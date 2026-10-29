@@ -21,12 +21,12 @@ use tidb_executor::dag_request::{
     DEFAULT_DIV_PRECISION_INCREMENT,
 };
 use tidb_planner_property::task_type::TaskType;
-use tidb_planner::{
-    access_path::{DataSourceAccessPath, IndexAccessPath, PointGetAdmission},
-    cardinality::{
+use tidb_planner_cardinality::{
         index_range_policy::{IndexRangeShape, RangeBoundKind},
         live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate},
-    },
+};
+use tidb_planner::{
+    access_path::{DataSourceAccessPath, IndexAccessPath, PointGetAdmission},
     logical_data_source::LogicalDataSource,
     logical_data_source_task::IndexTaskProperty,
     physical::{PhysicalIndexScan, PhysicalTableScan},

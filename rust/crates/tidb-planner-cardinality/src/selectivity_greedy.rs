@@ -235,7 +235,7 @@ pub struct SelectivityDefaults {
     /// every later estimation keeps Go's `true`.
     pub trigger_load: bool,
     /// Histogram risk settings from the current statement's plan context.
-    pub estimator_options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    pub estimator_options: crate::row_count_estimator::EstimatorOptions,
 }
 
 impl SelectivityDefaults {

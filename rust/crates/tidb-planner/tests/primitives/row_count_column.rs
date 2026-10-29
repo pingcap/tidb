@@ -14,7 +14,7 @@
 
 //! Dependency-closed tests for `pkg/planner/cardinality/row_count_column.go`.
 
-use tidb_planner::cardinality::{
+use tidb_planner_cardinality::{
     pseudo::{PseudoBoundKind, ScalarRange},
     row_count_column::{
         estimate_column_row_count, pseudo_row_count_with_partial_stats, ColumnRangeInput,
@@ -82,21 +82,21 @@ fn partial_stats_preserve_product_and_correlated_bounds() {
     ];
     assert_eq!(
         pseudo_row_count_with_partial_stats(&ranges, 100.0, false),
-        tidb_planner::cardinality::row_count_column::PartialStatsRowCount {
+        tidb_planner_cardinality::row_count_column::PartialStatsRowCount {
             total_count: 7.0,
             max_count: 20.0,
         }
     );
     assert_eq!(
         pseudo_row_count_with_partial_stats(&ranges, 100.0, true),
-        tidb_planner::cardinality::row_count_column::PartialStatsRowCount {
+        tidb_planner_cardinality::row_count_column::PartialStatsRowCount {
             total_count: 60.0,
             max_count: 0.0,
         }
     );
     assert_eq!(
         pseudo_row_count_with_partial_stats(&[], 0.0, false),
-        tidb_planner::cardinality::row_count_column::PartialStatsRowCount {
+        tidb_planner_cardinality::row_count_column::PartialStatsRowCount {
             total_count: 0.0,
             max_count: 0.0,
         }

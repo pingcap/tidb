@@ -14,6 +14,7 @@ autotests = false
 test-util = ["tidb-sessmgr/test-util"]
 
 [dependencies]
+tidb-planner-cardinality = { path = "../tidb-planner-cardinality" }
 tidb-planner-core-base = { path = "../tidb-planner-core-base" }
 tidb-planner-property = { path = "../tidb-planner-property" }
 tidb-executor-windows = { path = "../tidb-executor-windows" }

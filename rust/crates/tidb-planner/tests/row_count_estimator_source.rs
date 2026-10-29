@@ -46,12 +46,12 @@
 use tidb_codec::encode_key;
 use tidb_datatype::Datum;
 use tidb_charset::Collation;
-use tidb_planner::cardinality::row_count_estimator::{equal_row_count_on_column, get_index_row_count_for_stats_v2, get_row_count_by_column_ranges, ColumnRange, EstimatorOptions};
+use tidb_planner_cardinality::row_count_estimator::{equal_row_count_on_column, get_index_row_count_for_stats_v2, get_row_count_by_column_ranges, ColumnRange, EstimatorOptions};
 use tidb_planner_property::stats_info::IndexRowCounts;
 use tidb_ranger::Range;
 use tidb_stats::table_statistics::ColumnStats;
 use tidb_stats::table_statistics::IndexStats;
-use tidb_planner::selectivity_greedy::{
+use tidb_planner_cardinality::selectivity_greedy::{
     combine_selectivity, ConditionKind, SelectivityDefaults, StatsNode, StatsNodeType,
 };
 use tidb_stats::cmsketch::{encode_integer_datum_value, CmsSketch, TopN};

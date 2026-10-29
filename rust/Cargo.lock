@@ -4548,6 +4548,7 @@ dependencies = [
  "tidb-pdhelper",
  "tidb-plancodec",
  "tidb-planner",
+ "tidb-planner-cardinality",
  "tidb-planner-core-access",
  "tidb-planner-core-base",
  "tidb-planner-core-cost",
@@ -5787,6 +5788,7 @@ dependencies = [
  "tidb-parser",
  "tidb-parser-types",
  "tidb-plancodec",
+ "tidb-planner-cardinality",
  "tidb-planner-cascades-base",
  "tidb-planner-core-access",
  "tidb-planner-core-base",
@@ -5820,6 +5822,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-planner-cardinality"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-charset",
+ "tidb-codec",
+ "tidb-context",
+ "tidb-datatype",
+ "tidb-expr",
+ "tidb-exprctx",
+ "tidb-planner-core-base",
+ "tidb-planner-core-cost",
+ "tidb-planner-property",
+ "tidb-ranger",
+ "tidb-stats",
+ "tidb-tablecodec",
+ "tidb-vardef",
+]
+
+[[package]]
 name = "tidb-planner-cascades-base"
 version = "0.0.0"
 dependencies = [
@@ -5845,6 +5867,7 @@ dependencies = [
  "tidb-planner-cascades-base",
  "tidb-planner-property",
  "tidb-plannererrors",
+ "tidb-sessionctx",
  "tidb-terror",
 ]
 
@@ -6602,6 +6625,7 @@ dependencies = [
  "tidb-pdhelper",
  "tidb-plancodec",
  "tidb-planner",
+ "tidb-planner-cardinality",
  "tidb-planner-core-metrics",
  "tidb-plannererrors",
  "tidb-ppcpuusage",

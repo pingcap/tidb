@@ -1,0 +1,27 @@
+[package]
+name = "tidb-planner-cardinality"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/planner/cardinality (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-planner-core-base = { path = "../tidb-planner-core-base" }
+tidb-planner-property = { path = "../tidb-planner-property" }
+tidb-planner-core-cost = { path = "../tidb-planner-core-cost" }
+tidb-exprctx = { path = "../tidb-exprctx" }
+tidb-charset = { path = "../tidb-charset" }
+tidb-context = { path = "../tidb-context" }
+tidb-ranger = { path = "../tidb-ranger" }
+tidb-ast = { path = "../tidb-ast" }
+tidb-codec = { path = "../tidb-codec" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-stats = { path = "../tidb-stats" }
+tidb-vardef = { path = "../tidb-vardef" }

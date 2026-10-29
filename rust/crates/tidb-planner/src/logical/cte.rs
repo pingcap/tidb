@@ -325,7 +325,7 @@ impl LogicalCTE {
                         .iter()
                         .map(|column| column.unique_id)
                         .collect::<Vec<_>>();
-                    crate::cardinality::derive_stats::
+                    tidb_planner_cardinality::derive_stats::
                         estimate_cols_ndv_with_matched_len_and_skew_ratio(
                             &columns,
                             &profile,

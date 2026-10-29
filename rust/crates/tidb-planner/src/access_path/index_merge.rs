@@ -655,7 +655,7 @@ pub(super) fn estimate_index_ranges(
     ranges: &tidb_ranger::types::Ranges,
     columns: &[(tidb_expr::column::Column, i64)],
     ctx: &AccessPathDerivationContext<'_>,
-) -> Result<crate::cardinality::row_count_column::RowEstimate, PlanError> {
+) -> Result<tidb_planner_cardinality::row_count_column::RowEstimate, PlanError> {
     let declared = source_index.columns.len();
     // Go `GetRowCountByIndexRanges` records the index it reads before any
     // fast path (`row_count_index.go:48`).
@@ -664,8 +664,8 @@ pub(super) fn estimate_index_ranges(
     let Some(hist) = ds.table_stats.as_ref().and_then(|stats| stats.hist_coll()) else {
         // Go's table always carries a collection; a profile without one
         // keeps the pseudo rate.
-        return Ok(crate::cardinality::row_count_column::RowEstimate::default_est(
-            crate::ranger_stats_bridge::pseudo_count_by_index_ranges(
+        return Ok(tidb_planner_cardinality::row_count_column::RowEstimate::default_est(
+            tidb_planner_cardinality::ranger_stats_bridge::pseudo_count_by_index_ranges(
                 ranges,
                 ds.table_stats
                     .as_ref()
@@ -679,7 +679,7 @@ pub(super) fn estimate_index_ranges(
         .take(declared)
         .map(|(column, _)| column.clone())
         .collect::<Vec<_>>();
-    crate::cardinality::selectivity::get_row_count_by_index_ranges(
+    tidb_planner_cardinality::selectivity::get_row_count_by_index_ranges(
         hist,
         source_index.id,
         ranges,

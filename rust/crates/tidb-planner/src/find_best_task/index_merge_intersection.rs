@@ -21,7 +21,7 @@ use crate::logical::DataSource;
 use crate::physical::PhysicalPlan;
 use tidb_planner_core_base::PlanError;
 use crate::task::Task;
-use crate::cardinality::derive_stats::StatsInfoScale;
+use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 
 /// Builds the IndexMerge of a finished path: one partial plan per partial
 /// path, then the table lookup. Any conditions no partial range enforces

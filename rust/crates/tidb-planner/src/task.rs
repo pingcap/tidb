@@ -45,7 +45,7 @@ use crate::physical_table_reader::{ReadReqType, StoreType};
 use tidb_planner_core_base::PlanError;
 use std::sync::Arc;
 use tidb_expr::expression::Expression;
-use crate::cardinality::derive_stats::StatsInfoScale;
+use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 
 mod virtual_columns;
 
@@ -55,7 +55,7 @@ mod virtual_columns;
 pub struct TaskStatsContext {
     /// Go CopTask.TblColHists: the source population, before access/filter scaling.
     pub root_filter_stats: Option<Arc<tidb_planner_property::stats_info::StatsInfo>>,
-    pub estimator_options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    pub estimator_options: tidb_planner_cardinality::row_count_estimator::EstimatorOptions,
     pub scale_ndv_skew_ratio: f64,
 }
 
@@ -64,7 +64,7 @@ impl Default for TaskStatsContext {
         Self {
             root_filter_stats: None,
             estimator_options: Default::default(),
-            scale_ndv_skew_ratio: crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
+            scale_ndv_skew_ratio: tidb_planner_cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
         }
     }
 }
@@ -2237,7 +2237,7 @@ mod tests {
 
     #[test]
     fn root_task_filter_uses_the_task_session_estimator_options() {
-        use crate::cardinality::row_count_estimator::EstimatorOptions;
+        use tidb_planner_cardinality::row_count_estimator::EstimatorOptions;
         use tidb_stats::table_statistics::ColumnStats;
         use tidb_planner_property::stats_info::HistColl;
         use std::sync::Arc;

@@ -78,7 +78,6 @@
 
 pub mod table_statistics;
 pub mod access_path;
-pub mod cardinality;
 pub mod configured_order_limit_contract;
 pub mod common_plans;
 pub mod enforce;
@@ -112,10 +111,8 @@ pub mod plan_hint;
 pub mod point_get_value;
 pub mod preprocess;
 pub mod pushdown;
-pub mod ranger_stats_bridge;
 pub mod transaction_control;
 pub mod txn_mode;
-pub mod selectivity_greedy;
 pub mod show_predicate_extractor;
 pub mod show_schema;
 pub mod task;

@@ -19,7 +19,7 @@
 //! of that resolution instead of guessing it. Live DDL schema-state selection
 //! and default-value evaluation remain upstream prerequisites.
 
-use crate::cardinality::index_range_policy::{IndexRangeShape, RangeBoundKind};
+use tidb_planner_cardinality::index_range_policy::{IndexRangeShape, RangeBoundKind};
 
 /// A source-resolved `tipb.ColumnInfo` without a protobuf dependency in the
 /// planner crate.

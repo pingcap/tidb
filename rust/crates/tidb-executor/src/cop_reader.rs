@@ -64,7 +64,7 @@ use tidb_distsql::SelectInput;
 use tidb_distsql::select_response::SelectResponseIter;
 use tidb_txnkv::CancelHandle;
 use tidb_context::WarningCollector;
-use tidb_planner::cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
+use tidb_planner_cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
 use tidb_planner::physical::{PhysicalIndexScan, PhysicalTableScan};
 use tidb_planner::tikv_scan_spec::{
     ResolvedIndexDescriptor, ScanColumnInfo, TiKvIndexScanSpec, TiKvTableScanSpec,

@@ -24,7 +24,7 @@
 
 use tidb_planner_property::stats_info::PseudoColumn;
 
-use crate::cardinality::derive_stats::StatsInfoScale;
+use crate::derive_stats::StatsInfoScale;
 
 /// Source pseudo divisor for equality predicates and one value's average
 /// frequency.

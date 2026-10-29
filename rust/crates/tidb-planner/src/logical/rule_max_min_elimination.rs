@@ -520,7 +520,7 @@ mod tests {
             IndexAccessPath, PointGetAdmission, ResolvedTableDescriptor, ResolvedTableScanKind,
             TableAccessPath, TableScanExplainIdSuffix,
         };
-        use crate::cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
+        use tidb_planner_cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
         use crate::logical::data_source::DataSourceColumn;
         use tidb_infoschema::table_source::SourceIndexColumn;
         use tidb_infoschema::table_source::SourceIndex;
@@ -657,7 +657,7 @@ mod tests {
     #[test]
     fn split_source_clone_restores_all_access_paths() {
         use crate::access_path::IndexAccessPath;
-        use crate::cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
+        use tidb_planner_cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
         let path = |index_id| {
             DataSourceAccessPath::Index(IndexAccessPath::new(LiveIndexCandidate {
                 index_id,

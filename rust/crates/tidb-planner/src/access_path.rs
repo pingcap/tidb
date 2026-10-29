@@ -20,7 +20,7 @@
 
 use tidb_sessionctx::{IndexLookupPushDownPolicy, IndexLookupPushDownSession};
 use tidb_ranger::Range;
-use crate::cardinality::{
+use tidb_planner_cardinality::{
         live_index_optimizer::{LiveIndexCandidate, estimate_proven_point_rows},
     };
 use crate::tikv_scan_spec::{
@@ -51,13 +51,13 @@ pub(crate) struct AccessPathDerivationContext<'a> {
     pub opt_prefix_index_single_scan: bool,
     pub expr_pushdown_blacklist: &'a tidb_expr::infer_pushdown::ExprPushDownBlacklist,
     pub selectivity_factor: f64,
-    pub estimator_options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    pub estimator_options: tidb_planner_cardinality::row_count_estimator::EstimatorOptions,
     pub range_max_size: i64,
     pub range_fallback_handler: Option<&'a tidb_context::RangeFallbackHandler>,
     pub expression_evaluator: &'a tidb_ranger::points::ExpressionEvaluator<'a>,
     /// Go `sctx.SetSkipPlanCache` from the ranger; `None` unless the
     /// statement uses the plan cache (Go's tracker ignores it otherwise).
-    pub plan_cache_marker: Option<&'a dyn crate::logical::rule::PlanCacheMarker>,
+    pub plan_cache_marker: Option<&'a dyn tidb_planner_core_base::PlanCacheMarker>,
     /// Go `recordUsedItemStatsStatus`; `None` outside the statement's
     /// statistics derivation.
     pub used_stats_recorder: Option<&'a dyn crate::logical::rule::UsedStatsRecorder>,
@@ -116,7 +116,7 @@ pub struct IndexPathState {
     /// unresolved positions remain None instead of shortening the key.
     pub declared_columns: Option<Vec<Option<(tidb_expr::column::Column, i64)>>>,
     /// Access estimate and its skyline risk bounds, adjusted together.
-    pub row_estimate: Option<crate::cardinality::row_count_column::RowEstimate>,
+    pub row_estimate: Option<tidb_planner_cardinality::row_count_column::RowEstimate>,
     /// Go `IsSingleScan`, evaluated during pruning and refreshed at the first
     /// logical statistics derivation, before final column pruning.
     /// None means the covering decision has not been derived yet.
@@ -1805,5 +1805,54 @@ mod enumeration_tests {
             enumerate_possible_access_paths(&source, false, Some(&latest), Some(7), true, true)
                 .unwrap();
         assert_eq!(paths.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod index_range_collation_tests {
+    use tidb_charset::Collation;
+    use tidb_datatype::Datum;
+    use tidb_ranger::types::Range;
+
+    use tidb_planner_cardinality::row_count_estimator::ordinal_of_range_cond;
+
+    #[test]
+    fn index_range_prefix_comparison_retains_ranger_collation() {
+        let collation = Collation::Utf8Mb4GeneralCi;
+        let range = Range {
+            collators: vec![collation],
+            low_val: vec![Datum::new_collation_string("A", collation)],
+            high_val: vec![Datum::new_collation_string("a", collation)],
+            low_exclude: false,
+            high_exclude: false,
+        };
+        assert_eq!(ordinal_of_range_cond(&range), 1);
+        assert!(super::only_point_ranges(
+            super::PointRangePath::Index { column_count: 1 },
+            std::slice::from_ref(&range),
+        ));
+        let mut binary_range = range.clone();
+        binary_range.collators[0] = Collation::Binary;
+        assert_eq!(ordinal_of_range_cond(&binary_range), 0);
+        assert!(!super::only_point_ranges(
+            super::PointRangePath::Index { column_count: 1 },
+            &[binary_range],
+        ));
+    }
+
+    #[test]
+    fn range_prefix_and_point_checks_use_their_source_collator_positions() {
+        let range = Range {
+            low_val: vec![Datum::Int(1), Datum::new_string("A")],
+            high_val: vec![Datum::Int(1), Datum::new_string("a")],
+            collators: vec![Collation::Binary, Collation::Utf8Mb4GeneralCi],
+            low_exclude: false,
+            high_exclude: false,
+        };
+        assert_eq!(ordinal_of_range_cond(&range), 1);
+        assert!(super::only_point_ranges(
+            super::PointRangePath::Index { column_count: 2 },
+            &[range],
+        ));
     }
 }

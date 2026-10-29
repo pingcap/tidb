@@ -22,7 +22,7 @@ use crate::physical::PhysicalPlan;
 use tidb_planner_core_base::PlanError;
 use crate::task::Task;
 use tidb_expr::expression::Expression;
-use crate::cardinality::derive_stats::StatsInfoScale;
+use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 
 #[cfg(test)]
 /// Go `generateIndexMergePath`'s union candidate for a DataSource whose
@@ -1455,7 +1455,7 @@ mod tests {
                 .derived_index_paths
                 .entry(index.id)
                 .or_default()
-                .row_estimate = Some(crate::cardinality::row_count_column::RowEstimate::new(
+                .row_estimate = Some(tidb_planner_cardinality::row_count_column::RowEstimate::new(
                 100.0, 0.0, 0.0,
             ));
         }

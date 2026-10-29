@@ -597,3 +597,16 @@ impl From<EvalError> for PlanError {
         }
     }
 }
+
+/// Go `PlanContext.SetSkipPlanCache`: the session side effect the expression
+/// and rule simplifiers and the estimator perform.
+pub trait PlanCacheMarker {
+    /// Records the first reason the current statement cannot use plan cache.
+    fn set_skip_plan_cache(&self, reason: &str);
+}
+
+impl PlanCacheMarker for tidb_sessionctx::StmtContext {
+    fn set_skip_plan_cache(&self, reason: &str) {
+        tidb_sessionctx::StmtContext::set_skip_plan_cache(self, reason);
+    }
+}

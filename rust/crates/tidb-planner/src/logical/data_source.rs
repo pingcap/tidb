@@ -492,9 +492,9 @@ impl DataSource {
     /// estimate. The PRIMARY index therefore contributes no `Selectivity`
     /// node to the data source's own row count.
     #[must_use]
-    pub fn derive_stats_filled_paths(&self) -> crate::cardinality::selectivity::FilledPaths {
+    pub fn derive_stats_filled_paths(&self) -> tidb_planner_cardinality::selectivity::FilledPaths {
         let hist_coll = self.table_stats.as_ref().and_then(StatsInfo::hist_coll);
-        let mut paths = crate::cardinality::selectivity::FilledPaths::new();
+        let mut paths = tidb_planner_cardinality::selectivity::FilledPaths::new();
         for path in &self.enumerated_paths {
             match path {
                 crate::access_path::PossiblePath::Table {
@@ -979,7 +979,7 @@ fn is_null_condition_selectivity(
     is_null_condition_selectivity_with_options(
         condition,
         stats,
-        crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+        tidb_planner_cardinality::row_count_estimator::EstimatorOptions::default(),
     )
 }
 
@@ -987,7 +987,7 @@ fn is_null_condition_selectivity(
 fn is_null_condition_selectivity_with_options(
     condition: &Expression,
     stats: &StatsInfo,
-    options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    options: tidb_planner_cardinality::row_count_estimator::EstimatorOptions,
 ) -> Option<f64> {
     let Expression::ScalarFunction(function) = condition else {
         return None;
@@ -1023,13 +1023,13 @@ fn is_null_condition_selectivity_with_options(
         // the count runs through `Histogram.OutOfRangeRowCount`'s heuristic —
         // slightly below the raw table count (TPC-DS q6/q45: 1158371.5 over
         // customer).
-        let ranges = vec![crate::cardinality::row_count_estimator::ColumnRange {
+        let ranges = vec![tidb_planner_cardinality::row_count_estimator::ColumnRange {
             low: Datum::MinNotNull,
             high: Datum::MaxValue,
             low_exclude: false,
             high_exclude: false,
         }];
-        let estimate = crate::cardinality::row_count_estimator::get_column_row_count(
+        let estimate = tidb_planner_cardinality::row_count_estimator::get_column_row_count(
             column_stats,
             &ranges,
             Collation::Binary,
@@ -1297,7 +1297,7 @@ fn index_covers_column(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cardinality::derive_stats::StatsInfoScale;
+    use tidb_planner_cardinality::derive_stats::StatsInfoScale;
     use tidb_planner_property::stats_info::HistColl;
     use std::sync::Arc;
     use tidb_ast::CiString;
@@ -1368,20 +1368,20 @@ mod tests {
         let column_stats = hist_coll
             .histogram(column.unique_id)
             .expect("column histogram");
-        let ranges = vec![crate::cardinality::row_count_estimator::ColumnRange {
+        let ranges = vec![tidb_planner_cardinality::row_count_estimator::ColumnRange {
             low: Datum::MinNotNull,
             high: Datum::MaxValue,
             low_exclude: false,
             high_exclude: false,
         }];
-        let estimate = crate::cardinality::row_count_estimator::get_column_row_count(
+        let estimate = tidb_planner_cardinality::row_count_estimator::get_column_row_count(
             column_stats,
             &ranges,
             Collation::Binary,
             hist_coll.realtime_count(),
             hist_coll.modify_count(),
             false,
-            &crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+            &tidb_planner_cardinality::row_count_estimator::EstimatorOptions::default(),
         )
         .unwrap();
         let expected = (estimate.est / hist_coll.realtime_count() as f64).clamp(0.0, 1.0);
@@ -1415,31 +1415,31 @@ mod tests {
         let column_stats = hist_coll
             .histogram(column.unique_id)
             .expect("column histogram");
-        let ranges = [crate::cardinality::row_count_estimator::ColumnRange {
+        let ranges = [tidb_planner_cardinality::row_count_estimator::ColumnRange {
             low: Datum::MinNotNull,
             high: Datum::MaxValue,
             low_exclude: false,
             high_exclude: false,
         }];
-        let estimate = crate::cardinality::row_count_estimator::get_column_row_count(
+        let estimate = tidb_planner_cardinality::row_count_estimator::get_column_row_count(
             column_stats,
             &ranges,
             Collation::Binary,
             hist_coll.realtime_count(),
             hist_coll.modify_count(),
             false,
-            &crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+            &tidb_planner_cardinality::row_count_estimator::EstimatorOptions::default(),
         )
         .unwrap();
         let expected = (estimate.est / hist_coll.realtime_count() as f64).clamp(0.0, 1.0);
-        let wrong_count_estimate = crate::cardinality::row_count_estimator::get_column_row_count(
+        let wrong_count_estimate = tidb_planner_cardinality::row_count_estimator::get_column_row_count(
             column_stats,
             &ranges,
             Collation::Binary,
             scaled_stats.row_count() as i64,
             hist_coll.modify_count(),
             false,
-            &crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+            &tidb_planner_cardinality::row_count_estimator::EstimatorOptions::default(),
         )
         .unwrap();
         let wrong_count = (wrong_count_estimate.est / scaled_stats.row_count()).clamp(0.0, 1.0);

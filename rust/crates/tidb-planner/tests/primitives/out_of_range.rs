@@ -14,7 +14,7 @@
 
 //! Direct source-contract tests for out-of-range cardinality arithmetic.
 
-use tidb_planner::cardinality::out_of_range::{
+use tidb_planner_cardinality::out_of_range::{
     out_of_range_eq_selectivity, out_of_range_full_ndv, OUT_OF_RANGE_BETWEEN_RATE,
 };
 

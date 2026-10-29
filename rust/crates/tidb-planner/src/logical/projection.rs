@@ -428,7 +428,7 @@ impl LogicalProjection {
                 .iter()
                 .map(|column| column.unique_id)
                 .collect::<Vec<_>>();
-            let (ndv, _) = crate::cardinality::derive_stats::
+            let (ndv, _) = tidb_planner_cardinality::derive_stats::
                 estimate_cols_ndv_with_matched_len_and_skew_ratio(
                     &input_ids,
                     child,
@@ -561,7 +561,7 @@ mod statistics_tests {
             }]
         );
         assert_eq!(
-            crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len(&[11, 12], &stats),
+            tidb_planner_cardinality::derive_stats::estimate_cols_ndv_with_matched_len(&[11, 12], &stats),
             (8.0, 2)
         );
 

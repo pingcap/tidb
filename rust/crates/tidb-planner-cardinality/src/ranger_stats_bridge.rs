@@ -19,7 +19,7 @@
 
 use tidb_datatype::Datum;
 
-use crate::cardinality::pseudo::{
+use crate::pseudo::{
     pseudo_row_count_by_index_ranges as estimate_pseudo_index_ranges,
     pseudo_row_count_by_scalar_ranges, pseudo_row_count_by_signed_int_ranges,
     pseudo_row_count_by_unsigned_int_ranges, Range, PseudoBoundKind, ScalarRange,

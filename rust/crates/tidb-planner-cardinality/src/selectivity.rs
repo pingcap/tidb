@@ -37,7 +37,7 @@ use tidb_ranger::Range;
 use tidb_ranger::points::{ExpressionEvaluator, PointBuilderError};
 use crate::selectivity_greedy::{StatsNode, StatsNodeType, get_usable_sets_by_greedy};
 use tidb_planner_property::stats_info::HistColl;
-use crate::cardinality::row_count_estimator::HistCollIndexEstimation;
+use crate::row_count_estimator::HistCollIndexEstimation;
 
 /// The `PlanContext` state `Selectivity` reads.
 pub struct SelectivityContext<'a> {
@@ -55,7 +55,33 @@ pub struct SelectivityContext<'a> {
     pub record_used_item: Option<&'a dyn Fn(i64, bool)>,
     /// Go `sctx.SetSkipPlanCache` from the ranger calls the estimate makes;
     /// `None` unless the statement uses the plan cache.
-    pub plan_cache_marker: Option<&'a dyn crate::logical::rule::PlanCacheMarker>,
+    pub plan_cache_marker: Option<&'a dyn tidb_planner_core_base::PlanCacheMarker>,
+    /// Go's `CollectFilters4MVIndex` and `BuildPartialPaths4MVIndex`, which
+    /// `planner/core` registers for this package (`core_init.go`).
+    pub mv_index: &'a dyn MvIndexFilters,
+}
+
+/// The multi-valued index matching `planner/core` performs for the estimator
+/// (Go `cardinality.CollectFilters4MVIndex` / `BuildPartialPaths4MVIndex`).
+pub trait MvIndexFilters {
+    /// The filters that can access the index (`collectFilters4MVIndex`'s first
+    /// result).
+    fn collect_access_filters(
+        &self,
+        evaluate: &ExpressionEvaluator<'_>,
+        filters: &[Expression],
+        idx_cols: &[Column],
+    ) -> Vec<Expression>;
+    /// The partial paths' filter sets and whether they intersect
+    /// (`buildPartialPaths4MVIndex`).
+    fn partial_access_filters(
+        &self,
+        evaluate: &ExpressionEvaluator<'_>,
+        access_filters: &[Expression],
+        idx_cols: &[Column],
+    ) -> Result<Option<(Vec<Vec<Expression>>, bool)>, tidb_exprctx::EvalError>;
+    /// The index columns' lengths as the partial paths read them.
+    fn column_lengths(&self, idx_cols: &[Column], declared_lengths: &[i64]) -> Vec<i64>;
 }
 
 /// Go `Selectivity`'s `filledPaths`, keyed as its `id2Paths`: each possible
@@ -66,10 +92,15 @@ pub type FilledPaths = std::collections::BTreeMap<i64, Vec<Column>>;
 
 impl<'a> SelectivityContext<'a> {
     /// A context with no range-fallback recorder and plan caching off.
-    pub fn new(options: &'a EstimatorOptions, evaluate: &'a ExpressionEvaluator<'a>) -> Self {
+    pub fn new(
+        options: &'a EstimatorOptions,
+        evaluate: &'a ExpressionEvaluator<'a>,
+        mv_index: &'a dyn MvIndexFilters,
+    ) -> Self {
         Self {
             options,
             evaluate,
+            mv_index,
             range_fallback_handler: None,
             use_plan_cache: false,
             record_used_item: None,
@@ -526,15 +557,16 @@ fn mask_and_selectivity_for_mv_index(
     info: &tidb_planner_property::stats_info::HistCollIndexInfo,
     exprs: &[Expression],
 ) -> Option<(f64, i64)> {
-    use crate::access_path::mv_index;
     let cols = coll.mv_index_columns(index_id);
     if cols.is_empty() {
         return None;
     }
-    let (access_conds, _, _) = mv_index::collect_filters_for_mv_index(ctx.evaluate, exprs, cols);
-    let (filter_sets, is_intersection) =
-        mv_index::mv_index_partial_access_filters(ctx.evaluate, &access_conds, cols).ok()??;
-    let lengths = mv_index::mv_index_column_lengths(cols, &info.column_lengths);
+    let access_conds = ctx.mv_index.collect_access_filters(ctx.evaluate, exprs, cols);
+    let (filter_sets, is_intersection) = ctx
+        .mv_index
+        .partial_access_filters(ctx.evaluate, &access_conds, cols)
+        .ok()??;
+    let lengths = ctx.mv_index.column_lengths(cols, &info.column_lengths);
     let realtime = coll.realtime_count() as f64;
     // Go `CalcTotalSelectivityForMVIdxPath`: each partial reads the virtual
     // column, so its selectivity is over the table's realtime count.
@@ -811,7 +843,7 @@ use tidb_charset::Collation;
     use tidb_stats::{Bucket, Histogram, TopN};
 
     use super::get_row_count_by_index_ranges;
-    use crate::cardinality::row_count_estimator::EstimatorOptions;
+    use crate::row_count_estimator::EstimatorOptions;
     use tidb_planner_property::stats_info::IndexRowCounts;
     use tidb_ranger::Range;
     use tidb_stats::table_statistics::IndexStats;

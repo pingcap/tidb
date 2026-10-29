@@ -130,7 +130,7 @@ pub(crate) fn optimize_by_shuffle_in(
                 .iter()
                 .map(|(id, value)| (*id, *value))
                 .collect();
-            let (ndv, _) = crate::cardinality::ndv::estimate_cols_ndv_with_matched_len(
+            let (ndv, _) = tidb_planner_cardinality::ndv::estimate_cols_ndv_with_matched_len(
                 &ids,
                 &ndvs,
                 stats.row_count(),

@@ -1167,7 +1167,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                                     table.pk_handle_offset() == Some(offset),
                                 );
                             let avg_col_size =
-                                tidb_planner::cardinality::row_size::avg_col_size(
+                                tidb_planner_cardinality::row_size::avg_col_size(
                                     &row_size,
                                     statistics.row_count,
                                     false,

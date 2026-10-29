@@ -2676,51 +2676,6 @@ mod value_encoding_error_tests {
 }
 
 #[cfg(test)]
-mod index_range_collation_tests {
-    use super::*;
-
-    #[test]
-    fn index_range_prefix_comparison_retains_ranger_collation() {
-        let collation = Collation::Utf8Mb4GeneralCi;
-        let range = Range {
-            collators: vec![collation],
-            low_val: vec![Datum::new_collation_string("A", collation)],
-            high_val: vec![Datum::new_collation_string("a", collation)],
-            low_exclude: false,
-            high_exclude: false,
-        };
-        assert_eq!(ordinal_of_range_cond(&range), 1);
-        assert!(crate::access_path::only_point_ranges(
-            crate::access_path::PointRangePath::Index { column_count: 1 },
-            std::slice::from_ref(&range),
-        ));
-        let mut binary_range = range.clone();
-        binary_range.collators[0] = Collation::Binary;
-        assert_eq!(ordinal_of_range_cond(&binary_range), 0);
-        assert!(!crate::access_path::only_point_ranges(
-            crate::access_path::PointRangePath::Index { column_count: 1 },
-            &[binary_range],
-        ));
-    }
-
-    #[test]
-    fn range_prefix_and_point_checks_use_their_source_collator_positions() {
-        let range = Range {
-            low_val: vec![Datum::Int(1), Datum::new_string("A")],
-            high_val: vec![Datum::Int(1), Datum::new_string("a")],
-            collators: vec![Collation::Binary, Collation::Utf8Mb4GeneralCi],
-            low_exclude: false,
-            high_exclude: false,
-        };
-        assert_eq!(ordinal_of_range_cond(&range), 1);
-        assert!(crate::access_path::only_point_ranges(
-            crate::access_path::PointRangePath::Index { column_count: 2 },
-            &[range],
-        ));
-    }
-}
-
-#[cfg(test)]
 mod version_one_index_dispatch_tests {
     use super::*;
 

@@ -14,7 +14,7 @@
 
 //! Source-shaped tests for `GetUsableSetsByGreedy`.
 
-use tidb_planner::selectivity_greedy::{get_usable_sets_by_greedy, StatsNode, StatsNodeType};
+use tidb_planner_cardinality::selectivity_greedy::{get_usable_sets_by_greedy, StatsNode, StatsNodeType};
 
 fn mock_stats_node(id: i64, mask: i64, num_cols: usize) -> StatsNode {
     StatsNode::new(StatsNodeType::Index, id, mask, num_cols)

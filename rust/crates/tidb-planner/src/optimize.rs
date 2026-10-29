@@ -23,6 +23,7 @@
 //! [`OptimizeContext`] and [`OptimizeServices`], as Go's `base.PlanContext`
 //! and the statistics handle reach `pkg/planner/core`.
 
+use tidb_planner_core_base::PlanCacheMarker;
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
@@ -31,7 +32,7 @@ use crate::find_best_task::coster::{CostEnv, Ver2Coster};
 use crate::find_best_task::dispatch::{find_best_task, DispatchContext, MppWarningSink};
 use tidb_fixcontrol::OptimizerFixControl;
 use crate::logical::rule::{
-    flags, logical_optimize, CteOptimizer, DisabledLogicalRules, HintWarningSink, PlanCacheMarker,
+    flags, logical_optimize, CteOptimizer, DisabledLogicalRules, HintWarningSink,
     RuleContext, UsedStatsRecorder,
 };
 use crate::logical::rule_collect_plan_stats::StatisticsLoadRequester;

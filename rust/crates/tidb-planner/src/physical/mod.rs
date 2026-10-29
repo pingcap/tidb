@@ -42,7 +42,7 @@
 mod memory;
 pub mod part_info;
 pub use part_info::PhysPlanPartInfo;
-use crate::cardinality::derive_stats::StatsInfoScale;
+use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 mod resolve_indices;
 pub mod shuffle;
 pub mod shuffle_optimize;
@@ -2533,7 +2533,7 @@ pub struct PhysicalIndexScan {
     /// Normalized source ranges used by the bounded `checkCoverIndex` bridge.
     /// They represent the same Go `Ranges` as [`Self::ranges`] until that
     /// cardinality adapter consumes the full ranger type.
-    pub covering_ranges: Vec<crate::cardinality::index_range_policy::IndexRangeShape>,
+    pub covering_ranges: Vec<tidb_planner_cardinality::index_range_policy::IndexRangeShape>,
     /// Schema-validated fields consumed by TiKV protobuf lowering.
     pub tikv_pushdown: Option<crate::tikv_scan_spec::ValidatedIndexPushdown>,
     /// Go `DBName`.
@@ -2571,10 +2571,10 @@ impl PhysicalIndexScan {
     pub fn init(
         plan_id: i32,
         query_block_offset: i32,
-        candidate: &crate::cardinality::live_index_optimizer::LiveIndexCandidate,
+        candidate: &tidb_planner_cardinality::live_index_optimizer::LiveIndexCandidate,
         count_after_access: f64,
     ) -> Self {
-        let choice = crate::cardinality::live_index_optimizer::live_index_choice(
+        let choice = tidb_planner_cardinality::live_index_optimizer::live_index_choice(
             candidate,
             count_after_access,
         );
@@ -2637,7 +2637,7 @@ impl PhysicalIndexScan {
 
     /// Returns normalized range endpoints used by `checkCoverIndex`.
     #[must_use]
-    pub fn ranges(&self) -> &[crate::cardinality::index_range_policy::IndexRangeShape] {
+    pub fn ranges(&self) -> &[tidb_planner_cardinality::index_range_policy::IndexRangeShape] {
         &self.covering_ranges
     }
 
@@ -4259,7 +4259,7 @@ impl PhysicalPlan {
     /// scan's full histogram collection (`physicalop.GetTblStats`).
     #[must_use]
     pub fn cop_avg_row_size(&self, encoded_key: bool, enable_chunk_rpc: bool) -> f64 {
-        use crate::cardinality::row_size::{get_avg_row_size, RowSizeColumn};
+        use tidb_planner_cardinality::row_size::{get_avg_row_size, RowSizeColumn};
         let mut scan = self;
         while !matches!(scan, Self::TableScan(_) | Self::IndexScan(_)) {
             let Some(child) = scan.children().first() else {
@@ -4290,7 +4290,7 @@ impl PhysicalPlan {
     /// Go PointGetPlan/BatchPointGetPlan.GetAvgRowSize; fast plans have no accessCols.
     #[must_use]
     pub fn point_avg_row_size(&self, enable_chunk_rpc: bool) -> f64 {
-        use crate::cardinality::row_size::{
+        use tidb_planner_cardinality::row_size::{
             get_index_avg_row_size, get_table_avg_row_size, RowSizeColumn, RowSizeStore,
         };
         let (columns, index) = match self {

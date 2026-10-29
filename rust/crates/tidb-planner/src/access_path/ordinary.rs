@@ -172,7 +172,7 @@ pub(crate) fn correlated_access_count_after_access(
     let hist = stats.hist_coll();
     let realtime = hist.map_or(stats.row_count(), |hist| hist.realtime_count() as f64);
     if hist.is_none_or(tidb_planner_property::stats_info::HistColl::pseudo) {
-        return crate::cardinality::pseudo::pseudo_avg_count_per_value(realtime);
+        return tidb_planner_cardinality::pseudo::pseudo_avg_count_per_value(realtime);
     }
     let selectivity = count_after_access / realtime;
     let mut count = count_after_access;
@@ -181,7 +181,7 @@ pub(crate) fn correlated_access_count_after_access(
         // column NDVs hold.
         let mut ndv = stats.col_ndv(column.unique_id);
         if ndv <= 0.0 {
-            ndv = realtime * crate::cardinality::derive_stats::DISTINCT_FACTOR;
+            ndv = realtime * tidb_planner_cardinality::derive_stats::DISTINCT_FACTOR;
         }
         count /= (ndv * selectivity).max(1.0);
     }
@@ -216,7 +216,7 @@ pub(crate) fn fill_ordinary_index_paths(
                 .as_ref()
                 .and_then(|stats| stats.hist_coll())
                 .map_or(0.0, |hist| hist.realtime_count() as f64);
-            crate::cardinality::row_count_column::RowEstimate::new(realtime, 0.0, 0.0)
+            tidb_planner_cardinality::row_count_column::RowEstimate::new(realtime, 0.0, 0.0)
         } else {
             super::index_merge::estimate_index_ranges(
                 source,
@@ -569,7 +569,7 @@ pub(crate) fn estimate_int_table_path(
         .ranges
         .iter()
         .map(|range| {
-            crate::cardinality::row_count_estimator::ColumnRange::new(
+            tidb_planner_cardinality::row_count_estimator::ColumnRange::new(
                 range.low_val[0].clone(),
                 range.high_val[0].clone(),
                 range.low_exclude,
@@ -577,7 +577,7 @@ pub(crate) fn estimate_int_table_path(
             )
         })
         .collect::<Vec<_>>();
-    crate::cardinality::row_count_estimator::get_row_count_by_column_ranges(
+    tidb_planner_cardinality::row_count_estimator::get_row_count_by_column_ranges(
         column.map(|column| column.as_ref()),
         &ranges,
         path.handle_type.collation(),

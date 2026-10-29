@@ -123,7 +123,7 @@ struct InterestingColumnPruner {
 
 /// Recompute Go's asked-group NDVs after attaching a loaded table histogram.
 pub fn refresh_source_group_ndvs(source: &mut DataSource) {
-    refresh_source_group_ndvs_with_scale_ratio(source, crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO);
+    refresh_source_group_ndvs_with_scale_ratio(source, tidb_planner_cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO);
 }
 
 /// Refresh loaded group profiles with the statement's NDV scale blend.
@@ -190,7 +190,7 @@ impl InterestingColumnPruner {
         // re-scales the group NDVs, so the live profile gets the group NDVs
         // scaled from the TABLE row count to the plan's own row count.
         if let Some(stats) = source.base.base.stats_info().cloned() {
-            let scale_ndv = crate::cardinality::derive_stats::scale_ndv;
+            let scale_ndv = tidb_planner_cardinality::derive_stats::scale_ndv;
             let mut stats = stats;
             let scaled = group_ndvs
                 .iter()
@@ -673,7 +673,7 @@ pub fn collect_column_stats_usage(
     plan: LogicalPlan,
     opt_index_prune_threshold: i32,
 ) -> (LogicalPlan, ColumnStatsUsage) {
-    collect_column_stats_usage_with_options(plan, opt_index_prune_threshold, false, crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO)
+    collect_column_stats_usage_with_options(plan, opt_index_prune_threshold, false, tidb_planner_cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO)
 }
 
 fn collect_column_stats_usage_with_options(
@@ -1187,7 +1187,7 @@ mod tests {
             .base
             .set_stats(Some(StatsInfo::new(100.0, [(1, 50.0), (2, 40.0)])));
 
-        InterestingColumnPruner::refresh_group_ndvs(source, crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO);
+        InterestingColumnPruner::refresh_group_ndvs(source, tidb_planner_cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO);
 
         let table_stats = source.table_stats.as_ref().expect("table statistics");
         assert_eq!(table_stats.group_ndvs().len(), 1);

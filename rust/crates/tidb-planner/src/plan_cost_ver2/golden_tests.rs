@@ -26,7 +26,7 @@
 //! block). Nothing here is tuned: each case supplies the rows Go's
 //! `getCardinality` would have read -- which the recording ALSO prints as
 //! `estRows` -- and the row sizes derived independently by
-//! [`crate::cardinality::row_size`], then asserts the printed cost.
+//! [`tidb_planner_cardinality::row_size`], then asserts the printed cost.
 //!
 //! Two inputs are not printed by `EXPLAIN` and are therefore MEASURED from
 //! the recording rather than derived, and both are called out at their case:
@@ -34,7 +34,7 @@
 //! `len(PhysicalIndexJoin.LeftJoinKeys)`.
 
 use super::*;
-use crate::cardinality::row_size::RowSizeColumn;
+use tidb_planner_cardinality::row_size::RowSizeColumn;
 use tidb_planner_property::stats_info::{RowSizeColumnStats, RowSizeType};
 use tidb_planner_costusage::COST_FLAG_TRACE;
 
@@ -635,7 +635,7 @@ fn test_golden_index_lookup_reader() {
     let session = serial_session();
     // The index side is read as an encoded key in chunk format: `b` plus the
     // handle, 8 bytes each plus an eighth of a byte of null bitmap.
-    let index_row_size = crate::cardinality::row_size::get_avg_row_size(
+    let index_row_size = tidb_planner_cardinality::row_size::get_avg_row_size(
         &[int_col(T_ROWS), handle_col(T_ROWS)],
         false,
         T_ROWS as i64,
@@ -644,7 +644,7 @@ fn test_golden_index_lookup_reader() {
         true,
     );
     assert_eq!(index_row_size, 16.25);
-    let table_row_size = crate::cardinality::row_size::get_avg_row_size(
+    let table_row_size = tidb_planner_cardinality::row_size::get_avg_row_size(
         &[int_col(T_ROWS), int_col(T_ROWS), int_col(T_ROWS)],
         false,
         T_ROWS as i64,

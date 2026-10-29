@@ -722,7 +722,7 @@ fn deriving_a_data_source_fills_each_index_path_row_count_from_its_collection() 
     op.enumerated_paths = vec![crate::access_path::PossiblePath::Index { index: 0 }];
     op.pushed_down_conds = vec![Expression::ScalarFunction(eq_condition_to_constant(1, 7))];
     op.derived_index_paths.entry(8).or_default().row_estimate =
-        Some(crate::cardinality::row_count_column::RowEstimate::default_est(1.0));
+        Some(tidb_planner_cardinality::row_count_column::RowEstimate::default_est(1.0));
     attach_pseudo_collection(op);
     let context = super::rule_tests::test_context(&allocator);
     let (plan, result) =

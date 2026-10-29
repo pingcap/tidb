@@ -22,7 +22,7 @@
 //! `AvgColSize` / `AvgColSizeDataInDiskByRows` / `AvgColSizeChunkFormat`
 //! (`pkg/planner/cardinality/row_size.go:119/:169/:149`) against the analyzer's
 //! accumulated per-column totals. The Rust formulas live in
-//! [`tidb_planner::cardinality::row_size`]; the histogram owner they read is a
+//! [`tidb_planner_cardinality::row_size`]; the histogram owner they read is a
 //! caller-owned record (`RowSizeColumnStats`), so this port reproduces exactly
 //! the fields ANALYZE stored for those two rows:
 //!
@@ -32,7 +32,7 @@
 //! - row 2 `(132, '123456789112', ...)` adds varint(132)=2 bytes to c1
 //!   (TotColSize 3 over 2 rows) and 13 bytes to c2 (TotColSize 21).
 
-use tidb_planner::cardinality::row_size::{avg_col_size, avg_col_size_chunk_format, avg_col_size_data_in_disk_by_rows};
+use tidb_planner_cardinality::row_size::{avg_col_size, avg_col_size_chunk_format, avg_col_size_data_in_disk_by_rows};
 use tidb_planner_property::stats_info::{RowSizeColumnStats, RowSizeType};
 
 fn column(kind: RowSizeType, total_column_size: i64, null_count: i64) -> RowSizeColumnStats {

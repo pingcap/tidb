@@ -183,7 +183,7 @@ impl DataSource {
                             &loaded_indexes,
                         )
                     })
-                    .unwrap_or(row_count * crate::cardinality::derive_stats::DISTINCT_FACTOR);
+                    .unwrap_or(row_count * tidb_planner_cardinality::derive_stats::DISTINCT_FACTOR);
                 (column.unique_id, ndv)
             })
             .collect::<Vec<_>>();
@@ -558,11 +558,11 @@ use tidb_charset::Collation;
     use tidb_stats::{Bucket, Histogram, StatsLoadedStatus};
 
     use super::TableStatsSnapshot;
-    use crate::cardinality::row_count_estimator::EstimatorOptions;
+    use tidb_planner_cardinality::row_count_estimator::EstimatorOptions;
     use tidb_ranger::Range;
     use tidb_stats::table_statistics::ColumnStats;
     use tidb_stats::table_statistics::IndexStats;
-    use crate::cardinality::selectivity::get_row_count_by_index_ranges;
+    use tidb_planner_cardinality::selectivity::get_row_count_by_index_ranges;
     use crate::logical::data_source::DataSourceColumn;
     use crate::logical::DataSource;
     use tidb_infoschema::table_source::SourceIndexColumn;

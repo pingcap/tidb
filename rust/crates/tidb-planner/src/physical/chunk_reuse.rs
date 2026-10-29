@@ -168,9 +168,9 @@ fn average_row_size(stats: Option<&StatsInfo>, columns: &[&Column]) -> f64 {
             });
             match hist_coll.and_then(|hist_coll| hist_coll.column(column.unique_id)) {
                 Some(stats) => {
-                    crate::cardinality::row_size::RowSizeColumn::with_stats(stats, estimated_width)
+                    tidb_planner_cardinality::row_size::RowSizeColumn::with_stats(stats, estimated_width)
                 }
-                None => crate::cardinality::row_size::RowSizeColumn {
+                None => tidb_planner_cardinality::row_size::RowSizeColumn {
                     stats: None,
                     estimated_width,
                 },

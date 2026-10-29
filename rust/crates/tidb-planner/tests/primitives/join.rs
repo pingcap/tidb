@@ -14,7 +14,7 @@
 
 //! Source-shaped tests for `pkg/planner/cardinality/join.go`.
 
-use tidb_planner::cardinality::join::{
+use tidb_planner_cardinality::join::{
     estimate_full_join_row_count, FullJoinRowCountInput, JoinKeyEstimate,
 };
 

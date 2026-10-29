@@ -4912,10 +4912,10 @@ fn unknown_value_estimates_follow_analyze_and_truncate_lifecycle() {
             _ => panic!("{table} is not a KV table"),
         };
         let stats = catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap();
-        tidb_planner::cardinality::row_count_estimator::get_row_count_by_column_ranges(
+        tidb_planner_cardinality::row_count_estimator::get_row_count_by_column_ranges(
             stats.columns.get(&column_id),
             &[
-                tidb_planner::cardinality::row_count_estimator::ColumnRange::new(
+                tidb_planner_cardinality::row_count_estimator::ColumnRange::new(
                     tidb_datatype::Datum::Int(low),
                     tidb_datatype::Datum::Int(high),
                     false,
@@ -4926,7 +4926,7 @@ fn unknown_value_estimates_follow_analyze_and_truncate_lifecycle() {
             stats.row_count,
             stats.modify_count,
             false,
-            &tidb_planner::cardinality::row_count_estimator::EstimatorOptions::default(),
+            &tidb_planner_cardinality::row_count_estimator::EstimatorOptions::default(),
         )
         .unwrap()
         .est
@@ -5014,10 +5014,10 @@ fn unknown_value_estimates_follow_modify_delta_lifecycle() {
             _ => panic!("unknown_modify_lifecycle is not a KV table"),
         };
         let stats = catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap();
-        tidb_planner::cardinality::row_count_estimator::get_row_count_by_column_ranges(
+        tidb_planner_cardinality::row_count_estimator::get_row_count_by_column_ranges(
             stats.columns.get(&column_id),
             &[
-                tidb_planner::cardinality::row_count_estimator::ColumnRange::point(
+                tidb_planner_cardinality::row_count_estimator::ColumnRange::point(
                     tidb_datatype::Datum::Int(value),
                 ),
             ],
@@ -5025,7 +5025,7 @@ fn unknown_value_estimates_follow_modify_delta_lifecycle() {
             stats.row_count,
             stats.modify_count,
             false,
-            &tidb_planner::cardinality::row_count_estimator::EstimatorOptions::default(),
+            &tidb_planner_cardinality::row_count_estimator::EstimatorOptions::default(),
         )
         .unwrap()
         .est

@@ -15,7 +15,7 @@
 //! Ordered-scan estimates using the distribution of a correlated filter
 //! column, from `pkg/planner/cardinality/cross_estimation.go`.
 
-use crate::cardinality::row_count_estimator::{
+use crate::row_count_estimator::{
     ColumnRange, EstimatorOptions, get_index_row_count,
     get_row_count_by_column_ranges,
 };
@@ -25,7 +25,7 @@ use tidb_datatype::Datum;
 use tidb_charset::Collation;
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
-use crate::cardinality::row_count_estimator::HistCollIndexEstimation;
+use crate::row_count_estimator::HistCollIndexEstimation;
 
 /// Session controls for Go's correlation-adjusted scan estimates.
 #[derive(Clone, Copy, Debug, PartialEq)]

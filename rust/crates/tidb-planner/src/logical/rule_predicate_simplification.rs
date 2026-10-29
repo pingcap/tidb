@@ -780,7 +780,7 @@ mod tests {
     fn false_parameter_or_branch_is_pruned_and_disables_plan_cache() {
         #[derive(Default)]
         struct Marker(std::cell::RefCell<Vec<String>>);
-        impl super::super::rule::PlanCacheMarker for Marker {
+        impl tidb_planner_core_base::PlanCacheMarker for Marker {
             fn set_skip_plan_cache(&self, reason: &str) {
                 self.0.borrow_mut().push(reason.to_owned());
             }

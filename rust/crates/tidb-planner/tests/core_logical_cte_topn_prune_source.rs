@@ -104,7 +104,7 @@ fn test_context<'a>(allocator: &'a PlanIdAllocator) -> RuleContext<'a> {
         allow_eliminate_apply: true,
         join_reorder_threshold: 0,
         group_ndv_skew_ratio: 0.0,
-        scale_ndv_skew_ratio: tidb_planner::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
+        scale_ndv_skew_ratio: tidb_planner_cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
         advanced_join_reorder: true,
         cartesian_join_order_threshold: 0.0,
         join_reorder_through_proj: false,

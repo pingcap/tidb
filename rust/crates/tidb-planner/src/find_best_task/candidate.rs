@@ -479,7 +479,7 @@ mod skyline_tests {
         };
         let source = crate::logical::DataSource::default();
         let mut path = IndexPathState {
-            row_estimate: Some(crate::cardinality::row_count_column::RowEstimate::new(
+            row_estimate: Some(tidb_planner_cardinality::row_count_column::RowEstimate::new(
                 100.0, 20.0, 200.0,
             )),
             filled: Some(FilledIndexPath {

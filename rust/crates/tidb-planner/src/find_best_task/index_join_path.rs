@@ -57,7 +57,7 @@ pub(crate) struct IndexJoinRangeEnv<'a> {
     pub evaluate: &'a ExpressionEvaluator<'a>,
     /// Go `sctx.SetSkipPlanCache` from the ranger, when the statement uses
     /// the plan cache.
-    pub plan_cache_marker: Option<&'a dyn crate::logical::rule::PlanCacheMarker>,
+    pub plan_cache_marker: Option<&'a dyn tidb_planner_core_base::PlanCacheMarker>,
 }
 
 impl IndexJoinRangeEnv<'_> {
@@ -721,7 +721,7 @@ impl IndexJoinPathRebuild {
         /// Go's `SetSkipPlanCache` during the rebuild, which ends the hit.
         #[derive(Default)]
         struct Recorded(std::cell::RefCell<Option<String>>);
-        impl crate::logical::rule::PlanCacheMarker for Recorded {
+        impl tidb_planner_core_base::PlanCacheMarker for Recorded {
             fn set_skip_plan_cache(&self, reason: &str) {
                 self.0.borrow_mut().get_or_insert_with(|| reason.to_owned());
             }

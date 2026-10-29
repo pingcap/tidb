@@ -14,7 +14,7 @@
 
 //! Direct source-contract tests for the index row-count fast-path predicate.
 
-use tidb_planner::cardinality::index_range_policy::{can_skip_index_estimation, is_full_range_including_nulls, IndexRangeShape, RangeBoundKind};
+use tidb_planner_cardinality::index_range_policy::{can_skip_index_estimation, is_full_range_including_nulls, IndexRangeShape, RangeBoundKind};
 use tidb_planner_property::stats_info::IndexRangePolicy;
 
 fn full_range() -> IndexRangeShape {

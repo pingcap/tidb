@@ -44,7 +44,7 @@ use tidb_exprctx::Columns;
 use tidb_planner_property::stats_info::GroupNdv;
 use crate::expression_rewriter::ColumnIdAllocator;
 use tidb_planner_property::stats_info::StatsInfo;
-use crate::cardinality::derive_stats::StatsInfoScale;
+use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 
 /// Go `AggInfo` (`base_physical_agg.go:592`): the descriptor triple either
 /// half of a split carries.
@@ -741,7 +741,7 @@ fn scale_three_stage_multi_distinct_stats(
         .map(|set| {
             let mut ids: Vec<_> = set.iter().map(|column| column.unique_id).collect();
             ids.extend(normal_group_ids.iter().copied());
-            crate::cardinality::derive_stats::
+            tidb_planner_cardinality::derive_stats::
                 estimate_cols_ndv_with_matched_len_and_skew_ratio(
                     &ids,
                     child_stats,
@@ -772,7 +772,7 @@ fn scale_three_stage_multi_distinct_stats(
                         if grouping_ids.contains(column_id) {
                             let before_len = intersection_ids.len();
                             intersection_ids.extend_from_slice(&group.columns[index..]);
-                            let (increment, _) = crate::cardinality::derive_stats::
+                            let (increment, _) = tidb_planner_cardinality::derive_stats::
                                 estimate_cols_ndv_with_matched_len_and_skew_ratio(
                                     &intersection_ids,
                                     child_stats,

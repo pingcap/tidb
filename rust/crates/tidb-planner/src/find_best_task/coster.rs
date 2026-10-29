@@ -39,7 +39,7 @@
 //!   [`crate::find_best_task`]'s own model — price as the sum of their
 //!   children, conservative and shape-neutral.
 
-use crate::cardinality::row_size::RowSizeColumn;
+use tidb_planner_cardinality::row_size::RowSizeColumn;
 use tidb_planner_costusage::{CostVer2, PlanCostOption};
 use crate::physical::PhysicalPlan;
 use tidb_planner_core_base::PlanError;

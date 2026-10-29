@@ -11,6 +11,7 @@ description = "TiDB pkg/planner/core/base (Rust)."
 workspace = true
 
 [dependencies]
+tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-plannererrors = { path = "../tidb-plannererrors" }
 tidb-planner-property = { path = "../tidb-planner-property" }

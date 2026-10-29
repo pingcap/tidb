@@ -49,7 +49,7 @@ use tidb_planner_property::stats_info::StatsInfo;
 use super::FromTable;
 use tidb_infoschema::Catalog;
 use super::from::FromScope;
-use tidb_planner::cardinality::derive_stats::StatsInfoScale;
+use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 
 enum ListColumnsLocated {
     Full,
@@ -3462,7 +3462,7 @@ mod statistics_initialization_tests {
             99,
             tidb_planner::access_path::IndexPathState {
                 row_estimate: Some(
-                    tidb_planner::cardinality::row_count_column::RowEstimate::new(
+                    tidb_planner_cardinality::row_count_column::RowEstimate::new(
                         900.0, 800.0, 1000.0,
                     ),
                 ),
@@ -3478,7 +3478,7 @@ mod statistics_initialization_tests {
                     -1,
                 ))]),
                 row_estimate: Some(
-                    tidb_planner::cardinality::row_count_column::RowEstimate::new(
+                    tidb_planner_cardinality::row_count_column::RowEstimate::new(
                         900.0, 800.0, 1000.0,
                     ),
                 ),
@@ -3676,10 +3676,10 @@ mod statistics_initialization_tests {
                 "Go retains nonzero index payload regardless of full-load status"
             );
             let estimate =
-                tidb_planner::cardinality::row_count_estimator::get_row_count_by_column_ranges(
+                tidb_planner_cardinality::row_count_estimator::get_row_count_by_column_ranges(
                     hist.histogram_for_estimation(column.unique_id)
                         .map(|column| column.as_ref()),
-                    &[tidb_planner::cardinality::row_count_estimator::ColumnRange::point(Datum::Null)],
+                    &[tidb_planner_cardinality::row_count_estimator::ColumnRange::point(Datum::Null)],
                     tidb_charset::Collation::Binary,
                     hist.realtime_count(),
                     hist.modify_count(),

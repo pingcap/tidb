@@ -626,7 +626,7 @@ impl LogicalAggregation {
             .iter()
             .map(|column| column.unique_id)
             .collect::<Vec<_>>();
-        let (ndv, _) = crate::cardinality::derive_stats::
+        let (ndv, _) = tidb_planner_cardinality::derive_stats::
             estimate_cols_ndv_with_matched_len_and_skew_ratio(
                 &group_ids,
                 child,

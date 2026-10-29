@@ -132,7 +132,7 @@ pub fn estimate_cols_ndv_with_matched_len_and_skew_ratio(
     profile: &StatsInfo,
     skew_ratio: f64,
 ) -> (f64, usize) {
-    crate::cardinality::ndv::estimate_cols_ndv_with_stats(cols, profile, skew_ratio)
+    crate::ndv::estimate_cols_ndv_with_stats(cols, profile, skew_ratio)
 }
 
 /// `StatsInfo.Scale` and `ScaleByExpectCnt` with this package's NDV scaling,

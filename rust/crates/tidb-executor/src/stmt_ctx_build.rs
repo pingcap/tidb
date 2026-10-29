@@ -257,7 +257,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         let group_ndv_skew_ratio = number("tidb_opt_group_ndv_skew_ratio", 0.0);
         let mut env = tidb_planner::find_best_task::coster::CostEnv::default();
         env.session.estimator_options =
-            tidb_planner::cardinality::row_count_estimator::EstimatorOptions {
+            tidb_planner_cardinality::row_count_estimator::EstimatorOptions {
                 time_zone: std::sync::Arc::new(self.session_time_zone()),
                 risk_eq_skew_ratio: number(
                     tidb_vardef::tidb_vars::TIDB_OPT_RISK_EQ_SKEW_RATIO,
@@ -314,7 +314,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .get_bool_with_default(tidb_fixcontrol::FIX_54337, false),
             };
         env.session.correlation_options =
-            tidb_planner::cardinality::cross_estimation::CorrelationOptions {
+            tidb_planner_cardinality::cross_estimation::CorrelationOptions {
                 enabled: enabled(
                     tidb_vardef::tidb_vars::TIDB_OPT_ENABLE_CORRELATION_ADJUSTMENT,
                     tidb_vardef::defaults::DEF_OPT_ENABLE_CORRELATION_ADJUSTMENT,

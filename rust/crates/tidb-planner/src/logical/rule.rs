@@ -109,6 +109,7 @@
 //! fails to compile until it is placed in some rule's explicit arm or its
 //! `base_arms!` list. Do NOT invent a second convention.
 
+use tidb_planner_core_base::PlanCacheMarker;
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::builder::FunctionBuilder;
 use tidb_expr::expr_util::predicates::{is_const_null, maybe_over_optimized_4_plan_cache};
@@ -585,7 +586,7 @@ impl DisabledLogicalRules {
 pub struct RuleContext<'a> {
     /// Go `SessionVars.RiskRangeSkewRatio`, `RiskEqSkewRatio`, and
     /// `GetOptObjective()` inputs used by histogram cardinality estimation.
-    pub estimator_options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    pub estimator_options: tidb_planner_cardinality::row_count_estimator::EstimatorOptions,
     /// Go `sessionVars.PlanID`, for the operators a rule CREATES —
     /// `logicalop.AddSelection`'s `LogicalSelection` and `Conds2TableDual`'s
     /// `LogicalTableDual`.
@@ -709,11 +710,6 @@ pub trait HintWarningSink {
     fn set_hint_warning_from_error(&self, code: u16, message: &str);
 }
 
-/// The session side effect Go's expression and rule simplifiers perform.
-pub trait PlanCacheMarker {
-    /// Records the first reason the current statement cannot use plan cache.
-    fn set_skip_plan_cache(&self, reason: &str);
-}
 
 /// Go `recordUsedItemStatsStatus` (`cardinality/trace.go`): the statement's
 /// ledger of the column and index statistics an estimate read.

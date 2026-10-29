@@ -20,7 +20,7 @@
 //! the arithmetic contract while leaving mock-store, histogram, TopN, and
 //! session-variable ownership to the Go planner ring.
 
-use tidb_planner::cardinality::{
+use tidb_planner_cardinality::{
     row_count_column::RowEstimate,
     uniform::{calculate_skew_ratio_counts, estimate_uniform_equality, UniformEqualityStats},
 };

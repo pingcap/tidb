@@ -197,6 +197,7 @@ members = [
     "crates/tidb-format-textrow",
     "crates/tidb-distsql",
     "crates/tidb-planner",
+    "crates/tidb-planner-cardinality",
     "crates/tidb-planner-core-base",
     "crates/tidb-planner-util-domainmisc",
     "crates/tidb-planner-property",

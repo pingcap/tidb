@@ -420,7 +420,7 @@ fn build_partial_path_for_mv_index(
         path: IndexPathState {
             filled: Some(filled),
             declared_columns: None,
-            row_estimate: Some(crate::cardinality::row_count_column::RowEstimate::new(
+            row_estimate: Some(tidb_planner_cardinality::row_count_column::RowEstimate::new(
                 rows, rows, rows,
             )),
             is_single_scan: Some(false),
@@ -1004,4 +1004,33 @@ pub(crate) fn union_selectivity(ds: &DataSource, rows: impl Iterator<Item = f64>
         }
     })
     .fold(0.0, |total, sel| (sel + total) - total * sel)
+}
+
+/// This package's MV-index matching as the estimator reaches it (Go
+/// `core_init.go`'s `cardinality.CollectFilters4MVIndex` and
+/// `BuildPartialPaths4MVIndex`).
+pub struct PlannerMvIndexFilters;
+
+impl tidb_planner_cardinality::selectivity::MvIndexFilters for PlannerMvIndexFilters {
+    fn collect_access_filters(
+        &self,
+        evaluate: &ExpressionEvaluator<'_>,
+        filters: &[Expression],
+        idx_cols: &[Column],
+    ) -> Vec<Expression> {
+        collect_filters_for_mv_index(evaluate, filters, idx_cols).0
+    }
+
+    fn partial_access_filters(
+        &self,
+        evaluate: &ExpressionEvaluator<'_>,
+        access_filters: &[Expression],
+        idx_cols: &[Column],
+    ) -> Result<Option<(Vec<Vec<Expression>>, bool)>, tidb_exprctx::EvalError> {
+        mv_index_partial_access_filters(evaluate, access_filters, idx_cols)
+    }
+
+    fn column_lengths(&self, idx_cols: &[Column], declared_lengths: &[i64]) -> Vec<i64> {
+        mv_index_column_lengths(idx_cols, declared_lengths)
+    }
 }

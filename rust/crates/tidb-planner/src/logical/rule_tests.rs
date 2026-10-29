@@ -22,6 +22,7 @@
 //! decisions directly on hand-built plans: which node ends up where, which
 //! predicate travels how far, which column survives.
 
+use tidb_planner_core_base::PlanCacheMarker;
 use std::cell::RefCell;
 
 use tidb_ast::CiString;
@@ -46,7 +47,7 @@ use super::limit::LogicalLimit;
 use super::projection::LogicalProjection;
 use super::rule::{
     self, add_selection, flags, logical_optimize, no_unexpected_zero_column_schema, BuildKeySolver,
-    ColumnPruner, DisabledLogicalRules, LogicalOptRule, PlanCacheMarker, PpdSolver,
+    ColumnPruner, DisabledLogicalRules, LogicalOptRule, PpdSolver,
     PushDownTopNOptimizer, RuleContext, RuleId, OPT_RULE_FLAGS, OPT_RULE_LIST,
 };
 use super::rule_partition_processor::{PartitionProcessor, PartitionPruning};
@@ -93,7 +94,7 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         allow_eliminate_apply: true,
         join_reorder_threshold: 0,
         group_ndv_skew_ratio: tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
-        scale_ndv_skew_ratio: crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
+        scale_ndv_skew_ratio: tidb_planner_cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
         allow_agg_push_down: false,
         advanced_join_reorder: true,
         cartesian_join_order_threshold: 0.0,

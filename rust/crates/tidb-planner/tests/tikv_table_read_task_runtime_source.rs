@@ -6,14 +6,14 @@
 #![allow(missing_docs)]
 
 use tidb_planner_property::task_type::TaskType;
+use tidb_planner_cardinality::{
+        index_range_policy::{IndexRangeShape, RangeBoundKind},
+        live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate},
+};
 use tidb_planner::{
     access_path::{
         AccessPathStore, DataSourceAccessPath, IndexAccessPath, PointGetAdmission,
         ResolvedTableDescriptor, ResolvedTableScanKind, TableAccessPath, TableScanExplainIdSuffix,
-    },
-    cardinality::{
-        index_range_policy::{IndexRangeShape, RangeBoundKind},
-        live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate},
     },
     index_task::{IndexTaskRejection, ScanReadTask, ScanReadTaskRejection, TableTaskRejection},
     logical_data_source::LogicalDataSource,

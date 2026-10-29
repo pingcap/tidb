@@ -19,12 +19,12 @@
 //!
 //! Drives `GetUsableSetsByGreedy` (`pkg/planner/cardinality/selectivity.go:652`)
 //! through its transcreation
-//! [`tidb_planner::selectivity_greedy::get_usable_sets_by_greedy`] with the
+//! [`tidb_planner_cardinality::selectivity_greedy::get_usable_sets_by_greedy`] with the
 //! test-only `MockStatsNode(id, m, num)` helper (`main_test.go:64`). The Go
 //! mock leaves `StatsNode.Tp` at its zero value `IndexType`, so every mock
-//! node here is [`tidb_planner::selectivity_greedy::StatsNodeType::Index`].
+//! node here is [`tidb_planner_cardinality::selectivity_greedy::StatsNodeType::Index`].
 
-use tidb_planner::selectivity_greedy::{get_usable_sets_by_greedy, StatsNode, StatsNodeType};
+use tidb_planner_cardinality::selectivity_greedy::{get_usable_sets_by_greedy, StatsNode, StatsNodeType};
 
 /// Go `main_test.go:64 MockStatsNode` -- zero-valued Tp (index), given id,
 /// predicate mask, and column count.

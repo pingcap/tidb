@@ -19,12 +19,12 @@
 //!
 //! Pins the backoff formula exercised through production code
 //! `pkg/planner/cardinality/exponential.go:28 ApplyExponentialBackoff`
-//! (transcreated as [`tidb_planner::cardinality::apply_exponential_backoff`]):
+//! (transcreated as [`tidb_planner_cardinality::apply_exponential_backoff`]):
 //! `values[0] * values[1]^(1/2) * values[2]^(1/4) * values[3]^(1/8)`, capped at
 //! `MaxExponentialBackoffCols = 4` inputs and clamped into
 //! `[lower_bound, upper_bound]`; empty input returns the lower bound.
 
-use tidb_planner::cardinality::apply_exponential_backoff;
+use tidb_planner_cardinality::apply_exponential_backoff;
 
 /// Go `exponential_test.go:26 testExponentialBackoffHelper`.
 fn check(name: &'static str, values: &[f64], lower: f64, upper: f64, expected: f64, tolerance: f64) {

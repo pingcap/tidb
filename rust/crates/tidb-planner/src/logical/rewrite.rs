@@ -41,7 +41,7 @@ use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::{compose_cnf_condition, extract_columns};
 
 use crate::base_arms;
-use crate::cardinality::join::{
+use tidb_planner_cardinality::join::{
     FullJoinRowCountInput, JoinKeyEstimate, estimate_full_join_row_count,
 };
 use crate::expression_rewriter::ColumnIdAllocator;
@@ -59,7 +59,7 @@ use super::{
     LogicalSort, LogicalTableDual, LogicalTopN, LogicalUnionAll, LogicalUnionScan,
 };
 use tidb_hack::go_to_lower;
-use crate::cardinality::derive_stats::StatsInfoScale;
+use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 
 /// The schema an operator effectively exposes, materialized.
 ///
@@ -175,14 +175,14 @@ pub(crate) fn analyzed_filter_selectivity(
     analyzed_filter_selectivity_with_options(
         table_stats,
         conditions,
-        &crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+        &tidb_planner_cardinality::row_count_estimator::EstimatorOptions::default(),
     )
 }
 
 pub(crate) fn analyzed_filter_selectivity_with_options(
     table_stats: &StatsInfo,
     conditions: &[Expression],
-    options: &crate::cardinality::row_count_estimator::EstimatorOptions,
+    options: &tidb_planner_cardinality::row_count_estimator::EstimatorOptions,
 ) -> Option<f64> {
     analyzed_filter_selectivity_with_evaluator(
         table_stats,
@@ -196,12 +196,12 @@ pub(crate) fn analyzed_filter_selectivity_in(
     table_stats: &StatsInfo,
     conditions: &[Expression],
     context: &crate::access_path::AccessPathDerivationContext<'_>,
-    filled_paths: Option<&crate::cardinality::selectivity::FilledPaths>,
+    filled_paths: Option<&tidb_planner_cardinality::selectivity::FilledPaths>,
     record_used_item: Option<&dyn Fn(i64, bool)>,
 ) -> Option<f64> {
     // The derivation context carries the statement's own snapshot of these
     // session variables.
-    let options = crate::cardinality::row_count_estimator::EstimatorOptions {
+    let options = tidb_planner_cardinality::row_count_estimator::EstimatorOptions {
         selectivity_factor: context.selectivity_factor,
         range_max_size: context.range_max_size,
         opt_prefix_index_single_scan: context.opt_prefix_index_single_scan,
@@ -210,16 +210,17 @@ pub(crate) fn analyzed_filter_selectivity_in(
     filter_selectivity(
         table_stats,
         conditions,
-        &crate::cardinality::selectivity::SelectivityContext {
+        &tidb_planner_cardinality::selectivity::SelectivityContext {
             range_fallback_handler: context.range_fallback_handler,
             // The derivation context carries a marker only when the
             // statement uses the plan cache.
             use_plan_cache: context.plan_cache_marker.is_some(),
             plan_cache_marker: context.plan_cache_marker,
             record_used_item,
-            ..crate::cardinality::selectivity::SelectivityContext::new(
+            ..tidb_planner_cardinality::selectivity::SelectivityContext::new(
                 &options,
                 context.expression_evaluator,
+                &crate::access_path::mv_index::PlannerMvIndexFilters,
             )
         },
         filled_paths,
@@ -230,13 +231,17 @@ pub(crate) fn analyzed_filter_selectivity_in(
 pub fn analyzed_filter_selectivity_with_evaluator(
     table_stats: &StatsInfo,
     conditions: &[Expression],
-    options: &crate::cardinality::row_count_estimator::EstimatorOptions,
+    options: &tidb_planner_cardinality::row_count_estimator::EstimatorOptions,
     evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
 ) -> Option<f64> {
     filter_selectivity(
         table_stats,
         conditions,
-        &crate::cardinality::selectivity::SelectivityContext::new(options, evaluate),
+        &tidb_planner_cardinality::selectivity::SelectivityContext::new(
+            options,
+            evaluate,
+            &crate::access_path::mv_index::PlannerMvIndexFilters,
+        ),
         None,
     )
 }
@@ -248,12 +253,12 @@ pub fn analyzed_filter_selectivity_with_evaluator(
 pub fn filter_selectivity(
     table_stats: &StatsInfo,
     conditions: &[Expression],
-    ctx: &crate::cardinality::selectivity::SelectivityContext<'_>,
-    filled_paths: Option<&crate::cardinality::selectivity::FilledPaths>,
+    ctx: &tidb_planner_cardinality::selectivity::SelectivityContext<'_>,
+    filled_paths: Option<&tidb_planner_cardinality::selectivity::FilledPaths>,
 ) -> Option<f64> {
     let hist_coll = table_stats.hist_coll()?;
     Some(
-        crate::cardinality::selectivity::selectivity(ctx, hist_coll, conditions, filled_paths)
+        tidb_planner_cardinality::selectivity::selectivity(ctx, hist_coll, conditions, filled_paths)
             .unwrap_or(tidb_planner_core_cost::SELECTION_FACTOR),
     )
 }
@@ -2075,7 +2080,7 @@ struct DeriveStatsFold<'a> {
     expr_pushdown_blacklist: &'a tidb_expr::infer_pushdown::ExprPushDownBlacklist,
     eval_context: &'a dyn tidb_exprctx::Columns,
     builder: &'a dyn tidb_expr::expr_util::FunctionBuilder,
-    estimator_options: &'a crate::cardinality::row_count_estimator::EstimatorOptions,
+    estimator_options: &'a tidb_planner_cardinality::row_count_estimator::EstimatorOptions,
     /// The first failure, per the module header's first-failure discipline.
     failure: RewriteFailure,
     /// Go `SCtx().GetSessionVars().TiDBOptJoinReorderThreshold`, read by
@@ -2128,7 +2133,7 @@ fn stats_arity(go_symbol: &str) -> PlanError {
 /// [`estimate_full_join_row_count`] consumes.
 ///
 /// The body is NOT restated: the existing port in
-/// [`crate::cardinality::derive_stats`] is called directly — since the
+/// [`tidb_planner_cardinality::derive_stats`] is called directly — since the
 /// `StatsInfo` unification there is only one profile type and one column-id
 /// spelling, so the former u64 conversion detour is gone.
 fn join_key_estimate(
@@ -2138,7 +2143,7 @@ fn join_key_estimate(
 ) -> JoinKeyEstimate {
     let ids: Vec<i64> = keys.iter().map(|col| col.unique_id).collect();
     let (ndv, matched_len) =
-        crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len_and_skew_ratio(
+        tidb_planner_cardinality::derive_stats::estimate_cols_ndv_with_matched_len_and_skew_ratio(
             &ids,
             profile,
             group_ndv_skew_ratio,
@@ -2153,7 +2158,7 @@ fn join_key_estimate(
 impl DeriveStatsFold<'_> {
     /// Go `sctx.SetSkipPlanCache` for the ranger, gated on `UseCache` as
     /// Go's tracker is.
-    fn plan_cache_marker(&self) -> Option<&dyn super::rule::PlanCacheMarker> {
+    fn plan_cache_marker(&self) -> Option<&dyn tidb_planner_core_base::PlanCacheMarker> {
         self.rule_context
             .and_then(|context| context.plan_cache_marker)
             .filter(|_| self.use_plan_cache)
@@ -2317,7 +2322,7 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                         );
                         let stats = range_selectivity.map_or_else(
                             || {
-                                crate::cardinality::pseudo::derive_stats_by_filter_pseudo(
+                                tidb_planner_cardinality::pseudo::derive_stats_by_filter_pseudo(
                                     &table_stats,
                                     &op.pushed_down_conds,
                                     &resolve,
@@ -2438,7 +2443,7 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                                 .map(|cor| cor.column.unique_id)
                                 .collect();
                             let (outer_ndv, _) =
-                                crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len_and_skew_ratio(
+                                tidb_planner_cardinality::derive_stats::estimate_cols_ndv_with_matched_len_and_skew_ratio(
                                     &outer_columns,
                                     left,
                                     self.group_ndv_skew_ratio,
@@ -2763,9 +2768,9 @@ pub fn recursive_derive_stats(
         None,
         &tidb_expr::expr_util::RealFunctionBuilder::new(&tidb_exprctx::NoColumns),
         &tidb_exprctx::NoColumns,
-        &crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+        &tidb_planner_cardinality::row_count_estimator::EstimatorOptions::default(),
         tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
-        crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
+        tidb_planner_cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
         &Default::default(),
         None,
     )
@@ -2809,7 +2814,7 @@ fn recursive_derive_stats_with_range_quota(
     range_fallback_handler: Option<&tidb_context::RangeFallbackHandler>,
     builder: &dyn tidb_expr::expr_util::FunctionBuilder,
     eval_context: &dyn tidb_exprctx::Columns,
-    estimator_options: &crate::cardinality::row_count_estimator::EstimatorOptions,
+    estimator_options: &tidb_planner_cardinality::row_count_estimator::EstimatorOptions,
     group_ndv_skew_ratio: f64,
     scale_ndv_skew_ratio: f64,
     expr_pushdown_blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
@@ -2842,7 +2847,7 @@ fn recursive_derive_stats_with_range_quota(
 #[cfg(test)]
 mod analyzed_filter_selectivity_tests {
     use super::{analyzed_filter_selectivity, analyzed_filter_selectivity_with_options};
-    use crate::cardinality::row_count_estimator::EstimatorOptions;
+    use tidb_planner_cardinality::row_count_estimator::EstimatorOptions;
     use tidb_stats::table_statistics::ColumnStats;
     use tidb_planner_property::stats_info::{HistColl, StatsInfo};
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -2918,13 +2923,14 @@ mod analyzed_filter_selectivity_tests {
         };
         let cnf = vec![valid.clone(), invalid.clone()];
         let options = EstimatorOptions::default();
-        let ctx = crate::cardinality::selectivity::SelectivityContext::new(
+        let ctx = tidb_planner_cardinality::selectivity::SelectivityContext::new(
             &options,
             &tidb_ranger::points::evaluate_static,
+            &crate::access_path::mv_index::PlannerMvIndexFilters,
         );
         let hist = stats.hist_coll().unwrap();
         let estimate = |exprs: &[Expression]| {
-            crate::cardinality::selectivity::selectivity(&ctx, hist, exprs, None)
+            tidb_planner_cardinality::selectivity::selectivity(&ctx, hist, exprs, None)
         };
         assert!(estimate(&cnf).is_err());
         assert_eq!(analyzed_filter_selectivity(&stats, &cnf), Some(0.8));
@@ -3233,9 +3239,9 @@ mod analyzed_filter_selectivity_tests {
         let lt_alone = analyzed_filter_selectivity(&table_stats, &[compare("lt", 3)]).unwrap();
         // The estimator's own answer for the one range the ranger builds.
         let hist = table_stats.hist_coll().unwrap();
-        let one_range = crate::cardinality::row_count_estimator::get_row_count_by_column_ranges(
+        let one_range = tidb_planner_cardinality::row_count_estimator::get_row_count_by_column_ranges(
             hist.histogram(unique_id).map(|stats| stats.as_ref()),
-            &[crate::cardinality::row_count_estimator::ColumnRange::new(
+            &[tidb_planner_cardinality::row_count_estimator::ColumnRange::new(
                 Datum::Int(2),
                 Datum::Int(3),
                 false,
@@ -3245,7 +3251,7 @@ mod analyzed_filter_selectivity_tests {
             hist.realtime_count(),
             hist.modify_count(),
             false,
-            &crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+            &tidb_planner_cardinality::row_count_estimator::EstimatorOptions::default(),
         )
         .unwrap()
         .est / 1_000.0;
@@ -3344,9 +3350,9 @@ mod analyzed_filter_selectivity_tests {
         let lt_alone =
             analyzed_filter_selectivity(&table_stats, &[compare("lt", date(1996, 4, 1))]).unwrap();
         let hist = table_stats.hist_coll().unwrap();
-        let one_range = crate::cardinality::row_count_estimator::get_row_count_by_column_ranges(
+        let one_range = tidb_planner_cardinality::row_count_estimator::get_row_count_by_column_ranges(
             hist.histogram(unique_id).map(|stats| stats.as_ref()),
-            &[crate::cardinality::row_count_estimator::ColumnRange::new(
+            &[tidb_planner_cardinality::row_count_estimator::ColumnRange::new(
                 date(1996, 1, 1),
                 date(1996, 4, 1),
                 false,
@@ -3356,7 +3362,7 @@ mod analyzed_filter_selectivity_tests {
             hist.realtime_count(),
             hist.modify_count(),
             false,
-            &crate::cardinality::row_count_estimator::EstimatorOptions::default(),
+            &tidb_planner_cardinality::row_count_estimator::EstimatorOptions::default(),
         )
         .unwrap()
         .est / 6_001_215.0;

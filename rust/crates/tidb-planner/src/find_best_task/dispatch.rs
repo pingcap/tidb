@@ -58,7 +58,7 @@ use tidb_planner_property::PhysicalProperty;
 use tidb_planner_core_base::{PlanError, PlanIdAllocator};
 use crate::task::Task;
 use tidb_planner_property::task_type::TaskType;
-use crate::cardinality::derive_stats::StatsInfoScale;
+use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 
 /// Go `getTaskPlanCost`'s pricing half: what a built task costs.
 ///
@@ -112,9 +112,9 @@ pub struct DispatchContext<'a> {
     /// Published expression policy used throughout physical task attachment.
     pub expr_pushdown_blacklist: tidb_expr::infer_pushdown::ExprPushDownBlacklist,
     /// Session inputs to Go's histogram cardinality estimators.
-    pub estimator_options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    pub estimator_options: tidb_planner_cardinality::row_count_estimator::EstimatorOptions,
     /// Session controls for Go's correlated scan-limit estimator.
-    pub correlation_options: crate::cardinality::cross_estimation::CorrelationOptions,
+    pub correlation_options: tidb_planner_cardinality::cross_estimation::CorrelationOptions,
     /// The plan id allocator for built physical operators.
     pub allocator: &'a PlanIdAllocator,
     /// The pricing seam.
@@ -200,7 +200,7 @@ pub struct DispatchContext<'a> {
     pub heuristic_noted: std::collections::HashSet<usize>,
     /// Go `StmtCtx.SetSkipPlanCache` for decisions physical optimization
     /// makes; `None` drops them.
-    pub plan_cache_marker: Option<&'a dyn crate::logical::rule::PlanCacheMarker>,
+    pub plan_cache_marker: Option<&'a dyn tidb_planner_core_base::PlanCacheMarker>,
     /// Go `ExprCtx.IsUseCache()`: the statement is planned for the plan cache.
     pub use_plan_cache: bool,
     /// Go fix control 44830: the wider safe Batch/PointGet shapes.
@@ -293,7 +293,7 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub fn with_estimator_options(
         mut self,
-        options: crate::cardinality::row_count_estimator::EstimatorOptions,
+        options: tidb_planner_cardinality::row_count_estimator::EstimatorOptions,
     ) -> Self {
         self.estimator_options = options;
         self
@@ -349,7 +349,7 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_correlation_options(
         mut self,
-        options: crate::cardinality::cross_estimation::CorrelationOptions,
+        options: tidb_planner_cardinality::cross_estimation::CorrelationOptions,
     ) -> Self {
         self.correlation_options = options;
         self
@@ -574,7 +574,7 @@ impl<'a> DispatchContext<'a> {
     pub const fn with_plan_cache(
         mut self,
         use_plan_cache: bool,
-        marker: &'a dyn crate::logical::rule::PlanCacheMarker,
+        marker: &'a dyn tidb_planner_core_base::PlanCacheMarker,
         fix_44830: bool,
     ) -> Self {
         self.use_plan_cache = use_plan_cache;
@@ -1295,7 +1295,7 @@ fn exhaust_physical_plans(
                     .iter()
                     .map(|column| column.column.unique_id)
                     .collect::<Vec<_>>();
-                let (ndv, _) = crate::cardinality::derive_stats::
+                let (ndv, _) = tidb_planner_cardinality::derive_stats::
                     estimate_cols_ndv_with_matched_len_and_skew_ratio(
                         &ids,
                         stats,
@@ -2342,7 +2342,7 @@ fn build_index_join_path_result(
                 .iter()
                 .map(|column| column.unique_id)
                 .collect::<Vec<_>>();
-            crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len_and_skew_ratio(
+            tidb_planner_cardinality::derive_stats::estimate_cols_ndv_with_matched_len_and_skew_ratio(
                 &columns,
                 stats,
                 ctx.group_ndv_skew_ratio,
@@ -2885,7 +2885,7 @@ mod cross_estimate_dispatch_tests {
         let hist_coll = HistColl::new(false, 100, []).with_histograms([(2, histogram)]);
         let stats = StatsInfo::new(100.0, []).with_hist_coll(hist_coll.clone());
         let expected_cross_count =
-            crate::cardinality::cross_estimation::estimate_table_cross_row_count(
+            tidb_planner_cardinality::cross_estimation::estimate_table_cross_row_count(
                 &hist_coll,
                 &hist_coll,
                 std::slice::from_ref(&filter),
@@ -3357,7 +3357,7 @@ fn find_best_task_4_logical_data_source_paths(
                                     let table_hist_coll = table_stats.hist_coll();
                                     match (source_hist_coll, table_hist_coll, correlation_column) {
                                         (Some(source), Some(table), Some(column)) => Some(
-                                            crate::cardinality::cross_estimation::estimate_table_cross_row_count(
+                                            tidb_planner_cardinality::cross_estimation::estimate_table_cross_row_count(
                                                 source,
                                                 table,
                                                 &table_filters,
@@ -4281,7 +4281,7 @@ fn find_best_task_4_logical_data_source_paths(
                                 } else {
                                     ranges.clone()
                                 };
-                            Some(crate::ranger_stats_bridge::pseudo_count_by_ranges(
+                            Some(tidb_planner_cardinality::ranger_stats_bridge::pseudo_count_by_ranges(
                                 &estimate_ranges,
                                 base_stats.row_count(),
                             ))
@@ -6400,7 +6400,7 @@ mod tests {
 
         ds.indexes = vec![index];
         ds.table_stats = Some(StatsInfo::new(10.0, []));
-        let estimate = crate::cardinality::row_count_column::RowEstimate::new(2.0, 1.0, 4.0);
+        let estimate = tidb_planner_cardinality::row_count_column::RowEstimate::new(2.0, 1.0, 4.0);
         ds.derived_index_paths.entry(0).or_default().row_estimate = Some(estimate);
         let mut plan = LogicalPlan::DataSource(ds);
         let context = crate::logical::rule_tests::test_context(&allocator);

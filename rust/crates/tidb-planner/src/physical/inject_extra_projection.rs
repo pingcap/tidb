@@ -55,7 +55,7 @@ use tidb_exprctx::NoColumns;
 use crate::expression_rewriter::ColumnIdAllocator;
 use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalProjection};
 use tidb_planner_core_base::PlanIdAllocator;
-use crate::cardinality::derive_stats::StatsInfoScale;
+use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 
 /// The allocators and stats context Go reaches through `plan.SCtx()`.
 pub struct InjectContext<'a> {

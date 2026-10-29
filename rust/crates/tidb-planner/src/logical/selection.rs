@@ -30,7 +30,7 @@ use crate::logical::BaseLogicalPlan;
 use tidb_planner_property::stats_info::StatsInfo;
 
 pub use tidb_planner_core_cost::SELECTION_FACTOR;
-use crate::cardinality::derive_stats::StatsInfoScale;
+use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 
 /// Go `logicalop.LogicalSelection` (`logical_selection.go:38`).
 #[derive(Clone, Debug, Default)]
@@ -201,7 +201,7 @@ impl LogicalSelection {
         self.derive_stats_with_scale_ndv_skew_ratio(
             child_stats,
             reloads,
-            crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
+            tidb_planner_cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
         )
     }
 

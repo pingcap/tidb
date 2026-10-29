@@ -28,8 +28,8 @@
 //! the factor values, the min/max clamps or the division order is changed.
 //!
 //! The row inputs have owners already: row counts come from
-//! [`crate::cardinality::row_count_estimator`] and row sizes from
-//! [`crate::cardinality::row_size`] -- this module never re-derives either.
+//! [`tidb_planner_cardinality::row_count_estimator`] and row sizes from
+//! [`tidb_planner_cardinality::row_size`] -- this module never re-derives either.
 //!
 //! # Relationship to the other cost code in this workspace
 //!
@@ -51,7 +51,7 @@
 //! `pkg/sessionctx/vardef/tidb_vars.go`. Callers that later gain real session
 //! variables set the struct instead of changing a formula.
 
-use crate::cardinality::row_size::{RowSizeColumn, get_avg_row_size_data_in_disk_by_rows};
+use tidb_planner_cardinality::row_size::{RowSizeColumn, get_avg_row_size_data_in_disk_by_rows};
 use tidb_planner_costusage::{
     CostVer2, CostVer2Factor, PlanCostOption, ZERO_COST_VER2, add_cost_without_trace,
     div_cost_ver2, mul_cost_ver2, new_cost_ver2, new_zero_cost_ver2, sum_cost_ver2, trace_cost,
@@ -267,9 +267,9 @@ impl Ver2Factors {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CostSessionOpts {
     /// Session settings consumed by TiDB's histogram cardinality estimators.
-    pub estimator_options: crate::cardinality::row_count_estimator::EstimatorOptions,
+    pub estimator_options: tidb_planner_cardinality::row_count_estimator::EstimatorOptions,
     /// Correlation settings consumed by ordered scan row-count adjustment.
-    pub correlation_options: crate::cardinality::cross_estimation::CorrelationOptions,
+    pub correlation_options: tidb_planner_cardinality::cross_estimation::CorrelationOptions,
     /// `tidb_hash_join_concurrency`, resolved and stamped on each
     /// `PhysicalHashJoin` candidate when it is built.
     pub hash_join_concurrency: f64,
@@ -326,7 +326,7 @@ impl Default for CostSessionOpts {
             hash_join_concurrency: 5.0,
             shuffle_options: Default::default(),
             group_ndv_skew_ratio: tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
-            scale_ndv_skew_ratio: crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
+            scale_ndv_skew_ratio: tidb_planner_cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
             distsql_scan_concurrency: 15.0,
             index_lookup_concurrency: 5.0,
             index_lookup_join_concurrency: 5.0,

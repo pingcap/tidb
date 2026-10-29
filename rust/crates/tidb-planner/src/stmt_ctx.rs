@@ -152,11 +152,6 @@ impl PlannerStmtCtxData for StmtContextData {
     }
 }
 
-impl crate::logical::rule::PlanCacheMarker for StmtContext {
-    fn set_skip_plan_cache(&self, reason: &str) {
-        StmtContext::set_skip_plan_cache(self, reason);
-    }
-}
 
 impl crate::logical::rule::HintWarningSink for StmtContext {
     fn set_hint_warning(&self, message: &str) {
