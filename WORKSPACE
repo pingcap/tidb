@@ -91,8 +91,8 @@ load("@io_bazel_rules_go//go:deps.bzl", "go_download_sdk", "go_register_toolchai
 load("//:DEPS.bzl", "go_deps")
 
 # gazelle:repository_macro DEPS.bzl%go_deps
-# Declare the patched x/tools v0.47.0 before go_rules_dependencies(), whose
-# fallback is v0.30.0. Existing repository declarations take precedence.
+# Declare module dependencies before go_rules_dependencies() so the selected
+# x/tools version takes precedence over rules_go's fallback.
 go_deps()
 
 go_rules_dependencies()
@@ -106,7 +106,7 @@ go_download_sdk(
         "https://mirrors.aliyun.com/golang/{}",
         "https://dl.google.com/go/{}",
     ],
-    version = "1.25.12",
+    version = "1.27.3",
 )
 
 # Also fetches rules_license 1.0.0; restricted builders must preseed its
