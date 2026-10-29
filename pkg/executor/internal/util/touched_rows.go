@@ -71,6 +71,27 @@ func MarkTouchedRowsByColumn(
 
 	switch fieldType.EvalType() {
 	case types.ETInt:
+		// BIT evaluates as an integer but can be stored as variable-length byte literals.
+		// NULL values occupy no data bytes in that layout, so an int64 slice would
+		// address the wrong rows. Fixed-length projection columns keep the integer path.
+		if fieldType.GetType() == mysql.TypeBit && (!oldCol.IsFixed() || !newCol.IsFixed()) {
+			for updateOrdinal, rowIdx := range updateRows {
+				if !notNull {
+					oldIsNull := oldCol.IsNull(rowIdx)
+					newIsNull := newCol.IsNull(rowIdx)
+					if oldIsNull || newIsNull {
+						if oldIsNull != newIsNull {
+							marker.mark(updateOrdinal)
+						}
+						continue
+					}
+				}
+				if !bytes.Equal(oldCol.GetRaw(rowIdx), newCol.GetRaw(rowIdx)) {
+					marker.mark(updateOrdinal)
+				}
+			}
+			return nil
+		}
 		if mysql.HasUnsignedFlag(fieldType.GetFlag()) {
 			oldVals := oldCol.Uint64s()
 			newVals := newCol.Uint64s()
