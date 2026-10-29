@@ -16,6 +16,7 @@
 //! shared base state.
 
 pub mod table_access;
+pub mod index_usage_reporter;
 pub mod predicate_pushdown;
 
 use std::sync::atomic::{AtomicU64, Ordering};

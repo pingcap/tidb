@@ -4703,8 +4703,14 @@ dependencies = [
  "tidb-driver-error",
  "tidb-expr",
  "tidb-exprctx",
+ "tidb-ppcpuusage",
  "tidb-ranger",
  "tidb-sessionctx",
+ "tidb-stats",
+ "tidb-stats-handle-usage-indexusage",
+ "tidb-table",
+ "tidb-txnkv",
+ "tikv-client",
 ]
 
 [[package]]

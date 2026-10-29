@@ -18,6 +18,7 @@
 //! package does.
 
 mod error;
+pub mod savepoints;
 pub mod user_vars;
 pub mod hypo_index;
 pub mod variable_errors;

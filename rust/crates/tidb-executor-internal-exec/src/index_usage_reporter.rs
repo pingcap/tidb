@@ -22,24 +22,26 @@ use tidb_expr::schema::Schema;
 use tidb_stats_handle_usage_indexusage::{new_sample, StmtIndexUsageCollector};
 
 use tidb_stats::table_statistics::TableStatistics;
-use tidb_executor_internal_exec::Executor;
+use crate::Executor;
 use tidb_driver_error::ExecError;
 use tidb_table::kv_table::KvTable;
 
 /// Go `IndexUsageReporter`: common reporting rules for coprocessor and point
 /// readers. Request and row counters are supplied by their authoritative
 /// execution owners.
-pub(crate) struct IndexUsageReporter<'a> {
+pub struct IndexUsageReporter<'a> {
     collector: Option<&'a Arc<StmtIndexUsageCollector>>,
 }
 
 impl<'a> IndexUsageReporter<'a> {
-    pub(crate) fn new(collector: Option<&'a Arc<StmtIndexUsageCollector>>) -> Self {
+    /// Go `exec.NewIndexUsageReporter`: a reporter over the statement's
+    /// collector, which is absent when index usage is not collected.
+    pub fn new(collector: Option<&'a Arc<StmtIndexUsageCollector>>) -> Self {
         Self { collector }
     }
 
     /// Go `ReportCopIndexUsageForTable`.
-    pub(crate) fn report_cop_for_table(
+    pub fn report_cop_for_table(
         &self,
         table: &KvTable,
         stats: Option<&TableStatistics>,
@@ -51,7 +53,7 @@ impl<'a> IndexUsageReporter<'a> {
     }
 
     /// Go `ReportCopIndexUsage`.
-    pub(crate) fn report_cop(
+    pub fn report_cop(
         &self,
         logical_table_id: i64,
         index_id: i64,
@@ -76,7 +78,7 @@ impl<'a> IndexUsageReporter<'a> {
     }
 
     /// Go `ReportPointGetIndexUsageForHandle`.
-    pub(crate) fn report_point_for_handle(
+    pub fn report_point_for_handle(
         &self,
         table: &KvTable,
         stats: Option<&TableStatistics>,
@@ -90,7 +92,7 @@ impl<'a> IndexUsageReporter<'a> {
     }
 
     /// Resolves Go's logical table identity without retaining the table.
-    pub(crate) fn report_point_for_table(
+    pub fn report_point_for_table(
         &self,
         table: &KvTable,
         stats: Option<&TableStatistics>,
@@ -103,7 +105,7 @@ impl<'a> IndexUsageReporter<'a> {
 
     /// Go `ReportPointGetIndexUsage`: reporting owns IDs and counters, not
     /// a copy of the table or its storage handle.
-    pub(crate) fn report_point(
+    pub fn report_point(
         &self,
         logical_table_id: i64,
         stats: Option<&TableStatistics>,
@@ -132,7 +134,7 @@ fn real_table_row_count(stats: Option<&TableStatistics>) -> Option<u64> {
 }
 
 /// Go `getClusterIndexID`.
-pub(super) fn cluster_index_id(table: &KvTable) -> Option<i64> {
+pub fn cluster_index_id(table: &KvTable) -> Option<i64> {
     if table.pk_handle_offset().is_some() {
         return Some(0);
     }
@@ -148,25 +150,29 @@ pub(super) fn cluster_index_id(table: &KvTable) -> Option<i64> {
     )
 }
 
+/// Which point read a point executor's snapshot statistics came from.
 #[derive(Clone, Copy)]
-pub(super) enum PointCommand {
+pub enum PointCommand {
+    /// `PointGet`.
     Get,
+    /// `BatchPointGet`.
     BatchGet,
 }
 
 /// A point reader's own `SnapshotRuntimeStats` (Go `runtimeStatsWithSnapshot`),
 /// installed on its snapshot when it was built.
-pub(super) struct PointSnapshotStats {
-    pub(super) stats: Arc<tikv_client::SnapshotRuntimeStats>,
+pub struct PointSnapshotStats {
+    /// The snapshot's runtime statistics the point read accumulated.
+    pub stats: Arc<tikv_client::SnapshotRuntimeStats>,
     /// The reader's snapshot options without the stats, which Go's `Close`
     /// restores (`snapshot.SetOption(kv.CollectRuntimeStats, nil)`).
-    pub(super) options_without_stats: tidb_txnkv::SnapshotReadOptions,
+    pub options_without_stats: tidb_txnkv::SnapshotReadOptions,
     /// Go `SessionVars.SQLCPUUsages`.
-    pub(super) sql_cpu_usages: Option<Arc<tidb_ppcpuusage::SqlCpuUsages>>,
+    pub sql_cpu_usages: Option<Arc<tidb_ppcpuusage::SqlCpuUsages>>,
 }
 
 /// Go point readers report from `Close` after reading SnapshotRuntimeStats.
-pub(super) struct PointIndexUsageExec {
+pub struct PointIndexUsageExec {
     child: Box<dyn Executor>,
     table: KvTable,
     stats: Option<Arc<TableStatistics>>,
@@ -183,7 +189,8 @@ pub(super) struct PointIndexUsageExec {
 }
 
 impl PointIndexUsageExec {
-    pub(super) fn new(
+    /// Wraps a point executor so it reports its index usage when it closes.
+    pub fn new(
         child: Box<dyn Executor>,
         table: KvTable,
         stats: Option<Arc<TableStatistics>>,
@@ -302,7 +309,7 @@ impl Executor for PointIndexUsageExec {
 }
 
 /// Go coprocessor readers report the scan plan's task/row totals at close.
-pub(super) struct CopIndexUsageExec {
+pub struct CopIndexUsageExec {
     child: Box<dyn Executor>,
     logical_table_id: i64,
     stats: Option<Arc<TableStatistics>>,
@@ -312,7 +319,9 @@ pub(super) struct CopIndexUsageExec {
 }
 
 impl CopIndexUsageExec {
-    pub(super) fn new(
+    /// Wraps a coprocessor reader so it reports its index usage when it
+    /// closes.
+    pub fn new(
         child: Box<dyn Executor>,
         logical_table_id: i64,
         stats: Option<Arc<TableStatistics>>,
@@ -396,7 +405,7 @@ impl Executor for CopIndexUsageExec {
         self.child.new_chunk()
     }
 
-    fn table_access(&mut self) -> Option<&mut dyn tidb_executor_internal_exec::table_access::TableAccess> {
+    fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
         self.child.table_access()
     }
 }
@@ -410,7 +419,7 @@ mod tests {
     use super::*;
 
     struct CountedScanExecutor {
-        meta: tidb_executor_internal_exec::ExecutorMeta,
+        meta: crate::ExecutorMeta,
     }
 
     impl Executor for CountedScanExecutor {
@@ -446,12 +455,12 @@ mod tests {
             self.meta.new_chunk()
         }
 
-        fn table_access(&mut self) -> Option<&mut dyn tidb_executor_internal_exec::table_access::TableAccess> {
+        fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
             Some(self)
         }
     }
 
-    impl tidb_executor_internal_exec::table_access::TableAccess for CountedScanExecutor {
+    impl crate::table_access::TableAccess for CountedScanExecutor {
         fn cop_count_and_rows(&self) -> Option<(u64, u64)> {
             Some((1, 70))
         }
@@ -500,7 +509,7 @@ mod tests {
     fn cop_executor_reports_live_scan_counts_on_close() {
         let (global, session, statement) = collectors();
         let scan = CountedScanExecutor {
-            meta: tidb_executor_internal_exec::ExecutorMeta::new(Schema::default(), 0, 1, 1),
+            meta: crate::ExecutorMeta::new(Schema::default(), 0, 1, 1),
         };
         let mut reporter = CopIndexUsageExec::new(
             Box::new(scan),

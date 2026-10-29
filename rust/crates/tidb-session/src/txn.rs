@@ -72,7 +72,7 @@ pub(crate) struct TxnCtx {
     stale: Option<(u64, HistoricalRead)>,
     /// The transaction's savepoint stack, oldest first -- Go
     /// `TxnCtx.Savepoints` (`pkg/sessionctx/variable/session.go`).
-    savepoints: crate::SavepointStack<Savepoint>,
+    savepoints: tidb_variable::savepoints::SavepointStack<Savepoint>,
     /// The session's LOCAL temporary tables as they stood at `BEGIN`.
     ///
     /// Their ROWS are transactional in Go and their SCHEMA is not, and the
@@ -447,7 +447,7 @@ impl Session {
             mode,
             read_committed,
             stale: None,
-            savepoints: crate::SavepointStack::default(),
+            savepoints: tidb_variable::savepoints::SavepointStack::default(),
             local_temporary_at_open: self.local_temporary_tables.clone(),
         });
     }
@@ -588,7 +588,7 @@ impl Session {
             mode: SessionTxnMode::Optimistic,
             read_committed: false,
             stale: Some((ts, read)),
-            savepoints: crate::SavepointStack::default(),
+            savepoints: tidb_variable::savepoints::SavepointStack::default(),
             local_temporary_at_open: self.local_temporary_tables.clone(),
         });
         self.current_tso().publish(ts);

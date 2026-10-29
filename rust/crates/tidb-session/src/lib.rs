@@ -1145,8 +1145,6 @@ pub mod lazy_transaction;
 pub mod statement_lifecycle;
 pub mod store_session;
 pub mod txn_manager;
-mod savepoints;
-pub use savepoints::SavepointStack;
 mod txn;
 pub use txn::{
     HistoricalRead, HistoricalReadProvider, SnapshotSchemaProvider, StatementTxnActivator,

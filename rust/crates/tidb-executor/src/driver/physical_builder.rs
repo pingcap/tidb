@@ -31,7 +31,7 @@ use crate::access_path::{
 };
 use tidb_executor_join::index_lookup::{LookupProbeBound, SharedIndexJoinProbes};
 use crate::apply::NestedLoopApplyExec;
-use crate::driver::index_usage_reporter::{CopIndexUsageExec, PointCommand, PointIndexUsageExec};
+use tidb_executor_internal_exec::index_usage_reporter::{CopIndexUsageExec, PointCommand, PointIndexUsageExec};
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_executor_aggfuncs::aggfuncs::AggFunc;
 use tidb_executor_aggfuncs::aggfuncs::AggKind;
@@ -1239,7 +1239,7 @@ fn build_table_scan(
     );
     let (schema, keep, extra_handle_slot, extra_commit_ts_slot) = table_scan_schema(scan, &table)?;
     let logical_table_id = table.table_id();
-    let index_id = super::index_usage_reporter::cluster_index_id(&table);
+    let index_id = tidb_executor_internal_exec::index_usage_reporter::cluster_index_id(&table);
     // Go's index-usage reporter reads the statement's `UsedStatsInfo` entry,
     // which `initStats` fills from `GetStatsTable`.
     let stats = crate::access_cost::get_stats_table(ctx, catalog, table.stats_physical_id());
@@ -5323,7 +5323,7 @@ fn configure_point_snapshot_read(
     ctx: &crate::StmtContext,
     avg_row_bytes: f64,
     snapshot_stats: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
-) -> Option<super::index_usage_reporter::PointSnapshotStats> {
+) -> Option<tidb_executor_internal_exec::index_usage_reporter::PointSnapshotStats> {
     let options = ctx.snapshot_read_options(avg_row_bytes);
     let Some(stats) = snapshot_stats else {
         table.set_snapshot_read_options(options);
@@ -5333,7 +5333,7 @@ fn configure_point_snapshot_read(
         runtime_stats: Some(tidb_txnkv::SnapshotRuntimeStatsHandle(Arc::clone(&stats))),
         ..options.clone()
     });
-    Some(super::index_usage_reporter::PointSnapshotStats {
+    Some(tidb_executor_internal_exec::index_usage_reporter::PointSnapshotStats {
         stats,
         options_without_stats: options,
         sql_cpu_usages: ctx.sql_cpu_usages().cloned(),
@@ -5347,7 +5347,7 @@ fn wrap_point_index_usage(
     ctx: &crate::StmtContext,
     index_id: Option<i64>,
     command: PointCommand,
-    snapshot_stats: Option<super::index_usage_reporter::PointSnapshotStats>,
+    snapshot_stats: Option<tidb_executor_internal_exec::index_usage_reporter::PointSnapshotStats>,
 ) -> Box<dyn Executor> {
     // Go PointGet has no planner UsedStatsInfo entry and uses the smallest
     // bucket. BatchPointGet reports against the logical table's whole count,
@@ -5538,7 +5538,7 @@ impl PartialHandleSource for IndexPartialHandleSource {
                 if requests == 0 && rows == 0 {
                     rows = access.local_index_usage_rows().unwrap_or_default();
                 }
-                super::index_usage_reporter::IndexUsageReporter::new(
+                tidb_executor_internal_exec::index_usage_reporter::IndexUsageReporter::new(
                     self.ctx.index_usage_collector(),
                 )
                 .report_cop_for_table(

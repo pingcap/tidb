@@ -2027,11 +2027,11 @@ impl Executor for PreparedPointGetExecutor {
         }
         let after = reader.point_rpc_counts();
         let index_id = match plan.target {
-            PreparedPointTarget::RowHandle => super::index_usage_reporter::cluster_index_id(table),
+            PreparedPointTarget::RowHandle => tidb_executor_internal_exec::index_usage_reporter::cluster_index_id(table),
             PreparedPointTarget::UniqueIndex { index_id } => Some(index_id),
         };
         if let Some(index_id) = index_id {
-            super::index_usage_reporter::IndexUsageReporter::new(
+            tidb_executor_internal_exec::index_usage_reporter::IndexUsageReporter::new(
                 self.context.index_usage_collector(),
             )
             // Go's fast point plan never runs `initStats`, and a PointGet

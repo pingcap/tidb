@@ -54,7 +54,6 @@ mod table_resolver;
 pub(crate) use table_resolver::TableResolver;
 mod dml;
 pub(crate) use tidb_planner::from_scope as from;
-mod index_usage_reporter;
 mod multi_dml;
 pub(crate) use multi_dml::{multi_dml_explain_plan, MultiDmlRef};
 
