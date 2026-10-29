@@ -1837,7 +1837,7 @@ impl<'s> ClusterServerSession<'s> {
             |snapshot, _| {
                 let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                 let (counts, plan) =
-                    tidb_stats_handle_storage::cluster_stats_write::plan_historical_stats_meta_lock(
+                    tidb_stats_handle_history::history_stats::plan_historical_stats_meta_lock(
                         &mut snapshot,
                         catalog,
                         physical_id,
@@ -1854,7 +1854,7 @@ impl<'s> ClusterServerSession<'s> {
             self.session.lock_wait_timeout(),
             |snapshot, _| {
                 let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                let plan = tidb_stats_handle_storage::cluster_stats_write::plan_historical_stats_meta_replace(
+                let plan = tidb_stats_handle_history::history_stats::plan_historical_stats_meta_replace(
                     &mut snapshot,
                     catalog,
                     physical_id,

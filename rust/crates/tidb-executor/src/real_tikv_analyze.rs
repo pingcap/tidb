@@ -52,7 +52,8 @@ use tidb_infoschema::cluster_catalog::load_cluster_catalog;
 use tidb_stats_handle_storage::cluster_stats_load::{
     column_types_of, ClusterStatsItem, ClusterStatsLoader, ClusterTableStats,
 };
-use tidb_stats_handle_storage::cluster_stats_write::{plan_analyze_stats_write, plan_historical_stats_meta_lock, plan_historical_stats_meta_replace, plan_independent_index_stats_write, plan_partial_stats_write, plan_stats_meta_version_refresh, AnalyzeStatsMeta, AnalyzeStatsWriteScope};
+use tidb_stats_handle_storage::cluster_stats_write::{plan_analyze_stats_write, plan_independent_index_stats_write, plan_partial_stats_write, plan_stats_meta_version_refresh, AnalyzeStatsMeta, AnalyzeStatsWriteScope};
+use tidb_stats_handle_history::history_stats::{plan_historical_stats_meta_lock, plan_historical_stats_meta_replace};
 use tidb_syssession::stats_table_rows::{locate, set, StatsRows, StatsWriteError, StatsWritePlan};
 use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::plan_get_predicate_columns;
 use tidb_store_driver::cluster_table_storage::{

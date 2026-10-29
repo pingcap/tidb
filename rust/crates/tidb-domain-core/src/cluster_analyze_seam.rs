@@ -274,11 +274,23 @@ where
         historical_stats_enabled: bool,
     ) -> Result<ClusterLoadStatsReport, SqlQueryError> {
         let current = self.stats.load();
+        // Go `RecordHistoricalStatsMeta` through the stats handle; failures
+        // are logged and ignored there, and ignored here.
+        let record_history = |table_id: i64, version: u64, source: &str| {
+            let _ = tidb_stats_handle_history::history_stats::record_historical_stats_meta(
+                &self.opener,
+                table_id,
+                version,
+                source,
+                self.timeout,
+                Some(self.row_ids.as_ref()),
+            );
+        };
         let report = commit_cluster_load_stats(
             &self.opener,
             json,
             self.timeout,
-            historical_stats_enabled,
+            historical_stats_enabled.then_some(&record_history as &(dyn Fn(i64, u64, &str) + Sync)),
             |table_id| {
                 current
                     .get(&table_id)

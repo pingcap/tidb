@@ -3869,6 +3869,7 @@ dependencies = [
  "tidb-stats-handle-autoanalyze-priorityqueue",
  "tidb-stats-handle-autoanalyze-refresher",
  "tidb-stats-handle-cache",
+ "tidb-stats-handle-history",
  "tidb-stats-handle-lockstats",
  "tidb-stats-handle-logutil",
  "tidb-stats-handle-metrics",
@@ -4009,6 +4010,7 @@ dependencies = [
  "tidb-stats-handle",
  "tidb-stats-handle-autoanalyze",
  "tidb-stats-handle-cache",
+ "tidb-stats-handle-history",
  "tidb-stats-handle-lockstats",
  "tidb-stats-handle-metrics",
  "tidb-stats-handle-storage",
@@ -4827,6 +4829,7 @@ dependencies = [
  "tidb-stats-handle-autoanalyze-priorityqueue",
  "tidb-stats-handle-autoanalyze-refresher",
  "tidb-stats-handle-cache",
+ "tidb-stats-handle-history",
  "tidb-stats-handle-initstats",
  "tidb-stats-handle-lockstats",
  "tidb-stats-handle-logutil",
@@ -5083,6 +5086,23 @@ name = "tidb-stats-handle-cache-metrics"
 version = "0.0.0"
 dependencies = [
  "prometheus 0.14.0",
+]
+
+[[package]]
+name = "tidb-stats-handle-history"
+version = "0.0.0"
+dependencies = [
+ "tidb-datatype",
+ "tidb-infoschema",
+ "tidb-infoschema-issyncer",
+ "tidb-kv",
+ "tidb-stats",
+ "tidb-stats-handle",
+ "tidb-stats-handle-storage",
+ "tidb-store-driver",
+ "tidb-syssession",
+ "tidb-table",
+ "tidb-txnkv",
 ]
 
 [[package]]

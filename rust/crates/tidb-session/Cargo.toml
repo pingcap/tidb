@@ -10,6 +10,7 @@ description = "Session lifecycle and state authority for the TiDB Rust rewrite."
 autotests = false
 
 [dependencies]
+tidb-stats-handle-history = { path = "../tidb-stats-handle-history" }
 tidb-stats-handle-autoanalyze = { path = "../tidb-stats-handle-autoanalyze" }
 tidb-ddl-resourcegroup = { path = "../tidb-ddl-resourcegroup" }
 tidb-table = { path = "../tidb-table" }

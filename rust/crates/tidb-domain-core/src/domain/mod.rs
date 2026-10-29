@@ -1618,7 +1618,7 @@ impl Domain {
                                 },
                                 |snapshot, _start_ts| {
                                     let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                                    let (counts, plan) = tidb_stats_handle_storage::cluster_stats_write::plan_historical_stats_meta_lock(
+                                    let (counts, plan) = tidb_stats_handle_history::history_stats::plan_historical_stats_meta_lock(
                                         &mut snapshot,
                                         &catalog,
                                         update.table_id,
@@ -1649,7 +1649,7 @@ impl Domain {
                                 },
                                 |snapshot, _start_ts| {
                                     let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                                    let plan = tidb_stats_handle_storage::cluster_stats_write::plan_historical_stats_meta_replace(
+                                    let plan = tidb_stats_handle_history::history_stats::plan_historical_stats_meta_replace(
                                 &mut snapshot,
                                 &catalog,
                                 update.table_id,
@@ -2874,7 +2874,7 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
         )?;
         let staged = MutationBuffer::new();
         transaction.bind_mutation_buffer(&staged);
-        let (version, blocks) = tidb_stats_handle_storage::cluster_stats_write::historical_stats_data_blocks(&json)
+        let (version, blocks) = tidb_stats_handle_history::history_stats::historical_stats_data_blocks(&json)
             .map_err(|error| error.to_string())?;
         let create_time = tidb_datatype::current_time::local_now_datetime6();
         for (sequence, block) in blocks.iter().enumerate() {
@@ -2899,7 +2899,7 @@ impl HistoricalStatsHandle for ClusterHistoricalStatsHandle {
                     |snapshot, _start_ts| {
                         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                         let plan =
-                            tidb_stats_handle_storage::cluster_stats_write::plan_historical_stats_data_block(
+                            tidb_stats_handle_history::history_stats::plan_historical_stats_data_block(
                                 &mut snapshot,
                                 &catalog,
                                 physical_id,

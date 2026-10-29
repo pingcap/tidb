@@ -35,10 +35,7 @@ use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 use tidb_infoschema::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use tidb_stats_handle_storage::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader, ClusterTableStats};
-use tidb_stats_handle_storage::cluster_stats_write::{
-    plan_change_global_stats_id, plan_historical_stats_meta_lock,
-    plan_historical_stats_meta_replace, plan_stats_meta_version_refresh, plan_update_stats_version,
-};
+use tidb_stats_handle_storage::cluster_stats_write::{plan_change_global_stats_id, plan_stats_meta_version_refresh, plan_update_stats_version};
 use tidb_store_driver::cluster_table_storage::{
     commit_pessimistic_statement, lock_pessimistic_statement, PessimisticStatementTransactionError,
     SessionTransaction,

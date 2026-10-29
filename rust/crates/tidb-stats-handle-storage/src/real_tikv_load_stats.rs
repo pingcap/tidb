@@ -96,7 +96,9 @@ impl std::error::Error for ClusterLoadStatsCommitError {}
 
 /// Commits the storage half of pinned Go `LoadStatsFromJSON`.
 ///
-/// `item_history_initialized` supplies Go's `RecordHistoricalStatsMeta(...,
+/// `record_history` is Go's `RecordHistoricalStatsMeta` through the stats
+/// handle, present when historical stats are enabled; `item_history_initialized`
+/// supplies its `RecordHistoricalStatsMeta(...,
 /// enforce=false)` cache gate for column/index transactions. Final meta uses
 /// `enforce=true` and therefore does not consult it. History failures remain
 /// nonfatal, exactly as the Go handle logs and ignores them.
@@ -104,7 +106,7 @@ pub fn commit_cluster_load_stats<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     json: &JsonTable,
     timeout: Duration,
-    historical_stats_enabled: bool,
+    record_history: Option<&(dyn Fn(i64, u64, &str) + Sync)>,
     item_history_initialized: impl Fn(i64) -> bool + Sync,
     concurrency_for_partition: usize,
     row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
@@ -126,7 +128,7 @@ pub fn commit_cluster_load_stats<S: StoreClient>(
             &catalog,
             &table,
             timeout,
-            historical_stats_enabled,
+            record_history,
             &item_history_initialized,
             row_ids,
         )
@@ -175,7 +177,7 @@ fn commit_loaded_table<S: StoreClient>(
     catalog: &ClusterCatalog,
     table: &LoadedStatsTable,
     timeout: Duration,
-    historical_stats_enabled: bool,
+    record_history: Option<&(dyn Fn(i64, u64, &str) + Sync)>,
     item_history_initialized: &(impl Fn(i64) -> bool + Sync),
     row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<usize, ClusterLoadStatsCommitError> {
@@ -183,26 +185,14 @@ fn commit_loaded_table<S: StoreClient>(
     for item in table.columns.iter().chain(&table.indexes) {
         let version = commit_item(opener, catalog, table, item, timeout, row_ids)?;
         item_count += 1;
-        if historical_stats_enabled && item_history_initialized(table.physical_id) {
-            record_history(
-                opener,
-                table.physical_id,
-                version,
-                timeout,
-                Some(row_ids.as_ref()),
-            );
+        if let Some(record_history) = record_history.filter(|_| item_history_initialized(table.physical_id)) {
+            record_history(table.physical_id, version, LOAD_STATS_HISTORY_SOURCE);
         }
     }
     commit_usage(opener, catalog, table, timeout, row_ids)?;
     let version = commit_final_meta(opener, catalog, table, timeout, row_ids)?;
-    if historical_stats_enabled {
-        record_history(
-            opener,
-            table.physical_id,
-            version,
-            timeout,
-            Some(row_ids.as_ref()),
-        );
+    if let Some(record_history) = record_history {
+        record_history(table.physical_id, version, LOAD_STATS_HISTORY_SOURCE);
     }
     Ok(item_count)
 }
@@ -417,23 +407,6 @@ fn commit_final_meta<S: StoreClient>(
         Ok((version, plan.mutations))
     })
     .map_err(pessimistic_error)
-}
-
-fn record_history<S: StoreClient>(
-    opener: &RealOptimisticTransactionOpener<S>,
-    table_id: i64,
-    version: u64,
-    timeout: Duration,
-    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
-) {
-    let _ = crate::real_tikv_stats_write::record_historical_stats_meta(
-        opener,
-        table_id,
-        version,
-        LOAD_STATS_HISTORY_SOURCE,
-        timeout,
-        row_ids,
-    );
 }
 
 fn pessimistic_error(error: PessimisticStatementTransactionError) -> ClusterLoadStatsCommitError {

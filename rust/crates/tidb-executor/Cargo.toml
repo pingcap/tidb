@@ -14,6 +14,7 @@ autotests = false
 test-util = []
 
 [dependencies]
+tidb-stats-handle-history = { path = "../tidb-stats-handle-history" }
 tidb-stats-handle-usage-predicatecolumn = { path = "../tidb-stats-handle-usage-predicatecolumn" }
 tidb-stats-handle-types = { path = "../tidb-stats-handle-types" }
 tidb-kvcache = { path = "../tidb-kvcache" }

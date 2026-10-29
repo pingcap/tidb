@@ -1,0 +1,24 @@
+[package]
+name = "tidb-stats-handle-history"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB historical statistics: Go pkg/statistics/handle/history (Rust rewrite)."
+
+[dependencies]
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-stats = { path = "../tidb-stats" }
+tidb-stats-handle = { path = "../tidb-stats-handle" }
+tidb-stats-handle-storage = { path = "../tidb-stats-handle-storage" }
+tidb-store-driver = { path = "../tidb-store-driver" }
+tidb-syssession = { path = "../tidb-syssession" }
+tidb-table = { path = "../tidb-table" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+
+[lints]
+workspace = true
