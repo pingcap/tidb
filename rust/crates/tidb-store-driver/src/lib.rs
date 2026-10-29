@@ -15,5 +15,6 @@
 //! Go `pkg/store/driver`: the node's one store over TiKV and PD (`tikvStore`)
 //! and the transaction options every session's transaction opens with.
 
+pub mod tikv_region_store;
 pub mod real_tikv_read;
 pub mod session_commit_protocol;

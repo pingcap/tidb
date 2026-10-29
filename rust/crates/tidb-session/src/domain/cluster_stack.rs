@@ -142,7 +142,7 @@ pub fn cluster_session_stack(
     // The cluster's regions as `SPLIT`, `SHOW TABLE ... REGIONS`,
     // `TABLESAMPLE REGIONS()` and the pre-split after CREATE TABLE reach them.
     let region_store: Arc<dyn tidb_kv::region_map::RegionStore> =
-        Arc::new(tidb_exec::tikv_region_store::TikvRegionStore::new(
+        Arc::new(tidb_store_driver::tikv_region_store::TikvRegionStore::new(
             tikv_store.clone(),
             config.pd_endpoints.clone(),
         ));
@@ -364,7 +364,7 @@ pub fn cluster_session_stack(
         authority.tikv_store(),
         server_identity.as_ref().map_or(0, |identity| identity.id()),
     )?;
-    let discovery = Some(tidb_exec::cluster_discovery::PdClusterDiscovery::new(
+    let discovery = Some(tidb_domain::cluster_discovery::PdClusterDiscovery::new(
         authority.tikv_store().clone(),
         &config.cluster_security,
         COPROCESSOR_QUERY_TIMEOUT,
@@ -490,14 +490,14 @@ pub fn cluster_session_stack(
     // Go `InfoSyncer` init's `affinity.InitManager(is.pdHTTPCli)`: the DDL
     // job workers create and delete PD affinity groups through it.
     tidb_domain::affinity::init_manager(pd_http_client.as_ref().map(|client| {
-        Arc::new(tidb_exec::pd_affinity_client::PdHttpAffinityClient::new(
+        Arc::new(tidb_domain::pd_affinity_client::PdHttpAffinityClient::new(
             client,
         )) as Arc<dyn tidb_domain::affinity::PdAffinityClient>
     }));
     // Go `InfoSyncer.initLabelRuleManager`: PD's region-label rules, which
     // the DDL job workers write and `information_schema.attributes` reads.
     tidb_domain::label_manager::init_label_rule_manager(pd_http_client.as_ref().map(|client| {
-        Arc::new(tidb_exec::label_delivery::PdLabelManager::new(client))
+        Arc::new(tidb_domain::label_delivery::PdLabelManager::new(client))
             as Arc<dyn tidb_domain::label_manager::LabelRuleManager>
     }));
     // One DDL-gated worker. Its guard joins before the node releases DDL/PD.

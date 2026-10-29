@@ -28,7 +28,6 @@
 
 pub mod bootstrap_publish;
 pub mod cluster_analyze;
-pub mod cluster_discovery;
 use tidb_cluster::cluster_http;
 pub mod cluster_load_stats;
 pub mod cluster_predicate_column;
@@ -40,10 +39,8 @@ pub mod cluster_stats_write;
 pub mod ddl_session_pool;
 pub mod in_memory_meta;
 pub mod explain;
-pub mod label_delivery;
 pub mod meta_txn;
 pub mod mysql_bootstrap;
-pub mod pd_affinity_client;
 pub mod pd_approximate_count;
 pub mod pre_split;
 pub mod real_tikv_analyze;
@@ -54,7 +51,6 @@ pub mod real_tikv_stats_lock;
 mod result_metadata;
 pub mod stats_watch;
 pub mod table_info_build;
-pub mod tikv_region_store;
 
 pub use result_metadata::{
     col_names_to_result_fields, AdaptedResultField, FieldNameMetadata, IdentifierMetadata, ResultFieldMetadata,

@@ -3823,6 +3823,7 @@ dependencies = [
  "chrono-tz",
  "getrandom 0.3.4",
  "prometheus 0.14.0",
+ "reqwest 0.13.4",
  "serde",
  "serde_json",
  "tidb-ast",
@@ -3835,6 +3836,7 @@ dependencies = [
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
+ "tidb-pd-client",
  "tidb-proto",
  "tidb-stats-handle-metrics",
  "tidb-stmtsummary",
@@ -3843,6 +3845,7 @@ dependencies = [
  "tidb-util",
  "tidb-vardef",
  "tidb-variable",
+ "tikv-client",
  "toml",
  "tracing",
 ]
@@ -5218,6 +5221,7 @@ version = "0.0.0"
 dependencies = [
  "tidb-config",
  "tidb-distsql",
+ "tidb-kv",
  "tidb-pd-client",
  "tidb-proto",
  "tidb-tablecodec",

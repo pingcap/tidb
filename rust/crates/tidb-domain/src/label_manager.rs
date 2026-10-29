@@ -17,7 +17,7 @@
 //! without PD gets), and the package-level `PutLabelRule`, `UpdateLabelRules`,
 //! `GetAllLabelRules` and `GetLabelRules` over the node's manager, which
 //! `InfoSyncer.initLabelRuleManager` installs. `PDLabelManager` lives with the
-//! node's PD HTTP client (`tidb_exec::label_delivery`).
+//! node's PD HTTP client (`tidb_domain::label_delivery`).
 //!
 //! The in-process catalog owns a mock of its own, shared by every snapshot of
 //! it, as Go's `InfoSyncer` owns one per domain; a production node's catalog

@@ -24,10 +24,10 @@
 use std::collections::BTreeMap;
 
 use tidb_ddl_label::{LabelCodec, LabelRulePatch, Rule};
-use tidb_domain::label_manager::{filter_rules_by_keyspace, LabelRuleManager};
+use crate::label_manager::{filter_rules_by_keyspace, LabelRuleManager};
 use tikv_client::pd_http;
 
-use crate::cluster_http::block_on_pd_http;
+use tidb_txnkv::cluster_http::block_on_pd_http;
 
 /// Go `PDLabelManager`: PD's region-label rules through `pdHTTPCli`.
 pub struct PdLabelManager {
@@ -49,7 +49,7 @@ impl PdLabelManager {
     #[must_use]
     pub fn new(pd_http_client: &pd_http::Client) -> Self {
         Self {
-            pd_http_client: crate::cluster_http::info_syncer_pd_http_client(pd_http_client),
+            pd_http_client: tidb_txnkv::cluster_http::info_syncer_pd_http_client(pd_http_client),
         }
     }
 }

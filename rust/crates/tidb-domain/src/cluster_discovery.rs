@@ -15,7 +15,7 @@
 //! Live Go infoschema PD/store/microservice retrievers over the process PD client.
 
 use serde::Deserialize;
-use tidb_domain::cluster_topology::{ClusterDiscovery, ClusterServer, ClusterStore};
+use crate::cluster_topology::{ClusterDiscovery, ClusterServer, ClusterStore};
 use tidb_pd_client::ClusterSecurity;
 use tidb_proto::metapb;
 use tidb_txnkv::driver::tikv_store::TikvStore;
@@ -38,7 +38,7 @@ impl PdClusterDiscovery {
         timeout: std::time::Duration,
     ) -> Result<Self, String> {
         Ok(Self {
-            http: crate::cluster_http::internal_http_client(security)?,
+            http: tidb_txnkv::cluster_http::internal_http_client(security)?,
             store,
             timeout,
             scheme: if security.is_tls_enabled() {

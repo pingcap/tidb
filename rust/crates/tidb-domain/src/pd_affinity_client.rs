@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The PD HTTP calls behind [`tidb_domain::affinity::PdAffinityClient`]:
+//! The PD HTTP calls behind [`crate::affinity::PdAffinityClient`]:
 //! `CreateAffinityGroups`, `GetAffinityGroups`, `GetAllAffinityGroups` and
 //! `BatchDeleteAffinityGroups` on the info syncer's derivation of the store's
 //! PD HTTP client, which Go hands to `affinity.InitManager(is.pdHTTPCli)`.
 
 use std::collections::HashMap;
 
-use tidb_domain::affinity::{
+use crate::affinity::{
     AffinityGroup, AffinityGroupState, AffinityGroupStates, AffinityGroups, PdAffinityClient,
     PdHttpError,
 };
@@ -36,7 +36,7 @@ impl PdHttpAffinityClient {
     #[must_use]
     pub fn new(pd_http_client: &pd_http::Client) -> Self {
         Self {
-            pd_http_client: crate::cluster_http::info_syncer_pd_http_client(pd_http_client),
+            pd_http_client: tidb_txnkv::cluster_http::info_syncer_pd_http_client(pd_http_client),
         }
     }
 
@@ -45,8 +45,8 @@ impl PdHttpAffinityClient {
     fn request<T: Send>(
         request: impl std::future::Future<Output = tikv_client::Result<T>> + Send,
     ) -> Result<T, PdHttpError> {
-        crate::cluster_http::block_on_pd_http(request).map_err(|message| {
-            if crate::cluster_http::is_http_service_error(&message) {
+        tidb_txnkv::cluster_http::block_on_pd_http(request).map_err(|message| {
+            if tidb_txnkv::cluster_http::is_http_service_error(&message) {
                 PdHttpError::Coded {
                     code: tidb_error::tidb::errcode::ErrHTTPServiceError,
                     message,
