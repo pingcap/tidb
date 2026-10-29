@@ -16,12 +16,12 @@
 //! `SequenceValue` and `SequenceCycle`, read and written in a transaction of
 //! the reservation's OWN.
 //!
-//! This is [`tidb_autoid::cluster_auto_id`]'s shape applied to sequences: Go puts a
+//! This is [`crate::cluster_auto_id`]'s shape applied to sequences: Go puts a
 //! sequence's counter in meta and reserves from it inside `kv.RunInNewTxn`
 //! (`autoid.alloc4Sequence`), so two TiDB nodes hand out disjoint batches of
 //! the same ladder only because a reservation is one committed meta write.
 //! The allocation rules -- which value comes next, when the ladder wraps --
-//! stay in `crate::sequence`; what changes here is only WHERE the
+//! stay in [`crate::sequence`]; what changes here is only WHERE the
 //! number lives.
 //!
 //! Go reads and writes the counter through `AutoIDAccessor`s:
@@ -50,7 +50,7 @@ use tidb_txnkv::transaction::{
     BufferMutation, OptimisticCommitOutcome, RealOptimisticTransactionOpener, RealTransaction,
 };
 
-use tidb_autoid::cluster_auto_id::MAX_RESERVE_RETRIES;
+use crate::cluster_auto_id::MAX_RESERVE_RETRIES;
 
 /// One sequence's shared counter over the cluster meta keys.
 pub struct ClusterSequenceCounter<S = tikv_client::PdRpcClient>
@@ -118,7 +118,7 @@ where
             transaction
                 .snapshot_get(key, &UnaryCallContext::with_timeout(self.timeout))
                 .map(|result| result.value)
-                .map_err(tidb_autoid::cluster_auto_id::snapshot_read_error)
+                .map_err(crate::cluster_auto_id::snapshot_read_error)
         };
         let stored = get(&self.value_key)?;
         let round = get(&self.cycle_key)?;

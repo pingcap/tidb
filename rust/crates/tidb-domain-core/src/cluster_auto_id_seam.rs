@@ -33,7 +33,7 @@ use std::time::Duration;
 use tidb_txnkv::transaction::StoreClient;
 
 use tidb_autoid::cluster_auto_id::ClusterAutoIdStore;
-use tidb_table::cluster_sequence::ClusterSequenceCounter;
+use tidb_autoid::cluster_sequence::ClusterSequenceCounter;
 use tidb_table::sequence::SequenceDef;
 use tidb_autoid::DEFAULT_AUTO_ID_STEP;
 use tidb_table::kv_table::TableAutoId;

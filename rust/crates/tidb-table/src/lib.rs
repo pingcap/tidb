@@ -32,4 +32,3 @@ pub mod partition_routing;
 pub mod kv_table;
 pub mod sequence;
 pub mod origin_default;
-pub mod cluster_sequence;
