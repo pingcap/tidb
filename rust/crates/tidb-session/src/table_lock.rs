@@ -204,7 +204,11 @@ impl Session {
         let mut lock_tables = Vec::with_capacity(locks.len());
         let mut unique_table_id = HashSet::new();
         for (lock, (db, name)) in locks.iter().zip(&names) {
-            throw_err_if_in_mem_or_sys_db(login.as_ref(), db)?;
+            table_lock::throw_err_if_in_mem_or_sys_db(
+                login.as_ref().map(|(user, host)| (user.as_str(), host.as_str())),
+                db,
+            )
+            .map_err(DriverError::Mysql)?;
             let schema_id = catalog.database_id(db).ok_or_else(|| {
                 DriverError::from(
                     tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
@@ -407,7 +411,11 @@ impl Session {
         let mut unique_table_id = HashSet::new();
         let mut unlocked = 0;
         for (db, name) in &names {
-            throw_err_if_in_mem_or_sys_db(login.as_ref(), db)?;
+            table_lock::throw_err_if_in_mem_or_sys_db(
+                login.as_ref().map(|(user, host)| (user.as_str(), host.as_str())),
+                db,
+            )
+            .map_err(DriverError::Mysql)?;
             let schema_id = catalog.database_id(db).ok_or_else(|| {
                 DriverError::from(
                     tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
@@ -509,21 +517,4 @@ pub enum ClusterDdlLockEffect {
         /// The table ID before the truncate.
         old_id: i64,
     },
-}
-
-/// Go `ddl.throwErrIfInMemOrSysDB`.
-fn throw_err_if_in_mem_or_sys_db(
-    login: Option<&(String, String)>,
-    db: &str,
-) -> Result<(), DriverError> {
-    if !tidb_metadef::is_mem_or_sys_db(&go_to_lower(db)) {
-        return Ok(());
-    }
-    let (user, host) = login.map_or(("", ""), |(user, host)| (user.as_str(), host.as_str()));
-    // Go passes two of the message's three verbs.
-    Err(DriverError::Mysql(tidb_terror::MysqlError::from_terror(
-        &tidb_privilege::privileges_errors::ERR_ACCESS_DENIED.generate_with_stack(format!(
-            "Access denied for user '{user}'@'{host}' (using password: %!s(MISSING))"
-        )),
-    )))
 }

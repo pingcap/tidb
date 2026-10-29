@@ -173,3 +173,50 @@ pub fn unlock_table(
     next.sessions = sessions.into();
     Some(Some(next))
 }
+
+/// Go `ddl.throwErrIfInMemOrSysDB` (`ddl/executor.go`): `LOCK TABLES` and
+/// `ADMIN CLEANUP TABLE LOCK` refuse a memory or system schema with
+/// `infoschema.ErrAccessDenied` for the session's login (`login` is the
+/// user and host, `None` for a session without one).
+///
+/// # Errors
+///
+/// `ErrAccessDenied` (class `schema`) when `db` is a memory or system schema.
+pub fn throw_err_if_in_mem_or_sys_db(
+    login: Option<(&str, &str)>,
+    db: &str,
+) -> Result<(), MysqlError> {
+    if !tidb_metadef::is_mem_or_sys_db(&tidb_hack::go_to_lower(db)) {
+        return Ok(());
+    }
+    let (user, host) = login.unwrap_or(("", ""));
+    // Go passes two of the message's three verbs.
+    Err(MysqlError::from_terror(
+        &tidb_infoschema::infoschema_errors::ERR_ACCESS_DENIED.generate_with_stack(format!(
+            "Access denied for user '{user}'@'{host}' (using password: %!s(MISSING))"
+        )),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::throw_err_if_in_mem_or_sys_db;
+
+    /// Go raises `infoschema.ErrAccessDenied`, whose class (`schema`) is what
+    /// `err.Error()` prints; the privilege package's same-coded error is not
+    /// the one Go names.
+    #[test]
+    fn a_system_schema_is_refused_with_the_infoschema_access_denied() {
+        let error = throw_err_if_in_mem_or_sys_db(Some(("u", "%")), "MySQL").unwrap_err();
+        assert_eq!(error.code, 1045);
+        assert_eq!(
+            error.identity.map(|identity| identity.class()),
+            Some(tidb_infoschema::infoschema_errors::ERR_ACCESS_DENIED.class())
+        );
+        assert_eq!(
+            error.message,
+            "Access denied for user 'u'@'%' (using password: %!s(MISSING))"
+        );
+        assert!(throw_err_if_in_mem_or_sys_db(None, "test").is_ok());
+    }
+}
