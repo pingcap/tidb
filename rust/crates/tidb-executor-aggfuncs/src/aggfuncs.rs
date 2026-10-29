@@ -31,20 +31,14 @@ use tidb_driver_error::ExecError;
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
-use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
-use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
-use tidb_codec::{encode_bytes, encode_compact_bytes, encode_varint, NIL_FLAG, VARINT_FLAG};
+use tidb_codec::{encode_bytes, encode_compact_bytes};
 use tidb_goruntime::GoString;
 use tidb_datatype::{BinaryJSON, BinaryJSONValue, Datum, Decimal, EvalType, FieldType, FieldTypeCode, TimeType, MAX_DECIMAL_SCALE, UNSPECIFIED_LENGTH};
 use tidb_charset::Collation;
 use tidb_expr::compare_datums;
 use tidb_expr::expression::Expression;
-use tidb_expr::schema::Schema;
 use tidb_exprctx::Columns;
-use tidb_disk as disk;
-use tidb_memory::{ActionOnExceed, ArcAction, Tracker};
 use tidb_selection::{select, Selectable};
 use tidb_set::{
     Float64SetWithMemoryUsage, Int64SetWithMemoryUsage, StringSetWithMemoryUsage,

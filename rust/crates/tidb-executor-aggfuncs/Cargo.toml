@@ -13,12 +13,10 @@ workspace = true
 [dependencies]
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }
-tidb-disk = { path = "../tidb-disk" }
 tidb-driver-error = { path = "../tidb-driver-error" }
 smallvec = { workspace = true }
 tidb-expression-aggregation = { path = "../tidb-expression-aggregation" }
 tidb-goruntime = { path = "../tidb-goruntime" }
-tidb-memory = { path = "../tidb-memory" }
 tidb-parser-types = { path = "../tidb-parser-types" }
 tidb-selection = { path = "../tidb-selection" }
 tidb-set = { path = "../tidb-set" }
