@@ -215,10 +215,10 @@ func (idx *Index) IsAnalyzed() bool {
 
 // UniqueBySchema returns true if a public, non-prefix, single-column unique
 // index keeps every non-NULL value of the column or index with the given ID
-// distinct.
-func UniqueBySchema(tblInfo *model.TableInfo, isIndex bool, id int64) bool {
+// distinct. With localOnly, global indexes do not count.
+func UniqueBySchema(tblInfo *model.TableInfo, isIndex bool, id int64, localOnly bool) bool {
 	for _, idx := range tblInfo.Indices {
-		if !IsSingleColNonPrefixUniqueIndex(idx) {
+		if (localOnly && idx.Global) || !IsSingleColNonPrefixUniqueIndex(idx) {
 			continue
 		}
 		if (isIndex && idx.ID == id) || (!isIndex && tblInfo.Columns[idx.Columns[0].Offset].ID == id) {
