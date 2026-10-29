@@ -141,7 +141,8 @@ use tidb_datatype::{Collation, Datum, FieldType};
 use tidb_expr::schema::Schema;
 
 use crate::access_path::{HandleOutputColumn, HandleSourceExec};
-use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::executor::{Executor, ExecutorMeta};
+use tidb_driver_error::ExecError;
 use tidb_table::kv_table::TableHandle;
 use tidb_table::kv_table::RowDecodeContext;
 use tidb_table::kv_table::KvTable;

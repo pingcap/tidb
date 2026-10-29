@@ -21,8 +21,9 @@ use tidb_datatype::FieldType;
 use tidb_expr::schema::Schema;
 use tidb_stats_handle_usage_indexusage::{new_sample, StmtIndexUsageCollector};
 
-use crate::access_cost::TableStatistics;
-use crate::executor::{ExecError, Executor};
+use tidb_stats::table_statistics::TableStatistics;
+use crate::executor::Executor;
+use tidb_driver_error::ExecError;
 use tidb_table::kv_table::KvTable;
 
 /// Go `IndexUsageReporter`: common reporting rules for coprocessor and point

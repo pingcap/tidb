@@ -33,9 +33,9 @@ impl ClusterAnalyze for UndeterminedAnalyze {
         _: &tidb_util::sqlkiller::SqlKiller,
         _: &dyn Fn() -> bool,
         _: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
-    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, crate::domain::session_api::SqlQueryError>
+    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver::sql_query_error::SqlQueryError>
     {
-        Err(crate::domain::session_api::cluster_analyze_error(
+        Err(tidb_domain_core::errors::cluster_analyze_error(
             tidb_executor::real_tikv_analyze::ClusterAnalyzeError::Undetermined(
                 "commit response lost".to_owned(),
             ),
@@ -54,7 +54,7 @@ impl ClusterAnalyze for PanickingAnalyze {
         _: &tidb_util::sqlkiller::SqlKiller,
         _: &dyn Fn() -> bool,
         _: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
-    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, crate::domain::session_api::SqlQueryError>
+    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver::sql_query_error::SqlQueryError>
     {
         panic!("{}", self.0)
     }
@@ -154,7 +154,7 @@ impl tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock for WarningStat
         statement: &tidb_stats_handle_lockstats::lock_target::ClusterStatsLockStatement,
     ) -> Result<
         tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockReport,
-        crate::domain::session_api::SqlQueryError,
+        tidb_store_driver::sql_query_error::SqlQueryError,
     > {
         assert!(statement.lock);
         assert_eq!(statement.targets.len(), 1);
@@ -259,7 +259,7 @@ fn stats_lock_planning_keeps_go_error_identities() {
     ];
     for (error, code, state, message) in cases {
         let error =
-            crate::domain::session_api::cluster_stats_lock_error(ClusterStatsLockCommitError::Plan(error));
+            tidb_domain_core::errors::cluster_stats_lock_error(ClusterStatsLockCommitError::Plan(error));
         assert_eq!((error.code, error.state), (code, state));
         assert_eq!(error.message, message);
     }
@@ -322,7 +322,7 @@ fn analyze_commit_keeps_a_backoff_driver_error_coded_on_the_wire() {
     });
     let lock_error = tidb_store_driver::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome)
         .expect_err("an exhausted busy backoff cannot answer success");
-    let query_error = crate::domain::session_api::cluster_analyze_error(
+    let query_error = tidb_domain_core::errors::cluster_analyze_error(
         tidb_executor::real_tikv_analyze::ClusterAnalyzeError::Commit(lock_error),
     );
     assert_eq!(
@@ -344,7 +344,7 @@ fn analyze_merge_keeps_the_statement_kill_error_coded_on_the_wire() {
         .handle_signal()
         .expect("the query-interrupted signal has an error")
         .to_sql_error();
-    let query_error = crate::domain::session_api::cluster_analyze_error(
+    let query_error = tidb_domain_core::errors::cluster_analyze_error(
         tidb_executor::real_tikv_analyze::ClusterAnalyzeError::Killed(error),
     );
     assert_eq!((query_error.code, query_error.state), (1317, *b"70100"));
@@ -466,7 +466,7 @@ fn open_session_as_with_stats_lock(
             SharedStats::new(tidb_stats_handle_syncload::stats_watch::StatsSnapshot::new())
                 .expect("statistics cache"),
         ),
-        Arc::new(tidb_domain_core::cluster_session::LocalTableAutoIds::default()),
+        Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default()),
         crate::domain::cluster_session_node::open_pool_session,
     )
     .shared();
@@ -586,11 +586,11 @@ fn analyze_with_insert_and_select_on_the_table_reaches_the_seam() {
 #[test]
 fn analyze_scan_concurrency_uses_system_setting_only_for_auto_analyze() {
     assert_eq!(
-        crate::analyze_service::analyze_scan_concurrency_variable(false),
+        tidb_executor::analyze::exec::analyze_scan_concurrency_variable(false),
         tidb_vardef::tidb_vars::TIDB_ANALYZE_DIST_SQL_SCAN_CONCURRENCY
     );
     assert_eq!(
-        crate::analyze_service::analyze_scan_concurrency_variable(true),
+        tidb_executor::analyze::exec::analyze_scan_concurrency_variable(true),
         tidb_vardef::tidb_vars::TIDB_SYS_PROC_SCAN_CONCURRENCY
     );
 }

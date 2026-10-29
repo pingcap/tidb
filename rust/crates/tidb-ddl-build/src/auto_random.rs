@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use tidb_table::kv_table::{AutoIdError, AutoRandomError, AutoRandomSpec};
+use tidb_table::kv_table::{AutoRandomError, AutoRandomSpec};
+use tidb_autoid::AutoIdError;
 use tidb_error::mysql::MysqlError;
 
 use tidb_datatype::{FieldType, FieldTypeCode};

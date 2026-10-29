@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use tidb_kv::staged_writes::{StagedKey, StagedWrites};
 use super::*;
 use crate::executor::{Executor, ExecutorMeta};
 use tidb_codec::table_key::{get_table_handle_key_range, RecordHandle};

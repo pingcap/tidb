@@ -874,7 +874,7 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// (`skipRangeScanCheck`, true when unset).
     pub index_merge_skip_range_scan_check: bool,
     /// Session/transaction facts used by Go's index-lookup-pushdown gates.
-    pub index_lookup_push_down_session: crate::access_path::IndexLookupPushDownSession,
+    pub index_lookup_push_down_session: tidb_sessionctx::IndexLookupPushDownSession,
     /// Go `b.ctx.GetSessionVars().EnableSkewDistinctAgg`
     /// (`buildAggregation`, `:271`).
     pub enable_skew_distinct_agg: bool,
@@ -3140,7 +3140,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // oracle: `ACC2.NonExistent` answers `acc2.NonExistent`).
             return Err(PlanError::from(
                 tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.fast_generate_by_args(&[
-                    (tidb_util::stringutil::go_to_lower(&db_name)).into(),
+                    (tidb_hack::go_to_lower(&db_name)).into(),
                     table_name.into(),
                 ]),
             ));

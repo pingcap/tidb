@@ -14,10 +14,9 @@
 
 //! Source-backed tests for hash-join version selection.
 
-use tidb_executor::hash_join_version::{
-    is_optimized_version, HASH_JOIN_VERSION_LEGACY, HASH_JOIN_VERSION_OPTIMIZED,
-    TIFLASH_HASH_JOIN_VERSION_DEFAULT,
-};
+use tidb_executor::hash_join_version::{is_optimized_version, TIFLASH_HASH_JOIN_VERSION_DEFAULT};
+use tidb_vardef::defaults::HASH_JOIN_VERSION_LEGACY;
+use tidb_vardef::defaults::HASH_JOIN_VERSION_OPTIMIZED;
 
 #[test]
 fn hash_join_version_preserves_literals_and_case_boundary() {

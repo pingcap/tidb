@@ -25,6 +25,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use tidb_ddl::ddl_delete_range::DelRangeTask;
 use tidb_unistore::cluster::{bootstrap_with_multi_stores, Cluster};
 use tidb_unistore::mock::StorePdClient;
 use tidb_unistore::mock_pd::{AdvanceTxnSafePointResult as PdAdvanceTxnSafePointResult, GcState};

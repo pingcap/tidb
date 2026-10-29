@@ -162,7 +162,7 @@ struct BuildState {
     shuffle_receivers: HashMap<i32, Box<dyn Executor>>,
     cte_slots: HashMap<i32, CteBuildSlot>,
     runtime_counters: Option<PhysicalRuntimeStats>,
-    executor_runtime_stats_source: Option<Arc<dyn crate::executor::ExecutorRuntimeStatsSource>>,
+    executor_runtime_stats_source: Option<Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
     /// The coprocessor `Limit offset:o, count:c` a covering `IndexReader`'s
     /// `IndexPlan` carries above its `IndexScan`, as `o + c`. Go pushes it into
     /// the region request; the local cursor has no request, so the scan build
@@ -486,7 +486,7 @@ impl BuildState {
 struct SqlKillerCheckExec {
     child: Box<dyn Executor>,
     memory: crate::StatementMemory,
-    runtime_stats: Option<Arc<dyn crate::executor::ExecutorRuntimeStats>>,
+    runtime_stats: Option<Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStats>>,
     /// Go's `memTracker` (`NewTracker(e.ID(), -1)`) of an executor whose
     /// tracked memory is the chunk it holds (a projection's or stream
     /// aggregation's `childResult`, an index lookup's result chunk): the
@@ -618,7 +618,7 @@ fn checked_executor(child: Box<dyn Executor>, memory: crate::StatementMemory) ->
 fn checked_executor_with_stats(
     child: Box<dyn Executor>,
     memory: crate::StatementMemory,
-    runtime_stats: Option<Arc<dyn crate::executor::ExecutorRuntimeStats>>,
+    runtime_stats: Option<Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStats>>,
 ) -> Box<dyn Executor> {
     Box::new(SqlKillerCheckExec {
         child,
@@ -1051,7 +1051,7 @@ fn has_correlated_access(conditions: &[Expression]) -> bool {
 fn substitute_correlated_access(
     conditions: &[Expression],
     ctx: &crate::StmtContext,
-) -> Result<Vec<Expression>, crate::executor::ExecError> {
+) -> Result<Vec<Expression>, tidb_driver_error::ExecError> {
     let builder = tidb_expr::expr_util::builder::RealFunctionBuilder::new(ctx);
     let options = tidb_expr::expr_util::substitute::SubstituteOptions::new(&builder);
     conditions
@@ -1062,7 +1062,7 @@ fn substitute_correlated_access(
             tidb_expr::expr_util::substitute::substitute_cor_col_2_constant(
                 &condition, ctx, &options,
             )
-            .map_err(|error| crate::executor::ExecError::internal(format!("{error:?}")))
+            .map_err(|error| tidb_driver_error::ExecError::internal(format!("{error:?}")))
         })
         .collect()
 }
@@ -1091,7 +1091,7 @@ fn correlated_index_range_rebuilder(
                 &tidb_planner::ranger::points::StatementRangerEvaluator(&ctx),
                 ctx.ranger_options(),
             )
-            .map_err(|error| crate::executor::ExecError::internal(format!("{error:?}")))?;
+            .map_err(|error| tidb_driver_error::ExecError::internal(format!("{error:?}")))?;
         Ok(executor_ranges(&ranges))
     }))
 }
@@ -1114,7 +1114,7 @@ fn correlated_table_range_rebuilder(
         let ranges = match &rebuild.handle_type {
             Some(handle_type) => {
                 tidb_planner::ranger::ranger::build_table_range_in(&access, handle_type, 0, &evaluate)
-                    .map_err(|error| crate::executor::ExecError::internal(format!("{error:?}")))?
+                    .map_err(|error| tidb_driver_error::ExecError::internal(format!("{error:?}")))?
                     .ranges
             }
             None => {
@@ -1126,7 +1126,7 @@ fn correlated_table_range_rebuilder(
                     &evaluate,
                     ctx.ranger_options(),
                 )
-                .map_err(|error| crate::executor::ExecError::internal(format!("{error:?}")))?
+                .map_err(|error| tidb_driver_error::ExecError::internal(format!("{error:?}")))?
                 .ranges
             }
         };
@@ -5376,7 +5376,7 @@ fn batch_point_usage_stats(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     table: &tidb_table::kv_table::KvTable,
-) -> Option<std::sync::Arc<crate::access_cost::TableStatistics>> {
+) -> Option<std::sync::Arc<tidb_stats::table_statistics::TableStatistics>> {
     // Go `BatchPointGetPlan.LoadTableStats`: `GetStatsTable(TblInfo.ID)`.
     if crate::access_cost::table_statistics(ctx, catalog, table.table_id()).is_some() {
         return crate::access_cost::get_stats_table(ctx, catalog, table.table_id());
@@ -5390,9 +5390,9 @@ fn batch_point_usage_stats(
         }
         row_count = row_count.saturating_add(stats.row_count);
     }
-    Some(std::sync::Arc::new(crate::access_cost::TableStatistics {
+    Some(std::sync::Arc::new(tidb_stats::table_statistics::TableStatistics {
         row_count,
-        ..crate::access_cost::TableStatistics::default()
+        ..tidb_stats::table_statistics::TableStatistics::default()
     }))
 }
 
@@ -5487,7 +5487,7 @@ struct IndexPartialHandleSource {
     source: IndexRangeSourceExec,
     partition_indexes: Vec<usize>,
     table: crate::KvTable,
-    stats: Option<Arc<crate::access_cost::TableStatistics>>,
+    stats: Option<Arc<tidb_stats::table_statistics::TableStatistics>>,
     ctx: crate::StmtContext,
     index_id: i64,
     reported: bool,
@@ -8072,7 +8072,7 @@ use super::*;
         closes: std::sync::atomic::AtomicUsize,
     }
 
-    impl crate::executor::ExecutorRuntimeStats for RecordedExecutorRuntimeStats {
+    impl tidb_util::execdetails::runtime_stats::ExecutorRuntimeStats for RecordedExecutorRuntimeStats {
         fn record_open(&self, _elapsed: Duration) {
             self.opens.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
@@ -8095,13 +8095,13 @@ use super::*;
         stats: Arc<RecordedExecutorRuntimeStats>,
     }
 
-    impl crate::executor::ExecutorRuntimeStatsSource for RecordingExecutorRuntimeStatsSource {
+    impl tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource for RecordingExecutorRuntimeStatsSource {
         fn for_executor(
             &self,
             plan_id: i64,
-        ) -> Option<Arc<dyn crate::executor::ExecutorRuntimeStats>> {
+        ) -> Option<Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStats>> {
             self.plan_ids.lock().unwrap().push(plan_id);
-            let stats: Arc<dyn crate::executor::ExecutorRuntimeStats> = self.stats.clone();
+            let stats: Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStats> = self.stats.clone();
             Some(stats)
         }
     }
@@ -8109,7 +8109,7 @@ use super::*;
     #[test]
     fn ordinary_executor_records_runtime_stats_when_collection_is_enabled() {
         let source = Arc::new(RecordingExecutorRuntimeStatsSource::default());
-        let source_handle: Arc<dyn crate::executor::ExecutorRuntimeStatsSource> = source.clone();
+        let source_handle: Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource> = source.clone();
         let ctx =
             crate::StmtContext::for_query().with_executor_runtime_stats_source(Some(source_handle));
         let plan = dual(17, 1);

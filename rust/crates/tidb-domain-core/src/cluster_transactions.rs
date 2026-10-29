@@ -68,7 +68,7 @@ use tidb_store_driver::cluster_table_storage::{
     PreparedStatementSnapshot, SessionTransaction, StatementSnapshot,
 };
 use tidb_store_driver::pessimistic_lock_error::LockSqlError;
-use tidb_store_driver::real_tikv_read::RealOptimisticTransactionOpener;
+use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 use tidb_store_driver::session_commit_protocol::SessionTransactionOptions;
 use tidb_sessionctx::advisory_lock_state::{
     AdvisoryLockError, AdvisoryLockLease, AdvisoryLockService,
@@ -652,14 +652,14 @@ pub fn stage_pessimistic_statement<T>(
 #[derive(Clone, Debug, Default)]
 pub struct StatementReadTs {
     value: Arc<Mutex<Option<u64>>>,
-    current_tso: tidb_executor::CurrentTso,
+    current_tso: tidb_expr::CurrentTso,
     observer: Option<tidb_executor::process::ProcessTransactionObserver>,
     /// Where the open records Go's `DurationWaitTS`.
     phase_durations: Option<tidb_variable::phase_durations::SessionPhaseDurations>,
 }
 
 impl StatementReadTs {
-    pub fn new(current_tso: tidb_executor::CurrentTso) -> Self {
+    pub fn new(current_tso: tidb_expr::CurrentTso) -> Self {
         Self {
             value: Arc::default(),
             current_tso,

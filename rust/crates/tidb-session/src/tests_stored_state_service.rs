@@ -8,10 +8,10 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use crate::analyze_service::AnalyzeService;
+use tidb_executor::analyze::exec::AnalyzeService;
 use crate::ddl_service::DdlService;
 use crate::domain_services::DomainServices;
-use crate::stats_statement_service::StatsStatementService;
+use tidb_executor::stats_exec::StatsStatementService;
 use crate::stored_state_service::{AccountService, PendingSysvarChange, SysvarService};
 use crate::tests_support::*;
 use crate::*;
@@ -53,7 +53,7 @@ impl DdlService for Unreached {
     fn execute(
         &self,
         _statement: &tidb_ddl::cluster_ddl::DdlStatement,
-        _job_context: &tidb_executor::StmtContext,
+        _job_context: &tidb_sessionctx::StmtContext,
     ) -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, DriverError> {
         unreachable!("a SET runs no DDL job")
     }
@@ -153,7 +153,7 @@ mod analyze {
     use tidb_executor::cluster_analyze::AnalyzeStatement;
     use tidb_executor::real_tikv_analyze::ClusterAnalyzeReport;
 
-    use crate::analyze_service::AnalyzeService;
+    use tidb_executor::analyze::exec::AnalyzeService;
     use crate::*;
 
     #[derive(Default)]

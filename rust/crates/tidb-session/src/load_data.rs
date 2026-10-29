@@ -99,7 +99,7 @@ impl crate::Session {
         let ctx = self
             .statement_context_ignoring(true, !restrictive)
             .with_statement_priority(crate::classify::statement_priority_of(stmt))
-            .with_statement_class(tidb_executor::StatementClass::LoadData);
+            .with_statement_class(tidb_sessionctx::StatementClass::LoadData);
         let current_db = self.vars.current_db.clone();
         let result = self.with_staged_catalog(|catalog| {
             tidb_executor::load_data::run_load_data(

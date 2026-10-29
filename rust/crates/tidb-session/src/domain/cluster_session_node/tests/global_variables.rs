@@ -43,7 +43,7 @@ impl PendingSysvarChange for UndeterminedSysvarChange {
         self.0.clone()
     }
 
-    fn commit(self: Box<Self>) -> Result<Vec<String>, crate::domain::session_api::SqlQueryError> {
+    fn commit(self: Box<Self>) -> Result<Vec<String>, tidb_store_driver::sql_query_error::SqlQueryError> {
         Err(undetermined_cluster_commit_error("sysvar change"))
     }
 }
@@ -65,7 +65,7 @@ impl PendingSysvarChange for BackoffSysvarChange {
         self.0.clone()
     }
 
-    fn commit(self: Box<Self>) -> Result<Vec<String>, crate::domain::session_api::SqlQueryError> {
+    fn commit(self: Box<Self>) -> Result<Vec<String>, tidb_store_driver::sql_query_error::SqlQueryError> {
         let outcome = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
             receipt: OptimisticTransactionReceipt::new(1, 2, b"key".to_vec(), 1),
             cause: TransactionCause::BackoffExhausted {
@@ -74,7 +74,7 @@ impl PendingSysvarChange for BackoffSysvarChange {
             },
         });
         Err(
-            crate::domain::session_api::cluster_commit_error(&outcome, "sysvar change")
+            tidb_domain_core::errors::cluster_commit_error(&outcome, "sysvar change")
                 .expect("an exhausted max-ts backoff cannot answer success"),
         )
     }
@@ -96,7 +96,7 @@ fn factory_with_globals(node: &MockNode, globals: GlobalSysvars) -> Domain {
             SharedStats::new(tidb_stats_handle_syncload::stats_watch::StatsSnapshot::new())
                 .expect("statistics cache"),
         ),
-        Arc::new(tidb_domain_core::cluster_session::LocalTableAutoIds::default()),
+        Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default()),
         crate::domain::cluster_session_node::open_pool_session,
     )
 }
@@ -259,7 +259,8 @@ fn session_plan_cache_instance_flush_uses_factory_lifetime() {
 
 #[test]
 fn global_config_factory_shares_the_owner_across_scratch_sysvar_statements() {
-    use tidb_domain::globalconfigsync::{GlobalConfigItem, GlobalConfigSyncer};
+    use tidb_domain::globalconfigsync::GlobalConfigSyncer;
+    use tidb_proto::pdpb::GlobalConfigItem;
     let node = MockNode::start();
     let (syncer, notifications) = GlobalConfigSyncer::new(None);
     let factory = factory_with_globals(&node, node.sysvars.live.clone())

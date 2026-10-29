@@ -29,7 +29,8 @@ use tidb_model::{
 use tidb_txnkv::transaction::BufferMutation;
 
 use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
-use crate::cluster_ddl::{DdlAdmissionError, DdlPlanError};
+use crate::cluster_ddl::DdlPlanError;
+use tidb_ddl_build::table_info_build::DdlAdmissionError;
 use crate::ddl_job_table::DdlJobTable;
 
 /// Go `JobSpec`: the durable envelope plus its source-typed private arguments.
@@ -889,7 +890,7 @@ mod tests {
 
     #[test]
     fn alter_table_mode_job_matches_go() {
-        let context = tidb_executor::StmtContext::for_query()
+        let context = tidb_sessionctx::StmtContext::for_query()
             .with_ddl_sql_mode(4)
             .with_ddl_job_context(7, 1, "", Vec::new());
         let (job, args) =
@@ -916,7 +917,7 @@ mod tests {
 
     #[test]
     fn alter_table_mode_noop_and_invalid_match_go() {
-        let context = tidb_executor::StmtContext::for_query();
+        let context = tidb_sessionctx::StmtContext::for_query();
         assert!(build_alter_table_mode_job(
             &context,
             &target(TableMode::IMPORT, TableMode::IMPORT)

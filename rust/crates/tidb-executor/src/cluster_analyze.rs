@@ -46,13 +46,11 @@ use tidb_infoschema::cluster_catalog::{PagedMetaSnapshot, RegionPagedMetaSnapsho
 use tidb_kv::key::prefix_scan_end;
 use tidb_stats_handle_storage::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
 use tidb_syssession::mysql_system_tables::{SystemRow, SystemTableError, SystemTableView};
-use tidb_syssession::system_row_write::origin_default;
+use tidb_table::origin_default::origin_default;
 
-pub use crate::analyze::{
-    resolve_analyze_options, AnalyzeColumnChoice, AnalyzeOptionOverrides, AnalyzeOptions,
-    AnalyzeStatement, SampleMemoryExceeded, SampleMemoryQuota, MEM_QUOTA_ANALYZE_VARIABLE,
-    STATS_VERSION_2,
-};
+pub use crate::analyze::{resolve_analyze_options, AnalyzeColumnChoice, AnalyzeOptionOverrides, AnalyzeOptions, AnalyzeStatement, MEM_QUOTA_ANALYZE_VARIABLE, STATS_VERSION_2};
+pub use tidb_stats::row_sample_collector::SampleMemoryExceeded;
+pub use tidb_stats::row_sample_collector::SampleMemoryQuota;
 
 /// Whether this statement is an `ANALYZE TABLE` this node runs, and against
 /// which tables.

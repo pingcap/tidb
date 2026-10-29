@@ -24,10 +24,8 @@ use tidb_executor::compiler::prepared::PreparedExec as _;
 use tidb_executor::ddl_exec::map_error;
 use tidb_session::domain::cluster_session_node::DomainSessions;
 use tidb_domain_core::domain::Domain;
-use tidb_session::domain::session_api::{
-    ActiveQueryCancellation, GeneralExecuteOutcome, PreparedGeneral, QueryResult, SessionContext,
-    SqlQueryError,
-};
+use tidb_session::domain::session_api::{ActiveQueryCancellation, GeneralExecuteOutcome, PreparedGeneral, QueryResult, SessionContext};
+use tidb_store_driver::sql_query_error::SqlQueryError;
 use tidb_session::domain::wire_status::WireStatus;
 use tidb_session::Session;
 use tidb_util::globalconn::Allocator;

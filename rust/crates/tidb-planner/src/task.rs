@@ -1303,7 +1303,7 @@ mod tests {
 
     #[test]
     fn root_conversion_uses_statement_values_for_root_filters() {
-        use crate::cardinality::row_count_estimator::ColumnStats;
+        use tidb_stats::table_statistics::ColumnStats;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::constant::{Constant, ParamMarker};
         let allocator = PlanIdAllocator::new();
@@ -2110,7 +2110,7 @@ mod tests {
 
     #[test]
     fn root_task_filter_preserves_go_one_row_floor() {
-        use crate::cardinality::row_count_estimator::ColumnStats;
+        use tidb_stats::table_statistics::ColumnStats;
         use crate::stats_info::HistColl;
         use std::sync::Arc;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -2236,7 +2236,8 @@ mod tests {
 
     #[test]
     fn root_task_filter_uses_the_task_session_estimator_options() {
-        use crate::cardinality::row_count_estimator::{ColumnStats, EstimatorOptions};
+        use crate::cardinality::row_count_estimator::EstimatorOptions;
+        use tidb_stats::table_statistics::ColumnStats;
         use crate::stats_info::HistColl;
         use std::sync::Arc;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};

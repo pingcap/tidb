@@ -21,11 +21,8 @@
 //! into the new partitions and their indexes built) -> delete-reorganization
 //! -> public -> none, DML double writing both partition sets meanwhile.
 
-use super::add_index::{
-    action_step, job_batch_size, load_reorg_handle, ReorgSessionVars, reorg_step,
-    reorg_sub_job, table_step_with_diff, AddIndexReorg, AddIndexSubmission, PartitionReorgPhase,
-    ReorgOutcome, ReorgResult, ReorgStageRequest, COLUMN_ELEMENT_KEY,
-};
+use super::add_index::{action_step, job_batch_size, load_reorg_handle, reorg_step, reorg_sub_job, table_step_with_diff, AddIndexReorg, AddIndexSubmission, PartitionReorgPhase, ReorgOutcome, ReorgResult, ReorgStageRequest, COLUMN_ELEMENT_KEY};
+use tidb_ddl_build::session_pool::ReorgSessionVars;
 use super::*;
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;

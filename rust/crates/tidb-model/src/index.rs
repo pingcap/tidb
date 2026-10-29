@@ -24,9 +24,8 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 
 use crate::cascades_hash::HashInt64;
 use crate::column::{removing_origin_name, REMOVING_OBJ_PREFIX};
-use crate::go_runtime::{
-    GoNullClonePolicy, GoPointerAny, GoShared, GoSharedPointerSlice, GoSharedSlice,
-};
+use crate::go_runtime::{GoNullClonePolicy, GoPointerAny, GoShared, GoSharedPointerSlice};
+use tidb_goruntime::go_runtime::GoSharedSlice;
 use crate::reorg::BackfillState;
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{

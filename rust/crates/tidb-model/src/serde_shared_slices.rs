@@ -19,9 +19,9 @@ use std::collections::BTreeMap;
 use serde::de::{DeserializeSeed, Visitor};
 use serde::{Deserialize, Deserializer};
 
-use crate::go_runtime::{
-    go_64_slice_decode_capacity, GoShared, GoSharedSlice, GoSliceElementLayout,
-};
+use crate::go_runtime::{go_64_slice_decode_capacity, GoShared};
+use tidb_goruntime::go_runtime::GoSliceElementLayout;
+use tidb_goruntime::go_runtime::GoSharedSlice;
 use crate::serde_helpers::{
     is_fatal_json_error, GoJsonMerge, RawArrayMembers, RawObjectMembers, SharedStringSliceSeed,
 };

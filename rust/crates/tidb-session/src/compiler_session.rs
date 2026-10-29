@@ -83,7 +83,7 @@ impl tidb_executor::compiler::CompilerSession for Session {
         Session::rewrite_fts_for_planning(self, stmt)
     }
 
-    fn retrieving_memory_tables<T>(&mut self, ctx: &tidb_executor::StmtContext, mut run: impl FnMut(&mut Self) -> Result<T, DriverError>, ) -> Result<T, DriverError> {
+    fn retrieving_memory_tables<T>(&mut self, ctx: &tidb_sessionctx::StmtContext, mut run: impl FnMut(&mut Self) -> Result<T, DriverError>, ) -> Result<T, DriverError> {
         Session::retrieving_memory_tables(self, ctx, run)
     }
 
@@ -103,7 +103,7 @@ impl tidb_executor::compiler::CompilerSession for Session {
     }
 
 
-    fn drain_eval_warnings(&mut self, ctx: &tidb_executor::StmtContext) {
+    fn drain_eval_warnings(&mut self, ctx: &tidb_sessionctx::StmtContext) {
         Session::drain_eval_warnings(self, ctx)
     }
 

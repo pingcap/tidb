@@ -66,7 +66,7 @@ use tidb_stats::row_sample_collector::{
 };
 use tidb_stats::sample_bytes::MAX_SAMPLE_VALUE_LENGTH;
 
-pub use tidb_stats::row_sample_collector::{SampleMemoryExceeded, SampleMemoryQuota};
+use tidb_stats::row_sample_collector::{SampleMemoryExceeded, SampleMemoryQuota};
 
 /// `statistics.Version2`, the only generation this engine writes.
 pub const STATS_VERSION_2: i64 = 2;

@@ -480,7 +480,7 @@ mod tests {
         };
         for task in [record, index] {
             let metadata = task.request.metadata();
-            assert_eq!(metadata.request_type, tidb_distsql::RequestType::Checksum);
+            assert_eq!(metadata.request_type, tidb_txnkv::RequestType::Checksum);
             assert!(metadata.not_fill_cache);
             assert!(!metadata.paging.enabled);
             assert!(!metadata.keep_order);
@@ -589,7 +589,7 @@ mod tests {
         ) -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
             assert_eq!(
                 request.metadata().request_type,
-                tidb_distsql::RequestType::Checksum
+                tidb_txnkv::RequestType::Checksum
             );
             Ok(Box::new(Responses(
                 self.0.iter().map(Message::encode_to_vec).collect(),

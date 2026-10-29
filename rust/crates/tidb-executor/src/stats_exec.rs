@@ -21,9 +21,10 @@
 use std::sync::Arc;
 
 use crate::analyze::exec::AnalyzeExec;
-use tidb_stats_handle_storage::json::{parse_stats_json, JsonTable};
+use tidb_stats_handle_storage::json::parse_stats_json;
+use tidb_stats::JsonTable;
 use crate::{DriverError, KvTable, TableEntry};
-use tidb_util::stringutil::go_to_lower;
+use tidb_hack::go_to_lower;
 
 /// The physical tables a `FLUSH STATS_DELTA` dumps.
 #[derive(Clone, Debug, Eq, PartialEq)]

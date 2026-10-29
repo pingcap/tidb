@@ -72,7 +72,8 @@ use tidb_stats::cmsketch::{CmsSketch, TopN};
 use tidb_stats::histogram::{Bucket, Histogram};
 use tidb_stats::{FmSketch, JsonPredicateColumn, JsonTable, MAX_SKETCH_SIZE};
 use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId};
-use tidb_stats_handle_usage::{DeltaUpdate, TableDelta};
+use tidb_stats_handle_usage::DeltaUpdate;
+use tidb_variable::table_delta::TableDelta;
 use tidb_txnkv::transaction::BufferMutationOp;
 
 #[derive(Default)]

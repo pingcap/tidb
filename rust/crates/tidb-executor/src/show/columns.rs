@@ -18,7 +18,7 @@
 
 use tidb_datatype::{Datum, STRICT_INTEGER_DISPLAY_WIDTH};
 
-use crate::simple::account_tables::sysvar_datum_text as datum_text;
+use tidb_datatype::datum_text::sysvar_datum_text as datum_text;
 use crate::DriverError;
 
 /// The `Type` cell of a `SHOW COLUMNS`/`DESCRIBE` row: Go `NewColDesc`'s

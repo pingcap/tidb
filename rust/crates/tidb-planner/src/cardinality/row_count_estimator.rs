@@ -43,7 +43,7 @@ use tidb_datatype::{Collation, Datum};
 #[cfg(test)]
 use tidb_stats::cmsketch::CmsSketch;
 use tidb_stats::cmsketch::TopN;
-pub use tidb_stats::table_statistics::{ColumnStats, IndexStats};
+use tidb_stats::table_statistics::{ColumnStats, IndexStats};
 use tidb_stats::histogram::{Histogram, OutOfRangeContext};
 
 use super::pseudo::{
@@ -58,7 +58,7 @@ use crate::cost_factors::TOLERANCE_FACTOR;
 
 /// Go `statistics.Version1`.
 pub const VERSION1: i64 = 1;
-pub use tidb_stats::table_statistics::VERSION2;
+use tidb_stats::table_statistics::VERSION2;
 
 /// Go `staleLastBucketThreshold`.
 const STALE_LAST_BUCKET_THRESHOLD: f64 = 0.3;
@@ -456,7 +456,7 @@ pub fn between_row_count_on_column(
 
 // Cardinality and statistics share Go's full typed enumeration contract,
 // including the distinction between nil and an empty enumerated integer range.
-pub use tidb_stats::enum_range_values;
+use tidb_stats::enum_range_values;
 
 fn encode_datum(value: &Datum, options: &EstimatorOptions) -> Result<Vec<u8>, tidb_codec::CodecError> {
     tidb_codec::encode_key_in_timezone(options.time_zone.as_ref(), std::slice::from_ref(value))

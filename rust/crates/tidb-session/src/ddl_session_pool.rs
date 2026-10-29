@@ -26,7 +26,8 @@ use tidb_ddl_build::session_pool::{DdlSessionPool, ForeignKeyCheck, ReorgSession
 use tidb_table::table_from_meta::{cluster_table, AutoIdSource};
 use tidb_error::mysql::MysqlError;
 use tidb_ddl_build::partition_reorg::KvTablePartitionReorg;
-use tidb_executor::{KvTableDdl, KvTableReader, StmtContext};
+use tidb_executor::{KvTableDdl, KvTableReader};
+use tidb_sessionctx::StmtContext;
 use tidb_kv::cluster_storage::ClusterTableStorage;
 use tidb_table::context::MutateContext;
 use tidb_table::kv_table::{KvTable, KvTableError, RowDecodeContext, TableCharset};

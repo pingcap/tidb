@@ -61,12 +61,12 @@ use crate::analyze::ClusterAnalyzeReport;
 use crate::{DriverError, TableEntry};
 
 use tidb_hack::GoToLower;
-use tidb_util::stringutil::go_to_lower;
+use tidb_hack::go_to_lower;
 
 /// Publish merged ANALYZE items as a real cache table. Go's storage loader
 /// derives the table format from histogram rows; these local results bypass
 /// that reload and must refresh the same metadata after replacing items.
-fn finish_analyze_publication(statistics: &mut crate::access_cost::TableStatistics) {
+fn finish_analyze_publication(statistics: &mut tidb_stats::table_statistics::TableStatistics) {
     if let Some(version) = statistics
         .columns
         .values()
@@ -90,10 +90,10 @@ fn finish_analyze_publication(statistics: &mut crate::access_cost::TableStatisti
 }
 
 fn merge_analyzed_statistics(
-    old: Option<Arc<crate::access_cost::TableStatistics>>,
-    mut fresh: crate::access_cost::TableStatistics,
+    old: Option<Arc<tidb_stats::table_statistics::TableStatistics>>,
+    mut fresh: tidb_stats::table_statistics::TableStatistics,
     replace_counts: bool,
-) -> crate::access_cost::TableStatistics {
+) -> tidb_stats::table_statistics::TableStatistics {
     let Some(old) = old else {
         finish_analyze_publication(&mut fresh);
         return fresh;
@@ -131,17 +131,17 @@ fn merge_analyzed_statistics(
 }
 
 fn merge_partial_statistics(
-    old: Option<Arc<crate::access_cost::TableStatistics>>,
-    fresh: crate::access_cost::TableStatistics,
+    old: Option<Arc<tidb_stats::table_statistics::TableStatistics>>,
+    fresh: tidb_stats::table_statistics::TableStatistics,
     partial: bool,
-) -> crate::access_cost::TableStatistics {
+) -> tidb_stats::table_statistics::TableStatistics {
     merge_analyzed_statistics(if partial { old } else { None }, fresh, true)
 }
 
 fn merge_independent_index_statistics(
-    old: Option<Arc<crate::access_cost::TableStatistics>>,
-    fresh: crate::access_cost::TableStatistics,
-) -> crate::access_cost::TableStatistics {
+    old: Option<Arc<tidb_stats::table_statistics::TableStatistics>>,
+    fresh: tidb_stats::table_statistics::TableStatistics,
+) -> tidb_stats::table_statistics::TableStatistics {
     // An independent index task updates histogram rows without changing
     // stats_meta row/modify counts, unlike a full column-sampling task.
     merge_analyzed_statistics(old, fresh, false)
@@ -151,11 +151,11 @@ fn merge_independent_index_statistics(
 /// statistics, the same source used by Go's `MergePartitionStats2GlobalStats`.
 fn merge_partitioned_global_statistics(
     table: &tidb_table::kv_table::KvTable,
-    partitions: &[(i64, Arc<crate::access_cost::TableStatistics>)],
-    previous: Option<Arc<crate::access_cost::TableStatistics>>,
+    partitions: &[(i64, Arc<tidb_stats::table_statistics::TableStatistics>)],
+    previous: Option<Arc<tidb_stats::table_statistics::TableStatistics>>,
     options: &crate::analyze::AnalyzeOptions,
     time_zone: &tidb_datatype::SessionTimeZone,
-) -> Result<crate::access_cost::TableStatistics, DriverError> {
+) -> Result<tidb_stats::table_statistics::TableStatistics, DriverError> {
     let row_count = partitions
         .iter()
         .fold(0_i64, |count, (_, stats)| count.saturating_add(stats.row_count.max(0)));
@@ -165,7 +165,7 @@ fn merge_partitioned_global_statistics(
     let mut global = previous
         .as_deref()
         .cloned()
-        .unwrap_or_else(|| crate::access_cost::TableStatistics::new(
+        .unwrap_or_else(|| tidb_stats::table_statistics::TableStatistics::new(
             row_count,
             modify_count,
             Default::default(),
@@ -234,7 +234,7 @@ fn merge_partitioned_global_statistics(
             histogram.round_trip_through_storage(&column.field_type);
             global.columns.insert(
                 column.id,
-                tidb_planner::cardinality::row_count_estimator::ColumnStats {
+                tidb_stats::table_statistics::ColumnStats {
                     histogram,
                     topn: merged.topn,
                     cms: merged.cmsketch,
@@ -309,7 +309,7 @@ fn merge_partitioned_global_statistics(
             ));
             global.indexes.insert(
                 index.id,
-                tidb_planner::cardinality::row_count_estimator::IndexStats {
+                tidb_stats::table_statistics::IndexStats {
                     histogram,
                     topn: merged.topn,
                     cms: merged.cmsketch,
@@ -691,7 +691,7 @@ fn saved_options_from_row(
     row: &[tidb_datatype::Datum],
     table: &tidb_table::kv_table::KvTable,
 ) -> SavedAnalyzeOptions {
-    let text = |index: usize| row.get(index).and_then(crate::simple::account_tables::sysvar_datum_text).unwrap_or_default();
+    let text = |index: usize| row.get(index).and_then(tidb_datatype::datum_text::sysvar_datum_text).unwrap_or_default();
     let int = |index: usize| text(index).parse::<i64>().unwrap_or(0);
     let sample_num = int(0);
     let sample_rate = text(1).parse::<f64>().unwrap_or(0.0);
@@ -823,7 +823,7 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
         &mut self,
         statement: &AnalyzeStatement,
     ) -> Result<
-        std::collections::HashMap<i64, Arc<crate::access_cost::TableStatistics>>,
+        std::collections::HashMap<i64, Arc<tidb_stats::table_statistics::TableStatistics>>,
         DriverError,
     > {
         let stats_handle = self.stats_handle();

@@ -15,7 +15,8 @@
 //! Go `TableSampleExecutor`: one record from each storage range.
 
 use crate::KvTableReader;
-use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::executor::{Executor, ExecutorMeta};
+use tidb_driver_error::ExecError;
 use tidb_table::kv_table::TableHandle;
 use tidb_table::kv_table::RowDecodeContext;
 use tidb_table::kv_table::KvTable;

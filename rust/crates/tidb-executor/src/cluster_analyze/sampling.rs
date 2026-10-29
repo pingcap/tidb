@@ -558,11 +558,11 @@ pub(super) fn index_requires_ndv_scan(
         })
 }
 
-fn read_policy(snapshot_enabled: bool, snapshot: u64) -> (u64, tidb_distsql::IsolationLevel) {
+fn read_policy(snapshot_enabled: bool, snapshot: u64) -> (u64, tidb_txnkv::IsolationLevel) {
     if snapshot_enabled {
-        (snapshot, tidb_distsql::IsolationLevel::Snapshot)
+        (snapshot, tidb_txnkv::IsolationLevel::Snapshot)
     } else {
-        (u64::MAX, tidb_distsql::IsolationLevel::ReadCommitted)
+        (u64::MAX, tidb_txnkv::IsolationLevel::ReadCommitted)
     }
 }
 
@@ -809,7 +809,7 @@ mod tests {
         for (size, enabled) in [(4, true), (0, false)] {
             let mut builder = tidb_distsql::RequestBuilder::new();
             builder
-                .set_analyze_request(Vec::new(), tidb_distsql::IsolationLevel::ReadCommitted)
+                .set_analyze_request(Vec::new(), tidb_txnkv::IsolationLevel::ReadCommitted)
                 .set_non_partitioned_key_ranges(vec![tidb_distsql::RequestKeyRange {
                     start_key: b"a".to_vec().into(),
                     end_key: b"b".to_vec().into(),
@@ -864,11 +864,11 @@ mod tests {
     fn analyze_snapshot_controls_both_timestamp_and_isolation() {
         assert_eq!(
             super::read_policy(false, 123),
-            (u64::MAX, tidb_distsql::IsolationLevel::ReadCommitted)
+            (u64::MAX, tidb_txnkv::IsolationLevel::ReadCommitted)
         );
         assert_eq!(
             super::read_policy(true, 123),
-            (123, tidb_distsql::IsolationLevel::Snapshot)
+            (123, tidb_txnkv::IsolationLevel::Snapshot)
         );
     }
 

@@ -36,15 +36,15 @@ use tidb_unistore::mvcc_store::MvccStore;
 #[cfg(test)]
 use tidb_unistore::tso::InProcessPd;
 
-pub use tidb_ddl::embedded_store::{in_process_stack, InProcessStack, IN_PROCESS_TIMEOUT};
+use tidb_ddl::embedded_store::{in_process_stack, InProcessStack, IN_PROCESS_TIMEOUT};
 #[cfg(test)]
-pub use tidb_ddl::embedded_store::{
+use tidb_ddl::embedded_store::{
     embedded_tikv_store, in_process_write_stack, InProcessOpener,
 };
 #[cfg(test)]
 use tidb_pd_client::ClusterSecurity;
 
-use crate::domain::session_api::SqlQueryError;
+use tidb_store_driver::sql_query_error::SqlQueryError;
 
 
 /// The transport an in-process session reads through: Go's coprocessor over
@@ -739,7 +739,7 @@ pub fn unistore_cluster_session_stack_from(
     .with_region_store(region_store)
     .with_server_info(server_info)
     // No etcd: the standalone server ID, as Go's Domain allocator names.
-    .with_connection_ids(crate::domain::session_api::new_connection_id_allocator(
+    .with_connection_ids(tidb_domain_core::connection_ids::new_connection_id_allocator(
         &config.global_config,
         None,
     ))

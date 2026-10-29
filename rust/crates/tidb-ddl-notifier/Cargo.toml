@@ -11,6 +11,7 @@ description = "TiDB durable DDL schema-change notification."
 workspace = true
 
 [dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tidb-ast = { path = "../tidb-ast" }

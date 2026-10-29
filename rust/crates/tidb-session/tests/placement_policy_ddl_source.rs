@@ -24,7 +24,8 @@
 use std::sync::Arc;
 
 use crate::support::testkit::TestKit;
-use tidb_executor::{KvTable, TableEntry};
+use tidb_executor::TableEntry;
+use tidb_table::kv_table::KvTable;
 
 /// The `(id, followers, primary_region, regions, schedule)` a policy must
 /// carry after a create/alter, checked against Go's `checkFunc` expectations.

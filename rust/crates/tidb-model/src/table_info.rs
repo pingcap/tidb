@@ -30,9 +30,8 @@ use tidb_datatype::FieldTypeFlags;
 use crate::cascades_hash::HashInt64;
 use crate::column::ColumnInfo;
 use crate::engine_attribute::{build_storage_class_string, StorageClassTransitRule};
-use crate::go_runtime::{
-    GoNullClonePolicy, GoPointerAny, GoShared, GoSharedPointerSlice, GoSharedSlice, GoTime,
-};
+use crate::go_runtime::{GoNullClonePolicy, GoPointerAny, GoShared, GoSharedPointerSlice, GoTime};
+use tidb_goruntime::go_runtime::GoSharedSlice;
 use crate::index::{IndexInfo, RegionSplitPolicy};
 use crate::partition::PartitionInfo;
 use crate::placement::PolicyRefInfo;

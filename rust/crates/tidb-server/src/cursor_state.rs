@@ -28,10 +28,11 @@ use tidb_util::memory::{
 use crate::connection_writers::{write_eof_or_ok, write_packet_to, ConnectionPacketOutput};
 use crate::mysql_connection::MysqlConnectionError;
 use tidb_session::domain::resultset_source::ResultSetSource;
-use crate::sql_node::{CursorMaterializationAuthority, QueryResult, SqlQueryError};
+use crate::sql_node::{CursorMaterializationAuthority, QueryResult};
+use tidb_store_driver::sql_query_error::SqlQueryError;
 
 pub(crate) struct CursorState {
-    current_tso: Option<tidb_executor::CurrentTso>,
+    current_tso: Option<tidb_expr::CurrentTso>,
     _start_ts_guard: Option<Arc<tidb_txnkv::StartTsGuard>>,
     columns: Vec<tidb_protocol::ColumnInfo>,
     field_types: Vec<tidb_datatype::FieldType>,
@@ -339,7 +340,7 @@ mod tests {
     }
 
     struct CountingRows {
-        current_tso: tidb_executor::CurrentTso,
+        current_tso: tidb_expr::CurrentTso,
         fields: Vec<tidb_executor::adapter::ResultFieldMetadata>,
         rows: VecDeque<Vec<Datum>>,
         lifecycle: Arc<Mutex<SourceLifecycle>>,
@@ -404,7 +405,7 @@ mod tests {
         let disk_tracker = Arc::clone(memory.session_disk_tracker());
         let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
         let lifecycle = Arc::new(Mutex::new(SourceLifecycle::default()));
-        let current_tso = tidb_executor::CurrentTso::default();
+        let current_tso = tidb_expr::CurrentTso::default();
         let source = CountingRows {
             current_tso: current_tso.clone(),
             fields: select_fields(&[("v".to_owned(), fields[0].clone())]),

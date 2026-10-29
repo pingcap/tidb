@@ -13,9 +13,9 @@ use super::mock_cluster::*;
 use super::mock_seams::*;
 use crate::domain::configured_user_store::ConfiguredUserStore;
 use crate::domain::resultset_source::ResultSetSource;
-use crate::domain::session_api::{
-    cluster_commit_error, ConnectionCancellation, ConnectionClose, SqlQueryError,
-};
+use crate::domain::session_api::{ConnectionCancellation, ConnectionClose};
+use tidb_domain_core::errors::cluster_commit_error;
+use tidb_store_driver::sql_query_error::SqlQueryError;
 use sha1::{Digest, Sha1};
 use std::net::SocketAddr;
 use tidb_ast::CiString;
@@ -267,7 +267,7 @@ pub(super) struct MockNode {
     pub(super) factories: std::sync::Mutex<Vec<Arc<Domain>>>,
     /// The node's auto-id registry, which every connection's table
     /// allocates through.
-    pub(super) auto_ids: Arc<tidb_domain_core::cluster_session::LocalTableAutoIds>,
+    pub(super) auto_ids: Arc<tidb_table::table_from_meta::LocalTableAutoIds>,
 }
 
 impl MockNode {
@@ -284,7 +284,7 @@ impl MockNode {
 /// [`PrivilegeRegistry::replace_from`] empties its source.
 pub(super) fn clone_registry(source: &PrivilegeRegistry) -> PrivilegeRegistry {
     let image = tidb_domain_core::cluster_privileges::cluster_image_from_registry(source);
-    tidb_domain_core::cluster_privileges::registry_from_cluster(&image).registry
+    tidb_privilege::load::registry_from_cluster(&image).registry
 }
 
 /// The node IS its committed store as far as an assertion is concerned, so

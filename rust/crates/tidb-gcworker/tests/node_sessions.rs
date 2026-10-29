@@ -18,7 +18,8 @@
 use std::sync::Arc;
 
 use tidb_gcworker::node::NodeGcSessions;
-use tidb_gcworker::seams::{DelRangeTask, GcSessionFactory};
+use tidb_gcworker::seams::GcSessionFactory;
+use tidb_ddl::ddl_delete_range::DelRangeTask;
 use tidb_session::domain::cluster_session_node::DomainSessions as _;
 use tidb_session::domain::configured_user_store::ConfiguredUserStore;
 use tidb_domain_core::node_config::{NodeConfig, NodeOptions};

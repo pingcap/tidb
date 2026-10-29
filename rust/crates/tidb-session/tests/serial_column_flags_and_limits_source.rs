@@ -22,7 +22,7 @@
 
 use crate::support::testkit::{TestKit, serial, update_global_config};
 use tidb_datatype::FieldType;
-use tidb_session::StmtOutput;
+use tidb_executor::StmtOutput;
 
 /// Go `rs, _ := tk.Exec(sql); rs.Fields()`: the result-set column metadata.
 fn fields(tk: &mut TestKit, sql: &str) -> Vec<(String, FieldType)> {

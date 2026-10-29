@@ -185,7 +185,8 @@ use tidb_txnkv::Key;
 
 use crate::bad_null::zero_value;
 use tidb_table::column::cast_table_value;
-use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::executor::{Executor, ExecutorMeta};
+use tidb_driver_error::ExecError;
 use crate::joiner::eval_bool;
 use tidb_table::kv_table::TableHandle;
 use crate::mem_reader::{MemReaderError, MemRowsIter, RowComparator};

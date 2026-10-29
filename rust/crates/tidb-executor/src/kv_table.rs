@@ -44,13 +44,11 @@ use tidb_tablecodec::encode_table_row;
 use tidb_txnkv::{CommonHandle, Key};
 
 mod ddl_ops;
-pub use tidb_ddl_build::backfilling::ReorgBatch;
 mod partition_maintenance;
 mod table_scan;
 pub use table_scan::RowDecodeContextExt;
 pub(crate) use table_scan::insert_extra_handle;
 pub use ddl_ops::KvTableDdl;
-pub use tidb_ddl_build::table_backfill::KvTableBackfill;
 pub use partition_maintenance::KvTablePartitionMaintenance;
 pub use table_scan::KvTableReader;
 pub use table_scan::{

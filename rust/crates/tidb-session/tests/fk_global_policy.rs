@@ -11,7 +11,8 @@
 //! cannot race the other suites' ordinary ON fixtures.
 use std::sync::atomic::Ordering;
 use tidb_executor::TableEntry;
-use tidb_session::{GlobalSysvars, Session};
+use tidb_session::Session;
+use tidb_domain::global_sysvars::GlobalSysvars;
 
 fn sql(session: &mut Session, statement: &str) {
     session

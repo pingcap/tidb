@@ -22,7 +22,7 @@ use tidb_server::handshake::{
     CLIENT_ZSTD_COMPRESSION_ALGORITHM,
 };
 use tidb_server::{HandshakeResponse41, WireString};
-use tidb_session::GlobalSysvars;
+use tidb_domain::global_sysvars::GlobalSysvars;
 
 /// Go's tests store `vardef.ConnectAttrsSize` and zero the counters they
 /// read before parsing.

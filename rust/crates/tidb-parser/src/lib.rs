@@ -89,7 +89,7 @@ pub enum ParseParam {
 }
 use tidb_charset::{Encoding, TransformOp};
 use tidb_hack::raw_bytes;
-pub use tidb_lexer::SqlMode;
+use tidb_lexer::SqlMode;
 use tidb_lexer::{
     is_builtin_function_keyword, is_reserved, unescape_char, Lexer, Token, TokenKind,
 };

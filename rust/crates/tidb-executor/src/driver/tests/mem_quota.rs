@@ -16,7 +16,7 @@
 //! with the cascade UNAPPLIED.
 
 use super::*;
-use tidb_kv::mem_quota::OomAction;
+use tidb_vardef::OomAction;
 
 /// A context whose quota cancels any statement that accounts a single row.
 fn cancelling() -> crate::StmtContext {

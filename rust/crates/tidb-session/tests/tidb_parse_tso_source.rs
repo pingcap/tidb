@@ -2,7 +2,8 @@
 //! `TIDB_PARSE_TSO` and `TIDB_PARSE_TSO_LOGICAL`.
 
 use tidb_datatype::{Datum, FieldTypeCode, Time, TimeType};
-use tidb_session::{Session, StmtOutput};
+use tidb_session::Session;
+use tidb_executor::StmtOutput;
 
 fn datetime(
     year: i32,

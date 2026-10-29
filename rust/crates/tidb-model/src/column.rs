@@ -46,10 +46,9 @@ use tidb_error::mysql::{errname, FormatArg};
 use tidb_error::terror::TerrorError;
 
 pub use crate::go_any::{ColumnDefaultValue, GoAny};
-use crate::go_runtime::{
-    go_64_next_slice_capacity_for_element, GoShared, GoSharedPointerSlice, GoSharedSlice,
-    GoSliceElementLayout,
-};
+use crate::go_runtime::{go_64_next_slice_capacity_for_element, GoShared, GoSharedPointerSlice};
+use tidb_goruntime::go_runtime::GoSliceElementLayout;
+use tidb_goruntime::go_runtime::GoSharedSlice;
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{
     deserialize_go_object, go_json_field_matches, ignore_unknown, impl_go_json_deserialize,
@@ -359,7 +358,7 @@ fn zero_field_type() -> FieldType {
 mod go_shared_bytes {
     use serde::{Deserializer, Serializer};
 
-    use crate::go_runtime::GoSharedSlice;
+    use tidb_goruntime::go_runtime::GoSharedSlice;
 
     pub(super) fn serialize<S: Serializer>(
         value: &GoSharedSlice<u8>,

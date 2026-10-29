@@ -71,8 +71,8 @@ use tidb_table::partition_routing::{
 };
 use tidb_error::mysql::MysqlError;
 
-pub use tidb_table::partition_metadata::{
-    partition_spec_from_metadata, stored_definitions_as_ast, StoredPartitionDefinition,
+use tidb_table::partition_metadata::{
+    partition_spec_from_metadata, StoredPartitionDefinition,
     PARTITION_MAX_VALUE,
 };
 use tidb_hack::GoCaseCompare;
@@ -226,7 +226,7 @@ fn build_table_partitioning_inner(
                 &ctx.get_expr_ctx().get_eval_ctx().time_zone(),
                 ctx.get_expr_ctx().get_eval_ctx().like_default_escape(),
             )?;
-            unsigned = super::table_partition_range::partition_expression_is_unsigned(&built);
+            unsigned = tidb_table::partition_fold::partition_expression_is_unsigned(&built);
         } else if let [path] = method.columns.as_slice() {
             let name = path.last().ok_or_else(|| {
                 tidb_error::mysql::MysqlError::from_terror(
@@ -474,7 +474,7 @@ fn build_table_partitioning_inner(
             )
         }
         PartitionType::LIST => {
-            let (kind, duplicate) = super::table_partition_list::build_list_values(
+            let (kind, duplicate) = tidb_table::partition_fold::build_list_values(
                 &built,
                 &partitioning.definitions,
                 ctx,
@@ -2235,7 +2235,7 @@ fn stored_list_component(
 ) -> Result<String, MysqlError> {
     match field_type {
         Some(field_type) => {
-            let datum = super::table_partition_list::fold_column_value(expr, field_type, ctx)?;
+            let datum = tidb_table::partition_fold::fold_column_value(expr, field_type, ctx)?;
             stored_value_text(&datum, Some(field_type))
         }
         None => Ok(expr.restore_with_flags(partition_restore_flags())),

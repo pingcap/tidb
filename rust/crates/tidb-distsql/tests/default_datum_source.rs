@@ -19,7 +19,8 @@ use tidb_codec::{encode_value, encode_value_in_timezone};
 use tidb_datatype::{
     parse_datetime, Datum, FieldType, FieldTypeCode, MySqlDuration, SessionTimeZone, TimeType,
 };
-use tidb_distsql::{decode_chunk, ResponseChannel, WarningCollector};
+use tidb_distsql::{decode_chunk, ResponseChannel};
+use tidb_util::context::WarningCollector;
 use tidb_proto::tipb::SelectResponse;
 use tidb_proto::{Chunk, EncodeType};
 

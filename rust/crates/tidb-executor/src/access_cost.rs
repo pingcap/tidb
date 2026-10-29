@@ -23,7 +23,7 @@
 use crate::StatsStmtCtx as _;
 use tidb_planner::stmt_ctx::PlannerStmtCtx as _;
 use crate::plan_trace::PSEUDO_ROW_COUNT;
-pub use tidb_planner::table_statistics::TableStatistics;
+use tidb_stats::table_statistics::TableStatistics;
 
 /// One table's loaded statistics as the statement's statistics handle holds
 /// them (Go `sctx.GetStatsHandle().GetPhysicalTableStats`); `None` is Go's
@@ -184,7 +184,8 @@ pub(crate) fn realtime_row_count(stats: Option<&TableStatistics>) -> f64 {
 mod tests {
     use super::*;
     use std::collections::{BTreeMap, BTreeSet};
-    use tidb_planner::cardinality::row_count_estimator::{ColumnStats, IndexStats};
+    use tidb_stats::table_statistics::ColumnStats;
+    use tidb_stats::table_statistics::IndexStats;
     use tidb_planner::table_statistics::TableStatisticsExt as _;
     use tidb_datatype::Datum;
 

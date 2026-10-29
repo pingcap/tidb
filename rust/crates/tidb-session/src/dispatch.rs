@@ -425,7 +425,7 @@ impl Session {
     /// Returns how many scans were answered.
     pub(crate) fn retrieve_memory_tables(
         &mut self,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &tidb_sessionctx::StmtContext,
     ) -> Result<usize, DriverError> {
         let reads = ctx.mem_table_retrieval().take_pending();
         for read in &reads {
@@ -494,7 +494,7 @@ impl Session {
     /// the order Go raises them (planning, then the read).
     pub(crate) fn with_catalog_retrieving<T>(
         &mut self,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &tidb_sessionctx::StmtContext,
         mut attempt: impl FnMut(&mut Catalog) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
         self.retrieving_memory_tables(ctx, |session| session.with_catalog_mut(&mut attempt))
@@ -504,7 +504,7 @@ impl Session {
     /// statement, such as a staged catalog for a write.
     pub(crate) fn retrieving_memory_tables<T>(
         &mut self,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &tidb_sessionctx::StmtContext,
         mut run: impl FnMut(&mut Self) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
         let warnings_start = ctx.warning_count();
@@ -636,7 +636,7 @@ impl Session {
                 // error (go's FORMAT('x', 'y') keeps both coercion warnings
                 // beside the 1582, and the error itself stays out of the
                 // buffer on the read door).
-                for warning in tidb_executor::take_fold_warnings() {
+                for warning in tidb_expr::constant_fold::take_fold_warnings() {
                     self.append_sql_warning(warning);
                 }
                 Err(error)
@@ -654,7 +654,7 @@ impl Session {
         self.begin_prepared_statement_boundary(&stmt, parameters);
         if let Some(reason) = self.pending_plan_cache_refusal.take() {
             self.append_warning(
-                crate::warnings::WarningLevel::Warning,
+                tidb_util::context::WarningLevel::Warning,
                 1105,
                 format!("skip prepared plan-cache: {reason}"),
             );
@@ -669,13 +669,13 @@ impl Session {
         };
         if let Err(reason) = cacheable {
             self.append_warning(
-                crate::warnings::WarningLevel::Warning,
+                tidb_util::context::WarningLevel::Warning,
                 1105,
                 format!("skip prepared plan-cache: {reason}"),
             );
         } else if tidb_executor::compiler::prepared::plans_over_table_dual(&stmt) {
             self.append_warning(
-                crate::warnings::WarningLevel::Warning,
+                tidb_util::context::WarningLevel::Warning,
                 1105,
                 "skip prepared plan-cache: get a TableDual plan".to_owned(),
             );
@@ -775,7 +775,7 @@ impl Session {
         &mut self,
         execution: &tidb_executor::PreparedPointGetExecution,
         statement: &Stmt,
-        stmt_ctx: &tidb_executor::StmtContext,
+        stmt_ctx: &tidb_sessionctx::StmtContext,
     ) -> Result<(), DriverError> {
         let current_database = self.vars.current_db.clone();
         let (normalized_plan, plan_digest) = {
@@ -806,7 +806,7 @@ impl Session {
             let statement = statement.clone();
             let parameters = std::sync::Arc::clone(execution.parameters());
             let ctx = stmt_ctx.clone().without_process_plan_info();
-            tidb_executor::PlanSource(std::sync::Arc::new(move || {
+            tidb_sessionctx::PlanSource(std::sync::Arc::new(move || {
                 let bound = tidb_executor::bind_statement(statement.clone(), &parameters).ok()?;
                 let catalog = catalog.lock().ok()?;
                 tidb_executor::fast_point_process_plan_info(
@@ -829,7 +829,7 @@ impl Session {
             info.plan_source = Some(source);
         }
         if let Some(observer) = self.statement_phase_observer() {
-            observer(tidb_executor::StatementPhase::PlanReady);
+            observer(tidb_sessionctx::StatementPhase::PlanReady);
         }
         Ok(())
     }
@@ -1985,7 +1985,7 @@ impl Session {
                             // Go's `*ast.InsertStmt` arm sets
                             // `sc.Priority = stmt.Priority`.
                             .with_statement_priority(statement_priority_of(&stmt))
-                            .with_statement_class(tidb_executor::StatementClass::Insert)
+                            .with_statement_class(tidb_sessionctx::StatementClass::Insert)
                             .with_single_insert_bad_null_policy(
                                 insert.rows.len() == 1,
                                 enable_strict_not_null_check,
@@ -2049,7 +2049,7 @@ impl Session {
                             // Go `ResetUpdateStmtCtx` sets
                             // `sc.Priority = stmt.Priority`.
                             .with_statement_priority(statement_priority_of(&stmt))
-                            .with_statement_class(tidb_executor::StatementClass::Update);
+                            .with_statement_class(tidb_sessionctx::StatementClass::Update);
                         let output = match &update.kind {
                             tidb_ast::UpdateKind::Single(_) => self
                                 .retrieving_memory_tables(&ctx, |session| {
@@ -2101,7 +2101,7 @@ impl Session {
                             // Go `ResetDeleteStmtCtx` sets
                             // `sc.Priority = stmt.Priority`.
                             .with_statement_priority(statement_priority_of(&stmt))
-                            .with_statement_class(tidb_executor::StatementClass::Delete);
+                            .with_statement_class(tidb_sessionctx::StatementClass::Delete);
                         let output = match &delete.kind {
                             tidb_ast::DeleteKind::Single(_) => self
                                 .retrieving_memory_tables(&ctx, |session| {

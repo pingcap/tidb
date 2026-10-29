@@ -18,7 +18,6 @@
 
 use std::sync::Arc;
 
-pub use tidb_ddl::etcd_ops::EtcdClientOps;
 
 /// Go `getServerInfo` over the node's own configuration.
 ///
@@ -46,6 +45,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tidb_domain::server_id::{ServerIdAuthority, ServerIdIntervals, ServerIdKeeper};
+    use tidb_ddl::etcd_ops::EtcdClientOps;
     use tidb_domain::serverinfo_syncer::{EtcdOps, Syncer};
 
     // Go domain/serverinfo tests embed etcd. The Rust integration uses the

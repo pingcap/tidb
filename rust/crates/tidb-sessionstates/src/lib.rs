@@ -27,4 +27,4 @@ pub use session_token::{
     create_session_token, get_load_cert_interval, reload_signing_cert, set_cert_path,
     set_key_path, validate_session_token, SessionToken, LOAD_CERT_INTERVAL,
 };
-pub use tidb_error::catalog::sessionstates::ERR_CANNOT_MIGRATE_SESSION;
+use tidb_error::catalog::sessionstates::ERR_CANNOT_MIGRATE_SESSION;

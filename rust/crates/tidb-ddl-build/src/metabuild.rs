@@ -68,7 +68,7 @@ impl crate::session_context::DdlSessionContext for StmtContext {
         StmtContext::ddl_sql_mode(self)
     }
 
-    fn sql_mode(&self) -> tidb_parser::SqlMode {
+    fn sql_mode(&self) -> tidb_lexer::SqlMode {
         StmtContext::sql_mode(self)
     }
 

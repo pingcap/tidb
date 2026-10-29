@@ -17,7 +17,9 @@
 
 use serde::Serialize;
 
-use crate::go_runtime::{GoShared, GoSharedPointerSlice, GoSharedSlice, GoSliceElementLayout};
+use crate::go_runtime::{GoShared, GoSharedPointerSlice};
+use tidb_goruntime::go_runtime::GoSliceElementLayout;
+use tidb_goruntime::go_runtime::GoSharedSlice;
 use crate::job::PersistedRawJson;
 use crate::serde_helpers::{
     go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,

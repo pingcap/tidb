@@ -17,11 +17,9 @@
 use std::time::Duration;
 
 use tidb_distsql::cop_paging::{CopReadTaskError, CopReadTaskResponse, CopReadTaskRuntime};
-use tidb_distsql::{
-    CopPagingState, CoprCache, CoprCacheConfig, CoprCacheResponseOutcome, KvRequestMetadata,
-    ReadEngineGeneration, RegionTaskTopology, RequestKeyRange, RequestKeyRanges, RequestType,
-    ResponseChannelEvent, StoreType,
-};
+use tidb_distsql::{CopPagingState, CoprCache, CoprCacheConfig, CoprCacheResponseOutcome, KvRequestMetadata, ReadEngineGeneration, RegionTaskTopology, RequestKeyRange, RequestKeyRanges, ResponseChannelEvent};
+use tidb_txnkv::StoreType;
+use tidb_txnkv::RequestType;
 use tidb_proto::{
     CoprocessorExecDetailsV2, CoprocessorKeyRange, CoprocessorResponse, CoprocessorScanDetailV2,
 };

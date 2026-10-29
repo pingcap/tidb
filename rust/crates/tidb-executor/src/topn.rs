@@ -75,7 +75,8 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::Arc;
 
-use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::executor::{Executor, ExecutorMeta};
+use tidb_driver_error::ExecError;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::schema::Schema;
@@ -1157,7 +1158,7 @@ where
 mod tests {
     use super::*;
     use crate::limit::LimitExec;
-    use tidb_kv::mem_quota::OomAction;
+    use tidb_vardef::OomAction;
     use crate::sort::SortExec;
     use tidb_ast::CiString;
     use tidb_datatype::FieldTypeCode;
@@ -2179,7 +2180,7 @@ mod tests {
 mod spill_tests {
     use super::tests::{by, drain, schema_of, source};
     use super::*;
-    use tidb_kv::mem_quota::OomAction;
+    use tidb_vardef::OomAction;
     use crate::test_temp_storage::{scratch_dir as scratch_temp_dir, storage as test_storage};
     use tidb_expr::NoColumns;
     use tidb_util::sqlkiller::KillSignal;

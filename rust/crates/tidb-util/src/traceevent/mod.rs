@@ -48,7 +48,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tidb_log::{Field, Value};
 
 use crate::logutil;
-use crate::stringutil::go_to_lower;
+use tidb_hack::go_to_lower;
 use crate::tracing::{self, TraceContext};
 
 pub use crate::tracing::{Event, Sink, TraceCategory};

@@ -20,7 +20,7 @@
 //! rather than duplicated here.
 
 use super::*;
-use crate::context::SessionTimeZone;
+use tidb_datatype::SessionTimeZone;
 use crate::time_fn::dispatch;
 use std::cell::RefCell;
 use tidb_datatype::{Time, TimeType};

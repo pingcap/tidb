@@ -395,7 +395,7 @@ impl StatementLifecycle<'_> {
                 .map_err(SqlQueryError::unknown)?;
             transaction
                 .set_statement_assertion_level(
-                    crate::txn_manager::transaction_options(self.session.vars()).assertion_level,
+                    tidb_domain_core::session_transaction::transaction_options(self.session.vars()).assertion_level,
                 )
                 .map_err(SqlQueryError::unknown)?;
         }
@@ -461,7 +461,7 @@ impl StatementLifecycle<'_> {
                     Arc::<str>::from(resource_group),
                     autocommit_pessimistic,
                     fair_locking,
-                    crate::txn_manager::transaction_options(vars)
+                    tidb_domain_core::session_transaction::transaction_options(vars)
                         .with_statement_kv_context(self.session.statement_kv_context_cell()),
                 )
             } else {

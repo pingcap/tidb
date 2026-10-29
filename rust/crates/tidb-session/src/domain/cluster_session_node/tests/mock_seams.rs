@@ -11,11 +11,12 @@
 
 use super::super::*;
 use super::node_fixture::*;
-use crate::domain::session_api::SqlQueryError;
+use tidb_store_driver::sql_query_error::SqlQueryError;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use tidb_ast::CiString;
 use tidb_datatype::FieldTypeFlags;
 use tidb_infoschema::cluster_catalog::{ClusterCatalog, LoadedDatabase};
+use tidb_ddl::real_tikv_ddl::ClusterDdlReport;
 use tidb_model::db::DBInfo;
 
 /// The catalog writer, offline: the meta-key encoding and the 2PC are

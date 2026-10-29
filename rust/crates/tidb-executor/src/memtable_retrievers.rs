@@ -735,7 +735,7 @@ pub fn hot_region_row_with_schema_info(
     tables: &[store_helper::TableInfoWithKeyRange],
 ) -> Vec<Vec<Datum>> {
     use chrono::TimeZone;
-    use tidb_util::stringutil::go_to_upper;
+    use tidb_hack::go_to_upper;
     let region_id = his_hot_region.region_id as i64;
     let region = pd_http::RegionInfo {
         id: region_id,

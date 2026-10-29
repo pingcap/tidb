@@ -31,7 +31,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::pushdown_catalog::PbConverterContext;
 use tidb_expr::{truthy_of, Columns};
 
-use crate::executor::ExecError;
+use tidb_driver_error::ExecError;
 
 /// The comparison operators a scan filter accepts, which are exactly the ones
 /// the bounded TiKV Selection lowering speaks.

@@ -160,7 +160,7 @@ impl tidb_executor::simple::account_tables::AccountSession for Session {
         &self,
         database: &str,
         table: &str,
-        global_priv: tidb_privilege::PrivilegeType,
+        global_priv: tidb_mysql::PrivilegeType,
     ) -> bool {
         Session::has_scoped_privilege(self, database, table, global_priv)
     }

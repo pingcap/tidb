@@ -196,30 +196,26 @@
 //!   there even when TiDB's own planner would have rewritten the expression.
 
 #[allow(unused_imports)]
-pub use tidb_ddl_build::ttl_info_from_options;
+use tidb_ddl_build::ttl_info_from_options;
 
-pub use tidb_ddl_build::modify_column_type::check_modify_types;
-/// AUTO_RANDOM declaration validation shared by local and cluster DDL.
-pub use tidb_ddl_build::{check_too_long_identifier, create_table_ttl_info, table_affinity, validate_comment_length, validate_table_affinity, validate_temporary_table_create, CommentOwner, MAX_IDENTIFIER_LENGTH};
 mod hypo_index;
 mod indexes;
 #[cfg(test)]
 mod tests_modify_column_type;
-pub use tidb_ddl_build::index::{check_and_build_index_condition_string, check_create_global_index, check_expression_index_auto_increment, check_index_condition, get_name_for_anonymous_index, IndexConditionColumn, IndexedTableColumn};
-pub use tidb_ddl_build::split_region::{normalize_split_policy, SplitPolicyTarget};
 use tidb_ddl_build::table_partition;
 #[cfg(test)]
 mod tests_table_partition;
 
-pub use tidb_ddl_build::column_defaults::{check_column_default_value, normalize_column_default, settle_column_default, validate_column_default, SettledColumnDefault};
 
-pub use table_partition::{append_partition_defs, build_partition_metadata, escape_identifier, linear_partitioning_warning, partition_placement_text, partition_spec_from_metadata, StoredPartitionDefinition, StoredPartitionMetadata};
+pub use table_partition::{append_partition_defs, build_partition_metadata, escape_identifier, linear_partitioning_warning, partition_placement_text, StoredPartitionMetadata};
+pub use tidb_table::partition_metadata::{partition_spec_from_metadata, StoredPartitionDefinition};
 
-pub use hypo_index::{set_advisor_hypo_index, HypoIndexMap, HypoIndexes, HypoTiFlashReplicas};
+pub use hypo_index::set_advisor_hypo_index;
+pub use tidb_sessionstates::HypoIndexMap;
+pub use tidb_table::hypo_index::HypoIndexes;
+pub use tidb_table::hypo_index::HypoTiFlashReplicas;
 pub use indexes::{index_backfill_error};
-pub use tidb_ddl_build::column_types::is_int_column_type;
 
-pub use tidb_ddl_build::table_lifecycle::split_drop_table_targets;
 
 use crate::driver::DriverError;
 use tidb_infoschema::Catalog;
@@ -415,7 +411,7 @@ pub struct CreateTableSettings {
     /// The session's scanner `sql_mode`: this entry RE-PARSES text the
     /// session already parsed, so without it a double-quoted name would mean
     /// one thing to the session and another here.
-    pub sql_mode: tidb_parser::SqlMode,
+    pub sql_mode: tidb_lexer::SqlMode,
     /// The session's parser switches (Go `SessionVars.BuildParserConfig`),
     /// for the same re-parse: `DOUBLE(10)` is a syntax error only under
     /// `tidb_enable_strict_double_type_check`.
@@ -443,7 +439,7 @@ impl Default for CreateTableSettings {
     /// can, not only integer ones.
     fn default() -> Self {
         Self {
-            sql_mode: tidb_parser::SqlMode::default(),
+            sql_mode: tidb_lexer::SqlMode::default(),
             parser_config: tidb_parser::ParserConfig::default(),
             foreign_key_checks: true,
             enable_check_constraint: false,
@@ -459,8 +455,7 @@ fn tidb_executor_default_database() -> &'static str {
     tidb_infoschema::DEFAULT_DATABASE
 }
 
-pub use tidb_infoschema::run_create_system_table_in;
-pub use tidb_ddl_build::metabuild::new_metabuild_context_with_sctx;
+use tidb_ddl_build::metabuild::new_metabuild_context_with_sctx;
 
 /// Go `NewMetaBuildContextWithSctx`: the metadata-build context a DDL
 /// statement's builder runs under, from the statement's context.

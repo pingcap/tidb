@@ -2841,7 +2841,8 @@ fn recursive_derive_stats_with_range_quota(
 #[cfg(test)]
 mod analyzed_filter_selectivity_tests {
     use super::{analyzed_filter_selectivity, analyzed_filter_selectivity_with_options};
-    use crate::cardinality::row_count_estimator::{ColumnStats, EstimatorOptions};
+    use crate::cardinality::row_count_estimator::EstimatorOptions;
+    use tidb_stats::table_statistics::ColumnStats;
     use crate::stats_info::{HistColl, StatsInfo};
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_expr::column::Column;
@@ -3650,7 +3651,7 @@ mod access_path_context_tests {
 
     #[test]
     fn analyzed_derivation_evaluates_parameters_like_literal_predicates() {
-        use crate::cardinality::row_count_estimator::ColumnStats;
+        use tidb_stats::table_statistics::ColumnStats;
         use crate::stats_info::HistColl;
         let allocator = crate::plan_base::PlanIdAllocator::new();
         let ty = FieldType::new(FieldTypeCode::LongLong);

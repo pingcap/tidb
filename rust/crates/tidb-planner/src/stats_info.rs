@@ -22,7 +22,9 @@ use std::sync::Arc;
 
 use crate::cardinality::ndv::GroupNdv;
 use crate::cardinality::pseudo::PseudoColumn;
-use crate::cardinality::row_count_estimator::{ColumnStats, IndexRowCounts, IndexStats};
+use crate::cardinality::row_count_estimator::IndexRowCounts;
+use tidb_stats::table_statistics::ColumnStats;
+use tidb_stats::table_statistics::IndexStats;
 use crate::cardinality::row_size::RowSizeColumnStats;
 
 /// Go `statistics.HistColl` state consumed by planner cardinality and costing.

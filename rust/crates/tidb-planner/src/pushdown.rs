@@ -204,7 +204,7 @@ fn can_expr_push_down_reported(
     let signature = match tidb_expr::pushdown_catalog::from_expression(expr) {
         Some(tidb_expr::pushdown_catalog::PbScalar::Call { signature, .. }) => signature.sig,
         Some(tidb_expr::pushdown_catalog::PbScalar::Cast { signature, .. }) => signature,
-        _ => tidb_expr::pushdown_catalog::ScalarFuncSig::Unspecified,
+        _ => tidb_proto::tipb::ScalarFuncSig::Unspecified,
     };
     if !scalar_function_can_be_pushed(expr, function, signature, store, blacklist) {
         if let Some(report) = report {
@@ -236,12 +236,12 @@ fn can_expr_push_down_reported(
 fn scalar_function_can_be_pushed(
     expr: &Expression,
     function: &tidb_expr::scalar_function::ScalarFunction,
-    signature: tidb_expr::pushdown_catalog::ScalarFuncSig,
+    signature: tidb_proto::tipb::ScalarFuncSig,
     store: tidb_expr::infer_pushdown::PushDownStore,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> bool {
     use tidb_expr::infer_pushdown::{can_function_be_pushed, PushDownPolicy, PushDownStore};
-    use tidb_expr::pushdown_catalog::ScalarFuncSig;
+    use tidb_proto::tipb::ScalarFuncSig;
 
     let name = function.func_name.lowercase();
     // Dedicated Rust casts represent Go's single ast.Cast function family.

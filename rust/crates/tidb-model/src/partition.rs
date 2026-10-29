@@ -24,7 +24,9 @@ use tidb_ast::{CiString, PartitionType};
 
 use crate::action_type::ActionType;
 use crate::engine_attribute::{build_storage_class_string, StorageClassTransitRule};
-use crate::go_runtime::{GoShared, GoSharedSlice, GoSliceElementLayout};
+use crate::go_runtime::GoShared;
+use tidb_goruntime::go_runtime::GoSliceElementLayout;
+use tidb_goruntime::go_runtime::GoSharedSlice;
 use crate::placement::PolicyRefInfo;
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{

@@ -22,10 +22,10 @@
 //! once a name has reached a table, it binds the column references in that
 //! table's scope.
 
-pub use tidb_table::sequence::SequenceDef;
+use tidb_table::sequence::SequenceDef;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, FieldType};
 use tidb_table::kv_table::KvTable;
 use tidb_driver_error::DriverError;
 use tidb_table::kv_table::TableCharset;

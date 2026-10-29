@@ -258,7 +258,7 @@ pub fn prepare_load_data(
         let Some(found) = found else {
             return Err(DriverError::from(
                 tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
-                    tidb_util::stringutil::go_to_lower(&name.clone()).into(),
+                    tidb_hack::go_to_lower(&name.clone()).into(),
                     ("field list".to_owned()).into(),
                 ]),
             ));
@@ -439,7 +439,7 @@ pub fn run_load_data(
             .map_err(|error| match error {
                 tidb_expr::EvalError::UnknownColumn(column) => DriverError::from(
                     tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
-                        tidb_util::stringutil::go_to_lower(&column.go_to_lower()).into(),
+                        tidb_hack::go_to_lower(&column.go_to_lower()).into(),
                         ("expression".to_owned()).into(),
                     ]),
                 ),

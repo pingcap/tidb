@@ -22,7 +22,7 @@
 
 /// Go `mysql.PrivilegeType`: one static privilege, as a bit of a privilege
 /// mask. The session's registry masks are Go's bits.
-pub use tidb_mysql::PrivilegeType;
+use tidb_mysql::PrivilegeType;
 
 /// Go `privileges.SSLType` (`privileges/cache.go` line 163): what a
 /// `REQUIRE` clause demands of the connection's transport.

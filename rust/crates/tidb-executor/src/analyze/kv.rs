@@ -45,10 +45,11 @@ use std::collections::BTreeMap;
 use std::collections::HashSet;
 
 use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_planner::cardinality::row_count_estimator::{ColumnStats, IndexStats};
+use tidb_stats::table_statistics::ColumnStats;
+use tidb_stats::table_statistics::IndexStats;
 use tidb_stats::cmsketch::TopN;
 
-use crate::access_cost::TableStatistics;
+use tidb_stats::table_statistics::TableStatistics;
 use crate::analyze::{
     AnalyzeError, AnalyzeOptions, AnalyzePlan, AnalyzeRun, AnalyzedColumn, AnalyzedHistogram,
     AnalyzedIndex,

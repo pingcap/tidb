@@ -29,7 +29,7 @@ use tidb_executor::ddl_exec::map_error;
 
 use super::{ClusterServerSession, Domain};
 use crate::domain::resultset_source::ResultSetSource;
-use crate::domain::session_api::SqlQueryError;
+use tidb_store_driver::sql_query_error::SqlQueryError;
 use crate::{Session, StmtOutput};
 
 /// The domain's test-session hooks (Go `CreateSession4Test` and its siblings).
@@ -68,7 +68,7 @@ impl DomainTestSessions for Domain {
                     table_id: physical_id,
                     available,
                 },
-                &tidb_executor::StmtContext::for_query(),
+                &tidb_sessionctx::StmtContext::for_query(),
             )
             .map(drop)
     }

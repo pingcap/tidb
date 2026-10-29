@@ -21,16 +21,15 @@
 //! acquire a TiKV client, or issue RPCs.
 
 use crate::{DistSqlContext, ReadRequestMetadata};
-pub use tidb_txnkv::{
-    KeyRange as RequestKeyRange, PartitionIdAndRanges, PartitionedKeyRanges as RequestKeyRanges,
-};
+pub use tidb_txnkv::KeyRange as RequestKeyRange;
+pub use tidb_txnkv::PartitionedKeyRanges as RequestKeyRanges;
 
 /// Go's `kv.GlobalReplicaScope` / client-go `oracle.GlobalTxnScope` value.
 pub const GLOBAL_REPLICA_SCOPE: &str = "global";
 /// Go placement's data-center label key used for closest reads.
 pub const DC_LABEL_KEY: &str = "zone";
 
-pub use tidb_txnkv::KvRequestMetadata;
+use tidb_txnkv::KvRequestMetadata;
 
 /// Projects the source context fields into a new request metadata value.
 #[must_use]

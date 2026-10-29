@@ -146,7 +146,7 @@ fn statement_hints_use_the_canonical_parse_result() {
     assert_eq!(session.stmt_hints.replica_read, 1);
     assert_eq!(
         session.statement_context(false).replica_read(),
-        tidb_executor::ReplicaReadType::Follower,
+        tidb_txnkv::ReplicaReadType::Follower,
     );
 
     // Statement-local fields are not part of the generation-cached session
@@ -156,7 +156,7 @@ fn statement_hints_use_the_canonical_parse_result() {
     let ctx = session.statement_context(false);
     assert!(ctx.index_merge());
     assert!(ctx.allow_in_subq_to_join_and_agg());
-    assert_eq!(ctx.replica_read(), tidb_executor::ReplicaReadType::Leader,);
+    assert_eq!(ctx.replica_read(), tidb_txnkv::ReplicaReadType::Leader,);
     assert_eq!(
         ctx.statement_memory().quota(),
         session
@@ -179,14 +179,14 @@ fn replica_read_sysvar_reaches_statement_snapshot() {
     session.run("SET tidb_replica_read = 'follower'").unwrap();
     assert_eq!(
         session.statement_context(false).replica_read(),
-        tidb_executor::ReplicaReadType::Follower,
+        tidb_txnkv::ReplicaReadType::Follower,
     );
     session
         .run("SET tidb_replica_read = 'leader-and-follower'")
         .unwrap();
     assert_eq!(
         session.statement_context(false).replica_read(),
-        tidb_executor::ReplicaReadType::Mixed,
+        tidb_txnkv::ReplicaReadType::Mixed,
     );
 }
 
@@ -1072,7 +1072,7 @@ fn the_session_warning_buffer_stops_at_the_source_retention_limit() {
 #[test]
 fn a_coprocessor_warning_reaches_both_the_show_warnings_buffer_and_the_wire_count() {
     let mut session = Session::new();
-    let ctx = tidb_executor::StmtContext::for_query();
+    let ctx = tidb_sessionctx::StmtContext::for_query();
     // What `tidb_distsql`'s `response_channel` does with
     // `SelectResponse.warnings`; the sink is the statement's own.
     ctx.cop_warning_sink()

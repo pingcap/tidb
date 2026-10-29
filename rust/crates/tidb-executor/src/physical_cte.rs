@@ -26,7 +26,8 @@ use tidb_datatype::{Datum, FieldType};
 use tidb_expr::schema::Schema;
 
 use crate::cte_storage::CteStorage;
-use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::executor::{Executor, ExecutorMeta};
+use tidb_driver_error::ExecError;
 use crate::StmtContext;
 
 pub(crate) type SharedCteStorage = Arc<Mutex<CteStorage>>;

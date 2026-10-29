@@ -122,7 +122,7 @@ pub enum AuthenticationFailure {
     /// on who the client claims to be. Errno 3159.
     SecureTransportRequired,
     /// Authoritative login tracking could not complete its storage transaction.
-    Storage(crate::domain::session_api::SqlQueryError),
+    Storage(tidb_store_driver::sql_query_error::SqlQueryError),
 }
 
 impl AuthenticatedIdentity {
@@ -361,7 +361,7 @@ impl ConfiguredUserStore {
     ///
     /// The TSV file is one way to provision the rows; a cluster whose
     /// `mysql.*` a Go TiDB already wrote is another
-    /// ([`tidb_domain_core::cluster_privileges::registry_from_cluster`]). Both end at the
+    /// ([`tidb_privilege::load::registry_from_cluster`]). Both end at the
     /// same live table, so the login path, `CREATE USER`, and `SHOW GRANTS`
     /// cannot tell which one filled it.
     #[must_use]

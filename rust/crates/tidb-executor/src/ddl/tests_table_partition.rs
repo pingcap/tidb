@@ -13,10 +13,7 @@
 // limitations under the License.
 
 #[allow(unused_imports)]
-use tidb_ast::{
-    CreateTableStmt, Expr, PartitionDefinition, PartitionDefinitionClause, PartitionType,
-    PartitionValue,
-};
+use tidb_table::partition_metadata::partition_spec_from_metadata;
 #[allow(unused_imports)]
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 #[allow(unused_imports)]

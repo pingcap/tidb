@@ -221,7 +221,8 @@ fn joins() {
 /// returns nil and the physical search sees an ordinary anti-semi join.
 #[test]
 fn outer_join_inner_key_is_null_becomes_anti_semi_join() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE anti_l (id BIGINT, v BIGINT)", &mut catalog).unwrap();
@@ -382,7 +383,8 @@ fn outer_join_inner_key_is_null_becomes_anti_semi_join() {
 /// profiles by an extra `SelectionFactor`, which flipped the join order.
 #[test]
 fn a_join_filter_is_charged_only_to_the_filtered_side() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE a (x INT NOT NULL, y INT)", &mut catalog).unwrap();
@@ -450,7 +452,8 @@ fn a_join_filter_is_charged_only_to_the_filtered_side() {
 /// same constant from the statement predicate.
 #[test]
 fn a_join_equality_propagates_its_constant_to_the_other_side() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE a (x INT NOT NULL, y INT)", &mut catalog).unwrap();
@@ -528,7 +531,8 @@ fn a_join_equality_propagates_its_constant_to_the_other_side() {
 /// wildcard needs the columns no index carries, so that leaf keeps its scan.
 #[test]
 fn a_join_leaf_reads_a_covering_index_without_moving_a_row() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -613,7 +617,8 @@ fn a_join_leaf_reads_a_covering_index_without_moving_a_row() {
 /// checks both the access-path shape and the result-preservation contract.
 #[test]
 fn a_join_leaf_uses_a_single_table_constant_for_access() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -684,7 +689,8 @@ fn a_join_leaf_uses_a_single_table_constant_for_access() {
 /// Selection above it keeps that scale).
 #[test]
 fn an_index_join_probe_displays_the_outer_probe_count() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -803,7 +809,8 @@ fn an_index_join_probe_displays_the_outer_probe_count() {
 /// get even though `c_w_id` is not written as a constant.
 #[test]
 fn a_complete_common_handle_equality_is_a_point_get() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -1013,7 +1020,8 @@ fn a_leaf_delivers_only_the_order_its_scan_walks_in() {
 ///    [`a_leaf_delivers_only_the_order_its_scan_walks_in`] measured.
 #[test]
 fn a_leaf_asked_for_an_index_order_walks_the_index_and_says_so() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -1090,7 +1098,8 @@ fn a_leaf_asked_for_an_index_order_walks_the_index_and_says_so() {
 /// the scans unordered and makes the selected merge plan unexecutable.
 #[test]
 fn a_forced_merge_lowers_the_planner_selected_sort_enforcers() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     for ddl in [
@@ -1177,7 +1186,8 @@ fn a_forced_merge_lowers_the_planner_selected_sort_enforcers() {
 /// t2.a`. The shared planner must preserve those three physical receipts.
 #[test]
 fn a_join_hint_decides_the_family_before_any_cost_is_compared() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -1332,7 +1342,7 @@ fn an_outer_comparison_on_the_next_key_column_narrows_every_probe_range() {
         &catalog,
         "test",
         &ctx,
-        crate::explain::ExplainFormat::Brief,
+        tidb_sessionctx::explain_format::ExplainFormat::Brief,
     )
     .unwrap();
     let plan = plan
@@ -1376,7 +1386,8 @@ fn an_outer_comparison_on_the_next_key_column_narrows_every_probe_range() {
 /// from bounding the preserved-side read the way Go's eliminated plan does.
 #[test]
 fn nested_unread_left_join_chain_eliminates_to_fixpoint() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(

@@ -576,7 +576,7 @@ fn statement_context_reads_global_sysvars_through_the_live_accessor() {
     let globals = session.vars().global_sysvars();
     let context = session.statement_context(false);
     let read = || {
-        tidb_executor::Columns::sysvar(
+        tidb_expr::Columns::sysvar(
             &context,
             Some(tidb_ast::SysVarScope::Global),
             "validate_password.enable",
@@ -2658,7 +2658,8 @@ fn super_read_only_cannot_be_turned_off_under_restricted_read_only() {
 /// validated PD name/value. Cache/startup writes never use this path.
 #[test]
 fn global_config_explicit_sql_notifies_the_domain_owner() {
-    use tidb_domain::globalconfigsync::{GlobalConfigItem, GlobalConfigSyncer};
+    use tidb_domain::globalconfigsync::GlobalConfigSyncer;
+    use tidb_proto::pdpb::GlobalConfigItem;
     let (syncer, notifications) = GlobalConfigSyncer::new(None);
     let mut session = Session::new();
     session.set_global_config_syncer(std::sync::Arc::clone(&syncer));
@@ -2687,7 +2688,8 @@ fn global_config_explicit_sql_notifies_the_domain_owner() {
 
 #[test]
 fn global_config_notifies_default_and_scratch_writes_but_not_cache_reloads() {
-    use tidb_domain::globalconfigsync::{GlobalConfigItem, GlobalConfigSyncer};
+    use tidb_domain::globalconfigsync::GlobalConfigSyncer;
+    use tidb_proto::pdpb::GlobalConfigItem;
     let (syncer, notifications) = GlobalConfigSyncer::new(None);
     let mut session = Session::new();
     session.set_global_config_syncer(std::sync::Arc::clone(&syncer));

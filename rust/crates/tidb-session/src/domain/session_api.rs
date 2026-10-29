@@ -29,7 +29,6 @@ use crate::domain::resultset_source::ResultSetSource;
 use crate::domain::wire_status::WireStatus;
 use tidb_executor::process::ProcessKillTarget;
 
-pub use tidb_util::worker_stack::{sql_worker_thread, SQL_WORKER_STACK_BYTES};
 
 
 /// A backend query that can be interrupted during forced connection drain.
@@ -248,9 +247,6 @@ impl Drop for QueryCancellationLease {
     }
 }
 
-pub use tidb_store_driver::sql_query_error::{lock_sql_error, SqlQueryError};
-pub use tidb_ddl::real_tikv_ddl::cluster_ddl_error;
-pub use tidb_domain_core::errors::{cluster_analyze_error, cluster_commit_error, cluster_stats_lock_error};
 
 
 
@@ -274,7 +270,7 @@ pub struct QueryResult<'a> {
 /// Typed statement policy retained only when a prepared cursor materializes
 /// this result after execution.
 pub struct CursorMaterializationAuthority {
-    pub current_tso: Option<tidb_executor::CurrentTso>,
+    pub current_tso: Option<tidb_expr::CurrentTso>,
     pub start_ts_guard: Option<Arc<tidb_txnkv::StartTsGuard>>,
     pub field_types: Vec<tidb_datatype::FieldType>,
     pub init_chunk_size: usize,
@@ -403,7 +399,7 @@ pub enum GeneralExecuteOutcome<'a> {
     Write(WriteOutcome),
 }
 
-pub use tidb_executor::ddl_exec::WriteOutcome;
+use tidb_executor::ddl_exec::WriteOutcome;
 
 impl<'a> QueryResult<'a> {
     /// Transfers one session-owned result source to the connection writer.
@@ -689,4 +685,3 @@ pub struct SessionContext {
     pub close: ConnectionClose,
 }
 
-pub use tidb_domain_core::connection_ids::new_connection_id_allocator;

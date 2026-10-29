@@ -18,7 +18,8 @@
 //! Serial evaluation runs on the caller. Parallel evaluation circulates bounded
 //! input/output chunks through the shared CPU pool and joins work on close.
 
-use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::executor::{Executor, ExecutorMeta};
+use tidb_driver_error::ExecError;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;

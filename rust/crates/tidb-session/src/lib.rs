@@ -35,11 +35,11 @@ use std::time::Duration;
 
 use tidb_ast::Stmt;
 use tidb_datatype::{Datum, FieldType};
-use tidb_executor::{Catalog, DriverError, MysqlRng};
+use tidb_executor::{Catalog, DriverError};
+use tidb_util::mathutil::MysqlRng;
 pub use load_stats_arm::ClientLocalFileReader;
-pub use tidb_planner::txn_mode::{
-    txn_mode_for_begin, txn_mode_for_statement, SessionTxnMode, StatementTxnModeInputs,
-    OPTIMISTIC_TXN_MODE, PESSIMISTIC_TXN_MODE,
+use tidb_planner::txn_mode::{
+    txn_mode_for_begin, SessionTxnMode, PESSIMISTIC_TXN_MODE,
 };
 
 /// Go `approxParseSQLTokenCnt`: estimates the token count used to reserve
@@ -219,24 +219,24 @@ pub enum StmtResult {
     Done(bool),
 }
 
-pub use tidb_executor::StmtOutput;
-pub use tidb_executor::memtable_reader::{DataLockWait, DataLockWaitsProvider, DdlJobHistoryStore};
+use tidb_executor::StmtOutput;
+use tidb_executor::memtable_reader::{DataLockWaitsProvider, DdlJobHistoryStore};
 
 
 
-pub use tidb_executor::show::stats::ColumnStatsUsageProvider;
+use tidb_executor::show::stats::ColumnStatsUsageProvider;
 
-pub use tidb_executor::show::stats::AnalyzeStatusProvider;
+use tidb_executor::show::stats::AnalyzeStatusProvider;
 
 
 /// The cluster's BDR role, Go's meta key `BDRRole`, where a front end keeps
 /// it in a shared store rather than in its own catalog.
-pub use tidb_domain_core::domain::GlobalIdGenerator;
+use tidb_domain_core::domain::GlobalIdGenerator;
 
-pub use tidb_executor::admin::BdrRoleStore;
+use tidb_executor::admin::BdrRoleStore;
 
-pub use tidb_executor::table_size_stats::TableStorageStatsProvider;
-pub use tidb_executor::stmt_ctx_build::ResultMaterializationAuthority;
+use tidb_executor::table_size_stats::TableStorageStatsProvider;
+use tidb_executor::stmt_ctx_build::ResultMaterializationAuthority;
 
 
 
@@ -362,7 +362,7 @@ impl DomainMap {
 /// mirrors that with a shared, mutex-guarded catalog; the statement-level lock
 /// stands in for Go's schema-version/lease machinery, which is a separate
 /// tier (documented deferral).
-pub use tidb_domain_core::schema_sync::MdlRelatedTableSink;
+use tidb_domain_core::schema_sync::MdlRelatedTableSink;
 
 pub struct Session {
     global_config_syncer: Option<Arc<tidb_domain::globalconfigsync::GlobalConfigSyncer>>,
@@ -396,7 +396,7 @@ pub struct Session {
     external_executor_breakpoint_scope: bool,
     /// Metadata snapshot cache keyed by the catalog mutation version.
     tidb_decode_key_cache:
-        std::sync::Mutex<Option<(u64, Arc<tidb_executor::TidbDecodeKeySnapshot>)>>,
+        std::sync::Mutex<Option<(u64, Arc<tidb_infoschema::tidb_decode_key::TidbDecodeKeySnapshot>)>>,
     /// One connection-wide memory/disk tracker pair. Every statement gets a
     /// fresh child below these roots, so an open cursor remains counted when
     /// the client starts its next command.
@@ -455,7 +455,7 @@ pub struct Session {
     /// `SHOW TABLES` (which `Catalog::table_names` excludes), and while
     /// expanding a view's body (`logical_plan_builder.go:4941`), which the
     /// planner reads through the catalog's detached view.
-    local_temporary_tables: Vec<(String, String, tidb_executor::KvTable)>,
+    local_temporary_tables: Vec<(String, String, tidb_table::kv_table::KvTable)>,
     /// Go `sctx.GetInfoSchema()`: the node's schema this session's catalog
     /// was built from, which `DDLExec` builds a LOCAL temporary table's
     /// `TableInfo` against. `None` for a session no node opened.
@@ -477,7 +477,7 @@ pub struct Session {
     /// is both halves: it is swapped into the shared table object for the
     /// statement's duration and CLEARED at each transaction end, which is
     /// what `ON COMMIT DELETE ROWS` means here.
-    global_temporary_data: std::collections::HashMap<i64, tidb_executor::TemporaryTableTxnData>,
+    global_temporary_data: std::collections::HashMap<i64, tidb_table::kv_table::TemporaryTableTxnData>,
     /// The session's system and user variables.
     vars: SessionVars,
     /// Go `StmtCtx.StmtHints`: the canonical statement-hint parse result for
@@ -552,11 +552,11 @@ pub struct Session {
     /// Go `SessionVars.TxnCtx.StartTS`, shared with statement contexts so a
     /// lazily opened cluster snapshot becomes visible inside the statement
     /// that opened it.
-    current_tso: tidb_executor::CurrentTso,
+    current_tso: tidb_expr::CurrentTso,
     /// Go `SessionVars.TxnCtx.forUpdateTS` as the cluster tier last published
     /// it for a pessimistic statement. A value older than the open
     /// transaction's start is stale and `GetForUpdateTS` answers the start.
-    current_for_update_ts: tidb_executor::CurrentTso,
+    current_for_update_ts: tidb_expr::CurrentTso,
     /// The running statement's own `TxnCtx.StartTS` when its tier tore the
     /// autocommit transaction down (clearing [`Self::current_tso`]) before
     /// the statement finished; zero otherwise.
@@ -586,7 +586,7 @@ pub struct Session {
     /// transaction is the one case that must NOT reset it: read-your-own-
     /// writes has to see every earlier statement's staged rows until COMMIT
     /// or ROLLBACK ends the transaction.
-    staged_writes: std::sync::Arc<tidb_table::kv_table::StagedWrites>,
+    staged_writes: std::sync::Arc<tidb_kv::staged_writes::StagedWrites>,
     /// The node's server-info syncer, when the deployment has one.
     ///
     /// Go reads `information_schema.TIDB_SERVERS_INFO` through
@@ -626,7 +626,7 @@ pub struct Session {
     statement_snapshot: Option<(u64, txn::HistoricalRead)>,
     /// Go `GetRestrictedSQLExecutor`: internal sessions of the node, absent
     /// on the in-process tier; see [`restricted_sql`].
-    restricted_sql_executor: restricted_sql::RestrictedSql,
+    restricted_sql_executor: tidb_executor::memtable_reader::RestrictedSql,
     /// The statistics handle's persisted predicate-column usage reader.
     column_stats_usage: Option<std::sync::Arc<dyn ColumnStatsUsageProvider>>,
     /// The persisted analyze-job reader shared by SHOW and ANALYZE_STATUS.
@@ -654,7 +654,7 @@ pub struct Session {
     /// handle independently of statement execution.
     stats_collector: Option<std::sync::Arc<tidb_stats_handle_usage::SessionStatsItem>>,
     /// Go `SessionVars.TxnCtx.TableDeltaMap`, published only after commit.
-    transaction_table_delta: std::sync::Arc<tidb_stats_handle_usage::TableDeltaMap>,
+    transaction_table_delta: std::sync::Arc<tidb_variable::table_delta::TableDeltaMap>,
     /// Parsed-products cache over the raw system-variable text, keyed by
     /// [`vars::SessionVars::generation`]. Go holds these as typed fields on
     /// `SessionVars`, updated by each variable's `SetSession` hook, so a
@@ -680,7 +680,7 @@ pub struct Session {
     mdl_statement_tables: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<i64>>>,
     /// Go `StmtCtx.LastInsertID`/`LastInsertIDSet`: the id the RUNNING
     /// statement publishes. The session owns the cell and lends it to every
-    /// [`tidb_executor::StmtContext`] the statement builds, so an allocating
+    /// [`tidb_sessionctx::StmtContext`] the statement builds, so an allocating
     /// INSERT and `LAST_INSERT_ID(expr)` write one place, not two.
     published_last_insert_id: Arc<std::sync::Mutex<Option<u64>>>,
     /// Go `SessionVars.RetryInfo`'s auto-increment half: the ids the statement
@@ -688,11 +688,11 @@ pub struct Session {
     /// replay writes the ids the losing attempt picked. It lives on the
     /// session because the retry loop is above the statement -- each attempt
     /// builds its own `StmtContext`, and this is the one thing that has to
-    /// cross between them. See `tidb_executor::RetryAutoIds`.
-    retry_auto_ids: Arc<std::sync::Mutex<tidb_executor::RetryAutoIds>>,
+    /// cross between them. See `tidb_sessionctx::RetryAutoIds`.
+    retry_auto_ids: Arc<std::sync::Mutex<tidb_sessionctx::RetryAutoIds>>,
     /// Go `SessionVars.RowIDShardGenerator`: retains one random shard for
     /// `@@tidb_shard_allocate_step` generated IDs across statement contexts.
-    row_id_shards: Arc<std::sync::Mutex<tidb_executor::RowIdShardGenerator>>,
+    row_id_shards: Arc<std::sync::Mutex<tidb_sessionctx::RowIdShardGenerator>>,
     /// Go's separate non-prepared statement metadata LRU.
     non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache,
     physical_plan_cache: tidb_executor::SessionPlanCache,
@@ -795,7 +795,7 @@ pub struct Session {
     mpp_attempt_completed: bool,
     /// Go `ProcessInfo.BriefBinaryPlan`, populated from the ordinary physical
     /// tree before executor construction.
-    process_plan_info: Arc<std::sync::Mutex<tidb_executor::ProcessPlanInfo>>,
+    process_plan_info: Arc<std::sync::Mutex<tidb_sessionctx::ProcessPlanInfo>>,
     /// Go `SessionVars.RewritePhaseInfo`, `DurationOptimizer` and
     /// `DurationWaitTS`, set by the planner and the transaction tier.
     phase_durations: tidb_variable::phase_durations::SessionPhaseDurations,
@@ -888,8 +888,8 @@ impl Session {
             statement_kind: StatementKind::Other,
             statement_in_select: false,
             statement_keys_read: Arc::default(),
-            current_tso: tidb_executor::CurrentTso::default(),
-            current_for_update_ts: tidb_executor::CurrentTso::default(),
+            current_tso: tidb_expr::CurrentTso::default(),
+            current_for_update_ts: tidb_expr::CurrentTso::default(),
             statement_txn_start_ts: 0,
             statement_ended_txn_start_ts: None,
             statement_began_txn: false,
@@ -930,7 +930,7 @@ impl Session {
             ddl_job_history_store: None,
             stats_collector: None,
             transaction_table_delta: std::sync::Arc::new(
-                tidb_stats_handle_usage::TableDeltaMap::new(),
+                tidb_variable::table_delta::TableDeltaMap::new(),
             ),
             mdl_related_tables: None,
             mdl_statement_locks: false,
@@ -1031,7 +1031,7 @@ impl Session {
     #[doc(hidden)]
     pub fn notify_before_executor_first_run(&self) {
         if let Some(observer) = self.statement_phase_observer() {
-            observer(tidb_executor::StatementPhase::ExecutorReady);
+            observer(tidb_sessionctx::StatementPhase::ExecutorReady);
         }
         if self
             .executor_first_run_breakpoint
@@ -1130,7 +1130,9 @@ pub mod session_states;
 mod record_set;
 mod session_plan_cache;
 use record_set::StatementCompletion;
-pub use record_set::{OpenedStatement, SessionRecordSet, StatementExecution, StatementRecordSet};
+pub use record_set::{SessionRecordSet, StatementExecution};
+pub use tidb_executor::record_set::OpenedStatement;
+pub use tidb_executor::record_set::StatementRecordSet;
 mod resource_group;
 mod table_lock;
 mod temptable;
@@ -1157,7 +1159,8 @@ pub(crate) use classify::{
 pub use classify::StmtKind;
 pub use prepared_ast::PreparedAst;
 pub(crate) use variables::datum_text;
-pub use warnings::{SqlWarning, WarningLevel};
+pub use warnings::SqlWarning;
+pub use tidb_util::context::WarningLevel;
 #[cfg(test)]
 mod tests_expensivequery;
 mod privilege_tables;
@@ -1169,7 +1172,7 @@ mod show;
 use tidb_variable::vars;
 #[cfg(test)]
 mod tests_variable_session;
-pub use tidb_domain::global_sysvars::GlobalSysvars;
+use tidb_domain::global_sysvars::GlobalSysvars;
 pub use vars::{SessionVars, VarError};
 
 impl Session {
@@ -1195,7 +1198,7 @@ impl Session {
 
     /// The live transaction timestamp authority used by storage integration.
     #[must_use]
-    pub fn current_tso(&self) -> tidb_executor::CurrentTso {
+    pub fn current_tso(&self) -> tidb_expr::CurrentTso {
         self.current_tso.clone()
     }
 
@@ -1208,7 +1211,7 @@ impl Session {
 
     /// Where the cluster tier publishes the open pessimistic transaction's
     /// for-update timestamp (Go `TxnCtx.SetForUpdateTS`).
-    pub fn current_for_update_ts(&self) -> tidb_executor::CurrentTso {
+    pub fn current_for_update_ts(&self) -> tidb_expr::CurrentTso {
         self.current_for_update_ts.clone()
     }
 
@@ -1295,20 +1298,20 @@ impl Session {
 
     fn effective_replica_read(
         &self,
-        mode: tidb_executor::ReplicaReadType,
-    ) -> tidb_executor::ReplicaReadType {
+        mode: tidb_txnkv::ReplicaReadType,
+    ) -> tidb_txnkv::ReplicaReadType {
         // Go GetReplicaRead gives the statement hint priority over the domain
         // switch. Planner eligibility and execution must use the same decision.
         if self.stmt_hints.has_replica_read_hint {
-            return tidb_executor::ReplicaReadType::from_raw(self.stmt_hints.replica_read);
+            return tidb_txnkv::ReplicaReadType::from_raw(self.stmt_hints.replica_read);
         }
-        if mode == tidb_executor::ReplicaReadType::ClosestAdaptive
+        if mode == tidb_txnkv::ReplicaReadType::ClosestAdaptive
             && self
                 .cluster_topology
                 .as_ref()
                 .is_some_and(|topology| !topology.adaptive_enabled())
         {
-            tidb_executor::ReplicaReadType::Leader
+            tidb_txnkv::ReplicaReadType::Leader
         } else {
             mode
         }
@@ -1372,7 +1375,7 @@ impl Session {
     /// reaches it from `buildDataSource`: each stored table it binds -- a
     /// view's body included -- joins the transaction's map at the node's
     /// schema version then. `None` when this statement locks nothing.
-    pub(crate) fn mdl_related_table_recorder(&self) -> Option<tidb_executor::MdlRelatedTableRecorder> {
+    pub(crate) fn mdl_related_table_recorder(&self) -> Option<tidb_variable::MdlRelatedTableRecorder> {
         if !self.mdl_statement_locks {
             return None;
         }
@@ -1453,7 +1456,7 @@ impl Session {
             .process_plan_info
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        cell.plan.as_ref().and_then(tidb_executor::StoredPlan::get)
+        cell.plan.as_ref().and_then(tidb_sessionctx::StoredPlan::get)
     }
 
     /// Go `recordLastDDLInfo`: the query of a DDL job this session waited for
@@ -1544,14 +1547,14 @@ impl Session {
     #[must_use]
     pub fn table_delta_savepoint(
         &self,
-    ) -> std::collections::HashMap<i64, tidb_stats_handle_usage::TableDelta> {
+    ) -> std::collections::HashMap<i64, tidb_variable::table_delta::TableDelta> {
         self.transaction_table_delta.snapshot()
     }
 
     /// Restores Go's table-delta part of one transaction savepoint.
     pub fn restore_table_delta_savepoint(
         &self,
-        savepoint: std::collections::HashMap<i64, tidb_stats_handle_usage::TableDelta>,
+        savepoint: std::collections::HashMap<i64, tidb_variable::table_delta::TableDelta>,
     ) {
         self.transaction_table_delta.restore(savepoint);
     }
@@ -1882,9 +1885,9 @@ impl Session {
     /// The auto-increment ids the running statement has assigned, which a
     /// caller that RUNS THE STATEMENT AGAIN rewinds between attempts and
     /// clears when the statement is finally over. See
-    /// `tidb_executor::RetryAutoIds`.
+    /// `tidb_sessionctx::RetryAutoIds`.
     #[must_use]
-    pub fn retry_auto_ids(&self) -> &Arc<std::sync::Mutex<tidb_executor::RetryAutoIds>> {
+    pub fn retry_auto_ids(&self) -> &Arc<std::sync::Mutex<tidb_sessionctx::RetryAutoIds>> {
         &self.retry_auto_ids
     }
 
@@ -2421,7 +2424,7 @@ impl Session {
         &self,
         catalog: &tidb_executor::Catalog,
         physical_id: i64,
-        statistics: &tidb_executor::access_cost::TableStatistics,
+        statistics: &tidb_stats::table_statistics::TableStatistics,
     ) {
         let (schema, name) = catalog
             .table_names_by_id(physical_id)
@@ -2526,7 +2529,7 @@ impl Session {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let previous_plan = cell.plan.take();
             let previous_explain = cell.explain_marker;
-            *cell = tidb_executor::ProcessPlanInfo::default();
+            *cell = tidb_sessionctx::ProcessPlanInfo::default();
             cell.previous_plan = previous_plan;
             cell.previous_explain = previous_explain;
         }

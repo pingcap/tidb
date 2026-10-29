@@ -421,7 +421,7 @@ impl RuntimeFilterMode {
 }
 
 use crate::varsutil::{tidb_opt_int64, tidb_opt_positive_int32};
-use tidb_util::stringutil::go_to_upper;
+use tidb_hack::go_to_upper;
 use tidb_vardef::tidb_vars as names;
 
 /// The stored text a Go `SetSession` closure would receive: the session's

@@ -70,7 +70,6 @@ use tidb_datatype::{
     ConversionFlags, Datum, EvalType, FieldType, FieldTypeCode, SessionTimeZone,
     DEFAULT_STATEMENT_FLAGS,
 };
-use tidb_stats::table_statistics::{ColumnStats, IndexStats};
 use tidb_stats::cmsketch::{
     cmsketch_and_topn_from_proto, CmsSketchProto, CmsSketchProtoRow, CmsSketchProtoTopN,
 };
@@ -80,7 +79,7 @@ use tidb_stats::{
     Index, IndexInfo, JsonBucket, JsonCmSketch, JsonCmSketchRow, JsonCmSketchTopN, JsonColumn,
     JsonFmSketch, JsonHistogram, JsonPredicateColumn, StatsLoadedStatus, Table,
 };
-pub use tidb_stats::{JsonTable, TIDB_GLOBAL_STATS};
+use tidb_stats::JsonTable;
 use tidb_util::compress::{GzipReaderPool, GzipWriterPool};
 
 use tidb_stats::table_statistics::TableStatistics;

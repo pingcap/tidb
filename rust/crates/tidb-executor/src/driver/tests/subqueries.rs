@@ -94,7 +94,7 @@ fn an_uncorrelated_join_subquery_with_a_filter_keeps_its_table_statistics() {
             &catalog,
             "test",
             &ctx,
-            crate::explain::ExplainFormat::Brief,
+            tidb_sessionctx::explain_format::ExplainFormat::Brief,
         )
         .unwrap();
         plan.iter()
@@ -200,7 +200,7 @@ fn evaluated_scalar_predicate_is_pushed_below_a_sibling_anti_semi_join() {
         &catalog,
         "test",
         &ctx,
-        crate::explain::ExplainFormat::Brief,
+        tidb_sessionctx::explain_format::ExplainFormat::Brief,
     )
     .unwrap();
     let text = |row: &[Datum], column: usize| match &row[column] {
@@ -333,7 +333,7 @@ fn plain_explain_evaluates_and_labels_an_uncorrelated_scalar_subquery() {
             &catalog,
             "test",
             &ctx,
-            crate::explain::ExplainFormat::Brief,
+            tidb_sessionctx::explain_format::ExplainFormat::Brief,
         )
         .unwrap()
     });
@@ -376,7 +376,7 @@ fn plain_explain_evaluates_and_labels_an_uncorrelated_scalar_subquery() {
         &catalog,
         "test",
         &ctx,
-        crate::explain::ExplainFormat::Brief,
+        tidb_sessionctx::explain_format::ExplainFormat::Brief,
     )
     .unwrap();
     assert!(
@@ -428,7 +428,7 @@ fn plain_explain_evaluates_and_labels_an_uncorrelated_scalar_subquery() {
         &catalog,
         "test",
         &ctx,
-        crate::explain::ExplainFormat::Brief,
+        tidb_sessionctx::explain_format::ExplainFormat::Brief,
     )
     .unwrap();
     let operators = q11_plan
@@ -473,7 +473,8 @@ fn plain_explain_evaluates_and_labels_an_uncorrelated_scalar_subquery() {
 /// Go branch pinned above.
 #[test]
 fn explaining_a_correlated_scalar_type_reads_no_storage() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     fn explain_without_storage(
         sql: &str,
@@ -780,7 +781,8 @@ fn explaining_a_correlated_scalar_type_reads_no_storage() {
 /// aggregate column instead of remaining an opaque per-row subquery.
 #[test]
 fn correlated_avg_predicate_decorrelates_to_grouped_join() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -848,7 +850,8 @@ fn correlated_avg_predicate_decorrelates_to_grouped_join() {
 
 #[test]
 fn correlated_sum_predicate_pulls_above_unique_outer_join() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(

@@ -18,7 +18,7 @@
 use std::any::Any;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use crate::executor::ExecError;
+use tidb_driver_error::ExecError;
 
 /// Recovers one Go-style executor panic and turns it into its query error.
 ///

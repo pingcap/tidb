@@ -52,7 +52,7 @@ impl Session {
         let ctx = self
             .statement_context(false)
             .with_time_zone(tidb_datatype::SessionTimeZone::utc());
-        let decode = tidb_executor::RowDecodeContext::for_query(&ctx);
+        let decode = tidb_table::kv_table::RowDecodeContext::for_query(&ctx);
         let loaded = self.with_persistent_catalog_mut(|catalog| {
             tidb_privilege::cluster_privilege_load::load_privileges(
                 &mut crate::privilege_tables::SessionPrivilegeTables { catalog, decode },

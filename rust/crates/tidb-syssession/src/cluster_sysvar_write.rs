@@ -37,10 +37,8 @@ use tidb_txnkv::transaction::BufferMutation;
 use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_infoschema::cluster_catalog::MetaSnapshot;
 use crate::mysql_system_tables::{scan_system_table, SystemTableError, SystemTableView, SYSTEM_DB};
-use crate::system_row_write::{
-    decode_stored_row, defaults_row, delete_clustered_row, delete_row, insert_row, is_clustered,
-    row_id_of, store_clustered_row, update_row, RowEncodeError, RowValues,
-};
+use crate::system_row_write::{decode_stored_row, defaults_row, delete_clustered_row, delete_row, insert_row, is_clustered, row_id_of, store_clustered_row, update_row, RowValues};
+use tidb_table::origin_default::RowEncodeError;
 
 const GLOBAL_VARIABLES_TABLE: &str = "global_variables";
 

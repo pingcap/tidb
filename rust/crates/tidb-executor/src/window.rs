@@ -40,7 +40,8 @@ use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_expr::Columns;
 
-use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::executor::{Executor, ExecutorMeta};
+use tidb_driver_error::ExecError;
 use crate::hash_agg::{AggFunc, WindowAggState};
 use crate::vec_group_checker::VecGroupChecker;
 

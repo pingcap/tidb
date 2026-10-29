@@ -27,10 +27,8 @@ use tikv_client::pd_keyspace::is_keyspace_using_keyspace_level_gc;
 use tikv_client::proto::keyspacepb::{keyspace_meta, KeyspaceMeta, KeyspaceState};
 use tikv_client::proto::metapb;
 
-use crate::seams::{
-    DelRangeTask, GcError, GcKvClient, GcPdClient, GcResult, GcRuleClient, GcSession,
-    GcSessionFactory, GcStore, GcV2Manager,
-};
+use crate::seams::{GcError, GcKvClient, GcPdClient, GcResult, GcRuleClient, GcSession, GcSessionFactory, GcStore, GcV2Manager};
+use tidb_ddl::ddl_delete_range::DelRangeTask;
 
 pub(crate) const BOOLEAN_TRUE: &str = "true";
 pub(crate) const BOOLEAN_FALSE: &str = "false";

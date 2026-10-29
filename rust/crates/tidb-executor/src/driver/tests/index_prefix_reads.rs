@@ -348,7 +348,8 @@ fn a_multi_byte_column_is_cut_by_characters() {
 
 #[test]
 fn partial_order_topn_keeps_competing_rows_with_the_same_prefix() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     let ctx = crate::StmtContext::for_query().with_partial_ordered_index_for_topn(true);
@@ -534,7 +535,8 @@ fn partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters(
 
 #[test]
 fn prefix_null_conditions_use_a_covering_reader_without_exposing_prefix_values() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
         "CREATE TABLE pn (a VARCHAR(20), b INT, KEY idx(a(2), b))",
@@ -603,7 +605,8 @@ fn prefix_null_conditions_use_a_covering_reader_without_exposing_prefix_values()
 
 #[test]
 fn index_join_covering_rows_match_master_with_prefix_filters_and_outer_nulls() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
     let mut catalog = Catalog::mock();
     let ctx = crate::StmtContext::for_query();
     for ddl in [

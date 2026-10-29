@@ -38,9 +38,8 @@ use tidb_syssession::mysql_system_tables::{
     scan_system_table_from_int_handle, scan_system_table_prefixed, SystemRow, SystemTableError,
     SystemTableView,
 };
-use tidb_syssession::system_row_write::{
-    delete_clustered_row, store_clustered_row, RowEncodeError, RowValues,
-};
+use tidb_syssession::system_row_write::{delete_clustered_row, store_clustered_row, RowValues};
+use tidb_table::origin_default::RowEncodeError;
 
 /// One decoded active DDL row together with the exact stored row values needed
 /// by Go SQL `UPDATE`/`DELETE` semantics.

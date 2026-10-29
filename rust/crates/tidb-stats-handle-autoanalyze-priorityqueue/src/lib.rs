@@ -2379,7 +2379,8 @@ mod tests {
     use std::fmt::Write as _;
     use std::sync::RwLock;
     use tidb_ast::CiString;
-    use tidb_model::go_runtime::{GoShared, GoSharedPointerSlice, GoSharedSlice};
+    use tidb_model::go_runtime::{GoShared, GoSharedPointerSlice};
+    use tidb_goruntime::go_runtime::GoSharedSlice;
     use tidb_model::{IndexInfo, PartitionDefinition, PartitionInfo};
     use tidb_stats::{ColAndIdxExistenceMap, HistColl};
 

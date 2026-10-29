@@ -35,7 +35,7 @@ pub const BATCH_INSERT_SIZE: usize = 2_048;
 /// Go `dumpDeltaBatchSize`.
 pub const DUMP_DELTA_BATCH_SIZE: usize = 100_000;
 
-pub use tidb_variable::table_delta::{TableDelta, TableDeltaMap};
+use tidb_variable::table_delta::{TableDelta, TableDeltaMap};
 
 /// Go `storage.DeltaUpdate`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

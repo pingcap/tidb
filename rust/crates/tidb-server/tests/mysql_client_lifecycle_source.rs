@@ -21,14 +21,10 @@ use tidb_protocol::{
     COM_STMT_CLOSE, COM_STMT_EXECUTE, COM_STMT_FETCH, COM_STMT_PREPARE, COM_STMT_RESET,
     COM_STMT_SEND_LONG_DATA, DEFAULT_MAX_ALLOWED_PACKET, TYPE_BLOB, TYPE_LONGLONG,
 };
-use tidb_server::{
-    serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit,
-    ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral,
-    QueryResult, QuerySession, QuerySessionFactory,
-    ResultSetSource, SessionContext, SqlQueryError, WireStatus, WriteOutcome,
-    SERVER_STATUS_IN_TRANS,
-};
-use tidb_session::ResultMaterializationAuthority;
+use tidb_server::{serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit, ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral, QueryResult, QuerySession, QuerySessionFactory, ResultSetSource, SessionContext, WireStatus, SERVER_STATUS_IN_TRANS};
+use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_executor::ddl_exec::WriteOutcome;
+use tidb_executor::stmt_ctx_build::ResultMaterializationAuthority;
 use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;

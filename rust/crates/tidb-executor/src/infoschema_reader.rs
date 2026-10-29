@@ -32,9 +32,7 @@ use tidb_datatype::{
 use tidb_privilege::PrivilegeTypeExt;
 use crate::{Catalog, KvTable, TableEntry};
 
-pub use tidb_infoschema::infoschema_meta::{
-    is_information_schema, served_table_names, table_schema, INFORMATION_SCHEMA,
-};
+use tidb_infoschema::infoschema_meta::INFORMATION_SCHEMA;
 
 /// Go's catalog name, which is always `def`.
 const CATALOG: &str = "def";
@@ -2236,7 +2234,7 @@ pub fn show_table_status_rows(
     let mut rows = tables_rows(catalog, visibility, zone)
         .into_iter()
         .filter(|row| {
-            crate::simple::account_tables::sysvar_datum_text(&row[TABLE_SCHEMA]).is_some_and(|name| name.go_to_lower() == schema)
+            tidb_datatype::datum_text::sysvar_datum_text(&row[TABLE_SCHEMA]).is_some_and(|name| name.go_to_lower() == schema)
         })
         .map(|row| {
             let mut status = Vec::with_capacity(18);
@@ -2508,7 +2506,7 @@ fn view_tables_row(
 /// collation falls back to the server default.
 fn sequence_tables_row(
     schema: &str,
-    sequence: &tidb_infoschema::SequenceDef,
+    sequence: &tidb_table::sequence::SequenceDef,
     zone: &tidb_expr::SessionTimeZone,
 ) -> Vec<Datum> {
     vec![

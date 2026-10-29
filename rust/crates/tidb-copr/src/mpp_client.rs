@@ -2095,7 +2095,7 @@ mod mpp_read_batch_tests {
     #[test]
     fn remote_projection_uses_the_same_statement_memory_and_killer() {
         let memory = tidb_kv::mem_quota::StatementMemory::default();
-        let context = tidb_executor::StmtContext::for_query_with_memory(memory.clone());
+        let context = tidb_sessionctx::StmtContext::for_query_with_memory(memory.clone());
         let remote = tidb_executor::remote_scan::pushdown_statement_context(&context);
         assert!(Arc::ptr_eq(remote.memory.sql_killer(), memory.sql_killer()));
         remote.memory.stmt_tracker().consume(17);

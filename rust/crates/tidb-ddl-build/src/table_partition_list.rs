@@ -25,10 +25,7 @@ use tidb_datatype::FieldType;
 use tidb_table::partition_routing::PartitionKind;
 use tidb_error::mysql::MysqlError;
 
-pub use tidb_table::partition_fold::{
-    build_list_values, build_list_values_with_unsigned, eval_column_value, fold_column_value,
-    fold_range_column_value, partition_value_failure, partition_value_resolver,
-};
+use tidb_table::partition_fold::fold_column_value;
 
 use tidb_hack::GoCaseCompare;
 

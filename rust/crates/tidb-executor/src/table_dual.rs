@@ -16,7 +16,8 @@
 //! of rows carrying no real column data -- the source for a `FROM`-less
 //! `SELECT`.
 
-use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::executor::{Executor, ExecutorMeta};
+use tidb_driver_error::ExecError;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::FieldType;
 use tidb_expr::schema::Schema;

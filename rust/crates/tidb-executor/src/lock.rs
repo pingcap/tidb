@@ -21,7 +21,7 @@ use tidb_ast::TableLockType;
 use tidb_ddl_build::table_lock;
 use tidb_model::TableLockTpInfo;
 use tidb_mysql::PrivilegeType;
-use tidb_util::stringutil::go_to_lower;
+use tidb_hack::go_to_lower;
 
 use crate::{Catalog, DriverError, TableEntry};
 

@@ -516,7 +516,7 @@ fn cluster_metadata_composes_retrievers_and_retains_warnings_on_failure() {
 #[test]
 fn closest_adaptive_balances_zones_and_updates_existing_sessions() {
     use tidb_domain::cluster_topology::ClusterTopology;
-    use tidb_executor::ReplicaReadType;
+    use tidb_txnkv::ReplicaReadType;
     let fake = Arc::new(FakeEtcd::default());
     for (id, zone) in [
         ("s1", "z1"),
@@ -714,7 +714,7 @@ fn cluster_metadata_sem_child() {
 
 #[test]
 fn cluster_config_checks_config_privilege_before_discovery() {
-    use crate::{tests_support::*, *};
+    use crate::tests_support::*;
     let registry = tidb_privilege::PrivilegeRegistry::default();
     let mut bootstrap = bootstrap_session(&registry);
     bootstrap.run("CREATE USER 'config_reader'@'%'").unwrap();

@@ -17,7 +17,8 @@ fn install_cardinality_mock_statistics_for_table(
     row_count: i64,
     columns: &[(i64, i64)],
 ) {
-    use tidb_planner::cardinality::row_count_estimator::{ColumnStats, IndexStats};
+    use tidb_stats::table_statistics::ColumnStats;
+    use tidb_stats::table_statistics::IndexStats;
     use tidb_stats::histogram::Histogram;
 
     let shared = session.shared_catalog();
@@ -44,7 +45,7 @@ fn install_cardinality_mock_statistics_for_table(
         }
         histogram
     };
-    let mut statistics = tidb_executor::access_cost::TableStatistics {
+    let mut statistics = tidb_stats::table_statistics::TableStatistics {
         row_count,
         ..Default::default()
     };

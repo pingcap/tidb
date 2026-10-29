@@ -17,7 +17,7 @@
 use tidb_stats_handle::catalog_statistics::CatalogStatistics;
 use tidb_datatype::Datum;
 
-use crate::simple::account_tables::sysvar_datum_text as datum_text;
+use tidb_datatype::datum_text::sysvar_datum_text as datum_text;
 use crate::DriverError;
 
 use tidb_hack::GoCaseCompare;
@@ -170,7 +170,7 @@ pub(crate) fn stats_row_admitted(
     row: &[Datum],
 ) -> bool {
     let lower = |index: usize| {
-        tidb_util::stringutil::go_to_lower(&datum_text(&row[index]).unwrap_or_default())
+        tidb_hack::go_to_lower(&datum_text(&row[index]).unwrap_or_default())
     };
     match extractor {
         None => true,

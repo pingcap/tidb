@@ -70,10 +70,8 @@ pub use go_any::{
     GoEqualityProjection, GoJsonContext, GoJsonProjection, GoJsonReference,
     GoJsonReferenceIdentity, GoJsonValue, GoTypeIdentity, GoTypeKind,
 };
-pub use go_runtime::{
-    GoNullClonePolicy, GoPointerAny, GoShared, GoSharedPointerSlice, GoSharedSlice, GoTime,
-    GoTimeLocation,
-};
+pub use go_runtime::{GoNullClonePolicy, GoPointerAny, GoShared, GoSharedPointerSlice, GoTime, GoTimeLocation};
+pub use tidb_goruntime::go_runtime::GoSharedSlice;
 pub use index::{
     field_type_to_inverted_index_info, find_index_by_columns,
     find_index_by_columns_for_foreign_key, find_index_info_by_id, gen_unique_changing_index_name,

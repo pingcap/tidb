@@ -2,7 +2,8 @@
 //! `pkg/executor/adapter.go` contracts for `FOUND_ROWS()`.
 
 use tidb_datatype::Datum;
-use tidb_session::{Session, StmtOutput, StmtResult};
+use tidb_session::{Session, StmtResult};
+use tidb_executor::StmtOutput;
 
 #[test]
 fn found_rows_reports_the_previous_completed_result_set() {

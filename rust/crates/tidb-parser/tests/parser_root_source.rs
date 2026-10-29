@@ -17,7 +17,8 @@
 use tidb_ast::{
     AdminStmt, DmlStmt, Expr, ExtendedStatsType, QueryStmt, RestoreContext, RestoreFlags, Stmt,
 };
-use tidb_parser::{parse, parse_multi, parse_multi_with_sql_mode, parse_with_sql_mode, SqlMode};
+use tidb_parser::{parse, parse_multi, parse_multi_with_sql_mode, parse_with_sql_mode};
+use tidb_lexer::SqlMode;
 
 #[test]
 fn test_parentheses_depth_limit() {

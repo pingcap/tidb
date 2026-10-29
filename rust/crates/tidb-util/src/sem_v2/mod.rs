@@ -87,7 +87,7 @@ use std::sync::{Arc, RwLock};
 use tidb_log::Value;
 
 use crate::logutil;
-use crate::stringutil::go_to_lower;
+use tidb_hack::go_to_lower;
 use sql_rule::sql_rule_by_name;
 
 // Go `vardef` constants, inlined (see the module boundaries).

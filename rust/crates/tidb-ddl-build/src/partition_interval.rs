@@ -40,7 +40,7 @@ fn restore(expr: &Expr) -> String {
 }
 
 fn eval(expr: &Expr, ctx: &tidb_expr::metabuild::Context) -> Result<Datum, MysqlError> {
-    super::table_partition_list::eval_column_value(expr, ctx)
+    tidb_table::partition_fold::eval_column_value(expr, ctx)
 }
 
 /// Go `Datum.ConvertTo` into the RANGE COLUMNS column, when there is one.
@@ -288,8 +288,8 @@ pub fn expand_interval(
     let unit = time_unit(interval.unit.as_deref())?;
     match column {
         Some(column) => {
-            super::table_partition_list::fold_range_column_value(first, column, ctx)?;
-            super::table_partition_list::fold_range_column_value(last, column, ctx)?;
+            tidb_table::partition_fold::fold_range_column_value(first, column, ctx)?;
+            tidb_table::partition_fold::fold_range_column_value(last, column, ctx)?;
         }
         None => {
             // Go's generation takes a NULL end as it comes (its own 8200s
@@ -520,7 +520,7 @@ pub fn interval_from_table(
         first = bound(start)?;
     }
     let mut last = bound(end)?;
-    if last.eq_ignore_ascii_case(super::table_partition::PARTITION_MAX_VALUE) {
+    if last.eq_ignore_ascii_case(tidb_table::partition_metadata::PARTITION_MAX_VALUE) {
         maxvalue_partition = true;
         end -= 1;
         last = bound(end)?;

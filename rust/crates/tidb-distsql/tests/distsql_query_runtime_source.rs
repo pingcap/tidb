@@ -15,10 +15,9 @@
 #![allow(missing_docs)]
 
 use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_distsql::{
-    InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryResultContext, QueryTransport,
-    ResponseChannel, SelectInput, StoreType, TransportRequest, WarningCollector,
-};
+use tidb_distsql::{InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryResultContext, QueryTransport, ResponseChannel, SelectInput, TransportRequest};
+use tidb_util::context::WarningCollector;
+use tidb_txnkv::StoreType;
 
 struct OneResponse(Option<ResponseChannel<prost::bytes::Bytes>>);
 

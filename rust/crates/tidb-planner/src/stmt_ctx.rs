@@ -51,7 +51,7 @@ pub trait PlannerStmtCtx {
     /// Go `domain.GetDomain(sctx).InfoSchema()` as
     /// `planner/util/domainmisc.GetLatestIndexInfo` reads it: the statement's
     /// latest infoschema, when one is attached.
-    fn latest_index_schema(&self) -> Option<Arc<crate::domain_misc::LatestIndexSchema>>;
+    fn latest_index_schema(&self) -> Option<Arc<tidb_infoschema::table_source::LatestIndexSchema>>;
 }
 
 /// The cost environment's values the statement context reads itself.
@@ -111,7 +111,7 @@ impl PlannerStmtCtx for StmtContext {
         }
     }
 
-    fn latest_index_schema(&self) -> Option<Arc<crate::domain_misc::LatestIndexSchema>> {
+    fn latest_index_schema(&self) -> Option<Arc<tidb_infoschema::table_source::LatestIndexSchema>> {
         self.latest_info_schema()?.downcast()
     }
 

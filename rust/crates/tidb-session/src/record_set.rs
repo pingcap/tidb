@@ -17,7 +17,7 @@
 //! record set and the session primitives it finishes through.
 
 use crate::*;
-pub use tidb_executor::record_set::{OpenedStatement, StatementRecordSet};
+use tidb_executor::record_set::{OpenedStatement, StatementRecordSet};
 pub(crate) use tidb_executor::record_set::{PendingExecution, PendingQuery, QueryTransactionEnd};
 pub(crate) use tidb_executor::stmt_ctx_build::StatementCompletion;
 
@@ -54,7 +54,7 @@ impl tidb_executor::record_set::RecordSetSession for Session {
         self.statement_snapshot = None;
     }
 
-    fn drain_eval_warnings(&mut self, ctx: &tidb_executor::StmtContext) {
+    fn drain_eval_warnings(&mut self, ctx: &tidb_sessionctx::StmtContext) {
         Session::drain_eval_warnings(self, ctx);
     }
 

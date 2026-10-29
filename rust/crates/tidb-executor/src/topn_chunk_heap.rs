@@ -75,7 +75,7 @@ use tidb_chunk::chunk::Chunk;
 use tidb_chunk::row::Row;
 use tidb_datatype::{Datum, FieldType};
 
-use crate::executor::ExecError;
+use tidb_driver_error::ExecError;
 use crate::sort::{less_by_items, SortByItem};
 
 /// Go stdlib `container/heap`, which both `topn_chunk_heap.go` and

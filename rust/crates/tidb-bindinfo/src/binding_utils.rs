@@ -108,8 +108,9 @@ use tidb_ast::{DmlStmt, QueryStmt, Stmt};
 use tidb_datatype::Datum;
 use tidb_driver_error::DriverError;
 
-use crate::binding::{Binding, HintsSet, STATUS_DISABLED, STATUS_ENABLED, STATUS_USING};
-use tidb_util::stringutil::go_to_lower;
+use crate::binding::{Binding, STATUS_DISABLED, STATUS_ENABLED, STATUS_USING};
+use tidb_hint::HintsSet;
+use tidb_hack::go_to_lower;
 
 /// Go `bindinfo.BuiltinPseudoSQL4BindLock` (`binding_handle.go:34`). Declared
 /// in another file of the package; inlined here because

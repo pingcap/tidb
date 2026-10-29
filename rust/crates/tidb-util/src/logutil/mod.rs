@@ -48,7 +48,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, FixedOffset, Local};
 use tidb_log::{Entry, Field, Level, LoggerOptions, TextEncoder, WriteSyncer};
 
-use crate::stringutil::go_to_lower;
+use tidb_hack::go_to_lower;
 use file_sink::{RotatingFile, SharedSink, Sink};
 
 /// Default size of log files in MB (Go `DefaultLogMaxSize`).

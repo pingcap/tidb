@@ -77,7 +77,7 @@ pub enum ScopeKind {
 #[derive(Debug, Default)]
 pub struct TableScopePrivs {
     /// The privileges written without a column list.
-    table: Vec<tidb_privilege::PrivilegeType>,
+    table: Vec<tidb_mysql::PrivilegeType>,
     /// `(column, mask)` in the order the columns were first named, merged so
     /// that a column named by several privileges appears once.
     columns: Vec<(String, u64)>,
@@ -428,7 +428,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 return Ok(Vec::new());
             };
             let table = std::sync::Arc::make_mut(table);
-            let text = |datum: &Datum| super::account_tables::sysvar_datum_text(datum).unwrap_or_default();
+            let text = |datum: &Datum| tidb_datatype::datum_text::sysvar_datum_text(datum).unwrap_or_default();
             let rows = table
                 .scan_rows_with_context(&decode_context)
                 .map_err(crate::ddl::index_backfill_error)?;
@@ -2001,8 +2001,8 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         &self,
         privileges: &[tidb_ast::GrantPrivilege],
         scope: ScopeKind,
-    ) -> Result<Vec<tidb_privilege::PrivilegeType>, DriverError> {
-        let all_scoped: &[tidb_privilege::PrivilegeType] = match scope {
+    ) -> Result<Vec<tidb_mysql::PrivilegeType>, DriverError> {
+        let all_scoped: &[tidb_mysql::PrivilegeType] = match scope {
             ScopeKind::Database => tidb_mysql::ALL_DB_PRIVS,
             ScopeKind::Table => tidb_mysql::ALL_TABLE_PRIVS,
         };

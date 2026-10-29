@@ -33,7 +33,7 @@ fn has_index_join_compare_filters(plan: &tidb_planner::physical::PhysicalPlan) -
 #[test]
 fn index_join_compare_filters_intersect_on_go_one_column_range() {
     let mut catalog = Catalog::mock();
-    let ctx = tidb_executor::StmtContext::for_query();
+    let ctx = tidb_sessionctx::StmtContext::for_query();
     run_create_table_on(
         "CREATE TABLE ij_outer (a BIGINT, lo1 BIGINT, lo2 BIGINT)",
         &mut catalog,
@@ -67,7 +67,7 @@ fn index_join_compare_filters_intersect_on_go_one_column_range() {
 #[test]
 fn index_join_cuts_equality_probe_to_go_prefix_index_key() {
     let mut catalog = Catalog::mock();
-    let ctx = tidb_executor::StmtContext::for_query();
+    let ctx = tidb_sessionctx::StmtContext::for_query();
     run_create_table_on("CREATE TABLE pij_outer (s VARCHAR(20))", &mut catalog).unwrap();
     run_create_table_on(
         "CREATE TABLE pij_inner (s VARCHAR(20), KEY s3(s(3)))",
@@ -106,7 +106,7 @@ fn index_join_cuts_equality_probe_to_go_prefix_index_key() {
 #[test]
 fn index_join_deduplicates_go_prefix_lookup_keys_before_reading() {
     let mut catalog = Catalog::mock();
-    let ctx = tidb_executor::StmtContext::for_query();
+    let ctx = tidb_sessionctx::StmtContext::for_query();
     run_create_table_on("CREATE TABLE pdij_outer (s VARCHAR(20))", &mut catalog).unwrap();
     run_create_table_on(
         "CREATE TABLE pdij_inner (s VARCHAR(20), KEY s3(s(3)))",
@@ -154,7 +154,7 @@ fn index_join_deduplicates_go_prefix_lookup_keys_before_reading() {
 fn cached_index_join_compare_filter_rebinds_its_parameter() {
     let cache = tidb_executor::SessionPlanCache::default();
     let mut catalog = Catalog::mock();
-    let ctx = tidb_executor::StmtContext::for_query();
+    let ctx = tidb_sessionctx::StmtContext::for_query();
     run_create_table_on("CREATE TABLE cij_outer (a BIGINT, lo BIGINT)", &mut catalog).unwrap();
     run_create_table_on(
         "CREATE TABLE cij_inner (a BIGINT, b BIGINT, KEY ab(a,b))",
@@ -231,7 +231,7 @@ fn cached_index_join_compare_filter_rebinds_its_parameter() {
 fn fresh_and_cached_physical_execution_returns_the_same_rows_and_metadata() {
     let cache = tidb_executor::SessionPlanCache::default();
     let mut catalog = Catalog::mock();
-    let ctx = tidb_executor::StmtContext::for_query();
+    let ctx = tidb_sessionctx::StmtContext::for_query();
     run_create_table_on(
         "CREATE TABLE shared_physical_builder (\
             id BIGINT PRIMARY KEY, value BIGINT NOT NULL)",

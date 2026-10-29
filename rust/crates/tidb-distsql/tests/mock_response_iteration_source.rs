@@ -27,11 +27,9 @@ use tidb_chunk::codec::Codec as ChunkCodec;
 use tidb_codec::{encode_value, encode_value_in_timezone};
 use tidb_datatype::{parse_datetime, Datum, FieldType, FieldTypeCode, SessionTimeZone, TimeType};
 use tidb_distsql::query_runtime::{QueryResponseError, QueryResultSubset};
-use tidb_distsql::{
-    InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryOperation, QueryResultContext,
-    QueryTransport, ResponseChannel, SelectInput, StoreType, TransportRequest, WarningCollector,
-    DAG_RESULT_LABEL, GENERAL_SQL_TYPE,
-};
+use tidb_distsql::{InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryOperation, QueryResultContext, QueryTransport, ResponseChannel, SelectInput, TransportRequest, DAG_RESULT_LABEL, GENERAL_SQL_TYPE};
+use tidb_util::context::WarningCollector;
+use tidb_txnkv::StoreType;
 use tidb_proto::{Chunk, EncodeType, IntermediateOutput, SelectResponse};
 
 fn longlong_type() -> FieldType {

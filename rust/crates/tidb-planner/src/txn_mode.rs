@@ -20,7 +20,7 @@
 //! statement that implicitly opens a transaction. The difference is the whole
 //! point of the autocommit rule below.
 
-pub use tidb_ast::TransactionMode;
+use tidb_ast::TransactionMode;
 
 /// Go `vardef.PessimisticTxnMode`.
 pub const PESSIMISTIC_TXN_MODE: &str = "pessimistic";

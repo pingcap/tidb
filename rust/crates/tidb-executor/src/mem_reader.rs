@@ -129,7 +129,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_txnkv::{Handle as KvHandle, Key, KvIterator, UnionIter};
 
-use crate::executor::ExecError;
+use tidb_driver_error::ExecError;
 use tidb_table::kv_table::TableHandle;
 use tidb_table::kv_table::RowDecoder;
 use crate::predicate_pushdown::ScanFilterProbe;

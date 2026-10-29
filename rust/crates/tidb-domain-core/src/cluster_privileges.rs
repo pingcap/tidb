@@ -44,7 +44,7 @@ use tidb_privilege::PrivilegeRegistry;
 
 use tidb_mysql::consts::AuthNativePassword as DEFAULT_AUTH_PLUGIN;
 
-pub use tidb_privilege::load::{registry_from_cluster, LoadedRegistry, SkippedGrant};
+use tidb_privilege::load::registry_from_cluster;
 
 /// The cluster rows a registry built by [`registry_from_cluster`] would not
 /// carry, as sentences.

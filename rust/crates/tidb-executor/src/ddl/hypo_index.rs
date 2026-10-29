@@ -19,7 +19,7 @@ use tidb_hack::GoToLower;
 use tidb_model::index::{IndexColumn, IndexInfo};
 
 use crate::{Catalog, DriverError};
-pub use tidb_table::hypo_index::{HypoIndexMap, HypoIndexes, HypoTiFlashReplicas};
+use tidb_table::hypo_index::HypoIndexes;
 
 /// The Index Advisor's `addHypoIndex` (`pkg/planner/indexadvisor/optimizer.go`):
 /// a public, non-unique hypothetical index over `columns`, built straight

@@ -38,7 +38,7 @@ pub fn bind_parameters(
     // The scanner `sql_mode` the statement was PREPARED under: binding
     // re-parses the prepared text, and the restore below then writes it in
     // the parser's canonical form, exactly as Go's stored AST would.
-    sql_mode: tidb_parser::SqlMode,
+    sql_mode: tidb_lexer::SqlMode,
 ) -> Result<String, DriverError> {
     let stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
         .map_err(|e| DriverError::from(tidb_util::misc::syntax_error(format!("{e:?}"))))?;
@@ -178,7 +178,7 @@ fn install_marker_values<T: tidb_ast::Visitable>(
 
 /// The number of `?` markers a statement carries, which `COM_STMT_PREPARE`
 /// reports to the client.
-pub fn parameter_count(sql: &str, sql_mode: tidb_parser::SqlMode) -> Result<usize, DriverError> {
+pub fn parameter_count(sql: &str, sql_mode: tidb_lexer::SqlMode) -> Result<usize, DriverError> {
     let mut stmt = tidb_parser::parse_with_sql_mode(sql, sql_mode)
         .map_err(|e| DriverError::from(tidb_util::misc::syntax_error(format!("{e:?}"))))?;
     let mut counted = 0usize;
@@ -416,7 +416,7 @@ mod tests {
         let sql = "SELECT COUNT(*) FROM (SELECT o.o_id FROM orders o \
                    LEFT JOIN order_line ol ON ol.ol_o_id = ? \
                    WHERE o.o_w_id = ?) AS t WHERE t.o_id > 0";
-        let mode = tidb_parser::SqlMode::default();
+        let mode = tidb_lexer::SqlMode::default();
 
         assert_eq!(parameter_count(sql, mode).unwrap(), 2);
         let bound = bind_parameters(sql, &[Datum::Int(7), Datum::Int(3)], mode).unwrap();
@@ -428,7 +428,7 @@ mod tests {
     #[test]
     fn markers_inside_row_in_are_bound_in_order() {
         let sql = "SELECT o_d_id FROM orders WHERE (o_w_id, o_d_id, o_id) IN ((?,?,?),(?,?,?))";
-        let mode = tidb_parser::SqlMode::default();
+        let mode = tidb_lexer::SqlMode::default();
         let bound = bind_parameters(
             sql,
             &[

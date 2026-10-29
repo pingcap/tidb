@@ -27,7 +27,7 @@
 //! the catalog a write-conflict message is rewritten against -- as
 //! [`CommitHooks`], the way Go's commit reads them off the session.
 
-pub use tidb_domain_core::session_transaction::{options_from_values, transaction_options};
+use tidb_domain_core::session_transaction::transaction_options;
 use std::sync::Arc;
 
 use tidb_store_driver::session_commit_protocol::SessionTransactionOptions;

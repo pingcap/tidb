@@ -57,10 +57,8 @@ use crate::secure_transport::TransportKind;
 use tidb_ast::Stmt;
 
 use crate::driver::{QuerySession, QuerySessionFactory};
-use crate::sql_node::{
-    ConnectionCancellation, ConnectionClose, ConnectionTracker, GeneralExecuteOutcome,
-    PreparedGeneral, QueryResult, SessionContext, SqlQueryError,
-};
+use crate::sql_node::{ConnectionCancellation, ConnectionClose, ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral, QueryResult, SessionContext};
+use tidb_store_driver::sql_query_error::SqlQueryError;
 use tidb_session::domain::wire_status::{WireStatus, SERVER_STATUS_CURSOR_EXISTS, SERVER_STATUS_LAST_ROW_SEND};
 
 /// Carries one client SQL payload's bytes for `@@character_set_client`.
@@ -270,7 +268,8 @@ impl PreparedStatementRegistry {
         engine: &mut S,
         stmt: &Stmt,
     ) -> Result<(), SqlQueryError> {
-        use tidb_session::session_states::{PreparedStmtInfo, ProtocolSessionStates};
+        use tidb_session::session_states::ProtocolSessionStates;
+        use tidb_sessionstates::PreparedStmtInfo;
         let effective = engine
             .migration_session()
             .and_then(|session| session.session_migration_statement(stmt).cloned());
@@ -560,7 +559,7 @@ impl PreparedStatementRegistry {
     fn long_data_error(&self, statement_id: u32, connection_id: u64) -> Option<SqlQueryError> {
         let statement = self.statements.get(&statement_id)?;
         if statement.bound_params_mem_quota_exceeded {
-            let error = tidb_kv::mem_quota::memory_exceed_for_query(connection_id);
+            let error = tidb_util::sqlkiller::memory_exceed_for_query(connection_id);
             return Some(SqlQueryError::from(error));
         }
         if statement.bound_params_too_large {
@@ -3191,7 +3190,7 @@ mod client_error_recording_output_tests {
 
 #[cfg(test)]
 mod undetermined_tests {
-    use crate::sql_node::SqlQueryError;
+    use tidb_store_driver::sql_query_error::SqlQueryError;
     use tidb_error::terror::ERR_RESULT_UNDETERMINED;
 
     /// Go `pkg/server/conn.go:1288-1291` returns from the command loop for an

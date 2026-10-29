@@ -179,7 +179,7 @@ impl ViewerState {
                 .collect();
         }
         let columns =
-            crate::infoschema_reader::table_schema("SLOW_QUERY").expect("SLOW_QUERY is registered");
+            tidb_infoschema::infoschema_meta::table_schema("SLOW_QUERY").expect("SLOW_QUERY is registered");
         let read = crate::slow_query::retrieve_slow_query_rows(
             &columns,
             &checker,
@@ -418,7 +418,7 @@ impl MemTableRetriever for InstanceStateRetriever {
                 self.viewer.login_user.as_deref(),
             );
         }
-        let columns = crate::infoschema_reader::table_schema(table).ok_or_else(|| {
+        let columns = tidb_infoschema::infoschema_meta::table_schema(table).ok_or_else(|| {
             DriverError::unsupported("a statement summary table has no declared schema")
         })?;
         self.viewer
@@ -569,7 +569,7 @@ pub fn statement_summary_rows(
         };
         // The caller asks for `columns` (a pruned scan reads only some of the
         // table's); the evicted row is produced at full width.
-        let schema = crate::infoschema_reader::table_schema("STATEMENTS_SUMMARY_EVICTED")
+        let schema = tidb_infoschema::infoschema_meta::table_schema("STATEMENTS_SUMMARY_EVICTED")
             .unwrap_or_default();
         let positions: Vec<usize> = columns
             .iter()
@@ -781,7 +781,7 @@ impl SqlDigestTextRetriever {
         let requested: HashSet<_> = texts.keys().cloned().collect();
         // Go limits the WHERE IN list to512 digests, otherwise fetching all.
         let filter = (requested.len() <= 512).then_some(&requested);
-        let columns = crate::infoschema_reader::table_schema("STATEMENTS_SUMMARY")
+        let columns = tidb_infoschema::infoschema_meta::table_schema("STATEMENTS_SUMMARY")
             .expect("summary schema");
         let columns: Vec<_> = ["DIGEST", "DIGEST_TEXT"]
             .iter()
@@ -836,7 +836,7 @@ impl SqlDigestTextRetriever {
                 "STATEMENTS_SUMMARY_HISTORY",
             ),
         ] {
-            let schema = crate::infoschema_reader::table_schema(table)
+            let schema = tidb_infoschema::infoschema_meta::table_schema(table)
                 .expect("cluster summary schema");
             let offsets: Vec<_> = ["DIGEST", "DIGEST_TEXT"]
                 .iter()

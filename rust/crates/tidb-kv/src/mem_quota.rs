@@ -64,10 +64,9 @@ use tidb_util::memory::{
 use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 use tidb_util::sqlkiller::{KillSignal, SqlKiller};
 
-pub use tidb_vardef::OomAction;
+use tidb_vardef::OomAction;
 
 
-pub use tidb_util::sqlkiller::memory_exceed_for_query;
 
 /// Why [`StatementMemory::check`] stops a statement: the two outcomes of
 /// Go `SQLKiller.HandleSignal` this layer tells apart.

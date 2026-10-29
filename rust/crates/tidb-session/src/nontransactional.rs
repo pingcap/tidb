@@ -148,7 +148,7 @@ fn plain_error(message: impl Into<String>) -> DriverError {
 }
 
 fn lower(value: &str) -> String {
-    tidb_util::stringutil::go_to_lower(value)
+    tidb_hack::go_to_lower(value)
 }
 
 /// One BATCH statement between the statements its host runs for it.

@@ -97,11 +97,11 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &mut self.hypo_tiflash_replicas
     }
 
-    fn local_temporary_tables_ref(&self) -> &Vec<(String, String, tidb_executor::KvTable)> {
+    fn local_temporary_tables_ref(&self) -> &Vec<(String, String, tidb_table::kv_table::KvTable)> {
         &self.local_temporary_tables
     }
 
-    fn local_temporary_tables_mut(&mut self) -> &mut Vec<(String, String, tidb_executor::KvTable)> {
+    fn local_temporary_tables_mut(&mut self) -> &mut Vec<(String, String, tidb_table::kv_table::KvTable)> {
         &mut self.local_temporary_tables
     }
 
@@ -137,11 +137,11 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &mut self.prepared_params
     }
 
-    fn process_plan_info_ref(&self) -> &Arc<std::sync::Mutex<tidb_executor::ProcessPlanInfo>> {
+    fn process_plan_info_ref(&self) -> &Arc<std::sync::Mutex<tidb_sessionctx::ProcessPlanInfo>> {
         &self.process_plan_info
     }
 
-    fn process_plan_info_mut(&mut self) -> &mut Arc<std::sync::Mutex<tidb_executor::ProcessPlanInfo>> {
+    fn process_plan_info_mut(&mut self) -> &mut Arc<std::sync::Mutex<tidb_sessionctx::ProcessPlanInfo>> {
         &mut self.process_plan_info
     }
 
@@ -161,19 +161,19 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &mut self.rand
     }
 
-    fn retry_auto_ids_ref(&self) -> &Arc<std::sync::Mutex<tidb_executor::RetryAutoIds>> {
+    fn retry_auto_ids_ref(&self) -> &Arc<std::sync::Mutex<tidb_sessionctx::RetryAutoIds>> {
         &self.retry_auto_ids
     }
 
-    fn retry_auto_ids_mut(&mut self) -> &mut Arc<std::sync::Mutex<tidb_executor::RetryAutoIds>> {
+    fn retry_auto_ids_mut(&mut self) -> &mut Arc<std::sync::Mutex<tidb_sessionctx::RetryAutoIds>> {
         &mut self.retry_auto_ids
     }
 
-    fn row_id_shards_ref(&self) -> &Arc<std::sync::Mutex<tidb_executor::RowIdShardGenerator>> {
+    fn row_id_shards_ref(&self) -> &Arc<std::sync::Mutex<tidb_sessionctx::RowIdShardGenerator>> {
         &self.row_id_shards
     }
 
-    fn row_id_shards_mut(&mut self) -> &mut Arc<std::sync::Mutex<tidb_executor::RowIdShardGenerator>> {
+    fn row_id_shards_mut(&mut self) -> &mut Arc<std::sync::Mutex<tidb_sessionctx::RowIdShardGenerator>> {
         &mut self.row_id_shards
     }
 
@@ -225,11 +225,11 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &mut self.sql_cpu_usages
     }
 
-    fn staged_writes_ref(&self) -> &std::sync::Arc<tidb_table::kv_table::StagedWrites> {
+    fn staged_writes_ref(&self) -> &std::sync::Arc<tidb_kv::staged_writes::StagedWrites> {
         &self.staged_writes
     }
 
-    fn staged_writes_mut(&mut self) -> &mut std::sync::Arc<tidb_table::kv_table::StagedWrites> {
+    fn staged_writes_mut(&mut self) -> &mut std::sync::Arc<tidb_kv::staged_writes::StagedWrites> {
         &mut self.staged_writes
     }
 
@@ -297,19 +297,19 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &mut self.stmt_hints
     }
 
-    fn tidb_decode_key_cache_ref(&self) -> &std::sync::Mutex<Option<(u64, Arc<tidb_executor::TidbDecodeKeySnapshot>)>> {
+    fn tidb_decode_key_cache_ref(&self) -> &std::sync::Mutex<Option<(u64, Arc<tidb_infoschema::tidb_decode_key::TidbDecodeKeySnapshot>)>> {
         &self.tidb_decode_key_cache
     }
 
-    fn tidb_decode_key_cache_mut(&mut self) -> &mut std::sync::Mutex<Option<(u64, Arc<tidb_executor::TidbDecodeKeySnapshot>)>> {
+    fn tidb_decode_key_cache_mut(&mut self) -> &mut std::sync::Mutex<Option<(u64, Arc<tidb_infoschema::tidb_decode_key::TidbDecodeKeySnapshot>)>> {
         &mut self.tidb_decode_key_cache
     }
 
-    fn transaction_table_delta_ref(&self) -> &std::sync::Arc<tidb_stats_handle_usage::TableDeltaMap> {
+    fn transaction_table_delta_ref(&self) -> &std::sync::Arc<tidb_variable::table_delta::TableDeltaMap> {
         &self.transaction_table_delta
     }
 
-    fn transaction_table_delta_mut(&mut self) -> &mut std::sync::Arc<tidb_stats_handle_usage::TableDeltaMap> {
+    fn transaction_table_delta_mut(&mut self) -> &mut std::sync::Arc<tidb_variable::table_delta::TableDeltaMap> {
         &mut self.transaction_table_delta
     }
 
@@ -358,7 +358,7 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::txn_is_stale_read(self)
     }
 
-    fn statement_phase_observer(&self) -> Option<Arc<dyn Fn(tidb_executor::StatementPhase) + Send + Sync>> {
+    fn statement_phase_observer(&self) -> Option<Arc<dyn Fn(tidb_sessionctx::StatementPhase) + Send + Sync>> {
         Session::statement_phase_observer(self)
     }
 
@@ -370,15 +370,15 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::statement_kv_context_cell(self)
     }
 
-    fn statement_cop_response_sink(&self) -> Option<Arc<dyn tidb_executor::CopResponseSink>> {
+    fn statement_cop_response_sink(&self) -> Option<Arc<dyn tidb_distsql::CopResponseSink>> {
         Session::statement_cop_response_sink(self)
     }
 
-    fn effective_replica_read(&self, mode: tidb_executor::ReplicaReadType) -> tidb_executor::ReplicaReadType {
+    fn effective_replica_read(&self, mode: tidb_txnkv::ReplicaReadType) -> tidb_txnkv::ReplicaReadType {
         Session::effective_replica_read(self, mode)
     }
 
-    fn current_tso(&self) -> tidb_executor::CurrentTso {
+    fn current_tso(&self) -> tidb_expr::CurrentTso {
         Session::current_tso(self)
     }
 
@@ -386,7 +386,7 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::with_txn_catalog(self, body)
     }
 
-    fn view_definer_privilege_check(&self) -> Option<tidb_executor::ViewDefinerPrivilegeCheck> {
+    fn view_definer_privilege_check(&self) -> Option<tidb_sessionctx::ViewDefinerPrivilegeCheck> {
         Session::view_definer_privilege_check(self)
     }
 
@@ -398,15 +398,15 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::sys_error_count(self)
     }
 
-    fn sql_digest_text_retrieval(&self) -> tidb_executor::SqlDigestTextRetrieval {
+    fn sql_digest_text_retrieval(&self) -> tidb_sessionctx::SqlDigestTextRetrieval {
         Session::sql_digest_text_retrieval(self)
     }
 
-    fn session_privilege_check(&self) -> Option<tidb_executor::SessionPrivilegeCheck> {
+    fn session_privilege_check(&self) -> Option<tidb_sessionctx::SessionPrivilegeCheck> {
         Session::session_privilege_check(self)
     }
 
-    fn sequence_privilege_check(&self) -> Option<tidb_executor::SequencePrivilegeCheck> {
+    fn sequence_privilege_check(&self) -> Option<tidb_sessionctx::SequencePrivilegeCheck> {
         Session::sequence_privilege_check(self)
     }
 
@@ -414,7 +414,7 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::pessimistic_constraint_check_in_place(self)
     }
 
-    fn mdl_related_table_recorder(&self) -> Option<tidb_executor::MdlRelatedTableRecorder> {
+    fn mdl_related_table_recorder(&self) -> Option<tidb_variable::MdlRelatedTableRecorder> {
         Session::mdl_related_table_recorder(self)
     }
 
@@ -422,7 +422,7 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::has_process_privilege(self)
     }
 
-    fn locked_tables(&self) -> Option<tidb_executor::LockedTables> {
+    fn locked_tables(&self) -> Option<tidb_sessionctx::LockedTables> {
         Session::statement_locked_tables(self)
     }
 

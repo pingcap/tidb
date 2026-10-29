@@ -141,12 +141,12 @@ pub mod executor;
 pub mod explain;
 mod farmhash;
 pub(crate) mod foreign_key;
-pub use tidb_distsql::CopResponseSink;
+use tidb_distsql::CopResponseSink;
 pub use foreign_key::check_foreign_key_constrain;
 #[cfg(test)]
 mod tests_generated_column_ddl;
 pub(crate) use tidb_table::handle_range;
-pub use tidb_table::handle_range::split_ranges_across_int64_boundary;
+use tidb_table::handle_range::split_ranges_across_int64_boundary;
 pub mod hash_agg;
 #[cfg(test)]
 mod hash_agg_spill_tests;
@@ -252,7 +252,9 @@ pub mod window;
 
 pub use apply::ApplyExec;
 pub use cte_storage::CteStorage;
-pub use ddl::{append_partition_defs, escape_identifier, linear_partitioning_warning, partition_placement_text, run_create_system_table_in, run_create_table_on, run_create_table_on_with, split_drop_table_targets, CreateTableSettings};
+pub use ddl::{append_partition_defs, escape_identifier, linear_partitioning_warning, partition_placement_text, run_create_table_on, run_create_table_on_with, CreateTableSettings};
+pub use tidb_infoschema::run_create_system_table_in;
+pub use tidb_ddl_build::table_lifecycle::split_drop_table_targets;
 pub use ddl_sequence::show_create_sequence;
 #[cfg(test)]
 pub(crate) use driver::access::run_prepared_select_for_test;
@@ -275,33 +277,40 @@ pub use driver::{
     DriverError, MemTable, MysqlError, PreparedDmlExecution, PreparedDmlPlan, SelectMeta,
     TableEntry, VarError, ViewDef, DEFAULT_DATABASE,
 };
-pub use executor::{ExecError, Executor, ExecutorMeta};
-pub use explain::{brief_binary_plan, explain_analyze_delete_stmt, explain_analyze_insert_stmt, explain_connection_plan, query_plan_cost, explain_analyze_physical_plan, explain_analyze_select_stmt, explain_analyze_set_opr_stmt, explain_analyze_update_stmt, explain_delete_stmt, explain_insert_stmt, explain_physical_plan, explain_select_stmt, explain_set_opr_stmt, explain_update_stmt, process_plan_info, ExplainFormat};
+pub use executor::{Executor, ExecutorMeta};
+pub use tidb_driver_error::ExecError;
+pub use explain::{brief_binary_plan, explain_analyze_delete_stmt, explain_analyze_insert_stmt, explain_connection_plan, query_plan_cost, explain_analyze_physical_plan, explain_analyze_select_stmt, explain_analyze_set_opr_stmt, explain_analyze_update_stmt, explain_delete_stmt, explain_insert_stmt, explain_physical_plan, explain_select_stmt, explain_set_opr_stmt, explain_update_stmt, process_plan_info};
+pub use tidb_sessionctx::explain_format::ExplainFormat;
 pub use hash_agg::{AggFunc, AggKind, GroupedStreamAggExec, HashAggContext, HashAggExec, StreamAggExec};
 pub use join::{JoinExec, JoinKind};
-pub use kv_table::{KvTableBackfill, KvTableDdl, KvTablePartitionMaintenance, KvTableReader, RowDecodeContextExt, TableScanExec};
-pub use tidb_table::kv_table::{DecodedRow, FkAction, GeneratedColumnSelection, IndexRange, KvColumn, KvForeignKey, KvIndex, KvTable, RowDecodeContext, RowDecoder, TableCharset, TableHandle, TemporaryTableTxnData};
+pub use kv_table::{KvTableDdl, KvTablePartitionMaintenance, KvTableReader, RowDecodeContextExt, TableScanExec};
+pub use tidb_ddl_build::table_backfill::KvTableBackfill;
+use tidb_table::kv_table::{FkAction, IndexRange, KvColumn, KvTable, RowDecodeContext, TableCharset};
 pub use limit::LimitExec;
-pub use mem_quota::{OomAction, SessionMemory, StatementCancellation, StatementMemory};
+pub use mem_quota::{SessionMemory, StatementCancellation, StatementMemory};
+pub use tidb_vardef::OomAction;
 pub use mem_table::MemTableSourceExec;
 pub use mpp_query::MppQueryInfo;
 pub use predicate_pushdown::{PushedScanFilter, ScanColumnComparison, ScanComparison, ScanComparisonOp, ScanPredicate};
 pub use projection::ProjectionExec;
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
-pub use tidb_sessionctx::{scanner_sql_mode, DdlReorgVars, MdlRelatedTableRecorder, SessionPrivilegeCheck, LatestInfoSchema, LockedTables, GlobalSysvarAccessor, KeysReadBudget, PlanSource, ProcessPlanInfo, StoredPlan, RetryAutoIds, RowIdShardGenerator, SequencePrivilegeCheck, SequenceSchema, SequenceState, ViewDefinerPrivilegeCheck, SqlDigestTextRetrieval, StatementClass, StatementPhase, StmtContext, StmtContextSessionState};
+use tidb_sessionctx::{scanner_sql_mode, SessionPrivilegeCheck, LatestInfoSchema, LockedTables, PlanSource, ProcessPlanInfo, StoredPlan, RetryAutoIds, RowIdShardGenerator, SequencePrivilegeCheck, ViewDefinerPrivilegeCheck, SqlDigestTextRetrieval, StatementClass, StatementPhase, StmtContext, StmtContextSessionState};
+use tidb_variable::session_vars::DdlReorgVars;
+use tidb_variable::MdlRelatedTableRecorder;
+use tidb_kv::keys_read::KeysReadBudget;
 pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;
-pub use tidb_distsql::ReplicaReadType;
+use tidb_txnkv::ReplicaReadType;
 /// The level a statement warning carries -- Go's three `contextutil` levels,
 /// re-exported so the session can read the one a `StmtContext` recorded
 /// without depending on `tidb-distsql` directly.
-pub use tidb_distsql::WarningLevel as WarnLevel;
-pub use tidb_expr::builtin_registry::builtin_list;
-pub use tidb_expr::constant_fold::take_fold_warnings;
-pub use tidb_expr::infer_pushdown::{blacklist_name, blacklist_store_mask, ExprPushDownBlacklist};
-pub use tidb_expr::CurrentTso;
-pub use tidb_expr::{eval_in, like_match_with_collation, truthy_of, BlockEncryptionMode, Columns, EvalError, JsonError, MysqlRng, SessionTimeZone};
+pub use tidb_util::context::WarningLevel as WarnLevel;
+use tidb_expr::builtin_registry::builtin_list;
+use tidb_expr::infer_pushdown::{blacklist_name, blacklist_store_mask, ExprPushDownBlacklist};
+use tidb_expr::CurrentTso;
+use tidb_expr::{BlockEncryptionMode, EvalError, SessionTimeZone};
+use tidb_util::mathutil::MysqlRng;
 pub use topn::TopNExec;
 pub use view::{resolve_view_definition, view_column_list};
 
@@ -358,5 +367,4 @@ pub(crate) mod test_temp_storage {
 }
 
 /// Session-owned reference counts over shared advisory-lock services.
-pub use tidb_infoschema::TidbDecodeKeySnapshot;
-pub use tidb_infoschema::StatementStage;
+use tidb_infoschema::tidb_decode_key::TidbDecodeKeySnapshot;

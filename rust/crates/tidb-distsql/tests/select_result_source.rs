@@ -21,10 +21,10 @@ use tidb_chunk::chunk::Chunk as DecodedChunk;
 use tidb_chunk::codec::Codec as ChunkCodec;
 use tidb_codec::{VALUE_COMPACT_BYTES_FLAG, VALUE_VARINT_FLAG};
 use tidb_datatype::{BinaryJSON, Datum, FieldType, FieldTypeCode, VectorFloat32};
-use tidb_distsql::{
-    select_with_runtime_stats, ResponseChannel, ResponseChannelError, ResponseRuntimeStats,
-    SelectInput, StoreType, WarningClass, WarningCollector,
-};
+use tidb_distsql::{select_with_runtime_stats, ResponseChannel, ResponseChannelError, ResponseRuntimeStats, SelectInput};
+use tidb_util::context::WarningCollector;
+use tidb_util::context::WarningClass;
+use tidb_txnkv::StoreType;
 use tidb_proto::{
     Chunk, EncodeType, Error as TipbError, ExecutorExecutionSummary, IntermediateOutput,
     SelectResponse,

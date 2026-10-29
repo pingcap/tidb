@@ -1301,7 +1301,7 @@ fn shared_planner_reads_the_bounded_clustered_handle_range() {
         &catalog,
         "test",
         &crate::StmtContext::for_query(),
-        crate::explain::ExplainFormat::Row,
+        tidb_sessionctx::explain_format::ExplainFormat::Row,
     )
     .unwrap();
     assert_eq!(point_rows.len(), 1, "point plan has no root wrappers");
@@ -1313,7 +1313,7 @@ fn shared_planner_reads_the_bounded_clustered_handle_range() {
         &catalog,
         "test",
         &crate::StmtContext::for_query(),
-        crate::explain::ExplainFormat::Row,
+        tidb_sessionctx::explain_format::ExplainFormat::Row,
     )
     .unwrap();
     let scan_names = scan_rows
@@ -1338,7 +1338,7 @@ fn shared_planner_reads_the_bounded_clustered_handle_range() {
         &mut catalog,
         "test",
         &crate::StmtContext::for_query(),
-        crate::explain::ExplainFormat::Row,
+        tidb_sessionctx::explain_format::ExplainFormat::Row,
     )
     .unwrap();
     let update_names = update_rows
@@ -2004,7 +2004,8 @@ fn a_point_plan_keys_by_the_constant_in_the_columns_domain() {
 /// `Selection` or `Projection` remains.
 #[test]
 fn fast_point_get_replaces_selection_and_projection_like_go() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -2200,7 +2201,8 @@ fn fast_point_get_uses_gos_smaller_index_hint_check() {
 /// Selection and must still be evaluated before the write.
 #[test]
 fn fast_point_writes_remove_only_the_consumed_selection_like_go() {
-    use crate::explain::{explain_delete_stmt, explain_update_stmt, ExplainFormat};
+    use crate::explain::{explain_delete_stmt, explain_update_stmt};
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     fn explain_write(sql: &str, catalog: &mut Catalog, ctx: &crate::StmtContext) -> Vec<String> {
         let stmt = tidb_parser::parse(sql).unwrap();
@@ -2319,7 +2321,8 @@ fn fast_point_writes_remove_only_the_consumed_selection_like_go() {
 /// unique index (`IndexRangeScan index:i(i, j) range:[1 1,1 1]`).
 #[test]
 fn a_handle_point_with_an_extra_conjunct_wins_over_the_unique_index_like_go() {
-    use crate::explain::{explain_update_stmt, ExplainFormat};
+    use crate::explain::explain_update_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -2404,7 +2407,8 @@ fn a_handle_point_with_an_extra_conjunct_wins_over_the_unique_index_like_go() {
 /// into TiKV and returns it through a TableReader.
 #[test]
 fn exact_handle_range_uses_the_go_cop_projection_tree() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -2460,7 +2464,8 @@ fn exact_handle_range_uses_the_go_cop_projection_tree() {
 /// statistics even when the physical read is a common-handle prefix range.
 #[test]
 fn residual_selection_uses_logical_rows_over_access_rows() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -2555,7 +2560,8 @@ fn residual_selection_uses_logical_rows_over_access_rows() {
 /// `oltp_common.lua` simple ordered-range shape.
 #[test]
 fn ordered_handle_range_keeps_the_go_cop_projection_below_sort() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -2610,7 +2616,8 @@ fn ordered_handle_range_keeps_the_go_cop_projection_below_sort() {
 /// `c1 = 1 AND c2 > 1` reads `Point_Get`, not a `TableRangeScan` over `[1,1]`.
 #[test]
 fn a_single_point_handle_range_with_a_filter_is_a_point_get() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -2731,7 +2738,7 @@ fn out_of_range_point_literal_plans_a_table_dual() {
         &catalog,
         DEFAULT_DATABASE,
         &ctx,
-        crate::explain::ExplainFormat::Brief,
+        tidb_sessionctx::explain_format::ExplainFormat::Brief,
     )
     .unwrap();
     let operators = explain

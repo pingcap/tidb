@@ -174,7 +174,7 @@ impl crate::session_vars::SystemVars for SessionVars {
 /// User variables are NOT here. They live in one place -- the shared UserVars owner
 /// [`crate::Session`] lends to every statement context -- because `@x := expr`
 /// writes them from inside expression evaluation, mid-row; see
-/// `tidb_executor::StmtContext`'s `user_vars` field.
+/// `tidb_sessionctx::StmtContext`'s `user_vars` field.
 /// go `GetSessionVar`'s SysTimestamp hook: an explicit override that is not
 /// the default (`'0'`, empty) reads back verbatim; anything else reads the
 /// STATEMENT time, formatted like strconv.FormatFloat(v, 'f', -1, 64).

@@ -792,8 +792,8 @@ fn exhaust_physical_plans(
             // that same hash-then-stream order.
             // Go `LogicalAggregation.ResetHintIfConflicted`.
             let mut prefer_agg_type = op.prefer_agg_type;
-            let both = crate::expression_rewriter::PREFER_HASH_AGG
-                | crate::expression_rewriter::PREFER_STREAM_AGG;
+            let both = tidb_hint::PREFER_HASH_AGG
+                | tidb_hint::PREFER_STREAM_AGG;
             if prefer_agg_type & both == both {
                 if ctx
                     .hint_reset_aggregations
@@ -806,9 +806,9 @@ fn exhaust_physical_plans(
                 }
                 prefer_agg_type = 0;
             }
-            let prefer_hash = prefer_agg_type & crate::expression_rewriter::PREFER_HASH_AGG != 0;
+            let prefer_hash = prefer_agg_type & tidb_hint::PREFER_HASH_AGG != 0;
             let prefer_stream =
-                prefer_agg_type & crate::expression_rewriter::PREFER_STREAM_AGG != 0;
+                prefer_agg_type & tidb_hint::PREFER_STREAM_AGG != 0;
             let mut hash_aggs = physical::get_hash_aggs_with_mpp_options(
                 op,
                 prop,
@@ -2758,7 +2758,7 @@ mod index_scan_limit_adjustment_tests {
 #[cfg(test)]
 mod correlation_tests {
     use super::filter_column_correlation;
-    use crate::cardinality::row_count_estimator::ColumnStats;
+    use tidb_stats::table_statistics::ColumnStats;
     use crate::stats_info::{HistColl, StatsInfo};
     use std::sync::Arc;
     use tidb_datatype::{FieldType, FieldTypeCode};
@@ -2827,7 +2827,7 @@ mod cross_estimate_dispatch_tests {
         find_best_task_4_logical_data_source_without_enforcer,
     };
     use crate::access_path::PossiblePath;
-    use crate::cardinality::row_count_estimator::ColumnStats;
+    use tidb_stats::table_statistics::ColumnStats;
     use crate::find_best_task::coster::Ver2Coster;
     use crate::logical::data_source::DataSourceColumn;
     use crate::logical::{BaseLogicalPlan, DataSource};
@@ -7227,7 +7227,7 @@ mod tests {
         let LogicalPlan::Aggregation(mut hinted) = agg.clone() else {
             unreachable!();
         };
-        hinted.prefer_agg_type = crate::expression_rewriter::PREFER_HASH_AGG;
+        hinted.prefer_agg_type = tidb_hint::PREFER_HASH_AGG;
         let hinted = LogicalPlan::Aggregation(hinted);
         let task = find_best_task(&hinted, &prop, &mut ctx).expect("hinted plans");
         let plan = task.plan().expect("HASH_AGG requires a sorted hash plan");

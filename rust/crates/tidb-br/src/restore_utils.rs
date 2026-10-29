@@ -70,4 +70,4 @@ pub use rewrite_rule::{
     set_time_range_filter, validate_file_rewrite_rule, AppliedFile, RestoreError, RestoreErrorKind,
     RewriteRules, RewrittenKeys, TableIdRemap,
 };
-pub use tidb_proto::{backup::File, import_sstpb::RewriteRule};
+use tidb_proto::{backup::File, import_sstpb::RewriteRule};

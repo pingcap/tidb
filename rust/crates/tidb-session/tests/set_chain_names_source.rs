@@ -34,7 +34,7 @@ fn left_assoc_chain_and_first_arm_names() {
         .run_with_columns("select v as first_name from a union select v from b")
         .unwrap()
     {
-        tidb_session::StmtOutput::Rows { columns, rows } => {
+        tidb_executor::StmtOutput::Rows { columns, rows } => {
             assert_eq!(columns.len(), 1);
             assert_eq!(columns[0].0, "first_name");
             assert_eq!(rows.len(), 4, "a union b dedups the shared values");

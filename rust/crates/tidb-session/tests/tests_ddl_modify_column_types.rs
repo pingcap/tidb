@@ -24,7 +24,8 @@
 //! cases are not Go-parity evidence.
 
 use crate::support::testkit::TestKit;
-use tidb_executor::{KvColumn, TableEntry};
+use tidb_executor::TableEntry;
+use tidb_table::kv_table::KvColumn;
 
 // Go `modify_column_test.go::TestModifyColumnBetweenStringTypes`: same-family
 // shrinks succeed and keep values, shrinking below an existing value answers

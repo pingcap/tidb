@@ -107,7 +107,7 @@ impl SelectResultMetadata {
     }
 }
 
-pub use tidb_txnkv::LimiterWaitStats;
+use tidb_txnkv::LimiterWaitStats;
 
 /// The bounded runtime statistics updated while consuming select responses.
 ///

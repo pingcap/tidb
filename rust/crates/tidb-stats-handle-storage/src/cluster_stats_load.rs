@@ -587,7 +587,7 @@ impl StatsTableSchema {
             .map(|(offset, column)| StatsSchemaColumn {
                 info: ColumnInfo {
                     id: column.id,
-                    name: tidb_util::stringutil::go_to_lower(&column.name),
+                    name: tidb_hack::go_to_lower(&column.name),
                     primary_key: column
                         .field_type
                         .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
@@ -601,12 +601,12 @@ impl StatsTableSchema {
             .map(|index| StatsSchemaIndex {
                 info: IndexInfo {
                     id: index.id,
-                    name: tidb_util::stringutil::go_to_lower(&index.name),
+                    name: tidb_hack::go_to_lower(&index.name),
                     columns: index
                         .column_offsets
                         .iter()
                         .filter_map(|offset| table.columns().get(*offset))
-                        .map(|column| tidb_util::stringutil::go_to_lower(&column.name))
+                        .map(|column| tidb_hack::go_to_lower(&column.name))
                         .collect(),
                     mv_index: table.mv_key_part_source(index.id).is_some(),
                 },

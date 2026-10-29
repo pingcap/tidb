@@ -45,10 +45,9 @@
 
 use tidb_codec::encode_key;
 use tidb_datatype::{Collation, Datum};
-use tidb_planner::cardinality::row_count_estimator::{
-    equal_row_count_on_column, get_index_row_count_for_stats_v2, get_row_count_by_column_ranges,
-    ColumnRange, ColumnStats, EstimatorOptions, IndexRangeDatums, IndexRowCounts, IndexStats,
-};
+use tidb_planner::cardinality::row_count_estimator::{equal_row_count_on_column, get_index_row_count_for_stats_v2, get_row_count_by_column_ranges, ColumnRange, EstimatorOptions, IndexRangeDatums, IndexRowCounts};
+use tidb_stats::table_statistics::ColumnStats;
+use tidb_stats::table_statistics::IndexStats;
 use tidb_planner::selectivity_greedy::{
     combine_selectivity, ConditionKind, SelectivityDefaults, StatsNode, StatsNodeType,
 };

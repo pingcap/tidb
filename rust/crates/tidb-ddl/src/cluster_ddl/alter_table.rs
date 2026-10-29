@@ -1073,7 +1073,7 @@ fn auto_increment_counter<S: MetaSnapshot>(
     info: &TableInfo,
 ) -> Result<i64, DdlPlanError> {
     if let Some(service) = auto_increment_service(snapshot, kind, db_id, info) {
-        let call = tidb_table::kv_table::AutoIdCall::background();
+        let call = tidb_autoid::AutoIdCall::background();
         return service
             .alloc(&call, 0, 1, 1)
             .map(|(_, end)| end)
@@ -1120,9 +1120,9 @@ fn rebase_auto_increment_counter<S: MetaSnapshot>(
     let new_end = new_base.wrapping_sub(1);
     if let Some(service) = auto_increment_service(snapshot, kind, db_id, info) {
         let call = if force {
-            tidb_table::kv_table::AutoIdCall::with_timeout(std::time::Duration::from_secs(30))
+            tidb_autoid::AutoIdCall::with_timeout(std::time::Duration::from_secs(30))
         } else {
-            tidb_table::kv_table::AutoIdCall::background()
+            tidb_autoid::AutoIdCall::background()
         };
         return service
             .rebase(&call, new_end, force)

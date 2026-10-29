@@ -14,7 +14,3 @@
 
 //! The statistics statements' executors live in `tidb_executor::stats_exec`.
 
-pub use tidb_executor::stats_exec::{
-    get_physical_ids_and_partition_names, parse_load_stats_dump, FlushStatsDeltaTargets, StatsExec,
-    StatsStatementService,
-};

@@ -27,7 +27,7 @@ use tidb_chunk::row_container::{RowContainer, RowContainerChunk};
 use tidb_datatype::{Datum, FieldType};
 use tidb_util::memory::{ArcAction, Tracker, LABEL_FOR_CTE_STORAGE};
 
-use crate::executor::ExecError;
+use tidb_driver_error::ExecError;
 use crate::StatementMemory;
 
 /// One open row-container and the accounting authority that owns it.

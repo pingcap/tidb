@@ -289,14 +289,14 @@ mod tests {
     fn catalog_adapter_persists_lock_rows_and_merges_deltas() {
         let mut catalog = Catalog::mock();
         let context = StmtContext::for_query();
-        crate::ddl::run_create_system_table_in(
+        tidb_infoschema::run_create_system_table_in(
             tidb_metadef::system_tables_def::CREATE_STATS_META_TABLE,
             &mut catalog,
             "mysql",
             tidb_metadef::system::STATS_META_TABLE_ID,
         )
         .unwrap();
-        crate::ddl::run_create_system_table_in(
+        tidb_infoschema::run_create_system_table_in(
             tidb_metadef::system_tables_def::CREATE_STATS_TABLE_LOCKED_TABLE,
             &mut catalog,
             "mysql",

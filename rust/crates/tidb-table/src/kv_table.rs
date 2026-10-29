@@ -49,13 +49,12 @@ use tidb_hack::GoCaseCompare;
 pub mod row_decoder;
 pub mod table_meta;
 
-pub use tidb_autoid::PreparedAutoIdRebase;
-pub use tidb_autoid::{
-    advance, calc_needed_batch_size, exceeds, AutoIdError, AutoIdStore, AutoIdStoreError,
+use tidb_autoid::{
+    AutoIdError, AutoIdStore, AutoIdStoreError,
     LocalAutoIdStore, DEFAULT_AUTO_ID_STEP,
 };
 
-pub use tidb_autoid::{AutoIdCall, AutoIdService};
+use tidb_autoid::{AutoIdCall, AutoIdService};
 pub use auto_increment::{AutoIncrement, TableAutoId};
 pub use auto_random::{AutoRandom, AutoRandomError, AutoRandomSpec};
 
@@ -910,7 +909,7 @@ impl StorageIterator for KeysReadIterator {
 
 mod error;
 pub use error::KvTableError;
-pub use tidb_kv::staged_writes::{StagedKey, StagedWrites, TxnStaging};
+use tidb_kv::staged_writes::{StagedWrites, TxnStaging};
 
 /// Go `ShardIDFormat.Compose` for a SIGNED `BIGINT` handle, which is what
 /// `_tidb_rowid` always is.

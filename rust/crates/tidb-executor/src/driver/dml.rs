@@ -24,7 +24,7 @@ use super::*;
 use tidb_table::kv_table::AutoRandomError;
 use tidb_table::kv_table::AutoRandom;
 use tidb_table::kv_table::AutoIncrement;
-use tidb_table::kv_table::AutoIdError;
+use tidb_autoid::AutoIdError;
 
 mod defaults;
 pub(crate) mod delete_record;
@@ -1549,7 +1549,7 @@ fn run_insert_rows(
                     &mut new_rows[*index],
                     ctx.auto_increment_step(),
                     || ctx.reuse_auto_increment_id(),
-                    &tidb_table::kv_table::AutoIdCall::statement(&ctx.statement_memory()),
+                    &tidb_autoid::AutoIdCall::statement(&ctx.statement_memory()),
                 ) {
                     Ok(outcome) => outcome,
                     Err(error) => {

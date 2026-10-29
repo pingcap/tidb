@@ -18,7 +18,7 @@
 //! before physical index conversion. Both are explicit at this boundary, so a
 //! generic Rust candidate cannot silently become an index scan.
 
-pub use tidb_sessionctx::{IndexLookupPushDownPolicy, IndexLookupPushDownSession};
+use tidb_sessionctx::{IndexLookupPushDownPolicy, IndexLookupPushDownSession};
 use crate::{
     cardinality::{
         live_index_optimizer::{LiveIndexCandidate, estimate_proven_point_rows},
@@ -1193,7 +1193,7 @@ pub enum IndexLookupPushDownBy {
 pub fn get_possible_access_paths(
     table: &tidb_infoschema::table_source::SourceTable,
     optimizer_use_invisible_indexes: bool,
-    latest_index_schema: Option<&crate::domain_misc::LatestIndexSchema>,
+    latest_index_schema: Option<&tidb_infoschema::table_source::LatestIndexSchema>,
     connection_id: Option<u64>,
     repeatable_read: bool,
     is_for_update_read: bool,
@@ -1648,7 +1648,7 @@ mod enumeration_tests {
     use std::collections::BTreeMap;
 
     use super::{get_possible_access_paths as enumerate_possible_access_paths, PossiblePath};
-    use crate::domain_misc::LatestIndexSchema;
+    use tidb_infoschema::table_source::LatestIndexSchema;
     use tidb_infoschema::table_source::SourceTable;
     use tidb_infoschema::table_source::SourceIndex;
 

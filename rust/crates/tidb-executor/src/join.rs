@@ -152,7 +152,8 @@
 //! The check fires INSIDE both loops, never after: after the loop there is
 //! nothing left to save.
 
-use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::executor::{Executor, ExecutorMeta};
+use tidb_driver_error::ExecError;
 use crate::hash_join::{
     equi_keys_equal_chunk_rows, equi_keys_equal_row, exact_int_key_chunk, exact_int_keys_chunk,
     row_hash, row_hash_chunk, row_hash_chunk_batched, row_key, row_key_by, BuildError, BuildTable,
@@ -1376,7 +1377,7 @@ pub struct JoinExec<C: Columns> {
     index_join_batch_size: usize,
     /// Go `StmtCtx.RuntimeStatsColl` and the plan an index join registers
     /// its `indexLookUpJoinRuntimeStats` on at Close.
-    index_join_runtime_stats: Option<(Arc<dyn crate::executor::ExecutorRuntimeStatsSource>, i64)>,
+    index_join_runtime_stats: Option<(Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>, i64)>,
     /// Go `IndexLookUpJoin.stats`, created with the first task.
     index_join_stats: Option<Arc<crate::join_stats::IndexLookUpJoinRuntimeStats>>,
     outer_filter: Vec<Expression>,
@@ -1644,7 +1645,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// `indexLookUpJoinRuntimeStats` on `plan_id`.
     pub(crate) fn set_index_join_runtime_stats(
         &mut self,
-        source: Option<Arc<dyn crate::executor::ExecutorRuntimeStatsSource>>,
+        source: Option<Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
         plan_id: i64,
     ) {
         self.index_join_runtime_stats = source.map(|source| (source, plan_id));

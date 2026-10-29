@@ -2,7 +2,8 @@
 //! contracts.
 
 use tidb_datatype::{Datum, FieldTypeCode};
-use tidb_session::{Session, StmtOutput};
+use tidb_session::Session;
+use tidb_executor::StmtOutput;
 
 fn text(value: &Datum) -> String {
     value

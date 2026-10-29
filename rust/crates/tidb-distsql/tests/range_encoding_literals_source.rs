@@ -24,11 +24,12 @@
 //! `TestIndexRangesToKVRanges`), plus the numeric `kv.Request` field values
 //! those tests pin through their struct literals.
 
-use tidb_distsql::{
-    index_ranges_to_kv_ranges, table_ranges_to_kv_ranges, DatumRange, DistSqlContext,
-    IsolationLevel, KvPriority, MIN_ALLOWED_MAX_PAGING_SIZE, MIN_PAGING_SIZE, ReplicaReadType,
-    RequestBuilder, RequestEnvelope, RequestType,
-};
+use tidb_distsql::{index_ranges_to_kv_ranges, table_ranges_to_kv_ranges, DatumRange, DistSqlContext, KvPriority, RequestBuilder, RequestEnvelope};
+use tidb_txnkv::RequestType;
+use tidb_txnkv::ReplicaReadType;
+use tidb_util::paging::MIN_PAGING_SIZE;
+use tidb_util::paging::MIN_ALLOWED_MAX_PAGING_SIZE;
+use tidb_txnkv::IsolationLevel;
 
 fn datum(value: i64) -> tidb_datatype::Datum {
     tidb_datatype::Datum::Int(value)

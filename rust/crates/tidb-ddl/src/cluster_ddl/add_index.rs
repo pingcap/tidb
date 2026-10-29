@@ -575,7 +575,7 @@ pub(super) fn reorg_sub_job(job: &Job) -> Option<i32> {
     job.multi_schema_info.as_ref().map(|info| info.read().seq)
 }
 
-pub use tidb_ddl_build::session_pool::ReorgSessionVars;
+use tidb_ddl_build::session_pool::ReorgSessionVars;
 
 
 pub(super) fn job_batch_size(job: &Job) -> usize {

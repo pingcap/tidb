@@ -285,7 +285,7 @@ pub trait PreparedExec: super::CompilerSession {
     /// follows (`InferParamTypeFromDatum`). A gbk client's `SET @v = '中'`
     /// therefore binds as gbk text.
     fn using_param_value(&self, name: &str) -> Datum {
-        let name = tidb_util::stringutil::go_to_lower(name);
+        let name = tidb_hack::go_to_lower(name);
         let value = self
             .user_vars()
             .get_user_var_val(&name)
@@ -571,12 +571,12 @@ pub trait PreparedExec: super::CompilerSession {
     fn prepare_source_text(&self, name: &str) -> String {
         let value = self
             .user_vars()
-            .get_user_var_val(&tidb_util::stringutil::go_to_lower(name))
+            .get_user_var_val(&tidb_hack::go_to_lower(name))
             .unwrap_or(Datum::Null);
         // A value with no text form reads as `NULL`, the same text an unset
         // variable parses -- which is a syntax error unless the whole prepared
         // text is literally `NULL`, so nothing is silently accepted here.
-        crate::simple::account_tables::sysvar_datum_text(&value).unwrap_or_else(|| "NULL".to_owned())
+        tidb_datatype::datum_text::sysvar_datum_text(&value).unwrap_or_else(|| "NULL".to_owned())
     }
 
     /// Go `DeallocateExec.Next`: drops the name, or reports

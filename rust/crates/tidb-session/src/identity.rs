@@ -29,7 +29,7 @@ use std::sync::Arc;
 use tidb_ast::{SessionStmt, Stmt};
 
 use crate::{process, DriverError, Session};
-use tidb_util::stringutil::go_to_lower;
+use tidb_hack::go_to_lower;
 
 /// Distinct prepared texts whose privilege requests one session keeps.
 
@@ -39,7 +39,7 @@ impl Session {
         &self,
         database: &str,
         table: &str,
-        privilege: tidb_privilege::PrivilegeType,
+        privilege: tidb_mysql::PrivilegeType,
     ) -> Result<(), DriverError> {
         let granted =
             match tidb_privilege::verification::mem_db_verdict_mask(database, privilege.bit()) {
@@ -112,7 +112,7 @@ impl Session {
         &self,
         database: &str,
         table: &str,
-        global_priv: tidb_privilege::PrivilegeType,
+        global_priv: tidb_mysql::PrivilegeType,
     ) -> bool {
         let Some((registry, user, host)) = self.privilege_context() else {
             return true;
@@ -133,7 +133,7 @@ impl Session {
     /// `RequestVerification` from the builtin), which run with the session
     /// out of reach. `None` is an unrestricted session.
     #[must_use]
-    pub(crate) fn sequence_privilege_check(&self) -> Option<tidb_executor::SequencePrivilegeCheck> {
+    pub(crate) fn sequence_privilege_check(&self) -> Option<tidb_sessionctx::SequencePrivilegeCheck> {
         let (registry, user, host) = self.privilege_context()?;
         let registry = registry.clone();
         let (user, host) = (user.to_owned(), host.to_owned());
@@ -161,7 +161,7 @@ impl Session {
     /// Go `privilege.Manager.RequestVerification(activeRoles, ...)` for the
     /// planner: whether this session's account, with its active roles, holds
     /// a privilege. `None` is a session that enforces no privileges.
-    pub(crate) fn session_privilege_check(&self) -> Option<tidb_executor::SessionPrivilegeCheck> {
+    pub(crate) fn session_privilege_check(&self) -> Option<tidb_sessionctx::SessionPrivilegeCheck> {
         let (registry, user, host) = self.privilege_context()?;
         let registry = registry.clone();
         let (user, host) = (user.to_owned(), host.to_owned());
@@ -187,7 +187,7 @@ impl Session {
         &self,
         database: &str,
         table: &str,
-        global_priv: tidb_privilege::PrivilegeType,
+        global_priv: tidb_mysql::PrivilegeType,
     ) -> bool {
         self.has_scoped_privilege(database, table, global_priv)
     }
@@ -499,7 +499,7 @@ impl Session {
         Option<(
             tidb_planner::common_plans::Plan,
             Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
-            tidb_executor::StmtContext,
+            tidb_sessionctx::StmtContext,
         )>,
         DriverError,
     > {
@@ -617,7 +617,7 @@ impl Session {
         Option<(
             tidb_planner::common_plans::Plan,
             Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
-            tidb_executor::StmtContext,
+            tidb_sessionctx::StmtContext,
         )>,
         DriverError,
     > {
@@ -647,7 +647,7 @@ impl Session {
     pub(crate) fn statement_visit_infos(
         &self,
         stmt: &tidb_ast::Stmt,
-        _ctx: &tidb_executor::StmtContext,
+        _ctx: &tidb_sessionctx::StmtContext,
     ) -> Result<Vec<tidb_planner::plan_builder::visit_info::VisitInfo>, DriverError> {
         Ok(self
             .build_statement_plan(stmt)?
@@ -725,7 +725,7 @@ impl Session {
     /// session that enforces no privileges (Go's nil manager).
     pub(crate) fn view_definer_privilege_check(
         &self,
-    ) -> Option<tidb_executor::ViewDefinerPrivilegeCheck> {
+    ) -> Option<tidb_sessionctx::ViewDefinerPrivilegeCheck> {
         let (registry, _, _) = self.privilege_context()?;
         let registry = registry.clone();
         Some(Arc::new(
@@ -1356,7 +1356,7 @@ fn scoped_privilege(
     roles: &[tidb_privilege::Account],
     database: &str,
     table: &str,
-    global_priv: tidb_privilege::PrivilegeType,
+    global_priv: tidb_mysql::PrivilegeType,
 ) -> bool {
     if tidb_util::sem_compat::is_enabled() {
         let has_restricted_tables_admin = registry.has_dynamic_priv_with_roles(

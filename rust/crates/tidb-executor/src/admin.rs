@@ -1209,14 +1209,14 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
         for row in rows {
             let Some(name) = row
                 .first()
-                .and_then(crate::simple::account_tables::sysvar_datum_text)
+                .and_then(tidb_datatype::datum_text::sysvar_datum_text)
             else {
                 continue;
             };
             let name = crate::blacklist_name(&name);
             let store_types = row
                 .get(1)
-                .and_then(crate::simple::account_tables::sysvar_datum_text)
+                .and_then(tidb_datatype::datum_text::sysvar_datum_text)
                 .unwrap_or_default();
             let value =
                 loaded.get(&name).copied().unwrap_or(0) | crate::blacklist_store_mask(&store_types);
@@ -1236,7 +1236,7 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
         for row in rows {
             if let Some(name) = row
                 .first()
-                .and_then(crate::simple::account_tables::sysvar_datum_text)
+                .and_then(tidb_datatype::datum_text::sysvar_datum_text)
             {
                 loaded.insert(name);
             }

@@ -26,10 +26,9 @@ use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::RawValue;
 
-use crate::go_runtime::{
-    go_64_slice_decode_capacity, GoShared, GoSharedPointerSlice, GoSharedSlice,
-    GoSliceElementLayout,
-};
+use crate::go_runtime::{go_64_slice_decode_capacity, GoShared, GoSharedPointerSlice};
+use tidb_goruntime::go_runtime::GoSliceElementLayout;
+use tidb_goruntime::go_runtime::GoSharedSlice;
 
 /// An owned Go slice of non-pointer values with nil/allocation identity.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1665,7 +1664,7 @@ pub mod go_bytes {
 pub mod go_shared_bytes {
     use serde::{Deserialize, Deserializer, Serializer};
 
-    use crate::go_runtime::GoSharedSlice;
+    use tidb_goruntime::go_runtime::GoSharedSlice;
 
     /// Serializes nil as `null` and allocated bytes as padded base64.
     pub fn serialize<S: Serializer>(

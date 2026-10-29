@@ -14,9 +14,8 @@
 
 //! Direct DistSQL consumer obligations for `pkg/util/tiflash`.
 
-use tidb_distsql::{
-    DistSqlContext, ReadRequestMetadata, ReplicaRead,
-};
+use tidb_distsql::{DistSqlContext, ReadRequestMetadata};
+use tidb_txnkv::ReplicaRead;
 
 #[test]
 fn existing_request_projection_consumes_the_canonical_policy() {

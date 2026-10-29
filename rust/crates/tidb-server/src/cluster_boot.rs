@@ -23,7 +23,8 @@ use tidb_session::domain::cluster_stack::{cluster_session_stack, ClusterStack};
 use tidb_domain_core::node_config::NodeConfig;
 use tidb_session::domain::real_tikv_node::{run_with_process_shutdown, RunConfiguredNodeError};
 
-use crate::sql_node::{ConcurrentSqlNode, SqlQueryError};
+use crate::sql_node::ConcurrentSqlNode;
+use tidb_store_driver::sql_query_error::SqlQueryError;
 
 /// Starts the convergence node: wide SQL over cluster storage and cluster
 /// accounts, served on the MySQL port.
@@ -39,7 +40,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<(), RunConfiguredNodeError> {
     // Go `setGlobalVars`, before the store and the domain are created.
-    let global_vars = tidb_session::GlobalSysvars::new();
+    let global_vars = tidb_domain::global_sysvars::GlobalSysvars::new();
     crate::set_global_vars::set_global_vars(&config, &global_vars);
     let (mut stack, authority) =
         cluster_session_stack(&config, global_vars, spill_storage, memory_arbitrator)?;
@@ -162,7 +163,7 @@ mod status_tests {
 
     fn test_settings() -> crate::http_settings::Settings {
         crate::http_settings::Settings::new(
-            tidb_session::GlobalSysvars::new(),
+            tidb_domain::global_sysvars::GlobalSysvars::new(),
             Arc::new(|_, _| Err("test has no storage".into())),
         )
     }

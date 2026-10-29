@@ -16,7 +16,7 @@
 //! Go `statistics.Table` reduced to the fields `cardinality` consumes.
 
 
-pub use tidb_stats::table_statistics::TableStatistics;
+use tidb_stats::table_statistics::TableStatistics;
 
 /// [`TableStatistics`]' planner half.
 pub trait TableStatisticsExt {

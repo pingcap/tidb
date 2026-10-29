@@ -38,7 +38,7 @@ pub struct HypoIndexes {
     allocated_ids: i64,
 }
 
-pub use tidb_sessionstates::HypoIndexMap;
+use tidb_sessionstates::HypoIndexMap;
 
 impl HypoIndexes {
     /// Go `EncodeSessionStates`: `sessionStates.HypoIndexes = s.HypoIndexes`.

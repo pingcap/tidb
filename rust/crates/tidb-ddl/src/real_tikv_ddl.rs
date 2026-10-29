@@ -39,12 +39,8 @@ use tidb_txnkv::transaction::StoreClient;
 use tidb_txnkv::transaction::{OptimisticCoordinatorError, RealOptimisticTransactionOpener};
 
 use tidb_infoschema::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
-use crate::cluster_ddl::{
-    lower_ddl_with_context, plan_persisted_ddl_job_failure, plan_persisted_ddl_job_step,
-    prepare_check_constraint_job_submission, recover_ddl_action, CheckConstraintValidation,
-    DdlAdmissionError, DdlPlan, DdlPlanError, DdlStatement, DdlWrite, ExchangePartitionValidation,
-    MdlInfoUpdate, PersistedDdlJobFailure, PersistedDdlJobPlan,
-};
+use crate::cluster_ddl::{lower_ddl_with_context, plan_persisted_ddl_job_failure, plan_persisted_ddl_job_step, prepare_check_constraint_job_submission, recover_ddl_action, CheckConstraintValidation, DdlPlan, DdlPlanError, DdlStatement, DdlWrite, ExchangePartitionValidation, MdlInfoUpdate, PersistedDdlJobFailure, PersistedDdlJobPlan};
+use tidb_ddl_build::table_info_build::DdlAdmissionError;
 
 use tidb_store_driver::cluster_table_storage::{LockKeysOutcome, SessionTransaction};
 use crate::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
@@ -409,7 +405,7 @@ pub trait IndexBackfiller {
     /// buffer as the other stages.
     fn stage_foreign_key_check(
         &self,
-        _plan: &crate::cluster_ddl::ForeignKeyCheck,
+        _plan: &tidb_ddl_build::session_pool::ForeignKeyCheck,
         _snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
         _buffer: &MutationBuffer,
     ) -> Result<(), LockSqlError> {
@@ -578,7 +574,6 @@ pub trait CheckConstraintValidator {
     ) -> Result<(), DdlPlanError>;
 }
 
-pub use tidb_ddl_build::session_pool::DdlSessionPool;
 
 
 /// Owner-side synchronization between committed DDL schema phases.

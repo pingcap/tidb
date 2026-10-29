@@ -14,7 +14,7 @@
 
 //! `SHOW CREATE SEQUENCE`; the sequence DDL is `tidb_ddl_build::sequence`.
 
-use tidb_infoschema::SequenceDef;
+use tidb_table::sequence::SequenceDef;
 
 /// The `SHOW CREATE SEQUENCE` / `SHOW CREATE TABLE` text for a sequence.
 ///

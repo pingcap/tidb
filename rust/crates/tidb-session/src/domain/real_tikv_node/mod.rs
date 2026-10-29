@@ -22,9 +22,8 @@ use crate::GlobalSysvars;
 use tidb_infoschema_issyncer::catalog_watch::{CatalogReloadError, CatalogReloader, SharedCatalog};
 use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_infoschema_issyncer::real_tikv_catalog::reload_catalog_from_cluster;
-use tidb_store_driver::real_tikv_read::{
-    ProductionReadProcessAuthority, ReadProcessShutdownError, RealOptimisticTransactionOpener,
-};
+use tidb_store_driver::real_tikv_read::{ProductionReadProcessAuthority, ReadProcessShutdownError};
+use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 use tidb_stats_handle_syncload::real_tikv_stats::{update_stats_cache_from_cluster};
 use tidb_stats_handle::bootstrap::{load_stats_snapshot_and_loader, InitialStatsLoad};
 use tidb_stats_handle_syncload::stats_watch::{
@@ -36,7 +35,7 @@ use tidb_txnkv::transaction::StoreClient;
 use tidb_domain_core::cluster_privileges::PrivilegeReloader;
 use crate::domain::configured_user_store::{ConfiguredUserStore, ConfiguredUserStoreError};
 use tidb_domain_core::node_config::NodeConfig;
-use crate::domain::session_api::SqlQueryError;
+use tidb_store_driver::sql_query_error::SqlQueryError;
 
 mod schema_following;
 
@@ -44,7 +43,6 @@ pub use schema_following::{
     connect_etcd_client, spawn_catalog_reloader, spawn_node_stats, spawn_privilege_watch,
     spawn_sysvar_watch,
 };
-pub use tidb_domain_core::session_time_zone::RealTiKvSessionTimeZone;
 
 const PRODUCTION_CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);
 pub fn apply_account_policies(
@@ -127,7 +125,7 @@ pub fn node_accounts(
         )));
     }
     // Go's privilege cache logs nothing on a successful load.
-    let loaded = tidb_domain_core::cluster_privileges::registry_from_cluster(&accounts.privileges);
+    let loaded = tidb_privilege::load::registry_from_cluster(&accounts.privileges);
     let users = ConfiguredUserStore::from_accounts(loaded.registry).with_global_vars(global_vars);
     // Seed the same startup snapshot's global variables now; `run_bound_*`
     // immediately replaces this with a fresh complete image and starts the

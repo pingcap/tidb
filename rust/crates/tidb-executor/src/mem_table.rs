@@ -15,7 +15,8 @@
 //! The row source used by Go's `executorBuilder.buildMemTable` path after a
 //! `PhysicalMemTable` resolves its virtual-table rows.
 
-use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::executor::{Executor, ExecutorMeta};
+use tidb_driver_error::ExecError;
 use crate::predicate_pushdown::{PushedScanFilter, ScanFilterProbe};
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};

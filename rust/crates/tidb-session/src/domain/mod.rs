@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use self::node_config::NodeConfig;
 use self::real_tikv_node::RunConfiguredNodeError;
-use self::session_api::SqlQueryError;
+use tidb_store_driver::sql_query_error::SqlQueryError;
 
 pub mod peer_address;
 pub mod session_api;
@@ -46,12 +46,12 @@ pub(crate) mod embedded_resource_groups;
 pub mod mock_store;
 
 #[cfg(test)]
-pub use tidb_util::test_isolation::isolate_process_globals;
+use tidb_util::test_isolation::isolate_process_globals;
 
 
 
 
-pub use tidb_util::logutil::{log_recovered_panic, zap_error, zap_stack};
+use tidb_util::logutil::{log_recovered_panic, zap_error, zap_stack};
 use tidb_domain_core::node_config;
 
 /// Go `net.JoinHostPort`.

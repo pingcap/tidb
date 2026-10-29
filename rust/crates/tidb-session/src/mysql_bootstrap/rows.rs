@@ -24,16 +24,14 @@
 //! 3. the row-ID allocator key, so the next writer does not hand out a handle
 //!    this bootstrap already used.
 
-use chrono::{Datelike, Timelike};
 use tidb_codec::gen_table_record_prefix;
 use tidb_datatype::{Datum, Time, TimeType};
 use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
 use tidb_txnkv::transaction::BufferMutation;
 
-use tidb_syssession::system_row_write::{
-    defaults_row, insert_row, store_clustered_row, RowEncodeError, NO, YES,
-};
+use tidb_syssession::system_row_write::{defaults_row, insert_row, store_clustered_row, NO, YES};
+use tidb_table::origin_default::RowEncodeError;
 
 use super::{
     text, BootstrapError, BOOTSTRAPPED_VAR, CLUSTER_ID_VAR, DDL_TABLE_VERSION_VAR,

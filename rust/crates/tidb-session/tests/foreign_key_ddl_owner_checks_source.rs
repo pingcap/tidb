@@ -21,7 +21,9 @@
 //! errors, and its metadata reads are `external.GetTableByName`.
 
 use crate::support::testkit::TestKit;
-use tidb_executor::{FkAction, KvTable, TableEntry};
+use tidb_executor::TableEntry;
+use tidb_table::kv_table::FkAction;
+use tidb_table::kv_table::KvTable;
 
 /// Go `external.GetTableByName(t, tk, db, name).Meta()`: the storage-backed
 /// table as the domain's current schema holds it.

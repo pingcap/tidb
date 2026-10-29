@@ -133,7 +133,7 @@ pub(crate) fn var_error(error: VarError) -> DriverError {
     DriverError::from(error)
 }
 
-pub(crate) use tidb_executor::simple::account_tables::sysvar_datum_text as datum_text;
+pub(crate) use tidb_datatype::datum_text::sysvar_datum_text as datum_text;
 
 impl Session {
     /// Go session.SetGlobalSysVar notifies after validation/hooks and before
@@ -153,11 +153,11 @@ impl Session {
             "OFF" => "false",
             _ => value,
         };
-        let _ = syncer.notify(tidb_domain::globalconfigsync::GlobalConfigItem {
+        let _ = syncer.notify(tidb_proto::pdpb::GlobalConfigItem {
             name: definition.global_config_name.to_owned(),
             value: value.to_owned(),
             // Go Domain.NotifyGlobalConfigChange uses EventType_PUT.
-            kind: tidb_domain::globalconfigsync::EventType::Put as i32,
+            kind: tidb_proto::pdpb::EventType::Put as i32,
             ..Default::default()
         });
     }
@@ -277,7 +277,7 @@ impl Session {
         match self.resource_group_hint_rejection() {
             Some(ResourceGroupHintRejection::Disabled) => {
                 self.append_warning(
-                    crate::warnings::WarningLevel::Warning,
+                    tidb_util::context::WarningLevel::Warning,
                     8250,
                     "Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature".to_owned(),
                 );
@@ -285,7 +285,7 @@ impl Session {
             }
             Some(ResourceGroupHintRejection::AccessDenied) => {
                 self.append_warning(
-                    crate::warnings::WarningLevel::Warning,
+                    tidb_util::context::WarningLevel::Warning,
                     1227,
                     "Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN or RESOURCE_GROUP_USER privilege(s) for this operation".to_owned(),
                 );
@@ -585,7 +585,7 @@ impl Session {
     pub(crate) fn set_value_rows(
         &mut self,
         sql: &str,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &tidb_sessionctx::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         // The SELECT is restored or written by this tier, so it is UTF-8.
         self.with_catalog_retrieving(ctx, |catalog| {
@@ -624,7 +624,7 @@ impl Session {
     fn append_noop_read_warnings(&mut self, names: Vec<String>) {
         for name in names {
             self.append_warning(
-                crate::warnings::WarningLevel::Warning,
+                tidb_util::context::WarningLevel::Warning,
                 8145,
                 format!("variable {name} has no effect in TiDB"),
             );
@@ -872,7 +872,7 @@ impl Session {
         };
         for warning in warnings {
             self.append_sql_warning(crate::SqlWarning::from_error(
-                crate::warnings::WarningLevel::Warning,
+                tidb_util::context::WarningLevel::Warning,
                 warning.code,
                 warning.message,
                 warning.identity,
@@ -888,7 +888,7 @@ impl Session {
                     Ok((_parsed, warnings)) => {
                         for warning in warnings {
                             self.append_warning(
-                                crate::warnings::WarningLevel::Warning,
+                                tidb_util::context::WarningLevel::Warning,
                                 1105,
                                 warning,
                             );
@@ -896,7 +896,7 @@ impl Session {
                     }
                     Err(error) => {
                         self.append_warning(
-                            crate::warnings::WarningLevel::Warning,
+                            tidb_util::context::WarningLevel::Warning,
                             1105,
                             error.to_string(),
                         );
@@ -945,7 +945,7 @@ impl Session {
                     );
                     for _ in 0..2 {
                         self.append_warning(
-                            crate::warnings::WarningLevel::Warning,
+                            tidb_util::context::WarningLevel::Warning,
                             1105,
                             message.clone(),
                         );
@@ -964,7 +964,7 @@ impl Session {
                     );
                     for _ in 0..2 {
                         self.append_warning(
-                            crate::warnings::WarningLevel::Warning,
+                            tidb_util::context::WarningLevel::Warning,
                             1105,
                             message.clone(),
                         );

@@ -375,7 +375,7 @@ impl ViewerState {
             | "STATEMENTS_SUMMARY_HISTORY"
             | "STATEMENTS_SUMMARY_EVICTED"
             | "TIDB_STATEMENTS_STATS" => {
-                let columns = crate::infoschema_reader::table_schema(source).expect("registered summary source");
+                let columns = tidb_infoschema::infoschema_meta::table_schema(source).expect("registered summary source");
                 let offsets: Vec<_> = columns
                     .iter()
                     .enumerate()
@@ -999,7 +999,7 @@ impl crate::mem_table_retrieval::MemTableRetriever for ClusterTablesRetriever {
             ClusterTableFilter, MemTablePredicateExtractor as Extractor,
         };
         let table = read.table_name.as_str();
-        let columns = crate::infoschema_reader::table_schema(table);
+        let columns = tidb_infoschema::infoschema_meta::table_schema(table);
         let required = columns
             .as_deref()
             .map(|columns| required_columns(read, columns));

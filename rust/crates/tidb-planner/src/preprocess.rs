@@ -20,7 +20,7 @@
 use std::any::Any;
 
 use tidb_ast::{Visitable, Visitor};
-use tidb_util::stringutil::go_to_lower;
+use tidb_hack::go_to_lower;
 
 use crate::plan_base::PlanError;
 

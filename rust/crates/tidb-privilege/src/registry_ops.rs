@@ -27,7 +27,7 @@ use std::sync::atomic::Ordering;
 
 use super::*;
 use tidb_hack::{GoCaseCompare, GoToUpper};
-use tidb_util::stringutil::go_to_upper;
+use tidb_hack::go_to_upper;
 
 fn compare_host(left: &str, right: &str) -> Comparison {
     if left == "%" || right == "%" {

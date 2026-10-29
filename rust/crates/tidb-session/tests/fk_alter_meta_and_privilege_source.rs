@@ -21,7 +21,9 @@
 //! `tk.get_table_by_name` against the domain's current schema.
 
 use crate::support::testkit::TestKit;
-use tidb_executor::{KvForeignKey, KvTable, TableEntry};
+use tidb_executor::TableEntry;
+use tidb_table::kv_table::KvForeignKey;
+use tidb_table::kv_table::KvTable;
 
 /// Go `getTableInfo(t, dom, db, table)`: the storage-backed table as the
 /// domain's current schema holds it.

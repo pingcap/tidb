@@ -16,7 +16,8 @@
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_executor::executor::{ExecError, Executor, ExecutorMeta};
+use tidb_executor::executor::{Executor, ExecutorMeta};
+use tidb_driver_error::ExecError;
 use tidb_executor::hash_agg::{AggFunc, AggKind, BitOp};
 use tidb_executor::mem_table::MemTableSourceExec;
 use tidb_executor::window::{
@@ -644,7 +645,7 @@ fn pipelined_ready_chunk_precedes_later_same_partition_error() {
                 range_desc: false,
             },
             Box::new(child),
-            tidb_executor::StmtContext::for_query().with_pipelined_window_exec(false),
+            tidb_sessionctx::StmtContext::for_query().with_pipelined_window_exec(false),
             1,
         );
         let mut executor: Box<dyn Executor> = if ordered {
@@ -702,7 +703,7 @@ fn upstream_ordered_window_partitioned_row_number() {
             range_desc: false,
         },
         Box::new(child),
-        tidb_executor::StmtContext::for_query().with_pipelined_window_exec(false),
+        tidb_sessionctx::StmtContext::for_query().with_pipelined_window_exec(false),
         2,
     );
     let mut executor = tidb_executor::window::OrderedWindowExec::new(base);

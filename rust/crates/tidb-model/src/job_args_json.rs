@@ -14,7 +14,7 @@
 
 //! Ordered `encoding/json` receiver codecs for native `JobArgs` values.
 
-use crate::go_runtime::GoSliceElementLayout;
+use tidb_goruntime::go_runtime::GoSliceElementLayout;
 use crate::serde_helpers::{
     go_json_field_matches, ignore_unknown, impl_go_json_deserialize, impl_go_json_merge_object,
     NullNoopSeed, OptionSharedAtomicReplaceSeed, OptionSharedMergeSeed, SharedPointerSliceSeed,

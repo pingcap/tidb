@@ -103,7 +103,7 @@ impl tidb_domain_core::cluster_binding_seam::BindingSessionPool for BindingSessi
 struct BindingRunner {
     session: Session,
 }
-fn driver_error(error: crate::domain::session_api::SqlQueryError) -> DriverError {
+fn driver_error(error: tidb_store_driver::sql_query_error::SqlQueryError) -> DriverError {
     DriverError::Mysql(
         tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
             .with_identity_opt(error.identity),
@@ -114,7 +114,7 @@ impl BindingRunner {
         tidb_executor::bind_parameters(
             &sql.replace("%?", "?"),
             args,
-            tidb_parser::SqlMode::default(),
+            tidb_lexer::SqlMode::default(),
         )
     }
     fn rows(&mut self, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {

@@ -67,7 +67,7 @@ use tidb_datatype::{Datum, FieldTypeCode, Time};
 
 /// The mode bits this table reads, which now live in `tidb_datatype` because
 /// the READ path needs the same three and cannot depend on this crate.
-pub use tidb_datatype::DateModes;
+use tidb_datatype::DateModes;
 
 /// What the write path should do with one converted temporal value.
 #[derive(Clone, Debug, PartialEq)]

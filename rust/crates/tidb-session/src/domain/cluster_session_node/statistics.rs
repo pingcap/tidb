@@ -21,10 +21,11 @@ use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
 use tidb_executor::stats_exec::StatsExec as _;
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 
-use crate::domain::session_api::{SqlQueryError, WriteOutcome};
+use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_executor::ddl_exec::WriteOutcome;
 
 use super::{ClusterServerSession, ClusterTransactions, SharedClusterCatalog};
-use crate::stats_statement_service::FlushStatsDeltaTargets;
+use tidb_executor::stats_exec::FlushStatsDeltaTargets;
 
 /// Go answers the statistics statements with an OK packet carrying no rows.
 const NO_ROWS: WriteOutcome = WriteOutcome {
@@ -247,7 +248,7 @@ impl<'s> ClusterServerSession<'s> {
     /// statement.
     fn stats_statement_service(
         &self,
-    ) -> Box<dyn crate::stats_statement_service::StatsStatementService> {
+    ) -> Box<dyn tidb_executor::stats_exec::StatsStatementService> {
         let stats = Arc::clone(&self.domain_services().stats);
         stats(&self.session)
     }
@@ -336,7 +337,7 @@ impl<'s> ClusterServerSession<'s> {
 /// [`AnalyzeService`]: crate::analyze_service::AnalyzeService
 pub(super) fn analyze_service(
     domain: &super::Domain,
-) -> crate::domain_services::StatementService<dyn crate::analyze_service::AnalyzeService> {
+) -> crate::domain_services::StatementService<dyn tidb_executor::analyze::exec::AnalyzeService> {
     analyze_service_over(domain, domain.analyze())
 }
 
@@ -344,7 +345,7 @@ pub(super) fn analyze_service(
 pub(super) fn analyze_service_over(
     domain: &super::Domain,
     analyze: Arc<dyn tidb_domain_core::cluster_analyze_seam::ClusterAnalyze>,
-) -> crate::domain_services::StatementService<dyn crate::analyze_service::AnalyzeService> {
+) -> crate::domain_services::StatementService<dyn tidb_executor::analyze::exec::AnalyzeService> {
     let stats_usage = Arc::clone(&domain.stats_usage);
     let transactions = Arc::clone(&domain.transactions);
     let catalog = Arc::clone(&domain.catalog);
@@ -368,7 +369,7 @@ pub(super) fn analyze_service_over(
             approximate_table_counts: Arc::clone(&approximate_table_counts),
             historical_stats_worker: Arc::clone(&historical_stats_worker),
             row_ids: Arc::clone(&row_ids),
-        }) as Box<dyn crate::analyze_service::AnalyzeService>
+        }) as Box<dyn tidb_executor::analyze::exec::AnalyzeService>
     })
 }
 
@@ -380,7 +381,7 @@ pub(super) fn analyze_service_over(
 pub(super) fn stats_statement_service(
     domain: &super::Domain,
 ) -> crate::domain_services::StatementService<
-    dyn crate::stats_statement_service::StatsStatementService,
+    dyn tidb_executor::stats_exec::StatsStatementService,
 > {
     let stats_usage = Arc::clone(&domain.stats_usage);
     let transactions = Arc::clone(&domain.transactions);
@@ -401,7 +402,7 @@ pub(super) fn stats_statement_service(
             analyze: Arc::clone(&analyze),
             stats_lock: Arc::clone(&stats_lock),
             row_ids: Arc::clone(&row_ids),
-        }) as Box<dyn crate::stats_statement_service::StatsStatementService>
+        }) as Box<dyn tidb_executor::stats_exec::StatsStatementService>
     })
 }
 /// The cluster analyzer as the session's [`AnalyzeService`]: owned handles,
@@ -426,7 +427,7 @@ struct ClusterAnalyzeService {
     row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 }
 
-impl crate::analyze_service::AnalyzeService for ClusterAnalyzeService {
+impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
     fn flush_stats_delta(&self, target_ids: &[i64]) -> Result<(), tidb_executor::DriverError> {
         super::Domain::dump_stats_delta_to_kv_parts(
             self.stats_usage.as_ref(),
@@ -531,7 +532,7 @@ struct ClusterStatsStatementService {
     row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 }
 
-impl crate::stats_statement_service::StatsStatementService for ClusterStatsStatementService {
+impl tidb_executor::stats_exec::StatsStatementService for ClusterStatsStatementService {
     fn flush_stats_delta(&self, target_ids: &[i64]) -> Result<(), tidb_executor::DriverError> {
         super::Domain::dump_stats_delta_to_kv_parts(
             self.stats_usage.as_ref(),
@@ -565,7 +566,7 @@ impl crate::stats_statement_service::StatsStatementService for ClusterStatsState
 
     fn load_stats(
         &self,
-        json: &tidb_stats_handle_storage::json::JsonTable,
+        json: &tidb_stats::JsonTable,
         historical_stats_enabled: bool,
     ) -> Result<(), tidb_executor::DriverError> {
         // Go's LOAD STATS path logs nothing on success.

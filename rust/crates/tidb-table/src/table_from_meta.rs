@@ -107,7 +107,7 @@ fn auto_id_step(table: &TableInfo) -> u64 {
     if table.auto_id_cache > 0 {
         table.auto_id_cache as u64
     } else {
-        crate::kv_table::DEFAULT_AUTO_ID_STEP
+        tidb_autoid::DEFAULT_AUTO_ID_STEP
     }
 }
 
@@ -143,7 +143,7 @@ fn local_allocator_for(
             return allocator.clone();
         }
         let allocator = allocator.with_step(if kind == AutoIdKind::RowId {
-            crate::kv_table::DEFAULT_AUTO_ID_STEP
+            tidb_autoid::DEFAULT_AUTO_ID_STEP
         } else {
             auto_id_step(table)
         });
@@ -151,9 +151,9 @@ fn local_allocator_for(
         return allocator;
     }
     let allocator = TableAutoId::over(
-        Arc::new(crate::kv_table::LocalAutoIdStore::new()),
+        Arc::new(tidb_autoid::LocalAutoIdStore::new()),
         if kind == AutoIdKind::RowId {
-            crate::kv_table::DEFAULT_AUTO_ID_STEP
+            tidb_autoid::DEFAULT_AUTO_ID_STEP
         } else {
             auto_id_step(table)
         },
@@ -228,17 +228,17 @@ impl AutoIdSource<'_> {
 #[derive(Debug)]
 struct UnavailableAutoIdStore;
 
-impl crate::kv_table::AutoIdStore for UnavailableAutoIdStore {
+impl tidb_autoid::AutoIdStore for UnavailableAutoIdStore {
     fn reserve(
         &self,
         _step: u64,
         _unsigned: bool,
-    ) -> Result<(u64, u64), crate::kv_table::AutoIdStoreError> {
+    ) -> Result<(u64, u64), tidb_autoid::AutoIdStoreError> {
         Err(unavailable_counter())
     }
 
-    fn next_global(&self) -> Result<u64, crate::kv_table::AutoIdStoreError> {
-        Err(crate::kv_table::AutoIdStoreError(
+    fn next_global(&self) -> Result<u64, tidb_autoid::AutoIdStoreError> {
+        Err(tidb_autoid::AutoIdStoreError(
             "the table has no auto-id counter home".to_owned(),
         ))
     }
@@ -247,7 +247,7 @@ impl crate::kv_table::AutoIdStore for UnavailableAutoIdStore {
         &self,
         _required: u64,
         _unsigned: bool,
-    ) -> Result<(), crate::kv_table::AutoIdStoreError> {
+    ) -> Result<(), tidb_autoid::AutoIdStoreError> {
         Err(unavailable_counter())
     }
 
@@ -255,17 +255,17 @@ impl crate::kv_table::AutoIdStore for UnavailableAutoIdStore {
         &self,
         _required: u64,
         _unsigned: bool,
-    ) -> Result<(), crate::kv_table::AutoIdStoreError> {
+    ) -> Result<(), tidb_autoid::AutoIdStoreError> {
         Err(unavailable_counter())
     }
 
-    fn reset(&self) -> Result<(), crate::kv_table::AutoIdStoreError> {
+    fn reset(&self) -> Result<(), tidb_autoid::AutoIdStoreError> {
         Err(unavailable_counter())
     }
 }
 
-fn unavailable_counter() -> crate::kv_table::AutoIdStoreError {
-    crate::kv_table::AutoIdStoreError(
+fn unavailable_counter() -> tidb_autoid::AutoIdStoreError {
+    tidb_autoid::AutoIdStoreError(
         "this table was built to walk its stored rows, not to insert, so its \
          auto-increment counter was never given a home"
             .to_owned(),
@@ -901,7 +901,7 @@ fn partition_double_write_for(
     // table's for REORGANIZE PARTITION.
     let copies = |definitions: &[tidb_model::partition::PartitionDefinition]| {
         let mut info = partition.clone();
-        info.definitions = tidb_model::go_runtime::GoSharedSlice::from_vec(definitions.to_vec());
+        info.definitions = tidb_goruntime::go_runtime::GoSharedSlice::from_vec(definitions.to_vec());
         if partition.new_table_id != 0 {
             info.partition_type = partition.ddl_type;
             info.expr = partition.ddl_expr.clone();

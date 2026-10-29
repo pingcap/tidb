@@ -26,7 +26,7 @@ use std::time::Duration;
 use tikv_client::proto::keyspacepb::KeyspaceMeta;
 use tikv_client::proto::metapb;
 
-pub use tidb_ddl::ddl_delete_range::DelRangeTask;
+use tidb_ddl::ddl_delete_range::DelRangeTask;
 
 /// An error from the GC worker or one of its collaborators, carrying the
 /// message Go's `errors.Trace` would have carried.

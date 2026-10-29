@@ -14,16 +14,19 @@
 
 //! The per-statement evaluation context, which is Go's `StatementContext`.
 
-pub use tidb_kv::keys_read::KeysReadBudget;
+use tidb_kv::keys_read::KeysReadBudget;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use tidb_datatype::Datum;
-use tidb_distsql::{ReplicaReadType, WarningCollector, WarningLevel};
+use tidb_util::context::WarningLevel;
+use tidb_util::context::WarningCollector;
+use tidb_txnkv::ReplicaReadType;
 use tidb_util::context::SqlWarn;
-use tidb_expr::{Columns, CurrentTso, ErrorLevel, MysqlRng};
+use tidb_expr::{Columns, CurrentTso, ErrorLevel};
+use tidb_util::mathutil::MysqlRng;
 
 const MAX_WARNING_COUNT: usize = u16::MAX as usize;
 /// Go `vardef.DefDistSQLScanConcurrency`, the value a context built without
@@ -31,7 +34,8 @@ const MAX_WARNING_COUNT: usize = u16::MAX as usize;
 const DEFAULT_DIST_SQL_SCAN_CONCURRENCY: u64 =
     tidb_vardef::defaults::DEF_DIST_SQL_SCAN_CONCURRENCY as u64;
 
-use tidb_kv::mem_quota::{OomAction, StatementMemory};
+use tidb_kv::mem_quota::StatementMemory;
+use tidb_vardef::OomAction;
 use crate::statement_pushdown::{push_down_flags, PushDownFlagsInput, StatementKind};
 use tidb_driver_error::DriverError;
 use tidb_error::errctx::{ErrGroup, Level, LevelMap};
@@ -39,7 +43,7 @@ use tidb_util::spill_storage::SpillStorage;
 
 static NEXT_STATEMENT_CONTEXT_ID: AtomicU64 = AtomicU64::new(1);
 
-pub use tidb_variable::session_vars::DdlReorgVars;
+use tidb_variable::session_vars::DdlReorgVars;
 
 /// Go `privilege.Manager.RequestVerificationWithUser`, as the planner asks it
 /// for a `SQL SECURITY DEFINER` view's definer: may this definer hold this
@@ -55,7 +59,7 @@ pub type ViewDefinerPrivilegeCheck = Arc<
 pub type SessionPrivilegeCheck =
     Arc<dyn Fn(&str, &str, &str, tidb_mysql::PrivilegeType) -> bool + Send + Sync>;
 
-pub use tidb_variable::MdlRelatedTableRecorder;
+use tidb_variable::MdlRelatedTableRecorder;
 
 /// Which of Go's mutually exclusive `StatementContext` statement-kind
 /// booleans this statement sets (`InInsertStmt`, `InUpdateStmt`/
@@ -250,7 +254,7 @@ impl RowIdShardGenerator {
     }
 }
 
-pub use tidb_variable::GlobalSysvarAccessor;
+use tidb_variable::GlobalSysvarAccessor;
 
 /// Go `SessionVars.IndexLookUpPushDownPolicy`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -538,7 +542,7 @@ pub struct StmtContextSessionState {
     pub current_tso: CurrentTso,
     /// The current transaction's (or, in autocommit, current statement's)
     /// staged-write tracker. See [`StmtContextData::staged_writes`].
-    pub staged_writes: Arc<tidb_table::kv_table::StagedWrites>,
+    pub staged_writes: Arc<tidb_kv::staged_writes::StagedWrites>,
     /// Retry ID history retained across attempts.
     pub retry_auto_ids: Arc<Mutex<RetryAutoIds>>,
     /// Session row-ID shard generator.
@@ -936,12 +940,12 @@ pub struct StmtContextData {
     /// when an autocommit statement performs its first storage read.
     current_tso: CurrentTso,
     /// Go `txn.GetMemBuffer()`, narrowed to this tier's staged-write tracking
-    /// (see [`tidb_table::kv_table::StagedWrites`]). Shared by every statement of
+    /// (see [`tidb_kv::staged_writes::StagedWrites`]). Shared by every statement of
     /// the CURRENT transaction (or, in autocommit, just this one statement),
     /// so every write and every dirty-content read sees the same answer
     /// without a catalog-wide walk to reset it: a fresh transaction gets a
     /// fresh, empty handle here, exactly as Go's fresh membuffer is empty.
-    staged_writes: Arc<tidb_table::kv_table::StagedWrites>,
+    staged_writes: Arc<tidb_kv::staged_writes::StagedWrites>,
     /// Go `StmtCtx.InsertID`: the explicit value a row gave the
     /// `AUTO_INCREMENT` column, which the OK packet falls back to.
     given_insert_id: Arc<AtomicU64>,
@@ -1507,7 +1511,7 @@ context_configuration! {
     /// Attaches the session's scanner `sql_mode` flags, which every re-parse
     /// this statement performs must lex under.
     #[must_use]
-    pub fn with_sql_mode(mut self, sql_mode: tidb_parser::SqlMode) -> Self {
+    pub fn with_sql_mode(mut self, sql_mode: tidb_lexer::SqlMode) -> Self {
         use tidb_mysql::consts as m;
         self.set_sql_mode_bits(m::ModeRealAsFloat, sql_mode.real_as_float);
         self.set_sql_mode_bits(m::ModeNoBackslashEscapes, sql_mode.no_backslash_escapes);
@@ -2483,7 +2487,7 @@ context_configuration! {
 
     /// Attaches `NO_ZERO_DATE`, `NO_ZERO_IN_DATE` and `ALLOW_INVALID_DATES`.
     #[must_use]
-    pub fn with_date_modes(mut self, date_modes: tidb_table::zero_date::DateModes) -> Self {
+    pub fn with_date_modes(mut self, date_modes: tidb_datatype::DateModes) -> Self {
         use tidb_mysql::consts as m;
         self.set_sql_mode_bits(m::ModeNoZeroDate, date_modes.no_zero_date);
         self.set_sql_mode_bits(m::ModeNoZeroInDate, date_modes.no_zero_in_date);
@@ -2570,7 +2574,7 @@ impl Default for ExecutorChunkSizes {
     }
 }
 
-pub use tidb_table::sequence::SequenceSchema;
+use tidb_table::sequence::SequenceSchema;
 
 /// Go `SessionVars.SequenceState`: the value each sequence's last `NEXTVAL`
 /// returned in this session, which `LASTVAL` reads back.
@@ -3208,7 +3212,7 @@ impl StmtContext {
     pub fn for_system_session(&self) -> Self {
         self.clone()
             .with_ddl_sql_mode(0)
-            .with_sql_mode(tidb_parser::SqlMode::default())
+            .with_sql_mode(tidb_lexer::SqlMode::default())
             .with_strict(false)
             .with_only_full_group_by(false)
             .with_parser_config(tidb_parser::ParserConfig::default())
@@ -3312,7 +3316,7 @@ impl StmtContext {
 
     /// The scanner `sql_mode` flags for this statement's re-parses.
     #[must_use]
-    pub fn sql_mode(&self) -> tidb_parser::SqlMode {
+    pub fn sql_mode(&self) -> tidb_lexer::SqlMode {
         scanner_sql_mode(self.session_sql_mode())
     }
 
@@ -4989,9 +4993,9 @@ impl StmtContext {
 
     /// The SQL mode's temporal bits; see [`tidb_table::zero_date`].
     #[must_use]
-    pub fn date_modes(&self) -> tidb_table::zero_date::DateModes {
+    pub fn date_modes(&self) -> tidb_datatype::DateModes {
         let mode = self.session_sql_mode();
-        tidb_table::zero_date::DateModes {
+        tidb_datatype::DateModes {
             no_zero_date: mode.has_no_zero_date_mode(),
             no_zero_in_date: mode.has_no_zero_in_date_mode(),
             allow_invalid_dates: mode.has_allow_invalid_dates_mode(),
@@ -5340,7 +5344,7 @@ impl StmtContext {
     /// staged-write tracker, for [`tidb_table::kv_table::KvTable::has_dirty_content`]
     /// and [`tidb_table::kv_table::KvTable::record_key_is_staged`].
     #[must_use]
-    pub fn staged_writes(&self) -> &tidb_table::kv_table::StagedWrites {
+    pub fn staged_writes(&self) -> &tidb_kv::staged_writes::StagedWrites {
         &self.staged_writes
     }
 
@@ -5348,7 +5352,7 @@ impl StmtContext {
     /// context ([`tidb_distsql::remote_scan::PushdownStatementContext`]) built once
     /// per statement and carried by executors that outlive this borrow.
     #[must_use]
-    pub fn staged_writes_handle(&self) -> Arc<tidb_table::kv_table::StagedWrites> {
+    pub fn staged_writes_handle(&self) -> Arc<tidb_kv::staged_writes::StagedWrites> {
         Arc::clone(&self.staged_writes)
     }
 
@@ -5750,7 +5754,7 @@ impl tidb_table::context::MutateContext for StmtContext {
         StmtContext::take_warnings(self)
     }
 
-    fn append_leveled(&self, level: tidb_distsql::WarningLevel, code: u16, message: &str) {
+    fn append_leveled(&self, level: tidb_util::context::WarningLevel, code: u16, message: &str) {
         StmtContext::append_leveled(self, level, code, message);
     }
 
@@ -6402,7 +6406,7 @@ mod tests {
 
     #[test]
     fn sleep_keeps_a_kill_installed_after_a_physical_table_reader_is_built() {
-        let session = tidb_kv::mem_quota::SessionMemory::new(-1, tidb_kv::mem_quota::OomAction::Cancel, 7);
+        let session = tidb_kv::mem_quota::SessionMemory::new(-1, tidb_vardef::OomAction::Cancel, 7);
         let cancellation = session.begin_query_cancellation();
         cancellation.cancel();
         let ctx = StmtContext::for_query_with_memory(session.statement());
@@ -6629,7 +6633,7 @@ mod tests {
     #[test]
     fn reorg_flags_are_not_ddl_default_admission_flags() {
         let strict =
-            StmtContext::for_dml(true, true, false).with_date_modes(tidb_table::zero_date::DateModes {
+            StmtContext::for_dml(true, true, false).with_date_modes(tidb_datatype::DateModes {
                 no_zero_date: true,
                 no_zero_in_date: true,
                 allow_invalid_dates: false,
@@ -6643,7 +6647,7 @@ mod tests {
         assert_ne!(flags, strict.ddl_default_conversion_flags());
 
         let permissive =
-            StmtContext::for_dml(true, false, false).with_date_modes(tidb_table::zero_date::DateModes {
+            StmtContext::for_dml(true, false, false).with_date_modes(tidb_datatype::DateModes {
                 no_zero_date: true,
                 no_zero_in_date: true,
                 allow_invalid_dates: true,
@@ -6658,7 +6662,7 @@ mod tests {
 
     #[test]
     fn prepared_type_flags_preserve_statement_class_and_policy() {
-        let modes = tidb_table::zero_date::DateModes::TIDB_DEFAULT_SQL_MODE;
+        let modes = tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE;
         let query = StmtContext::for_query().with_date_modes(modes);
         assert_eq!(query.type_flags().bits(), 30);
         let base = StmtContext::for_dml(true, true, false).with_date_modes(modes);
@@ -6683,8 +6687,8 @@ mod tests {
 /// The scanner's view of a session `SQLMode` (Go's lexer reads these bits
 /// from the same mode).
 #[must_use]
-pub const fn scanner_sql_mode(mode: tidb_mysql::SqlMode) -> tidb_parser::SqlMode {
-    tidb_parser::SqlMode {
+pub const fn scanner_sql_mode(mode: tidb_mysql::SqlMode) -> tidb_lexer::SqlMode {
+    tidb_lexer::SqlMode {
         real_as_float: mode.has_real_as_float_mode(),
         no_backslash_escapes: mode.has_no_backslash_escapes_mode(),
         ansi_quotes: mode.has_ansi_quotes_mode(),

@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use tidb_util::sqlkiller::memory_exceed_for_query;
+use tidb_vardef::OomAction;
 use tidb_kv::mem_quota::*;
 use std::sync::Arc;
 use tidb_util::memory::Tracker;

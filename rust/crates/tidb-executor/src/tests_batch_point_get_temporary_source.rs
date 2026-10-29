@@ -93,7 +93,7 @@ fn explain_of_a_global_temporary_table_batch_get_names_batch_point_get() {
         &catalog,
         crate::DEFAULT_DATABASE,
         &ctx,
-        crate::explain::ExplainFormat::Brief,
+        tidb_sessionctx::explain_format::ExplainFormat::Brief,
     )
     .expect("the batch point get over a temporary table explains");
     let operators = rows

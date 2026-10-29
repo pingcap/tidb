@@ -70,7 +70,7 @@ impl RealTiKvSessionTransportFactory for ProductionReadSessionFactory {
 
 /// Write capability re-exported so the server never depends on `tidb-txnkv`
 /// directly; the dependency direction stays server -> exec -> txnkv.
-pub use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
+use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 
 /// Builds one worker-local query transport from process-owned shared handles.
 ///

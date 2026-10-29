@@ -29,7 +29,7 @@ use tidb_model::StorageClassTransitRule;
 use tidb_table::partition_routing::{PartitionDef, PartitionKind};
 use tidb_error::mysql::MysqlError;
 
-pub use tidb_table::partition_routing::StorageClass;
+use tidb_table::partition_routing::StorageClass;
 
 /// Go `model.StorageClassDef`, decoded from the written JSON.
 #[derive(Clone, Debug, Default)]
@@ -615,7 +615,7 @@ fn is_partition_match_values_in(partition: &PartitionDef, values_in: &[String]) 
 
 /// Go `isPartitionValueKeyword`.
 fn is_partition_value_keyword(value: &str) -> bool {
-    value.eq_ignore_ascii_case(super::table_partition::PARTITION_MAX_VALUE)
+    value.eq_ignore_ascii_case(tidb_table::partition_metadata::PARTITION_MAX_VALUE)
         || value.eq_ignore_ascii_case("DEFAULT")
 }
 
@@ -645,7 +645,7 @@ fn compare_range_partition_values(
     right: &str,
     ctx: &tidb_expr::metabuild::Context,
 ) -> Result<i32, MysqlError> {
-    let max_value = super::table_partition::PARTITION_MAX_VALUE;
+    let max_value = tidb_table::partition_metadata::PARTITION_MAX_VALUE;
     match (
         left.eq_ignore_ascii_case(max_value),
         right.eq_ignore_ascii_case(max_value),
@@ -700,7 +700,7 @@ fn compare_range_columns_partition_values(
     };
     let cast = |text: &str| -> Option<Datum> {
         let expr = tidb_model::generated_expr::parse_expression(text).ok()?;
-        let value = super::table_partition_list::eval_column_value(&expr, ctx).ok()?;
+        let value = tidb_table::partition_fold::eval_column_value(&expr, ctx).ok()?;
         // Go casts with `WithCastExprTo`; a lossy cast only warns.
         value
             .convert_to_in(
@@ -768,7 +768,7 @@ fn get_range_value(text: &str, unsigned: bool, ctx: &tidb_expr::metabuild::Conte
         return Some(value);
     }
     let expr = tidb_model::generated_expr::parse_expression(text).ok()?;
-    let value = super::table_partition_list::eval_column_value(&expr, ctx).ok()?;
+    let value = tidb_table::partition_fold::eval_column_value(&expr, ctx).ok()?;
     let mut target = FieldType::new(FieldTypeCode::LongLong);
     if unsigned {
         target.add_flags(FieldTypeFlags::UNSIGNED);

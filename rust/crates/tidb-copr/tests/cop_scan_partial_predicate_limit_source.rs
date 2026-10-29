@@ -47,7 +47,7 @@ use tidb_distsql::remote_scan::PushdownPartialAggregate;
 use tidb_distsql::remote_scan::PushdownAggregateKind;
 use tidb_distsql::remote_scan::PushdownAggregateFunction;
 use tidb_kv::storage::StorageError;
-use tidb_executor::StmtContext;
+use tidb_sessionctx::StmtContext;
 use tidb_proto::tipb::{Chunk, DagRequest, ExecType, Expr, ExprType, SelectResponse};
 use tidb_txnkv::Key;
 

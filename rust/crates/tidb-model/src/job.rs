@@ -27,7 +27,8 @@ use tidb_error::terror::TerrorError;
 use crate::action_type::ActionType;
 use crate::db::DBInfo;
 use crate::go_any::GoAny;
-use crate::go_runtime::{GoShared, GoSharedPointerSlice, GoSharedSlice};
+use crate::go_runtime::{GoShared, GoSharedPointerSlice};
+use tidb_goruntime::go_runtime::GoSharedSlice;
 pub use crate::history::HistoryInfo;
 use crate::job_enums::{JobState, JobVersion};
 use crate::reorg::{DDLReorgMeta, ReorgStage, ReorgType};
@@ -152,7 +153,7 @@ impl PersistedRawJson {
                 bytes.len(),
                 self.0.capacity(),
                 1,
-                crate::go_runtime::GoSliceElementLayout::NoPointers,
+                tidb_goruntime::go_runtime::GoSliceElementLayout::NoPointers,
             )
         };
         self.0.replace_decoded(bytes, capacity);
@@ -163,7 +164,7 @@ impl PersistedRawJson {
             bytes.len(),
             0,
             1,
-            crate::go_runtime::GoSliceElementLayout::NoPointers,
+            tidb_goruntime::go_runtime::GoSliceElementLayout::NoPointers,
         );
         Self(GoSharedSlice::from_vec_with_capacity(bytes, capacity))
     }

@@ -53,10 +53,8 @@ use std::sync::{Arc, Mutex};
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_distsql::{
-    CancelHandle, DistSqlContext, EncodeType, ExecutorKind, ExecutorShape, QueryResultContext,
-    RequestBuilder, RequestEnvelope, SelectInput, SelectResponseIter, WarningCollector,
-};
+use tidb_distsql::{CancelHandle, DistSqlContext, EncodeType, ExecutorKind, ExecutorShape, QueryResultContext, RequestBuilder, RequestEnvelope, SelectInput, SelectResponseIter};
+use tidb_util::context::WarningCollector;
 use tidb_planner::cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
 use tidb_planner::physical::{PhysicalIndexScan, PhysicalTableScan};
 use tidb_planner::tikv_scan_spec::{
@@ -743,7 +741,7 @@ struct RemoteScanPlan {
     /// Go `StmtCtx.ResourceGroupName` for this request.
     resource_group_name: String,
     /// Go `SessionVars.GetReplicaRead()` for this request.
-    replica_read: tidb_distsql::ReplicaReadType,
+    replica_read: tidb_txnkv::ReplicaReadType,
     read_replica_scope: String,
     is_staleness: bool,
     read_policy: tidb_distsql::remote_scan::CoprocessorReadPolicy,
@@ -791,12 +789,12 @@ fn scan_result<T>(task: impl FnOnce() -> Result<T, String>) -> Result<T, String>
 /// Go executor.newClosestReadAdjuster. The number of tasks is known only
 /// after region splitting; paging/retries retain the resulting request.
 fn closest_read_adjuster(
-    mode: tidb_distsql::ReplicaReadType,
+    mode: tidb_txnkv::ReplicaReadType,
     bytes: f64,
     threshold: i64,
     zone: String,
 ) -> Option<Arc<dyn tidb_txnkv::CoprocessorRequestAdjuster>> {
-    if mode != tidb_distsql::ReplicaReadType::ClosestAdaptive {
+    if mode != tidb_txnkv::ReplicaReadType::ClosestAdaptive {
         return None;
     }
     Some(Arc::new(
@@ -815,7 +813,7 @@ fn closest_read_adjuster(
                 });
                 true
             } else {
-                request.replica_read = tidb_distsql::ReplicaReadType::Leader;
+                request.replica_read = tidb_txnkv::ReplicaReadType::Leader;
                 false
             }
         },
@@ -1300,7 +1298,7 @@ mod tests {
             (0.0, 0, false),
         ] {
             let mut request = tidb_txnkv::Request::default();
-            request.replica_read = tidb_distsql::ReplicaReadType::ClosestAdaptive;
+            request.replica_read = tidb_txnkv::ReplicaReadType::ClosestAdaptive;
             request.match_store_labels.push(tidb_txnkv::StoreLabel {
                 key: "rack".into(),
                 value: "r1".into(),
@@ -1312,9 +1310,9 @@ mod tests {
             assert_eq!(
                 request.replica_read,
                 if hit {
-                    tidb_distsql::ReplicaReadType::ClosestAdaptive
+                    tidb_txnkv::ReplicaReadType::ClosestAdaptive
                 } else {
-                    tidb_distsql::ReplicaReadType::Leader
+                    tidb_txnkv::ReplicaReadType::Leader
                 }
             );
             if hit {
@@ -1322,9 +1320,9 @@ mod tests {
             }
         }
         for mode in [
-            tidb_distsql::ReplicaReadType::Leader,
-            tidb_distsql::ReplicaReadType::Follower,
-            tidb_distsql::ReplicaReadType::Closest,
+            tidb_txnkv::ReplicaReadType::Leader,
+            tidb_txnkv::ReplicaReadType::Follower,
+            tidb_txnkv::ReplicaReadType::Closest,
         ] {
             assert!(closest_read_adjuster(mode, 1e9, 1, "z".into()).is_none());
         }

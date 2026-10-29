@@ -19,7 +19,7 @@ use std::fmt::Write;
 use std::sync::Arc;
 
 use crate::{KeyRange, PartitionIdAndRanges};
-pub use tidb_proto::MppTaskMeta;
+use tidb_proto::MppTaskMeta;
 
 /// MPP plan protocol version.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]

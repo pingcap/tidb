@@ -20,9 +20,11 @@
 //! once under a quota it cannot, compared group by group. Nothing here trusts
 //! a hand-written expectation about what a spilled aggregation "should" say.
 
-use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::executor::{Executor, ExecutorMeta};
+use tidb_driver_error::ExecError;
 use crate::hash_agg::{AggFunc, AggKind, HashAggExec};
-use tidb_kv::mem_quota::{OomAction, StatementMemory};
+use tidb_kv::mem_quota::StatementMemory;
+use tidb_vardef::OomAction;
 use crate::test_temp_storage::{scratch_dir as scratch_temp_dir, storage as test_storage};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};

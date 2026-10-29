@@ -14,7 +14,7 @@
 
 //! Owned chunk ranges for Go's retained window rows. No partition data copy.
 
-use crate::executor::ExecError;
+use tidb_driver_error::ExecError;
 use std::collections::VecDeque;
 use std::ops::Range;
 use std::sync::Arc;

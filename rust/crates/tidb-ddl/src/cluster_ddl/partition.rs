@@ -24,11 +24,8 @@
 //! An ADD on a HASH or KEY table is a reorganization in Go
 //! (`hashPartitionManagement`); it is not queued here.
 
-use super::add_index::{
-    action_step, job_batch_size, load_reorg_handle, ReorgSessionVars, reorg_step,
-    reorg_sub_job, table_step, table_step_with_diff, AddIndexReorg, AddIndexSubmission,
-    ReorgOutcome, ReorgResult, ReorgStageRequest,
-};
+use super::add_index::{action_step, job_batch_size, load_reorg_handle, reorg_step, reorg_sub_job, table_step, table_step_with_diff, AddIndexReorg, AddIndexSubmission, ReorgOutcome, ReorgResult, ReorgStageRequest};
+use tidb_ddl_build::session_pool::ReorgSessionVars;
 use super::*;
 
 /// Go `mysql.PartitionCountLimit`.

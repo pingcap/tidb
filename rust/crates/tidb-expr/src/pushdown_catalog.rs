@@ -77,7 +77,7 @@ use crate::expression::Expression;
 /// The TiPB signature enum, re-exported so a caller that reads a resolved
 /// signature off the catalog does not need its own TiPB dependency: the
 /// catalog is the only place a signature is chosen.
-pub use tidb_proto::tipb::ScalarFuncSig;
+use tidb_proto::tipb::ScalarFuncSig;
 
 use crate::pb_predicate::int_field_type;
 

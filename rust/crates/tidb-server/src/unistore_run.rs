@@ -19,7 +19,7 @@
 use std::sync::Arc;
 
 use tidb_session::domain::real_tikv_node::{configured_account_store, RunConfiguredNodeError};
-use tidb_session::domain::session_api::SqlQueryError;
+use tidb_store_driver::sql_query_error::SqlQueryError;
 use tidb_session::domain::unistore_node::*;
 
 use crate::sql_node::ConcurrentSqlNode;
@@ -60,7 +60,7 @@ pub fn run_unistore_cluster_session(
         tidb_unistore::region_manager::STORE_ID,
     );
     // Go `setGlobalVars`, before the store and the domain are created.
-    let global_vars = tidb_session::GlobalSysvars::new();
+    let global_vars = tidb_domain::global_sysvars::GlobalSysvars::new();
     crate::set_global_vars::set_global_vars(&config, &global_vars);
     let users = configured_account_store(&config, global_vars)?;
     let users = Arc::new(users);

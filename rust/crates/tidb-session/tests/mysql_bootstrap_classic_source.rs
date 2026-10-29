@@ -316,7 +316,7 @@ fn no_job_state_outlives_the_bootstrap() {
 fn the_first_user_table_is_117() {
     let (mut store, _) = bootstrapped();
     let sql = "create table test.t1(a int primary key, b varchar(10))";
-    let context = tidb_executor::StmtContext::default().with_ddl_query(sql);
+    let context = tidb_sessionctx::StmtContext::default().with_ddl_query(sql);
     let parsed = tidb_parser::parse(sql).unwrap();
     let statement = lower_ddl_with_context(&parsed, "test", &ddl_context(&context))
         .unwrap()
@@ -465,6 +465,6 @@ fn a_second_classic_bootstrap_is_refused() {
 }
 
 /// The shared session handle the DDL lowering keeps (Go's `sessionctx`).
-fn ddl_context(context: &tidb_executor::StmtContext) -> tidb_ddl::cluster_ddl::DdlContext {
+fn ddl_context(context: &tidb_sessionctx::StmtContext) -> tidb_ddl::cluster_ddl::DdlContext {
     std::sync::Arc::new(context.clone())
 }

@@ -20,7 +20,8 @@ mod tests {
     use crate::connection_writers::{write_query_error, ConnectionPacketOutput};
     use crate::mysql_connection::MysqlConnectionError;
     use tidb_ddl::real_tikv_ddl::ClusterDdlError;
-    use tidb_session::domain::session_api::{cluster_ddl_error, lock_sql_error};
+    use tidb_ddl::real_tikv_ddl::cluster_ddl_error;
+    use tidb_store_driver::sql_query_error::lock_sql_error;
     use tidb_txnkv::retry::RegionBackoffKind;
     use tidb_txnkv::transaction::TransactionCause;
 

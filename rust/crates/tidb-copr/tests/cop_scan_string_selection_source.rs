@@ -46,7 +46,7 @@ use tidb_executor::driver::{run_select_on, Catalog};
 use tidb_table::kv_table::KvTable;
 use tidb_table::kv_table::KvColumn;
 use tidb_kv::storage::StorageError;
-use tidb_executor::StmtContext;
+use tidb_sessionctx::StmtContext;
 use tidb_proto::tipb::{
     Chunk, DagRequest, ExecType, Expr, ExprType, ScalarFuncSig, SelectResponse,
 };

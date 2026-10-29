@@ -289,7 +289,8 @@ mod runtime_stats_coll_sink_tests {
     use super::*;
     use std::sync::Arc;
     use tidb_distsql::select_with_runtime_stats;
-    use tidb_distsql::{SelectInput, StoreType};
+    use tidb_distsql::SelectInput;
+    use tidb_txnkv::StoreType;
 
     fn metadata(cop_plan_ids: Vec<isize>, root: isize) -> SelectResultMetadata {
         select_with_runtime_stats(
@@ -395,7 +396,7 @@ mod runtime_stats_coll_sink_tests {
     /// time the iterator reports, and render before the cop stats.
     #[test]
     fn close_registers_the_select_result_stats_on_the_root_plan() {
-        use crate::executor::ExecutorRuntimeStatsSource;
+        use tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource;
         let coll = Arc::new(tidb_util::execdetails::runtime_stats::RuntimeStatsColl::new(None));
         let sink = RuntimeStatsCollSink::new(Arc::clone(&coll), None);
         let metadata = metadata(vec![5], 7);

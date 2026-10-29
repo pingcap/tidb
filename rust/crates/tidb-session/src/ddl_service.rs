@@ -27,11 +27,12 @@
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_ddl::cluster_ddl::DdlStatement;
 use tidb_ddl::real_tikv_ddl::ClusterDdlReport;
-use tidb_executor::{DriverError, StmtContext};
+use tidb_executor::DriverError;
+use tidb_sessionctx::StmtContext;
 
 use crate::Session;
 use tidb_hack::GoCaseCompare;
-use tidb_util::stringutil::go_to_lower;
+use tidb_hack::go_to_lower;
 
 /// Go `ddl.DDL.DoDDLJob` for one lowered statement: publishes the change,
 /// then brings the caller's own catalog up to it before answering.

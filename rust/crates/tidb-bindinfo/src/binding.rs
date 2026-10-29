@@ -59,9 +59,9 @@ use std::collections::BTreeMap;
 use tidb_ast::{Stmt, Visitable as _, Visitor};
 use tidb_driver_error::DriverError;
 use tidb_hack::GoCaseCompare;
-use tidb_util::stringutil::go_to_lower;
+use tidb_hack::go_to_lower;
 
-pub use tidb_hint::HintsSet;
+use tidb_hint::HintsSet;
 
 /// Go `utilparser.RestoreWithDefaultDB`: the statement's canonical text with
 /// every unqualified table name qualified by `default_db`. Delegates to the
@@ -367,7 +367,7 @@ impl Binding {
     /// Invalid SQL and builtin rows are ignored; tombstones reach cache resolution.
     pub fn from_storage_row(
         row: &[tidb_datatype::Datum],
-        mode: tidb_parser::SqlMode,
+        mode: tidb_lexer::SqlMode,
     ) -> Option<Self> {
         let text = |index: usize| tidb_datatype::datum_text::sysvar_datum_text(row.get(index)?);
         let status = match text(3)?.as_str() {

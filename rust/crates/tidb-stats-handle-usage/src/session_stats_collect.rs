@@ -26,9 +26,8 @@ use tidb_model::TableItemID;
 use tidb_txnkv::transaction::BufferMutation;
 
 use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
-use tidb_syssession::system_row_write::{
-    defaults_row, RowEncodeError,
-};
+use tidb_syssession::system_row_write::defaults_row;
+use tidb_table::origin_default::RowEncodeError;
 use tidb_stats_handle_storage::cluster_stats_write::*;
 use tidb_syssession::stats_table_rows::*;
 

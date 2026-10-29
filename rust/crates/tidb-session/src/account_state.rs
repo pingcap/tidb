@@ -38,7 +38,7 @@ pub(crate) struct AccountState {
     pub(crate) current_user: Option<String>,
     pub(crate) active_roles: Vec<tidb_privilege::Account>,
     /// Go `GetRestrictedSQLExecutor` for the `mysql.user` read.
-    pub(crate) restricted_sql: crate::restricted_sql::RestrictedSql,
+    pub(crate) restricted_sql: tidb_executor::memtable_reader::RestrictedSql,
 }
 
 impl AccountState {
@@ -128,7 +128,7 @@ impl AccountState {
                 continue;
             }
             let grantable = flag(privs & tidb_mysql::GrantPriv.bit() != 0);
-            let named: Vec<&tidb_privilege::PrivilegeType> = tidb_mysql::ALL_GLOBAL_PRIVS
+            let named: Vec<&tidb_mysql::PrivilegeType> = tidb_mysql::ALL_GLOBAL_PRIVS
                 .iter()
                 .filter(|priv_| privs & priv_.bit() != 0)
                 .collect();
@@ -183,7 +183,7 @@ impl AccountState {
     pub(crate) fn user_attributes_rows(
         &self,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
-        let rows = crate::restricted_sql::exec_restricted_sql_over(
+        let rows = tidb_executor::memtable_reader::exec_restricted_sql_over(
             self.restricted_sql.as_deref(),
             "SELECT User, Host, JSON_UNQUOTE(JSON_EXTRACT(User_attributes, '$.metadata')) \
              FROM mysql.user",
@@ -373,7 +373,7 @@ impl MemTableRetriever for AccountRetriever {
         &self,
         read: &MemTableRead,
         _catalog: &Catalog,
-        _ctx: &tidb_executor::StmtContext,
+        _ctx: &tidb_sessionctx::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         Ok(if read.table_name.go_lower_eq("USER_PRIVILEGES") {
             self.account.user_privileges_rows()
@@ -415,7 +415,7 @@ impl MemTableRetriever for VariablesRetriever {
         &self,
         read: &MemTableRead,
         _catalog: &Catalog,
-        _ctx: &tidb_executor::StmtContext,
+        _ctx: &tidb_sessionctx::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         if read.table_name.go_lower_eq("VARIABLES_INFO") {
             return Ok(self.state.variables_info_rows());

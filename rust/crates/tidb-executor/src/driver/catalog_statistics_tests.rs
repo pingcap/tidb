@@ -14,14 +14,14 @@
 
 
     use crate::*;
-    use std::collections::HashMap;
+    
     use std::sync::Arc;
     use tidb_infoschema::*;
     use tidb_stats_handle::{StatisticsLoadWorkers, StatsHandle};
     use crate::driver::CatalogStatisticsLoad;
     use tidb_stats_handle::catalog_statistics::CatalogStatistics;
-    use tidb_infoschema::statistics_access::*;
-    use tidb_infoschema::planner_view::*;
+    
+    
 
     static STATS_LOAD_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -37,7 +37,7 @@
             &self,
             items: &[tidb_model::StatsLoadItem],
             _resource_group: &str,
-        ) -> Result<Vec<(i64, Arc<tidb_planner::table_statistics::TableStatistics>)>, String> {
+        ) -> Result<Vec<(i64, Arc<tidb_stats::table_statistics::TableStatistics>)>, String> {
             *self
                 .requests
                 .lock()
@@ -62,14 +62,14 @@
         };
         let table_id = table.table_id();
         let column_id = table.columns()[0].id;
-        let statistics = tidb_planner::table_statistics::TableStatistics {
+        let statistics = tidb_stats::table_statistics::TableStatistics {
             pseudo: false,
             row_count: 10,
             column_load_status: [(column_id, tidb_stats::StatsLoadedStatus::all_evicted())]
                 .into_iter()
                 .collect(),
             column_stats_existence: [(column_id, true)].into_iter().collect(),
-            ..tidb_planner::table_statistics::TableStatistics::default()
+            ..tidb_stats::table_statistics::TableStatistics::default()
         };
         handle.set_table_statistics(table_id, Arc::new(statistics));
         (catalog, handle, table_id, column_id)
@@ -126,7 +126,7 @@
             .iter()
             .map(|index| (index.name.clone(), index.id))
             .collect::<Vec<_>>();
-        let statistics = tidb_planner::table_statistics::TableStatistics {
+        let statistics = tidb_stats::table_statistics::TableStatistics {
             pseudo: false,
             row_count: 4,
             column_load_status: column_ids
@@ -140,7 +140,7 @@
                 .collect(),
             column_stats_existence: column_ids.iter().copied().map(|id| (id, true)).collect(),
             index_stats_existence: indexes.iter().map(|(_, id)| (*id, true)).collect(),
-            ..tidb_planner::table_statistics::TableStatistics::default()
+            ..tidb_stats::table_statistics::TableStatistics::default()
         };
         for physical_id in std::iter::once(table_id).chain(partition_ids.iter().copied()) {
             handle.set_table_statistics(physical_id, Arc::new(statistics.clone()));
@@ -193,7 +193,7 @@
         let (mut catalog, handle, table_id, column_id) = analyzed_lite_catalog();
         let loader = Arc::new(RecordingLoader::default());
         handle.set_item_loader(loader.clone(), StatisticsLoadWorkers::new());
-        let usage = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
+        let usage = tidb_stats::table_statistics::ColumnStatsUsage {
             visited_logical_table_ids: [table_id].into_iter().collect(),
             ..Default::default()
         };
@@ -388,7 +388,7 @@
             }),
             StatisticsLoadWorkers::new(),
         );
-        let usage = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
+        let usage = tidb_stats::table_statistics::ColumnStatsUsage {
             predicate_columns: [(
                 tidb_model::TableItemID {
                     table_id,
@@ -506,7 +506,7 @@
             is_index: false,
             is_sync_load_failed: false,
         };
-        let usage = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
+        let usage = tidb_stats::table_statistics::ColumnStatsUsage {
             predicate_columns: [(requested, true)].into_iter().collect(),
             ..Default::default()
         };
@@ -666,7 +666,7 @@
             .and_then(|table| table.indexes().first())
             .expect("fixture index")
             .id;
-        let statistics = tidb_planner::table_statistics::TableStatistics {
+        let statistics = tidb_stats::table_statistics::TableStatistics {
             // `GetStatsTable` rule 2 makes this table's planner copy pseudo,
             // while the cached `HistColl.Pseudo` stays false.
             pseudo: true,
@@ -681,7 +681,7 @@
                 .collect(),
             column_stats_existence: [(column_id, true)].into_iter().collect(),
             index_stats_existence: [(index_id, true)].into_iter().collect(),
-            ..tidb_planner::table_statistics::TableStatistics::default()
+            ..tidb_stats::table_statistics::TableStatistics::default()
         };
         handle.set_table_statistics(table_id, Arc::new(statistics));
         let column = tidb_model::TableItemID {
@@ -697,7 +697,7 @@
             is_sync_load_failed: false,
         };
 
-        let predicate = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
+        let predicate = tidb_stats::table_statistics::ColumnStatsUsage {
             predicate_columns: [(column, true)].into_iter().collect(),
             ..Default::default()
         };
@@ -709,7 +709,7 @@
             "the predicate column's index is requested: {items:?}"
         );
 
-        let visited = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
+        let visited = tidb_stats::table_statistics::ColumnStatsUsage {
             visited_logical_table_ids: [table_id].into_iter().collect(),
             ..Default::default()
         };
@@ -748,7 +748,7 @@
             };
             let columns = [(
                 column_id,
-                tidb_planner::cardinality::row_count_estimator::ColumnStats {
+                tidb_stats::table_statistics::ColumnStats {
                     histogram: histogram(column_id, column_version),
                     topn: None,
                     cms: None,
@@ -760,7 +760,7 @@
             .collect();
             let indexes = [(
                 index_id,
-                tidb_planner::cardinality::row_count_estimator::IndexStats {
+                tidb_stats::table_statistics::IndexStats {
                     histogram: histogram(index_id, 7),
                     topn: None,
                     cms: None,
@@ -772,7 +772,7 @@
             .into_iter()
             .collect();
             Arc::new(
-                tidb_planner::table_statistics::TableStatistics::new(row_count, 0, columns, indexes)
+                tidb_stats::table_statistics::TableStatistics::new(row_count, 0, columns, indexes)
                     .with_stat_versions(meta_version, 7),
             )
         };
@@ -806,7 +806,7 @@
             .and_then(|table| table.indexes().first())
             .expect("fixture index")
             .id;
-        let statistics = tidb_planner::table_statistics::TableStatistics {
+        let statistics = tidb_stats::table_statistics::TableStatistics {
             pseudo: false,
             row_count: 10,
             column_load_status: [(column_id, tidb_stats::StatsLoadedStatus::all_evicted())]
@@ -817,7 +817,7 @@
                 .collect(),
             column_stats_existence: [(column_id, true)].into_iter().collect(),
             index_stats_existence: [(index_id, true)].into_iter().collect(),
-            ..tidb_planner::table_statistics::TableStatistics::default()
+            ..tidb_stats::table_statistics::TableStatistics::default()
         };
         handle.set_table_statistics(table_id, Arc::new(statistics));
         let column = tidb_model::TableItemID {
@@ -826,7 +826,7 @@
             is_index: false,
             is_sync_load_failed: false,
         };
-        let usage = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
+        let usage = tidb_stats::table_statistics::ColumnStatsUsage {
             predicate_columns: [(column, true)].into_iter().collect(),
             kept_index_ids: [(table_id, std::collections::HashSet::new())]
                 .into_iter()
@@ -907,7 +907,7 @@
         let index_id = table.indexes().first().expect("expression index").id;
         handle.set_table_statistics(
             table_id,
-            Arc::new(tidb_planner::table_statistics::TableStatistics {
+            Arc::new(tidb_stats::table_statistics::TableStatistics {
                 pseudo: false,
                 row_count: 10,
                 column_load_status: [
@@ -921,7 +921,7 @@
                     .collect(),
                 column_stats_existence: [(a, true), (v, true)].into_iter().collect(),
                 index_stats_existence: [(index_id, true)].into_iter().collect(),
-                ..tidb_planner::table_statistics::TableStatistics::default()
+                ..tidb_stats::table_statistics::TableStatistics::default()
             }),
         );
         let requested = tidb_model::TableItemID {
@@ -930,7 +930,7 @@
             is_index: false,
             is_sync_load_failed: false,
         };
-        let usage = tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage {
+        let usage = tidb_stats::table_statistics::ColumnStatsUsage {
             predicate_columns: [(requested, true)].into_iter().collect(),
             ..Default::default()
         };

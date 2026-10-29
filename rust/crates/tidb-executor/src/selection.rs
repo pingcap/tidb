@@ -28,7 +28,8 @@
 
 use std::sync::Arc;
 
-use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::executor::{Executor, ExecutorMeta};
+use tidb_driver_error::ExecError;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::evaluator::{vectorizable, vectorized_filter_consider_null};

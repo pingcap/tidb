@@ -494,7 +494,7 @@ mod tests {
 
     fn one_cell(pool: &mut Connections, sql: &str) -> String {
         match pool.current().run_with_columns(sql).unwrap() {
-            tidb_session::StmtOutput::Rows { rows, .. } => format!("{rows:?}"),
+            tidb_executor::StmtOutput::Rows { rows, .. } => format!("{rows:?}"),
             other => panic!("{sql} answered {other:?}"),
         }
     }

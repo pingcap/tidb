@@ -18,7 +18,7 @@ use std::sync::{
     atomic::{AtomicU32, AtomicU64, Ordering},
     Arc,
 };
-pub use tidb_txnkv::{CancelHandle, KvVariables};
+use tidb_txnkv::{CancelHandle, KvVariables};
 
 /// Shared kill signal corresponding to Go's `*sqlkiller.SQLKiller` identity.
 #[derive(Debug, Default)]

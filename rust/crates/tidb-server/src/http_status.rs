@@ -414,7 +414,7 @@ mod tests {
         let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
         let captured = calls.clone();
         let settings = crate::http_settings::Settings::new(
-            tidb_session::GlobalSysvars::default(),
+            tidb_domain::global_sysvars::GlobalSysvars::default(),
             Arc::new(move |name, value| {
                 captured
                     .lock()

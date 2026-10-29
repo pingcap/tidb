@@ -105,7 +105,7 @@ pub struct StatementVarSnapshot {
     enable_hash_join: bool,
     enable_null_aware_anti_join: bool,
     limit_push_down_threshold: u64,
-    index_lookup_push_down_session: tidb_planner::access_path::IndexLookupPushDownSession,
+    index_lookup_push_down_session: tidb_sessionctx::IndexLookupPushDownSession,
     join_reorder_through_proj: bool,
     join_reorder_through_sel: bool,
     outer_join_reorder: bool,
@@ -609,7 +609,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
     /// mode has to travel with the statement; it travels on
     /// [`crate::StmtContext`], which every executor entry already
     /// takes, rather than on ~30 separate parameters.
-    fn scanner_sql_mode(&self) -> tidb_parser::SqlMode {
+    fn scanner_sql_mode(&self) -> tidb_lexer::SqlMode {
         crate::scanner_sql_mode(self.session_vars().sql_mode())
     }
 
@@ -899,7 +899,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
 
     fn latest_index_schema_snapshot(
         &self,
-    ) -> Option<Arc<tidb_planner::domain_misc::LatestIndexSchema>> {
+    ) -> Option<Arc<tidb_infoschema::table_source::LatestIndexSchema>> {
         let mut schema = self.domain_info_schema().lock().ok()?.latest_index_schema();
         for (_, _, table) in self.local_temporary_tables_ref() {
             Arc::make_mut(&mut schema).table_indexes.insert(
@@ -971,11 +971,11 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             .get_system(tidb_vardef::tidb_vars::TIDB_INDEX_LOOK_UP_PUSH_DOWN_POLICY)
             .as_deref()
         {
-            Ok("force") => tidb_planner::access_path::IndexLookupPushDownPolicy::Force,
+            Ok("force") => tidb_sessionctx::IndexLookupPushDownPolicy::Force,
             Ok("affinity-force") => {
-                tidb_planner::access_path::IndexLookupPushDownPolicy::AffinityForce
+                tidb_sessionctx::IndexLookupPushDownPolicy::AffinityForce
             }
-            _ => tidb_planner::access_path::IndexLookupPushDownPolicy::HintOnly,
+            _ => tidb_sessionctx::IndexLookupPushDownPolicy::HintOnly,
         };
         let read_staleness = self
             .session_vars()
@@ -984,7 +984,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             .and_then(|value| value.trim().parse::<i64>().ok())
             .is_some_and(|value| value != 0);
         let index_lookup_push_down_session =
-            tidb_planner::access_path::IndexLookupPushDownSession {
+            tidb_sessionctx::IndexLookupPushDownSession {
                 repeatable_read: self
                     .session_vars()
                     .get_system("transaction_isolation")
@@ -1468,9 +1468,9 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         let runtime_stats_coll = collect_execution_info
             .then(|| Arc::new(tidb_util::execdetails::runtime_stats::RuntimeStatsColl::new(None)));
         let runtime_stats_source: Option<
-            Arc<dyn crate::executor::ExecutorRuntimeStatsSource>,
+            Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>,
         > = runtime_stats_coll.clone().map(|coll| {
-            coll as Arc<dyn crate::executor::ExecutorRuntimeStatsSource>
+            coll as Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>
         });
         // Go `selectResult.updateCopRuntimeStats` feeds the statement's
         // `RuntimeStatsColl` with every response it reads.
@@ -2213,9 +2213,9 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// Go `SessionVars` / `StmtCtx` state `sql_cpu_usages`, mutably.
     fn sql_cpu_usages_mut(&mut self) -> &mut Arc<tidb_util::ppcpuusage::SqlCpuUsages>;
     /// Go `SessionVars` / `StmtCtx` state `staged_writes`, read.
-    fn staged_writes_ref(&self) -> &std::sync::Arc<tidb_table::kv_table::StagedWrites>;
+    fn staged_writes_ref(&self) -> &std::sync::Arc<tidb_kv::staged_writes::StagedWrites>;
     /// Go `SessionVars` / `StmtCtx` state `staged_writes`, mutably.
-    fn staged_writes_mut(&mut self) -> &mut std::sync::Arc<tidb_table::kv_table::StagedWrites>;
+    fn staged_writes_mut(&mut self) -> &mut std::sync::Arc<tidb_kv::staged_writes::StagedWrites>;
     /// Go `SessionVars` / `StmtCtx` state `statement_affected_rows`, read.
     fn statement_affected_rows_ref(&self) -> &u64;
     /// Go `SessionVars` / `StmtCtx` state `statement_affected_rows`, mutably.
@@ -2253,9 +2253,9 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// Go `SessionVars` / `StmtCtx` state `tidb_decode_key_cache`, mutably.
     fn tidb_decode_key_cache_mut(&mut self) -> &mut std::sync::Mutex<Option<(u64, Arc<crate::TidbDecodeKeySnapshot>)>>;
     /// Go `SessionVars` / `StmtCtx` state `transaction_table_delta`, read.
-    fn transaction_table_delta_ref(&self) -> &std::sync::Arc<tidb_stats_handle_usage::TableDeltaMap>;
+    fn transaction_table_delta_ref(&self) -> &std::sync::Arc<tidb_variable::table_delta::TableDeltaMap>;
     /// Go `SessionVars` / `StmtCtx` state `transaction_table_delta`, mutably.
-    fn transaction_table_delta_mut(&mut self) -> &mut std::sync::Arc<tidb_stats_handle_usage::TableDeltaMap>;
+    fn transaction_table_delta_mut(&mut self) -> &mut std::sync::Arc<tidb_variable::table_delta::TableDeltaMap>;
     /// Whether a transaction is open (Go `SessionVars.InTxn`, the wire's
     /// `SERVER_STATUS_IN_TRANS`).
     fn in_transaction(&self) -> bool;

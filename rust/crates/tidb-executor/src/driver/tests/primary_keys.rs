@@ -336,7 +336,8 @@ fn clustered_common_handle() {
 /// It nevertheless lowers to `PhysicalTableScan`, whose `TP()` reports a
 /// `TableFullScan` for a full range.
 fn explain_plan(sql: &str, catalog: &Catalog, ctx: &crate::StmtContext) -> Vec<String> {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let stmt = tidb_parser::parse(sql).unwrap();
     let Stmt::Query(query) = &stmt else {

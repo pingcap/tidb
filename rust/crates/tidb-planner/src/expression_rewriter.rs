@@ -316,7 +316,6 @@ pub struct RewriterHints {
     pub prefer_agg_to_cop: bool,
 }
 
-pub use tidb_hint::{PREFER_HASH_AGG, PREFER_STREAM_AGG};
 
 impl RewriterHints {
     /// Adapts Go `PlanHints` to the two fields expression rewriting consumes.

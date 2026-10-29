@@ -19,7 +19,7 @@ use tidb_datatype::{FieldType, SessionTimeZone};
 
 use crate::distsql_runtime::SelectResultMetadata;
 use crate::response_channel::SelectResponseIter;
-pub use tidb_txnkv::{QueryResponseError, QueryResultSubset};
+use tidb_txnkv::QueryResponseError;
 use crate::WarningCollector;
 
 /// Pull-based raw response owner: Go's `kv.Response` (`tidb_txnkv::Response`)
@@ -31,7 +31,6 @@ pub trait QueryResponse: tidb_txnkv::Response {}
 /// assertions on `kv.Response`, e.g. `copr.CopInfo`) are the kv trait's own.
 impl<R: tidb_txnkv::Response + ?Sized> QueryResponse for R {}
 
-pub use tidb_txnkv::CopInfo;
 
 /// Go-shaped DistSQL result that owns one raw response until conversion or
 /// close.

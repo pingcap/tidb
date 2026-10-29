@@ -96,7 +96,7 @@ impl Session {
     /// Go `matchSQLBindingCore`: the session binding, else the global one,
     /// matching the statement's no-DB digest and tables -- the matched
     /// binding's hints and bind SQL.
-    fn match_statement_binding(&mut self, stmt: &Stmt) -> Option<(binding::HintsSet, String)> {
+    fn match_statement_binding(&mut self, stmt: &Stmt) -> Option<(tidb_hint::HintsSet, String)> {
         let global = self.global_binding_cache.as_ref().map(|cache| cache.load());
         let has_global = match &global {
             Some(cache) => cache.size() != 0,

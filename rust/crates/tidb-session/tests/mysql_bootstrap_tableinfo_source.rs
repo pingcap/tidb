@@ -321,7 +321,7 @@ fn bootstrap_mode_none_is_not_replaced_by_the_live_ddl_mode() {
 
     // The same AST issued by a stock live session remains 1101; bootstrap's
     // exception must not become a global validation bypass.
-    let live = tidb_executor::StmtContext::for_query()
+    let live = tidb_sessionctx::StmtContext::for_query()
         .with_strict(true)
         .with_date_modes(tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE)
         .with_time_zone(tidb_datatype::SessionTimeZone::utc());
@@ -329,7 +329,7 @@ fn bootstrap_mode_none_is_not_replaced_by_the_live_ddl_mode() {
         create,
         "utf8mb4",
         "utf8mb4_bin",
-        &tidb_executor::ddl::new_metabuild_context_with_sctx(&live),
+        &tidb_ddl_build::metabuild::new_metabuild_context_with_sctx(&live),
         live.enable_check_constraint(),
     )
     .expect_err("strict live DDL rejects an empty LONGTEXT default");

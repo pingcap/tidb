@@ -85,7 +85,7 @@ pub(crate) struct TxnCtx {
     /// `DROP` inside a transaction SURVIVES its rollback. See
     /// [`Session::restore_local_temporary_rows`], which restores exactly the
     /// first half.
-    local_temporary_at_open: Vec<(String, String, tidb_executor::KvTable)>,
+    local_temporary_at_open: Vec<(String, String, tidb_table::kv_table::KvTable)>,
 }
 
 impl TxnCtx {
@@ -155,9 +155,9 @@ pub(crate) struct Savepoint {
     /// reason [`TxnCtx::local_temporary_at_open`] exists: their rows are
     /// in the transaction membuffer Go truncates back to the checkpoint, so
     /// they roll back with everything else, while the table map does not.
-    local_temporary: Vec<(String, String, tidb_executor::KvTable)>,
+    local_temporary: Vec<(String, String, tidb_table::kv_table::KvTable)>,
     /// The Go `TxnCtx.TableDeltaMap` alongside the row checkpoint.
-    table_delta: std::collections::HashMap<i64, tidb_stats_handle_usage::TableDelta>,
+    table_delta: std::collections::HashMap<i64, tidb_variable::table_delta::TableDelta>,
     /// The session's GLOBAL temporary rows at the savepoint.
     ///
     /// These are transactional in Go with no exception at all: a global
@@ -166,7 +166,7 @@ pub(crate) struct Savepoint {
     /// The corpus asserts exactly this -- `executor/executor_txn`'s
     /// `TestSavepointWithTemporaryTable` inserts three rows under three
     /// savepoints and rolls back to each in turn.
-    global_temporary: std::collections::HashMap<i64, tidb_executor::TemporaryTableTxnData>,
+    global_temporary: std::collections::HashMap<i64, tidb_table::kv_table::TemporaryTableTxnData>,
 }
 
 /// The session's temporary-table state while it is OFF the catalog, and the
@@ -186,8 +186,8 @@ pub(crate) struct Savepoint {
 /// the global half is only the ROW STORAGE, because a global temporary
 /// table's `TableInfo` is genuinely shared and must stay where it is.
 struct TemporaryTableOverlay {
-    local: Vec<(String, String, tidb_executor::KvTable)>,
-    global: std::collections::HashMap<i64, tidb_executor::TemporaryTableTxnData>,
+    local: Vec<(String, String, tidb_table::kv_table::KvTable)>,
+    global: std::collections::HashMap<i64, tidb_table::kv_table::TemporaryTableTxnData>,
 }
 
 impl TemporaryTableOverlay {
@@ -292,7 +292,7 @@ struct CatalogStage<'a> {
     /// The catalog the statement mutates in place.
     catalog: &'a mut Catalog,
     /// The statement's stage, taken away once the statement has succeeded.
-    stage: Option<tidb_executor::StatementStage>,
+    stage: Option<tidb_infoschema::StatementStage>,
 }
 
 impl Drop for CatalogStage<'_> {
@@ -632,7 +632,7 @@ impl Session {
     /// [`TxnCtx::local_temporary_at_open`].
     fn restore_local_temporary_rows(
         &mut self,
-        snapshot: Vec<(String, String, tidb_executor::KvTable)>,
+        snapshot: Vec<(String, String, tidb_table::kv_table::KvTable)>,
     ) {
         for (database, name, table) in snapshot {
             if let Some(current) = self.local_temporary_tables.iter_mut().find(

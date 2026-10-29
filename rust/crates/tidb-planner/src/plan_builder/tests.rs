@@ -198,7 +198,7 @@ fn parse_select(sql: &str) -> SelectStmt {
     }
 }
 
-fn parse_select_with_sql_mode(sql: &str, sql_mode: tidb_parser::SqlMode) -> SelectStmt {
+fn parse_select_with_sql_mode(sql: &str, sql_mode: tidb_lexer::SqlMode) -> SelectStmt {
     match tidb_parser::parse_with_sql_mode(sql, sql_mode).expect("the seam's SQL parses") {
         Stmt::Query(query) => match query.into_inner() {
             tidb_ast::QueryStmt::Select(select) => *select,
@@ -343,9 +343,9 @@ fn test_like_rewrite_uses_the_statement_default_escape() {
     );
     let select = parse_select_with_sql_mode(
         r"SELECT a FROM t WHERE b LIKE 'a\b'",
-        tidb_parser::SqlMode {
+        tidb_lexer::SqlMode {
             no_backslash_escapes: true,
-            ..tidb_parser::SqlMode::default()
+            ..tidb_lexer::SqlMode::default()
         },
     );
     let (plan, _) = builder.build_select(&select).expect("the LIKE plan builds");

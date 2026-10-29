@@ -43,7 +43,7 @@ use tidb_datatype::FieldType;
 use tidb_table::partition_routing::{RangeBound, RangeColumnBound};
 use tidb_error::mysql::MysqlError;
 
-pub use tidb_table::partition_fold::partition_expression_is_unsigned;
+use tidb_table::partition_fold::partition_expression_is_unsigned;
 use tidb_hack::GoCaseCompare;
 
 /// The DDL-owned metadata that becomes one routed `RANGE COLUMNS` spec.
@@ -220,7 +220,7 @@ pub fn build_range_columns_bounds(
                 PartitionValue::MaxValue => Ok(RangeColumnBound::MaxValue),
                 PartitionValue::Expr(expr) => {
                     let value =
-                        super::table_partition_list::fold_range_column_value(expr, field_type, ctx)?;
+                        tidb_table::partition_fold::fold_range_column_value(expr, field_type, ctx)?;
                     // Go `ErrNullInValuesLessThan` (`ddl/partition.go:1691`).
                     if value.is_null() {
                         return Err(tidb_error::mysql::MysqlError::from_terror(

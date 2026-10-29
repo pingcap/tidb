@@ -193,7 +193,7 @@ pub struct DataSource {
     /// Whether Go `TableInfo.Affinity` is non-nil.
     pub has_affinity: bool,
     /// Session/transaction inputs to Go's lookup-pushdown support check.
-    pub index_lookup_push_down_session: crate::access_path::IndexLookupPushDownSession,
+    pub index_lookup_push_down_session: tidb_sessionctx::IndexLookupPushDownSession,
     /// Whether TiKV is present in Go `SessionVars.IsolationReadEngines`.
     pub tikv_in_isolation_read: bool,
     /// Raw `tidb_isolation_read_engines`, retained for Go-compatible index
@@ -1319,7 +1319,7 @@ mod tests {
         let hist_coll =
             HistColl::new(false, row_count as i64, std::iter::empty()).with_histograms([(
                 1,
-                Arc::new(crate::cardinality::row_count_estimator::ColumnStats {
+                Arc::new(tidb_stats::table_statistics::ColumnStats {
                     histogram: Histogram {
                         id: 1,
                         ndv: 900,

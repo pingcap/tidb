@@ -32,7 +32,7 @@ use tidb_ddl_notifier::{
     publish_schema_change_to_store, DdlNotifier, Handler, SchemaChangeEvent, SessionPool, Store,
     TEST_HANDLER_ID,
 };
-use tidb_model::go_runtime::GoSharedSlice;
+use tidb_goruntime::go_runtime::GoSharedSlice;
 use tidb_model::partition::{PartitionDefinition, PartitionInfo};
 
 use tidb_domain_core::domain::ddl_notifier::{ClusterNotifierSessionPool, ClusterNotifierTableStore};
@@ -2729,7 +2729,7 @@ impl tidb_domain_core::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAn
         killer: &tidb_util::sqlkiller::SqlKiller,
         historical_stats_enabled: &dyn Fn() -> bool,
         jobs: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
-    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, crate::domain::session_api::SqlQueryError>
+    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver::sql_query_error::SqlQueryError>
     {
         let process = self
             .processes
@@ -2765,7 +2765,7 @@ impl tidb_domain_core::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAn
     fn update_stats_cache(
         &self,
         physical_ids: Vec<i64>,
-    ) -> Result<(), crate::domain::session_api::SqlQueryError> {
+    ) -> Result<(), tidb_store_driver::sql_query_error::SqlQueryError> {
         self.inner.update_stats_cache(physical_ids)
     }
 }
@@ -2788,7 +2788,7 @@ impl tidb_domain_core::cluster_analyze_seam::ClusterAnalyze for KillingSystemAna
         killer: &tidb_util::sqlkiller::SqlKiller,
         historical_stats_enabled: &dyn Fn() -> bool,
         jobs: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
-    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, crate::domain::session_api::SqlQueryError>
+    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver::sql_query_error::SqlQueryError>
     {
         let process_id = self
             .processes
@@ -2818,7 +2818,7 @@ impl tidb_domain_core::cluster_analyze_seam::ClusterAnalyze for KillingSystemAna
     fn update_stats_cache(
         &self,
         physical_ids: Vec<i64>,
-    ) -> Result<(), crate::domain::session_api::SqlQueryError> {
+    ) -> Result<(), tidb_store_driver::sql_query_error::SqlQueryError> {
         self.inner.update_stats_cache(physical_ids)
     }
 }
@@ -13256,7 +13256,7 @@ fn cluster_bdr_role_lives_in_meta_and_refuses_denied_ddl() {
     fn run(
         session: &mut Session,
         sql: &str,
-    ) -> Result<(), crate::domain::session_api::SqlQueryError> {
+    ) -> Result<(), tidb_store_driver::sql_query_error::SqlQueryError> {
         if session.node_conn().execute_write(sql)?.is_some() {
             return Ok(());
         }
@@ -17559,7 +17559,7 @@ impl tidb_domain_core::cluster_analyze_seam::ClusterAnalyze for FailingStatsCach
         killer: &tidb_util::sqlkiller::SqlKiller,
         historical_stats_enabled: &dyn Fn() -> bool,
         jobs: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
-    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, crate::domain::session_api::SqlQueryError>
+    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver::sql_query_error::SqlQueryError>
     {
         self.inner.execute(
             statement,
@@ -17574,9 +17574,9 @@ impl tidb_domain_core::cluster_analyze_seam::ClusterAnalyze for FailingStatsCach
     fn update_stats_cache(
         &self,
         physical_ids: Vec<i64>,
-    ) -> Result<(), crate::domain::session_api::SqlQueryError> {
+    ) -> Result<(), tidb_store_driver::sql_query_error::SqlQueryError> {
         self.updated.lock().unwrap().extend(physical_ids);
-        Err(crate::domain::session_api::SqlQueryError::unknown(
+        Err(tidb_store_driver::sql_query_error::SqlQueryError::unknown(
             "statistics cache update failed",
         ))
     }
@@ -21032,7 +21032,7 @@ fn run_load_data_cases(cases: &[(&str, &str, &[u8], &str, &str)], connection_id:
         }
     };
     let error_text =
-        |error: crate::domain::session_api::SqlQueryError| format!("ERR [{}]{}", error.code, error.message);
+        |error: tidb_store_driver::sql_query_error::SqlQueryError| format!("ERR [{}]{}", error.code, error.message);
     rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
     rows(&mut session, "USE test");
     let mut failures = Vec::new();
@@ -21058,7 +21058,7 @@ fn run_load_data_cases(cases: &[(&str, &str, &[u8], &str, &str)], connection_id:
                     if session.local_infile_request().is_some() {
                         session.node_conn().finish_local_infile(data)?;
                     }
-                    Ok(crate::domain::session_api::WriteOutcome {
+                    Ok(tidb_executor::ddl_exec::WriteOutcome {
                         affected_rows: session.affected_rows(),
                         last_insert_id: session.statement_last_insert_id(),
                     })
@@ -23243,7 +23243,7 @@ fn tiflash_replica_status_runs_as_a_persisted_job_like_go() {
                 table_id,
                 available,
             },
-            &tidb_executor::StmtContext::for_query(),
+            &tidb_sessionctx::StmtContext::for_query(),
         )
     };
     update(true).unwrap();
@@ -23267,7 +23267,7 @@ fn tiflash_replica_status_runs_as_a_persisted_job_like_go() {
             table_id: table_id + 1000,
             available: true,
         },
-        &tidb_executor::StmtContext::for_query(),
+        &tidb_sessionctx::StmtContext::for_query(),
     );
     assert!(missing.is_err());
 }

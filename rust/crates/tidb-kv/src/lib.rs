@@ -28,5 +28,3 @@ pub mod cluster_storage;
 #[cfg(any(test, feature = "test-util"))]
 pub mod cluster_storage_test_util;
 
-/// Go `kv.ReplicaReadType` (`pkg/kv/option.go`).
-pub use tidb_txnkv::ReplicaReadType;

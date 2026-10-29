@@ -49,7 +49,7 @@ use crate::{
     CancelHandle, CoprCache, RegionTaskEpoch, RegionTaskPeer, RegionTaskTopology,
     ResponseChannelEvent, TransportRequest,
 };
-pub use tidb_txnkv::driver::cop_store::{CopBackoffer, NativeCopSend, NativeCopStore};
+use tidb_txnkv::driver::cop_store::{CopBackoffer, NativeCopSend, NativeCopStore};
 use tidb_txnkv::lock::SnapshotLockSet;
 use tidb_txnkv::UnaryCallContext;
 

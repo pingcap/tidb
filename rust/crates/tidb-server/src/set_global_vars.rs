@@ -32,7 +32,7 @@
 //! * Plan-cache sizing (`PreparedPlanCacheMaxMemory`) — no prepared-plan
 //!   cache memory bound exists in this port to receive it.
 
-use tidb_session::GlobalSysvars;
+use tidb_domain::global_sysvars::GlobalSysvars;
 
 use tidb_domain_core::node_config::NodeConfig;
 

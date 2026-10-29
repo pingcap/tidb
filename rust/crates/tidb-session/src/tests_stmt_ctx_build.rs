@@ -455,11 +455,11 @@ fn coprocessor_read_policy_retains_settings_and_hint_deadline() {
     assert_eq!(retained.coprocessor_read_policy().read_timeout_ms, 731);
     assert_eq!(retained.max_execution_time_ms(), 919);
     for class in [
-        tidb_executor::StatementClass::Insert,
-        tidb_executor::StatementClass::Update,
-        tidb_executor::StatementClass::Delete,
-        tidb_executor::StatementClass::Other,
-        tidb_executor::StatementClass::LoadData,
+        tidb_sessionctx::StatementClass::Insert,
+        tidb_sessionctx::StatementClass::Update,
+        tidb_sessionctx::StatementClass::Delete,
+        tidb_sessionctx::StatementClass::Other,
+        tidb_sessionctx::StatementClass::LoadData,
     ] {
         assert_eq!(
             retained
@@ -508,7 +508,7 @@ fn index_lookup_pushdown_uses_one_typed_statement_snapshot() {
     let snapshot = context.index_lookup_push_down_session();
     assert_eq!(
         snapshot.policy,
-        tidb_planner::access_path::IndexLookupPushDownPolicy::Force
+        tidb_sessionctx::IndexLookupPushDownPolicy::Force
     );
     assert!(!snapshot.repeatable_read);
     assert!(!snapshot.leader_read);

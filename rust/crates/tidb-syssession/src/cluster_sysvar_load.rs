@@ -16,7 +16,7 @@
 //!
 //! Go's `GetGlobalSysVar` reads this table lazily, one row at a time, through
 //! `GlobalVarAccessor`; this node instead reads the whole table once, at
-//! startup, into [`tidb_session::GlobalSysvars`] -- the same one-shot
+//! startup, into [`tidb_domain::global_sysvars::GlobalSysvars`] -- the same one-shot
 //! trade-off `tidb_privilege::cluster_privilege_load` already documents for
 //! accounts. A node that only does this one-shot startup load (no
 //! `crate::cluster_sysvar_write` seam wired in) never sees a peer's later
@@ -47,7 +47,7 @@ const GLOBAL_VARIABLES_COLUMNS: &[&str] = &["variable_name", "variable_value"];
 /// bootstrapped by a Go version too old to have created it -- reads as no
 /// overrides rather than an error: every variable then answers with its
 /// build default, which is exactly what a keyspace with no stored row means
-/// for [`tidb_session::GlobalSysvars::get`].
+/// for [`tidb_domain::global_sysvars::GlobalSysvars::get`].
 pub fn load_cluster_sysvars<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,

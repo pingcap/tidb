@@ -16,7 +16,8 @@
 
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use tidb_domain::globalconfigsync::{GlobalConfigItem, GlobalConfigStore, GlobalConfigSyncer};
+use tidb_domain::globalconfigsync::{GlobalConfigStore, GlobalConfigSyncer};
+use tidb_proto::pdpb::GlobalConfigItem;
 
 /// Go's `GlobalConfigSyncer` over `store.GetPDClient()`.
 struct PdStore(tidb_txnkv::driver::tikv_store::TikvStore);

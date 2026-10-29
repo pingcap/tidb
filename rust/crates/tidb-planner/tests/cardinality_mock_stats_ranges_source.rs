@@ -19,10 +19,9 @@
 //! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
-use tidb_planner::cardinality::row_count_estimator::{
-    ColumnRange, ColumnStats, EstimatorOptions, IndexColumnStats, IndexRangeDatums, IndexRowCounts,
-    IndexStats, get_column_row_count, get_index_row_count_for_stats_v2,
-};
+use tidb_planner::cardinality::row_count_estimator::{ColumnRange, EstimatorOptions, IndexColumnStats, IndexRangeDatums, IndexRowCounts, get_column_row_count, get_index_row_count_for_stats_v2};
+use tidb_stats::table_statistics::ColumnStats;
+use tidb_stats::table_statistics::IndexStats;
 use tidb_stats::histogram::Histogram;
 
 fn longlong() -> FieldType {

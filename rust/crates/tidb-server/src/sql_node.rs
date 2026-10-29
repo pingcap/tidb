@@ -14,6 +14,8 @@
 
 //! Bounded concurrent listener and worker-local query-session ownership.
 
+use tidb_domain_core::connection_ids::new_connection_id_allocator;
+use tidb_util::worker_stack::SQL_WORKER_STACK_BYTES;
 use std::fmt;
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -1518,6 +1520,7 @@ mod tests {
     use std::io::Read;
     use std::net::{IpAddr, Ipv4Addr};
     use std::path::PathBuf;
+    use tidb_store_driver::sql_query_error::SqlQueryError;
     use std::sync::atomic::AtomicUsize;
 
     #[test]
@@ -1568,7 +1571,7 @@ mod tests {
             tidb_pd_client::EtcdClient::connect(["127.0.0.1:1"], Duration::from_millis(100))
                 .unwrap();
         let identity = tidb_domain::server_id::ServerIdAuthority::new(
-            Some(Arc::new(tidb_session::domain::serverinfo_etcd::EtcdClientOps::new(
+            Some(Arc::new(tidb_ddl::etcd_ops::EtcdClientOps::new(
                 Arc::new(client),
             ))),
             true,

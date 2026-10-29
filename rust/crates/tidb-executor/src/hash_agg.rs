@@ -83,7 +83,8 @@ use group_key::GroupKeyBuffer;
 use input::AggInputMode;
 
 use crate::approx_count_distinct::ApproxCountDistinctSketch;
-use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::executor::{Executor, ExecutorMeta};
+use tidb_driver_error::ExecError;
 use crate::hash_join::FastBytesMap;
 use tidb_kv::mem_quota::StatementMemory;
 use spill::new_group_bytes;
@@ -3280,7 +3281,7 @@ pub struct HashAggExec<C: HashAggContext> {
     pipeline_final_concurrency: usize,
     /// Go `StmtCtx.RuntimeStatsColl` and the plan Close registers
     /// `HashAggRuntimeStats` on.
-    runtime_stats: Option<(Arc<dyn crate::executor::ExecutorRuntimeStatsSource>, i64)>,
+    runtime_stats: Option<(Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>, i64)>,
     /// Go `HashAggExec.stats`, created by `initForParallelExec`.
     pub(super) hash_agg_stats: Option<Arc<stats::HashAggRuntimeStats>>,
     /// Test/diagnostic override standing in for SET concurrency variables.
@@ -3372,7 +3373,7 @@ impl<C: HashAggContext> HashAggExec<C> {
     /// registers `HashAggRuntimeStats` on `plan_id`.
     pub fn set_runtime_stats(
         &mut self,
-        source: Option<Arc<dyn crate::executor::ExecutorRuntimeStatsSource>>,
+        source: Option<Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
         plan_id: i64,
     ) {
         self.runtime_stats = source.map(|source| (source, plan_id));
@@ -4001,7 +4002,7 @@ mod tests {
             vec![AggFunc::new(AggKind::Count, Some(col(1)))],
             source(&[(1, Some(1))]),
             NoColumns,
-            StatementMemory::new(1 << 20, tidb_kv::mem_quota::OomAction::Cancel, 42)
+            StatementMemory::new(1 << 20, tidb_vardef::OomAction::Cancel, 42)
                 .with_tmp_storage_on_oom(false),
         );
 
@@ -4839,7 +4840,7 @@ mod tests {
         }
         let mut column = Column::new(1, field_type.clone());
         column.index = 0;
-        let memory = StatementMemory::new(1 << 20, tidb_kv::mem_quota::OomAction::Cancel, 45);
+        let memory = StatementMemory::new(1 << 20, tidb_vardef::OomAction::Cancel, 45);
         let killer = Arc::clone(memory.sql_killer());
         let mut first_row = AggFunc::new(AggKind::FirstRow, Some(typed_col(0, field_type.clone())));
         first_row.distinct = true;

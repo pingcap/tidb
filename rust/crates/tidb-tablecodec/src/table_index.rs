@@ -24,9 +24,8 @@ use tidb_txnkv::{CommonHandle, Handle, IntHandle, PartitionHandle};
 
 use crate::table_row::{decode_column_value, TableRowError};
 use tidb_codec::table_key::encode_index_seek_key;
-pub use tidb_codec::table_key::{
-    is_index_key, is_temp_index_key, is_untouched_index_kv, MAX_OLD_ENCODE_VALUE_LEN,
-    TEMP_INDEX_PREFIX, UNCOMMITTED_INDEX_KV_FLAG,
+use tidb_codec::table_key::{
+    is_untouched_index_kv, MAX_OLD_ENCODE_VALUE_LEN, TEMP_INDEX_PREFIX, UNCOMMITTED_INDEX_KV_FLAG,
 };
 use tidb_codec::{
     cut_one, decode_int, decode_one, decode_row_to_old_bytes, encode_bytes, encode_int, encode_row,

@@ -35,7 +35,7 @@ pub use tidb_util::context::SqlWarn as SqlWarning;
 /// `StmtCtx.warnings[i].Level`: Go's `contextutil.WarnLevelWarning`,
 /// `WarnLevelError` and `WarnLevelNote` (`pkg/util/context/warn.go`), reached
 /// through `StmtCtx.AppendWarning` / `AppendError` / `AppendNote`.
-pub use tidb_util::context::WarningLevel;
+use tidb_util::context::WarningLevel;
 
 /// Whether the statement reports the warning buffer, and so must be handed the
 /// previous statement's entries instead of an empty buffer.
@@ -155,11 +155,11 @@ impl Session {
     /// session `StmtContext` the statement runs under, while this stack
     /// lowers cluster DDL in a context of its own that would otherwise drop
     /// them (the seam gap named at the CHECK arm of `table_info_build`).
-    pub fn drain_context_warnings(&mut self, ctx: &tidb_executor::StmtContext) {
+    pub fn drain_context_warnings(&mut self, ctx: &tidb_sessionctx::StmtContext) {
         self.drain_eval_warnings(ctx);
     }
 
-    pub(crate) fn drain_eval_warnings(&mut self, ctx: &tidb_executor::StmtContext) {
+    pub(crate) fn drain_eval_warnings(&mut self, ctx: &tidb_sessionctx::StmtContext) {
         // The constant-fold stash travels thread-locally and a QueryRecordSet's
         // finish would otherwise be its only drain -- statements that ERROR
         // before producing one (FORMAT('x', 'y')'s 1582) would leave their
@@ -182,7 +182,7 @@ impl Session {
     /// order go's buffer carries them -- the fold rows first, the error row
     /// last).
     pub fn drain_fold_stash(&mut self) {
-        for warning in tidb_executor::take_fold_warnings() {
+        for warning in tidb_expr::constant_fold::take_fold_warnings() {
             self.append_sql_warning(warning);
         }
     }

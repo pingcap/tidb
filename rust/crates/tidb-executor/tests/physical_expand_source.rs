@@ -53,7 +53,7 @@ fn cached_child_chunk_is_evaluated_once_per_expand_level() {
         ],
         Box::new(child),
         NoColumns,
-        tidb_executor::StmtContext::for_query().statement_memory(),
+        tidb_sessionctx::StmtContext::for_query().statement_memory(),
     );
 
     expand.open().unwrap();

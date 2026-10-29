@@ -15,8 +15,6 @@
 //! Go `pkg/executor/show.go`: the `ShowExec` fetchers that moved here from
 //! the session.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
 
 use tidb_datatype::Datum;
 use tidb_variable::sysvar;
@@ -315,7 +313,6 @@ pub fn fetch_show_collation(ctx: &dyn SessionContext, extractor: Extractor<'_>) 
     rows
 }
 
-pub use tidb_sessionctx::show_retrieval::ShowRetrieval;
 
 /// What follows `DEFAULT ` in `SHOW CREATE TABLE`, quoting included.
 ///

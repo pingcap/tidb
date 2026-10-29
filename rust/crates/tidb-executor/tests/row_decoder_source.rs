@@ -23,8 +23,11 @@ use tidb_datatype::{
 use tidb_executor::{
     admin_check::check_table,
     analyze::{kv::analyze_kv_table, AnalyzeOptions},
+};
+use tidb_sessionctx::StmtContext;
+use tidb_table::kv_table::TableHandle;
+use tidb_table::kv_table::{
     GeneratedColumnSelection, IndexRange, KvColumn, KvIndex, KvTable, RowDecodeContext, RowDecoder,
-    StmtContext, TableHandle,
 };
 
 fn column(id: i64, name: &str, field_type: FieldType) -> KvColumn {

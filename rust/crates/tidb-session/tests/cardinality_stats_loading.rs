@@ -252,7 +252,7 @@ fn builtin_in_estimate_survives_statistics_initialization() {
     }
     let updates = [tidb_stats_handle_usage::DeltaUpdate {
         table_id,
-        delta: tidb_stats_handle_usage::TableDelta {
+        delta: tidb_variable::table_delta::TableDelta {
             delta: 10,
             count: 10,
             init_time: None,

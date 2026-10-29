@@ -28,7 +28,7 @@ use tidb_datatype::Datum;
 use super::account::{tls_policy_of, PasswordOrLockOptions};
 use crate::DriverError;
 use tidb_hack::GoToLower;
-use tidb_util::stringutil::go_to_lower;
+use tidb_hack::go_to_lower;
 
 /// The `mysql.user` columns Go `fetchShowCreateUser` reads, in its order.
 pub struct ShowCreateUserRow {

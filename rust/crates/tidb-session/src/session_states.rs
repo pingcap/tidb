@@ -23,7 +23,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_executor::{DriverError, MysqlError};
-pub use tidb_sessionstates::{PreparedStmtInfo, SessionStates};
+use tidb_sessionstates::{PreparedStmtInfo, SessionStates};
 
 /// A snapshot supplied by the connection owner before exporting session state.
 #[derive(Default)]

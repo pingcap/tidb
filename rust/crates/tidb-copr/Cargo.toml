@@ -9,6 +9,7 @@ description = "TiDB coprocessor and MPP clients: Go pkg/store/copr (Rust rewrite
 autotests = false
 
 [dependencies]
+tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-config = { path = "../tidb-config" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-error = { path = "../tidb-error" }

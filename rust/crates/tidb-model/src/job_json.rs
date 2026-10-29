@@ -20,7 +20,8 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 use tidb_error::terror::{TerrorCode, TerrorError};
 
-use crate::go_runtime::{GoSharedSlice, GoSliceElementLayout};
+use tidb_goruntime::go_runtime::GoSliceElementLayout;
+use tidb_goruntime::go_runtime::GoSharedSlice;
 use crate::job::{
     HistoryInfo, InvolvingSchemaInfo, Job, JobMeta, JobPauseReason, JobResumeReason,
     MultiSchemaInfo, PersistedRawJson, SubJob, TimeZoneLocation, TraceInfo,

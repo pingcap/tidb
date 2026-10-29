@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB session context: Go pkg/sessionctx, the context a session hands every statement's planner and executor (Rust rewrite)."
 
 [dependencies]
+tidb-lexer = { path = "../tidb-lexer" }
 tidb-fixcontrol = { path = "../tidb-fixcontrol" }
 tidb-driver-error = { path = "../tidb-driver-error" }
 tidb-variable = { path = "../tidb-variable" }

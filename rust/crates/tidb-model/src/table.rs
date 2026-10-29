@@ -32,7 +32,9 @@ use tidb_parser::auth::UserIdentity;
 use tidb_parser::ConfigDurationError;
 
 use crate::column::ColumnInfo;
-use crate::go_runtime::{GoShared, GoSharedPointerSlice, GoSharedSlice, GoSliceElementLayout};
+use crate::go_runtime::{GoShared, GoSharedPointerSlice};
+use tidb_goruntime::go_runtime::GoSliceElementLayout;
+use tidb_goruntime::go_runtime::GoSharedSlice;
 use crate::index::IndexColumn;
 use crate::schema_state::SchemaState;
 use crate::serde_helpers::{

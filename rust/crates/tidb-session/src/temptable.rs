@@ -21,7 +21,7 @@
 //! session's catalog allocator.
 
 use tidb_model::db::DBInfo;
-use tidb_util::stringutil::go_to_lower;
+use tidb_hack::go_to_lower;
 
 use crate::{DriverError, Session};
 
@@ -46,7 +46,7 @@ impl Session {
         &self,
         schema: &str,
         name: &str,
-    ) -> Option<&tidb_executor::KvTable> {
+    ) -> Option<&tidb_table::kv_table::KvTable> {
         self.local_temporary_position(schema, name)
             .map(|position| &self.local_temporary_tables[position].2)
     }

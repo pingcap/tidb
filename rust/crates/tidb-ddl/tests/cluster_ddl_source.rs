@@ -2390,7 +2390,7 @@ fn completed_check_schema_stays_active_until_schema_sync() {
     apply(&mut store, &create);
     let parsed =
         tidb_parser::parse("ALTER TABLE sync_check ADD CONSTRAINT c CHECK (a > 0)").unwrap();
-    let context = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let context = tidb_sessionctx::StmtContext::for_query().with_enable_check_constraint(true);
     let statement = lower_ddl_with_context(&parsed, "u6", &ddl_context(&context))
         .unwrap()
         .unwrap();
@@ -2443,7 +2443,7 @@ fn check_job_submission_precedes_every_schema_transition() {
         .expect("table metadata exists");
 
     let sql_mode = (1_i64 << 2) | (1_i64 << 24);
-    let context = tidb_executor::StmtContext::for_query()
+    let context = tidb_sessionctx::StmtContext::for_query()
         .with_enable_check_constraint(true)
         .with_ddl_sql_mode(sql_mode)
         .with_connection_id(Some(77))
@@ -2646,7 +2646,7 @@ fn failed_job_insert_attempt_cleans_up_assigned_id_registration_before_retry() {
     let parsed =
         tidb_parser::parse("ALTER TABLE retry_cleanup ADD CONSTRAINT c_positive CHECK (a > 0)")
             .expect("CHECK DDL parses");
-    let context = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let context = tidb_sessionctx::StmtContext::for_query().with_enable_check_constraint(true);
     let statement = lower_ddl_with_context(&parsed, "u6", &ddl_context(&context))
         .expect("CHECK DDL is admitted")
         .expect("CHECK DDL owns a catalog route");
@@ -2706,7 +2706,7 @@ fn check_job_submission_observes_the_global_upgrading_state() {
     let parsed =
         tidb_parser::parse("ALTER TABLE upgrading_submit ADD CONSTRAINT c_positive CHECK (a > 0)")
             .expect("CHECK DDL parses");
-    let context = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let context = tidb_sessionctx::StmtContext::for_query().with_enable_check_constraint(true);
     let statement = lower_ddl_with_context(&parsed, "u6", &ddl_context(&context))
         .expect("CHECK DDL is admitted")
         .expect("CHECK DDL owns a catalog route");
@@ -2732,7 +2732,7 @@ fn persisted_add_check_rolls_back_after_owner_restart() {
     let table_id = create.created_id.expect("CREATE allocated the table ID");
     apply(&mut store, &create);
 
-    let context = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let context = tidb_sessionctx::StmtContext::for_query().with_enable_check_constraint(true);
     let parsed = tidb_parser::parse(
         "ALTER TABLE queued_check_rollback ADD CONSTRAINT c_positive CHECK (a > 0)",
     )
@@ -2855,7 +2855,7 @@ fn persisted_add_check_rolls_back_after_owner_restart() {
 #[test]
 fn persisted_drop_and_alter_check_jobs_resume_and_finish_like_go() {
     let mut store = bootstrapped();
-    let context = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let context = tidb_sessionctx::StmtContext::for_query().with_enable_check_constraint(true);
     let lower = |sql: &str| {
         let parsed = tidb_parser::parse(sql).expect("CHECK DDL parses");
         lower_ddl_with_context(&parsed, "u6", &ddl_context(&context))
@@ -3028,7 +3028,7 @@ fn persisted_drop_and_alter_check_jobs_resume_and_finish_like_go() {
 #[test]
 fn persisted_alter_check_validation_rolls_back_to_not_enforced() {
     let mut store = bootstrapped();
-    let context = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let context = tidb_sessionctx::StmtContext::for_query().with_enable_check_constraint(true);
     let lower = |sql: &str| {
         let parsed = tidb_parser::parse(sql).expect("CHECK DDL parses");
         lower_ddl_with_context(&parsed, "u6", &ddl_context(&context))
@@ -3162,7 +3162,7 @@ fn plan_ddl_with_tiflash_stores(
     tiflash_stores: u64,
 ) -> Result<DdlPlan, DdlPlanError> {
     let row_ids = std::sync::Arc::clone(&store.row_ids);
-    let context = tidb_executor::StmtContext::for_query();
+    let context = tidb_sessionctx::StmtContext::for_query();
     let mut no_null = |_: &tidb_model::TableInfo, _: i64| Ok(false);
     let submission = tidb_ddl::real_tikv_ddl::prepare_persisted_job_submission(
         store,
@@ -3875,7 +3875,7 @@ fn parsed_binary_enum_default_reaches_the_shared_normalizer_losslessly() {
     assert!(matches!(value, tidb_datatype::Datum::BinaryLiteral(_)));
     assert_eq!(value.go_bytes(), [0xff]);
 
-    let value = tidb_executor::ddl::normalize_column_default(
+    let value = tidb_ddl_build::column_defaults::normalize_column_default(
         value,
         &field_type,
         &column.name,
@@ -4040,7 +4040,7 @@ fn defaults_are_validated_and_persisted_against_the_final_column_type() {
 
 #[test]
 fn cluster_create_persists_a_literal_timestamp_in_utc_from_the_session_zone() {
-    let context = tidb_executor::StmtContext::for_query()
+    let context = tidb_sessionctx::StmtContext::for_query()
         .with_strict(true)
         .with_date_modes(tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE)
         .with_time_zone(tidb_datatype::SessionTimeZone::Fixed {
@@ -4069,7 +4069,7 @@ fn cluster_create_persists_a_literal_timestamp_in_utc_from_the_session_zone() {
 #[test]
 fn cluster_create_folds_a_timestamp_expression_in_the_session_zone() {
     fn stored(zone: tidb_datatype::SessionTimeZone) -> Vec<u8> {
-        let context = tidb_executor::StmtContext::for_query()
+        let context = tidb_sessionctx::StmtContext::for_query()
             .with_strict(true)
             .with_date_modes(tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE)
             .with_time_zone(zone);
@@ -4107,7 +4107,7 @@ fn cluster_create_folds_a_timestamp_expression_in_the_session_zone() {
 #[test]
 fn cluster_create_default_admission_uses_the_captured_date_modes() {
     let sql = "CREATE TABLE u6.t (a DATE DEFAULT '0000-00-00')";
-    let strict_default = tidb_executor::StmtContext::for_query()
+    let strict_default = tidb_sessionctx::StmtContext::for_query()
         .with_strict(true)
         .with_date_modes(tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE)
         .with_time_zone(tidb_datatype::SessionTimeZone::utc());
@@ -4121,7 +4121,7 @@ fn cluster_create_default_admission_uses_the_captured_date_modes() {
 
     // Go reads one `SQLMode` (`GetSQLMode().HasNoZeroDateMode()`): strict
     // without NO_ZERO_DATE admits the zero date.
-    let permissive = tidb_executor::StmtContext::for_query()
+    let permissive = tidb_sessionctx::StmtContext::for_query()
         .with_strict(true)
         .with_date_modes(tidb_datatype::DateModes::default())
         .with_ddl_sql_mode(tidb_mysql::ModeStrictTransTables.0)
@@ -4382,7 +4382,7 @@ fn exchange_partition_swaps_ids_auto_ids_and_notifier_payload() {
 fn exchange_partition_builds_gos_four_way_label_rule_patch() {
     use tidb_ddl_label::{CodecV1, Rule};
 
-    let swap = tidb_ddl::cluster_ddl::ExchangePartitionLabelSwap {
+    let swap = tidb_ddl_build::label_rules::ExchangePartitionLabelSwap {
         partitioned_schema: "dbp".to_owned(),
         partitioned_table: "pt".to_owned(),
         partition: "p0".to_owned(),
@@ -5301,7 +5301,7 @@ fn a_check_constraint_is_ignored_with_gos_warning() {
     // `tidb_enable_check_constraint is off` and are IGNORED; the table
     // creates and enforces nothing. Probe 24 caught this node refusing
     // where every default-configured Go server accepts.
-    let context = tidb_executor::StmtContext::for_query();
+    let context = tidb_sessionctx::StmtContext::for_query();
     let parsed =
         tidb_parser::parse("CREATE TABLE ck (v INT CHECK (v > 0), CONSTRAINT big CHECK (v < 100))")
             .expect("parses");
@@ -5324,7 +5324,7 @@ fn a_check_constraint_is_ignored_with_gos_warning() {
 
 #[test]
 fn enabled_create_check_constraints_persist_gos_metadata_and_errors() {
-    let context = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let context = tidb_sessionctx::StmtContext::for_query().with_enable_check_constraint(true);
     let parsed = tidb_parser::parse(
         "CREATE TABLE ck (v INT CHECK (v > 0), CONSTRAINT big CHECK (v < 100) NOT ENFORCED)",
     )
@@ -5409,7 +5409,7 @@ fn enabled_create_check_constraints_persist_gos_metadata_and_errors() {
 #[test]
 fn inline_add_column_check_matches_gos_discard_and_off_warning() {
     let mut store = bootstrapped();
-    let enabled = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let enabled = tidb_sessionctx::StmtContext::for_query().with_enable_check_constraint(true);
     let create = tidb_parser::parse("CREATE TABLE ck_inline (a INT)").expect("CREATE parses");
     let create = lower_ddl_with_context(&create, "u6", &ddl_context(&enabled))
         .expect("CREATE is admitted")
@@ -5439,7 +5439,7 @@ fn inline_add_column_check_matches_gos_discard_and_off_warning() {
     assert!(added.constraints.is_empty());
     assert_eq!(enabled.warning_count(), 0);
 
-    let off = tidb_executor::StmtContext::for_query();
+    let off = tidb_sessionctx::StmtContext::for_query();
     let add_off =
         tidb_parser::parse("ALTER TABLE ck_inline ADD COLUMN c INT CONSTRAINT c_off CHECK (c > 0)")
             .expect("second ADD COLUMN parses");
@@ -5457,8 +5457,8 @@ fn inline_add_column_check_matches_gos_discard_and_off_warning() {
 #[test]
 fn grouped_add_columns_admits_check_against_original_schema_then_refuses_job() {
     let mut store = bootstrapped();
-    let context = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
-    let lower = |sql: &str, context: &tidb_executor::StmtContext| {
+    let context = tidb_sessionctx::StmtContext::for_query().with_enable_check_constraint(true);
+    let lower = |sql: &str, context: &tidb_sessionctx::StmtContext| {
         let parsed = tidb_parser::parse(sql).expect("grouped ADD parses");
         lower_ddl_with_context(&parsed, "u6", &ddl_context(context))
             .expect("grouped ADD is admitted")
@@ -5508,7 +5508,7 @@ fn grouped_add_columns_admits_check_against_original_schema_then_refuses_job() {
     assert_eq!(unchanged.columns.len(), 1);
     assert_eq!(unchanged.constraints.len(), 0);
 
-    let off = tidb_executor::StmtContext::for_query();
+    let off = tidb_sessionctx::StmtContext::for_query();
     let grouped_off = lower(
         "ALTER TABLE ck_grouped ADD COLUMN \
          (c INT, CONSTRAINT c_off CHECK (c > 0))",
@@ -5971,7 +5971,7 @@ fn check_job_admission_uses_alter_column_errors_and_constraint_name_scope() {
         3_001,
     );
     apply(&mut store, &create);
-    let context = tidb_executor::StmtContext::for_query().with_enable_check_constraint(true);
+    let context = tidb_sessionctx::StmtContext::for_query().with_enable_check_constraint(true);
     let lower = |sql: &str| {
         lower_ddl_with_context(&tidb_parser::parse(sql).unwrap(), "u6", &ddl_context(&context))
             .unwrap()
@@ -6160,8 +6160,8 @@ fn int_only_context() -> tidb_expr::metabuild::Context {
 
 /// TiDB's shipped DDL mode in UTC, the session `tidb-exec`'s
 /// `default_ddl_statement_context` gives a statement-free caller.
-fn default_ddl_statement_context() -> tidb_executor::StmtContext {
-    tidb_executor::StmtContext::for_query()
+fn default_ddl_statement_context() -> tidb_sessionctx::StmtContext {
+    tidb_sessionctx::StmtContext::for_query()
         .with_strict(true)
         .with_date_modes(tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE)
         .with_time_zone(tidb_datatype::SessionTimeZone::utc())
@@ -6177,6 +6177,6 @@ pub(crate) fn lower_ddl(
 }
 
 /// The shared session handle the DDL lowering keeps (Go's `sessionctx`).
-fn ddl_context(context: &tidb_executor::StmtContext) -> tidb_ddl::cluster_ddl::DdlContext {
+fn ddl_context(context: &tidb_sessionctx::StmtContext) -> tidb_ddl::cluster_ddl::DdlContext {
     std::sync::Arc::new(context.clone())
 }

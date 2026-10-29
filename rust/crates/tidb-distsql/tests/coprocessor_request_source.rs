@@ -15,7 +15,8 @@
 //! Source-contract tests for the pre-region coprocessor request wire leaf.
 
 use prost::Message;
-use tidb_distsql::{CoprocessorRequestEnvelope, KvRequestBuilder, RequestKeyRange, RequestType};
+use tidb_distsql::{CoprocessorRequestEnvelope, KvRequestBuilder, RequestKeyRange};
+use tidb_txnkv::RequestType;
 use tidb_proto::{CoprocessorRequest, KvrpcContext};
 
 #[test]

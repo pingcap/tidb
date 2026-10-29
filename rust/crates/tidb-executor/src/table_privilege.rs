@@ -22,7 +22,7 @@
 use tidb_privilege::PrivilegeTypeExt;
 use tidb_ast::{DmlStmt, Stmt};
 
-use tidb_privilege::PrivilegeType;
+use tidb_mysql::PrivilegeType;
 
 /// Go VisitInfo4PrivCheck keeps observation visits while adapting admission.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

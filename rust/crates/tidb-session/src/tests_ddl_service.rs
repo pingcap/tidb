@@ -16,7 +16,7 @@ impl DdlService for Fake {
     fn execute(
         &self,
         _statement: &DdlStatement,
-        _job_context: &tidb_executor::StmtContext,
+        _job_context: &tidb_sessionctx::StmtContext,
     ) -> Result<ClusterDdlReport, DriverError> {
         self.0.clone().map_err(|(code, message)| {
             DriverError::Mysql(tidb_executor::MysqlError::sql_error(code, message))

@@ -808,9 +808,8 @@ mod index_range_estimate_tests {
     use tidb_stats::{Bucket, Histogram, TopN};
 
     use super::get_row_count_by_index_ranges;
-    use crate::cardinality::row_count_estimator::{
-        EstimatorOptions, IndexRangeDatums, IndexRowCounts, IndexStats,
-    };
+    use crate::cardinality::row_count_estimator::{EstimatorOptions, IndexRangeDatums, IndexRowCounts};
+    use tidb_stats::table_statistics::IndexStats;
     use crate::stats_info::HistColl;
 
     fn column(unique_id: i64) -> Column {

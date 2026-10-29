@@ -29,7 +29,7 @@ use tidb_ast::{
 };
 use tidb_datatype::FieldType;
 use tidb_hack::GoToLower;
-use tidb_util::stringutil::go_to_lower;
+use tidb_hack::go_to_lower;
 
 use super::keyset::KeySet;
 use super::model::{Column, Query};

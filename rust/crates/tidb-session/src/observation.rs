@@ -226,7 +226,7 @@ impl Session {
     /// (Go's `copIteratorWorker.stats` is only created when it is ON).
     pub(crate) fn statement_cop_response_sink(
         &self,
-    ) -> Option<Arc<dyn tidb_executor::CopResponseSink>> {
+    ) -> Option<Arc<dyn tidb_distsql::CopResponseSink>> {
         let collect = self
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_COLLECT_EXECUTION_INFO)
@@ -240,7 +240,7 @@ impl Session {
 
     pub(crate) fn statement_phase_observer(
         &self,
-    ) -> Option<Arc<dyn Fn(tidb_executor::StatementPhase) + Send + Sync>> {
+    ) -> Option<Arc<dyn Fn(tidb_sessionctx::StatementPhase) + Send + Sync>> {
         let observation = self.statement_observation.as_ref()?;
         let phases = Arc::clone(&observation.phases);
         let stats = Arc::clone(&self.statement_stats);
@@ -255,7 +255,7 @@ impl Session {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             match phase {
-                tidb_executor::StatementPhase::PlanReady => {
+                tidb_sessionctx::StatementPhase::PlanReady => {
                     if phases.compile_finished {
                         return;
                     }
@@ -270,7 +270,7 @@ impl Session {
                     };
                     return;
                 }
-                tidb_executor::StatementPhase::ExecutorReady => {
+                tidb_sessionctx::StatementPhase::ExecutorReady => {
                     if phases.execution_started {
                         return;
                     }
@@ -427,7 +427,7 @@ impl Session {
         exec_details: &Arc<tikv_client::util::ExecDetails>,
         normalized: &str,
         digest: &tidb_parser::Digest,
-        plan: Option<Arc<Mutex<tidb_executor::ProcessPlanInfo>>>,
+        plan: Option<Arc<Mutex<tidb_sessionctx::ProcessPlanInfo>>>,
     ) {
         // Go `StmtCtx.SQLDigest`: a statement with no normalized text tags
         // no SQL digest.
@@ -1229,7 +1229,7 @@ impl tidb_executor::exec_stmt_observation::ExecStmtObservation for Session {
             .to_owned()
     }
 
-    fn process_plan_info_cell(&self) -> Arc<std::sync::Mutex<tidb_executor::ProcessPlanInfo>> {
+    fn process_plan_info_cell(&self) -> Arc<std::sync::Mutex<tidb_sessionctx::ProcessPlanInfo>> {
         Arc::clone(&self.process_plan_info)
     }
 }

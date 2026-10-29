@@ -166,7 +166,7 @@ fn run() -> Result<(), String> {
 /// overwrite. A run whose statements read nothing has no timestamp and takes a
 /// fresh one.
 fn run_autocommit(
-    opener: &Arc<tidb_store_driver::real_tikv_read::RealOptimisticTransactionOpener>,
+    opener: &Arc<tidb_txnkv::transaction::RealOptimisticTransactionOpener>,
     buffer: &MutationBuffer,
     catalog: &ClusterCatalog,
     arguments: &Arguments,
@@ -205,7 +205,7 @@ fn run_autocommit(
 /// The explicit shape: one transaction for the whole run, every statement read
 /// at its `start_ts`, and the commit prewritten at that same timestamp.
 fn run_explicit_transaction(
-    opener: &Arc<tidb_store_driver::real_tikv_read::RealOptimisticTransactionOpener>,
+    opener: &Arc<tidb_txnkv::transaction::RealOptimisticTransactionOpener>,
     buffer: &MutationBuffer,
     catalog: &ClusterCatalog,
     arguments: &Arguments,
@@ -294,7 +294,7 @@ fn run_in_transaction(
 /// Runs one statement at its own snapshot, over the session's staged writes,
 /// and answers with the timestamp that snapshot read at.
 fn run_statement(
-    opener: &Arc<tidb_store_driver::real_tikv_read::RealOptimisticTransactionOpener>,
+    opener: &Arc<tidb_txnkv::transaction::RealOptimisticTransactionOpener>,
     buffer: &MutationBuffer,
     catalog: &ClusterCatalog,
     schema: &str,

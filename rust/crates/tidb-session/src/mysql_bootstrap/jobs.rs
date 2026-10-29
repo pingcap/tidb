@@ -216,7 +216,7 @@ struct JobOutcome {
 /// warning, not an error), `tidb_enable_clustered_index` pinned to INT_ONLY
 /// "to be compatible with old TiDB versions" (`BootstrapSession`), and the
 /// statement text the job carries is the statement as written.
-fn bootstrap_context(sql: &str) -> tidb_executor::StmtContext {
+fn bootstrap_context(sql: &str) -> tidb_sessionctx::StmtContext {
     tidb_ddl_build::table_info_build::default_ddl_statement_context()
         .with_strict(false)
         .with_ddl_sql_mode(0)

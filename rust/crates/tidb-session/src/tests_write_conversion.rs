@@ -14,7 +14,7 @@
 
 //! The flags a COLUMN WRITE converts under, in both SQL modes.
 //!
-//! `tidb_executor::StmtContext::write_conversion_flags` mirrors Go
+//! `tidb_sessionctx::StmtContext::write_conversion_flags` mirrors Go
 //! `pkg/util/misc.go`'s `GetTypeFlagsForInsert`. The case that made the
 //! difference visible is a negative value written into an UNSIGNED column:
 //! Go clears `FlagAllowNegativeToUnsigned` for every write, so the value

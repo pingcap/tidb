@@ -287,7 +287,7 @@ impl BindingCache {
             {
                 continue;
             }
-            let Some(binding) = Binding::from_storage_row(&row, tidb_parser::SqlMode::default())
+            let Some(binding) = Binding::from_storage_row(&row, tidb_lexer::SqlMode::default())
             else {
                 continue;
             };

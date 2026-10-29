@@ -24,9 +24,8 @@ use tidb_txnkv::transaction::BufferMutation;
 
 use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
-use tidb_syssession::system_row_write::{
-    defaults_row, delete_clustered_row, store_clustered_row, RowEncodeError, RowValues,
-};
+use tidb_syssession::system_row_write::{defaults_row, delete_clustered_row, store_clustered_row, RowValues};
+use tidb_table::origin_default::RowEncodeError;
 use tidb_hack::GoToLower;
 
 const LOCK_TABLE: &str = "stats_table_locked";

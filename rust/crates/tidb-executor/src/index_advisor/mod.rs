@@ -191,8 +191,8 @@ pub trait IndexAdvisorExec: crate::bind_exec::SqlBindExec {
         let rows = self.user_table_rows(&sql)?;
         let mut values = std::collections::BTreeMap::new();
         for row in rows {
-            let name = row.first().and_then(crate::simple::account_tables::sysvar_datum_text).unwrap_or_default();
-            let value = row.get(1).and_then(crate::simple::account_tables::sysvar_datum_text).unwrap_or_default();
+            let name = row.first().and_then(tidb_datatype::datum_text::sysvar_datum_text).unwrap_or_default();
+            let value = row.get(1).and_then(tidb_datatype::datum_text::sysvar_datum_text).unwrap_or_default();
             values.insert(name, value);
         }
         for name in ALL_OPTIONS {
@@ -326,11 +326,11 @@ pub trait IndexAdvisorExec: crate::bind_exec::SqlBindExec {
         let rows = self.set_value_rows(&sql, &ctx)?;
         let mut query_set = QuerySet::new();
         for row in rows {
-            let schema_name = row.first().and_then(crate::simple::account_tables::sysvar_datum_text).unwrap_or_default();
-            let text = row.get(1).and_then(crate::simple::account_tables::sysvar_datum_text).unwrap_or_default();
+            let schema_name = row.first().and_then(tidb_datatype::datum_text::sysvar_datum_text).unwrap_or_default();
+            let text = row.get(1).and_then(tidb_datatype::datum_text::sysvar_datum_text).unwrap_or_default();
             let frequency = match row.get(2) {
                 Some(Datum::Real(count)) => *count as i64,
-                Some(other) => crate::simple::account_tables::sysvar_datum_text(other)
+                Some(other) => tidb_datatype::datum_text::sysvar_datum_text(other)
                     .and_then(|count| count.parse::<f64>().ok())
                     .map_or(0, |count| count as i64),
                 None => 0,

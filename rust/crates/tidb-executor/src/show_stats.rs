@@ -88,7 +88,7 @@ use tidb_datatype::{core_time_from_datetime, Datum, FieldTypeCode, Time, TimeTyp
 use tidb_stats::memory_usage::{ColumnMemUsage, IndexMemUsage};
 use tidb_stats::{Histogram, TopN};
 
-use crate::access_cost::TableStatistics;
+use tidb_stats::table_statistics::TableStatistics;
 
 /// Go `oracle.physicalShiftBits`: a TSO's low 18 bits are its logical
 /// counter, so the physical half is milliseconds since the Unix epoch.

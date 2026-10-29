@@ -96,7 +96,8 @@ use integration_plan_property::{plan_statement, PlanStatement};
 use mysqltest_connections::Connections;
 use mysqltest_script::{align_bytes, parse_test, recording_path, split_warnings_bytes, Item, Stmt};
 use tidb_datatype::Datum;
-use tidb_session::{Session, StmtOutput};
+use tidb_session::Session;
+use tidb_executor::StmtOutput;
 
 /// The join operators TiDB's `EXPLAIN` prints, minus `Apply`.
 ///

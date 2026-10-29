@@ -9,11 +9,8 @@ use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 
 use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
-use tidb_server::{
-    serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionTracker,
-    MysqlConnectionError, QueryResult, QuerySession, QuerySessionFactory, SessionContext,
-    SqlQueryError,
-};
+use tidb_server::{serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionTracker, MysqlConnectionError, QueryResult, QuerySession, QuerySessionFactory, SessionContext};
+use tidb_store_driver::sql_query_error::SqlQueryError;
 
 struct UnusedSession;
 

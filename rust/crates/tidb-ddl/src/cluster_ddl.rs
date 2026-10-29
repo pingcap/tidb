@@ -76,7 +76,7 @@ use crate::real_tikv_ddl::DdlWarningLevel;
 use tidb_hack::GoToLower;
 use tidb_ddl_build::column_types::resolve_charset_collation;
 
-pub use tidb_ddl_build::table_info_build::DdlAdmissionError;
+use tidb_ddl_build::table_info_build::DdlAdmissionError;
 
 /// The catalog charset every object this node creates carries.
 ///
@@ -7571,7 +7571,7 @@ impl MdlInfoUpdate {
 
 /// The names and post-exchange physical IDs Go uses to swap the standalone
 /// table and partition label rules in PD; shared with the in-process tier.
-pub use tidb_ddl_build::label_rules::ExchangePartitionLabelSwap;
+use tidb_ddl_build::label_rules::ExchangePartitionLabelSwap;
 use tidb_ddl_build::label_rules::{self, LabelRuleTable, LabelRuleWrite};
 
 /// Go's wrapping of a failed label-rule write.
@@ -7654,7 +7654,7 @@ impl LabelRuleSteps {
     }
 }
 
-pub use tidb_ddl_build::session_pool::ForeignKeyCheck;
+use tidb_ddl_build::session_pool::ForeignKeyCheck;
 
 
 /// The candidate table shape whose enforced CHECK must hold for every

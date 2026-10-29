@@ -580,7 +580,7 @@ pub struct MiniPartitionInfoForSchemaEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_model::go_runtime::GoSharedSlice;
+    use tidb_goruntime::go_runtime::GoSharedSlice;
     use tidb_model::partition::PartitionDefinition;
 
     #[test]

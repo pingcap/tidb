@@ -47,7 +47,7 @@ use crate::domain::real_tikv_node::{
 /// deadlines (tens of seconds), and a request queued past ITS deadline failed
 /// with `timeout_ms: 0` -- the admission-time zero the old constant produced.
 const TRANSACTION_RPC_TIMEOUT: Duration = Duration::from_secs(60);
-use crate::domain::session_api::SqlQueryError;
+use tidb_store_driver::sql_query_error::SqlQueryError;
 
 use crate::domain::cluster_session_node::{RealClusterDdl, RealClusterTransactions, CONTROL_PLANE_TIMEOUT};
 use tidb_domain_core::domain::Domain;
@@ -307,7 +307,7 @@ pub fn cluster_session_stack(
     // `information_schema.TIDB_SERVERS_INFO` then reports this node alone,
     // which is Go's `etcdCli == nil` answer.
     let server_etcd = etcd.clone().map(|client| {
-        Arc::new(crate::domain::serverinfo_etcd::EtcdClientOps::new(client))
+        Arc::new(tidb_ddl::etcd_ops::EtcdClientOps::new(client))
             as Arc<dyn tidb_domain::serverinfo_syncer::EtcdOps>
     });
     // A failed cluster connection is not a standalone deployment.
@@ -569,7 +569,7 @@ pub fn cluster_session_stack(
     )))
     .with_region_store(region_store)
     .with_server_info(Arc::clone(&server_info))
-    .with_connection_ids(crate::domain::session_api::new_connection_id_allocator(
+    .with_connection_ids(tidb_domain_core::connection_ids::new_connection_id_allocator(
         &config.global_config,
         server_identity.clone(),
     ))

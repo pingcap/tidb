@@ -107,7 +107,7 @@ use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_expr::Columns;
 
-use crate::executor::ExecError;
+use tidb_driver_error::ExecError;
 
 /// Go `plannerbase.JoinType` (`pkg/planner/core/base`), restricted to the
 /// values `NewJoiner` accepts.

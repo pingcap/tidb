@@ -24,7 +24,8 @@ use serde::{Deserialize, Serialize, Serializer};
 use tidb_datatype::GoString;
 use tidb_error::terror::{TerrorCode, TerrorError};
 
-use crate::go_runtime::{GoShared, GoSharedSlice};
+use crate::go_runtime::GoShared;
+use tidb_goruntime::go_runtime::GoSharedSlice;
 use crate::job::{JobMeta, TimeZoneLocation};
 use crate::serde_helpers::{
     deserialize_go_object, go_json_field_matches, ignore_unknown, impl_go_json_deserialize,

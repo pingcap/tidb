@@ -34,13 +34,13 @@ use difftest_result_tests::mysqltest_connections::{
 use difftest_result_tests::mysqltest_script::ConnectionCmd;
 use difftest_result_tests::replay::{run_topic, ReplayBackend, ReplaySession};
 use tidb_executor::{DriverError, MysqlError};
-use tidb_session::StmtOutput;
+use tidb_executor::StmtOutput;
 
 use crate::domain_test_support::{
     scramble, session_context, session_context_with_identity, ABC_HASH, SALT,
 };
 use tidb_session::domain::configured_user_store::ConfiguredUserStore;
-use tidb_session::domain::session_api::SqlQueryError;
+use tidb_store_driver::sql_query_error::SqlQueryError;
 
 use crate::driver::QuerySession;
 use tidb_session::domain::unistore_node::{unistore_cluster_session_stack, UnistoreClusterStack};

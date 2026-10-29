@@ -155,7 +155,7 @@ impl ColumnType {
     }
 }
 
-pub use tidb_codec::SerializeMode;
+use tidb_codec::SerializeMode;
 
 /// Physical key representation selected for a join table.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

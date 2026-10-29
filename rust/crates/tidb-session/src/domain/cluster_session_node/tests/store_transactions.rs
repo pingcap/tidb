@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tidb_store_driver::real_tikv_read::RealOptimisticTransactionOpener;
+use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 use tidb_store_driver::session_commit_protocol::SessionTransactionOptions;
 use tidb_store_driver::sql_query_error::SqlQueryError;
 use tidb_sessionctx::advisory_lock_state::{AdvisoryLockError, AdvisoryLockLease};
@@ -217,7 +217,7 @@ fn session_activation_retains_options_after_timestamp_future_failure() {
         }
     }
     let stack =
-        crate::domain::unistore_node::in_process_stack(&tidb_pd_client::ClusterSecurity::plaintext())
+        tidb_ddl::embedded_store::in_process_stack(&tidb_pd_client::ClusterSecurity::plaintext())
             .unwrap();
     let fail = Arc::new(AtomicBool::new(false));
     let store = stack.tikv_store.store();

@@ -21,9 +21,9 @@
 
 use std::sync::Arc;
 
-use crate::analyze_service::AnalyzeService;
+use tidb_executor::analyze::exec::AnalyzeService;
 use crate::ddl_service::DdlService;
-use crate::stats_statement_service::StatsStatementService;
+use tidb_executor::stats_exec::StatsStatementService;
 use crate::stored_state_service::{AccountService, SysvarService};
 use crate::Session;
 

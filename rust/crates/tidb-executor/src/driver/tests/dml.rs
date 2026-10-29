@@ -317,7 +317,8 @@ fn clustered_batch_insert_keeps_primary_duplicate_errors() {
 /// root fast plan.
 #[test]
 fn a_consumed_handle_range_update_keeps_its_table_reader() {
-    use crate::explain::{explain_update_stmt, ExplainFormat};
+    use crate::explain::explain_update_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -359,7 +360,8 @@ fn a_consumed_handle_range_update_keeps_its_table_reader() {
 /// the write still removes exactly the rows the `WHERE` admits.
 #[test]
 fn a_delete_on_a_secondary_index_reads_through_it() {
-    use crate::explain::{explain_delete_stmt, ExplainFormat};
+    use crate::explain::explain_delete_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(

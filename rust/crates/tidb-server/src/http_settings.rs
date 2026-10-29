@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tidb_config::config_tree::config::{get_global_config, update_global};
-use tidb_session::GlobalSysvars;
+use tidb_domain::global_sysvars::GlobalSysvars;
 
 // Go applies fields in source order. Serialize an individual handler invocation
 // so its config publication and live deadlock policy cannot cross another POST.

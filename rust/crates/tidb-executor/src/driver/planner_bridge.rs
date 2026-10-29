@@ -1045,7 +1045,7 @@ pub(crate) fn record_used_item_stats_status(
     context: &crate::StmtContext,
     table_name: &str,
     physical_table_id: i64,
-    statistics: Option<&crate::access_cost::TableStatistics>,
+    statistics: Option<&tidb_stats::table_statistics::TableStatistics>,
     in_pseudo_table: bool,
     item_id: i64,
     is_index: bool,
@@ -1129,7 +1129,7 @@ impl InitStats<'_> {
     fn predicate_loaded_items(
         &self,
         source: &tidb_planner::logical::DataSource,
-        statistics: Option<&crate::access_cost::TableStatistics>,
+        statistics: Option<&tidb_stats::table_statistics::TableStatistics>,
     ) -> Option<(BTreeSet<i64>, BTreeSet<i64>)> {
         statistics?;
         let demanded = self.demanded?;
@@ -1232,7 +1232,7 @@ impl InitStats<'_> {
         // scaling and histogram estimates without inferring state from buckets.
         let predicate_loaded = self.predicate_loaded_items(source, statistics);
         source.init_stats(
-            statistics.map(|statistics| statistics as &dyn tidb_planner::logical::init_stats::TableStatsSnapshot),
+            statistics.map(|statistics| statistics as &dyn tidb_stats::table_statistics::TableStatsSnapshot),
             row_count,
             predicate_loaded,
         );
@@ -2883,7 +2883,7 @@ fn optimize_built_logical(
     {
         fn request(
             &self,
-            usage: &tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
+            usage: &tidb_stats::table_statistics::ColumnStatsUsage,
         ) -> Result<(), tidb_planner::plan_base::PlanError> {
             self.context.set_operator_num(usage.operator_count);
             self.context
@@ -3305,8 +3305,8 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     ctx: &crate::StmtContext,
 ) -> Result<
     (
-        tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
-        tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
+        tidb_stats::table_statistics::ColumnStatsUsage,
+        tidb_stats::table_statistics::ColumnStatsUsage,
     ),
     tidb_planner::plan_base::PlanError,
 > {
@@ -3369,7 +3369,7 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
 #[cfg(test)]
 mod predicate_column_tests {
     use super::*;
-    use crate::access_cost::TableStatistics;
+    use tidb_stats::table_statistics::TableStatistics;
     use tidb_planner::logical::DataSource;
     use tidb_model::TableItemID;
 
@@ -3457,7 +3457,7 @@ mod statistics_initialization_tests {
         let context = crate::StmtContext::default();
         context.stats_handle().set_table_statistics(
             7,
-            std::sync::Arc::new(crate::access_cost::TableStatistics::new(
+            std::sync::Arc::new(tidb_stats::table_statistics::TableStatistics::new(
                 1000,
                 0,
                 BTreeMap::new(),
@@ -3614,14 +3614,14 @@ mod statistics_initialization_tests {
             null_count: 3,
             ..Default::default()
         };
-        let column_stats = tidb_planner::cardinality::row_count_estimator::ColumnStats {
+        let column_stats = tidb_stats::table_statistics::ColumnStats {
             histogram: histogram.clone(),
             topn: None,
             cms: None,
             stats_ver: 2,
             unsigned: false,
         };
-        let index_stats = tidb_planner::cardinality::row_count_estimator::IndexStats {
+        let index_stats = tidb_stats::table_statistics::IndexStats {
             histogram: tidb_stats::Histogram { id: 9, ..histogram },
             topn: None,
             cms: None,
@@ -3629,7 +3629,7 @@ mod statistics_initialization_tests {
             num_columns: 1,
             unique: false,
         };
-        let mut statistics = crate::access_cost::TableStatistics::new(
+        let mut statistics = tidb_stats::table_statistics::TableStatistics::new(
             100,
             0,
             [(1, column_stats)].into(),

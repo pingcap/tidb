@@ -35,7 +35,7 @@ use super::rule::{LogicalOptRule, RuleContext};
 use super::rule_prune_indexes::prune_data_source_with_options;
 use crate::plan_base::PlanError;
 
-pub use tidb_stats::table_statistics::ColumnStatsUsage;
+use tidb_stats::table_statistics::ColumnStatsUsage;
 
 /// The domain statistics handle reached by Go
 /// `CollectPredicateColumnsPoint.Optimize`.

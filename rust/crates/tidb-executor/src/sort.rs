@@ -29,7 +29,8 @@ use std::cmp::Ordering;
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::Arc;
 
-use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::executor::{Executor, ExecutorMeta};
+use tidb_driver_error::ExecError;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::compare::ColumnCompareFunc;
 use tidb_chunk::row::Row;
@@ -554,7 +555,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_kv::mem_quota::OomAction;
+    use tidb_vardef::OomAction;
     use tidb_ast::CiString;
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_expr::column::Column;

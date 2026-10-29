@@ -3964,7 +3964,7 @@ mod tests {
             integer_count_distinct_funcs(),
             IntNullSource::new(&data, 128),
             NoColumns,
-            StatementMemory::new(2 * 1024 * 1024, tidb_kv::mem_quota::OomAction::Cancel, 42)
+            StatementMemory::new(2 * 1024 * 1024, tidb_vardef::OomAction::Cancel, 42)
                 .with_tmp_storage_on_oom(true),
         );
         spilled.open().unwrap();
@@ -4001,7 +4001,7 @@ mod tests {
             vec![AggFunc::new(AggKind::Count, Some(col(1)))],
             MultiChunkSource::new(&[(1, 5)], 1),
             NoColumns,
-            StatementMemory::new(1 << 20, tidb_kv::mem_quota::OomAction::Cancel, 42),
+            StatementMemory::new(1 << 20, tidb_vardef::OomAction::Cancel, 42),
         );
         assert!(exec.pipeline_eligibility().is_some());
     }
@@ -4024,7 +4024,7 @@ mod tests {
             vec![AggFunc::new(AggKind::Count, Some(col(1)))],
             MultiChunkSource::new(&data, 128),
             NoColumns,
-            StatementMemory::new(512 * 1024, tidb_kv::mem_quota::OomAction::Cancel, 42)
+            StatementMemory::new(512 * 1024, tidb_vardef::OomAction::Cancel, 42)
                 .with_tmp_storage_on_oom(true),
         );
 
@@ -4140,7 +4140,7 @@ mod tests {
             make_func(),
             MultiChunkSource::new(&data, 128),
             NoColumns,
-            StatementMemory::new(512 * 1024, tidb_kv::mem_quota::OomAction::Cancel, 42)
+            StatementMemory::new(512 * 1024, tidb_vardef::OomAction::Cancel, 42)
                 .with_tmp_storage_on_oom(true)
                 .with_spill_storage(crate::test_temp_storage::storage(&dir)),
         );
@@ -4413,7 +4413,7 @@ mod tests {
             decimal_min_max_funcs(),
             DecimalChunkSource::new(&data, 128),
             NoColumns,
-            StatementMemory::new(2 * 1024 * 1024, tidb_kv::mem_quota::OomAction::Cancel, 42)
+            StatementMemory::new(2 * 1024 * 1024, tidb_vardef::OomAction::Cancel, 42)
                 .with_tmp_storage_on_oom(true),
         );
         exec.open().unwrap();

@@ -17,13 +17,12 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::FieldType;
 use tidb_expr::schema::Schema;
 
-pub use tidb_driver_error::ExecError;
+use tidb_driver_error::ExecError;
 
 /// Go `exec.Executor`: a pull-based operator in the execution tree.
 ///
@@ -90,8 +89,6 @@ pub trait Executor: Send {
     }
 }
 
-pub use tidb_util::execdetails::runtime_stats::{ExecutorRuntimeStats, ExecutorRuntimeStatsSource};
-pub use tidb_util::execdetails::CopRuntimeInfo;
 
 /// A row counter owned by one executor and observed by its statement.
 /// Moving the executor to a worker does not move or invalidate the observer.

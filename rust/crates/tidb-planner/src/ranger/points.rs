@@ -304,7 +304,7 @@ pub fn handle_bound_col(ft: &FieldType, mut val: Datum, op: &str) -> (Datum, Str
 
 /// Go `CutDatumByPrefixLen` (`ranger.go:737`) and `ReachPrefixLen`
 /// (`ranger.go:763`): the same cut as `tablecodec.TruncateIndexValue`.
-pub use tidb_tablecodec::{cut_datum_by_prefix_len, reach_prefix_len};
+use tidb_tablecodec::{cut_datum_by_prefix_len, reach_prefix_len};
 
 /// Go `cutPrefixForPoints` (`ranger.go:714`): cut every point to the
 /// prefix length; a CUT point — or a START point already AT the length —

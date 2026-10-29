@@ -208,15 +208,13 @@ use tidb_stats_handle_cache::StatsTableRowCache;
 use tidb_domain_core::cluster_account_seam::ClusterAccountWriter;
 #[cfg(test)]
 use tidb_domain_core::cluster_analyze_seam::ClusterAnalyze;
-use tidb_domain_core::cluster_session::{
-    cluster_session_catalog_with_templates, SkippedTable, TableAutoIds,
-};
+use tidb_domain_core::cluster_session::{cluster_session_catalog_with_templates, SkippedTable};
+use tidb_table::table_from_meta::TableAutoIds;
 use tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter;
 use crate::domain::pipeline_session::MaterializedResultSetSource;
-use crate::domain::session_api::{
-    ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral, QueryResult, SessionContext,
-    SqlQueryError, WriteOutcome,
-};
+use crate::domain::session_api::{ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral, QueryResult, SessionContext};
+use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_executor::ddl_exec::WriteOutcome;
 use crate::domain::wire_status::WireStatus;
 use tidb_executor::ddl_exec::map_error;
 
@@ -247,7 +245,6 @@ mod test_session;
 use tidb_domain_core::cluster_transactions as transactions;
 
 pub use ddl::{ClusterDdl, RealClusterDdl};
-pub use tidb_ddl::real_tikv_ddl::ClusterDdlReport;
 #[cfg(test)]
 use transactions::sql_error;
 pub use transactions::{ClusterTransactions, OpenClusterTransaction, RealClusterTransactions};
@@ -298,7 +295,7 @@ enum StatementRoute {
     DropStats(Vec<i64>),
 }
 
-use crate::stats_statement_service::FlushStatsDeltaTargets;
+use tidb_executor::stats_exec::FlushStatsDeltaTargets;
 
 /// What [`ClusterServerSession::run_statement`] left for its caller.
 enum Executed {
@@ -1161,7 +1158,7 @@ impl<'s> ClusterServerSession<'s> {
                     Ok(_) => Err(SqlQueryError::unknown(
                         "this node runs ANALYZE TABLE for a named table only",
                     )),
-                    Err(error) => Err(crate::domain::session_api::cluster_analyze_error(
+                    Err(error) => Err(tidb_domain_core::errors::cluster_analyze_error(
                         tidb_executor::real_tikv_analyze::ClusterAnalyzeError::Analyze(error),
                     )),
                 }
@@ -1175,7 +1172,7 @@ impl<'s> ClusterServerSession<'s> {
                     Ok(None) => Err(SqlQueryError::unknown(
                         "this node could not lower the statistics lock statement",
                     )),
-                    Err(refusal) => Err(crate::domain::session_api::cluster_stats_lock_error(
+                    Err(refusal) => Err(tidb_domain_core::errors::cluster_stats_lock_error(
                         ClusterStatsLockCommitError::Plan(refusal),
                     )),
                 }
@@ -1470,7 +1467,7 @@ impl<'s> ClusterServerSession<'s> {
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
             let update = tidb_stats_handle_usage::DeltaUpdate {
                 table_id: logical_table_id,
-                delta: tidb_stats_handle_usage::TableDelta {
+                delta: tidb_variable::table_delta::TableDelta {
                     delta: count.wrapping_neg(),
                     count,
                     init_time: None,
@@ -1641,7 +1638,7 @@ impl<'s> ClusterServerSession<'s> {
                     None
                 } else {
                     Some(
-                        tidb_syssession::system_row_write::origin_default(column, table.name.original())
+                        tidb_table::origin_default::origin_default(column, table.name.original())
                             .map_err(|error| SqlQueryError::unknown(error.to_string()))?,
                     )
                 };
@@ -2033,7 +2030,7 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         }
     }
 
-    fn ddl_statement_context(&self) -> tidb_executor::StmtContext {
+    fn ddl_statement_context(&self) -> tidb_sessionctx::StmtContext {
         self.session.ddl_statement_context()
     }
 
@@ -2068,7 +2065,7 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         self.session.begin_routed_statement_warnings();
     }
 
-    fn drain_context_warnings(&mut self, ctx: &tidb_executor::StmtContext) {
+    fn drain_context_warnings(&mut self, ctx: &tidb_sessionctx::StmtContext) {
         self.session.drain_context_warnings(ctx);
     }
 
@@ -3040,7 +3037,7 @@ struct NodeRestrictedSql {
     factory: Weak<Domain>,
 }
 
-impl crate::restricted_sql::RestrictedSqlExecutor for NodeRestrictedSql {
+impl tidb_executor::memtable_reader::RestrictedSqlExecutor for NodeRestrictedSql {
     fn exec_restricted_sql(
         &self,
         sql: &str,
@@ -3114,7 +3111,7 @@ impl crate::ddl_service::DdlService for ClusterDdlService {
     fn execute(
         &self,
         statement: &DdlStatement,
-        job_context: &tidb_executor::StmtContext,
+        job_context: &tidb_sessionctx::StmtContext,
     ) -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, tidb_executor::DriverError> {
         self.ddl.execute(statement, job_context).map_err(|error| {
             tidb_executor::DriverError::Mysql(

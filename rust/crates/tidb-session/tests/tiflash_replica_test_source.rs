@@ -25,7 +25,7 @@ use crate::support::testkit::{enable_failpoint, TestKit};
 use tidb_executor::TableEntry;
 
 /// Go `external.GetTableByName(t, tk, db, table).Meta()`: the stored table.
-fn kv_table(tk: &TestKit, table: &str) -> std::sync::Arc<tidb_executor::KvTable> {
+fn kv_table(tk: &TestKit, table: &str) -> std::sync::Arc<tidb_table::kv_table::KvTable> {
     match tk.get_table_by_name("test", table) {
         TableEntry::Kv(table) => table,
         _ => panic!("{table} is a stored table"),

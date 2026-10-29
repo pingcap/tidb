@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Go pkg/table and pkg/table/tables for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-meta = { path = "../tidb-meta" }
 tikv-client.workspace = true
 tidb-autoid = { path = "../tidb-autoid" }

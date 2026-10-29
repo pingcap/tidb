@@ -21,7 +21,7 @@ use std::sync::{
     Arc,
 };
 
-pub use tidb_proto::pdpb::{EventType, GlobalConfigItem};
+use tidb_proto::pdpb::GlobalConfigItem;
 
 /// The PD method used by this package. No retry policy belongs here.
 pub trait GlobalConfigStore: Send + Sync {

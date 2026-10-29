@@ -20,7 +20,7 @@
 use tidb_stats_handle::catalog_statistics::CatalogStatistics;
 use tidb_datatype::Datum;
 use tidb_hack::{GoCaseCompare, GoToLower};
-use tidb_util::stringutil::go_to_lower;
+use tidb_hack::go_to_lower;
 
 use super::placement::*;
 use super::stats::*;
@@ -676,7 +676,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                 crate::infoschema_reader::show_table_status_rows(&catalog, &visibility, &zone, &database)
                     .into_iter()
                     .filter(|row| {
-                        let name = go_to_lower(crate::simple::account_tables::sysvar_datum_text(&row[0]).unwrap_or_default());
+                        let name = go_to_lower(tidb_datatype::datum_text::sysvar_datum_text(&row[0]).unwrap_or_default());
                         crate::show::extractor_admits(extractor, &name, &name)
                     })
                     .collect()

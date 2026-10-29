@@ -40,7 +40,7 @@ use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike, Utc};
 
 use super::calendar::date_format;
 use crate::coerce::coerce_str;
-use crate::context::SessionTimeZone;
+use tidb_datatype::SessionTimeZone;
 use crate::{Columns, Datum, Decimal, EvalError};
 use tidb_datatype::{Time, TimeType};
 

@@ -460,7 +460,7 @@ pub enum ErrorLevel {
 /// The type itself lives in `tidb-datatype` because the storage codecs need
 /// it and sit below this crate, exactly as Go's `tablecodec` sits below
 /// `sessionctx`; see [`tidb_datatype::SessionTimeZone`].
-pub use tidb_datatype::SessionTimeZone;
+use tidb_datatype::SessionTimeZone;
 
 /// The supported values of MySQL's `block_encryption_mode` session variable.
 ///

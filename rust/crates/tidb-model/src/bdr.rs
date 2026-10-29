@@ -20,7 +20,8 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use crate::action_type::ActionType;
-use crate::go_runtime::{GoShared, GoSharedSlice, GoTime};
+use crate::go_runtime::{GoShared, GoTime};
+use tidb_goruntime::go_runtime::GoSharedSlice;
 
 /// Go `DDLBDRType` (a `string`): a DDL's safety class under BDR.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

@@ -56,7 +56,7 @@
 //! that reason.
 
 #[allow(unused_imports)]
-pub use tidb_table::origin_default::{
+use tidb_table::origin_default::{
     encode_error, is_time_column, literal_default, materialise, origin_default, unmaterialisable,
     typed_value, RowEncodeError, CURRENT_TIMESTAMP,
 };

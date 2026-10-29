@@ -1966,8 +1966,8 @@ fn every_information_schema_cell_matches_its_declared_column_type() {
         .unwrap();
     session.run("CREATE VIEW v AS SELECT id FROM t").unwrap();
 
-    for name in tidb_executor::infoschema_reader::served_table_names() {
-        let columns = tidb_executor::infoschema_reader::table_schema(name)
+    for name in tidb_infoschema::infoschema_meta::served_table_names() {
+        let columns = tidb_infoschema::infoschema_meta::table_schema(name)
             .expect("a served table has a schema");
         let answer = session.run_with_columns(&format!("SELECT * FROM information_schema.{name}"));
         // Go refuses to scan CLUSTER_LOG without a time range

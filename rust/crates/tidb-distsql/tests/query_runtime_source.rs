@@ -22,13 +22,9 @@ use prost::Message;
 use tidb_codec::encode_value_in_timezone;
 use tidb_datatype::{parse_datetime, Datum, FieldType, FieldTypeCode, SessionTimeZone, TimeType};
 use tidb_distsql::query_runtime::{QueryResponseError, QueryResultSubset};
-use tidb_distsql::{
-    InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryOperation, QueryResultContext,
-    QueryRuntimeError, QueryTransport, ResponseChannel, ResponseRuntimeStats, SelectInput,
-    StoreType, TransportBinding, TransportRequest, WarningCollector, ANALYZE_RESULT_LABEL,
-    CHECKSUM_RESULT_LABEL, DAG_RESULT_LABEL, GENERAL_SQL_TYPE, INTERNAL_SQL_TYPE,
-    INTERNAL_TXN_STATS_SOURCE,
-};
+use tidb_distsql::{InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryOperation, QueryResultContext, QueryRuntimeError, QueryTransport, ResponseChannel, ResponseRuntimeStats, SelectInput, TransportBinding, TransportRequest, ANALYZE_RESULT_LABEL, CHECKSUM_RESULT_LABEL, DAG_RESULT_LABEL, GENERAL_SQL_TYPE, INTERNAL_SQL_TYPE, INTERNAL_TXN_STATS_SOURCE};
+use tidb_util::context::WarningCollector;
+use tidb_txnkv::StoreType;
 use tidb_proto::tipb::SelectResponse;
 use tidb_proto::{Chunk, EncodeType, KvrpcLockInfo};
 use tidb_txnkv::{wrap_cop_meet_lock, CopMeetLock, EventCallback};
@@ -45,7 +41,7 @@ struct ScriptedTransport {
     responses: VecDeque<Result<Option<ResponseChannel<prost::bytes::Bytes>>, String>>,
     dispatches: Vec<QueryDispatch>,
     request_was_bound: bool,
-    request_sources: Vec<tidb_distsql::RequestSource>,
+    request_sources: Vec<tidb_txnkv::RequestSource>,
 }
 
 impl ScriptedTransport {

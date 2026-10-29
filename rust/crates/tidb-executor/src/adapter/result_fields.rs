@@ -17,7 +17,7 @@
 //! server's (`tidb-server::column_convert`).
 
 use tidb_datatype::{Collation, FieldTypeCode};
-pub use tidb_datatype::{FieldNameMetadata, IdentifierMetadata};
+use tidb_datatype::{FieldNameMetadata, IdentifierMetadata};
 use tidb_protocol::ColumnDefault;
 
 /// The source's MySQL `NotFixedDec` marker.

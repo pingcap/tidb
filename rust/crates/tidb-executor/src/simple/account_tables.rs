@@ -20,7 +20,7 @@
 use tidb_datatype::Datum;
 use tidb_hack::GoToLower;
 use tidb_privilege::PrivilegeTypeExt;
-use tidb_util::stringutil::go_to_lower;
+use tidb_hack::go_to_lower;
 
 use crate::DriverError;
 
@@ -50,7 +50,7 @@ pub trait AccountSession: crate::stmt_ctx_build::ResetContextOfStmt {
         &self,
         database: &str,
         table: &str,
-        global_priv: tidb_privilege::PrivilegeType,
+        global_priv: tidb_mysql::PrivilegeType,
     ) -> bool;
     /// Go `RequestDynamicVerification`.
     fn has_dynamic_privilege(&self, name: &str, with_grant: bool) -> bool;
@@ -491,7 +491,7 @@ pub trait UserTableExec: AccountSession {
         host: &str,
         db: &str,
         table: &str,
-        privs: &[tidb_privilege::PrivilegeType],
+        privs: &[tidb_mysql::PrivilegeType],
         all: bool,
         grant: bool,
     ) -> Result<(), DriverError> {
@@ -866,4 +866,3 @@ pub trait UserTableExec: AccountSession {
 
 impl<S: AccountSession> UserTableExec for S {}
 
-pub use tidb_datatype::datum_text::sysvar_datum_text;

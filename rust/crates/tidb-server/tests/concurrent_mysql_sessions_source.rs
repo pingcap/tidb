@@ -17,11 +17,8 @@ use tidb_protocol::{
     PacketReader, PacketWriter, COM_PING, COM_QUERY,
     COM_QUIT, DEFAULT_MAX_ALLOWED_PACKET,
 };
-use tidb_server::{
-    ActiveQueryCancellation, ConcurrentSqlNode, ConfiguredUserStore, ConnectionCancellation,
-    NodeConfig, QueryCancellationLease, QueryResult, QuerySession, QuerySessionFactory,
-    ResultSetSource, SessionContext, SqlQueryError,
-};
+use tidb_server::{ActiveQueryCancellation, ConcurrentSqlNode, ConfiguredUserStore, ConnectionCancellation, NodeConfig, QueryCancellationLease, QueryResult, QuerySession, QuerySessionFactory, ResultSetSource, SessionContext};
+use tidb_store_driver::sql_query_error::SqlQueryError;
 use tidb_util::globalconn::{parse_conn_id, Gcid};
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
@@ -766,7 +763,7 @@ impl QuerySession for MetricsSession {
         if statement.sql() != "BEGIN" {
             return Err(SqlQueryError::unknown("only a prepared BEGIN is part of this fixture"));
         }
-        Ok(tidb_server::GeneralExecuteOutcome::Write(tidb_server::WriteOutcome::default()))
+        Ok(tidb_server::GeneralExecuteOutcome::Write(tidb_executor::ddl_exec::WriteOutcome::default()))
     }
 }
 
@@ -952,7 +949,7 @@ fn a_client_logs_in_over_the_unix_socket_like_go() {
 
     let contexts = factory.contexts.lock().unwrap();
     assert_eq!(contexts.len(), 1);
-    assert_eq!(contexts[0].peer_addr, tidb_server::PeerAddress::Unix);
+    assert_eq!(contexts[0].peer_addr, tidb_session::domain::peer_address::PeerAddress::Unix);
     assert_eq!(contexts[0].peer_addr.host(), "localhost");
     // A Unix socket negotiates no TLS: Go's `TLSConnectionState` stays nil.
     assert_eq!(contexts[0].tls_state, None);

@@ -2529,7 +2529,7 @@ fn native_hash_join_executor_lifecycle_source() {
         C: tidb_expr::Columns + Clone + Send + Sync + 'static,
     >() {
     }
-    statement_context_can_cross_worker_lanes::<tidb_executor::StmtContext>();
+    statement_context_can_cross_worker_lanes::<tidb_sessionctx::StmtContext>();
     for concurrency in [1, 4, 5] {
         for kind in [
             JoinType::Inner,

@@ -21,7 +21,7 @@
 use crate::{
     region_task::build_region_tasks, RegionTaskEnvelope, RegionTaskTopology, RequestKeyRange,
 };
-pub use tidb_txnkv::{TransportBinding, TransportRequest, TransportRequestError};
+use tidb_txnkv::{TransportRequest, TransportRequestError};
 
 /// Go `copr.buildCopTasks` / `SplitKeyRangesByLocations` over a built
 /// request.
@@ -97,6 +97,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use tidb_txnkv::TransportBinding;
     use crate::{CancelHandle, KvRequestBuilder, RequestType, GLOBAL_REPLICA_SCOPE};
 
     #[test]

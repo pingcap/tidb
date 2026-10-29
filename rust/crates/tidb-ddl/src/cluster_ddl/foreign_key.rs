@@ -396,7 +396,7 @@ fn foreign_key_check(
         parent,
         name: fk.name.original().to_owned(),
         use_new_collation: tidb_datatype::new_collation_enabled(),
-        session_vars: add_index::ReorgSessionVars::of_job(&active.job),
+        session_vars: tidb_ddl_build::session_pool::ReorgSessionVars::of_job(&active.job),
     })
 }
 
@@ -417,7 +417,7 @@ fn check_request(
             merging: false,
             physical_ids: Vec::new(),
             batch_size: 1,
-            session_vars: add_index::ReorgSessionVars::of_job(&active.job),
+            session_vars: tidb_ddl_build::session_pool::ReorgSessionVars::of_job(&active.job),
             row_count: active.job.row_count,
             column: None,
             sub_job: add_index::reorg_sub_job(&active.job),

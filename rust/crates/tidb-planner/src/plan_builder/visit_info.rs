@@ -76,4 +76,3 @@ pub struct VisitInfo {
     pub dynamic_with_grant: bool,
 }
 
-pub use tidb_infoschema::table_source::PrivilegeVerifier;

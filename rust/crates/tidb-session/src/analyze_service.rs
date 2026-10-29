@@ -15,7 +15,6 @@
 //! `ANALYZE TABLE`'s executor lives in `tidb_executor::analyze::exec`
 //! (Go `pkg/executor/analyze.go`); this is the session as it sees it.
 
-pub use tidb_executor::analyze::exec::{analyze_scan_concurrency_variable, AnalyzeService};
 
 impl tidb_executor::analyze::exec::AnalyzeExec for crate::Session {
     fn approximate_table_counts(
@@ -24,7 +23,7 @@ impl tidb_executor::analyze::exec::AnalyzeExec for crate::Session {
         std::sync::Arc::clone(&self.approximate_table_counts)
     }
 
-    fn drain_context_warnings(&mut self, ctx: &tidb_executor::StmtContext) {
+    fn drain_context_warnings(&mut self, ctx: &tidb_sessionctx::StmtContext) {
         crate::Session::drain_context_warnings(self, ctx);
     }
 

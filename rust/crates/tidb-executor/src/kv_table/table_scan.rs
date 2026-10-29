@@ -31,7 +31,8 @@ use super::{
     index_entry_handle, IndexRange, KvIndex, KvTable, KvTableError, PreparedPointGetDecodeContext,
     RowDecodeContext, TableHandle,
 };
-use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::executor::{Executor, ExecutorMeta};
+use tidb_driver_error::ExecError;
 use tidb_distsql::remote_scan::EXTRA_HANDLE_COLUMN_ID;
 use tidb_distsql::remote_scan::PushdownTopN;
 use tidb_distsql::remote_scan::PushdownStatementContext;

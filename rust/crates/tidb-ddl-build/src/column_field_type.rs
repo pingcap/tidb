@@ -112,7 +112,7 @@ pub fn column_type_code(declared: &ColumnType) -> Result<FieldTypeCode, ColumnTy
 /// This and a resolved charset of `binary` are the only two things that stamp
 /// `BinaryFlag`; see the module doc for why the `BINARY` column MODIFIER
 /// deliberately does not.
-pub use tidb_ast::is_intrinsically_binary;
+use tidb_ast::is_intrinsically_binary;
 
 /// Go's parser flen/decimal assignment plus `setCharsetCollationFlenDecimal`.
 ///

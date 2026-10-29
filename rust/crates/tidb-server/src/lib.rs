@@ -28,7 +28,7 @@
 mod auth_exchange;
 pub(crate) use tidb_session::domain::auth_identity;
 mod auth_plugin_registry;
-pub(crate) use tidb_domain_core::cluster_privileges;
+use tidb_store_driver::sql_query_error::SqlQueryError;
 use tidb_session::domain::cluster_session_node;
 pub(crate) use tidb_session::domain::configured_user_store;
 mod client_socket;
@@ -85,10 +85,8 @@ pub use auth_identity::{
 pub use auth_plugin_registry::{
     AuthPluginAdmission, AuthPluginDescriptor, AuthPluginRegistry, AuthPluginRegistryError,
 };
-pub use cluster_privileges::{registry_from_cluster, LoadedRegistry, SkippedGrant};
 use cluster_boot::run_cluster_session_node_with_spill;
 pub use cluster_session_node::ClusterServerSession;
-pub use tidb_domain_core::domain::Domain;
 pub use configured_user_store::{
     AuthenticatedIdentity, AuthenticationFailure, ConfiguredUserStore, ConfiguredUserStoreError,
 };
@@ -99,7 +97,6 @@ pub use handshake::{
 };
 pub use handshake_response::{HandshakeResponse41, WireString};
 pub use client_socket::ClientSocket;
-pub use tidb_session::domain::peer_address::PeerAddress;
 
 pub use mysql_connection::{
     serve_mysql_connection, serve_mysql_connection_with_tls, ConnectionCommandCounts,
@@ -128,7 +125,7 @@ pub use driver::{QuerySession, QuerySessionFactory};
 pub use sql_node::{
     ActiveQueryCancellation, BoxedResultSetSource, ConcurrentSqlNode, ConnectionCancellation,
     ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral,
-    QueryCancellationLease, QueryResult, SessionContext, ShutdownHandle, SqlNodeError, SqlQueryError, WriteOutcome,
+    QueryCancellationLease, QueryResult, SessionContext, ShutdownHandle, SqlNodeError,
 };
 pub use wire_status::{
     WireStatus, SERVER_MORE_RESULTS_EXISTS, SERVER_STATUS_AUTOCOMMIT, SERVER_STATUS_CURSOR_EXISTS,
@@ -601,7 +598,6 @@ pub(crate) fn isolate_process_globals() -> bool {
     );
     true
 }
-pub(crate) use tidb_session::domain::{
-    log_mysql_listening, log_status_listen,
-    log_status_listen_failed, open_spill_storage, zap_error, zap_stack, MemoryArbitratorAuthority,
-};
+pub(crate) use tidb_session::domain::{log_mysql_listening, log_status_listen, log_status_listen_failed, open_spill_storage, MemoryArbitratorAuthority};
+pub(crate) use tidb_util::logutil::zap_error;
+pub(crate) use tidb_util::logutil::zap_stack;

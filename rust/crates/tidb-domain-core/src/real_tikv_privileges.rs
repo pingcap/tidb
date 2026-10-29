@@ -44,7 +44,7 @@ pub struct ClusterAccounts {
     pub privileges: ClusterPrivileges,
     /// Every `SET GLOBAL` override `mysql.global_variables` held at that same
     /// snapshot, as `(name, value)` pairs ready for
-    /// `tidb_session::GlobalSysvars::load_from_cluster`.
+    /// `tidb_domain::global_sysvars::GlobalSysvars::load_from_cluster`.
     pub sysvars: Vec<(String, String)>,
 }
 

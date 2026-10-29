@@ -29,7 +29,7 @@ impl Session {
     // Go `SimpleExec.executeKillStmt`.
     /// [`Self::sql_digest_text_retriever`] as `TIDB_DECODE_SQL_DIGESTS` runs
     /// it from the statement context (Go `RetrieveGlobal`).
-    pub(crate) fn sql_digest_text_retrieval(&self) -> tidb_executor::SqlDigestTextRetrieval {
+    pub(crate) fn sql_digest_text_retrieval(&self) -> tidb_sessionctx::SqlDigestTextRetrieval {
         let retriever = self.sql_digest_text_retriever();
         std::sync::Arc::new(move |ctx, digests| {
             retriever

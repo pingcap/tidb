@@ -34,9 +34,10 @@ use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_proto::{Chunk as ResponseChunk, EncodeType, ExecutorExecutionSummary, SelectResponse};
 
 use super::chunk_decode::{decode_chunk, decode_select_response, ChunkDecodeError};
-use super::distsql_runtime::{LimiterWaitStats, SelectResultMetadata, SelectResultRuntimeStats};
+use super::distsql_runtime::{SelectResultMetadata, SelectResultRuntimeStats};
+use tidb_txnkv::LimiterWaitStats;
 use super::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
-pub use tidb_txnkv::{RequestStatsSample, ResponseRuntimeStats};
+use tidb_txnkv::ResponseRuntimeStats;
 use super::select_iter::SelectResultRow;
 use crate::{Warning, WarningCollector, WarningLevel};
 

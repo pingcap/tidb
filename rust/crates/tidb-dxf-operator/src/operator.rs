@@ -16,7 +16,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use tidb_resourcemanager::workerpool::{Context as WorkerContext, PanicError, WorkerPool};
-pub use tidb_resourcemanager::workerpool::{NoResult, TaskMayPanic, Worker};
+use tidb_resourcemanager::workerpool::{TaskMayPanic, Worker};
 
 use crate::{SimpleDataChannel, WithSink, WithSource};
 

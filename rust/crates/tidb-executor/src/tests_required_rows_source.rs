@@ -38,7 +38,8 @@ use tidb_expr::schema::Schema;
 
 use tidb_expr::NoColumns;
 
-use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::executor::{Executor, ExecutorMeta};
+use tidb_driver_error::ExecError;
 use crate::limit::LimitExec;
 use tidb_kv::mem_quota::StatementMemory;
 use crate::projection::ProjectionExec;

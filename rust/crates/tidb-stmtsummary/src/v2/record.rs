@@ -89,7 +89,7 @@ use tidb_util::execdetails::exec_details::{
 };
 use tidb_util::plancodec::{BINARY_PLAN_DISCARDED_ENCODED, PLAN_DISCARDED_ENCODED};
 use tidb_util::ppcpuusage::CpuUsages;
-use tidb_util::stringutil::go_to_lower;
+use tidb_hack::go_to_lower;
 use tikv_client::util::ExecDetailsSnapshot;
 use tikv_client::RuDetails;
 

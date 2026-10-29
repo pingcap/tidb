@@ -18,13 +18,13 @@
 use prost::Message;
 use tidb_codec::{encode_int, encode_key, encode_row_key};
 use tidb_datatype::Datum;
-use tidb_distsql::{
-    build_table_ranges, index_ranges_to_kv_ranges, table_handles_to_kv_ranges,
-    table_ranges_to_kv_ranges, DatumRange, DistSqlContext, ExecutorKind, ExecutorShape,
-    IsolationLevel, KvPriority, KvRequestMetadata, PagingConfig, ReplicaReadType, RequestBuilder,
-    RequestEnvelope, RequestKeyRange, RequestSource, RequestType, StoreLabel, StoreType,
-    TableRangeSpec, DC_LABEL_KEY, DEFAULT_DIST_SQL_CONCURRENCY, GLOBAL_REPLICA_SCOPE,
-};
+use tidb_distsql::{build_table_ranges, index_ranges_to_kv_ranges, table_handles_to_kv_ranges, table_ranges_to_kv_ranges, DatumRange, DistSqlContext, ExecutorKind, ExecutorShape, KvPriority, KvRequestMetadata, PagingConfig, RequestBuilder, RequestEnvelope, RequestKeyRange, TableRangeSpec, DC_LABEL_KEY, DEFAULT_DIST_SQL_CONCURRENCY, GLOBAL_REPLICA_SCOPE};
+use tidb_txnkv::StoreType;
+use tidb_txnkv::StoreLabel;
+use tidb_txnkv::RequestType;
+use tidb_txnkv::RequestSource;
+use tidb_txnkv::ReplicaReadType;
+use tidb_txnkv::IsolationLevel;
 use tidb_proto::ResourceGroupTag;
 use tidb_txnkv::{Handle, IntHandle, Key, ResourceGroupTagBuilder};
 

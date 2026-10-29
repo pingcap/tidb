@@ -23,7 +23,7 @@ use tidb_ast::{
 use tidb_bindinfo::binding::{self, Binding, BIND_INFO_COLUMNS, SOURCE_MANUAL, STATUS_ENABLED};
 use tidb_datatype::Datum;
 use tidb_expr::user_vars::UserVarsReader;
-use tidb_util::stringutil::go_to_lower;
+use tidb_hack::go_to_lower;
 
 use crate::{DriverError, StmtOutput};
 
@@ -290,7 +290,7 @@ pub trait SqlBindExec: crate::show::exec::ShowExec {
                             "can't find specified user variable: {name}"
                         )));
                     };
-                    crate::simple::account_tables::sysvar_datum_text(&found).unwrap_or_default()
+                    tidb_datatype::datum_text::sysvar_datum_text(&found).unwrap_or_default()
                 }
             };
             digests.extend(
@@ -324,7 +324,7 @@ pub trait SqlBindExec: crate::show::exec::ShowExec {
         for row in rows {
             let text = |index: usize| {
                 row.get(index)
-                    .and_then(crate::simple::account_tables::sysvar_datum_text)
+                    .and_then(tidb_datatype::datum_text::sysvar_datum_text)
                     .unwrap_or_default()
             };
             let stmt_type = text(0);
@@ -337,7 +337,7 @@ pub trait SqlBindExec: crate::show::exec::ShowExec {
                 let mut query = text(5);
                 // A prepared statement's sample carries its arguments.
                 let prepared = row.get(4).is_some_and(|value| {
-                    crate::simple::account_tables::sysvar_datum_text(value).is_some_and(|flag| flag == "1")
+                    tidb_datatype::datum_text::sysvar_datum_text(value).is_some_and(|flag| flag == "1")
                 });
                 if prepared {
                     if let Some(index) = query.rfind("[arguments:") {
@@ -540,9 +540,9 @@ pub trait SqlBindExec: crate::show::exec::ShowExec {
                     // silently dropping nothing.
                     tidb_ast::BindingValue::UserVar(name) => self
                         .user_vars()
-                        .get_user_var_val(&tidb_util::stringutil::go_to_lower(name))
+                        .get_user_var_val(&tidb_hack::go_to_lower(name))
                         .as_ref()
-                        .and_then(crate::simple::account_tables::sysvar_datum_text)
+                        .and_then(tidb_datatype::datum_text::sysvar_datum_text)
                         .ok_or_else(|| DriverError::unsupported("sql digest is null")),
                 })
                 .collect::<Result<Vec<_>, _>>()?,

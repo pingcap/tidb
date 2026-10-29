@@ -13,7 +13,7 @@ use tidb_table::kv_table::KvColumn;
 use prost::Message;
 use tidb_proto::tipb::DagRequest;
 use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
-use tidb_executor::StmtContext;
+use tidb_sessionctx::StmtContext;
 use tidb_txnkv::Key;
 
 fn long_col(name: &str, id: i64) -> KvColumn {

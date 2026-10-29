@@ -424,8 +424,8 @@ fn peer_meta(fields: &[tidb_datatype::FieldType]) -> tidb_executor::ExecutorMeta
     tidb_executor::ExecutorMeta::new(schema, 0, 32, 1024)
 }
 
-fn peer_context(zone: &SessionTimeZone) -> tidb_executor::StmtContext {
-    tidb_executor::StmtContext::for_query().with_time_zone(zone.clone())
+fn peer_context(zone: &SessionTimeZone) -> tidb_sessionctx::StmtContext {
+    tidb_sessionctx::StmtContext::for_query().with_time_zone(zone.clone())
 }
 
 /// Opens, drains and closes `executor`, whose rows have `fields`; its
@@ -433,7 +433,7 @@ fn peer_context(zone: &SessionTimeZone) -> tidb_executor::StmtContext {
 fn drain_peer_executor(
     mut executor: Box<dyn tidb_executor::Executor>,
     fields: &[tidb_datatype::FieldType],
-    ctx: &tidb_executor::StmtContext,
+    ctx: &tidb_sessionctx::StmtContext,
     warnings: &mut Vec<tipb::Error>,
 ) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
     executor
@@ -1127,16 +1127,16 @@ mod tests {
                 rows
             }
             "DATA_LOCK_WAITS" => {
-                struct Waits(Vec<tidb_session::DataLockWait>);
-                impl tidb_session::DataLockWaitsProvider for Waits {
-                    fn lock_waits(&self) -> Result<Vec<tidb_session::DataLockWait>, String> {
+                struct Waits(Vec<tidb_executor::memtable_reader::DataLockWait>);
+                impl tidb_executor::memtable_reader::DataLockWaitsProvider for Waits {
+                    fn lock_waits(&self) -> Result<Vec<tidb_executor::memtable_reader::DataLockWait>, String> {
                         Ok(self.0.clone())
                     }
                 }
                 let mut tag = tidb_txnkv::ResourceGroupTagBuilder::new(None);
                 tag.set_sql_digest(&[0xaa, 0xbb, 0xcc, 0xdd, 0x11, 0x44]);
                 session.set_data_lock_waits_provider(Arc::new(Waits(vec![
-                    tidb_session::DataLockWait {
+                    tidb_executor::memtable_reader::DataLockWait {
                         txn: 1,
                         wait_for_txn: 2,
                         key: vec![],
@@ -1241,7 +1241,7 @@ mod tests {
             assert!(response.other_error.is_empty(), "{}", response.other_error);
             let response = tipb::SelectResponse::decode(response.data.as_ref()).unwrap();
             assert!(response.error.is_none());
-            let schema = tidb_executor::infoschema_reader::table_schema("CLUSTER_PROCESSLIST").unwrap();
+            let schema = tidb_infoschema::infoschema_meta::table_schema("CLUSTER_PROCESSLIST").unwrap();
             let fields = vec![schema[1].1.clone(), schema[1].1.clone()];
             let expected = if encoding == tipb::EncodeType::TypeDefault {
                 tidb_codec::encode_value(&[Datum::UInt(11), Datum::UInt(11)]).unwrap()
@@ -1422,9 +1422,9 @@ mod tests {
         let mut info = tidb_stmtsummary::v2::record::generate_stmt_exec_info_4_test("c1c2");
         info.normalized_sql = "local normalized statement".into();
         tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP.add_statement(&info);
-        struct Waits(Vec<tidb_session::DataLockWait>);
-        impl tidb_session::DataLockWaitsProvider for Waits {
-            fn lock_waits(&self) -> Result<Vec<tidb_session::DataLockWait>, String> {
+        struct Waits(Vec<tidb_executor::memtable_reader::DataLockWait>);
+        impl tidb_executor::memtable_reader::DataLockWaitsProvider for Waits {
+            fn lock_waits(&self) -> Result<Vec<tidb_executor::memtable_reader::DataLockWait>, String> {
                 Ok(self.0.clone())
             }
         }
@@ -1435,7 +1435,7 @@ mod tests {
                     .map(|digest| {
                         let mut tag = tidb_txnkv::ResourceGroupTagBuilder::new(None);
                         tag.set_sql_digest(digest);
-                        tidb_session::DataLockWait {
+                        tidb_executor::memtable_reader::DataLockWait {
                             resource_group_tag: tag.encode_tag_with_key(&[]),
                             ..Default::default()
                         }
@@ -1488,7 +1488,7 @@ mod tests {
                 );
                 "CLUSTER_STATEMENTS_SUMMARY_HISTORY"
             };
-            let columns = tidb_executor::infoschema_reader::table_schema(table).unwrap();
+            let columns = tidb_infoschema::infoschema_meta::table_schema(table).unwrap();
             assert_eq!(
                 scan.columns.iter().map(|c| c.column_id).collect::<Vec<_>>(),
                 ["DIGEST", "DIGEST_TEXT"]
@@ -1869,7 +1869,7 @@ mod tests {
                 tidb_executor::infoschema_reader::memory_table_id(table).unwrap(),
                 &columns,
                 Some(("diagnostic_alice", "127.0.0.1")),
-                &tidb_executor::StmtContext::for_query(),
+                &tidb_sessionctx::StmtContext::for_query(),
                 &SessionTimeZone::utc(),
                 1,
             )?;
@@ -2081,7 +2081,7 @@ mod tests {
                     tidb_executor::infoschema_reader::memory_table_id(table).unwrap(),
                     &columns,
                     Some(("summary_alice", "127.0.0.1")),
-                    &tidb_executor::StmtContext::for_query(),
+                    &tidb_sessionctx::StmtContext::for_query(),
                     &SessionTimeZone::utc(),
                     2,
                 )
@@ -2128,7 +2128,7 @@ mod tests {
                             &columns,
                             &[digest, text],
                             None,
-                            &tidb_executor::StmtContext::for_query(),
+                            &tidb_sessionctx::StmtContext::for_query(),
                             &SessionTimeZone::utc(),
                             2,
                             Some(&[value, "00".into()].into_iter().collect()),
@@ -2207,7 +2207,7 @@ mod tests {
                     .unwrap(),
                 &columns,
                 Some(("summary_alice", "127.0.0.1")),
-                &tidb_executor::StmtContext::for_query(),
+                &tidb_sessionctx::StmtContext::for_query(),
                 &SessionTimeZone::utc(),
                 1,
             )
@@ -2554,7 +2554,7 @@ mod tests {
         info.static_info.status_port = server.local_addr().port() as usize;
         info.static_info.json_server_id = 17;
         let outbound = peer_client();
-        let context = tidb_executor::StmtContext::for_query();
+        let context = tidb_sessionctx::StmtContext::for_query();
         let columns =
             tidb_executor::driver::infoschema_meta::table_schema("CLUSTER_PROCESSLIST").unwrap();
         let rows = outbound

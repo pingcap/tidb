@@ -45,7 +45,7 @@ use crate::real_tikv_ddl::{
     DdlSchemaSync, IndexBackfiller, PersistedDdlJobOutcome, SchemaVersionNotifier,
 };
 
-use tidb_store_driver::real_tikv_read::RealOptimisticTransactionOpener;
+use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 use tidb_infoschema_isvalidator::SchemaValidator;
 use tidb_kv::cluster_storage::{ClusterSnapshot, ClusterTableStorage, MutationBuffer};
 use tidb_table::kv_table::RowDecodeContext;
@@ -307,7 +307,7 @@ where
     /// Go `ddlJobDoneChMap`, shared by this node's submitting sessions.
     ddl_job_done_ch_map: Arc<crate::real_tikv_ddl::DdlJobDoneChMap>,
     /// Go `pkg/ddl/session.Pool`: the sessions the node hands DDL.
-    session_pool: Arc<dyn crate::real_tikv_ddl::DdlSessionPool>,
+    session_pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
 }
 
 impl<S> PersistedDdlScheduler<S>
@@ -380,7 +380,7 @@ where
             std::sync::OnceLock<crate::real_tikv_ddl::delete_range::DelRangeEmulator>,
         >,
         ddl_job_done_ch_map: Arc<crate::real_tikv_ddl::DdlJobDoneChMap>,
-        session_pool: Arc<dyn crate::real_tikv_ddl::DdlSessionPool>,
+        session_pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
     ) {
         must_reload_schemas(schema_sync.as_ref(), &stopped, DDL_SCHEDULER_INTERVAL);
         if stop.load(Ordering::Acquire) {
@@ -656,7 +656,7 @@ where
         schema_version_syncer: Option<Arc<dyn tidb_schemaver::Syncer>>,
         schema_validator: Arc<SchemaValidator>,
         campaign_owner: bool,
-        session_pool: Arc<dyn crate::real_tikv_ddl::DdlSessionPool>,
+        session_pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
         row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
     ) -> Result<Self, String> {
         Self::new_with_min_job_id_refresher(
@@ -687,7 +687,7 @@ where
         schema_validator: Arc<SchemaValidator>,
         campaign_owner: bool,
         min_job_id_refresher: Arc<MinJobIdRefresher>,
-        session_pool: Arc<dyn crate::real_tikv_ddl::DdlSessionPool>,
+        session_pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
         row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
     ) -> Result<Self, String> {
         let owner_id = server_info.local_server_info().static_info.id;
@@ -954,7 +954,7 @@ mod schema_sync_tests {
             &(Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default())
                 as Arc<dyn tidb_table::table_from_meta::TableAutoIds>),
             &(Arc::new(tidb_session::ddl_session_pool::ExecutorDdlSessionPool)
-                as Arc<dyn crate::real_tikv_ddl::DdlSessionPool>),
+                as Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>),
         )
     }
 
@@ -2980,13 +2980,13 @@ struct KvTableIndexBackfiller {
     /// The node's row-ID allocators, for the reorg handle's row.
     row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
     /// The data checks Go runs as restricted SQL through its session pool.
-    session_pool: Arc<dyn crate::real_tikv_ddl::DdlSessionPool>,
+    session_pool: Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
 }
 
 impl KvTableIndexBackfiller {
     fn new(
         row_ids: &Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
-        session_pool: &Arc<dyn crate::real_tikv_ddl::DdlSessionPool>,
+        session_pool: &Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>,
     ) -> Self {
         Self {
             row_ids: Arc::clone(row_ids),
@@ -3274,7 +3274,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
     /// by the same check the in-process `ADD FOREIGN KEY` runs.
     fn stage_foreign_key_check(
         &self,
-        plan: &crate::cluster_ddl::ForeignKeyCheck,
+        plan: &tidb_ddl_build::session_pool::ForeignKeyCheck,
         snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
         buffer: &MutationBuffer,
     ) -> Result<(), LockSqlError> {
@@ -3442,7 +3442,7 @@ fn backfill_failure(error: tidb_table::kv_table::KvTableError) -> LockSqlError {
 /// mode and location with no session.
 #[must_use]
 fn reorg_table_mutate_context(
-    vars: &crate::cluster_ddl::add_index::ReorgSessionVars,
+    vars: &tidb_ddl_build::session_pool::ReorgSessionVars,
 ) -> tidb_table::context::StaticMutateContext {
     tidb_table::context::StaticMutateContext::for_reorg_meta(vars.sql_mode, vars.time_zone.clone())
 }
@@ -3457,7 +3457,7 @@ mod reorg_context_tests {
     /// held Go's `reorgTableMutateContext` (Go `newReorgSessCtx`) over the
     /// job's SQL mode and time zone. Go's reorganization reads the current time
     /// in the job's zone, as a NULL bound for a `TIMESTAMP NOT NULL` column does.
-    fn reorg_statement_context(vars: &crate::cluster_ddl::add_index::ReorgSessionVars) -> tidb_executor::StmtContext {
+    fn reorg_statement_context(vars: &tidb_ddl_build::session_pool::ReorgSessionVars) -> tidb_sessionctx::StmtContext {
         tidb_ddl_build::table_info_build::default_ddl_statement_context()
             .with_ddl_sql_mode(vars.sql_mode)
             .with_lazy_clock(None, vars.time_zone.clone())
@@ -3529,7 +3529,7 @@ mod reorg_context_tests {
         for mode in modes {
             let sql_mode = tidb_mysql::get_sql_mode(mode).expect("a valid SQL mode").0;
             for zone in &zones {
-                let vars = crate::cluster_ddl::add_index::ReorgSessionVars {
+                let vars = tidb_ddl_build::session_pool::ReorgSessionVars {
                     sql_mode,
                     time_zone: zone.clone(),
                 };

@@ -7,6 +7,7 @@
 //! `pkg/util/ranger` feeding `pkg/executor`'s index reader.
 
 use super::*;
+use tidb_table::kv_table::KvTable;
 use tidb_table::kv_table::IndexRange;
 
 fn planner_index_path(
@@ -99,7 +100,8 @@ fn planner_index_path(
 /// the remaining range, then applies the shipped 0.01 ordering-risk ratio.
 #[test]
 fn ordered_limit_adjusts_the_common_handle_scan_estimate() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -271,7 +273,8 @@ fn ordered_limit_adjusts_the_common_handle_scan_estimate() {
 /// two-child IndexLookUp, not an IndexReader with a root identity projection.
 #[test]
 fn non_covering_random_points_use_index_lookup_without_identity_projection() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -1102,7 +1105,8 @@ fn a_handle_that_leads_its_index_is_not_appended_behind_it() {
 /// pushed-Limit plan.
 #[test]
 fn a_descending_handle_limit_answers_the_largest_ids() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -1171,7 +1175,8 @@ fn a_descending_handle_limit_answers_the_largest_ids() {
 /// order at all and planned a TopN.
 #[test]
 fn an_ascending_handle_order_limit_pushes_a_limit_not_a_topn() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -1225,7 +1230,8 @@ fn an_ascending_handle_order_limit_pushes_a_limit_not_a_topn() {
 /// hbx-web3's two-key flex query.
 #[test]
 fn partial_index_topn_eliminates_identity_projection() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(

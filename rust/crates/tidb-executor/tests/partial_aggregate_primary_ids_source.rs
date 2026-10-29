@@ -35,7 +35,10 @@ use tidb_distsql::remote_scan::PushdownStatementContext;
 use tidb_distsql::remote_scan::PushdownPartialAggregate;
 use tidb_proto::tipb::DagRequest;
 use tidb_kv::storage::{StorageError, StorageIterator, TableStorage};
-use tidb_executor::{IndexRange, KvColumn, KvIndex, KvTable};
+use tidb_table::kv_table::IndexRange;
+use tidb_table::kv_table::KvColumn;
+use tidb_table::kv_table::KvIndex;
+use tidb_table::kv_table::KvTable;
 use tidb_txnkv::Key;
 
 const TABLE_ID: i64 = 42;
@@ -201,7 +204,7 @@ fn capture(table: &mut KvTable, captured: Arc<Mutex<Option<Recorded>>>) {
         Vec::<tidb_expr::expression::Expression>::new().as_slice(),
         Option::<&[IndexRange]>::None,
         &count_over_primary(),
-        &tidb_executor::StmtContext::default(),
+        &tidb_sessionctx::StmtContext::default(),
         &SessionTimeZone::default(),
         &PushdownStatementContext::default(),
         false, // desc

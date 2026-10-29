@@ -230,7 +230,7 @@ pub struct JsonSqlWarnForSlowLog {
 /// Go `RewritePhaseInfo` and `DurationOptimizer`, which the planner sets.
 pub use crate::phase_durations::{DurationOptimizer, RewritePhaseInfo};
 
-pub use tidb_util::execdetails::exec_details::KvExecDetails;
+use tidb_util::execdetails::exec_details::KvExecDetails;
 
 /// Go `execdetails.LoadTiKVExecDetails(ctx.Value(util.ExecDetailsKey))`:
 /// client-rust charges the statement's `ExecDetails` itself, traffic

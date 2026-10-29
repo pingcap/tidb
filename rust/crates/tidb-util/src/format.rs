@@ -19,7 +19,6 @@
 //! here because the util package additionally doubles backslashes.
 
 use tidb_datatype::{go_chars, GoStringSource};
-pub use tidb_datatype::{FlatFormatter, FormatFragment, Formatter, IndentFormatter};
 
 /// Applies `pkg/util/format.OutputFormat` to a byte-preserving Go string.
 pub fn output_format(input: impl GoStringSource) -> String {

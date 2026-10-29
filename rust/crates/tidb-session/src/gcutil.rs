@@ -14,7 +14,7 @@
 
 use tidb_executor::DriverError;
 
-use crate::restricted_sql::RestrictedSqlExecutor;
+use tidb_executor::memtable_reader::RestrictedSqlExecutor;
 
 /// Go `validateSnapshot`: the GC safe point read through restricted SQL, on
 /// an internal session at the current time, independent of the user's

@@ -12,6 +12,8 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-sessionstates = { path = "../tidb-sessionstates" }
+tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-bindinfo = { path = "../tidb-bindinfo" }
 tidb-domain-core = { path = "../tidb-domain-core" }
 tidb-kv = { path = "../tidb-kv" }
@@ -126,7 +128,6 @@ rustls.workspace = true
 rustls-pemfile.workspace = true
 tidb-parser = { path = "../tidb-parser" }
 # The session-token login presents a token this process signs.
-tidb-sessionstates = { path = "../tidb-sessionstates" }
 tempfile.workspace = true
 # The integration corpus's script parser and comparison, driven over the
 # embedded store by `cluster_session_node::tests::corpus_unistore`.

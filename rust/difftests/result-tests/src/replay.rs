@@ -33,7 +33,7 @@ use crate::mysqltest_script::{
 };
 use tidb_datatype::Datum;
 use tidb_executor::DriverError;
-use tidb_session::StmtOutput;
+use tidb_executor::StmtOutput;
 
 /// One connection of a replay backend: what the engine asks of whatever
 /// runs SQL.

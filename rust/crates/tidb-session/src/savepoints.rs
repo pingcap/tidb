@@ -24,7 +24,7 @@
 //! working catalog image, the cluster node's mutation-buffer checkpoint --
 //! and is the type parameter `C`, which Go has as `tikv.MemDBCheckpoint`.
 
-use tidb_util::stringutil::go_to_lower;
+use tidb_hack::go_to_lower;
 
 /// A transaction's savepoints, oldest first.
 #[derive(Debug)]

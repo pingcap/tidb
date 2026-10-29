@@ -64,7 +64,8 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::truthy_of;
 
-use crate::executor::{ExecError, Executor, ExecutorMeta};
+use crate::executor::{Executor, ExecutorMeta};
+use tidb_driver_error::ExecError;
 use tidb_hack::GoCaseCompare;
 
 /// Lookups over at most this many handles are fetched inline by the calling
@@ -6537,7 +6538,7 @@ use std::collections::HashMap;
 
     use super::*;
     use crate::driver::{run_select_on, Catalog};
-    use crate::explain::ExplainFormat;
+    use tidb_sessionctx::explain_format::ExplainFormat;
     use tidb_table::kv_table::KvTable;
     use tidb_table::kv_table::KvColumn;
     use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};

@@ -44,11 +44,8 @@ use crate::cluster_privilege_load::{
     ClusterPrivileges, DB_PRIVILEGE_COLUMNS, USER_PRIVILEGE_COLUMNS,
 };
 use tidb_syssession::mysql_system_tables::{scan_system_table, SystemTableError, SystemTableView, SYSTEM_DB};
-use tidb_syssession::system_row_write::{
-    canonical_text, decode_stored_row, defaults_row, delete_clustered_row, delete_row,
-    indexed_columns, insert_row, is_clustered, row_id_of, store_clustered_row, update_row,
-    RowEncodeError, RowValues, NO, YES,
-};
+use tidb_syssession::system_row_write::{canonical_text, decode_stored_row, defaults_row, delete_clustered_row, delete_row, indexed_columns, insert_row, is_clustered, row_id_of, store_clustered_row, update_row, RowValues, NO, YES};
+use tidb_table::origin_default::RowEncodeError;
 
 /// Why an account image could not be written.
 #[derive(Debug)]
@@ -916,7 +913,7 @@ fn apply_policy_values(
         if !same {
             row.insert(
                 id,
-                tidb_syssession::system_row_write::typed_value(wanted, &column.read().field_type)?,
+                tidb_table::origin_default::typed_value(wanted, &column.read().field_type)?,
             );
             moved = true;
         }

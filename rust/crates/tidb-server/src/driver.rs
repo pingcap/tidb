@@ -22,10 +22,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tidb_ast::Stmt;
-use tidb_session::domain::session_api::{
-    ActiveQueryCancellation, GeneralExecuteOutcome, PreparedGeneral, QueryResult, SessionContext,
-    SqlQueryError,
-};
+use tidb_session::domain::session_api::{ActiveQueryCancellation, GeneralExecuteOutcome, PreparedGeneral, QueryResult, SessionContext};
+use tidb_store_driver::sql_query_error::SqlQueryError;
 use tidb_session::domain::wire_status::WireStatus;
 use tidb_util::globalconn::Allocator;
 

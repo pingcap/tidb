@@ -10,7 +10,8 @@ use super::*;
 
 #[test]
 fn aggregation_hints_are_lowered_from_the_shared_physical_plan() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE hinted_agg (g BIGINT, v BIGINT)", &mut catalog)
@@ -133,7 +134,8 @@ fn aggregation_hints_are_lowered_from_the_shared_physical_plan() {
 
 #[test]
 fn a_computed_projection_column_explains_as_column_not_its_alias() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE alias_agg (g BIGINT, v BIGINT)", &mut catalog)
@@ -178,7 +180,8 @@ fn a_computed_projection_column_explains_as_column_not_its_alias() {
 
 #[test]
 fn distinct_aggregation_family_is_lowered_from_the_shared_physical_plan() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE hinted_distinct (g BIGINT)", &mut catalog).unwrap();
@@ -230,7 +233,8 @@ fn distinct_aggregation_family_is_lowered_from_the_shared_physical_plan() {
 /// instead of scanning the unrelated `k` index.
 #[test]
 fn a_shared_aggregate_access_receipt_keeps_the_table_range() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -284,7 +288,8 @@ fn a_shared_aggregate_access_receipt_keeps_the_table_range() {
 /// `lt(l_shipdate, 1997-01-01 00:00:00.000000)` for exactly this reason.
 #[test]
 fn a_constant_date_add_in_a_predicate_folds_before_push_down() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE t (d DATE NOT NULL)", &mut catalog).unwrap();
@@ -327,7 +332,8 @@ fn a_constant_date_add_in_a_predicate_folds_before_push_down() {
 /// materialized Projection.
 #[test]
 fn aggregate_push_down_substitutes_child_projection_before_injection() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -494,7 +500,8 @@ fn aggregate_push_down_substitutes_child_projection_before_injection() {
 /// between HashAgg and Sort.
 #[test]
 fn grouped_order_by_projects_visible_fields_below_sort() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -585,7 +592,8 @@ fn grouped_order_by_projects_visible_fields_below_sort() {
 /// the dimension name NDV before the fact table raises the row count again.
 #[test]
 fn grouped_rows_follow_the_reordered_join_tree() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -714,7 +722,8 @@ fn grouped_rows_follow_the_reordered_join_tree() {
 /// restores the written `[group, count]` order.
 #[test]
 fn grouped_partial_count_carries_the_group_key() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -777,7 +786,8 @@ fn grouped_partial_count_carries_the_group_key() {
 /// a meaningless input order (TPCC condition 06).
 #[test]
 fn derived_table_order_by_is_removed_unless_top_level_limit_or_disabled() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -915,7 +925,8 @@ fn max_over_a_derived_sum_materializes_coprocessor_topn_keys() {
 
 #[test]
 fn derived_aggregate_null_filter_refreshes_source_statistics() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -965,7 +976,8 @@ fn derived_aggregate_null_filter_refreshes_source_statistics() {
 /// the same mistake).
 #[test]
 fn a_narrow_covering_index_range_prices_the_common_handle_once() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -1013,7 +1025,8 @@ fn a_narrow_covering_index_range_prices_the_common_handle_once() {
 /// pseudo-statistics fixture selects this pair (2026-09-07).
 #[test]
 fn global_sum_expression_uses_partial_and_final_stream_agg() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -1072,7 +1085,8 @@ fn global_sum_expression_uses_partial_and_final_stream_agg() {
 /// StreamAgg, including the decimal input projection required by SUM.
 #[test]
 fn joined_integer_sum_uses_root_stream_agg() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -1133,7 +1147,8 @@ fn joined_integer_sum_uses_root_stream_agg() {
 /// Live Go selects StreamAgg at both stages for this pseudo-statistics fixture.
 #[test]
 fn global_avg_uses_count_sum_partial_and_final_stream_agg() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -1188,7 +1203,8 @@ fn global_avg_uses_count_sum_partial_and_final_stream_agg() {
 /// projection used by the one-row plan is absent.
 #[test]
 fn global_integer_sum_uses_gos_stream_agg_and_cast_projection() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -1244,7 +1260,8 @@ fn global_integer_sum_uses_gos_stream_agg_and_cast_projection() {
 /// equality is an access condition, so no Selection survives above PointGet.
 #[test]
 fn global_count_over_point_get_uses_gos_stream_agg_without_selection() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -1295,7 +1312,8 @@ fn global_count_over_point_get_uses_gos_stream_agg_without_selection() {
 /// places a partial StreamAgg over that scan below the IndexReader.
 #[test]
 fn global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -1465,7 +1483,7 @@ fn global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader() {
         topn.sort();
         let bounds = |value| tidb_codec::encode_key(&[Datum::Int(value)]).unwrap();
         (
-            tidb_planner::cardinality::row_count_estimator::ColumnStats {
+            tidb_stats::table_statistics::ColumnStats {
                 histogram: tidb_stats::Histogram {
                     id: column_id,
                     ndv: 1736,
@@ -1484,7 +1502,7 @@ fn global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader() {
                 stats_ver: 2,
                 unsigned: false,
             },
-            tidb_planner::cardinality::row_count_estimator::IndexStats {
+            tidb_stats::table_statistics::IndexStats {
                 histogram: tidb_stats::Histogram {
                     id: index_id,
                     ndv: 1736,
@@ -1507,7 +1525,7 @@ fn global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader() {
         )
     };
     let (column_stats, index_stats) = analyzed_stats(k_column_id, index_id);
-    let statistics = crate::access_cost::TableStatistics::new(
+    let statistics = tidb_stats::table_statistics::TableStatistics::new(
         10_000,
         0,
         [(k_column_id, column_stats)].into_iter().collect(),
@@ -1863,7 +1881,8 @@ fn select_distinct() {
 /// ordinary root HashAgg shape instead of returning a trace-only error.
 #[test]
 fn explain_distinct_scalar_subquery_with_filter() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on(
@@ -2220,7 +2239,8 @@ fn grouped_aggregation_enumerates_families_over_one_planned_child() {
 
 #[test]
 fn explain_uses_the_common_physical_plan_without_legacy_ast_execution() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     let ctx = crate::StmtContext::for_query();

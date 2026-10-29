@@ -20,7 +20,8 @@
 
 use tidb_ast::{CiString, PartitionType, ViewSecurity};
 use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags, UNSPECIFIED_LENGTH};
-use tidb_model::go_runtime::{GoShared, GoSharedPointerSlice, GoSharedSlice};
+use tidb_model::go_runtime::{GoShared, GoSharedPointerSlice};
+use tidb_goruntime::go_runtime::GoSharedSlice;
 use tidb_model::serde_helpers::GoValueSlice;
 use tidb_model::table::ViewInfo;
 use tidb_model::{

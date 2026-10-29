@@ -435,7 +435,7 @@ pub(super) fn plan_persisted_exchange_partition_job_step<S: MetaSnapshot>(
                         merging: false,
                         physical_ids: Vec::new(),
                         batch_size: 0,
-                        session_vars: super::add_index::ReorgSessionVars::of_job(&active.job),
+                        session_vars: tidb_ddl_build::session_pool::ReorgSessionVars::of_job(&active.job),
                         row_count: active.job.row_count,
                         column: None,
                         sub_job: None,

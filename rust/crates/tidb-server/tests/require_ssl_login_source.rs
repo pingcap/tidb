@@ -36,13 +36,10 @@ use std::sync::Arc;
 
 use sha1::{Digest, Sha1};
 use tidb_protocol::{PacketReader, PacketWriter, COM_QUIT, DEFAULT_MAX_ALLOWED_PACKET};
-use tidb_server::{
-    serve_mysql_connection_with_tls, ConfiguredUserStore, ConnectionCancellation, ConnectionExit,
-    ConnectionTracker, MysqlServerTls, QueryResult, QuerySession, QuerySessionFactory,
-    SessionContext, SqlQueryError,
-};
+use tidb_server::{serve_mysql_connection_with_tls, ConfiguredUserStore, ConnectionCancellation, ConnectionExit, ConnectionTracker, MysqlServerTls, QueryResult, QuerySession, QuerySessionFactory, SessionContext};
+use tidb_store_driver::sql_query_error::SqlQueryError;
 use tidb_privilege::{encode_password, PrivilegeRegistry, SslType};
-use tidb_session::GlobalSysvars;
+use tidb_domain::global_sysvars::GlobalSysvars;
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
 const CLIENT_SECURE_CONNECTION: u32 = 1 << 15;

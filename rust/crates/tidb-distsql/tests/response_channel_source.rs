@@ -14,10 +14,10 @@
 
 //! Source-derived response-channel ordering, error, and close lifecycle tests.
 
-use tidb_distsql::{
-    ResponseChannel, ResponseChannelError, ResponseChannelEvent, ResponseChannelState, Warning,
-    WarningClass, WarningLevel,
-};
+use tidb_distsql::{ResponseChannel, ResponseChannelError, ResponseChannelEvent, ResponseChannelState};
+use tidb_util::context::WarningLevel;
+use tidb_util::context::WarningClass;
+use tidb_util::context::Warning;
 
 #[test]
 fn go_fetch_response_preserves_result_warning_and_close_order() {

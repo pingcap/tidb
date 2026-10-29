@@ -27,9 +27,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use crate::seams::{
-    DelRangeTask, GcError, GcResult, GcRuleClient, GcSession, GcSessionFactory,
-};
+use crate::seams::{GcError, GcResult, GcRuleClient, GcSession, GcSessionFactory};
+use tidb_ddl::ddl_delete_range::DelRangeTask;
 use crate::tikv_store::TikvStoreClient;
 use crate::{GcWorker, GcWorkerDeps, GcWorkerHandle};
 use tidb_util::sqlescape::{escape_sql, SqlArg};
@@ -38,7 +37,7 @@ use tidb_session::domain::cluster_session_node::ClusterServerSession;
 use tidb_domain_core::domain::Domain;
 use tidb_session::Session;
 use tidb_session::domain::session_api::SessionContext;
-use tidb_session::domain::session_api::SqlQueryError;
+use tidb_store_driver::sql_query_error::SqlQueryError;
 
 /// How long one internal request to PD or TiKV may take before the worker
 /// gives up on it.
@@ -54,7 +53,7 @@ pub struct NodeGcWorker {
 pub fn start_gc_worker(
     factory: &Arc<Domain>,
     store: &tidb_txnkv::driver::tikv_store::TikvStore,
-    opener: Arc<tidb_store_driver::real_tikv_read::RealOptimisticTransactionOpener>,
+    opener: Arc<tidb_txnkv::transaction::RealOptimisticTransactionOpener>,
 ) -> Result<NodeGcWorker, String> {
     // The node serves the null keyspace.
     let client = Arc::new(TikvStoreClient::new(

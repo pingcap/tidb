@@ -28,22 +28,19 @@
 //! [`MemTableSourceExec`] remains the source for catalog-backed in-memory
 //! tables.
 
-use crate::executor::{ExecError, Executor};
+use crate::executor::Executor;
+use tidb_driver_error::ExecError;
 use tidb_table::kv_table::TableHandle;
-use tidb_table::kv_table::KvTable;
 use tidb_kv::mem_quota;
-use std::collections::HashMap;
 use std::sync::Arc;
-use tidb_ast::{JoinNode, QueryStmt, SelectField, Stmt, Visitable, Visitor};
+use tidb_ast::{QueryStmt, Stmt, Visitable, Visitor};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
 
 use tidb_expr::schema::Schema;
-pub use tidb_planner::plan_builder::field_name::{
-    default_field_display_name, strip_spec_field_comment_markers,
-};
+use tidb_planner::plan_builder::field_name::default_field_display_name;
 
 pub mod access;
 use tidb_planner::point_get_plan;
@@ -55,7 +52,6 @@ mod catalog_planner_view_tests;
 mod catalog_statistics_tests;
 mod table_resolver;
 pub(crate) use table_resolver::TableResolver;
-pub(crate) use tidb_stats_handle::sync_load;
 mod dml;
 pub(crate) use tidb_planner::from_scope as from;
 mod index_usage_reporter;
@@ -940,7 +936,7 @@ mod dml_batch_tests {
     #[test]
     fn quota_failure_stops_reading_and_closes_source() {
         let (exec, nexts, closes, types) = source(false);
-        let memory = crate::StatementMemory::new(1024, tidb_kv::mem_quota::OomAction::Cancel, 7);
+        let memory = crate::StatementMemory::new(1024, tidb_vardef::OomAction::Cancel, 7);
         let accountant = memory.write_accountant(tidb_kv::mem_quota::label::UPDATE);
         let result = visit_executor_rows(exec, &types, &memory, |row| {
             accountant.account_row(&row).map_err(DriverError::from)
@@ -989,7 +985,6 @@ fn next_executor(
     Ok(())
 }
 
-pub(crate) use tidb_planner::point_get_plan::eval_limit_bound;
 
 #[cfg(test)]
 mod limit_bound_tests {
@@ -1032,7 +1027,8 @@ mod limit_bound_tests {
 
 #[cfg(test)]
 mod field_name_tests {
-    use super::{run_select_meta_on, strip_spec_field_comment_markers, Catalog};
+    use super::{run_select_meta_on, Catalog};
+    use tidb_planner::plan_builder::field_name::strip_spec_field_comment_markers;
 
     /// Go `SpecFieldPattern` + `TrimComment`: every closing `*/` and opening
     /// `/*!<version>` marker is removed, and a `/*+ ...` hint opener is kept.

@@ -27,9 +27,10 @@ pub use cop_read_task_runtime::{
     CopReadResponseError, CopReadTaskError, CopReadTaskReplacement, CopReadTaskResponse,
     CopReadTaskRuntime, FailedCopReadAttempt, PreparedCopReadTask,
 };
-pub use native_transport::{
-    CopBackoffer, NativeCopResponse, NativeCopSend, NativeCopStore, NativeCopTransport,
-};
+pub use native_transport::{NativeCopResponse, NativeCopTransport};
+pub use tidb_txnkv::driver::cop_store::NativeCopStore;
+pub use tidb_txnkv::driver::cop_store::NativeCopSend;
+pub use tidb_txnkv::driver::cop_store::CopBackoffer;
 pub use tikv_rpc_contract::{
     build_tikv_unary_request, decode_tikv_unary_response, TikvUnaryRequest,
 };

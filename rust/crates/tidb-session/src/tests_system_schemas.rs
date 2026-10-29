@@ -24,6 +24,7 @@
 
 use tidb_executor::compiler::PreparedAstCompile;
 use crate::tests_support::*;
+use tidb_executor::memtable_reader::DataLockWait;
 use crate::*;
 
 /// The gap this module exists for: `USE mysql` must SUCCEED.

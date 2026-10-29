@@ -90,6 +90,7 @@ pub use export::*;
 pub use password::*;
 pub use password_lock::*;
 pub use privs::*;
+use tidb_mysql::PrivilegeType;
 
 /// One account identity, `(user, host)` -- the key of every table here, and
 /// the shape a role is named by too, since a role IS an account.

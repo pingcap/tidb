@@ -44,7 +44,6 @@
 //! ROW -> INDEX; index-heavy mismatches and equal counts use INDEX -> ROW.
 //! `ADMIN CHECK INDEX` reports a count mismatch as 8003 before either scan.
 
-pub use tidb_table::kv_table::index_key_bounds;
 use crate::KvTablePartitionMaintenance;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;

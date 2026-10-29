@@ -113,7 +113,8 @@ fn common_table_expressions() {
 /// the shared materialization path rather than duplicating the CTE body.
 #[test]
 fn single_use_cte_explain_keeps_base_statistics_and_multiple_uses_materialize() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
+    use crate::explain::explain_select_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     let ctx = crate::StmtContext::for_query();
@@ -322,7 +323,8 @@ fn set_operations() {
 /// each fold, not the independently materialized term counts.
 #[test]
 fn intersect_and_except_explain_as_go_semi_join_chains() {
-    use crate::explain::{explain_analyze_set_opr_stmt, explain_set_opr_stmt, ExplainFormat};
+    use crate::explain::{explain_analyze_set_opr_stmt, explain_set_opr_stmt};
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     for table in ["sx1", "sx2", "sx3"] {
@@ -401,7 +403,8 @@ fn intersect_and_except_explain_as_go_semi_join_chains() {
 /// observable.
 #[test]
 fn union_distinct_propagates_duplicate_agnostic_outer_join_elimination() {
-    use crate::explain::{explain_set_opr_stmt, ExplainFormat};
+    use crate::explain::explain_set_opr_stmt;
+    use tidb_sessionctx::explain_format::ExplainFormat;
 
     let mut catalog = Catalog::mock();
     crate::run_create_table_on("CREATE TABLE ul (id BIGINT PRIMARY KEY)", &mut catalog).unwrap();

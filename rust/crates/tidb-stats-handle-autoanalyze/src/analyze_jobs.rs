@@ -29,9 +29,8 @@ use tidb_syssession::mysql_system_tables::{
     scan_system_table, HandleLayout,
     SystemRow, SystemTableError, SystemTableView,
 };
-use tidb_syssession::system_row_write::{
-    defaults_row, delete_clustered_row, delete_row, RowEncodeError, RowValues,
-};
+use tidb_syssession::system_row_write::{defaults_row, delete_clustered_row, delete_row, RowValues};
+use tidb_table::origin_default::RowEncodeError;
 use tidb_syssession::stats_table_rows::*;
 
 /// One persisted `mysql.analyze_jobs` identifier.

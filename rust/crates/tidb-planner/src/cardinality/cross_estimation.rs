@@ -312,7 +312,7 @@ mod tests {
         CountedRange, EstimatorOptions, convert_range_from_expected_cnt,
         estimate_table_cross_row_count,
     };
-    use crate::cardinality::row_count_estimator::ColumnStats;
+    use tidb_stats::table_statistics::ColumnStats;
     use crate::ranger::types::Range;
     use crate::stats_info::HistColl;
     use std::sync::Arc;
@@ -536,7 +536,8 @@ mod tests {
 
     #[test]
     fn table_cross_estimate_does_not_skip_the_first_leading_index() {
-        use crate::cardinality::row_count_estimator::{IndexRowCounts, IndexStats};
+        use crate::cardinality::row_count_estimator::IndexRowCounts;
+        use tidb_stats::table_statistics::IndexStats;
 
         let (column_stats, column, filters) = correlated_fixture();
         let source_stats = HistColl::new(false, 100, []).with_column_index_ids([(7, 11), (7, 4)]);

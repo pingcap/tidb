@@ -3,11 +3,13 @@
 //! that runs -- the node's immediately, the connection's at its next
 //! statement, and never inside an explicit transaction.
 
+use tidb_ddl::real_tikv_ddl::ClusterDdlReport;
 use tidb_privilege::PrivilegeTypeExt;
 use super::super::*;
 use super::node_fixture::*;
 use crate::domain::configured_user_store::ConfiguredUserStore;
-use crate::domain::session_api::{cluster_ddl_error, SqlQueryError};
+use tidb_ddl::real_tikv_ddl::cluster_ddl_error;
+use tidb_store_driver::sql_query_error::SqlQueryError;
 use std::sync::atomic::Ordering;
 use tidb_datatype::Datum;
 use tidb_store_driver::pessimistic_lock_error::commit_outcome_to_sql_error;

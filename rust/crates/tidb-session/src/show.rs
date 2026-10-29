@@ -153,7 +153,7 @@ impl Session {
                 command.into(),
                 user.to_owned().into(),
                 host.to_owned().into(),
-                (tidb_util::stringutil::go_to_lower(table_name)).into(),
+                (tidb_hack::go_to_lower(table_name)).into(),
             ]),
         ))
     }
@@ -288,7 +288,7 @@ impl tidb_executor::bind_exec::SqlBindExec for Session {
     fn set_value_rows(
         &mut self,
         sql: &str,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &tidb_sessionctx::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         Session::set_value_rows(self, sql, ctx)
     }
@@ -335,7 +335,7 @@ impl tidb_executor::admin::AdminExec for Session {
 
     fn with_catalog_retrieving<T>(
         &mut self,
-        ctx: &tidb_executor::StmtContext,
+        ctx: &tidb_sessionctx::StmtContext,
         attempt: impl FnMut(&mut Catalog) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
         Session::with_catalog_retrieving(self, ctx, attempt)

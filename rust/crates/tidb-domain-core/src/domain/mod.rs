@@ -59,7 +59,6 @@ use crate::cluster_stats_lock_seam::ClusterStatsLock;
 use crate::cluster_sysvar_seam::ClusterSysvarWriter;
 use crate::cluster_transactions::ClusterTransactions;
 use crate::ddl_job_history_store;
-use crate::schema_sync;
 use crate::session_transaction::global_lock_wait_timeout;
 use crate::sys_session::{stats_session_error, system_process_trackers};
 use crate::util::{is_analyze_table_sql, sql_string_literal};
@@ -483,7 +482,7 @@ impl tidb_stats_handle::StatisticsItemLoader for ClusterStatisticsItemLoader {
         &self,
         items: &[tidb_model::StatsLoadItem],
         resource_group: &str,
-    ) -> Result<Vec<(i64, Arc<tidb_executor::access_cost::TableStatistics>)>, String> {
+    ) -> Result<Vec<(i64, Arc<tidb_stats::table_statistics::TableStatistics>)>, String> {
         let catalog = self.catalog.load();
         let loader = ClusterStatsLoader::locate(&catalog).map_err(|error| error.to_string())?;
         let skipped_column_types = self

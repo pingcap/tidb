@@ -29,7 +29,7 @@ use tidb_executor::DriverError;
 
 use crate::Session;
 
-pub use tidb_executor::memtable_reader::{
+use tidb_executor::memtable_reader::{
     exec_restricted_sql_over, RestrictedSql, RestrictedSqlExecutor,
 };
 

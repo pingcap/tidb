@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB SQL bindings: Go pkg/bindinfo (Rust rewrite)."
 
 [dependencies]
+tidb-lexer = { path = "../tidb-lexer" }
 tidb-metrics = { path = "../tidb-metrics" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }

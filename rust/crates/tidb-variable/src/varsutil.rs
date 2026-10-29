@@ -36,7 +36,7 @@ use tidb_vardef::tidb_vars::{
 };
 
 use crate::VarError;
-use tidb_util::stringutil::go_to_lower;
+use tidb_hack::go_to_lower;
 
 /// Go `OffInt`.
 pub const OFF_INT: i64 = 0;

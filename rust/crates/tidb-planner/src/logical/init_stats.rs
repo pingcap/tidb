@@ -18,7 +18,7 @@
 use std::collections::BTreeSet;
 
 use super::DataSource;
-pub use tidb_stats::table_statistics::{analyze_row_count, TableStatsSnapshot};
+use tidb_stats::table_statistics::{analyze_row_count, TableStatsSnapshot};
 use crate::cardinality::row_size::{RowSizeColumnStats, RowSizeType};
 use crate::stats_info::{HistColl, StatsInfo};
 
@@ -357,7 +357,7 @@ impl DataSource {
                         .unwrap_or(-1.0);
                     let index_total_count = statistics.indexes().get(&index.id).map_or(
                         0.0,
-                        crate::cardinality::row_count_estimator::IndexStats::total_row_count,
+                        tidb_stats::table_statistics::IndexStats::total_row_count,
                     );
                     if analyzed_row_count > 0.0 && index_total_count > 0.0 {
                         let scale = index_total_count / analyzed_row_count;
@@ -557,9 +557,9 @@ mod tests {
     use tidb_stats::{Bucket, Histogram, StatsLoadedStatus};
 
     use super::TableStatsSnapshot;
-    use crate::cardinality::row_count_estimator::{
-        ColumnStats, EstimatorOptions, IndexRangeDatums, IndexStats,
-    };
+    use crate::cardinality::row_count_estimator::{EstimatorOptions, IndexRangeDatums};
+    use tidb_stats::table_statistics::ColumnStats;
+    use tidb_stats::table_statistics::IndexStats;
     use crate::cardinality::selectivity::get_row_count_by_index_ranges;
     use crate::logical::data_source::DataSourceColumn;
     use crate::logical::DataSource;

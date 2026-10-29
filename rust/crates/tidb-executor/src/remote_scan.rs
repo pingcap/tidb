@@ -1990,7 +1990,7 @@ mod tests {
         assert_eq!(
             ctx.take_warnings().iter().map(tidb_util::context::SqlWarn::parts).collect::<Vec<_>>(),
             vec![(
-                tidb_distsql::WarningLevel::Warning,
+                tidb_util::context::WarningLevel::Warning,
                 1292u16,
                 "Truncated incorrect DOUBLE value: '12abc'".to_owned()
             )],

@@ -39,7 +39,7 @@
 use std::sync::{Arc, Mutex};
 use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_stats_handle_syncload::stats_watch::{StatsSnapshot, TableStatsState};
-use tidb_executor::access_cost::TableStatistics;
+use tidb_stats::table_statistics::TableStatistics;
 use tidb_kv::cluster_storage::ClusterTableStorage;
 use tidb_executor::driver::{Catalog, ViewDef};
 use tidb_table::kv_table::KvTable;
@@ -54,10 +54,8 @@ const PRI_KEY_FLAG: u32 = 1 << 1;
 
 // Go `tables.TableFromMeta` and the auto-id seam moved beside the DDL
 // planner; the server keeps reaching them by their old paths.
-#[cfg(test)]
-pub use tidb_table::table_from_meta::kv_index;
-pub use tidb_table::table_from_meta::{cluster_table, AutoIdKind};
-pub use tidb_table::table_from_meta::{AutoIdSource, LocalTableAutoIds, TableAutoIds};
+use tidb_table::table_from_meta::cluster_table;
+use tidb_table::table_from_meta::{AutoIdSource, TableAutoIds};
 
 /// Why one loaded table is not part of the session's catalog.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -202,11 +200,11 @@ pub fn cluster_session_catalog_with_templates(
         // created without its own charset inherits. An unrecognised stored
         // name falls back to the server default rather than refusing the
         // whole database.
-        let charset = tidb_executor::TableCharset {
+        let charset = tidb_table::kv_table::TableCharset {
             charset: tidb_datatype::Charset::from_name(&database.info.charset)
-                .unwrap_or(tidb_executor::TableCharset::default().charset),
+                .unwrap_or(tidb_table::kv_table::TableCharset::default().charset),
             collation: tidb_datatype::Collation::from_name(&database.info.collate)
-                .unwrap_or(tidb_executor::TableCharset::default().collation),
+                .unwrap_or(tidb_table::kv_table::TableCharset::default().collation),
         };
         catalog.register_database_with_id_and_charset(&schema, database.info.id, charset);
         // Go `DBInfo.PlacementPolicyRef`: the schema default a table created
@@ -396,6 +394,7 @@ use tidb_table::table_from_meta::kv_index;
     use tidb_model::column::ColumnInfo;
     use tidb_model::db::DBInfo;
     use tidb_model::index::{IndexColumn, IndexInfo};
+    use tidb_table::table_from_meta::LocalTableAutoIds;
     use tidb_txnkv::Key;
 
     /// A snapshot with fixed contents: the cluster as this test's statements
@@ -792,7 +791,7 @@ use tidb_table::table_from_meta::kv_index;
             kv_index(&index(1, "vi", "v", 1, -1), &walked.columns()).expect("a full-value index");
 
         walked
-            .create_index_with_context(index, &tidb_executor::StmtContext::default())
+            .create_index_with_context(index, &tidb_sessionctx::StmtContext::default())
             .expect("a backfill that allocates nothing needs no allocator");
         assert!(
             walked
@@ -924,7 +923,7 @@ use tidb_table::table_from_meta::kv_index;
             );
             // A clustered key change within the partition: the copy moves to
             // the new handle too (Go always removes and adds the copy).
-            let ctx = tidb_executor::StmtContext::for_dml(false, false, false);
+            let ctx = tidb_sessionctx::StmtContext::for_dml(false, false, false);
             loaded
                 .update_row_with_context(&handle, &[Datum::Int(5)], &ctx)
                 .expect("the update succeeds");
@@ -936,7 +935,7 @@ use tidb_table::table_from_meta::kv_index;
                 loaded.stored_raw_value(&key(5, copy)).is_some(),
                 "{state:?} new copy"
             );
-            let moved = tidb_executor::TableHandle::Int(5);
+            let moved = tidb_table::kv_table::TableHandle::Int(5);
             loaded
                 .delete_row_with_context(&moved, &ctx)
                 .expect("the delete succeeds");

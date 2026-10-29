@@ -15,7 +15,8 @@
 use super::tests::{eq_on, join_of, join_with_memory, run};
 use super::{ExecError, JoinKind};
 use crate::executor::Executor;
-use tidb_kv::mem_quota::{OomAction, StatementMemory};
+use tidb_kv::mem_quota::StatementMemory;
+use tidb_vardef::OomAction;
 use crate::merge_join_plan::{MergeJoinKey, MergeJoinPlan};
 use std::sync::Arc;
 use tidb_datatype::Datum;

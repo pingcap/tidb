@@ -36,7 +36,7 @@ pub trait DdlSessionContext: Send + Sync {
     /// The complete `SessionVars.SQLMode` the job records.
     fn ddl_sql_mode(&self) -> i64;
     /// The lexer's view of the SQL mode (`ANSI_QUOTES` and friends).
-    fn sql_mode(&self) -> tidb_parser::SqlMode;
+    fn sql_mode(&self) -> tidb_lexer::SqlMode;
     /// The `QueryString` rewrite a partition statement's sugar recorded.
     fn ddl_query_rewrite(&self) -> Option<(String, String)>;
     /// Go `ctx.SetValue(sessionctx.QueryString, ...)`.
@@ -129,7 +129,7 @@ impl<T: DdlSessionContext + ?Sized> DdlSessionContext for std::sync::Arc<T> {
         (**self).ddl_sql_mode()
     }
 
-    fn sql_mode(&self) -> tidb_parser::SqlMode {
+    fn sql_mode(&self) -> tidb_lexer::SqlMode {
         (**self).sql_mode()
     }
 

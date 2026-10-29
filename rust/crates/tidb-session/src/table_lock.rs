@@ -28,11 +28,12 @@ use std::collections::HashSet;
 use tidb_ast::TableLockType;
 use tidb_config::config_tree::config::table_lock_enabled;
 use tidb_ddl_build::table_lock;
-use tidb_executor::{Catalog, DriverError, KvTable, TableEntry};
+use tidb_executor::{Catalog, DriverError, TableEntry};
+use tidb_table::kv_table::KvTable;
 use tidb_model::{SessionInfo, TableLockTpInfo};
-use tidb_util::stringutil::go_to_lower;
+use tidb_hack::go_to_lower;
 
-use tidb_privilege::PrivilegeType;
+use tidb_mysql::PrivilegeType;
 use tidb_executor::table_privilege::TablePrivilegeRequest;
 use crate::Session;
 
@@ -164,7 +165,7 @@ impl Session {
     /// Go `TableLockReadContext`: the table locks this session holds, handed
     /// to the executor (`StmtContext::locked_tables`); `None` with the
     /// feature off.
-    pub(crate) fn statement_locked_tables(&self) -> Option<tidb_executor::LockedTables> {
+    pub(crate) fn statement_locked_tables(&self) -> Option<tidb_sessionctx::LockedTables> {
         if !table_lock_enabled() {
             return None;
         }

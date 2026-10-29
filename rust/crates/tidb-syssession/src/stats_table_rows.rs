@@ -28,10 +28,8 @@ use crate::mysql_system_tables::{
     scan_system_table, scan_system_table_index_prefixed, scan_system_table_prefixed, HandleLayout,
     SystemRow, SystemTableError, SystemTableView, SYSTEM_DB,
 };
-use crate::system_row_write::{
-    delete_clustered_row, delete_row, insert_row, rewrite_rowid_row,
-    store_clustered_row, RowEncodeError, RowValues,
-};
+use crate::system_row_write::{delete_clustered_row, delete_row, insert_row, rewrite_rowid_row, store_clustered_row, RowValues};
+use tidb_table::origin_default::RowEncodeError;
 
 /// Why one table's statistics could not be stored.
 #[derive(Debug)]

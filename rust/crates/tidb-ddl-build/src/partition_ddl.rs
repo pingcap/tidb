@@ -29,7 +29,8 @@ use tidb_table::partition_routing::{
     PartitionDef, PartitionKind, PartitionSpec, RangeBound, RangeColumnBound,
 };
 
-use crate::table_partition::{self, StoredPartitionDefinition};
+use crate::table_partition::self;
+use tidb_table::partition_metadata::StoredPartitionDefinition;
 
 /// Go `StmtCtx.AppendNote(err)` for a refusal `IF [NOT] EXISTS` turns into a
 /// note.
@@ -274,7 +275,7 @@ pub fn plan_hash_partition_management(
         definitions: definitions
             .iter()
             .map(
-                |definition| crate::table_partition::StoredPartitionDefinition {
+                |definition| tidb_table::partition_metadata::StoredPartitionDefinition {
                     id: definition.id,
                     name: definition.name.clone(),
                     less_than: Vec::new(),
@@ -751,7 +752,7 @@ pub fn plan_add_partitions(
                 // than deferred: there is no earlier partition-level check
                 // for it to lose to.
                 let (added, duplicate) =
-                    crate::table_partition_list::build_list_values_with_unsigned(
+                    tidb_table::partition_fold::build_list_values_with_unsigned(
                         definitions,
                         *unsigned,
                         ctx,
@@ -1475,7 +1476,7 @@ pub fn plan_reorganize_partition(
             .map(|slot| match slot {
                 Some(definition) => {
                     Ok(
-                        table_partition::stored_definitions_as_ast(&[stored_definition(
+                        tidb_table::partition_metadata::stored_definitions_as_ast(&[stored_definition(
                             definition,
                         )])?
                         .remove(0),

@@ -2,7 +2,8 @@
 //! `TIDB_ENCODE_SQL_DIGEST`.
 
 use tidb_datatype::{Datum, FieldTypeCode, UNSPECIFIED_LENGTH};
-use tidb_session::{Session, StmtOutput};
+use tidb_session::Session;
+use tidb_executor::StmtOutput;
 
 fn digest(sql: &str) -> Datum {
     Datum::new_string(tidb_parser::normalize_digest(sql).1.to_string())

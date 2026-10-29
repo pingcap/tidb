@@ -28,7 +28,7 @@ pub trait CatalogStatisticsLoad {
     /// later `SyncWaitStatsLoadPoint`.
     fn request_statistics_load(
         &self,
-        usage: &tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
+        usage: &tidb_stats::table_statistics::ColumnStatsUsage,
         context: &StmtContext,
     ) -> Result<(), tidb_planner::plan_base::PlanError>;
 
@@ -45,7 +45,7 @@ impl CatalogStatisticsLoad for Catalog {
     /// later `SyncWaitStatsLoadPoint`.
     fn request_statistics_load(
         &self,
-        usage: &tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
+        usage: &tidb_stats::table_statistics::ColumnStatsUsage,
         context: &StmtContext,
     ) -> Result<(), tidb_planner::plan_base::PlanError> {
         let wait = std::time::Duration::from_millis(context.stats_load_wait_ms());
