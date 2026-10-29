@@ -222,7 +222,10 @@ func (s *StatsCacheImpl) update(ctx context.Context, is infoschema.InfoSchema, m
 		// If the table is not updated, we can skip it.
 
 		oldTbl, ok := s.Get(physicalID)
-		cachedStatsCurrent := ok && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS &&
+		// Older writers can leave the histogram watermark NULL or zero.
+		// An unknown watermark cannot establish that cached histograms are current.
+		cachedStatsCurrent := ok && latestHistUpdateVersion > 0 &&
+			tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS &&
 			oldTbl.LastStatsHistVersion >= latestHistUpdateVersion
 		if cachedStatsCurrent && oldTbl.Version >= version {
 			continue

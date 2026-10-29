@@ -251,6 +251,19 @@ func TestAnalyzeRefreshesOnlyPersistedStats(t *testing.T) {
 // A metadata-only refresh must load a histogram persisted by another TiDB
 // before advancing the table's metadata version.
 func TestAnalyzeRefreshesUnseenGlobalStats(t *testing.T) {
+	testAnalyzeRefreshesUnseenGlobalStats(t, "")
+}
+
+func TestAnalyzeRefreshesUnseenGlobalStatsWithUnknownWatermark(t *testing.T) {
+	for _, watermark := range []string{"NULL", "0"} {
+		t.Run(watermark, func(t *testing.T) {
+			testAnalyzeRefreshesUnseenGlobalStats(t, watermark)
+		})
+	}
+}
+
+func testAnalyzeRefreshesUnseenGlobalStats(t *testing.T, unknownWatermark string) {
+	t.Helper()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -265,11 +278,22 @@ func TestAnalyzeRefreshesUnseenGlobalStats(t *testing.T) {
 	info := table.Meta()
 	colID := info.Columns[1].ID
 	handle := dom.StatsHandle()
+	if unknownWatermark != "" {
+		// Upgraded rows and legacy writers can leave the watermark unknown.
+		// Load that actual row so the old cache has a current schema and NDV 1.
+		tk.MustExec("update mysql.stats_meta set last_stats_histograms_version = "+unknownWatermark+" where table_id = ?", info.ID)
+		handle.Clear()
+		require.NoError(t, handle.Update(context.Background(), is, info.ID))
+	}
 	handle.WaitForAsyncUpdates()
 	old, ok := handle.Get(info.ID)
 	require.True(t, ok)
 	require.NotNil(t, old.GetCol(colID))
 	require.Equal(t, int64(1), old.GetCol(colID).NDV)
+	if unknownWatermark != "" {
+		require.Zero(t, old.LastStatsHistVersion)
+		require.Equal(t, info.UpdateTS, old.TblInfoUpdateTS)
+	}
 
 	// Restore the original cache after persisting a new distribution, modeling
 	// this TiDB's cache before it observes another TiDB's ANALYZE.
@@ -280,6 +304,13 @@ func TestAnalyzeRefreshesUnseenGlobalStats(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, int64(2), fresh.GetCol(colID).NDV)
 	require.Greater(t, fresh.LastStatsHistVersion, old.LastStatsHistVersion)
+	expectedWatermark := fresh.LastStatsHistVersion
+	if unknownWatermark != "" {
+		// Model a legacy writer which persists the new histogram without
+		// populating the table-level histogram watermark.
+		tk.MustExec("update mysql.stats_meta set last_stats_histograms_version = "+unknownWatermark+" where table_id = ?", info.ID)
+		expectedWatermark = 0
+	}
 	handle.Put(info.ID, old)
 	handle.WaitForAsyncUpdates()
 
@@ -289,7 +320,7 @@ func TestAnalyzeRefreshesUnseenGlobalStats(t *testing.T) {
 	refreshed, ok := handle.Get(info.ID)
 	require.True(t, ok)
 	require.Equal(t, int64(2), refreshed.GetCol(colID).NDV)
-	require.Equal(t, fresh.LastStatsHistVersion, refreshed.LastStatsHistVersion)
+	require.Equal(t, expectedWatermark, refreshed.LastStatsHistVersion)
 	require.NoError(t, handle.Update(context.Background(), is))
 	handle.WaitForAsyncUpdates()
 	refreshed, ok = handle.Get(info.ID)
@@ -307,7 +338,7 @@ func TestAnalyzeRefreshesUnseenGlobalStats(t *testing.T) {
 	refreshed, ok = handle.Get(info.ID)
 	require.True(t, ok)
 	require.Equal(t, int64(2), refreshed.GetCol(colID).NDV)
-	require.Equal(t, fresh.LastStatsHistVersion, refreshed.LastStatsHistVersion)
+	require.Equal(t, expectedWatermark, refreshed.LastStatsHistVersion)
 }
 
 // The histogram transaction can commit before slow-save bookkeeping fails.
