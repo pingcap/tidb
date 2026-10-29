@@ -208,12 +208,12 @@ fn complete_func_index_error(
             tidb_error::tidb::errcode::ErrInvalidJSONValueForFuncIndex,
             &[FormatArg::from(name)],
         )
-    } else if identity == tidb_datatype::ERR_OVERFLOW.identity() {
+    } else if identity == tidb_parser_types::parser_types_errors::ERR_OVERFLOW.identity() {
         completed(
             tidb_error::tidb::errcode::ErrDataOutOfRangeFunctionalIndex,
             &[FormatArg::from(name), FormatArg::from(row_index + 1)],
         )
-    } else if identity == tidb_datatype::ERR_DATA_TOO_LONG.identity() {
+    } else if identity == tidb_parser_types::parser_types_errors::ERR_DATA_TOO_LONG.identity() {
         completed(
             tidb_error::tidb::errcode::ErrFunctionalIndexDataIsTooLong,
             &[FormatArg::from(name)],

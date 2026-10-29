@@ -62,6 +62,8 @@ impl CatalogTableKey {
     }
 }
 
+pub mod metric_table_def;
+pub mod virtual_tables;
 pub mod infoschema_meta;
 pub mod metricsschema;
 pub mod perfschema;
@@ -287,8 +289,8 @@ impl Catalog {
                 _ => None,
             })
             .collect();
-        tidb_metadef::virtual_tables::register_virtual_table(
-            tidb_metadef::virtual_tables::VirtualSchema {
+        crate::virtual_tables::register_virtual_table(
+            crate::virtual_tables::VirtualSchema {
                 db_info: tidb_model::db::DBInfo {
                     id: db_id,
                     name: tidb_ast::CiString::new(name.to_owned()),

@@ -3798,6 +3798,7 @@ dependencies = [
  "tidb-context",
  "tidb-datatype",
  "tidb-dbterror",
+ "tidb-ddl-bdr",
  "tidb-ddl-build",
  "tidb-ddl-label",
  "tidb-ddl-logutil",
@@ -3845,6 +3846,15 @@ dependencies = [
  "tikv-client",
  "tokio",
  "tonic",
+]
+
+[[package]]
+name = "tidb-ddl-bdr"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-model",
 ]
 
 [[package]]
@@ -4372,6 +4382,7 @@ dependencies = [
  "tidb-murmur3",
  "tidb-mysql",
  "tidb-parser",
+ "tidb-parser-types",
  "tidb-password-validation",
  "tidb-pd-client",
  "tidb-plancodec",
@@ -4488,6 +4499,7 @@ dependencies = [
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
+ "tidb-parser-types",
  "tidb-password-validation",
  "tidb-plancodec",
  "tidb-printer",
@@ -4678,10 +4690,10 @@ dependencies = [
  "tidb-error",
  "tidb-expr",
  "tidb-filter",
+ "tidb-goruntime",
  "tidb-hack",
  "tidb-kv",
  "tidb-meta",
- "tidb-metadef",
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
@@ -4966,8 +4978,6 @@ dependencies = [
  "tidb-config",
  "tidb-config-kerneltype",
  "tidb-datatype",
- "tidb-goruntime",
- "tidb-hack",
  "tidb-model",
  "tidb-mysql",
 ]
@@ -4996,6 +5006,7 @@ dependencies = [
  "tidb-hack",
  "tidb-mysql",
  "tidb-parser",
+ "tidb-parser-types",
  "tidb-planner-cascades-base",
 ]
 
@@ -5077,6 +5088,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tidb-charset",
+ "tidb-error",
  "tidb-goruntime",
  "tidb-parser-format",
 ]
@@ -5182,6 +5194,7 @@ dependencies = [
  "tidb-mysql",
  "tidb-paging",
  "tidb-parser",
+ "tidb-parser-types",
  "tidb-plancodec",
  "tidb-planner-cascades-base",
  "tidb-planner-coreusage",
@@ -5379,6 +5392,15 @@ dependencies = [
  "tidb-hack",
  "tidb-parser",
  "tidb-tablecodec",
+]
+
+[[package]]
+name = "tidb-ranger-context"
+version = "0.0.0"
+dependencies = [
+ "tidb-context",
+ "tidb-datatype",
+ "tidb-error",
 ]
 
 [[package]]

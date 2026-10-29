@@ -53,7 +53,7 @@ pub(crate) fn admit_add_column(
     schema: &str,
     options: &[tidb_ast::ColumnOption],
 ) -> Result<(), DdlPlanError> {
-    if tidb_model::ddl_bdr::is_add_column_denied(role_of(stored), options)
+    if tidb_ddl_bdr::is_add_column_denied(role_of(stored), options)
         && !is_system_schema(schema)
     {
         return Err(restricted(stored));
@@ -70,7 +70,7 @@ pub(crate) fn admit_modify_column(
     old_field_type: &tidb_datatype::FieldType,
     options: &[tidb_ast::ColumnOption],
 ) -> Result<(), DdlPlanError> {
-    if tidb_model::ddl_bdr::is_modify_column_denied(
+    if tidb_ddl_bdr::is_modify_column_denied(
         role_of(stored),
         new_field_type,
         old_field_type,

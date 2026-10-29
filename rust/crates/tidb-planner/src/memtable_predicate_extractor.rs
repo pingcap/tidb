@@ -1169,7 +1169,7 @@ impl MetricTableExtractor {
         lower_table_name: &str,
         metric_schema_range_duration: i64,
     ) -> String {
-        let Some(def) = tidb_metadef::metric_table_def::get_metric_table_def(lower_table_name)
+        let Some(def) = tidb_infoschema::metric_table_def::get_metric_table_def(lower_table_name)
         else {
             return String::new();
         };

@@ -21,7 +21,21 @@ use std::fmt;
 
 use tidb_meta::{key, value};
 use tidb_metadef::MAX_USER_GLOBAL_ID;
-use tidb_model::{ActionType, AdminCommandOperator, AlterTableModeArgs, AlterTableModeTarget, GoField, GoShared, HistoryInfo, InvolvingSchemaInfo, Job, JobArgsValue, JobState, JobVersion, PartitionInfo, TableInfo, TraceInfo};
+use tidb_model::ActionType;
+use tidb_model::AdminCommandOperator;
+use tidb_model::AlterTableModeArgs;
+use tidb_model::AlterTableModeTarget;
+use tidb_model::GoField;
+use tidb_model::GoShared;
+use tidb_model::HistoryInfo;
+use tidb_model::InvolvingSchemaInfo;
+use tidb_model::Job;
+use tidb_model::JobArgsValue;
+use tidb_model::JobState;
+use tidb_model::JobVersion;
+use tidb_model::PartitionInfo;
+use tidb_model::TableInfo;
+use tidb_model::TraceInfo;
 use tidb_goruntime::go_runtime::GoSharedSlice;
 use tidb_txnkv::transaction::BufferMutation;
 
@@ -530,11 +544,11 @@ pub fn prepare_spec_for_submit(
             job.multi_schema_info.as_ref().is_some_and(|info| {
                 info.read().sub_jobs.iter_deref().any(|sub_job| {
                     let sub_job = sub_job.read();
-                    tidb_model::ddl_bdr::is_denied(role, sub_job.type_, sub_job.job_args_value())
+                    tidb_ddl_bdr::is_denied(role, sub_job.type_, sub_job.job_args_value())
                 })
             })
         } else {
-            tidb_model::ddl_bdr::is_denied(role, job.type_, Some(&spec.args))
+            tidb_ddl_bdr::is_denied(role, job.type_, Some(&spec.args))
         };
         if denied {
             return Err(JobSubmitError::BdrRestricted(
@@ -792,12 +806,23 @@ pub fn ensure_no_flashback_cluster_job<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_model::{
-        BatchCreateTableArgs, CreateTableArgs, GoAny, GoSharedPointerSlice, IndexArg, JobArgs,
-        ModifyIndexArgs, MultiSchemaInfo, PartitionDefinition, RenameTableArgs, RenameTablesArgs,
-        ResourceGroupArgs, ResourceGroupInfo, SubJob, TableMode, TablePartitionArgs,
-        TruncateTableArgs,
-    };
+    use tidb_model::BatchCreateTableArgs;
+    use tidb_model::CreateTableArgs;
+    use tidb_model::GoAny;
+    use tidb_model::GoSharedPointerSlice;
+    use tidb_model::IndexArg;
+    use tidb_model::JobArgs;
+    use tidb_model::ModifyIndexArgs;
+    use tidb_model::MultiSchemaInfo;
+    use tidb_model::PartitionDefinition;
+    use tidb_model::RenameTableArgs;
+    use tidb_model::RenameTablesArgs;
+    use tidb_model::ResourceGroupArgs;
+    use tidb_model::ResourceGroupInfo;
+    use tidb_model::SubJob;
+    use tidb_model::TableMode;
+    use tidb_model::TablePartitionArgs;
+    use tidb_model::TruncateTableArgs;
 
     fn job(action: ActionType) -> Job {
         let mut job = Job::default();

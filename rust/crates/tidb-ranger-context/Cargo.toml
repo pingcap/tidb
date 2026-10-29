@@ -1,0 +1,16 @@
+[package]
+name = "tidb-ranger-context"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/util/ranger/context: the context the ranger builds ranges in (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-context = { path = "../tidb-context" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-error = { path = "../tidb-error" }

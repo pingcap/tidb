@@ -36,7 +36,7 @@ pub const METRICS_SCHEMA_DB_ID: i64 = (1 << 62) | 20000;
 /// `varchar(512)`, `quantile` only for a quantile metric (its default is the
 /// metric's quantile), then `value`; every table is `utf8mb4_bin` and carries
 /// the metric's comment.
-fn create_table_sql(name: &str, def: &tidb_metadef::metric_table_def::MetricTableDef) -> String {
+fn create_table_sql(name: &str, def: &crate::metric_table_def::MetricTableDef) -> String {
     let mut columns = vec!["`time` DATETIME DEFAULT CURRENT_TIMESTAMP".to_owned()];
     for label in def.labels {
         columns.push(format!("`{label}` VARCHAR(512) COLLATE utf8mb4_bin"));
@@ -60,7 +60,7 @@ pub fn tables() -> HashMap<String, Arc<TableEntry>> {
             let mut scratch = Catalog::memory_schema_scratch();
             // Go sorts by name before numbering: "the id is stable across
             // different TiDB instances".
-            let mut defs = tidb_metadef::metric_table_def::METRIC_TABLE_MAP
+            let mut defs = crate::metric_table_def::METRIC_TABLE_MAP
                 .iter()
                 .collect::<Vec<_>>();
             defs.sort_by(|(left, _), (right, _)| left.cmp(right));

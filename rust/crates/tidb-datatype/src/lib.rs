@@ -51,7 +51,6 @@ mod mysql_time;
 mod numeric_helper;
 mod overflow;
 mod packed_time;
-mod parser_types_errors;
 mod session_time_zone;
 mod source_string;
 mod str_to_date;
@@ -226,20 +225,6 @@ pub use overflow::{
     sub_int_with_uint, sub_uint64, sub_uint_with_int, OverflowError,
 };
 pub use packed_time::{PackedTime, PackedTimeError, PackedTimeParts};
-pub use parser_types_errors::{
-    DATETIME_STR, DATE_STR, ERR_BAD_NUMBER, ERR_CAST_AS_SIGNED_OVERFLOW,
-    ERR_CAST_NEG_INT_AS_UNSIGNED, ERR_DATA_OUT_OF_RANGE, ERR_DATA_TOO_LONG,
-    ERR_DATETIME_FUNCTION_OVERFLOW, ERR_DIV_BY_ZERO, ERR_DUPLICATED_VALUE_IN_TYPE,
-    ERR_ILLEGAL_VALUE_FOR_TYPE, ERR_INCORRECT_DATETIME_VALUE, ERR_INVALID_DEFAULT,
-    ERR_INVALID_FIELD_SIZE, ERR_INVALID_WEEK_MODE_FORMAT, ERR_INVALID_YEAR,
-    ERR_INVALID_YEAR_FORMAT, ERR_JSON_BAD_ONE_OR_ALL_ARG, ERR_JSON_VACUOUS_PATH,
-    ERR_M_BIGGER_THAN_D, ERR_OVERFLOW, ERR_PARTITION_COLUMN_STATS_MISSING,
-    ERR_PARTITION_STATS_MISSING, ERR_SYNTAX, ERR_TIMESTAMP_IN_DST_TRANSITION,
-    ERR_TOO_BIG_DISPLAY_WIDTH, ERR_TOO_BIG_FIELD_LENGTH, ERR_TOO_BIG_PRECISION, ERR_TOO_BIG_SCALE,
-    ERR_TOO_BIG_SET, ERR_TRUNCATED, ERR_TRUNCATED_WRONG_VALUE, ERR_WARN_DATA_OUT_OF_RANGE,
-    ERR_WRONG_FIELD_SPEC, ERR_WRONG_VALUE, ERR_WRONG_VALUE_2, ERR_WRONG_VALUE_FOR_TYPE,
-    TIMESTAMP_STR, TIME_STR,
-};
 pub use session_time_zone::{SessionTimeZone, SessionTimeZoneOffset};
 pub use source_string::{HackedStr, PlainStr, SourceString};
 pub use str_to_date::{get_format_type, is_go_punctuation};

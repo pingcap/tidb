@@ -175,12 +175,12 @@ pub fn name_value_pair_value(
         return NameValuePairValue::Decline;
     };
     if let Some(error) = &converted.error {
-        if tidb_datatype::ERR_OVERFLOW.equal(Some(error)) {
+        if tidb_parser_types::parser_types_errors::ERR_OVERFLOW.equal(Some(error)) {
             return NameValuePairValue::TableDual;
         }
         // "Some scenarios cast to int with error, but we may use this value
         // in point get."
-        if !tidb_datatype::ERR_TRUNCATED_WRONG_VALUE.equal(Some(error)) {
+        if !tidb_parser_types::parser_types_errors::ERR_TRUNCATED_WRONG_VALUE.equal(Some(error)) {
             return NameValuePairValue::Decline;
         }
     }

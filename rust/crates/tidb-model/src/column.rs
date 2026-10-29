@@ -38,10 +38,13 @@ use std::{
 use serde::de::{DeserializeSeed, MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use tidb_ast::CiString;
-use tidb_datatype::{
-    type_to_str, FieldType, FieldTypeCode, FieldTypeFlags, GoString, ERR_INVALID_DEFAULT,
-    STRICT_INTEGER_DISPLAY_WIDTH,
-};
+use tidb_datatype::type_to_str;
+use tidb_datatype::FieldType;
+use tidb_datatype::FieldTypeCode;
+use tidb_datatype::FieldTypeFlags;
+use tidb_datatype::GoString;
+use tidb_parser_types::parser_types_errors::ERR_INVALID_DEFAULT;
+use tidb_datatype::STRICT_INTEGER_DISPLAY_WIDTH;
 use tidb_error::mysql::{errname, FormatArg};
 use tidb_error::terror::TerrorError;
 

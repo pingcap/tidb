@@ -781,7 +781,7 @@ pub(crate) fn str_to_uint_reported(
             Ok(value) => value,
             Err((value, error)) => {
                 diagnostics.error(|| {
-                    crate::ERR_OVERFLOW
+                    tidb_parser_types::parser_types_errors::ERR_OVERFLOW
                         .generate(format!("BIGINT value is out of range in '{input}'"))
                 });
                 prefix_error = Some(ScalarConversionEvent::Overflow(error));
@@ -793,7 +793,7 @@ pub(crate) fn str_to_uint_reported(
     if let Some(magnitude) = unsigned.strip_prefix('-') {
         if magnitude.bytes().any(|byte| byte != b'0') {
             diagnostics.replace_error(|| {
-                crate::ERR_OVERFLOW.generate(format!(
+                tidb_parser_types::parser_types_errors::ERR_OVERFLOW.generate(format!(
                     "BIGINT UNSIGNED value is out of range in '{integer}'"
                 ))
             });
@@ -824,7 +824,7 @@ pub(crate) fn str_to_uint_reported(
         },
         Err(error) => {
             diagnostics.replace_error(|| {
-                crate::ERR_OVERFLOW.generate(format!(
+                tidb_parser_types::parser_types_errors::ERR_OVERFLOW.generate(format!(
                     "BIGINT UNSIGNED value is out of range in '{unsigned}'"
                 ))
             });
@@ -1059,7 +1059,7 @@ pub(crate) fn json_to_int_reported(
             && json.value().first() == Some(&JSON_LITERAL_NULL))
     {
         diagnostics.truncate(|| {
-            crate::ERR_TRUNCATED_WRONG_VALUE
+            tidb_parser_types::parser_types_errors::ERR_TRUNCATED_WRONG_VALUE
                 .generate(format!("Truncated incorrect INTEGER value: '{json}'"))
         });
         return Converted::truncated(0);
@@ -1173,7 +1173,7 @@ pub(crate) fn json_to_float_reported(
             && json.value().first() == Some(&JSON_LITERAL_NULL))
     {
         diagnostics.truncate(|| {
-            crate::ERR_TRUNCATED_WRONG_VALUE
+            tidb_parser_types::parser_types_errors::ERR_TRUNCATED_WRONG_VALUE
                 .generate(format!("Truncated incorrect FLOAT value: '{json}'"))
         });
         return Converted::truncated(0.0);
@@ -1270,7 +1270,7 @@ pub(crate) fn json_to_decimal_reported(
         _ => (
             Decimal::from_int(0),
             Some(
-                crate::ERR_TRUNCATED_WRONG_VALUE
+                tidb_parser_types::parser_types_errors::ERR_TRUNCATED_WRONG_VALUE
                     .generate(format!("Truncated incorrect DECIMAL value: '{json}'")),
             ),
         ),
@@ -1293,9 +1293,9 @@ pub(crate) fn decimal_conversion_error(
     input: &[u8],
 ) -> tidb_error::terror::TerrorError {
     match error {
-        crate::DecimalError::Truncated => crate::ERR_TRUNCATED.clone(),
-        crate::DecimalError::Overflow => crate::ERR_OVERFLOW.clone(),
-        crate::DecimalError::BadNumber => crate::ERR_BAD_NUMBER.clone(),
+        crate::DecimalError::Truncated => tidb_parser_types::parser_types_errors::ERR_TRUNCATED.clone(),
+        crate::DecimalError::Overflow => tidb_parser_types::parser_types_errors::ERR_OVERFLOW.clone(),
+        crate::DecimalError::BadNumber => tidb_parser_types::parser_types_errors::ERR_BAD_NUMBER.clone(),
         crate::DecimalError::TruncatedWrongValue => {
             let input = &input[input
                 .iter()
@@ -1306,7 +1306,7 @@ pub(crate) fn decimal_conversion_error(
             } else {
                 input
             };
-            crate::ERR_TRUNCATED_WRONG_VALUE.generate(format!(
+            tidb_parser_types::parser_types_errors::ERR_TRUNCATED_WRONG_VALUE.generate(format!(
                 "Truncated incorrect DECIMAL value: '{}'",
                 String::from_utf8_lossy(input)
             ))

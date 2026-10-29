@@ -970,7 +970,7 @@ pub fn get_stmt_timestamp(sctx: &Arc<dyn SessionContext>) -> Result<DateTime<Utc
             ConversionLocation::named(zone_name(&vars.location())),
             &tidb_datatype::IGNORE_CONVERSION_WARNINGS,
         );
-        let truncated = tidb_datatype::ERR_TRUNCATED_WRONG_VALUE.generate_with_stack(format!(
+        let truncated = tidb_parser_types::parser_types_errors::ERR_TRUNCATED_WRONG_VALUE.generate_with_stack(format!(
             "Truncated incorrect DOUBLE value: '{}'",
             tidb_datatype::float_warning_input(&timestamp_str)
         ));

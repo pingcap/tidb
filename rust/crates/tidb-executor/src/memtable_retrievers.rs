@@ -82,7 +82,7 @@ pub fn metrics_summary_rows(
     };
     let mut total_rows = Vec::new();
     // `METRIC_TABLE_MAP` is sorted by name, Go's `slices.Sort(tables)`.
-    for (name, def) in tidb_metadef::metric_table_def::METRIC_TABLE_MAP {
+    for (name, def) in tidb_infoschema::metric_table_def::METRIC_TABLE_MAP {
         // Go `inspectionFilter.enable`.
         if !extractor.metrics_names.is_empty() && !extractor.metrics_names.contains(*name) {
             continue;

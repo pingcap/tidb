@@ -15,7 +15,7 @@
 //! Complete transcreation of Go `pkg/ddl/bdr` (`bdr.go`): the policy deciding
 //! whether a DDL is denied under a BDR cluster role.
 //!
-//! The classification tables themselves already live in [`crate::bdr`]
+//! The classification tables themselves already live in [`tidb_model::bdr`]
 //! (Go `pkg/meta/model`'s `ActionBDRMap`); this module is the policy that
 //! reads them, kept next to those tables because its only other inputs are
 //! AST column options and a field type.
@@ -28,8 +28,9 @@
 use tidb_ast::{BdrRole, ColumnOption};
 use tidb_datatype::FieldType;
 
-use crate::bdr::{DDLBDRType, ACTION_BDR_MAP};
-use crate::{ActionType, JobArgsValue};
+use tidb_model::bdr::{DDLBDRType, ACTION_BDR_MAP};
+use tidb_model::ActionType;
+use tidb_model::JobArgsValue;
 
 /// Go `IsAddColumnDenied`.
 ///
@@ -356,8 +357,8 @@ mod tests {
     fn the_primary_role_refuses_a_unique_index() {
         let primary = Some(BdrRole::Primary);
         let unique_args =
-            JobArgsValue::ModifyIndex(Some(crate::GoShared::new(crate::ModifyIndexArgs {
-                index_args: vec![crate::IndexArg {
+            JobArgsValue::ModifyIndex(Some(tidb_model::GoShared::new(tidb_model::ModifyIndexArgs {
+                index_args: vec![tidb_model::IndexArg {
                     unique: true,
                     ..Default::default()
                 }]
@@ -365,8 +366,8 @@ mod tests {
                 ..Default::default()
             })));
         let non_unique_args =
-            JobArgsValue::ModifyIndex(Some(crate::GoShared::new(crate::ModifyIndexArgs {
-                index_args: vec![crate::IndexArg::default()].into(),
+            JobArgsValue::ModifyIndex(Some(tidb_model::GoShared::new(tidb_model::ModifyIndexArgs {
+                index_args: vec![tidb_model::IndexArg::default()].into(),
                 ..Default::default()
             })));
 

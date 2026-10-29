@@ -56,7 +56,7 @@ pub(crate) fn extract(
         };
         let invalid = || {
             EvalError::Conversion(
-                tidb_datatype::ERR_TRUNCATED_WRONG_VALUE
+                tidb_parser_types::parser_types_errors::ERR_TRUNCATED_WRONG_VALUE
                     .generate(format!("Truncated incorrect time value: '{text}'")),
             )
         };

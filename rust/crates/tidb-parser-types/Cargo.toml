@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB column types: Go pkg/parser/types (Rust rewrite)."
 
 [dependencies]
+tidb-error = { path = "../tidb-error" }
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 tidb-charset = { path = "../tidb-charset" }

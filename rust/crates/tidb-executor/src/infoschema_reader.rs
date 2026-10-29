@@ -2443,7 +2443,7 @@ fn tables_rows(
                 row.push(Datum::Null);
                 row.push(text(""));
                 // A metric table's comment is its definition's (`tableInfo.Comment`).
-                let comment = tidb_metadef::metric_table_def::get_metric_table_def(table_name)
+                let comment = tidb_infoschema::metric_table_def::get_metric_table_def(table_name)
                     .filter(|_| schema_upper == "METRICS_SCHEMA")
                     .map_or("", |def| def.comment);
                 row.push(text(comment));
@@ -3253,7 +3253,7 @@ fn tidb_indexes_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Ve
 /// Go `memtableRetriever.setDataForMetricTables`: one row per metric table,
 /// sorted by name, with the labels comma-joined.
 fn metrics_tables_rows() -> Vec<Vec<Datum>> {
-    tidb_metadef::metric_table_def::METRIC_TABLE_MAP
+    tidb_infoschema::metric_table_def::METRIC_TABLE_MAP
         .iter()
         .map(|(name, def)| {
             vec![

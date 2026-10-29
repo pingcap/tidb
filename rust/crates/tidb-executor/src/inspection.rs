@@ -90,7 +90,7 @@ pub fn inspection_summary_rows(
             if !extractor.metric_names.is_empty() && !extractor.metric_names.contains(*name) {
                 continue;
             }
-            let Some(def) = tidb_metadef::metric_table_def::get_metric_table_def(name) else {
+            let Some(def) = tidb_infoschema::metric_table_def::get_metric_table_def(name) else {
                 warn(format!("metrics table: {name} not found"));
                 continue;
             };

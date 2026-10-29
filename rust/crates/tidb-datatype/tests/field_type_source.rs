@@ -13,13 +13,26 @@
 
 //! Source-derived FieldType assertions from parser and runtime Go tests.
 
-use tidb_datatype::{
-    agg_field_type, aggregate_eval_type, default_field_type_for_value, enum_set_display_length,
-    merge_field_type, parser_default_field_type_for_value, str_to_type, type_str, type_to_str,
-    EvalType, FieldType, FieldTypeCode as C, FieldTypeFlags as F, FieldTypeValue as V,
-    ERR_DATA_OUT_OF_RANGE, ERR_ILLEGAL_VALUE_FOR_TYPE, ERR_INVALID_DEFAULT,
-    ERR_TRUNCATED_WRONG_VALUE, UNSPECIFIED_LENGTH, VAR_STORAGE_LEN,
-};
+use tidb_datatype::agg_field_type;
+use tidb_datatype::aggregate_eval_type;
+use tidb_datatype::default_field_type_for_value;
+use tidb_datatype::enum_set_display_length;
+use tidb_datatype::merge_field_type;
+use tidb_datatype::parser_default_field_type_for_value;
+use tidb_datatype::str_to_type;
+use tidb_datatype::type_str;
+use tidb_datatype::type_to_str;
+use tidb_datatype::EvalType;
+use tidb_datatype::FieldType;
+use tidb_datatype::FieldTypeCode as C;
+use tidb_datatype::FieldTypeFlags as F;
+use tidb_datatype::FieldTypeValue as V;
+use tidb_parser_types::parser_types_errors::ERR_DATA_OUT_OF_RANGE;
+use tidb_parser_types::parser_types_errors::ERR_ILLEGAL_VALUE_FOR_TYPE;
+use tidb_parser_types::parser_types_errors::ERR_INVALID_DEFAULT;
+use tidb_parser_types::parser_types_errors::ERR_TRUNCATED_WRONG_VALUE;
+use tidb_datatype::UNSPECIFIED_LENGTH;
+use tidb_datatype::VAR_STORAGE_LEN;
 use tidb_error::mysql::{errcode, errname};
 use tidb_error::terror::TerrorClass;
 

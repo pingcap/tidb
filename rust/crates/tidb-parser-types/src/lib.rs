@@ -18,6 +18,7 @@
 //! and adds the functions over them.
 
 mod eval_type;
+pub mod parser_types_errors;
 pub mod field_type;
 
 #[cfg(test)]

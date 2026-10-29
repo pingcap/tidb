@@ -183,7 +183,7 @@ impl ClusterCatalog {
             .iter()
             .find(|database| database.info.name.lowercase() == lower)
             .map(|database| (&database.info, database.tables.as_slice()))
-            .or_else(|| tidb_metadef::virtual_tables::virtual_schema(schema))
+            .or_else(|| crate::virtual_tables::virtual_schema(schema))
     }
 
     /// Go `InfoSchema.TableByName`: a stored table, else one of the virtual
@@ -191,7 +191,7 @@ impl ClusterCatalog {
     #[must_use]
     pub fn table_by_name(&self, schema: &str, table: &str) -> Option<(&DBInfo, &TableInfo)> {
         self.find_table(schema, table)
-            .or_else(|| tidb_metadef::virtual_tables::virtual_table(schema, table))
+            .or_else(|| crate::virtual_tables::virtual_table(schema, table))
     }
 
     /// Finds one table by case-insensitive schema and table name.
