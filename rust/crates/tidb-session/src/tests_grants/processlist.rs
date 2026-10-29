@@ -727,3 +727,40 @@ fn cluster_lifecycle_batch_auto_analyze_kill_requires_connection_admin() {
     crate::tests_support::assert_err(denied, 1227, "Access denied; you need (at least one of) the SUPER or CONNECTION_ADMIN privilege(s) for this operation");
     allowed.unwrap();
 }
+
+/// Go `buildExplainFor`: `EXPLAIN FOR CONNECTION` on another user's
+/// connection without SUPER is `plannererrors.ErrAccessDenied` -- class
+/// optimizer, with `ErrAccessDeniedNoPassword`'s message over the user and
+/// host alone (no "using password" clause).
+#[test]
+fn explain_for_another_users_connection_needs_super() {
+    let privileges = tidb_privilege::PrivilegeRegistry::default();
+    let mut boot = bootstrap_session(&privileges);
+    boot.run("CREATE USER bob").unwrap();
+    let registry = process::ProcessRegistry::default();
+    let mut session = authenticated_session(&privileges, "bob", "%");
+    session.attach_process(1, registry.register(
+        1,
+        "bob".to_owned(),
+        "127.0.0.1:1".to_owned(),
+        "test".to_owned(),
+        None,
+    ));
+    let _alice = registry.register(
+        2,
+        "alice".to_owned(),
+        "10.0.0.2:2".to_owned(),
+        "test".to_owned(),
+        None,
+    );
+    let error = session
+        .run("explain for connection 2")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1045);
+    assert_eq!(error.message, "Access denied for user 'bob'@'%'");
+    assert_eq!(
+        error.identity.map(|identity| identity.class()),
+        Some(tidb_plannererrors::ERR_ACCESS_DENIED.class())
+    );
+}

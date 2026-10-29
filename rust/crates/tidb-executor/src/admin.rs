@@ -1072,17 +1072,15 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
         };
         let plan = registry.plan_of(target);
         // Go `buildExplainFor`: another user's connection needs SUPER,
-        // refused with `ErrAccessDenied` over the two names alone.
+        // refused with `plannererrors.ErrAccessDenied` (class optimizer,
+        // `ErrAccessDeniedNoPassword`'s two-name message).
         if let Some((_, user, host)) = self.privilege_context() {
             if user != target_row.user && !self.has_scoped_privilege("", "", tidb_mysql::SuperPriv)
             {
-                return Err(DriverError::Mysql(crate::MysqlError::from_terror(
-                    &tidb_privilege::privileges_errors::ERR_ACCESS_DENIED.generate_with_stack(
-                        format!(
-                        "Access denied for user '{user}'@'{host}' (using password: %!s(MISSING))"
-                    ),
-                    ),
-                )));
+                return Err(DriverError::from(
+                    tidb_plannererrors::ERR_ACCESS_DENIED
+                        .generate_with_stack_by_args(&[user.into(), host.into()]),
+                ));
             }
         }
         let format = explain_for.format.to_lowercase();
