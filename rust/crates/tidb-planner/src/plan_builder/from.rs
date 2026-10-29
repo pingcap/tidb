@@ -955,7 +955,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let visible = names.iter().filter(|name| !name.hidden).count();
             if visible != column_names.len() {
                 return Err(PlanError::from(
-                    tidb_util::dbterror::ERR_VIEW_WRONG_LIST.generate_with_stack_by_args(&[]),
+                    tidb_dbterror::ERR_VIEW_WRONG_LIST.generate_with_stack_by_args(&[]),
                 ));
             }
             let mut aliases = column_names.iter();

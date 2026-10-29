@@ -1,0 +1,13 @@
+[package]
+name = "tidb-tls"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/tls: Go pkg/util/tls (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]

@@ -20,7 +20,7 @@ use crate::serverinfo_syncer::{EtcdOps, Syncer};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
-use tidb_util::globalconn::{MAX_SERVER_ID32, MAX_SERVER_ID64};
+use tidb_globalconn::{MAX_SERVER_ID32, MAX_SERVER_ID64};
 
 const SERVER_ID_PATH: &str = "/tidb/server_id";
 

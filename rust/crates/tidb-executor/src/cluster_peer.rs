@@ -126,7 +126,7 @@ impl ClusterPeerClient {
     pub fn kill(
         &self,
         servers: &[ServerInfo],
-        id: tidb_util::globalconn::Gcid,
+        id: tidb_globalconn::Gcid,
         query: bool,
         ctx: &StmtContext,
         zone: &SessionTimeZone,
@@ -408,7 +408,7 @@ impl ClusterPeerClient {
                     recv(done_rx) -> _ => {},
                 }
             });
-            if killer.get_kill_signal() != tidb_util::sqlkiller::KillSignal::UnspecifiedKillSignal {
+            if killer.get_kill_signal() != tidb_sqlkiller::KillSignal::UnspecifiedKillSignal {
                 cancel.cancel();
             }
             let result = run(cancel);

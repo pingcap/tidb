@@ -161,7 +161,7 @@ pub(super) fn build_create_table_with_info_job(
     info: TableInfo,
     on_exist: OnExist,
     job_context: &dyn DdlSessionContext,
-    warnings: &mut Vec<tidb_util::context::SqlWarn>,
+    warnings: &mut Vec<tidb_context::SqlWarn>,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let Some(database) = find_database(catalog, schema) else {
         return Err(DdlPlanError::from(
@@ -202,7 +202,7 @@ pub(super) fn build_create_table_with_info_job(
             OnExist::Replace if info.view.is_some() => {
                 if existing.view.is_none() {
                     return Err(coded_refusal(
-                        &tidb_util::dbterror::ERR_WRONG_OBJECT,
+                        &tidb_dbterror::ERR_WRONG_OBJECT,
                         format!("'{schema}.{}' is not VIEW", info.name.original()),
                     ));
                 }
@@ -364,7 +364,7 @@ pub fn build_session_temporary_table_info(
     table: &str,
     like: Option<(&str, &TableInfo)>,
     context: &dyn DdlSessionContext,
-    warnings: &mut Vec<tidb_util::context::SqlWarn>,
+    warnings: &mut Vec<tidb_context::SqlWarn>,
 ) -> Result<TableInfo, DdlPlanError> {
     let mb_ctx = context.metabuild_context();
     let info = match like {
@@ -430,7 +430,7 @@ fn job_database<'a>(
             cancel_ddl_job(
                 active,
                 DdlPlanError::from(
-                    tidb_util::dbterror::CLASS_SCHEMA
+                    tidb_dbterror::CLASS_SCHEMA
                         .new_std(tidb_error::tidb::errcode::ErrBadDB)
                         .generate(format!(
                             "Unknown database '(Schema ID {})'",
@@ -443,7 +443,7 @@ fn job_database<'a>(
 
 fn table_exists_in_owner(schema: &str, name: &str) -> DdlPlanError {
     DdlPlanError::from(
-        tidb_util::dbterror::CLASS_SCHEMA
+        tidb_dbterror::CLASS_SCHEMA
             .new_std(tidb_error::tidb::errcode::ErrTableExists)
             .generate(format!("Table '{schema}.{name}' already exists")),
     )
@@ -645,7 +645,7 @@ fn build_alter_sequence_job(
     };
     let Some(old) = stored.sequence.as_ref().map(|shared| shared.read().clone()) else {
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_WRONG_OBJECT,
+            &tidb_dbterror::ERR_WRONG_OBJECT,
             format!("'{schema}.{name}' is not SEQUENCE"),
         ));
     };
@@ -706,7 +706,7 @@ pub(super) fn plan_persisted_alter_sequence_job_step(
         return Err(cancel_ddl_job(
             active,
             coded_refusal(
-                &tidb_util::dbterror::ERR_WRONG_OBJECT,
+                &tidb_dbterror::ERR_WRONG_OBJECT,
                 format!(
                     "'{}.{}' is not SEQUENCE",
                     ident.schema.original(),

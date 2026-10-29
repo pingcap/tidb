@@ -1,0 +1,17 @@
+[package]
+name = "tidb-zeropool"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/zeropool: Go pkg/util/zeropool (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[[bench]]
+name = "zeropool"
+harness = false

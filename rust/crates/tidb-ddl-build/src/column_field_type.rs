@@ -777,7 +777,7 @@ impl ColumnAttributeError {
                     (*type_name).into(),
                 ]),
             // Go `ErrTooLongValueForType.GenWithStackByArgs(col.Name)`.
-            Self::TooLongEnumSetValue => tidb_util::dbterror::ERR_TOO_LONG_VALUE_FOR_TYPE
+            Self::TooLongEnumSetValue => tidb_dbterror::ERR_TOO_LONG_VALUE_FOR_TYPE
                 .generate_with_stack_by_args(&[column.into()]),
             Self::InvalidVectorDimension(message) => {
                 return tidb_error::mysql::MysqlError::unknown(message.as_str())

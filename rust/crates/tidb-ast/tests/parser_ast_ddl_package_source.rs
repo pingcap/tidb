@@ -22,7 +22,8 @@ use crate::parser_ast_node_restore_source::{
     case, expect_ddl, run_node_restore_test, run_node_restore_test_with_flags,
     run_node_restore_test_with_flags_stmt_change, NodeRestoreCase,
 };
-use tidb_ast::{DdlStmt, RestoreContext, RestoreFlags, Stmt};
+use tidb_ast::{DdlStmt, RestoreContext, Stmt};
+use tidb_parser_format::RestoreFlags;
 
 const SPECIAL_COMMENT: RestoreFlags = RestoreFlags::TIDB_SPECIAL_COMMENT;
 

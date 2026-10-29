@@ -28,7 +28,7 @@ fn push_column_comment(clause: &mut String, column: &crate::KvColumn) {
         return;
     }
     clause.push_str(" COMMENT '");
-    clause.push_str(&tidb_util::format::output_format(&column.comment));
+    clause.push_str(&tidb_format::output_format(&column.comment));
     clause.push('\'');
 }
 
@@ -375,7 +375,7 @@ pub fn show_create_table_text(
         }
         if !index.comment.is_empty() {
             clause.push_str(" COMMENT '");
-            clause.push_str(&tidb_util::format::output_format(&index.comment));
+            clause.push_str(&tidb_format::output_format(&index.comment));
             clause.push('\'');
         }
         if is_hypo {
@@ -482,7 +482,7 @@ pub fn show_create_table_text(
             Some(tier) => out.push_str(&format!(" STORAGE_CLASS='{tier}'")),
             None => out.push_str(&format!(
                 " ENGINE_ATTRIBUTE='{}'",
-                tidb_util::format::output_format(&engine_attribute)
+                tidb_format::output_format(&engine_attribute)
             )),
         }
     }
@@ -557,7 +557,7 @@ pub fn show_create_table_text(
     if !table.comment().is_empty() {
         out.push_str(&format!(
             " COMMENT='{}'",
-            tidb_util::format::output_format(table.comment())
+            tidb_format::output_format(table.comment())
         ));
     }
     // Go `ConstructResultOfShowCreateTable` (`executor/show.go:1421`) prints

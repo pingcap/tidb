@@ -14,7 +14,7 @@
 use std::fmt;
 
 use tidb_ast::{LoadDataFields, LoadDataLines};
-use tidb_util::texttree::{indent_4_child, pretty_identifier};
+use tidb_texttree::{indent_4_child, pretty_identifier};
 
 use crate::access::AccessObject;
 

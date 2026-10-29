@@ -77,8 +77,8 @@ fn ddl_reports_preserve_warning_order_levels_and_statement_lifetime() {
 
     let node = MockNode::start();
     let notes = vec![
-        tidb_util::context::SqlWarn::with_code(Note, 1051, "Unknown table 'app.absent_a'"),
-        tidb_util::context::SqlWarn::with_code(Note, 1051, "Unknown table 'app.absent_b'"),
+        tidb_context::SqlWarn::with_code(Note, 1051, "Unknown table 'app.absent_a'"),
+        tidb_context::SqlWarn::with_code(Note, 1051, "Unknown table 'app.absent_b'"),
     ];
     // An applied multi-drop and an entirely suppressed multi-drop carry the
     // same ordered notes. Neither report variant determines the level.
@@ -146,7 +146,7 @@ fn ddl_reports_preserve_warning_order_levels_and_statement_lifetime() {
             },
             report: ClusterDdlReport::AlreadySatisfied {
                 detail: "no change".to_owned(),
-                warnings: vec![tidb_util::context::SqlWarn::with_code(Warning, 8200, message.clone())],
+                warnings: vec![tidb_context::SqlWarn::with_code(Warning, 8200, message.clone())],
             },
         }),
     );
@@ -231,7 +231,7 @@ fn full_cluster_ddl_keeps_a_region_backoff_error_coded_on_the_wire() {
 fn auto_random_rebase_errors_keep_their_tidb_codes_on_the_cluster_wire() {
     let invalid = cluster_ddl_error(tidb_ddl::real_tikv_ddl::ClusterDdlError::Plan(
         tidb_ddl::cluster_ddl::DdlPlanError::from(
-            tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
+            tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
                 ("alter auto_random_base of a non auto_random table".to_owned()).into(),
             ]),
         ),
@@ -783,14 +783,14 @@ fn a_catalog_refusal_carries_the_code_mysql_clients_switch_on() {
     assert_eq!(message, "Duplicate column name 'a'");
 
     let (code, message) = coded(DdlPlanError::from(
-        tidb_util::dbterror::ERR_DUP_KEY_NAME
+        tidb_dbterror::ERR_DUP_KEY_NAME
             .generate_with_stack_by_args(&[("ix".to_owned()).into()]),
     ));
     assert_eq!(code, 1061);
     assert_eq!(message, "Duplicate key name 'ix'");
 
     let (code, message) = coded(DdlPlanError::from(
-        tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
+        tidb_dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
             .generate_with_stack(format!("column does not exist: {}", ("c".to_owned()))),
     ));
     assert_eq!((code, message.as_str()), (1072, "column does not exist: c"));

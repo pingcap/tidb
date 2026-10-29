@@ -297,7 +297,7 @@ where
 pub fn install_process_globals(config: &NodeConfig) {
     let max_procs = config.global_config.performance.max_procs;
     install_global_config(config.global_config.clone());
-    tidb_util::cpu::install_cpu_count(max_procs, config.affinity_cpus.len());
+    tidb_cpu::install_cpu_count(max_procs, config.affinity_cpus.len());
 }
 
 /// Stable usage text printed by the executable for `--help`.
@@ -359,7 +359,7 @@ fn install_global_config(config: SourceConfig) {
         return;
     }
     if !configured_edition.is_empty() {
-        tidb_util::versioninfo::set_tidb_edition(configured_edition);
+        tidb_versioninfo::set_tidb_edition(configured_edition);
     }
     tidb_mysql::set_runtime_versions(
         if configured_release.is_empty() {

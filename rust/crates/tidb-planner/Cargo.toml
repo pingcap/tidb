@@ -12,6 +12,26 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-planner-coreusage = { path = "../tidb-planner-coreusage" }
+tidb-planner-costusage = { path = "../tidb-planner-costusage" }
+tidb-planner-tablesampler = { path = "../tidb-planner-tablesampler" }
+tidb-planner-util = { path = "../tidb-planner-util" }
+tidb-planner-cascades-base = { path = "../tidb-planner-cascades-base" }
+tidb-context = { path = "../tidb-context" }
+tidb-dbterror = { path = "../tidb-dbterror" }
+tidb-disjointset = { path = "../tidb-disjointset" }
+tidb-filter = { path = "../tidb-filter" }
+tidb-go-regexp = { path = "../tidb-go-regexp" }
+tidb-intset = { path = "../tidb-intset" }
+tidb-memory = { path = "../tidb-memory" }
+tidb-paging = { path = "../tidb-paging" }
+tidb-plancodec = { path = "../tidb-plancodec" }
+tidb-printer = { path = "../tidb-printer" }
+tidb-sem-compat = { path = "../tidb-sem-compat" }
+tidb-sem-v2 = { path = "../tidb-sem-v2" }
+tidb-size = { path = "../tidb-size" }
+tidb-stringutil = { path = "../tidb-stringutil" }
+tidb-texttree = { path = "../tidb-texttree" }
 tidb-ranger = { path = "../tidb-ranger" }
 tidb-lexer = { path = "../tidb-lexer" }
 tidb-goruntime = { path = "../tidb-goruntime" }
@@ -31,7 +51,7 @@ tidb-config = { path = "../tidb-config" }
 tidb-error = { path = "../tidb-error" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-funcdep = { path = "../tidb-funcdep" }
-tidb-hash = { path = "../tidb-hash" }
+tidb-parser-util = { path = "../tidb-parser-util" }
 tidb-hint = { path = "../tidb-hint" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }

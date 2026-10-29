@@ -28,7 +28,7 @@ pub(crate) fn recover_executor_panic<T>(
     operation: impl FnOnce() -> Result<T, ExecError>,
 ) -> Result<T, ExecError> {
     catch_unwind(AssertUnwindSafe(operation)).map_err(|payload| {
-        tidb_util::traceevent::dump_flight_recorder_to_logger("GetRecoverError");
+        tidb_traceevent::dump_flight_recorder_to_logger("GetRecoverError");
         ExecError::internal(panic_message(payload.as_ref()))
     })?
 }

@@ -257,7 +257,7 @@ impl<C: AutoIdServiceRpc + ?Sized> AutoIdServiceAllocator<C> {
         table_id: i64,
     ) -> Result<(i64, i64), AutoIdServiceError> {
         // Go `singlePointAlloc.alloc`'s region.
-        let _region = tidb_util::tracing::start_thread_region_ex("autoid.Alloc");
+        let _region = tidb_tracing::start_thread_region_ex("autoid.Alloc");
         if !(1..=65_535).contains(&increment) || !(1..=65_535).contains(&offset) {
             return Err(AutoIdServiceError::InvalidIncrementAndOffset { increment, offset });
         }
@@ -328,7 +328,7 @@ impl<C: AutoIdServiceRpc + ?Sized> AutoIdServiceAllocator<C> {
         table_id: i64,
     ) -> Result<(), AutoIdServiceError> {
         // Go `singlePointAlloc.rebase`'s region.
-        let _region = tidb_util::tracing::start_thread_region_ex("autoid.Rebase");
+        let _region = tidb_tracing::start_thread_region_ex("autoid.Rebase");
         let mut backoff = AutoIdServiceBackoff::default();
         let mut retry_state = AutoIdServiceRetryState::default();
         let request = AutoIdServiceRebaseRequest {
@@ -640,14 +640,14 @@ where
         loop {
             let call = UnaryCallContext::with_timeout(self.timeout);
             let mut transaction = {
-                let _untraced = tidb_util::tracing::with_thread_span(None);
+                let _untraced = tidb_tracing::with_thread_span(None);
                 self.opener
                     .begin()
                     .map_err(|error| store_error("open", &error))?
             };
-            let region = region.map(tidb_util::tracing::start_thread_region);
+            let region = region.map(tidb_tracing::start_thread_region);
             let stored = {
-                let _untraced = tidb_util::tracing::with_thread_span(None);
+                let _untraced = tidb_tracing::with_thread_span(None);
                 transaction
                     .snapshot_get(
                         &self.counter_key,

@@ -51,11 +51,11 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLock
 use std::thread::ThreadId;
 
 use tidb_datatype::FieldType;
-use tidb_util::disk;
-use tidb_util::memory::{
+use tidb_disk as disk;
+use tidb_memory::{
     ActionOnExceed, ArcAction, Tracker, DEF_SPILL_PRIORITY, LABEL_FOR_ROW_CONTAINER,
 };
-use tidb_util::spill_storage::SpillStorage;
+use tidb_spill_storage::SpillStorage;
 
 use crate::chunk::Chunk;
 use crate::chunk_in_disk::DiskError;

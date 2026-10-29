@@ -458,7 +458,7 @@ impl<S> HistoricalStatsWorker<S> {
             return;
         }
         if !self.tbl_ch.try_send(table_id) {
-            tidb_util::logutil::bg_logger().warn(
+            tidb_logutil::bg_logger().warn(
                 "discard dump historical stats task",
                 &[tidb_log::Field::new(
                     "table-id",
@@ -730,10 +730,10 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let mut file = tidb_util::logutil::new_file_log_config(300);
+        let mut file = tidb_logutil::new_file_log_config(300);
         file.filename = path.to_string_lossy().into_owned();
-        let config = tidb_util::logutil::new_log_config("info", "text", "", "", file, false);
-        tidb_util::logutil::init_logger(&config).unwrap();
+        let config = tidb_logutil::new_log_config("info", "text", "", "", file, false);
+        tidb_logutil::init_logger(&config).unwrap();
         path
     }
 

@@ -870,7 +870,7 @@ fn persisted_cancellation_distinguishes_errors_with_the_same_number() {
             "DDL job rollback, error msg: legacy duplicate",
         ),
         (
-            tidb_util::dbterror::ERR_CANCELLED_DDL_JOB.generate("normal cancellation"),
+            tidb_dbterror::ERR_CANCELLED_DDL_JOB.generate("normal cancellation"),
             "ddl:8214",
             "normal cancellation",
         ),
@@ -1120,14 +1120,14 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
     let cases = [
         (
             DdlPlanError::from(
-                tidb_util::dbterror::CLASS_SCHEMA
+                tidb_dbterror::CLASS_SCHEMA
                     .new_std(1061)
                     .generate("schema duplicate"),
             ),
             1061,
         ),
         (
-            DdlPlanError::from(tidb_util::dbterror::ERR_DUP_KEY_NAME.generate("DDL duplicate")),
+            DdlPlanError::from(tidb_dbterror::ERR_DUP_KEY_NAME.generate("DDL duplicate")),
             1061,
         ),
         (
@@ -1174,7 +1174,7 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
         ),
         (
             DdlPlanError::from(
-                tidb_util::dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&["idx".into()]),
+                tidb_dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&["idx".into()]),
             ),
             1061,
         ),
@@ -1187,7 +1187,7 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
         ),
         (
             DdlPlanError::from(
-                tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
+                tidb_dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
                     .generate_with_stack(format!("column does not exist: {}", "col")),
             ),
             1072,
@@ -1201,14 +1201,14 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
         ),
         (
             DdlPlanError::from(
-                tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY
+                tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY
                     .generate_with_stack_by_args(&["col".into()]),
             ),
             1091,
         ),
         (
             DdlPlanError::from(
-                tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY
+                tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY
                     .generate_with_stack_by_args(&["idx".into()]),
             ),
             1091,
@@ -1222,7 +1222,7 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
         ),
         (
             DdlPlanError::from(
-                tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM
+                tidb_dbterror::ERR_INVALID_AUTO_RANDOM
                     .generate_with_stack_by_args(&["invalid range".into()]),
             ),
             8216,
@@ -1341,7 +1341,7 @@ fn persisted_check_failure_uses_source_identity_for_rollback() {
     for (error, state, rfc) in [
         (
             DdlPlanError::from(
-                tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED.generate("violation"),
+                tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED.generate("violation"),
             ),
             JobState::ROLLINGBACK,
             "ddl:3819",
@@ -2759,7 +2759,7 @@ fn persisted_add_check_rolls_back_after_owner_restart() {
         job_id,
         10_000,
         PersistedDdlJobFailure::Error(DdlPlanError::from(
-            tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED.generate(validation_message),
+            tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED.generate(validation_message),
         )),
         &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
         None,
@@ -3072,7 +3072,7 @@ fn persisted_alter_check_validation_rolls_back_to_not_enforced() {
         job_id,
         10_000,
         PersistedDdlJobFailure::Error(DdlPlanError::from(
-            tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED.generate(validation_message),
+            tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED.generate(validation_message),
         )),
         &|| tidb_vardef::defaults::DEF_TIDB_DDL_ERROR_COUNT_LIMIT,
         None,
@@ -4860,7 +4860,7 @@ fn a_duplicate_index_name_is_refused_and_if_not_exists_is_a_no_op() {
     )
     .expect_err("a duplicate index name is an error");
     assert!(
-        refused.equal(&tidb_util::dbterror::ERR_DUP_KEY_NAME),
+        refused.equal(&tidb_dbterror::ERR_DUP_KEY_NAME),
         "{refused}"
     );
     assert_eq!(refused.to_string(), "[ddl:1061]Duplicate key name 'vi'");
@@ -6121,13 +6121,13 @@ fn persisted_job_errors_carry_the_go_class() {
         ),
         (
             DdlPlanError::from(
-                tidb_util::dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&["idx".into()]),
+                tidb_dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&["idx".into()]),
             ),
             "ddl:1061",
         ),
         (
             DdlPlanError::from(
-                tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY
+                tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY
                     .generate_with_stack_by_args(&["c".into()]),
             ),
             "ddl:1091",

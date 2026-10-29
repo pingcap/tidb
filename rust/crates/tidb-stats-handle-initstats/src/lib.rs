@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 use tidb_log::{Field, Value};
-use tidb_util::logutil::{bg_logger, sample_logger_factory, SampledLogger, LOG_FIELD_CATEGORY};
+use tidb_logutil::{bg_logger, sample_logger_factory, SampledLogger, LOG_FIELD_CATEGORY};
 
 /// An atomic `f64` with Go `atomic.Float64` load/store behavior.
 pub struct AtomicF64(AtomicU64);

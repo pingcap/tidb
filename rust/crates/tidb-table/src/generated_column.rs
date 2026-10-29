@@ -495,13 +495,13 @@ pub fn resolve_generated_expr(
 ///
 /// This is also the canonical form a generated-column substitution rule can
 /// compare against once the wired planner implements `GcSubstituter`.
-pub fn generated_restore_flags() -> tidb_ast::RestoreFlags {
-    tidb_ast::RestoreFlags::STRING_SINGLE_QUOTES
-        | tidb_ast::RestoreFlags::KEYWORD_LOWERCASE
-        | tidb_ast::RestoreFlags::NAME_BACK_QUOTES
-        | tidb_ast::RestoreFlags::SPACES_AROUND_BINARY_OPERATION
-        | tidb_ast::RestoreFlags::WITHOUT_SCHEMA_NAME
-        | tidb_ast::RestoreFlags::WITHOUT_TABLE_NAME
+pub fn generated_restore_flags() -> tidb_parser_format::RestoreFlags {
+    tidb_parser_format::RestoreFlags::STRING_SINGLE_QUOTES
+        | tidb_parser_format::RestoreFlags::KEYWORD_LOWERCASE
+        | tidb_parser_format::RestoreFlags::NAME_BACK_QUOTES
+        | tidb_parser_format::RestoreFlags::SPACES_AROUND_BINARY_OPERATION
+        | tidb_parser_format::RestoreFlags::WITHOUT_SCHEMA_NAME
+        | tidb_parser_format::RestoreFlags::WITHOUT_TABLE_NAME
 }
 
 /// Resolves a generated expression's column references against the table's

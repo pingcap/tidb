@@ -19,7 +19,7 @@ use tidb_datatype::SessionTimeZone;
 use tidb_proto::{coprocessor, tikvpb, tipb};
 use tidb_session::{Session};
 use tidb_privilege::PrivilegeRegistry;
-use tidb_executor::process::ProcessRegistry;
+use tidb_sessmgr::ProcessRegistry;
 
 type ReplyStream<T> = Pin<Box<dyn futures::Stream<Item = Result<T, tonic::Status>> + Send>>;
 
@@ -131,15 +131,15 @@ impl PeerService {
             );
         }
         // Go ConstructTimeZone prefers the name to the offset, including System.
-        let zone = match tidb_util::timeutil::construct_time_zone(
+        let zone = match tidb_timeutil::construct_time_zone(
             dag.time_zone_name.as_deref().unwrap_or(""),
             dag.time_zone_offset.unwrap_or(0) as i32,
         )
         .map_err(|e| e.to_string())?
         {
-            tidb_util::timeutil::TimeZone::Local => SessionTimeZone::Local,
-            tidb_util::timeutil::TimeZone::Named(zone) => SessionTimeZone::Named(zone),
-            tidb_util::timeutil::TimeZone::Fixed { name, offset_secs } => {
+            tidb_timeutil::TimeZone::Local => SessionTimeZone::Local,
+            tidb_timeutil::TimeZone::Named(zone) => SessionTimeZone::Named(zone),
+            tidb_timeutil::TimeZone::Fixed { name, offset_secs } => {
                 SessionTimeZone::Fixed { name, offset_secs }
             }
         };
@@ -842,7 +842,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tidb_datatype::Datum;
-    use tidb_executor::process::ProcessKillTarget;
+    use tidb_sessmgr::ProcessKillTarget;
 
     /// The outgoing peer client over an embedded store, whose TiDB requests
     /// cross the real socket through the mock store's redirector, as Go's
@@ -1949,7 +1949,7 @@ mod tests {
         assert_eq!(read("CLUSTER_MEMORY_USAGE").unwrap().1.len(), 1);
         assert_eq!(
             read("CLUSTER_MEMORY_USAGE_OPS_HISTORY").unwrap().1.len(),
-            tidb_util::servermemorylimit::GLOBAL_MEMORY_OPS_HISTORY_MANAGER
+            tidb_servermemorylimit::GLOBAL_MEMORY_OPS_HISTORY_MANAGER
                 .get_rows()
                 .len()
         );
@@ -2571,7 +2571,7 @@ mod tests {
         assert!(rows.warnings.is_empty(), "{:?}", rows.warnings);
         assert_eq!(rows.rows.len(), 1);
         assert_eq!(rows.rows[0][1], Datum::UInt(12));
-        let global_id = tidb_util::globalconn::Gcid {
+        let global_id = tidb_globalconn::Gcid {
             server_id: 17,
             local_conn_id: 42,
             is_64bits: false,

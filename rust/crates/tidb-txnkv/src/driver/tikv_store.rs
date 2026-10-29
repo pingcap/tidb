@@ -265,7 +265,7 @@ impl<PdC: PdClient> TikvStore<PdC> {
         F: std::future::Future + Send,
         F::Output: Send,
     {
-        let span = tidb_util::tracing::current_span();
+        let span = tidb_tracing::current_span();
         block_on_runtime(
             &self.runtime,
             crate::rpc::trace::with_span_ctx(span, operation),
@@ -313,7 +313,7 @@ impl<PdC: PdClient> TikvStore<PdC> {
                 {
                     Ok(response) => response,
                     Err(error) => {
-                        tidb_util::logutil::bg_logger().warn(
+                        tidb_logutil::bg_logger().warn(
                             "query lock wait info failed",
                             &[tidb_log::Field::new(
                                 "error",
@@ -325,7 +325,7 @@ impl<PdC: PdClient> TikvStore<PdC> {
                 };
                 match response.downcast::<tikv_client::proto::kvrpcpb::GetLockWaitInfoResponse>() {
                     Ok(response) => result.extend(response.entries),
-                    Err(_) => tidb_util::logutil::bg_logger()
+                    Err(_) => tidb_logutil::bg_logger()
                         .warn("lock wait info from store is nil", &[]),
                 }
             }

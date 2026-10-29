@@ -126,7 +126,7 @@ pub struct DispatchContext<'a> {
     /// factor (`tidb_opt_selectivity_factor`).
     pub selectivity_factor: f64,
     /// Statement warning and plan-cache fallback state.
-    pub range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
+    pub range_fallback_handler: Option<&'a tidb_context::RangeFallbackHandler>,
     /// Statement parameter values, warnings and coercion settings used by ranger.
     pub expression_evaluator: &'a tidb_ranger::points::ExpressionEvaluator<'a>,
     /// Go `SessionVars.OptOrderingIdxSelRatio`, used by the ordered LIMIT
@@ -403,7 +403,7 @@ impl<'a> DispatchContext<'a> {
     pub const fn with_range_quota(
         mut self,
         quota: i64,
-        handler: &'a tidb_util::context::RangeFallbackHandler,
+        handler: &'a tidb_context::RangeFallbackHandler,
     ) -> Self {
         self.range_max_size = quota;
         self.range_fallback_handler = Some(handler);

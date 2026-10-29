@@ -40,7 +40,7 @@
 //!   children, conservative and shape-neutral.
 
 use crate::cardinality::row_size::RowSizeColumn;
-use crate::cost_usage::{CostVer2, PlanCostOption};
+use tidb_planner_costusage::{CostVer2, PlanCostOption};
 use crate::physical::PhysicalPlan;
 use crate::plan_base::PlanError;
 use crate::plan_cost_ver2::{
@@ -76,7 +76,7 @@ pub struct Ver2Coster {
     factors: Ver2Factors,
     session_factors: CostFactorVars,
     session: CostSessionOpts,
-    cost_option: Option<crate::cost_usage::PlanCostOption>,
+    cost_option: Option<tidb_planner_costusage::PlanCostOption>,
     // Go stores costs on physical nodes. EXPLAIN uses a temporary cache over
     // its immutable retained tree so child rendering reuses recursive costs.
     explain_costs: Option<std::rc::Rc<std::cell::RefCell<std::collections::HashMap<usize, CostVer2>>>>,
@@ -106,7 +106,7 @@ impl TaskCoster for Ver2Coster {
             }
             Task::Cop(cop) => match (&cop.index_plan, &cop.table_plan) {
                 (Some(index), Some(table)) if cop.index_plan_finished => {
-                    crate::cost_usage::sum_cost_ver2(&[
+                    tidb_planner_costusage::sum_cost_ver2(&[
                         self.price(index, TaskType::CopMultiRead),
                         self.price_with_scan_context(table, TaskType::CopMultiRead, Some(true)),
                     ])
@@ -192,7 +192,7 @@ impl Ver2Coster {
         coster.plan_cost(plan, task_type, is_child_of_inl)
     }
 
-    pub fn cost_option(&self) -> Option<&crate::cost_usage::PlanCostOption> {
+    pub fn cost_option(&self) -> Option<&tidb_planner_costusage::PlanCostOption> {
         self.cost_option.as_ref()
     }
 
@@ -201,7 +201,7 @@ impl Ver2Coster {
     fn recalculates(&self) -> bool {
         self.cost_option().is_some_and(|option| {
             option.cost_flag()
-                & (crate::cost_usage::COST_FLAG_RECALCULATE | crate::cost_usage::COST_FLAG_TRACE)
+                & (tidb_planner_costusage::COST_FLAG_RECALCULATE | tidb_planner_costusage::COST_FLAG_TRACE)
                 != 0
         })
     }
@@ -270,7 +270,7 @@ impl Ver2Coster {
     /// Pins the cost option for every pricing this coster performs — the
     /// EXPLAIN cost-trace path builds its coster with
     /// `COST_FLAG_TRACE` so each operator's `CostVer2` carries its formula.
-    pub fn with_cost_option(mut self, option: crate::cost_usage::PlanCostOption) -> Self {
+    pub fn with_cost_option(mut self, option: tidb_planner_costusage::PlanCostOption) -> Self {
         self.cost_option = Some(option);
         self
     }
@@ -343,9 +343,9 @@ impl Ver2Coster {
         task_type: TaskType,
         is_child_of_inl: Option<bool>,
     ) -> CostVer2 {
-        let mut total = crate::cost_usage::ZERO_COST_VER2;
+        let mut total = tidb_planner_costusage::ZERO_COST_VER2;
         for child in plan.children() {
-            total = crate::cost_usage::sum_cost_ver2(&[
+            total = tidb_planner_costusage::sum_cost_ver2(&[
                 total,
                 self.price_with_scan_context(child, task_type, is_child_of_inl),
             ]);
@@ -488,7 +488,7 @@ impl Ver2Coster {
                         TaskType::CopSingleRead
                     };
                 let inner = reader.table_plan.as_deref().map_or_else(
-                    || crate::cost_usage::ZERO_COST_VER2,
+                    || tidb_planner_costusage::ZERO_COST_VER2,
                     |plan| self.price(plan, child_task_type),
                 );
                 let net_owner = if reader
@@ -500,8 +500,8 @@ impl Ver2Coster {
                 } else {
                     crate::plan_cost_ver2::NetOwner::TiDbToTiKv
                 };
-                let mut cost = crate::cost_usage::div_cost_ver2(
-                    &crate::cost_usage::sum_cost_ver2(&[
+                let mut cost = tidb_planner_costusage::div_cost_ver2(
+                    &tidb_planner_costusage::sum_cost_ver2(&[
                         inner,
                         net_cost(
                             self.cost_option(),
@@ -515,19 +515,19 @@ impl Ver2Coster {
                 if reader.store_type == crate::physical_table_reader::StoreType::TiFlash
                     && self.session.mpp_enforced
                     && !self.cost_option().is_some_and(|option| {
-                        option.cost_flag() & crate::cost_usage::COST_FLAG_RECALCULATE != 0
+                        option.cost_flag() & tidb_planner_costusage::COST_FLAG_RECALCULATE != 0
                     })
                 {
-                    cost = crate::cost_usage::div_cost_ver2(
+                    cost = tidb_planner_costusage::div_cost_ver2(
                         &cost,
                         crate::plan_cost_ver2::MPP_ENFORCED_DISCOUNT,
                     );
                 }
-                crate::cost_usage::mul_cost_ver2(&cost, self.session_factors.table_reader)
+                tidb_planner_costusage::mul_cost_ver2(&cost, self.session_factors.table_reader)
             }
             PhysicalPlan::ExchangeReceiver(_receiver) => {
                 let child = plan.children().first();
-                let child_cost = child.map_or(crate::cost_usage::ZERO_COST_VER2, |child| {
+                let child_cost = child.map_or(tidb_planner_costusage::ZERO_COST_VER2, |child| {
                     self.price(child, TaskType::Mpp)
                 });
                 let is_broadcast = child.is_some_and(|child| {
@@ -575,11 +575,11 @@ impl Ver2Coster {
 
                 let index_plan = reader.index_plan.as_deref();
                 let index_child = index_plan.map_or_else(
-                    || crate::cost_usage::ZERO_COST_VER2,
+                    || tidb_planner_costusage::ZERO_COST_VER2,
                     |plan| self.price_with_scan_context(plan, TaskType::CopMultiRead, Some(false)),
                 );
-                let index_side = crate::cost_usage::div_cost_ver2(
-                    &crate::cost_usage::sum_cost_ver2(&[
+                let index_side = tidb_planner_costusage::div_cost_ver2(
+                    &tidb_planner_costusage::sum_cost_ver2(&[
                         // Go `cardinality.GetAvgRowSize(GetTblStats(p.IndexPlan),
                         // p.IndexPlan.Schema().Columns, isEncodedKey: true)`.
                         net_cost(
@@ -598,11 +598,11 @@ impl Ver2Coster {
 
                 let table_plan = reader.table_plan.as_deref();
                 let table_child = table_plan.map_or_else(
-                    || crate::cost_usage::ZERO_COST_VER2,
+                    || tidb_planner_costusage::ZERO_COST_VER2,
                     |plan| self.price_with_scan_context(plan, TaskType::CopMultiRead, Some(true)),
                 );
-                let table_side = crate::cost_usage::div_cost_ver2(
-                    &crate::cost_usage::sum_cost_ver2(&[
+                let table_side = tidb_planner_costusage::div_cost_ver2(
+                    &tidb_planner_costusage::sum_cost_ver2(&[
                         // Go `cardinality.GetAvgRowSize(GetTblStats(p.TablePlan),
                         // p.TablePlan.Schema().Columns, isEncodedKey: false)`.
                         net_cost(
@@ -621,7 +621,7 @@ impl Ver2Coster {
 
                 let double_read_rows = index_rows;
                 let cpu_factor = self.factors.task_cpu(task_type);
-                let double_read_cpu = crate::cost_usage::new_cost_ver2(
+                let double_read_cpu = tidb_planner_costusage::new_cost_ver2(
                     self.cost_option(),
                     cpu_factor,
                     double_read_rows * cpu_factor.value(),
@@ -630,7 +630,7 @@ impl Ver2Coster {
                 let batch_size = self.session.index_lookup_size;
                 let task_per_batch = 32.0;
                 let double_read_tasks = double_read_rows / batch_size * task_per_batch;
-                let double_read = crate::cost_usage::sum_cost_ver2(&[
+                let double_read = tidb_planner_costusage::sum_cost_ver2(&[
                     double_read_cpu,
                     crate::plan_cost_ver2::double_read_cost(
                         self.cost_option(),
@@ -639,10 +639,10 @@ impl Ver2Coster {
                     ),
                 ]);
 
-                let mut cost = crate::cost_usage::sum_cost_ver2(&[
+                let mut cost = tidb_planner_costusage::sum_cost_ver2(&[
                     index_side,
-                    crate::cost_usage::div_cost_ver2(
-                        &crate::cost_usage::sum_cost_ver2(&[table_side, double_read]),
+                    tidb_planner_costusage::div_cost_ver2(
+                        &tidb_planner_costusage::sum_cost_ver2(&[table_side, double_read]),
                         double_read_concurrency,
                     ),
                 ]);
@@ -651,15 +651,15 @@ impl Ver2Coster {
                     && expect > 0.0
                     && expect <= crate::plan_cost_ver2::PAGING_THRESHOLD as f64
                 {
-                    cost = crate::cost_usage::mul_cost_ver2(&cost, 0.6);
+                    cost = tidb_planner_costusage::mul_cost_ver2(&cost, 0.6);
                 }
                 if reader
                     .pushed_limit
                     .is_some_and(|limit| table_rows <= limit.count as f64)
                 {
-                    cost = crate::cost_usage::mul_cost_ver2(&cost, self.session_factors.limit);
+                    cost = tidb_planner_costusage::mul_cost_ver2(&cost, self.session_factors.limit);
                 }
-                crate::cost_usage::mul_cost_ver2(&cost, self.session_factors.index_lookup)
+                tidb_planner_costusage::mul_cost_ver2(&cost, self.session_factors.index_lookup)
             }
             PhysicalPlan::IndexReader(reader) => {
                 let child_rows = reader
@@ -667,11 +667,11 @@ impl Ver2Coster {
                     .as_deref()
                     .map_or(rows, |plan| Self::rows(plan));
                 let inner = reader.index_plan.as_deref().map_or_else(
-                    || crate::cost_usage::ZERO_COST_VER2,
+                    || tidb_planner_costusage::ZERO_COST_VER2,
                     |plan| self.price(plan, TaskType::CopSingleRead),
                 );
-                let cost = crate::cost_usage::div_cost_ver2(
-                    &crate::cost_usage::sum_cost_ver2(&[
+                let cost = tidb_planner_costusage::div_cost_ver2(
+                    &tidb_planner_costusage::sum_cost_ver2(&[
                         inner,
                         net_cost(
                             self.cost_option(),
@@ -685,7 +685,7 @@ impl Ver2Coster {
                     ]),
                     self.session.distsql_scan_concurrency,
                 );
-                crate::cost_usage::mul_cost_ver2(&cost, self.session_factors.index_reader)
+                tidb_planner_costusage::mul_cost_ver2(&cost, self.session_factors.index_reader)
             }
             // `getPlanCostVer24PhysicalIndexMergeReader`: every partial and
             // the table side price as (net + child) / dist-concurrency.
@@ -795,7 +795,7 @@ impl Ver2Coster {
                 // `p.Children()[0]` for the child cardinality
                 // (`plan_cost_ver2.go:561`).
                 let child_rows = Self::rows(&plan.children()[0]);
-                crate::cost_usage::sum_cost_ver2(&[
+                tidb_planner_costusage::sum_cost_ver2(&[
                     self.children_cost(plan, task_type, is_child_of_inl),
                     filter_cost(
                         self.cost_option(),
@@ -1137,7 +1137,7 @@ impl Ver2Coster {
             PhysicalPlan::TableDual(_)
             | PhysicalPlan::CTETable(_)
             | PhysicalPlan::Show(_)
-            | PhysicalPlan::ShowDDLJobs(_) => crate::cost_usage::ZERO_COST_VER2,
+            | PhysicalPlan::ShowDDLJobs(_) => tidb_planner_costusage::ZERO_COST_VER2,
             // Everything else prices as its children, conservative.
             _ => self.children_cost(plan, task_type, is_child_of_inl),
         }
@@ -1357,7 +1357,7 @@ mod tests {
         assert!(cte_cost > 0.0);
 
         let mut option = PlanCostOption::new();
-        option.with_cost_flag(crate::cost_usage::COST_FLAG_TRACE);
+        option.with_cost_flag(tidb_planner_costusage::COST_FLAG_TRACE);
         let detached = point(5, true);
         let traced = detached
             .get_plan_cost_ver2(TaskType::Root, option, false)

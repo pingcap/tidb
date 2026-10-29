@@ -10,26 +10,26 @@ use std::sync::Arc;
 #[derive(Default)]
 struct NoopMemStateRecorder;
 
-impl tidb_util::memory::RecordMemState for NoopMemStateRecorder {
-    fn load(&self) -> Result<Option<tidb_util::memory::RuntimeMemStateV1>, String> {
+impl tidb_memory::RecordMemState for NoopMemStateRecorder {
+    fn load(&self) -> Result<Option<tidb_memory::RuntimeMemStateV1>, String> {
         Ok(None)
     }
 
-    fn store(&self, _: &tidb_util::memory::RuntimeMemStateV1) -> Result<(), String> {
+    fn store(&self, _: &tidb_memory::RuntimeMemStateV1) -> Result<(), String> {
         Ok(())
     }
 }
 
-fn test_mem_arbitrator() -> Arc<tidb_util::memory::MemArbitrator> {
+fn test_mem_arbitrator() -> Arc<tidb_memory::MemArbitrator> {
     let arbitrator =
-        tidb_util::memory::MemArbitrator::new(1024, 4, 3, 0, Box::new(NoopMemStateRecorder));
+        tidb_memory::MemArbitrator::new(1024, 4, 3, 0, Box::new(NoopMemStateRecorder));
     assert!(arbitrator.auto_run(
-        tidb_util::memory::MemArbitratorActions::default(),
-        tidb_util::memory::DEF_AWAIT_FREE_POOL_ALLOC_ALIGN_SIZE,
+        tidb_memory::MemArbitratorActions::default(),
+        tidb_memory::DEF_AWAIT_FREE_POOL_ALLOC_ALIGN_SIZE,
         4,
-        tidb_util::memory::DEF_TASK_TICK_DUR,
+        tidb_memory::DEF_TASK_TICK_DUR,
     ));
-    arbitrator.set_work_mode(tidb_util::memory::ArbitratorWorkMode::Standard);
+    arbitrator.set_work_mode(tidb_memory::ArbitratorWorkMode::Standard);
     arbitrator
 }
 
@@ -40,10 +40,10 @@ fn server_spill_authority_reaches_every_statement_context() {
         std::process::id()
     ));
     let storage = Arc::new(
-        tidb_util::spill_storage::SpillStorage::open(tidb_util::spill_storage::SpillStorageSpec {
+        tidb_spill_storage::SpillStorage::open(tidb_spill_storage::SpillStorageSpec {
             path: path.clone(),
             quota_bytes: -1,
-            encryption: tidb_util::spill_storage::SpillEncryptionMethod::Aes128Ctr,
+            encryption: tidb_spill_storage::SpillEncryptionMethod::Aes128Ctr,
         })
         .unwrap(),
     );
@@ -58,7 +58,7 @@ fn server_spill_authority_reaches_every_statement_context() {
         assert_eq!(inherited.path(), path);
         assert_eq!(
             inherited.encryption(),
-            tidb_util::spill_storage::SpillEncryptionMethod::Aes128Ctr
+            tidb_spill_storage::SpillEncryptionMethod::Aes128Ctr
         );
     }
 
@@ -585,7 +585,7 @@ fn mpp_context_uses_the_live_server_info_identity() {
     // the MPP task server ID reads that same `do.ServerID()`.
     assert_eq!(
         session.statement_context(false).mpp_server_id(),
-        tidb_util::globalconn::SERVER_ID_FOR_STANDALONE
+        tidb_globalconn::SERVER_ID_FOR_STANDALONE
     );
     let id = Arc::new(AtomicU64::new(42));
     let getter_id = id.clone();

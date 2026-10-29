@@ -404,7 +404,7 @@ fn join_restore() {
                 "`t1` JOIN (`t2` RIGHT JOIN `t3` ON `t2`.`a`=`t3`.`a`)",
             ),
         ],
-        tidb_ast::RestoreFlags::DEFAULT,
+        tidb_parser_format::RestoreFlags::DEFAULT,
         |stmt, context| select_from(stmt).restore_with_context(context),
     );
 }

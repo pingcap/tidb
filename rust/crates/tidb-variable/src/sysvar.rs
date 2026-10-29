@@ -734,17 +734,17 @@ fn sem_v2_defaults() -> &'static RwLock<HashMap<String, String>> {
 
 struct SemV2SysVarRegistry;
 
-impl tidb_util::sem_v2::SysVarRegistry for SemV2SysVarRegistry {
-    fn get_sys_var(&self, name: &str) -> Option<tidb_util::sem_v2::SysVar> {
+impl tidb_sem_v2::SysVarRegistry for SemV2SysVarRegistry {
+    fn get_sys_var(&self, name: &str) -> Option<tidb_sem_v2::SysVar> {
         let definition = get_sys_var(name)?;
         let scope = match definition.scope {
-            SCOPE_NONE => tidb_util::sem_v2::SysVarScope::None,
-            SCOPE_GLOBAL => tidb_util::sem_v2::SysVarScope::Global,
-            SCOPE_SESSION => tidb_util::sem_v2::SysVarScope::Session,
-            SCOPE_INSTANCE => tidb_util::sem_v2::SysVarScope::Instance,
-            _ => tidb_util::sem_v2::SysVarScope::Other,
+            SCOPE_NONE => tidb_sem_v2::SysVarScope::None,
+            SCOPE_GLOBAL => tidb_sem_v2::SysVarScope::Global,
+            SCOPE_SESSION => tidb_sem_v2::SysVarScope::Session,
+            SCOPE_INSTANCE => tidb_sem_v2::SysVarScope::Instance,
+            _ => tidb_sem_v2::SysVarScope::Other,
         };
-        Some(tidb_util::sem_v2::SysVar {
+        Some(tidb_sem_v2::SysVar {
             scope,
             value: effective_default(definition),
         })
@@ -763,7 +763,7 @@ impl tidb_util::sem_v2::SysVarRegistry for SemV2SysVarRegistry {
 
 /// Installs Go `variable.GetSysVar` / `SetSysVar` as SEM v2's registry.
 pub fn install_sem_v2_sysvar_registry() {
-    tidb_util::sem_v2::set_sys_var_registry(Some(Arc::new(SemV2SysVarRegistry)));
+    tidb_sem_v2::set_sys_var_registry(Some(Arc::new(SemV2SysVarRegistry)));
 }
 
 /// The registry position of the entry `name` addresses (case-insensitively),
@@ -861,7 +861,7 @@ pub fn effective_default_value(definition: &SysVarDef) -> Cow<'static, str> {
     {
         return Cow::Owned(value);
     }
-    tidb_util::sem::effective_sysvar_default(definition.name)
+    tidb_sem::effective_sysvar_default(definition.name)
         .map_or_else(|| Cow::Borrowed(definition.value), Cow::Owned)
 }
 /// go `server.setSystemTimeZoneVariable` -> `timeutil.InferSystemTZ`
@@ -1037,7 +1037,7 @@ pub fn normalize_time_value(
         FULL_DAY_TIME_FORMAT
     };
     let clock =
-        tidb_util::go_time_layout::parse_clock(layout, value).map_err(ValidationError::Refused)?;
+        tidb_go_time_layout::parse_clock(layout, value).map_err(ValidationError::Refused)?;
     let offset_minutes = match clock.zone_offset {
         Some(offset) => offset / 60,
         None => {
@@ -1220,7 +1220,7 @@ impl SysVarDef {
         lookup: Option<&dyn Fn(&str) -> Option<String>>,
     ) -> Result<Validated, ValidationError> {
         if self.name == "tiflash_compute_dispatch_policy" {
-            tidb_util::tiflashcompute::DispatchPolicy::parse(&validated.value)
+            tidb_tiflashcompute::DispatchPolicy::parse(&validated.value)
                 .map_err(ValidationError::Refused)?;
         }
         if let Some(lookup) = lookup {
@@ -1266,7 +1266,7 @@ impl SysVarDef {
                     truncated: validated.truncated,
                 });
             }
-            tidb_util::timeutil::parse_time_zone(&validated.value)
+            tidb_timeutil::parse_time_zone(&validated.value)
                 .map_err(|error| ValidationError::SqlError(error.to_sql_error()))?;
             return Ok(validated);
         }
@@ -1437,7 +1437,7 @@ impl SysVarDef {
         // The host total is a process fact, so a percentage is only resolved
         // when the runtime can provide it; byte forms remain deterministic.
         if self.name == "tidb_server_memory_limit" {
-            let total = tidb_util::memory::mem_total().unwrap_or_default();
+            let total = tidb_memory::mem_total().unwrap_or_default();
             let parsed = crate::varsutil::parse_memory_limit(total, &validated.value, original)
                 .map_err(|_| {
                     ValidationError::SqlError(SqlError::new(

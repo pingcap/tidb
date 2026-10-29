@@ -27,9 +27,9 @@ use std::sync::atomic::AtomicI64;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use tidb_datatype::FieldType;
-use tidb_util::disk::Tracker as DiskTracker;
-use tidb_util::memory::{ActionOnExceed, ArcAction, Tracker};
-use tidb_util::spill_storage::SpillStorage;
+use tidb_disk::Tracker as DiskTracker;
+use tidb_memory::{ActionOnExceed, ArcAction, Tracker};
+use tidb_spill_storage::SpillStorage;
 
 use crate::chunk::Chunk;
 use crate::chunk_in_disk::DiskError;
@@ -195,7 +195,7 @@ impl SortedRowContainer {
             "one comparator slot is required for each sorted key"
         );
         let rows = RowContainer::new(field_types, chunk_size, storage);
-        let mem_tracker = Tracker::new(tidb_util::memory::LABEL_FOR_ROW_CONTAINER, -1);
+        let mem_tracker = Tracker::new(tidb_memory::LABEL_FOR_ROW_CONTAINER, -1);
         rows.mem_tracker().attach_to(&mem_tracker);
         let inner = Arc::new(SortedInner {
             rows,
@@ -507,8 +507,8 @@ mod tests {
     use super::*;
     use crate::compare::get_compare_func;
     use crate::test_temp_storage::{isolated_storage, storage};
-    use tidb_util::spill_storage::SpillEncryptionMethod;
-    use tidb_util::sqlkiller::KillSignal;
+    use tidb_spill_storage::SpillEncryptionMethod;
+    use tidb_sqlkiller::KillSignal;
 
     fn fields(width: usize) -> Vec<FieldType> {
         vec![FieldType::new(FieldTypeCode::LongLong); width]

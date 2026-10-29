@@ -82,9 +82,9 @@ where
         params: &[&str],
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, RuStatsError> {
         use tidb_sqlexec::RestrictedSqlExecutor;
-        let arguments: Vec<tidb_util::sqlescape::SqlArg<'_>> = params
+        let arguments: Vec<tidb_sqlescape::SqlArg<'_>> = params
             .iter()
-            .map(|param| tidb_util::sqlescape::SqlArg::String(param.as_bytes()))
+            .map(|param| tidb_sqlescape::SqlArg::String(param.as_bytes()))
             .collect();
         let use_current_session: tidb_sqlexec::OptionFuncAlias =
             Arc::new(tidb_sqlexec::exec_option_use_current_session);
@@ -285,7 +285,7 @@ impl RuStatsWriterWorker {
         });
         let weak: Weak<Domain> = Arc::downgrade(factory);
         let running = Arc::clone(&stop);
-        let thread = tidb_util::worker_stack::sql_worker_thread("ru-stats-writer")
+        let thread = tidb_worker_stack::sql_worker_thread("ru-stats-writer")
             .spawn(move || {
                 let local = chrono::Local;
                 let mut writer = RuStatsWriter::new(deps, chrono::Local::now(), local);

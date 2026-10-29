@@ -671,9 +671,9 @@ impl ProgressRangeTree {
                 "failed to insert the progress range into range tree, because there is a \
                  overlapping range. The insert item start key: {}; The overlapped item start \
                  key: {}, end key: {}.",
-                tidb_util::redact::key(&start_key),
-                tidb_util::redact::key(&overlap.origin.start_key),
-                tidb_util::redact::key(&overlap.origin.end_key),
+                tidb_redact::key(&start_key),
+                tidb_redact::key(&overlap.origin.start_key),
+                tidb_redact::key(&overlap.origin.end_key),
             )));
         }
         self.tree.insert(start_key, pr);
@@ -707,8 +707,8 @@ impl ProgressRangeTree {
                 "The given region is not contained in the found progress range. The region start \
                  key is {}; The progress range start key is {}, end key is {}.",
                 String::from_utf8_lossy(start_key),
-                tidb_util::redact::key(&ret.origin.start_key),
-                tidb_util::redact::key(&ret.origin.end_key),
+                tidb_redact::key(&ret.origin.start_key),
+                tidb_redact::key(&ret.origin.end_key),
             )));
         }
 

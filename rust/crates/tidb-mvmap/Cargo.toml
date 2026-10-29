@@ -1,0 +1,17 @@
+[package]
+name = "tidb-mvmap"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/mvmap: Go pkg/util/mvmap (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[[bench]]
+name = "mvmap"
+harness = false

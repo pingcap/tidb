@@ -16,7 +16,7 @@
 
 use tidb_timer::go_time::{GoTime, HOUR};
 use tidb_timer::timer::{SchedPolicyType, TimerRecord, TimerSpec};
-use tidb_util::timeutil::TimeZone;
+use tidb_timeutil::TimeZone;
 
 /// Go `TestTimerValidate`.
 #[test]

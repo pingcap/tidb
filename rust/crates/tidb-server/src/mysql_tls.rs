@@ -137,7 +137,7 @@ impl MysqlServerTls {
             origin,
             ca,
             min_version,
-            tidb_util::tls::REQUIRE_SECURE_TRANSPORT.load(std::sync::atomic::Ordering::SeqCst),
+            tidb_tls::REQUIRE_SECURE_TRANSPORT.load(std::sync::atomic::Ordering::SeqCst),
         )
     }
 
@@ -150,7 +150,7 @@ impl MysqlServerTls {
         require_secure: bool,
     ) -> Result<Self, MysqlTlsError> {
         if !matches!(min_version, "" | "TLSv1.2" | "TLSv1.3") {
-            tidb_util::logutil::bg_logger().warn(
+            tidb_logutil::bg_logger().warn(
                 "Invalid TLS version, using default instead",
                 &[tidb_log::Field::new(
                     "tls-version",
@@ -319,7 +319,7 @@ fn create_certificates(cert: &Path, key: &Path, rsa_bits: i64) -> Result<(), Mys
         &rcgen::PKCS_RSA_SHA256,
     )
     .map_err(|e| generation(&e))?;
-    let hostname = tidb_util::sem::operating_system_hostname()
+    let hostname = tidb_sem::operating_system_hostname()
         .ok_or_else(|| MysqlTlsError::Generation("could not read the OS hostname".into()))?;
     let mut params = rcgen::CertificateParams::new(vec![hostname]).map_err(|e| generation(&e))?;
     params.distinguished_name = rcgen::DistinguishedName::new();
@@ -375,7 +375,7 @@ impl rustls::server::ResolvesServerCert for PemResolver {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         match next {
             Ok(key) => *current = Arc::new(key),
-            Err(error) => tidb_util::logutil::bg_logger().warn(
+            Err(error) => tidb_logutil::bg_logger().warn(
                 "could not load server certificate, using the old one",
                 &[crate::zap_error(error)],
             ),
@@ -515,7 +515,7 @@ impl MysqlTlsManager {
         // Go's automatic rotation stores the loader result, including nil on
         // failure. SQL reload has its separate rollback policy below.
         let next = self.load().unwrap_or_else(|error| {
-            tidb_util::logutil::bg_logger().warn(
+            tidb_logutil::bg_logger().warn(
                 "TLS Certificate rotation failed",
                 &[crate::zap_error(error)],
             );
@@ -528,19 +528,19 @@ impl MysqlTlsManager {
     }
 }
 
-impl tidb_executor::process::TlsManager for MysqlTlsManager {
+impl tidb_sessmgr::TlsManager for MysqlTlsManager {
     fn reload_tls(&self, no_rollback_on_error: bool) -> Result<(), String> {
         let next = match self.load() {
             Ok(next) => next,
             Err(error)
                 if !no_rollback_on_error
-                    || tidb_util::tls::REQUIRE_SECURE_TRANSPORT
+                    || tidb_tls::REQUIRE_SECURE_TRANSPORT
                         .load(std::sync::atomic::Ordering::SeqCst) =>
             {
                 return Err(error.to_string());
             }
             Err(_) => {
-                tidb_util::logutil::bg_logger().warn(
+                tidb_logutil::bg_logger().warn(
                     "reload TLS fail but keep working without TLS due to 'no rollback on error'",
                     &[],
                 );
@@ -756,7 +756,7 @@ impl ClientStream {
             }
         }
         Some(tidb_privilege::TlsPeerIdentity {
-            cipher: tidb_util::tls::cipher_suite_name(u16::from(
+            cipher: tidb_tls::cipher_suite_name(u16::from(
                 stream.conn.negotiated_cipher_suite()?.suite(),
             ))
             .into(),
@@ -1053,7 +1053,7 @@ mod account_tls_batch_tests {
         assert_eq!(names.len(), 1);
         assert_eq!(
             names[0].dnsname(),
-            tidb_util::sem::operating_system_hostname().as_deref()
+            tidb_sem::operating_system_hostname().as_deref()
         );
         let key = fs::read_to_string(path.join("key.pem")).unwrap();
         assert!(key.starts_with("-----BEGIN PRIVATE KEY-----"));
@@ -1098,7 +1098,7 @@ mod account_tls_batch_tests {
         let mut config = generated_config();
         config.ssl_ca = Some(ca.clone());
         let manager = MysqlTlsManager::new(&config).unwrap();
-        let processes = tidb_executor::process::ProcessRegistry::default();
+        let processes = tidb_sessmgr::ProcessRegistry::default();
         processes.set_tls_manager(manager.clone());
         let mut session = tidb_session::Session::new();
         session.attach_process(

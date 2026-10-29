@@ -1,5 +1,17 @@
 # Structural mismatch scan (2026-10-29)
 
+## Status (2026-10-29)
+
+Done (each is its Go package's crate now): every `tidb-util` entry (one crate per `pkg/util/*` package; `tidb-util` keeps `misc`); `planner/cascades/base` (`hash_equaler`, `base_traits`, `cascades_base`); `planner/util` (`by_item`, `column_length`, `index_columns`, `null_misc`, `handle_cols`), `util/costusage`, `util/tablesampler`, `util/coreusage`; `planner/indexadvisor` (the executor's `index_advisor` minus `RecommendIndexExec`); `util/ranger`; `parser/format` (`tidb-ast`'s `format.rs` restore state) and `parser/opcode`; `parser/util`; `timer/runtime` and `timer/tablestore` (with `notifier`); unistore's `lockstore` (with `arena`, `iterator`, `load_dump`), `util/lockwaiter` and `tikv/mvcc`; `util/resourcegrouptag`, `util/trxevents`, `util/tiflash`, `util/cteutil`, `session/txninfo`, `session/sessmgr`, `pkg/lock`; `select_result_stats` into tidb-distsql; `util/domainutil`, `util/replayer`.
+
+Blocked on a behavior-level change, not a move:
+- `planner/property` (`physical_property`, `stats_info`, `task_type`) and `planner/cardinality`: the planner's `stats_info::HistColl` reimplements Go `statistics.HistColl`, and cardinality reads planner core (`access_path`, logical plans).
+- `planner/util/path.go` (`access_path`) and `domainmisc`: read planner core, which Go's `planner/util` reaches only through `core/base`, still inside the planner crate.
+- unistore's `cophandler` reads `tikv`'s `MvccStore` (Go's reads `dbreader`); `tikv` (`mvcc_store`, `kv_handler`, `detector`, `region_manager`) and the root (`cluster`, `tso`, `mock_pd`, `rpc`) reference each other in cycles.
+- `tidb-error`'s `catalog`: every Go package's error prototypes in one crate.
+- txnkv's `mpp_probe`, `key_ranges`, `range_diagnostics` (Go `store/copr`): tidb-copr depends on tidb-distsql, the reverse of Go's `distsql -> copr`.
+- tidb-session's `temptable` runs over the concrete `Session`.
+
 Each Rust module whose `//!` docs cite a Go package (most-cited `pkg/...` path) unrelated to its crate's Go package, after dropping modules whose file name matches a Go file in the crate's package. A citation is a lead, not proof: each entry needs a check against the Go source before it moves.
 
 | Lines | Crate | Module | Cited Go package | Crate's Go package |

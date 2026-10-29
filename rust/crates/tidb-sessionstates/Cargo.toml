@@ -8,6 +8,8 @@ repository.workspace = true
 description = "TiDB sessionctx/sessionstates: the session state a migration carries (Rust rewrite)."
 
 [dependencies]
+tidb-context = { path = "../tidb-context" }
+tidb-stringutil = { path = "../tidb-stringutil" }
 base64 = { workspace = true }
 chrono = { workspace = true }
 fail = { version = "0.4", optional = true }

@@ -286,7 +286,7 @@ fn alter_table_extended_statistics_transcreate_all_go_ast_restore_rows() {
 
 #[test]
 fn test_alter_table_with_special_comment_restore() {
-    let flags = tidb_ast::RestoreFlags::DEFAULT | tidb_ast::RestoreFlags::TIDB_SPECIAL_COMMENT;
+    let flags = tidb_parser_format::RestoreFlags::DEFAULT | tidb_parser_format::RestoreFlags::TIDB_SPECIAL_COMMENT;
     for (sql, expected) in [
         (
             "ALTER TABLE t PLACEMENT POLICY p1",

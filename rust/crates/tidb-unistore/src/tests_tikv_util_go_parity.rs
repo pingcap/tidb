@@ -17,7 +17,7 @@
 //!
 //! `TestLockwaiterBasic` / `TestLockwaiterConcurrent` (from
 //! `util/lockwaiter/lockwaiter_test.go`, also in this batch's slice) remain
-//! ported in [`crate::lockwaiter::tests`] as `test_lockwaiter_basic` and
+//! ported in [`tidb_unistore_lockwaiter::tests`] as `test_lockwaiter_basic` and
 //! `test_lockwaiter_concurrent`; this module owns the three `tikv/util.go`
 //! helper tables.
 //!

@@ -77,7 +77,7 @@ pub fn spawn_sysvar_watch(
     let waker = reloader?.waker();
     match etcd?.watch_key(SYSVAR_UPDATE_KEY, 0, move |_event| {
         // Go `LoadSysVarCacheLoop`, woken by the watch.
-        tidb_util::logutil::bg_logger()
+        tidb_logutil::bg_logger()
             .debug("Rebuilding sysvar cache from etcd watch event.", &[]);
         waker.nudge();
     }) {

@@ -1685,14 +1685,14 @@ fn test_eval_ttl_expire_time() {
 /// `time_zone`, which is all `(*PhysicalTable).EvalExpireTime` reads.
 struct GlobalTimeZoneContext {
     global_time_zone: &'static str,
-    killer: tidb_util::sqlkiller::SqlKiller,
+    killer: tidb_sqlkiller::SqlKiller,
 }
 
 impl GlobalTimeZoneContext {
     fn new(global_time_zone: &'static str) -> Self {
         Self {
             global_time_zone,
-            killer: tidb_util::sqlkiller::SqlKiller::default(),
+            killer: tidb_sqlkiller::SqlKiller::default(),
         }
     }
 }
@@ -1736,15 +1736,15 @@ impl tidb_ttl::session::SessionContext for GlobalTimeZoneContext {
         Ok(self.global_time_zone.to_owned())
     }
 
-    fn time_zone(&self) -> Option<tidb_util::timeutil::TimeZone> {
+    fn time_zone(&self) -> Option<tidb_timeutil::TimeZone> {
         None
     }
 
-    fn location(&self) -> tidb_util::timeutil::TimeZone {
-        tidb_util::timeutil::parse_time_zone(self.global_time_zone).unwrap()
+    fn location(&self) -> tidb_timeutil::TimeZone {
+        tidb_timeutil::parse_time_zone(self.global_time_zone).unwrap()
     }
 
-    fn sql_killer(&self) -> &tidb_util::sqlkiller::SqlKiller {
+    fn sql_killer(&self) -> &tidb_sqlkiller::SqlKiller {
         &self.killer
     }
 }

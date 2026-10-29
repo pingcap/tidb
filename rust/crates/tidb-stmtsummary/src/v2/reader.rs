@@ -660,7 +660,7 @@ fn parse_end_ts(path: &Path) -> Result<i64, String> {
 
 /// Go `logutil.BgLogger().Warn(msg, zap.Error(err), zap.String("path", path))`.
 fn log_file_failure(msg: &str, error: impl std::fmt::Display, path: &Path) {
-    tidb_util::logutil::bg_logger().warn(
+    tidb_logutil::bg_logger().warn(
         msg,
         &[
             tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),

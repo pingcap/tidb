@@ -1766,7 +1766,7 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
         // Go sizes this VarString from `printer.GetTiDBInfo()`.
         "tidb_version" if args.is_empty() => ft_with_flen(
             text(),
-            i64::try_from(tidb_util::printer::get_tidb_info().len())
+            i64::try_from(tidb_printer::get_tidb_info().len())
                 .unwrap_or(i64::MAX),
         ),
         // Go `connectionIDFunctionClass` fixes an unsigned `LongLong`.

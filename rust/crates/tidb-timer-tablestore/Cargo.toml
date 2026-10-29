@@ -1,0 +1,33 @@
+[package]
+name = "tidb-timer-tablestore"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/timer/tablestore: the system-table timer store and its etcd notifier (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-timer = { path = "../tidb-timer" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-timeutil = { path = "../tidb-timeutil" }
+chrono.workspace = true
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-log = { path = "../tidb-log" }
+tidb-pd-client = { path = "../tidb-pd-client" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-syssession = { path = "../tidb-syssession" }
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+[dev-dependencies]
+chrono-tz.workspace = true
+tidb-ast = { path = "../tidb-ast" }
+tidb-model = { path = "../tidb-model" }
+tidb-resolve = { path = "../tidb-resolve" }

@@ -767,7 +767,7 @@ pub fn fetch_region_table_index(
         let (start_key, end_key) = match store.locate_region_by_id(*region_id) {
             Ok(bounds) => bounds,
             Err(error) => {
-                tidb_util::logutil::bg_logger().error(
+                tidb_logutil::bg_logger().error(
                     "locate region failed",
                     &[tidb_log::Field::new("error", tidb_log::Value::Str(error))],
                 );

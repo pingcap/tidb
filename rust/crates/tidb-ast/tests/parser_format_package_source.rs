@@ -17,9 +17,8 @@
 use std::fs;
 use std::path::Path;
 
-use tidb_ast::{
-    CteRestorer, RestoreContext, RestoreCtx, RestoreFlags, GO_SIMPLE_CASE_UNICODE_VERSION,
-};
+use tidb_ast::RestoreContext;
+use tidb_parser_format::{CteRestorer, RestoreCtx, RestoreFlags, GO_SIMPLE_CASE_UNICODE_VERSION};
 
 #[test]
 fn original_test_restore_ctx_and_source_priority() {

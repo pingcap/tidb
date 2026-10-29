@@ -47,25 +47,25 @@ fn log_dir(test: &str) -> std::path::PathBuf {
 fn install_loggers(dir: &std::path::Path) -> (String, String) {
     let slow = dir.join("tidb-slow.log").to_string_lossy().into_owned();
     let general = dir.join("tidb-general.log").to_string_lossy().into_owned();
-    let file = tidb_util::logutil::FileLogConfig {
+    let file = tidb_logutil::FileLogConfig {
         filename: dir.join("tidb.log").to_string_lossy().into_owned(),
         max_size: 300,
         ..Default::default()
     };
-    let config = tidb_util::logutil::new_log_config(
+    let config = tidb_logutil::new_log_config(
         "info",
-        tidb_util::logutil::DEFAULT_LOG_FORMAT,
+        tidb_logutil::DEFAULT_LOG_FORMAT,
         &slow,
         &general,
         file,
         false,
     );
-    tidb_util::logutil::init_logger(&config).unwrap();
+    tidb_logutil::init_logger(&config).unwrap();
     (slow, general)
 }
 
 fn read(path: &str) -> String {
-    let _ = tidb_util::logutil::sync();
+    let _ = tidb_logutil::sync();
     std::fs::read_to_string(path).unwrap_or_default()
 }
 

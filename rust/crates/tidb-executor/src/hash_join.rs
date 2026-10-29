@@ -72,8 +72,8 @@ use tidb_chunk::row::Row;
 use tidb_chunk::row_container::{RowContainer, SpillDiskAction};
 use tidb_datatype::{Collation, Datum, EvalType, FieldType};
 use tidb_expr::expression::Expression;
-use tidb_util::memory::Tracker;
-use tidb_util::spill_storage::SpillStorage;
+use tidb_memory::Tracker;
+use tidb_spill_storage::SpillStorage;
 
 /// Go's hash join feeds encoded key columns to `hash/fnv.New64`. The complete
 /// encoded key is still compared after a bucket hit, so this hash is only a
@@ -1912,7 +1912,7 @@ impl BuildTable {
     }
 
     /// Go `hashRowContainer.GetDiskTracker`.
-    pub(crate) fn disk_tracker(&self) -> &Arc<tidb_util::disk::Tracker> {
+    pub(crate) fn disk_tracker(&self) -> &Arc<tidb_disk::Tracker> {
         self.rows.disk_tracker()
     }
 

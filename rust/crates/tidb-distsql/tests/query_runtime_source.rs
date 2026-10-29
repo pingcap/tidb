@@ -27,11 +27,13 @@ use tidb_distsql::{InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryO
 use tidb_txnkv::ResponseRuntimeStats;
 use tidb_txnkv::TransportBinding;
 use tidb_txnkv::TransportRequest;
-use tidb_util::context::WarningCollector;
+use tidb_context::WarningCollector;
 use tidb_txnkv::StoreType;
 use tidb_proto::tipb::SelectResponse;
 use tidb_proto::{Chunk, EncodeType, KvrpcLockInfo};
-use tidb_txnkv::{wrap_cop_meet_lock, CopMeetLock, EventCallback};
+use tidb_trxevents::wrap_cop_meet_lock;
+use tidb_trxevents::CopMeetLock;
+use tidb_trxevents::EventCallback;
 
 fn transport_request(metadata: tidb_txnkv::KvRequestMetadata) -> TransportRequest {
     TransportRequest::new(

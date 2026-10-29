@@ -1,0 +1,26 @@
+[package]
+name = "tidb-sessmgr"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/session/sessmgr: process info and the session manager (Rust)."
+
+[lints]
+workspace = true
+
+[features]
+test-util = []
+
+[dependencies]
+tidb-kv = { path = "../tidb-kv" }
+tidb-sessionctx = { path = "../tidb-sessionctx" }
+tidb-txninfo = { path = "../tidb-txninfo" }
+tidb-memory = { path = "../tidb-memory" }
+tidb-memoryusagealarm = { path = "../tidb-memoryusagealarm" }
+tidb-sqlkiller = { path = "../tidb-sqlkiller" }
+tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
+chrono = { workspace = true }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-parser = { path = "../tidb-parser" }

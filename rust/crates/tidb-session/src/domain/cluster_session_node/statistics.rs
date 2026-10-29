@@ -189,7 +189,7 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
                 "finished"
             };
             log_update_analyze_job_failed(
-                &tidb_util::logutil::bg_logger(),
+                &tidb_logutil::bg_logger(),
                 format!("running->{state}"),
                 error,
             );
@@ -198,7 +198,7 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
 }
 
 fn log_update_analyze_job_failed(
-    logger: &tidb_util::logutil::Logger,
+    logger: &tidb_logutil::Logger,
     update: String,
     error: impl std::fmt::Display,
 ) {

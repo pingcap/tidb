@@ -50,11 +50,11 @@ fn check_column_qualifier_part(
     }
     Err(if schema {
         MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_WRONG_DB_NAME.generate_with_stack_by_args(&[written.into()]),
+            &tidb_dbterror::ERR_WRONG_DB_NAME.generate_with_stack_by_args(&[written.into()]),
         )
     } else {
         MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_WRONG_TABLE_NAME
+            &tidb_dbterror::ERR_WRONG_TABLE_NAME
                 .generate_with_stack_by_args(&[written.into()]),
         )
     })

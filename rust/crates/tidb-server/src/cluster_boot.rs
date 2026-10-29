@@ -36,8 +36,8 @@ pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredN
 
 pub(crate) fn run_cluster_session_node_with_spill(
     config: NodeConfig,
-    spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
-    memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
+    spill_storage: Arc<tidb_spill_storage::SpillStorage>,
+    memory_arbitrator: Option<Arc<tidb_memory::MemArbitrator>>,
 ) -> Result<(), RunConfiguredNodeError> {
     // Go `setGlobalVars`, before the store and the domain are created.
     let global_vars = tidb_domain::global_sysvars::GlobalSysvars::new();
@@ -139,7 +139,7 @@ fn start_cluster_status(
         config.status_port,
         tracker,
         tidb_mysql::runtime_versions().server_version,
-        tidb_util::versioninfo::TIDB_GIT_HASH.to_owned(),
+        tidb_versioninfo::TIDB_GIT_HASH.to_owned(),
         crate::http_status::StatusRoutes {
             schema: Some(schema),
             settings: Some(settings),

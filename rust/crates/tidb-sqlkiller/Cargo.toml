@@ -1,0 +1,28 @@
+[package]
+name = "tidb-sqlkiller"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/sqlkiller: Go pkg/util/sqlkiller (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+enableassert = ["tidb-intest/enableassert"]
+failpoints = ["dep:fail", "fail/failpoints"]
+intest = ["tidb-intest/intest"]
+
+[dependencies]
+tidb-dbterror = { path = "../tidb-dbterror" }
+tidb-fastrand = { path = "../tidb-fastrand" }
+tidb-intest = { path = "../tidb-intest" }
+crossbeam-channel = "0.5"
+tidb-error = { path = "../tidb-error" }
+tracing = "0.1"
+fail = { version = "0.4", optional = true }
+
+[dev-dependencies]
+tidb-intest = { path = "../tidb-intest", features = ["intest"] }

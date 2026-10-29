@@ -954,7 +954,7 @@ fn memory_usage_sums_the_whole_subtree() {
     // Go `PhysicalSelection.MemoryUsage`: the physical base, one flag, and
     // every condition; the child is charged by its own walk.
     let own = root.base.go_memory_usage()
-        + tidb_util::size::SIZE_OF_BOOL
+        + tidb_size::SIZE_OF_BOOL
         + root
             .conditions
             .iter()
@@ -2113,7 +2113,7 @@ fn join_memory_usage_charges_its_own_keys_and_conditions() {
     assert!(own > join.base.go_schema_producer_memory_usage());
     let mut heavier = join.clone();
     heavier.is_null_eq.push(false);
-    assert_eq!(heavier.memory_usage(), own + tidb_util::size::SIZE_OF_BOOL);
+    assert_eq!(heavier.memory_usage(), own + tidb_size::SIZE_OF_BOOL);
     assert_eq!(
         tree.memory_usage(),
         own + tree
@@ -2133,7 +2133,7 @@ fn join_memory_usage_charges_its_own_keys_and_conditions() {
 #[test]
 fn index_join_compare_filters_weigh_what_gos_manager_allocates() {
     use tidb_expr::memory_usage::GO_EMPTY_SCHEMA_SIZE;
-    use tidb_util::size::{SIZE_OF_FUNC, SIZE_OF_POINTER};
+    use tidb_size::{SIZE_OF_FUNC, SIZE_OF_POINTER};
     let long = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Long);
     let target_col = tidb_expr::column::Column::new(1, long());
     let outer = tidb_expr::column::Column::new(2, long());

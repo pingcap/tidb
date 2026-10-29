@@ -26,7 +26,7 @@ use tidb_resourcemanager::util::{Component, MockGPool};
 #[test]
 fn test_failpoint_cpu_value() {
     fail::cfg("GetCgroupCPUErr", "return").unwrap();
-    let observer = tidb_util::cpu::Observer::new();
+    let observer = tidb_cpu::Observer::new();
     let exit = Arc::new(AtomicBool::new(false));
     let mut workers = Vec::new();
     for _ in 0..10 {
@@ -40,7 +40,7 @@ fn test_failpoint_cpu_value() {
     observer.start();
     for _ in 0..10 {
         std::thread::sleep(Duration::from_millis(200));
-        let (value, unsupported) = tidb_util::cpu::get_cpu_usage();
+        let (value, unsupported) = tidb_cpu::get_cpu_usage();
         assert!(unsupported);
         assert_eq!(0.0, value);
     }

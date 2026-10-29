@@ -1,0 +1,26 @@
+[package]
+name = "tidb-selection"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/selection: Go pkg/util/selection (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+testexport = []
+
+[dependencies]
+tidb-fastrand = { path = "../tidb-fastrand" }
+
+
+[dev-dependencies]
+standard-fastrand = { package = "fastrand", version = "2" }
+
+[[bench]]
+name = "selection"
+harness = false
+required-features = ["testexport"]

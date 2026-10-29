@@ -316,7 +316,7 @@ fn test_drop_placement_policy_restore() {
 #[test]
 fn test_remove_placement_restore() {
     let flags =
-        tidb_ast::RestoreFlags::DEFAULT | tidb_ast::RestoreFlags::SKIP_PLACEMENT_RULE_FOR_RESTORE;
+        tidb_parser_format::RestoreFlags::DEFAULT | tidb_parser_format::RestoreFlags::SKIP_PLACEMENT_RULE_FOR_RESTORE;
     for (sql, expected) in [
         (
             "CREATE TABLE t1 (id BIGINT NOT NULL PRIMARY KEY auto_increment, b varchar(255)) PLACEMENT POLICY=placement1",

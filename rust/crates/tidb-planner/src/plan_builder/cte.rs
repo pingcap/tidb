@@ -368,7 +368,7 @@ fn err_non_uniq_table() -> PlanError {
 
 /// Go `dbterror.ErrViewWrongList` (MySQL 1353).
 fn err_view_wrong_list() -> PlanError {
-    PlanError::from(tidb_util::dbterror::ERR_VIEW_WRONG_LIST.generate_with_stack_by_args(&[]))
+    PlanError::from(tidb_dbterror::ERR_VIEW_WRONG_LIST.generate_with_stack_by_args(&[]))
 }
 
 /// Whether `op` is one of the two operators a recursive CTE's fixpoint is
@@ -1216,7 +1216,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if !cte.col_name_list.is_empty() {
             if cte.col_name_list.len() != names.len() {
                 return Err(PlanError::from(
-                    tidb_util::dbterror::ERR_VIEW_WRONG_LIST.generate_with_stack_by_args(&[]),
+                    tidb_dbterror::ERR_VIEW_WRONG_LIST.generate_with_stack_by_args(&[]),
                 ));
             }
             for (name, new_name) in names.iter_mut().zip(&cte.col_name_list) {

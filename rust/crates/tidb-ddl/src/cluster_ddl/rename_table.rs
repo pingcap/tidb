@@ -105,7 +105,7 @@ fn check_renamable(
     };
     if table.table_cache_status_type != tidb_model::TableCacheStatusType::DISABLE {
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_OPT_ON_CACHE_TABLE,
+            &tidb_dbterror::ERR_OPT_ON_CACHE_TABLE,
             format!("'{operation}' is unsupported on cache tables."),
         ));
     }
@@ -363,7 +363,7 @@ fn rename_one(
 ) -> Result<(), DdlPlanError> {
     let not_exists = || {
         DdlPlanError::from(
-            tidb_util::dbterror::CLASS_SCHEMA
+            tidb_dbterror::CLASS_SCHEMA
                 .new_std(tidb_error::tidb::errcode::ErrNoSuchTable)
                 .generate(format!(
                     "Table '{}.{}' doesn't exist",
@@ -381,7 +381,7 @@ fn rename_one(
         return Err(cancel_ddl_job(
             active,
             DdlPlanError::from(
-                tidb_util::dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+                tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
                     FormatArg::from("table"),
                     FormatArg::new(
                         table.state.to_string(),
@@ -421,7 +421,7 @@ fn rename_one(
         return Err(cancel_ddl_job(
             active,
             DdlPlanError::from(
-                tidb_util::dbterror::CLASS_SCHEMA
+                tidb_dbterror::CLASS_SCHEMA
                     .new_std(tidb_error::tidb::errcode::ErrBadDB)
                     .generate(format!("Unknown database '(Schema ID {new_schema_id})'")),
             ),
@@ -547,7 +547,7 @@ pub(super) fn plan_persisted_rename_table_job_step(
                 return Err(cancel_ddl_job(
                     active,
                     DdlPlanError::from(
-                        tidb_util::dbterror::CLASS_SCHEMA
+                        tidb_dbterror::CLASS_SCHEMA
                             .new_std(tidb_error::tidb::errcode::ErrNoSuchTable)
                             .generate(format!(
                                 "Table '{}' doesn't exist",
@@ -597,7 +597,7 @@ pub(super) fn plan_persisted_rename_table_job_step(
             return Err(cancel_ddl_job(
                 active,
                 DdlPlanError::from(
-                    tidb_util::dbterror::CLASS_SCHEMA
+                    tidb_dbterror::CLASS_SCHEMA
                         .new_std(tidb_error::tidb::errcode::ErrBadDB)
                         .generate(format!(
                             "Unknown database '(Schema ID {})'",
@@ -614,7 +614,7 @@ pub(super) fn plan_persisted_rename_table_job_step(
             return Err(cancel_ddl_job(
                 active,
                 DdlPlanError::from(
-                    tidb_util::dbterror::CLASS_SCHEMA
+                    tidb_dbterror::CLASS_SCHEMA
                         .new_std(tidb_error::tidb::errcode::ErrTableExists)
                         .generate(format!(
                             "Table '{}' already exists",

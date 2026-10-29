@@ -94,7 +94,7 @@ use tidb_model::GoShared;
 /// Go `types.UnspecifiedLength`.
 pub const UNSPECIFIED_LENGTH: i64 = -1;
 
-use tidb_util::context::WarnErr;
+use tidb_context::WarnErr;
 use tidb_vardef::modes::ClusteredIndexDefMode;
 
 /// Go `errCheckConstraintIsOff` (`pkg/ddl/executor.go`): a plain
@@ -131,7 +131,7 @@ impl DdlAdmissionError {
     /// server does not do that" from an internal failure.
     pub fn unsupported(what: impl Into<String>) -> Self {
         Self::from_terror(
-            &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL
+            &tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL
                 .generate_with_stack_by_args(&[what.into().into()]),
         )
     }
@@ -468,7 +468,7 @@ pub fn build_table_info_in_schema(
         // and MODIFY COLUMN build their column elsewhere and never warn it.
         if column.ty.zerofill || info.field_type.code() == FieldTypeCode::Year {
             context.append_warning(WarnErr::Terror(
-                tidb_util::dbterror::ERR_WARN_DEPRECATED_ZEROFILL.clone(),
+                tidb_dbterror::ERR_WARN_DEPRECATED_ZEROFILL.clone(),
             ));
         }
         // An inline PRIMARY KEY / UNIQUE becomes a constraint of its own, in
@@ -623,7 +623,7 @@ pub fn build_table_info_in_schema(
         if bits > 0 && clustered {
             return Err(default_admission_error(
                 tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_UNSUPPORTED_SHARD_ROW_ID_BITS
+                    &tidb_dbterror::ERR_UNSUPPORTED_SHARD_ROW_ID_BITS
                         .generate_with_stack_by_args(&[]),
                 ),
             ));
@@ -677,7 +677,7 @@ pub fn build_table_info_in_schema(
         if temporary != tidb_model::TempTableType::NONE {
             return Err(default_admission_error(
                 tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_PARTITION_NO_TEMPORARY
+                    &tidb_dbterror::ERR_PARTITION_NO_TEMPORARY
                         .generate_with_stack_by_args(&[]),
                 ),
             ));
@@ -686,7 +686,7 @@ pub fn build_table_info_in_schema(
         // HASH/KEY table, warning that it did so (8200).
         if let Some(message) = crate::table_partition::linear_partitioning_warning(create) {
             context.append_warning(WarnErr::Terror(
-                tidb_util::dbterror::ERR_UNSUPPORTED_CREATE_PARTITION.generate(message),
+                tidb_dbterror::ERR_UNSUPPORTED_CREATE_PARTITION.generate(message),
             ));
         }
         let names = table
@@ -735,7 +735,7 @@ pub fn build_table_info_in_schema(
                 .any(|index| index.read().has_condition())
             {
                 return Err(DdlAdmissionError::from_terror(
-                    &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
+                    &tidb_dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
                         .generate_with_stack_by_args(&[
                             "partial index is not supported on partitioned table".into(),
                         ]),
@@ -781,7 +781,7 @@ pub fn build_table_info_with_like(
     // "BASE TABLE")`).
     if refer.is_sequence() || refer.is_view() {
         return Err(DdlAdmissionError::from_terror(
-            &tidb_util::dbterror::ERR_WRONG_OBJECT.generate_with_stack(format!(
+            &tidb_dbterror::ERR_WRONG_OBJECT.generate_with_stack(format!(
                 "'{schema}.{}' is not BASE TABLE",
                 refer.name.original()
             )),
@@ -955,7 +955,7 @@ pub(crate) fn check_too_many_columns(column_count: usize) -> Refusal<()> {
     let limit = tidb_config::config_tree::config::get_global_config().table_column_count_limit;
     if u64::try_from(column_count).unwrap_or(u64::MAX) > u64::from(limit) {
         return Err(DdlAdmissionError::from_terror(
-            &tidb_util::dbterror::ERR_TOO_MANY_FIELDS.generate_with_stack_by_args(&[]),
+            &tidb_dbterror::ERR_TOO_MANY_FIELDS.generate_with_stack_by_args(&[]),
         ));
     }
     Ok(())
@@ -971,7 +971,7 @@ pub fn check_too_many_indexes(index_count: usize) -> Result<(), MysqlError> {
     let limit = tidb_config::config_tree::config::get_global_config().index_limit;
     if i64::try_from(index_count).unwrap_or(i64::MAX) > limit {
         return Err(MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_TOO_MANY_KEYS.generate_with_stack_by_args(&[limit.into()]),
+            &tidb_dbterror::ERR_TOO_MANY_KEYS.generate_with_stack_by_args(&[limit.into()]),
         ));
     }
     Ok(())
@@ -995,7 +995,7 @@ fn check_global_indexes(
         }
         if !is_partitioned {
             return Err(DdlAdmissionError::from_terror(
-                &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL
+                &tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL
                     .generate_with_stack_by_args(&["Global Index on non-partitioned table".into()]),
             ));
         }
@@ -1021,7 +1021,7 @@ fn validate_global_index_with_generated_columns(
         let is_prefix_col = col.length != tidb_datatype::UNSPECIFIED_LENGTH;
         if is_virtual_generated || is_prefix_col {
             append_warning(WarnErr::Terror(
-                tidb_util::dbterror::ERR_WARN_GLOBAL_INDEX_NEED_MANUALLY_ANALYZE
+                tidb_dbterror::ERR_WARN_GLOBAL_INDEX_NEED_MANUALLY_ANALYZE
                     .fast_generate_by_args(&[index_info.name.original().into()]),
             ));
             return;
@@ -1033,7 +1033,7 @@ fn validate_global_index_with_generated_columns(
 fn check_charset_and_collation(cs: &str, co: &str) -> Refusal<()> {
     if !tidb_datatype::valid_charset_and_collation(cs, co) {
         return Err(DdlAdmissionError::from_terror(
-            &tidb_util::dbterror::ERR_UNKNOWN_CHARACTER_SET
+            &tidb_dbterror::ERR_UNKNOWN_CHARACTER_SET
                 .generate_with_stack_by_args(&[cs.into()]),
         ));
     }
@@ -1070,7 +1070,7 @@ pub fn check_invisible_index_on_pk(tbl_info: &TableInfo) -> Refusal<()> {
         .is_some_and(|primary| primary.read().invisible)
     {
         return Err(DdlAdmissionError::from_terror(
-            &tidb_util::dbterror::ERR_PK_INDEX_CANT_BE_INVISIBLE.generate_with_stack_by_args(&[]),
+            &tidb_dbterror::ERR_PK_INDEX_CANT_BE_INVISIBLE.generate_with_stack_by_args(&[]),
         ));
     }
     Ok(())
@@ -1112,7 +1112,7 @@ pub fn check_ttl_info_valid(
     };
     if table.temp_table_type != tidb_model::TempTableType::NONE {
         return Err(tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_TEMP_TABLE_NOT_ALLOWED_WITH_TTL
+            &tidb_dbterror::ERR_TEMP_TABLE_NOT_ALLOWED_WITH_TTL
                 .generate_with_stack_by_args(&[]),
         ));
     }
@@ -1139,7 +1139,7 @@ pub fn check_ttl_info_valid(
             });
             if float_key {
                 return Err(tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_UNSUPPORTED_PRIMARY_KEY_TYPE_WITH_TTL
+                    &tidb_dbterror::ERR_UNSUPPORTED_PRIMARY_KEY_TYPE_WITH_TTL
                         .generate_with_stack_by_args(&[]),
                 ));
             }
@@ -1147,19 +1147,19 @@ pub fn check_ttl_info_valid(
     }
     if referred_by_foreign_key {
         return Err(tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_TTL_REFERENCED_BY_FK
+            &tidb_dbterror::ERR_UNSUPPORTED_TTL_REFERENCED_BY_FK
                 .generate_with_stack_by_args(&[]),
         ));
     }
     let named = ttl.column_name.original();
     match tidb_model::column::find_column_info(&table.columns, named) {
         None => Err(tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_BAD_FIELD
+            &tidb_dbterror::ERR_BAD_FIELD
                 .generate_with_stack_by_args(&[named.to_owned().into(), "TTL config".into()]),
         )),
         Some(column) if !column.read().field_type.code().is_type_time() => {
             Err(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_UNSUPPORTED_COLUMN_IN_TTL_CONFIG
+                &tidb_dbterror::ERR_UNSUPPORTED_COLUMN_IN_TTL_CONFIG
                     .generate_with_stack_by_args(&[named.to_owned().into()]),
             ))
         }
@@ -1429,7 +1429,7 @@ fn check_pk_on_generated_column(table: &TableInfo, constraint: &Constraint) -> R
         let Some(column) = table.find_public_column_by_name(&tidb_hack::go_to_lower(&part.name))
         else {
             return Err(DdlAdmissionError::from_terror(
-                &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
+                &tidb_dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
                     .generate_with_stack_by_args(&[part.name.clone().into()]),
             ));
         };
@@ -1437,12 +1437,12 @@ fn check_pk_on_generated_column(table: &TableInfo, constraint: &Constraint) -> R
         if column.is_virtual_generated() {
             if column.hidden {
                 return Err(DdlAdmissionError::from_terror(
-                    &tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_PRIMARY_KEY
+                    &tidb_dbterror::ERR_FUNCTIONAL_INDEX_PRIMARY_KEY
                         .generate_with_stack_by_args(&[]),
                 ));
             }
             return Err(DdlAdmissionError::from_terror(
-                &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN
+                &tidb_dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN
                     .generate_with_stack_by_args(&[
                         "Defining a virtual generated column as primary key".into(),
                     ]),
@@ -1468,7 +1468,7 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
         // a FULLTEXT key outright, with its own wording and the 8200 code.
         IndexConstraintKind::Fulltext => {
             return Err(DdlAdmissionError::from_terror(
-                &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX.generate_with_stack(
+                &tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX.generate_with_stack(
                     "FULLTEXT index is only supported in starter deployment mode",
                 ),
             ))
@@ -1483,7 +1483,7 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
     // but the primary key is `ErrUnsupportedClusteredSecondaryKey`.
     if index.options.primary_key_storage.is_some() && kind != ConstraintKind::PrimaryKey {
         return Err(DdlAdmissionError::from_terror(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_CLUSTERED_SECONDARY_KEY
+            &tidb_dbterror::ERR_UNSUPPORTED_CLUSTERED_SECONDARY_KEY
                 .generate_with_stack_by_args(&[]),
         ));
     }
@@ -1601,7 +1601,7 @@ fn synthesize_expression_index_columns(
             // go `CheckPKOnGeneratedColumn` -> `ErrUnsupportedOnGeneratedColumn`
             // (3756): the primary key cannot be an expression index.
             return Err(DdlAdmissionError::from_terror(
-                &tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_PRIMARY_KEY
+                &tidb_dbterror::ERR_FUNCTIONAL_INDEX_PRIMARY_KEY
                     .generate_with_stack_by_args(&[]),
             ));
         }
@@ -1779,7 +1779,7 @@ pub fn build_added_column(
             "nextval" => {
                 return Err(default_admission_error(
                     tidb_error::mysql::MysqlError::from_terror(
-                        &tidb_util::dbterror::ERR_ADD_COLUMN_WITH_SEQUENCE_AS_DEFAULT
+                        &tidb_dbterror::ERR_ADD_COLUMN_WITH_SEQUENCE_AS_DEFAULT
                             .generate_with_stack_by_args(&[(column.name.clone())
                                 .to_string()
                                 .into()]),
@@ -1789,7 +1789,7 @@ pub fn build_added_column(
             "rand" | "uuid" | "uuid_to_bin" | "replace" | "upper" => {
                 return Err(default_admission_error(
                     tidb_error::mysql::MysqlError::from_terror(
-                        &tidb_util::dbterror::ERR_BINLOG_UNSAFE_SYSTEM_FUNCTION
+                        &tidb_dbterror::ERR_BINLOG_UNSAFE_SYSTEM_FUNCTION
                             .generate_with_stack_by_args(&[]),
                     ),
                 ));
@@ -1814,7 +1814,7 @@ pub fn build_added_column(
             .any(|option| matches!(option, ColumnOption::Generated { stored: true, .. }))
     {
         return Err(DdlAdmissionError::from_terror(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN.generate_with_stack_by_args(
+            &tidb_dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN.generate_with_stack_by_args(
                 &["Adding generated stored column through ALTER TABLE".into()],
             ),
         ));
@@ -1830,7 +1830,7 @@ pub fn build_added_column(
         if let Some(auto_increment) = auto_increment {
             if info.dependences.contains(auto_increment.name.lowercase()) {
                 return Err(DdlAdmissionError::from_terror(
-                    &tidb_util::dbterror::ERR_GENERATED_COLUMN_REF_AUTO_INC
+                    &tidb_dbterror::ERR_GENERATED_COLUMN_REF_AUTO_INC
                         .generate_with_stack_by_args(
                             &[tidb_hack::go_to_lower(&column.name).into()],
                         ),
@@ -1900,7 +1900,7 @@ pub fn process_modify_column_options(
     // Go `ErrUnsupportedModifyColumn.GenWithStackByArgs(reason)`.
     let unsupported = |reason: &str| {
         DdlAdmissionError::from_terror(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN
+            &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN
                 .generate_with_stack_by_args(&[reason.into()]),
         )
     };
@@ -1944,7 +1944,7 @@ pub fn process_modify_column_options(
                     InlineKeyKind::Unique => "UNIQUE KEY",
                 };
                 return Err(DdlAdmissionError::from_terror(
-                    &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN.generate_with_stack(
+                    &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN.generate_with_stack(
                         format!("can't change column constraint ({constraint})"),
                     ),
                 ));
@@ -1958,7 +1958,7 @@ pub fn process_modify_column_options(
                 ) || !tidb_expr::is_valid_current_timestamp_expr(expr, Some(&field_type))
                 {
                     return Err(DdlAdmissionError::from_terror(
-                        &tidb_util::dbterror::ERR_INVALID_ON_UPDATE
+                        &tidb_dbterror::ERR_INVALID_ON_UPDATE
                             .generate_with_stack_by_args(&[name.into()]),
                     ));
                 }
@@ -2023,7 +2023,7 @@ pub fn process_modify_column_options(
     {
         return Err(default_admission_error(
             tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
                     .generate_with_stack_by_args(&[name.to_string().into()]),
             ),
         ));
@@ -2031,7 +2031,7 @@ pub fn process_modify_column_options(
     if field_type.has_flag(FieldTypeFlags::PRI_KEY) && has_null_flag {
         return Err(default_admission_error(
             tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_PRIMARY_CANT_HAVE_NULL.generate_with_stack_by_args(&[]),
+                &tidb_dbterror::ERR_PRIMARY_CANT_HAVE_NULL.generate_with_stack_by_args(&[]),
             ),
         ));
     }
@@ -2047,12 +2047,12 @@ pub fn process_modify_column_options(
 
 /// Go `ProcessModifyColumnOptions`' restore flags for a generated
 /// expression: CREATE / ADD COLUMN's, keeping a table qualifier.
-fn modify_generated_restore_flags() -> tidb_ast::RestoreFlags {
-    tidb_ast::RestoreFlags::STRING_SINGLE_QUOTES
-        | tidb_ast::RestoreFlags::KEYWORD_LOWERCASE
-        | tidb_ast::RestoreFlags::NAME_BACK_QUOTES
-        | tidb_ast::RestoreFlags::SPACES_AROUND_BINARY_OPERATION
-        | tidb_ast::RestoreFlags::WITHOUT_SCHEMA_NAME
+fn modify_generated_restore_flags() -> tidb_parser_format::RestoreFlags {
+    tidb_parser_format::RestoreFlags::STRING_SINGLE_QUOTES
+        | tidb_parser_format::RestoreFlags::KEYWORD_LOWERCASE
+        | tidb_parser_format::RestoreFlags::NAME_BACK_QUOTES
+        | tidb_parser_format::RestoreFlags::SPACES_AROUND_BINARY_OPERATION
+        | tidb_parser_format::RestoreFlags::WITHOUT_SCHEMA_NAME
 }
 
 /// Go `GetModifiableColumnJob`: once a MODIFY / CHANGE may change the
@@ -2112,7 +2112,7 @@ fn expression_default_origin(
     {
         return Err(default_admission_error(
             tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_BINLOG_UNSAFE_SYSTEM_FUNCTION
+                &tidb_dbterror::ERR_BINLOG_UNSAFE_SYSTEM_FUNCTION
                     .generate_with_stack_by_args(&[]),
             ),
         ));
@@ -2140,7 +2140,7 @@ fn expression_default_origin(
         )
         .map_err(|_| {
             default_admission_error(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
                     .generate_with_stack_by_args(&[name.to_owned().into()]),
             ))
         })?;
@@ -2402,7 +2402,7 @@ fn build_column_field_type(
         try_auto_convert_too_big_varchar(&mut field_type, name, context.get_sql_mode().has_strict_mode())?
     {
         context.append_warning(WarnErr::Terror(
-            tidb_util::dbterror::ERR_AUTO_CONVERT.generate(warning),
+            tidb_dbterror::ERR_AUTO_CONVERT.generate(warning),
         ));
     }
     // go deprecates an EXPLICIT integer display width
@@ -2425,7 +2425,7 @@ fn build_column_field_type(
             field_type.code() == FieldTypeCode::Tiny && declared_width == Some(1);
         if declared_width.is_some() && !boolean_convention {
             context.append_warning(WarnErr::Terror(
-                tidb_util::dbterror::ERR_WARN_DEPRECATED_INTEGER_DISPLAY_WIDTH.clone(),
+                tidb_dbterror::ERR_WARN_DEPRECATED_INTEGER_DISPLAY_WIDTH.clone(),
             ));
         }
     }
@@ -2453,7 +2453,7 @@ fn build_column(
     let lower = tidb_hack::go_to_lower(name);
     if lower == "_tidb_rowid" {
         return Err(DdlAdmissionError::from_terror(
-            &tidb_util::dbterror::ERR_WRONG_COLUMN_NAME
+            &tidb_dbterror::ERR_WRONG_COLUMN_NAME
                 .generate_with_stack_by_args(&[lower.into()]),
         ));
     }
@@ -2584,13 +2584,13 @@ fn build_column(
                 ) {
                     // Go `ErrInvalidOnUpdate` (1294).
                     return Err(DdlAdmissionError::from_terror(
-                        &tidb_util::dbterror::ERR_INVALID_ON_UPDATE
+                        &tidb_dbterror::ERR_INVALID_ON_UPDATE
                             .generate_with_stack_by_args(&[name.into()]),
                     ));
                 }
                 if !tidb_expr::is_valid_current_timestamp_expr(expr, Some(&field_type)) {
                     return Err(DdlAdmissionError::from_terror(
-                        &tidb_util::dbterror::ERR_INVALID_ON_UPDATE
+                        &tidb_dbterror::ERR_INVALID_ON_UPDATE
                             .generate_with_stack_by_args(&[name.into()]),
                     ));
                 }
@@ -2759,7 +2759,7 @@ fn build_column(
     {
         return Err(default_admission_error(
             tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
                     .generate_with_stack_by_args(&[name.to_owned().into()]),
             ),
         ));
@@ -2781,7 +2781,7 @@ fn build_column(
     if field_type.has_flag(FieldTypeFlags::PRI_KEY) && has_null_flag {
         return Err(default_admission_error(
             tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_PRIMARY_CANT_HAVE_NULL.generate_with_stack_by_args(&[]),
+                &tidb_dbterror::ERR_PRIMARY_CANT_HAVE_NULL.generate_with_stack_by_args(&[]),
             ),
         ));
     }
@@ -2803,21 +2803,21 @@ fn generated_column_admission_error(
         // Go `checkDependedColExist` reports a key of `findDependedColumnNames`'s
         // map, which is the name's lowercase form.
         GeneratedDdlError::UnknownDependency(name) => DdlAdmissionError::from_terror(
-            &tidb_util::dbterror::ERR_BAD_FIELD.generate_with_stack(format!(
+            &tidb_dbterror::ERR_BAD_FIELD.generate_with_stack(format!(
                 "Unknown column '{}' in 'generated column function'",
                 tidb_hack::go_to_lower(&name)
             )),
         ),
         GeneratedDdlError::NonPrior => DdlAdmissionError::from_terror(
-            &tidb_util::dbterror::ERR_GENERATED_COLUMN_NON_PRIOR.generate_with_stack_by_args(&[]),
+            &tidb_dbterror::ERR_GENERATED_COLUMN_NON_PRIOR.generate_with_stack_by_args(&[]),
         ),
         GeneratedDdlError::IllegalFunction(error) => DdlAdmissionError::from_mysql_error(error),
         GeneratedDdlError::RefAutoInc(column) => DdlAdmissionError::from_terror(
-            &tidb_util::dbterror::ERR_GENERATED_COLUMN_REF_AUTO_INC
+            &tidb_dbterror::ERR_GENERATED_COLUMN_REF_AUTO_INC
                 .generate_with_stack_by_args(&[column.into()]),
         ),
         GeneratedDdlError::Unsupported(reason) => DdlAdmissionError::from_terror(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN
+            &tidb_dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN
                 .generate_with_stack_by_args(&[reason.into()]),
         ),
         GeneratedDdlError::Unbuildable(reason) => DdlAdmissionError::unsupported(reason),
@@ -2860,7 +2860,7 @@ pub fn set_column_default(
     if !staged.has_default() {
         return Err(default_admission_error(
             tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
                     .generate_with_stack_by_args(&[name.to_owned().into()]),
             ),
         ));
@@ -2911,7 +2911,7 @@ pub fn recheck_column_default_in_reorg_context(info: &ColumnInfo) -> Refusal<()>
     if !has_default {
         return Err(default_admission_error(
             tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
                     .generate_with_stack_by_args(&[name.to_owned().into()]),
             ),
         ));
@@ -3079,7 +3079,7 @@ fn build_table(
             // Go `buildTableInfo` blocks every partial primary key.
             if constraint.condition.is_some() {
                 return Err(DdlAdmissionError::from_terror(
-                    &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
+                    &tidb_dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
                         .generate_with_stack_by_args(&[
                             "create an primary key with partial index is not supported".into(),
                         ]),
@@ -3101,13 +3101,13 @@ fn build_table(
                 // invisible nor global.
                 if constraint.invisible {
                     return Err(DdlAdmissionError::from_terror(
-                        &tidb_util::dbterror::ERR_PK_INDEX_CANT_BE_INVISIBLE
+                        &tidb_dbterror::ERR_PK_INDEX_CANT_BE_INVISIBLE
                             .generate_with_stack_by_args(&[]),
                     ));
                 }
                 if constraint.global {
                     return Err(DdlAdmissionError::from_terror(
-                        &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL
+                        &tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL
                             .generate_with_stack_by_args(&[
                                 "create an index that is both a global index and a clustered index"
                                     .into(),
@@ -3376,7 +3376,7 @@ fn persist_column_default(
             if info.field_type.has_flag(FieldTypeFlags::AUTO_INCREMENT) {
                 return Err(default_admission_error(
                     tidb_error::mysql::MysqlError::from_terror(
-                        &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                        &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
                             .generate_with_stack_by_args(&[name.to_owned().into()]),
                     ),
                 ));
@@ -3398,7 +3398,7 @@ fn persist_column_default(
             {
                 return Err(default_admission_error(
                     tidb_error::mysql::MysqlError::from_terror(
-                        &tidb_util::dbterror::ERR_PRIMARY_CANT_HAVE_NULL
+                        &tidb_dbterror::ERR_PRIMARY_CANT_HAVE_NULL
                             .generate_with_stack_by_args(&[]),
                     ),
                 ));

@@ -430,3 +430,12 @@ impl<K, V> Iterator for Indices<'_, K, V> {
         Some(index)
     }
 }
+
+/// Go `GlobalLRUMemUsageTracker`: tracks all the memory usage of `SimpleLruCache`.
+pub fn global_lru_memory_tracker() -> &'static std::sync::Arc<tidb_memory::Tracker> {
+    static TRACKER: std::sync::OnceLock<std::sync::Arc<tidb_memory::Tracker>> =
+        std::sync::OnceLock::new();
+    TRACKER.get_or_init(|| {
+        tidb_memory::Tracker::new(tidb_memory::LABEL_FOR_GLOBAL_SIMPLE_LRU_CACHE, -1)
+    })
+}

@@ -1,0 +1,16 @@
+[package]
+name = "tidb-password-validation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/password-validation: Go pkg/util/password-validation (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-vardef = { path = "../tidb-vardef" }
+tidb-datatype = { path = "../tidb-datatype" }

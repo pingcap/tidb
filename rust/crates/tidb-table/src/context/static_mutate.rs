@@ -28,7 +28,7 @@ use tidb_expr::{Columns, ErrorLevel};
 use tidb_kv::keys_read::KeysReadBudget;
 use tidb_kv::mem_quota::StatementMemory;
 use tidb_kv::staged_writes::StagedWrites;
-use tidb_util::context::WarningLevel;
+use tidb_context::WarningLevel;
 
 use super::MutateContext;
 
@@ -38,7 +38,7 @@ struct Shared {
     staged_writes: Arc<StagedWrites>,
     keys_read: KeysReadBudget,
     memory: StatementMemory,
-    warnings: Mutex<Vec<tidb_util::context::SqlWarn>>,
+    warnings: Mutex<Vec<tidb_context::SqlWarn>>,
     row_id_shard: OnceLock<u64>,
 }
 
@@ -128,7 +128,7 @@ impl StaticMutateContext {
         }
     }
 
-    fn warnings(&self) -> std::sync::MutexGuard<'_, Vec<tidb_util::context::SqlWarn>> {
+    fn warnings(&self) -> std::sync::MutexGuard<'_, Vec<tidb_context::SqlWarn>> {
         self.shared
             .warnings
             .lock()
@@ -247,16 +247,16 @@ impl Columns for StaticMutateContext {
         self.warnings().truncate(bookmark);
     }
 
-    fn take_warnings_since(&self, bookmark: usize) -> Vec<tidb_util::context::SqlWarn> {
+    fn take_warnings_since(&self, bookmark: usize) -> Vec<tidb_context::SqlWarn> {
         self.warnings().drain(bookmark..).collect()
     }
 
-    fn append_sql_warn(&self, warning: tidb_util::context::SqlWarn) {
+    fn append_sql_warn(&self, warning: tidb_context::SqlWarn) {
         self.warnings().push(warning);
     }
 
     fn append_error_warning(&self, error: &tidb_error::mysql::SqlError) {
-        self.append_sql_warn(tidb_util::context::SqlWarn::from_error(
+        self.append_sql_warn(tidb_context::SqlWarn::from_error(
             WarningLevel::Warning,
             error.code,
             error.message.clone(),
@@ -331,7 +331,7 @@ impl MutateContext for StaticMutateContext {
         *self
             .shared
             .row_id_shard
-            .get_or_init(|| u64::from(tidb_util::fastrand::uint32()))
+            .get_or_init(|| u64::from(tidb_fastrand::uint32()))
     }
 
     /// Go `DefTiDBTmpTableMaxSize`.
@@ -362,12 +362,12 @@ impl MutateContext for StaticMutateContext {
             .with_cast_time_to_year_through_concat(true)
     }
 
-    fn take_warnings(&self) -> Vec<tidb_util::context::SqlWarn> {
+    fn take_warnings(&self) -> Vec<tidb_context::SqlWarn> {
         std::mem::take(&mut *self.warnings())
     }
 
     fn append_leveled(&self, level: WarningLevel, code: u16, message: &str) {
-        self.append_sql_warn(tidb_util::context::SqlWarn::with_code(level, code, message));
+        self.append_sql_warn(tidb_context::SqlWarn::with_code(level, code, message));
     }
 
 

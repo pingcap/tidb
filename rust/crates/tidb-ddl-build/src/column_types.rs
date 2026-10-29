@@ -43,7 +43,7 @@ use tidb_error::mysql::MysqlError;
 fn get_charset_info(name: &str) -> Result<CharsetInfo, MysqlError> {
     tidb_datatype::get_charset_info(name).map_err(|_| {
         MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_UNKNOWN_CHARACTER_SET
+            &tidb_dbterror::ERR_UNKNOWN_CHARACTER_SET
                 .generate_with_stack_by_args(&[name.into()]),
         )
     })
@@ -59,7 +59,7 @@ pub fn get_collation_by_name(name: &str) -> Result<CollationInfo, MysqlError> {
                 .generate_with_stack_by_args(&[name.into()]),
         ),
         tidb_datatype::CollationError::Registry(_) => MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_UNKNOWN_COLLATION.generate_with_stack_by_args(&[name.into()]),
+            &tidb_dbterror::ERR_UNKNOWN_COLLATION.generate_with_stack_by_args(&[name.into()]),
         ),
     })
 }
@@ -111,7 +111,7 @@ pub fn resolve_charset_collation(
                 .map_or_else(|_| (*chs).to_owned(), |info| info.name);
             if !chs.is_empty() && collation.charset_name != written_charset {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_COLLATION_CHARSET_MISMATCH
+                    &tidb_dbterror::ERR_COLLATION_CHARSET_MISMATCH
                         .generate_with_stack_by_args(&[col.into(), chs.into()]),
                 ));
             }
@@ -159,7 +159,7 @@ pub fn get_charset_and_collate_in_table_option(
                     chs.clone_from(&info.name);
                 } else if chs != info.name {
                     return Err(MysqlError::from_terror(
-                        &tidb_util::dbterror::ERR_CONFLICTING_DECLARATIONS
+                        &tidb_dbterror::ERR_CONFLICTING_DECLARATIONS
                             .generate_with_stack_by_args(&[chs.into(), info.name.into()]),
                     ));
                 }
@@ -178,7 +178,7 @@ pub fn get_charset_and_collate_in_table_option(
                     chs.clone_from(&info.charset_name);
                 } else if chs != info.charset_name {
                     return Err(MysqlError::from_terror(
-                        &tidb_util::dbterror::ERR_COLLATION_CHARSET_MISMATCH
+                        &tidb_dbterror::ERR_COLLATION_CHARSET_MISMATCH
                             .generate_with_stack_by_args(&[(&info.name).into(), (&chs).into()]),
                     ));
                 }
@@ -216,7 +216,7 @@ pub fn get_charset_and_collate_in_column_def(
                 chs.clone_from(&info.charset_name);
             } else if chs != info.charset_name {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_COLLATION_CHARSET_MISMATCH
+                    &tidb_dbterror::ERR_COLLATION_CHARSET_MISMATCH
                         .generate_with_stack_by_args(&[(&info.name).into(), (&chs).into()]),
                 ));
             }

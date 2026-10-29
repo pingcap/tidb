@@ -20,7 +20,7 @@ use std::fmt;
 use std::rc::Rc;
 
 use tidb_ast::IndexType;
-use tidb_ast::{RestoreCtx, RestoreFlags, RestoreWriter};
+use tidb_parser_format::{RestoreCtx, RestoreFlags, RestoreWriter};
 use tidb_datatype::{FieldType, GoString, UNSPECIFIED_LENGTH};
 use tidb_model::column::ColumnInfo;
 use tidb_model::index::IndexInfo;

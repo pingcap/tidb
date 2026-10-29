@@ -123,7 +123,7 @@ impl SqlExecutor for MockSqlExecutor {
         &self,
         _context: &dyn tidb_sqlexec::ExecutionContext,
         _sql: &str,
-        _arguments: &[tidb_util::sqlescape::SqlArg<'_>],
+        _arguments: &[tidb_sqlescape::SqlArg<'_>],
     ) -> tidb_sqlexec::Result<tidb_ast::Stmt> {
         unreachable!("optional-property test does not execute SQL")
     }
@@ -145,7 +145,7 @@ impl SqlExecutor for MockSqlExecutor {
         _context: &dyn tidb_sqlexec::ExecutionContext,
         _options: &[tidb_sqlexec::OptionFuncAlias],
         _sql: &str,
-        _arguments: &[tidb_util::sqlescape::SqlArg<'_>],
+        _arguments: &[tidb_sqlescape::SqlArg<'_>],
     ) -> tidb_sqlexec::Result<(
         Vec<Vec<tidb_datatype::Datum>>,
         Vec<tidb_resolve::ResultFieldRef>,

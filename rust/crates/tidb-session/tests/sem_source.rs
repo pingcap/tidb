@@ -22,11 +22,11 @@ fn sem_policy_requires_explicit_restricted_privileges() {
 
     impl Drop for DisableSemOnDrop {
         fn drop(&mut self) {
-            tidb_util::sem::disable();
+            tidb_sem::disable();
         }
     }
 
-    tidb_util::sem::disable();
+    tidb_sem::disable();
     let _reset = DisableSemOnDrop;
 
     // The grants are made over SQL with SEM off, as an administrator
@@ -39,7 +39,7 @@ fn sem_policy_requires_explicit_restricted_privileges() {
         .run("GRANT RESTRICTED_TABLES_ADMIN ON *.* TO 'sem_role'@'%'")
         .unwrap();
     session.set_user("root@%".to_owned(), "root@%".to_owned());
-    tidb_util::sem::enable();
+    tidb_sem::enable();
 
     // The same explicit RESTRICTED_TABLES_ADMIN gate owns schema/table
     // visibility and the SEM read-only rule for system schemas.
@@ -81,11 +81,11 @@ fn sem_policy_requires_explicit_restricted_privileges() {
         );
     }
 
-    tidb_util::sem::disable();
+    tidb_sem::disable();
     session
         .run("GRANT RESTRICTED_TABLES_ADMIN, RESTRICTED_VARIABLES_ADMIN ON *.* TO 'root'@'%'")
         .unwrap();
-    tidb_util::sem::enable();
+    tidb_sem::enable();
     assert!(session.database_is_visible("METRICS_ScHEma"));
     assert!(session.has_scoped_privilege("mysql", "tidb", tidb_mysql::SelectPriv));
     assert!(session.has_scoped_privilege("mysql", "user", tidb_mysql::InsertPriv));

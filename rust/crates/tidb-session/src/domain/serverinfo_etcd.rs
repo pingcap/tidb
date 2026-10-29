@@ -29,7 +29,7 @@ pub fn node_server_info(
     tidb_domain::serverinfo_syncer::server_info_from_config(
         &tidb_domain::serverinfo_syncer::new_node_id(),
         &config.global_config,
-        tidb_util::versioninfo::TIDB_GIT_HASH,
+        tidb_versioninfo::TIDB_GIT_HASH,
         config
             .global_config
             .enable_global_kill

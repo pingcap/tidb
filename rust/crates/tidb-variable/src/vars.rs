@@ -208,7 +208,7 @@ pub struct SessionVars {
     /// Go `StmtCtx.AppendWarning` as the sysvar hooks reach it: what a SET's
     /// `Validation` / `SetSession` / `SetGlobal` hooks appended, which the
     /// session moves onto the statement (see `crate::set_hooks`).
-    pub(crate) stmt_warnings: Vec<tidb_util::context::SqlWarn>,
+    pub(crate) stmt_warnings: Vec<tidb_context::SqlWarn>,
     /// Go's typed `ServerStatusAutocommit` bit.
     ///
     /// The normalized system-variable text remains the SQL read authority;
@@ -505,10 +505,10 @@ fn resolve_session_time_zone_value(written: &str) -> tidb_datatype::SessionTimeZ
     // SYSTEM is TiDB's process-wide SystemLocation, not an offset snapshot.
     // Preserve a resolved IANA zone (and therefore DST), with the process
     // local zone as the same fallback Go uses.
-    match tidb_util::timeutil::system_location() {
-        tidb_util::timeutil::TimeZone::Local => SessionTimeZone::Local,
-        tidb_util::timeutil::TimeZone::Named(zone) => SessionTimeZone::Named(zone),
-        tidb_util::timeutil::TimeZone::Fixed { name, offset_secs } => {
+    match tidb_timeutil::system_location() {
+        tidb_timeutil::TimeZone::Local => SessionTimeZone::Local,
+        tidb_timeutil::TimeZone::Named(zone) => SessionTimeZone::Named(zone),
+        tidb_timeutil::TimeZone::Fixed { name, offset_secs } => {
             SessionTimeZone::Fixed { name, offset_secs }
         }
     }
@@ -610,13 +610,13 @@ impl SessionVars {
     /// Go `GetSession`'s `tidb_last_query_info` getter:
     /// `json.Marshal(s.LastQueryInfo)`.
     pub fn last_query_info_value(&self) -> String {
-        tidb_util::stringutil::go_json_marshal(&self.last_query_info)
+        tidb_stringutil::go_json_marshal(&self.last_query_info)
     }
 
     /// Go `GetSession`'s `tidb_last_ddl_info` getter:
     /// `json.Marshal(s.LastDDLInfo)`.
     pub fn last_ddl_info_value(&self) -> String {
-        tidb_util::stringutil::go_json_marshal(&self.last_ddl_info)
+        tidb_stringutil::go_json_marshal(&self.last_ddl_info)
     }
 
     /// Restore only Go's typed SnapshotTS after failed storage/schema validation.

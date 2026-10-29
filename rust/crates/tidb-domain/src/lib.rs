@@ -31,13 +31,11 @@ pub mod affinity;
 pub mod cdcutil;
 pub mod cluster_topology;
 pub mod disttask;
-pub mod domainutil;
 /// Complete Go `pkg/domain/globalconfigsync` queue/store contract.
 pub mod globalconfigsync;
 pub mod historical_stats;
 pub mod label_manager;
 pub mod plan_replayer;
-pub mod replayer;
 pub mod resource_manager_client;
 pub mod ru_stats;
 pub mod schema_checker;

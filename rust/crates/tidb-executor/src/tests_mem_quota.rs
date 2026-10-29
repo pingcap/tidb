@@ -12,37 +12,37 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use tidb_util::sqlkiller::memory_exceed_for_query;
+use tidb_sqlkiller::memory_exceed_for_query;
 use tidb_vardef::OomAction;
 use tidb_kv::mem_quota::*;
 use std::sync::Arc;
-use tidb_util::memory::Tracker;
-use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+use tidb_memory::Tracker;
+use tidb_spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 use tidb_kv::mem_quota::KillStop;
 
 #[derive(Default)]
 struct NoopMemStateRecorder;
 
-impl tidb_util::memory::RecordMemState for NoopMemStateRecorder {
-    fn load(&self) -> Result<Option<tidb_util::memory::RuntimeMemStateV1>, String> {
+impl tidb_memory::RecordMemState for NoopMemStateRecorder {
+    fn load(&self) -> Result<Option<tidb_memory::RuntimeMemStateV1>, String> {
         Ok(None)
     }
 
-    fn store(&self, _: &tidb_util::memory::RuntimeMemStateV1) -> Result<(), String> {
+    fn store(&self, _: &tidb_memory::RuntimeMemStateV1) -> Result<(), String> {
         Ok(())
     }
 }
 
-fn test_mem_arbitrator() -> Arc<tidb_util::memory::MemArbitrator> {
+fn test_mem_arbitrator() -> Arc<tidb_memory::MemArbitrator> {
     let arbitrator =
-        tidb_util::memory::MemArbitrator::new(1024, 4, 3, 0, Box::new(NoopMemStateRecorder));
+        tidb_memory::MemArbitrator::new(1024, 4, 3, 0, Box::new(NoopMemStateRecorder));
     assert!(arbitrator.auto_run(
-        tidb_util::memory::MemArbitratorActions::default(),
-        tidb_util::memory::DEF_AWAIT_FREE_POOL_ALLOC_ALIGN_SIZE,
+        tidb_memory::MemArbitratorActions::default(),
+        tidb_memory::DEF_AWAIT_FREE_POOL_ALLOC_ALIGN_SIZE,
         4,
-        tidb_util::memory::DEF_TASK_TICK_DUR,
+        tidb_memory::DEF_TASK_TICK_DUR,
     ));
-    arbitrator.set_work_mode(tidb_util::memory::ArbitratorWorkMode::Standard);
+    arbitrator.set_work_mode(tidb_memory::ArbitratorWorkMode::Standard);
     arbitrator
 }
 
@@ -202,7 +202,7 @@ fn session_tracker_defers_kill_to_the_typed_statement_boundary() {
 #[test]
 fn closing_a_retained_cursor_cannot_remove_the_next_statement_action() {
     let session = SessionMemory::new(1, OomAction::Cancel, 7);
-    let cursor = Tracker::new(tidb_util::memory::LABEL_FOR_CURSOR_FETCH, -1);
+    let cursor = Tracker::new(tidb_memory::LABEL_FOR_CURSOR_FETCH, -1);
     let first = session.statement();
     cursor.attach_to(first.session_tracker());
     cursor.detach();
@@ -221,7 +221,7 @@ fn closing_a_retained_cursor_cannot_remove_the_next_statement_action() {
 fn retained_cursor_bytes_count_against_the_next_statement() {
     let session = SessionMemory::new(10, OomAction::Cancel, 7);
     let first = session.statement();
-    let cursor = Tracker::new(tidb_util::memory::LABEL_FOR_CURSOR_FETCH, -1);
+    let cursor = Tracker::new(tidb_memory::LABEL_FOR_CURSOR_FETCH, -1);
     cursor.attach_to(first.session_tracker());
     cursor.consume(6);
     first.finish_statement();

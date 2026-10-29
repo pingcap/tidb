@@ -480,7 +480,7 @@ fn parse_plan(plan: &str) -> String {
         return plan.to_owned();
     }
     let inner = &plan[SLOW_LOG_PLAN_PREFIX.len()..plan.len() - SLOW_LOG_PLAN_SUFFIX.len()];
-    match tidb_util::plancodec::decode_plan(inner) {
+    match tidb_plancodec::decode_plan(inner) {
         Ok(decoded) => String::from_utf8_lossy(&decoded).into_owned(),
         Err(_) => inner.to_owned(),
     }

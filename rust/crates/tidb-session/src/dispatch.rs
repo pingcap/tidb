@@ -27,7 +27,8 @@ use tidb_executor::compiler::PreparedExec;
 use tidb_executor::compiler::NonPreparedPlanCacheCompile;
 use tidb_executor::compiler::PlanCacheableChecker;
 use tidb_ast::{DmlStmt, SessionStmt, Stmt};
-use tidb_executor::{Catalog, DriverError};
+use tidb_executor::Catalog;
+use tidb_executor::DriverError;
 
 pub(crate) use tidb_executor::compiler::explain::variant_name;
 use crate::record_set::{PendingExecution, PendingQuery, QueryTransactionEnd};
@@ -79,19 +80,19 @@ fn do_projection_query(exprs: &[tidb_ast::Expr]) -> Stmt {
     )))
 }
 
-fn sem_table_option(option: &tidb_ast::TableOption) -> tidb_util::sem_v2::TableOptionType {
+fn sem_table_option(option: &tidb_ast::TableOption) -> tidb_sem_v2::TableOptionType {
     match option {
-        tidb_ast::TableOption::Ttl { .. } => tidb_util::sem_v2::TableOptionType::Ttl,
-        tidb_ast::TableOption::TtlEnable(_) => tidb_util::sem_v2::TableOptionType::TtlEnable,
+        tidb_ast::TableOption::Ttl { .. } => tidb_sem_v2::TableOptionType::Ttl,
+        tidb_ast::TableOption::TtlEnable(_) => tidb_sem_v2::TableOptionType::TtlEnable,
         tidb_ast::TableOption::TtlJobInterval(_) => {
-            tidb_util::sem_v2::TableOptionType::TtlJobInterval
+            tidb_sem_v2::TableOptionType::TtlJobInterval
         }
-        _ => tidb_util::sem_v2::TableOptionType::Other,
+        _ => tidb_sem_v2::TableOptionType::Other,
     }
 }
 
-fn sem_stmt_kind(stmt: &Stmt) -> tidb_util::sem_v2::StmtKind {
-    use tidb_util::sem_v2::{AlterTableSpec, AlterTableType, StmtKind};
+fn sem_stmt_kind(stmt: &Stmt) -> tidb_sem_v2::StmtKind {
+    use tidb_sem_v2::{AlterTableSpec, AlterTableType, StmtKind};
 
     match stmt {
         Stmt::Query(query) => match query.as_ref() {
@@ -157,8 +158,8 @@ fn sem_stmt_kind(stmt: &Stmt) -> tidb_util::sem_v2::StmtKind {
     }
 }
 
-fn sem_stmt_view(stmt: &Stmt) -> tidb_util::sem_v2::StmtView {
-    tidb_util::sem_v2::StmtView {
+fn sem_stmt_view(stmt: &Stmt) -> tidb_sem_v2::StmtView {
+    tidb_sem_v2::StmtView {
         sem_command: stmt.sem_command().to_owned(),
         kind: sem_stmt_kind(stmt),
     }
@@ -199,7 +200,7 @@ pub(crate) fn filter_sem_restricted_hints(stmt: &mut Stmt) -> Vec<String> {
     impl Filter {
         fn retain(&mut self, hints: &mut Vec<tidb_ast::Hint>) {
             hints.retain(
-                |hint| match tidb_util::sem_v2::is_restricted_hint(&hint.lower_name()) {
+                |hint| match tidb_sem_v2::is_restricted_hint(&hint.lower_name()) {
                     Ok(()) => true,
                     Err(warning) => {
                         self.warnings.push(warning);
@@ -528,7 +529,7 @@ impl Session {
     pub fn local_cluster_table_rows(
         &mut self,
         table_name: &str,
-        registry: Option<&tidb_executor::process::ProcessRegistry>,
+        registry: Option<&tidb_sessmgr::ProcessRegistry>,
         zone: &tidb_datatype::SessionTimeZone,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         self.local_cluster_table_rows_for(table_name, registry, zone, None, None)
@@ -539,7 +540,7 @@ impl Session {
     pub fn local_cluster_table_rows_for(
         &mut self,
         table_name: &str,
-        registry: Option<&tidb_executor::process::ProcessRegistry>,
+        registry: Option<&tidb_sessmgr::ProcessRegistry>,
         zone: &tidb_datatype::SessionTimeZone,
         required: Option<&std::collections::HashSet<String>>,
         digests: Option<&std::collections::HashSet<String>>,
@@ -654,7 +655,7 @@ impl Session {
         self.begin_prepared_statement_boundary(&stmt, parameters);
         if let Some(reason) = self.pending_plan_cache_refusal.take() {
             self.append_warning(
-                tidb_util::context::WarningLevel::Warning,
+                tidb_context::WarningLevel::Warning,
                 1105,
                 format!("skip prepared plan-cache: {reason}"),
             );
@@ -669,13 +670,13 @@ impl Session {
         };
         if let Err(reason) = cacheable {
             self.append_warning(
-                tidb_util::context::WarningLevel::Warning,
+                tidb_context::WarningLevel::Warning,
                 1105,
                 format!("skip prepared plan-cache: {reason}"),
             );
         } else if tidb_executor::compiler::prepared::plans_over_table_dual(&stmt) {
             self.append_warning(
-                tidb_util::context::WarningLevel::Warning,
+                tidb_context::WarningLevel::Warning,
                 1105,
                 "skip prepared plan-cache: get a TableDual plan".to_owned(),
             );
@@ -1379,8 +1380,8 @@ impl Session {
         // Go plans it inside the EXECUTE's `planner.Optimize`, so it opens
         // no compile of its own.
         let compile = CompileDepth::enter(&stmt);
-        if !compile.nested && tidb_util::tracing::current_span().is_some() {
-            tidb_util::tracing::begin_thread_region("executor.Compile", Some(sql.to_owned()));
+        if !compile.nested && tidb_tracing::current_span().is_some() {
+            tidb_tracing::begin_thread_region("executor.Compile", Some(sql.to_owned()));
         }
         let result =
             self.prepare_parsed_statement_compile_phase(sql, stmt, prepared, select_plan, dml_plan);
@@ -1389,7 +1390,7 @@ impl Session {
             if result.is_ok() {
                 tidb_executor::driver::begin_run_stmt_region();
             } else {
-                tidb_util::tracing::end_thread_region("executor.Compile");
+                tidb_tracing::end_thread_region("executor.Compile");
             }
         }
         drop(compile);
@@ -1411,8 +1412,8 @@ impl Session {
     /// statement: SQL the SEM v2 policy restricts needs
     /// `RESTRICTED_SQL_ADMIN`, ahead of any privilege check.
     pub(crate) fn check_sem_stmt(&self, sql: &str, stmt: &Stmt) -> Result<(), DriverError> {
-        if tidb_util::sem_v2::is_enabled()
-            && tidb_util::sem_v2::is_restricted_sql(&sem_stmt_view(stmt))
+        if tidb_sem_v2::is_enabled()
+            && tidb_sem_v2::is_restricted_sql(&sem_stmt_view(stmt))
             && !self.has_dynamic_privilege("RESTRICTED_SQL_ADMIN", false)
         {
             let statement = if stmt.text().is_empty() {
@@ -1453,7 +1454,7 @@ impl Session {
         // Go preprocesses the statement it compiles: an EXECUTE, not the
         // prepared statement it runs.
         let preprocess = (!CompileDepth::is_nested())
-            .then(|| tidb_util::tracing::start_thread_region("planner.Preprocess"));
+            .then(|| tidb_tracing::start_thread_region("planner.Preprocess"));
         let scan = tidb_bindinfo::binding::scan_statement_tables(&mut stmt);
         drop(preprocess);
         // Go `preprocessor.Enter`'s `*ast.ColumnName` arm: the commit-TS

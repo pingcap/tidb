@@ -31,7 +31,7 @@ use tidb_sqlexec::{
     TrackSysProc, UntrackSysProc,
 };
 use tidb_stats_handle_util::{AutoAnalyzeProcIdGenerator, AutoAnalyzeTracker, STATS_CONTEXT};
-use tidb_util::sqlescape::SqlArg;
+use tidb_sqlescape::SqlArg;
 
 const FULL_DAY_TIME_FORMAT: &str = "%H:%M %z";
 
@@ -95,7 +95,7 @@ fn exec_options<C: AutoAnalyzeSessionContext + ?Sized>(
     arguments: &[SqlArg<'_>],
 ) -> (u64, Vec<OptionFuncAlias>) {
     let escaped = need_version_rewrite_warn.then(|| {
-        tidb_util::sqlescape::escape_sql(sql, arguments)
+        tidb_sqlescape::escape_sql(sql, arguments)
             .ok()
             .and_then(|sql| String::from_utf8(sql).ok())
             .unwrap_or_else(|| sql.to_owned())
@@ -179,7 +179,7 @@ pub fn run_analyze_stmt<C: AutoAnalyzeSessionContext + ?Sized>(
                 .copied()
                 .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
                 .unwrap_or("unknown panic");
-            tidb_util::logutil::bg_logger().warn(
+            tidb_logutil::bg_logger().warn(
                 "panic in execAnalyzeStmt",
                 &[
                     Field::new("error", Value::Str(message.to_owned())),
@@ -221,7 +221,7 @@ pub fn auto_analyze<C: AutoAnalyzeSessionContext + ?Sized>(
             true
         }
         Err(error) => {
-            let escaped = tidb_util::sqlescape::escape_sql(sql, arguments)
+            let escaped = tidb_sqlescape::escape_sql(sql, arguments)
                 .ok()
                 .and_then(|sql| String::from_utf8(sql).ok())
                 .unwrap_or_default();

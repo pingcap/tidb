@@ -29,7 +29,7 @@ use tidb_expr::simple_expr::{
     extract_columns, extract_columns_from_expressions, extract_cor_columns,
 };
 
-use crate::hash_equaler::{new_hash_equaler, Hasher};
+use tidb_planner_cascades_base::{new_hash_equaler, Hasher};
 use crate::logical::schema_producer;
 use crate::logical::BaseLogicalPlan;
 use crate::stats_info::StatsInfo;

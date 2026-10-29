@@ -592,7 +592,7 @@ pub struct SelectResponseIter {
     close_reported: bool,
     /// Go `selectResult.memTracker` and the bytes of the response it holds
     /// (`selectRespSize`).
-    memory_tracker: Option<(Arc<tidb_util::memory::Tracker>, i64)>,
+    memory_tracker: Option<(Arc<tidb_memory::Tracker>, i64)>,
     closed: bool,
 }
 
@@ -1257,7 +1257,7 @@ impl SelectResponseIter {
     /// Go `kvReq.MemTracker` of the reader: each response this select result
     /// holds is charged to `tracker` until the next replaces it or Close.
     #[must_use]
-    pub fn with_memory_tracker(mut self, tracker: Option<Arc<tidb_util::memory::Tracker>>) -> Self {
+    pub fn with_memory_tracker(mut self, tracker: Option<Arc<tidb_memory::Tracker>>) -> Self {
         self.memory_tracker = tracker.map(|tracker| (tracker, 0));
         self
     }

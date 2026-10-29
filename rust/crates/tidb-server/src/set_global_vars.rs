@@ -22,7 +22,7 @@
 //! every `@@` read without a session copy falls through to.
 //!
 //! Dispositions of the rest of Go's function, by name:
-//! * `hostname` — already live through `tidb_util::sem`: startup calls
+//! * `hostname` — already live through `tidb_sem`: startup calls
 //!   `sem::disable()`/`enable()`, whose hostname default is what
 //!   `effective_sysvar_default` answers. Not repeated here.
 //! * `version` and `version_comment` — initialized from the same process-wide
@@ -43,7 +43,7 @@ pub fn set_global_vars(config: &NodeConfig, globals: &GlobalSysvars) {
         "version_comment",
         format!(
             "TiDB Server (Apache License 2.0) {} Edition, MySQL 8.0 compatible",
-            tidb_util::versioninfo::tidb_edition()
+            tidb_versioninfo::tidb_edition()
         ),
     );
     // Go's `setInstanceVar` block: the `[instance]` values this instance
@@ -266,8 +266,8 @@ mod tests {
         // Go's hostname leg: `os.Hostname()` when it resolves. The sem tier
         // owns that default here; `disable()` is the restore path startup
         // takes without SEM.
-        tidb_util::sem::disable();
-        let hostname = tidb_util::sem::effective_sysvar_default("hostname").expect("answered");
+        tidb_sem::disable();
+        let hostname = tidb_sem::effective_sysvar_default("hostname").expect("answered");
         assert_ne!(hostname, "");
     }
 }

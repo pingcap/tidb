@@ -162,7 +162,7 @@ pub(super) struct PointSnapshotStats {
     /// restores (`snapshot.SetOption(kv.CollectRuntimeStats, nil)`).
     pub(super) options_without_stats: tidb_txnkv::SnapshotReadOptions,
     /// Go `SessionVars.SQLCPUUsages`.
-    pub(super) sql_cpu_usages: Option<Arc<tidb_util::ppcpuusage::SqlCpuUsages>>,
+    pub(super) sql_cpu_usages: Option<Arc<tidb_ppcpuusage::SqlCpuUsages>>,
 }
 
 /// Go point readers report from `Close` after reading SnapshotRuntimeStats.

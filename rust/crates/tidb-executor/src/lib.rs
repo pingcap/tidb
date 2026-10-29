@@ -53,11 +53,9 @@ pub use stats_stmt_ctx::{PendingStatisticsLoad, StatsStmtCtx, StatsStmtCtxData};
 pub use sessionctx::StmtOutput;
 pub mod admin;
 pub mod ddl_exec;
-pub mod lock;
 pub mod stats_exec;
 pub mod record_set;
 pub mod stmt_ctx_build;
-pub mod select_result_stats;
 pub mod statement_cop_stats;
 pub mod table_privilege;
 pub mod compiler;
@@ -71,8 +69,6 @@ pub mod memtable_reader;
 pub mod cluster_config;
 pub mod cluster_diagnostics;
 pub mod cluster_peer;
-pub mod process;
-pub mod txn_summary;
 pub mod show;
 pub mod ddl_jobs;
 pub mod infoschema_reader;
@@ -127,7 +123,6 @@ pub(crate) use tidb_table::bad_null;
 mod tests_bad_null;
 #[cfg(test)]
 mod tests_cluster_storage;
-pub mod cte_storage;
 pub mod ddl;
 pub mod ddl_sequence;
 pub mod cop_reader;
@@ -251,7 +246,6 @@ pub mod view;
 pub mod window;
 
 pub use apply::ApplyExec;
-pub use cte_storage::CteStorage;
 pub use ddl::{append_partition_defs, escape_identifier, linear_partitioning_warning, partition_placement_text, run_create_table_on, run_create_table_on_with, CreateTableSettings};
 use tidb_infoschema::run_create_system_table_in;
 use tidb_ddl_build::table_lifecycle::split_drop_table_targets;
@@ -305,13 +299,13 @@ use tidb_txnkv::ReplicaReadType;
 /// The level a statement warning carries -- Go's three `contextutil` levels,
 /// re-exported so the session can read the one a `StmtContext` recorded
 /// without depending on `tidb-distsql` directly.
-pub use tidb_util::context::WarningLevel as WarnLevel;
+pub use tidb_context::WarningLevel as WarnLevel;
 use tidb_expr::builtin_registry::builtin_list;
 use tidb_expr::infer_pushdown::{blacklist_name, blacklist_store_mask, ExprPushDownBlacklist};
 use tidb_expr::CurrentTso;
 use tidb_expr::{BlockEncryptionMode, EvalError};
 use tidb_datatype::SessionTimeZone;
-use tidb_util::mathutil::MysqlRng;
+use tidb_mathutil::MysqlRng;
 pub use topn::TopNExec;
 pub use view::{resolve_view_definition, view_column_list};
 
@@ -346,7 +340,7 @@ pub(crate) mod test_temp_storage {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+    use tidb_spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
     /// A fresh scratch directory named after the test.
     pub(crate) fn scratch_dir(name: &str) -> PathBuf {

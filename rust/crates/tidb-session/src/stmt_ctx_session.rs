@@ -217,11 +217,11 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &mut self.session_memory
     }
 
-    fn sql_cpu_usages_ref(&self) -> &Arc<tidb_util::ppcpuusage::SqlCpuUsages> {
+    fn sql_cpu_usages_ref(&self) -> &Arc<tidb_ppcpuusage::SqlCpuUsages> {
         &self.sql_cpu_usages
     }
 
-    fn sql_cpu_usages_mut(&mut self) -> &mut Arc<tidb_util::ppcpuusage::SqlCpuUsages> {
+    fn sql_cpu_usages_mut(&mut self) -> &mut Arc<tidb_ppcpuusage::SqlCpuUsages> {
         &mut self.sql_cpu_usages
     }
 
@@ -362,7 +362,7 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::statement_phase_observer(self)
     }
 
-    fn statement_kv_exec_counter(&self) -> tidb_util::topsql_stmtstats::KvExecCounterHandle {
+    fn statement_kv_exec_counter(&self) -> tidb_topsql_stmtstats::KvExecCounterHandle {
         Session::statement_kv_exec_counter(self)
     }
 

@@ -308,7 +308,7 @@ impl SessionPlanCache {
             let configured = tidb_config::config_tree::config::get_global_config()
                 .performance
                 .server_memory_quota;
-            let total = tidb_util::memory::mem_total().unwrap_or(u64::MAX);
+            let total = tidb_memory::mem_total().unwrap_or(u64::MAX);
             let quota = if configured == 0 {
                 total
             } else {
@@ -316,7 +316,7 @@ impl SessionPlanCache {
             };
             let mut plans = LruPlanCache::new(capacity, quota, guard);
             plans.set_memory_used(Box::new(|| {
-                tidb_util::memory::read_mem_stats().heap_alloc.max(0) as u64
+                tidb_memory::read_mem_stats().heap_alloc.max(0) as u64
             }));
             CacheState {
                 plans,

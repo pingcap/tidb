@@ -83,12 +83,12 @@ use std::time::Duration;
 use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
 use serde::ser::{SerializeMap, Serializer};
 use serde::Serialize;
-use tidb_util::execdetails::exec_details::{
+use tidb_execdetails::exec_details::{
     get_ia_remote_read_segment_stats, CommitDetails, CommitDetailsInner, CopExecDetails,
     CopTasksSummary, ExecDetails, ResolveLockDetail, ScanDetail, TimeDetail,
 };
-use tidb_util::plancodec::{BINARY_PLAN_DISCARDED_ENCODED, PLAN_DISCARDED_ENCODED};
-use tidb_util::ppcpuusage::CpuUsages;
+use tidb_plancodec::{BINARY_PLAN_DISCARDED_ENCODED, PLAN_DISCARDED_ENCODED};
+use tidb_ppcpuusage::CpuUsages;
 use tidb_hack::go_to_lower;
 use tikv_client::util::ExecDetailsSnapshot;
 use tikv_client::RuDetails;

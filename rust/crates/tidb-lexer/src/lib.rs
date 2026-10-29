@@ -27,7 +27,6 @@
 
 mod charset;
 mod collation;
-mod escape;
 mod features;
 mod keyword_catalog;
 mod keywords;
@@ -38,7 +37,7 @@ mod token;
 /// Canonicalizes a recognized charset name from the generated TiDB charset table.
 pub use charset::canonical_charset;
 pub use collation::canonical_collation;
-pub use escape::unescape_char;
+use tidb_parser_util::unescape_char;
 pub use features::{
     can_parse_feature, FEATURE_ID_AFFINITY, FEATURE_ID_AUTO_ID_CACHE, FEATURE_ID_AUTO_PRE_SPLIT,
     FEATURE_ID_AUTO_RANDOM, FEATURE_ID_AUTO_RANDOM_BASE, FEATURE_ID_CLUSTERED_INDEX,

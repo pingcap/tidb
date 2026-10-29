@@ -18,7 +18,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tidb_log::Field;
-use tidb_util::logutil::bg_logger;
+use tidb_logutil::bg_logger;
 
 use crate::error::{Result, TimerError};
 use crate::go_time::{GoTime, MINUTE};

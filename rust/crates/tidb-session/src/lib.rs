@@ -35,8 +35,9 @@ use std::time::Duration;
 
 use tidb_ast::Stmt;
 use tidb_datatype::{Datum, FieldType};
-use tidb_executor::{Catalog, DriverError};
-use tidb_util::mathutil::MysqlRng;
+use tidb_executor::Catalog;
+use tidb_executor::DriverError;
+use tidb_mathutil::MysqlRng;
 pub use load_stats_arm::ClientLocalFileReader;
 use tidb_planner::txn_mode::{
     txn_mode_for_begin, SessionTxnMode, PESSIMISTIC_TXN_MODE,
@@ -429,7 +430,7 @@ pub struct Session {
     /// through the executor's own boundary.
     routed_statement_kind: Option<crate::classify::StatementKind>,
     previous_summary_statement: Option<(String, String)>,
-    statement_stats: Arc<tidb_util::topsql_stmtstats::StatementStats>,
+    statement_stats: Arc<tidb_topsql_stmtstats::StatementStats>,
     /// Go's statement ctx values (`RUDetails`, resource-group taggers) of the
     /// statement that runs, shared with its transactions and requests.
     statement_kv_context: tidb_txnkv::StatementKvContextCell,
@@ -437,7 +438,7 @@ pub struct Session {
     txn_ctx: Option<txn::TxnCtx>,
     /// Go `LazyTxn.writeSLI`: transaction write-throughput state shared by
     /// every statement until the transaction ends.
-    write_sli: tidb_util::sli::TxnWriteThroughputSli,
+    write_sli: tidb_sli::TxnWriteThroughputSli,
     /// Go `SessionVars.LocalTemporaryTables` (an `infoschema.SessionTables`):
     /// the LOCAL temporary tables this connection created, as
     /// `(folded schema, folded name, table)`.
@@ -801,7 +802,7 @@ pub struct Session {
     phase_durations: tidb_variable::phase_durations::SessionPhaseDurations,
     /// Go `SessionVars.SQLCPUUsages`: the running statement's TiDB and TiKV
     /// CPU time.
-    sql_cpu_usages: Arc<tidb_util::ppcpuusage::SqlCpuUsages>,
+    sql_cpu_usages: Arc<tidb_ppcpuusage::SqlCpuUsages>,
     /// Go `SessionVars.RUV2PendingSessionParserTotal`.
     ruv2_pending_session_parser_total: i64,
     /// Set while a binary-protocol EXECUTE runs. Go keeps the plan detail out
@@ -815,7 +816,8 @@ pub struct Session {
     pub(crate) node: Option<Box<crate::domain::cluster_session_node::NodeConn>>,
 }
 
-use tidb_executor::process::normalize_statement_digest;
+use tidb_sessmgr::normalize_statement_digest;
+use tidb_sessmgr as process;
 
 impl Session {
     /// Builds the Go `createSessionWithOpt` state over an already selected
@@ -839,7 +841,7 @@ impl Session {
             external_executor_breakpoint_scope: false,
             tidb_decode_key_cache: std::sync::Mutex::new(None),
             session_memory: tidb_executor::SessionMemory::new(
-                tidb_util::memory::DEF_MEM_QUOTA_QUERY,
+                tidb_memory::DEF_MEM_QUOTA_QUERY,
                 tidb_vardef::OomAction::Cancel,
                 0,
             ),
@@ -852,10 +854,10 @@ impl Session {
             routed_statement_observation_depth: 0,
             routed_statement_kind: None,
             previous_summary_statement: None,
-            statement_stats: tidb_util::topsql_stmtstats::create_statement_stats(),
+            statement_stats: tidb_topsql_stmtstats::create_statement_stats(),
             statement_kv_context: tidb_txnkv::StatementKvContextCell::default(),
             txn_ctx: None,
-            write_sli: tidb_util::sli::TxnWriteThroughputSli::default(),
+            write_sli: tidb_sli::TxnWriteThroughputSli::default(),
             local_temporary_tables: Vec::new(),
             info_schema: None,
             hypo_indexes: Arc::default(),
@@ -906,7 +908,7 @@ impl Session {
             // encodes that same value, so `KILL` recognizes local
             // connections. A cluster node replaces this through
             // `set_server_info_syncer`.
-            server_id_getter: Arc::new(|| tidb_util::globalconn::SERVER_ID_FOR_STANDALONE),
+            server_id_getter: Arc::new(|| tidb_globalconn::SERVER_ID_FOR_STANDALONE),
             cluster_schema_version: None,
             take_snapshot: None,
             index_usage_collector: Arc::new(tidb_stats_handle_usage_indexusage::Collector::new()),
@@ -979,7 +981,7 @@ impl Session {
 
     fn breakpoint_notify_func(&self) -> Option<Arc<dyn Fn(String) + Send + Sync + 'static>> {
         self.context_values
-            .get(tidb_util::breakpoint::NOTIFY_BREAK_POINT_FUNC_KEY)
+            .get(tidb_breakpoint::NOTIFY_BREAK_POINT_FUNC_KEY)
             .and_then(|value| value.downcast_ref::<Arc<dyn Fn(String) + Send + Sync + 'static>>())
             .cloned()
     }
@@ -1039,11 +1041,11 @@ impl Session {
         {
             return;
         }
-        tidb_util::breakpoint::inject(self, "beforeExecutorFirstRun");
+        tidb_breakpoint::inject(self, "beforeExecutorFirstRun");
     }
 }
 
-impl tidb_util::context::ValueStoreContext for Session {
+impl tidb_context::ValueStoreContext for Session {
     type Key = str;
 
     fn set_value(&mut self, key: &Self::Key, value: Box<dyn std::any::Any + Send + Sync>) {
@@ -1160,13 +1162,12 @@ pub use classify::StmtKind;
 pub use prepared_ast::PreparedAst;
 pub(crate) use variables::datum_text;
 pub use warnings::SqlWarning;
-use tidb_util::context::WarningLevel;
+use tidb_context::WarningLevel;
 #[cfg(test)]
 mod tests_expensivequery;
 mod privilege_tables;
 #[cfg(test)]
 mod tests_privilege_tls;
-use tidb_executor::process;
 mod process_arm;
 mod show;
 use tidb_variable::vars;
@@ -1179,7 +1180,7 @@ impl Session {
     /// The session's SQL killer (Go `SessionVars.SQLKiller`), where the
     /// connection installs its liveness probe.
     #[must_use]
-    pub fn sql_killer(&self) -> Arc<tidb_util::sqlkiller::SqlKiller> {
+    pub fn sql_killer(&self) -> Arc<tidb_sqlkiller::SqlKiller> {
         Arc::clone(self.session_memory.sql_killer())
     }
 
@@ -2052,13 +2053,13 @@ impl Session {
 
     /// Installs the server-owned spill policy for every statement created by
     /// this session.
-    pub fn set_spill_storage(&mut self, storage: Arc<tidb_util::spill_storage::SpillStorage>) {
+    pub fn set_spill_storage(&mut self, storage: Arc<tidb_spill_storage::SpillStorage>) {
         self.session_memory.set_spill_storage(storage);
     }
 
     /// Installs the server-owned process memory arbitrator for statements this
     /// session starts after the authority becomes available.
-    pub fn set_mem_arbitrator(&mut self, arbitrator: Arc<tidb_util::memory::MemArbitrator>) {
+    pub fn set_mem_arbitrator(&mut self, arbitrator: Arc<tidb_memory::MemArbitrator>) {
         self.session_memory.set_mem_arbitrator(arbitrator);
     }
 
@@ -2339,7 +2340,7 @@ impl Session {
 
     /// Go `GetTxnWriteThroughputSLI`: returns the session's transaction-wide
     /// SLI accumulator.
-    pub fn txn_write_throughput_sli(&mut self) -> &mut tidb_util::sli::TxnWriteThroughputSli {
+    pub fn txn_write_throughput_sli(&mut self) -> &mut tidb_sli::TxnWriteThroughputSli {
         &mut self.write_sli
     }
 
@@ -2577,7 +2578,7 @@ impl Session {
                 self.active_resource_group.clone(),
                 snapshot.ddl_session_alias.clone(),
                 snapshot.redact_sql,
-                tidb_util::memoryusagealarm::OOMAlarmVariablesInfo {
+                tidb_memoryusagealarm::OOMAlarmVariablesInfo {
                     session_analyze_version: snapshot.analyze_version,
                     session_enabled_rate_limit_action: snapshot.rate_limit_action,
                     session_mem_quota_query: snapshot.mem_quota,
@@ -2875,11 +2876,11 @@ mod session_source_tests {
         );
 
         struct Recorder;
-        impl tidb_util::memory::RecordMemState for Recorder {
-            fn load(&self) -> Result<Option<tidb_util::memory::RuntimeMemStateV1>, String> {
+        impl tidb_memory::RecordMemState for Recorder {
+            fn load(&self) -> Result<Option<tidb_memory::RuntimeMemStateV1>, String> {
                 Ok(None)
             }
-            fn store(&self, _: &tidb_util::memory::RuntimeMemStateV1) -> Result<(), String> {
+            fn store(&self, _: &tidb_memory::RuntimeMemStateV1) -> Result<(), String> {
                 Ok(())
             }
         }
@@ -2892,8 +2893,8 @@ mod session_source_tests {
         session
             .run("SET tidb_mem_arbitrator_wait_averse='nolimit'")
             .unwrap();
-        let arbitrator = tidb_util::memory::MemArbitrator::new(1024, 4, 3, 0, Box::new(Recorder));
-        arbitrator.set_work_mode(tidb_util::memory::ArbitratorWorkMode::Standard);
+        let arbitrator = tidb_memory::MemArbitrator::new(1024, 4, 3, 0, Box::new(Recorder));
+        arbitrator.set_work_mode(tidb_memory::ArbitratorWorkMode::Standard);
         session.set_mem_arbitrator(arbitrator.clone());
         for sql in [
             "SELECT id FROM t WHERE id IN (1, 2)",
@@ -2924,7 +2925,7 @@ mod session_source_tests {
             tidb_parser::normalize_digest(sql).0
         );
         drop(opened.attach(&mut session));
-        arbitrator.set_work_mode(tidb_util::memory::ArbitratorWorkMode::Disable);
+        arbitrator.set_work_mode(tidb_memory::ArbitratorWorkMode::Disable);
         session.run("SELECT 2").unwrap();
         assert!(session.current_sql_digest_key.is_empty());
     }
@@ -3262,7 +3263,7 @@ impl tidb_executor::sessionctx::SessionContext for Session {
         &self.user_vars
     }
 
-    fn append_sql_warning(&mut self, warning: tidb_util::context::SqlWarn) {
+    fn append_sql_warning(&mut self, warning: tidb_context::SqlWarn) {
         Session::append_sql_warning(self, warning);
     }
 

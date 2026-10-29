@@ -46,7 +46,7 @@ fn build_regexp(pattern: &str, match_type: &str) -> Result<Regex, EvalError> {
         }
     }
 
-    tidb_util::go_regexp::compile_with_flags(
+    tidb_go_regexp::compile_with_flags(
         pattern,
         case_insensitive,
         multi_line,

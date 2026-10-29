@@ -22,7 +22,7 @@
 //! `compareLength` :491-504) treats `-1` (`types.UnspecifiedLength`) as the
 //! LONGEST length possible, so `-1` on the dominating side never loses.
 
-use tidb_planner::column_length::{compare_col2_len, Col2Len, UNSPECIFIED_LENGTH};
+use tidb_planner_util::column_length::{compare_col2_len, Col2Len, UNSPECIFIED_LENGTH};
 
 fn col2len(pairs: &[(i64, i64)]) -> Col2Len {
     Col2Len::from_pairs(pairs.iter().copied())

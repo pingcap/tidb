@@ -962,7 +962,7 @@ impl Session {
             // (driver_tidb.go:376's error door), so SHOW WARNINGS after the
             // refused ROLLBACK TO carries the same 1305 row.
             let error = DriverError::from(
-                tidb_util::dbterror::exeerrors::ERR_SAVEPOINT_NOT_EXISTS
+                tidb_dbterror::exeerrors::ERR_SAVEPOINT_NOT_EXISTS
                     .generate_with_stack_by_args(&["SAVEPOINT".into(), (name.to_owned()).into()]),
             );
             self.append_driver_error(crate::WarningLevel::Error, &error);
@@ -987,7 +987,7 @@ impl Session {
             .is_some_and(|ctx| ctx.savepoints.release(name));
         if !released {
             let error = DriverError::from(
-                tidb_util::dbterror::exeerrors::ERR_SAVEPOINT_NOT_EXISTS
+                tidb_dbterror::exeerrors::ERR_SAVEPOINT_NOT_EXISTS
                     .generate_with_stack_by_args(&["SAVEPOINT".into(), (name.to_owned()).into()]),
             );
             self.append_driver_error(crate::WarningLevel::Error, &error);

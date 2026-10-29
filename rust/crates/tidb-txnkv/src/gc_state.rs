@@ -81,7 +81,7 @@ impl std::error::Error for VisibilityError {}
 /// `oracle.GetTimeFromTS(ts)` is a `time.Local` value, so `time.Time.String()`
 /// renders it in the process's zone with the zone's abbreviation.
 fn get_time_from_ts_string(ts: u64) -> String {
-    tidb_util::go_time_layout::go_unix_milli_string((ts >> 18) as i64)
+    tidb_go_time_layout::go_unix_milli_string((ts >> 18) as i64)
 }
 
 impl VisibilityError {
@@ -227,8 +227,8 @@ mod tests {
         // `AS OF TIMESTAMP '2000-01-01 00:00:00'` under a Pacific-time Go
         // server, and that cluster's txn safe point.
         let (start_ts, safe_point) = (248_175_289_958_400_000, 469_896_279_291_330_560);
-        let start_time = tidb_util::go_time_layout::go_unix_milli_string(946_713_600_000);
-        let safe_point_time = tidb_util::go_time_layout::go_unix_milli_string(1_792_512_051_740);
+        let start_time = tidb_go_time_layout::go_unix_milli_string(946_713_600_000);
+        let safe_point_time = tidb_go_time_layout::go_unix_milli_string(1_792_512_051_740);
         let expected = format!(
             "GC life time is shorter than transaction duration, transaction start ts is {start_ts} ({start_time}), txn safe point is {safe_point} ({safe_point_time})"
         );

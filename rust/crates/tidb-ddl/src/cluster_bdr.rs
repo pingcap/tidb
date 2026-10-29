@@ -44,7 +44,7 @@ fn restricted(stored: &[u8]) -> DdlPlanError {
 }
 
 fn is_system_schema(schema: &str) -> bool {
-    tidb_util::filter::is_system_schema(&schema.go_to_lower())
+    tidb_filter::is_system_schema(&schema.go_to_lower())
 }
 
 /// Go `AddColumn`'s `IsAddColumnDenied` check over the built column.

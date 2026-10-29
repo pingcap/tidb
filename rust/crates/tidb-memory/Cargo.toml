@@ -1,0 +1,36 @@
+[package]
+name = "tidb-memory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/memory: Go pkg/util/memory (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+enableassert = ["tidb-sqlkiller/enableassert"]
+failpoints = ["tidb-cgroup/failpoints", "tidb-sqlkiller/failpoints"]
+intest = ["tidb-sqlkiller/intest"]
+jemalloc = ["tidb-allocator-stats/jemalloc"]
+
+[dependencies]
+tidb-cgroup = { path = "../tidb-cgroup" }
+tidb-dbterror = { path = "../tidb-dbterror" }
+tidb-sqlkiller = { path = "../tidb-sqlkiller" }
+crossbeam-channel = "0.5"
+tidb-sysutil = { path = "../tidb-sysutil" }
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+tidb-error = { path = "../tidb-error" }
+tidb-allocator-stats = { path = "../tidb-allocator-stats" }
+tracing = "0.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libproc = "=0.14.11"
+
+[dev-dependencies]
+tidb-intest = { path = "../tidb-intest", features = ["intest"] }
+tidb-fastrand = { path = "../tidb-fastrand" }

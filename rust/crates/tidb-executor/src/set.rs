@@ -88,7 +88,7 @@ fn set_sys_variable(
     };
     // Go `pkg/executor/set.go:124`.
     if let Some(require_dynamic_privileges) = sys_var.require_dynamic_privileges() {
-        let sem_enabled = tidb_util::sem_compat::is_enabled();
+        let sem_enabled = tidb_sem_compat::is_enabled();
         let pm = ctx.privilege_manager();
         for privilege in require_dynamic_privileges(v.is_global, sem_enabled) {
             if !pm.request_dynamic_verification(privilege, false) {
@@ -105,8 +105,8 @@ fn set_sys_variable(
         }
     }
     // Check read-only system variables in SEM mode.
-    if tidb_util::sem_v2::is_enabled()
-        && tidb_util::sem_v2::is_read_only_variable(name)
+    if tidb_sem_v2::is_enabled()
+        && tidb_sem_v2::is_read_only_variable(name)
         && !ctx
             .privilege_manager()
             .request_dynamic_verification("RESTRICTED_VARIABLES_ADMIN", false)
@@ -120,9 +120,9 @@ fn set_sys_variable(
         // The variable is a noop. For compatibility we allow it to still be
         // changed, but we append a warning since users might be expecting
         // something that's not going to happen (Go `ErrSettingNoopVariable`).
-        ctx.append_sql_warning(tidb_util::context::SqlWarn::raised(
-            tidb_util::context::WarningLevel::Warning,
-            tidb_util::dbterror::exeerrors::ERR_SETTING_NOOP_VARIABLE
+        ctx.append_sql_warning(tidb_context::SqlWarn::raised(
+            tidb_context::WarningLevel::Warning,
+            tidb_dbterror::exeerrors::ERR_SETTING_NOOP_VARIABLE
                 .generate_with_stack_by_args(&[sys_var.name.into()]),
         ));
     }
@@ -132,9 +132,9 @@ fn set_sys_variable(
         // and warn that this will not be supported in future
         // (Go `ErrInstanceScope`).
         is_instance = true;
-        ctx.append_sql_warning(tidb_util::context::SqlWarn::raised(
-            tidb_util::context::WarningLevel::Warning,
-            tidb_util::dbterror::exeerrors::ERR_INSTANCE_SCOPE
+        ctx.append_sql_warning(tidb_context::SqlWarn::raised(
+            tidb_context::WarningLevel::Warning,
+            tidb_dbterror::exeerrors::ERR_INSTANCE_SCOPE
                 .generate_with_stack_by_args(&[sys_var.name.into()]),
         ));
     }
@@ -165,7 +165,7 @@ fn set_sys_variable(
             || (is_snapshot && ctx.txn_is_staleness()))
     {
         return Err(DriverError::Mysql(MysqlError::from_terror(
-            &tidb_util::dbterror::exeerrors::ERR_CANT_CHANGE_TX_CHARACTERISTICS
+            &tidb_dbterror::exeerrors::ERR_CANT_CHANGE_TX_CHARACTERISTICS
                 .generate_with_stack_by_args(&[]),
         )));
     }

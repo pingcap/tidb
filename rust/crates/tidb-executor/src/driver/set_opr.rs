@@ -115,7 +115,7 @@ pub(crate) fn validate_query_usage(
             {
                 if !self.oracle_mode && alias.as_ref().is_none_or(String::is_empty) {
                     self.error = Some(DriverError::from(
-                        tidb_util::dbterror::ERR_DERIVED_MUST_HAVE_ALIAS
+                        tidb_dbterror::ERR_DERIVED_MUST_HAVE_ALIAS
                             .generate_with_stack_by_args(&[]),
                     ));
                     return true;

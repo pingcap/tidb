@@ -81,14 +81,14 @@ pub(super) fn build_drop_index_job<S: MetaSnapshot>(
     if is_pk {
         if index.is_none() && !stored.pk_is_handle {
             return Err(DdlPlanError::from(
-                tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY
+                tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY
                     .generate_with_stack_by_args(&[("PRIMARY".to_owned()).into()]),
             ));
         }
         if stored.is_common_handle || stored.pk_is_handle {
             return Err(DdlPlanError::Admission(
                 tidb_ddl_build::table_info_build::DdlAdmissionError::from_terror(
-                    &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_PRIMARY_KEY.generate_with_stack(
+                    &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_PRIMARY_KEY.generate_with_stack(
                         "Unsupported drop primary key when the table is using clustered index",
                     ),
                 ),
@@ -102,13 +102,13 @@ pub(super) fn build_drop_index_job<S: MetaSnapshot>(
             return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                 detail: format!("index `{index_name}` does not exist on `{schema}`.`{table}`"),
                 warnings: vec![crate::real_tikv_ddl::ddl_note(
-                    tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY
+                    tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY
                         .generate_with_stack(format!("index {index_name} doesn't exist")),
                 )],
             }));
         }
         return Err(DdlPlanError::from(
-            tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY
+            tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY
                 .generate_with_stack(format!("index {} doesn't exist", (index_name))),
         ));
     };
@@ -180,7 +180,7 @@ fn check_drop_index(
                 Err((
                     arg.if_exist,
                     DdlPlanError::from(
-                        tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY
+                        tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY
                             .generate_with_stack(format!("index {} doesn't exist", (name))),
                     ),
                 )),
@@ -218,7 +218,7 @@ pub(super) fn plan_persisted_drop_index_job_step(
     let (stored, checked) = check_drop_index(catalog, active)?;
     let indexes = match checked {
         Ok(indexes) => indexes,
-        Err((true, error)) if error.equal(&tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY) => {
+        Err((true, error)) if error.equal(&tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY) => {
             // Go: under IF EXISTS the job finishes with the 1091 as its
             // warning.
             active.job.warning = Some(GoShared::new(error.to_job_error()));
@@ -253,7 +253,7 @@ pub(super) fn plan_persisted_drop_index_job_step(
         SchemaState::DELETE_REORGANIZATION => SchemaState::NONE,
         state => {
             return Err(DdlPlanError::from(
-                tidb_util::dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+                tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
                     FormatArg::from("index"),
                     FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
                 ]),

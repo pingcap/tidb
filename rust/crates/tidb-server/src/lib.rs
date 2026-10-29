@@ -134,13 +134,13 @@ pub use wire_status::{
 
 /// Starts the shared SQL session/catalog lifecycle over the selected storage engine.
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
-    tidb_util::traceevent::register_with_client_go();
+    tidb_traceevent::register_with_client_go();
     crate::install_process_globals(&config);
     setup_log()?;
     let result = run_node_with_log(config);
     // Go `main`: `syncLog()` after the server exited; a failed sync turns
     // the exit into a generic failure.
-    if let Err(error) = tidb_util::logutil::sync() {
+    if let Err(error) = tidb_logutil::sync() {
         eprintln!("sync log err: {error}");
         if result.is_ok() {
             return Err(RunConfiguredNodeError::Log(error.to_string()));
@@ -157,7 +157,7 @@ fn setup_log() -> Result<(), RunConfiguredNodeError> {
     let log = tidb_config::config_tree::config::get_global_config()
         .log
         .to_log_config();
-    let file = tidb_util::logutil::FileLogConfig {
+    let file = tidb_logutil::FileLogConfig {
         filename: log.file.filename,
         max_size: log.file.max_size,
         max_days: log.file.max_days,
@@ -167,7 +167,7 @@ fn setup_log() -> Result<(), RunConfiguredNodeError> {
         buffer_size: log.file.buffer_size,
         buffer_flush_interval: log.file.buffer_flush_interval,
     };
-    let mut log_config = tidb_util::logutil::new_log_config(
+    let mut log_config = tidb_logutil::new_log_config(
         &log.level,
         &log.format,
         &log.slow_query_file,
@@ -188,7 +188,7 @@ fn setup_log() -> Result<(), RunConfiguredNodeError> {
             tidb_log::Value::Str(keyspace_name),
         )]
     };
-    tidb_util::logutil::init_logger_with_core_fields(&log_config, &core_fields)
+    tidb_logutil::init_logger_with_core_fields(&log_config, &core_fields)
         .map_err(RunConfiguredNodeError::Log)
 }
 
@@ -203,7 +203,7 @@ fn setup_log() -> Result<(), RunConfiguredNodeError> {
 fn print_info() {
     let level = tidb_log::get_level();
     tidb_log::set_level(tidb_log::Level::Info);
-    tidb_util::printer::print_tidb_info();
+    tidb_printer::print_tidb_info();
     tidb_log::set_level(level);
 }
 
@@ -211,14 +211,14 @@ fn run_node_with_log(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
     initialize_compute_topology(&config.global_config)?;
     tidb_txnkv::global_mpp_failed_store_prober().run();
     let _mpp_prober_cleanup = MppProberCleanup;
-    tidb_util::cgmon::start_cgroup_monitor();
+    tidb_cgmon::start_cgroup_monitor();
     let _cgroup_monitor_cleanup = CgroupMonitorCleanup;
     initialize_temp_dir(&config)?;
     let _temp_dir_cleanup = TempDirCleanup;
     {
         let global_config = tidb_config::config_tree::config::get_global_config();
-        tidb_domain::domainutil::REPAIR_INFO.set_repair_mode(global_config.repair_mode);
-        tidb_domain::domainutil::REPAIR_INFO
+        tidb_domainutil::REPAIR_INFO.set_repair_mode(global_config.repair_mode);
+        tidb_domainutil::REPAIR_INFO
             .set_repair_table_list(global_config.repair_table_list.clone());
     }
     print_info();
@@ -244,7 +244,7 @@ fn run_node_with_log(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
     tidb_stats_handle_metrics::init_dashboard_series();
     tidb_metrics::globalsort::init_dashboard_series();
     tidb_metrics::stmtsummary::init_dashboard_series();
-    tidb_util::topsql_reporter::metrics::init_metrics_vars();
+    tidb_topsql_reporter_metrics::init_metrics_vars();
     let _statement_observation_cleanup = start_statement_observation();
     tidb_txnkv::client_go_metrics::init_dashboard_series();
     if config.store_kind == node_config::StoreKind::Unistore {
@@ -270,7 +270,7 @@ fn initialize_compute_topology(
     config: &tidb_config::config_tree::config::Config,
 ) -> Result<(), RunConfiguredNodeError> {
     if config.disaggregated_tiflash && config.use_auto_scaler {
-        tidb_util::tiflashcompute::init_global_topo_fetcher(
+        tidb_tiflashcompute::init_global_topo_fetcher(
             &config.tiflash_compute_auto_scaler_type,
             &config.tiflash_compute_auto_scaler_addr,
             &config.auto_scaler_cluster_id,
@@ -287,8 +287,8 @@ struct StatementObservationCleanup;
 
 fn start_statement_observation() -> StatementObservationCleanup {
     let config = tidb_config::config_tree::config::get_global_config();
-    tidb_executor::txn_summary::RECORDER.resize(config.trx_summary.transaction_summary_capacity);
-    tidb_executor::txn_summary::RECORDER.set_min_duration(std::time::Duration::from_millis(
+    tidb_txninfo::RECORDER.resize(config.trx_summary.transaction_summary_capacity);
+    tidb_txninfo::RECORDER.set_min_duration(std::time::Duration::from_millis(
         config.trx_summary.transaction_id_digest_min_duration as u64,
     ));
     let instance = &config.instance;
@@ -300,17 +300,17 @@ fn start_statement_observation() -> StatementObservationCleanup {
             file_max_backups: instance.stmt_summary_file_max_backups,
         };
         if let Err(error) = tidb_stmtsummary::v2::stmtsummary::setup(&summary_config) {
-            tidb_util::logutil::bg_logger()
+            tidb_logutil::bg_logger()
                 .error("failed to setup statements summary", &[zap_error(error)]);
         }
     }
-    tidb_util::topsql_stmtstats::setup_aggregator();
+    tidb_topsql_stmtstats::setup_aggregator();
     StatementObservationCleanup
 }
 
 impl Drop for StatementObservationCleanup {
     fn drop(&mut self) {
-        tidb_util::topsql_stmtstats::close_aggregator();
+        tidb_topsql_stmtstats::close_aggregator();
         tidb_stmtsummary::v2::stmtsummary::close();
     }
 }
@@ -323,7 +323,7 @@ struct ResourceManagerCleanup;
 
 impl Drop for CgroupMonitorCleanup {
     fn drop(&mut self) {
-        tidb_util::cgmon::stop_cgroup_monitor();
+        tidb_cgmon::stop_cgroup_monitor();
     }
 }
 
@@ -335,13 +335,13 @@ impl Drop for ResourceManagerCleanup {
 
 impl Drop for TempDirCleanup {
     fn drop(&mut self) {
-        tidb_util::disk::clean_up();
+        tidb_disk::clean_up();
     }
 }
 
 fn initialize_temp_dir(config: &NodeConfig) -> Result<(), RunConfiguredNodeError> {
-    tidb_util::disk::initialize_temp_dir().map_err(|source| {
-        RunConfiguredNodeError::Spill(tidb_util::spill_storage::SpillStorageOpenError::Io {
+    tidb_disk::initialize_temp_dir().map_err(|source| {
+        RunConfiguredNodeError::Spill(tidb_spill_storage::SpillStorageOpenError::Io {
             operation: "initialize temporary storage directory",
             path: config.spill_storage.path.clone(),
             source,
@@ -353,7 +353,7 @@ static SYSTEM_TIME_JUMP_BACKWARD_COUNT: AtomicU64 = AtomicU64::new(0);
 
 fn start_system_time_monitor() {
     let _ = std::thread::spawn(|| {
-        tidb_util::systimemon::start_monitor(SystemTime::now, || {
+        tidb_systimemon::start_monitor(SystemTime::now, || {
             SYSTEM_TIME_JUMP_BACKWARD_COUNT.fetch_add(1, Ordering::Relaxed);
             tidb_metrics::server::TIME_JUMP_BACK_TOTAL.inc();
         });
@@ -391,7 +391,7 @@ fn install_server_boot_gauges() {
     tidb_metrics::server::SERVER_INFO
         .with_label_values(&[
             &tidb_mysql::runtime_versions().server_version,
-            tidb_util::versioninfo::TIDB_GIT_HASH,
+            tidb_versioninfo::TIDB_GIT_HASH,
         ])
         .set(start_seconds as i64);
 }
@@ -423,7 +423,7 @@ mod skip_grant_startup_tests {
             .expect("an enabled policy starts a process controller");
         assert_eq!(
             arbitrator.work_mode(),
-            tidb_util::memory::ArbitratorWorkMode::Priority
+            tidb_memory::ArbitratorWorkMode::Priority
         );
         assert_eq!(arbitrator.limit_u64(), 1 << 30);
         assert_eq!(arbitrator.soft_limit(), 3 << 28);
@@ -527,9 +527,9 @@ mod setup_log_tests {
                 &slow.to_string_lossy(),
             ],
         );
-        tidb_util::logutil::bg_logger().info("info passes the flag's level", &[]);
+        tidb_logutil::bg_logger().info("info passes the flag's level", &[]);
         tidb_log::info("the pingcap/log global writes the same file", &[]);
-        tidb_util::logutil::slow_query_logger().info("slow entry", &[]);
+        tidb_logutil::slow_query_logger().info("slow entry", &[]);
         let content = std::fs::read_to_string(&from_flag).unwrap();
         assert!(content.contains("[INFO] [lib.rs:"), "{content}");
         assert!(
@@ -563,8 +563,8 @@ mod setup_log_tests {
             ),
             &[],
         );
-        tidb_util::logutil::bg_logger().info("filtered by the config level", &[]);
-        tidb_util::logutil::bg_logger().warn("warn passes", &[]);
+        tidb_logutil::bg_logger().info("filtered by the config level", &[]);
+        tidb_logutil::bg_logger().warn("warn passes", &[]);
         let content = std::fs::read_to_string(&from_config).unwrap();
         assert!(!content.contains("filtered"), "{content}");
         assert!(content.contains("[WARN] [lib.rs:"), "{content}");
@@ -599,5 +599,5 @@ pub(crate) fn isolate_process_globals() -> bool {
     true
 }
 pub(crate) use tidb_session::domain::{log_mysql_listening, log_status_listen, log_status_listen_failed, open_spill_storage, MemoryArbitratorAuthority};
-pub(crate) use tidb_util::logutil::zap_error;
-pub(crate) use tidb_util::logutil::zap_stack;
+pub(crate) use tidb_logutil::zap_error;
+pub(crate) use tidb_logutil::zap_stack;

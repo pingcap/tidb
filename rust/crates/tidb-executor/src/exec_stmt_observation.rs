@@ -49,7 +49,7 @@ pub struct StatementObservation {
     pub binding_sql: String,
     pub binding_digest: String,
     pub phases: Arc<Mutex<StatementPhases>>,
-    pub kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
+    pub kv_exec_counter: tidb_topsql_stmtstats::KvExecCounterHandle,
     /// Go `StmtCtx.ExecDetails`: what the statement's coprocessor responses
     /// reported, read back when the summary is recorded.
     pub cop_stats: Arc<crate::statement_cop_stats::StatementCopStats>,
@@ -62,7 +62,7 @@ pub struct StatementObservation {
     pub exec_details: Arc<tikv_client::util::ExecDetails>,
     /// Go `SessionVars.RUV2Metrics`: the statement's TiDB-side RU v2
     /// counters (`RUV2MetricsFromContext`), created with its ctx.
-    pub ruv2_metrics: Arc<tidb_util::ruv2_metrics::RuV2Metrics>,
+    pub ruv2_metrics: Arc<tidb_ruv2_metrics::RuV2Metrics>,
     /// Go `recordLastQueryInfo`'s statement test: a `SHOW` other than
     /// `SHOW SESSION_STATES`, an `EXECUTE`, or a DML node.
     pub record_last_query: bool,
@@ -248,7 +248,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
         } else if let Some(secure_text) = &observation.secure_text {
             secure_text.clone()
         } else {
-            tidb_util::redact::string(
+            tidb_redact::string(
                 &mode,
                 &format!("{}{}", observation.text, self.plan_cache_params_string()),
             )
@@ -286,7 +286,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
         if !self.write_slow_log_hint() {
             // Go also forces the entry while runtime tracing is on; this node
             // has no runtime tracer.
-            force = tidb_util::logutil::get_level() <= tidb_log::Level::Debug;
+            force = tidb_logutil::get_level() <= tidb_log::Level::Debug;
             if !self.instance_switch_on(tidb_vardef::tidb_vars::TIDB_ENABLE_SLOW_LOG) && !force {
                 return;
             }
@@ -309,7 +309,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
                     .get_system(tidb_vardef::tidb_vars::TIDB_SLOW_LOG_THRESHOLD)
                     .ok()
                     .and_then(|value| value.parse::<i64>().ok())
-                    .unwrap_or(tidb_util::logutil::DEFAULT_SLOW_THRESHOLD as i64);
+                    .unwrap_or(tidb_logutil::DEFAULT_SLOW_THRESHOLD as i64);
                 match_rules = elapsed >= Duration::from_millis(threshold as u64);
                 if !match_rules && !force {
                     return;
@@ -545,7 +545,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
         let entry = tidb_variable::slow_log::slow_log_format(&vars, &items);
         // Go `SlowLogFormat` clears `CurrentDBChanged` once it printed `use`.
         self.session_vars_mut().current_db_changed = false;
-        tidb_util::logutil::slow_query_logger().warn(&entry, &[]);
+        tidb_logutil::slow_query_logger().warn(&entry, &[]);
 
         if !match_rules {
             return;
@@ -735,7 +735,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
             resource_group_name: self.observed_resource_group(),
             ru_detail: Some(Arc::clone(&observation.ru_details)),
             // Go `calculateStatementTotalRUV2`.
-            total_ru_v2: tidb_util::ruv2_metrics::total_ru(
+            total_ru_v2: tidb_ruv2_metrics::total_ru(
                 Some(&observation.ruv2_metrics),
                 ruv2_weights,
                 observation.ru_details.tikv_ru_v2(),
@@ -743,7 +743,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
             ),
             // Go `SQLCPUUsages.GetCPUUsages()`, whose TiKV time this node
             // keeps as the coprocessor responses' plus the point readers'.
-            cpu_usages: tidb_util::ppcpuusage::CpuUsages {
+            cpu_usages: tidb_ppcpuusage::CpuUsages {
                 tikv_cpu_time: i64::try_from(
                     observation
                         .cop_stats
@@ -851,14 +851,14 @@ fn plan_storage_flags(plan: &tidb_planner::physical::PhysicalPlan) -> (bool, boo
 
 /// Go `executor.sampleLoggerFactory`: one entry per minute, category
 /// `slow log`.
-fn slow_log_sample_logger() -> tidb_util::logutil::SampledLogger {
-    static LOGGER: std::sync::LazyLock<tidb_util::logutil::SampledLogger> =
+fn slow_log_sample_logger() -> tidb_logutil::SampledLogger {
+    static LOGGER: std::sync::LazyLock<tidb_logutil::SampledLogger> =
         std::sync::LazyLock::new(|| {
-            tidb_util::logutil::sample_logger_factory(
+            tidb_logutil::sample_logger_factory(
                 Duration::from_secs(60),
                 1,
                 vec![tidb_log::Field::new(
-                    tidb_util::logutil::LOG_FIELD_CATEGORY,
+                    tidb_logutil::LOG_FIELD_CATEGORY,
                     tidb_log::Value::Str("slow log".to_owned()),
                 )],
             )()

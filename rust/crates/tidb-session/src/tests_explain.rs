@@ -310,11 +310,11 @@ fn ordinary_execution_publishes_the_brief_binary_plan() {
     session.run("INSERT INTO src VALUES (1)").unwrap();
 
     session.run("SELECT * FROM src USE INDEX ()").unwrap();
-    let select_info = tidb_util::memoryusagealarm::SessionManager::get_process_info(&registry, 41)
+    let select_info = tidb_memoryusagealarm::SessionManager::get_process_info(&registry, 41)
         .expect("registered process");
     let select_plan = select_info.brief_binary_plan.clone();
     let select_rows =
-        tidb_util::plancodec::decode_binary_plan_for_connection(select_plan, "row", true).unwrap();
+        tidb_plancodec::decode_binary_plan_for_connection(select_plan, "row", true).unwrap();
     assert!(
         select_rows
             .iter()
@@ -328,17 +328,17 @@ fn ordinary_execution_publishes_the_brief_binary_plan() {
     session
         .run("SELECT a FROM src USE INDEX (ia) WHERE a > 0")
         .unwrap();
-    let index_info = tidb_util::memoryusagealarm::SessionManager::get_process_info(&registry, 41)
+    let index_info = tidb_memoryusagealarm::SessionManager::get_process_info(&registry, 41)
         .expect("registered process");
     assert_eq!(index_info.index_names, ["src:ia"]);
 
     session.run("INSERT INTO dst SELECT a FROM src").unwrap();
-    let insert_plan = tidb_util::memoryusagealarm::SessionManager::get_process_info(&registry, 41)
+    let insert_plan = tidb_memoryusagealarm::SessionManager::get_process_info(&registry, 41)
         .expect("registered process")
         .brief_binary_plan
         .clone();
     let insert_rows =
-        tidb_util::plancodec::decode_binary_plan_for_connection(insert_plan, "row", true).unwrap();
+        tidb_plancodec::decode_binary_plan_for_connection(insert_plan, "row", true).unwrap();
     assert!(
         insert_rows
             .first()
@@ -4701,7 +4701,7 @@ fn binary_prepared_execution_keeps_plan_detail_out_of_the_process_list() {
     session
         .run("SELECT a FROM src USE INDEX (ia) WHERE a > 0")
         .unwrap();
-    let info = tidb_util::memoryusagealarm::SessionManager::get_process_info(&registry, 42)
+    let info = tidb_memoryusagealarm::SessionManager::get_process_info(&registry, 42)
         .expect("registered process");
     assert_eq!(info.brief_binary_plan, "");
     assert_eq!(info.index_names, ["src:ia"]);
@@ -4709,7 +4709,7 @@ fn binary_prepared_execution_keeps_plan_detail_out_of_the_process_list() {
     // The span ends with the EXECUTE; an ordinary statement publishes again.
     session.set_binary_prepared_execution(false);
     session.run("SELECT * FROM src USE INDEX ()").unwrap();
-    let info = tidb_util::memoryusagealarm::SessionManager::get_process_info(&registry, 42)
+    let info = tidb_memoryusagealarm::SessionManager::get_process_info(&registry, 42)
         .expect("registered process");
     assert!(!info.brief_binary_plan.is_empty());
 }
@@ -4753,9 +4753,9 @@ fn prepared_explain_constants_follow_current_parameters() {
                 _ => vec![vec![number_text.as_str(), word]],
             };
             assert_eq!(actual, expected, "{query}");
-            let info = tidb_util::memoryusagealarm::SessionManager::get_process_info(&registry, 43)
+            let info = tidb_memoryusagealarm::SessionManager::get_process_info(&registry, 43)
                 .unwrap();
-            let rows = tidb_util::plancodec::decode_binary_plan_for_connection(
+            let rows = tidb_plancodec::decode_binary_plan_for_connection(
                 info.brief_binary_plan.clone(),
                 "row",
                 false,
@@ -4829,9 +4829,9 @@ fn prepared_explain_index_probe_strings_match_go() {
                 row_text(session.run("EXECUTE s USING @x")),
                 vec![vec![word]]
             );
-            let info = tidb_util::memoryusagealarm::SessionManager::get_process_info(&registry, 44)
+            let info = tidb_memoryusagealarm::SessionManager::get_process_info(&registry, 44)
                 .unwrap();
-            let rows = tidb_util::plancodec::decode_binary_plan_for_connection(
+            let rows = tidb_plancodec::decode_binary_plan_for_connection(
                 info.brief_binary_plan.clone(),
                 "row",
                 false,

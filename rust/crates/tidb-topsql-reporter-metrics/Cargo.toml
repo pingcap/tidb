@@ -1,0 +1,15 @@
+[package]
+name = "tidb-topsql-reporter-metrics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/topsql/reporter/metrics: Go pkg/util/topsql/reporter/metrics (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-metrics = { path = "../tidb-metrics" }
+prometheus = { version = "0.14", default-features = false }

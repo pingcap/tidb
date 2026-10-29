@@ -340,7 +340,7 @@ pub fn show_create_default_clause(
         // it a default holding any of them prints a body that does not
         // re-parse.
         ColumnDefault::Value(_) => {
-            format!("'{}'", tidb_util::format::output_format(literal_text))
+            format!("'{}'", tidb_format::output_format(literal_text))
         }
         ColumnDefault::Computed(computed)
             if computed.kind == ComputedDefaultKind::CurrentTimestamp =>

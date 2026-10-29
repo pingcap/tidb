@@ -36,7 +36,7 @@ use tidb_expr::evaluator::{vectorizable, vectorized_filter_consider_null};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::{truthy_of, Columns};
-use tidb_util::memory::Tracker;
+use tidb_memory::Tracker;
 
 use crate::StatementMemory;
 

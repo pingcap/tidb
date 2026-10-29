@@ -137,7 +137,7 @@ fn cluster_peer_batch_kill_and_memory_scan_share_protocol_and_fleet() {
     let client = ClusterPeerClient::new(store);
     let context = StmtContext::for_query();
     let zone = SessionTimeZone::utc();
-    let id = tidb_util::globalconn::Gcid {
+    let id = tidb_globalconn::Gcid {
         server_id: 17,
         local_conn_id: 42,
         is_64bits: false,
@@ -227,7 +227,7 @@ fn cluster_peer_batch_kill_and_memory_scan_share_protocol_and_fleet() {
             assert!(std::time::Instant::now() < deadline);
             std::thread::yield_now();
         }
-        killer.send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+        killer.send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
         assert!(call
             .join()
             .unwrap()

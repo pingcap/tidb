@@ -28,7 +28,7 @@ use tidb_session::domain::session_api::{ActiveQueryCancellation, GeneralExecuteO
 use tidb_store_driver::sql_query_error::SqlQueryError;
 use tidb_session::domain::wire_status::WireStatus;
 use tidb_session::Session;
-use tidb_util::globalconn::Allocator;
+use tidb_globalconn::Allocator;
 
 use crate::driver::{should_install_connection_alive, QuerySession, QuerySessionFactory};
 
@@ -41,7 +41,7 @@ impl QuerySessionFactory for Domain {
 
     fn install_tls_manager(
         &self,
-        manager: Arc<dyn tidb_executor::process::TlsManager>,
+        manager: Arc<dyn tidb_sessmgr::TlsManager>,
         variables: Vec<(&'static str, String)>,
     ) {
         Domain::install_tls_manager(self, manager, variables);
@@ -55,7 +55,7 @@ impl QuerySessionFactory for Domain {
         Some(self.connection_id_allocator())
     }
 
-    fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {
+    fn session_manager(&self) -> Option<Arc<dyn tidb_memoryusagealarm::SessionManager>> {
         Some(Domain::session_manager(self))
     }
 
@@ -120,7 +120,7 @@ impl QuerySession for Session {
         Some(Arc::new(self.begin_query_cancellation()))
     }
 
-    fn sql_killer(&self) -> Option<Arc<tidb_util::sqlkiller::SqlKiller>> {
+    fn sql_killer(&self) -> Option<Arc<tidb_sqlkiller::SqlKiller>> {
         Some(Session::sql_killer(self))
     }
 

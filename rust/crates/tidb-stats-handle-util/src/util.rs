@@ -29,7 +29,7 @@ use tidb_sqlexec::{
 };
 use tidb_sqlexec_mock::MockRestrictedSqlExecutor;
 use tidb_syssession::{Pool as SessionPool, SessionContext};
-use tidb_util::sqlescape::SqlArg;
+use tidb_sqlescape::SqlArg;
 use tidb_vardef::tidb_vars;
 use tikv_client::trace::TraceContext;
 use tikv_client::util::with_internal_source_type;
@@ -228,7 +228,7 @@ where
     match result {
         Ok(result) => result,
         Err(payload)
-            if tidb_util::intest::IN_TEST
+            if tidb_intest::IN_TEST
                 && panic_text(payload.as_ref()).contains("assert failed") =>
         {
             resume_unwind(payload)
@@ -326,7 +326,7 @@ pub fn exec_rows_with_ctx<C: StatsSessionContext + ?Sized>(
     fail::fail_point!("ExecRowsTimeout", |_| {
         return Err(error("inject timeout error"));
     });
-    if tidb_util::intest::IN_TEST {
+    if tidb_intest::IN_TEST {
         if let Some(mock) = context.mock_restricted_sql_executor() {
             return mock.exec_restricted_sql(
                 &*STATS_CONTEXT,

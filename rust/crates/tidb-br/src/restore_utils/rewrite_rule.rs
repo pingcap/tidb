@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 use tidb_codec::table_key::{encode_table_index_prefix, encode_table_prefix};
 use tidb_codec::{decode_bytes, decode_table_id, encode_bytes, gen_table_record_prefix};
 use tidb_model::TableInfo;
-use tidb_util::redact;
+use tidb_redact as redact;
 
 use super::misc::{get_index_id_map, get_table_id_map, DEFAULT_CF_NAME, WRITE_CF_NAME};
 use super::{File, RewriteRule};

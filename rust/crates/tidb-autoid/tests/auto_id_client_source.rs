@@ -250,6 +250,6 @@ fn auto_id_owner_sql_kill_interrupts_service_discovery() {
     }
     memory
         .sql_killer()
-        .send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+        .send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
     assert!(worker.join().unwrap().is_err());
 }

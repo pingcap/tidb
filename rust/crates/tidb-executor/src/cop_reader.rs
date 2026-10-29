@@ -55,7 +55,7 @@ use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_distsql::{DistSqlContext, EncodeType, ExecutorKind, ExecutorShape, QueryResultContext, RequestBuilder, RequestEnvelope, SelectInput, SelectResponseIter};
 use tidb_txnkv::CancelHandle;
-use tidb_util::context::WarningCollector;
+use tidb_context::WarningCollector;
 use tidb_planner::cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
 use tidb_planner::physical::{PhysicalIndexScan, PhysicalTableScan};
 use tidb_planner::tikv_scan_spec::{
@@ -706,7 +706,7 @@ pub fn open_cop_scan(
 /// Everything needed to open one response on the query worker.
 struct RemoteScanPlan {
     cancellation: Arc<CancelHandle>,
-    kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
+    kv_exec_counter: tidb_topsql_stmtstats::KvExecCounterHandle,
     /// The issuing statement's ctx values: its `RUDetails` and its
     /// `StmtCtx.GetResourceGroupTagger`.
     kv_context: tidb_txnkv::StatementKvContext,
@@ -768,7 +768,7 @@ struct RemoteScanPlan {
     cop_plan_ids: Vec<isize>,
     root_plan_id: isize,
     /// The reader's memory tracker the select result charges.
-    memory_tracker: Option<Arc<tidb_util::memory::Tracker>>,
+    memory_tracker: Option<Arc<tidb_memory::Tracker>>,
     /// The statement's `tidb_max_keys_read` budget and keys-examined counter.
     keys_read: crate::KeysReadBudget,
     /// The statement's consumer of per-response execution details.

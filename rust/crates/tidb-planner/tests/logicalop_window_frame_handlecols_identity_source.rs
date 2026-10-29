@@ -35,7 +35,7 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 
-use tidb_planner::handle_cols::{CommonHandleIdentity, HandleColumnIdentity, HandleMetadataIdentity};
+use tidb_planner_util::handle_cols::{CommonHandleIdentity, HandleColumnIdentity, HandleMetadataIdentity};
 use tidb_planner::logical::schema_producer::expressions_equal;
 use tidb_planner::logical::window::{BoundType, FrameBound, FrameType, RangeCmpDataType, WindowFrame};
 

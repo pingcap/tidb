@@ -1,0 +1,15 @@
+[package]
+name = "tidb-txninfo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/session/txninfo: transaction info and summaries (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+serde_json = { workspace = true }
+tidb-datatype = { path = "../tidb-datatype" }

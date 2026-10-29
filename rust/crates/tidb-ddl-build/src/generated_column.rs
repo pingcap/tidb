@@ -211,7 +211,7 @@ pub fn find_depended_column_names(
         if let Some(db) = db.filter(|db| !db.is_empty() && !schema.is_empty()) {
             if tidb_hack::go_to_lower(db) != schema {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_WRONG_DB_NAME
+                    &tidb_dbterror::ERR_WRONG_DB_NAME
                         .generate_with_stack_by_args(&[db.into()]),
                 ));
             }
@@ -219,7 +219,7 @@ pub fn find_depended_column_names(
         if let Some(tbl) = tbl.filter(|tbl| !tbl.is_empty() && !table.is_empty()) {
             if tidb_hack::go_to_lower(tbl) != table {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_WRONG_TABLE_NAME
+                    &tidb_dbterror::ERR_WRONG_TABLE_NAME
                         .generate_with_stack_by_args(&[tbl.into()]),
                 ));
             }

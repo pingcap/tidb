@@ -14,6 +14,12 @@
 
 //! Stateful text formatting from `pkg/parser/format/format.go`.
 
+mod restore;
+
+pub use restore::{
+    CteRestorer, CteScope, RestoreCtx, RestoreFlags, RestoreWriter, GO_SIMPLE_CASE_UNICODE_VERSION,
+};
+
 use std::fmt;
 use std::io::{self, Write};
 

@@ -276,7 +276,7 @@ fn single_statement(
 /// Go `ErrRunMultiSchemaChanges`.
 fn run_multi_schema_changes(action: ActionType) -> DdlPlanError {
     coded_refusal(
-        &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
+        &tidb_dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
         format!("Unsupported multi schema change for {action}"),
     )
 }
@@ -289,7 +289,7 @@ fn run_multi_schema_changes(action: ActionType) -> DdlPlanError {
 /// them in place.
 fn publish_warnings(
     job_context: &dyn DdlSessionContext,
-    warnings: Vec<tidb_util::context::SqlWarn>,
+    warnings: Vec<tidb_context::SqlWarn>,
 ) {
     for warning in warnings {
         job_context.append_sql_warn(warning);
@@ -1012,7 +1012,7 @@ pub(super) fn plan_persisted_multi_schema_job_step<S: MetaSnapshot>(
                         .error
                         .as_ref()
                         .filter(|error| {
-                            !tidb_util::dbterror::ERR_CANCELLED_DDL_JOB.equal(Some(&*error.read()))
+                            !tidb_dbterror::ERR_CANCELLED_DDL_JOB.equal(Some(&*error.read()))
                         })
                         .map(|error| DdlPlanError::from(error.read().clone()))
                 });
@@ -1253,7 +1253,7 @@ pub(super) fn plan_cancel_multi_schema(
     flush_cancelling(&sub_jobs);
     active.job.state = JobState::ROLLINGBACK;
     Err(DdlPlanError::from(
-        tidb_util::dbterror::ERR_CANCELLED_DDL_JOB
+        tidb_dbterror::ERR_CANCELLED_DDL_JOB
             .generate(tidb_error::tidb::errname::ErrCancelledDDLJob.raw),
     ))
 }

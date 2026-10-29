@@ -1,0 +1,28 @@
+[package]
+name = "tidb-plancodec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/plancodec: Go pkg/util/plancodec (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+enableassert = ["tidb-memory/enableassert"]
+failpoints = ["tidb-memory/failpoints"]
+intest = ["tidb-memory/intest"]
+jemalloc = ["tidb-memory/jemalloc"]
+
+[dependencies]
+tidb-memory = { path = "../tidb-memory" }
+tidb-texttree = { path = "../tidb-texttree" }
+base64.workspace = true
+prost.workspace = true
+snap.workspace = true
+tidb-proto = { path = "../tidb-proto" }
+
+[dev-dependencies]
+tidb-intest = { path = "../tidb-intest", features = ["intest"] }

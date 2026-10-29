@@ -35,7 +35,7 @@
 
 use super::*;
 use crate::cardinality::row_size::{RowSizeColumn, RowSizeColumnStats, RowSizeType};
-use crate::cost_usage::COST_FLAG_TRACE;
+use tidb_planner_costusage::COST_FLAG_TRACE;
 
 /// A child cost taken verbatim from a recording, expressed through the source
 /// constructor so no test-only way to build a [`CostVer2`] is introduced.
@@ -1333,7 +1333,7 @@ fn test_source_remaining_leaf_operators() {
         100.0 / 1_000_000_000.0
     );
     let mut recalculate = PlanCostOption::new();
-    recalculate.with_cost_flag(crate::cost_usage::COST_FLAG_RECALCULATE);
+    recalculate.with_cost_flag(tidb_planner_costusage::COST_FLAG_RECALCULATE);
     assert_eq!(
         union_all_cost_with_option(Some(&recalculate), &children, 5.0, true).value(),
         100.0

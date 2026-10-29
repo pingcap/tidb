@@ -122,9 +122,9 @@ use tidb_error::terror::TerrorError;
 use tidb_mysql::consts::SqlMode;
 use tidb_mysql::privilege::PrivilegeType;
 use tidb_parser::auth::{RoleIdentity, UserIdentity};
-use tidb_util::context::{PlanCacheTracker, SqlWarn, WarnAppender, WarnErr, WarnHandler};
-use tidb_util::mathutil::MysqlRng;
-use tidb_util::timeutil::{zone_name, TimeZone};
+use tidb_context::{PlanCacheTracker, SqlWarn, WarnAppender, WarnErr, WarnHandler};
+use tidb_mathutil::MysqlRng;
+use tidb_timeutil::{zone_name, TimeZone};
 use tidb_vardef::defaults::DEF_BLOCK_ENCRYPTION_MODE;
 
 use crate::exprctx::{
@@ -1090,7 +1090,7 @@ mod tests {
     use tidb_error::terror::TerrorCode;
     use tidb_mysql::consts::{get_sql_mode, ModeNoZeroDate, ModeStrictTransTables};
     use tidb_mysql::privilege::{CreatePriv, SuperPriv};
-    use tidb_util::context::{
+    use tidb_context::{
         gen_context_id, StaticWarnHandler, WARN_LEVEL_NOTE, WARN_LEVEL_WARNING,
     };
     use tidb_vardef::defaults::DEF_TIMESTAMP;
@@ -1368,7 +1368,7 @@ mod tests {
             &self,
             _context: &dyn tidb_sqlexec::ExecutionContext,
             _sql: &str,
-            _arguments: &[tidb_util::sqlescape::SqlArg<'_>],
+            _arguments: &[tidb_sqlescape::SqlArg<'_>],
         ) -> tidb_sqlexec::Result<tidb_ast::Stmt> {
             unreachable!("session-expression test does not execute SQL")
         }
@@ -1390,7 +1390,7 @@ mod tests {
             _context: &dyn tidb_sqlexec::ExecutionContext,
             _options: &[tidb_sqlexec::OptionFuncAlias],
             _sql: &str,
-            _arguments: &[tidb_util::sqlescape::SqlArg<'_>],
+            _arguments: &[tidb_sqlescape::SqlArg<'_>],
         ) -> tidb_sqlexec::Result<(
             Vec<Vec<tidb_datatype::Datum>>,
             Vec<tidb_resolve::ResultFieldRef>,

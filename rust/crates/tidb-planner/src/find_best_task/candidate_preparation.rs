@@ -64,7 +64,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
                     continue;
                 }
                 let table = retained.table_path.as_ref()?;
-                let columns = crate::column_length::Col2Len::from_pairs(
+                let columns = tidb_planner_util::column_length::Col2Len::from_pairs(
                     table.detached.access_conds.iter().flat_map(|condition| {
                         tidb_expr::simple_expr::extract_columns(condition)
                             .into_iter()

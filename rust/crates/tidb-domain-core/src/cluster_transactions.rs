@@ -302,7 +302,7 @@ pub trait ClusterTransactions: Send + Sync {
         resource_group: &str,
         _schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
         options: SessionTransactionOptions,
-        observer: Option<tidb_executor::process::ProcessTransactionObserver>,
+        observer: Option<tidb_sessmgr::ProcessTransactionObserver>,
     ) -> Result<Option<CommittedTxnInfo>, SqlQueryError> {
         if let (Some(observer), Some(ts)) = (observer, read_ts) {
             observer.activated(ts);
@@ -653,7 +653,7 @@ pub fn stage_pessimistic_statement<T>(
 pub struct StatementReadTs {
     value: Arc<Mutex<Option<u64>>>,
     current_tso: tidb_expr::CurrentTso,
-    observer: Option<tidb_executor::process::ProcessTransactionObserver>,
+    observer: Option<tidb_sessmgr::ProcessTransactionObserver>,
     /// Where the open records Go's `DurationWaitTS`.
     phase_durations: Option<tidb_variable::phase_durations::SessionPhaseDurations>,
 }
@@ -687,7 +687,7 @@ impl StatementReadTs {
 
     pub fn with_observer(
         mut self,
-        observer: Option<tidb_executor::process::ProcessTransactionObserver>,
+        observer: Option<tidb_sessmgr::ProcessTransactionObserver>,
     ) -> Self {
         self.observer = observer;
         self
@@ -1447,7 +1447,7 @@ where
                 // failed timestamp future is logged and the transaction is
                 // opened on a fresh synchronous timestamp instead of failing
                 // the statement (only unistore propagates the error).
-                tidb_util::logutil::bg_logger().warn(
+                tidb_logutil::bg_logger().warn(
                     "wait tso failed",
                     &[tidb_log::Field::new(
                         "error",
@@ -1619,7 +1619,7 @@ where
         resource_group: &str,
         schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
         options: SessionTransactionOptions,
-        observer: Option<tidb_executor::process::ProcessTransactionObserver>,
+        observer: Option<tidb_sessmgr::ProcessTransactionObserver>,
     ) -> Result<Option<CommittedTxnInfo>, SqlQueryError> {
         // Go's autocommit `finishStmt` on a statement that staged nothing
         // publishes nothing; skip the opener and protocol lookups too.

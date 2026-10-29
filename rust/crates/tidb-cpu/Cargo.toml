@@ -1,0 +1,36 @@
+[package]
+name = "tidb-cpu"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/cpu: Go pkg/util/cpu (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+enableassert = ["tidb-mathutil/enableassert"]
+failpoints = ["dep:fail", "fail/failpoints", "tidb-cgroup/failpoints"]
+intest = ["tidb-mathutil/intest"]
+
+[dependencies]
+tidb-cgroup = { path = "../tidb-cgroup" }
+tidb-mathutil = { path = "../tidb-mathutil" }
+crossbeam-channel = "0.5"
+nix.workspace = true
+prometheus = { version = "0.14", default-features = false }
+tracing = "0.1"
+fail = { version = "0.4", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+fs4 = { version = "=1.1.0", default-features = false }
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tidb-intest = { path = "../tidb-intest", features = ["intest"] }

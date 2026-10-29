@@ -22,10 +22,10 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Utc};
-use tidb_util::execdetails::exec_details::{get_ia_remote_read_segment_stats, CopTasksSummary, ExecDetails};
+use tidb_execdetails::exec_details::{get_ia_remote_read_segment_stats, CopTasksSummary, ExecDetails};
 use tidb_kvcache::{CacheKey, InvalidCapacity, SimpleLruCache};
-use tidb_util::plancodec::{BINARY_PLAN_DISCARDED_ENCODED, PLAN_DISCARDED_ENCODED};
-use tidb_util::ppcpuusage::CpuUsages;
+use tidb_plancodec::{BINARY_PLAN_DISCARDED_ENCODED, PLAN_DISCARDED_ENCODED};
+use tidb_ppcpuusage::CpuUsages;
 use tikv_client::util::ExecDetailsSnapshot;
 #[cfg(test)]
 use tikv_client::util::TrafficDetailsSnapshot;

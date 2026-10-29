@@ -90,7 +90,7 @@ impl Catalog {
                     );
                 for (database_name, entry) in entries {
                     // Go `Handle.isSystemTable`: `filter.IsSystemSchema(db.Name.L)`.
-                    let system_schema = tidb_util::filter::is_system_schema(&database_name);
+                    let system_schema = tidb_filter::is_system_schema(&database_name);
                     {
                         let TableEntry::Kv(table) = entry.as_ref() else {
                             continue;

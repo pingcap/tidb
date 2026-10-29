@@ -15,7 +15,8 @@
 //! Direct inline-column key rows from Go `HandParser.parseColumnOptions`.
 
 use super::*;
-use tidb_ast::{InlineKeyKind, RestoreFlags};
+use tidb_ast::InlineKeyKind;
+use tidb_parser_format::RestoreFlags;
 
 fn first_inline_option(sql: &str) -> ColumnOption {
     let stmt = parse(sql).unwrap_or_else(|error| panic!("Go accepts {sql}: {error:?}"));

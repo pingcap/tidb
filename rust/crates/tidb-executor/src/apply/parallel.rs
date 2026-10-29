@@ -31,7 +31,7 @@ use std::sync::{
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::FieldType;
 use tidb_expr::{expression::Expression, schema::Schema};
-use tidb_util::memory::Tracker;
+use tidb_memory::Tracker;
 
 /// One row owned by a lane, populated only before its task starts.
 pub(crate) type WorkerFeed = Arc<Mutex<(Option<Chunk>, bool)>>;

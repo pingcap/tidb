@@ -15,8 +15,8 @@
 //! Direct source vector for DistSQL paging configuration defaults.
 
 use tidb_distsql::PagingConfig;
-use tidb_util::paging::MIN_PAGING_SIZE;
-use tidb_util::paging::MIN_ALLOWED_MAX_PAGING_SIZE;
+use tidb_paging::MIN_PAGING_SIZE;
+use tidb_paging::MIN_ALLOWED_MAX_PAGING_SIZE;
 
 #[test]
 fn paging_config_defaults_consume_the_policy_authority() {

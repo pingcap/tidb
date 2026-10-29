@@ -23,7 +23,7 @@ use prometheus::{
     HistogramVec, Opts,
 };
 
-use tidb_util::promutil::{Factory, Registry};
+use tidb_promutil::{Factory, Registry};
 
 /// The pending table state.
 pub const TABLE_STATE_PENDING: &str = "pending";
@@ -561,7 +561,7 @@ pub fn get_common_metric(context: &tikv_client::trace::TraceContext) -> Option<A
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_util::promutil::new_default_factory;
+    use tidb_promutil::new_default_factory;
 
     #[test]
     fn read_counter() {

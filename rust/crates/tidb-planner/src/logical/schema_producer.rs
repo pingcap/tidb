@@ -43,7 +43,7 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
-use crate::hash_equaler::{new_hash_equaler, Hasher, NIL_FLAG, NOT_NIL_FLAG};
+use tidb_planner_cascades_base::{new_hash_equaler, Hasher, NIL_FLAG, NOT_NIL_FLAG};
 
 /// Go `expression.GetUsedList(ctx, usedCols, schema)` (`schema.go:338`).
 ///

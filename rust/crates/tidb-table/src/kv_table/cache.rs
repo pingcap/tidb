@@ -64,7 +64,7 @@ impl KvTable {
         if self.partition.is_some() {
             return Err(KvTableError::Mysql(
                 tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_OPT_ON_CACHE_TABLE
+                    &tidb_dbterror::ERR_OPT_ON_CACHE_TABLE
                         .generate_with_stack_by_args(&["partition mode".into()]),
                 ),
             ));
@@ -72,7 +72,7 @@ impl KvTable {
         if self.cache_storage_size_exceeds(CACHE_TABLE_SIZE_LIMIT)? {
             return Err(KvTableError::Mysql(
                 tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_OPT_ON_CACHE_TABLE
+                    &tidb_dbterror::ERR_OPT_ON_CACHE_TABLE
                         .generate_with_stack_by_args(&["table too large".into()]),
                 ),
             ));

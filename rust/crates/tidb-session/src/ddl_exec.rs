@@ -183,7 +183,7 @@ impl Session {
             }
             DdlExecNext::UnsupportedLocalTempTableDdl(statement) => {
                 return Err(DriverError::from(
-                    tidb_util::dbterror::ERR_UNSUPPORTED_LOCAL_TEMP_TABLE_DDL
+                    tidb_dbterror::ERR_UNSUPPORTED_LOCAL_TEMP_TABLE_DDL
                         .generate_with_stack_by_args(&[(statement).into()]),
                 ));
             }

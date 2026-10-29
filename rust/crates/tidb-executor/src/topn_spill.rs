@@ -57,11 +57,11 @@ use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::Columns;
-use tidb_util::disk;
-use tidb_util::memory::{
+use tidb_disk as disk;
+use tidb_memory::{
     ActionOnExceed, ArcAction, BaseOomAction, Tracker, DEF_SPILL_PRIORITY, LABEL_FOR_ROW_CONTAINER,
 };
-use tidb_util::spill_storage::SpillStorage;
+use tidb_spill_storage::SpillStorage;
 
 use tidb_driver_error::ExecError;
 use tidb_kv::mem_quota::StatementMemory;

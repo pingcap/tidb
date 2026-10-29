@@ -32,7 +32,7 @@ fn test_table_option_ttl_restore() {
         assert_eq!(r(sql), expected, "source SQL: {sql}");
     }
 
-    let flags = tidb_ast::RestoreFlags::DEFAULT | tidb_ast::RestoreFlags::TIDB_SPECIAL_COMMENT;
+    let flags = tidb_parser_format::RestoreFlags::DEFAULT | tidb_parser_format::RestoreFlags::TIDB_SPECIAL_COMMENT;
     for (sql, expected) in [
         (
             "create table t (created_at datetime) ttl = created_at + INTERVAL 1 YEAR",
@@ -64,7 +64,7 @@ fn alter_table_ttl_uses_special_comments_when_requested() {
     let statement = parse("alter table t ttl_enable='on' remove ttl").expect("parse");
     assert_eq!(
         statement.restore_with_flags(
-            tidb_ast::RestoreFlags::DEFAULT | tidb_ast::RestoreFlags::TIDB_SPECIAL_COMMENT,
+            tidb_parser_format::RestoreFlags::DEFAULT | tidb_parser_format::RestoreFlags::TIDB_SPECIAL_COMMENT,
         ),
         "ALTER TABLE `t` /*T![ttl] TTL_ENABLE = 'ON' */, /*T![ttl] REMOVE TTL */"
     );

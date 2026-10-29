@@ -254,7 +254,7 @@ fn index_lookup_pushdown_hint_reaches_the_shared_physical_reader() {
     let conflict = "SELECT /*+ INDEX_LOOKUP_PUSHDOWN(lookup_hint, ia) NO_INDEX_LOOKUP_PUSHDOWN(lookup_hint) */ b FROM lookup_hint WHERE a > 0";
     let plan = physical(conflict, &conflict_ctx);
     assert!(lookup(&plan).is_none_or(|reader| !reader.index_lookup_push_down));
-    assert!(conflict_ctx.take_warnings().iter().map(tidb_util::context::SqlWarn::parts).any(|(_, _, message)| {
+    assert!(conflict_ctx.take_warnings().iter().map(tidb_context::SqlWarn::parts).any(|(_, _, message)| {
         message
             == "hint INDEX_LOOKUP_PUSHDOWN cannot be inapplicable, NO_INDEX_LOOKUP_PUSHDOWN is specified"
     }));

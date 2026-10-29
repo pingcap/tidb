@@ -264,7 +264,7 @@ pub fn split_bootstrap_tables(
         let (_, error) = store.split_regions(keys, false, Some(GLOBAL_SCATTER_GROUP_ID));
         // Go `splitAndScatterTable`.
         if let Some(error) = error {
-            tidb_util::logutil::bg_logger().warn("split table region failed", &[zap_error(&error)]);
+            tidb_logutil::bg_logger().warn("split table region failed", &[zap_error(&error)]);
         }
     }
     for id in &splits.table_ids {

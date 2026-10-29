@@ -20,7 +20,7 @@
 //! coverage test silently exercise a different contract.
 
 use super::*;
-use tidb_ast::RestoreFlags;
+use tidb_parser_format::RestoreFlags;
 
 fn restore_special(sql: &str) -> String {
     parse(sql)

@@ -1,0 +1,43 @@
+[package]
+name = "tidb-memoryusagealarm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/memoryusagealarm: Go pkg/util/memoryusagealarm (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+enableassert = ["tidb-disk/enableassert", "tidb-logutil/enableassert", "tidb-memory/enableassert", "tidb-plancodec/enableassert"]
+failpoints = ["tidb-disk/failpoints", "tidb-memory/failpoints", "tidb-plancodec/failpoints"]
+intest = ["tidb-disk/intest", "tidb-logutil/intest", "tidb-memory/intest", "tidb-plancodec/intest"]
+jemalloc = ["tidb-allocator-stats/jemalloc", "tidb-disk/jemalloc", "tidb-memory/jemalloc", "tidb-plancodec/jemalloc"]
+testexport = []
+
+[dependencies]
+tidb-disk = { path = "../tidb-disk" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-memory = { path = "../tidb-memory" }
+tidb-plancodec = { path = "../tidb-plancodec" }
+tidb-goruntime = { path = "../tidb-goruntime" }
+crossbeam-channel = "0.5"
+tidb-log = { path = "../tidb-log" }
+tidb-config = { path = "../tidb-config" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-vardef = { path = "../tidb-vardef" }
+chrono.workspace = true
+tempfile.workspace = true
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-allocator-stats = { path = "../tidb-allocator-stats" }
+
+
+[dev-dependencies]
+tidb-intest = { path = "../tidb-intest", features = ["intest"] }
+
+[[bench]]
+name = "memoryusagealarm"
+harness = false
+required-features = ["testexport"]

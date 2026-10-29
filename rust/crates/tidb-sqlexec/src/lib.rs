@@ -24,7 +24,7 @@ use tidb_chunk::chunk::Chunk;
 use tidb_chunk::iterator::{ChunkIterator, Iterator4Chunk};
 use tidb_datatype::{Datum, FieldType};
 use tidb_resolve::ResultFieldRef;
-use tidb_util::sqlescape::SqlArg;
+use tidb_sqlescape::SqlArg;
 
 /// Error returned by a SQL executor or record set.
 pub type SqlExecError = Box<dyn Error + Send + Sync>;

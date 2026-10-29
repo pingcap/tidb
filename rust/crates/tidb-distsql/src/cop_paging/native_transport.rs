@@ -214,7 +214,7 @@ fn observation_time() -> Duration {
 pub struct NativeCopTransport<S: ?Sized> {
     store: Arc<S>,
     config: CopRuntimeConfig,
-    event_callback: Option<tidb_txnkv::EventCallback>,
+    event_callback: Option<tidb_trxevents::EventCallback>,
 }
 
 impl<S: NativeCopStore + ?Sized> NativeCopTransport<S> {
@@ -233,7 +233,7 @@ impl<S: NativeCopStore + ?Sized> NativeCopTransport<S> {
 impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
     type Response = super::CopIterator<NativeCopResponse<S>>;
 
-    fn set_event_callback(&mut self, callback: Option<tidb_txnkv::EventCallback>) {
+    fn set_event_callback(&mut self, callback: Option<tidb_trxevents::EventCallback>) {
         self.event_callback = callback;
     }
 
@@ -275,7 +275,7 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
         // tikv.TxnStartKey(), req.StartTs)` for the whole iterator, its task
         // building, sends, backoffers and lock resolution.
         let kv_context = request.kv_context().with_txn_start_ts(metadata.start_ts);
-        let build_cop_tasks = tidb_util::tracing::start_thread_region("copr.buildCopTasks");
+        let build_cop_tasks = tidb_tracing::start_thread_region("copr.buildCopTasks");
         let build_started = std::time::Instant::now();
         let topology =
             locate(self.store.as_ref(), &ranges, &kv_context).map_err(|error| error.to_string())?;
@@ -321,7 +321,7 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
             cancellation.unary_cancellation(),
         );
         // Go's copr workers inherit `distsql.Select`'s ctx and its span.
-        let trace_parent = tidb_util::tracing::current_span();
+        let trace_parent = tidb_tracing::current_span();
         let source = NativeCopResponse {
             store: Arc::clone(&self.store),
             cluster_id: self.store.cluster_id(),
@@ -388,11 +388,11 @@ pub struct NativeCopResponse<S: ?Sized> {
     /// A traced statement's `distsql.Select` span: Go's copr workers run
     /// with its ctx, and each task's backoffer takes it as its `bo.ctx`, so
     /// the client spans of the request's sends report under it.
-    trace_parent: Option<tidb_util::tracing::Span>,
-    event_callback: Option<tidb_txnkv::EventCallback>,
+    trace_parent: Option<tidb_tracing::Span>,
+    event_callback: Option<tidb_trxevents::EventCallback>,
     cancellation: Arc<CancelHandle>,
     call: UnaryCallContext,
-    kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
+    kv_exec_counter: tidb_topsql_stmtstats::KvExecCounterHandle,
     /// Go `bo.GetCtx()`'s statement values: the `RUDetails` and
     /// `ExecDetails` charged for every send and lock resolution of the read.
     kv_context: tidb_txnkv::StatementKvContext,
@@ -498,7 +498,7 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
         let _ctx = self
             .trace_parent
             .clone()
-            .map(|span| tidb_util::tracing::with_thread_span(Some(span)));
+            .map(|span| tidb_tracing::with_thread_span(Some(span)));
         self.check_active()?;
         let prepared = self.runtime.activate_attempt(attempt_id)?;
         let task = prepared.task();
@@ -809,8 +809,8 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
         lock: &tidb_proto::KvrpcLockInfo,
     ) -> Result<(), NativeCopError> {
         if let Some(callback) = &self.event_callback {
-            callback(tidb_txnkv::wrap_cop_meet_lock(Some(Arc::new(
-                tidb_txnkv::CopMeetLock {
+            callback(tidb_trxevents::wrap_cop_meet_lock(Some(Arc::new(
+                tidb_trxevents::CopMeetLock {
                     lock_info: Some(Arc::new(lock.clone())),
                 },
             ))));

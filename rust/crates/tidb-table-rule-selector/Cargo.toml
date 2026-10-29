@@ -1,0 +1,13 @@
+[package]
+name = "tidb-table-rule-selector"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/table-rule-selector: Go pkg/util/table-rule-selector (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]

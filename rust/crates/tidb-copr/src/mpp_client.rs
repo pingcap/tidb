@@ -150,7 +150,7 @@ impl<S: tikv_client::PdClient> TiFlashMppClient<S> {
         &self,
         ctx: &Arc<dyn MppContext>,
         ranges: &[(tidb_txnkv::Key, tidb_txnkv::Key)],
-        replica_read: tidb_txnkv::ReplicaRead,
+        replica_read: tidb_tiflash::ReplicaRead,
         kv_context: &tidb_txnkv::StatementKvContext,
         append_warning: &mut dyn FnMut(String),
     ) -> Result<Vec<MppStoreTask>, String> {
@@ -195,7 +195,7 @@ impl<S: tikv_client::PdClient> TiFlashMppClient<S> {
     fn target(
         &self,
         address: &str,
-        kv_exec_counter: &tidb_util::topsql_stmtstats::KvExecCounterHandle,
+        kv_exec_counter: &tidb_topsql_stmtstats::KvExecCounterHandle,
     ) -> MppTarget<S> {
         let config = tidb_config::config_tree::config::get_global_config();
         MppTarget {
@@ -215,12 +215,12 @@ impl<S: tikv_client::PdClient> TiFlashMppClient<S> {
         &self,
         auto_scaler: bool,
         memory: &Arc<dyn MppContext>,
-    ) -> Result<Vec<String>, tidb_util::tiflashcompute::TopologyError> {
+    ) -> Result<Vec<String>, tidb_tiflashcompute::TopologyError> {
         let mut budget = RegionBackoffBudget::new(std::time::Duration::from_secs(20));
         loop {
             mpp_memory_error(memory.as_ref()).map_err(|error| error.to_string())?;
             let stores = if auto_scaler {
-                tidb_util::tiflashcompute::global_topo_fetcher()
+                tidb_tiflashcompute::global_topo_fetcher()
                     .ok_or_else(|| {
                         "TiFlash compute topology fetcher is not initialized".to_owned()
                     })?
@@ -313,8 +313,8 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for TiFlashMppCli
         ctx: &Arc<dyn MppContext>,
         request: &MppBuildTasksRequest,
         kv_context: &tidb_txnkv::StatementKvContext,
-        dispatch_policy: tidb_util::tiflashcompute::DispatchPolicy,
-        replica_read: tidb_txnkv::ReplicaRead,
+        dispatch_policy: tidb_tiflashcompute::DispatchPolicy,
+        replica_read: tidb_tiflash::ReplicaRead,
         append_warning: &mut dyn FnMut(String),
     ) -> Result<Vec<MppStoreTask>, MppError> {
         let refuse = |reason: String| MppError::Other(format!("tiflash mpp: {reason}"));
@@ -350,7 +350,7 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for TiFlashMppCli
             regions,
             &stores,
             dispatch_policy,
-            tidb_util::fastrand::uint64_n(stores.len() as u64) as usize,
+            tidb_fastrand::uint64_n(stores.len() as u64) as usize,
         )
         .map_err(refuse)
     }
@@ -362,7 +362,7 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for TiFlashMppCli
         meta: TaskMeta,
         encoded_plan: Vec<u8>,
         kv_context: &tidb_txnkv::StatementKvContext,
-        kv_exec_counter: &tidb_util::topsql_stmtstats::KvExecCounterHandle,
+        kv_exec_counter: &tidb_topsql_stmtstats::KvExecCounterHandle,
     ) -> Result<(), MppError> {
         let target = self.target(&task.address, kv_exec_counter);
         let dispatch_request = encode_dispatch_request(DispatchTaskRequest {
@@ -421,7 +421,7 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for TiFlashMppCli
         sender: TaskMeta,
         receiver: TaskMeta,
         kv_context: &tidb_txnkv::StatementKvContext,
-        kv_exec_counter: &tidb_util::topsql_stmtstats::KvExecCounterHandle,
+        kv_exec_counter: &tidb_topsql_stmtstats::KvExecCounterHandle,
     ) -> Result<Box<dyn MppStreamResponse>, MppError> {
         let target = self.target(address, kv_exec_counter);
         self.store
@@ -438,10 +438,10 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for TiFlashMppCli
 fn compute_region_tasks(
     regions: Vec<tidb_proto::coprocessor::RegionInfo>,
     stores: &[String],
-    policy: tidb_util::tiflashcompute::DispatchPolicy,
+    policy: tidb_tiflashcompute::DispatchPolicy,
     start: usize,
 ) -> Result<Vec<MppStoreTask>, String> {
-    use tidb_util::tiflashcompute::DispatchPolicy;
+    use tidb_tiflashcompute::DispatchPolicy;
     if stores.is_empty() {
         return Err("tiflash_compute node is unavailable".into());
     }
@@ -740,7 +740,7 @@ struct MppTarget<S: tikv_client::PdClient> {
     /// Whether the task runs on a TiFlash compute node from the region
     /// cache's compute-store list, which a send failure invalidates.
     compute_cache: bool,
-    kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
+    kv_exec_counter: tidb_topsql_stmtstats::KvExecCounterHandle,
 }
 
 impl<S: tikv_client::PdClient> Clone for MppTarget<S> {
@@ -891,7 +891,7 @@ async fn cancel_mpp_task<S: tikv_client::PdClient>(target: &MppTarget<S>, meta: 
     .await
     {
         target.invalidate_compute_cache();
-        tidb_util::logutil::bg_logger().warn(
+        tidb_logutil::bg_logger().warn(
             "cancel task error",
             &[
                 tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string())),
@@ -1495,8 +1495,8 @@ mod mpp_read_batch_tests {
 
     #[test]
     fn kv_exec_counter_batch_mpp_socket_setup_marks_target() {
-        use tidb_util::topsql_stmtstats::{create_statement_stats, KvExecCounterHandle};
-        tidb_util::topsql_state::enable_top_sql();
+        use tidb_topsql_stmtstats::{create_statement_stats, KvExecCounterHandle};
+        tidb_topsql_state::enable_top_sql();
         let fixture = Fixture::with_opening(
             false,
             false,
@@ -1514,7 +1514,7 @@ mod mpp_read_batch_tests {
             .unwrap();
         assert!(response.next().unwrap().is_some());
         response.close();
-        tidb_util::topsql_state::disable_top_sql();
+        tidb_topsql_state::disable_top_sql();
         let data = stats.take();
         let total: u64 = data
             .iter()
@@ -1825,7 +1825,7 @@ mod mpp_read_batch_tests {
                     std::thread::sleep(Duration::from_millis(1));
                 }
                 std::thread::sleep(Duration::from_millis(10));
-                killer.send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+                killer.send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
             });
             let result = fixture.open_target(&fixture.target(true), memory.clone());
             thread.join().unwrap();
@@ -1932,7 +1932,7 @@ mod mpp_read_batch_tests {
         let killer = Arc::clone(memory.sql_killer());
         let thread = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(25));
-            killer.send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+            killer.send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
         });
         let result = fixture.open_with_memory(memory.clone());
         thread.join().unwrap();
@@ -2015,7 +2015,7 @@ mod mpp_read_batch_tests {
         let killer = Arc::clone(memory.sql_killer());
         let thread = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(25));
-            killer.send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+            killer.send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
         });
         let started = std::time::Instant::now();
         assert!(matches!(
@@ -2107,7 +2107,7 @@ mod mpp_read_batch_tests {
 #[cfg(test)]
 mod compute_topology_batch_tests {
     use super::*;
-    use tidb_util::tiflashcompute::DispatchPolicy;
+    use tidb_tiflashcompute::DispatchPolicy;
 
     #[test]
     fn compute_topology_batch_region_grouping() {

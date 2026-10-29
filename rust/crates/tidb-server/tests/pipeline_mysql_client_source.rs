@@ -33,7 +33,7 @@ use tidb_server::{
     ConnectionTracker,
 };
 use tidb_session::domain::mock_store::MockStoreDomain;
-use tidb_util::globalconn::parse_conn_id;
+use tidb_globalconn::parse_conn_id;
 
 /// Go's server over a mock store whose node authenticates against, and keeps
 /// its accounts in, `store`: connections are served from its session factory.

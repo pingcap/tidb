@@ -19,7 +19,7 @@ use std::sync::{Arc, LazyLock, RwLock};
 use tidb_codec::decode_table_id;
 use tidb_proto::ResourceGroupTag;
 
-use crate::resource_group_tag::{
+use tidb_resourcegrouptag::{
     get_first_key_from_request, get_resource_group_label_by_key, FirstKeyRequest,
 };
 

@@ -55,7 +55,7 @@ pub(crate) struct AccessPathDerivationContext<'a> {
     pub selectivity_factor: f64,
     pub estimator_options: crate::cardinality::row_count_estimator::EstimatorOptions,
     pub range_max_size: i64,
-    pub range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
+    pub range_fallback_handler: Option<&'a tidb_context::RangeFallbackHandler>,
     pub expression_evaluator: &'a tidb_ranger::points::ExpressionEvaluator<'a>,
     /// Go `sctx.SetSkipPlanCache` from the ranger; `None` unless the
     /// statement uses the plan cache (Go's tracker ignores it otherwise).

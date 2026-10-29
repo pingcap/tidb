@@ -68,7 +68,7 @@ fn warn(message: String, error: Option<String>) {
     let fields = error
         .map(|error| vec![Field::new("error", Value::Str(error))])
         .unwrap_or_default();
-    tidb_util::logutil::bg_logger().warn(&message, &fields);
+    tidb_logutil::bg_logger().warn(&message, &fields);
 }
 
 /// Go `LoadConfigForPlanReplayerLoad`.

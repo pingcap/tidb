@@ -10,6 +10,43 @@ description = "Session lifecycle and state authority for the TiDB Rust rewrite."
 autotests = false
 
 [dependencies]
+tidb-domainutil = { path = "../tidb-domainutil" }
+tidb-replayer = { path = "../tidb-replayer" }
+tidb-lock = { path = "../tidb-lock" }
+tidb-sessmgr = { path = "../tidb-sessmgr" }
+tidb-txninfo = { path = "../tidb-txninfo" }
+tidb-parser-format = { path = "../tidb-parser-format" }
+tidb-breakpoint = { path = "../tidb-breakpoint" }
+tidb-context = { path = "../tidb-context" }
+tidb-dbterror = { path = "../tidb-dbterror" }
+tidb-execdetails = { path = "../tidb-execdetails" }
+tidb-fastrand = { path = "../tidb-fastrand" }
+tidb-globalconn = { path = "../tidb-globalconn" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-mathutil = { path = "../tidb-mathutil" }
+tidb-memory = { path = "../tidb-memory" }
+tidb-memoryusagealarm = { path = "../tidb-memoryusagealarm" }
+tidb-plancodec = { path = "../tidb-plancodec" }
+tidb-ppcpuusage = { path = "../tidb-ppcpuusage" }
+tidb-redact = { path = "../tidb-redact" }
+tidb-ruv2-metrics = { path = "../tidb-ruv2-metrics" }
+tidb-sem = { path = "../tidb-sem" }
+tidb-sem-compat = { path = "../tidb-sem-compat" }
+tidb-sem-v2 = { path = "../tidb-sem-v2" }
+tidb-sli = { path = "../tidb-sli" }
+tidb-spill-storage = { path = "../tidb-spill-storage" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-sqlkiller = { path = "../tidb-sqlkiller" }
+tidb-stringutil = { path = "../tidb-stringutil" }
+tidb-test-isolation = { path = "../tidb-test-isolation" }
+tidb-timeutil = { path = "../tidb-timeutil" }
+tidb-tls = { path = "../tidb-tls" }
+tidb-topsql-state = { path = "../tidb-topsql-state" }
+tidb-topsql-stmtstats = { path = "../tidb-topsql-stmtstats" }
+tidb-traceevent = { path = "../tidb-traceevent" }
+tidb-tracing = { path = "../tidb-tracing" }
+tidb-versioninfo = { path = "../tidb-versioninfo" }
+tidb-vitess = { path = "../tidb-vitess" }
 tidb-driver-error = { path = "../tidb-driver-error" }
 tidb-fixcontrol = { path = "../tidb-fixcontrol" }
 tidb-goruntime = { path = "../tidb-goruntime" }

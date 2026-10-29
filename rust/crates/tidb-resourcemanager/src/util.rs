@@ -87,7 +87,7 @@ impl ShardPoolMap {
         let mut pools = self.pools[hash(&key)]
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if pools.contains_key(&key) && !tidb_util::intest::IN_TEST {
+        if pools.contains_key(&key) && !tidb_intest::IN_TEST {
             return Err("pool is already exist");
         }
         pools.insert(key, pool);

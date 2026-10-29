@@ -166,7 +166,7 @@ pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlErr
         // becomes `exeerrors.ErrDeadlock`.
         PessimisticLockFailure::Deadlock(_) => {
             LockSqlError::from(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::exeerrors::ERR_DEADLOCK.generate_with_stack_by_args(&[]),
+                &tidb_dbterror::exeerrors::ERR_DEADLOCK.generate_with_stack_by_args(&[]),
             ))
         }
         PessimisticLockFailure::LockAcquireFailAndNoWaitSet { .. } => {

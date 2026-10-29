@@ -27,7 +27,7 @@ use tidb_executor::adapter::ResultFieldMetadata;
 use crate::domain::configured_user_store::AuthenticatedIdentity;
 use crate::domain::resultset_source::ResultSetSource;
 use crate::domain::wire_status::WireStatus;
-use tidb_executor::process::ProcessKillTarget;
+use tidb_sessmgr::ProcessKillTarget;
 
 
 
@@ -37,7 +37,7 @@ pub trait ActiveQueryCancellation: Send + Sync {
     fn cancel(&self);
 
     /// Fires it with a watchdog's own kill signal (Go server `killQuery`).
-    fn cancel_with(&self, signal: tidb_util::sqlkiller::KillSignal) {
+    fn cancel_with(&self, signal: tidb_sqlkiller::KillSignal) {
         let _ = signal;
         self.cancel();
     }
@@ -48,7 +48,7 @@ impl ActiveQueryCancellation for tidb_executor::StatementCancellation {
         tidb_executor::StatementCancellation::cancel(self);
     }
 
-    fn cancel_with(&self, signal: tidb_util::sqlkiller::KillSignal) {
+    fn cancel_with(&self, signal: tidb_sqlkiller::KillSignal) {
         tidb_executor::StatementCancellation::cancel_with(self, signal);
     }
 }
@@ -118,11 +118,11 @@ impl ConnectionCancellation {
     /// able to run the next one -- Go's `KILL QUERY`, which differs from
     /// forced drain exactly in that it does not latch the request.
     fn cancel_current_query(&self) {
-        self.cancel_current_query_with(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+        self.cancel_current_query_with(tidb_sqlkiller::KillSignal::QueryInterrupted);
     }
 
     /// [`Self::cancel_current_query`] with the signal the statement observes.
-    fn cancel_current_query_with(&self, signal: tidb_util::sqlkiller::KillSignal) {
+    fn cancel_current_query_with(&self, signal: tidb_sqlkiller::KillSignal) {
         let active = self
             .state
             .lock()
@@ -225,7 +225,7 @@ impl ProcessKillTarget for ConnectionKillTarget {
         self.cancellation.cancel_current_query();
     }
 
-    fn cancel_query_with(&self, signal: tidb_util::sqlkiller::KillSignal) {
+    fn cancel_query_with(&self, signal: tidb_sqlkiller::KillSignal) {
         self.cancellation.cancel_current_query_with(signal);
     }
 
@@ -524,7 +524,7 @@ impl<'a> QueryResult<'a> {
     #[must_use]
     pub fn with_process_statement(
         self,
-        statement: tidb_executor::process::ProcessStatementGuard,
+        statement: tidb_sessmgr::ProcessStatementGuard,
     ) -> Self {
         let Self {
             source,
@@ -554,7 +554,7 @@ impl<'a> QueryResult<'a> {
 
 struct ProcessTrackedResultSet<'a> {
     inner: Box<dyn ResultSetSource + 'a>,
-    statement: Option<tidb_executor::process::ProcessStatementGuard>,
+    statement: Option<tidb_sessmgr::ProcessStatementGuard>,
 }
 
 impl ResultSetSource for ProcessTrackedResultSet<'_> {

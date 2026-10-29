@@ -77,7 +77,7 @@ struct RequestSettings {
     resource_group_name: String,
     explicit_request_source_type: String,
     statement: crate::StatementMemory,
-    kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
+    kv_exec_counter: tidb_topsql_stmtstats::KvExecCounterHandle,
     /// The statement ctx's values the requests carry: its `RUDetails`, which
     /// the sends charge, and its `StmtCtx.GetResourceGroupTagger`.
     kv_context: tidb_txnkv::StatementKvContext,

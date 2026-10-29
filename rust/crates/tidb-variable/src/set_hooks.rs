@@ -30,7 +30,7 @@ use crate::vars::{validation_var_error, SessionVars};
 use crate::VarError;
 
 /// Go's warning levels for what a hook appends (`contextutil.WarnLevel*`).
-pub use tidb_util::context::WarningLevel as VarWarningLevel;
+pub use tidb_context::WarningLevel as VarWarningLevel;
 
 /// Go `SessionVars.NoopFuncsMode` (`pkg/sessionctx/variable/session.go:1338`),
 /// Go's `OffInt` / `OnInt` / `WarnInt`, set by `tidb_enable_noop_functions`
@@ -55,19 +55,19 @@ impl SessionVars {
         message: String,
     ) {
         self.stmt_warnings
-            .push(tidb_util::context::SqlWarn::of(level, proto, message));
+            .push(tidb_context::SqlWarn::of(level, proto, message));
     }
 
     /// Go `StmtCtx.AppendWarning(errors.New(message))` for a sysvar hook.
     pub fn append_stmt_plain_warning(&mut self, level: VarWarningLevel, message: String) {
-        self.stmt_warnings.push(tidb_util::context::SqlWarn::new(
+        self.stmt_warnings.push(tidb_context::SqlWarn::new(
             level,
-            tidb_util::context::WarnErr::Message(message),
+            tidb_context::WarnErr::Message(message),
         ));
     }
 
     /// The rows the hooks appended since the last call.
-    pub fn take_stmt_warnings(&mut self) -> Vec<tidb_util::context::SqlWarn> {
+    pub fn take_stmt_warnings(&mut self) -> Vec<tidb_context::SqlWarn> {
         std::mem::take(&mut self.stmt_warnings)
     }
 

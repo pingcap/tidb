@@ -24,7 +24,7 @@
 //! so the SAME arithmetic is expressed over explicit source-shaped inputs:
 //! every function takes the rows, row sizes, factors and already-computed
 //! child costs that Go would have read, and returns the same
-//! [`CostVer2`](crate::cost_usage::CostVer2). Nothing about the formulas,
+//! [`CostVer2`](tidb_planner_costusage::CostVer2). Nothing about the formulas,
 //! the factor values, the min/max clamps or the division order is changed.
 //!
 //! The row inputs have owners already: row counts come from
@@ -33,7 +33,7 @@
 //!
 //! # Relationship to the other cost code in this workspace
 //!
-//! * [`crate::cost_usage`] is Go's `pkg/planner/util/costusage` -- the
+//! * [`tidb_planner_costusage`] is Go's `pkg/planner/util/costusage` -- the
 //!   cost/trace arithmetic this module is written on top of. It was ported
 //!   but never declared in `lib.rs`; this module is its first caller.
 //! * `tidb-executor`'s `access_cost` is Go's cost model version ONE
@@ -52,13 +52,13 @@
 //! variables set the struct instead of changing a formula.
 
 use crate::cardinality::row_size::{RowSizeColumn, get_avg_row_size_data_in_disk_by_rows};
-use crate::cost_usage::{
+use tidb_planner_costusage::{
     CostVer2, CostVer2Factor, PlanCostOption, ZERO_COST_VER2, add_cost_without_trace,
     div_cost_ver2, mul_cost_ver2, new_cost_ver2, new_zero_cost_ver2, sum_cost_ver2, trace_cost,
 };
 use crate::physical_table_reader::StoreType;
 use crate::task_type::TaskType;
-pub use tidb_util::paging::THRESHOLD as PAGING_THRESHOLD;
+pub use tidb_paging::THRESHOLD as PAGING_THRESHOLD;
 
 /// Minimum row count used to avoid underestimation (`MinNumRows`).
 pub const MIN_NUM_ROWS: f64 = 1.0;
@@ -1501,9 +1501,9 @@ pub fn union_all_cost_with_option(
 ) -> CostVer2 {
     let cost = div_cost_ver2(&sum_cost_ver2(child_costs), concurrency);
     if mpp_enforced
-        && !crate::cost_usage::has_cost_flag(
+        && !tidb_planner_costusage::has_cost_flag(
             option.map_or(0, |option| option.cost_flag()),
-            crate::cost_usage::COST_FLAG_RECALCULATE,
+            tidb_planner_costusage::COST_FLAG_RECALCULATE,
         )
     {
         div_cost_ver2(&cost, MPP_ENFORCED_DISCOUNT)

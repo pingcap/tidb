@@ -249,7 +249,7 @@ impl Session {
     pub(crate) fn variables_state(&self) -> crate::account_state::VariablesState {
         crate::account_state::VariablesState {
             vars: self.vars.clone(),
-            hide_invisible: tidb_util::sem_compat::is_enabled()
+            hide_invisible: tidb_sem_compat::is_enabled()
                 && self.privilege_context().is_some()
                 && !self.has_dynamic_privilege("RESTRICTED_VARIABLES_ADMIN", false),
         }
@@ -310,7 +310,7 @@ impl Session {
         table: &str,
         mask: u64,
     ) -> Option<bool> {
-        if !tidb_util::sem_compat::is_enabled() {
+        if !tidb_sem_compat::is_enabled() {
             return None;
         }
         let has_restricted_tables_admin = registry.has_dynamic_priv_with_roles(
@@ -346,15 +346,15 @@ impl Session {
     /// Go cluster metadata redacts even with a nil privilege checker. Active
     /// roles are evaluated at retrieval, so SET ROLE affects existing sessions.
     pub(crate) fn sem_hides_cluster_metadata(&self) -> bool {
-        tidb_util::sem_compat::is_enabled()
+        tidb_sem_compat::is_enabled()
             && (self.privileges.is_none()
                 || !self.has_dynamic_privilege("RESTRICTED_TABLES_ADMIN", false))
     }
 
     pub(crate) fn sem_hides_status_var(&self, name: &str) -> bool {
         !self.privilege_checks_bypassed()
-            && tidb_util::sem_compat::is_enabled()
-            && tidb_util::sem_compat::is_invisible_status_var(name)
+            && tidb_sem_compat::is_enabled()
+            && tidb_sem_compat::is_invisible_status_var(name)
             && self
                 .privilege_context()
                 .is_none_or(|_| !self.has_dynamic_privilege("RESTRICTED_STATUS_ADMIN", false))
@@ -756,7 +756,7 @@ impl Session {
         // and `checkRepairTableGrammar` reads the process's REPAIR MODE.
         if let tidb_ast::Stmt::Ddl(ddl) = stmt {
             if let tidb_ast::DdlStmt::RepairTable(repair) = ddl.as_ref() {
-                let repair_info = &*tidb_domain::domainutil::REPAIR_INFO;
+                let repair_info = &*tidb_domainutil::REPAIR_INFO;
                 tidb_planner::preprocess::check_repair_table_grammar(
                     repair,
                     repair_info.in_repair_mode(),
@@ -1247,7 +1247,7 @@ impl Session {
             .get_system(tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_QUERY)
             .ok()
             .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(tidb_util::memory::DEF_MEM_QUOTA_QUERY);
+            .unwrap_or(tidb_memory::DEF_MEM_QUOTA_QUERY);
         let (oom_action, tmp_storage_on_oom) = self.vars.statement_memory_policy();
         self.session_memory
             .configure(quota, oom_action, tmp_storage_on_oom);
@@ -1331,7 +1331,7 @@ impl Session {
             Stmt::Session(session) if matches!(*session, SessionStmt::SetPassword(_)) => Ok(()),
             Stmt::Admin(admin) if matches!(*admin, tidb_ast::AdminStmt::AlterUser(_)) => Ok(()),
             _ => Err(DriverError::from(
-                tidb_util::dbterror::exeerrors::ERR_MUST_CHANGE_PASSWORD
+                tidb_dbterror::exeerrors::ERR_MUST_CHANGE_PASSWORD
                     .generate_with_stack_by_args(&[]),
             )),
         }
@@ -1358,7 +1358,7 @@ fn scoped_privilege(
     table: &str,
     global_priv: tidb_mysql::PrivilegeType,
 ) -> bool {
-    if tidb_util::sem_compat::is_enabled() {
+    if tidb_sem_compat::is_enabled() {
         let has_restricted_tables_admin = registry.has_dynamic_priv_with_roles(
             user,
             host,

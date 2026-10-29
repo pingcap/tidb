@@ -409,7 +409,7 @@ fn memory_limit_global_values_are_canonicalized_like_go() {
     let (mut session, _, _) = two_sessions_sharing_globals();
 
     let old_server_limit =
-        tidb_util::memory::SERVER_MEMORY_LIMIT.load(std::sync::atomic::Ordering::SeqCst);
+        tidb_memory::SERVER_MEMORY_LIMIT.load(std::sync::atomic::Ordering::SeqCst);
     session
         .run("SET GLOBAL tidb_server_memory_limit = '100MB'")
         .unwrap();
@@ -450,7 +450,7 @@ fn memory_limit_global_values_are_canonicalized_like_go() {
             "{input}"
         );
     }
-    tidb_util::memory::SERVER_MEMORY_LIMIT
+    tidb_memory::SERVER_MEMORY_LIMIT
         .store(old_server_limit, std::sync::atomic::Ordering::SeqCst);
 
     session
@@ -531,7 +531,7 @@ fn remaining_optimizer_defaults_match_go() {
 /// The X-kernel success branch remains an upstream obligation.
 #[test]
 fn trace_event_global_sysvar_is_refused_on_the_classic_kernel() {
-    if let Some(recorder) = tidb_util::traceevent::get_flight_recorder() {
+    if let Some(recorder) = tidb_traceevent::get_flight_recorder() {
         recorder.close();
     }
     let (mut session, _, _) = two_sessions_sharing_globals();
@@ -543,7 +543,7 @@ fn trace_event_global_sysvar_is_refused_on_the_classic_kernel() {
         .to_mysql_error();
     assert_eq!(error.code, 1105);
     assert!(error.message.contains("can only be set for TiDB X kernel"));
-    assert!(tidb_util::traceevent::get_flight_recorder().is_none());
+    assert!(tidb_traceevent::get_flight_recorder().is_none());
     assert!(session.run("SET GLOBAL tidb_trace_event = ''").is_err());
 }
 

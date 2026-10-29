@@ -282,7 +282,7 @@ impl Session {
         if let DdlStatement::DropDatabase { name, .. } = statement {
             if name.go_lower_eq("mysql") {
                 return Err(DriverError::from(
-                    (&tidb_util::dbterror::ERR_FORBIDDEN_DDL)
+                    (&tidb_dbterror::ERR_FORBIDDEN_DDL)
                         .generate_with_stack("Drop 'mysql' database is forbidden".to_owned()),
                 ));
             }

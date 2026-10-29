@@ -156,7 +156,7 @@ pub(super) fn build_add_foreign_key_jobs<S: MetaSnapshot>(
             Some(AddIndexSubmission::Job(spec, _)) => specs.push(*spec),
             _ => {
                 return Err(DdlPlanError::from(
-                    tidb_util::dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&[(created
+                    tidb_dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&[(created
                         .fk
                         .name
                         .original()
@@ -212,7 +212,7 @@ fn check_add_foreign_key_valid_in_owner(
         .any(|existing| existing.read().name.lowercase() == fk.name.lowercase())
     {
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_FK_DUP_NAME,
+            &tidb_dbterror::ERR_FK_DUP_NAME,
             format!(
                 "Duplicate foreign key constraint name '{}'",
                 fk.name.original()
@@ -347,7 +347,7 @@ pub(super) fn plan_persisted_add_foreign_key_job_step(
             Ok(action_step(write))
         }
         state => Err(DdlPlanError::from(
-            tidb_util::dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+            tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
                 FormatArg::from("foreign key"),
                 FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
             ]),

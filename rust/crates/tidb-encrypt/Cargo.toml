@@ -1,0 +1,26 @@
+[package]
+name = "tidb-encrypt"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/encrypt: Go pkg/util/encrypt (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+testexport = []
+
+[dependencies]
+tidb-layered-io = { path = "../tidb-layered-io" }
+aes.workspace = true
+getrandom.workspace = true
+
+[dev-dependencies]
+tidb-checksum = { path = "../tidb-checksum" }
+
+[[bench]]
+name = "encrypt"
+harness = false

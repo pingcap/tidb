@@ -260,7 +260,7 @@ pub(super) fn plan_persisted_lock_tables_job_step(
             return Err(cancel_ddl_job(
                 active,
                 DdlPlanError::from(
-                    tidb_util::dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+                    tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
                         FormatArg::from("table lock"),
                         FormatArg::new(
                             state.to_string(),

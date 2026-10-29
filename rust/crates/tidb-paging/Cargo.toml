@@ -1,0 +1,13 @@
+[package]
+name = "tidb-paging"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/paging: Go pkg/util/paging (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]

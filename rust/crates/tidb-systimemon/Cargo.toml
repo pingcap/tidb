@@ -1,0 +1,23 @@
+[package]
+name = "tidb-systimemon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/systimemon: Go pkg/util/systimemon (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+enableassert = ["tidb-logutil/enableassert"]
+intest = ["tidb-logutil/intest"]
+
+[dependencies]
+tidb-logutil = { path = "../tidb-logutil" }
+crossbeam-channel = "0.5"
+tidb-log = { path = "../tidb-log" }
+
+[dev-dependencies]
+tidb-intest = { path = "../tidb-intest", features = ["intest"] }

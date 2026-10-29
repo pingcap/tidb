@@ -66,7 +66,6 @@ mod masking;
 #[path = "stmt/misc.rs"]
 mod misc;
 mod model;
-pub mod opcode;
 #[path = "stmt/placement.rs"]
 mod placement;
 mod procedure;
@@ -121,10 +120,8 @@ pub use dml_stmt::{BatchDml, BatchDmlDryRun, BatchDmlStmt, CallStmt, DmlStmt};
 pub use explain::{ExplainStmt, ExplainTarget, StatsLockStmt, StatsLockTable};
 pub use expr::*;
 pub use flush::{FlushLogType, FlushStmt, FlushTarget};
-pub use format::{
-    CteRestorer, CteScope, RestoreContext, RestoreCtx, RestoreFlags, RestoreWriter,
-    GO_SIMPLE_CASE_UNICODE_VERSION,
-};
+pub use format::RestoreContext;
+use tidb_parser_format::RestoreFlags;
 pub use load_data::{
     ColumnOrUserVar, LoadDataFields, LoadDataLines, LoadDataOnDuplicate, LoadDataOption,
     LoadDataStmt,
@@ -139,7 +136,7 @@ pub use misc::{
     TraceStmt,
 };
 pub use model::*;
-pub use opcode::Op;
+use tidb_parser_opcode::Op;
 pub use placement::{
     AlterPlacementPolicyStmt, CreatePlacementPolicyStmt, DropPlacementPolicyStmt, PlacementOption,
     PlacementRestoreMode,

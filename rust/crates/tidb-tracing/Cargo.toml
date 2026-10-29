@@ -1,0 +1,29 @@
+[package]
+name = "tidb-tracing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/tracing: Go pkg/util/tracing (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+enableassert = ["tidb-intest/enableassert"]
+intest = ["tidb-intest/intest"]
+
+[dependencies]
+tidb-intest = { path = "../tidb-intest" }
+tidb-log = { path = "../tidb-log" }
+tidb-config = { path = "../tidb-config" }
+serde.workspace = true
+
+
+[dev-dependencies]
+tidb-intest = { path = "../tidb-intest", features = ["intest"] }
+
+[[bench]]
+name = "tracing"
+harness = false

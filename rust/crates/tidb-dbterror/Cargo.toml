@@ -1,0 +1,14 @@
+[package]
+name = "tidb-dbterror"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/dbterror: Go pkg/util/dbterror (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-error = { path = "../tidb-error" }

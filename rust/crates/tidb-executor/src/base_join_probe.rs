@@ -159,7 +159,7 @@ impl From<crate::ExecError> for ProbeError {
         match error {
             crate::ExecError::Killed(error) => Self::Killed(error),
             crate::ExecError::MemoryExceedForQuery { conn_id } => {
-                Self::Killed(tidb_util::sqlkiller::memory_exceed_for_query(conn_id))
+                Self::Killed(tidb_sqlkiller::memory_exceed_for_query(conn_id))
             }
             crate::ExecError::Eval(error) => Self::Expression(error),
             crate::ExecError::SpillFailed(error) => Self::Spill(error),

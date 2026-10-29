@@ -16,7 +16,9 @@
 
 use std::io;
 
-use tidb_ast::{BinaryOp, Op, RestoreCtx, RestoreFlags, UnaryOp};
+use tidb_ast::{BinaryOp, UnaryOp};
+use tidb_parser_opcode::Op;
+use tidb_parser_format::{RestoreCtx, RestoreFlags};
 
 const SOURCE_ROWS: [(Op, &str, &str, bool); 31] = [
     (Op::LogicAnd, "and", "AND", true),

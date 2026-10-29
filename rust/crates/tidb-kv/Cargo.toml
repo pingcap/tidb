@@ -8,6 +8,10 @@ repository.workspace = true
 description = "Go pkg/kv for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-dbterror = { path = "../tidb-dbterror" }
+tidb-memory = { path = "../tidb-memory" }
+tidb-spill-storage = { path = "../tidb-spill-storage" }
+tidb-sqlkiller = { path = "../tidb-sqlkiller" }
 tidb-codec = { path = "../tidb-codec" }
 tracing = "0.1"
 smallvec = { workspace = true }

@@ -90,11 +90,11 @@ pub trait DdlSessionContext: Send + Sync {
         if_exists: bool,
     ) -> Result<(), tidb_error::mysql::MysqlError>;
     /// The statement's warnings, taken.
-    fn take_warnings(&self) -> Vec<tidb_util::context::SqlWarn>;
+    fn take_warnings(&self) -> Vec<tidb_context::SqlWarn>;
 
     /// Go `StmtCtx.AppendWarning` / `AppendNote` / `AppendError` of a
     /// warning kept with its error.
-    fn append_sql_warn(&self, warning: tidb_util::context::SqlWarn);
+    fn append_sql_warn(&self, warning: tidb_context::SqlWarn);
     /// The same session with a warning buffer of its own.
     fn with_isolated_warnings(&self) -> Box<dyn DdlSessionContext>;
 }
@@ -216,11 +216,11 @@ impl<T: DdlSessionContext + ?Sized> DdlSessionContext for std::sync::Arc<T> {
         (**self).drop_hypo_index(schema, table, index, if_exists)
     }
 
-    fn append_sql_warn(&self, warning: tidb_util::context::SqlWarn) {
+    fn append_sql_warn(&self, warning: tidb_context::SqlWarn) {
         (**self).append_sql_warn(warning);
     }
 
-    fn take_warnings(&self) -> Vec<tidb_util::context::SqlWarn> {
+    fn take_warnings(&self) -> Vec<tidb_context::SqlWarn> {
         (**self).take_warnings()
     }
 

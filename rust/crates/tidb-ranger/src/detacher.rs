@@ -839,7 +839,7 @@ pub struct RangeDetacher<'a> {
     /// Go `rangeMaxSize`.
     pub range_max_size: i64,
     /// Shared statement handler, retained across recursive candidate construction.
-    pub range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
+    pub range_fallback_handler: Option<&'a tidb_context::RangeFallbackHandler>,
     /// Go's session `RegardNULLAsPoint` (default true).
     pub regard_null_as_point: bool,
     /// Go's session `OptPrefixIndexSingleScan` (default true).
@@ -1840,7 +1840,7 @@ pub fn detach_index_range_with_fallback_handler(
     cols: &[tidb_expr::column::Column],
     lengths: &[i64],
     range_max_size: i64,
-    handler: &tidb_util::context::RangeFallbackHandler,
+    handler: &tidb_context::RangeFallbackHandler,
 ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
     detach_index_range_with_fallback_handler_in(
         conditions,
@@ -1859,7 +1859,7 @@ pub fn detach_index_range_with_fallback_handler_in(
     cols: &[tidb_expr::column::Column],
     lengths: &[i64],
     range_max_size: i64,
-    handler: &tidb_util::context::RangeFallbackHandler,
+    handler: &tidb_context::RangeFallbackHandler,
     eval_expression: &ExpressionEvaluator<'_>,
     options: RangerOptions,
 ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
@@ -1922,7 +1922,7 @@ pub fn detach_partition_range_with_fallback_handler(
     cols: &[tidb_expr::column::Column],
     lengths: &[i64],
     range_max_size: i64,
-    handler: &tidb_util::context::RangeFallbackHandler,
+    handler: &tidb_context::RangeFallbackHandler,
     options: RangerOptions,
 ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
     detach_cond_and_build_range(
@@ -1947,7 +1947,7 @@ fn detach_cond_and_build_range(
     convert_to_sort_key: bool,
     merge_consecutive: bool,
     eval_expression: &ExpressionEvaluator<'_>,
-    range_fallback_handler: Option<&tidb_util::context::RangeFallbackHandler>,
+    range_fallback_handler: Option<&tidb_context::RangeFallbackHandler>,
     options: RangerOptions,
 ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
     let new_tp_slice: Vec<tidb_datatype::FieldType> = cols

@@ -21,9 +21,10 @@
 use std::ops::{Deref, DerefMut};
 use std::{sync::Arc, time::Instant};
 
-use tidb_util::paging::{MIN_ALLOWED_MAX_PAGING_SIZE, MIN_PAGING_SIZE};
+use tidb_paging::{MIN_ALLOWED_MAX_PAGING_SIZE, MIN_PAGING_SIZE};
 
-use crate::{CancelHandle, Paging, ReplicaRead, Request, RequestSource, StatementKvContext};
+use crate::{CancelHandle, Paging, Request, RequestSource, StatementKvContext};
+use tidb_tiflash::ReplicaRead;
 
 /// DistSQL-only metadata attached to the canonical `pkg/kv.Request`.
 ///
@@ -143,7 +144,7 @@ pub enum TransportRequestError {
 #[derive(Clone, Debug)]
 pub struct TransportRequest {
     metadata: KvRequestMetadata,
-    kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
+    kv_exec_counter: tidb_topsql_stmtstats::KvExecCounterHandle,
     /// Go's statement ctx values (`util.RUDetailsCtxKey`,
     /// `util.ExecDetailsKey`) the copr worker's `bo.GetCtx()` carries to
     /// every send.
@@ -183,7 +184,7 @@ impl TransportRequest {
     #[must_use]
     pub fn with_kv_exec_counter(
         mut self,
-        counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
+        counter: tidb_topsql_stmtstats::KvExecCounterHandle,
     ) -> Self {
         self.kv_exec_counter = counter;
         self
@@ -191,7 +192,7 @@ impl TransportRequest {
 
     /// The statement interceptor every send of this request counts in.
     #[must_use]
-    pub fn kv_exec_counter(&self) -> tidb_util::topsql_stmtstats::KvExecCounterHandle {
+    pub fn kv_exec_counter(&self) -> tidb_topsql_stmtstats::KvExecCounterHandle {
         self.kv_exec_counter.clone()
     }
 

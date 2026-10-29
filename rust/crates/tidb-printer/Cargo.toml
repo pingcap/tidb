@@ -1,0 +1,29 @@
+[package]
+name = "tidb-printer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/printer: Go pkg/util/printer (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+enableassert = ["tidb-logutil/enableassert"]
+intest = ["tidb-logutil/intest"]
+race = ["tidb-israce/race"]
+
+[dependencies]
+tidb-israce = { path = "../tidb-israce" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-versioninfo = { path = "../tidb-versioninfo" }
+tidb-log = { path = "../tidb-log" }
+tidb-config = { path = "../tidb-config" }
+tidb-mysql = { path = "../tidb-mysql" }
+serde_json = { workspace = true, features = ["raw_value"] }
+
+[dev-dependencies]
+tidb-intest = { path = "../tidb-intest", features = ["intest"] }
+tempfile.workspace = true

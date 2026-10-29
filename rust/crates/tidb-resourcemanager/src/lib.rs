@@ -16,7 +16,7 @@
 //!
 //! Ported whole against the baseline, including the CPU scheduling surface
 //! Go gets from `pkg/util/cpu` (usage EMA observer, GOMAXPROCS install),
-//! which lives in `tidb_util::cpu` here.
+//! which lives in `tidb_cpu` here.
 
 pub mod pool;
 pub mod poolmanager;
@@ -52,7 +52,7 @@ pub fn random_name() -> String {
 pub struct ResourceManager {
     pool_map: Arc<RwLock<Arc<ShardPoolMap>>>,
     schedulers: Arc<Vec<Box<dyn Scheduler>>>,
-    cpu_observer: Arc<tidb_util::cpu::Observer>,
+    cpu_observer: Arc<tidb_cpu::Observer>,
     lifecycle: Mutex<Lifecycle>,
 }
 
@@ -72,7 +72,7 @@ impl ResourceManager {
         Self {
             pool_map: Arc::new(RwLock::new(Arc::new(ShardPoolMap::new()))),
             schedulers: Arc::new(vec![Box::new(CpuScheduler::new())]),
-            cpu_observer: Arc::new(tidb_util::cpu::Observer::new()),
+            cpu_observer: Arc::new(tidb_cpu::Observer::new()),
             lifecycle: Mutex::new(Lifecycle {
                 stopped: false,
                 threads: Vec::new(),

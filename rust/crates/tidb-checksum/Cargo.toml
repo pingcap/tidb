@@ -1,0 +1,19 @@
+[package]
+name = "tidb-checksum"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/checksum: Go pkg/util/checksum (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-layered-io = { path = "../tidb-layered-io" }
+tidb-zeropool = { path = "../tidb-zeropool" }
+crc32fast.workspace = true
+
+[dev-dependencies]
+tidb-encrypt = { path = "../tidb-encrypt" }

@@ -1431,7 +1431,7 @@ pub fn lower_ddl_with_context(
                 > 1
             {
                 return Err(DdlAdmissionError::from_terror(
-                    &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES
+                    &tidb_dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES
                         .generate_with_stack_by_args(&["set tiflash replica".into()]),
                 ));
             }
@@ -1490,7 +1490,7 @@ pub fn lower_ddl_with_context(
             let mut chosen: Option<String> = None;
             let conflict = |current: &str, other: &str| {
                 DdlAdmissionError::from_terror(
-                    &tidb_util::dbterror::ERR_CONFLICTING_DECLARATIONS
+                    &tidb_dbterror::ERR_CONFLICTING_DECLARATIONS
                         .generate_with_stack_by_args(&[current.into(), other.into()]),
                 )
             };
@@ -1564,7 +1564,7 @@ pub fn lower_ddl_with_context(
             // (`ddl/executor.go:6808`).
             if create.or_replace && create.if_not_exists {
                 return Err(DdlAdmissionError::from_terror(
-                    &tidb_util::dbterror::ERR_WRONG_USAGE
+                    &tidb_dbterror::ERR_WRONG_USAGE
                         .generate_with_stack("Incorrect usage of OR REPLACE and IF NOT EXISTS"),
                 ));
             }
@@ -1855,7 +1855,7 @@ fn placement_settings_from_options(
 /// `dbterror.ErrRunMultiSchemaChanges.FastGenByArgs(job.Type.String())`.
 fn go_unsupported_multi_schema_change(job: &str) -> DdlAdmissionError {
     DdlAdmissionError::from_terror(
-        &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES
+        &tidb_dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES
             .generate_with_stack_by_args(&[job.into()]),
     )
 }
@@ -1892,7 +1892,7 @@ fn go_multi_schema_job_without_sub_job(action: &tidb_ast::AlterTableAction) -> O
 /// no arm for are refused with their own errors.
 fn check_alter_table_spec_refusals(alter: &AlterTableStmt) -> Result<(), DdlAdmissionError> {
     use tidb_ast::{AlterPartitionAction, PartitionMaintenanceOp};
-    use tidb_util::dbterror as dbt;
+    use tidb_dbterror as dbt;
     for action in &alter.actions {
         match action {
             tidb_ast::AlterTableAction::Partition(partition) => {
@@ -2051,12 +2051,12 @@ fn resolve_alter_algorithm(
     );
     if rank(specify) > rank(supported) {
         return Err(DdlAdmissionError::from_terror(
-            &tidb_util::dbterror::ERR_ALTER_OPERATION_NOT_SUPPORTED.generate_with_stack(message),
+            &tidb_dbterror::ERR_ALTER_OPERATION_NOT_SUPPORTED.generate_with_stack(message),
         ));
     }
-    context.append_sql_warn(tidb_util::context::SqlWarn::of(
+    context.append_sql_warn(tidb_context::SqlWarn::of(
         DdlWarningLevel::Error,
-        &tidb_util::dbterror::ERR_ALTER_OPERATION_NOT_SUPPORTED,
+        &tidb_dbterror::ERR_ALTER_OPERATION_NOT_SUPPORTED,
         message,
     ));
     Ok(())
@@ -2288,7 +2288,7 @@ fn lower_alter_table_catalog(
                             // Go's `default: err = dbterror.ErrUnsupportedAlterTableOption`.
                             _ => actions.push(AlterColumnAction::Refused(
                                 DdlAdmissionError::from_terror(
-                                    &tidb_util::dbterror::ERR_UNSUPPORTED_ALTER_TABLE_OPTION
+                                    &tidb_dbterror::ERR_UNSUPPORTED_ALTER_TABLE_OPTION
                                         .generate_with_stack_by_args(&[]),
                                 ),
                             )),
@@ -2365,16 +2365,16 @@ fn lower_alter_table_catalog(
                 // Go `AlterTable`: each VALIDATION spec appends its own 8200
                 // warning; ENABLE / DISABLE KEYS do nothing (MyISAM only).
                 tidb_ast::AlterTableAction::WithValidation => {
-                    context.append_sql_warn(tidb_util::context::SqlWarn::raised(
+                    context.append_sql_warn(tidb_context::SqlWarn::raised(
                         DdlWarningLevel::Warning,
-                        tidb_util::dbterror::ERR_UNSUPPORTED_ALTER_TABLE_WITH_VALIDATION
+                        tidb_dbterror::ERR_UNSUPPORTED_ALTER_TABLE_WITH_VALIDATION
                             .generate_with_stack_by_args(&[]),
                     ))
                 }
                 tidb_ast::AlterTableAction::WithoutValidation => {
-                    context.append_sql_warn(tidb_util::context::SqlWarn::raised(
+                    context.append_sql_warn(tidb_context::SqlWarn::raised(
                         DdlWarningLevel::Warning,
-                        tidb_util::dbterror::ERR_UNSUPPORTED_ALTER_TABLE_WITHOUT_VALIDATION
+                        tidb_dbterror::ERR_UNSUPPORTED_ALTER_TABLE_WITHOUT_VALIDATION
                             .generate_with_stack_by_args(&[]),
                     ))
                 }
@@ -2725,7 +2725,7 @@ fn lower_alter_table_catalog(
                 // `dbterror.ErrUnsupportedAlterTableOption`.
                 _ => {
                     return Err(DdlAdmissionError::from_terror(
-                        &tidb_util::dbterror::ERR_UNSUPPORTED_ALTER_TABLE_OPTION
+                        &tidb_dbterror::ERR_UNSUPPORTED_ALTER_TABLE_OPTION
                             .generate_with_stack_by_args(&[]),
                     ))
                 }
@@ -2813,7 +2813,7 @@ fn lower_alter_table_catalog(
                 // not a charset — a collation name, say.
                 if tidb_datatype::get_charset_info(name).is_err() {
                     return Err(DdlAdmissionError::from_terror(
-                        &tidb_util::dbterror::ERR_UNKNOWN_CHARACTER_SET
+                        &tidb_dbterror::ERR_UNKNOWN_CHARACTER_SET
                             .generate_with_stack_by_args(&[name.into()]),
                     ));
                 }
@@ -3105,7 +3105,7 @@ fn lower_alter_table_catalog(
             }))
         }
         tidb_ast::AlterTableAction::SetStatsOptions(_) => Err(DdlAdmissionError::from_terror(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_ALTER_TABLE_OPTION
+            &tidb_dbterror::ERR_UNSUPPORTED_ALTER_TABLE_OPTION
                 .generate_with_stack_by_args(&[]),
         )),
         // Go `AlterTable`'s default arm: the specifications it has no job for.
@@ -3115,7 +3115,7 @@ fn lower_alter_table_catalog(
             tidb_ast::AlterPartitionAction::ImportTablespace { .. }
             | tidb_ast::AlterPartitionAction::DiscardTablespace { .. },
         ) => Err(DdlAdmissionError::from_terror(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_ALTER_TABLE_SPEC.generate_with_stack_by_args(&[]),
+            &tidb_dbterror::ERR_UNSUPPORTED_ALTER_TABLE_SPEC.generate_with_stack_by_args(&[]),
         )),
         _ => Ok(None),
     }
@@ -3187,7 +3187,7 @@ fn lower_alter_add_index(
         )
     {
         return Err(DdlAdmissionError::from_terror(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_PRIMARY_KEY.generate_with_stack(
+            &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_PRIMARY_KEY.generate_with_stack(
                 "Adding clustered primary key is not supported. Please consider adding \
              NONCLUSTERED primary key instead",
             ),
@@ -3205,7 +3205,7 @@ fn lower_alter_add_index(
             // refusal (oracle g-alter: `8200 FULLTEXT index is only
             // supported in starter deployment mode`).
             return Err(DdlAdmissionError::from_terror(
-                &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX.generate_with_stack(
+                &tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX.generate_with_stack(
                     "FULLTEXT index is only supported in starter deployment mode",
                 ),
             ));
@@ -3287,7 +3287,7 @@ fn prepare_rename_column(
     let new_name = to.go_to_lower();
     if new_name == "_tidb_rowid" {
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_WRONG_COLUMN_NAME,
+            &tidb_dbterror::ERR_WRONG_COLUMN_NAME,
             format!("Incorrect column name '{new_name}'"),
         ));
     }
@@ -3308,7 +3308,7 @@ fn prepare_rename_column(
     }) {
         return Err(if dependent.read().hidden {
             coded_refusal(
-                &tidb_util::dbterror::ERR_DEPENDENT_BY_FUNCTIONAL_INDEX,
+                &tidb_dbterror::ERR_DEPENDENT_BY_FUNCTIONAL_INDEX,
                 format!(
                     "Column '{from}' has an expression index dependency and cannot be dropped \
                      or renamed"
@@ -3316,7 +3316,7 @@ fn prepare_rename_column(
             )
         } else {
             coded_refusal(
-                &tidb_util::dbterror::ERR_DEPENDENT_BY_GENERATED_COLUMN,
+                &tidb_dbterror::ERR_DEPENDENT_BY_GENERATED_COLUMN,
                 format!("Column '{from}' has a generated column dependency."),
             )
         });
@@ -3347,7 +3347,7 @@ fn check_modify_column_with_generated_columns_constraint(
     let hidden = dependent.read().hidden;
     Some(if hidden {
         (
-            &*tidb_util::dbterror::ERR_DEPENDENT_BY_FUNCTIONAL_INDEX,
+            &*tidb_dbterror::ERR_DEPENDENT_BY_FUNCTIONAL_INDEX,
             format!(
                 "Column '{written}' has an expression index dependency and cannot be dropped or \
                  renamed"
@@ -3355,7 +3355,7 @@ fn check_modify_column_with_generated_columns_constraint(
         )
     } else {
         (
-            &*tidb_util::dbterror::ERR_DEPENDENT_BY_GENERATED_COLUMN,
+            &*tidb_dbterror::ERR_DEPENDENT_BY_GENERATED_COLUMN,
             format!("Column '{written}' has a generated column dependency."),
         )
     })
@@ -3370,7 +3370,7 @@ fn is_generated_related_column(
 ) -> Result<(), DdlPlanError> {
     let unsupported = |reason: String| {
         coded_refusal(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN,
+            &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN,
             format!("Unsupported modify column: {reason}"),
         )
     };
@@ -3408,13 +3408,13 @@ fn check_modify_generated_column(
 ) -> Result<(), DdlPlanError> {
     let unsupported_on_generated = |what: &str| {
         coded_refusal(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
+            &tidb_dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
             format!("'{what}' is not supported for generated columns."),
         )
     };
     let bad_field = |column: &str| {
         coded_refusal(
-            &tidb_util::dbterror::ERR_BAD_FIELD,
+            &tidb_dbterror::ERR_BAD_FIELD,
             format!("Unknown column '{column}' in 'generated column function'"),
         )
     };
@@ -3493,7 +3493,7 @@ fn check_modify_generated_column(
             };
             if *dependency_generated && at <= dependency_at {
                 return Err(coded_refusal(
-                    &tidb_util::dbterror::ERR_GENERATED_COLUMN_NON_PRIOR,
+                    &tidb_dbterror::ERR_GENERATED_COLUMN_NON_PRIOR,
                     "Generated column can refer only to generated columns defined prior to it."
                         .to_owned(),
                 ));
@@ -3536,7 +3536,7 @@ fn check_modify_generated_column(
                     .any(|dependency| dependency == auto_increment.name.lowercase())
                 {
                     return Err(coded_refusal(
-                        &tidb_util::dbterror::ERR_GENERATED_COLUMN_REF_AUTO_INC,
+                        &tidb_dbterror::ERR_GENERATED_COLUMN_REF_AUTO_INC,
                         format!(
                             "Generated column '{}' cannot refer to auto-increment column.",
                             new_def.name.go_to_lower()
@@ -3555,7 +3555,7 @@ fn check_modify_generated_column(
         });
         let covered_by_index = || {
             coded_refusal(
-                &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
+                &tidb_dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
                 "Unsupported modification for generated columns covered by an index".to_owned(),
             )
         };
@@ -3610,7 +3610,7 @@ fn apply_rename_index(
     if from_lower != to_lower {
         if let Some(existing) = find_index(info, to) {
             return Err(DdlPlanError::from(
-                tidb_util::dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&[(existing
+                tidb_dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&[(existing
                     .read()
                     .name
                     .original()
@@ -3712,7 +3712,7 @@ fn apply_index_visibility(
     }
     if invisible && found.read().is_columnar_index() {
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_INDEX_TYPE,
+            &tidb_dbterror::ERR_UNSUPPORTED_INDEX_TYPE,
             format!(
                 "INVISIBLE can not be used in {} INDEX",
                 found.read().tp.sql()
@@ -3760,7 +3760,7 @@ fn apply_set_column_default(
         && target.read().field_type.has_flag(FieldTypeFlags::PRI_KEY)
     {
         return Err(DdlPlanError::from(
-            tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
+            tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
                 ("auto_random is incompatible with default".to_owned()).into(),
             ]),
         ));
@@ -3776,7 +3776,7 @@ fn check_table_charset_named(charset: &str, collate: &str) -> Result<(), DdlPlan
     if charset.is_empty() && collate.is_empty() {
         return Err(DdlPlanError::Admission(
             tidb_ddl_build::table_info_build::DdlAdmissionError::from_terror(
-                &tidb_util::dbterror::ERR_UNKNOWN_CHARACTER_SET
+                &tidb_dbterror::ERR_UNKNOWN_CHARACTER_SET
                     .generate_with_stack_by_args(&["".into()]),
             ),
         ));
@@ -4062,7 +4062,7 @@ pub(super) fn build_add_column(
         })
     {
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_GENERATED_COLUMN_NON_PRIOR,
+            &tidb_dbterror::ERR_GENERATED_COLUMN_NON_PRIOR,
             "Generated column can refer only to generated columns defined prior to it.",
         ));
     }
@@ -4182,8 +4182,8 @@ pub(crate) fn checked_refusal(code: u16, message: impl Into<String>) -> DdlPlanE
         1690 => Some(&types::ERR_OVERFLOW),
         1365 => Some(&tidb_error::catalog::expression::ERR_DIVISION_BY_ZERO),
         1451 => Some(&tidb_error::plannererrors::ERR_ROW_IS_REFERENCED2),
-        1452 => Some(&tidb_util::dbterror::ERR_NO_REFERENCED_ROW2),
-        3819 => Some(&tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED),
+        1452 => Some(&tidb_dbterror::ERR_NO_REFERENCED_ROW2),
+        3819 => Some(&tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED),
         _ => None,
     };
     match proto {
@@ -4209,7 +4209,7 @@ fn check_unsupported_column_constraint(
             tidb_ast::ColumnOption::AutoRandom(_) => {
                 // `ErrInvalidAutoRandom.GenWithStackByArgs(AutoRandomAlterAddColumn)`.
                 return Err(coded_refusal(
-                    &tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM,
+                    &tidb_dbterror::ERR_INVALID_AUTO_RANDOM,
                     format!(
                         "Invalid auto random: unsupported add column '{}' constraint AUTO_RANDOM when altering '{schema}.{table}'",
                         column.name
@@ -4219,7 +4219,7 @@ fn check_unsupported_column_constraint(
             _ => continue,
         };
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_COLUMN,
+            &tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMN,
             format!(
                 "unsupported add column '{}' constraint {constraint} when altering '{schema}.{table}'",
                 column.name
@@ -4260,7 +4260,7 @@ fn check_is_droppable_column(
             return Ok(false);
         }
         return Err(DdlPlanError::from(
-            tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY
+            tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY
                 .generate_with_stack_by_args(&[(column.to_owned()).into()]),
         ));
     };
@@ -4274,7 +4274,7 @@ fn check_is_droppable_column(
     // Go `ErrUnsupportedPKHandle`.
     if col.is_pk_handle_column(info) {
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_PK_HANDLE,
+            &tidb_dbterror::ERR_UNSUPPORTED_PK_HANDLE,
             "Unsupported drop integer primary key",
         ));
     }
@@ -4283,7 +4283,7 @@ fn check_is_droppable_column(
         && !allow_remove_auto_inc
     {
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_CANT_DROP_COL_WITH_AUTO_INC,
+            &tidb_dbterror::ERR_CANT_DROP_COL_WITH_AUTO_INC,
             "Unsupported can't remove column with auto_increment when \
              @@tidb_allow_remove_auto_inc disabled",
         ));
@@ -4310,7 +4310,7 @@ fn is_droppable_column(
     {
         return Err(if dependent.read().hidden {
             coded_refusal(
-                &tidb_util::dbterror::ERR_DEPENDENT_BY_FUNCTIONAL_INDEX,
+                &tidb_dbterror::ERR_DEPENDENT_BY_FUNCTIONAL_INDEX,
                 format!(
                     "Column '{col_name}' has an expression index dependency and cannot be \
                      dropped or renamed"
@@ -4318,14 +4318,14 @@ fn is_droppable_column(
             )
         } else {
             coded_refusal(
-                &tidb_util::dbterror::ERR_DEPENDENT_BY_GENERATED_COLUMN,
+                &tidb_dbterror::ERR_DEPENDENT_BY_GENERATED_COLUMN,
                 format!("Column '{col_name}' has a generated column dependency."),
             )
         });
     }
     if column_count == 1 {
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_CANT_REMOVE_ALL_FIELDS,
+            &tidb_dbterror::ERR_CANT_REMOVE_ALL_FIELDS,
             format!(
                 "can't drop only column {column} in table {}",
                 info.name.original()
@@ -4349,7 +4349,7 @@ fn is_droppable_column(
                 "with composite index covered or Primary Key covered now"
             };
             return Err(coded_refusal(
-                &tidb_util::dbterror::ERR_CANT_DROP_COL_WITH_INDEX,
+                &tidb_dbterror::ERR_CANT_DROP_COL_WITH_INDEX,
                 format!("can't drop column {col_name} {covered}"),
             ));
         }
@@ -4389,7 +4389,7 @@ fn check_drop_column_with_partition_constraint(
         .any(|name| name.go_to_lower() == col_name)
     {
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_DEPENDENT_BY_PARTITION_FUNCTIONAL,
+            &tidb_dbterror::ERR_DEPENDENT_BY_PARTITION_FUNCTIONAL,
             format!(
                 "Column '{col_name}' has a partitioning function dependency and cannot be \
                  dropped or renamed"
@@ -4404,7 +4404,7 @@ fn check_drop_column_with_ttl_config(info: &TableInfo, col_name: &str) -> Result
     if let Some(ttl) = &info.ttl_info {
         if ttl.read().column_name.lowercase() == col_name {
             return Err(coded_refusal(
-                &tidb_util::dbterror::ERR_TTL_COLUMN_CANNOT_DROP,
+                &tidb_dbterror::ERR_TTL_COLUMN_CANNOT_DROP,
                 format!("Cannot drop column '{col_name}': needed in TTL config"),
             ));
         }
@@ -4426,7 +4426,7 @@ fn check_column_referenced_by_partial_condition(
             .any(|affected| affected.read().name.lowercase() == col_name)
         {
             return Err(coded_refusal(
-                &tidb_util::dbterror::ERR_MODIFY_COLUMN_REFERENCED_BY_PARTIAL_CONDITION,
+                &tidb_dbterror::ERR_MODIFY_COLUMN_REFERENCED_BY_PARTIAL_CONDITION,
                 format!(
                     "Cannot drop, change or modify column '{column}': it is referenced in \
                      partial index '{}'",
@@ -4446,11 +4446,11 @@ fn table_column_count_limit() -> usize {
 /// Go `checkTableInfoValidExtra`, its `ec` warnings recorded with the job's.
 fn check_table_info_valid_extra(
     info: &TableInfo,
-    warnings: &mut Vec<tidb_util::context::SqlWarn>,
+    warnings: &mut Vec<tidb_context::SqlWarn>,
 ) -> Result<(), DdlPlanError> {
     tidb_ddl_build::table_info_build::check_table_info_valid_extra(
         &mut |warning| {
-            warnings.push(tidb_util::context::SqlWarn::new(DdlWarningLevel::Warning, warning));
+            warnings.push(tidb_context::SqlWarn::new(DdlWarningLevel::Warning, warning));
         },
         info,
     )?;
@@ -4466,7 +4466,7 @@ fn check_table_info_valid(info: &TableInfo) -> Result<(), DdlPlanError> {
 fn check_add_column_too_many_columns(col_num: usize) -> Result<(), DdlPlanError> {
     if col_num > table_column_count_limit() {
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_TOO_MANY_FIELDS,
+            &tidb_dbterror::ERR_TOO_MANY_FIELDS,
             "Too many columns",
         ));
     }
@@ -4490,12 +4490,12 @@ fn check_visible_column_cnt(
     if info.columns.len() > visible_column_cnt {
         // There are only invisible columns.
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_TABLE_MUST_HAVE_COLUMNS,
+            &tidb_dbterror::ERR_TABLE_MUST_HAVE_COLUMNS,
             "A table must have at least 1 column",
         ));
     }
     Err(coded_refusal(
-        &tidb_util::dbterror::ERR_CANT_REMOVE_ALL_FIELDS,
+        &tidb_dbterror::ERR_CANT_REMOVE_ALL_FIELDS,
         "You can't delete all columns with ALTER TABLE; use DROP TABLE instead",
     ))
 }
@@ -4531,7 +4531,7 @@ fn check_operate_drop_index_use_by_foreign_key(
             .is_none()
             {
                 return Err(coded_refusal(
-                    &tidb_util::dbterror::ERR_DROP_INDEX_NEEDED_IN_FOREIGN_KEY,
+                    &tidb_dbterror::ERR_DROP_INDEX_NEEDED_IN_FOREIGN_KEY,
                     format!(
                         "Cannot drop index '{}': needed in a foreign key constraint",
                         dropping_idx.read().name
@@ -4546,7 +4546,7 @@ fn check_operate_drop_index_use_by_foreign_key(
 /// Go `infoschema.ErrForeignKeyNotExists` (1091).
 fn foreign_key_not_exists(name: &str) -> DdlPlanError {
     coded_refusal(
-        &tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY,
+        &tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY,
         format!("Can't DROP '{name}'; check that column/key exists"),
     )
 }
@@ -4916,7 +4916,7 @@ pub enum DdlPlan {
         /// go notes 1007/1051, errors 1105. A statement can raise several
         /// (`DROP TABLE IF EXISTS a, b` on two missing tables leaves one
         /// 1051 note per table).
-        warnings: Vec<tidb_util::context::SqlWarn>,
+        warnings: Vec<tidb_context::SqlWarn>,
     },
     /// The mutations to publish in one transaction.
     Write(Box<DdlWrite>),
@@ -5002,7 +5002,7 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
                 })
             {
                 return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
-                    &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_DUP_NAME
+                    &tidb_dbterror::ERR_CHECK_CONSTRAINT_DUP_NAME
                         .generate_with_stack_by_args(&[constraint.name.original().into()]),
                 )));
             }
@@ -5035,7 +5035,7 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
                 .find(|constraint| constraint.read().name.lowercase() == name.go_to_lower())
                 .ok_or_else(|| {
                     DdlPlanError::Admission(DdlAdmissionError::from_terror(
-                        &tidb_util::dbterror::ERR_CONSTRAINT_NOT_FOUND
+                        &tidb_dbterror::ERR_CONSTRAINT_NOT_FOUND
                             .generate_with_stack_by_args(&[name.into()]),
                     ))
                 })?;
@@ -5066,7 +5066,7 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
                 .find(|constraint| constraint.read().name.lowercase() == name.go_to_lower())
                 .ok_or_else(|| {
                     DdlPlanError::Admission(DdlAdmissionError::from_terror(
-                        &tidb_util::dbterror::ERR_CONSTRAINT_NOT_FOUND
+                        &tidb_dbterror::ERR_CONSTRAINT_NOT_FOUND
                             .generate_with_stack_by_args(&[name.into()]),
                     ))
                 })?;
@@ -5776,7 +5776,7 @@ fn plan_persisted_check_constraint_job_step(
                     return Err(cancel_ddl_job(
                         active,
                         DdlPlanError::from(
-                            tidb_util::dbterror::CLASS_SCHEMA
+                            tidb_dbterror::CLASS_SCHEMA
                                 .new_std(tidb_error::tidb::errcode::ErrDupFieldName)
                                 .generate_with_stack_by_args(&[FormatArg::from(
                                     constraint_handle.read().name.original(),
@@ -5799,7 +5799,7 @@ fn plan_persisted_check_constraint_job_step(
                 return Err(cancel_ddl_job(
                     active,
                     DdlPlanError::from(
-                        tidb_util::dbterror::CLASS_SCHEMA
+                        tidb_dbterror::CLASS_SCHEMA
                             .new_std(tidb_error::tidb::errcode::ErrCheckConstraintDupName)
                             .generate_with_stack_by_args(&[FormatArg::from(wanted.as_str())]),
                     ),
@@ -5852,7 +5852,7 @@ fn plan_persisted_check_constraint_job_step(
                             .any(|existing| existing.read().name.lowercase() == wanted)
                     }) {
                         return Err(DdlPlanError::from(
-                            tidb_util::dbterror::CLASS_SCHEMA
+                            tidb_dbterror::CLASS_SCHEMA
                                 .new_std(tidb_error::tidb::errcode::ErrCheckConstraintDupName)
                                 .generate_with_stack_by_args(&[FormatArg::from(
                                     constraint.name.lowercase(),
@@ -5866,7 +5866,7 @@ fn plan_persisted_check_constraint_job_step(
                                 && column.name.lowercase() == dependency.lowercase()
                         }) {
                             return Err(DdlPlanError::from(
-                                tidb_util::dbterror::ERR_TABLE_CHECK_CONSTRAINT_REFER_UNKNOWN
+                                tidb_dbterror::ERR_TABLE_CHECK_CONSTRAINT_REFER_UNKNOWN
                                     .generate_with_stack_by_args(&[
                                         FormatArg::from(constraint.name.original()),
                                         FormatArg::from(dependency.original()),
@@ -5913,7 +5913,7 @@ fn plan_persisted_check_constraint_job_step(
                         }
                         state => {
                             return Err(DdlPlanError::from(
-                                tidb_util::dbterror::ERR_INVALID_DDL_STATE
+                                tidb_dbterror::ERR_INVALID_DDL_STATE
                                     .generate_with_stack_by_args(&[
                                         FormatArg::from("constraint"),
                                         FormatArg::new(
@@ -5941,7 +5941,7 @@ fn plan_persisted_check_constraint_job_step(
                     cancel_ddl_job(
                         active,
                         DdlPlanError::from(
-                            tidb_util::dbterror::ERR_CONSTRAINT_NOT_FOUND
+                            tidb_dbterror::ERR_CONSTRAINT_NOT_FOUND
                                 .generate_with_stack_by_args(&[FormatArg::from(
                                     args.read().constraint_name.get().original(),
                                 )]),
@@ -5990,7 +5990,7 @@ fn plan_persisted_check_constraint_job_step(
                     }
                     _ => {
                         return Err(DdlPlanError::from(
-                            tidb_util::dbterror::ERR_INVALID_DDL_JOB.generate_with_stack_by_args(
+                            tidb_dbterror::ERR_INVALID_DDL_JOB.generate_with_stack_by_args(
                                 &[
                                     FormatArg::from("constraint"),
                                     FormatArg::new(
@@ -6020,7 +6020,7 @@ fn plan_persisted_check_constraint_job_step(
                     cancel_ddl_job(
                         active,
                         DdlPlanError::from(
-                            tidb_util::dbterror::ERR_CONSTRAINT_NOT_FOUND
+                            tidb_dbterror::ERR_CONSTRAINT_NOT_FOUND
                                 .generate_with_stack_by_args(&[FormatArg::from(
                                     args.constraint_name.get().original(),
                                 )]),
@@ -6196,7 +6196,7 @@ fn plan_persisted_create_schema_job_step(
         return Err(cancel_ddl_job(
             active,
             DdlPlanError::from(
-                tidb_util::dbterror::CLASS_SCHEMA
+                tidb_dbterror::CLASS_SCHEMA
                     .new_std(tidb_error::tidb::errcode::ErrDBCreateExists)
                     .generate(format!(
                         "Can't create database '{}'; database exists",
@@ -6295,7 +6295,7 @@ fn plan_persisted_create_tables_job_step(
             cancel_ddl_job(
                 active,
                 DdlPlanError::from(
-                    tidb_util::dbterror::CLASS_SCHEMA
+                    tidb_dbterror::CLASS_SCHEMA
                         .new_std(tidb_error::tidb::errcode::ErrBadDB)
                         .generate(format!(
                             "Unknown database '(Schema ID {})'",
@@ -6347,7 +6347,7 @@ fn plan_persisted_create_tables_job_step(
         return Err(cancel_ddl_job(
             active,
             DdlPlanError::from(
-                tidb_util::dbterror::CLASS_SCHEMA
+                tidb_dbterror::CLASS_SCHEMA
                     .new_std(tidb_error::tidb::errcode::ErrTableExists)
                     .generate(reason),
             ),
@@ -6477,7 +6477,7 @@ fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
         return Err(cancel_ddl_job(
             active,
             DdlPlanError::from(
-                tidb_util::dbterror::CLASS_SCHEMA
+                tidb_dbterror::CLASS_SCHEMA
                     .new_std(tidb_error::tidb::errcode::ErrDBDropExists)
                     .generate("Can't drop database ''; database doesn't exist"),
             ),
@@ -6690,7 +6690,7 @@ fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
             return Err(cancel_ddl_job(
                 active,
                 coded_refusal(
-                    &tidb_util::dbterror::ERR_TRUNCATE_ILLEGAL_FOREIGN_KEY,
+                    &tidb_dbterror::ERR_TRUNCATE_ILLEGAL_FOREIGN_KEY,
                     format!(
                         "Cannot truncate a table referenced in a foreign key constraint (`{}`.`{}` CONSTRAINT `{}`)",
                         referred.child_schema.original(),
@@ -6994,7 +6994,7 @@ fn cancelled_ddl_job(active: &mut crate::ddl_job_table::ActiveDdlJob) -> DdlPlan
     cancel_ddl_job(
         active,
         DdlPlanError::from(
-            tidb_util::dbterror::ERR_CANCELLED_DDL_JOB
+            tidb_dbterror::ERR_CANCELLED_DDL_JOB
                 .generate(tidb_error::tidb::errname::ErrCancelledDDLJob.raw),
         ),
     )
@@ -7039,7 +7039,7 @@ fn plan_cancel_persisted_ddl_job(
                     cancel_ddl_job(
                         active,
                         DdlPlanError::from(
-                            tidb_util::dbterror::CLASS_SCHEMA
+                            tidb_dbterror::CLASS_SCHEMA
                                 .new_std(tidb_error::tidb::errcode::ErrDBDropExists)
                                 .generate("Can't drop database ''; database doesn't exist"),
                         ),
@@ -7132,7 +7132,7 @@ fn checked_job_table<'a>(
             cancel_ddl_job(
                 active,
                 DdlPlanError::from(
-                    tidb_util::dbterror::CLASS_SCHEMA
+                    tidb_dbterror::CLASS_SCHEMA
                         .new_std(tidb_error::tidb::errcode::ErrBadDB)
                         .generate(format!(
                             "Unknown database '(Schema ID {})'",
@@ -7149,7 +7149,7 @@ fn checked_job_table<'a>(
             cancel_ddl_job(
                 active,
                 DdlPlanError::from(
-                    tidb_util::dbterror::CLASS_SCHEMA
+                    tidb_dbterror::CLASS_SCHEMA
                         .new_std(tidb_error::tidb::errcode::ErrNoSuchTable)
                         .generate(format!(
                             "Table '(Schema ID {}).(Table ID {})' doesn't exist",
@@ -7164,7 +7164,7 @@ fn checked_job_table<'a>(
         return Err(cancel_ddl_job(
             active,
             DdlPlanError::from(
-                tidb_util::dbterror::CLASS_SCHEMA
+                tidb_dbterror::CLASS_SCHEMA
                     .new_std(tidb_error::tidb::errcode::ErrNoSuchTable)
                     .generate(format!(
                         "Table '{}.{}' doesn't exist",
@@ -7176,7 +7176,7 @@ fn checked_job_table<'a>(
     if require_public && table.state != SchemaState::PUBLIC {
         return Err(cancel_ddl_job(
             active,
-            DdlPlanError::from(tidb_util::dbterror::ERR_INVALID_DDL_STATE.generate(format!(
+            DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_STATE.generate(format!(
                 "table {} is not in public, but {}",
                 table.name, table.state
             ))),
@@ -7195,9 +7195,9 @@ fn record_ddl_cancellation_error(
     } else {
         job.error_count += 1;
     }
-    if error.equal(&tidb_util::dbterror::ERR_CANCELLED_DDL_JOB) {
+    if error.equal(&tidb_dbterror::ERR_CANCELLED_DDL_JOB) {
         let original = job.error.as_ref().unwrap().read().clone();
-        if !tidb_util::dbterror::ERR_CANCELLED_DDL_JOB.equal(Some(&original)) {
+        if !tidb_dbterror::ERR_CANCELLED_DDL_JOB.equal(Some(&original)) {
             // generate retains a source identity and also preserves old Rust
             // history without an RFC code; synthesizing class zero invents one.
             job.error = Some(GoShared::new(original.generate(format!(
@@ -7263,7 +7263,7 @@ pub(crate) fn recover_ddl_action<T>(action: impl FnOnce() -> T) -> Result<T, ()>
         // Go `tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s
         // runOneJobStep", w), ...)`. Rust runs jobs on no numbered worker,
         // so `funcInfo` names the step without Go's `worker N, tp T` prefix.
-        tidb_util::logutil::bg_logger().error(
+        tidb_logutil::bg_logger().error(
             "panic in the recoverable goroutine",
             &[
                 tidb_log::Field::new("label", tidb_log::Value::Str("ddl-worker".to_owned())),
@@ -7321,7 +7321,7 @@ pub fn plan_persisted_ddl_job_failure<S: MetaSnapshot>(
             if matches!(
                 active.job.type_,
                 ActionType::ACTION_ADD_CHECK_CONSTRAINT | ActionType::ACTION_ALTER_CHECK_CONSTRAINT
-            ) && error.equal(&tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED)
+            ) && error.equal(&tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED)
             {
                 active.job.state = JobState::ROLLINGBACK;
             }
@@ -7385,7 +7385,7 @@ pub struct DdlWrite {
     /// back with `SHOW WARNINGS`. A change that silently did something other
     /// than what was written would otherwise look like it did exactly what
     /// was written.
-    pub warnings: Vec<tidb_util::context::SqlWarn>,
+    pub warnings: Vec<tidb_context::SqlWarn>,
     /// The placement rule bundles PD has to be told about before this change
     /// becomes visible.
     ///
@@ -7870,7 +7870,7 @@ fn stored_partition_spec(
 ) -> Result<tidb_table::partition_routing::PartitionSpec, DdlPlanError> {
     let partition = stored.partition.as_ref().ok_or_else(|| {
         DdlPlanError::Admission(DdlAdmissionError::from_terror(
-            &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+            &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
                 .generate_with_stack_by_args(&[]),
         ))
     })?;
@@ -7966,19 +7966,19 @@ fn check_exchange_tables(
 ) -> Result<(), DdlPlanError> {
     if standalone.is_view() || standalone.is_sequence() {
         return Err(exchange_refusal(
-            &tidb_util::dbterror::ERR_CHECK_NO_SUCH_TABLE,
+            &tidb_dbterror::ERR_CHECK_NO_SUCH_TABLE,
             "Can't open table",
         ));
     }
     if partitioned.partition.is_none() {
         return Err(exchange_refusal(
-            &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED,
+            &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED,
             "Partition management on a not partitioned table is not possible",
         ));
     }
     if standalone.partition.is_some() {
         return Err(exchange_refusal(
-            &tidb_util::dbterror::ERR_PARTITION_EXCHANGE_PART_TABLE,
+            &tidb_dbterror::ERR_PARTITION_EXCHANGE_PART_TABLE,
             format!(
                 "Table to exchange with partition is partitioned: '{}'",
                 standalone.name
@@ -7987,13 +7987,13 @@ fn check_exchange_tables(
     }
     if standalone.affinity.is_some() || partitioned.affinity.is_some() {
         return Err(exchange_refusal(
-            &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL,
+            &tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL,
             "Unsupported EXCHANGE PARTITION of a table with AFFINITY option",
         ));
     }
     if !standalone.foreign_keys.is_empty() {
         return Err(exchange_refusal(
-            &tidb_util::dbterror::ERR_PARTITION_EXCHANGE_FOREIGN_KEY,
+            &tidb_dbterror::ERR_PARTITION_EXCHANGE_FOREIGN_KEY,
             format!(
                 "Table to exchange with partition has foreign key references: '{}'",
                 standalone.name
@@ -8002,7 +8002,7 @@ fn check_exchange_tables(
     }
     if standalone.temp_table_type != tidb_model::TempTableType::NONE {
         return Err(exchange_refusal(
-            &tidb_util::dbterror::ERR_PARTITION_EXCHANGE_TEMP_TABLE,
+            &tidb_dbterror::ERR_PARTITION_EXCHANGE_TEMP_TABLE,
             format!(
                 "Table to exchange with partition is temporary: '{}'",
                 standalone.name
@@ -8010,7 +8010,7 @@ fn check_exchange_tables(
         ));
     }
     let different_metadata = || exchange_refusal(
-        &tidb_util::dbterror::ERR_TABLES_DIFFERENT_METADATA,
+        &tidb_dbterror::ERR_TABLES_DIFFERENT_METADATA,
         "Tables have different definitions",
     );
     if partitioned.auto_random_bits != standalone.auto_random_bits
@@ -8035,7 +8035,7 @@ fn check_exchange_tables(
         let target = target.read();
         if source.is_virtual_generated() != target.is_virtual_generated() {
             return Err(exchange_refusal(
-                &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
+                &tidb_dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
                 "'Exchanging partitions for non-generated columns' is not supported for generated columns.",
             ));
         }
@@ -8050,7 +8050,7 @@ fn check_exchange_tables(
         }
         if source.id != target.id {
             return Err(exchange_refusal(
-                &tidb_util::dbterror::ERR_PARTITION_EXCHANGE_DIFFERENT_OPTION,
+                &tidb_dbterror::ERR_PARTITION_EXCHANGE_DIFFERENT_OPTION,
                 format!(
                     "Non matching attribute 'column: {}' between partition and table",
                     source.name
@@ -8065,7 +8065,7 @@ fn check_exchange_tables(
         let source = source.read();
         if source.global {
             return Err(exchange_refusal(
-                &tidb_util::dbterror::ERR_PARTITION_EXCHANGE_DIFFERENT_OPTION,
+                &tidb_dbterror::ERR_PARTITION_EXCHANGE_DIFFERENT_OPTION,
                 format!(
                     "Non matching attribute 'global index: {}' between partition and table",
                     source.name
@@ -8100,7 +8100,7 @@ fn check_exchange_tables(
         }
         if source.id != target.id {
             return Err(exchange_refusal(
-                &tidb_util::dbterror::ERR_PARTITION_EXCHANGE_DIFFERENT_OPTION,
+                &tidb_dbterror::ERR_PARTITION_EXCHANGE_DIFFERENT_OPTION,
                 format!(
                     "Non matching attribute 'index: {}' between partition and table",
                     source.name
@@ -8154,7 +8154,7 @@ pub fn plan_ddl<S: MetaSnapshot>(
             let warnings = warning
                 .as_ref()
                 .map(|(code, message)| {
-                    vec![tidb_util::context::SqlWarn::with_code(
+                    vec![tidb_context::SqlWarn::with_code(
                         crate::real_tikv_ddl::DdlWarningLevel::Warning,
                         *code,
                         message.clone(),
@@ -8195,7 +8195,7 @@ pub fn plan_ddl<S: MetaSnapshot>(
                     )
                 })
                 .map(|message| {
-                    vec![tidb_util::context::SqlWarn::with_code(
+                    vec![tidb_context::SqlWarn::with_code(
                         DdlWarningLevel::Warning,
                         1105,
                         message,
@@ -8259,7 +8259,7 @@ fn build_create_table_info<S: MetaSnapshot>(
     table: &str,
     if_not_exists: bool,
     build: &CreateTableBuild,
-    warnings: &mut Vec<tidb_util::context::SqlWarn>,
+    warnings: &mut Vec<tidb_context::SqlWarn>,
 ) -> Result<Result<TableInfo, DdlPlan>, DdlPlanError> {
     let Some(database) = find_database(catalog, schema) else {
         return Err(DdlPlanError::from(
@@ -8282,7 +8282,7 @@ fn build_create_table_info<S: MetaSnapshot>(
             .is_empty()
     {
         let error = tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_TTL_REFERENCED_BY_FK
+            &tidb_dbterror::ERR_UNSUPPORTED_TTL_REFERENCED_BY_FK
                 .generate_with_stack_by_args(&[]),
         );
         return Err(DdlPlanError::from_mysql_error(error));
@@ -8643,7 +8643,7 @@ fn already(detail: String) -> DdlPlan {
 }
 
 /// go's note for one missing table: `Note | 1051 | Unknown table 'd.t'`.
-fn missing_table_note(schema: &str, table: &str) -> tidb_util::context::SqlWarn {
+fn missing_table_note(schema: &str, table: &str) -> tidb_context::SqlWarn {
     crate::real_tikv_ddl::ddl_note(
         tidb_error::catalog::infoschema::ERR_TABLE_DROP_EXISTS
             .generate_with_stack_by_args(&[format!("{}.{}", schema, table).into()]),
@@ -8651,7 +8651,7 @@ fn missing_table_note(schema: &str, table: &str) -> tidb_util::context::SqlWarn 
 }
 
 /// `already` carrying go's per-table 1051 notes (DROP ... IF EXISTS).
-fn already_with_warnings(detail: String, warnings: Vec<tidb_util::context::SqlWarn>) -> DdlPlan {
+fn already_with_warnings(detail: String, warnings: Vec<tidb_context::SqlWarn>) -> DdlPlan {
     DdlPlan::AlreadySatisfied { detail, warnings }
 }
 
@@ -8723,7 +8723,7 @@ fn refuse_non_base_table(
 ) -> Result<(), DdlPlanError> {
     if stored.is_view() || stored.is_sequence() {
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_WRONG_OBJECT,
+            &tidb_dbterror::ERR_WRONG_OBJECT,
             format!("'{schema}.{table}' is not BASE TABLE"),
         ));
     }
@@ -8818,7 +8818,7 @@ fn create_foreign_key(
         .any(|fk| fk.read().name.lowercase() == name.go_to_lower())
     {
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_FK_DUP_NAME,
+            &tidb_dbterror::ERR_FK_DUP_NAME,
             format!("Duplicate foreign key constraint name '{name}'"),
         ));
     }
@@ -8853,7 +8853,7 @@ fn create_foreign_key(
     // Go `createIndex`'s duplicate-name check for the key's index.
     if needs_index && find_index(stored, fk.name.original()).is_some() {
         return Err(DdlPlanError::from(
-            tidb_util::dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&[(fk
+            tidb_dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&[(fk
                 .name
                 .original()
                 .to_owned())

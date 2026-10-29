@@ -30,7 +30,7 @@ use tidb_txnkv::QueryResponseError;
 use tidb_txnkv::QueryResultSubset;
 use tidb_distsql::{InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryOperation, QueryResultContext, QueryTransport, ResponseChannel, SelectInput, DAG_RESULT_LABEL, GENERAL_SQL_TYPE};
 use tidb_txnkv::TransportRequest;
-use tidb_util::context::WarningCollector;
+use tidb_context::WarningCollector;
 use tidb_txnkv::StoreType;
 use tidb_proto::{Chunk, EncodeType, IntermediateOutput, SelectResponse};
 

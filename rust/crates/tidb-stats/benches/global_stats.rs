@@ -24,7 +24,7 @@ use tidb_stats::histogram::{Bucket, Histogram};
 use tidb_stats::{
     merge_partition_topn, merge_partition_topn_concurrently, TopN, MAX_PARTITION_MERGE_BATCH_SIZE,
 };
-use tidb_util::sqlkiller::SqlKiller;
+use tidb_sqlkiller::SqlKiller;
 
 const BENCHMARK_SIZES: [usize; 5] = [100, 1_000, 2_000, 5_000, 10_000];
 const TOPN_VALUES: usize = 500;

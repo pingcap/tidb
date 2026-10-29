@@ -58,7 +58,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::SeqCst};
 use std::sync::Arc;
 
-use tidb_util::memory::{ActionOnExceed, ArcAction, BaseOomAction, Tracker, DEF_SPILL_PRIORITY};
+use tidb_memory::{ActionOnExceed, ArcAction, BaseOomAction, Tracker, DEF_SPILL_PRIORITY};
 
 /// Go `maxSpillTimes`: how many times one aggregation may enter spill mode.
 /// Past this the action stops spilling and falls through to the cancellation,
@@ -233,7 +233,7 @@ impl ActionOnExceed for AggSpillDiskAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_util::memory::LABEL_FOR_SESSION;
+    use tidb_memory::LABEL_FOR_SESSION;
 
     /// Go `hasEnoughDataToSpill` is a FIFTH of the limit, and it reads the
     /// aggregation's tracker while the limit comes from the tracker that

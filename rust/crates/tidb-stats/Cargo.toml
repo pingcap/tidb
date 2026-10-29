@@ -12,6 +12,11 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-fastrand = { path = "../tidb-fastrand" }
+tidb-generic = { path = "../tidb-generic" }
+tidb-mathutil = { path = "../tidb-mathutil" }
+tidb-memory = { path = "../tidb-memory" }
+tidb-sqlkiller = { path = "../tidb-sqlkiller" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 chrono.workspace = true
 chrono-tz.workspace = true

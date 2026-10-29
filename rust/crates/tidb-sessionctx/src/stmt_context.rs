@@ -21,12 +21,12 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use tidb_datatype::Datum;
-use tidb_util::context::WarningLevel;
-use tidb_util::context::WarningCollector;
+use tidb_context::WarningLevel;
+use tidb_context::WarningCollector;
 use tidb_txnkv::ReplicaReadType;
-use tidb_util::context::SqlWarn;
+use tidb_context::SqlWarn;
 use tidb_expr::{Columns, CurrentTso, ErrorLevel};
-use tidb_util::mathutil::MysqlRng;
+use tidb_mathutil::MysqlRng;
 
 const MAX_WARNING_COUNT: usize = u16::MAX as usize;
 /// Go `vardef.DefDistSQLScanConcurrency`, the value a context built without
@@ -39,7 +39,7 @@ use tidb_vardef::OomAction;
 use crate::statement_pushdown::{push_down_flags, PushDownFlagsInput, StatementKind};
 use tidb_driver_error::DriverError;
 use tidb_error::errctx::{ErrGroup, Level, LevelMap};
-use tidb_util::spill_storage::SpillStorage;
+use tidb_spill_storage::SpillStorage;
 
 static NEXT_STATEMENT_CONTEXT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -246,7 +246,7 @@ impl RowIdShardGenerator {
             self.remaining = 0;
         }
         if self.remaining == 0 {
-            self.current = u64::from(tidb_util::fastrand::uint32());
+            self.current = u64::from(tidb_fastrand::uint32());
             self.remaining = step;
         }
         self.remaining = self.remaining.saturating_sub(count);
@@ -456,8 +456,8 @@ pub enum StatementPhase {
 }
 
 struct StatementRangeFallback {
-    tracker: Arc<tidb_util::context::PlanCacheTracker>,
-    handler: tidb_util::context::RangeFallbackHandler,
+    tracker: Arc<tidb_context::PlanCacheTracker>,
+    handler: tidb_context::RangeFallbackHandler,
     cache_started: AtomicBool,
 }
 
@@ -465,18 +465,18 @@ struct PlannerWarningAppender {
     warnings: Arc<Mutex<Vec<SqlWarn>>>,
 }
 
-impl tidb_util::context::WarnAppender for PlannerWarningAppender {
-    fn append_warning(&self, err: tidb_util::context::WarnErr) {
+impl tidb_context::WarnAppender for PlannerWarningAppender {
+    fn append_warning(&self, err: tidb_context::WarnErr) {
         self.append(WarningLevel::Warning, err);
     }
 
-    fn append_note(&self, err: tidb_util::context::WarnErr) {
+    fn append_note(&self, err: tidb_context::WarnErr) {
         self.append(WarningLevel::Note, err);
     }
 }
 
 impl PlannerWarningAppender {
-    fn append(&self, level: WarningLevel, err: tidb_util::context::WarnErr) {
+    fn append(&self, level: WarningLevel, err: tidb_context::WarnErr) {
         self.warnings
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -851,7 +851,7 @@ pub struct StmtContextData {
     store_batch_size: u64,
     /// Go `SessionVars.TiFlashReplicaRead`: the session's
     /// `tiflash_replica_read`, which places MPP tasks.
-    tiflash_replica_read: tidb_txnkv::ReplicaRead,
+    tiflash_replica_read: tidb_tiflash::ReplicaRead,
     /// Go `SessionVars.IsolationReadEngines`, in the session variable's
     /// canonical comma-separated spelling.
     isolation_read_engines: String,
@@ -1182,11 +1182,11 @@ pub struct StmtContextData {
     phase_durations: tidb_variable::phase_durations::SessionPhaseDurations,
     /// Go `SessionVars.SQLCPUUsages`, which point readers charge their TiKV
     /// process time to.
-    sql_cpu_usages: Option<Arc<tidb_util::ppcpuusage::SqlCpuUsages>>,
+    sql_cpu_usages: Option<Arc<tidb_ppcpuusage::SqlCpuUsages>>,
     /// Go `StmtCtx.IsTiFlash` as `buildDataSource` sets it: MPP is allowed
     /// and a table the statement reads has an available TiFlash replica.
     is_tiflash: Arc<AtomicBool>,
-    kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
+    kv_exec_counter: tidb_topsql_stmtstats::KvExecCounterHandle,
     /// Go's statement ctx `RUDetails` and `StmtCtx.GetResourceGroupTagger`,
     /// as the session publishes them for the statement that runs.
     statement_kv_context: Option<tidb_txnkv::StatementKvContextCell>,
@@ -1340,7 +1340,7 @@ pub struct StmtContextData {
     index_usage_collector: Option<Arc<tidb_stats_handle_usage_indexusage::StmtIndexUsageCollector>>,
     /// Go `StmtCtx.RuntimeStatsColl`, present only when instance-level
     /// execution-info collection is enabled.
-    executor_runtime_stats_source: Option<Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
+    executor_runtime_stats_source: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
     /// Go `SessionVars.TxnCtx.TableDeltaMap` for the open transaction.
     table_delta: Option<Arc<tidb_variable::table_delta::TableDeltaMap>>,
     /// Go `SessionVars.IsPlanReplayerCaptureEnabled()`.
@@ -1712,7 +1712,7 @@ context_configuration! {
     #[must_use]
     pub fn with_executor_runtime_stats_source(
         mut self,
-        source: Option<Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
+        source: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
     ) -> Self {
         self.executor_runtime_stats_source = source;
         self
@@ -2083,7 +2083,7 @@ context_configuration! {
 
     /// Retains the statement counter through every execution context clone.
     #[must_use]
-    pub fn with_kv_exec_counter(mut self, counter: tidb_util::topsql_stmtstats::KvExecCounterHandle) -> Self {
+    pub fn with_kv_exec_counter(mut self, counter: tidb_topsql_stmtstats::KvExecCounterHandle) -> Self {
         self.kv_exec_counter = counter;
         self
     }
@@ -2157,7 +2157,7 @@ context_configuration! {
     #[must_use]
     pub fn with_sql_cpu_usages(
         mut self,
-        usages: Option<Arc<tidb_util::ppcpuusage::SqlCpuUsages>>,
+        usages: Option<Arc<tidb_ppcpuusage::SqlCpuUsages>>,
     ) -> Self {
         self.sql_cpu_usages = usages;
         self
@@ -2473,7 +2473,7 @@ context_configuration! {
 
     /// Sets Go `SessionVars.TiFlashReplicaRead` for this statement.
     #[must_use]
-    pub fn with_tiflash_replica_read(mut self, policy: tidb_txnkv::ReplicaRead) -> Self {
+    pub fn with_tiflash_replica_read(mut self, policy: tidb_tiflash::ReplicaRead) -> Self {
         self.tiflash_replica_read = policy;
         self
     }
@@ -2686,7 +2686,7 @@ impl StmtContext {
             not_fill_cache: false,
             dist_sql_scan_concurrency: DEFAULT_DIST_SQL_SCAN_CONCURRENCY,
             store_batch_size: tidb_vardef::defaults::DEF_TIDB_STORE_BATCH_SIZE as u64,
-            tiflash_replica_read: tidb_txnkv::get_tiflash_replica_read_by_str(
+            tiflash_replica_read: tidb_tiflash::get_tiflash_replica_read_by_str(
                 tidb_vardef::defaults::DEF_TIFLASH_REPLICA_READ,
             ),
             isolation_read_engines: session.isolation_read_engines,
@@ -3529,7 +3529,7 @@ impl StmtContext {
 
     /// The session's SQL CPU usages (Go `SessionVars.SQLCPUUsages`).
     #[must_use]
-    pub fn sql_cpu_usages(&self) -> Option<&Arc<tidb_util::ppcpuusage::SqlCpuUsages>> {
+    pub fn sql_cpu_usages(&self) -> Option<&Arc<tidb_ppcpuusage::SqlCpuUsages>> {
         self.sql_cpu_usages.as_ref()
     }
 
@@ -3569,7 +3569,7 @@ impl StmtContext {
     #[must_use]
     pub fn executor_runtime_stats_source(
         &self,
-    ) -> Option<&Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>> {
+    ) -> Option<&Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>> {
         self.executor_runtime_stats_source.as_ref()
     }
 
@@ -3733,9 +3733,9 @@ impl StmtContext {
             let warnings = Arc::new(PlannerWarningAppender {
                 warnings: Arc::clone(&self.warnings),
             });
-            let tracker = Arc::new(tidb_util::context::PlanCacheTracker::new(warnings.clone()));
+            let tracker = Arc::new(tidb_context::PlanCacheTracker::new(warnings.clone()));
             let handler =
-                tidb_util::context::RangeFallbackHandler::new(Arc::clone(&tracker), warnings);
+                tidb_context::RangeFallbackHandler::new(Arc::clone(&tracker), warnings);
             StatementRangeFallback {
                 tracker,
                 handler,
@@ -3768,9 +3768,9 @@ impl StmtContext {
             state
                 .tracker
                 .set_cache_type(if self.non_prepared_plan_cache {
-                    tidb_util::context::PlanCacheType::SessionNonPrepared
+                    tidb_context::PlanCacheType::SessionNonPrepared
                 } else {
-                    tidb_util::context::PlanCacheType::SessionPrepared
+                    tidb_context::PlanCacheType::SessionPrepared
                 });
             state
                 .tracker
@@ -3783,7 +3783,7 @@ impl StmtContext {
         }
     }
 
-    pub fn range_fallback_handler(&self) -> &tidb_util::context::RangeFallbackHandler {
+    pub fn range_fallback_handler(&self) -> &tidb_context::RangeFallbackHandler {
         &self.statement_range_fallback().handler
     }
 
@@ -4270,7 +4270,7 @@ impl StmtContext {
         if self.before_executor_first_run.swap(true, Ordering::AcqRel) {
             return;
         }
-        tidb_util::breakpoint::inject_stored_value(
+        tidb_breakpoint::inject_stored_value(
             self.breakpoint_notify_func
                 .as_ref()
                 .map(|notify| notify as &(dyn std::any::Any + Send + Sync)),
@@ -4629,7 +4629,7 @@ impl StmtContext {
     /// `TIDB_VERSION()`.
     #[must_use]
     pub fn tidb_info_len(&self) -> usize {
-        tidb_util::printer::get_tidb_info().len()
+        tidb_printer::get_tidb_info().len()
     }
 
     /// Installs the candidate row exposed to `VALUES(col)` while an insert
@@ -4724,7 +4724,7 @@ impl StmtContext {
 
     /// Go `SessionVars.TiFlashReplicaRead`.
     #[must_use]
-    pub fn tiflash_replica_read(&self) -> tidb_txnkv::ReplicaRead {
+    pub fn tiflash_replica_read(&self) -> tidb_tiflash::ReplicaRead {
         self.tiflash_replica_read
     }
 
@@ -4788,7 +4788,7 @@ impl StmtContext {
     }
 
     /// Borrows the counter shared by every request in this execution.
-    pub fn kv_exec_counter(&self) -> tidb_util::topsql_stmtstats::KvExecCounterHandle {
+    pub fn kv_exec_counter(&self) -> tidb_topsql_stmtstats::KvExecCounterHandle {
         self.kv_exec_counter.clone()
     }
 
@@ -5515,9 +5515,9 @@ impl StmtContext {
             let code = u16::try_from(warning.code.unwrap_or(1105)).unwrap_or(1105);
             warnings.push(match warning.class {
                 // Go `selectResult`: `dbterror.ClassTiKV.Synthesize(code, msg)`.
-                tidb_util::context::WarningClass::TiKv => SqlWarn::new(
+                tidb_context::WarningClass::TiKv => SqlWarn::new(
                     warning.level,
-                    tidb_util::context::WarnErr::Terror(
+                    tidb_context::WarnErr::Terror(
                         tidb_error::terror::TerrorError::synthesize(
                             tidb_error::terror::TerrorClass::TiKv,
                             tidb_error::terror::TerrorCode::new(isize::try_from(code).unwrap_or(isize::MAX)),
@@ -5525,7 +5525,7 @@ impl StmtContext {
                         ),
                     ),
                 ),
-                tidb_util::context::WarningClass::Statement => {
+                tidb_context::WarningClass::Statement => {
                     SqlWarn::with_code(warning.level, code, warning.message)
                 }
             });
@@ -5565,7 +5565,7 @@ impl StmtContext {
     }
 
     /// Go `StmtCtx.AppendWarning` / `AppendNote` / `AppendError` of `err`.
-    pub fn append_warn_err(&self, level: WarningLevel, err: tidb_util::context::WarnErr) {
+    pub fn append_warn_err(&self, level: WarningLevel, err: tidb_context::WarnErr) {
         self.push_warning(SqlWarn::new(level, err));
     }
 
@@ -5754,7 +5754,7 @@ impl tidb_table::context::MutateContext for StmtContext {
         StmtContext::take_warnings(self)
     }
 
-    fn append_leveled(&self, level: tidb_util::context::WarningLevel, code: u16, message: &str) {
+    fn append_leveled(&self, level: tidb_context::WarningLevel, code: u16, message: &str) {
         StmtContext::append_leveled(self, level, code, message);
     }
 
@@ -5818,12 +5818,12 @@ impl tidb_expr::metabuild::EvalContext for StmtContext {
 
     /// Go `StmtCtx.AppendWarning`; `SHOW WARNINGS` renders the error through
     /// `terror.ToSQLError`, and a plain error as `ErrUnknown`.
-    fn append_warning(&self, err: tidb_util::context::WarnErr) {
+    fn append_warning(&self, err: tidb_context::WarnErr) {
         self.append_warn_err(WarningLevel::Warning, err);
     }
 
     /// Go `StmtCtx.AppendNote`.
-    fn append_note(&self, note: tidb_util::context::WarnErr) {
+    fn append_note(&self, note: tidb_context::WarnErr) {
         self.append_warn_err(WarningLevel::Note, note);
     }
 }
@@ -6054,7 +6054,7 @@ impl Columns for StmtContext {
     }
 
     fn tidb_info(&self) -> String {
-        tidb_util::printer::get_tidb_info()
+        tidb_printer::get_tidb_info()
     }
 
     fn block_encryption_mode(&self) -> tidb_expr::BlockEncryptionMode {

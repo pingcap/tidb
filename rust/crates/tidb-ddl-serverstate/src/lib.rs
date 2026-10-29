@@ -25,8 +25,8 @@ use serde::de::{DeserializeSeed, Error as _, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserializer, Serialize};
 use tidb_log::{Field, Value};
 use tidb_pd_client::{EtcdClient, EtcdError, EtcdLeaseSession, EtcdWatcher};
-pub use tidb_util::timeutil::SleepContext as Context;
-use tidb_util::timeutil::{sleep, SleepError};
+pub use tidb_timeutil::SleepContext as Context;
+use tidb_timeutil::{sleep, SleepError};
 
 /// Go `util.ServerGlobalState`.
 pub const SERVER_GLOBAL_STATE: &str = "/tidb/server/global_state";

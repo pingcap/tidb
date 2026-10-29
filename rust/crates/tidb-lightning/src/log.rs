@@ -321,14 +321,14 @@ pub fn init_logger(config: &Config, _level: &str) -> Result<(), String> {
         ]
     };
 
-    let tidb_config = tidb_util::logutil::LogConfig {
+    let tidb_config = tidb_logutil::LogConfig {
         config: tidb_log::Config {
             level: "fatal".to_owned(),
             ..Default::default()
         },
         ..Default::default()
     };
-    tidb_util::logutil::init_logger(&tidb_config)?;
+    tidb_logutil::init_logger(&tidb_config)?;
 
     if !config.file.is_empty() && config.file != "-" && Path::new(&config.file).is_dir() {
         return Err("can't use directory as log file name".to_owned());

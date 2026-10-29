@@ -51,7 +51,7 @@
 //!   eviction read the same number the Go tracker would report, so the policy
 //!   is unaffected — only the reporting hookup is deferred.
 //!
-//! `tidb_util::kvcache`'s `SimpleLruCache` owns the generic LRU order (Go
+//! `tidb_kvcache`'s `SimpleLruCache` owns the generic LRU order (Go
 //! builds it with `mathutil.MaxUint` capacity precisely to disable its own
 //! memory control); this module owns Apply's retained-byte quota and the
 //! synchronization Go gets from `syncutil.Mutex`.

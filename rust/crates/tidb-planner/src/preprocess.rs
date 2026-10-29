@@ -267,7 +267,7 @@ pub fn check_ddl_grammar(stmt: &Stmt, strict: bool) -> Result<(), MysqlError> {
             for column in &create.columns {
                 if is_incorrect_identifier_name(column) {
                     return Err(MysqlError::from_terror(
-                        &tidb_util::dbterror::ERR_WRONG_COLUMN_NAME
+                        &tidb_dbterror::ERR_WRONG_COLUMN_NAME
                             .generate_with_stack_by_args(&[(column.clone()).to_string().into()]),
                     ));
                 }
@@ -302,7 +302,7 @@ pub fn check_ddl_grammar(stmt: &Stmt, strict: bool) -> Result<(), MysqlError> {
             check_table_name(path_name(&create.table))?;
             if create.name.is_empty() {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_WRONG_NAME_FOR_INDEX
+                    &tidb_dbterror::ERR_WRONG_NAME_FOR_INDEX
                         .generate_with_stack_by_args(&[(&create.name).into()]),
                 ));
             }
@@ -325,7 +325,7 @@ pub fn check_repair_table_grammar(
 ) -> Result<(), MysqlError> {
     let repair_table_fail = |reason: &str| {
         MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_REPAIR_TABLE_FAIL
+            &tidb_dbterror::ERR_REPAIR_TABLE_FAIL
                 .generate_with_stack_by_args(&[reason.into()]),
         )
     };
@@ -353,7 +353,7 @@ fn path_name(path: &[String]) -> &str {
 fn check_database_name(name: &str) -> Result<(), MysqlError> {
     if is_incorrect_identifier_name(name) {
         return Err(MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_WRONG_DB_NAME.generate_with_stack_by_args(&[name.into()]),
+            &tidb_dbterror::ERR_WRONG_DB_NAME.generate_with_stack_by_args(&[name.into()]),
         ));
     }
     Ok(())
@@ -362,7 +362,7 @@ fn check_database_name(name: &str) -> Result<(), MysqlError> {
 fn check_table_name(name: &str) -> Result<(), MysqlError> {
     if is_incorrect_identifier_name(name) {
         return Err(MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_WRONG_TABLE_NAME
+            &tidb_dbterror::ERR_WRONG_TABLE_NAME
                 .generate_with_stack_by_args(&[name.to_owned().into()]),
         ));
     }
@@ -376,7 +376,7 @@ fn check_table_name(name: &str) -> Result<(), MysqlError> {
 pub fn wrong_string_length_error(value: &str, kind: &str, maximum: usize) -> MysqlError {
     let shown: String = value.chars().take(70).collect();
     MysqlError::from_terror(
-        &tidb_util::dbterror::ERR_WRONG_STRING_LENGTH.generate_with_stack_by_args(&[
+        &tidb_dbterror::ERR_WRONG_STRING_LENGTH.generate_with_stack_by_args(&[
             shown.into(),
             kind.into(),
             maximum.into(),
@@ -459,7 +459,7 @@ fn check_create_table(create: &CreateTableStmt, strict: bool) -> Result<(), Mysq
                     check_index_info(name, &index.parts)?;
                     if index.is_empty_index {
                         return Err(MysqlError::from_terror(
-                            &tidb_util::dbterror::ERR_WRONG_NAME_FOR_INDEX
+                            &tidb_dbterror::ERR_WRONG_NAME_FOR_INDEX
                                 .generate_with_stack_by_args(&[name.into()]),
                         ));
                     }
@@ -481,7 +481,7 @@ fn check_create_table(create: &CreateTableStmt, strict: bool) -> Result<(), Mysq
     }
     if create.columns.is_empty() && create.like_table.is_none() {
         return Err(MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_TABLE_MUST_HAVE_COLUMNS.generate_with_stack_by_args(&[]),
+            &tidb_dbterror::ERR_TABLE_MUST_HAVE_COLUMNS.generate_with_stack_by_args(&[]),
         ));
     }
     if let Some(partitioning) = &create.partitioning {
@@ -491,7 +491,7 @@ fn check_create_table(create: &CreateTableStmt, strict: bool) -> Result<(), Mysq
             .any(|definition| is_incorrect_identifier_name(&definition.name))
         {
             return Err(MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_WRONG_PARTITION_NAME.generate_with_stack_by_args(&[]),
+                &tidb_dbterror::ERR_WRONG_PARTITION_NAME.generate_with_stack_by_args(&[]),
             ));
         }
     }
@@ -526,12 +526,12 @@ pub fn check_unsupported_table_options(options: &[TableOption]) -> Result<(), My
         match option {
             TableOption::Union(_) => {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_TABLE_OPTION_UNION_UNSUPPORTED,
+                    &tidb_dbterror::ERR_TABLE_OPTION_UNION_UNSUPPORTED,
                 ))
             }
             TableOption::InsertMethod(_) => {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_TABLE_OPTION_INSERT_METHOD_UNSUPPORTED,
+                    &tidb_dbterror::ERR_TABLE_OPTION_INSERT_METHOD_UNSUPPORTED,
                 ))
             }
             TableOption::Engine(engine)
@@ -540,7 +540,7 @@ pub fn check_unsupported_table_options(options: &[TableOption]) -> Result<(), My
                     .any(|valid| engine.eq_ignore_ascii_case(valid)) =>
             {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_UNKNOWN_ENGINE
+                    &tidb_dbterror::ERR_UNKNOWN_ENGINE
                         .generate_with_stack_by_args(&[(engine.clone()).to_string().into()]),
                 ))
             }
@@ -600,7 +600,7 @@ fn check_alter_table(alter: &tidb_ast::AlterTableStmt) -> Result<(), MysqlError>
                 .any(|definition| is_incorrect_identifier_name(&definition.name)) =>
             {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_WRONG_PARTITION_NAME.generate_with_stack_by_args(&[]),
+                    &tidb_dbterror::ERR_WRONG_PARTITION_NAME.generate_with_stack_by_args(&[]),
                 ));
             }
             _ => {}
@@ -614,7 +614,7 @@ fn check_alter_table(alter: &tidb_ast::AlterTableStmt) -> Result<(), MysqlError>
 fn check_index_info(name: &str, parts: &[IndexPart]) -> Result<(), MysqlError> {
     if name.go_equal_fold("PRIMARY") {
         return Err(MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_WRONG_NAME_FOR_INDEX
+            &tidb_dbterror::ERR_WRONG_NAME_FOR_INDEX
                 .generate_with_stack_by_args(&[name.into()]),
         ));
     }
@@ -632,7 +632,7 @@ fn check_index_info(name: &str, parts: &[IndexPart]) -> Result<(), MysqlError> {
         } = part
         {
             return Err(MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_KEY_PART0
+                &tidb_dbterror::ERR_KEY_PART0
                     .generate_with_stack_by_args(&[(name.clone()).to_string().into()]),
             ));
         }
@@ -685,7 +685,7 @@ fn check_column_options(temporary: bool, options: &[ColumnOption]) -> Result<usi
     }
     if primary > 0 && generated && !stored {
         return Err(MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN.generate_with_stack_by_args(
+            &tidb_dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN.generate_with_stack_by_args(
                 &[
                     ("Defining a virtual generated column as primary key".to_owned())
                         .to_string()
@@ -721,11 +721,11 @@ impl ColumnCheckError {
         };
         match self {
             Self::WrongColumnName => MysqlError::from_terror(
-        &tidb_util::dbterror::ERR_WRONG_COLUMN_NAME
+        &tidb_dbterror::ERR_WRONG_COLUMN_NAME
             .generate_with_stack_by_args(&[(name.clone()).to_string().into()]),
     ),
             Self::InvalidDefault => coded(
-                &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE,
+                &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE,
                 format!("Invalid default value for '{name}'"),
             ),
             Self::DisplayWidthOutOfRange => coded(
@@ -953,7 +953,7 @@ fn check_auto_increment_op(column: &ColumnDef, index: usize) -> Result<bool, Mys
     let options = &column.options;
     let invalid_default = || {
         MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+            &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
                 .generate_with_stack_by_args(&[column.name.clone().into()]),
         )
     };
@@ -1053,13 +1053,13 @@ fn check_contain_dot_column(create: &CreateTableStmt) -> Result<(), MysqlError> 
         };
         if !column_schema.is_empty() && column_schema != schema {
             return Err(MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_WRONG_DB_NAME
+                &tidb_dbterror::ERR_WRONG_DB_NAME
                     .generate_with_stack_by_args(&[column_schema.into()]),
             ));
         }
         if !column_table.is_empty() && column_table != table {
             return Err(MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_WRONG_TABLE_NAME
+                &tidb_dbterror::ERR_WRONG_TABLE_NAME
                     .generate_with_stack_by_args(&[column_table.to_owned().into()]),
             ));
         }

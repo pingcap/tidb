@@ -195,8 +195,8 @@ fn handle_raw_cast_error(
             identity: reported.identity,
         }),
         |warning| {
-            ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
-                tidb_util::context::WarningLevel::Warning,
+            ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
+                tidb_context::WarningLevel::Warning,
                 warning.code,
                 warning.message.clone(),
                 warning.identity,
@@ -374,8 +374,8 @@ fn cast_contextual_value(
     for warning in warnings.0.into_inner() {
         let reported =
             completion.complete_warning(warning.to_sql_error(), warning_source, field, column, row);
-        ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
-            tidb_util::context::WarningLevel::Warning,
+        ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
+            tidb_context::WarningLevel::Warning,
             reported.code,
             reported.message.clone(),
             reported.identity,
@@ -440,8 +440,8 @@ fn cast_contextual_value(
                 // adjusted past the gap and warns `ErrTruncateWrongInsertValue`
                 // (1292), the same diagnostic strict mode raises below.
                 let reported = dst_transition_error(source, column, row);
-                ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
-            tidb_util::context::WarningLevel::Warning,
+                ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
+            tidb_context::WarningLevel::Warning,
             reported.code,
             reported.message.clone(),
             reported.identity,
@@ -458,8 +458,8 @@ fn cast_contextual_value(
                     column,
                     row,
                 );
-                ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
-            tidb_util::context::WarningLevel::Warning,
+                ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
+            tidb_context::WarningLevel::Warning,
             reported.code,
             reported.message.clone(),
             reported.identity,
@@ -580,7 +580,7 @@ fn wrong_value(field_type: &FieldType, text: &str) -> tidb_error::terror::Terror
 /// `exeerrors.ErrTruncateWrongInsertValue.GenWithStackByArgs(...)`.
 fn dst_transition_error(source: &Datum, column: &str, row: usize) -> MysqlError {
     MysqlError::from_terror(
-        &tidb_util::dbterror::exeerrors::ERR_TRUNCATE_WRONG_INSERT_VALUE
+        &tidb_dbterror::exeerrors::ERR_TRUNCATE_WRONG_INSERT_VALUE
             .generate_with_stack_by_args(&[
                 "timestamp".into(),
                 datum_error_text(source).into(),
@@ -658,8 +658,8 @@ fn apply_zero_date(
                     row_index,
                 )
             };
-            ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
-                tidb_util::context::WarningLevel::Warning,
+            ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
+                tidb_context::WarningLevel::Warning,
                 reported.code,
                 reported.message.clone(),
                 reported.identity,

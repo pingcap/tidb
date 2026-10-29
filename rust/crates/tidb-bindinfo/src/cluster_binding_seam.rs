@@ -262,7 +262,7 @@ impl BindingReloader {
     ) -> Result<Self, String> {
         let (stop, stopped) = mpsc::channel();
         let cleanup = Arc::clone(&target);
-        let worker = tidb_util::worker_stack::sql_worker_thread("tidb-binding-maintenance")
+        let worker = tidb_worker_stack::sql_worker_thread("tidb-binding-maintenance")
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let mut deadlines = intervals.map(|interval| Instant::now() + interval);
@@ -284,13 +284,13 @@ impl BindingReloader {
                                 continue;
                             }
                             // Go `globalBindHandleWorkerLoop`'s lines.
-                            let logger = tidb_util::logutil::bg_logger();
+                            let logger = tidb_logutil::bg_logger();
                             match index {
                                 0 => {
                                     if let Err(error) = target.reload() {
                                         logger.error(
                                             "update bindinfo failed",
-                                            &[tidb_util::logutil::zap_error(error)],
+                                            &[tidb_logutil::zap_error(error)],
                                         );
                                     }
                                 }
@@ -298,7 +298,7 @@ impl BindingReloader {
                                     if let Err(error) = target.gc() {
                                         logger.error(
                                             "GC bind record failed",
-                                            &[tidb_util::logutil::zap_error(error)],
+                                            &[tidb_logutil::zap_error(error)],
                                         );
                                     }
                                 }
@@ -306,7 +306,7 @@ impl BindingReloader {
                                     if let Err(error) = target.write_usage() {
                                         logger.warn(
                                             "BindingHandle.UpdateBindingUsageInfoToStorage",
-                                            &[tidb_util::logutil::zap_error(error)],
+                                            &[tidb_logutil::zap_error(error)],
                                         );
                                     }
                                 }
@@ -331,7 +331,7 @@ impl BindingReloader {
                 }));
                 target.close();
                 if let Err(payload) = result {
-                    tidb_util::logutil::log_recovered_panic("globalBindHandleWorkerLoop", payload.as_ref());
+                    tidb_logutil::log_recovered_panic("globalBindHandleWorkerLoop", payload.as_ref());
                 }
             })
             .map_err(|error| {

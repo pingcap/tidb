@@ -178,7 +178,7 @@ pub(super) fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
             cancel_ddl_job(
                 active,
                 DdlPlanError::from(
-                    tidb_util::dbterror::CLASS_SCHEMA
+                    tidb_dbterror::CLASS_SCHEMA
                         .new_std(tidb_error::tidb::errcode::ErrBadDB)
                         .generate(format!(
                             "Unknown database '(Schema ID {})'",
@@ -208,7 +208,7 @@ pub(super) fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
                 return Err(cancel_ddl_job(
                     active,
                     DdlPlanError::from(
-                        tidb_util::dbterror::CLASS_SCHEMA
+                        tidb_dbterror::CLASS_SCHEMA
                             .new_std(tidb_error::tidb::errcode::ErrTableExists)
                             .generate(format!(
                                 "Table '{}.{}' already exists",
@@ -229,7 +229,7 @@ pub(super) fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
                     return Err(cancel_ddl_job(
                         active,
                         DdlPlanError::from(
-                            tidb_util::dbterror::CLASS_SCHEMA
+                            tidb_dbterror::CLASS_SCHEMA
                                 .new_std(tidb_error::tidb::errcode::ErrCheckConstraintDupName)
                                 .generate_with_stack_by_args(&[FormatArg::from(wanted.as_str())]),
                         ),
@@ -281,7 +281,7 @@ pub(super) fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
         }
         state => {
             return Err(DdlPlanError::from(
-                tidb_util::dbterror::ERR_INVALID_DDL_JOB.generate_with_stack_by_args(&[
+                tidb_dbterror::ERR_INVALID_DDL_JOB.generate_with_stack_by_args(&[
                     FormatArg::from("table"),
                     FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
                 ]),

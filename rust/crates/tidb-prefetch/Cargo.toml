@@ -1,0 +1,13 @@
+[package]
+name = "tidb-prefetch"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/prefetch: Go pkg/util/prefetch (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]

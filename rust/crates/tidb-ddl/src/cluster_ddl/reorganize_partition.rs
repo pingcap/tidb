@@ -311,7 +311,7 @@ pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
     let warnings = planned
         .warning
         .map(|warning| {
-            vec![tidb_util::context::SqlWarn::with_code(
+            vec![tidb_context::SqlWarn::with_code(
                 DdlWarningLevel::Warning,
                 1105,
                 warning.to_owned(),
@@ -350,7 +350,7 @@ fn check_reorg_partition_names(
         .collect::<std::collections::HashSet<_>>();
     let same_name = |name: &str| {
         coded_refusal(
-            &tidb_util::dbterror::ERR_SAME_NAME_PARTITION,
+            &tidb_dbterror::ERR_SAME_NAME_PARTITION,
             format!("Duplicate partition name {name}"),
         )
     };
@@ -382,13 +382,13 @@ fn get_replaced_partition_ids(
             .position(|definition| definition.name.lowercase() == lower)
         else {
             return Err(coded_refusal(
-                &tidb_util::dbterror::ERR_WRONG_PARTITION_NAME,
+                &tidb_dbterror::ERR_WRONG_PARTITION_NAME,
                 "Incorrect partition name",
             ));
         };
         if !positions.insert(position) {
             return Err(coded_refusal(
-                &tidb_util::dbterror::ERR_SAME_NAME_PARTITION,
+                &tidb_dbterror::ERR_SAME_NAME_PARTITION,
                 format!("Duplicate partition name {}", definitions[position].name),
             ));
         }
@@ -398,7 +398,7 @@ fn get_replaced_partition_ids(
     match partition.partition_type {
         tidb_ast::PartitionType::RANGE if positions.len() != last - first + 1 => {
             return Err(coded_refusal(
-                &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL,
+                &tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL,
                 "Unsupported REORGANIZE PARTITION of RANGE; not adjacent partitions",
             ))
         }
@@ -406,7 +406,7 @@ fn get_replaced_partition_ids(
             if positions.len() != definitions.len() =>
         {
             return Err(coded_refusal(
-                &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL,
+                &tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL,
                 "Unsupported REORGANIZE PARTITION of HASH/RANGE; must reorganize all partitions",
             ))
         }
@@ -565,7 +565,7 @@ pub(super) fn plan_persisted_reorganize_partition_job_step<S: MetaSnapshot>(
                 return Err(cancel_ddl_job(
                     active,
                     coded_refusal(
-                        &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL,
+                        &tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL,
                         "Unsupported REORGANIZE PARTITION of a table with AFFINITY option",
                     ),
                 ));
@@ -577,7 +577,7 @@ pub(super) fn plan_persisted_reorganize_partition_job_step<S: MetaSnapshot>(
                     part_info.definitions.len() + current.definitions.len() - part_names.len();
                 (if count > 8192 {
                     Err(coded_refusal(
-                        &tidb_util::dbterror::ERR_TOO_MANY_PARTITIONS,
+                        &tidb_dbterror::ERR_TOO_MANY_PARTITIONS,
                         "Too many partitions (including subpartitions) were defined",
                     ))
                 } else {
@@ -956,7 +956,7 @@ pub(super) fn plan_persisted_reorganize_partition_job_step<S: MetaSnapshot>(
             Ok(action_step(write))
         }
         state => Err(DdlPlanError::from(
-            tidb_util::dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+            tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
                 FormatArg::from("partition"),
                 FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
             ]),
@@ -1281,7 +1281,7 @@ pub(super) fn plan_cancel_reorganize_partition(
         &args,
         start_ts,
         DdlPlanError::from(
-            tidb_util::dbterror::ERR_CANCELLED_DDL_JOB
+            tidb_dbterror::ERR_CANCELLED_DDL_JOB
                 .generate(tidb_error::tidb::errname::ErrCancelledDDLJob.raw),
         ),
     )

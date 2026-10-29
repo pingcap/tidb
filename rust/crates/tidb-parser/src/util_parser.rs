@@ -35,7 +35,8 @@
 use std::error::Error;
 use std::fmt;
 
-use tidb_ast::{DmlStmt, InsertStmt, RestoreContext, RestoreFlags, Stmt, Visitable, Visitor};
+use tidb_ast::{DmlStmt, InsertStmt, RestoreContext, Stmt, Visitable, Visitor};
+use tidb_parser_format::RestoreFlags;
 use tidb_hack::go_to_lower;
 
 /// Source `ErrPatternNotMatch`: patterns doesn't match.

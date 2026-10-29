@@ -1,0 +1,19 @@
+[package]
+name = "tidb-cgroup"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/cgroup: Go pkg/util/cgroup (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+failpoints = ["dep:fail", "fail/failpoints"]
+
+[dependencies]
+rustix = { workspace = true, features = ["fs", "pipe", "stdio", "system", "thread"] }
+tempfile.workspace = true
+fail = { version = "0.4", optional = true }

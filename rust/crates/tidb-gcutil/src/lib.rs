@@ -161,7 +161,7 @@ fn go_time_to_ts(value: chrono::DateTime<chrono::FixedOffset>) -> u64 {
 /// Go `model.TSConvert2Time(tso).String()`: the TSO's physical milliseconds
 /// as a `time.Local` value, printed by `time.Time.String()`.
 fn format_tso_in_process_location(tso: u64) -> String {
-    tidb_util::go_time_layout::go_unix_milli_string((tso >> 18) as i64)
+    tidb_go_time_layout::go_unix_milli_string((tso >> 18) as i64)
 }
 
 #[cfg(test)]
@@ -257,7 +257,7 @@ mod snapshot_validation_tests {
                 );
                 assert_eq!(
                     safe_point_time,
-                    tidb_util::go_time_layout::go_time_string(
+                    tidb_go_time_layout::go_time_string(
                         chrono::Local
                             .timestamp_millis_opt(1_704_067_200_000)
                             .single()

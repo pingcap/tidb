@@ -184,7 +184,7 @@ fn merge_partitioned_global_statistics(
 
     let bucket_count = usize::try_from(options.num_buckets.max(1)).unwrap_or(256);
     let topn_count = u32::try_from(options.num_topn.max(0)).unwrap_or(0);
-    let killer = tidb_util::sqlkiller::SqlKiller::default();
+    let killer = tidb_sqlkiller::SqlKiller::default();
 
     for column in table.visible_columns() {
         let items = partitions
@@ -425,7 +425,7 @@ fn analyze_partition_ids(
             return Ok(Vec::new());
         }
         return Err(DriverError::from(
-            tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+            tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
                 .generate_with_stack_by_args(&[]),
         ));
     };

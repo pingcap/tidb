@@ -168,7 +168,7 @@ fn a_migrated_session_logs_in_with_its_session_token_like_go() {
     accounts.create_user_with_plugin("auth_session_token", "%", "", NATIVE);
     accounts.create_user_with_plugin("another_user", "%", "", NATIVE);
     let users = ConfiguredUserStore::from_accounts(accounts);
-    let token = tidb_util::stringutil::go_json_marshal(
+    let token = tidb_stringutil::go_json_marshal(
         &tidb_sessionstates::create_session_token("auth_session_token").unwrap(),
     )
     .into_bytes();

@@ -20,8 +20,8 @@
 //! Verification verdicts after re-deriving each Go test against its source:
 //!
 //! * Already ported and verified faithful by this batch's re-read: the four
-//!   `lockstore_test.go` tests ([`crate::lockstore::tests`],
-//!   [`crate::iterator::tests`]), `detector_test.go::TestDeadlock`
+//!   `lockstore_test.go` tests ([`tidb_unistore_lockstore::tests`],
+//!   [`tidb_unistore_lockstore::iterator::tests`]), `detector_test.go::TestDeadlock`
 //!   ([`crate::detector::tests`]), and all 27 `mvcc_test.go` tests plus
 //!   unistore's mock-PD/keyspace surfaces in `tidb-txnkv/src/unistore.rs`.
 //!   Three arms those landed ports skip are exercised HERE because the

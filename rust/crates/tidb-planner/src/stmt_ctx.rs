@@ -226,7 +226,7 @@ impl crate::optimize::OptimizeContext for StmtContext {
     fn selectivity_factor(&self) -> f64 {
         StmtContext::selectivity_factor(self)
     }
-    fn range_fallback_handler(&self) -> &tidb_util::context::RangeFallbackHandler {
+    fn range_fallback_handler(&self) -> &tidb_context::RangeFallbackHandler {
         StmtContext::range_fallback_handler(self)
     }
     fn always_keep_join_key(&self) -> bool {
@@ -330,9 +330,9 @@ impl crate::optimize::OptimizeContext for StmtContext {
     }
     fn append_task_warning(&self, note: bool, code: u16, message: &str) {
         let level = if note {
-            tidb_util::context::WarningLevel::Note
+            tidb_context::WarningLevel::Note
         } else {
-            tidb_util::context::WarningLevel::Warning
+            tidb_context::WarningLevel::Warning
         };
         self.append_leveled(level, code, message);
     }
@@ -366,9 +366,9 @@ mod tests {
             .with_in_explain_stmt(true);
         explain.append_mpp_warning("explain refusal");
         assert_eq!(
-            explain.take_warnings().iter().map(tidb_util::context::SqlWarn::parts).collect::<Vec<_>>(),
+            explain.take_warnings().iter().map(tidb_context::SqlWarn::parts).collect::<Vec<_>>(),
             vec![(
-                tidb_util::context::WarningLevel::Warning,
+                tidb_context::WarningLevel::Warning,
                 1105,
                 "explain refusal".to_owned()
             )]
@@ -379,9 +379,9 @@ mod tests {
         ordinary.append_mpp_warning("ordinary refusal");
         assert!(ordinary.take_warnings().is_empty());
         assert_eq!(
-            ordinary.take_extra_warnings().iter().map(tidb_util::context::SqlWarn::parts).collect::<Vec<_>>(),
+            ordinary.take_extra_warnings().iter().map(tidb_context::SqlWarn::parts).collect::<Vec<_>>(),
             vec![(
-                tidb_util::context::WarningLevel::Warning,
+                tidb_context::WarningLevel::Warning,
                 1105,
                 "ordinary refusal".to_owned()
             )]

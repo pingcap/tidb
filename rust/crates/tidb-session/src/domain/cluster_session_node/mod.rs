@@ -303,7 +303,7 @@ enum Executed {
     Done(WriteOutcome),
     /// A query compiled; its record set is the caller's to open, inside
     /// the `session.ExecuteStmt` region still held.
-    Query(tidb_util::tracing::ThreadRegionScope),
+    Query(tidb_tracing::ThreadRegionScope),
     /// An `ADMIN TRACE` compiled; the wrapped statement is the caller's to run.
     Trace,
 }
@@ -480,7 +480,7 @@ impl ClusterServerSession<'_> {
                     .is_err()
                 {
                     // Go `session.Close` logs the connection, not the error.
-                    tidb_util::logutil::bg_logger().error(
+                    tidb_logutil::bg_logger().error(
                         "release table lock failed",
                         &[tidb_log::Field::new(
                             "conn",
@@ -499,12 +499,12 @@ impl ClusterServerSession<'_> {
 /// `session.runStmt`, which logs the statement's text. Nothing on an
 /// untraced thread.
 fn compile_simple_statement(sql: &str) {
-    if tidb_util::tracing::current_span().is_none() {
+    if tidb_tracing::current_span().is_none() {
         return;
     }
-    tidb_util::tracing::begin_thread_region("executor.Compile", Some(sql.to_owned()));
-    tidb_util::tracing::start_thread_region("planner.Preprocess").end();
-    tidb_util::tracing::start_thread_region("planner.Optimize").end();
+    tidb_tracing::begin_thread_region("executor.Compile", Some(sql.to_owned()));
+    tidb_tracing::start_thread_region("planner.Preprocess").end();
+    tidb_tracing::start_thread_region("planner.Optimize").end();
     tidb_executor::driver::begin_run_stmt_region();
 }
 
@@ -512,14 +512,14 @@ fn compile_simple_statement(sql: &str) {
 /// `exec.Next` region; both end when the value drops.
 struct SimpleExecRegions {
     // Dropped in declaration order: the executor's call ends first.
-    _next: tidb_util::tracing::ThreadRegion,
-    _handle: tidb_util::tracing::ThreadRegion,
+    _next: tidb_tracing::ThreadRegion,
+    _handle: tidb_tracing::ThreadRegion,
 }
 
 impl SimpleExecRegions {
     fn begin() -> Self {
-        let handle = tidb_util::tracing::start_thread_region_ex("executor.handleNoDelayExecutor");
-        let next = tidb_util::tracing::start_thread_region_ex("*executor.SimpleExec.Next");
+        let handle = tidb_tracing::start_thread_region_ex("executor.handleNoDelayExecutor");
+        let next = tidb_tracing::start_thread_region_ex("*executor.SimpleExec.Next");
         Self {
             _next: next,
             _handle: handle,
@@ -2076,13 +2076,13 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         self.session.drop_local_temporary_tables(names)
     }
 
-    fn sql_killer(&self) -> Arc<tidb_util::sqlkiller::SqlKiller> {
+    fn sql_killer(&self) -> Arc<tidb_sqlkiller::SqlKiller> {
         self.session.sql_killer()
     }
 
     fn append_warning(
         &mut self,
-        level: tidb_util::context::WarningLevel,
+        level: tidb_context::WarningLevel,
         code: u16,
         message: String,
     ) {
@@ -2220,7 +2220,7 @@ impl<'s> ClusterServerSession<'s> {
         }
         // Go's `session.ExecuteStmt` region covers `Compile` and `runStmt`;
         // a query's record set is opened inside it and drained outside.
-        let execute_stmt = tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
+        let execute_stmt = tidb_tracing::begin_thread_region_scope("session.ExecuteStmt");
         self.begin_statement();
         let compiled = match self.compile(sql, stmt) {
             Ok(CompiledStatement::Query) => return Ok(Executed::Query(execute_stmt)),
@@ -2741,7 +2741,7 @@ impl<'s> ClusterServerSession<'s> {
         // Go runs a transaction statement as any other: `session.ExecuteStmt`
         // compiles its `Simple` plan and `runStmt` drives the `SimpleExec`.
         let _execute_stmt =
-            observed.then(|| tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt"));
+            observed.then(|| tidb_tracing::begin_thread_region_scope("session.ExecuteStmt"));
         if observed {
             compile_simple_statement(sql);
             self.session.begin_routed_statement_observation(sql, stmt);

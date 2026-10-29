@@ -43,7 +43,7 @@ use tidb_domain::historical_stats::{
 };
 use tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader;
 use tidb_stats_handle_syncload::stats_watch::SharedStats;
-use tidb_executor::process::ProcessRegistry;
+use tidb_sessmgr::ProcessRegistry;
 use tidb_executor::table_size_stats::TableStorageStatsProvider;
 use tidb_kv::cluster_storage::MutationBuffer;
 use tidb_privilege::PrivilegeRegistry;
@@ -253,9 +253,9 @@ impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
         };
         if let Err(error) = self.row_stats_cache.update_by_id(&source, physical_ids) {
             // Go `updateStatsCacheIfNeed`.
-            tidb_util::logutil::bg_logger().warn(
+            tidb_logutil::bg_logger().warn(
                 "cannot update stats cache for tables",
-                &[tidb_util::logutil::zap_error(error)],
+                &[tidb_logutil::zap_error(error)],
             );
         }
 
@@ -670,7 +670,7 @@ pub struct Domain {
     /// Go `Domain.connIDAllocator`: the node's one connection-ID allocator,
     /// shared with the SQL listener and drawn from by internal processes
     /// (auto-analyze's `NextConnID`).
-    connection_ids: Arc<dyn tidb_util::globalconn::Allocator + Send + Sync>,
+    connection_ids: Arc<dyn tidb_globalconn::Allocator + Send + Sync>,
     pub cluster_topology: Option<Arc<tidb_domain::cluster_topology::ClusterTopology>>,
     pub cluster_config: Option<Arc<tidb_executor::cluster_config::ClusterConfigClient>>,
     pub cluster_diagnostics: Option<Arc<tidb_executor::cluster_diagnostics::ClusterDiagnosticsClient>>,
@@ -689,9 +689,9 @@ pub struct Domain {
     /// `KvTable` that was handing it out; see [`crate::cluster_auto_id_seam`].
     pub auto_ids: Arc<dyn TableAutoIds>,
     /// Process-owned spill authority inherited by every connection.
-    pub spill_storage: Option<Arc<tidb_util::spill_storage::SpillStorage>>,
+    pub spill_storage: Option<Arc<tidb_spill_storage::SpillStorage>>,
     /// Process-wide memory admission authority installed before listener bind.
-    pub mem_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
+    pub mem_arbitrator: Option<Arc<tidb_memory::MemArbitrator>>,
     /// The catalog versions live statements and transactions still read at
     /// -- the MDL gate the schema-sync acknowledger consults before telling
     /// a Go DDL owner this node has the new schema. See
@@ -1685,7 +1685,7 @@ impl Domain {
                                     "tableID",
                                     tidb_log::Value::I64(update.table_id),
                                 ),
-                                tidb_util::logutil::zap_error(error),
+                                tidb_logutil::zap_error(error),
                             ],
                         );
                     }
@@ -1744,7 +1744,7 @@ impl Domain {
 
     pub fn with_spill_storage(
         mut self,
-        spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
+        spill_storage: Arc<tidb_spill_storage::SpillStorage>,
     ) -> Self {
         self.spill_storage = Some(spill_storage);
         self
@@ -1754,7 +1754,7 @@ impl Domain {
     #[must_use]
     pub fn with_mem_arbitrator(
         mut self,
-        arbitrator: Arc<tidb_util::memory::MemArbitrator>,
+        arbitrator: Arc<tidb_memory::MemArbitrator>,
     ) -> Self {
         self.mem_arbitrator = Some(arbitrator);
         self
@@ -1816,7 +1816,7 @@ impl Domain {
     #[must_use]
     pub fn with_connection_ids(
         mut self,
-        connection_ids: Arc<dyn tidb_util::globalconn::Allocator + Send + Sync>,
+        connection_ids: Arc<dyn tidb_globalconn::Allocator + Send + Sync>,
     ) -> Self {
         self.connection_ids = connection_ids;
         self
@@ -1826,7 +1826,7 @@ impl Domain {
     /// connection-ID allocator.
     pub fn connection_id_allocator(
         &self,
-    ) -> Arc<dyn tidb_util::globalconn::Allocator + Send + Sync> {
+    ) -> Arc<dyn tidb_globalconn::Allocator + Send + Sync> {
         Arc::clone(&self.connection_ids)
     }
 
@@ -1972,7 +1972,7 @@ impl AutoAnalyzeWorker {
         });
         let weak = Arc::downgrade(factory);
         let running = Arc::clone(&stop);
-        let thread = tidb_util::worker_stack::sql_worker_thread("auto-analyze")
+        let thread = tidb_worker_stack::sql_worker_thread("auto-analyze")
             .spawn(move || loop {
                 if running.wait(stats_lease) {
                     return;
@@ -2015,7 +2015,7 @@ impl AnalyzeJobsCleanupWorker {
         });
         let weak = Arc::downgrade(factory);
         let running = Arc::clone(&stop);
-        let thread = tidb_util::worker_stack::sql_worker_thread("analyze-jobs-cleanup")
+        let thread = tidb_worker_stack::sql_worker_thread("analyze-jobs-cleanup")
             .spawn(move || {
                 let gc_interval = Duration::from_secs(60 * 60);
                 let cleanup_interval = stats_lease.saturating_mul(100);
@@ -2065,9 +2065,9 @@ impl AnalyzeJobsCleanupWorker {
                                     if let Err(error) = factory
                                         .cleanup_corrupted_analyze_jobs_on_dead_instances(cutoff)
                                     {
-                                        tidb_util::logutil::bg_logger().warn(
+                                        tidb_logutil::bg_logger().warn(
                                             "cleanup analyze jobs on dead instances failed",
-                                            &[tidb_util::logutil::zap_error(error)],
+                                            &[tidb_logutil::zap_error(error)],
                                         );
                                     }
                                 }
@@ -2087,16 +2087,16 @@ impl AnalyzeJobsCleanupWorker {
 
 // Go `Domain.analyzeJobsCleanupWorker`'s lines.
 pub(crate) fn log_gc_analyze_history_failed(error: impl std::fmt::Display) {
-    tidb_util::logutil::bg_logger().warn(
+    tidb_logutil::bg_logger().warn(
         "gc analyze history failed",
-        &[tidb_util::logutil::zap_error(error)],
+        &[tidb_logutil::zap_error(error)],
     );
 }
 
 pub(crate) fn log_cleanup_analyze_jobs_current_instance_failed(error: impl std::fmt::Display) {
-    tidb_util::logutil::bg_logger().warn(
+    tidb_logutil::bg_logger().warn(
         "cleanup analyze jobs on current instance failed",
-        &[tidb_util::logutil::zap_error(error)],
+        &[tidb_logutil::zap_error(error)],
     );
 }
 
@@ -2164,7 +2164,7 @@ impl StatsUsageWorkers {
         if let crate::node_config::StatsLease::Positive(lease) = lease {
             flush_on_drop = true;
             let jitter = || {
-                Duration::from_nanos(tidb_util::fastrand::uint64_n(
+                Duration::from_nanos(tidb_fastrand::uint64_n(
                     Duration::from_secs(60).as_nanos() as u64,
                 ))
             };
@@ -2248,7 +2248,7 @@ impl Drop for Domain {
                 // Go `Handle.FlushStats`.
                 tidb_stats_handle_logutil::stats_logger().warn(
                     "dump stats delta fail",
-                    &[tidb_util::logutil::zap_error(error)],
+                    &[tidb_logutil::zap_error(error)],
                 );
             }
         }
@@ -2618,11 +2618,11 @@ impl ClusterHistoricalStatsHandle {
                     .ok()
                 })
                 .map_or(0, |duration| duration.0);
-            tidb_util::logutil::bg_logger().warn(
+            tidb_logutil::bg_logger().warn(
                 "failed to gc outdated historical stats",
                 &[
                     tidb_log::Field::new("duration", tidb_log::Value::Duration(duration)),
-                    tidb_util::logutil::zap_error(error),
+                    tidb_logutil::zap_error(error),
                 ],
             );
         }
@@ -2981,7 +2981,7 @@ impl HistoricalStatsRuntime {
         handle: Arc<ClusterHistoricalStatsHandle>,
     ) -> Self {
         let running = Arc::clone(&worker);
-        let thread = tidb_util::worker_stack::sql_worker_thread("historical-stats-worker")
+        let thread = tidb_worker_stack::sql_worker_thread("historical-stats-worker")
             .spawn(move || {
                 while let Some(table_id) = running.recv_historical_stats_table() {
                     if let Err(error) = running.dump_historical_stats(
@@ -2990,10 +2990,10 @@ impl HistoricalStatsRuntime {
                         &ClusterHistoricalStatsMetrics,
                     ) {
                         // Go `Domain.StartHistoricalStatsWorker`.
-                        tidb_util::logutil::bg_logger().warn(
+                        tidb_logutil::bg_logger().warn(
                             "dump historical stats failed",
                             &[
-                                tidb_util::logutil::zap_error(error),
+                                tidb_logutil::zap_error(error),
                                 tidb_log::Field::new("tableID", tidb_log::Value::I64(table_id)),
                             ],
                         );
@@ -3026,7 +3026,7 @@ pub(crate) fn spawn_usage_worker(
 ) -> std::thread::JoinHandle<()> {
     let worker_name = name.to_owned();
     let log_name = worker_name.clone();
-    tidb_util::worker_stack::sql_worker_thread(worker_name)
+    tidb_worker_stack::sql_worker_thread(worker_name)
         .spawn(move || {
             while !stop.wait(interval) {
                 let Some(factory) = factory.upgrade() else {
@@ -3047,7 +3047,7 @@ pub fn log_stats_gc_version_failed(physical_id: i64, error: String) {
         "Failed to update stats meta version for gc",
         &[
             tidb_log::Field::new("tableID", tidb_log::Value::I64(physical_id)),
-            tidb_util::logutil::zap_error(error),
+            tidb_logutil::zap_error(error),
         ],
     );
 }
@@ -3055,15 +3055,15 @@ pub fn log_stats_gc_version_failed(physical_id: i64, error: String) {
 // The failure line of the Go worker each usage worker ports:
 // `indexUsageWorker`, `dumpColStatsUsageWorker`, `deltaUpdateTickerWorker`.
 pub(crate) fn log_usage_worker_failure(name: &str, error: String) {
-    let error = [tidb_util::logutil::zap_error(error)];
+    let error = [tidb_logutil::zap_error(error)];
     match name {
         "index-usage-gc" => {
             tidb_stats_handle_logutil::stats_logger().error("gc index usage failed", &error);
         }
         "column-stats-usage-dump" => {
-            tidb_util::logutil::bg_logger().warn("dump column stats usage failed", &error);
+            tidb_logutil::bg_logger().warn("dump column stats usage failed", &error);
         }
-        _ => tidb_util::logutil::bg_logger().warn("dump stats delta failed", &error),
+        _ => tidb_logutil::bg_logger().warn("dump stats delta failed", &error),
     }
 }
 
@@ -3154,7 +3154,7 @@ impl Domain {
 
     pub fn install_tls_manager(
         &self,
-        manager: Arc<dyn tidb_executor::process::TlsManager>,
+        manager: Arc<dyn tidb_sessmgr::TlsManager>,
         variables: Vec<(&'static str, String)>,
     ) {
         self.processes.set_tls_manager(manager);
@@ -3172,7 +3172,7 @@ impl Domain {
         Arc::clone(&self.expensive_query_handle)
     }
 
-    pub fn session_manager(&self) -> Arc<dyn tidb_util::memoryusagealarm::SessionManager> {
+    pub fn session_manager(&self) -> Arc<dyn tidb_memoryusagealarm::SessionManager> {
         Arc::new(self.processes.clone())
     }
 }
@@ -3470,7 +3470,7 @@ impl tidb_stats_handle_autoanalyze_priorityqueue::AnalysisJobContext
                 let (track, untrack) = system_process_trackers(factory.processes());
                 let arguments = arguments
                     .iter()
-                    .map(|argument| tidb_util::sqlescape::SqlArg::from(argument.as_str()))
+                    .map(|argument| tidb_sqlescape::SqlArg::from(argument.as_str()))
                     .collect::<Vec<_>>();
                 analyzed = tidb_stats_handle_autoanalyze_exec::auto_analyze(
                     context,

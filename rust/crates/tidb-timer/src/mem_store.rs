@@ -21,7 +21,7 @@ use std::sync::mpsc::{sync_channel, SyncSender};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 
-use tidb_util::timeutil::{parse_time_zone, system_location, TimeZone};
+use tidb_timeutil::{parse_time_zone, system_location, TimeZone};
 
 use crate::error::{Result, TimerError};
 use crate::store::{

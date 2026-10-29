@@ -30,7 +30,7 @@ use chrono::{DateTime, Utc};
 use tidb_domain::plan_replayer::{
     DumpFileGcChecker, DumpFileStorage, PlanReplayerError, RestrictedSqlExecutor,
 };
-use tidb_domain::replayer::get_plan_replayer_dir_name;
+use tidb_replayer::get_plan_replayer_dir_name;
 
 /// `extstore.NewExtStorage(ctx, "file://<root>", "")`: real files under a
 /// scratch root, addressed by storage-relative paths.

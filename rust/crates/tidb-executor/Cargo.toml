@@ -11,9 +11,47 @@ autotests = false
 
 [features]
 # Test hooks other crates' tests read (the digest-call counter).
-test-util = []
+test-util = ["tidb-sessmgr/test-util"]
 
 [dependencies]
+tidb-resourcegrouptag = { path = "../tidb-resourcegrouptag" }
+tidb-tiflash = { path = "../tidb-tiflash" }
+tidb-cteutil = { path = "../tidb-cteutil" }
+tidb-lock = { path = "../tidb-lock" }
+tidb-sessmgr = { path = "../tidb-sessmgr" }
+tidb-txninfo = { path = "../tidb-txninfo" }
+tidb-planner-costusage = { path = "../tidb-planner-costusage" }
+tidb-planner-indexadvisor = { path = "../tidb-planner-indexadvisor" }
+tidb-context = { path = "../tidb-context" }
+tidb-dbterror = { path = "../tidb-dbterror" }
+tidb-disk = { path = "../tidb-disk" }
+tidb-execdetails = { path = "../tidb-execdetails" }
+tidb-filter = { path = "../tidb-filter" }
+tidb-format = { path = "../tidb-format" }
+tidb-globalconn = { path = "../tidb-globalconn" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-mathutil = { path = "../tidb-mathutil" }
+tidb-memory = { path = "../tidb-memory" }
+tidb-memoryusagealarm = { path = "../tidb-memoryusagealarm" }
+tidb-password-validation = { path = "../tidb-password-validation" }
+tidb-plancodec = { path = "../tidb-plancodec" }
+tidb-ppcpuusage = { path = "../tidb-ppcpuusage" }
+tidb-redact = { path = "../tidb-redact" }
+tidb-ruv2-metrics = { path = "../tidb-ruv2-metrics" }
+tidb-selection = { path = "../tidb-selection" }
+tidb-sem-compat = { path = "../tidb-sem-compat" }
+tidb-sem-v2 = { path = "../tidb-sem-v2" }
+tidb-serialization = { path = "../tidb-serialization" }
+tidb-servermemorylimit = { path = "../tidb-servermemorylimit" }
+tidb-set = { path = "../tidb-set" }
+tidb-spill-storage = { path = "../tidb-spill-storage" }
+tidb-sqlkiller = { path = "../tidb-sqlkiller" }
+tidb-stringutil = { path = "../tidb-stringutil" }
+tidb-tiflashcompute = { path = "../tidb-tiflashcompute" }
+tidb-tls = { path = "../tidb-tls" }
+tidb-topsql-stmtstats = { path = "../tidb-topsql-stmtstats" }
+tidb-traceevent = { path = "../tidb-traceevent" }
+tidb-tracing = { path = "../tidb-tracing" }
 tidb-ranger = { path = "../tidb-ranger" }
 tidb-fixcontrol = { path = "../tidb-fixcontrol" }
 tidb-goruntime = { path = "../tidb-goruntime" }

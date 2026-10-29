@@ -1,0 +1,16 @@
+[package]
+name = "tidb-unistore-mvcc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/store/mockstore/unistore/tikv/mvcc: the MVCC lock and write records (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-unistore-lockstore = { path = "../tidb-unistore-lockstore" }
+tidb-codec = { path = "../tidb-codec" }
+tidb-proto = { path = "../tidb-proto" }

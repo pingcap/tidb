@@ -19,9 +19,10 @@ use std::sync::Arc;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_executor::{CteStorage, StatementMemory};
+use tidb_cteutil::CteStorage;
+use tidb_executor::StatementMemory;
 use tidb_vardef::OomAction;
-use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+use tidb_spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
 struct ScratchDir(PathBuf);
 

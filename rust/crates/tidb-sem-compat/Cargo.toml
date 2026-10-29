@@ -1,0 +1,23 @@
+[package]
+name = "tidb-sem-compat"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/sem/compat: Go pkg/util/sem/compat (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+enableassert = ["tidb-intest/enableassert", "tidb-sem/enableassert", "tidb-sem-v2/enableassert"]
+intest = ["tidb-intest/intest", "tidb-sem/intest", "tidb-sem-v2/intest"]
+
+[dependencies]
+tidb-intest = { path = "../tidb-intest" }
+tidb-sem = { path = "../tidb-sem" }
+tidb-sem-v2 = { path = "../tidb-sem-v2" }
+
+[dev-dependencies]
+tidb-intest = { path = "../tidb-intest", features = ["intest"] }

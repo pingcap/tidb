@@ -178,7 +178,7 @@ fn rename_user_moves_the_whole_account_row() {
         .run("RENAME USER 'nosuch'@'%' TO 'x'@'%'")
         .unwrap_err();
     assert!(
-        error.equal(&tidb_util::dbterror::exeerrors::ERR_CANNOT_USER),
+        error.equal(&tidb_dbterror::exeerrors::ERR_CANNOT_USER),
         "{error:?}"
     );
     assert!(error.to_string().ends_with(" old did not exist"), "{error}");
@@ -186,7 +186,7 @@ fn rename_user_moves_the_whole_account_row() {
         .run("RENAME USER 'bobby'@'%' TO 'occupied'@'%'")
         .unwrap_err();
     assert!(
-        error.equal(&tidb_util::dbterror::exeerrors::ERR_CANNOT_USER),
+        error.equal(&tidb_dbterror::exeerrors::ERR_CANNOT_USER),
         "{error:?}"
     );
     assert!(error.to_string().ends_with(" new did exist"), "{error}");
@@ -205,7 +205,7 @@ fn rename_user_is_one_transaction() {
         .run("RENAME USER ru3 TO ru5@localhost, nosuch TO ru7")
         .unwrap_err();
     assert!(
-        error.equal(&tidb_util::dbterror::exeerrors::ERR_CANNOT_USER),
+        error.equal(&tidb_dbterror::exeerrors::ERR_CANNOT_USER),
         "{error:?}"
     );
     assert!(error.to_string().ends_with(" old did not exist"), "{error}");

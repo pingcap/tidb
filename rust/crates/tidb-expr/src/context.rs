@@ -772,7 +772,7 @@ pub trait Columns {
     /// Unlike ordinary information builtins, Go reads this from process-wide
     /// package and configuration state and does not require a session.
     fn tidb_info(&self) -> String {
-        tidb_util::printer::get_tidb_info()
+        tidb_printer::get_tidb_info()
     }
 
     /// The statement snapshot of `@@block_encryption_mode`.
@@ -885,9 +885,9 @@ pub trait Columns {
     /// Go `StmtCtx.AppendWarning` / `AppendNote` / `AppendError` of a whole
     /// warning; a context that keeps only codes records its level, code and
     /// message.
-    fn append_sql_warn(&self, warning: tidb_util::context::SqlWarn) {
+    fn append_sql_warn(&self, warning: tidb_context::SqlWarn) {
         match warning.warning_level() {
-            tidb_util::context::WarningLevel::Note => {
+            tidb_context::WarningLevel::Note => {
                 self.append_note(warning.code(), warning.message());
             }
             _ => self.append_warning(warning.code(), warning.message()),
@@ -941,7 +941,7 @@ pub trait Columns {
     /// stash survives the statement boundary's warning reset, while entries
     /// appended straight into the live list during PLANNING are cleared by
     /// it before execution reads them.
-    fn take_warnings_since(&self, _bookmark: usize) -> Vec<tidb_util::context::SqlWarn> {
+    fn take_warnings_since(&self, _bookmark: usize) -> Vec<tidb_context::SqlWarn> {
         Vec::new()
     }
 

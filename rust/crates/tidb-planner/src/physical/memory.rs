@@ -30,7 +30,7 @@
 use tidb_expr::aggregation::{AggFuncDesc, BaseFuncDesc, ByItems};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
-use tidb_util::size::{
+use tidb_size::{
     SIZE_OF_BOOL, SIZE_OF_FLOAT64, SIZE_OF_INT, SIZE_OF_INT32, SIZE_OF_INTERFACE, SIZE_OF_MAP,
     SIZE_OF_POINTER, SIZE_OF_SLICE, SIZE_OF_STRING, SIZE_OF_UINT64, SIZE_OF_UINT8,
 };
@@ -352,7 +352,7 @@ pub(super) fn go_node_memory_usage(node: &PhysicalPlan) -> i64 {
                 + op.tbl_id_to_handle_cols
                     .values()
                     .map(|cols| {
-                        tidb_util::size::SIZE_OF_INT64
+                        tidb_size::SIZE_OF_INT64
                             + SIZE_OF_SLICE
                             + cols.len() as i64 * SIZE_OF_INTERFACE
                             + columns_memory_usage(cols)
@@ -361,7 +361,7 @@ pub(super) fn go_node_memory_usage(node: &PhysicalPlan) -> i64 {
                 + op.tbl_id_to_phys_tbl_id_col
                     .values()
                     .map(|col| {
-                        tidb_util::size::SIZE_OF_INT64 + SIZE_OF_POINTER + col.memory_usage()
+                        tidb_size::SIZE_OF_INT64 + SIZE_OF_POINTER + col.memory_usage()
                     })
                     .sum::<i64>()
         }

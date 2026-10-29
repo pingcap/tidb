@@ -176,7 +176,7 @@ fn recover_callback(name: &str, action: impl FnOnce()) {
             .copied()
             .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
             .unwrap_or("non-string panic");
-        tidb_util::logutil::bg_logger().warn(
+        tidb_logutil::bg_logger().warn(
             &format!("panic in {name}"),
             &[
                 Field::new("error", Value::Str(message.to_owned())),
@@ -294,7 +294,7 @@ fn adjust_mem_cost(total_mem_cost: i64) -> Result<i64, String> {
     if total_mem_cost != 0 {
         return Ok(total_mem_cost);
     }
-    tidb_util::memory::mem_total()
+    tidb_memory::mem_total()
         .map(|total| (total / 5).min(i64::MAX as u64) as i64)
         .map_err(|error| error.to_string())
 }
@@ -347,7 +347,7 @@ impl StatsCacheInner for Lfu {
         let capacity = match adjust_mem_cost(capacity) {
             Ok(capacity) => capacity,
             Err(error) => {
-                tidb_util::logutil::bg_logger().warn(
+                tidb_logutil::bg_logger().warn(
                     "adjustMemCost failed",
                     &[Field::new("error", Value::Str(error))],
                 );

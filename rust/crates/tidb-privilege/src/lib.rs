@@ -560,7 +560,7 @@ mod tests {
             )
             .unwrap_err(),
             tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::exeerrors::ERR_PASSWORD_FORMAT
+                &tidb_dbterror::exeerrors::ERR_PASSWORD_FORMAT
                     .generate_with_stack_by_args(&[])
             )
         );
@@ -569,7 +569,7 @@ mod tests {
             encode_password_for_plugin("mysql_native_password", &PluginCredential::As("*short"))
                 .unwrap_err(),
             tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::exeerrors::ERR_PASSWORD_FORMAT
+                &tidb_dbterror::exeerrors::ERR_PASSWORD_FORMAT
                     .generate_with_stack_by_args(&[])
             )
         );
@@ -600,7 +600,7 @@ mod tests {
             )
             .unwrap_err(),
             tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::exeerrors::ERR_PASSWORD_FORMAT
+                &tidb_dbterror::exeerrors::ERR_PASSWORD_FORMAT
                     .generate_with_stack_by_args(&[])
             )
         );
@@ -616,7 +616,7 @@ mod tests {
             encode_password_for_plugin("tidb_auth_token", &PluginCredential::As("anything"))
                 .unwrap_err(),
             tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::exeerrors::ERR_PASSWORD_FORMAT
+                &tidb_dbterror::exeerrors::ERR_PASSWORD_FORMAT
                     .generate_with_stack_by_args(&[])
             )
         );

@@ -16,6 +16,9 @@ path = "tests/all.rs"
 workspace = true
 
 [dependencies]
+tidb-parser-format = { path = "../tidb-parser-format" }
+tidb-parser-opcode = { path = "../tidb-parser-opcode" }
+tidb-parser-util = { path = "../tidb-parser-util" }
 serde.workspace = true
 serde_json.workspace = true
 tidb-charset = { path = "../tidb-charset" }

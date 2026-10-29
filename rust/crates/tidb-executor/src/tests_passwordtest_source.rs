@@ -29,7 +29,7 @@
 //! corpus. Those Go tests therefore carry per-test gap rows below.
 
 use tidb_datatype::GoString;
-use tidb_util::password_validation::{
+use tidb_password_validation::{
     validate_password, GlobalVarAccessor, PasswordUser, PwdError,
 };
 

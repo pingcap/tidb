@@ -15,14 +15,12 @@
 //! All planner source-translation tests in one process.
 
 // Register module-safe suites here; isolated suites remain explicit Cargo targets.
-mod base_traits;
 mod by_item;
 mod cardinality;
 mod column_length;
 mod cost_factors;
 mod cross_estimation;
 mod fix_control;
-mod hash_equaler;
 mod index_columns;
 mod index_range_policy;
 mod join;

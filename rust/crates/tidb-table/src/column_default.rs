@@ -263,11 +263,11 @@ fn clock_fsp_argument(arg: &Expr) -> Option<i64> {
 /// Go `restoreFuncCall`'s flag set, which is what `ColumnInfo.DefaultValue`
 /// stores for an expression default and therefore what `SHOW CREATE TABLE`
 /// prints back.
-fn default_restore_flags() -> tidb_ast::RestoreFlags {
-    tidb_ast::RestoreFlags::STRING_SINGLE_QUOTES
-        | tidb_ast::RestoreFlags::KEYWORD_LOWERCASE
-        | tidb_ast::RestoreFlags::NAME_BACK_QUOTES
-        | tidb_ast::RestoreFlags::SPACES_AROUND_BINARY_OPERATION
+fn default_restore_flags() -> tidb_parser_format::RestoreFlags {
+    tidb_parser_format::RestoreFlags::STRING_SINGLE_QUOTES
+        | tidb_parser_format::RestoreFlags::KEYWORD_LOWERCASE
+        | tidb_parser_format::RestoreFlags::NAME_BACK_QUOTES
+        | tidb_parser_format::RestoreFlags::SPACES_AROUND_BINARY_OPERATION
 }
 
 /// Go `getFuncCallDefaultValue`: the whitelist a function-call `DEFAULT` must
@@ -304,7 +304,7 @@ fn func_call_default(
             };
             if written_fsp != field_type.decimal() {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                    &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
                         .generate_with_stack_by_args(&[column.into()]),
                 ));
             }
@@ -338,7 +338,7 @@ fn func_call_default(
         };
         if written_fsp != field_type.decimal() {
             return Err(MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
                     .generate_with_stack_by_args(&[column.into()]),
             ));
         }
@@ -362,7 +362,7 @@ fn func_call_default(
                     | FieldTypeCode::LongLong
             ) {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_COLUMN_TYPE_UNSUPPORTED_NEXT_VALUE
+                    &tidb_dbterror::ERR_COLUMN_TYPE_UNSUPPORTED_NEXT_VALUE
                         .generate_with_stack_by_args(&[column.into()]),
                 ));
             }
@@ -456,7 +456,7 @@ fn func_call_default(
             };
             let Some(now_args) = function_args(now, "now") else {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                    &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
                         .generate_with_stack_by_args(&[
                             column.into(),
                             format!("{name} with disallowed args").into(),
@@ -471,7 +471,7 @@ fn func_call_default(
             }
             let Some(format) = string_value(format) else {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                    &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
                         .generate_with_stack_by_args(&[
                             column.into(),
                             format!("{name} with disallowed args").into(),
@@ -483,7 +483,7 @@ fn func_call_default(
                 "%Y-%m" | "%Y-%m-%d" | "%Y-%m-%d %H.%i.%s" | "%Y-%m-%d %H:%i:%s"
             ) {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                    &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
                         .generate_with_stack_by_args(&[
                             column.into(),
                             format!("KindString {format}").into(),
@@ -505,7 +505,7 @@ fn func_call_default(
             };
             let Some(upper_args) = function_args(source, "upper") else {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                    &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
                         .generate_with_stack_by_args(&[
                             column.into(),
                             format!("{name} with disallowed args").into(),
@@ -520,7 +520,7 @@ fn func_call_default(
             };
             let Some(uuid_args) = function_args(uuid, "uuid") else {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                    &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
                         .generate_with_stack_by_args(&[
                             column.into(),
                             format!("{name} with disallowed args").into(),
@@ -548,7 +548,7 @@ fn func_call_default(
             };
             let Some(substring_args) = function_args(substring, "substring_index") else {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                    &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
                         .generate_with_stack_by_args(&[
                             column.into(),
                             format!("{name} with disallowed args").into(),
@@ -563,7 +563,7 @@ fn func_call_default(
             };
             let Some(user_args) = function_args(user, "user") else {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                    &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
                         .generate_with_stack_by_args(&[
                             column.into(),
                             format!("{name} with disallowed args").into(),
@@ -585,7 +585,7 @@ fn func_call_default(
                     );
                 }
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                    &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
                         .generate_with_stack_by_args(&[
                             column.into(),
                             format!("KindString {separator}").into(),
@@ -593,7 +593,7 @@ fn func_call_default(
                 ));
             }
             Err(MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
                     .generate_with_stack_by_args(&[
                         column.into(),
                         format!("{name} with disallowed args").into(),
@@ -609,7 +609,7 @@ fn func_call_default(
             }
             if !args.iter().all(is_value_expr) {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                    &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
                         .generate_with_stack_by_args(&[
                             column.into(),
                             format!("{name} with disallowed args").into(),
@@ -650,7 +650,7 @@ fn func_call_default(
             )
         }
         _ => Err(MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+            &tidb_dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
                 .generate_with_stack_by_args(&[column.into(), lower.into()]),
         )),
     }
@@ -820,10 +820,10 @@ pub fn materialize_stored_literal(
 }
 
 fn system_location_as_session_zone() -> SessionTimeZone {
-    match tidb_util::timeutil::system_location() {
-        tidb_util::timeutil::TimeZone::Local => SessionTimeZone::Local,
-        tidb_util::timeutil::TimeZone::Named(zone) => SessionTimeZone::Named(zone),
-        tidb_util::timeutil::TimeZone::Fixed { name, offset_secs } => {
+    match tidb_timeutil::system_location() {
+        tidb_timeutil::TimeZone::Local => SessionTimeZone::Local,
+        tidb_timeutil::TimeZone::Named(zone) => SessionTimeZone::Named(zone),
+        tidb_timeutil::TimeZone::Fixed { name, offset_secs } => {
             SessionTimeZone::Fixed { name, offset_secs }
         }
     }
@@ -925,8 +925,8 @@ pub fn check_no_default_value_for_insert(
             return Err(crate::column::ColumnError::NoDefaultForField(name.to_owned()));
         }
         if !not_null {
-            ctx.append_sql_warn(tidb_util::context::SqlWarn::raised(
-                tidb_util::context::WarningLevel::Warning,
+            ctx.append_sql_warn(tidb_context::SqlWarn::raised(
+                tidb_context::WarningLevel::Warning,
                 tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE
                     .generate_with_stack_by_args(&[name.into()]),
             ));
@@ -1015,8 +1015,8 @@ pub fn get_col_default_value_from_nil(
         return Ok(crate::bad_null::zero_value(field_type));
     }
     if !ctx.strict() {
-        ctx.append_sql_warn(tidb_util::context::SqlWarn::of(
-            tidb_util::context::WarningLevel::Warning,
+        ctx.append_sql_warn(tidb_context::SqlWarn::of(
+            tidb_context::WarningLevel::Warning,
             &tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE,
             MysqlError::from_terror(
                 &tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE

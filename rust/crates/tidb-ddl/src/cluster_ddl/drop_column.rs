@@ -67,7 +67,7 @@ pub(super) fn build_drop_column_job<S: MetaSnapshot>(
         return Ok(Some(AddIndexSubmission::AlreadySatisfied {
             detail: format!("column `{column}` does not exist on `{schema}`.`{table}`"),
             warnings: vec![crate::real_tikv_ddl::ddl_note(
-                tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY
+                tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY
                     .generate_with_stack_by_args(&[column.into()]),
             )],
         }));
@@ -132,7 +132,7 @@ fn check_drop_column_in_owner(
         return Ok(Err((
             if_exists,
             coded_refusal(
-                &tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY,
+                &tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY,
                 format!("column {} doesn't exist", name.original()),
             ),
         )));
@@ -190,7 +190,7 @@ pub(super) fn plan_persisted_drop_column_job_step(
         Err((true, error)) => {
             // Go: IF EXISTS turns the error into the job's warning.
             active.job.warning = Some(GoShared::new(
-                tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY.generate(error.to_string()),
+                tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY.generate(error.to_string()),
             ));
             active.job.state = JobState::DONE;
             return Ok(PersistedDdlActionStep {
@@ -259,7 +259,7 @@ pub(super) fn plan_persisted_drop_column_job_step(
         }
         _ => {
             return Err(DdlPlanError::from(
-                tidb_util::dbterror::ERR_INVALID_DDL_JOB.generate_with_stack_by_args(&[
+                tidb_dbterror::ERR_INVALID_DDL_JOB.generate_with_stack_by_args(&[
                     FormatArg::from("table"),
                     FormatArg::new(
                         info.state.to_string(),
@@ -321,7 +321,7 @@ pub(super) fn plan_cancel_drop_column(
             SchemaState::PUBLIC => {}
             state => {
                 return Err(DdlPlanError::from(
-                    tidb_util::dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+                    tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
                         FormatArg::from("index"),
                         FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
                     ]),

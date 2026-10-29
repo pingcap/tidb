@@ -267,7 +267,7 @@ fn get_modifiable_column_job(
     let new_col_name = column.name.go_to_lower();
     if new_col_name == "_tidb_rowid" {
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_WRONG_COLUMN_NAME,
+            &tidb_dbterror::ERR_WRONG_COLUMN_NAME,
             format!("Incorrect column name '{new_col_name}'"),
         ));
     }
@@ -364,7 +364,7 @@ fn get_modifiable_column_job(
     }
     if is_auto_increment && !new_col.default_value.is_nil() {
         return Err(driver_refusal(tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE.generate_with_stack_by_args(&[
+            &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE.generate_with_stack_by_args(&[
                 (new_col.name.original().to_owned()).to_string().into(),
             ]),
         )));
@@ -409,7 +409,7 @@ fn get_modifiable_column_job(
     if let Some((proto, message)) = err_g {
         // Go wraps `errG.Error()`, the terror text with its class prefix.
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
+            &tidb_dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
             format!(
                 "'{}' is not supported for generated columns.",
                 proto.generate(message)
@@ -423,7 +423,7 @@ fn get_modifiable_column_job(
             && !new_col.field_type.code().is_type_time()
         {
             return Err(driver_refusal(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_UNSUPPORTED_COLUMN_IN_TTL_CONFIG
+                &tidb_dbterror::ERR_UNSUPPORTED_COLUMN_IN_TTL_CONFIG
                     .generate_with_stack_by_args(&[(new_col.name.original().to_owned())
                         .to_string()
                         .into()]),
@@ -499,7 +499,7 @@ fn check_index_in_modifiable_columns(
             .find(|column| column.name.lowercase() == part.name.lowercase())
         else {
             return Err(coded_refusal(
-                &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS,
+                &tidb_dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS,
                 format!("column does not exist: {}", part.name.original()),
             ));
         };
@@ -608,7 +608,7 @@ fn check_partition_modifiable_column(
     // Go `checkPartitionColumnModifiable`.
     if col.name.lowercase() != new_col.name.lowercase() {
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_DEPENDENT_BY_PARTITION_FUNCTIONAL,
+            &tidb_dbterror::ERR_DEPENDENT_BY_PARTITION_FUNCTIONAL,
             format!(
                 "Column '{}' has a partitioning function dependency and cannot be dropped or \
                  renamed",
@@ -619,7 +619,7 @@ fn check_partition_modifiable_column(
     let (old, new) = (&col.field_type, &new_col.field_type);
     if !is_col_type_allowed_as_partitioning_col(partition_type, new) {
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION,
+            &tidb_dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION,
             format!(
                 "Field '{}' is of a not allowed type for this type of partitioning",
                 new_col.name.original()
@@ -960,14 +960,14 @@ fn extract_auto_random_bits_from_col_def(
     let shard_bits = option.shard_bits.unwrap_or(5);
     if shard_bits == 0 {
         return Err(DdlPlanError::from(
-            tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
+            tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
                 ("the value of auto_random should be positive".to_owned()).into(),
             ]),
         ));
     }
     if shard_bits > 15 {
         return Err(DdlPlanError::from(
-            tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[(format!(
+            tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[(format!(
                 "max allowed auto_random shard bits is 15, but got {shard_bits} on column `{}`",
                 column.name
             ))
@@ -977,7 +977,7 @@ fn extract_auto_random_bits_from_col_def(
     let range_bits = option.range_bits.unwrap_or(64);
     if !(32..=64).contains(&range_bits) {
         return Err(DdlPlanError::from(
-            tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[(format!(
+            tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[(format!(
                 "auto_random range bits must be between 32 and 64, but got {range_bits}"
             ))
             .into()]),
@@ -1003,7 +1003,7 @@ fn check_auto_random(
     let (new_shard_bits, new_range_bits) = extract_auto_random_bits_from_col_def(column)?;
     let invalid = |reason: String| {
         DdlPlanError::from(
-            tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM
+            tidb_dbterror::ERR_INVALID_AUTO_RANDOM
                 .generate_with_stack_by_args(&[reason.into()]),
         )
     };
@@ -1106,7 +1106,7 @@ fn check_and_apply_auto_random_bits<S: MetaSnapshot>(
     if used_bits > incremental_bits {
         let overflow = used_bits - incremental_bits;
         return Err(DdlPlanError::from(
-            tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[(format!(
+            tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[(format!(
                 "max allowed auto_random shard bits is {}, but got {} on column `{}`",
                 new_shard_bits.wrapping_sub(overflow),
                 new_shard_bits,
@@ -1147,7 +1147,7 @@ fn column_not_exists(column: &str, table: &str) -> DdlPlanError {
 /// Go `ErrUnsupportedModifyColumn` with its reason.
 fn unsupported_modify_column(reason: &str) -> DdlPlanError {
     coded_refusal(
-        &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN,
+        &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN,
         format!("Unsupported modify column: {reason}"),
     )
 }
@@ -1174,7 +1174,7 @@ fn get_modify_column_info(
         return Err(cancel_ddl_job(
             active,
             DdlPlanError::from(
-                tidb_util::dbterror::CLASS_SCHEMA
+                tidb_dbterror::CLASS_SCHEMA
                     .new_std(tidb_error::tidb::errcode::ErrBadDB)
                     .generate(format!(
                         "Unknown database '(Schema ID {})'",
@@ -2018,7 +2018,7 @@ fn finish_modify_column_without_reorg(
 /// Go `ErrColumnInChange`.
 fn column_in_change(old: &tidb_model::ColumnInfo, new_id: i64) -> DdlPlanError {
     coded_refusal(
-        &tidb_util::dbterror::ERR_COLUMN_IN_CHANGE,
+        &tidb_dbterror::ERR_COLUMN_IN_CHANGE,
         format!(
             "column {}, id {} still in changing",
             old.name.original(),
@@ -2880,7 +2880,7 @@ fn do_modify_column_index_reorg<S: MetaSnapshot>(
             }
         }
         state => Err(DdlPlanError::from(
-            tidb_util::dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+            tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
                 FormatArg::from("column"),
                 FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
             ]),
@@ -3166,7 +3166,7 @@ fn do_modify_column_type_with_data<S: MetaSnapshot>(
             Ok(action_step(write))
         }
         state => Err(DdlPlanError::from(
-            tidb_util::dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+            tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
                 FormatArg::from("column"),
                 FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
             ]),
@@ -3284,7 +3284,7 @@ fn merge_reorg_warnings(job: &Job, warnings: &[(u16, String, i64)]) {
         *counts.entry(key.clone()).or_insert(0) += count;
         warnings_map.entry(key).or_insert_with(|| {
             Some(GoShared::new(
-                tidb_util::dbterror::CLASS_TYPES
+                tidb_dbterror::CLASS_TYPES
                     .new_std(*code)
                     .generate(message.clone()),
             ))
@@ -3314,7 +3314,7 @@ pub(super) fn plan_cancel_modify_column(
     let target = get_modify_column_info(catalog, active, &mut args)?;
     let cancelled = || {
         DdlPlanError::from(
-            tidb_util::dbterror::ERR_CANCELLED_DDL_JOB
+            tidb_dbterror::ERR_CANCELLED_DDL_JOB
                 .generate(tidb_error::tidb::errname::ErrCancelledDDLJob.raw),
         )
     };

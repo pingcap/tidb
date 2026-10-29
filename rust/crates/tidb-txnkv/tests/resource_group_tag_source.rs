@@ -20,7 +20,8 @@ use tidb_proto::{
     KvrpcBatchGetRequest, KvrpcBatchRollbackRequest, KvrpcCommitRequest, KvrpcGetRequest,
     KvrpcMutation, KvrpcPrewriteRequest, KvrpcScanRequest, ResourceGroupTag, ResourceGroupTagLabel,
 };
-use tidb_txnkv::{get_first_key_from_request, get_resource_group_label_by_key};
+use tidb_resourcegrouptag::get_first_key_from_request;
+use tidb_resourcegrouptag::get_resource_group_label_by_key;
 
 const ROW_KEY: &[u8] = &[116, 128, 0, 0, 0, 0, 0, 0, 0, 95, 114];
 const INDEX_KEY: &[u8] = &[

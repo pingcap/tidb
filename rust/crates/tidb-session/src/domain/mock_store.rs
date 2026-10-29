@@ -208,7 +208,7 @@ fn bootstrap_image_path() -> Option<std::path::PathBuf> {
     metadata.modified().ok()?.hash(&mut identity);
     // What the bootstrap reads from its environment: the system time zone
     // it persists and the layout a debug build may be told to use.
-    tidb_util::timeutil::infer_system_tz().hash(&mut identity);
+    tidb_timeutil::infer_system_tz().hash(&mut identity);
     std::env::var("TIDB_RS_TEST_BOOTSTRAP_LAYOUT")
         .ok()
         .hash(&mut identity);

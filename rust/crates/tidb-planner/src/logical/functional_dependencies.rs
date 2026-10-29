@@ -137,7 +137,7 @@ fn add_not_null_facts(fds: &mut FdSet, conditions: &[Expression]) {
     let mut not_null = ColSet::default();
     for condition in conditions {
         for column in extract_columns(condition) {
-            if crate::null_misc::is_null_rejected(condition, column.unique_id) {
+            if tidb_planner_util::null_misc::is_null_rejected(condition, column.unique_id) {
                 not_null.insert(column.unique_id);
             }
         }
@@ -220,7 +220,7 @@ fn expression_is_null_rejected_by_schema(expression: &Expression, schema: Option
             .iter()
             .map(|column| column.unique_id)
             .collect::<Vec<_>>();
-        crate::null_misc::is_null_rejected_by(expression, &columns)
+        tidb_planner_util::null_misc::is_null_rejected_by(expression, &columns)
     })
 }
 
@@ -896,8 +896,8 @@ mod tests {
             &expression,
             Some(&schema)
         ));
-        assert!(!crate::null_misc::is_null_rejected(&expression, 1));
-        assert!(!crate::null_misc::is_null_rejected(&expression, 2));
+        assert!(!tidb_planner_util::null_misc::is_null_rejected(&expression, 1));
+        assert!(!tidb_planner_util::null_misc::is_null_rejected(&expression, 2));
     }
 
     #[test]

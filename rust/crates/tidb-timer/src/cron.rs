@@ -476,7 +476,7 @@ fn day_matches(dom: u64, dow: u64, time: &GoTime) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_util::timeutil::system_location;
+    use tidb_timeutil::system_location;
 
     #[test]
     fn descriptors_expand_to_specs() {

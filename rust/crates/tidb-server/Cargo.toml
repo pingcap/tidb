@@ -12,6 +12,33 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-domainutil = { path = "../tidb-domainutil" }
+tidb-sessmgr = { path = "../tidb-sessmgr" }
+tidb-txninfo = { path = "../tidb-txninfo" }
+tidb-topsql-reporter-metrics = { path = "../tidb-topsql-reporter-metrics" }
+tidb-cgmon = { path = "../tidb-cgmon" }
+tidb-cpu = { path = "../tidb-cpu" }
+tidb-disk = { path = "../tidb-disk" }
+tidb-globalconn = { path = "../tidb-globalconn" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-memory = { path = "../tidb-memory" }
+tidb-memoryusagealarm = { path = "../tidb-memoryusagealarm" }
+tidb-monotime = { path = "../tidb-monotime" }
+tidb-printer = { path = "../tidb-printer" }
+tidb-sem = { path = "../tidb-sem" }
+tidb-servermemorylimit = { path = "../tidb-servermemorylimit" }
+tidb-spill-storage = { path = "../tidb-spill-storage" }
+tidb-sqlkiller = { path = "../tidb-sqlkiller" }
+tidb-sys = { path = "../tidb-sys" }
+tidb-systimemon = { path = "../tidb-systimemon" }
+tidb-tiflashcompute = { path = "../tidb-tiflashcompute" }
+tidb-timeutil = { path = "../tidb-timeutil" }
+tidb-tls = { path = "../tidb-tls" }
+tidb-topsql-reporter = { path = "../tidb-topsql-reporter" }
+tidb-topsql-stmtstats = { path = "../tidb-topsql-stmtstats" }
+tidb-traceevent = { path = "../tidb-traceevent" }
+tidb-versioninfo = { path = "../tidb-versioninfo" }
+tidb-worker-stack = { path = "../tidb-worker-stack" }
 tidb-driver-error = { path = "../tidb-driver-error" }
 tidb-sessionstates = { path = "../tidb-sessionstates" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
@@ -119,6 +146,8 @@ tidb-config = { path = "../tidb-config" }
 toml.workspace = true
 
 [dev-dependencies]
+tidb-sem-v2 = { path = "../tidb-sem-v2" }
+tidb-stringutil = { path = "../tidb-stringutil" }
 tidb-ddl = { path = "../tidb-ddl", features = ["failpoints"] }
 tidb-util = { path = "../tidb-util", features = ["failpoints"] }
 fail = { version = "0.4", features = ["failpoints"] }

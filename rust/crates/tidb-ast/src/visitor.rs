@@ -197,3 +197,12 @@ mod tests {
         assert_eq!(visitor.left_expressions, 0);
     }
 }
+
+impl crate::Visitable for tidb_parser_opcode::Op {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        visitor.leave(self)
+    }
+}

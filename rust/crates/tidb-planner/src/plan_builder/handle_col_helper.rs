@@ -42,17 +42,17 @@
 //! # The element type
 //!
 //! Go's value is `util.HandleCols`, an interface over an int handle and a
-//! common handle. [`crate::handle_cols`] already models both identities, so
+//! common handle. [`tidb_planner_util::handle_cols`] already models both identities, so
 //! [`PlanHandleCols`] is the two-variant sum of them rather than a third
 //! spelling. That keeps the `Hash64`/`Equals` behaviour the cascades memo
 //! needs on the same values the helper stores.
 
 use std::collections::BTreeMap;
 
-use crate::handle_cols::{CommonHandleIdentity, IntHandleIdentity};
+use tidb_planner_util::handle_cols::{CommonHandleIdentity, IntHandleIdentity};
 
 /// Go `util.HandleCols`, as the closed sum of the two implementations
-/// [`crate::handle_cols`] already carries.
+/// [`tidb_planner_util::handle_cols`] already carries.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum PlanHandleCols {
     /// Go `util.IntHandleCols`.
@@ -160,7 +160,7 @@ impl HandleColHelper {
 #[cfg(test)]
 mod tests {
     use super::{HandleColHelper, HandleColMap, PlanHandleCols};
-    use crate::handle_cols::{CommonHandleIdentity, HandleColumnIdentity, IntHandleIdentity};
+    use tidb_planner_util::handle_cols::{CommonHandleIdentity, HandleColumnIdentity, IntHandleIdentity};
 
     fn int_handle(unique_id: i64) -> PlanHandleCols {
         PlanHandleCols::Int(IntHandleIdentity::new(Some(HandleColumnIdentity::new(

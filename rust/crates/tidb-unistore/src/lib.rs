@@ -103,18 +103,12 @@
 //! `main_test.go` is likewise skipped: it is `goleak` plus TiDB's global
 //! `testsetup` for the Go test binary, neither of which has an analogue here.
 
-pub mod arena;
 pub mod cluster;
 pub mod cophandler;
 pub mod detector;
-pub mod iterator;
 pub mod kv_handler;
-pub mod load_dump;
-pub mod lockstore;
-pub mod lockwaiter;
 pub mod mock;
 pub mod mock_pd;
-pub mod mvcc;
 pub mod mvcc_store;
 pub mod pd;
 pub mod redirector;
@@ -124,11 +118,6 @@ pub mod rpc;
 mod tests_mockstore_part1_go_parity;
 #[cfg(test)]
 mod tests_tikv_util_go_parity;
-#[cfg(test)]
-mod testutil;
 pub(crate) mod tikv_util;
 pub mod tso;
 
-pub use arena::{Arena, ArenaAddr, NULL_ARENA_ADDR, REUSE_SAFE_DURATION};
-pub use iterator::Iterator;
-pub use lockstore::{Hint, MemStore, MAX_HEIGHT, NODE_HEADER_SIZE};

@@ -19,10 +19,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tidb_expensivequery::Handle;
-use tidb_executor::process::{ProcessKillTarget, ProcessRegistry};
+use tidb_sessmgr::{ProcessKillTarget, ProcessRegistry};
 use crate::tests_support::row_text;
 use crate::Session;
-use tidb_util::sqlkiller::KillSignal;
+use tidb_sqlkiller::KillSignal;
 
 /// A connection's kill target holding its running command's
 /// cancellation, as the server's `ConnectionCancellation` does.

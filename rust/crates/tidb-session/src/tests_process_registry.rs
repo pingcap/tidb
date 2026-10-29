@@ -18,8 +18,8 @@
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use std::sync::Arc;
 
-use tidb_executor::process::*;
-use tidb_util::memoryusagealarm::SessionManager;
+use tidb_sessmgr::*;
+use tidb_memoryusagealarm::SessionManager;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 

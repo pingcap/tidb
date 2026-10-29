@@ -34,7 +34,7 @@ use crate::chunk::Chunk;
 use crate::row::Row;
 use std::sync::Arc;
 use tidb_datatype::FieldType;
-use tidb_util::memory::{Tracker, LABEL_FOR_CHUNK_LIST};
+use tidb_memory::{Tracker, LABEL_FOR_CHUNK_LIST};
 
 /// Go `chunk.RowPtrSize`: `unsafe.Sizeof(RowPtr{})`, two `uint32`s.
 pub const ROW_PTR_SIZE: usize = size_of::<RowPtr>();

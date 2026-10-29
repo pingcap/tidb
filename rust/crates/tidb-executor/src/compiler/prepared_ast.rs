@@ -285,7 +285,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
             self.prepared_statement_cacheable(&mut candidate, &catalog).err()
         };
         if let Some(reason) = refusal {
-            self.append_sql_warning(tidb_util::context::SqlWarn::with_code(tidb_util::context::WarningLevel::Warning, 1105,
+            self.append_sql_warning(tidb_context::SqlWarn::with_code(tidb_context::WarningLevel::Warning, 1105,
                 format!("skip prepared plan-cache: {reason}")),
             );
         }

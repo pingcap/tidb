@@ -107,7 +107,7 @@ pub fn create_session_token(username: &str) -> Result<SessionToken, TerrorError>
         expire_time: add(now, current_token_lifetime()),
         signature: Vec::new(),
     };
-    let token_bytes = tidb_util::stringutil::go_json_marshal(&token);
+    let token_bytes = tidb_stringutil::go_json_marshal(&token);
     token.signature = GLOBAL_SIGNING_CERT
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -128,7 +128,7 @@ pub fn validate_session_token(token_bytes: &[u8], username: &str) -> Result<(), 
         serde_json::from_slice(token_bytes).map_err(|error| error.to_string())?;
     let signature = std::mem::take(&mut token.signature);
     // Clear the signature and marshal it again to get the original content.
-    let content = tidb_util::stringutil::go_json_marshal(&token);
+    let content = tidb_stringutil::go_json_marshal(&token);
     GLOBAL_SIGNING_CERT
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner)

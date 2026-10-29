@@ -51,7 +51,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::expression::{Column, CorrelatedColumn};
 use tidb_expr::schema::Schema;
 
-use crate::cost_usage::{CostVer2, PlanCostOption};
+use tidb_planner_costusage::{CostVer2, PlanCostOption};
 use crate::find_best_task::LogicalJoinType;
 use crate::physical_property::{
     choose_partition_keys, ColumnSortItem, MppPartitionColumn, MppPartitionType, PhysicalProperty,
@@ -589,7 +589,7 @@ fn base_physical_join_memory_usage(
     condition_lists: &[&[tidb_expr::expression::Expression]],
     default_values: &[tidb_datatype::Datum],
 ) -> i64 {
-    use tidb_util::size::{SIZE_OF_BOOL, SIZE_OF_INTERFACE, SIZE_OF_POINTER};
+    use tidb_size::{SIZE_OF_BOOL, SIZE_OF_INTERFACE, SIZE_OF_POINTER};
     let conditions = condition_lists.iter().map(|list| list.len()).sum::<usize>() as i64;
     let keys = key_lists.iter().map(|list| list.len()).sum::<usize>() as i64;
     let mut sum = GO_EMPTY_BASE_PHYSICAL_JOIN_SIZE
@@ -616,7 +616,7 @@ impl PhysicalHashJoin {
     /// `NAEqualConditions` function.
     #[must_use]
     pub fn memory_usage(&self) -> i64 {
-        use tidb_util::size::{SIZE_OF_BOOL, SIZE_OF_SLICE, SIZE_OF_UINT, SIZE_OF_UINT8};
+        use tidb_size::{SIZE_OF_BOOL, SIZE_OF_SLICE, SIZE_OF_UINT, SIZE_OF_UINT8};
         base_physical_join_memory_usage(
             &self.base,
             &[
@@ -648,7 +648,7 @@ impl PhysicalMergeJoin {
     /// the join base plus one `CompareFunc` per key pair.
     #[must_use]
     pub fn memory_usage(&self) -> i64 {
-        use tidb_util::size::{SIZE_OF_BOOL, SIZE_OF_FUNC, SIZE_OF_SLICE};
+        use tidb_size::{SIZE_OF_BOOL, SIZE_OF_FUNC, SIZE_OF_SLICE};
         base_physical_join_memory_usage(
             &self.base,
             &[
@@ -675,7 +675,7 @@ impl PhysicalIndexJoin {
     /// `InnerPlan` is a child here, charged by the subtree walk.
     #[must_use]
     pub fn memory_usage(&self) -> i64 {
-        use tidb_util::size::{
+        use tidb_size::{
             SIZE_OF_BOOL, SIZE_OF_FUNC, SIZE_OF_INT, SIZE_OF_INTERFACE, SIZE_OF_POINTER,
             SIZE_OF_SLICE,
         };
@@ -719,7 +719,7 @@ impl PhysicalApply {
     /// embedded hash join plus the outer schema's correlated columns.
     #[must_use]
     pub fn memory_usage(&self) -> i64 {
-        use tidb_util::size::{SIZE_OF_BOOL, SIZE_OF_POINTER, SIZE_OF_SLICE};
+        use tidb_size::{SIZE_OF_BOOL, SIZE_OF_POINTER, SIZE_OF_SLICE};
         self.hash_join.memory_usage()
             + SIZE_OF_BOOL * 3
             + SIZE_OF_SLICE
@@ -836,7 +836,7 @@ impl IndexJoinCompareFilters {
     /// charged here as Go allocates them.
     #[must_use]
     pub fn memory_usage(&self) -> i64 {
-        use tidb_util::size::SIZE_OF_FUNC;
+        use tidb_size::SIZE_OF_FUNC;
         let affected = self
             .args
             .iter()
@@ -1335,7 +1335,7 @@ pub struct PhysicalTableSample {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
     /// Go `TableSampleInfo`.
-    pub table_sample_info: crate::table_sampler::TableSampleInfo,
+    pub table_sample_info: tidb_planner_tablesampler::TableSampleInfo,
     /// Go `PhysicalTableID`.
     pub physical_table_id: i64,
     /// Go `Desc`.
@@ -1701,7 +1701,7 @@ pub fn find_best_task_4_logical_cte(
     // (`plancodec/id.go:131`) — the `CTE` spelling is the CTEDefinition row.
     let mut base = BasePhysicalPlan::new(
         allocator,
-        tidb_util::plancodec::TYPE_CTE_FULL_SCAN,
+        tidb_plancodec::TYPE_CTE_FULL_SCAN,
         p.base.base.query_block_offset(),
     );
     base.base.set_stats(p.base.base.stats_info().cloned());

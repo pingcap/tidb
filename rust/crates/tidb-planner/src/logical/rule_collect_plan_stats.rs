@@ -133,7 +133,7 @@ pub fn refresh_source_group_ndvs_with_scale_ratio(source: &mut DataSource, ratio
 
 impl InterestingColumnPruner {
     fn record_asked_groups(source: &mut DataSource, groups: &[Vec<Column>], scale_ndv_skew_ratio: f64) {
-        if tidb_util::filter::is_system_schema(&tidb_mysql::to_lowercase(&source.db_name)) {
+        if tidb_filter::is_system_schema(&tidb_mysql::to_lowercase(&source.db_name)) {
             return;
         }
         let Some(schema) = source.base.base.schema() else {
@@ -446,7 +446,7 @@ impl Collector {
     }
 
     fn collect_data_source(&mut self, source: &DataSource) {
-        if tidb_util::filter::is_system_schema(&tidb_mysql::to_lowercase(&source.db_name)) {
+        if tidb_filter::is_system_schema(&tidb_mysql::to_lowercase(&source.db_name)) {
             return;
         }
         self.result

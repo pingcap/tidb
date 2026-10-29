@@ -17,7 +17,7 @@
 //! TABLES` executors (`executor/ddl.go`,
 //! `ddl/executor.go`) and the edits their jobs make to `TableInfo.Lock`
 //! (`ddl/table_lock.go`). `lock.Checker` (`pkg/lock`) is
-//! `tidb_executor::lock`.
+//! `tidb_lock`.
 //!
 //! This tier applies a lock job's steps in one catalog mutation, so a lock
 //! goes from absent straight to Go's final `public` state; the `pre-lock`
@@ -28,7 +28,9 @@ use std::collections::HashSet;
 use tidb_ast::TableLockType;
 use tidb_config::config_tree::config::table_lock_enabled;
 use tidb_ddl_build::table_lock;
-use tidb_executor::{Catalog, DriverError, TableEntry};
+use tidb_executor::Catalog;
+use tidb_executor::DriverError;
+use tidb_executor::TableEntry;
 use tidb_table::kv_table::KvTable;
 use tidb_model::{SessionInfo, TableLockTpInfo};
 use tidb_hack::go_to_lower;
@@ -156,8 +158,8 @@ impl Session {
                 )
             })
             .collect();
-        tidb_executor::lock::check_visits(
-            &tidb_executor::lock::Checker::new(&self.locked_tables, catalog),
+        tidb_lock::check_visits(
+            &tidb_lock::Checker::new(&self.locked_tables, catalog),
             &visits,
         )
     }
@@ -187,7 +189,7 @@ impl Session {
         for (db, table) in &names {
             if self.is_local_temporary_table(db, table) {
                 return Err(DriverError::from(
-                    tidb_util::dbterror::ERR_UNSUPPORTED_LOCAL_TEMP_TABLE_DDL
+                    tidb_dbterror::ERR_UNSUPPORTED_LOCAL_TEMP_TABLE_DDL
                         .generate_with_stack_by_args(&["LOCK TABLES".into()]),
                 ));
             }
@@ -390,7 +392,7 @@ impl Session {
         for (db, table) in &names {
             if self.is_local_temporary_table(db, table) {
                 return Err(DriverError::from(
-                    tidb_util::dbterror::ERR_UNSUPPORTED_LOCAL_TEMP_TABLE_DDL
+                    tidb_dbterror::ERR_UNSUPPORTED_LOCAL_TEMP_TABLE_DDL
                         .generate_with_stack_by_args(&["ADMIN CLEANUP TABLE LOCK".into()]),
                 ));
             }

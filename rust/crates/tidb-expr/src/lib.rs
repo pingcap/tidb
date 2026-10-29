@@ -398,7 +398,7 @@ pub use like::{ilike_match, like_match_with_collation};
 pub use regexp::regexp_match_bin_collation;
 pub use row::{compare_datums, compare_datums_with_collation};
 pub(crate) use tidb_datatype::{Datum, Decimal};
-use tidb_util::mathutil::MysqlRng;
+use tidb_mathutil::MysqlRng;
 
 use tidb_ast::{CastStyle, Expr, GetFormatSelector, IsTarget};
 

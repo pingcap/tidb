@@ -119,14 +119,14 @@ fn sem_enable_and_disable_change_new_session_defaults() {
 
     impl Drop for DisableSemOnDrop {
         fn drop(&mut self) {
-            tidb_util::sem::disable();
+            tidb_sem::disable();
         }
     }
 
-    tidb_util::sem::disable();
+    tidb_sem::disable();
     let _reset = DisableSemOnDrop;
 
-    tidb_util::sem::enable();
+    tidb_sem::enable();
     let enabled = mock_session_vars();
     assert_eq!(
         enabled.get_system("tidb_enable_enhanced_security").unwrap(),
@@ -144,7 +144,7 @@ fn sem_enable_and_disable_change_new_session_defaults() {
         "skip-grant-table satisfies RESTRICTED_STATUS_ADMIN verification",
     );
 
-    tidb_util::sem::disable();
+    tidb_sem::disable();
     let disabled = mock_session_vars();
     assert_eq!(
         disabled

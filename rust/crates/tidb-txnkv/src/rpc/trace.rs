@@ -29,7 +29,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use tidb_util::tracing::{Span, TRACE_EVENT_KEY};
+use tidb_tracing::{Span, TRACE_EVENT_KEY};
 use tikv_client::trace::{ClientSpanEvent, ClientSpanHandler};
 
 /// Go's opentracing tracer as client-go reaches it through `ctx`: every
@@ -87,7 +87,7 @@ pub fn client_span_handler(root: Span) -> ClientSpanHandler {
 /// `util.ContextWithTraceExecDetails(ctx)` for one client call: `future`
 /// reports client-go's spans under `span` and the `tikv.*` tree of every
 /// RPC it sends; `None` (an untraced statement) runs it unchanged. Pass the
-/// span of the code making the call (`tidb_util::tracing::current_span()`
+/// span of the code making the call (`tidb_tracing::current_span()`
 /// on the calling thread), taken before the future moves elsewhere.
 ///
 /// The future moves to the heap as soon as it is made: the client's futures
@@ -152,7 +152,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::*;
-    use tidb_util::tracing::{RawSpan, Tracer};
+    use tidb_tracing::{RawSpan, Tracer};
 
     fn recording_root() -> (Span, Arc<Mutex<Vec<RawSpan>>>) {
         let spans = Arc::new(Mutex::new(Vec::new()));

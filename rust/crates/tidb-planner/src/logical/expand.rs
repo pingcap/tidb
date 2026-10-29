@@ -63,7 +63,7 @@ use tidb_expr::expression::{CorrelatedColumn, Expression};
 use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::extract_cor_columns;
 
-use crate::hash_equaler::{new_hash_equaler, Hasher, NIL_FLAG, NOT_NIL_FLAG};
+use tidb_planner_cascades_base::{new_hash_equaler, Hasher, NIL_FLAG, NOT_NIL_FLAG};
 use crate::logical::{schema_producer, BaseLogicalPlan};
 use crate::plan_base::PlanError;
 

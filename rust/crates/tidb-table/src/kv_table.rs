@@ -408,13 +408,13 @@ struct KvCheckConstraint {
 
 /// Go `CheckAndBuildIndexConditionString`'s restore flags
 /// (`pkg/ddl/index.go`).
-fn partial_index_condition_flags() -> tidb_ast::RestoreFlags {
-    tidb_ast::RestoreFlags::STRING_SINGLE_QUOTES
-        | tidb_ast::RestoreFlags::KEYWORD_LOWERCASE
-        | tidb_ast::RestoreFlags::NAME_BACK_QUOTES
-        | tidb_ast::RestoreFlags::SPACES_AROUND_BINARY_OPERATION
-        | tidb_ast::RestoreFlags::WITHOUT_SCHEMA_NAME
-        | tidb_ast::RestoreFlags::WITHOUT_TABLE_NAME
+fn partial_index_condition_flags() -> tidb_parser_format::RestoreFlags {
+    tidb_parser_format::RestoreFlags::STRING_SINGLE_QUOTES
+        | tidb_parser_format::RestoreFlags::KEYWORD_LOWERCASE
+        | tidb_parser_format::RestoreFlags::NAME_BACK_QUOTES
+        | tidb_parser_format::RestoreFlags::SPACES_AROUND_BINARY_OPERATION
+        | tidb_parser_format::RestoreFlags::WITHOUT_SCHEMA_NAME
+        | tidb_parser_format::RestoreFlags::WITHOUT_TABLE_NAME
 }
 
 /// The lightweight evaluation context used by a partial-index predicate.
@@ -3083,7 +3083,7 @@ impl KvTable {
         rows: &[(&[Datum], Option<i64>)],
         ctx: &dyn tidb_expr::Columns,
     ) -> Result<std::collections::HashMap<Key, Vec<u8>>, KvTableError> {
-        let _region = tidb_util::tracing::start_thread_region_ex("prefetchUniqueIndices");
+        let _region = tidb_tracing::start_thread_region_ex("prefetchUniqueIndices");
         let mut keys = Vec::new();
         for (row, row_id) in rows {
             // A row whose keys cannot be built (Go `getKeysNeedCheckOneRow`
@@ -3096,7 +3096,7 @@ impl KvTable {
             keys.extend(unique_keys);
         }
         // Go `tikvTxn.BatchGet`, the driver transaction's read.
-        let _batch_get = tidb_util::tracing::start_thread_region_ex("tikvTxn.BatchGet");
+        let _batch_get = tidb_tracing::start_thread_region_ex("tikvTxn.BatchGet");
         self.store.batch_get(&keys).map_err(KvTableError::from)
     }
 
@@ -3109,7 +3109,7 @@ impl KvTable {
         values: &std::collections::HashMap<Key, Vec<u8>>,
         ctx: &dyn tidb_expr::Columns,
     ) -> Result<(), KvTableError> {
-        let _region = tidb_util::tracing::start_thread_region_ex("prefetchConflictedOldRows");
+        let _region = tidb_tracing::start_thread_region_ex("prefetchConflictedOldRows");
         let mut keys = Vec::new();
         for (row, row_id) in rows {
             let Ok(physical_id) = self.record_physical_id(row, ctx) else {
@@ -3134,7 +3134,7 @@ impl KvTable {
                 )));
             }
         }
-        let _batch_get = tidb_util::tracing::start_thread_region_ex("tikvTxn.BatchGet");
+        let _batch_get = tidb_tracing::start_thread_region_ex("tikvTxn.BatchGet");
         self.store.batch_get(&keys).map_err(KvTableError::from)?;
         Ok(())
     }
@@ -3577,7 +3577,7 @@ impl KvTable {
         // Go `AddRecord(..., table.WithCtx(ctx))`'s region; its index
         // writes take the caller's ctx (`GetCreateIdxOpt`), so they are its
         // siblings.
-        let _add_record = tidb_util::tracing::start_thread_region("table.AddRecord");
+        let _add_record = tidb_tracing::start_thread_region("table.AddRecord");
         self.with_txn_staging(ctx, |table| {
             table.insert_row_in(
                 row,
@@ -3636,7 +3636,7 @@ impl KvTable {
         ctx: &dyn crate::context::MutateContext,
         lazy_dup_check: bool,
     ) -> Result<TableHandle, KvTableError> {
-        let _add_record = tidb_util::tracing::start_thread_region("table.AddRecord");
+        let _add_record = tidb_tracing::start_thread_region("table.AddRecord");
         self.with_txn_staging(ctx, |table| {
             table.insert_row_in(
                 row,
@@ -3667,7 +3667,7 @@ impl KvTable {
         lazy_dup_check: bool,
         ctx: &dyn crate::context::MutateContext,
     ) -> Result<TableHandle, KvTableError> {
-        let _add_record = tidb_util::tracing::start_thread_region("table.AddRecord");
+        let _add_record = tidb_tracing::start_thread_region("table.AddRecord");
         self.with_txn_staging(ctx, |table| {
             table.insert_row_in(
                 row,

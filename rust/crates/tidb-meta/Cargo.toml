@@ -17,6 +17,7 @@ nextgen = ["tidb-config/nextgen"]
 workspace = true
 
 [dependencies]
+tidb-partialjson = { path = "../tidb-partialjson" }
 serde.workspace = true
 serde_json.workspace = true
 regex.workspace = true

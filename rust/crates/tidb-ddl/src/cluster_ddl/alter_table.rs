@@ -324,7 +324,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             let (_, stored) = locate_table(&catalog, schema, table)?;
             if stored.temp_table_type != tidb_model::TempTableType::NONE {
                 return Err(coded_refusal(
-                    &tidb_util::dbterror::ERR_OPT_ON_TEMPORARY_TABLE,
+                    &tidb_dbterror::ERR_OPT_ON_TEMPORARY_TABLE,
                     "`shard_row_id_bits` is unsupported on temporary tables.".to_owned(),
                 ));
             }
@@ -335,7 +335,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             }
             if *bits > 0 && (stored.pk_is_handle || stored.is_common_handle) {
                 return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
-                    &tidb_util::dbterror::ERR_UNSUPPORTED_SHARD_ROW_ID_BITS
+                    &tidb_dbterror::ERR_UNSUPPORTED_SHARD_ROW_ID_BITS
                         .generate_with_stack_by_args(&[]),
                 )));
             }
@@ -390,7 +390,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                     new_base,
                 )?;
                 if adjusted != new_base {
-                    warnings.push(tidb_util::context::SqlWarn::with_code(
+                    warnings.push(tidb_context::SqlWarn::with_code(
                         DdlWarningLevel::Warning,
                         tidb_error::mysql::errcode::ErrUnknown,
                         cant_reset_auto_increment(new_base, adjusted),
@@ -418,7 +418,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             let (schema_id, stored) = locate_table(catalog, schema, table)?;
             if stored.auto_random_bits == 0 || stored.get_pk_col_info().is_none() {
                 return Err(DdlPlanError::from(
-                    tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
+                    tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
                         ("alter auto_random_base of a non auto_random table".to_owned()).into(),
                     ]),
                 ));
@@ -433,7 +433,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             let maximum = (1_u64 << incremental_bits) - 1;
             let requested = *next as u64;
             if *next < 0 || requested & maximum != requested {
-                return Err(DdlPlanError::from(tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[(format!(
+                return Err(DdlPlanError::from(tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[(format!(
                     "alter auto_random_base to {next} overflows the incremental bits, max allowed base is {maximum}"
                 )).into()])));
             }
@@ -447,7 +447,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                     new_base,
                 )?;
                 if adjusted != new_base {
-                    warnings.push(tidb_util::context::SqlWarn::with_code(
+                    warnings.push(tidb_context::SqlWarn::with_code(
                         DdlWarningLevel::Warning,
                         tidb_error::mysql::errcode::ErrUnknown,
                         cant_reset_auto_increment(new_base, adjusted),
@@ -492,7 +492,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                         "TTL_JOB_INTERVAL"
                     };
                     let error = tidb_error::mysql::MysqlError::from_terror(
-                        &tidb_util::dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
+                        &tidb_dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
                             .generate_with_stack_by_args(&[option.to_string().into()]),
                     );
                     return Err(DdlPlanError::from_mysql_error(error));
@@ -536,7 +536,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             let (_, stored) = locate_table(catalog, schema, table)?;
             if stored.temp_table_type != tidb_model::TempTableType::NONE {
                 return Err(coded_refusal(
-                    &tidb_util::dbterror::ERR_OPT_ON_TEMPORARY_TABLE,
+                    &tidb_dbterror::ERR_OPT_ON_TEMPORARY_TABLE,
                     "`placement` is unsupported on temporary tables.".to_owned(),
                 ));
             }
@@ -837,7 +837,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             if *cache {
                 if tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                     return Err(coded_refusal(
-                        &tidb_util::dbterror::ERR_UNSUPPORTED_ALTER_CACHE_FOR_SYS_TABLE,
+                        &tidb_dbterror::ERR_UNSUPPORTED_ALTER_CACHE_FOR_SYS_TABLE,
                         "ALTER table cache for tables in system database is currently unsupported",
                     ));
                 }
@@ -902,7 +902,7 @@ fn driver_refusal(error: impl Into<tidb_error::mysql::MysqlError>) -> DdlPlanErr
 
 fn invalid_attributes_spec(error: tidb_ddl_label::LabelError) -> DdlPlanError {
     coded_refusal(
-        &tidb_util::dbterror::ERR_INVALID_ATTRIBUTES_SPEC,
+        &tidb_dbterror::ERR_INVALID_ATTRIBUTES_SPEC,
         label_rules::invalid_attributes_spec_message(&error),
     )
 }
@@ -928,7 +928,7 @@ fn label_rule_step(rule: &serde_json::Value) -> Result<LabelRuleStep, DdlPlanErr
 /// Go `ErrOptOnTemporaryTable` for ALTER TABLE CACHE.
 fn alter_temporary_table_cache() -> DdlPlanError {
     coded_refusal(
-        &tidb_util::dbterror::ERR_OPT_ON_TEMPORARY_TABLE,
+        &tidb_dbterror::ERR_OPT_ON_TEMPORARY_TABLE,
         "`alter temporary table cache` is unsupported on temporary tables.",
     )
 }
@@ -936,7 +936,7 @@ fn alter_temporary_table_cache() -> DdlPlanError {
 /// Go `ErrOptOnCacheTable` for a partitioned table.
 fn partition_mode_on_cache_table() -> DdlPlanError {
     coded_refusal(
-        &tidb_util::dbterror::ERR_OPT_ON_CACHE_TABLE,
+        &tidb_dbterror::ERR_OPT_ON_CACHE_TABLE,
         "'partition mode' is unsupported on cache tables.",
     )
 }
@@ -966,7 +966,7 @@ fn partition_of(table: &TableInfo, physical_id: i64) -> bool {
 fn find_partition_id(table: &TableInfo, partition: &str) -> Result<i64, DdlPlanError> {
     let Some(partitioning) = table.get_partition_info() else {
         return Err(driver_refusal(tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+            &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
                 .generate_with_stack_by_args(&[]),
         )));
     };
@@ -1180,7 +1180,7 @@ fn revertible_point_with_table(
 fn check_rename_index_cache(info: &TableInfo) -> Result<(), DdlPlanError> {
     if info.table_cache_status_type != tidb_model::TableCacheStatusType::DISABLE {
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_OPT_ON_CACHE_TABLE,
+            &tidb_dbterror::ERR_OPT_ON_CACHE_TABLE,
             "'Rename Index' is unsupported on cache tables.",
         ));
     }
@@ -1340,7 +1340,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
             };
             let set_ttl_option = |option: &str| {
                 let error = tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
+                    &tidb_dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
                         .generate_with_stack_by_args(&[option.to_string().into()]),
                 );
                 DdlPlanError::from_mysql_error(error)
@@ -1697,7 +1697,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
             };
             if tidb_metadef::is_mem_or_sys_db(&active.job.schema_name.to_string().go_to_lower()) {
                 return Err(DdlPlanError::from(
-                    tidb_util::dbterror::ERR_UNSUPPORTED_TI_FLASH_OPERATION_FOR_SYS_OR_MEM_TABLE
+                    tidb_dbterror::ERR_UNSUPPORTED_TI_FLASH_OPERATION_FOR_SYS_OR_MEM_TABLE
                         .clone(),
                 ));
             }
@@ -1816,7 +1816,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
                 let status = format!("{:?}", info.table_cache_status_type);
                 return Err(cancel_ddl_job(
                     active,
-                    DdlPlanError::from(tidb_util::dbterror::ERR_INVALID_DDL_STATE.generate(
+                    DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_STATE.generate(
                         format!(
                             "invalid {} state {status}",
                             if cache {

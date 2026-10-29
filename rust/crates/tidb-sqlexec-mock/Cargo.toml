@@ -11,6 +11,7 @@ description = "TiDB restricted SQL executor test double."
 workspace = true
 
 [dependencies]
+tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-resolve = { path = "../tidb-resolve" }

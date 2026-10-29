@@ -699,7 +699,7 @@ impl ClusterAnalyze for MockAnalyze {
         statement: &AnalyzeStatement,
         _: &str,
         _: &dyn tidb_executor::real_tikv_analyze::ApproximateTableCountProvider,
-        _: &tidb_util::sqlkiller::SqlKiller,
+        _: &tidb_sqlkiller::SqlKiller,
         _: &dyn Fn() -> bool,
         _: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
     ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, SqlQueryError> {

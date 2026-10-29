@@ -297,7 +297,7 @@ pub fn get_physical_ids_and_partition_names(
     let Some(partition) = table.partition() else {
         if !partition_names.is_empty() {
             return Err(DriverError::from(
-                tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
                     .generate_with_stack_by_args(&[]),
             ));
         }

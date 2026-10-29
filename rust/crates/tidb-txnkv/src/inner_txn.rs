@@ -222,7 +222,7 @@ pub fn print_long_time_internal_txn(
     // zap's `zap.Time` renders through the encoder's time layout, in the
     // local zone `oracle.GetTimeFromTS` returns.
     let start_time: chrono::DateTime<chrono::Local> = tso_time(observation.start_ts).into();
-    tidb_util::logutil::bg_logger().info(
+    tidb_logutil::bg_logger().info(
         &format!("An internal transaction running by {owner} lasts long time"),
         &[
             tidb_log::Field::new(
@@ -282,10 +282,10 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let mut file = tidb_util::logutil::new_file_log_config(300);
+        let mut file = tidb_logutil::new_file_log_config(300);
         file.filename = path.to_string_lossy().into_owned();
-        let config = tidb_util::logutil::new_log_config("info", "text", "", "", file, false);
-        tidb_util::logutil::init_logger(&config).unwrap();
+        let config = tidb_logutil::new_log_config("info", "text", "", "", file, false);
+        tidb_logutil::init_logger(&config).unwrap();
         path
     }
 

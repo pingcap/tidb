@@ -368,7 +368,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ) -> Result<LogicalPlan, PlanError> {
         if check_for_user_variables(&create.query) {
             return Err(PlanError::from(
-                tidb_util::dbterror::ERR_VIEW_SELECT_VARIABLE.generate_with_stack_by_args(&[]),
+                tidb_dbterror::ERR_VIEW_SELECT_VARIABLE.generate_with_stack_by_args(&[]),
             ));
         }
         let view_name = create.name.last().cloned().unwrap_or_default();
@@ -409,7 +409,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         if create.columns.len() != schema_len {
             return Err(PlanError::from(
-                tidb_util::dbterror::ERR_VIEW_WRONG_LIST.generate_with_stack_by_args(&[]),
+                tidb_dbterror::ERR_VIEW_WRONG_LIST.generate_with_stack_by_args(&[]),
             ));
         }
         Ok(plan)

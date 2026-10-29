@@ -16,7 +16,7 @@
 //! Removed empty entries and their original contracts are indexed in
 //! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
-use tidb_planner::cost_usage::CostVer2;
+use tidb_planner_costusage::CostVer2;
 use tidb_planner::plan_cost_ver2::{
     index_scan_cost, reader_cost, table_scan_cost, CostFactorVars, TableScanInput,
     TableScanPenaltyInput, Ver2Factors,

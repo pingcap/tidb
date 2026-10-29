@@ -1,0 +1,19 @@
+[package]
+name = "tidb-tiflashcompute"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/tiflashcompute: Go pkg/util/tiflashcompute (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+reqwest = { workspace = true, features = ["blocking"] }
+tidb-log = { path = "../tidb-log" }
+tidb-config = { path = "../tidb-config" }
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+tidb-error = { path = "../tidb-error" }

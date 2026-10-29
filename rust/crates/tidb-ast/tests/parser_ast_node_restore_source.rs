@@ -25,7 +25,8 @@
 //! Go `ast_test` package has), and derived `PartialEq` already excludes the
 //! source-text metadata `CleanNodeText` clears.
 
-use tidb_ast::{DdlStmt, RestoreContext, RestoreFlags, Stmt};
+use tidb_ast::{DdlStmt, RestoreContext, Stmt};
+use tidb_parser_format::RestoreFlags;
 use tidb_parser::parse;
 
 /// One `{sourceSQL, expectSQL}` row of Go's `NodeRestoreTestCase`.

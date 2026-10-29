@@ -128,7 +128,7 @@ pub trait SqlBindExec: crate::show::exec::ShowExec {
         })?;
         if changed == 0 {
             // Go wraps `errors.NewNoStackError(...)` as an ordinary 1105.
-            self.append_sql_warning(tidb_util::context::SqlWarn::with_code(tidb_util::context::WarningLevel::Warning, 1105,
+            self.append_sql_warning(tidb_context::SqlWarn::with_code(tidb_context::WarningLevel::Warning, 1105,
                 "There are no bindings can be set the status. Please check the SQL text".to_owned(),
             ));
         }
@@ -382,7 +382,7 @@ pub trait SqlBindExec: crate::show::exec::ShowExec {
         let db = binding::default_db_of(&origin, &schema);
         let (original_sql, sql_digest) = binding::normalize_with_db(&origin, &schema);
         if !handled_sql_digests.insert(sql_digest.clone()) {
-            self.append_sql_warning(tidb_util::context::SqlWarn::with_code(tidb_util::context::WarningLevel::Warning, 1105,
+            self.append_sql_warning(tidb_context::SqlWarn::with_code(tidb_context::WarningLevel::Warning, 1105,
                 format!(
                     "{plan_digest} is ignored because it corresponds to the same SQL digest as \
                      another Plan Digest"
@@ -391,7 +391,7 @@ pub trait SqlBindExec: crate::show::exec::ShowExec {
             return Ok(None);
         }
         if !complete {
-            self.append_sql_warning(tidb_util::context::SqlWarn::with_code(tidb_util::context::WarningLevel::Warning, 1105,
+            self.append_sql_warning(tidb_context::SqlWarn::with_code(tidb_context::WarningLevel::Warning, 1105,
                 format!("{reason}. Plan Digest: {plan_digest}"),
             ));
         }

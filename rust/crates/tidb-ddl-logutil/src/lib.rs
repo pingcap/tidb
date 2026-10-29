@@ -18,7 +18,7 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 use tidb_log::{Field, Value};
-use tidb_util::logutil::{
+use tidb_logutil::{
     bg_logger, sample_logger_factory, Logger, SampledLogger, LOG_FIELD_CATEGORY,
 };
 

@@ -85,7 +85,7 @@ fn add_statement_summary(digest: &str, normalized_sql: &str) {
         compile_latency: Duration::ZERO,
         stmt_ctx: Arc::new(stmt_ctx),
         cop_tasks: None,
-        exec_detail: tidb_util::execdetails::exec_details::ExecDetails::default(),
+        exec_detail: tidb_execdetails::exec_details::ExecDetails::default(),
         mem_max: 0,
         mem_arbitration: 0.0,
         disk_max: 0,
@@ -105,7 +105,7 @@ fn add_statement_summary(digest: &str, normalized_sql: &str) {
         resource_group_name: "default".to_owned(),
         ru_detail: None,
         total_ru_v2: 0.0,
-        cpu_usages: tidb_util::ppcpuusage::CpuUsages::default(),
+        cpu_usages: tidb_ppcpuusage::CpuUsages::default(),
         plan_cache_unqualified: String::new(),
         lazy_info: Arc::new(LazyInfo),
     });

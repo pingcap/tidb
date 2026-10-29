@@ -24,10 +24,8 @@
 
 use std::any::Any;
 
-use tidb_ast::{
-    Assignment, BatchDml, BatchDmlDryRun, BatchDmlStmt, BinaryOp, DeleteKind, Expr, Join, JoinNode,
-    QueryStmt, RestoreFlags, TableRef, UpdateKind, Visitable, Visitor,
-};
+use tidb_ast::{Assignment, BatchDml, BatchDmlDryRun, BatchDmlStmt, BinaryOp, DeleteKind, Expr, Join, JoinNode, QueryStmt, TableRef, UpdateKind, Visitable, Visitor};
+use tidb_parser_format::RestoreFlags;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_executor::{DriverError, TableEntry};
 use tidb_hack::GoCaseCompare;
@@ -65,7 +63,7 @@ impl Job {
             "job id: {}, estimated size: {}, sql: {}",
             self.job_id,
             self.job_size,
-            tidb_util::redact::string(redact, &self.sql)
+            tidb_redact::string(redact, &self.sql)
         )
     }
 }

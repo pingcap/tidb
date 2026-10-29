@@ -633,7 +633,7 @@ pub struct RuleContext<'a> {
     /// Go SessionVars.SelectivityFactor for uncovered or partially covered predicates.
     pub selectivity_factor: f64,
     /// The statement's shared construction-time ranger fallback handler.
-    pub range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
+    pub range_fallback_handler: Option<&'a tidb_context::RangeFallbackHandler>,
     /// Go `SessionVars.AlwaysKeepJoinKey`.
     pub always_keep_join_key: bool,
     /// Go `SessionVars.EnableUnsafeSubstitute`.

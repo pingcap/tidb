@@ -16,6 +16,8 @@ failpoints = ["dep:fail", "fail/failpoints", "tidb-util/failpoints"]
 intest = ["tidb-util/intest"]
 
 [dependencies]
+tidb-cpu = { path = "../tidb-cpu" }
+tidb-intest = { path = "../tidb-intest" }
 crossbeam-channel = "0.5"
 fail = { version = "0.4", optional = true }
 getrandom.workspace = true
@@ -24,5 +26,6 @@ tidb-util = { path = "../tidb-util" }
 tracing = "0.1"
 
 [dev-dependencies]
+tidb-cgroup = { path = "../tidb-cgroup" }
 rand = "0.8.7"
 tidb-util = { path = "../tidb-util", features = ["intest"] }

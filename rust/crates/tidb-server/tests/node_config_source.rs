@@ -11,7 +11,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use tidb_server::{run_configured_node, NodeConfigError, RunConfiguredNodeError};
-use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorageOpenError};
+use tidb_spill_storage::{SpillEncryptionMethod, SpillStorageOpenError};
 
 fn required() -> Vec<&'static str> {
     vec![
@@ -117,20 +117,20 @@ fn configured_sem_is_installed_before_startup_resource_admission() {
 
     impl Drop for DisableSemOnDrop {
         fn drop(&mut self) {
-            tidb_util::sem_v2::disable();
-            tidb_util::sem::disable();
+            tidb_sem_v2::disable();
+            tidb_sem::disable();
         }
     }
 
-    tidb_util::sem_v2::disable();
-    tidb_util::sem::disable();
+    tidb_sem_v2::disable();
+    tidb_sem::disable();
     let _reset = DisableSemOnDrop;
     let base = std::env::temp_dir().join(format!("tidb-server-sem-startup-{}", std::process::id()));
     let sem = ConfigFile::write(
         "sem_v2",
         &format!(
             "{{\"version\":\"1.0\",\"tidb_version\":{:?}}}",
-            tidb_util::sem_v2::tidb_release_version()
+            tidb_sem_v2::tidb_release_version()
         ),
     );
     let file = ConfigFile::write(
@@ -152,8 +152,8 @@ fn configured_sem_is_installed_before_startup_resource_admission() {
         error,
         RunConfiguredNodeError::Spill(SpillStorageOpenError::QuotaExceedsAvailable { .. })
     ));
-    assert!(tidb_util::sem_v2::is_enabled());
-    assert!(!tidb_util::sem::is_enabled());
+    assert!(tidb_sem_v2::is_enabled());
+    assert!(!tidb_sem::is_enabled());
     let _ = std::fs::remove_dir_all(base);
 }
 

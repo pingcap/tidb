@@ -54,7 +54,7 @@ impl Scheduler for CpuScheduler {
         if elapsed < minimum as i128 {
             return Command::Hold;
         }
-        let (value, unsupported) = tidb_util::cpu::get_cpu_usage();
+        let (value, unsupported) = tidb_cpu::get_cpu_usage();
         if unsupported {
             return Command::Hold;
         }

@@ -23,8 +23,8 @@ use tidb_codec::{VALUE_COMPACT_BYTES_FLAG, VALUE_VARINT_FLAG};
 use tidb_datatype::{BinaryJSON, Datum, FieldType, FieldTypeCode, VectorFloat32};
 use tidb_distsql::{select_with_runtime_stats, ResponseChannel, ResponseChannelError, SelectInput};
 use tidb_txnkv::ResponseRuntimeStats;
-use tidb_util::context::WarningCollector;
-use tidb_util::context::WarningClass;
+use tidb_context::WarningCollector;
+use tidb_context::WarningClass;
 use tidb_txnkv::StoreType;
 use tidb_proto::{
     Chunk, EncodeType, Error as TipbError, ExecutorExecutionSummary, IntermediateOutput,

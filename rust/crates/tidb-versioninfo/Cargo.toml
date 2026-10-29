@@ -1,0 +1,17 @@
+[package]
+name = "tidb-versioninfo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/versioninfo: Go pkg/util/versioninfo (Rust rewrite)."
+build = "build.rs"
+
+[lints]
+workspace = true
+
+[build-dependencies]
+chrono.workspace = true
+
+[dependencies]

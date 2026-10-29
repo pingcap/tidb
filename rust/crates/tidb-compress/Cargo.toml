@@ -1,0 +1,15 @@
+[package]
+name = "tidb-compress"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/compress: Go pkg/util/compress (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-zeropool = { path = "../tidb-zeropool" }
+flate2.workspace = true

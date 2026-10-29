@@ -33,9 +33,9 @@ use tidb_error::errctx::{
 };
 use tidb_error::terror::TerrorError;
 use tidb_mysql::consts::{format_sql_mode_str, get_sql_mode, DefaultSQLMode, SqlMode};
-use tidb_util::context::WarnHandler;
-use tidb_util::context::{gen_context_id, SqlWarn, StaticWarnHandler, WarnAppender, WarnErr};
-use tidb_util::timeutil::{parse_time_zone, zone_name, TimeZone};
+use tidb_context::WarnHandler;
+use tidb_context::{gen_context_id, SqlWarn, StaticWarnHandler, WarnAppender, WarnErr};
+use tidb_timeutil::{parse_time_zone, zone_name, TimeZone};
 use tidb_vardef::defaults::{
     DEF_DEFAULT_WEEK_FORMAT, DEF_DIV_PRECISION_INCREMENT, DEF_GROUP_CONCAT_MAX_LEN,
     DEF_SYSDATE_IS_NOW, DEF_TIDB_ENABLE_NOOP_FUNCS, DEF_TIDB_REDACT_LOG, DEF_TIMESTAMP,
@@ -1078,7 +1078,7 @@ mod tests {
     }
 
     fn tz(name: &str) -> TimeZone {
-        tidb_util::timeutil::load_location(name).unwrap()
+        tidb_timeutil::load_location(name).unwrap()
     }
 
     // Go `checkDefaultStaticEvalCtx`.
@@ -1326,14 +1326,14 @@ mod tests {
     // Go `TestStaticEvalCtxWarnings`.
     #[test]
     fn static_eval_ctx_warnings() {
-        use tidb_util::context::{WARN_LEVEL_NOTE, WARN_LEVEL_WARNING};
+        use tidb_context::{WARN_LEVEL_NOTE, WARN_LEVEL_WARNING};
 
         // The default context has an empty static warning handler.
         let ctx = EvalContext::new([]);
         assert_eq!(ctx.warning_count(), 0);
 
         // `with_warn_handler` installs the given handler.
-        let ignore: Arc<dyn WarnHandler + Send + Sync> = Arc::new(tidb_util::context::IGNORE_WARN);
+        let ignore: Arc<dyn WarnHandler + Send + Sync> = Arc::new(tidb_context::IGNORE_WARN);
         let ctx = EvalContext::new([with_warn_handler(Arc::clone(&ignore))]);
         assert!(Arc::ptr_eq(ctx.get_warn_handler(), &ignore));
 
@@ -1831,7 +1831,7 @@ impl crate::Columns for EvalContext {
 
     fn append_error_warning(&self, error: &tidb_error::mysql::SqlError) {
         let warning = SqlWarn::from_error(
-            tidb_util::context::WarningLevel::Warning,
+            tidb_context::WarningLevel::Warning,
             error.code,
             error.message.clone(),
             error.identity,
@@ -1886,5 +1886,5 @@ fn eval_error_level(level: tidb_error::errctx::Level) -> crate::ErrorLevel {
 /// its own identity reaches this context through `AppendWarning` directly
 /// (`crate::metabuild::EvalContext`).
 fn columns_warning(code: u16, message: &str) -> WarnErr {
-    SqlWarn::with_code(tidb_util::context::WarningLevel::Warning, code, message).err
+    SqlWarn::with_code(tidb_context::WarningLevel::Warning, code, message).err
 }

@@ -223,8 +223,8 @@ pub fn notify_privilege_update(notifier: Option<&EtcdClient>, _changed: &[String
     };
     // Go `Domain.notifyUpdatePrivilege` is silent on success.
     if let Err(error) = notifier.notify_privilege_update() {
-        tidb_util::logutil::bg_logger()
-            .warn("notify update privilege failed", &[tidb_util::logutil::zap_error(error)]);
+        tidb_logutil::bg_logger()
+            .warn("notify update privilege failed", &[tidb_logutil::zap_error(error)]);
     }
 }
 

@@ -60,7 +60,7 @@ impl Executor for MaxOneRowExec {
             }
             1 => {}
             _ => {
-                return Err(tidb_util::dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
+                return Err(tidb_dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
                     .generate_with_stack_by_args(&[])
                     .into())
             }
@@ -68,7 +68,7 @@ impl Executor for MaxOneRowExec {
         let mut next = self.child.new_chunk();
         self.child.next(&mut next)?;
         if next.num_rows() != 0 {
-            return Err(tidb_util::dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
+            return Err(tidb_dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
                 .generate_with_stack_by_args(&[])
                 .into());
         }

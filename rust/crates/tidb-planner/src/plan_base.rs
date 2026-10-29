@@ -453,10 +453,10 @@ pub struct PossiblePropertiesInfo {
 /// is encoded as a present list and each column uses the same identity triple
 /// used by the planner schema hash.
 pub(crate) fn hash_possible_properties(
-    hasher: &mut impl crate::hash_equaler::Hasher,
+    hasher: &mut impl tidb_planner_cascades_base::Hasher,
     properties: &PossiblePropertiesInfo,
 ) {
-    use crate::hash_equaler::NOT_NIL_FLAG;
+    use tidb_planner_cascades_base::NOT_NIL_FLAG;
 
     hasher.hash_byte(NOT_NIL_FLAG);
     hasher.hash_int(properties.orders.len() as i64);

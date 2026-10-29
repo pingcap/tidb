@@ -453,7 +453,7 @@ fn run_ack_loop<S>(
             match syncer.update_self_version(syncer_context, 0, loaded) {
                 Ok(()) => reported_loaded_version = Some((mdl_enabled, loaded)),
                 // Go `issyncer.Syncer.Reload`.
-                Err(error) => tidb_util::logutil::bg_logger().info(
+                Err(error) => tidb_logutil::bg_logger().info(
                     "update self version failed",
                     &[
                         tidb_log::Field::new(
@@ -527,7 +527,7 @@ fn run_ack_loop<S>(
                             }
                         }
                         // Go `refreshMDLCheckTableInfo`.
-                        tidb_util::logutil::bg_logger().warn(
+                        tidb_logutil::bg_logger().warn(
                             "get mdl info from tidb_mdl_info failed",
                             &[crate::worker::zap_error(error)],
                         );
@@ -545,7 +545,7 @@ fn run_ack_loop<S>(
                     tidb_log::Field::new("jobID", tidb_log::Value::I64(job.job_id)),
                     tidb_log::Field::new("version", tidb_log::Value::I64(job.version)),
                 ];
-                tidb_util::logutil::bg_logger()
+                tidb_logutil::bg_logger()
                     .info("mdl gets lock, update self version to owner", &ack_fields);
                 match syncer.update_self_version(syncer_context, job.job_id, job.version) {
                     Ok(()) => {
@@ -554,7 +554,7 @@ fn run_ack_loop<S>(
                     Err(error) => {
                         let mut fields = ack_fields.to_vec();
                         fields.push(crate::worker::zap_error(error));
-                        tidb_util::logutil::bg_logger().warn(
+                        tidb_logutil::bg_logger().warn(
                             "mdl gets lock, update self version to owner failed",
                             &fields,
                         );
@@ -619,7 +619,7 @@ fn recover_schema_syncer(
     catalog: &SharedCatalog,
     stop: &AtomicBool,
 ) -> bool {
-    let logger = tidb_util::logutil::bg_logger();
+    let logger = tidb_logutil::bg_logger();
     logger.info("reload schema in loop, schema syncer need restart", &[]);
     validator.stop();
     loop {

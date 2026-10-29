@@ -44,7 +44,7 @@ fn test_ctx_with_handle_truncate_err_level() {
     };
     use tidb_datatype::DEFAULT_STATEMENT_FLAGS;
     use tidb_error::errctx::{ErrGroup, Level, LevelMap};
-    use tidb_util::timeutil::TimeZone;
+    use tidb_timeutil::TimeZone;
 
     for level in [Level::Warn, Level::Ignore, Level::Error] {
         let mut original_flags = DEFAULT_STATEMENT_FLAGS;

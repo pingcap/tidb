@@ -25,7 +25,7 @@ use tidb_chunk::{
 };
 use tidb_datatype::FieldType;
 use tidb_expr::{column::CorrelatedColumn, expression::Expression, schema::Schema};
-use tidb_util::memory::Tracker;
+use tidb_memory::Tracker;
 
 /// Go joinRuntimeStats cache counters, published by NestedLoopApplyExec.Close.
 #[derive(Clone, Copy, Default)]

@@ -125,7 +125,7 @@ struct AddColumnTarget {
 /// Go `ErrColumnExists`.
 fn column_exists(name: &str) -> DdlPlanError {
     DdlPlanError::from(
-        tidb_util::dbterror::CLASS_SCHEMA
+        tidb_dbterror::CLASS_SCHEMA
             .new_std(tidb_error::tidb::errcode::ErrDupFieldName)
             .generate_with_stack_by_args(&[FormatArg::from(name)]),
     )
@@ -193,7 +193,7 @@ fn check_unsupported_charset_for_tiflash(
         return Ok(());
     }
     Err(coded_refusal(
-        &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_COLUMN,
+        &tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMN,
         format!(
             "unsupported add column '{}' when altering '{}' with TiFlash replicas and {} encoding",
             column.name.original(),
@@ -223,7 +223,7 @@ pub(super) fn plan_persisted_add_column_job_step(
         Err((true, error)) => {
             // Go: IF NOT EXISTS turns the error into the job's warning.
             active.job.warning = Some(GoShared::new(
-                tidb_util::dbterror::CLASS_SCHEMA
+                tidb_dbterror::CLASS_SCHEMA
                     .new_std(tidb_error::tidb::errcode::ErrDupFieldName)
                     .generate(error.to_string()),
             ));
@@ -272,7 +272,7 @@ pub(super) fn plan_persisted_add_column_job_step(
         SchemaState::WRITE_REORGANIZATION => SchemaState::PUBLIC,
         state => {
             return Err(DdlPlanError::from(
-                tidb_util::dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+                tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
                     FormatArg::from("column"),
                     FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
                 ]),
@@ -362,7 +362,7 @@ pub(super) fn plan_cancel_add_column(
         write,
         update_raw_args: true,
         run_error: Some(DdlPlanError::from(
-            tidb_util::dbterror::ERR_CANCELLED_DDL_JOB
+            tidb_dbterror::ERR_CANCELLED_DDL_JOB
                 .generate(tidb_error::tidb::errname::ErrCancelledDDLJob.raw),
         )),
         reorg: None,

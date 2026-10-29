@@ -26,7 +26,7 @@
 //! Mode != Partial2Mode`. No session, catalog, or SQL pipeline is involved,
 //! so both halves of the exercised surface exist on the Rust side: the
 //! descriptors come from `tidb_expr::aggregation`, and the mode gate is
-//! implemented by [`tidb_planner::core_usage::wrap_cast_for_agg_funcs`].
+//! implemented by [`tidb_planner_coreusage::wrap_cast_for_agg_funcs`].
 //!
 //! Per-case expectations re-derived from Go source:
 //! - The argument retTypes cover the int family (`TypeLong`, `TypeLonglong`,
@@ -47,7 +47,7 @@ use tidb_expr::aggregation::{names, AggFuncDesc, AggFunctionMode};
 use tidb_expr::constant::Constant;
 use tidb_expr::expression::Expression;
 use tidb_expr::NoColumns;
-use tidb_planner::core_usage::wrap_cast_for_agg_funcs;
+use tidb_planner_coreusage::wrap_cast_for_agg_funcs;
 
 /// Go `aggNames := []string{ast.AggFuncSum}`
 /// (`rule_inject_extra_projection_test.go:35`).

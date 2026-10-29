@@ -17,7 +17,7 @@
 //! The direct Go anchor is `TestCompareCol2Len` at
 //! `pkg/planner/util/path_test.go:30`.
 
-use tidb_planner::column_length::{compare_col2_len, Col2Len, UNSPECIFIED_LENGTH};
+use tidb_planner_util::column_length::{compare_col2_len, Col2Len, UNSPECIFIED_LENGTH};
 
 #[test]
 fn source_compare_col2_len_preserves_dominance_and_incomparability() {

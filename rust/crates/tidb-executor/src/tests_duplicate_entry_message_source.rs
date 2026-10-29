@@ -174,7 +174,7 @@ fn duplicate_entry_message_names_the_new_value_and_key_across_type_shapes() {
     .unwrap();
     let warnings = ignore.take_warnings();
     assert!(
-        warnings.iter().map(tidb_util::context::SqlWarn::parts).any(|(_, code, message)| code == 1062
+        warnings.iter().map(tidb_context::SqlWarn::parts).any(|(_, code, message)| code == 1062
             && message == "Duplicate entry '$-C-10' for key 't7.PRIMARY'"),
         "expected the 1062 duplicate warning, got {warnings:?}"
     );

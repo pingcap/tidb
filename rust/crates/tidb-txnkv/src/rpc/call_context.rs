@@ -158,7 +158,7 @@ impl UnaryCancellation {
 pub struct UnaryCallContext {
     deadline: Option<Instant>,
     cancellation: UnaryCancellation,
-    kv_exec_counter: Option<tidb_util::topsql_stmtstats::KvExecCounterHandle>,
+    kv_exec_counter: Option<tidb_topsql_stmtstats::KvExecCounterHandle>,
 }
 
 impl UnaryCallContext {
@@ -202,14 +202,14 @@ impl UnaryCallContext {
     #[must_use]
     pub fn with_kv_exec_counter(
         mut self,
-        counter: Option<tidb_util::topsql_stmtstats::KvExecCounterHandle>,
+        counter: Option<tidb_topsql_stmtstats::KvExecCounterHandle>,
     ) -> Self {
         self.kv_exec_counter = counter;
         self
     }
 
     /// The observer belongs to this call, never the shared connection fleet.
-    pub fn kv_exec_counter(&self) -> Option<&tidb_util::topsql_stmtstats::KvExecCounterHandle> {
+    pub fn kv_exec_counter(&self) -> Option<&tidb_topsql_stmtstats::KvExecCounterHandle> {
         self.kv_exec_counter.as_ref()
     }
 

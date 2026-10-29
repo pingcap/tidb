@@ -59,8 +59,8 @@ fn a_dropped_current_database_is_deselected_and_job_warnings_reach_the_session()
         schema_version: 7,
         created_id: None,
         warnings: vec![
-            tidb_util::context::SqlWarn::with_code(DdlWarningLevel::Note, 1007, "a note"),
-            tidb_util::context::SqlWarn::with_code(DdlWarningLevel::Warning, 1105, "a warning"),
+            tidb_context::SqlWarn::with_code(DdlWarningLevel::Note, 1007, "a note"),
+            tidb_context::SqlWarn::with_code(DdlWarningLevel::Warning, 1105, "a warning"),
         ],
     }));
     session.begin_ddl_statement(&parsed).unwrap();

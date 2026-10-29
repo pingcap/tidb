@@ -214,7 +214,7 @@ impl InfoSchemaBaseExtractor {
             let regs: Option<Vec<Regex>> = like_patterns
                 .iter()
                 .map(|pattern| {
-                    tidb_util::go_regexp::compile_with_flags(pattern, true, false, false).ok()
+                    tidb_go_regexp::compile_with_flags(pattern, true, false, false).ok()
                 })
                 .collect();
             if let Some(regs) = regs {

@@ -15,7 +15,7 @@
 //! Behavioral cases from `pkg/parser/auth`. Benchmark timing obligations
 //! are separate from these correctness tests.
 
-use tidb_ast::{RestoreCtx, RestoreFlags};
+use tidb_parser_format::{RestoreCtx, RestoreFlags};
 use tidb_mysql::{AuthCachingSha2Password, AuthTiDBSM3Password};
 use tidb_parser::auth::{
     check_hashing_password, check_hashing_password_bytes, check_scrambled_password,

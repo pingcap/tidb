@@ -57,7 +57,7 @@ use tidb_ddl_logutil::ddl_logger;
 use tidb_domain::serverinfo::ServerInfo;
 use tidb_domain::serverinfo_syncer::{join_host_port, EtcdOps};
 use tidb_log::{Field, Value};
-use tidb_util::logutil::bg_logger;
+use tidb_logutil::bg_logger;
 
 use crate::{
     mdl_enabled, AllServerInfo, Context, DoneCh, GlobalVerRx, SharedRecv, SyncSummary, Syncer,
@@ -2198,10 +2198,10 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let mut file = tidb_util::logutil::new_file_log_config(300);
+        let mut file = tidb_logutil::new_file_log_config(300);
         file.filename = path.to_string_lossy().into_owned();
-        let config = tidb_util::logutil::new_log_config("info", "text", "", "", file, false);
-        tidb_util::logutil::init_logger(&config).unwrap();
+        let config = tidb_logutil::new_log_config("info", "text", "", "", file, false);
+        tidb_logutil::init_logger(&config).unwrap();
         path
     }
 

@@ -80,7 +80,7 @@ use tidb_stats::{
     JsonFmSketch, JsonHistogram, JsonPredicateColumn, StatsLoadedStatus, Table,
 };
 use tidb_stats::JsonTable;
-use tidb_util::compress::{GzipReaderPool, GzipWriterPool};
+use tidb_compress::{GzipReaderPool, GzipWriterPool};
 
 use tidb_stats::table_statistics::TableStatistics;
 use tidb_table::kv_table::KvTable;

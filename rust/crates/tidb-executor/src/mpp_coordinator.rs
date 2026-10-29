@@ -272,10 +272,10 @@ pub fn open_mpp_scan(
                 .map_err(|error| QueryResponseError::Source(error.to_string()))
         }),
         Box::new(|node_count| {
-            tidb_util::tiflashcompute::global_topo_fetcher()
+            tidb_tiflashcompute::global_topo_fetcher()
                 .ok_or_else(|| "TiFlash compute topology fetcher is not initialized".to_owned())?
                 .recovery_and_get_topo(
-                    tidb_util::tiflashcompute::RecoveryType::MEM_LIMIT,
+                    tidb_tiflashcompute::RecoveryType::MEM_LIMIT,
                     node_count as i64,
                 )
                 .map(|_| ())
@@ -326,7 +326,7 @@ fn open_gather(
     // `ExecDetails` the task building's region lookups charge.
     let build_kv_context = kv_context.clone().with_txn_start_ts(request.snapshot_ts);
     let policy =
-        tidb_util::tiflashcompute::DispatchPolicy::parse(&request.statement.tiflash_compute_dispatch_policy)
+        tidb_tiflashcompute::DispatchPolicy::parse(&request.statement.tiflash_compute_dispatch_policy)
             .map_err(refuse)?;
     let tasks = client.construct_mpp_tasks(
         &ctx,

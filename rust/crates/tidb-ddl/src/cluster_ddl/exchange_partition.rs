@@ -101,7 +101,7 @@ pub fn prepare_exchange_partition_job_submission<S: MetaSnapshot>(
             id_allocated: true,
         }),
         // Go appends it once the job succeeded.
-        vec![tidb_util::context::SqlWarn::with_code(
+        vec![tidb_context::SqlWarn::with_code(
             DdlWarningLevel::Warning,
             1105,
             "after the exchange, please analyze related table of the exchange to update statistics"
@@ -167,7 +167,7 @@ fn check_exchange_partition_placement_policy<S: MetaSnapshot>(
 ) -> Result<(), DdlPlanError> {
     let different = || {
         exchange_refusal(
-            &tidb_util::dbterror::ERR_TABLES_DIFFERENT_METADATA,
+            &tidb_dbterror::ERR_TABLES_DIFFERENT_METADATA,
             "Tables have different definitions",
         )
     };
@@ -293,7 +293,7 @@ pub(super) fn plan_persisted_exchange_partition_job_step<S: MetaSnapshot>(
         return Err(cancel_ddl_job(
             active,
             DdlPlanError::from(
-                tidb_util::dbterror::CLASS_SCHEMA
+                tidb_dbterror::CLASS_SCHEMA
                     .new_std(tidb_error::tidb::errcode::ErrBadDB)
                     .generate(format!(
                         "Unknown database '(Schema ID {})'",
@@ -311,7 +311,7 @@ pub(super) fn plan_persisted_exchange_partition_job_step<S: MetaSnapshot>(
         return Err(cancel_ddl_job(
             active,
             DdlPlanError::from(
-                tidb_util::dbterror::CLASS_SCHEMA
+                tidb_dbterror::CLASS_SCHEMA
                     .new_std(tidb_error::tidb::errcode::ErrNoSuchTable)
                     .generate(format!(
                         "Table '(Schema ID {}).(Table ID {})' doesn't exist",
@@ -342,7 +342,7 @@ pub(super) fn plan_persisted_exchange_partition_job_step<S: MetaSnapshot>(
         if partitioned.state != SchemaState::PUBLIC {
             return Err(cancel_ddl_job(
                 active,
-                DdlPlanError::from(tidb_util::dbterror::ERR_INVALID_DDL_STATE.generate(format!(
+                DdlPlanError::from(tidb_dbterror::ERR_INVALID_DDL_STATE.generate(format!(
                     "table {} is not in public, but {}",
                     partitioned.name, partitioned.state
                 ))),
@@ -622,7 +622,7 @@ fn rollback_exchange_table_partition(
         let mut partitioned = stored_table_by_ids(catalog, args.pt_schema_id, args.pt_table_id)
             .ok_or_else(|| {
                 DdlPlanError::from(
-                    tidb_util::dbterror::CLASS_SCHEMA
+                    tidb_dbterror::CLASS_SCHEMA
                         .new_std(tidb_error::tidb::errcode::ErrNoSuchTable)
                         .generate(format!(
                             "Table '(Schema ID {}).(Table ID {})' doesn't exist",

@@ -1190,7 +1190,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .get_system("tidb_mem_quota_query")
                 .ok()
                 .and_then(|value| value.parse::<i64>().ok())
-                .unwrap_or(tidb_util::memory::DEF_MEM_QUOTA_QUERY),
+                .unwrap_or(tidb_memory::DEF_MEM_QUOTA_QUERY),
             redact_sql: match self
                 .session_vars()
                 .get_system(tidb_vardef::tidb_vars::TIDB_REDACT_LOG)
@@ -1466,11 +1466,11 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_COLLECT_EXECUTION_INFO)
             .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("ON"));
         let runtime_stats_coll = collect_execution_info
-            .then(|| Arc::new(tidb_util::execdetails::runtime_stats::RuntimeStatsColl::new(None)));
+            .then(|| Arc::new(tidb_execdetails::runtime_stats::RuntimeStatsColl::new(None)));
         let runtime_stats_source: Option<
-            Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>,
+            Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>,
         > = runtime_stats_coll.clone().map(|coll| {
-            coll as Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>
+            coll as Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>
         });
         // Go `selectResult.updateCopRuntimeStats` feeds the statement's
         // `RuntimeStatsColl` with every response it reads.
@@ -1705,7 +1705,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                             .and_then(|value| value.parse::<u64>().ok())
                             .unwrap_or(tidb_vardef::defaults::DEF_TIDB_STORE_BATCH_SIZE as u64),
                     )
-                    .with_tiflash_replica_read(tidb_txnkv::get_tiflash_replica_read_by_str(
+                    .with_tiflash_replica_read(tidb_tiflash::get_tiflash_replica_read_by_str(
                         &self
                             .session_vars()
                             .get_system(tidb_vardef::tidb_vars::TIFLASH_REPLICA_READ)
@@ -2209,9 +2209,9 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// Go `SessionVars` / `StmtCtx` state `session_memory`, mutably.
     fn session_memory_mut(&mut self) -> &mut crate::SessionMemory;
     /// Go `SessionVars` / `StmtCtx` state `sql_cpu_usages`, read.
-    fn sql_cpu_usages_ref(&self) -> &Arc<tidb_util::ppcpuusage::SqlCpuUsages>;
+    fn sql_cpu_usages_ref(&self) -> &Arc<tidb_ppcpuusage::SqlCpuUsages>;
     /// Go `SessionVars` / `StmtCtx` state `sql_cpu_usages`, mutably.
-    fn sql_cpu_usages_mut(&mut self) -> &mut Arc<tidb_util::ppcpuusage::SqlCpuUsages>;
+    fn sql_cpu_usages_mut(&mut self) -> &mut Arc<tidb_ppcpuusage::SqlCpuUsages>;
     /// Go `SessionVars` / `StmtCtx` state `staged_writes`, read.
     fn staged_writes_ref(&self) -> &std::sync::Arc<tidb_kv::staged_writes::StagedWrites>;
     /// Go `SessionVars` / `StmtCtx` state `staged_writes`, mutably.
@@ -2298,7 +2298,7 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// Session primitive.
     fn statement_phase_observer(&self) -> Option<Arc<dyn Fn(crate::StatementPhase) + Send + Sync>>;
     /// Session primitive.
-    fn statement_kv_exec_counter(&self) -> tidb_util::topsql_stmtstats::KvExecCounterHandle;
+    fn statement_kv_exec_counter(&self) -> tidb_topsql_stmtstats::KvExecCounterHandle;
     /// The session's statement ctx values, shared with the transactions and
     /// snapshots its statements use; see [`tidb_txnkv::StatementKvContextCell`].
     fn statement_kv_context_cell(&self) -> tidb_txnkv::StatementKvContextCell;

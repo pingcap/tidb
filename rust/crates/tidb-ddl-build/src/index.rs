@@ -34,7 +34,7 @@ use tidb_model::column::ColumnInfo;
 use tidb_model::index::{ColumnarIndexType, IndexColumn, IndexInfo};
 use tidb_model::table_info::TableInfo;
 use tidb_hack::GoCaseCompare;
-use tidb_util::context::WarnErr;
+use tidb_context::WarnErr;
 use tidb_hack::GoToLower;
 use tidb_table::kv_table::KvColumn;
 
@@ -54,7 +54,7 @@ pub fn check_and_build_index_condition_string(
     };
     if partitioned {
         return Err(MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX.generate_with_stack_by_args(&[
+            &tidb_dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX.generate_with_stack_by_args(&[
                 "partial index on partitioned table is not supported".into(),
             ]),
         ));
@@ -92,7 +92,7 @@ pub fn check_expression_index_auto_increment(
             .any(|dependency| dependency.go_lower_eq(auto))
     }) {
         return Err(tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_EXPRESSION_INDEX_CAN_NOT_REFER
+            &tidb_dbterror::ERR_EXPRESSION_INDEX_CAN_NOT_REFER
                 .generate_with_stack_by_args(&[index_name.to_owned().into()]),
         ));
     }
@@ -201,7 +201,7 @@ pub fn check_index_condition(
     };
     let generated = |name: &str| {
         MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX.generate_with_stack_by_args(&[
+            &tidb_dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX.generate_with_stack_by_args(&[
                 (format!("generated column {name} cannot be used in partial index condition"))
                     .into(),
             ]),
@@ -215,13 +215,13 @@ pub fn check_index_condition(
         } => {
             let Some(name) = name_of(expr) else {
                 return Err(MysqlError::from_terror(
-        &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
+        &tidb_dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
             .generate_with_stack_by_args(&["partial index condition must include a column name in the IS NULL expression".into()]),
     ));
             };
             let Some(info) = column(&name) else {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
+                    &tidb_dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
                         .generate_with_stack_by_args(&[(format!(
                     "column name {name} referenced in partial index condition is not found in table"
                 ))
@@ -244,7 +244,7 @@ pub fn check_index_condition(
                     | tidb_ast::BinaryOp::Le
             ) {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
+                    &tidb_dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
                         .generate_with_stack_by_args(&[(format!(
                             "binary operation {} is not supported",
                             op.opcode().name()
@@ -257,14 +257,14 @@ pub fn check_index_condition(
                 (None, Some(name)) => (name, left.as_ref()),
                 (None, None) => {
                     return Err(MysqlError::from_terror(
-        &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
+        &tidb_dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
             .generate_with_stack_by_args(&["partial index condition must include a column name in the binary operation".into()]),
     ));
                 }
             };
             let Some(info) = column(&name) else {
                 return Err(MysqlError::from_terror(
-        &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
+        &tidb_dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
             .generate_with_stack_by_args(&[(format!(
                     "column name `{name}` referenced in partial index condition is not found in table"
                 )).into()]),
@@ -275,13 +275,13 @@ pub fn check_index_condition(
             }
             let Some(literal) = index_condition_literal_type(another_side, connection) else {
                 return Err(MysqlError::from_terror(
-        &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
+        &tidb_dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
             .generate_with_stack_by_args(&["partial index condition must include a literal value on the other side of the binary operation".into()]),
     ));
             };
             let incompatible = || {
                 MysqlError::from_terror(
-        &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
+        &tidb_dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
             .generate_with_stack_by_args(&[(format!(
                     "the type {} of the column `{name}` in partial index condition is not compatible with the literal value type {literal}",
                     info.field_type
@@ -334,7 +334,7 @@ pub fn check_index_condition(
                     ) {
                         if info.field_type.charset_name() != literal.charset_name() {
                             return Err(MysqlError::from_terror(
-        &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
+        &tidb_dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
             .generate_with_stack_by_args(&[(format!(
                                 "the charset {} of the column `{name}` in partial index condition is not compatible with the literal value charset {}",
                                 info.field_type.charset_name(),
@@ -354,11 +354,11 @@ pub fn check_index_condition(
                     Err(incompatible())
                 }
                 Tp::Null => Err(MysqlError::from_terror(
-        &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
+        &tidb_dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
             .generate_with_stack_by_args(&["= NULL is not supported in partial index condition because it is always false".into()]),
     )),
                 _ => Err(MysqlError::from_terror(
-        &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
+        &tidb_dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
             .generate_with_stack_by_args(&[(format!(
                     "the type {literal} of the literal value in partial index condition is not supported"
                 )).into()]),
@@ -366,7 +366,7 @@ pub fn check_index_condition(
             }
         }
         _ => Err(MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX.generate_with_stack_by_args(&[
+            &tidb_dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX.generate_with_stack_by_args(&[
                 "the kind of partial index condition is not supported".into(),
             ]),
         )),
@@ -478,7 +478,7 @@ pub fn build_index_columns(
     for ip in index_part_specifications {
         let Some(col) = find_column_info(columns, ip.column) else {
             return Err(MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
+                &tidb_dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
                     .generate_with_stack(format!("column does not exist: {}", ip.column)),
             ));
         };
@@ -486,7 +486,7 @@ pub fn build_index_columns(
         if columnar_index_type == ColumnarIndexType::VECTOR && code != FieldTypeCode::VectorFloat32
         {
             return Err(MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_VECTOR_INDEX.generate_with_stack_by_args(
+                &tidb_dbterror::ERR_UNSUPPORTED_ADD_VECTOR_INDEX.generate_with_stack_by_args(
                     &[format!(
                         "only support vector type, but this is type: {}",
                         col.field_type
@@ -497,7 +497,7 @@ pub fn build_index_columns(
         }
         if columnar_index_type == ColumnarIndexType::INVERTED && !code.is_type_stored_as_integer() {
             return Err(MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX
+                &tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX
                     .generate_with_stack_by_args(&[format!(
                         "only support integer type, but this is type: {}",
                         col.field_type
@@ -507,7 +507,7 @@ pub fn build_index_columns(
         }
         if columnar_index_type == ColumnarIndexType::FULLTEXT && !code.is_string() {
             return Err(MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX
+                &tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX
                     .generate_with_stack_by_args(&[format!(
                         "only support string type, but this is type: {}",
                         col.field_type
@@ -529,7 +529,7 @@ pub fn build_index_columns(
         if col.field_type.is_array() {
             if mv_index {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_NOT_SUPPORTED_YET.generate_with_stack_by_args(&[
+                    &tidb_dbterror::ERR_NOT_SUPPORTED_YET.generate_with_stack_by_args(&[
                         "more than one multi-valued key part per index".into(),
                     ]),
                 ));
@@ -558,14 +558,14 @@ pub fn build_index_columns(
             });
             let Some(ctx) = truncate else {
                 return Err(tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_TOO_LONG_KEY
+                    &tidb_dbterror::ERR_TOO_LONG_KEY
                         .generate_with_stack_by_args(&[sum_length.into(), max_index_length.into()]),
                 ));
             };
             // Truncate the index length and warn in non-strict SQL mode.
             let col_len_per_uint = get_index_column_length(col, 1, columnar_index_type)?;
             index_col_len = max_index_length / col_len_per_uint;
-            ctx.append_warning(WarnErr::Terror(tidb_util::dbterror::ERR_TOO_LONG_KEY.generate(
+            ctx.append_warning(WarnErr::Terror(tidb_dbterror::ERR_TOO_LONG_KEY.generate(
                 format!(
                     "Specified key was too long ({sum_length} bytes); max key length is \
                      {max_index_length} bytes"
@@ -600,7 +600,7 @@ pub fn check_index_prefix_length(
     let max_index_length = max_index_length();
     if idx_len > max_index_length {
         return Err(tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_TOO_LONG_KEY
+            &tidb_dbterror::ERR_TOO_LONG_KEY
                 .generate_with_stack_by_args(&[idx_len.into(), max_index_length.into()]),
         ));
     }
@@ -622,7 +622,7 @@ pub fn index_columns_len(
     for idx_col in idx_cols {
         let Some(col) = find_column_info(cols, idx_col.name.lowercase()) else {
             return Err(MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS.generate_with_stack(format!(
+                &tidb_dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS.generate_with_stack(format!(
                     "column does not exist: {}",
                     idx_col.name.lowercase()
                 )),
@@ -657,22 +657,22 @@ pub fn check_index_column(
         || (flen == 0 && (code.is_type_char() || code.is_type_varchar()))
     {
         if col.hidden {
-            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_WRONG_KEY_COLUMN_FUNCTIONAL_INDEX.generate_with_stack_by_args(&[(col.generated_expr_string.clone()).to_string().into()])));
+            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_WRONG_KEY_COLUMN_FUNCTIONAL_INDEX.generate_with_stack_by_args(&[(col.generated_expr_string.clone()).to_string().into()])));
         }
-        return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_WRONG_KEY_COLUMN.generate_with_stack_by_args(&[(col.name.original().to_owned()).to_string().into()])));
+        return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_WRONG_KEY_COLUMN.generate_with_stack_by_args(&[(col.name.original().to_owned()).to_string().into()])));
     }
 
     // JSON column cannot index.
     if code == FieldTypeCode::Json && !col.field_type.is_array() {
         if col.hidden {
-            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_ON_JSON_OR_GEOMETRY_FUNCTION.generate_with_stack_by_args(&[])));
+            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_FUNCTIONAL_INDEX_ON_JSON_OR_GEOMETRY_FUNCTION.generate_with_stack_by_args(&[])));
         }
-        return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_JSON_USED_AS_KEY.generate_with_stack_by_args(&[(col.name.original().to_owned()).to_string().into()])));
+        return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_JSON_USED_AS_KEY.generate_with_stack_by_args(&[(col.name.original().to_owned()).to_string().into()])));
     }
 
     if code == FieldTypeCode::VectorFloat32 {
         return Err(MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX
+            &tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX
                 .generate_with_stack("only VECTOR INDEX can be added to vector column"),
         ));
     }
@@ -681,28 +681,28 @@ pub fn check_index_column(
     if code.is_type_blob() {
         if index_column_len == UNSPECIFIED_LENGTH {
             if col.hidden {
-                return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_ON_BLOB.generate_with_stack_by_args(&[])));
+                return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_FUNCTIONAL_INDEX_ON_BLOB.generate_with_stack_by_args(&[])));
             }
-            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_BLOB_KEY_WITHOUT_LENGTH.generate_with_stack_by_args(&[(col.name.original().to_owned()).to_string().into()])));
+            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_BLOB_KEY_WITHOUT_LENGTH.generate_with_stack_by_args(&[(col.name.original().to_owned()).to_string().into()])));
         }
         if index_column_len == ERROR_LENGTH {
-            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_KEY_PART0.generate_with_stack_by_args(&[(col.name.original().to_owned()).to_string().into()])));
+            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_KEY_PART0.generate_with_stack_by_args(&[(col.name.original().to_owned()).to_string().into()])));
         }
     }
 
     // Length can only be specified for specifiable types.
     if index_column_len != UNSPECIFIED_LENGTH && !code.is_type_prefixable() {
-        return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_INCORRECT_PREFIX_KEY.generate_with_stack_by_args(&[])));
+        return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_INCORRECT_PREFIX_KEY.generate_with_stack_by_args(&[])));
     }
 
     // Key length must be shorter or equal to the column length.
     if index_column_len != UNSPECIFIED_LENGTH && code.is_type_char() {
         if flen < index_column_len {
-            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_INCORRECT_PREFIX_KEY.generate_with_stack_by_args(&[])));
+            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_INCORRECT_PREFIX_KEY.generate_with_stack_by_args(&[])));
         }
         // Length must be non-zero for char.
         if index_column_len == ERROR_LENGTH {
-            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_KEY_PART0.generate_with_stack_by_args(&[(col.name.original().to_owned()).to_string().into()])));
+            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_KEY_PART0.generate_with_stack_by_args(&[(col.name.original().to_owned()).to_string().into()])));
         }
     }
 
@@ -715,7 +715,7 @@ pub fn check_index_column(
     let max_index_length = max_index_length();
     if index_column_len > max_index_length && !suppress_too_long_key_err {
         return Err(tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_TOO_LONG_KEY
+            &tidb_dbterror::ERR_TOO_LONG_KEY
                 .generate_with_stack_by_args(&[index_column_len.into(), max_index_length.into()]),
         ));
     }
@@ -777,7 +777,7 @@ pub fn get_index_column_length(
             // character.
             let maxlen = charset_maxlen(col.field_type.charset_name()).map_err(|_| {
                 MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_UNSUPPORTED_CHARSET.generate_with_stack_by_args(&[
+                    &tidb_dbterror::ERR_UNSUPPORTED_CHARSET.generate_with_stack_by_args(&[
                         col.field_type.charset_name().into(),
                         col.field_type.collation_name().into(),
                     ]),
@@ -837,7 +837,7 @@ mod index_column_tests {
     #[test]
     fn a_length_on_a_non_prefixable_type_is_1089() {
         let int = column("a", tidb_datatype::FieldType::new(FieldTypeCode::Long));
-        assert_eq!(check_index_column(&int, 3, false), Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_INCORRECT_PREFIX_KEY.generate_with_stack_by_args(&[]))));
+        assert_eq!(check_index_column(&int, 3, false), Err(tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_INCORRECT_PREFIX_KEY.generate_with_stack_by_args(&[]))));
         assert!(matches!(check_index_column(&int, UNSPECIFIED_LENGTH, false), Ok(())));
     }
 
@@ -849,7 +849,7 @@ mod index_column_tests {
         assert_eq!(
             check_index_column(&blob, UNSPECIFIED_LENGTH, false),
             Err(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_BLOB_KEY_WITHOUT_LENGTH
+                &tidb_dbterror::ERR_BLOB_KEY_WITHOUT_LENGTH
                     .generate_with_stack_by_args(&["a".into()])
             ))
         );
@@ -858,7 +858,7 @@ mod index_column_tests {
         assert_eq!(
             check_index_column(&blob, 0, false),
             Err(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_KEY_PART0.generate_with_stack_by_args(&["a".into()])
+                &tidb_dbterror::ERR_KEY_PART0.generate_with_stack_by_args(&["a".into()])
             ))
         );
     }
@@ -872,13 +872,13 @@ mod index_column_tests {
         assert_eq!(
             check_index_column(&short, 10, false),
             Err(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_INCORRECT_PREFIX_KEY.generate_with_stack_by_args(&[])
+                &tidb_dbterror::ERR_INCORRECT_PREFIX_KEY.generate_with_stack_by_args(&[])
             ))
         );
         assert_eq!(
             check_index_column(&short, 0, false),
             Err(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_KEY_PART0.generate_with_stack_by_args(&["a".into()])
+                &tidb_dbterror::ERR_KEY_PART0.generate_with_stack_by_args(&["a".into()])
             ))
         );
         assert!(matches!(check_index_column(&short, 3, false), Ok(())));
@@ -915,7 +915,7 @@ mod index_column_tests {
         assert_eq!(
             check_index_column(&wide, 1000, false),
             Err(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_TOO_LONG_KEY
+                &tidb_dbterror::ERR_TOO_LONG_KEY
                     .generate_with_stack_by_args(&[4000.into(), MAX_INDEX_LENGTH.into()])
             ))
         );
@@ -942,7 +942,7 @@ mod index_column_tests {
         assert_eq!(
             check_index_prefix_length(&columns, &[part("a"), part("b")], ColumnarIndexType::NA),
             Err(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_TOO_LONG_KEY
+                &tidb_dbterror::ERR_TOO_LONG_KEY
                     .generate_with_stack_by_args(&[4000.into(), MAX_INDEX_LENGTH.into()])
             ))
         );
@@ -1089,7 +1089,7 @@ pub fn check_create_global_index(
 ) -> Result<(), MysqlError> {
     if global && partition_offsets.is_none() {
         return Err(MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
+            &tidb_dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
                 .generate_with_stack("Unsupported Global Index on non-partitioned table"),
         ));
     }
@@ -1121,7 +1121,7 @@ pub fn check_create_global_index(
             .all(|offset| crate::table_partition::key_part_covers(offsets, prefix_lengths, *offset))
         {
             return Err(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_GLOBAL_INDEX_NOT_EXPLICITLY_SET
+                &tidb_dbterror::ERR_GLOBAL_INDEX_NOT_EXPLICITLY_SET
                     .generate_with_stack_by_args(&[index_name.to_owned().into()]),
             ));
         }
@@ -1138,8 +1138,8 @@ pub fn warn_global_index_needs_manual_analyze(
     mut part_is_prefix_or_virtual: impl Iterator<Item = bool>,
 ) {
     if part_is_prefix_or_virtual.any(|flag| flag) {
-        ctx.append_warning(tidb_util::context::WarnErr::Terror(
-            tidb_util::dbterror::ERR_WARN_GLOBAL_INDEX_NEED_MANUALLY_ANALYZE
+        ctx.append_warning(tidb_context::WarnErr::Terror(
+            tidb_dbterror::ERR_WARN_GLOBAL_INDEX_NEED_MANUALLY_ANALYZE
                 .fast_generate_by_args(&[index_name.into()]),
         ));
     }
@@ -1381,7 +1381,7 @@ pub fn resolve_index_columns(
         else {
             // Go `buildIndexColumns`' `GenWithStack("column does not exist: %s")`.
             return Err(DdlAdmissionError::from_terror(
-                &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS.generate_with_stack(format!(
+                &tidb_dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS.generate_with_stack(format!(
                     "column does not exist: {}",
                     part.name.original()
                 )),

@@ -32,4 +32,4 @@ pub use fd_graph::{find_common_equiv_classes, FdSet, OuterJoinOptions};
 /// Go `intset.FastIntSet`: the column-id set every dependency edge is built
 /// from. Re-exported so a consumer needs only this crate to speak to the
 /// graph.
-pub use tidb_util::intset::FastIntSet as ColSet;
+pub use tidb_intset::FastIntSet as ColSet;

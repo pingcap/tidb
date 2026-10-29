@@ -59,7 +59,7 @@ use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_expr::schema::Schema;
-use tidb_util::memory::Tracker;
+use tidb_memory::Tracker;
 
 #[derive(Clone)]
 struct ApplyCacheConfig {

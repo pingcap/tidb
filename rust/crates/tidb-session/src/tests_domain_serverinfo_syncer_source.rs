@@ -622,8 +622,8 @@ fn cluster_metadata_instance_uses_local_status_identity_without_discovery() {
 #[ignore = "isolated subprocess helper for process-global SEM"]
 fn cluster_metadata_sem_child() {
     use crate::{tests_support::*, *};
-    tidb_util::sem::disable();
-    tidb_util::sem_v2::disable();
+    tidb_sem::disable();
+    tidb_sem_v2::disable();
     let registry = tidb_privilege::PrivilegeRegistry::default();
     let mut bootstrap = bootstrap_session(&registry);
     bootstrap.run("CREATE USER 'metadata_reader'@'%'").unwrap();
@@ -641,12 +641,12 @@ fn cluster_metadata_sem_child() {
     let mut failures = Vec::new();
     for version in [1, 2] {
         if version == 1 {
-            tidb_util::sem::enable();
+            tidb_sem::enable();
         } else {
-            tidb_util::sem::disable();
-            tidb_util::sem_v2::enable_by(&tidb_util::sem_v2::Config {
+            tidb_sem::disable();
+            tidb_sem_v2::enable_by(&tidb_sem_v2::Config {
                 version: "1.0".into(),
-                tidb_version: tidb_util::sem_v2::tidb_release_version(),
+                tidb_version: tidb_sem_v2::tidb_release_version(),
                 ..Default::default()
             })
             .unwrap();
@@ -703,8 +703,8 @@ fn cluster_metadata_sem_child() {
             );
         }
     }
-    tidb_util::sem_v2::disable();
-    tidb_util::sem::disable();
+    tidb_sem_v2::disable();
+    tidb_sem::disable();
     assert_eq!(
         internal.cluster_info_table_rows().unwrap()[0][1],
         tidb_datatype::Datum::Bytes(b"[2001:db8::7]:4000".to_vec())

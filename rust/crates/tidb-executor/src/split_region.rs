@@ -432,7 +432,7 @@ fn index_split_keys(
             let upper_key = index_key(upper)?;
             if lower_key >= upper_key {
                 return Err(DriverError::Mysql(MysqlError::from_terror(
-                    &tidb_util::dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
+                    &tidb_dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
                         .generate_with_stack_by_args(&[(format!(
                     "Split index `{}` region lower value {} should less than the upper value {}",
                     index.name,
@@ -491,7 +491,7 @@ fn table_split_keys(
             let upper_handle = build_handle(table, true, upper, &zone)?;
             if handle_bytes(&lower_handle) >= handle_bytes(&upper_handle) {
                 return Err(DriverError::Mysql(MysqlError::from_terror(
-        &tidb_util::dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
+        &tidb_dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
             .generate_with_stack_by_args(&[(format!(
                     "Split table `{table_name}` region lower value {} should less than the upper value {}",
                     datums_text(lower),
@@ -549,7 +549,7 @@ fn int_bound_and_step(
     let (low, step) = if table.unsigned_pk_handle() {
         if upper_bits <= lower_bits {
             return Err(DriverError::Mysql(MysqlError::from_terror(
-                &tidb_util::dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
+                &tidb_dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
                     .generate_with_stack_by_args(&[(format!(
                         "lower value {lower_bits} should less than the upper value {upper_bits}"
                     ))
@@ -564,7 +564,7 @@ fn int_bound_and_step(
         let (low, up) = (lower_bits as i64, upper_bits as i64);
         if up <= low {
             return Err(DriverError::Mysql(MysqlError::from_terror(
-                &tidb_util::dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
+                &tidb_dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
                     .generate_with_stack_by_args(&[(format!(
                         "lower value {low} should less than the upper value {up}"
                     ))
@@ -575,7 +575,7 @@ fn int_bound_and_step(
     };
     if step < MIN_REGION_STEP_VALUE {
         return Err(DriverError::Mysql(MysqlError::from_terror(
-        &tidb_util::dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
+        &tidb_dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
             .generate_with_stack_by_args(&[(format!(
             "the region size is too small, expected at least {MIN_REGION_STEP_VALUE}, but got {step}"
         )).into()]),
@@ -711,8 +711,8 @@ impl tidb_datatype::ConversionWarningAppender for StatementWarnings<'_> {
     fn append_conversion_warning(&self, warning: tidb_error::terror::TerrorError) {
         let reported = warning.to_sql_error();
         self.0
-            .append_sql_warn(tidb_util::context::SqlWarn::from_error(
-            tidb_util::context::WarningLevel::Warning,
+            .append_sql_warn(tidb_context::SqlWarn::from_error(
+            tidb_context::WarningLevel::Warning,
             reported.code,
             reported.message.clone(),
             reported.identity,

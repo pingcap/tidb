@@ -23,7 +23,6 @@ flate2.workspace = true
 futures.workspace = true
 nix = { workspace = true, features = ["feature", "fs", "net", "sched"] }
 regex.workspace = true
-tidb-datatype = { path = "../tidb-datatype" }
 tidb-log = { path = "../tidb-log" }
 tidb-proto = { path = "../tidb-proto" }
 tokio = { workspace = true }

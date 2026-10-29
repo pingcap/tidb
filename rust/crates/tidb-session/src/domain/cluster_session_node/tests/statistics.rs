@@ -30,7 +30,7 @@ impl ClusterAnalyze for UndeterminedAnalyze {
         _: &tidb_executor::cluster_analyze::AnalyzeStatement,
         _: &str,
         _: &dyn tidb_executor::real_tikv_analyze::ApproximateTableCountProvider,
-        _: &tidb_util::sqlkiller::SqlKiller,
+        _: &tidb_sqlkiller::SqlKiller,
         _: &dyn Fn() -> bool,
         _: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
     ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver::sql_query_error::SqlQueryError>
@@ -51,7 +51,7 @@ impl ClusterAnalyze for PanickingAnalyze {
         _: &tidb_executor::cluster_analyze::AnalyzeStatement,
         _: &str,
         _: &dyn tidb_executor::real_tikv_analyze::ApproximateTableCountProvider,
-        _: &tidb_util::sqlkiller::SqlKiller,
+        _: &tidb_sqlkiller::SqlKiller,
         _: &dyn Fn() -> bool,
         _: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
     ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver::sql_query_error::SqlQueryError>
@@ -338,8 +338,8 @@ fn analyze_commit_keeps_a_backoff_driver_error_coded_on_the_wire() {
 
 #[test]
 fn analyze_merge_keeps_the_statement_kill_error_coded_on_the_wire() {
-    let killer = tidb_util::sqlkiller::SqlKiller::default();
-    killer.send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+    let killer = tidb_sqlkiller::SqlKiller::default();
+    killer.send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
     let error = killer
         .handle_signal()
         .expect("the query-interrupted signal has an error")

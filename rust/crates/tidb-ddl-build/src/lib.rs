@@ -86,15 +86,15 @@ pub fn validate_comment_length(
     // `%-.64s`: the name as Go prints it.
     let shown: String = name.chars().take(64).collect();
     let (proto, owner) = match owner {
-        CommentOwner::Table => (&*tidb_util::dbterror::ERR_TOO_LONG_TABLE_COMMENT, "table"),
-        CommentOwner::Field => (&*tidb_util::dbterror::ERR_TOO_LONG_FIELD_COMMENT, "field"),
-        CommentOwner::Index => (&*tidb_util::dbterror::ERR_TOO_LONG_INDEX_COMMENT, "index"),
+        CommentOwner::Table => (&*tidb_dbterror::ERR_TOO_LONG_TABLE_COMMENT, "table"),
+        CommentOwner::Field => (&*tidb_dbterror::ERR_TOO_LONG_FIELD_COMMENT, "field"),
+        CommentOwner::Index => (&*tidb_dbterror::ERR_TOO_LONG_INDEX_COMMENT, "index"),
     };
     let message = format!("Comment for {owner} '{shown}' is too long (max = {max_len})");
     if ctx.get_sql_mode().has_strict_mode() {
         return Err(MysqlError::from_terror(&proto.generate_with_stack(message)));
     }
-    ctx.append_warning(tidb_util::context::WarnErr::Terror(proto.generate(message)));
+    ctx.append_warning(tidb_context::WarnErr::Terror(proto.generate(message)));
     let mut end = max_len;
     while !comment.is_char_boundary(end) {
         end -= 1;
@@ -107,7 +107,7 @@ pub fn validate_comment_length(
 pub fn table_affinity(level: &str) -> Result<Option<tidb_model::TableAffinityInfo>, MysqlError> {
     tidb_model::new_table_affinity_info_with_level(level).map_err(|_| {
         MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_CANNOT_SET_AFFINITY_ON_TABLE
+            &tidb_dbterror::ERR_CANNOT_SET_AFFINITY_ON_TABLE
                 .generate_with_stack(format!("Invalid AFFINITY '{level}'")),
         )
     })
@@ -126,7 +126,7 @@ pub fn validate_table_affinity(
     };
     let refuse = |what: String, kind: &str| {
         MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_CANNOT_SET_AFFINITY_ON_TABLE
+            &tidb_dbterror::ERR_CANNOT_SET_AFFINITY_ON_TABLE
                 .generate_with_stack_by_args(&[what.into(), kind.into()]),
         )
     };
@@ -159,7 +159,7 @@ pub fn create_table_ttl_info(
             .any(|option| matches!(option, tidb_ast::TableOption::TtlEnable(_)))
         {
             return Err(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
+                &tidb_dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
                     .generate_with_stack_by_args(&[("TTL_ENABLE".to_owned()).to_string().into()]),
             ));
         }
@@ -168,7 +168,7 @@ pub fn create_table_ttl_info(
             .any(|option| matches!(option, tidb_ast::TableOption::TtlJobInterval(_)))
         {
             return Err(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
+                &tidb_dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
                     .generate_with_stack_by_args(&[("TTL_JOB_INTERVAL".to_owned())
                         .to_string()
                         .into()]),
@@ -297,7 +297,7 @@ pub fn set_temporary_type(
                 Ok(tidb_model::TempTableType::GLOBAL)
             } else {
                 Err(tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_UNSUPPORTED_ON_COMMIT_PRESERVE
+                    &tidb_dbterror::ERR_UNSUPPORTED_ON_COMMIT_PRESERVE
                         .generate_with_stack_by_args(&[]),
                 ))
             }
@@ -316,7 +316,7 @@ pub const MAX_IDENTIFIER_LENGTH: usize = 64;
 pub fn check_too_long_identifier(name: &str) -> Result<(), MysqlError> {
     if name.chars().count() > MAX_IDENTIFIER_LENGTH {
         return Err(tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_TOO_LONG_IDENT
+            &tidb_dbterror::ERR_TOO_LONG_IDENT
                 .generate_with_stack_by_args(&[name.to_owned().into()]),
         ));
     }
@@ -358,8 +358,8 @@ pub fn ttl_info_from_options(
                 // records `INTERVAL _utf8mb4'15:20' HOUR_MINUTE`, and the
                 // default flags would print `_UTF8MB4`.
                 interval_expr_str: value.restore_with_flags(
-                    tidb_ast::RestoreFlags::STRING_SINGLE_QUOTES
-                        | tidb_ast::RestoreFlags::NAME_BACK_QUOTES,
+                    tidb_parser_format::RestoreFlags::STRING_SINGLE_QUOTES
+                        | tidb_parser_format::RestoreFlags::NAME_BACK_QUOTES,
                 ),
                 interval_time_unit,
                 enable: true,

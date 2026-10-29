@@ -1321,8 +1321,8 @@ impl PrivilegeRegistry {
         if self.has_explicit_dynamic_priv(user, host, &name, with_grant) {
             return true;
         }
-        if tidb_util::sem_compat::is_enabled()
-            && tidb_util::sem_compat::is_restricted_privilege(&name)
+        if tidb_sem_compat::is_enabled()
+            && tidb_sem_compat::is_restricted_privilege(&name)
         {
             return false;
         }
@@ -1382,8 +1382,8 @@ impl PrivilegeRegistry {
                 return true;
             }
         }
-        if tidb_util::sem_compat::is_enabled()
-            && tidb_util::sem_compat::is_restricted_privilege(&name)
+        if tidb_sem_compat::is_enabled()
+            && tidb_sem_compat::is_restricted_privilege(&name)
         {
             return false;
         }
@@ -1810,8 +1810,8 @@ impl PrivilegeRegistry {
         database: &str,
     ) -> bool {
         let _view = self.read_view();
-        if tidb_util::sem_compat::is_enabled()
-            && tidb_util::sem_compat::is_invisible_schema(database)
+        if tidb_sem_compat::is_enabled()
+            && tidb_sem_compat::is_invisible_schema(database)
             && !self.has_dynamic_priv_with_roles(
                 user,
                 host,
@@ -1967,7 +1967,7 @@ impl PrivilegeRegistry {
         // Every identity whose rows fold into this output. Go reads the
         // account's own row and each effective role's, ORing the masks.
         let quote = |value: &str| {
-            String::from_utf8(tidb_util::stringutil::escape(value.as_bytes(), sql_mode))
+            String::from_utf8(tidb_stringutil::escape(value.as_bytes(), sql_mode))
                 .expect("quoting UTF-8 preserves UTF-8")
         };
         // Go prints the account and each role raw between single quotes

@@ -334,15 +334,15 @@ impl From<OptimisticCoordinatorError> for ClusterDdlError {
 /// warnings are `StmtCtx.AppendWarning` (Warning); `IF [NOT] EXISTS`
 /// suppressions are `AppendNote` (Note) — `DROP TABLE IF EXISTS nosuch`
 /// leaves `Note | 1051 | Unknown table 'x.nosuch'`.
-pub use tidb_util::context::WarningLevel as DdlWarningLevel;
+pub use tidb_context::WarningLevel as DdlWarningLevel;
 
 /// Go `StmtCtx.AppendNote(proto.GenWithStackByArgs(...))`: the note an
 /// `IF [NOT] EXISTS` files, carrying the Go error `proto` it suppressed.
 #[must_use]
-pub fn ddl_note(error: tidb_error::terror::TerrorError) -> tidb_util::context::SqlWarn {
-    tidb_util::context::SqlWarn::new(
+pub fn ddl_note(error: tidb_error::terror::TerrorError) -> tidb_context::SqlWarn {
+    tidb_context::SqlWarn::new(
         DdlWarningLevel::Note,
-        tidb_util::context::WarnErr::Terror(error),
+        tidb_context::WarnErr::Terror(error),
     )
 }
 
@@ -357,14 +357,14 @@ pub enum ClusterDdlReport {
         created_id: Option<i64>,
         /// Go `job.Warning`: what the change did differently from what was
         /// written, for the caller to raise as a statement warning.
-        warnings: Vec<tidb_util::context::SqlWarn>,
+        warnings: Vec<tidb_context::SqlWarn>,
     },
     /// `IF [NOT] EXISTS` was already satisfied, so nothing was written.
     AlreadySatisfied {
         /// What was already true.
         detail: String,
         /// The warnings the statement raises even though it changed nothing.
-        warnings: Vec<tidb_util::context::SqlWarn>,
+        warnings: Vec<tidb_context::SqlWarn>,
     },
 }
 
@@ -763,7 +763,7 @@ fn is_retryable_job_error(error: &DdlPlanError, error_count: i64, limit: i64) ->
         return false;
     }
     let message = error.to_string();
-    if tidb_util::dbterror::REORG_RETRYABLE_ERR_MSGS
+    if tidb_dbterror::REORG_RETRYABLE_ERR_MSGS
         .iter()
         .any(|pattern| message.contains(pattern))
     {
@@ -771,7 +771,7 @@ fn is_retryable_job_error(error: &DdlPlanError, error_count: i64, limit: i64) ->
     }
     error
         .mysql_error_code()
-        .is_none_or(|code| tidb_util::dbterror::REORG_RETRYABLE_ERR_CODES.contains(&code))
+        .is_none_or(|code| tidb_dbterror::REORG_RETRYABLE_ERR_CODES.contains(&code))
 }
 
 // Go worker.loadGlobalVars uses an independent session: a SET GLOBAL committed
@@ -1178,7 +1178,7 @@ pub fn submit_check_constraint_job_with_retry<S: StoreClient>(
 pub enum AddIndexSubmitted {
     /// The job queued, by id and action, with the executor's statement
     /// warnings.
-    Job(i64, ActionType, Vec<tidb_util::context::SqlWarn>),
+    Job(i64, ActionType, Vec<tidb_context::SqlWarn>),
     /// `IF NOT EXISTS` over an existing index: nothing queued.
     AlreadySatisfied(ClusterDdlReport),
 }
@@ -2159,7 +2159,7 @@ mod tests {
         let coded = |code, message: &str| {
             DdlPlanError::from_mysql_error(tidb_error::mysql::MysqlError::sql_error(code, message))
         };
-        for &code in tidb_util::dbterror::REORG_RETRYABLE_ERR_CODES.iter() {
+        for &code in tidb_dbterror::REORG_RETRYABLE_ERR_CODES.iter() {
             let error = coded(code, "temporary source error");
             assert!(is_retryable_job_error(&error, 1, 3), "{code}");
             assert!(!is_retryable_job_error(&error, 2, 3), "{code}");
@@ -2167,7 +2167,7 @@ mod tests {
         for code in [1049, 1061, 3819, 1105] {
             assert!(!is_retryable_job_error(&coded(code, "permanent"), 1, 3));
         }
-        for pattern in tidb_util::dbterror::REORG_RETRYABLE_ERR_MSGS {
+        for pattern in tidb_dbterror::REORG_RETRYABLE_ERR_MSGS {
             // Go tests messages before the typed code, but after the limit.
             let error = coded(1105, &format!("wrapped: {pattern}: failed"));
             assert!(is_retryable_job_error(&error, 0, 3));
@@ -2176,11 +2176,11 @@ mod tests {
         let plain = DdlPlanError::Encode("unknown action failure".into());
         assert!(is_retryable_job_error(&plain, 1, 3));
         let typed =
-            DdlPlanError::from(tidb_util::dbterror::ERR_NOT_OWNER.generate("owner changed"));
+            DdlPlanError::from(tidb_dbterror::ERR_NOT_OWNER.generate("owner changed"));
         assert!(is_retryable_job_error(&typed, 1, 3));
         assert_eq!(typed.to_job_error().rfc_code(), "ddl:8201");
         let permanent = DdlPlanError::from(
-            tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED.generate("invalid row"),
+            tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED.generate("invalid row"),
         );
         assert!(!is_retryable_job_error(&permanent, 1, 3));
         let unknown = DdlPlanError::from(tidb_error::terror::TerrorError::synthesize(

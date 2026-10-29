@@ -101,7 +101,7 @@ pub trait ClusterDdl: Send + Sync {
 pub(crate) fn sql_worker_thread(name: impl Into<String>) -> std::thread::Builder {
     std::thread::Builder::new()
         .name(name.into())
-        .stack_size(tidb_util::worker_stack::WORKER_STACK_BYTES)
+        .stack_size(tidb_worker_stack::WORKER_STACK_BYTES)
 }
 
 /// zap `zap.Error(err)`.
@@ -540,7 +540,7 @@ where
         // aborted the whole-corpus replay over the embedded store.
         let handle = std::thread::Builder::new()
             .name("ddl-job-scheduler".to_owned())
-            .stack_size(tidb_util::worker_stack::WORKER_STACK_BYTES)
+            .stack_size(tidb_worker_stack::WORKER_STACK_BYTES)
             .spawn({
                 let opener = Arc::clone(&self.opener);
                 let notifier = self.notifier.clone();
@@ -1845,7 +1845,7 @@ mod schema_sync_tests {
                 buffer: &MutationBuffer,
             ) -> Result<(), DdlPlanError> {
                 (self.0)(buffer);
-                Err(tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED
+                Err(tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED
                     .fast_generate_by_args(&["c".into()])
                     .into())
             }
@@ -2613,7 +2613,7 @@ where
                             && if_exists
                             && error.code == tidb_error::mysql::errcode::ErrWrongObject =>
                     {
-                        notes.push(tidb_util::context::SqlWarn::from_error(
+                        notes.push(tidb_context::SqlWarn::from_error(
                             crate::real_tikv_ddl::DdlWarningLevel::Note,
                             error.code,
                             error.message,
@@ -2753,15 +2753,15 @@ where
 /// then a multi-schema change's sub-job warnings as notes
 /// (`appendMultiChangeWarningsToOwnerCtx`). A job's own `Warning` never
 /// reaches the client.
-fn synced_job_warnings(job: &tidb_model::Job) -> Vec<tidb_util::context::SqlWarn> {
+fn synced_job_warnings(job: &tidb_model::Job) -> Vec<tidb_context::SqlWarn> {
     let mut warnings = reorg_meta_warnings(job);
     if job.type_ == tidb_model::ActionType::ACTION_MULTI_SCHEMA_CHANGE {
         if let Some(info) = &job.multi_schema_info {
             for sub in info.read().sub_jobs.iter_deref() {
                 if let Some(warning) = &sub.read().warning {
-                    warnings.push(tidb_util::context::SqlWarn::new(
+                    warnings.push(tidb_context::SqlWarn::new(
                         crate::real_tikv_ddl::DdlWarningLevel::Note,
-                        tidb_util::context::WarnErr::Terror(warning.read().clone()),
+                        tidb_context::WarnErr::Terror(warning.read().clone()),
                     ));
                 }
             }
@@ -2772,7 +2772,7 @@ fn synced_job_warnings(job: &tidb_model::Job) -> Vec<tidb_util::context::SqlWarn
 
 /// Go `DoDDLJobWrapper` on a synced job: the reorganization's warnings,
 /// each once or summarized by code.
-fn reorg_meta_warnings(job: &tidb_model::Job) -> Vec<tidb_util::context::SqlWarn> {
+fn reorg_meta_warnings(job: &tidb_model::Job) -> Vec<tidb_context::SqlWarn> {
     let Some(meta) = job.reorg_meta.as_ref() else {
         return Vec::new();
     };
@@ -2803,9 +2803,9 @@ fn reorg_meta_warnings(job: &tidb_model::Job) -> Vec<tidb_util::context::SqlWarn
                     ),
                 )
             };
-            Some(tidb_util::context::SqlWarn::new(
+            Some(tidb_context::SqlWarn::new(
                 crate::real_tikv_ddl::DdlWarningLevel::Warning,
-                tidb_util::context::WarnErr::Terror(error),
+                tidb_context::WarnErr::Terror(error),
             ))
         })
         .collect()
@@ -3039,7 +3039,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
         Ok(matches!(
             found,
             Some(tidb_table::kv_table::KvTableError::Mysql(error))
-                if error.equal(&tidb_util::dbterror::ERR_INVALID_USE_OF_NULL)
+                if error.equal(&tidb_dbterror::ERR_INVALID_USE_OF_NULL)
         ))
     }
 
@@ -3325,7 +3325,7 @@ impl KvTableIndexBackfiller {
         {
             return Err(LockSqlError::from(
                 tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_UNSUPPORTED_PARTITION_TYPE
+                    &tidb_dbterror::ERR_UNSUPPORTED_PARTITION_TYPE
                         .generate_with_stack_by_args(&[plan.partitioned.name.original().into()]),
                 ),
             ));
@@ -3391,7 +3391,7 @@ fn check_constraint_validation_table_error(
             if error.equal(&tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED) =>
         {
             use tidb_hack::GoToLower;
-            tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED
+            tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED
                 .generate_with_stack_by_args(&[tidb_error::mysql::FormatArg::from(
                     constraint_name.go_to_lower(),
                 )])
@@ -3416,7 +3416,7 @@ fn exchange_validation_table_error(error: tidb_table::kv_table::KvTableError) ->
                 || error.equal(&tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED) =>
         {
             LockSqlError::from(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_ROW_DOES_NOT_MATCH_PARTITION
+                &tidb_dbterror::ERR_ROW_DOES_NOT_MATCH_PARTITION
                     .generate_with_stack_by_args(&[]),
             ))
         }

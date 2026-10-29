@@ -50,7 +50,7 @@ use std::sync::Arc;
 
 use tidb_datatype::ConversionFlags;
 use tidb_mysql::consts::SqlMode;
-use tidb_util::context::WarnErr;
+use tidb_context::WarnErr;
 use tidb_vardef::defaults::{
     DEF_PRE_SPLIT_REGIONS, DEF_SHARD_ROW_ID_BITS, DEF_TIDB_ENABLE_AUTO_INCREMENT_IN_GENERATED,
     DEF_TIDB_ENABLE_CLUSTERED_INDEX,

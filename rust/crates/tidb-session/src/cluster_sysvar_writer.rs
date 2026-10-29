@@ -240,8 +240,8 @@ where
         );
         if let Some(error) = refresh_error {
             // Go `NotifyUpdateSysVarCache`'s local rebuild failure.
-            tidb_util::logutil::bg_logger()
-                .error("rebuilding sysvar cache failed", &[tidb_util::logutil::zap_error(error)]);
+            tidb_logutil::bg_logger()
+                .error("rebuilding sysvar cache failed", &[tidb_logutil::zap_error(error)]);
         }
         notify_sysvar_update(self.notifier.as_deref(), &changed);
         Ok(changed)

@@ -8,6 +8,17 @@ repository.workspace = true
 description = "Go pkg/sessionctx/variable for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-context = { path = "../tidb-context" }
+tidb-execdetails = { path = "../tidb-execdetails" }
+tidb-go-time-layout = { path = "../tidb-go-time-layout" }
+tidb-memory = { path = "../tidb-memory" }
+tidb-ruv2-metrics = { path = "../tidb-ruv2-metrics" }
+tidb-sem = { path = "../tidb-sem" }
+tidb-sem-v2 = { path = "../tidb-sem-v2" }
+tidb-stringutil = { path = "../tidb-stringutil" }
+tidb-tiflashcompute = { path = "../tidb-tiflashcompute" }
+tidb-timeutil = { path = "../tidb-timeutil" }
+tidb-tls = { path = "../tidb-tls" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-fixcontrol = { path = "../tidb-fixcontrol" }
 tidb-stmtctx = { path = "../tidb-stmtctx" }

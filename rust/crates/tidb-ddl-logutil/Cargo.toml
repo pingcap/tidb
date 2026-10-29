@@ -11,5 +11,6 @@ description = "Go pkg/ddl/logutil category and sampling loggers."
 workspace = true
 
 [dependencies]
+tidb-logutil = { path = "../tidb-logutil" }
 tidb-log = { path = "../tidb-log" }
 tidb-util = { path = "../tidb-util" }

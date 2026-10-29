@@ -1,0 +1,13 @@
+[package]
+name = "tidb-ppcpuusage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/ppcpuusage: Go pkg/util/ppcpuusage (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]

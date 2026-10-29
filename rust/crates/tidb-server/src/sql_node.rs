@@ -15,7 +15,7 @@
 //! Bounded concurrent listener and worker-local query-session ownership.
 
 use tidb_domain_core::connection_ids::new_connection_id_allocator;
-use tidb_util::worker_stack::SQL_WORKER_STACK_BYTES;
+use tidb_worker_stack::SQL_WORKER_STACK_BYTES;
 use std::fmt;
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -23,7 +23,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use tidb_util::globalconn::Allocator;
+use tidb_globalconn::Allocator;
 
 use crate::configured_user_store::ConfiguredUserStore;
 use crate::client_socket::ClientSocket;
@@ -535,7 +535,7 @@ pub struct ConcurrentSqlNode<F: QuerySessionFactory> {
 /// handle runs until its domain closes the exit it was built over.
 pub(crate) fn run_expensive_query_handle(
     handle: Arc<tidb_expensivequery::Handle>,
-    manager: Arc<dyn tidb_util::memoryusagealarm::SessionManager>,
+    manager: Arc<dyn tidb_memoryusagealarm::SessionManager>,
 ) {
     handle.set_session_manager(manager);
     std::thread::spawn(move || handle.run());
@@ -547,9 +547,9 @@ struct ServerMemoryLimitRunner {
 }
 
 impl ServerMemoryLimitRunner {
-    fn start(manager: Arc<dyn tidb_util::memoryusagealarm::SessionManager>) -> Self {
+    fn start(manager: Arc<dyn tidb_memoryusagealarm::SessionManager>) -> Self {
         let (exit, receiver) = mpsc::channel();
-        let mut handle = tidb_util::servermemorylimit::new_server_memory_limit_handle(receiver);
+        let mut handle = tidb_servermemorylimit::new_server_memory_limit_handle(receiver);
         handle.set_session_manager(manager);
         let thread = std::thread::spawn(move || handle.run());
         Self {
@@ -574,11 +574,11 @@ struct MemoryUsageAlarmRunner {
 }
 
 impl MemoryUsageAlarmRunner {
-    fn start(manager: Arc<dyn tidb_util::memoryusagealarm::SessionManager>) -> Self {
+    fn start(manager: Arc<dyn tidb_memoryusagealarm::SessionManager>) -> Self {
         let (exit, receiver) = crossbeam_channel::unbounded();
-        let handle = tidb_util::memoryusagealarm::Handle::new(
+        let handle = tidb_memoryusagealarm::Handle::new(
             receiver,
-            Arc::new(tidb_util::memoryusagealarm::TiDBConfigProvider),
+            Arc::new(tidb_memoryusagealarm::TiDBConfigProvider),
         );
         handle.set_session_manager(Some(manager));
         let thread = std::thread::spawn(move || handle.run());
@@ -616,7 +616,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             let client_verification = tls_variables
                 .iter()
                 .any(|(name, value)| *name == "ssl_ca" && !value.is_empty());
-            tidb_util::logutil::bg_logger().info(
+            tidb_logutil::bg_logger().info(
                 "mysql protocol server secure connection is enabled",
                 &[tidb_log::Field::new(
                     "client verification enabled",
@@ -855,7 +855,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             // the connection anyway: one client's socket never ends the
             // listener (a peer that already closed fails its handshake).
             if let Err(error) = prepare_stream(&stream, self.connection_timeout) {
-                tidb_util::logutil::bg_logger()
+                tidb_logutil::bg_logger()
                     .error("failed to set connection socket options", &[crate::zap_error(error)]);
             }
             let connection_key = u64::try_from(accepted)
@@ -944,7 +944,7 @@ impl SocketListener {
         cleanup_stale_socket(socket)?;
         let listener =
             std::os::unix::net::UnixListener::bind(socket).map_err(SqlNodeError::Bind)?;
-        tidb_util::logutil::bg_logger().info(
+        tidb_logutil::bg_logger().info(
             "server is running MySQL protocol",
             &[tidb_log::Field::new("socket", tidb_log::Value::Str(socket.to_owned()))],
         );
@@ -1164,7 +1164,7 @@ fn serve_connection_work<F: QuerySessionFactory>(
 /// caught) log nothing more, like Go.
 fn log_connection_error(error: &MysqlConnectionError, peer_addr: PeerAddress) {
     use tidb_protocol::PacketError;
-    let logger = tidb_util::logutil::bg_logger();
+    let logger = tidb_logutil::bg_logger();
     match error {
         MysqlConnectionError::Handshake(_) => logger.warn(
             "Server.onConn handshake",
@@ -1339,7 +1339,7 @@ fn drain_workers(
     grace: Duration,
 ) -> Result<(), SqlNodeError> {
     // Go `Server.DrainClients`' log lines mark the same phases.
-    let logger = tidb_util::logutil::bg_logger();
+    let logger = tidb_logutil::bg_logger();
     logger.info("start drain clients", &[]);
     let mut failures = Vec::new();
     if let Err(error) = active_sockets.cancel_queries() {
@@ -1542,7 +1542,7 @@ mod tests {
             Arc::new(ConfiguredUserStore::parse("root\t%\tmysql_native_password\t\n").unwrap());
         let node = ConcurrentSqlNode::bind(&config, Arc::new(UnusedFactory), users).unwrap();
         let (id, truncated) =
-            tidb_util::globalconn::parse_conn_id(node.tracker.connection_ids.next_id()).unwrap();
+            tidb_globalconn::parse_conn_id(node.tracker.connection_ids.next_id()).unwrap();
         assert!(id.is_64bits && !truncated);
         assert_eq!(id.server_id, 1);
     }
@@ -1662,10 +1662,10 @@ mod tests {
             run_ddl: true,
             stats_lease: crate::node_config::StatsLease::Positive(Duration::from_secs(3)),
             cluster_security: tidb_pd_client::ClusterSecurity::plaintext(),
-            spill_storage: tidb_util::spill_storage::SpillStorageSpec {
+            spill_storage: tidb_spill_storage::SpillStorageSpec {
                 path: std::env::temp_dir().join("tidb-sql-node-unit-spill"),
                 quota_bytes: -1,
-                encryption: tidb_util::spill_storage::SpillEncryptionMethod::Plaintext,
+                encryption: tidb_spill_storage::SpillEncryptionMethod::Plaintext,
             },
             memory_arbitrator: MemoryArbitratorConfig {
                 server_memory_limit: "80%".to_owned(),

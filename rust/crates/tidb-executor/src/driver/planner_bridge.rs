@@ -1805,7 +1805,7 @@ fn subquery_evaluator<'a>(
         let begin_evaluation = std::time::Instant::now();
         // Go `EvalSubqueryFirstRow`'s region: the subquery's executors run
         // under it.
-        let region = tidb_util::tracing::start_thread_region_ex("executor.EvalSubQuery");
+        let region = tidb_tracing::start_thread_region_ex("executor.EvalSubQuery");
         let evaluated =
             crate::driver::physical_builder::execute_first_row(&mut physical, catalog, ctx);
         region.end();
@@ -3886,10 +3886,10 @@ mod subquery_error_identity_tests {
     /// that never stops -- reaches the client with its own code, not 1105.
     #[test]
     fn a_planning_time_subquery_keeps_the_go_error_it_raised() {
-        let raised = tidb_util::dbterror::exeerrors::ERR_CTE_MAX_RECURSION_DEPTH
+        let raised = tidb_dbterror::exeerrors::ERR_CTE_MAX_RECURSION_DEPTH
             .generate_with_stack_by_args(&[1000_i64.into()]);
         let planned = driver_error_to_plan(crate::DriverError::from(raised.clone()));
-        assert!(planned.equal(&tidb_util::dbterror::exeerrors::ERR_CTE_MAX_RECURSION_DEPTH));
+        assert!(planned.equal(&tidb_dbterror::exeerrors::ERR_CTE_MAX_RECURSION_DEPTH));
         let crate::DriverError::Mysql(back) = crate::driver::planner_error_to_driver(planned)
         else {
             panic!("the Go error was flattened");

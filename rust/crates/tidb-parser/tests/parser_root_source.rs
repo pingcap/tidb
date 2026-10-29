@@ -14,9 +14,8 @@
 
 //! Direct source-order transcreation of `pkg/parser/parser_test.go`.
 
-use tidb_ast::{
-    AdminStmt, DmlStmt, Expr, ExtendedStatsType, QueryStmt, RestoreContext, RestoreFlags, Stmt,
-};
+use tidb_ast::{AdminStmt, DmlStmt, Expr, ExtendedStatsType, QueryStmt, RestoreContext, Stmt};
+use tidb_parser_format::RestoreFlags;
 use tidb_parser::{parse, parse_multi, parse_multi_with_sql_mode, parse_with_sql_mode};
 use tidb_lexer::SqlMode;
 

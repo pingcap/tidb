@@ -1988,9 +1988,9 @@ mod tests {
         run_select_on("SELECT a FROM t", &catalog, &ctx).unwrap();
 
         assert_eq!(
-            ctx.take_warnings().iter().map(tidb_util::context::SqlWarn::parts).collect::<Vec<_>>(),
+            ctx.take_warnings().iter().map(tidb_context::SqlWarn::parts).collect::<Vec<_>>(),
             vec![(
-                tidb_util::context::WarningLevel::Warning,
+                tidb_context::WarningLevel::Warning,
                 1292u16,
                 "Truncated incorrect DOUBLE value: '12abc'".to_owned()
             )],

@@ -178,7 +178,7 @@ pub trait ExplainCompile: super::CompilerSession {
         // fresh `RuntimeStatsColl` whatever `tidb_enable_collect_execution_info`
         // says: the rows below are rendered from it.
         let ctx = if explain.analyze && ctx.executor_runtime_stats_source().is_none() {
-            let coll = Arc::new(tidb_util::execdetails::runtime_stats::RuntimeStatsColl::new(None));
+            let coll = Arc::new(tidb_execdetails::runtime_stats::RuntimeStatsColl::new(None));
             let sink: Arc<dyn crate::CopResponseSink> = Arc::new(
                 crate::statement_cop_stats::RuntimeStatsCollSink::new(
                     Arc::clone(&coll),
@@ -356,7 +356,7 @@ pub trait ExplainCompile: super::CompilerSession {
             return Ok(None);
         }
         if self.non_prepared_hint_only_refuses(target) {
-            self.append_sql_warning(tidb_util::context::SqlWarn::with_code(tidb_util::context::WarningLevel::Warning, 1105,
+            self.append_sql_warning(tidb_context::SqlWarn::with_code(tidb_context::WarningLevel::Warning, 1105,
                 "skip non-prepared plan-cache: plan cache strategy is hint_only and \
                  use_plan_cache hint is absent"
                     .to_owned(),
@@ -366,7 +366,7 @@ pub trait ExplainCompile: super::CompilerSession {
         let parameterized = match self.parameterize_non_prepared_select_or_refusal(target) {
             Ok(parameterized) => parameterized,
             Err(refusal) => {
-                self.append_sql_warning(tidb_util::context::SqlWarn::with_code(tidb_util::context::WarningLevel::Warning, 1105,
+                self.append_sql_warning(tidb_context::SqlWarn::with_code(tidb_context::WarningLevel::Warning, 1105,
                     format!("skip non-prepared plan-cache: {}", refusal.reason),
                 ));
                 return Ok(None);

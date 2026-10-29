@@ -19,11 +19,11 @@
 //! Ported: the in-memory copies (`CopySelectedJoinRowsDirect`,
 //! `CopySelectedJoinRowsWithSameOuterRows`, `CopySelectedRows`, `CopyRows`),
 //! and the spill-to-disk [`DiskFileReaderWriter`] half of the Go file, which
-//! layers `tidb_util::checksum` over the temporary file.
+//! layers `tidb_checksum` over the temporary file.
 //!
 //! The spill stack has both Go variants: checksum -> file for `plaintext`, and
 //! checksum -> AES-CTR -> file for `aes128-ctr`. The immutable
-//! [`tidb_util::spill_storage::SpillStorage`] passed by the server owns that choice and
+//! [`tidb_spill_storage::SpillStorage`] passed by the server owns that choice and
 //! the directory lease for every file in one process.
 
 use crate::chunk::Chunk;
@@ -33,10 +33,11 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
-use tidb_util::disjointset::Set;
-use tidb_util::layered_io::{CloseWrite, ReadAt};
-use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage};
-use tidb_util::{checksum, encrypt};
+use tidb_disjointset::Set;
+use tidb_layered_io::{CloseWrite, ReadAt};
+use tidb_spill_storage::{SpillEncryptionMethod, SpillStorage};
+use tidb_checksum as checksum;
+use tidb_encrypt as encrypt;
 
 /// Go `msgErrSelNotNil`: a bulk copy refuses chunks carrying a selection
 /// vector, because the copy walks physical rows.

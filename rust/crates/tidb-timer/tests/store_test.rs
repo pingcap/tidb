@@ -25,7 +25,7 @@ use tidb_timer::store::{and, not, or, Cond, OptionalVal, TimerCond, TimerUpdate}
 use tidb_timer::timer::{
     EventExtra, ManualRequest, SchedEventStatus, SchedPolicyType, TimerRecord, TimerSpec,
 };
-use tidb_util::timeutil::{set_system_tz, TimeZone};
+use tidb_timeutil::{set_system_tz, TimeZone};
 
 /// Go `TestFieldOptional`.
 #[test]

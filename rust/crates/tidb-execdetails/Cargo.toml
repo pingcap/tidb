@@ -1,0 +1,20 @@
+[package]
+name = "tidb-execdetails"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/execdetails: Go pkg/util/execdetails (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-ruv2-metrics = { path = "../tidb-ruv2-metrics" }
+tidb-goruntime = { path = "../tidb-goruntime" }
+prost.workspace = true
+tidb-log = { path = "../tidb-log" }
+tidb-model = { path = "../tidb-model" }
+tidb-proto = { path = "../tidb-proto" }
+tikv-client.workspace = true

@@ -612,7 +612,7 @@ mod tests {
             vec![condition.clone()]
         ));
         use std::sync::Arc;
-        use tidb_util::context::{
+        use tidb_context::{
             PlanCacheTracker, PlanCacheType, RangeFallbackHandler, StaticWarnHandler, WarnHandler,
         };
         let warnings = Arc::new(StaticWarnHandler::new(0));

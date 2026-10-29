@@ -362,7 +362,7 @@ pub fn note_reload(
         }
         ReloadedCatalog::Full { catalog, reason } => {
             // Go `issyncer.Syncer.Reload`'s line for a full load.
-            tidb_util::logutil::bg_logger().info("full load and reset schema validator", &[]);
+            tidb_logutil::bg_logger().info("full load and reset schema validator", &[]);
             // Not log content: rust/scripts/run-realtikv-ddl.sh reads this
             // JSON line from stderr.
             eprintln!(

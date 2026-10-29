@@ -19,7 +19,7 @@ use std::fmt::Write as _;
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 
 use tidb_datatype::{Collation, Datum, StringDatum, Time, TimeType, MAX_FSP};
-use tidb_txnkv::decode_resource_group_tag;
+use tidb_resourcegrouptag::decode_resource_group_tag;
 use tidb_txnkv::transaction::DeadlockDetail;
 
 /// `INFORMATION_SCHEMA.DEADLOCKS.DEADLOCK_ID`.

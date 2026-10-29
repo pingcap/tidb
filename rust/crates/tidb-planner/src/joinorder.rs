@@ -36,7 +36,7 @@ use crate::logical::rule::RuleContext;
 use crate::logical::selection::LogicalSelection;
 use crate::logical::{BaseLogicalPlan, LogicalPlan};
 use crate::plan_base::PlanError;
-use tidb_util::intset::FastIntSet;
+use tidb_intset::FastIntSet;
 
 /// Go `joinorder.Node`.
 #[derive(Clone, Debug, Default)]

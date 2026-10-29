@@ -1,0 +1,21 @@
+[package]
+name = "tidb-table-filter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/table-filter: Go pkg/util/table-filter (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-go-regexp = { path = "../tidb-go-regexp" }
+tidb-mysql = { path = "../tidb-mysql" }
+regex.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tidb-filter = { path = "../tidb-filter" }

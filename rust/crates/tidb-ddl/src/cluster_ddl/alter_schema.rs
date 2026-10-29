@@ -147,7 +147,7 @@ pub(super) fn plan_persisted_alter_schema_job_step<S: MetaSnapshot>(
         return Err(cancel_ddl_job(
             active,
             DdlPlanError::from(
-                tidb_util::dbterror::CLASS_SCHEMA
+                tidb_dbterror::CLASS_SCHEMA
                     .new_std(tidb_error::tidb::errcode::ErrBadDB)
                     .generate(format!(
                         "Unknown database '(Schema ID {})'",
@@ -252,7 +252,7 @@ pub fn schema_tiflash_replica_tables<'catalog>(
     };
     if tidb_metadef::is_mem_or_sys_db(database.name.lowercase()) {
         return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_TI_FLASH_OPERATION_FOR_SYS_OR_MEM_TABLE
+            &tidb_dbterror::ERR_UNSUPPORTED_TI_FLASH_OPERATION_FOR_SYS_OR_MEM_TABLE
                 .generate_with_stack_by_args(&[]),
         )));
     }

@@ -1,0 +1,14 @@
+[package]
+name = "tidb-tiflash"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/util/tiflash: the TiFlash replica read policy (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-vardef = { path = "../tidb-vardef" }

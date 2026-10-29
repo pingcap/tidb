@@ -11,6 +11,14 @@ description = "Go pkg/domain (seed): sysvar cache, schema checker, domain contex
 workspace = true
 
 [dependencies]
+tidb-replayer = { path = "../tidb-replayer" }
+tidb-globalconn = { path = "../tidb-globalconn" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-memory = { path = "../tidb-memory" }
+tidb-printer = { path = "../tidb-printer" }
+tidb-redact = { path = "../tidb-redact" }
+tidb-tls = { path = "../tidb-tls" }
+tidb-traceevent = { path = "../tidb-traceevent" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tikv-client.workspace = true

@@ -29,7 +29,7 @@ use tidb_stats::builder::{
     build_column, build_hist_and_topn, BuildOptions, ComparedBytesResult, HistogramBuildError,
     SampleCollector, SampleItem, SequentialRangeChecker,
 };
-use tidb_util::memory::{Tracker, TRACK_MEM_WHEN_EXCEEDS};
+use tidb_memory::{Tracker, TRACK_MEM_WHEN_EXCEEDS};
 
 /// An integer sample, encoded the way an order-preserving key encoder would:
 /// sign-flipped big-endian, so byte order is numeric order.

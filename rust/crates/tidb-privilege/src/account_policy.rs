@@ -82,11 +82,11 @@ impl PasswordLocking {
     }
 }
 
-fn process_local_zone() -> &'static tidb_util::timeutil::TimeZone {
-    static ZONE: std::sync::LazyLock<tidb_util::timeutil::TimeZone> =
+fn process_local_zone() -> &'static tidb_timeutil::TimeZone {
+    static ZONE: std::sync::LazyLock<tidb_timeutil::TimeZone> =
         std::sync::LazyLock::new(|| {
-            tidb_util::timeutil::load_location(&tidb_util::timeutil::infer_system_tz())
-                .unwrap_or(tidb_util::timeutil::TimeZone::Local)
+            tidb_timeutil::load_location(&tidb_timeutil::infer_system_tz())
+                .unwrap_or(tidb_timeutil::TimeZone::Local)
         });
     &ZONE
 }
@@ -97,7 +97,7 @@ fn parse_unix_date(value: &str) -> Result<i64, String> {
 
 fn parse_unix_date_in_zone(
     value: &str,
-    zone: &tidb_util::timeutil::TimeZone,
+    zone: &tidb_timeutil::TimeZone,
 ) -> Result<i64, String> {
     // Go ignores a valid weekday and resolves the abbreviation against Local;
     // an unknown abbreviation has offset zero. UTC always has offset zero.
@@ -109,7 +109,7 @@ fn parse_unix_date_in_zone(
     let naive = chrono::NaiveDateTime::parse_from_str(&calendar, "%b %d %H:%M:%S %Y")
         .map_err(|error| error.to_string())?;
     match zone {
-        tidb_util::timeutil::TimeZone::Named(zone) => {
+        tidb_timeutil::TimeZone::Named(zone) => {
             for instant in [
                 zone.from_local_datetime(&naive).earliest(),
                 zone.from_local_datetime(&naive).latest(),
@@ -122,7 +122,7 @@ fn parse_unix_date_in_zone(
                 }
             }
         }
-        tidb_util::timeutil::TimeZone::Local => {
+        tidb_timeutil::TimeZone::Local => {
             for instant in [
                 Local.from_local_datetime(&naive).earliest(),
                 Local.from_local_datetime(&naive).latest(),
@@ -135,7 +135,7 @@ fn parse_unix_date_in_zone(
                 }
             }
         }
-        tidb_util::timeutil::TimeZone::Fixed { name, offset_secs } if name == parts[4] => {
+        tidb_timeutil::TimeZone::Fixed { name, offset_secs } if name == parts[4] => {
             return Ok(naive.and_utc().timestamp() - i64::from(*offset_secs))
         }
         _ => {}
@@ -151,7 +151,7 @@ pub fn locking_epoch_text(epoch: i64) -> String {
         .single()
         .expect("valid account lock epoch");
     match process_local_zone() {
-        tidb_util::timeutil::TimeZone::Named(zone) => instant
+        tidb_timeutil::TimeZone::Named(zone) => instant
             .with_timezone(zone)
             .format("%a %b %e %H:%M:%S %Z %Y")
             .to_string(),
@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn named_local_zone_resolves_its_abbreviation_only() {
-        let tokyo = tidb_util::timeutil::load_location("Asia/Tokyo").unwrap();
+        let tokyo = tidb_timeutil::load_location("Asia/Tokyo").unwrap();
         assert_eq!(
             parse_unix_date_in_zone("Sat Feb  3 04:05:06 JST 2001", &tokyo).unwrap(),
             981_140_706

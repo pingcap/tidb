@@ -16,4 +16,3 @@
 
 // Register module-safe suites here; isolated suites remain explicit Cargo targets.
 mod parser_keywords_source;
-mod parser_util_package_source;

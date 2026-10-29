@@ -157,10 +157,10 @@ fn process_admin_batch_sem_target_defaults_and_caller_active_roles() {
     // the standalone server ID that `KILL` checks before reaching the local
     // registry.
     let local = |local_conn_id| {
-        tidb_util::globalconn::Gcid {
+        tidb_globalconn::Gcid {
             is_64bits: false,
             local_conn_id,
-            server_id: tidb_util::globalconn::SERVER_ID_FOR_STANDALONE,
+            server_id: tidb_globalconn::SERVER_ID_FOR_STANDALONE,
         }
         .to_conn_id()
     };
@@ -179,7 +179,7 @@ fn process_admin_batch_sem_target_defaults_and_caller_active_roles() {
         String::new(),
         Some(target.clone()),
     );
-    tidb_util::sem::enable();
+    tidb_sem::enable();
     crate::tests_support::assert_go_error(
         bob.run(&kill_victim),
         &tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED,
@@ -206,14 +206,14 @@ fn process_admin_batch_sem_target_defaults_and_caller_active_roles() {
     privileges.create_user("protected", "::1", "");
     privileges.grant_dynamic("protected", "%", "RESTRICTED_USER_ADMIN", false);
     crate::tests_support::assert_err(bob.run(&kill_victim), 1227, "Access denied; you need (at least one of) the RESTRICTED_CONNECTION_ADMIN privilege(s) for this operation");
-    tidb_util::sem::disable();
+    tidb_sem::disable();
     bob.run(&kill_victim).unwrap();
     assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 4);
 }
 
 #[test]
 fn process_admin_batch_processlist_reads_target_statement_state() {
-    use tidb_util::memory::Tracker;
+    use tidb_memory::Tracker;
     let registry = process::ProcessRegistry::default();
     let mut observer = Session::new();
     observer.attach_process(
@@ -507,10 +507,10 @@ fn kill_answers_ok_and_reaches_only_live_connections() {
     // against before touching the local registry (`executeKillStmt`). An ID
     // naming server 0 is never local in Go standalone; Go treats it as remote
     // and refuses it as "Unexpected ZERO ServerID".
-    let own = tidb_util::globalconn::Gcid {
+    let own = tidb_globalconn::Gcid {
         is_64bits: false,
         local_conn_id: 3,
-        server_id: tidb_util::globalconn::SERVER_ID_FOR_STANDALONE,
+        server_id: tidb_globalconn::SERVER_ID_FOR_STANDALONE,
     }
     .to_conn_id();
     let guard = registry.register(

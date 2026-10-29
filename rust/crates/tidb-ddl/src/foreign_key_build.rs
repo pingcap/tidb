@@ -265,7 +265,7 @@ pub(crate) fn check_index_needed_in_foreign_key(
             return Ok(());
         }
         Err(coded(
-            &tidb_util::dbterror::ERR_DROP_INDEX_NEEDED_IN_FOREIGN_KEY,
+            &tidb_dbterror::ERR_DROP_INDEX_NEEDED_IN_FOREIGN_KEY,
             format!(
                 "Cannot drop index '{}': needed in a foreign key constraint",
                 idx_info.name
@@ -302,7 +302,7 @@ pub(crate) fn check_drop_column_with_foreign_key_constraint(
             .any(|col| col.lowercase() == col_name)
         {
             return Err(coded(
-                &tidb_util::dbterror::ERR_FK_COLUMN_CANNOT_DROP,
+                &tidb_dbterror::ERR_FK_COLUMN_CANNOT_DROP,
                 format!(
                     "Cannot drop column '{col_name}': needed in a foreign key constraint '{}'",
                     fk.name
@@ -317,7 +317,7 @@ pub(crate) fn check_drop_column_with_foreign_key_constraint(
             .any(|col| col.lowercase() == col_name)
         {
             return Err(coded(
-                &tidb_util::dbterror::ERR_FK_COLUMN_CANNOT_DROP_CHILD,
+                &tidb_dbterror::ERR_FK_COLUMN_CANNOT_DROP_CHILD,
                 format!(
                     "Cannot drop column '{col_name}': needed in a foreign key constraint '{}' \
                      of table '{}'",
@@ -383,7 +383,7 @@ pub(crate) fn check_modify_column_with_foreign_key_constraint(
             let refer_col = refer_col.read();
             if new.code() != refer_col.field_type.code() {
                 return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_FK_INCOMPATIBLE_COLUMNS.generate_with_stack_by_args(
+                    &tidb_dbterror::ERR_FK_INCOMPATIBLE_COLUMNS.generate_with_stack_by_args(
                         &[
                             (new_col.name.original()).to_string().into(),
                             (ref_cols[i].original()).to_string().into(),
@@ -394,7 +394,7 @@ pub(crate) fn check_modify_column_with_foreign_key_constraint(
             }
             if !is_acceptable_foreign_key_column_change(new_col, original_col, &refer_col) {
                 return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_FOREIGN_KEY_COLUMN_CANNOT_CHANGE
+                    &tidb_dbterror::ERR_FOREIGN_KEY_COLUMN_CANNOT_CHANGE
                         .generate_with_stack_by_args(&[
                             (original_col.name.original()).to_string().into(),
                             (fk.name.original()).to_string().into(),
@@ -430,7 +430,7 @@ pub(crate) fn check_modify_column_with_foreign_key_constraint(
             let child_col = child_col.read();
             if new.code() != child_col.field_type.code() {
                 return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_FK_INCOMPATIBLE_COLUMNS.generate_with_stack_by_args(
+                    &tidb_dbterror::ERR_FK_INCOMPATIBLE_COLUMNS.generate_with_stack_by_args(
                         &[
                             (child_col.name.original()).to_string().into(),
                             (original_col.name.original()).to_string().into(),
@@ -441,7 +441,7 @@ pub(crate) fn check_modify_column_with_foreign_key_constraint(
             }
             if !is_acceptable_foreign_key_column_change(new_col, original_col, &child_col) {
                 return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_FOREIGN_KEY_COLUMN_CANNOT_CHANGE_CHILD
+                    &tidb_dbterror::ERR_FOREIGN_KEY_COLUMN_CANNOT_CHANGE_CHILD
                         .generate_with_stack_by_args(&[
                             (original_col.name.original()).to_string().into(),
                             (referred_fk.child_fk_name.original()).to_string().into(),

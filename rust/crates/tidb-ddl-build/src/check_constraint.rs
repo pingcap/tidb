@@ -21,7 +21,8 @@
 
 use std::collections::HashSet;
 
-use tidb_ast::{CheckConstraintDefinition, CiString, ColumnOption, Expr, RestoreFlags};
+use tidb_ast::{CheckConstraintDefinition, CiString, ColumnOption, Expr};
+use tidb_parser_format::RestoreFlags;
 use tidb_datatype::FieldTypeFlags;
 use tidb_hack::GoCaseCompare;
 use tidb_model::table::ConstraintInfo;
@@ -79,7 +80,7 @@ pub fn uses_column(info: &ConstraintInfo, column_name: &str) -> bool {
 #[must_use]
 pub fn column_dependency_error(constraint_name: &str, column_name: &str) -> CheckConstraintError {
     CheckConstraintError::new(
-        &tidb_util::dbterror::ERR_CANT_DROP_COL_WITH_CHECK_CONSTRAINT,
+        &tidb_dbterror::ERR_CANT_DROP_COL_WITH_CHECK_CONSTRAINT,
         format!(
             "Check constraint '{}' uses column '{}', hence column cannot be dropped or renamed.",
             constraint_name, column_name
@@ -164,7 +165,7 @@ pub fn build_constraint_infos(
         };
         if !used_names.insert(name.go_to_lower()) {
             return Err(CheckConstraintError::new(
-                &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_DUP_NAME,
+                &tidb_dbterror::ERR_CHECK_CONSTRAINT_DUP_NAME,
                 format!("Duplicate check constraint name '{name}'."),
             ));
         }
@@ -199,7 +200,7 @@ pub fn build_constraint_infos(
         };
         if name.len() > MAX_CONSTRAINT_IDENTIFIER_LEN {
             return Err(CheckConstraintError::new(
-                &tidb_util::dbterror::ERR_TOO_LONG_IDENT,
+                &tidb_dbterror::ERR_TOO_LONG_IDENT,
                 format!("Identifier name '{name}' is too long"),
             ));
         }
@@ -240,7 +241,7 @@ pub fn build_constraint_infos(
             })
         }) {
             return Err(CheckConstraintError::new(
-                &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_REFERS_AUTO_INCREMENT_COLUMN,
+                &tidb_dbterror::ERR_CHECK_CONSTRAINT_REFERS_AUTO_INCREMENT_COLUMN,
                 format!("Check constraint '{name}' cannot refer to an auto-increment column."),
             ));
         }
@@ -253,7 +254,7 @@ pub fn build_constraint_infos(
                         .any(|column| column.go_lower_eq(dependency))
                 }) {
                     return Err(CheckConstraintError::new(
-                        &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_USING_FK_REFER_ACTION_COLUMN,
+                        &tidb_dbterror::ERR_CHECK_CONSTRAINT_USING_FK_REFER_ACTION_COLUMN,
                         format!(
                             "Column '{dependency}' cannot be used in a check constraint '{name}': needed in a foreign key constraint referential action."
                         ),
@@ -266,7 +267,7 @@ pub fn build_constraint_infos(
             .is_some_and(|field_type| field_type.has_flag(FieldTypeFlags::IS_BOOLEAN))
         {
             return Err(CheckConstraintError::new(
-                &tidb_util::dbterror::ERR_NON_BOOLEAN_EXPR_FOR_CHECK_CONSTRAINT,
+                &tidb_dbterror::ERR_NON_BOOLEAN_EXPR_FOR_CHECK_CONSTRAINT,
                 format!(
                     "An expression of non-boolean type specified to a check constraint '{name}'."
                 ),
@@ -337,7 +338,7 @@ fn column_constraint_references_other(
     // find itself and its CHECK is refused as referring to another column.
     if names.0.len() > 1 || (names.0.len() == 1 && !names.0.contains(in_column)) {
         return Err(CheckConstraintError::new(
-            &tidb_util::dbterror::ERR_COLUMN_CHECK_CONSTRAINT_REFER_OTHER,
+            &tidb_dbterror::ERR_COLUMN_CHECK_CONSTRAINT_REFER_OTHER,
             format!("Column check constraint '{name}' references other column."),
         ));
     }
@@ -351,7 +352,7 @@ fn unknown_column(
 ) -> CheckConstraintError {
     if mode == CheckConstraintBuildMode::Alter {
         return CheckConstraintError::new(
-            &tidb_util::dbterror::ERR_BAD_FIELD,
+            &tidb_dbterror::ERR_BAD_FIELD,
             format!(
                 "Unknown column '{}' in 'check constraint {name} expression'",
                 missing.go_to_lower()
@@ -359,7 +360,7 @@ fn unknown_column(
         );
     }
     CheckConstraintError::new(
-        &tidb_util::dbterror::ERR_TABLE_CHECK_CONSTRAINT_REFER_UNKNOWN,
+        &tidb_dbterror::ERR_TABLE_CHECK_CONSTRAINT_REFER_UNKNOWN,
         format!("Check constraint '{name}' refers to non-existing column '{missing}'."),
     )
 }
@@ -381,7 +382,7 @@ fn validate_expression_ast(name: &str, expression: &Expr) -> Result<(), CheckCon
             let error = match expression {
                 Expr::UserVar(_) | Expr::SysVar { .. } | Expr::Assign { .. } => {
                     Some(CheckConstraintError::new(
-                        &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_VARIABLES,
+                        &tidb_dbterror::ERR_CHECK_CONSTRAINT_VARIABLES,
                         format!(
                             "An expression of a check constraint '{}' cannot refer to a user or system variable.",
                             self.name
@@ -392,7 +393,7 @@ fn validate_expression_ast(name: &str, expression: &Expr) -> Result<(), CheckCon
                 | Expr::Exists { .. }
                 | Expr::InSubquery { .. }
                 | Expr::CompareSubquery { .. } => Some(CheckConstraintError::new(
-                    &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_FUNC_IS_NOT_ALLOWED,
+                    &tidb_dbterror::ERR_CHECK_CONSTRAINT_FUNC_IS_NOT_ALLOWED,
                     format!(
                         "An expression of a check constraint '{}' contains disallowed function.",
                         self.name
@@ -425,7 +426,7 @@ fn validate_expression_ast(name: &str, expression: &Expr) -> Result<(), CheckCon
 
 fn disallowed_named_function(name: &str, function: &str) -> CheckConstraintError {
     CheckConstraintError::new(
-        &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_NAMED_FUNC_IS_NOT_ALLOWED,
+        &tidb_dbterror::ERR_CHECK_CONSTRAINT_NAMED_FUNC_IS_NOT_ALLOWED,
         format!(
             "An expression of a check constraint '{name}' contains disallowed function: {function}."
         ),

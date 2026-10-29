@@ -1099,7 +1099,7 @@ impl HandleHeap {
 /// A merge worker's tracker and canonical statement cancellation authority.
 /// Rust ownership mirrors Go's deferred Detach, including early error exits.
 struct MergeProcessMemory {
-    tracker: std::sync::Arc<tidb_util::memory::Tracker>,
+    tracker: std::sync::Arc<tidb_memory::Tracker>,
     memory: crate::StatementMemory,
 }
 
@@ -1107,7 +1107,7 @@ impl MergeProcessMemory {
     fn new(memory: &crate::StatementMemory, label: i64) -> Self {
         // Go's worker tracker attaches to the reader's `e.memTracker`, which
         // outlives the worker on the statement tracker.
-        let tracker = tidb_util::memory::Tracker::new(label, -1);
+        let tracker = tidb_memory::Tracker::new(label, -1);
         tracker.attach_to(&memory.persistent_operator_tracker(label));
         Self {
             tracker,
@@ -2249,7 +2249,7 @@ mod tests {
                 _ => {
                     memory
                         .sql_killer()
-                        .send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+                        .send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
                     assert!(matches!(exec.next_table_task(), Err(ExecError::Killed(_))));
                     exec.close().unwrap();
                 }
@@ -2651,7 +2651,7 @@ mod tests {
                 let read = self.reads.fetch_add(1, Ordering::SeqCst);
                 self.memory
                     .sql_killer()
-                    .send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+                    .send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
                 Ok((read == 0).then(|| PartialHandleBatch {
                     handles: int_handles(&[1]),
                     sort_keys: vec![vec![Datum::Int(1)]].into(),
@@ -2685,7 +2685,7 @@ mod tests {
                     context
                         .statement_memory()
                         .sql_killer()
-                        .send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+                        .send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
                 }
                 let result = exec
                     .start_workers()

@@ -136,8 +136,8 @@ fn column_check_restore_uses_statement_qualifier_context() {
     );
     assert_eq!(
         statement.restore_with_flags(
-            tidb_ast::RestoreFlags::WITHOUT_SCHEMA_NAME
-                | tidb_ast::RestoreFlags::WITHOUT_TABLE_NAME,
+            tidb_parser_format::RestoreFlags::WITHOUT_SCHEMA_NAME
+                | tidb_parser_format::RestoreFlags::WITHOUT_TABLE_NAME,
         ),
         "CREATE TABLE `t` (`a` INT CONSTRAINT `c` CHECK(`a`>0) ENFORCED)"
     );

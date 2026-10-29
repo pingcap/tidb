@@ -1,0 +1,22 @@
+[package]
+name = "tidb-timer-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/timer/runtime: the timer runtime that schedules and fires timers (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-timer = { path = "../tidb-timer" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-timeutil = { path = "../tidb-timeutil" }
+chrono-tz.workspace = true
+tidb-log = { path = "../tidb-log" }
+
+[[test]]
+name = "all"
+path = "tests/all.rs"

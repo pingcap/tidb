@@ -1,0 +1,14 @@
+[package]
+name = "tidb-promutil"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/promutil: Go pkg/util/promutil (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+prometheus = { version = "0.14", default-features = false }

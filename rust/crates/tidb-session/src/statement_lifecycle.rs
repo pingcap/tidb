@@ -339,7 +339,7 @@ impl StatementLifecycle<'_> {
             // the inner error's text keeps its `[class:code]` prefix.
             return outcome.map_err(|error| {
                 SqlQueryError::from(tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::exeerrors::ERR_LAZY_UNIQUENESS_CHECK_FAILURE
+                    &tidb_dbterror::exeerrors::ERR_LAZY_UNIQUENESS_CHECK_FAILURE
                         .generate_with_stack_by_args(&[error.error_string().into()]),
                 ))
             });
@@ -558,7 +558,7 @@ impl StatementLifecycle<'_> {
                             // that beat it.
                             self.txn.buffer().restore(savepoint.clone());
                             retry_read_ts = Some(for_update_ts);
-                            tidb_util::breakpoint::inject(
+                            tidb_breakpoint::inject(
                                 &*self.session,
                                 "lockErrorAndThenOnStmtRetryCalled",
                             );
@@ -577,8 +577,8 @@ impl StatementLifecycle<'_> {
                             self.txn.explicit.is_none() && !self.session.in_transaction();
                         let _commit = ends_transaction.then(|| {
                             (
-                                tidb_util::tracing::begin_thread_region_scope("session.CommitTxn"),
-                                tidb_util::tracing::begin_thread_region_scope(
+                                tidb_tracing::begin_thread_region_scope("session.CommitTxn"),
+                                tidb_tracing::begin_thread_region_scope(
                                     "session.doCommitWithRetry",
                                 ),
                             )
@@ -630,7 +630,7 @@ impl StatementLifecycle<'_> {
                         // that beat the statement.
                         Self::rollback_prefetched_write(write_transaction.clone());
                         self.txn.buffer().restore(savepoint.clone());
-                        tidb_util::breakpoint::inject(
+                        tidb_breakpoint::inject(
                             &*self.session,
                             "lockErrorAndThenOnStmtRetryCalled",
                         );
@@ -648,7 +648,7 @@ impl StatementLifecycle<'_> {
                             // the version that beat it.
                             self.txn.buffer().restore(savepoint.clone());
                             retry_read_ts = Some(for_update_ts);
-                            tidb_util::breakpoint::inject(
+                            tidb_breakpoint::inject(
                                 &*self.session,
                                 "lockErrorAndThenOnStmtRetryCalled",
                             );
@@ -672,7 +672,7 @@ impl StatementLifecycle<'_> {
             // transaction is rolled back under `session.RollbackTxn`.
             let _rollback_txn =
                 (!committing && self.txn.explicit.is_none() && !self.session.in_transaction())
-                    .then(|| tidb_util::tracing::start_thread_region_ex("session.RollbackTxn"));
+                    .then(|| tidb_tracing::start_thread_region_ex("session.RollbackTxn"));
             Self::rollback_prefetched_write(write_transaction);
             // Cancel the client's active fair scope. Ordinary locks remain
             // transaction-owned, following Go StmtRollback.

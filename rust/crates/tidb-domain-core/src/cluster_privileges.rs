@@ -223,7 +223,7 @@ impl PrivilegeReloader {
         let stats = Arc::new(PrivilegeReloadCounters::default());
         let worker_signal = Arc::clone(&signal);
         let worker_stats = Arc::clone(&stats);
-        let worker = tidb_util::worker_stack::sql_worker_thread("privilege-reloader")
+        let worker = tidb_worker_stack::sql_worker_thread("privilege-reloader")
             .spawn(move || {
                 let (lock, condvar) = &*worker_signal;
                 loop {
@@ -332,9 +332,9 @@ fn run_one_privilege_reload_pass(
         Ok(accounts) => {
             stats.failures.fetch_add(1, Ordering::AcqRel);
             // Go `LoadPrivilegeLoop`'s failed reload.
-            tidb_util::logutil::bg_logger().error(
+            tidb_logutil::bg_logger().error(
                 "load privilege failed",
-                &[tidb_util::logutil::zap_error(format!(
+                &[tidb_logutil::zap_error(format!(
                     "cluster reports {}",
                     accounts.bootstrap
                 ))],
@@ -342,8 +342,8 @@ fn run_one_privilege_reload_pass(
         }
         Err(error) => {
             stats.failures.fetch_add(1, Ordering::AcqRel);
-            tidb_util::logutil::bg_logger()
-                .error("load privilege failed", &[tidb_util::logutil::zap_error(error)]);
+            tidb_logutil::bg_logger()
+                .error("load privilege failed", &[tidb_logutil::zap_error(error)]);
         }
     }
 }

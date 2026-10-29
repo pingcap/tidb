@@ -25,7 +25,7 @@ use tidb_ast::Stmt;
 use tidb_session::domain::session_api::{ActiveQueryCancellation, GeneralExecuteOutcome, PreparedGeneral, QueryResult, SessionContext};
 use tidb_store_driver::sql_query_error::SqlQueryError;
 use tidb_session::domain::wire_status::WireStatus;
-use tidb_util::globalconn::Allocator;
+use tidb_globalconn::Allocator;
 
 /// Query capability retained entirely inside one fixed worker thread.
 pub trait QuerySession {
@@ -144,7 +144,7 @@ pub trait QuerySession {
     /// The session's SQL killer, where the connection installs its liveness
     /// probe for a statement (Go `setSQLKillerConnectionAlive`). Sessions
     /// without one take no probe.
-    fn sql_killer(&self) -> Option<Arc<tidb_util::sqlkiller::SqlKiller>> {
+    fn sql_killer(&self) -> Option<Arc<tidb_sqlkiller::SqlKiller>> {
         None
     }
 
@@ -346,7 +346,7 @@ pub trait QuerySessionFactory: Send + Sync + 'static {
     /// Connect SQL and new connections to the same process TLS owner.
     fn install_tls_manager(
         &self,
-        _manager: Arc<dyn tidb_executor::process::TlsManager>,
+        _manager: Arc<dyn tidb_sessmgr::TlsManager>,
         _variables: Vec<(&'static str, String)>,
     ) {
     }
@@ -366,7 +366,7 @@ pub trait QuerySessionFactory: Send + Sync + 'static {
     }
 
     /// Returns the server's session manager for process memory control.
-    fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {
+    fn session_manager(&self) -> Option<Arc<dyn tidb_memoryusagealarm::SessionManager>> {
         None
     }
 

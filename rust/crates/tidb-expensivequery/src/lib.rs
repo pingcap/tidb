@@ -31,7 +31,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tidb_log::{Field, Value};
-use tidb_util::memoryusagealarm::{gen_log_fields, ProcessInfo, SessionManager};
+use tidb_memoryusagealarm::{gen_log_fields, ProcessInfo, SessionManager};
 
 /// Go `Handle`: the handler for expensive queries.
 pub struct Handle {
@@ -112,7 +112,7 @@ impl Handle {
     /// Go `Handle.LogOnQueryExceedMemQuota`: logs the statement of `conn_id`
     /// when it exceeds its memory quota.
     pub fn log_on_query_exceed_mem_quota(&self, conn_id: u64) {
-        if tidb_util::logutil::get_level() > tidb_log::Level::Warn {
+        if tidb_logutil::get_level() > tidb_log::Level::Warn {
             return;
         }
         // The out-of-memory SQL may be internal SQL run while bootstrapping,
@@ -123,7 +123,7 @@ impl Handle {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         let Some(sm) = sm else {
-            tidb_util::logutil::bg_logger().info(
+            tidb_logutil::bg_logger().info(
                 "expensive_query during bootstrap phase",
                 &[Field::new("conn", Value::U64(conn_id))],
             );
@@ -164,7 +164,7 @@ fn check_processes(
     need_metrics: bool,
     log_times: &mut LogTimes,
 ) {
-    let warn_enabled = tidb_util::logutil::get_level() <= tidb_log::Level::Warn;
+    let warn_enabled = tidb_logutil::get_level() <= tidb_log::Level::Warn;
     let processes = sm.show_process_list();
     log_times
         .query
@@ -225,7 +225,7 @@ fn check_processes(
         }
         if info.max_execution_time > 0 && cost_time > Duration::from_millis(info.max_execution_time)
         {
-            tidb_util::logutil::bg_logger().warn(
+            tidb_logutil::bg_logger().warn(
                 "execution timeout, kill it",
                 &[
                     Field::new("costTime", duration_value(cost_time)),
@@ -244,7 +244,7 @@ fn check_processes(
             if max_auto_analyze_time > 0
                 && cost_time > Duration::from_secs(max_auto_analyze_time.unsigned_abs())
             {
-                tidb_util::logutil::bg_logger().warn(
+                tidb_logutil::bg_logger().warn(
                     "auto analyze timeout, kill it",
                     &[
                         Field::new("costTime", duration_value(cost_time)),
@@ -262,7 +262,7 @@ fn check_processes(
         }
         if let Some(rule_kill_action) = &info.runaway_rule_kill_action {
             if let Some(cause) = rule_kill_action() {
-                tidb_util::logutil::bg_logger().warn(
+                tidb_logutil::bg_logger().warn(
                     "runaway query timeout",
                     &[
                         Field::new("costTime", duration_value(cost_time)),
@@ -280,7 +280,7 @@ fn check_processes(
 /// Go `logExpensiveQuery`.
 fn log_expensive_query(cost_time: Duration, info: &ProcessInfo, msg: &str) {
     let cost_time = chrono::Duration::from_std(cost_time).unwrap_or(chrono::Duration::MAX);
-    tidb_util::logutil::bg_logger().warn(msg, &gen_log_fields(cost_time, info));
+    tidb_logutil::bg_logger().warn(msg, &gen_log_fields(cost_time, info));
 }
 
 /// Go `zap.Duration`.
@@ -315,7 +315,7 @@ fn process_info_text(info: &ProcessInfo) -> String {
         if info.info.is_empty() {
             nil()
         } else {
-            tidb_executor::process::truncate_process_info(&info.info, false)
+            tidb_sessmgr::truncate_process_info(&info.info, false)
         }
     )
 }

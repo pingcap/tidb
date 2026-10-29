@@ -55,7 +55,7 @@ impl GlobalConfigKeeper {
                     if let Err(error) = running.store_global_config(item) {
                         // Go logs and continues. Retrying here could overwrite a
                         // newer value published by another TiDB node.
-                        tidb_util::logutil::bg_logger().error(
+                        tidb_logutil::bg_logger().error(
                             "global config syncer store failed",
                             &[crate::domain::zap_error(error)],
                         );

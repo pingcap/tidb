@@ -143,14 +143,14 @@ pub fn build_fk_info(
         // and fails to find it among the table's columns (1072).
         if matches!(key, IndexPart::Expr { .. }) {
             return Err(coded(
-                &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS,
+                &tidb_dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS,
                 format!("Key column '_V$_{fk_name}_{position}' doesn't exist in table"),
             ));
         }
         let name = part_column(key)?;
         let Some(column) = find_column_info(&table.columns, &name) else {
             return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
+                &tidb_dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
                     .generate_with_stack_by_args(&[name.to_string().into()]),
             )));
         };
@@ -167,7 +167,7 @@ pub fn build_fk_info(
             }
             if matches!(on_update, 2 | 3 | 5) {
                 return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_WRONG_FK_OPTION_FOR_GENERATED_COLUMN
+                    &tidb_dbterror::ERR_WRONG_FK_OPTION_FOR_GENERATED_COLUMN
                         .generate_with_stack_by_args(&[(format!(
                             "ON UPDATE {}",
                             refer_opt_name(on_update)
@@ -178,7 +178,7 @@ pub fn build_fk_info(
             }
             if matches!(on_delete, 3 | 5) {
                 return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_WRONG_FK_OPTION_FOR_GENERATED_COLUMN
+                    &tidb_dbterror::ERR_WRONG_FK_OPTION_FOR_GENERATED_COLUMN
                         .generate_with_stack_by_args(&[(format!(
                             "ON DELETE {}",
                             refer_opt_name(on_delete)
@@ -243,7 +243,7 @@ pub fn build_fk_infos(create: &CreateTableStmt, schema: &str, table: &mut TableI
         let fk_name = match definition.name.as_deref() {
             Some("") => {
                 return Err(coded(
-                    &tidb_util::dbterror::ERR_WRONG_NAME_FOR_INDEX,
+                    &tidb_dbterror::ERR_WRONG_NAME_FOR_INDEX,
                     "Incorrect index name ''",
                 ))
             }
@@ -289,7 +289,7 @@ pub fn add_index_for_foreign_key(table: &mut TableInfo) -> Refusal<()> {
         }
         if table.find_index_by_name(fk.name.lowercase()).is_some() {
             return Err(coded(
-                &tidb_util::dbterror::ERR_DUP_KEY_NAME,
+                &tidb_dbterror::ERR_DUP_KEY_NAME,
                 format!("duplicate key name {}", fk.name.original()),
             ));
         }
@@ -297,7 +297,7 @@ pub fn add_index_for_foreign_key(table: &mut TableInfo) -> Refusal<()> {
         for name in &cols {
             let column = find_column_info(&table.columns, name.original()).ok_or_else(|| {
                 refusal(tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
+                    &tidb_dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
                         .generate_with_stack_by_args(&[(name.original().to_owned())
                             .to_string()
                             .into()]),
@@ -331,7 +331,7 @@ pub fn check_table_foreign_key(refer: &TableInfo, table: &TableInfo, fk: &FKInfo
     }
     if refer.ttl_info.is_some() {
         return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_TTL_REFERENCED_BY_FK
+            &tidb_dbterror::ERR_UNSUPPORTED_TTL_REFERENCED_BY_FK
                 .generate_with_stack_by_args(&[]),
         )));
     }
@@ -367,7 +367,7 @@ pub fn check_table_foreign_key(refer: &TableInfo, table: &TableInfo, fk: &FKInfo
         let Some(col) = cols.get(i).and_then(|name| find_column_info(&table.columns, name.original()))
         else {
             return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS.generate_with_stack_by_args(&[
+                &tidb_dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS.generate_with_stack_by_args(&[
                     (cols
                         .get(i)
                         .map(|n| n.original().to_owned())
@@ -385,7 +385,7 @@ pub fn check_table_foreign_key(refer: &TableInfo, table: &TableInfo, fk: &FKInfo
             || col.get_collate() != ref_col.get_collate()
         {
             return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_FK_INCOMPATIBLE_COLUMNS.generate_with_stack_by_args(&[
+                &tidb_dbterror::ERR_FK_INCOMPATIBLE_COLUMNS.generate_with_stack_by_args(&[
                     (col.name.original().to_owned()).to_string().into(),
                     (ref_col.name.original().to_owned()).to_string().into(),
                     (fk.name.original().to_owned()).to_string().into(),

@@ -2182,7 +2182,7 @@ fn range_fallback_ladder_matches_go() {
 #[test]
 fn range_quota_events_reach_shared_handler() {
     use std::sync::Arc;
-    use tidb_util::context::{
+    use tidb_context::{
         PlanCacheTracker, PlanCacheType, RangeFallbackHandler, StaticWarnHandler, WarnHandler,
     };
     let table = MinAccessTable::new();
@@ -2265,7 +2265,7 @@ fn range_quota_events_reach_shared_handler() {
 #[test]
 fn range_quota_events_cover_recursive_and_dnf_builds() {
     use std::sync::Arc;
-    use tidb_util::context::{
+    use tidb_context::{
         PlanCacheTracker, PlanCacheType, RangeFallbackHandler, StaticWarnHandler, WarnHandler,
     };
     let table = MinAccessTable::new();

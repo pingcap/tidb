@@ -21,7 +21,7 @@ use std::sync::{Arc, Condvar, Mutex};
 
 use tidb_chunk::{chunk::Chunk, chunk_in_disk::DataInDiskByChunks};
 use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
-use tidb_util::memory::{ActionOnExceed, ArcAction, BaseOomAction, Tracker, DEF_SPILL_PRIORITY};
+use tidb_memory::{ActionOnExceed, ArcAction, BaseOomAction, Tracker, DEF_SPILL_PRIORITY};
 
 use crate::join_row_table::{RowTable, RowTableSegment};
 use crate::sort_util::recover_worker_panic;

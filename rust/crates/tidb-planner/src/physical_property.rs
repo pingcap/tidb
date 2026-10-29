@@ -873,7 +873,7 @@ impl PhysicalProperty {
         let items = |items: &[SortItem]| {
             items
                 .iter()
-                .map(|item| tidb_util::size::SIZE_OF_BOOL + item.col.memory_usage())
+                .map(|item| tidb_size::SIZE_OF_BOOL + item.col.memory_usage())
                 .sum::<i64>()
         };
         EMPTY_PHYSICAL_PROPERTY_SIZE
@@ -883,13 +883,13 @@ impl PhysicalProperty {
             + self
                 .mpp_partition_cols
                 .iter()
-                .map(|col| tidb_util::size::SIZE_OF_INT32 + col.col.memory_usage())
+                .map(|col| tidb_size::SIZE_OF_INT32 + col.col.memory_usage())
                 .sum::<i64>()
             + items(&self.advisory_sort_items)
             + self.partial_order_info.as_ref().map_or(0, |info| {
                 const EMPTY_PARTIAL_ORDER_INFO_SIZE: i64 = 24;
                 EMPTY_PARTIAL_ORDER_INFO_SIZE
-                    + info.sort_items.len() as i64 * tidb_util::size::SIZE_OF_POINTER
+                    + info.sort_items.len() as i64 * tidb_size::SIZE_OF_POINTER
                     + items(&info.sort_items)
             })
     }

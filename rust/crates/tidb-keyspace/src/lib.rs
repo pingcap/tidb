@@ -36,7 +36,7 @@ use tidb_error::tidb::errcode;
 use tidb_error::ErrMessage;
 use tidb_log::{Field, Value};
 
-use tidb_util::dbterror::CLASS_DDL;
+use tidb_dbterror::CLASS_DDL;
 
 /// Go `System`: the SYSTEM keyspace name.
 pub const SYSTEM: &str = "SYSTEM";

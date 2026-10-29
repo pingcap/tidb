@@ -1,0 +1,22 @@
+[package]
+name = "tidb-lock"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/lock: the table lock checker (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-driver-error = { path = "../tidb-driver-error" }
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-ddl-build = { path = "../tidb-ddl-build" }
+tidb-hack = { path = "../tidb-hack" }
+tidb-ast = { path = "../tidb-ast" }
+tidb-error = { path = "../tidb-error" }
+tidb-metadef = { path = "../tidb-metadef" }
+tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }

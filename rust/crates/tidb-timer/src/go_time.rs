@@ -20,7 +20,7 @@
 //! into the timer's zone, `TimerRecord.NextEventTime` evaluates the schedule
 //! against the watermark's zone, and the upstream tests compare the zone as
 //! part of the value. Rust's `chrono::DateTime<Tz>` fixes the zone in the type,
-//! so this module pairs a UTC instant with `tidb_util::timeutil::TimeZone` and
+//! so this module pairs a UTC instant with `tidb_timeutil::TimeZone` and
 //! reimplements exactly the `time` operations this package uses:
 //! `Now`, `Unix`, `UnixMilli`, `Date`, `IsZero`, `Add`, `Sub`, `AddDate`,
 //! `Truncate`, `In`, and the local calendar accessors the cron evaluator needs.
@@ -35,7 +35,7 @@
 use chrono::{
     DateTime, Datelike, Duration, Local, NaiveDate, NaiveDateTime, TimeZone as _, Timelike, Utc,
 };
-use tidb_util::timeutil::TimeZone;
+use tidb_timeutil::TimeZone;
 
 /// Nanoseconds in a second, as Go's `time.Second`.
 pub const SECOND: i64 = 1_000_000_000;

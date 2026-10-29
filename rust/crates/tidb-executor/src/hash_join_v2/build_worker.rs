@@ -45,8 +45,8 @@ struct OwnedBuildContext {
     partition: PartitionInfo,
     key_serializer: Arc<JoinKeyColumns>,
     build_filter: Option<Arc<JoinFilter<'static>>>,
-    memory_tracker: Arc<tidb_util::memory::Tracker>,
-    sql_killer: Arc<tidb_util::sqlkiller::SqlKiller>,
+    memory_tracker: Arc<tidb_memory::Tracker>,
+    sql_killer: Arc<tidb_sqlkiller::SqlKiller>,
 }
 
 impl OwnedBuildContext {

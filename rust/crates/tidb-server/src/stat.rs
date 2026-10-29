@@ -48,7 +48,7 @@ impl Statistics for ServerStatistics {
                     m.insert(SERVER_NOT_AFTER.to_owned(), certificate_time(not_after));
                     m.insert(SERVER_NOT_BEFORE.to_owned(), certificate_time(not_before));
                 }
-                Err(error) => tidb_util::logutil::bg_logger().warn(
+                Err(error) => tidb_logutil::bg_logger().warn(
                     "Failed to parse TLS certificates to get server status",
                     &[tidb_log::Field::new("error", tidb_log::Value::Str(error))],
                 ),

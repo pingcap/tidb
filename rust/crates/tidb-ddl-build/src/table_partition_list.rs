@@ -49,7 +49,7 @@ pub fn build_list_columns_values(
     for path in columns {
         let name = path.last().ok_or_else(|| {
             tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
+                &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
             )
         })?;
         // Go `checkPartitionColumnsUnique`, from
@@ -59,7 +59,7 @@ pub fn build_list_columns_values(
                 .any(|candidate: &String| candidate.go_lower_eq(name))
         {
             return Err(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_SAME_NAME_PARTITION_FIELD
+                &tidb_dbterror::ERR_SAME_NAME_PARTITION_FIELD
                     .generate_with_stack_by_args(&[(name.clone()).to_string().into()]),
             ));
         }
@@ -71,14 +71,14 @@ pub fn build_list_columns_values(
             // not the 1054 the expression path raises.
             .ok_or_else(|| {
                 tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_FIELD_NOT_FOUND_PART.generate_with_stack_by_args(&[]),
+                    &tidb_dbterror::ERR_FIELD_NOT_FOUND_PART.generate_with_stack_by_args(&[]),
                 )
             })?;
         let field_type = types[offset].clone();
         // Go `checkColumnsPartitionType` (`partition.go:642`).
         if !list_columns_type_allowed(&field_type) {
             return Err(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION
+                &tidb_dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION
                     .generate_with_stack_by_args(&[(name.clone()).to_string().into()]),
             ));
         }
@@ -127,14 +127,14 @@ pub fn build_list_columns_values(
                     )
                     .map_err(|_| {
                         tidb_error::mysql::MysqlError::from_terror(
-                            &tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
+                            &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
                                 .generate_with_stack_by_args(&[]),
                         )
                     })?;
                     // Go `checkListPartitionValue`.
                     if keys.insert(key, ordinal).is_some() {
                         return Err(tidb_error::mysql::MysqlError::from_terror(
-                            &tidb_util::dbterror::ERR_MULTIPLE_DEF_CONST_IN_LIST_PART
+                            &tidb_dbterror::ERR_MULTIPLE_DEF_CONST_IN_LIST_PART
                                 .generate_with_stack_by_args(&[]),
                         ));
                     }
@@ -176,7 +176,7 @@ fn set_default_partition(
     // `checkListPartitionValue` reaches.
     if slot.replace(ordinal).is_some() {
         return Err(tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_MULTIPLE_DEF_CONST_IN_LIST_PART
+            &tidb_dbterror::ERR_MULTIPLE_DEF_CONST_IN_LIST_PART
                 .generate_with_stack_by_args(&[]),
         ));
     }

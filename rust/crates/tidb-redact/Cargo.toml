@@ -1,0 +1,23 @@
+[package]
+name = "tidb-redact"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/redact: Go pkg/util/redact (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+enableassert = ["tidb-intest/enableassert"]
+intest = ["tidb-intest/intest"]
+
+[dependencies]
+tidb-intest = { path = "../tidb-intest" }
+tidb-proto = { path = "../tidb-proto" }
+tidb-error = { path = "../tidb-error" }
+
+[dev-dependencies]
+tidb-intest = { path = "../tidb-intest", features = ["intest"] }

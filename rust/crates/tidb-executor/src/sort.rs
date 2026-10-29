@@ -38,7 +38,7 @@ use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
-use tidb_util::memory::{ArcAction, Tracker};
+use tidb_memory::{ArcAction, Tracker};
 
 use tidb_kv::mem_quota::StatementMemory;
 use crate::sort_partition::{spill_action, SortPartition, SPILL_CHUNK_SIZE};
@@ -229,7 +229,7 @@ pub struct SortExec<C: Columns> {
     /// `SHOW`-style tree dumps attribute the bytes to the sort.
     tracker: Arc<Tracker>,
     /// Go `SortExec.diskTracker`.
-    disk_tracker: Arc<tidb_util::disk::Tracker>,
+    disk_tracker: Arc<tidb_disk::Tracker>,
     /// Go `enableTmpStorageOnOOM` = `vardef.EnableTmpStorageOnOOM.Load()`:
     /// `tidb_enable_tmp_storage_on_oom`. With it OFF the sort registers no
     /// spill action, so an overrun goes straight to the 8175 cancellation --
@@ -563,7 +563,7 @@ mod tests {
     use tidb_expr::expression::Expression;
     use tidb_expr::scalar_function::ScalarFunction;
     use tidb_expr::NoColumns;
-    use tidb_util::sqlkiller::KillSignal;
+    use tidb_sqlkiller::KillSignal;
 
     fn long() -> FieldType {
         FieldType::new(FieldTypeCode::Long)

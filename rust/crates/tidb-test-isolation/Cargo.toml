@@ -1,0 +1,13 @@
+[package]
+name = "tidb-test-isolation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/testutils: Go pkg/util/testutils (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]

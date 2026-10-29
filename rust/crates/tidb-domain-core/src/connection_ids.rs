@@ -16,7 +16,7 @@
 
 use std::sync::Arc;
 
-use tidb_util::globalconn::{Allocator, GlobalAllocator, SimpleAllocator};
+use tidb_globalconn::{Allocator, GlobalAllocator, SimpleAllocator};
 
 /// Go `Domain`'s connection-ID allocator (`domain.go`, "initialize the global
 /// kill"): with global kill on, a global allocator whose IDs name this node's
@@ -34,7 +34,7 @@ pub fn new_connection_id_allocator(
             move || {
                 owner
                     .as_ref()
-                    .map_or(tidb_util::globalconn::SERVER_ID_FOR_STANDALONE, |owner| owner.id())
+                    .map_or(tidb_globalconn::SERVER_ID_FOR_STANDALONE, |owner| owner.id())
             },
             config.enable_32bits_connection_id,
         ))

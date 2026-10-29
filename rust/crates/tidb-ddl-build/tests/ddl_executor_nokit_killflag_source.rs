@@ -15,8 +15,8 @@
 //! Behavioral tests retained from Go. Removed documentary entries are
 //! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
 
-use tidb_util::dbterror;
-use tidb_util::sqlkiller::{KillSignal, SqlKiller};
+use tidb_dbterror as dbterror;
+use tidb_sqlkiller::{KillSignal, SqlKiller};
 
 use tidb_ddl_build::ddl_executor::{convert_kill_flag, is_retryable_ddl_cancel_err, is_session_done};
 

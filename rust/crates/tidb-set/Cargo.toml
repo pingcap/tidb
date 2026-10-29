@@ -1,0 +1,31 @@
+[package]
+name = "tidb-set"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/set: Go pkg/util/set (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+enableassert = ["tidb-memory/enableassert"]
+failpoints = ["tidb-memory/failpoints"]
+intest = ["tidb-memory/intest"]
+jemalloc = ["tidb-memory/jemalloc"]
+
+[dependencies]
+tidb-memory = { path = "../tidb-memory" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-hack = { path = "../tidb-hack" }
+
+
+[dev-dependencies]
+tidb-intest = { path = "../tidb-intest", features = ["intest"] }
+
+[[bench]]
+name = "set"
+harness = false

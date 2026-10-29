@@ -202,7 +202,7 @@ fn initialize_cluster_system_tz_with_read(
 ) -> Result<(), RunConfiguredNodeError> {
     let system_tz =
         read().map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
-    tidb_util::timeutil::set_system_tz(&system_tz);
+    tidb_timeutil::set_system_tz(&system_tz);
     Ok(())
 }
 
@@ -335,7 +335,7 @@ pub enum RunConfiguredNodeError {
     /// The required immutable account catalog was rejected.
     Auth(ConfiguredUserStoreError),
     /// Spill storage could not be leased or admitted before listener startup.
-    Spill(tidb_util::spill_storage::SpillStorageOpenError),
+    Spill(tidb_spill_storage::SpillStorageOpenError),
     /// The process SIGINT/SIGTERM handler could not be installed.
     Signal(ctrlc::Error),
     /// Production query-authority construction failed.
@@ -443,7 +443,7 @@ mod tests {
         initialize_cluster_system_tz_with_read(|| Ok("Asia/Shanghai".to_owned()))
             .expect("the persisted timezone installs");
         assert_eq!(
-            tidb_util::timeutil::get_system_tz().expect("system_tz is initialized"),
+            tidb_timeutil::get_system_tz().expect("system_tz is initialized"),
             "Asia/Shanghai"
         );
     }

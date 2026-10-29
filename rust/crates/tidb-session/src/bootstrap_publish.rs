@@ -34,7 +34,7 @@ use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, RealOptimisticTransactionOpener, StoreClient,
 };
-use tidb_util::timeutil::infer_system_tz;
+use tidb_timeutil::infer_system_tz;
 
 thread_local! {
     static LAYOUT_OVERRIDE: std::cell::Cell<Option<BootstrapLayout>> =
@@ -170,7 +170,7 @@ pub fn notify_committed_bootstrap(
 
 /// Go `session.bootstrap`'s line once the owner finished the bootstrap.
 pub fn log_bootstrap_successful(started: std::time::Instant) {
-    tidb_util::logutil::bg_logger().info(
+    tidb_logutil::bg_logger().info(
         "bootstrap successful",
         &[tidb_log::Field::new(
             "take time",

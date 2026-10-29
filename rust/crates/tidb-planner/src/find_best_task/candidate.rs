@@ -11,7 +11,7 @@
 
 //! Go access-path comparison shared by ordinary scans and IndexJoin.
 
-use crate::column_length::{compare_col2_len, Col2Len};
+use tidb_planner_util::column_length::{compare_col2_len, Col2Len};
 
 /// Facts used by Go `derivePathStatsAndTryHeuristics`, before cost comparison.
 #[derive(Clone, Debug, Default)]

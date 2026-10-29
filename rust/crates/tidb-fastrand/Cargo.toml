@@ -1,0 +1,22 @@
+[package]
+name = "tidb-fastrand"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/fastrand: Go pkg/util/fastrand (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+getrandom.workspace = true
+
+
+[dev-dependencies]
+standard-fastrand = { package = "fastrand", version = "2" }
+
+[[bench]]
+name = "fastrand"
+harness = false

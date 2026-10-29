@@ -502,7 +502,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// Go `appendVisitInfoIsRestrictedUser`: under SEM, touching an account
     /// that holds RESTRICTED_USER_ADMIN needs `privilege`.
     fn append_visit_info_is_restricted_user(&mut self, user: &str, host: &str, privilege: &'static str) {
-        if !tidb_util::sem_compat::is_enabled() {
+        if !tidb_sem_compat::is_enabled() {
             return;
         }
         let restricted = self.session_ctx.is_some_and(|session| {
@@ -561,8 +561,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut non_dynamic_privilege = false;
         let mut all_privs: &[PrivilegeType] = &[];
         for item in privileges {
-            if tidb_util::sem_v2::is_enabled()
-                && tidb_util::sem_v2::is_restricted_privilege(&tidb_hack::go_to_upper(&item.name))
+            if tidb_sem_v2::is_enabled()
+                && tidb_sem_v2::is_restricted_privilege(&tidb_hack::go_to_upper(&item.name))
             {
                 self.visit_info.push(dynamic_visit(
                     &["RESTRICTED_PRIV_ADMIN"],
@@ -1241,7 +1241,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             )),
             DdlStmt::OptimizeTable(_) => {
                 return Err(PlanError::from(
-                    tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL
+                    tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL
                         .generate_with_stack("OPTIMIZE TABLE is not supported"),
                 ));
             }

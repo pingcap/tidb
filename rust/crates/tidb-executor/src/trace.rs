@@ -19,13 +19,13 @@
 //! while it runs records a span, and the result is the span tree (`row`),
 //! appdash's JSON (`json`) or the span starts and logged events (`log`).
 //! [`StatementTrace`] is that tracer: the statement runs with its root span
-//! as the thread's span (`tidb_util::tracing`), the regions opened under it
+//! as the thread's span (`tidb_tracing`), the regions opened under it
 //! are the recorded spans, and the formats render what was recorded.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
 use tidb_datatype::{core_time_from_datetime, Datum, FieldType, FieldTypeCode, Time, TimeType};
-use tidb_util::tracing::{RawSpan, ThreadSpanGuard, Tracer, TRACE_EVENT_KEY};
+use tidb_tracing::{RawSpan, ThreadSpanGuard, Tracer, TRACE_EVENT_KEY};
 
 /// One recorded span of the tree.
 #[derive(Clone, Debug)]
@@ -55,7 +55,7 @@ pub struct Span {
 /// Go `TraceExec`'s tracer over one statement: the recorder, its `trace`
 /// root span and the clock the output's times are measured from.
 pub struct StatementTrace {
-    root: tidb_util::tracing::Span,
+    root: tidb_tracing::Span,
     spans: Arc<Mutex<Vec<RawSpan>>>,
 }
 
@@ -81,7 +81,7 @@ impl StatementTrace {
     /// thread runs until the guard drops records its spans under the root.
     #[must_use]
     pub fn enter(&self) -> ThreadSpanGuard {
-        tidb_util::tracing::enter_thread_trace(self.root.clone())
+        tidb_tracing::enter_thread_trace(self.root.clone())
     }
 
     /// Go `logutil.Eventf(ctx, ...)` on the root span.
@@ -288,7 +288,7 @@ fn materialize_with_json(fields: &[(String, String)]) -> String {
             return event.clone();
         }
     }
-    tidb_util::stringutil::go_json_marshal(&serde_json::Value::Object(
+    tidb_stringutil::go_json_marshal(&serde_json::Value::Object(
         map.into_iter()
             .map(|(key, value)| (key, serde_json::Value::String(value)))
             .collect(),
@@ -296,7 +296,7 @@ fn materialize_with_json(fields: &[(String, String)]) -> String {
 }
 
 fn json_string(text: &str) -> String {
-    tidb_util::stringutil::go_json_marshal(&serde_json::Value::String(text.to_owned()))
+    tidb_stringutil::go_json_marshal(&serde_json::Value::String(text.to_owned()))
 }
 
 fn varchar() -> FieldType {
@@ -639,22 +639,22 @@ mod tests {
         let trace = StatementTrace::start();
         let entered = trace.enter();
         {
-            let _execute = tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
-            tidb_util::tracing::begin_thread_region("executor.Compile", Some("SELECT 1".into()));
-            tidb_util::tracing::start_thread_region("planner.Preprocess").end();
-            tidb_util::tracing::start_thread_region("planner.Optimize").end();
-            let text = tidb_util::tracing::end_thread_region("executor.Compile").flatten();
-            let run = tidb_util::tracing::begin_thread_region("session.runStmt", None).unwrap();
+            let _execute = tidb_tracing::begin_thread_region_scope("session.ExecuteStmt");
+            tidb_tracing::begin_thread_region("executor.Compile", Some("SELECT 1".into()));
+            tidb_tracing::start_thread_region("planner.Preprocess").end();
+            tidb_tracing::start_thread_region("planner.Optimize").end();
+            let text = tidb_tracing::end_thread_region("executor.Compile").flatten();
+            let run = tidb_tracing::begin_thread_region("session.runStmt", None).unwrap();
             run.log_kv("sql", &text.unwrap());
-            let select = tidb_util::tracing::start_thread_region_ex("distsql.Select");
-            tidb_util::tracing::start_thread_region("copr.buildCopTasks").end();
+            let select = tidb_tracing::start_thread_region_ex("distsql.Select");
+            tidb_tracing::start_thread_region("copr.buildCopTasks").end();
             select.end();
         }
         for _ in 0..2 {
-            let _next = tidb_util::tracing::start_thread_region_ex("*executor.TableDualExec.Next");
+            let _next = tidb_tracing::start_thread_region_ex("*executor.TableDualExec.Next");
         }
         drop(entered);
-        assert!(tidb_util::tracing::current_span().is_none());
+        assert!(tidb_tracing::current_span().is_none());
         trace.event("execute done, ReturnRow: 1, ModifyRow: 0");
         trace.event("execute done, modify row: 0");
         let (root, started) = trace.finish();
@@ -761,8 +761,8 @@ mod tests {
     fn late_children_and_tags_render_as_go_does() {
         let trace = StatementTrace::start();
         let entered = trace.enter();
-        let select = tidb_util::tracing::start_thread_region_ex("distsql.Select");
-        let parent = tidb_util::tracing::current_span().unwrap();
+        let select = tidb_tracing::start_thread_region_ex("distsql.Select");
+        let parent = tidb_tracing::current_span().unwrap();
         select.end();
         let send = parent
             .tracer()

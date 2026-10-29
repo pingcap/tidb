@@ -69,7 +69,7 @@ use tidb_datatype::SessionTimeZone;
 use tidb_datatype::{core_time_from_datetime, Datum, Time, TimeType};
 use tidb_hack::raw_bytes::str_to_bytes;
 use tidb_model::ColumnInfo;
-use tidb_util::plancodec::decode_plan;
+use tidb_plancodec::decode_plan;
 
 use crate::statement_summary::{
     avg_float, avg_float4_uint, avg_int, avg_sum_float, convert_empty_to_nil, format_backoff_types,

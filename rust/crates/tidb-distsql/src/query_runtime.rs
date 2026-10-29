@@ -30,7 +30,7 @@ use tidb_txnkv::QueryResponseError;
 use tidb_txnkv::CopInfo;
 
 use tidb_datatype::{FieldType, SessionTimeZone};
-use tidb_txnkv::EventCallback;
+use tidb_trxevents::EventCallback;
 
 use crate::{
     analyze_request_source, analyze_result_metadata, checksum_result_metadata,
@@ -207,7 +207,7 @@ impl<T: QueryTransport> InjectedQueryRuntime<T> {
         mut input: SelectInput,
         result_context: QueryResultContext,
     ) -> Result<QuerySelectResult<T::Response>, QueryRuntimeError> {
-        let _region = tidb_util::tracing::start_thread_region_ex("distsql.Select");
+        let _region = tidb_tracing::start_thread_region_ex("distsql.Select");
         input.row_len = result_context.final_field_types.len();
         self.execute(
             request,
@@ -233,7 +233,7 @@ impl<T: QueryTransport> InjectedQueryRuntime<T> {
         collector_enabled: bool,
     ) -> Result<QuerySelectResult<T::Response>, QueryRuntimeError> {
         // Go `SelectWithRuntimeStats` sends through `Select`.
-        let _region = tidb_util::tracing::start_thread_region_ex("distsql.Select");
+        let _region = tidb_tracing::start_thread_region_ex("distsql.Select");
         input.row_len = result_context.final_field_types.len();
         self.execute(
             request,
@@ -324,7 +324,7 @@ pub fn select_with_runtime_stats_over_client(
     root_plan_id: isize,
     collector_enabled: bool,
 ) -> Result<QuerySelectResult<Box<dyn tidb_txnkv::Response + Send>>, QueryRuntimeError> {
-    let _region = tidb_util::tracing::start_thread_region_ex("distsql.Select");
+    let _region = tidb_tracing::start_thread_region_ex("distsql.Select");
     input.row_len = result_context.final_field_types.len();
     let metadata = select_with_runtime_stats(
         select_input_from_request(request, input),

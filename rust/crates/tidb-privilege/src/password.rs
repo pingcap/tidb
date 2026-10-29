@@ -194,7 +194,7 @@ pub fn encode_password_for_plugin(
                 Ok((*hash).to_owned())
             } else {
                 Err(tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::exeerrors::ERR_PASSWORD_FORMAT
+                    &tidb_dbterror::exeerrors::ERR_PASSWORD_FORMAT
                         .generate_with_stack_by_args(&[]),
                 ))
             }
@@ -208,7 +208,7 @@ pub fn encode_password_for_plugin(
 /// with a random 20-byte salt and 5000 iterations, stored
 /// `$A$005$<20-byte salt><43-char digest>` -- 70 bytes total,
 /// `SHAPWDHashLen`. The salt excludes NUL and `$` exactly as Go's generator
-/// does (see [`tidb_util::fastrand::buf`]).
+/// does (see [`tidb_fastrand::buf`]).
 pub(super) fn hash_caching_sha2(password: &str) -> String {
     hash_password(password, AuthCachingSha2Password)
 }
@@ -223,7 +223,7 @@ pub(super) fn hash_tidb_sm3(password: &str) -> String {
 }
 
 fn hash_password(password: &str, plugin: &str) -> String {
-    let salt = tidb_util::fastrand::buf(tidb_parser::auth::SALT_LENGTH);
+    let salt = tidb_fastrand::buf(tidb_parser::auth::SALT_LENGTH);
     let encoded =
         tidb_parser::auth::hash_password_with_salt_bytes(password.as_bytes(), &salt, plugin);
     String::from_utf8(encoded).expect("generated authentication strings are ASCII")

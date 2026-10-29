@@ -1,0 +1,22 @@
+[package]
+name = "tidb-mathutil"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/mathutil: Go pkg/util/mathutil (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+enableassert = ["tidb-intest/enableassert"]
+intest = ["tidb-intest/intest"]
+
+[dependencies]
+tidb-intest = { path = "../tidb-intest" }
+num-traits.workspace = true
+
+[dev-dependencies]
+tidb-intest = { path = "../tidb-intest", features = ["intest"] }

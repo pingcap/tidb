@@ -1,0 +1,18 @@
+[package]
+name = "tidb-sli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/sli: Go pkg/util/sli (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+failpoints = ["dep:fail", "fail/failpoints"]
+
+[dependencies]
+prometheus = { version = "0.14", default-features = false }
+fail = { version = "0.4", optional = true }

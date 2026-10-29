@@ -1,0 +1,13 @@
+[package]
+name = "tidb-slice"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/slice: Go pkg/util/slice (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]

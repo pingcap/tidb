@@ -1,0 +1,13 @@
+[package]
+name = "tidb-unistore-lockstore"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/store/mockstore/unistore/lockstore: the lock store's arena skiplist (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]

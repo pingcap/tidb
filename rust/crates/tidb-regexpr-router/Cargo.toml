@@ -1,0 +1,17 @@
+[package]
+name = "tidb-regexpr-router"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/regexpr-router: Go pkg/util/regexpr-router (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-filter = { path = "../tidb-filter" }
+tidb-go-regexp = { path = "../tidb-go-regexp" }
+tidb-table-filter = { path = "../tidb-table-filter" }
+tidb-table-router = { path = "../tidb-table-router" }

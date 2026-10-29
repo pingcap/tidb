@@ -1,0 +1,13 @@
+[package]
+name = "tidb-arena"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/arena: Go pkg/util/arena (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]

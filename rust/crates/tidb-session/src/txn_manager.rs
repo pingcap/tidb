@@ -74,15 +74,15 @@ pub trait CommitHooks {
 /// the value drops.
 pub(crate) struct CommitTxnRegions {
     // Dropped in declaration order: the inner region ends first.
-    _do_commit: Option<tidb_util::tracing::ThreadRegion>,
-    _commit_txn: tidb_util::tracing::ThreadRegion,
+    _do_commit: Option<tidb_tracing::ThreadRegion>,
+    _commit_txn: tidb_tracing::ThreadRegion,
 }
 
 impl CommitTxnRegions {
     pub(crate) fn begin(valid: bool) -> Self {
-        let commit_txn = tidb_util::tracing::start_thread_region_ex("session.CommitTxn");
+        let commit_txn = tidb_tracing::start_thread_region_ex("session.CommitTxn");
         let do_commit =
-            valid.then(|| tidb_util::tracing::start_thread_region_ex("session.doCommitWithRetry"));
+            valid.then(|| tidb_tracing::start_thread_region_ex("session.doCommitWithRetry"));
         Self {
             _do_commit: do_commit,
             _commit_txn: commit_txn,

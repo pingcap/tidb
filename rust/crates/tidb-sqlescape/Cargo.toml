@@ -1,0 +1,19 @@
+[package]
+name = "tidb-sqlescape"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/sqlescape: Go pkg/util/sqlescape (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
+chrono.workspace = true
+
+[[bench]]
+name = "sqlescape"
+harness = false

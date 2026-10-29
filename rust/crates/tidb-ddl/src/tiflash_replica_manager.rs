@@ -644,7 +644,7 @@ fn parse_sync_status(body: &str) -> Result<Vec<i64>, String> {
         .collect::<Result<_, _>>()?;
     // Go warns on count disagreement but accepts the successfully parsed IDs.
     if expected != regions.len() as i64 {
-        tidb_util::logutil::bg_logger().warn(
+        tidb_logutil::bg_logger().warn(
             "ComputeTiFlashStatus count check failed",
             &[
                 Field::new("claim", Value::I64(expected)),
@@ -1326,10 +1326,10 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let mut file = tidb_util::logutil::new_file_log_config(300);
+        let mut file = tidb_logutil::new_file_log_config(300);
         file.filename = path.to_string_lossy().into_owned();
-        let config = tidb_util::logutil::new_log_config("info", "text", "", "", file, false);
-        tidb_util::logutil::init_logger(&config).unwrap();
+        let config = tidb_logutil::new_log_config("info", "text", "", "", file, false);
+        tidb_logutil::init_logger(&config).unwrap();
         path
     }
 

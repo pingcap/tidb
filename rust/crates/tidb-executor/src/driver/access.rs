@@ -784,7 +784,7 @@ pub struct PreparedSelectExecution {
     cache_hit: bool,
     cached_plan: Arc<std::sync::Mutex<super::planner_bridge::CachedSelectPlan>>,
     generation: u64,
-    planning_warnings: std::sync::Mutex<Vec<tidb_util::context::SqlWarn>>,
+    planning_warnings: std::sync::Mutex<Vec<tidb_context::SqlWarn>>,
 }
 
 impl PreparedSelectPlan {
@@ -1169,7 +1169,7 @@ impl PreparedSelectExecution {
         Arc::clone(&self.parameters)
     }
     /// Takes warnings produced by this execution's cache-miss planning once.
-    pub fn take_planning_warnings(&self) -> Vec<tidb_util::context::SqlWarn> {
+    pub fn take_planning_warnings(&self) -> Vec<tidb_context::SqlWarn> {
         std::mem::take(
             &mut *self
                 .planning_warnings

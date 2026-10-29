@@ -23,11 +23,11 @@ use std::time::{Duration, Instant};
 
 use tidb_model::go_duration::format_go_duration;
 
-use tidb_util::execdetails::{
+use tidb_execdetails::{
     format_duration, RuntimeStats, TP_INDEX_LOOK_UP_RUN_TIME_STATS, TP_INDEX_MERGE_RUN_TIME_STATS,
 };
-use tidb_util::execdetails::runtime_stats::ExecutorRuntimeStats;
-use tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource;
+use tidb_execdetails::runtime_stats::ExecutorRuntimeStats;
+use tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource;
 
 fn nanos(duration: Duration) -> i64 {
     i64::try_from(duration.as_nanos()).unwrap_or(i64::MAX)

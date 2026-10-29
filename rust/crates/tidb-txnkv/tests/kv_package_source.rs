@@ -30,6 +30,7 @@ use tidb_codec::encode_key;
 use tidb_datatype::{BinaryLiteral, Datum, Decimal};
 use tidb_proto::{CoprocessorKeyRange, ResourceGroupTag};
 use tidb_txnkv::*;
+use tidb_resourcegrouptag::FirstKeyRequest;
 
 #[test]
 fn TestVersion() {

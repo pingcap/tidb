@@ -21,16 +21,17 @@
 //! `Next`), so what they need of the viewing session is a [`ViewerState`]
 //! the session snapshots when a scan first asks for one of them.
 
+use tidb_sessmgr as process;
 use crate::StatsStmtCtx as _;
 use std::sync::Arc;
 
 use tidb_datatype::{Datum, FieldType};
 use crate::mem_table_retrieval::{MemTableRead, MemTableRetriever};
-use crate::{Catalog, DriverError};
+use crate::Catalog;
+use crate::DriverError;
 use tidb_hack::GoCaseCompare;
 
 use crate::infoschema_reader::SchemaVisibility;
-use crate::process;
 
 /// What the instance-wide tables read of the session viewing them.
 #[derive(Clone)]
@@ -139,7 +140,7 @@ impl ViewerState {
             return Vec::new();
         }
         registry.or(self.registry.as_ref()).map_or_else(
-            || crate::txn_summary::RECORDER.rows(),
+            || tidb_txninfo::RECORDER.rows(),
             |registry| registry.transaction_history_rows(),
         )
     }
@@ -402,7 +403,7 @@ impl MemTableRetriever for InstanceStateRetriever {
             return Ok(memory_usage_table_rows());
         }
         if table.go_lower_eq("MEMORY_USAGE_OPS_HISTORY") {
-            return Ok(tidb_util::servermemorylimit::GLOBAL_MEMORY_OPS_HISTORY_MANAGER.get_rows());
+            return Ok(tidb_servermemorylimit::GLOBAL_MEMORY_OPS_HISTORY_MANAGER.get_rows());
         }
         if table.go_lower_eq("TIDB_INDEX_USAGE") {
             return Ok(crate::infoschema_reader::tidb_index_usage_rows(
@@ -488,12 +489,12 @@ pub fn memory_usage_table_rows() -> Vec<Vec<tidb_datatype::Datum>> {
 
     use tidb_datatype::{core_time_from_datetime, CoreTime, Datum, Time, TimeType};
 
-    let stats = tidb_util::memory::read_mem_stats();
-    let current_ops = tidb_util::servermemorylimit::IS_KILLING
+    let stats = tidb_memory::read_mem_stats();
+    let current_ops = tidb_servermemorylimit::IS_KILLING
         .load(Ordering::SeqCst)
         .then(|| Datum::new_string("shrink"))
         .unwrap_or(Datum::Null);
-    let session_kill_last = tidb_util::servermemorylimit::SESSION_KILL_LAST
+    let session_kill_last = tidb_servermemorylimit::SESSION_KILL_LAST
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .map(|value| {
@@ -508,23 +509,23 @@ pub fn memory_usage_table_rows() -> Vec<Vec<tidb_datatype::Datum>> {
     );
     vec![vec![
         Datum::new_int(
-            tidb_util::memory::mem_total()
+            tidb_memory::mem_total()
                 .ok()
                 .and_then(|value| i64::try_from(value).ok())
                 .unwrap_or(0),
         ),
         Datum::new_int(
-            i64::try_from(tidb_util::memory::SERVER_MEMORY_LIMIT.load(Ordering::SeqCst))
+            i64::try_from(tidb_memory::SERVER_MEMORY_LIMIT.load(Ordering::SeqCst))
                 .unwrap_or(i64::MAX),
         ),
         Datum::new_int(stats.heap_inuse),
         Datum::new_int(
-            i64::try_from(tidb_util::servermemorylimit::MEMORY_MAX_USED.load(Ordering::SeqCst))
+            i64::try_from(tidb_servermemorylimit::MEMORY_MAX_USED.load(Ordering::SeqCst))
                 .unwrap_or(i64::MAX),
         ),
         current_ops,
         session_kill_last,
-        Datum::new_int(tidb_util::servermemorylimit::SESSION_KILL_TOTAL.load(Ordering::SeqCst)),
+        Datum::new_int(tidb_servermemorylimit::SESSION_KILL_TOTAL.load(Ordering::SeqCst)),
         zero_datetime,
         Datum::new_int(0),
         Datum::new_int(0),

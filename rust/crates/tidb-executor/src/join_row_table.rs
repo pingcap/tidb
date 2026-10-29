@@ -65,7 +65,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use tidb_util::serialization::{INT_LEN, UINT64_LEN};
+use tidb_serialization::{INT_LEN, UINT64_LEN};
 
 use crate::join_table_meta::{JoinTableMeta, KeyMode};
 use crate::tagged_ptr::{get_tagged_bits_from_usize, TagPtrHelper};

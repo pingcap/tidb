@@ -1045,7 +1045,7 @@ fn truncate_to_second<Tz: chrono::TimeZone>(value: DateTime<Tz>) -> DateTime<Tz>
 /// freezes its offset across the arithmetic below and answers `01:31` where Go
 /// answers `00:31` for `2024-03-10 03:01:00 America/Los_Angeles` less ninety
 /// minutes. [`PhysicalTable::eval_expire_time`] therefore splits the session's
-/// [`tidb_util::timeutil::TimeZone`] into a concrete `Tz` before calling here
+/// [`tidb_timeutil::TimeZone`] into a concrete `Tz` before calling here
 /// rather than passing that union through.
 ///
 /// `// boundary:` Go passes the one `exprstatic.ExprContext` as both the build
@@ -1108,13 +1108,13 @@ pub fn eval_expire_time<Tz: chrono::TimeZone>(
     Ok(truncate_to_second(now.clone() + (end - start)))
 }
 
-/// `tidb_util::timeutil::TimeZone` -> `tidb_datatype::SessionTimeZone`: Go's
+/// `tidb_timeutil::TimeZone` -> `tidb_datatype::SessionTimeZone`: Go's
 /// one `*time.Location` split across two Rust types, joined arm for arm.
-fn to_session_time_zone(zone: &tidb_util::timeutil::TimeZone) -> SessionTimeZone {
+fn to_session_time_zone(zone: &tidb_timeutil::TimeZone) -> SessionTimeZone {
     match zone {
-        tidb_util::timeutil::TimeZone::Local => SessionTimeZone::Local,
-        tidb_util::timeutil::TimeZone::Named(zone) => SessionTimeZone::Named(*zone),
-        tidb_util::timeutil::TimeZone::Fixed { name, offset_secs } => SessionTimeZone::Fixed {
+        tidb_timeutil::TimeZone::Local => SessionTimeZone::Local,
+        tidb_timeutil::TimeZone::Named(zone) => SessionTimeZone::Named(*zone),
+        tidb_timeutil::TimeZone::Fixed { name, offset_secs } => SessionTimeZone::Fixed {
             name: name.clone(),
             offset_secs: *offset_secs,
         },
@@ -1175,13 +1175,13 @@ impl PhysicalTable {
         // arithmetic -- see [`eval_expire_time`]'s zone boundary.
         let instant = now.naive_utc().and_utc();
         let expire = match &global_tz {
-            tidb_util::timeutil::TimeZone::Named(zone) => {
+            tidb_timeutil::TimeZone::Named(zone) => {
                 eval_expire_time(&instant.with_timezone(zone), &interval, unit)?.naive_utc()
             }
-            tidb_util::timeutil::TimeZone::Local => {
+            tidb_timeutil::TimeZone::Local => {
                 eval_expire_time(&instant.with_timezone(&Local), &interval, unit)?.naive_utc()
             }
-            tidb_util::timeutil::TimeZone::Fixed { offset_secs, .. } => {
+            tidb_timeutil::TimeZone::Fixed { offset_secs, .. } => {
                 let offset = FixedOffset::east_opt(*offset_secs)
                     .ok_or_else(|| error("the global time zone offset is out of range"))?;
                 eval_expire_time(&instant.with_timezone(&offset), &interval, unit)?.naive_utc()

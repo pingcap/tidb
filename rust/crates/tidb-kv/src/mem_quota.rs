@@ -57,12 +57,12 @@ use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use tidb_datatype::{estimated_mem_usage, Datum};
-use tidb_util::memory::{
+use tidb_memory::{
     ActionOnExceed, ArcAction, BaseOomAction, KillSignalTransport, LogOnExceed, Tracker,
     DEF_MEM_QUOTA_QUERY, DEF_PANIC_PRIORITY, LABEL_FOR_SESSION, LABEL_FOR_SQL_TEXT,
 };
-use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
-use tidb_util::sqlkiller::{KillSignal, SqlKiller};
+use tidb_spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+use tidb_sqlkiller::{KillSignal, SqlKiller};
 
 use tidb_vardef::OomAction;
 
@@ -91,7 +91,7 @@ impl KillStop {
         match self {
             // Go `sqlkiller`: `exeerrors.ErrMemoryExceedForQuery.GenWithStackByArgs(connID)`.
             KillStop::MemoryExceedForQuery { conn_id } => tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY
+                &tidb_dbterror::exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY
                     .generate_with_stack_by_args(&[conn_id.into()]),
             ),
             KillStop::Killed(error) => tidb_error::mysql::MysqlError::from_sql_error(error),
@@ -270,7 +270,7 @@ impl Drop for StatementCancellation {
 #[derive(Clone)]
 struct SessionMemoryConfig {
     spill_storage: Option<Arc<SpillStorage>>,
-    arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
+    arbitrator: Option<Arc<tidb_memory::MemArbitrator>>,
     tmp_storage_on_oom: bool,
     oom_action: OomAction,
 }
@@ -371,7 +371,7 @@ impl SessionMemory {
     /// until they finish, just as Go keeps the tracker chosen at execution
     /// start.
     #[must_use]
-    pub fn with_mem_arbitrator(self, arbitrator: Arc<tidb_util::memory::MemArbitrator>) -> Self {
+    pub fn with_mem_arbitrator(self, arbitrator: Arc<tidb_memory::MemArbitrator>) -> Self {
         self.set_mem_arbitrator(arbitrator);
         self
     }
@@ -420,7 +420,7 @@ impl SessionMemory {
 
     /// Replaces the global arbitrator used by future statements without
     /// moving this connection's persistent tracker roots.
-    pub fn set_mem_arbitrator(&self, arbitrator: Arc<tidb_util::memory::MemArbitrator>) {
+    pub fn set_mem_arbitrator(&self, arbitrator: Arc<tidb_memory::MemArbitrator>) {
         self.config.lock().unwrap().arbitrator = Some(arbitrator);
     }
 
@@ -452,7 +452,7 @@ impl SessionMemory {
             .arbitrator
             .as_ref()
             .is_some_and(|arbitrator| {
-                arbitrator.work_mode() != tidb_util::memory::ArbitratorWorkMode::Disable
+                arbitrator.work_mode() != tidb_memory::ArbitratorWorkMode::Disable
             })
     }
 
@@ -484,11 +484,11 @@ impl SessionMemory {
         disk_stmt.attach_to(&self.disk_session);
 
         if let (Some(arbitrator), Some(wait_averse)) = (config.arbitrator.as_ref(), wait_averse) {
-            if arbitrator.work_mode() != tidb_util::memory::ArbitratorWorkMode::Disable {
+            if arbitrator.work_mode() != tidb_memory::ArbitratorWorkMode::Disable {
                 let _ = stmt.init_mem_arbitrator(
                     Arc::clone(arbitrator),
                     Arc::clone(&self.session.killer),
-                    tidb_util::memory::ArbitrationPriority::Medium,
+                    tidb_memory::ArbitrationPriority::Medium,
                     wait_averse,
                     reserve_size.max(0),
                     digest_key,

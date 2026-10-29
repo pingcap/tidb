@@ -29,7 +29,7 @@
 //! from the boundary classify identically, which 1 and the 1GiB default are.
 
 use tidb_datatype::Datum;
-use tidb_util::memory::DEF_LOG_PRIORITY;
+use tidb_memory::DEF_LOG_PRIORITY;
 
 use tidb_kv::mem_quota::SessionMemory;
 use tidb_vardef::OomAction;
@@ -49,7 +49,7 @@ fn cancelling() -> StmtContext {
 }
 
 fn is_memory_exceeded(error: &crate::DriverError) -> bool {
-    error.equal(&tidb_util::dbterror::exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY)
+    error.equal(&tidb_dbterror::exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY)
 }
 
 fn rows(catalog: &Catalog, sql: &str) -> Vec<Vec<Datum>> {

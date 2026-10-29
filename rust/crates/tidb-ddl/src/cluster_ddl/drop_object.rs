@@ -164,13 +164,13 @@ pub fn prepare_drop_object_job_submission<S: MetaSnapshot>(
             });
             let Some((db_id, stored)) = found else {
                 return Err(coded_refusal(
-                    &tidb_util::dbterror::ERR_UNKNOWN_SEQUENCE,
+                    &tidb_dbterror::ERR_UNKNOWN_SEQUENCE,
                     format!("Unknown SEQUENCE: '{schema}.{name}'"),
                 ));
             };
             if !stored.is_sequence() {
                 return Err(coded_refusal(
-                    &tidb_util::dbterror::ERR_WRONG_OBJECT,
+                    &tidb_dbterror::ERR_WRONG_OBJECT,
                     format!("'{schema}.{name}' is not SEQUENCE"),
                 ));
             }
@@ -283,7 +283,7 @@ pub(super) fn foreign_key_cannot_drop_parent(
     referred: &tidb_model::table::ReferredFKInfo,
 ) -> DdlPlanError {
     coded_refusal(
-        &tidb_util::dbterror::ERR_FOREIGN_KEY_CANNOT_DROP_PARENT,
+        &tidb_dbterror::ERR_FOREIGN_KEY_CANNOT_DROP_PARENT,
         format!(
             "Cannot drop table '{table}' referenced by a foreign key constraint '{}' on table '{}'.",
             referred.child_fk_name.original(),

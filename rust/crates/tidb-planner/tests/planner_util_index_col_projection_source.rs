@@ -23,7 +23,7 @@
 //! `UnspecifiedLength` sentinel when an index column's declared length equals
 //! the field length (:77-82).
 //!
-//! The crate carrier [`tidb_planner::index_columns::project_index_columns`]
+//! The crate carrier [`tidb_planner_util::index_columns::project_index_columns`]
 //! normalizes both metadata inputs to `(name, length)` pairs; Go's returned
 //! column POINTERS become caller-slice POSITIONS ([`ResolvedColumn::
 //! source_index`]), which pins the same identity: Go asserts `EqualColumn` on
@@ -39,7 +39,7 @@
 //! position as a miss instead of panicking. All four Go rows keep
 //! `colInfos`/`cols` aligned, so the deviation is not observable here.
 
-use tidb_planner::index_columns::{
+use tidb_planner_util::index_columns::{
     project_index_columns, ColumnRef, IndexColumnProjection, IndexColumnRef, ResolvedColumn,
     UNSPECIFIED_LENGTH,
 };

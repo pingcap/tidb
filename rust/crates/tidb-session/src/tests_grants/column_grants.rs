@@ -24,7 +24,7 @@ fn only_the_four_column_privileges_accept_a_column_list() {
     for privilege in ["DELETE", "DROP", "ALTER", "INDEX", "CREATE", "GRANT OPTION"] {
         crate::tests_support::assert_go_error(
             session.run(&format!("GRANT {privilege} (a) ON test.t TO 'u'@'%'")),
-            &tidb_util::dbterror::exeerrors::ERR_WRONG_USAGE,
+            &tidb_dbterror::exeerrors::ERR_WRONG_USAGE,
             &["COLUMN GRANT".into(), "NON-COLUMN PRIVILEGES".into()],
         );
     }

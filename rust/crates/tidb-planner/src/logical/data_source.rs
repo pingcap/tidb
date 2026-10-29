@@ -34,7 +34,7 @@
 //! * The pruning rule reads resolved FORCE facts and query-block-matched
 //!   `IndexMergeHints` from this leaf instead of re-reading syntax.
 //! * `HandleCols util.HandleCols` is an interface over an int handle or a
-//!   common handle. [`crate::handle_cols`] already models both identities;
+//!   common handle. [`tidb_planner_util::handle_cols`] already models both identities;
 //!   this operator holds the handle COLUMNS, which is what the ported bodies
 //!   need, plus [`DataSource::handle_is_int`].
 
@@ -122,7 +122,7 @@ pub struct DataSource {
     /// Go `PhysicalTableID`: the partition's id, or the table's.
     pub physical_table_id: i64,
     /// Go `SampleInfo`.
-    pub sample_info: Option<crate::table_sampler::TableSampleInfo>,
+    pub sample_info: Option<tidb_planner_tablesampler::TableSampleInfo>,
     /// Go `PartitionDefIdx`: which partition definition this reads.
     pub partition_def_idx: Option<usize>,
     /// Go `PartitionNames`: an explicit `PARTITION (p, ...)` restriction.

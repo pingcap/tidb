@@ -90,13 +90,13 @@ pub struct HashJoinV2Executor<C> {
     finished: bool,
     /// Go `StmtCtx.RuntimeStatsColl` and `IsGA`: where Close registers
     /// [`super::stats::HashJoinRuntimeStatsV2`].
-    runtime_stats_source: Option<Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
+    runtime_stats_source: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
     is_ga: bool,
     /// Go `HashJoinV2Exec.stats`.
     stats: Option<super::stats::SharedHashJoinRuntimeStatsV2>,
     /// Go `HashJoinV2Exec.memTracker`, created by the first Open and kept
     /// on the statement tracker (later Opens reuse it, as Go's `Reset`).
-    operator_tracker: Option<Arc<tidb_util::memory::Tracker>>,
+    operator_tracker: Option<Arc<tidb_memory::Tracker>>,
 }
 
 impl<C> HashJoinV2Executor<C> {
@@ -106,7 +106,7 @@ impl<C> HashJoinV2Executor<C> {
     #[must_use]
     pub fn with_runtime_stats(
         mut self,
-        source: Option<Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
+        source: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
         is_ga: bool,
     ) -> Self {
         self.runtime_stats_source = source;

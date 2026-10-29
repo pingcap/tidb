@@ -24,7 +24,7 @@
 //! lower layers return their own errors (`StorageError`, `KvTableError`,
 //! `ColumnError`, `CastError`, `KillStop`, `MysqlError`) and the conversions
 //! below lift them into the executor's. The Go error prototypes are
-//! `tidb_error`'s and `tidb_util::dbterror`'s.
+//! `tidb_error`'s and `tidb_dbterror`'s.
 
 
 mod driver_error;
@@ -61,7 +61,7 @@ impl From<ExecError> for DriverError {
             // Go's error, raised by the executor, reported unchanged.
             ExecError::Mysql(error) => DriverError::Mysql(error),
             ExecError::MemoryExceedForQuery { conn_id } => DriverError::from(
-                tidb_util::dbterror::exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY
+                tidb_dbterror::exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY
                     .generate_with_stack_by_args(&[conn_id.into()]),
             ),
             ExecError::Retrieval(error) => *error,
@@ -127,7 +127,7 @@ mod source_tests {
     }
 }
 
-pub use tidb_util::sqlkiller::memory_exceed_for_query;
+pub use tidb_sqlkiller::memory_exceed_for_query;
 
 // The lower layers' errors, lifted into the executor's.
 

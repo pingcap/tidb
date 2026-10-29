@@ -106,7 +106,7 @@ fn non_strict_insert_null_semantics_follow_the_values_path() {
     assert!(
         warnings
             .iter()
-            .map(tidb_util::context::SqlWarn::parts)
+            .map(tidb_context::SqlWarn::parts)
             .any(|(_, code, message)| code == 1048
                 && message.contains("Column 'col1' cannot be null")),
         "expected a 1048 warning, got {warnings:?}"

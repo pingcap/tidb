@@ -18,7 +18,7 @@
 use std::fmt;
 
 use tidb_parser::duration::parse_config_duration;
-use tidb_util::timeutil::{parse_time_zone, TimeZone};
+use tidb_timeutil::{parse_time_zone, TimeZone};
 
 use crate::cron;
 use crate::error::{Result, TimerError};

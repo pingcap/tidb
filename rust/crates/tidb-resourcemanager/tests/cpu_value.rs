@@ -20,10 +20,10 @@ use std::time::Duration;
 
 #[test]
 fn test_cpu_value() {
-    if !tidb_util::cgroup::in_container() {
+    if !tidb_cgroup::in_container() {
         return;
     }
-    let observer = tidb_util::cpu::Observer::new();
+    let observer = tidb_cpu::Observer::new();
     let exit = Arc::new(AtomicBool::new(false));
     let mut workers = Vec::new();
     for _ in 0..10 {
@@ -37,7 +37,7 @@ fn test_cpu_value() {
     observer.start();
     for _ in 0..10 {
         std::thread::sleep(Duration::from_millis(200));
-        let (value, unsupported) = tidb_util::cpu::get_cpu_usage();
+        let (value, unsupported) = tidb_cpu::get_cpu_usage();
         assert!(!unsupported);
         assert!(value > 0.0);
         assert!(value < 1.0);

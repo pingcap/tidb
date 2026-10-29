@@ -270,7 +270,7 @@ pub(crate) struct VariablesState {
 
 impl VariablesState {
     fn hides(&self, name: &str) -> bool {
-        self.hide_invisible && tidb_util::sem_compat::is_invisible_sys_var(&name.to_ascii_lowercase())
+        self.hide_invisible && tidb_sem_compat::is_invisible_sys_var(&name.to_ascii_lowercase())
     }
 
     /// Go `memtableRetriever.setDataForVariablesInfo`: one row per system

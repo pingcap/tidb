@@ -1155,7 +1155,7 @@ pub(super) struct ParallelSpillPartitions {
     field_types: Vec<FieldType>,
     chunks: Vec<Chunk>,
     files: Vec<Option<SpillFile>>,
-    storage: Arc<tidb_util::spill_storage::SpillStorage>,
+    storage: Arc<tidb_spill_storage::SpillStorage>,
     disk_tracker: Arc<disk::Tracker>,
     has_data: bool,
 }
@@ -3533,7 +3533,7 @@ mod tests {
     #[test]
     fn spill_partitions_allocate_chunks_only_when_spill_starts() {
         let memory = StatementMemory::default();
-        let disk_tracker = tidb_util::disk::Tracker::new(1, -1);
+        let disk_tracker = tidb_disk::Tracker::new(1, -1);
         let spill = ParallelSpillPartitions::new(&memory, &disk_tracker);
 
         assert!(spill.chunks.is_empty());
@@ -4085,7 +4085,7 @@ mod tests {
         let stats = Arc::clone(exec.pipeline_stats.as_ref().unwrap());
         exec.memory
             .sql_killer()
-            .send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+            .send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
         assert!(exec.next(&mut first).is_err());
         exec.close().unwrap();
         assert_eq!(

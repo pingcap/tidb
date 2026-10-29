@@ -38,9 +38,9 @@ fn runtime_exit_code<E: std::fmt::Display>(result: Result<(), E>) -> ExitCode {
 fn main() -> ExitCode {
     // First, before any thread exists: Go's background work runs on growable
     // goroutine stacks, and this gives every thread the same headroom.
-    tidb_util::worker_stack::install_as_default_thread_stack();
+    tidb_worker_stack::install_as_default_thread_stack();
     // Go's runtime records its start, which `time.Now()` measures from.
-    tidb_util::monotime::mark_process_start();
+    tidb_monotime::mark_process_start();
     let arguments = std::env::args().collect::<Vec<_>>();
     if arguments
         .iter()
@@ -53,7 +53,7 @@ fn main() -> ExitCode {
     if arguments.iter().skip(1).any(|argument| argument == "-V") {
         return match tidb_server::initialize_versions_for_display(arguments) {
             Ok(()) => {
-                println!("{}", tidb_util::printer::get_tidb_info());
+                println!("{}", tidb_printer::get_tidb_info());
                 ExitCode::SUCCESS
             }
             Err(error) => {
@@ -65,7 +65,7 @@ fn main() -> ExitCode {
     match tidb_server::parse_node_config(arguments) {
         Ok(config) => {
             if !config.affinity_cpus.is_empty() {
-                if let Err(error) = tidb_util::sys::linux::set_affinity(&config.affinity_cpus) {
+                if let Err(error) = tidb_sys::linux::set_affinity(&config.affinity_cpus) {
                     eprintln!("set cpu affinity failure: {error}");
                     return ExitCode::FAILURE;
                 }

@@ -11,6 +11,7 @@ description = "Go pkg/planner/funcdep: the functional-dependency graph and the n
 workspace = true
 
 [dependencies]
+tidb-intset = { path = "../tidb-intset" }
 tidb-util = { path = "../tidb-util" }
 
 [dev-dependencies]

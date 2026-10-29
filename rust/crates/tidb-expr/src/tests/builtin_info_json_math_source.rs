@@ -33,7 +33,7 @@ use tidb_datatype::{
     TimeType,
 };
 use tidb_mysql::runtime_versions;
-use tidb_util::printer::get_tidb_info;
+use tidb_printer::get_tidb_info;
 
 fn parse_expr(sql_expr: &str) -> tidb_ast::Expr {
     let statement = tidb_parser::parse(&format!("SELECT {sql_expr}")).expect("parses");

@@ -21,8 +21,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use tidb_error::errctx::{ErrGroup, Level};
-use tidb_util::context::PlanCacheTracker;
-use tidb_util::mathutil::MysqlRng;
+use tidb_context::PlanCacheTracker;
+use tidb_mathutil::MysqlRng;
 use tidb_vardef::defaults::{
     DEF_BLOCK_ENCRYPTION_MODE, DEF_GROUP_CONCAT_MAX_LEN, DEF_SYSDATE_IS_NOW,
     DEF_TIDB_ENABLE_NOOP_FUNCS,
@@ -450,12 +450,12 @@ impl ExprContext {
 /// `contextutil.NewPlanCacheTracker`.
 struct EvalCtxWarnSink(Arc<EvalContext>);
 
-impl tidb_util::context::WarnAppender for EvalCtxWarnSink {
-    fn append_warning(&self, err: tidb_util::context::WarnErr) {
+impl tidb_context::WarnAppender for EvalCtxWarnSink {
+    fn append_warning(&self, err: tidb_context::WarnErr) {
         self.0.append_warning(err);
     }
 
-    fn append_note(&self, err: tidb_util::context::WarnErr) {
+    fn append_note(&self, err: tidb_context::WarnErr) {
         self.0.append_note(err);
     }
 }
@@ -577,8 +577,8 @@ pub fn make_expr_context_static(ctx: &dyn StaticConvertibleExprContext) -> ExprC
 mod tests {
     use super::*;
     use crate::exprstatic::evalctx::with_location;
-    use tidb_util::context::{gen_context_id, StaticWarnHandler};
-    use tidb_util::timeutil::TimeZone;
+    use tidb_context::{gen_context_id, StaticWarnHandler};
+    use tidb_timeutil::TimeZone;
 
     // Go `checkDefaultStaticExprCtx`.
     fn check_default_static_expr_ctx(ctx: &ExprContext) {
@@ -960,7 +960,7 @@ mod tests {
         let ctx = default_ctx.load_system_vars(&eval_vars).unwrap();
         assert_eq!(ctx.get_eval_ctx().get_div_precision_increment(), 9);
         assert_eq!(
-            tidb_util::timeutil::zone_name(ctx.get_eval_ctx().location()),
+            tidb_timeutil::zone_name(ctx.get_eval_ctx().location()),
             "Asia/Tokyo"
         );
     }

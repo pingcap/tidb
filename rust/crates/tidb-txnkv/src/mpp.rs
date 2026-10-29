@@ -280,8 +280,8 @@ pub trait MppClient: std::fmt::Debug + Send + Sync {
         ctx: &Arc<dyn MppContext>,
         request: &MppBuildTasksRequest,
         kv_context: &crate::StatementKvContext,
-        dispatch_policy: tidb_util::tiflashcompute::DispatchPolicy,
-        replica_read: crate::ReplicaRead,
+        dispatch_policy: tidb_tiflashcompute::DispatchPolicy,
+        replica_read: tidb_tiflash::ReplicaRead,
         append_warning: &mut dyn FnMut(String),
     ) -> Result<Vec<MppStoreTask>, MppError>;
 
@@ -295,7 +295,7 @@ pub trait MppClient: std::fmt::Debug + Send + Sync {
         meta: tidb_proto::mpp::TaskMeta,
         encoded_plan: Vec<u8>,
         kv_context: &crate::StatementKvContext,
-        kv_exec_counter: &tidb_util::topsql_stmtstats::KvExecCounterHandle,
+        kv_exec_counter: &tidb_topsql_stmtstats::KvExecCounterHandle,
     ) -> Result<(), MppError>;
 
     /// Go `EstablishMPPConns`: the coordinator's (`receiver`) stream from the
@@ -308,7 +308,7 @@ pub trait MppClient: std::fmt::Debug + Send + Sync {
         sender: tidb_proto::mpp::TaskMeta,
         receiver: tidb_proto::mpp::TaskMeta,
         kv_context: &crate::StatementKvContext,
-        kv_exec_counter: &tidb_util::topsql_stmtstats::KvExecCounterHandle,
+        kv_exec_counter: &tidb_topsql_stmtstats::KvExecCounterHandle,
     ) -> Result<Box<dyn MppStreamResponse>, MppError>;
 }
 

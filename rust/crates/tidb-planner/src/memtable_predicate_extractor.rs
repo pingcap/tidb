@@ -470,7 +470,7 @@ impl ExtractHelper {
         match name {
             "eq" => Some(format!("^{}$", quote_meta(&value))),
             "like" | "ilike" if need_like_to_regexp => Some(
-                tidb_util::stringutil::compile_like_to_regexp(value.as_bytes(), b'\\'),
+                tidb_stringutil::compile_like_to_regexp(value.as_bytes(), b'\\'),
             ),
             _ => Some(value),
         }

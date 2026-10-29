@@ -20,6 +20,7 @@ path = "src/generate_keyword.rs"
 workspace = true
 
 [dependencies]
+tidb-parser-util = { path = "../tidb-parser-util" }
 tidb-charset = { path = "../tidb-charset" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-mysql = { path = "../tidb-mysql" }

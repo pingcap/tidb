@@ -1,0 +1,18 @@
+[package]
+name = "tidb-cteutil"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/util/cteutil: the CTE storage (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-kv = { path = "../tidb-kv" }
+tidb-memory = { path = "../tidb-memory" }
+tidb-driver-error = { path = "../tidb-driver-error" }
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-datatype = { path = "../tidb-datatype" }

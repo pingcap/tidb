@@ -1,0 +1,26 @@
+[package]
+name = "tidb-sys"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/sys: Go pkg/util/sys (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+nix.workspace = true
+rustix = { workspace = true, features = ["fs", "pipe", "stdio", "system", "thread"] }
+
+[target.'cfg(windows)'.dependencies]
+fs4 = { version = "=1.1.0", default-features = false }
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -35,7 +35,8 @@
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
 use crate::KvTableDdl;
-use crate::{DriverError, StmtOutput};
+use crate::DriverError;
+use crate::StmtOutput;
 
 /// Go `SimpleExec.executeFlush`.
 ///
@@ -986,8 +987,8 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
                     registry.kill(target, kill.query);
                 }
             } else {
-                self.append_sql_warning(tidb_util::context::SqlWarn::with_code(
-                    tidb_util::context::WarningLevel::Warning,
+                self.append_sql_warning(tidb_context::SqlWarn::with_code(
+                    tidb_context::WarningLevel::Warning,
                     1105,
                     INVALID_OPERATION.to_owned(),
                 ));
@@ -997,23 +998,23 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
         let Some(registry) = registry else {
             return Ok(Some(StmtOutput::Affected(0)));
         };
-        match tidb_util::globalconn::parse_conn_id(target) {
+        match tidb_globalconn::parse_conn_id(target) {
             Err(error) => {
-                self.append_sql_warning(tidb_util::context::SqlWarn::with_code(
-                    tidb_util::context::WarningLevel::Warning,
+                self.append_sql_warning(tidb_context::SqlWarn::with_code(
+                    tidb_context::WarningLevel::Warning,
                     1105,
                     format!("Parse ConnectionID failed: {error}"),
                 ));
             }
             Ok((_, true)) => {
-                self.append_sql_warning(tidb_util::context::SqlWarn::with_code(tidb_util::context::WarningLevel::Warning, 1105, "Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID.".to_owned()));
+                self.append_sql_warning(tidb_context::SqlWarn::with_code(tidb_context::WarningLevel::Warning, 1105, "Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID.".to_owned()));
             }
             Ok((id, false)) => {
                 if id.server_id == self.server_id() {
                     registry.kill(target, kill.query);
                 } else if let Err(error) = self.kill_remote_connection(id, kill.query) {
-                    self.append_sql_warning(tidb_util::context::SqlWarn::with_code(
-                        tidb_util::context::WarningLevel::Warning,
+                    self.append_sql_warning(tidb_context::SqlWarn::with_code(
+                        tidb_context::WarningLevel::Warning,
                         1105,
                         format!("KILL remote connection failed: {error}"),
                     ));
@@ -1025,7 +1026,7 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
 
     fn kill_remote_connection(
         &self,
-        id: tidb_util::globalconn::Gcid,
+        id: tidb_globalconn::Gcid,
         query: bool,
     ) -> Result<(), String> {
         if id.server_id == 0 {
@@ -1092,7 +1093,7 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
         };
         // Go `buildExplainFor`: no plan at all is the statement's own
         // empty result; any other plan needs one of the three formats.
-        if matches!(plan, crate::process::ProcessPlan::None) {
+        if matches!(plan, tidb_sessmgr::ProcessPlan::None) {
             return Ok(Some(StmtOutput::Affected(0)));
         }
         let explain_format = match format.as_str() {
@@ -1106,7 +1107,7 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
             }
         };
         let plan = match plan {
-            crate::process::ProcessPlan::Plan(plan) => plan,
+            tidb_sessmgr::ProcessPlan::Plan(plan) => plan,
             // An `Explain` plan renders nothing, under the analyze
             // header of the format.
             _ => {
@@ -1169,7 +1170,7 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
         let entered = recorder.enter();
         // Go `session.ExecuteStmt`; this path drains the record set
         // inside it.
-        let execute_stmt = tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
+        let execute_stmt = tidb_tracing::begin_thread_region_scope("session.ExecuteStmt");
         let outcome = self.execute_statement_owned(inner, &inner_sql);
         drop(execute_stmt);
         drop(entered);

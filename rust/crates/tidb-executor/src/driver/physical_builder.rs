@@ -162,7 +162,7 @@ struct BuildState {
     shuffle_receivers: HashMap<i32, Box<dyn Executor>>,
     cte_slots: HashMap<i32, CteBuildSlot>,
     runtime_counters: Option<PhysicalRuntimeStats>,
-    executor_runtime_stats_source: Option<Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
+    executor_runtime_stats_source: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
     /// The coprocessor `Limit offset:o, count:c` a covering `IndexReader`'s
     /// `IndexPlan` carries above its `IndexScan`, as `o + c`. Go pushes it into
     /// the region request; the local cursor has no request, so the scan build
@@ -202,7 +202,7 @@ pub(crate) struct PhysicalRuntimeCounter {
     /// Go `RURuntimeStats`, which `ExplainExec.executeAnalyzeExec` registers
     /// on the target plan after the analyzed statement ran and before its
     /// executors' `Close` register theirs.
-    ru: Option<Arc<tidb_util::ruv2_metrics::RuRuntimeStats>>,
+    ru: Option<Arc<tidb_ruv2_metrics::RuRuntimeStats>>,
     /// Go `runtimeStatsWithSnapshot`, which a PointGet/BatchPointGet
     /// registers from its `Close`: its snapshot's RPC, time and scan details.
     snapshot: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
@@ -228,7 +228,7 @@ impl PhysicalRuntimeCounter {
     /// Go `RuntimeStatsColl.RegisterStats(targetPlanID, &RURuntimeStats{..})`.
     pub(crate) fn register_ru_runtime_stats(
         &mut self,
-        stats: tidb_util::ruv2_metrics::RuRuntimeStats,
+        stats: tidb_ruv2_metrics::RuRuntimeStats,
     ) {
         self.ru = Some(Arc::new(stats));
     }
@@ -328,8 +328,8 @@ fn register_concurrency_info(ctx: &crate::StmtContext, plan: &PhysicalPlan, name
     let Some(source) = ctx.executor_runtime_stats_source() else {
         return;
     };
-    let stats = tidb_util::execdetails::RuntimeStatsWithConcurrencyInfo::default();
-    stats.set_concurrency_info(vec![tidb_util::execdetails::ConcurrencyInfo::new(
+    let stats = tidb_execdetails::RuntimeStatsWithConcurrencyInfo::default();
+    stats.set_concurrency_info(vec![tidb_execdetails::ConcurrencyInfo::new(
         name,
         i64::try_from(num).unwrap_or(i64::MAX),
     )]);
@@ -486,12 +486,12 @@ impl BuildState {
 struct SqlKillerCheckExec {
     child: Box<dyn Executor>,
     memory: crate::StatementMemory,
-    runtime_stats: Option<Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStats>>,
+    runtime_stats: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStats>>,
     /// Go's `memTracker` (`NewTracker(e.ID(), -1)`) of an executor whose
     /// tracked memory is the chunk it holds (a projection's or stream
     /// aggregation's `childResult`, an index lookup's result chunk): the
     /// tracker and the bytes charged for the last chunk returned.
-    chunk_memory: Option<(Arc<tidb_util::memory::Tracker>, i64)>,
+    chunk_memory: Option<(Arc<tidb_memory::Tracker>, i64)>,
     /// Go `exec.Next`'s `tracing.StartRegionEx(ctx, <type>.Next)` for the
     /// executor Go builds for the node.
     next_region: Option<&'static str>,
@@ -518,7 +518,7 @@ struct GoExecutorTrace {
     /// `LimitExec.Close`'s `limitExec.Close` span, opened under the span
     /// its `Open` ran in when the close took over a millisecond.
     limit_close: bool,
-    open_span: Option<tidb_util::tracing::Span>,
+    open_span: Option<tidb_tracing::Span>,
 }
 
 impl GoExecutorTrace {
@@ -526,7 +526,7 @@ impl GoExecutorTrace {
         let trace = match plan {
             PhysicalPlan::TableReader(reader) => Self {
                 open_region: Some(("TableReaderExecutor.Open", true)),
-                next_event: tidb_util::tracing::current_span()
+                next_event: tidb_tracing::current_span()
                     .and_then(|_| reader.table_scan_plan())
                     .map(|scan| {
                         let ranges = scan
@@ -618,7 +618,7 @@ fn checked_executor(child: Box<dyn Executor>, memory: crate::StatementMemory) ->
 fn checked_executor_with_stats(
     child: Box<dyn Executor>,
     memory: crate::StatementMemory,
-    runtime_stats: Option<Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStats>>,
+    runtime_stats: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStats>>,
 ) -> Box<dyn Executor> {
     Box::new(SqlKillerCheckExec {
         child,
@@ -638,14 +638,14 @@ impl Executor for SqlKillerCheckExec {
             .and_then(|trace| trace.open_region)
             .map(|(name, enter)| {
                 if enter {
-                    tidb_util::tracing::start_thread_region_ex(name)
+                    tidb_tracing::start_thread_region_ex(name)
                 } else {
-                    tidb_util::tracing::start_thread_region(name)
+                    tidb_tracing::start_thread_region(name)
                 }
             });
         let after_open = trace.and_then(|trace| {
             if trace.limit_close {
-                trace.open_span = tidb_util::tracing::current_span();
+                trace.open_span = tidb_tracing::current_span();
             }
             trace.after_open_region
         });
@@ -656,7 +656,7 @@ impl Executor for SqlKillerCheckExec {
         }
         if result.is_ok() {
             if let Some(name) = after_open {
-                tidb_util::tracing::start_thread_region(name).end();
+                tidb_tracing::start_thread_region(name).end();
             }
         }
         result
@@ -665,13 +665,13 @@ impl Executor for SqlKillerCheckExec {
     fn next(&mut self, req: &mut Chunk) -> Result<(), crate::ExecError> {
         let _region = self
             .next_region
-            .map(tidb_util::tracing::start_thread_region_ex);
+            .map(tidb_tracing::start_thread_region_ex);
         if let Some(event) = self
             .trace
             .as_ref()
             .and_then(|trace| trace.next_event.as_ref())
         {
-            tidb_util::tracing::thread_event(|| event.clone());
+            tidb_tracing::thread_event(|| event.clone());
         }
         let start = self.runtime_stats.as_ref().map(|_| Instant::now());
         let result = crate::sort_util::recover_executor_panic(|| {
@@ -896,12 +896,12 @@ impl Executor for MaxOneRowExec {
                 if extra.num_rows() == 0 {
                     Ok(())
                 } else {
-                    Err(tidb_util::dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
+                    Err(tidb_dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
                         .generate_with_stack_by_args(&[])
                         .into())
                 }
             }
-            _ => Err(tidb_util::dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
+            _ => Err(tidb_dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
                 .generate_with_stack_by_args(&[])
                 .into()),
         }
@@ -6188,14 +6188,14 @@ fn build_cte(
     let mut cor_cols = tidb_planner::physical::extract_outer_apply_correlated_cols(&cte.seed_plan);
     let seed = build_with_state(&cte.seed_plan, catalog, ctx, state)?;
     let output_types = seed.ret_field_types().to_vec();
-    let mut result_storage = crate::cte_storage::CteStorage::new(
+    let mut result_storage = tidb_cteutil::CteStorage::new(
         output_types.clone(),
         ctx.executor_chunk_sizes().1,
         ctx.statement_memory(),
     );
     result_storage.open_and_ref()?;
     let result = Arc::new(Mutex::new(result_storage));
-    let mut iter_in_storage = crate::cte_storage::CteStorage::new(
+    let mut iter_in_storage = tidb_cteutil::CteStorage::new(
         output_types.clone(),
         ctx.executor_chunk_sizes().1,
         ctx.statement_memory(),
@@ -7992,11 +7992,11 @@ use super::*;
         }
         let spans = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&spans);
-        let tracer = Arc::new(tidb_util::tracing::Tracer::new(Arc::new(move |raw| {
+        let tracer = Arc::new(tidb_tracing::Tracer::new(Arc::new(move |raw| {
             sink.lock().unwrap().push(raw);
         })));
         let root = tracer.start_span("trace");
-        let entered = tidb_util::tracing::with_thread_span(Some(root.clone()));
+        let entered = tidb_tracing::with_thread_span(Some(root.clone()));
         for close_for in [Duration::from_millis(3), Duration::ZERO] {
             let mut limit = SqlKillerCheckExec {
                 child: Box::new(SlowClose {
@@ -8046,7 +8046,7 @@ use super::*;
                 accesses: 0,
             },
         ))));
-        counter.register_ru_runtime_stats(tidb_util::ruv2_metrics::RuRuntimeStats {
+        counter.register_ru_runtime_stats(tidb_ruv2_metrics::RuRuntimeStats {
             ru_details: Some(tikv_client::RuDetails::new_with(
                 1.5,
                 1.33,
@@ -8060,7 +8060,7 @@ use super::*;
         );
         // No RU details registers nothing visible.
         let mut empty = PhysicalRuntimeCounter::from(crate::executor::RowCount::default());
-        empty.register_ru_runtime_stats(tidb_util::ruv2_metrics::RuRuntimeStats::default());
+        empty.register_ru_runtime_stats(tidb_ruv2_metrics::RuRuntimeStats::default());
         assert_eq!(empty.execution_info(), None);
     }
 
@@ -8072,7 +8072,7 @@ use super::*;
         closes: std::sync::atomic::AtomicUsize,
     }
 
-    impl tidb_util::execdetails::runtime_stats::ExecutorRuntimeStats for RecordedExecutorRuntimeStats {
+    impl tidb_execdetails::runtime_stats::ExecutorRuntimeStats for RecordedExecutorRuntimeStats {
         fn record_open(&self, _elapsed: Duration) {
             self.opens.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
@@ -8095,13 +8095,13 @@ use super::*;
         stats: Arc<RecordedExecutorRuntimeStats>,
     }
 
-    impl tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource for RecordingExecutorRuntimeStatsSource {
+    impl tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource for RecordingExecutorRuntimeStatsSource {
         fn for_executor(
             &self,
             plan_id: i64,
-        ) -> Option<Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStats>> {
+        ) -> Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStats>> {
             self.plan_ids.lock().unwrap().push(plan_id);
-            let stats: Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStats> = self.stats.clone();
+            let stats: Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStats> = self.stats.clone();
             Some(stats)
         }
     }
@@ -8109,7 +8109,7 @@ use super::*;
     #[test]
     fn ordinary_executor_records_runtime_stats_when_collection_is_enabled() {
         let source = Arc::new(RecordingExecutorRuntimeStatsSource::default());
-        let source_handle: Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource> = source.clone();
+        let source_handle: Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource> = source.clone();
         let ctx =
             crate::StmtContext::for_query().with_executor_runtime_stats_source(Some(source_handle));
         let plan = dual(17, 1);
@@ -8154,7 +8154,7 @@ use super::*;
         executor.open().unwrap();
         memory
             .sql_killer()
-            .send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+            .send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
 
         let mut req = executor.new_chunk();
         assert!(matches!(
@@ -8182,7 +8182,7 @@ use super::*;
         executor.open().unwrap();
         memory
             .sql_killer()
-            .send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+            .send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
         let mut req = executor.new_chunk();
         assert!(matches!(
             executor.next(&mut req),
@@ -8207,7 +8207,7 @@ use super::*;
         fn next(&mut self, _req: &mut Chunk) -> Result<(), crate::ExecError> {
             self.memory
                 .sql_killer()
-                .send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+                .send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
             Ok(())
         }
 
@@ -8585,7 +8585,7 @@ use super::*;
         assert!(matches!(
             error,
             crate::ExecError::Mysql(ref error)
-                if error.equal(&tidb_util::dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW)
+                if error.equal(&tidb_dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW)
         ));
     }
 

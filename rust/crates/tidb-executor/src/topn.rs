@@ -81,7 +81,7 @@ use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
-use tidb_util::memory::{ArcAction, Tracker};
+use tidb_memory::{ArcAction, Tracker};
 
 use tidb_kv::mem_quota::StatementMemory;
 use crate::sort::{eval_sort_key, less_by_items, validate_by_items, SortByItem};
@@ -128,7 +128,7 @@ pub struct TopNExec<C: Columns> {
     /// Go `TopNExec.memTracker`.
     tracker: Arc<Tracker>,
     /// Go `TopNExec.diskTracker`.
-    disk_tracker: Arc<tidb_util::disk::Tracker>,
+    disk_tracker: Arc<tidb_disk::Tracker>,
     /// Go `enableTmpStorageOnOOM`: with `tidb_enable_tmp_storage_on_oom` off,
     /// no spill action is registered and an overrun goes straight to 8175.
     enable_tmp_storage_on_oom: bool,
@@ -174,7 +174,7 @@ fn spill_parallel_worker_heap(
     heap: &mut TopNChunkHeap,
     field_types: &[FieldType],
     spill_chunk_size: usize,
-    disk_tracker: &Arc<tidb_util::disk::Tracker>,
+    disk_tracker: &Arc<tidb_disk::Tracker>,
     memory: &StatementMemory,
     tracker: &Arc<Tracker>,
     accounted: &mut i64,
@@ -240,7 +240,7 @@ struct ParallelTopNWorker<C> {
     ctx: C,
     tracker: Arc<Tracker>,
     memory: StatementMemory,
-    disk_tracker: Arc<tidb_util::disk::Tracker>,
+    disk_tracker: Arc<tidb_disk::Tracker>,
     spill_chunk_size: usize,
     chunks: usize,
     accounted: i64,
@@ -2183,7 +2183,7 @@ mod spill_tests {
     use tidb_vardef::OomAction;
     use crate::test_temp_storage::{scratch_dir as scratch_temp_dir, storage as test_storage};
     use tidb_expr::NoColumns;
-    use tidb_util::sqlkiller::KillSignal;
+    use tidb_sqlkiller::KillSignal;
 
     fn topn(
         rows: &[Vec<Option<i64>>],
@@ -2411,7 +2411,7 @@ mod spill_tests {
         let mut input = Chunk::new(&[], 4, 4);
         input.set_num_virtual_rows(3);
         heap.add_chunk(input, vec![Vec::new(); 3]);
-        let disk_tracker = tidb_util::disk::new_tracker(0, -1);
+        let disk_tracker = tidb_disk::new_tracker(0, -1);
         let mut runs = Vec::new();
         spill_parallel_worker_heap(
             &mut heap,

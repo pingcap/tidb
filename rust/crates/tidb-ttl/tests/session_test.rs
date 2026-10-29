@@ -44,8 +44,8 @@
 use std::sync::Mutex;
 
 use tidb_datatype::{CoreTime, Datum, Time, TimeType};
-use tidb_util::sqlkiller::{KillSignal, SqlKiller};
-use tidb_util::timeutil::TimeZone;
+use tidb_sqlkiller::{KillSignal, SqlKiller};
+use tidb_timeutil::TimeZone;
 
 use tidb_ttl::session::{
     Phase, PhaseTracer, ResultRow, Session, SessionContext, SessionError, TtlSession, TxnMode,
@@ -110,7 +110,7 @@ impl MockContext {
 
 /// `Asia/Shanghai`, resolved the way `GlobalTimeZone` resolves it.
 fn shanghai() -> TimeZone {
-    tidb_util::timeutil::parse_time_zone("Asia/Shanghai").unwrap()
+    tidb_timeutil::parse_time_zone("Asia/Shanghai").unwrap()
 }
 
 impl SessionContext for MockContext {

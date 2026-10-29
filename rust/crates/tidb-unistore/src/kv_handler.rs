@@ -214,14 +214,14 @@ impl RequestCtx {
 /// key and the lock it waits for.
 #[derive(Debug)]
 pub struct PessimisticLockWait {
-    waiter: std::sync::Arc<crate::lockwaiter::Waiter>,
+    waiter: std::sync::Arc<tidb_unistore_lockwaiter::Waiter>,
     locked: Box<tidb_proto::KvrpcLockInfo>,
 }
 
 impl PessimisticLockWait {
     /// The waiter to wait on.
     #[must_use]
-    pub fn waiter(&self) -> &std::sync::Arc<crate::lockwaiter::Waiter> {
+    pub fn waiter(&self) -> &std::sync::Arc<tidb_unistore_lockwaiter::Waiter> {
         &self.waiter
     }
 }
@@ -460,9 +460,9 @@ impl KvHandler {
                 req,
                 response,
                 wait,
-                crate::lockwaiter::WaitResult {
-                    wakeup_sleep_time: crate::lockwaiter::WAIT_TIMEOUT,
-                    ..crate::lockwaiter::WaitResult::default()
+                tidb_unistore_lockwaiter::WaitResult {
+                    wakeup_sleep_time: tidb_unistore_lockwaiter::WAIT_TIMEOUT,
+                    ..tidb_unistore_lockwaiter::WaitResult::default()
                 },
             ),
             None => response,
@@ -498,7 +498,7 @@ impl KvHandler {
         req: &kvrpcpb::PessimisticLockRequest,
         mut response: kvrpcpb::PessimisticLockResponse,
         wait: PessimisticLockWait,
-        result: crate::lockwaiter::WaitResult,
+        result: tidb_unistore_lockwaiter::WaitResult,
     ) -> kvrpcpb::PessimisticLockResponse {
         let PessimisticLockWait { waiter, locked } = wait;
         self.store.deadlock_detector.clean_up_wait_for(
@@ -507,7 +507,7 @@ impl KvHandler {
             waiter.key_hash,
         );
         self.store.lock_waiter_manager.clean_up(&waiter);
-        if result.wakeup_sleep_time == crate::lockwaiter::WAIT_TIMEOUT {
+        if result.wakeup_sleep_time == tidb_unistore_lockwaiter::WAIT_TIMEOUT {
             return response;
         }
         let force_lock =
@@ -530,11 +530,11 @@ impl KvHandler {
         }
         #[allow(deprecated)]
         let force = req.force;
-        if result.wakeup_sleep_time == crate::lockwaiter::WAKE_UP_THIS_WAITER
+        if result.wakeup_sleep_time == tidb_unistore_lockwaiter::WAKE_UP_THIS_WAITER
             && (force || force_lock)
         {
             let (retry, retry_wait) =
-                self.pessimistic_lock_attempt(req, crate::lockwaiter::LOCK_NO_WAIT);
+                self.pessimistic_lock_attempt(req, tidb_unistore_lockwaiter::LOCK_NO_WAIT);
             debug_assert!(retry_wait.is_none(), "a no-wait attempt parks no waiter");
             let still_locked = retry
                 .errors

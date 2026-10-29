@@ -241,7 +241,7 @@ pub(crate) fn run_query_stmt(
 // session holds it the planning steps open no region of their own, and the
 // handover to execution ends it.
 thread_local! {
-    static HELD_OPTIMIZE_REGION: std::cell::RefCell<Option<tidb_util::tracing::ThreadRegion>> =
+    static HELD_OPTIMIZE_REGION: std::cell::RefCell<Option<tidb_tracing::ThreadRegion>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -249,7 +249,7 @@ thread_local! {
 /// (the EXECUTE that runs it is the statement Go compiles); see
 /// [`end_held_optimize_region`].
 pub fn hold_optimize_region() {
-    let region = tidb_util::tracing::start_thread_region("planner.Optimize");
+    let region = tidb_tracing::start_thread_region("planner.Optimize");
     if region.span().is_some() {
         HELD_OPTIMIZE_REGION.with(|held| *held.borrow_mut() = Some(region));
     }
@@ -265,12 +265,12 @@ pub fn end_held_optimize_region() {
 /// an EXECUTE holds it ([`hold_optimize_region`]).
 pub(crate) fn start_optimize_region() -> OptimizeRegion {
     let held = HELD_OPTIMIZE_REGION.with(|held| held.borrow().is_some());
-    OptimizeRegion((!held).then(|| tidb_util::tracing::start_thread_region("planner.Optimize")))
+    OptimizeRegion((!held).then(|| tidb_tracing::start_thread_region("planner.Optimize")))
 }
 
 /// See [`start_optimize_region`].
 #[must_use = "the region ends when it drops"]
-pub(crate) struct OptimizeRegion(Option<tidb_util::tracing::ThreadRegion>);
+pub(crate) struct OptimizeRegion(Option<tidb_tracing::ThreadRegion>);
 
 impl OptimizeRegion {
     /// Go `Region.End`.
@@ -284,8 +284,8 @@ impl OptimizeRegion {
 /// thread.
 pub fn begin_run_stmt_region() {
     end_held_optimize_region();
-    if let Some(text) = tidb_util::tracing::end_thread_region("executor.Compile") {
-        if let Some(span) = tidb_util::tracing::begin_thread_region("session.runStmt", None) {
+    if let Some(text) = tidb_tracing::end_thread_region("executor.Compile") {
+        if let Some(span) = tidb_tracing::begin_thread_region("session.runStmt", None) {
             span.log_kv("sql", text.as_deref().unwrap_or_default());
         }
     }
@@ -296,8 +296,8 @@ pub fn begin_run_stmt_region() {
 /// where any other statement runs `session.runStmt`.
 pub fn begin_point_get_region() {
     end_held_optimize_region();
-    if let Some(text) = tidb_util::tracing::end_thread_region("executor.Compile") {
-        if let Some(span) = tidb_util::tracing::begin_thread_region("ExecStmt.PointGet", None) {
+    if let Some(text) = tidb_tracing::end_thread_region("executor.Compile") {
+        if let Some(span) = tidb_tracing::begin_thread_region("ExecStmt.PointGet", None) {
             span.log_kv("sql", text.as_deref().unwrap_or_default());
         }
     }
@@ -308,15 +308,15 @@ pub fn begin_point_get_region() {
 /// DML runs inside both until the value drops.
 pub(crate) struct DmlExecutionRegions {
     // Dropped in declaration order: the executor's call ends first.
-    _next: tidb_util::tracing::ThreadRegion,
-    _handle: tidb_util::tracing::ThreadRegion,
+    _next: tidb_tracing::ThreadRegion,
+    _handle: tidb_tracing::ThreadRegion,
 }
 
 /// [`begin_run_stmt_region`], then [`DmlExecutionRegions`] for `executor`.
 pub(crate) fn begin_dml_execution(executor: &'static str) -> DmlExecutionRegions {
     begin_run_stmt_region();
-    let handle = tidb_util::tracing::start_thread_region_ex("executor.handleNoDelayExecutor");
-    let next = tidb_util::tracing::start_thread_region_ex(executor);
+    let handle = tidb_tracing::start_thread_region_ex("executor.handleNoDelayExecutor");
+    let next = tidb_tracing::start_thread_region_ex(executor);
     DmlExecutionRegions {
         _next: next,
         _handle: handle,
@@ -942,7 +942,7 @@ mod dml_batch_tests {
             accountant.account_row(&row).map_err(DriverError::from)
         });
         assert!((result).is_err_and(
-            |error| error.equal(&tidb_util::dbterror::exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY)
+            |error| error.equal(&tidb_dbterror::exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY)
         ));
         assert_eq!(
             nexts.load(SeqCst),

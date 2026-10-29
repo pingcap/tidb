@@ -27,8 +27,8 @@
 use tidb_distsql::{index_ranges_to_kv_ranges, table_ranges_to_kv_ranges, DatumRange, DistSqlContext, KvPriority, RequestBuilder, RequestEnvelope};
 use tidb_txnkv::RequestType;
 use tidb_txnkv::ReplicaReadType;
-use tidb_util::paging::MIN_PAGING_SIZE;
-use tidb_util::paging::MIN_ALLOWED_MAX_PAGING_SIZE;
+use tidb_paging::MIN_PAGING_SIZE;
+use tidb_paging::MIN_ALLOWED_MAX_PAGING_SIZE;
 use tidb_txnkv::IsolationLevel;
 
 fn datum(value: i64) -> tidb_datatype::Datum {

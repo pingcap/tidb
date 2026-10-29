@@ -165,7 +165,7 @@ fn finish_stats_handler(
             "Failed to handle DDL event",
             &[
                 tidb_log::Field::new("event", tidb_log::Value::Str(event.to_string())),
-                tidb_util::logutil::zap_error(error),
+                tidb_logutil::zap_error(error),
             ],
         );
     }

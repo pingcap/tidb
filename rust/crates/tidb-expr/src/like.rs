@@ -17,7 +17,7 @@
 
 use tidb_datatype::CollationCollator;
 use tidb_datatype::Collation;
-use tidb_util::stringutil::{lower_one_string, lower_one_string_excluding_escape_char};
+use tidb_stringutil::{lower_one_string, lower_one_string_excluding_escape_char};
 
 /// Go `collate.WildcardPattern`, retained by `builtinLikeSig.patternCache`.
 /// The compiled wildcard tokens are immutable and safe to share across rows

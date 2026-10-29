@@ -131,7 +131,7 @@
 #![cfg(test)]
 
 use crate::tests_support::*;
-use tidb_util::context::WarningLevel;
+use tidb_context::WarningLevel;
 use crate::*;
 
 /// The capture's schema and rows, so every case below reads the same table.

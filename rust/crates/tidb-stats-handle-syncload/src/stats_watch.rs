@@ -968,7 +968,7 @@ fn run_one_stats_reload_pass(
         // successful reload logs nothing.
         Err(message) => {
             stats.failures.fetch_add(1, Ordering::AcqRel);
-            tidb_util::logutil::bg_logger().warn(
+            tidb_logutil::bg_logger().warn(
                 "update stats info failed",
                 &[tidb_log::Field::new("error", tidb_log::Value::Str(message))],
             );

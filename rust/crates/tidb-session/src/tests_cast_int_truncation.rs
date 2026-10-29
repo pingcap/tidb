@@ -138,7 +138,7 @@ fn signed_string_overflow_reaches_sql_and_implicit_int_consumers() {
         )],
     );
 
-    let expected_hash = tidb_util::vitess::hash_uint64((-2_i64) as u64).to_string();
+    let expected_hash = tidb_vitess::hash_uint64((-2_i64) as u64).to_string();
     assert_eq!(
         row_text(session.run("SELECT VITESS_HASH('18446744073709551614')")),
         [[expected_hash]],
@@ -164,7 +164,7 @@ fn signed_string_overflow_reaches_sql_and_implicit_int_consumers() {
 #[test]
 fn implicit_integer_cast_keeps_warning_after_plan_fold() {
     let mut session = Session::new();
-    let expected_hash = tidb_util::vitess::hash_uint64((-2_i64) as u64).to_string();
+    let expected_hash = tidb_vitess::hash_uint64((-2_i64) as u64).to_string();
     assert_eq!(
         row_text(session.run("SELECT VITESS_HASH('18446744073709551614')")),
         [[expected_hash]],

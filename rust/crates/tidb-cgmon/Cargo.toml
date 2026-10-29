@@ -1,0 +1,17 @@
+[package]
+name = "tidb-cgmon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/cgmon: Go pkg/util/cgmon (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-cgroup = { path = "../tidb-cgroup" }
+tidb-memory = { path = "../tidb-memory" }
+prometheus = { version = "0.14", default-features = false }
+tracing = "0.1"

@@ -21,7 +21,7 @@ use tidb_ast::Stmt;
 use tidb_datatype::Datum;
 use tidb_resolve::ResultFieldRef;
 use tidb_sqlexec::{ExecutionContext, OptionFuncAlias, RestrictedSqlExecutor, Result as SqlResult};
-use tidb_util::sqlescape::SqlArg;
+use tidb_sqlescape::SqlArg;
 
 type RowsAndFields = (Vec<Vec<Datum>>, Vec<ResultFieldRef>);
 type ParseCall =

@@ -52,8 +52,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 );
             }
             let var_name = go_to_lower(vars.name.as_str());
-            if tidb_util::sem_compat::is_enabled()
-                && tidb_util::sem_compat::is_invisible_sys_var(&var_name)
+            if tidb_sem_compat::is_enabled()
+                && tidb_sem_compat::is_invisible_sys_var(&var_name)
             {
                 self.append_dynamic_visit(
                     &["RESTRICTED_VARIABLES_ADMIN"],

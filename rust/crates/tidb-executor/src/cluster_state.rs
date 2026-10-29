@@ -23,7 +23,8 @@
 //! drains into its own warnings.
 
 use tidb_datatype::{Datum, FieldType};
-use crate::{Catalog, DriverError};
+use crate::Catalog;
+use crate::DriverError;
 
 use crate::memtable_reader::ViewerState;
 use std::sync::Arc;
@@ -352,7 +353,7 @@ impl ViewerState {
         ctx: &crate::StmtContext,
         catalog: &Catalog,
         table_name: &str,
-        registry: Option<&crate::process::ProcessRegistry>,
+        registry: Option<&tidb_sessmgr::ProcessRegistry>,
         zone: &tidb_datatype::SessionTimeZone,
         required: Option<&std::collections::HashSet<String>>,
         digests: Option<&std::collections::HashSet<String>>,
@@ -413,7 +414,7 @@ impl ViewerState {
         ctx: &crate::StmtContext,
         catalog: &Catalog,
         source: &str,
-        registry: Option<&crate::process::ProcessRegistry>,
+        registry: Option<&tidb_sessmgr::ProcessRegistry>,
         required: Option<&std::collections::HashSet<String>>,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         let needs = |name: &str| required.is_none_or(|set| set.contains(name));
@@ -433,7 +434,7 @@ impl ViewerState {
             }
             "MEMORY_USAGE" => crate::memtable_reader::memory_usage_table_rows(),
             "MEMORY_USAGE_OPS_HISTORY" => {
-                tidb_util::servermemorylimit::GLOBAL_MEMORY_OPS_HISTORY_MANAGER.get_rows()
+                tidb_servermemorylimit::GLOBAL_MEMORY_OPS_HISTORY_MANAGER.get_rows()
             }
             "TIDB_INDEX_USAGE" => crate::infoschema_reader::tidb_index_usage_rows(
                 catalog,
@@ -466,7 +467,7 @@ impl ViewerState {
     fn tidb_trx_rows(
         &self,
         ctx: &crate::StmtContext,
-        registry: Option<&crate::process::ProcessRegistry>,
+        registry: Option<&tidb_sessmgr::ProcessRegistry>,
         needs_text: bool,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         use chrono::{DateTime, Local};
@@ -626,7 +627,7 @@ impl ViewerState {
         let digests: Vec<_> = waits
             .iter()
             .map(|wait| {
-                tidb_txnkv::decode_resource_group_tag(&wait.resource_group_tag)
+                tidb_resourcegrouptag::decode_resource_group_tag(&wait.resource_group_tag)
                     .ok()
                     .flatten()
                     .map(|bytes| {

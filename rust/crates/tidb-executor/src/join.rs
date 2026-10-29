@@ -181,7 +181,7 @@ use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
-use tidb_util::memory::{ArcAction, Tracker};
+use tidb_memory::{ArcAction, Tracker};
 
 /// Which side, if any, keeps rows that match nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -484,7 +484,7 @@ impl MergeInnerGroup {
         chunk_size: usize,
         memory: &StatementMemory,
         tracker: &Arc<Tracker>,
-        disk_tracker: &Arc<tidb_util::disk::Tracker>,
+        disk_tracker: &Arc<tidb_disk::Tracker>,
     ) -> Self {
         let rows = RowContainer::new(&types, chunk_size, memory.spill_storage());
         rows.mem_tracker().attach_to(tracker);
@@ -1377,7 +1377,7 @@ pub struct JoinExec<C: Columns> {
     index_join_batch_size: usize,
     /// Go `StmtCtx.RuntimeStatsColl` and the plan an index join registers
     /// its `indexLookUpJoinRuntimeStats` on at Close.
-    index_join_runtime_stats: Option<(Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>, i64)>,
+    index_join_runtime_stats: Option<(Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>, i64)>,
     /// Go `IndexLookUpJoin.stats`, created with the first task.
     index_join_stats: Option<Arc<crate::join_stats::IndexLookUpJoinRuntimeStats>>,
     outer_filter: Vec<Expression>,
@@ -1468,7 +1468,7 @@ pub struct JoinExec<C: Columns> {
     tracker: Arc<Tracker>,
     /// Go `HashJoinCtxV1.diskTracker`: what the build side has written to
     /// spill files.
-    disk_tracker: Arc<tidb_util::disk::Tracker>,
+    disk_tracker: Arc<tidb_disk::Tracker>,
     /// The spill action registered on the session tracker, kept so `close`
     /// can unbind it -- Go's
     /// `MemTracker.UnbindActionFromHardLimit(e.RowContainer.ActionSpill())`.
@@ -1645,7 +1645,7 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// `indexLookUpJoinRuntimeStats` on `plan_id`.
     pub(crate) fn set_index_join_runtime_stats(
         &mut self,
-        source: Option<Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
+        source: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
         plan_id: i64,
     ) {
         self.index_join_runtime_stats = source.map(|source| (source, plan_id));

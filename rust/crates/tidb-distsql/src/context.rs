@@ -16,7 +16,7 @@
 
 use crate::{ExecutionState, ReplicaRead, Warning, WarningCollector};
 use tidb_txnkv::ReplicaReadType;
-use tidb_util::paging::{MIN_ALLOWED_MAX_PAGING_SIZE, MIN_PAGING_SIZE};
+use tidb_paging::{MIN_ALLOWED_MAX_PAGING_SIZE, MIN_PAGING_SIZE};
 
 /// TiDB's default `tidb_distsql_scan_concurrency` used by the Go test helper.
 pub const DEFAULT_DIST_SQL_CONCURRENCY: u64 = 15;

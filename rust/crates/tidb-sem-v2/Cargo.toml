@@ -1,0 +1,29 @@
+[package]
+name = "tidb-sem-v2"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/sem/v2: Go pkg/util/sem/v2 (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+enableassert = ["tidb-intest/enableassert", "tidb-logutil/enableassert"]
+intest = ["tidb-intest/intest", "tidb-logutil/intest"]
+
+[dependencies]
+tidb-sem = { path = "../tidb-sem" }
+tidb-intest = { path = "../tidb-intest" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-log = { path = "../tidb-log" }
+tidb-mysql = { path = "../tidb-mysql" }
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+tempfile.workspace = true
+tidb-hack = { path = "../tidb-hack" }
+
+[dev-dependencies]
+tidb-intest = { path = "../tidb-intest", features = ["intest"] }

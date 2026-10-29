@@ -26,7 +26,7 @@ use tidb_resolve::ResultFieldRef;
 use tidb_sqlexec::{
     ExecutionContext, OptionFuncAlias, RecordSet, RestrictedSqlExecutor, SqlExecutor,
 };
-use tidb_util::sqlescape::SqlArg;
+use tidb_sqlescape::SqlArg;
 
 /// Maximum size of a system-session pool.
 pub const POOL_MAX_SIZE: usize = 1024 * 1024 * 1024;
@@ -782,7 +782,7 @@ impl<C: SessionContext + ?Sized + 'static> AdvancedSessionPool<C> {
                     // explicitly in tests, so a missing session manager must
                     // not spin a test forever. That failpoint has no hook
                     // here, so the forced-retry arm is always false.
-                    if tidb_util::intest::IN_TEST {
+                    if tidb_intest::IN_TEST {
                         break;
                     }
                     if cancelled() {
@@ -900,7 +900,7 @@ impl<C: SessionContext + ?Sized + 'static> Pool<C> for AdvancedSessionPool<C> {
                     // unless the ForceBlockGCInTest failpoint forces the
                     // retry; the forced-retry arm has no hook here and is
                     // always false.
-                    if tidb_util::intest::IN_TEST {
+                    if tidb_intest::IN_TEST {
                         break;
                     }
                     if cancelled() {
@@ -980,7 +980,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(format!("parse:{sql}:{}", arguments.len()));
-            let escaped = tidb_util::sqlescape::escape_sql(sql, arguments)?;
+            let escaped = tidb_sqlescape::escape_sql(sql, arguments)?;
             let sql = String::from_utf8(escaped)?;
             tidb_parser::parse(&sql).map_err(|error| {
                 Box::new(std::io::Error::other(format!("{error:?}"))) as tidb_sqlexec::SqlExecError

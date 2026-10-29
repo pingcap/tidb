@@ -101,7 +101,7 @@ pub struct IndexJoinInfo {
 
 /// Go `contextutil.WarnLevel*`; this file writes `WarnLevelWarning` and
 /// `WarnLevelNote`.
-pub use tidb_util::context::WarningLevel as WarnLevel;
+pub use tidb_context::WarningLevel as WarnLevel;
 
 /// Go `context.SQLWarn`, narrowed: the `error` becomes its rendered message.
 #[derive(Clone, Debug, PartialEq)]

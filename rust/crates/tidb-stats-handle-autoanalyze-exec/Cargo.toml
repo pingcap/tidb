@@ -11,6 +11,8 @@ description = "TiDB auto-analyze execution package."
 workspace = true
 
 [dependencies]
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
 chrono.workspace = true
 prometheus = { version = "0.14", default-features = false }
 tidb-datatype = { path = "../tidb-datatype" }

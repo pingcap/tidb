@@ -155,11 +155,11 @@ impl crate::session_context::DdlSessionContext for StmtContext {
         StmtContext::drop_hypo_index(self, schema, table, index, if_exists)
     }
 
-    fn append_sql_warn(&self, warning: tidb_util::context::SqlWarn) {
+    fn append_sql_warn(&self, warning: tidb_context::SqlWarn) {
         StmtContext::append_sql_warn(self, warning);
     }
 
-    fn take_warnings(&self) -> Vec<tidb_util::context::SqlWarn> {
+    fn take_warnings(&self) -> Vec<tidb_context::SqlWarn> {
         StmtContext::take_warnings(self)
     }
 

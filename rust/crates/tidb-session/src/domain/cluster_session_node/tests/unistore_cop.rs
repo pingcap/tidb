@@ -2712,7 +2712,7 @@ fn stats_lock_live_pessimistic_transaction_merges_partition_delta_like_go() {
 /// ordinary version-2 statistics result.
 struct ObservedSystemAnalyze {
     inner: Arc<dyn tidb_executor::cluster_analyze_seam::ClusterAnalyze>,
-    processes: tidb_executor::process::ProcessRegistry,
+    processes: tidb_sessmgr::ProcessRegistry,
     kill: Option<bool>,
     process_id: u64,
     factory: std::sync::Weak<Domain>,
@@ -2726,7 +2726,7 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnaly
         statement: &tidb_executor::cluster_analyze::AnalyzeStatement,
         resource_group: &str,
         approximate_counts: &dyn tidb_executor::real_tikv_analyze::ApproximateTableCountProvider,
-        killer: &tidb_util::sqlkiller::SqlKiller,
+        killer: &tidb_sqlkiller::SqlKiller,
         historical_stats_enabled: &dyn Fn() -> bool,
         jobs: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
     ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver::sql_query_error::SqlQueryError>
@@ -2774,7 +2774,7 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnaly
 /// the shared process list shows for it, and records that ID.
 struct KillingSystemAnalyze {
     inner: Arc<dyn tidb_executor::cluster_analyze_seam::ClusterAnalyze>,
-    processes: tidb_executor::process::ProcessRegistry,
+    processes: tidb_sessmgr::ProcessRegistry,
     factory: std::sync::Weak<Domain>,
     process_id: Arc<AtomicU64>,
 }
@@ -2785,7 +2785,7 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for KillingSystemAnalyz
         statement: &tidb_executor::cluster_analyze::AnalyzeStatement,
         resource_group: &str,
         approximate_counts: &dyn tidb_executor::real_tikv_analyze::ApproximateTableCountProvider,
-        killer: &tidb_util::sqlkiller::SqlKiller,
+        killer: &tidb_sqlkiller::SqlKiller,
         historical_stats_enabled: &dyn Fn() -> bool,
         jobs: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
     ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver::sql_query_error::SqlQueryError>
@@ -2878,12 +2878,12 @@ fn production_auto_analyze_is_killable_by_its_process_id() {
     );
 
     let process_id = process_id.load(Ordering::SeqCst);
-    let (gcid, truncated) = tidb_util::globalconn::parse_conn_id(process_id)
+    let (gcid, truncated) = tidb_globalconn::parse_conn_id(process_id)
         .expect("an allocator-minted process ID parses");
     assert!(!truncated);
     assert_eq!(
         gcid.server_id,
-        tidb_util::globalconn::SERVER_ID_FOR_STANDALONE,
+        tidb_globalconn::SERVER_ID_FOR_STANDALONE,
         "process ID {process_id} names this node's server ID"
     );
     assert!(
@@ -2996,8 +2996,8 @@ fn run_tracked_auto_analyze(kill: Option<bool>) {
                 false,
                 "analyze table %n.%n",
                 &[
-                    tidb_util::sqlescape::SqlArg::from("test"),
-                    tidb_util::sqlescape::SqlArg::from("auto_exec_live"),
+                    tidb_sqlescape::SqlArg::from("test"),
+                    tidb_sqlescape::SqlArg::from("auto_exec_live"),
                 ],
             );
             Ok(())
@@ -3039,7 +3039,7 @@ struct AutoAnalyzeKillTarget {
     cancelled: Arc<AtomicBool>,
 }
 
-impl tidb_executor::process::ProcessKillTarget for AutoAnalyzeKillTarget {
+impl tidb_sessmgr::ProcessKillTarget for AutoAnalyzeKillTarget {
     fn cancel_query(&self) {
         self.cancelled.store(true, Ordering::SeqCst);
     }
@@ -3070,7 +3070,7 @@ fn auto_analyze_window_check_kills_only_outside_the_window_like_go() {
         "SET GLOBAL tidb_auto_analyze_end_time = '00:00 +0000'",
     );
     let cancelled = Arc::new(AtomicBool::new(false));
-    let target: Arc<dyn tidb_executor::process::ProcessKillTarget> =
+    let target: Arc<dyn tidb_sessmgr::ProcessKillTarget> =
         Arc::new(AutoAnalyzeKillTarget {
             cancelled: Arc::clone(&cancelled),
         });
@@ -13036,7 +13036,7 @@ fn deferred_uniqueness_batch_terminal_dml_error_aborts_prior_writes() {
     );
     assert_eq!(
         error.identity,
-        Some(tidb_util::dbterror::exeerrors::ERR_LAZY_UNIQUENESS_CHECK_FAILURE.identity())
+        Some(tidb_dbterror::exeerrors::ERR_LAZY_UNIQUENESS_CHECK_FAILURE.identity())
     );
     assert!(!session.in_transaction());
     assert!(session.node().txn.explicit.is_none());
@@ -17556,7 +17556,7 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for FailingStatsCacheUp
         statement: &tidb_executor::cluster_analyze::AnalyzeStatement,
         resource_group: &str,
         approximate_counts: &dyn tidb_executor::real_tikv_analyze::ApproximateTableCountProvider,
-        killer: &tidb_util::sqlkiller::SqlKiller,
+        killer: &tidb_sqlkiller::SqlKiller,
         historical_stats_enabled: &dyn Fn() -> bool,
         jobs: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
     ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver::sql_query_error::SqlQueryError>

@@ -53,12 +53,9 @@ mod option;
 mod prefix_ops;
 mod range_diagnostics;
 mod resource_group;
-mod resource_group_tag;
 pub mod retry;
 pub mod rpc;
-mod tiflash;
 pub mod transaction;
-mod trxevents;
 mod txn_scope;
 mod txn_source;
 mod union_iter;
@@ -183,23 +180,11 @@ pub use range_diagnostics::{
 pub use resource_group::{
     set_decode_table_id, ClientRequest, ResourceGroupTagBuilder, ResourceGroupTaggedRequest,
 };
-pub use resource_group_tag::{
-    decode_resource_group_tag, get_first_key_from_request, get_resource_group_label_by_key,
-    FirstKeyRequest, ResourceGroupTagDecodeError,
-};
 pub use retry::{
     retry_backoff_upper_bound_ms, should_retry_after_failure, RegionBackoffBudget,
     RegionBackoffExhausted, RegionBackoffKind, RETRY_BACKOFF_BASE_MS, RETRY_BACKOFF_CAP_MS,
 };
 pub use rpc::{CancelHandle, UnaryCallContext, UnaryCancellation};
-pub use tiflash::{
-    get_tiflash_replica_read, get_tiflash_replica_read_by_str, ReplicaRead,
-    MAX_REMOTE_READ_COUNT_PER_NODE_FOR_CLOSEST_REPLICAS,
-};
-pub use trxevents::{
-    wrap_cop_meet_lock, CopMeetLock, EventCallback, EventType, TransactionEvent,
-    EVENT_TYPE_COP_MEET_LOCK,
-};
 pub use txn_scope::{TxnScopeVar, GLOBAL_TXN_SCOPE, LOCAL_TXN_SCOPE};
 pub use txn_source::{
     get_cdc_write_source, get_lossy_ddl_reorg_source, is_cdc_write_source_set,

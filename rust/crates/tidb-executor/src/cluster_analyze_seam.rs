@@ -64,7 +64,7 @@ use tidb_stats_handle_storage::real_tikv_load_stats::{
 use tidb_stats_handle_syncload::real_tikv_stats::{update_stats_cache_from_cluster, StatsTarget};
 use tidb_stats_handle_syncload::stats_watch::SharedStats;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
-use tidb_util::sqlkiller::SqlKiller;
+use tidb_sqlkiller::SqlKiller;
 
 use crate::real_tikv_analyze::cluster_analyze_error;
 use tidb_store_driver::sql_query_error::SqlQueryError;

@@ -33,9 +33,9 @@ pub fn check_multi_schema_names(info: &tidb_model::MultiSchemaInfo) -> Result<()
             if seen.contains(&canonical) {
                 // Go `ErrOperateSameColumn` / `ErrOperateSameIndex`.
                 let proto = if kind == "index" {
-                    &tidb_util::dbterror::ERR_OPERATE_SAME_INDEX
+                    &tidb_dbterror::ERR_OPERATE_SAME_INDEX
                 } else {
-                    &tidb_util::dbterror::ERR_OPERATE_SAME_COLUMN
+                    &tidb_dbterror::ERR_OPERATE_SAME_COLUMN
                 };
                 return Err(MysqlError::from_terror(&proto.generate_with_stack(
                     format!("Unsupported operate same {kind} '{canonical}'"),

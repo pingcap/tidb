@@ -1134,7 +1134,7 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
             |_, _, ssbd, _| Datum::new_string(require_ssbd(ssbd).plan_digest.as_bytes())
         }
         PLAN_STR => |_, _, _, stats| {
-            let plan = tidb_util::plancodec::decode_plan(stats.sample_plan.as_bytes())
+            let plan = tidb_plancodec::decode_plan(stats.sample_plan.as_bytes())
                 .unwrap_or_else(|_error| {
                     // Go logs through `logutil.BgLogger()`; this crate has no
                     // logger boundary, so the failure only reaches the row as

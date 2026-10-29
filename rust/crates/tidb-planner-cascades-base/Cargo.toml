@@ -1,0 +1,14 @@
+[package]
+name = "tidb-planner-cascades-base"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/planner/cascades/base: the planner's Hasher and HashEquals contracts (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-parser-util = { path = "../tidb-parser-util" }

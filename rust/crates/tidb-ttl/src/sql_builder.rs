@@ -17,10 +17,10 @@
 
 use std::fmt::Write as _;
 
-use tidb_ast::{RestoreCtx, RestoreFlags, RestoreWriter};
+use tidb_parser_format::{RestoreCtx, RestoreFlags, RestoreWriter};
 use tidb_datatype::{Datum, FieldType};
 use tidb_model::ColumnInfo;
-use tidb_util::sqlescape::escape_string;
+use tidb_sqlescape::escape_string;
 
 pub use crate::cache::table::PhysicalTable;
 

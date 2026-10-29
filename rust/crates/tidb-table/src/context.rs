@@ -76,10 +76,10 @@ pub trait MutateContext: tidb_expr::Columns + Send + Sync {
     fn reorg_default_conversion_flags(&self) -> ConversionFlags;
 
     /// Takes the statement's warnings recorded so far.
-    fn take_warnings(&self) -> Vec<tidb_util::context::SqlWarn>;
+    fn take_warnings(&self) -> Vec<tidb_context::SqlWarn>;
 
     /// Go `AppendWarning` / `AppendNote` at `level`.
-    fn append_leveled(&self, level: tidb_util::context::WarningLevel, code: u16, message: &str);
+    fn append_leveled(&self, level: tidb_context::WarningLevel, code: u16, message: &str);
 
     /// Go's SELECT type flags.
     fn query_default_conversion_flags(&self) -> ConversionFlags;

@@ -107,10 +107,10 @@ use tidb_expr::compare_datums;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
-use tidb_util::disk;
-use tidb_util::memory::{ActionOnExceed, ArcAction, Tracker};
-use tidb_util::selection::{select, Selectable};
-use tidb_util::set::{
+use tidb_disk as disk;
+use tidb_memory::{ActionOnExceed, ArcAction, Tracker};
+use tidb_selection::{select, Selectable};
+use tidb_set::{
     Float64SetWithMemoryUsage, Int64SetWithMemoryUsage, StringSetWithMemoryUsage,
 };
 
@@ -3281,7 +3281,7 @@ pub struct HashAggExec<C: HashAggContext> {
     pipeline_final_concurrency: usize,
     /// Go `StmtCtx.RuntimeStatsColl` and the plan Close registers
     /// `HashAggRuntimeStats` on.
-    runtime_stats: Option<(Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>, i64)>,
+    runtime_stats: Option<(Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>, i64)>,
     /// Go `HashAggExec.stats`, created by `initForParallelExec`.
     pub(super) hash_agg_stats: Option<Arc<stats::HashAggRuntimeStats>>,
     /// Test/diagnostic override standing in for SET concurrency variables.
@@ -3373,7 +3373,7 @@ impl<C: HashAggContext> HashAggExec<C> {
     /// registers `HashAggRuntimeStats` on `plan_id`.
     pub fn set_runtime_stats(
         &mut self,
-        source: Option<Arc<dyn tidb_util::execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
+        source: Option<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>,
         plan_id: i64,
     ) {
         self.runtime_stats = source.map(|source| (source, plan_id));
@@ -4778,7 +4778,7 @@ mod tests {
     struct KillAfterFirstChunkSource {
         meta: ExecutorMeta,
         data: Option<Chunk>,
-        killer: Arc<tidb_util::sqlkiller::SqlKiller>,
+        killer: Arc<tidb_sqlkiller::SqlKiller>,
     }
     impl Executor for KillAfterFirstChunkSource {
         fn open(&mut self) -> Result<(), ExecError> {
@@ -4791,7 +4791,7 @@ mod tests {
                     req.append_row(data.get_row(r));
                 }
                 self.killer
-                    .send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryMemoryExceeded);
+                    .send_kill_signal(tidb_sqlkiller::KillSignal::QueryMemoryExceeded);
             }
             Ok(())
         }

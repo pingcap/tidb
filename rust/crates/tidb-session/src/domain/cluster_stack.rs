@@ -102,8 +102,8 @@ impl ClusterStack {
 pub fn cluster_session_stack(
     config: &NodeConfig,
     global_vars: crate::GlobalSysvars,
-    spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
-    memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
+    spill_storage: Arc<tidb_spill_storage::SpillStorage>,
+    memory_arbitrator: Option<Arc<tidb_memory::MemArbitrator>>,
 ) -> Result<(ClusterStack, ProductionReadProcessAuthority), RunConfiguredNodeError> {
     let mut loaded = None;
     // Go `tikv.NewKVStore` in `driver.TiKVDriver.Open`: the node's one
@@ -766,7 +766,7 @@ pub fn start_resource_groups_controller_over<PdC: tikv_client::PdClient>(
     tikv_client::set_resource_control_interceptor(controller.clone());
     // Go `SetupTopProfiling(..., dom)` binds the domain as the RU-version
     // provider; its `GetRUVersion` asks this controller.
-    tidb_util::topsql_stmtstats::bind_ru_version_provider(Some(Arc::new(DomainRuVersion(
+    tidb_topsql_stmtstats::bind_ru_version_provider(Some(Arc::new(DomainRuVersion(
         Arc::clone(&controller),
     ))));
     Ok(controller)
@@ -775,9 +775,9 @@ pub fn start_resource_groups_controller_over<PdC: tikv_client::PdClient>(
 /// Go `Domain.GetRUVersion`: the resource-groups controller's RU version.
 struct DomainRuVersion(Arc<tikv_client::pd_resource_group::controller::ResourceGroupsController>);
 
-impl tidb_util::topsql_stmtstats::RuVersionProvider for DomainRuVersion {
-    fn get_ru_version(&self) -> tidb_util::topsql_stmtstats::RuVersion {
-        tidb_util::topsql_stmtstats::RuVersion(self.0.get_ru_version())
+impl tidb_topsql_stmtstats::RuVersionProvider for DomainRuVersion {
+    fn get_ru_version(&self) -> tidb_topsql_stmtstats::RuVersion {
+        tidb_topsql_stmtstats::RuVersion(self.0.get_ru_version())
     }
 }
 
@@ -789,7 +789,7 @@ pub fn stop_resource_groups_controller<PdC: tikv_client::PdClient>(
 ) {
     tikv_client::unset_resource_control_interceptor();
     // Go `topsql.Close`: `BindRUVersionProvider(nil)`.
-    tidb_util::topsql_stmtstats::bind_ru_version_provider(None);
+    tidb_topsql_stmtstats::bind_ru_version_provider(None);
     // Go cancels the controller's context and logs nothing.
     let _ = store.block_on(controller.stop());
 }

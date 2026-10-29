@@ -19,7 +19,7 @@
 //! the lowered limit.
 
 use crate::support::testkit::{update_global_config, TestKit};
-use tidb_util::context::WarningLevel;
+use tidb_context::WarningLevel;
 
 /// The column limit counts the ORIGINAL table plus every added column of the
 /// whole statement (a sibling DROP does not make room), and an

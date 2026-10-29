@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB schema loader and syncer: Go pkg/infoschema/issyncer (Rust rewrite)."
 
 [dependencies]
+tidb-logutil = { path = "../tidb-logutil" }
 tidb-table = { path = "../tidb-table" }
 tidb-autoid = { path = "../tidb-autoid" }
 tidb-datatype = { path = "../tidb-datatype" }

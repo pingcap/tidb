@@ -276,7 +276,7 @@ pub fn partition_spec_from_metadata(
             for column in columns {
                 if !names.iter().any(|candidate| candidate.go_lower_eq(column)) {
                     return Err(tidb_error::mysql::MysqlError::from_terror(
-                        &tidb_util::dbterror::ERR_FIELD_NOT_FOUND_PART
+                        &tidb_dbterror::ERR_FIELD_NOT_FOUND_PART
                             .generate_with_stack_by_args(&[]),
                     ));
                 }
@@ -519,7 +519,7 @@ fn load_range_bounds(
             ),
             PartitionValue::Default | PartitionValue::Tuple(_) => {
                 return Err(tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_VALUES_IS_NOT_INT_TYPE.generate_with_stack_by_args(
+                    &tidb_dbterror::ERR_VALUES_IS_NOT_INT_TYPE.generate_with_stack_by_args(
                         &[(definition.name.clone()).to_string().into()],
                     ),
                 ))
@@ -542,7 +542,7 @@ fn load_partition_columns(
     for path in columns {
         let name = path.last().ok_or_else(|| {
             tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
+                &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
             )
         })?;
         let offset = names
@@ -550,7 +550,7 @@ fn load_partition_columns(
             .position(|candidate| candidate.go_lower_eq(name))
             .ok_or_else(|| {
                 tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_FIELD_NOT_FOUND_PART.generate_with_stack_by_args(&[]),
+                    &tidb_dbterror::ERR_FIELD_NOT_FOUND_PART.generate_with_stack_by_args(&[]),
                 )
             })?;
         dependency_names.push(name.clone());
@@ -604,14 +604,14 @@ fn load_range_columns_bounds(
                         .map(RangeColumnBound::Value)
                         .map_err(|_| {
                             tidb_error::mysql::MysqlError::from_terror(
-                                &tidb_util::dbterror::ERR_PARTITION_CONST_DOMAIN
+                                &tidb_dbterror::ERR_PARTITION_CONST_DOMAIN
                                     .generate_with_stack_by_args(&[]),
                             )
                         })
                 }
                 PartitionValue::Default | PartitionValue::Tuple(_) => {
                     Err(tidb_error::mysql::MysqlError::from_terror(
-                        &tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
+                        &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
                             .generate_with_stack_by_args(&[]),
                     ))
                 }
@@ -677,7 +677,7 @@ fn load_list_columns_values(
                     )
                     .map_err(|_| {
                         tidb_error::mysql::MysqlError::from_terror(
-                            &tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
+                            &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
                                 .generate_with_stack_by_args(&[]),
                         )
                     })?;

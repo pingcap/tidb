@@ -1,0 +1,38 @@
+[package]
+name = "tidb-traceevent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/traceevent: Go pkg/util/traceevent (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+enableassert = ["tidb-intest/enableassert", "tidb-logutil/enableassert", "tidb-tracing/enableassert"]
+intest = ["tidb-intest/intest", "tidb-logutil/intest", "tidb-tracing/intest"]
+
+[dependencies]
+tidb-fastrand = { path = "../tidb-fastrand" }
+tidb-intest = { path = "../tidb-intest" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-tracing = { path = "../tidb-tracing" }
+base64.workspace = true
+crossbeam-channel = "0.5"
+tidb-log = { path = "../tidb-log" }
+tidb-config = { path = "../tidb-config" }
+tikv-client.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+tidb-hack = { path = "../tidb-hack" }
+tracing = "0.1"
+
+
+[dev-dependencies]
+tidb-intest = { path = "../tidb-intest", features = ["intest"] }
+
+[[bench]]
+name = "traceevent"
+harness = false

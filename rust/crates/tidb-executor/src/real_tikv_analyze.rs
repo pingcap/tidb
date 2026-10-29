@@ -42,7 +42,7 @@ use tidb_stats::{
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::StoreClient;
 use tidb_txnkv::transaction::{OptimisticCommitOutcome, RealOptimisticTransactionOpener};
-use tidb_util::sqlkiller::SqlKiller;
+use tidb_sqlkiller::SqlKiller;
 
 use crate::cluster_analyze::{
     analyze_independent_index_with_progress, lower_analyze, resolve_analyze_options,
@@ -464,7 +464,7 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
         .pseudo_table_info(table.id);
     // Go `Handle.isSystemTable`: `filter.IsSystemSchema(db.Name.L)`.
     let pseudo_cacheable = table.temp_table_type == tidb_model::TempTableType::NONE
-        && !tidb_util::filter::is_system_schema(&tidb_hack::go_to_lower(&statement.schema));
+        && !tidb_filter::is_system_schema(&tidb_hack::go_to_lower(&statement.schema));
     for options in &mut resolution.physical {
         let (columns, missing) = final_column_choice(&table, &options.columns)?;
         options.columns = columns;
@@ -762,7 +762,7 @@ fn analyze_partition_ids(
         if requested.is_empty() {
             return Ok(Vec::new());
         }
-        return Err(tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+        return Err(tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
             .generate_with_stack_by_args(&[])
             .into());
     };
@@ -3186,7 +3186,7 @@ mod tests {
         OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction,
         TransactionCause,
     };
-    use tidb_util::sqlkiller::SqlKiller;
+    use tidb_sqlkiller::SqlKiller;
 
     fn global_partition_item(id: i64, count: i64) -> super::ClusterStatsItem {
         super::ClusterStatsItem {

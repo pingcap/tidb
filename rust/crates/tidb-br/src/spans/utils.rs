@@ -17,7 +17,7 @@
 
 use std::cmp::Ordering;
 
-use tidb_util::redact;
+use tidb_redact as redact;
 
 use super::compare_bytes_ext;
 use super::sorted::{Span, Valued};

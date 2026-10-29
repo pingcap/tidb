@@ -18,7 +18,7 @@ use tidb_timer::go_time::{GoTime, HOUR, MINUTE};
 use tidb_timer::timer::{
     create_sched_event_policy, SchedEventPolicy, SchedPolicy, SchedPolicyType,
 };
-use tidb_util::timeutil::TimeZone;
+use tidb_timeutil::TimeZone;
 
 fn utc() -> TimeZone {
     TimeZone::Named(chrono_tz::Tz::UTC)

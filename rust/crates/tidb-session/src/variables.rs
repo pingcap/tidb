@@ -277,7 +277,7 @@ impl Session {
         match self.resource_group_hint_rejection() {
             Some(ResourceGroupHintRejection::Disabled) => {
                 self.append_warning(
-                    tidb_util::context::WarningLevel::Warning,
+                    tidb_context::WarningLevel::Warning,
                     8250,
                     "Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature".to_owned(),
                 );
@@ -285,7 +285,7 @@ impl Session {
             }
             Some(ResourceGroupHintRejection::AccessDenied) => {
                 self.append_warning(
-                    tidb_util::context::WarningLevel::Warning,
+                    tidb_context::WarningLevel::Warning,
                     1227,
                     "Access denied; you need (at least one of) the SUPER or RESOURCE_GROUP_ADMIN or RESOURCE_GROUP_USER privilege(s) for this operation".to_owned(),
                 );
@@ -434,7 +434,7 @@ impl Session {
         // below consume (see `set_node_wide_sys_var`).
         let stored = result.map_err(var_error)?;
         pending.commit()?;
-        tidb_util::logutil::bg_logger().info(
+        tidb_logutil::bg_logger().info(
             "set global var",
             &[
                 tidb_log::Field::new("conn", tidb_log::Value::U64(self.connection_id())),
@@ -563,7 +563,7 @@ impl Session {
                 0 => Ok(Datum::Null),
                 1 => Ok(rows[0].first().cloned().unwrap_or(Datum::Null)),
                 _ => Err(DriverError::from(
-                    tidb_util::dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
+                    tidb_dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
                         .generate_with_stack_by_args(&[]),
                 )),
             };
@@ -624,7 +624,7 @@ impl Session {
     fn append_noop_read_warnings(&mut self, names: Vec<String>) {
         for name in names {
             self.append_warning(
-                tidb_util::context::WarningLevel::Warning,
+                tidb_context::WarningLevel::Warning,
                 8145,
                 format!("variable {name} has no effect in TiDB"),
             );
@@ -872,7 +872,7 @@ impl Session {
         };
         for warning in warnings {
             self.append_sql_warning(crate::SqlWarning::from_error(
-                tidb_util::context::WarningLevel::Warning,
+                tidb_context::WarningLevel::Warning,
                 warning.code,
                 warning.message,
                 warning.identity,
@@ -888,7 +888,7 @@ impl Session {
                     Ok((_parsed, warnings)) => {
                         for warning in warnings {
                             self.append_warning(
-                                tidb_util::context::WarningLevel::Warning,
+                                tidb_context::WarningLevel::Warning,
                                 1105,
                                 warning,
                             );
@@ -896,7 +896,7 @@ impl Session {
                     }
                     Err(error) => {
                         self.append_warning(
-                            tidb_util::context::WarningLevel::Warning,
+                            tidb_context::WarningLevel::Warning,
                             1105,
                             error.to_string(),
                         );
@@ -945,7 +945,7 @@ impl Session {
                     );
                     for _ in 0..2 {
                         self.append_warning(
-                            tidb_util::context::WarningLevel::Warning,
+                            tidb_context::WarningLevel::Warning,
                             1105,
                             message.clone(),
                         );
@@ -964,7 +964,7 @@ impl Session {
                     );
                     for _ in 0..2 {
                         self.append_warning(
-                            tidb_util::context::WarningLevel::Warning,
+                            tidb_context::WarningLevel::Warning,
                             1105,
                             message.clone(),
                         );

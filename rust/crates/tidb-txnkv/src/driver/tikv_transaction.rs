@@ -179,7 +179,7 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
     where
         F: std::future::Future<Output = tikv_client::Result<T>> + 'a,
     {
-        let span = tidb_util::tracing::current_span();
+        let span = tidb_tracing::current_span();
         self.transaction.block_on(move |transaction| {
             crate::rpc::trace::with_span_ctx(span, operation(transaction))
         })

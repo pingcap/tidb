@@ -8,6 +8,9 @@ repository.workspace = true
 description = "TiDB expensive-query handle: Go pkg/util/expensivequery (Rust rewrite)."
 
 [dependencies]
+tidb-sessmgr = { path = "../tidb-sessmgr" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-memoryusagealarm = { path = "../tidb-memoryusagealarm" }
 tidb-metrics = { path = "../tidb-metrics" }
 chrono = { workspace = true }
 tidb-config = { path = "../tidb-config" }

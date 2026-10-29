@@ -2089,7 +2089,7 @@ struct DeriveStatsFold<'a> {
     use_plan_cache: bool,
     range_max_size: i64,
     selectivity_factor: f64,
-    range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
+    range_fallback_handler: Option<&'a tidb_context::RangeFallbackHandler>,
     /// The rule context whose [`CteOptimizer`](super::rule::CteOptimizer)
     /// `LogicalCTE.DeriveStats` runs lazily; `None` for the context-free
     /// entry points, where an unoptimized CTE class refuses.
@@ -2805,7 +2805,7 @@ fn recursive_derive_stats_with_range_quota(
     use_plan_cache: bool,
     range_max_size: i64,
     selectivity_factor: f64,
-    range_fallback_handler: Option<&tidb_util::context::RangeFallbackHandler>,
+    range_fallback_handler: Option<&tidb_context::RangeFallbackHandler>,
     builder: &dyn tidb_expr::expr_util::FunctionBuilder,
     eval_context: &dyn tidb_expr::Columns,
     estimator_options: &crate::cardinality::row_count_estimator::EstimatorOptions,

@@ -20,10 +20,8 @@
 //! so each case constructs the typed AST state Go's parser would produce and
 //! asserts the same restored text through [`Expr::restore`].
 
-use tidb_ast::{
-    BinaryOp, Expr, IsTarget, MatchModifier, NodeBox, QueryStmt, RestoreFlags, SelectField,
-    SelectStatementKind, SelectStmt, Stmt, SysVarScope, UnaryOp,
-};
+use tidb_ast::{BinaryOp, Expr, IsTarget, MatchModifier, NodeBox, QueryStmt, SelectField, SelectStatementKind, SelectStmt, Stmt, SysVarScope, UnaryOp};
+use tidb_parser_format::RestoreFlags;
 
 fn column(path: &[&str]) -> Expr {
     Expr::Column(path.iter().map(|name| name.to_string()).collect())

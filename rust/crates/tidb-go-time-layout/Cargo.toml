@@ -1,0 +1,16 @@
+[package]
+name = "tidb-go-time-layout"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/timeutil: Go pkg/util/timeutil (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-timeutil = { path = "../tidb-timeutil" }
+chrono.workspace = true
+chrono-tz.workspace = true

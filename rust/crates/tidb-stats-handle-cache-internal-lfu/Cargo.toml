@@ -11,6 +11,8 @@ description = "TiDB statistics handle Ristretto LFU cache."
 workspace = true
 
 [dependencies]
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-memory = { path = "../tidb-memory" }
 rand = "0.10"
 tidb-ristretto = { path = "../tidb-ristretto" }
 tidb-log = { path = "../tidb-log" }

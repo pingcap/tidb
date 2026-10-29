@@ -1,0 +1,18 @@
+[package]
+name = "tidb-breakpoint"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/breakpoint: Go pkg/util/breakpoint (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+failpoints = ["dep:fail", "fail/failpoints"]
+
+[dependencies]
+tidb-context = { path = "../tidb-context" }
+fail = { version = "0.4", optional = true }

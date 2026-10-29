@@ -17,7 +17,7 @@
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_distsql::{InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryResultContext, QueryTransport, ResponseChannel, SelectInput};
 use tidb_txnkv::TransportRequest;
-use tidb_util::context::WarningCollector;
+use tidb_context::WarningCollector;
 use tidb_txnkv::StoreType;
 
 struct OneResponse(Option<ResponseChannel<prost::bytes::Bytes>>);

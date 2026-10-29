@@ -242,8 +242,8 @@ fn test_binary_operation_expr_with_flags() {
             // flag set. The two only looked alike while every case-sensitive
             // piece of this restore was hardcoded.
             expr.restore_with_flags(
-                tidb_ast::RestoreFlags::DEFAULT
-                    | tidb_ast::RestoreFlags::SPACES_AROUND_BINARY_OPERATION,
+                tidb_parser_format::RestoreFlags::DEFAULT
+                    | tidb_parser_format::RestoreFlags::SPACES_AROUND_BINARY_OPERATION,
             ),
             expected
                 .strip_prefix("SELECT ")

@@ -1,0 +1,17 @@
+[package]
+name = "tidb-intest"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/intest: Go pkg/util/intest (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+enableassert = []
+intest = []
+
+[dependencies]

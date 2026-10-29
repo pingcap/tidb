@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use tidb_config::config_tree::Config as SourceConfig;
 use tidb_pd_client::ClusterSecurity;
-use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorageSpec};
+use tidb_spill_storage::{SpillEncryptionMethod, SpillStorageSpec};
 
 /// The warm connection-worker pool never pre-spawns more than this many
 /// threads; demand past it (or all of it, when the limit is 0/unlimited) is

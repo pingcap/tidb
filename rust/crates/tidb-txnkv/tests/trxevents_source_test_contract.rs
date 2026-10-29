@@ -16,7 +16,8 @@
 
 use std::sync::Arc;
 
-use tidb_txnkv::{wrap_cop_meet_lock, CopMeetLock};
+use tidb_trxevents::wrap_cop_meet_lock;
+use tidb_trxevents::CopMeetLock;
 
 #[deny(unused_must_use)]
 #[test]

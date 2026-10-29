@@ -1,0 +1,13 @@
+[package]
+name = "tidb-size"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/size: Go pkg/util/size (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]

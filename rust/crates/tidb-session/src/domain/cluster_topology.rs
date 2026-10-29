@@ -44,7 +44,7 @@ impl ReplicaReadChecker {
             .spawn(move || loop {
                 let setting = globals.get("tidb_replica_read").unwrap_or_default();
                 if let Err(error) = topology.check_replica_read(&setting) {
-                    tidb_util::logutil::bg_logger().warn(
+                    tidb_logutil::bg_logger().warn(
                         "refresh replicaRead flag failed",
                         &[crate::domain::zap_error(error)],
                     );

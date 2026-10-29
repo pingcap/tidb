@@ -876,25 +876,25 @@ mod session_vars {
         vars.swap_globals(Some(Arc::new(globals.clone())));
         vars.set_global("tidb_redact_log", "MARKER".to_owned())
             .unwrap();
-        assert!(tidb_util::redact::need_redact());
-        assert_eq!(tidb_util::redact::value("secret"), "?");
+        assert!(tidb_redact::need_redact());
+        assert_eq!(tidb_redact::value("secret"), "?");
 
         globals.reset("tidb_redact_log").unwrap();
-        assert!(!tidb_util::redact::need_redact());
+        assert!(!tidb_redact::need_redact());
 
         let scratch =
             GlobalSysvars::from_cluster_rows([("tidb_redact_log".to_owned(), "MARKER".to_owned())]);
-        assert!(!tidb_util::redact::need_redact());
+        assert!(!tidb_redact::need_redact());
         globals.replace_from(&scratch);
-        assert!(tidb_util::redact::need_redact());
+        assert!(tidb_redact::need_redact());
 
         vars.set_global("tidb_redact_log", "OFF".to_owned())
             .unwrap();
-        assert!(!tidb_util::redact::need_redact());
+        assert!(!tidb_redact::need_redact());
 
         globals
             .load_from_cluster([("tidb_redact_log".to_owned(), "ON".to_owned())]);
-        assert!(tidb_util::redact::need_redact());
+        assert!(tidb_redact::need_redact());
         globals.reset("tidb_redact_log").unwrap();
     }
 
@@ -950,19 +950,19 @@ mod session_vars {
     fn global_memory_arbitration_settings_update_the_running_process_authority() {
         struct NoopRecorder;
 
-        impl tidb_util::memory::RecordMemState for NoopRecorder {
-            fn load(&self) -> Result<Option<tidb_util::memory::RuntimeMemStateV1>, String> {
+        impl tidb_memory::RecordMemState for NoopRecorder {
+            fn load(&self) -> Result<Option<tidb_memory::RuntimeMemStateV1>, String> {
                 Ok(None)
             }
 
-            fn store(&self, _: &tidb_util::memory::RuntimeMemStateV1) -> Result<(), String> {
+            fn store(&self, _: &tidb_memory::RuntimeMemStateV1) -> Result<(), String> {
                 Ok(())
             }
         }
 
         let arbitrator =
-            tidb_util::memory::MemArbitrator::new(1 << 30, 4, 4, 64 << 10, Box::new(NoopRecorder));
-        let _registration = tidb_util::memory::install_process_arbitrator(&arbitrator);
+            tidb_memory::MemArbitrator::new(1 << 30, 4, 4, 64 << 10, Box::new(NoopRecorder));
+        let _registration = tidb_memory::install_process_arbitrator(&arbitrator);
         let globals = GlobalSysvars::new();
         // Every cache rebuild runs each GLOBAL variable's SetGlobal hook, as
         // Go's `rebuildSysVarCache` does, so the server limit the arbitrator
@@ -984,7 +984,7 @@ mod session_vars {
             .unwrap();
         assert_eq!(
             arbitrator.work_mode(),
-            tidb_util::memory::ArbitratorWorkMode::Priority
+            tidb_memory::ArbitratorWorkMode::Priority
         );
 
         globals
@@ -1008,7 +1008,7 @@ mod session_vars {
             .unwrap();
         assert_eq!(
             arbitrator.work_mode(),
-            tidb_util::memory::ArbitratorWorkMode::Disable
+            tidb_memory::ArbitratorWorkMode::Disable
         );
     }
 

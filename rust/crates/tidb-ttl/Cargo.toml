@@ -11,6 +11,10 @@ description = "Go pkg/ttl/sqlbuilder: SQL construction for TTL scan and delete t
 workspace = true
 
 [dependencies]
+tidb-parser-format = { path = "../tidb-parser-format" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-sqlkiller = { path = "../tidb-sqlkiller" }
+tidb-timeutil = { path = "../tidb-timeutil" }
 chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

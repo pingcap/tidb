@@ -359,7 +359,7 @@ fn auto_random_retains_each_argument_and_uses_go_special_comment_restore() {
     let statement = parse("create table t (a bigint auto_random(5, 53))").unwrap();
     assert_eq!(
         statement.restore_with_flags(
-            tidb_ast::RestoreFlags::DEFAULT | tidb_ast::RestoreFlags::TIDB_SPECIAL_COMMENT,
+            tidb_parser_format::RestoreFlags::DEFAULT | tidb_parser_format::RestoreFlags::TIDB_SPECIAL_COMMENT,
         ),
         "CREATE TABLE `t` (`a` BIGINT /*T![auto_rand] AUTO_RANDOM(5, 53) */)"
     );

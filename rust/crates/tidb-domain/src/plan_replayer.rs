@@ -168,7 +168,7 @@ use tidb_ast::{SelectStmt, Stmt, TableRef, Visitable as _, Visitor};
 use tidb_mysql::to_lowercase as go_simple_lowercase;
 use tidb_stats_handle_metrics::domain_metrics;
 
-use crate::replayer::PlanReplayerTaskKey;
+use tidb_replayer::PlanReplayerTaskKey;
 
 /// Go `"select sql_digest, plan_digest from mysql.plan_replayer_task"`
 /// (`plan_replayer.go:305`).
@@ -938,7 +938,7 @@ impl<E: InternalSqlExecutor, D: PlanReplayerDumper> PlanReplayerTaskDumpWorker<E
                     .map(|message| (*message).to_owned())
                     .or_else(|| payload.downcast_ref::<String>().cloned())
                     .unwrap_or_default();
-                tidb_util::logutil::bg_logger().error(
+                tidb_logutil::bg_logger().error(
                     "panic in the recoverable goroutine",
                     &[
                         tidb_log::Field::new("label", tidb_log::Value::Str("domain".to_owned())),
@@ -1173,7 +1173,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::replayer::generate_plan_replayer_file_name;
+    use tidb_replayer::generate_plan_replayer_file_name;
 
     /// Upstream `plan_replayer_test.go` is reachable in part:
     /// `TestDumpGCFileParseTime` and `TestPlanReplayerDifferentGC` are
@@ -2268,7 +2268,7 @@ pub fn build_config_toml() -> Result<String, toml::ser::Error> {
 /// Go `dumpMeta`'s file body: `printer.GetTiDBInfo()` verbatim.
 #[must_use]
 pub fn build_meta_txt() -> String {
-    tidb_util::printer::get_tidb_info()
+    tidb_printer::get_tidb_info()
 }
 
 #[cfg(test)]
@@ -2846,7 +2846,7 @@ pub fn set_task_presigned_url(presign: &dyn PresignSource, task: &mut PlanReplay
     }
     let path = format!(
         "{}/{}",
-        crate::replayer::PLAN_REPLAYER_DIR_NAME,
+        tidb_replayer::PLAN_REPLAYER_DIR_NAME,
         task.file_name.clone().unwrap_or_default()
     );
     if let Ok(url) = presign.presign_file(&path, PLAN_REPLAYER_PRESIGN_EXPIRE) {

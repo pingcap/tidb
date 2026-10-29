@@ -425,9 +425,9 @@ fn generated_restore_uses_general_column_qualifier_context_flags() {
     );
     assert_eq!(
         statement.restore_with_flags(
-            tidb_ast::RestoreFlags::DEFAULT
-                | tidb_ast::RestoreFlags::WITHOUT_SCHEMA_NAME
-                | tidb_ast::RestoreFlags::WITHOUT_TABLE_NAME,
+            tidb_parser_format::RestoreFlags::DEFAULT
+                | tidb_parser_format::RestoreFlags::WITHOUT_SCHEMA_NAME
+                | tidb_parser_format::RestoreFlags::WITHOUT_TABLE_NAME,
         ),
         "CREATE TABLE `child` (`id` INT GENERATED ALWAYS AS(LOWER(`id`)) STORED)"
     );
@@ -440,13 +440,13 @@ fn generated_restore_uses_general_column_qualifier_context_flags() {
             .expect("parse schema-qualified generated column expression");
     assert_eq!(
         statement.restore_with_flags(
-            tidb_ast::RestoreFlags::DEFAULT | tidb_ast::RestoreFlags::WITHOUT_SCHEMA_NAME
+            tidb_parser_format::RestoreFlags::DEFAULT | tidb_parser_format::RestoreFlags::WITHOUT_SCHEMA_NAME
         ),
         "CREATE TABLE `child` (`id` INT GENERATED ALWAYS AS(LOWER(`child`.`id`)) STORED)"
     );
     assert_eq!(
         statement.restore_with_flags(
-            tidb_ast::RestoreFlags::DEFAULT | tidb_ast::RestoreFlags::WITHOUT_TABLE_NAME
+            tidb_parser_format::RestoreFlags::DEFAULT | tidb_parser_format::RestoreFlags::WITHOUT_TABLE_NAME
         ),
         "CREATE TABLE `child` (`id` INT GENERATED ALWAYS AS(LOWER(`db`.`id`)) STORED)"
     );

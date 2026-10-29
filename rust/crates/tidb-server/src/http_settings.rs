@@ -51,7 +51,7 @@ impl Settings {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let get = |name: &str| form.get(name).filter(|s| !s.is_empty());
         if let Some(level) = get("log_level") {
-            tidb_util::logutil::set_level(level)?;
+            tidb_logutil::set_level(level)?;
             update_global(|config| config.log.level.clone_from(level));
         }
         if let Some(value) = get("tidb_general_log") {
@@ -119,7 +119,7 @@ impl Settings {
             update_global(|config| {
                 config.trx_summary.transaction_summary_capacity = capacity as usize
             });
-            tidb_executor::txn_summary::RECORDER.resize(capacity as usize);
+            tidb_txninfo::RECORDER.resize(capacity as usize);
         }
         if let Some(value) = get("transaction_id_digest_min_duration") {
             let duration = integer(value).map_err(|_| "illegal argument")?;
@@ -132,7 +132,7 @@ impl Settings {
             update_global(|config| {
                 config.trx_summary.transaction_id_digest_min_duration = duration as usize
             });
-            tidb_executor::txn_summary::RECORDER
+            tidb_txninfo::RECORDER
                 .set_min_duration(std::time::Duration::from_millis(duration as u64));
         }
         Ok(())
@@ -204,7 +204,7 @@ mod tests {
         impl Drop for Restore {
             fn drop(&mut self) {
                 tidb_config::config_tree::config::store_global_config(self.0.clone());
-                let _ = tidb_util::logutil::set_level(&self.1);
+                let _ = tidb_logutil::set_level(&self.1);
                 tidb_deadlockhistory::recording::configure_deadlock_history(
                     self.0.pessimistic_txn.deadlock_history_capacity as usize,
                     self.0.pessimistic_txn.deadlock_history_collect_retryable,
@@ -231,7 +231,7 @@ mod tests {
         );
         let form = parse_form("", "log_level=error&tidb_general_log=1&tidb_enable_async_commit=1&tidb_enable_1pc=1&tidb_enable_mutation_checker=1&ddl_slow_threshold=200&check_mb4_value_in_utf8=0&deadlock_history_capacity=5&deadlock_history_collect_retryable=true").unwrap();
         settings.apply(&form).unwrap();
-        assert_eq!(format!("{:?}", tidb_util::logutil::get_level()), "Error");
+        assert_eq!(format!("{:?}", tidb_logutil::get_level()), "Error");
         assert_eq!(get_global_config().log.level, "error");
         assert_eq!(globals.get("tidb_general_log").unwrap(), "ON");
         assert_eq!(globals.get("ddl_slow_threshold").unwrap(), "200");
@@ -328,7 +328,7 @@ mod tests {
         if crate::isolate_process_globals() {
             return;
         }
-        use tidb_executor::txn_summary::RECORDER;
+        use tidb_txninfo::RECORDER;
         let settings = Settings::new(GlobalSysvars::default(), Arc::new(|_, _| Ok(())));
         settings
             .apply(

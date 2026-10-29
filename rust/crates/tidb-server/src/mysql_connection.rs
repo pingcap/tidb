@@ -559,7 +559,7 @@ impl PreparedStatementRegistry {
     fn long_data_error(&self, statement_id: u32, connection_id: u64) -> Option<SqlQueryError> {
         let statement = self.statements.get(&statement_id)?;
         if statement.bound_params_mem_quota_exceeded {
-            let error = tidb_util::sqlkiller::memory_exceed_for_query(connection_id);
+            let error = tidb_sqlkiller::memory_exceed_for_query(connection_id);
             return Some(SqlQueryError::from(error));
         }
         if statement.bound_params_too_large {
@@ -1140,7 +1140,7 @@ pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
     // under the default label and leaves under the session's last group.
     crate::query_metrics::note_connection_start();
     // Go `server.go:591`, once a connection is accepted.
-    tidb_util::logutil::bg_logger().debug("accept new connection success", &[]);
+    tidb_logutil::bg_logger().debug("accept new connection success", &[]);
     let shutdown = cancellation.clone();
     let mut commands = ConnectionCommandCounts::default();
     // Keep worker containment for setup or cleanup panics. Command Run owns
@@ -1175,7 +1175,7 @@ pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
     record_connection_exit_metrics(&result);
     crate::query_metrics::note_connection_end();
     // Go `onConn`'s deferred `logutil.Logger(ctx).Debug("connection closed")`.
-    tidb_util::logutil::with_conn_id(&tidb_util::logutil::bg_logger(), connection_id)
+    tidb_logutil::with_conn_id(&tidb_logutil::bg_logger(), connection_id)
         .debug("connection closed", &[]);
     result
 }
@@ -1645,10 +1645,10 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             // handshake counts its negotiated version and cipher.
             if let Some((cipher, version)) = socket.negotiated_tls() {
                 tidb_metrics::server::TLS_CIPHER
-                    .with_label_values(&[&tidb_util::tls::cipher_suite_name(cipher)])
+                    .with_label_values(&[&tidb_tls::cipher_suite_name(cipher)])
                     .inc();
                 tidb_metrics::server::TLS_VERSION
-                    .with_label_values(&[&tidb_util::tls::version_name(version)])
+                    .with_label_values(&[&tidb_tls::version_name(version)])
                     .inc();
             }
             session
@@ -1791,8 +1791,8 @@ impl ConnectionAliveProbe {
 /// Clears the statement's liveness probe when the statement ends (Go's
 /// `clearConnectionAlive`).
 struct ConnectionAliveGuard {
-    killer: Arc<tidb_util::sqlkiller::SqlKiller>,
-    registration: Option<tidb_util::sqlkiller::ConnectionAliveRegistration>,
+    killer: Arc<tidb_sqlkiller::SqlKiller>,
+    registration: Option<tidb_sqlkiller::ConnectionAliveRegistration>,
 }
 
 impl Drop for ConnectionAliveGuard {
@@ -2021,7 +2021,7 @@ fn connection_panic_message(payload: Box<dyn std::any::Any + Send>, connection_i
         .unwrap_or_else(|| "non-string panic payload".to_owned());
     // Go `clientConn.Run`'s recover: "connection running loop panic" with
     // `err` and `stack` under the connection's `conn` field.
-    tidb_util::logutil::with_conn_id(&tidb_util::logutil::bg_logger(), connection_id).error(
+    tidb_logutil::with_conn_id(&tidb_logutil::bg_logger(), connection_id).error(
         "connection running loop panic",
         &[
             tidb_log::Field::new("err", tidb_log::Value::Str(message.clone())),

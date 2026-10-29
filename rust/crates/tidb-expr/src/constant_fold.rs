@@ -986,21 +986,21 @@ mod deferred_function_tests {
 /// otherwise drop go's per-statement warnings (`ADDDATE('abc', INTERVAL 1
 /// DAY)` warns `Incorrect datetime value: 'abc'` on an empty table).
 thread_local! {
-    static FOLD_WARNINGS: std::cell::RefCell<Vec<tidb_util::context::SqlWarn>> =
+    static FOLD_WARNINGS: std::cell::RefCell<Vec<tidb_context::SqlWarn>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Records one fold-time warning into this thread's stash.
 pub fn record_fold_warning(code: u16, message: &str) {
-    record_fold_sql_warn(tidb_util::context::SqlWarn::with_code(
-        tidb_util::context::WarningLevel::Warning,
+    record_fold_sql_warn(tidb_context::SqlWarn::with_code(
+        tidb_context::WarningLevel::Warning,
         code,
         message,
     ));
 }
 
 /// Records one fold-time warning, error and all, into this thread's stash.
-pub fn record_fold_sql_warn(warning: tidb_util::context::SqlWarn) {
+pub fn record_fold_sql_warn(warning: tidb_context::SqlWarn) {
     FOLD_WARNINGS.with(|warnings| warnings.borrow_mut().push(warning));
 }
 
@@ -1038,7 +1038,7 @@ pub fn move_live_warnings_to_stash(ctx: &dyn crate::Columns, bookmark: usize) {
 /// after planning, forwarding the pairs into the statement's warning buffer
 /// so `SHOW WARNINGS` and the OK packet's count see them.
 #[must_use]
-pub fn take_fold_warnings() -> Vec<tidb_util::context::SqlWarn> {
+pub fn take_fold_warnings() -> Vec<tidb_context::SqlWarn> {
     let taken = FOLD_WARNINGS.with(std::cell::RefCell::take);
     taken
 }
@@ -1073,8 +1073,8 @@ impl Columns for FoldWarningContext {
     }
 
     fn append_error_warning(&self, error: &tidb_error::mysql::SqlError) {
-        record_fold_sql_warn(tidb_util::context::SqlWarn::from_error(
-            tidb_util::context::WarningLevel::Warning,
+        record_fold_sql_warn(tidb_context::SqlWarn::from_error(
+            tidb_context::WarningLevel::Warning,
             error.code,
             error.message.clone(),
             error.identity,

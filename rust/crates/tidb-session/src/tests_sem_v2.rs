@@ -39,28 +39,28 @@ fn configured_sem_v2_policy_reaches_statement_hint_and_privilege_gates() {
 #[test]
 #[ignore = "subprocess helper"]
 fn configured_sem_v2_policy_child() {
-    tidb_util::sem::disable();
-    tidb_util::sem_v2::disable();
+    tidb_sem::disable();
+    tidb_sem_v2::disable();
     tidb_variable::sysvar::install_sem_v2_sysvar_registry();
 
-    let config = tidb_util::sem_v2::Config {
+    let config = tidb_sem_v2::Config {
         version: "1.0".to_owned(),
-        tidb_version: tidb_util::sem_v2::tidb_release_version(),
+        tidb_version: tidb_sem_v2::tidb_release_version(),
         restricted_privileges: vec!["FILE".to_owned()],
-        restricted_variables: vec![tidb_util::sem_v2::VariableRestriction {
+        restricted_variables: vec![tidb_sem_v2::VariableRestriction {
             name: "autocommit".to_owned(),
             hidden: false,
             readonly: true,
             value: String::new(),
         }],
-        restricted_sql: tidb_util::sem_v2::SQLRestriction {
+        restricted_sql: tidb_sem_v2::SQLRestriction {
             sql: vec!["ALTER RESOURCE GROUP".to_owned()],
             rule: Vec::new(),
         },
         restricted_hints: vec!["hash_agg".to_owned()],
-        ..tidb_util::sem_v2::Config::default()
+        ..tidb_sem_v2::Config::default()
     };
-    tidb_util::sem_v2::enable_by(&config).unwrap();
+    tidb_sem_v2::enable_by(&config).unwrap();
 
     let privileges = tidb_privilege::PrivilegeRegistry::default();
     let mut bootstrap = bootstrap_session(&privileges);

@@ -34,7 +34,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use crate::lockwaiter::WaitForEntry;
+use tidb_unistore_lockwaiter::WaitForEntry;
 
 /// Go `diagnosticContext`: the key and resource-group tag carried into the
 /// wait chain for diagnostics.
@@ -328,7 +328,7 @@ impl Detector {
 #[cfg(test)]
 mod tests {
     use super::{Detector, DiagnosticContext};
-    use crate::lockwaiter::WaitForEntry;
+    use tidb_unistore_lockwaiter::WaitForEntry;
     use std::time::Duration;
 
     fn diag(key: &str, tag: &str) -> DiagnosticContext {

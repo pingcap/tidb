@@ -85,13 +85,13 @@ pub fn check_column_default_value(
             )
             .map_err(|_| {
                 tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                    &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
                         .generate_with_stack_by_args(&[column.to_owned().into()]),
                 )
             })?;
         if matches!(converted.value, Datum::Time(time) if time.is_zero()) {
             return Err(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
                     .generate_with_stack_by_args(&[column.to_owned().into()]),
             ));
         }
@@ -111,17 +111,17 @@ pub fn check_column_default_value(
     let empty = matches!(value.as_raw_bytes(), Some(bytes) if bytes.is_empty());
     if ctx.get_sql_mode().has_strict_mode() || !empty {
         return Err(tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_BLOB_CANT_HAVE_DEFAULT
+            &tidb_dbterror::ERR_BLOB_CANT_HAVE_DEFAULT
                 .generate_with_stack_by_args(&[column.to_owned().into()]),
         ));
     }
     // Go `ctx.GetEvalCtx().AppendWarning(dbterror.ErrBlobCantHaveDefault.FastGenByArgs(col.Name.O))`.
     let reported = tidb_error::mysql::MysqlError::from_terror(
-        &tidb_util::dbterror::ERR_BLOB_CANT_HAVE_DEFAULT
+        &tidb_dbterror::ERR_BLOB_CANT_HAVE_DEFAULT
             .generate_with_stack_by_args(&[column.to_string().into()]),
     );
-    ctx.append_warning(tidb_util::context::WarnErr::Terror(
-        tidb_util::dbterror::ERR_BLOB_CANT_HAVE_DEFAULT.generate(reported.message),
+    ctx.append_warning(tidb_context::WarnErr::Terror(
+        tidb_dbterror::ERR_BLOB_CANT_HAVE_DEFAULT.generate(reported.message),
     ));
     Ok(match field_type.code() {
         FieldTypeCode::Blob | FieldTypeCode::LongBlob => (false, value),
@@ -164,7 +164,7 @@ pub fn validate_column_default(
 ) -> Result<Datum, MysqlError> {
     let invalid = || {
         tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+            &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
                 .generate_with_stack_by_args(&[column.to_owned().into()]),
         )
     };
@@ -175,7 +175,7 @@ pub fn validate_column_default(
         // when the column also spelled NOT NULL.
         if field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY) {
             return Err(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_PRIMARY_CANT_HAVE_NULL.generate_with_stack_by_args(&[]),
+                &tidb_dbterror::ERR_PRIMARY_CANT_HAVE_NULL.generate_with_stack_by_args(&[]),
             ));
         }
         if field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL) {
@@ -218,7 +218,7 @@ pub fn column_default_storage_value(
     }
     let invalid = || {
         tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+            &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
                 .generate_with_stack_by_args(&[column.to_owned().into()]),
         )
     };
@@ -320,7 +320,7 @@ pub fn column_default_storage_value(
             }
             if let Some(ctx) = ctx {
                 for warning in warnings.0.into_inner() {
-                    ctx.append_warning(tidb_util::context::WarnErr::Terror(warning));
+                    ctx.append_warning(tidb_context::WarnErr::Terror(warning));
                 }
             }
             converted.value
@@ -347,7 +347,7 @@ pub fn timestamp_default_to_utc(
     }
     let invalid = || {
         tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+            &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
                 .generate_with_stack_by_args(&[column.to_owned().into()]),
         )
     };
@@ -443,7 +443,7 @@ pub fn bit_column_default(
 ) -> Result<Datum, MysqlError> {
     let invalid = || {
         tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+            &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
                 .generate_with_stack_by_args(&[column.to_owned().into()]),
         )
     };

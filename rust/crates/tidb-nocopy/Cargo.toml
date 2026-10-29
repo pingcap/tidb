@@ -1,0 +1,13 @@
+[package]
+name = "tidb-nocopy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/nocopy: Go pkg/util/nocopy (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]

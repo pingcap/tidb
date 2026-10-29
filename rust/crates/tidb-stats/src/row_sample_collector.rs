@@ -66,7 +66,7 @@
 
 use tidb_datatype::Datum;
 use tidb_txnkv::Handle;
-use tidb_util::fastrand;
+use tidb_fastrand as fastrand;
 
 use crate::cmsketch::hash_bytes;
 use crate::fmsketch::{FmSketch, MAX_SKETCH_SIZE};

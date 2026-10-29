@@ -247,7 +247,7 @@ impl Session {
         });
         let token = match token {
             Some(token) => Datum::Json(
-                tidb_datatype::BinaryJSON::parse(&tidb_util::stringutil::go_json_marshal(&token))
+                tidb_datatype::BinaryJSON::parse(&tidb_stringutil::go_json_marshal(&token))
                     .map_err(invalid_state)?,
             ),
             None => Datum::Null,
@@ -352,7 +352,7 @@ impl Session {
             for (name, value) in vars {
                 // Go logs and continues when versions differ in variable availability or validation.
                 if let Err(error) = self.vars.set_system(name, value.to_owned()) {
-                    tidb_util::logutil::bg_logger().warn(
+                    tidb_logutil::bg_logger().warn(
                         "restoring session variable failed",
                         &[
                             tidb_log::Field::new("variable", tidb_log::Value::Str(name.clone())),

@@ -153,7 +153,7 @@ fn the_second_execute_of_a_cacheable_statement_reports_a_hit() {
     // Go derives access-path statistics with the current ranger context.
     // Parameterized equality must cost the same range as its literal form;
     // retaining a full-table estimate can cache a scan+sort for an index read.
-    let registry = tidb_executor::process::ProcessRegistry::default();
+    let registry = tidb_sessmgr::ProcessRegistry::default();
     session.attach_process(
         41,
         registry.register(41, "root".into(), "local".into(), "test".into(), None),
@@ -183,8 +183,8 @@ fn the_second_execute_of_a_cacheable_statement_reports_a_hit() {
     for _ in 0..2 {
         session.run("EXECUTE range_cost USING @w,@d,@last").unwrap();
         let info =
-            tidb_util::memoryusagealarm::SessionManager::get_process_info(&registry, 41).unwrap();
-        let plan = tidb_util::plancodec::decode_binary_plan_for_connection(
+            tidb_memoryusagealarm::SessionManager::get_process_info(&registry, 41).unwrap();
+        let plan = tidb_plancodec::decode_binary_plan_for_connection(
             info.brief_binary_plan.clone(),
             "row",
             true,
@@ -1464,7 +1464,7 @@ fn held_prepared_execution_reuses_published_digest() {
         .unwrap();
     let sql = "SELECT v FROM digest_reuse WHERE id=?";
     let prepared = crate::tests_support::prepare_binary(&mut session, sql);
-    let registry = tidb_executor::process::ProcessRegistry::default();
+    let registry = tidb_sessmgr::ProcessRegistry::default();
     session.attach_process(
         91,
         registry.register(91, "root".into(), "local".into(), "test".into(), None),
@@ -1478,7 +1478,7 @@ fn held_prepared_execution_reuses_published_digest() {
     // Statement summary now legitimately materializes normalized SQL too.
     // Assert the published PREPARE identity, not a zero-normalizer-call count.
     assert_eq!(
-        tidb_util::memoryusagealarm::SessionManager::get_process_info(&registry, 91)
+        tidb_memoryusagealarm::SessionManager::get_process_info(&registry, 91)
             .unwrap()
             .digest,
         digest
@@ -1486,10 +1486,10 @@ fn held_prepared_execution_reuses_published_digest() {
     assert_eq!(registry.snapshot()[0].info.as_deref(), Some(sql));
     drop(hold);
     assert_eq!(registry.snapshot()[0].info, None);
-    tidb_executor::process::STATEMENT_DIGEST_CALLS.with(|count| count.set(0));
+    tidb_sessmgr::STATEMENT_DIGEST_CALLS.with(|count| count.set(0));
     session.run("SELECT 2").unwrap();
     assert_eq!(
-        tidb_executor::process::STATEMENT_DIGEST_CALLS.with(|count| count.get()),
+        tidb_sessmgr::STATEMENT_DIGEST_CALLS.with(|count| count.get()),
         1,
         "an ordinary statement still derives its process digest exactly once"
     );

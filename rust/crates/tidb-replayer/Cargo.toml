@@ -1,0 +1,15 @@
+[package]
+name = "tidb-replayer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/util/replayer: plan replayer file helpers (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+getrandom.workspace = true
+base64.workspace = true

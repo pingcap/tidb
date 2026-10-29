@@ -281,7 +281,7 @@ impl PrivilegeRegistry {
                         | tidb_mysql::consts::AuthTiDBSM3Password
                 ) {
                     return Err(tidb_error::mysql::MysqlError::from_terror(
-                        &tidb_util::dbterror::exeerrors::ERR_PLUGIN_IS_NOT_LOADED
+                        &tidb_dbterror::exeerrors::ERR_PLUGIN_IS_NOT_LOADED
                             .generate_with_stack_by_args(&[plugin.into()]),
                     ));
                 }
@@ -310,14 +310,14 @@ impl PrivilegeRegistry {
                         }
                         _ => {
                             return Err(tidb_error::mysql::MysqlError::from_terror(
-                                &tidb_util::dbterror::exeerrors::ERR_PLUGIN_IS_NOT_LOADED
+                                &tidb_dbterror::exeerrors::ERR_PLUGIN_IS_NOT_LOADED
                                     .generate_with_stack_by_args(&[plugin.into()]),
                             ))
                         }
                     };
                     if matches {
                         return Err(tidb_error::mysql::MysqlError::from_terror(
-                            &tidb_util::dbterror::exeerrors::ERR_EXISTS_IN_HISTORY_PASSWORD
+                            &tidb_dbterror::exeerrors::ERR_EXISTS_IN_HISTORY_PASSWORD
                                 .generate_with_stack_by_args(&[user.into(), host.into()]),
                         ));
                     }

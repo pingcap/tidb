@@ -91,8 +91,9 @@ use tidb_charset::{Encoding, TransformOp};
 use tidb_hack::raw_bytes;
 use tidb_lexer::SqlMode;
 use tidb_lexer::{
-    is_builtin_function_keyword, is_reserved, unescape_char, Lexer, Token, TokenKind,
+    is_builtin_function_keyword, is_reserved, Lexer, Token, TokenKind,
 };
+use tidb_parser_util::unescape_char;
 
 /// A parse failure with a human-readable reason and the byte offset at which it
 /// occurred.

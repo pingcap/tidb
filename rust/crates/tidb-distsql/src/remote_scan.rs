@@ -63,7 +63,7 @@ use std::sync::Arc;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
-use tidb_util::context::WarningCollector;
+use tidb_context::WarningCollector;
 use tidb_expr::expression::Expression;
 use tidb_expr::pushdown_catalog::PbConverterContext;
 use tidb_txnkv::Key;
@@ -381,7 +381,7 @@ impl fmt::Debug for StatementEval {
 #[derive(Clone, Debug)]
 pub struct PushdownStatementContext {
     /// Statement KV execution counter shared with point readers.
-    pub kv_exec_counter: tidb_util::topsql_stmtstats::KvExecCounterHandle,
+    pub kv_exec_counter: tidb_topsql_stmtstats::KvExecCounterHandle,
     /// Go's statement ctx values every DistSQL request carries: its
     /// `RUDetails` (`util.RUDetailsCtxKey`) and, through `SetFromSessionVars`,
     /// `StmtCtx.GetResourceGroupTagger`.
@@ -466,7 +466,7 @@ pub struct PushdownStatementContext {
     /// every coprocessor request.
     pub store_batch_size: u64,
     /// Go `SessionVars.TiFlashReplicaRead`, which places MPP tasks.
-    pub tiflash_replica_read: tidb_txnkv::ReplicaRead,
+    pub tiflash_replica_read: tidb_tiflash::ReplicaRead,
     /// Go's query-scoped per-store coprocessor limiter, shared by every
     /// remote scan in this statement.
     pub query_cop_store_limiter: Option<std::sync::Arc<tidb_txnkv::QueryCopStoreLimiter>>,
@@ -516,7 +516,7 @@ impl Default for PushdownStatementContext {
             not_fill_cache: false,
             dist_sql_scan_concurrency: tidb_vardef::defaults::DEF_DIST_SQL_SCAN_CONCURRENCY as u64,
             store_batch_size: tidb_vardef::defaults::DEF_TIDB_STORE_BATCH_SIZE as u64,
-            tiflash_replica_read: tidb_txnkv::ReplicaRead::AllReplicas,
+            tiflash_replica_read: tidb_tiflash::ReplicaRead::AllReplicas,
             query_cop_store_limiter: None,
             // Go `vardef.DefDivPrecisionIncrement`; a caller with no statement
             // behind it has no session value to send.

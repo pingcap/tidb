@@ -55,12 +55,12 @@ pub fn stats_session_error(message: impl Into<String>) -> tidb_sqlexec::SqlExecE
 }
 
 pub fn system_process_trackers(
-    processes: tidb_executor::process::ProcessRegistry,
+    processes: tidb_sessmgr::ProcessRegistry,
 ) -> (tidb_sqlexec::TrackSysProc, tidb_sqlexec::UntrackSysProc) {
     let tracking = processes.clone();
     let track: tidb_sqlexec::TrackSysProc = Arc::new(move |id, process| {
         let process = (&*process as &dyn std::any::Any)
-            .downcast_ref::<tidb_executor::process::SystemProcess>()
+            .downcast_ref::<tidb_sessmgr::SystemProcess>()
             .ok_or_else(|| stats_session_error("invalid system process owner"))?;
         tracking
             .track_system_process(id, process.clone())

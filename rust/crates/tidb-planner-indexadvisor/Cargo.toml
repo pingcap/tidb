@@ -1,0 +1,25 @@
+[package]
+name = "tidb-planner-indexadvisor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/planner/indexadvisor: the index advisor behind RECOMMEND INDEX (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-config = { path = "../tidb-config" }
+tidb-context = { path = "../tidb-context" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-driver-error = { path = "../tidb-driver-error" }
+tidb-error = { path = "../tidb-error" }
+tidb-goruntime = { path = "../tidb-goruntime" }
+tidb-hack = { path = "../tidb-hack" }
+tidb-metadef = { path = "../tidb-metadef" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-util = { path = "../tidb-util" }

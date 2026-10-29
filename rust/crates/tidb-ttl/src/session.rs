@@ -65,8 +65,8 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tidb_datatype::Datum;
-use tidb_util::sqlkiller::{KillSignal, SqlKiller};
-use tidb_util::timeutil::{parse_time_zone, TimeZone};
+use tidb_sqlkiller::{KillSignal, SqlKiller};
+use tidb_timeutil::{parse_time_zone, TimeZone};
 
 /// Go `vardef.TimeZone`, the system variable both time-zone paths read.
 const VAR_TIME_ZONE: &str = "time_zone";

@@ -54,7 +54,7 @@ pub trait SessionContext {
     /// Go `SessionVars.UserVars`.
     fn user_vars(&self) -> &tidb_expr::user_vars::UserVars;
     /// Go `SessionVars.StmtCtx.AppendWarning` / `AppendNote`.
-    fn append_sql_warning(&mut self, warning: tidb_util::context::SqlWarn);
+    fn append_sql_warning(&mut self, warning: tidb_context::SqlWarn);
     /// Go `SessionVars.InTxn`.
     fn in_txn(&self) -> bool;
     /// Go `SessionVars.TxnCtx.IsStaleness`.
@@ -114,8 +114,8 @@ pub trait PrivilegeManager {
 /// hidden from a session without `RESTRICTED_VARIABLES_ADMIN`.
 pub fn sys_var_hidden_for_sem(ctx: &dyn SessionContext, name: &str) -> bool {
     let name = name.to_ascii_lowercase();
-    tidb_util::sem_compat::is_enabled()
-        && tidb_util::sem_compat::is_invisible_sys_var(&name)
+    tidb_sem_compat::is_enabled()
+        && tidb_sem_compat::is_invisible_sys_var(&name)
         && !ctx
             .privilege_manager()
             .request_dynamic_verification("RESTRICTED_VARIABLES_ADMIN", false)

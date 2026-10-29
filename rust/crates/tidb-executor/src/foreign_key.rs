@@ -363,7 +363,7 @@ fn no_referenced_row(database: &str, table: &str, foreign_key: &KvForeignKey) ->
     let fk =
         crate::driver::fk_trigger_plan::meta(foreign_key).string(database, &table.go_to_lower());
     DriverError::from(
-        tidb_util::dbterror::ERR_NO_REFERENCED_ROW2.generate_with_stack_by_args(&[fk.into()]),
+        tidb_dbterror::ERR_NO_REFERENCED_ROW2.generate_with_stack_by_args(&[fk.into()]),
     )
 }
 
@@ -497,7 +497,7 @@ fn cascade_at_depth(
 ) -> Result<(), DriverError> {
     if depth > MAX_CASCADE_DEPTH {
         return Err(DriverError::from(
-            tidb_util::dbterror::exeerrors::ERR_FOREIGN_KEY_CASCADE_DEPTH_EXCEEDED
+            tidb_dbterror::exeerrors::ERR_FOREIGN_KEY_CASCADE_DEPTH_EXCEEDED
                 .generate_with_stack_by_args(&[crate::foreign_key::MAX_CASCADE_DEPTH.into()]),
         ));
     }
@@ -834,8 +834,8 @@ fn check_fk_cascade_table_lock(
     } else {
         tidb_mysql::UpdatePriv
     };
-    crate::lock::check_visits(
-        &crate::lock::Checker::new(locked_tables, catalog),
+    tidb_lock::check_visits(
+        &tidb_lock::Checker::new(locked_tables, catalog),
         &[(db, table, tidb_mysql::SelectPriv), (db, table, write)],
     )
 }

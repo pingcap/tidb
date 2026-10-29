@@ -22,7 +22,7 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_model::{ColumnInfo, GoShared};
 use tidb_resolve::ResultField;
 use tidb_sqlexec::{ExecutionContext, RecordSet, SimpleRecordSet};
-use tidb_util::sqlescape::SqlArg;
+use tidb_sqlescape::SqlArg;
 
 use super::{DestroyMode, Error, Pool, ResourcePool, Result, Session, SessionContext, Transaction};
 

@@ -117,7 +117,7 @@ pub fn build_range_bounds_with_unsigned(
                 // and then reports 1481 for any other one it meets.
                 if index + 1 != definitions.len() {
                     return Err(tidb_error::mysql::MysqlError::from_terror(
-                        &tidb_util::dbterror::ERR_PARTITION_MAXVALUE
+                        &tidb_dbterror::ERR_PARTITION_MAXVALUE
                             .generate_with_stack_by_args(&[]),
                     ));
                 }
@@ -127,7 +127,7 @@ pub fn build_range_bounds_with_unsigned(
                 RangeBound::Value(fold_range_bound(expr, &definition.name, unsigned, ctx)?)
             }
             PartitionValue::Default | PartitionValue::Tuple(_) => {
-                return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_VALUES_IS_NOT_INT_TYPE.generate_with_stack_by_args(&[(definition.name.clone()).to_string().into()])))
+                return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_VALUES_IS_NOT_INT_TYPE.generate_with_stack_by_args(&[(definition.name.clone()).to_string().into()])))
             }
         };
         bounds.push(bound);
@@ -176,14 +176,14 @@ pub fn build_range_columns_bounds(
     for path in columns {
         let name = path
             .last()
-            .ok_or_else(|| tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[])))?;
+            .ok_or_else(|| tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[])))?;
         // Go `checkPartitionColumnsUnique` (`ddl/partition.go:4664`).
         if dependency_names
             .iter()
             .any(|candidate: &String| candidate.go_lower_eq(name))
         {
             return Err(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_SAME_NAME_PARTITION_FIELD
+                &tidb_dbterror::ERR_SAME_NAME_PARTITION_FIELD
                     .generate_with_stack_by_args(&[(name.clone()).to_string().into()]),
             ));
         }
@@ -193,11 +193,11 @@ pub fn build_range_columns_bounds(
             // Go `checkColumnsPartitionType` (`partition.go:787`) reports a
             // column list's missing name as `ErrFieldNotFoundPart` (1488),
             // not the 1054 the expression path raises.
-            .ok_or_else(|| tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_FIELD_NOT_FOUND_PART.generate_with_stack_by_args(&[])))?;
+            .ok_or_else(|| tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_FIELD_NOT_FOUND_PART.generate_with_stack_by_args(&[])))?;
         let field_type = types[offset].clone();
         // Go `checkColumnsPartitionType` (`ddl/partition.go:785`).
         if !super::table_partition_list::list_columns_type_allowed(&field_type) {
-            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION.generate_with_stack_by_args(&[(name.clone()).to_string().into()])));
+            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION.generate_with_stack_by_args(&[(name.clone()).to_string().into()])));
         }
         dependency_names.push(name.clone());
         field_types.push(field_type);
@@ -224,14 +224,14 @@ pub fn build_range_columns_bounds(
                     // Go `ErrNullInValuesLessThan` (`ddl/partition.go:1691`).
                     if value.is_null() {
                         return Err(tidb_error::mysql::MysqlError::from_terror(
-                            &tidb_util::dbterror::ERR_NULL_IN_VALUES_LESS_THAN
+                            &tidb_dbterror::ERR_NULL_IN_VALUES_LESS_THAN
                                 .generate_with_stack_by_args(&[]),
                         ));
                     }
                     Ok(RangeColumnBound::Value(value))
                 }
                 PartitionValue::Default | PartitionValue::Tuple(_) => {
-                    Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[])))
+                    Err(tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[])))
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -256,7 +256,7 @@ pub fn check_range_columns_strictly_increasing(
     for pair in less_than.windows(2) {
         if !range_columns_bound_increases(&pair[0], &pair[1], field_types)? {
             return Err(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_RANGE_NOT_INCREASING.generate_with_stack_by_args(&[]),
+                &tidb_dbterror::ERR_RANGE_NOT_INCREASING.generate_with_stack_by_args(&[]),
             ));
         }
     }
@@ -278,7 +278,7 @@ pub fn range_columns_bound_increases(
                     previous,
                     field_type.collation(),
                 )
-                .map_err(|_| tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[])))?;
+                .map_err(|_| tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[])))?;
                 match order {
                     Ordering::Greater => return Ok(true),
                     Ordering::Less => return Ok(false),
@@ -303,7 +303,7 @@ pub fn fold_range_bound(
 ) -> Result<i64, MysqlError> {
     match tidb_table::partition_fold::fold_range_bound(expr, partition, ctx)? {
         tidb_table::partition_fold::FoldedRangeBound::Signed(value) if unsigned && value < 0 => {
-            Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_PARTITION_CONST_DOMAIN.generate_with_stack_by_args(&[])))
+            Err(tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_PARTITION_CONST_DOMAIN.generate_with_stack_by_args(&[])))
         }
         folded => Ok(folded.stored()),
     }
@@ -328,7 +328,7 @@ pub fn check_strictly_increasing(
             };
             if !increasing {
                 return Err(tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_RANGE_NOT_INCREASING.generate_with_stack_by_args(&[]),
+                    &tidb_dbterror::ERR_RANGE_NOT_INCREASING.generate_with_stack_by_args(&[]),
                 ));
             }
         }

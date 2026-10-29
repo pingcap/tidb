@@ -1,0 +1,29 @@
+[package]
+name = "tidb-logutil"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/logutil: Go pkg/util/logutil (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+enableassert = ["tidb-tracing/enableassert"]
+intest = ["tidb-tracing/intest"]
+
+[dependencies]
+tidb-tracing = { path = "../tidb-tracing" }
+flate2.workspace = true
+tidb-log = { path = "../tidb-log" }
+chrono.workspace = true
+regex.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+tidb-hack = { path = "../tidb-hack" }
+tracing = "0.1"
+log = { version = "0.4", features = ["kv_serde"] }
+
+[dev-dependencies]
+tidb-intest = { path = "../tidb-intest", features = ["intest"] }

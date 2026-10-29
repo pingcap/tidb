@@ -122,7 +122,7 @@ const TLS_CIPHERS: [u16; 25] = [
 static TLS_SUPPORTED_CIPHERS: LazyLock<String> = LazyLock::new(|| {
     TLS_CIPHERS
         .iter()
-        .map(|cipher| format!("{}:", tidb_util::tls::cipher_suite_name(*cipher)))
+        .map(|cipher| format!("{}:", tidb_tls::cipher_suite_name(*cipher)))
         .collect()
 });
 
@@ -177,14 +177,14 @@ impl Statistics for DefaultStatusStat {
             if let Some(state) = &vars.tls_connection_state {
                 status_vars.insert(
                     "Ssl_cipher".to_owned(),
-                    tidb_util::tls::cipher_suite_name(state.cipher_suite).to_owned(),
+                    tidb_tls::cipher_suite_name(state.cipher_suite).to_owned(),
                 );
                 status_vars.insert("Ssl_cipher_list".to_owned(), TLS_SUPPORTED_CIPHERS.clone());
                 // tls.VerifyClientCertIfGiven == SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE
                 status_vars.insert("Ssl_verify_mode".to_owned(), (0x01 | 0x04).to_string());
                 status_vars.insert(
                     "Ssl_version".to_owned(),
-                    tidb_util::tls::version_name(state.version),
+                    tidb_tls::version_name(state.version),
                 );
             }
         }

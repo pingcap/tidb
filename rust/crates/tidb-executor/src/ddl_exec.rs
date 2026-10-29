@@ -179,11 +179,11 @@ pub trait DdlExec {
     /// Go `dropLocalTemporaryTables`.
     fn drop_local_temporary_tables(&mut self, names: &[Vec<String>]) -> Result<(), DriverError>;
     /// The session's statement-kill switch.
-    fn sql_killer(&self) -> Arc<tidb_util::sqlkiller::SqlKiller>;
+    fn sql_killer(&self) -> Arc<tidb_sqlkiller::SqlKiller>;
     /// Appends one warning to the statement context.
     fn append_warning(
         &mut self,
-        level: tidb_util::context::WarningLevel,
+        level: tidb_context::WarningLevel,
         code: u16,
         message: String,
     );
@@ -573,7 +573,7 @@ pub trait DdlExec {
                 tidb_ddl_build::ddl_executor::is_table_tiflash_supported(&schema, table)
             {
                 self.append_warning(
-                    tidb_util::context::WarningLevel::Note,
+                    tidb_context::WarningLevel::Note,
                     error.code,
                     error.message,
                 );
@@ -627,7 +627,7 @@ pub trait DdlExec {
     /// seen, and whether the wait timed out (a forced check next time).
     fn wait_pending_tiflash_table_threshold(
         &self,
-        killer: &tidb_util::sqlkiller::SqlKiller,
+        killer: &tidb_sqlkiller::SqlKiller,
         mut origin_version: i64,
         mut pending_count: u32,
         threshold: u32,

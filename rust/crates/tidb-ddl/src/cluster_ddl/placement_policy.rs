@@ -54,7 +54,7 @@ fn check_policy_not_in_use(
     });
     if named_by_database || policy_referenced(catalog, policy) {
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_PLACEMENT_POLICY_IN_USE,
+            &tidb_dbterror::ERR_PLACEMENT_POLICY_IN_USE,
             format!("Placement policy '{}' is still in use", policy.original()),
         ));
     }
@@ -425,7 +425,7 @@ pub(super) fn plan_persisted_drop_placement_policy_job_step<S: MetaSnapshot>(
         SchemaState::DELETE_ONLY => BufferMutation::delete(key::policy_kv_key(policy.id))?,
         state => {
             return Err(DdlPlanError::from(
-                tidb_util::dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+                tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
                     FormatArg::from("policy"),
                     FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
                 ]),

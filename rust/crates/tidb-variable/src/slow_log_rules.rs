@@ -395,9 +395,9 @@ pub struct SlowLogRuleValues {
     /// Go `StmtCtx.ResourceGroupName`.
     pub resource_group: String,
     /// Go `ctx.Value(util.ExecDetailsKey)`'s snapshot, `None` without one.
-    pub kv_exec_detail: Option<tidb_util::execdetails::exec_details::KvExecDetails>,
+    pub kv_exec_detail: Option<tidb_execdetails::exec_details::KvExecDetails>,
     /// Go `StmtCtx.GetExecDetails()`.
-    pub exec_detail: tidb_util::execdetails::exec_details::ExecDetails,
+    pub exec_detail: tidb_execdetails::exec_details::ExecDetails,
     /// Go `GetPlanDigest`'s digest.
     pub plan_digest: String,
 }

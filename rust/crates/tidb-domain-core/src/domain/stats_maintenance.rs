@@ -71,14 +71,14 @@ impl StatsMaintenanceWorker {
                         // This existing owner also checks the auto-analyze window
                         // after errors, matching the Go worker's continuation.
                         if let Err(error) = active.gc_stats(lease, schema_lease) {
-                            tidb_util::logutil::bg_logger()
-                                .warn("GC stats failed", &[tidb_util::logutil::zap_error(error)]);
+                            tidb_logutil::bg_logger()
+                                .warn("GC stats failed", &[tidb_logutil::zap_error(error)]);
                         }
                     }
                 }
                 Tick::Health => active.stats.update_stats_healthy_metrics(),
                 Tick::Memory => {
-                    tidb_util::memory::force_read_mem_stats();
+                    tidb_memory::force_read_mem_stats();
                     active.stats.trigger_evict();
                 }
             },
@@ -115,7 +115,7 @@ impl StatsMaintenanceWorker {
             wake: Condvar::new(),
         });
         let running = Arc::clone(&stop);
-        let thread = tidb_util::worker_stack::sql_worker_thread("statistics-maintenance")
+        let thread = tidb_worker_stack::sql_worker_thread("statistics-maintenance")
             .spawn(move || {
                 while !initialized() {
                     // Shutdown remains independent of a blocked statistics read.
@@ -160,7 +160,7 @@ impl StatsMaintenanceWorker {
                 }));
                 // Go `defer util.Recover(metrics.LabelDomain, "gcStatsWorker", nil, false)`.
                 if let Err(payload) = result {
-                    tidb_util::logutil::log_recovered_panic("gcStatsWorker", payload.as_ref());
+                    tidb_logutil::log_recovered_panic("gcStatsWorker", payload.as_ref());
                 }
             })
             .map_err(|error| format!("start statistics maintenance: {error}"))?;

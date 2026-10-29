@@ -1,0 +1,13 @@
+[package]
+name = "tidb-layered-io"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/encrypt: Go pkg/util/encrypt (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]

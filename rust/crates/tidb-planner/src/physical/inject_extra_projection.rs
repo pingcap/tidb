@@ -139,7 +139,7 @@ fn inject_proj_below_agg(
 ) -> PhysicalPlan {
     // Go `coreusage.WrapCastForAggFuncs(exprCtx, aggFuncs)` — best-effort
     // argument casts, exactly as Go runs them unconditionally here.
-    let _ = crate::core_usage::wrap_cast_for_agg_funcs(&NoColumns, &mut agg.agg_funcs);
+    let _ = tidb_planner_coreusage::wrap_cast_for_agg_funcs(&NoColumns, &mut agg.agg_funcs);
 
     let mut has_scalar_func = false;
     for func in &agg.agg_funcs {

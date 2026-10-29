@@ -22,7 +22,7 @@ use crate::*;
 use tidb_executor::exec_stmt_observation::{
     ExecStmtObservation as _, StatementObservation, StatementPhases,
 };
-use tidb_util::topsql_stmtstats::{ExecFinishInfo, StatementObserver};
+use tidb_topsql_stmtstats::{ExecFinishInfo, StatementObserver};
 
 
 
@@ -214,7 +214,7 @@ impl Session {
 
     pub(crate) fn statement_kv_exec_counter(
         &self,
-    ) -> tidb_util::topsql_stmtstats::KvExecCounterHandle {
+    ) -> tidb_topsql_stmtstats::KvExecCounterHandle {
         self.statement_observation
             .as_ref()
             .map(|o| o.kv_exec_counter.clone())
@@ -287,10 +287,10 @@ impl Session {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .is_fast_plan;
-            if !fast || tidb_util::topsql_state::top_profiling_enabled() {
+            if !fast || tidb_topsql_state::top_profiling_enabled() {
                 let info = top_profiling_begin_info(&ru_details, &user);
                 stats.on_execution_begin(digest.as_bytes(), &[], Some(&info));
-                if tidb_util::topsql_state::top_sql_enabled() {
+                if tidb_topsql_state::top_sql_enabled() {
                     kv_exec_counter.initialize(&stats, digest.as_bytes(), &[]);
                 }
             }
@@ -344,7 +344,7 @@ impl Session {
         // Go `executeStmtImpl`: `sessVars.RUV2Metrics` is the statement ctx's,
         // its bypass decided (`shouldBypass`: no internal source type here),
         // and the parses counted since the last statement move into it.
-        let ruv2_metrics = Arc::new(tidb_util::ruv2_metrics::RuV2Metrics::new());
+        let ruv2_metrics = Arc::new(tidb_ruv2_metrics::RuV2Metrics::new());
         ruv2_metrics.set_bypass(false);
         let pending_parses = std::mem::take(&mut self.ruv2_pending_session_parser_total);
         if pending_parses > 0 {
@@ -566,14 +566,14 @@ impl Session {
                     &**session_stmt,
                     tidb_ast::SessionStmt::Set(_)
                 ));
-                if !fast || tidb_util::topsql_state::top_profiling_enabled() {
+                if !fast || tidb_topsql_state::top_profiling_enabled() {
                     let info = top_profiling_begin_info(&observation.ru_details, &user);
                     self.statement_stats.on_execution_begin(
                         observation.digest.as_bytes(),
                         &[],
                         Some(&info),
                     );
-                    if tidb_util::topsql_state::top_sql_enabled() {
+                    if tidb_topsql_state::top_sql_enabled() {
                         observation.kv_exec_counter.initialize(
                             &self.statement_stats,
                             observation.digest.as_bytes(),
@@ -730,8 +730,8 @@ impl Session {
         let elapsed = observation.started.elapsed() + phases.parse_before_start;
         // Go `observeStmtFinishedForTopProfiling`: Top RU alone also records
         // the finish, with the statement's `RUDetails` and user.
-        let top_ru = tidb_util::topsql_state::top_ru_enabled();
-        if phases.execution_started && (tidb_util::topsql_state::top_sql_enabled() || top_ru) {
+        let top_ru = tidb_topsql_state::top_ru_enabled();
+        if phases.execution_started && (tidb_topsql_state::top_sql_enabled() || top_ru) {
             self.statement_stats.on_execution_finished(
                 observation.digest.as_bytes(),
                 &[],
@@ -753,7 +753,7 @@ impl Session {
         // Go `finalizeStatementRUV2Metrics`, before the slow log and the
         // summary read the metrics: the raw TiKV RU v2 counters the
         // statement's RPCs left in its `RUDetails`.
-        tidb_util::ruv2_metrics::sync_ruv2_metrics_from_ru_details(
+        tidb_ruv2_metrics::sync_ruv2_metrics_from_ru_details(
             Some(&observation.ruv2_metrics),
             Some(&observation.ru_details),
         );
@@ -814,7 +814,7 @@ impl Session {
         let mode = self.redact_log_mode();
         let mut text = tidb_parser::normalize(sql, self.redact_mode());
         if mode != "ON" {
-            text.push_str(&tidb_util::redact::string(
+            text.push_str(&tidb_redact::string(
                 &mode,
                 &self.plan_cache_params_string(),
             ));
@@ -906,7 +906,7 @@ impl Session {
                 ));
             }
             fields.push(tidb_log::Field::new("user", tidb_log::Value::Str(user)));
-            tidb_util::logutil::bg_logger().info("CRUCIAL OPERATION", &fields);
+            tidb_logutil::bg_logger().info("CRUCIAL OPERATION", &fields);
             return;
         }
         self.log_general_query(observation, schema_version);
@@ -921,7 +921,7 @@ impl Session {
         let mut query = tidb_variable::slow_log::query_replacer(&self.text_to_log(observation, false));
         let mode = self.redact_log_mode();
         if mode != "ON" {
-            query.push_str(&tidb_util::redact::string(
+            query.push_str(&tidb_redact::string(
                 &mode,
                 &self.plan_cache_params_string(),
             ));
@@ -979,7 +979,7 @@ impl Session {
                 tidb_log::Value::Str(tidb_error::mysql::go_quote_bytes(&origin)),
             ));
         }
-        tidb_util::logutil::general_logger().info("GENERAL_LOG", &fields);
+        tidb_logutil::general_logger().info("GENERAL_LOG", &fields);
     }
 }
 
@@ -1045,9 +1045,9 @@ fn is_crucial_stmt(stmt: &Stmt) -> bool {
 fn top_profiling_begin_info(
     ru_details: &Arc<tikv_client::RuDetails>,
     user: &str,
-) -> tidb_util::topsql_stmtstats::ExecBeginInfo {
-    let top_ru = tidb_util::topsql_state::top_ru_enabled();
-    let mut info = tidb_util::topsql_stmtstats::ExecBeginInfo {
+) -> tidb_topsql_stmtstats::ExecBeginInfo {
+    let top_ru = tidb_topsql_state::top_ru_enabled();
+    let mut info = tidb_topsql_stmtstats::ExecBeginInfo {
         top_ru_enabled: top_ru,
         ..Default::default()
     };
@@ -1055,8 +1055,8 @@ fn top_profiling_begin_info(
         info.ru_details = Some(Arc::clone(ru_details));
         info.user = user.to_owned();
         // Go `stmtstats.NormalizeRUVersion(do.GetRUVersion())`.
-        info.ru_version = tidb_util::topsql_stmtstats::normalize_ru_version(
-            tidb_util::topsql_stmtstats::bound_ru_version(),
+        info.ru_version = tidb_topsql_stmtstats::normalize_ru_version(
+            tidb_topsql_stmtstats::bound_ru_version(),
         );
     }
     info

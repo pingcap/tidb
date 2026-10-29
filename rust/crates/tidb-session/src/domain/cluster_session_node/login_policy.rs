@@ -16,7 +16,7 @@ use crate::domain::configured_user_store::{
     AuthenticationFailure, ConfiguredUserStore, LoginPolicyStorage,
 };
 use tidb_privilege::{LoginPolicyAction, PasswordLocking};
-use tidb_util::sqlescape::{escape_sql, SqlArg};
+use tidb_sqlescape::{escape_sql, SqlArg};
 
 struct LoginStorage(Weak<Domain>);
 

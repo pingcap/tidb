@@ -181,11 +181,11 @@ fn compose_ts(physical: i64, logical: i64) -> u64 {
 
 /// Go `time.Now().String()`: the wall clock and the monotonic reading.
 fn go_time_now_string() -> String {
-    go_time_string(Local::now()) + &tidb_util::monotime::monotonic_suffix()
+    go_time_string(Local::now()) + &tidb_monotime::monotonic_suffix()
 }
 
 /// Go `time.Time.String()` of a local wall-clock time.
-pub(crate) use tidb_util::go_time_layout::go_time_string;
+pub(crate) use tidb_go_time_layout::go_time_string;
 
 fn now() -> DateTime<FixedOffset> {
     Local::now().fixed_offset()
@@ -211,8 +211,8 @@ fn error_field(error: &GcError) -> Field {
     Field::new("error", Value::Str(error.0.clone()))
 }
 
-fn logger() -> tidb_util::logutil::Logger {
-    tidb_util::logutil::bg_logger()
+fn logger() -> tidb_logutil::Logger {
+    tidb_logutil::bg_logger()
 }
 
 fn gc_worker_counter(label: &str) {
@@ -303,7 +303,7 @@ impl GcWorker {
     pub fn new(deps: GcWorkerDeps) -> GcResult<Self> {
         let version = deps.store.current_version()?;
         let host_name =
-            tidb_util::sem::operating_system_hostname().unwrap_or_else(|| "unknown".to_owned());
+            tidb_sem::operating_system_hostname().unwrap_or_else(|| "unknown".to_owned());
         let uuid = format!("{version:x}");
         let keyspace_id = deps
             .store
@@ -345,7 +345,7 @@ impl GcWorker {
             has_finished_first_gc_job: false,
             done_tx,
             done_rx,
-            in_test: tidb_util::intest::IN_TEST,
+            in_test: tidb_intest::IN_TEST,
         }
     }
 
@@ -1928,7 +1928,7 @@ fn go_atoi(value: &str) -> GcResult<i64> {
 fn ddl_job_not_found(job_id: i64) -> GcError {
     // Go `dbterror.ErrDDLJobNotFound`: 8223, "DDL Job:%v not found".
     GcError::new(
-        tidb_util::dbterror::ERR_DDL_JOB_NOT_FOUND
+        tidb_dbterror::ERR_DDL_JOB_NOT_FOUND
             .fast_generate_by_args(&[job_id.into()])
             .to_string(),
     )
@@ -2189,7 +2189,7 @@ impl MockGcWorker {
     pub fn new(deps: GcWorkerDeps) -> GcResult<Self> {
         let version = deps.store.current_version()?;
         let host_name =
-            tidb_util::sem::operating_system_hostname().unwrap_or_else(|| "unknown".to_owned());
+            tidb_sem::operating_system_hostname().unwrap_or_else(|| "unknown".to_owned());
         let desc = format!(
             "host:{host_name}, pid:{}, start at {}",
             std::process::id(),

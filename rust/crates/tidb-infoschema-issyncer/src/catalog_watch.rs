@@ -502,7 +502,7 @@ fn run_one_pass(
         // `BgLogger`).
         Err(message) => {
             stats.failures.fetch_add(1, Ordering::AcqRel);
-            tidb_util::logutil::bg_logger().error(
+            tidb_logutil::bg_logger().error(
                 "reload schema in loop failed",
                 &[tidb_log::Field::new("error", tidb_log::Value::Str(message))],
             );

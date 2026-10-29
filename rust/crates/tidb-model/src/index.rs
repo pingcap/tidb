@@ -22,7 +22,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tidb_ast::{CiString, Expr, IndexType, IsTarget};
 use tidb_datatype::{FieldType, FieldTypeCode};
 
-use crate::cascades_hash::HashInt64;
+use tidb_planner_cascades_base::Hasher;
 use crate::column::{removing_origin_name, REMOVING_OBJ_PREFIX};
 use crate::go_runtime::{GoNullClonePolicy, GoPointerAny, GoShared, GoSharedPointerSlice};
 use tidb_goruntime::go_runtime::GoSharedSlice;
@@ -610,13 +610,13 @@ impl IndexInfo {
 
     /// Go `Hash64`: hash the persisted index ID as one whole cascades
     /// `HashInt64` step.
-    pub fn hash64<H: HashInt64>(&self, state: &mut H) {
+    pub fn hash64<H: Hasher + ?Sized>(&self, state: &mut H) {
         state.hash_int64(self.id);
     }
 
     /// Nil-receiver-capable Go `Hash64` call boundary. A nil `*IndexInfo`
     /// panics when Go evaluates `index.ID`.
-    pub fn hash64_pointer<H: HashInt64>(index: Option<&Self>, state: &mut H) {
+    pub fn hash64_pointer<H: Hasher + ?Sized>(index: Option<&Self>, state: &mut H) {
         index.expect("nil *IndexInfo").hash64(state);
     }
 
@@ -1256,13 +1256,13 @@ mod tests {
         assert!(IndexInfo::equals(None, GoPointerAny::typed(None)));
         assert!(!IndexInfo::equals(None, GoPointerAny::typed(Some(&right))));
         let hash = |index: &IndexInfo| {
-            let mut state = crate::cascades_hash::CascadesHasher::new();
+            let mut state = tidb_planner_cascades_base::new_hash_equaler();
             index.hash64(&mut state);
             state.sum64()
         };
         assert_eq!(hash(&left), hash(&right));
         assert!(std::panic::catch_unwind(|| {
-            let mut state = crate::cascades_hash::CascadesHasher::new();
+            let mut state = tidb_planner_cascades_base::new_hash_equaler();
             IndexInfo::hash64_pointer(None, &mut state);
         })
         .is_err());

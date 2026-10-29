@@ -370,19 +370,19 @@ pub trait PreparedExec: super::CompilerSession {
             // (the positional text, under the generic 1105) at the parse
             // site; the classified 1064 lands afterwards from the
             // statement error return -- SHOW WARNINGS carries both rows.
-            self.append_sql_warning(tidb_util::context::SqlWarn::with_code(tidb_util::context::WarningLevel::Error, 1105, raw.clone()));
+            self.append_sql_warning(tidb_context::SqlWarn::with_code(tidb_context::WarningLevel::Error, 1105, raw.clone()));
             DriverError::from(tidb_util::misc::syntax_error(raw))
         })?;
         if statements.len() != 1 {
             return Err(DriverError::from(
-                tidb_util::dbterror::exeerrors::ERR_PREPARE_MULTI.generate_with_stack_by_args(&[]),
+                tidb_dbterror::exeerrors::ERR_PREPARE_MULTI.generate_with_stack_by_args(&[]),
             ));
         }
         let mut statement = statements.remove(0);
         // Go `GeneratePlanCacheStmtWithAST`'s own switch, before any planning.
         if is_unpreparable(&statement) {
             return Err(DriverError::from(
-                tidb_util::dbterror::exeerrors::ERR_UNSUPPORTED_PS.generate_with_stack_by_args(&[]),
+                tidb_dbterror::exeerrors::ERR_UNSUPPORTED_PS.generate_with_stack_by_args(&[]),
             ));
         }
         // Go `Preprocess` at PREPARE (`handleTableName`): the retained
@@ -526,7 +526,7 @@ pub trait PreparedExec: super::CompilerSession {
         // answers (ok) with `skip prepared plan-cache: not a
         // SELECT/UPDATE/INSERT/DELETE/SET statement`).
         if let Some(reason) = skip_reason {
-            self.append_sql_warning(tidb_util::context::SqlWarn::with_code(tidb_util::context::WarningLevel::Warning, 1105, reason));
+            self.append_sql_warning(tidb_context::SqlWarn::with_code(tidb_context::WarningLevel::Warning, 1105, reason));
         }
         // Only a statement that CARRIES markers is ever restored (that is what
         // binding does), so only that statement needs its column names pinned

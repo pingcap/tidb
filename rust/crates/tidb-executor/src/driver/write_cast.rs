@@ -450,7 +450,7 @@ fn complete_typed_cast(
             ) =>
         {
             MysqlError::from_terror(
-                &tidb_util::dbterror::exeerrors::ERR_TRUNCATE_WRONG_INSERT_VALUE
+                &tidb_dbterror::exeerrors::ERR_TRUNCATE_WRONG_INSERT_VALUE
                     .generate_with_stack_by_args(&[
                         tidb_datatype::type_str(field.code()).into(),
                         datum_error_text(source).into(),

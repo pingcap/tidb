@@ -8,6 +8,9 @@ repository.workspace = true
 description = "TiDB lightning packages: Go pkg/lightning (Rust rewrite)."
 
 [dependencies]
+tidb-extsort = { path = "../tidb-extsort" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-promutil = { path = "../tidb-promutil" }
 getrandom.workspace = true
 rustix = { workspace = true, features = ["fs", "pipe", "stdio", "system", "thread"] }
 tidb-datatype = { path = "../tidb-datatype" }

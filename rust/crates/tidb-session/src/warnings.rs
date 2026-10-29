@@ -30,12 +30,12 @@ use crate::{DriverError, Session};
 
 /// A statement warning, Go's `contextutil.SQLWarn`: the level and the error
 /// `StmtCtx` keeps, which `SHOW WARNINGS` reports as `Level | Code | Message`.
-pub use tidb_util::context::SqlWarn as SqlWarning;
+pub use tidb_context::SqlWarn as SqlWarning;
 
 /// `StmtCtx.warnings[i].Level`: Go's `contextutil.WarnLevelWarning`,
 /// `WarnLevelError` and `WarnLevelNote` (`pkg/util/context/warn.go`), reached
 /// through `StmtCtx.AppendWarning` / `AppendError` / `AppendNote`.
-use tidb_util::context::WarningLevel;
+use tidb_context::WarningLevel;
 
 /// Whether the statement reports the warning buffer, and so must be handed the
 /// previous statement's entries instead of an empty buffer.

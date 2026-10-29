@@ -1,0 +1,16 @@
+[package]
+name = "tidb-israce"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/israce: Go pkg/util/israce (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+race = []
+
+[dependencies]

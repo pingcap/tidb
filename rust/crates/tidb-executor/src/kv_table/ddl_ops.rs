@@ -119,7 +119,7 @@ impl KvTableDdl for KvTable {
         {
             return Err(KvTableError::Mysql(
                 tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_DUP_KEY_NAME
+                    &tidb_dbterror::ERR_DUP_KEY_NAME
                         .generate_with_stack_by_args(&[(index.name.clone()).into()]),
                 ),
             ));
@@ -266,7 +266,7 @@ impl KvTableDdl for KvTable {
             if value.is_null() {
                 return Ok(Some(KvTableError::Mysql(
                     tidb_error::mysql::MysqlError::from_terror(
-                        &tidb_util::dbterror::ERR_INVALID_USE_OF_NULL
+                        &tidb_dbterror::ERR_INVALID_USE_OF_NULL
                             .generate_with_stack_by_args(&[]),
                     ),
                 )));

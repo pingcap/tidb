@@ -18,7 +18,7 @@
 //! `pkg/planner/core/logical_plans_test.go:679`; these vectors isolate the
 //! reusable ORDER BY metadata contract from expression and plan ownership.
 
-use tidb_planner::by_item::{stringify_by_items, ByItem};
+use tidb_planner_util::by_item::{stringify_by_items, ByItem};
 
 #[test]
 fn by_items_preserve_expression_and_direction_identity() {

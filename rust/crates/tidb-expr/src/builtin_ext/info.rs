@@ -54,7 +54,7 @@ fn decode_plan(value: &Datum) -> Result<Datum, EvalError> {
     let Some(input) = crate::arg_eval_type::eval_string(value)? else {
         return Ok(Datum::Null);
     };
-    Ok(match tidb_util::plancodec::decode_plan(&input) {
+    Ok(match tidb_plancodec::decode_plan(&input) {
         Ok(decoded) => Datum::new_string(decoded),
         Err(_) => Datum::new_string(input),
     })
@@ -67,7 +67,7 @@ fn decode_binary_plan(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, 
         return Ok(Datum::Null);
     };
     let decoded =
-        tidb_util::plancodec::decode_binary_plan(&input).map_err(|error| error.to_string());
+        tidb_plancodec::decode_binary_plan(&input).map_err(|error| error.to_string());
     match decoded {
         Ok(decoded) => Ok(Datum::new_string(decoded)),
         Err(error) => {
@@ -279,14 +279,14 @@ mod tests {
     #[test]
     fn decode_plan_builtins_preserve_their_distinct_error_policies() {
         let mut raw = String::new();
-        tidb_util::plancodec::normalize_plan_node(
+        tidb_plancodec::normalize_plan_node(
             0,
-            tidb_util::plancodec::TYPE_SELECTION,
+            tidb_plancodec::TYPE_SELECTION,
             "0",
             "eq(a, 1)",
             &mut raw,
         );
-        let encoded = tidb_util::plancodec::compress(raw.as_bytes());
+        let encoded = tidb_plancodec::compress(raw.as_bytes());
         let decoded = dispatch(
             "TIDB_DECODE_PLAN",
             &[Datum::new_string(encoded)],
@@ -298,7 +298,7 @@ mod tests {
         .unwrap();
         assert!(decoded.contains("Selection"));
 
-        let encoded = tidb_util::plancodec::compress(b"0\t1\t0\t1\t\xff\n");
+        let encoded = tidb_plancodec::compress(b"0\t1\t0\t1\t\xff\n");
         let decoded = dispatch(
             "TIDB_DECODE_PLAN",
             &[Datum::new_string(encoded)],
@@ -311,7 +311,7 @@ mod tests {
             b"\tid       \ttask\testRows\toperator info\n\tSelection\troot\t1      \t\xff"
         );
 
-        let encoded = tidb_util::plancodec::compress(b"0\t2147483648\t0\tinfo\n");
+        let encoded = tidb_plancodec::compress(b"0\t2147483648\t0\tinfo\n");
         let decoded = dispatch(
             "TIDB_DECODE_PLAN",
             &[Datum::new_string(encoded)],
@@ -364,7 +364,7 @@ mod tests {
             dispatch(
                 "TIDB_DECODE_BINARY_PLAN",
                 &[Datum::new_string(
-                    tidb_util::plancodec::BINARY_PLAN_DISCARDED_ENCODED.as_str(),
+                    tidb_plancodec::BINARY_PLAN_DISCARDED_ENCODED.as_str(),
                 )],
                 &warnings,
             )
@@ -375,7 +375,7 @@ mod tests {
             "(plan discarded because too long)"
         );
 
-        let encoded = tidb_util::plancodec::compress(
+        let encoded = tidb_plancodec::compress(
             &ExplainData {
                 main: Some(ExplainOperator {
                     name: "TableScan_1".to_owned(),

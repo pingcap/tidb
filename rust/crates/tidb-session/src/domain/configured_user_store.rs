@@ -562,7 +562,7 @@ impl ConfiguredUserStore {
         transport: TransportKind,
     ) -> Result<TransportAdmission, SecureTransportError> {
         let policy = SecureTransportPolicy::new(
-            tidb_util::tls::REQUIRE_SECURE_TRANSPORT.load(std::sync::atomic::Ordering::SeqCst),
+            tidb_tls::REQUIRE_SECURE_TRANSPORT.load(std::sync::atomic::Ordering::SeqCst),
         );
         policy.admit(transport)?;
         Ok(TransportAdmission {

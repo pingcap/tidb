@@ -22,7 +22,7 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::{Expression, ScalarFunction};
 use tidb_expr::schema::{merge_schema, Schema};
 use tidb_expr::simple_expr::resolve_indices_in_place;
-use tidb_util::disjointset::SimpleIntSet;
+use tidb_disjointset::SimpleIntSet;
 
 use super::{
     BasePhysicalPlan, PhysicalHashJoin, PhysicalIndexJoin, PhysicalMergeJoin, PhysicalPlan,

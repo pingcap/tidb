@@ -1,0 +1,13 @@
+[package]
+name = "tidb-disjointset"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/disjointset: Go pkg/util/disjointset (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]

@@ -13,6 +13,18 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-context = { path = "../tidb-context" }
+tidb-encrypt = { path = "../tidb-encrypt" }
+tidb-go-regexp = { path = "../tidb-go-regexp" }
+tidb-mathutil = { path = "../tidb-mathutil" }
+tidb-password-validation = { path = "../tidb-password-validation" }
+tidb-plancodec = { path = "../tidb-plancodec" }
+tidb-printer = { path = "../tidb-printer" }
+tidb-size = { path = "../tidb-size" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-stringutil = { path = "../tidb-stringutil" }
+tidb-timeutil = { path = "../tidb-timeutil" }
+tidb-vitess = { path = "../tidb-vitess" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 stacker = { workspace = true }
 tidb-hack = { path = "../tidb-hack" }

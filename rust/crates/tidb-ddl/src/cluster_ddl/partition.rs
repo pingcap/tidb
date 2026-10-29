@@ -37,7 +37,7 @@ fn admission(error: tidb_error::mysql::MysqlError) -> DdlPlanError {
 }
 
 /// The notes the shared partition implementation left on `context`.
-fn partition_notes(context: &dyn DdlSessionContext) -> Vec<tidb_util::context::SqlWarn> {
+fn partition_notes(context: &dyn DdlSessionContext) -> Vec<tidb_context::SqlWarn> {
     context.take_warnings()
 }
 
@@ -110,7 +110,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
             let (database_id, stored) = locate_table(&catalog, schema, table)?;
             let Some(partitioning) = stored.get_partition_info() else {
                 return Err(admission(tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                    &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
                         .generate_with_stack_by_args(&[]),
                 )));
             };
@@ -256,7 +256,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
             let (database_id, stored) = locate_table(&catalog, schema, table)?;
             let Some(partitioning) = stored.get_partition_info() else {
                 return Err(admission(tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                    &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
                         .generate_with_stack_by_args(&[]),
                 )));
             };
@@ -353,7 +353,7 @@ fn job_partition(
         cancel_ddl_job(
             active,
             admission(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
                     .generate_with_stack_by_args(&[]),
             )),
         )
@@ -363,7 +363,7 @@ fn job_partition(
 /// Go `dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", state)`.
 fn invalid_partition_state(state: SchemaState) -> DdlPlanError {
     DdlPlanError::from(
-        tidb_util::dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+        tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
             FormatArg::from("partition"),
             FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
         ]),
@@ -570,7 +570,7 @@ fn clean_global_index_entries_from_dropped_partitions<S: MetaSnapshot>(
 fn check_add_partition_too_many_partitions(count: usize) -> Result<(), DdlPlanError> {
     if count > PARTITION_COUNT_LIMIT {
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_TOO_MANY_PARTITIONS,
+            &tidb_dbterror::ERR_TOO_MANY_PARTITIONS,
             "Too many partitions (including subpartitions) were defined",
         ));
     }
@@ -610,7 +610,7 @@ fn check_add_partition_value(
             let range_value = last.less_than.get(0);
             if range_value.eq_ignore_ascii_case("MAXVALUE") {
                 return Err(coded_refusal(
-                    &tidb_util::dbterror::ERR_PARTITION_MAXVALUE,
+                    &tidb_dbterror::ERR_PARTITION_MAXVALUE,
                     "MAXVALUE can only be used in last partition definition",
                 ));
             }
@@ -624,14 +624,14 @@ fn check_add_partition_value(
                 }
                 if max_value {
                     return Err(coded_refusal(
-                        &tidb_util::dbterror::ERR_PARTITION_MAXVALUE,
+                        &tidb_dbterror::ERR_PARTITION_MAXVALUE,
                         "MAXVALUE can only be used in last partition definition",
                     ));
                 }
                 let next = atoi(&bound)?;
                 if next <= current {
                     return Err(coded_refusal(
-                        &tidb_util::dbterror::ERR_RANGE_NOT_INCREASING,
+                        &tidb_dbterror::ERR_RANGE_NOT_INCREASING,
                         "VALUES LESS THAN value must be strictly increasing for each partition",
                     ));
                 }
@@ -641,7 +641,7 @@ fn check_add_partition_value(
         }
         tidb_ast::PartitionType::LIST if partition.get_default_list_partition() != -1 => {
             Err(coded_refusal(
-                &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL,
+                &tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL,
                 "Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead",
             ))
         }
@@ -664,7 +664,7 @@ fn check_add_partition_name_unique(
     for definition in part_info.definitions.snapshot() {
         if !names.insert(definition.name.lowercase().to_owned()) {
             return Err(coded_refusal(
-                &tidb_util::dbterror::ERR_SAME_NAME_PARTITION,
+                &tidb_dbterror::ERR_SAME_NAME_PARTITION,
                 format!("Duplicate partition name {}", definition.name.original()),
             ));
         }
@@ -700,7 +700,7 @@ pub(super) fn plan_persisted_add_table_partition_job_step<S: MetaSnapshot>(
                 return Err(cancel_ddl_job(
                     active,
                     coded_refusal(
-                        &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL,
+                        &tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL,
                         "Unsupported ADD PARTITION of a table with AFFINITY option",
                     ),
                 ));
@@ -944,7 +944,7 @@ pub(super) fn rollback_like_drop_partition<S: MetaSnapshot>(
 fn check_drop_table_partition(info: &TableInfo, names: &[String]) -> Result<(), DdlPlanError> {
     let Some(partition) = info.get_partition_info() else {
         return Err(admission(tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+            &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
                 .generate_with_stack_by_args(&[]),
         )));
     };
@@ -954,20 +954,20 @@ fn check_drop_table_partition(info: &TableInfo, names: &[String]) -> Result<(), 
         tidb_ast::PartitionType::RANGE | tidb_ast::PartitionType::LIST
     ) {
         return Err(admission(tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_ONLY_ON_RANGE_LIST_PARTITION
+            &tidb_dbterror::ERR_ONLY_ON_RANGE_LIST_PARTITION
                 .generate_with_stack_by_args(&[("DROP").into()]),
         )));
     }
     if info.affinity.is_some() {
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL,
+            &tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL,
             "Unsupported DROP PARTITION of a table with AFFINITY option",
         ));
     }
     let definitions = partition.definitions.snapshot();
     if definitions.len() <= names.len() {
         return Err(admission(tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_DROP_LAST_PARTITION.generate_with_stack_by_args(&[]),
+            &tidb_dbterror::ERR_DROP_LAST_PARTITION.generate_with_stack_by_args(&[]),
         )));
     }
     let mut seen = std::collections::HashSet::new();
@@ -977,7 +977,7 @@ fn check_drop_table_partition(info: &TableInfo, names: &[String]) -> Result<(), 
             .any(|definition| definition.name.lowercase() == name);
         if !found || !seen.insert(name.clone()) {
             return Err(admission(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_DROP_PARTITION_NON_EXISTENT
+                &tidb_dbterror::ERR_DROP_PARTITION_NON_EXISTENT
                     .generate_with_stack_by_args(&["DROP".into()]),
             )));
         }
@@ -1194,7 +1194,7 @@ pub(super) fn plan_persisted_truncate_table_partition_job_step<S: MetaSnapshot>(
         return Err(fault(
             active,
             admission(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
                     .generate_with_stack_by_args(&[]),
             )),
         ));
@@ -1404,7 +1404,7 @@ pub(super) fn plan_cancel_partition(
                 write,
                 update_raw_args: true,
                 run_error: Some(DdlPlanError::from(
-                    tidb_util::dbterror::ERR_CANCELLED_DDL_JOB
+                    tidb_dbterror::ERR_CANCELLED_DDL_JOB
                         .generate(tidb_error::tidb::errname::ErrCancelledDDLJob.raw),
                 )),
                 reorg: None,

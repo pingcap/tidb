@@ -88,7 +88,7 @@ fn create_rsa_cert(cert_path: &Path, key_path: &Path) {
 
 fn create_new_token(username: &str) -> (SessionToken, Vec<u8>) {
     let token = create_session_token(username).unwrap();
-    let bytes = tidb_util::stringutil::go_json_marshal(&token).into_bytes();
+    let bytes = tidb_stringutil::go_json_marshal(&token).into_bytes();
     (token, bytes)
 }
 
@@ -183,13 +183,13 @@ fn verify_token() {
     assert!(error.contains("username does not match"), "{error}");
     // forge the user name
     token.username = "another_user".to_owned();
-    let forged = tidb_util::stringutil::go_json_marshal(&token);
+    let forged = tidb_stringutil::go_json_marshal(&token);
     let error = validate_session_token(forged.as_bytes(), "another_user").unwrap_err();
     assert!(error.contains("verification error"), "{error}");
     // forge the expire time
     token.username = "test_user".to_owned();
     token.expire_time = chrono::Local::now().fixed_offset() - chrono::Duration::minutes(1);
-    let forged = tidb_util::stringutil::go_json_marshal(&token);
+    let forged = tidb_stringutil::go_json_marshal(&token);
     let error = validate_session_token(forged.as_bytes(), "test_user").unwrap_err();
     assert!(error.contains("verification error"), "{error}");
 }
@@ -290,9 +290,9 @@ fn a_token_go_encoded_decodes_and_re_encodes_byte_for_byte() {
     let go = br#"{"username":"test_user","sign-time":"2026-10-27T16:03:31.123456789+08:00","expire-time":"2026-10-27T16:04:31.12345678+08:00","signature":"AQID"}"#;
     let token: SessionToken = serde_json::from_slice(go).unwrap();
     assert_eq!(token.signature, vec![1, 2, 3]);
-    assert_eq!(tidb_util::stringutil::go_json_marshal(&token).as_bytes(), go);
+    assert_eq!(tidb_stringutil::go_json_marshal(&token).as_bytes(), go);
     let utc = br#"{"username":"u","sign-time":"2026-10-27T08:03:31Z","expire-time":"2026-10-27T08:04:31Z"}"#;
     let token: SessionToken = serde_json::from_slice(utc).unwrap();
     assert!(token.signature.is_empty());
-    assert_eq!(tidb_util::stringutil::go_json_marshal(&token).as_bytes(), utc);
+    assert_eq!(tidb_stringutil::go_json_marshal(&token).as_bytes(), utc);
 }

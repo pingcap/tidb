@@ -1,0 +1,21 @@
+[package]
+name = "tidb-stringutil"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/stringutil: Go pkg/util/stringutil (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
+tidb-mysql = { path = "../tidb-mysql" }
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+
+[[bench]]
+name = "stringutil"
+harness = false

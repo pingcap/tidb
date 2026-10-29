@@ -55,7 +55,7 @@ pub fn normalize_split_policy(
     };
     if tb_info.has_clustered_index() && primary_key {
         return Err(MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_FORBIDDEN_DDL.generate_with_stack_by_args(&[
+            &tidb_dbterror::ERR_FORBIDDEN_DDL.generate_with_stack_by_args(&[
                 "SPLIT PRIMARY is only for non-clustered table".into(),
             ]),
         ));
@@ -71,7 +71,7 @@ pub fn normalize_split_policy(
     };
     if regions < 1 {
         return Err(MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_FORBIDDEN_DDL.generate_with_stack_by_args(&[
+            &tidb_dbterror::ERR_FORBIDDEN_DDL.generate_with_stack_by_args(&[
                 "SPLIT REGION number must not be zero or negative".into(),
             ]),
         ));
@@ -99,7 +99,7 @@ pub fn normalize_split_policy(
             .map(|index| index.read().columns.len())
         else {
             return Err(MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_WRONG_NAME_FOR_INDEX
+                &tidb_dbterror::ERR_WRONG_NAME_FOR_INDEX
                     .generate_with_stack_by_args(&[index_name.into()]),
             ));
         };
@@ -107,7 +107,7 @@ pub fn normalize_split_policy(
     };
     if column_count != upper.len() || column_count != lower.len() {
         return Err(MysqlError::from_terror(
-            &tidb_util::dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
+            &tidb_dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
                 .generate_with_stack_by_args(&[
                     "length of index columns and split values differ".into()
                 ]),
@@ -136,7 +136,7 @@ fn restored_bounds(bounds: &[tidb_ast::Expr]) -> Result<Vec<String>, MysqlError>
             built
                 .eval(&tidb_expr::NoColumns, tidb_chunk::row::Row::empty())
                 .map_err(|error| error.to_mysql_error())?;
-            Ok(bound.restore_with_flags(tidb_ast::RestoreFlags::DEFAULT))
+            Ok(bound.restore_with_flags(tidb_parser_format::RestoreFlags::DEFAULT))
         })
         .collect()
 }

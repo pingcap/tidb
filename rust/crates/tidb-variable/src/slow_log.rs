@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidb_util::execdetails::exec_details::{
+use tidb_execdetails::exec_details::{
     format_seconds, get_ia_remote_read_segment_stats, CopTasksDetails, ExecDetails,
     IA_REMOTE_READ_SEGMENT_COUNT_STR, IA_REMOTE_READ_SEGMENT_SIZE_STR,
     IA_REMOTE_READ_SEGMENT_WAIT_TIME_STR,
@@ -230,7 +230,7 @@ pub struct JsonSqlWarnForSlowLog {
 /// Go `RewritePhaseInfo` and `DurationOptimizer`, which the planner sets.
 pub use crate::phase_durations::{DurationOptimizer, RewritePhaseInfo};
 
-use tidb_util::execdetails::exec_details::KvExecDetails;
+use tidb_execdetails::exec_details::KvExecDetails;
 
 /// Go `execdetails.LoadTiKVExecDetails(ctx.Value(util.ExecDetailsKey))`:
 /// client-rust charges the statement's `ExecDetails` itself, traffic
@@ -339,7 +339,7 @@ pub struct SlowQueryLogItems {
     /// Go `RUDetails`.
     pub ru_details: Option<Arc<tikv_client::RuDetails>>,
     /// Go `RUV2Metrics`.
-    pub ruv2_metrics: Option<tidb_util::ruv2_metrics::RuV2Metrics>,
+    pub ruv2_metrics: Option<tidb_ruv2_metrics::RuV2Metrics>,
     /// Go `MemMax`.
     pub mem_max: i64,
     /// Go `DiskMax`.
@@ -385,15 +385,15 @@ pub struct SlowLogSessionVars {
     /// `SlowLogFormat` does.
     pub current_db_changed: bool,
     /// Go `RUV2Weights()`.
-    pub ruv2_weights: tidb_util::ruv2_metrics::RuV2Weights,
+    pub ruv2_weights: tidb_ruv2_metrics::RuV2Weights,
 }
 
 /// Go `SessionVars.RUV2Weights()`: the TiDB-side RU v2 weights of the
 /// global config (`ruv2WeightsFromConfig`).
 #[must_use]
-pub fn ruv2_weights() -> tidb_util::ruv2_metrics::RuV2Weights {
+pub fn ruv2_weights() -> tidb_ruv2_metrics::RuV2Weights {
     let config = tidb_config::config_tree::config::get_global_config().ru_v2;
-    tidb_util::ruv2_metrics::RuV2Weights {
+    tidb_ruv2_metrics::RuV2Weights {
         ru_scale: config.ru_scale,
         result_chunk_cells: config.result_chunk_cells,
         executor_l1: config.executor_l1,
@@ -918,7 +918,7 @@ pub fn slow_log_format(vars: &SlowLogSessionVars, items: &SlowQueryLogItems) -> 
     let (tikv_ru, tiflash_ru) = ru_details.map_or((0.0, 0.0), |details| {
         (details.tikv_ru_v2(), details.tiflash_ru())
     });
-    let (total, formatted) = tidb_util::ruv2_metrics::format_ruv2_summary(
+    let (total, formatted) = tidb_ruv2_metrics::format_ruv2_summary(
         items.ruv2_metrics.as_ref(),
         vars.ruv2_weights,
         tikv_ru,
@@ -1093,14 +1093,14 @@ mod tests {
             ..ExecDetails::default()
         };
         exec_detail.cop_exec_details.backoff_time = Duration::from_millis(1);
-        exec_detail.cop_exec_details.scan_detail = Some(tidb_util::execdetails::exec_details::ScanDetail {
+        exec_detail.cop_exec_details.scan_detail = Some(tidb_execdetails::exec_details::ScanDetail {
             processed_keys: 20001,
             total_keys: 10000,
             ia_cache_hit_count: 2,
             ia_remote_read_segment_count: 4,
             ia_remote_read_segment_bytes: 4096,
             ia_remote_read_segment_duration: Duration::from_millis(15),
-            ..tidb_util::execdetails::exec_details::ScanDetail::default()
+            ..tidb_execdetails::exec_details::ScanDetail::default()
         });
         exec_detail.cop_exec_details.time_detail.process_time = Duration::from_secs(2);
         exec_detail.cop_exec_details.time_detail.wait_time = Duration::from_secs(60);
@@ -1135,14 +1135,14 @@ mod tests {
         );
         let mut cop_tasks = CopTasksDetails {
             num_cop_tasks: 10,
-            process_time_stats: tidb_util::execdetails::exec_details::TaskTimeStats {
+            process_time_stats: tidb_execdetails::exec_details::TaskTimeStats {
                 avg_time: Duration::from_secs(1),
                 p90_time: Duration::from_secs(2),
                 max_address: "10.6.131.78".to_owned(),
                 max_time: Duration::from_secs(3),
                 tot_time: Duration::ZERO,
             },
-            wait_time_stats: tidb_util::execdetails::exec_details::TaskTimeStats {
+            wait_time_stats: tidb_execdetails::exec_details::TaskTimeStats {
                 avg_time: Duration::from_millis(10),
                 p90_time: Duration::from_millis(20),
                 max_time: Duration::from_millis(30),
@@ -1154,7 +1154,7 @@ mod tests {
         for backoff in ["rpcTiKV", "rpcPD", "regionMiss"] {
             cop_tasks.backoff_time_stats_map.insert(
                 backoff.to_owned(),
-                tidb_util::execdetails::exec_details::TaskTimeStats {
+                tidb_execdetails::exec_details::TaskTimeStats {
                     max_time: Duration::from_millis(200),
                     max_address: "127.0.0.1".to_owned(),
                     avg_time: Duration::from_millis(200),
@@ -1334,7 +1334,7 @@ mod tests {
         cop_tasks.process_time_stats.max_address = "store1".to_owned();
         cop_tasks.backoff_time_stats_map.insert(
             "regionMiss".to_owned(),
-            tidb_util::execdetails::exec_details::TaskTimeStats {
+            tidb_execdetails::exec_details::TaskTimeStats {
                 tot_time: Duration::from_millis(2),
                 ..Default::default()
             },

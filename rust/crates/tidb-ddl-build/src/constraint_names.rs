@@ -194,17 +194,17 @@ pub fn check_constraint_names(
             let name = &constraint.name;
             return Err(match constraint.kind {
                 Kind::ForeignKey => ConstraintNameError {
-                    proto: &tidb_util::dbterror::ERR_FK_DUP_NAME,
+                    proto: &tidb_dbterror::ERR_FK_DUP_NAME,
                     name: name.clone(),
                     message: format!("Duplicate foreign key constraint name '{name}'"),
                 },
                 Kind::Check => ConstraintNameError {
-                    proto: &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_DUP_NAME,
+                    proto: &tidb_dbterror::ERR_CHECK_CONSTRAINT_DUP_NAME,
                     name: name.clone(),
                     message: format!("Duplicate check constraint name '{name}'."),
                 },
                 Kind::Key => ConstraintNameError {
-                    proto: &tidb_util::dbterror::ERR_DUP_KEY_NAME,
+                    proto: &tidb_dbterror::ERR_DUP_KEY_NAME,
                     name: name.clone(),
                     message: format!("Duplicate key name '{name}'"),
                 },
@@ -346,7 +346,7 @@ mod tests {
         assert_eq!(
             names("create table t (a int, key c (a), constraint c check (a > 0))").unwrap_err(),
             ConstraintNameError {
-                proto: &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_DUP_NAME,
+                proto: &tidb_dbterror::ERR_CHECK_CONSTRAINT_DUP_NAME,
                 name: "c".to_owned(),
                 message: "Duplicate check constraint name 'c'.".to_owned()
             }
@@ -354,7 +354,7 @@ mod tests {
         assert_eq!(
             names("create table t (a int, constraint c check (a > 0), key c (a))").unwrap_err(),
             ConstraintNameError {
-                proto: &tidb_util::dbterror::ERR_DUP_KEY_NAME,
+                proto: &tidb_dbterror::ERR_DUP_KEY_NAME,
                 name: "c".to_owned(),
                 message: "Duplicate key name 'c'".to_owned()
             }

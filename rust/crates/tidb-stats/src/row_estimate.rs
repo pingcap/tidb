@@ -18,7 +18,7 @@
 //! contexts, and statistics handles.  Callers own the estimates' source and
 //! decide which SQL/cardinality operation each arithmetic method represents.
 
-use tidb_util::mathutil::clamp;
+use tidb_mathutil::clamp;
 
 /// The minimum, default, and maximum estimate for a row-count operation.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

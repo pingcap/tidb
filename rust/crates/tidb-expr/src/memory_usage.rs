@@ -23,7 +23,7 @@
 //! through `Datum::estimated_mem_usage` (see its own note on Go's
 //! `MemUsage`).
 
-use tidb_util::size::{SIZE_OF_POINTER, SIZE_OF_SLICE};
+use tidb_size::{SIZE_OF_POINTER, SIZE_OF_SLICE};
 
 use crate::column::{Column, CorrelatedColumn};
 use crate::constant::Constant;

@@ -1,0 +1,26 @@
+[package]
+name = "tidb-spill-storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/disk: Go pkg/util/disk (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+enableassert = ["tidb-disk/enableassert"]
+failpoints = ["tidb-disk/failpoints"]
+intest = ["tidb-disk/intest"]
+jemalloc = ["tidb-disk/jemalloc"]
+
+[dependencies]
+tidb-memory = { path = "../tidb-memory" }
+tidb-sys = { path = "../tidb-sys" }
+tidb-disk = { path = "../tidb-disk" }
+tempfile.workspace = true
+
+[dev-dependencies]
+tidb-intest = { path = "../tidb-intest", features = ["intest"] }

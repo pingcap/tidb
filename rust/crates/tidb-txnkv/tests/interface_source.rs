@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tidb_txnkv::*;
+use tidb_tiflash::ReplicaRead;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct MockError;
@@ -463,7 +464,7 @@ impl MppClient for MockMppClient {
         _: &Arc<dyn MppContext>,
         _: &MppBuildTasksRequest,
         _: &StatementKvContext,
-        _: tidb_util::tiflashcompute::DispatchPolicy,
+        _: tidb_tiflashcompute::DispatchPolicy,
         _: ReplicaRead,
         _: &mut dyn FnMut(String),
     ) -> Result<Vec<MppStoreTask>, MppError> {
@@ -476,7 +477,7 @@ impl MppClient for MockMppClient {
         _: tidb_proto::mpp::TaskMeta,
         _: Vec<u8>,
         _: &StatementKvContext,
-        _: &tidb_util::topsql_stmtstats::KvExecCounterHandle,
+        _: &tidb_topsql_stmtstats::KvExecCounterHandle,
     ) -> Result<(), MppError> {
         Ok(())
     }
@@ -487,7 +488,7 @@ impl MppClient for MockMppClient {
         _: tidb_proto::mpp::TaskMeta,
         _: tidb_proto::mpp::TaskMeta,
         _: &StatementKvContext,
-        _: &tidb_util::topsql_stmtstats::KvExecCounterHandle,
+        _: &tidb_topsql_stmtstats::KvExecCounterHandle,
     ) -> Result<Box<dyn MppStreamResponse>, MppError> {
         Err(MppError::Other("no store".to_owned()))
     }

@@ -2046,11 +2046,11 @@ fn physical_explain_operator(
         operator.memory_info = memory
             .stmt_tracker()
             .search_tracker(label)
-            .map(|tracker| tidb_util::memory::format_bytes(tracker.max_consumed()));
+            .map(|tracker| tidb_memory::format_bytes(tracker.max_consumed()));
         operator.disk_info = memory
             .stmt_disk_tracker()
             .search_tracker(label)
-            .map(|tracker| tidb_util::memory::format_bytes(tracker.max_consumed()));
+            .map(|tracker| tidb_memory::format_bytes(tracker.max_consumed()));
     }
     // Go `getRuntimeInfoStr`: a pushed operator reports what the cop tasks
     // returned in their execution summaries. A local fallback for a cop plan
@@ -2489,7 +2489,7 @@ fn binary_plan_from_roots(
         ctes,
         ..Default::default()
     };
-    tidb_util::plancodec::compress(&data.encode_to_vec())
+    tidb_plancodec::compress(&data.encode_to_vec())
 }
 
 fn first_table_scan(plan: &PhysicalPlan) -> Option<&tidb_planner::physical::PhysicalTableScan> {
@@ -2687,8 +2687,8 @@ fn collect_stats_info(
 // format; the binary format keeps them in its typed field.
 fn encode_observed_operator(operator: &ExplainOperator, depth: isize, output: &mut String) {
     let task = match &operator.task {
-        ExplainTask::Root => tidb_util::plancodec::encode_task_type(true, 0),
-        ExplainTask::Cop { store, .. } => tidb_util::plancodec::encode_task_type(
+        ExplainTask::Root => tidb_plancodec::encode_task_type(true, 0),
+        ExplainTask::Cop { store, .. } => tidb_plancodec::encode_task_type(
             false,
             match store.as_str() {
                 "tiflash" => 1,
@@ -2708,7 +2708,7 @@ fn encode_observed_operator(operator: &ExplainOperator, depth: isize, output: &m
         }
         info.push_str(&operator.operator_info);
     }
-    tidb_util::plancodec::encode_plan_node(
+    tidb_plancodec::encode_plan_node(
         depth,
         &format!("{}{}", operator.id, operator.label),
         &operator.operator,
@@ -3184,10 +3184,10 @@ pub fn normalize_physical_plan(
                 self.catalog,
                 index_join_context,
             );
-            tidb_util::plancodec::normalize_plan_node(
+            tidb_plancodec::normalize_plan_node(
                 depth,
                 &name,
-                &tidb_util::plancodec::encode_task_type_for_normalize(is_root, store),
+                &tidb_plancodec::encode_task_type_for_normalize(is_root, store),
                 &info,
                 &mut self.output,
             );
@@ -3304,7 +3304,7 @@ fn plan_encodings(
     let encoded_plan = if encoded.is_empty() {
         String::new()
     } else {
-        tidb_util::plancodec::compress(encoded.as_bytes())
+        tidb_plancodec::compress(encoded.as_bytes())
     };
     (
         encoded_plan,
@@ -3437,12 +3437,12 @@ fn register_ru_runtime_stats(
         runtime
             .entry(crate::driver::physical_builder::runtime_plan_key(physical))
             .or_insert_with(|| crate::executor::RowCount::default().into())
-            .register_ru_runtime_stats(tidb_util::ruv2_metrics::RuRuntimeStats {
+            .register_ru_runtime_stats(tidb_ruv2_metrics::RuRuntimeStats {
                 ru_details: Some(ru_details.cloned()),
                 metrics: None,
-                weights: tidb_util::ruv2_metrics::RuV2Weights::default(),
+                weights: tidb_ruv2_metrics::RuV2Weights::default(),
                 // Go `do.GetRUVersion()`.
-                ru_version: tidb_util::topsql_stmtstats::bound_ru_version(),
+                ru_version: tidb_topsql_stmtstats::bound_ru_version(),
             });
     }
     runtime
@@ -3525,8 +3525,8 @@ fn render_physical_plan(
             // go prices `ExplainFormatCostTrace` with
             // `CostFlagTrace` so every operator's `CostVer2` carries
             // its formula decomposition.
-            let mut option = tidb_planner::cost_usage::PlanCostOption::new();
-            option.with_cost_flag(tidb_planner::cost_usage::COST_FLAG_TRACE);
+            let mut option = tidb_planner_costusage::PlanCostOption::new();
+            option.with_cost_flag(tidb_planner_costusage::COST_FLAG_TRACE);
             coster.with_cost_option(option)
         } else {
             coster
@@ -3703,7 +3703,7 @@ fn explain_binary_plan(roots: Vec<ExplainOperator>, analyze: bool) -> String {
         with_runtime_stats: true,
         ..Default::default()
     };
-    tidb_util::plancodec::compress(&data.encode_to_vec())
+    tidb_plancodec::compress(&data.encode_to_vec())
 }
 
 const EMPTY_ROOT_BASIC_EXEC_INFO: &str = "time:0s, open:0s, close:0s, loops:0";

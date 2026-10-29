@@ -21,8 +21,11 @@ tidb-datatype = { path = "../../crates/tidb-datatype" }
 tidb-executor = { path = "../../crates/tidb-executor" }
 tidb-privilege = { path = "../../crates/tidb-privilege" }
 tidb-session = { path = "../../crates/tidb-session" }
+tidb-sessmgr = { path = "../../crates/tidb-sessmgr" }
 tidb-expensivequery = { path = "../../crates/tidb-expensivequery" }
+tidb-memory = { path = "../../crates/tidb-memory" }
 tidb-util = { path = "../../crates/tidb-util" }
+tidb-sqlkiller = { path = "../../crates/tidb-sqlkiller" }
 tidb-protocol = { path = "../../crates/tidb-protocol" }
 tidb-config = { path = "../../crates/tidb-config" }
 

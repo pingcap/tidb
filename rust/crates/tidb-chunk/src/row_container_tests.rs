@@ -17,7 +17,7 @@ use super::*;
 use std::sync::atomic::AtomicUsize;
 use std::sync::{mpsc, Barrier};
 use tidb_datatype::FieldTypeCode as C;
-use tidb_util::memory::BaseOomAction;
+use tidb_memory::BaseOomAction;
 
 fn int64_fields() -> Vec<FieldType> {
     vec![FieldType::new(C::LongLong)]
@@ -726,7 +726,7 @@ fn a_kill_signal_stops_a_spill_in_progress() {
     rc.add(int64_chunk(20)).expect("add");
 
     root.killer
-        .send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+        .send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
     rc.spill_to_disk();
     // Go recovers the kill panic inside `spillToDisk` and leaves it in
     // `spillError`, which every later read reports.
@@ -758,7 +758,7 @@ fn a_kill_signal_stops_a_spill_in_progress() {
 fn disk_quota_failure_is_sticky_for_reads_and_later_adds() {
     let storage = crate::test_temp_storage::isolated_storage_with_quota(
         "row-container-quota",
-        tidb_util::spill_storage::SpillEncryptionMethod::Plaintext,
+        tidb_spill_storage::SpillEncryptionMethod::Plaintext,
         1,
     );
     let fields = int64_fields();
@@ -771,7 +771,7 @@ fn disk_quota_failure_is_sticky_for_reads_and_later_adds() {
     let stored = rc.spill_error().expect("quota failure must be stored");
     assert_eq!(
         stored,
-        tidb_util::spill_storage::LOCAL_TEMPORARY_SPACE_QUOTA_ERROR
+        tidb_spill_storage::LOCAL_TEMPORARY_SPACE_QUOTA_ERROR
     );
     assert!(rc.already_spilled(), "the disk authority was installed");
 

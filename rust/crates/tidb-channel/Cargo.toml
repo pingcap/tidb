@@ -1,0 +1,13 @@
+[package]
+name = "tidb-channel"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/channel: Go pkg/util/channel (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]

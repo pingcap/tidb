@@ -456,7 +456,7 @@ pub struct CachedAutoIdAllocator {
 #[derive(Clone)]
 pub struct AutoIdCall {
     rpc: tidb_txnkv::rpc::UnaryCallContext,
-    killer: Option<Arc<tidb_util::sqlkiller::SqlKiller>>,
+    killer: Option<Arc<tidb_sqlkiller::SqlKiller>>,
 }
 impl AutoIdCall {
     /// Go context.Background for service reads without a caller deadline.
@@ -496,7 +496,7 @@ impl AutoIdCall {
     /// Poll the shared SQL kill signal before transport admission and retry waits.
     pub fn cancellation(&self) -> &tidb_txnkv::rpc::UnaryCancellation {
         if self.killer.as_ref().is_some_and(|k| {
-            k.get_kill_signal() != tidb_util::sqlkiller::KillSignal::UnspecifiedKillSignal
+            k.get_kill_signal() != tidb_sqlkiller::KillSignal::UnspecifiedKillSignal
         }) {
             self.rpc.cancellation().cancel();
         }

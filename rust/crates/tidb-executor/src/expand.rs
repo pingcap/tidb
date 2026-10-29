@@ -24,7 +24,7 @@ use tidb_expr::evaluator::{EvaluatorError, EvaluatorSuite};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
-use tidb_util::memory::Tracker;
+use tidb_memory::Tracker;
 
 /// Projects a cached input batch once per grouping level before advancing.
 pub struct ExpandExec<C: Columns> {

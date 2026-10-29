@@ -81,7 +81,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
     /// session.
     fn viewer_state(&self) -> crate::memtable_reader::ViewerState;
     /// Go `SessionManager`: this server's process registry.
-    fn process_registry(&self) -> Option<crate::process::ProcessRegistry>;
+    fn process_registry(&self) -> Option<tidb_sessmgr::ProcessRegistry>;
     /// Go `fetchShowSessionStates` over `EncodeStates`.
     fn show_session_states_rows(&self) -> Result<Vec<Vec<Datum>>, DriverError>;
     /// Go `fetchShowClusterConfigs`.
@@ -1701,7 +1701,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                     match row.info {
                         Some(info) => Datum::Bytes(
                             tidb_hack::raw_bytes::str_to_bytes(
-                                &crate::process::truncate_process_info(&info, full),
+                                &tidb_sessmgr::truncate_process_info(&info, full),
                             )
                             .into_owned(),
                         ),
@@ -1750,8 +1750,8 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
         Ok(vec![vec![
             Datum::Int(count),
             Datum::Int(count),
-            Datum::new_string(tidb_util::memory::format_bytes(usage)),
-            Datum::new_string(tidb_util::memory::format_bytes(quota)),
+            Datum::new_string(tidb_memory::format_bytes(usage)),
+            Datum::new_string(tidb_memory::format_bytes(quota)),
         ]])
     }
 

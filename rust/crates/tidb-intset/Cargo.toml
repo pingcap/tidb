@@ -1,0 +1,17 @@
+[package]
+name = "tidb-intset"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/intset: Go pkg/util/intset (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[[bench]]
+name = "intset"
+harness = false

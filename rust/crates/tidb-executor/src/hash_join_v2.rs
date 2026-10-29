@@ -41,8 +41,8 @@ use crate::joiner::JoinType;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_util::copy_selected_rows_with_row_id_func;
 use tidb_codec::JoinKeyColumns;
-use tidb_util::memory::Tracker;
-use tidb_util::sqlkiller::SqlKiller;
+use tidb_memory::Tracker;
+use tidb_sqlkiller::SqlKiller;
 
 use crate::base_join_probe::{
     common_init_for_scan_row_table, is_key_matched, is_key_matched_mode, new_join_probe,
@@ -1334,7 +1334,7 @@ pub struct HashJoinV2Exec {
     pub hash_table_context: HashTableContext,
     /// Go `HashJoinV2Exec.memTracker` (`NewTracker(e.ID(), -1)`), the hash
     /// table tracker's parent; `None` attaches it to the statement.
-    pub memory_tracker: Option<std::sync::Arc<tidb_util::memory::Tracker>>,
+    pub memory_tracker: Option<std::sync::Arc<tidb_memory::Tracker>>,
 }
 
 impl HashJoinV2Exec {

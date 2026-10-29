@@ -1,0 +1,13 @@
+[package]
+name = "tidb-unistore-lockwaiter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/store/mockstore/unistore/util/lockwaiter: the pessimistic lock wait queue (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]

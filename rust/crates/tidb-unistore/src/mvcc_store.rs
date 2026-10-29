@@ -47,7 +47,7 @@
 //! This store is single-writer (`&mut self`), which the borrow checker
 //! enforces more strongly than the latches do; the calls are therefore
 //! absent rather than stubbed. Pessimistic waiters are Go's: a conflicting
-//! lock parks a [`crate::lockwaiter::Waiter`] that the caller waits on with
+//! lock parks a [`tidb_unistore_lockwaiter::Waiter`] that the caller waits on with
 //! the store released, and commits, rollbacks and cleanups wake it.
 //!
 //! `reqCtx.buf` (Go's per-request lock-buffer reuse) is an allocation
@@ -57,8 +57,8 @@ use std::collections::BTreeMap;
 
 use tidb_proto::{KvrpcLockInfo, KvrpcMutation, KvrpcOp, KvrpcTxnAction};
 
-use crate::lockstore::MemStore;
-use crate::mvcc::{decode_lock, encode_extra_txn_status_key, DbUserMeta, Lock, LockHdr};
+use tidb_unistore_lockstore::MemStore;
+use tidb_unistore_mvcc::{decode_lock, encode_extra_txn_status_key, DbUserMeta, Lock, LockHdr};
 use crate::tikv_util::{exceed_end_key, keys_to_hash_vals, mutations_to_hash_vals};
 
 /// The version-keyed committed store standing in for badger. Keys are
@@ -284,7 +284,7 @@ pub enum KvError {
         /// `DeadlockKeyHash`.
         deadlock_key_hash: u64,
         /// `WaitChain`.
-        wait_chain: Vec<crate::lockwaiter::WaitForEntry>,
+        wait_chain: Vec<tidb_unistore_lockwaiter::WaitForEntry>,
     },
     /// Go's literal `errors.New("lock type not match")`.
     LockTypeNotMatch,
@@ -362,7 +362,7 @@ pub struct MvccStore {
     /// Go `latestTS`: the newest commit ts the store has written.
     latest_ts: u64,
     /// Go `lockWaiterManager`: pessimistic lockers parked on a key.
-    pub lock_waiter_manager: std::sync::Arc<crate::lockwaiter::Manager>,
+    pub lock_waiter_manager: std::sync::Arc<tidb_unistore_lockwaiter::Manager>,
     /// Go `DeadlockDetectSvr` (the detector the store's client reaches in
     /// process, Go's non-raft `StartDeadlockDetection`).
     pub deadlock_detector: std::sync::Arc<crate::detector::Detector>,
@@ -395,8 +395,8 @@ impl MvccStore {
             pd: None,
             safe_point: 0,
             latest_ts: 0,
-            lock_waiter_manager: std::sync::Arc::new(crate::lockwaiter::Manager::new(
-                &crate::lockwaiter::Config::default(),
+            lock_waiter_manager: std::sync::Arc::new(tidb_unistore_lockwaiter::Manager::new(
+                &tidb_unistore_lockwaiter::Config::default(),
             )),
             // Go `NewDetectorServer`: 3s entry TTL, urgent size 100000, 3600s
             // expire interval.
@@ -845,11 +845,11 @@ impl MvccStore {
         lock_wait_time: i64,
         key: &[u8],
         resource_group_tag: &[u8],
-    ) -> Option<std::sync::Arc<crate::lockwaiter::Waiter>> {
+    ) -> Option<std::sync::Arc<tidb_unistore_lockwaiter::Waiter>> {
         let KvError::Locked(locked) = err else {
             return None;
         };
-        if lock_wait_time == crate::lockwaiter::LOCK_NO_WAIT {
+        if lock_wait_time == tidb_unistore_lockwaiter::LOCK_NO_WAIT {
             return None;
         }
         let key_hash = tidb_txnkv::fingerprint64(&locked.key);
@@ -869,12 +869,12 @@ impl MvccStore {
             {
                 // Go `convertErrToResp` + `WakeUpForDeadlock`.
                 self.lock_waiter_manager.wake_up_for_deadlock(
-                    &crate::lockwaiter::DeadlockResponse {
-                        entry: crate::lockwaiter::WaitForEntry {
+                    &tidb_unistore_lockwaiter::DeadlockResponse {
+                        entry: tidb_unistore_lockwaiter::WaitForEntry {
                             txn: start_ts,
                             wait_for_txn: lock_ts,
                             key_hash,
-                            ..crate::lockwaiter::WaitForEntry::default()
+                            ..tidb_unistore_lockwaiter::WaitForEntry::default()
                         },
                         deadlock_key_hash: deadlock.deadlock_key_hash,
                         wait_chain: deadlock.wait_chain,
@@ -1023,7 +1023,7 @@ impl MvccStore {
         self.engine
             .versions(key)
             .find(|meta| meta.start_ts() == start_ts)
-            .map(super::mvcc::DbUserMeta::commit_ts)
+            .map(tidb_unistore_mvcc::DbUserMeta::commit_ts)
     }
 
     /// Go `MVCCStore.Get` at the default read context: snapshot isolation
@@ -1167,7 +1167,7 @@ impl MvccStore {
             if !matches!(entry_key.first(), Some(&b'u' | &b'n')) {
                 continue;
             }
-            let rollback_ts = super::mvcc::decode_key_ts(entry_key);
+            let rollback_ts = tidb_unistore_mvcc::decode_key_ts(entry_key);
             info.writes.push(MvccWrite {
                 op: KvrpcOp::Rollback as i32,
                 start_ts: rollback_ts,
@@ -2215,7 +2215,7 @@ pub struct PessimisticLockReq {
     /// latest value and its commit_ts instead of a write conflict.
     pub force: bool,
     /// `WaitTimeout`, milliseconds: how long a conflicting lock is waited
-    /// for; [`crate::lockwaiter::LOCK_NO_WAIT`] answers at once, zero is the
+    /// for; [`tidb_unistore_lockwaiter::LOCK_NO_WAIT`] answers at once, zero is the
     /// store's limit.
     pub wait_timeout: i64,
     /// `IsFirstLock`: the statement's first lock skips deadlock detection.
@@ -2263,7 +2263,7 @@ impl MvccStore {
         req: &PessimisticLockReq,
     ) -> (
         Result<PessimisticLockResult, KvError>,
-        Option<std::sync::Arc<crate::lockwaiter::Waiter>>,
+        Option<std::sync::Arc<tidb_unistore_lockwaiter::Waiter>>,
     ) {
         let mut waiter = None;
         let result = self.pessimistic_lock_inner(req, &mut waiter);
@@ -2274,7 +2274,7 @@ impl MvccStore {
     fn pessimistic_lock_inner(
         &mut self,
         req: &PessimisticLockReq,
-        waiter: &mut Option<std::sync::Arc<crate::lockwaiter::Waiter>>,
+        waiter: &mut Option<std::sync::Arc<tidb_unistore_lockwaiter::Waiter>>,
     ) -> Result<PessimisticLockResult, KvError> {
         let mut mutations = req.mutations.clone();
         if !req.return_values {

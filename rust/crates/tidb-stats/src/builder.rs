@@ -41,8 +41,8 @@ use std::sync::Arc;
 
 use tidb_chunk::column::VAR_ELEM_LEN;
 use tidb_datatype::{Collation, Datum, DatumValueError};
-use tidb_util::generic::BoundedMinHeap;
-use tidb_util::memory::Tracker;
+use tidb_generic::BoundedMinHeap;
+use tidb_memory::Tracker;
 
 use crate::cmsketch::TopN;
 use crate::correlation::calc_correlation;

@@ -2,7 +2,7 @@
 //!
 //! One value serves both directions of the round trip: its name and current
 //! offset go into the DAG request, and the same DST-aware zone converts write
-//! literals. Parsing is delegated to `tidb_util::timeutil::parse_time_zone`,
+//! literals. Parsing is delegated to `tidb_timeutil::parse_time_zone`,
 //! the package owner of Go `timeutil.ParseTimeZone`'s accepted domain.
 
 /// A real-TiKV session's resolved `time_zone`.
@@ -13,18 +13,18 @@ pub struct RealTiKvSessionTimeZone {
 
 impl Default for RealTiKvSessionTimeZone {
     fn default() -> Self {
-        Self::from_timeutil(tidb_util::timeutil::system_location())
+        Self::from_timeutil(tidb_timeutil::system_location())
     }
 }
 
 impl RealTiKvSessionTimeZone {
-    fn from_timeutil(zone: tidb_util::timeutil::TimeZone) -> Self {
+    fn from_timeutil(zone: tidb_timeutil::TimeZone) -> Self {
         let zone = match zone {
-            tidb_util::timeutil::TimeZone::Local => tidb_datatype::SessionTimeZone::Local,
-            tidb_util::timeutil::TimeZone::Named(zone) => {
+            tidb_timeutil::TimeZone::Local => tidb_datatype::SessionTimeZone::Local,
+            tidb_timeutil::TimeZone::Named(zone) => {
                 tidb_datatype::SessionTimeZone::Named(zone)
             }
-            tidb_util::timeutil::TimeZone::Fixed { name, offset_secs } => {
+            tidb_timeutil::TimeZone::Fixed { name, offset_secs } => {
                 tidb_datatype::SessionTimeZone::Fixed { name, offset_secs }
             }
         };
@@ -38,7 +38,7 @@ impl RealTiKvSessionTimeZone {
 
     /// Parses the complete Go `timeutil.ParseTimeZone` domain.
     pub fn parse(value: &str) -> Result<Self, tidb_error::terror::TerrorError> {
-        Ok(Self::from_timeutil(tidb_util::timeutil::parse_time_zone(
+        Ok(Self::from_timeutil(tidb_timeutil::parse_time_zone(
             value,
         )?))
     }
@@ -69,8 +69,8 @@ mod tests {
         assert_eq!(dag("-08:00"), (String::new(), -28_800));
         assert_eq!(dag("+00:00"), (String::new(), 0));
         assert_eq!(dag("UTC"), ("UTC".to_owned(), 0));
-        let system = tidb_util::timeutil::system_location();
-        assert_eq!(dag("SYSTEM"), tidb_util::timeutil::zone(&system));
+        let system = tidb_timeutil::system_location();
+        assert_eq!(dag("SYSTEM"), tidb_timeutil::zone(&system));
     }
 
     #[test]
@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn fresh_session_uses_the_resolved_system_location() {
         let default = RealTiKvSessionTimeZone::default().zone().dag_zone();
-        let system = tidb_util::timeutil::system_location();
-        assert_eq!(default, tidb_util::timeutil::zone(&system));
+        let system = tidb_timeutil::system_location();
+        assert_eq!(default, tidb_timeutil::zone(&system));
     }
 }

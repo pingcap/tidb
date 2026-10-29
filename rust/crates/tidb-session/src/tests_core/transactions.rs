@@ -602,7 +602,7 @@ fn as_of_timestamp_reads_the_stores_history() {
                     .session()
                     .routed_statement_memory()
                     .sql_killer()
-                    .send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+                    .send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
                 let mut chunk = result.new_chunk();
                 assert_eq!(
                     result.next(&mut chunk).unwrap_err().to_mysql_error().code,

@@ -50,10 +50,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tidb_datatype::FieldType;
-use tidb_util::disk;
-use tidb_util::layered_io::ReadAt;
-use tidb_util::memory::LABEL_FOR_CHUNK_DATA_IN_DISK_BY_CHUNKS;
-use tidb_util::spill_storage::{SpillStorage, LOCAL_TEMPORARY_SPACE_QUOTA_ERROR};
+use tidb_disk as disk;
+use tidb_layered_io::ReadAt;
+use tidb_memory::LABEL_FOR_CHUNK_DATA_IN_DISK_BY_CHUNKS;
+use tidb_spill_storage::{SpillStorage, LOCAL_TEMPORARY_SPACE_QUOTA_ERROR};
 
 use crate::chunk::Chunk;
 use crate::chunk_util::DiskFileReaderWriter;
@@ -398,10 +398,10 @@ pub(crate) fn read_full_at(
         }
         if let Some(error) = result.error {
             return match error {
-                tidb_util::layered_io::ReadAtError::Eof => {
+                tidb_layered_io::ReadAtError::Eof => {
                     Err(io::Error::new(io::ErrorKind::UnexpectedEof, error))
                 }
-                tidb_util::layered_io::ReadAtError::Io(error) => Err(error),
+                tidb_layered_io::ReadAtError::Io(error) => Err(error),
             };
         }
         if result.n == 0 {
@@ -419,7 +419,7 @@ mod tests {
     use super::*;
     use crate::chunk::Chunk;
     use tidb_datatype::FieldTypeCode;
-    use tidb_util::layered_io::{ReadAtError, ReadAtResult};
+    use tidb_layered_io::{ReadAtError, ReadAtResult};
 
     struct BytesReader(&'static [u8]);
 
@@ -483,7 +483,7 @@ mod tests {
             .collect()
     }
 
-    fn fixture_cipher(key: &str) -> tidb_util::encrypt::CtrCipher {
+    fn fixture_cipher(key: &str) -> tidb_encrypt::CtrCipher {
         let specification = encrypted_go_vector(key);
         let (key_hex, nonce_hex) = specification
             .strip_prefix("key=")
@@ -491,7 +491,7 @@ mod tests {
             .expect("key and nonce fixture");
         let key: [u8; 16] = bytes_of(key_hex).try_into().expect("AES-128 key");
         let nonce: [u8; 8] = bytes_of(nonce_hex).try_into().expect("CTR nonce");
-        tidb_util::encrypt::CtrCipher::new_for_test(key, u64::from_be_bytes(nonce))
+        tidb_encrypt::CtrCipher::new_for_test(key, u64::from_be_bytes(nonce))
             .expect("fixture cipher")
     }
 
@@ -600,7 +600,7 @@ mod tests {
     }
 
     use crate::test_temp_storage::isolated_storage;
-    use tidb_util::spill_storage::SpillEncryptionMethod;
+    use tidb_spill_storage::SpillEncryptionMethod;
 
     /// Builds chunk `c` of `chunks` chunks x `rows` rows, deterministically.
     fn payload_chunk(fields: &[FieldType], c: usize, rows: usize) -> Chunk {
@@ -825,7 +825,7 @@ mod tests {
         assert!(matches!(error, DiskError::QuotaExceeded));
         assert_eq!(
             error.to_string(),
-            tidb_util::spill_storage::LOCAL_TEMPORARY_SPACE_QUOTA_ERROR
+            tidb_spill_storage::LOCAL_TEMPORARY_SPACE_QUOTA_ERROR
         );
         assert!(storage.global_tracker().bytes_consumed() > 0);
 

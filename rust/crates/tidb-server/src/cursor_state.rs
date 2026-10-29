@@ -21,7 +21,7 @@ use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DiskError;
 use tidb_chunk::row_container::RowContainer;
 use tidb_chunk::row_container_reader::RowContainerReader;
-use tidb_util::memory::{
+use tidb_memory::{
     ActionWithPriority, ArcAction, DEF_CURSOR_FETCH_SPILL_PRIORITY, LABEL_FOR_CURSOR_FETCH,
 };
 
@@ -329,7 +329,7 @@ mod tests {
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_executor::StatementMemory;
     use tidb_vardef::OomAction;
-    use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+    use tidb_spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
     use super::*;
     use crate::pipeline_session::select_fields;

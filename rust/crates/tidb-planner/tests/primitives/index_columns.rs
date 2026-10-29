@@ -18,7 +18,7 @@
 //! `pkg/planner/util/column_test.go:29`; these vectors isolate prefix stopping
 //! and full-column missing-slot semantics from expression/catalog ownership.
 
-use tidb_planner::index_columns::{
+use tidb_planner_util::index_columns::{
     project_index_columns, ColumnRef, IndexColumnProjection, IndexColumnRef, ResolvedColumn,
     UNSPECIFIED_LENGTH,
 };

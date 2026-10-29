@@ -741,7 +741,7 @@ pub fn generate_sql(stats: &RuStats) -> Result<Option<String>, RuStatsError> {
             // Go warns with the group's name and id, then skips it
             // (`ru_stats.go:274-276`). A fresh cluster's `default` group has
             // no consumption yet, so this is the line such a round logs.
-            tidb_util::logutil::bg_logger().warn(
+            tidb_logutil::bg_logger().warn(
                 "group ru consumption statistics data is empty",
                 &[
                     Field::new("name", Value::Str(g.name.clone())),
@@ -1510,7 +1510,7 @@ where
             match writer.do_write_ru_statistics() {
                 Ok(()) => break None,
                 Err(error) => {
-                    tidb_util::logutil::bg_logger().error(
+                    tidb_logutil::bg_logger().error(
                         "failed to insert request_unit_by_group data",
                         &[
                             Field::new("error", Value::Str(error.to_string())),
@@ -1528,7 +1528,7 @@ where
         // Go attempts the GC once per owned round and only warns on failure.
         // Go's message spells "rowd".
         if let Err(error) = writer.gc_outdated_records(&last_time) {
-            tidb_util::logutil::bg_logger().warn(
+            tidb_logutil::bg_logger().warn(
                 "[ru_stats] gc outdated rowd failed, will try next time.",
                 &[Field::new("error", Value::Str(error.to_string()))],
             );
@@ -1558,7 +1558,7 @@ where
         if let Some(error) = last_error {
             fields.push(Field::new("error", Value::Str(error.to_string())));
         }
-        tidb_util::logutil::bg_logger().info("[ru_stats] finish write ru historical data", &fields);
+        tidb_logutil::bg_logger().info("[ru_stats] finish write ru historical data", &fields);
     }
     // Go: nextTime := lastTime.Add(ruStatsInterval); dur := time.Until(nextTime).
     next_wakeup(&last_time)

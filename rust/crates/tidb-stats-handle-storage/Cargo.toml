@@ -8,6 +8,9 @@ repository.workspace = true
 description = "TiDB statistics storage: Go pkg/statistics/handle/storage (Rust rewrite)."
 
 [dependencies]
+tidb-compress = { path = "../tidb-compress" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-worker-stack = { path = "../tidb-worker-stack" }
 serde_json = { workspace = true }
 base64 = { workspace = true }
 tidb-stats-handle-usage-predicatecolumn = { path = "../tidb-stats-handle-usage-predicatecolumn" }

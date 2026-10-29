@@ -182,15 +182,15 @@ const NO_SOURCE_TYPE_WARNING: &str = "unexpected no source type context, if you 
 
 fn set_request_source<T: NewTxnTransaction>(context: &RunInNewTxnContext, transaction: &mut T) {
     let Some(source) = context.request_source.as_ref() else {
-        tidb_util::logutil::bg_logger().warn(NO_SOURCE_TYPE_WARNING, &[]);
+        tidb_logutil::bg_logger().warn(NO_SOURCE_TYPE_WARNING, &[]);
         return;
     };
     if source.source_type.is_empty() {
-        tidb_util::logutil::bg_logger().warn(NO_SOURCE_TYPE_WARNING, &[]);
+        tidb_logutil::bg_logger().warn(NO_SOURCE_TYPE_WARNING, &[]);
         return;
     }
     if !source.internal {
-        tidb_util::logutil::bg_logger().warn("`RunInNewTxn` should be used by inner txn only", &[]);
+        tidb_logutil::bg_logger().warn("`RunInNewTxn` should be used by inner txn only", &[]);
     }
     transaction.set_option(
         OptionKey::RequestSourceInternal,

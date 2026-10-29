@@ -15,6 +15,7 @@ default = []
 failpoints = ["dep:fail", "fail/failpoints"]
 
 [dependencies]
+tidb-sqlescape = { path = "../tidb-sqlescape" }
 fail = { version = "0.4", optional = true }
 prometheus = { version = "0.14", default-features = false }
 tidb-datatype = { path = "../tidb-datatype" }

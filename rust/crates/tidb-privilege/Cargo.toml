@@ -8,6 +8,11 @@ repository.workspace = true
 description = "Go pkg/privilege/privileges (the privilege cache and account policy) for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-dbterror = { path = "../tidb-dbterror" }
+tidb-fastrand = { path = "../tidb-fastrand" }
+tidb-sem-compat = { path = "../tidb-sem-compat" }
+tidb-stringutil = { path = "../tidb-stringutil" }
+tidb-timeutil = { path = "../tidb-timeutil" }
 tidb-table = { path = "../tidb-table" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-model = { path = "../tidb-model" }

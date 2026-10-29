@@ -73,7 +73,7 @@ pub trait OptimizeContext: tidb_expr::Columns + PlanCacheMarker + HintWarningSin
     /// Go `SessionVars.SelectivityFactor`.
     fn selectivity_factor(&self) -> f64;
     /// Go's range-fallback warning hook (`StmtCtx.RecordRangeFallback`).
-    fn range_fallback_handler(&self) -> &tidb_util::context::RangeFallbackHandler;
+    fn range_fallback_handler(&self) -> &tidb_context::RangeFallbackHandler;
     /// Go `SessionVars.AlwaysKeepJoinKey`.
     fn always_keep_join_key(&self) -> bool;
     /// Go `SessionVars.EnableUnsafeSubstitute`.
@@ -515,7 +515,7 @@ pub fn optimize_physical<C: OptimizeContext>(
         && crate::physical::chunk_reuse::should_disable_reuse_chunk(
             &physical,
             ctx.max_chunk_size(),
-            tidb_util::memory::mem_total().ok(),
+            tidb_memory::mem_total().ok(),
         )
     {
         ctx.set_chunk_alloc_valid(false);

@@ -1611,7 +1611,7 @@ fn client_errors_summary_uses_the_shared_counters_and_process_rules() {
 
 #[test]
 fn transaction_observation_batch_summary_completion_visibility_and_physical_identity() {
-    let recorder = std::sync::Arc::new(tidb_executor::txn_summary::TransactionHistoryRecorder::new(
+    let recorder = std::sync::Arc::new(tidb_txninfo::TransactionHistoryRecorder::new(
         32,
         std::time::Duration::ZERO,
     ));

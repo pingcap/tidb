@@ -39,14 +39,14 @@ impl ReorgSessionVars {
                 let location = location.read();
                 let name = location.name.to_string();
                 if location.offset == 0 {
-                    match tidb_util::timeutil::load_location(&name) {
-                        Ok(tidb_util::timeutil::TimeZone::Named(zone)) => {
+                    match tidb_timeutil::load_location(&name) {
+                        Ok(tidb_timeutil::TimeZone::Named(zone)) => {
                             tidb_datatype::SessionTimeZone::Named(zone)
                         }
-                        Ok(tidb_util::timeutil::TimeZone::Local) => {
+                        Ok(tidb_timeutil::TimeZone::Local) => {
                             tidb_datatype::SessionTimeZone::Local
                         }
-                        Ok(tidb_util::timeutil::TimeZone::Fixed { name, offset_secs }) => {
+                        Ok(tidb_timeutil::TimeZone::Fixed { name, offset_secs }) => {
                             tidb_datatype::SessionTimeZone::Fixed { name, offset_secs }
                         }
                         Err(_) => utc,

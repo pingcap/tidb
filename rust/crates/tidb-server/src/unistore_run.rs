@@ -49,8 +49,8 @@ fn finish_with_signal_code(
 /// the reload ticks still run, against this process's own store.
 pub fn run_unistore_cluster_session(
     config: tidb_domain_core::node_config::NodeConfig,
-    spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
-    memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
+    spill_storage: Arc<tidb_spill_storage::SpillStorage>,
+    memory_arbitrator: Option<Arc<tidb_memory::MemArbitrator>>,
 ) -> Result<(), tidb_session::domain::real_tikv_node::RunConfiguredNodeError> {
     use tidb_session::domain::real_tikv_node::RunConfiguredNodeError;
 
@@ -114,7 +114,7 @@ pub fn run_unistore_cluster_session(
             config.status_port,
             node.tracker(),
             tidb_mysql::runtime_versions().server_version,
-            tidb_util::versioninfo::TIDB_GIT_HASH.to_owned(),
+            tidb_versioninfo::TIDB_GIT_HASH.to_owned(),
             crate::http_status::StatusRoutes {
                 schema: Some(Arc::new(move || schema_factory.catalog_snapshot())),
                 settings: Some(crate::node_status::status_settings(&factory)),

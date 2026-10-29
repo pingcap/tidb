@@ -196,14 +196,14 @@ struct RepairModeOn;
 
 impl RepairModeOn {
     fn enter() -> Self {
-        tidb_domain::domainutil::REPAIR_INFO.set_repair_mode(true);
+        tidb_domainutil::REPAIR_INFO.set_repair_mode(true);
         Self
     }
 }
 
 impl Drop for RepairModeOn {
     fn drop(&mut self) {
-        tidb_domain::domainutil::REPAIR_INFO.set_repair_mode(false);
+        tidb_domainutil::REPAIR_INFO.set_repair_mode(false);
     }
 }
 
@@ -232,7 +232,7 @@ fn repair_table_is_refused_by_the_preprocessor() {
         (8215, "Failed to repair table: TiDB is not in REPAIR MODE")
     );
     let _repair_mode = RepairModeOn::enter();
-    assert!(tidb_domain::domainutil::REPAIR_INFO
+    assert!(tidb_domainutil::REPAIR_INFO
         .get_repair_table_list()
         .is_empty());
     let refused = low.node_conn().execute_write(repair).unwrap_err();

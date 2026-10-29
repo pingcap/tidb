@@ -15,6 +15,7 @@ default = []
 failpoints = ["dep:fail", "fail/failpoints"]
 
 [dependencies]
+tidb-timeutil = { path = "../tidb-timeutil" }
 fail = { version = "0.4", optional = true }
 prometheus = { version = "0.14", default-features = false }
 serde.workspace = true

@@ -1312,7 +1312,7 @@ fn correlated_subqueries() {
         &catalog,
         &crate::StmtContext::for_query()
     ))
-    .is_err_and(|error| error.equal(&tidb_util::dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW)));
+    .is_err_and(|error| error.equal(&tidb_dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW)));
 
     // Correlated IN / NOT IN and ANY / ALL: the same Apply, folding this
     // outer row's inner result into the three-valued answer. id 3's inner

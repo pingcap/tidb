@@ -1,0 +1,20 @@
+[package]
+name = "tidb-topsql-stmtstats"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/topsql/stmtstats: Go pkg/util/topsql/stmtstats (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-topsql-reporter-metrics = { path = "../tidb-topsql-reporter-metrics" }
+tidb-topsql-state = { path = "../tidb-topsql-state" }
+crossbeam-channel = "0.5"
+tikv-client.workspace = true
+
+[dev-dependencies]
+standard-fastrand = { package = "fastrand", version = "2" }

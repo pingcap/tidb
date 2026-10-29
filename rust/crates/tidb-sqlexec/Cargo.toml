@@ -11,6 +11,7 @@ description = "TiDB shared SQL execution contracts."
 workspace = true
 
 [dependencies]
+tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-datatype = { path = "../tidb-datatype" }

@@ -19,8 +19,8 @@
 //! types map to their already-transcreated homes — `types.Context` is
 //! [`tidb_datatype::ConversionContext`], `errctx.Context` is
 //! [`tidb_error::errctx::Context`], and the two embedded `contextutil`
-//! pointers are `Arc`s of [`tidb_util::context::RangeFallbackHandler`] /
-//! [`tidb_util::context::PlanCacheTracker`] — except one:
+//! pointers are `Arc`s of [`tidb_context::RangeFallbackHandler`] /
+//! [`tidb_context::PlanCacheTracker`] — except one:
 //!
 //! - `// boundary:` Go `pkg/expression/exprctx.BuildContext` — modeled as
 //!   the local marker trait [`ExprBuildContext`]; this package only stores
@@ -36,7 +36,7 @@ use std::sync::Arc;
 
 use tidb_datatype::ConversionContext;
 use tidb_error::errctx;
-use tidb_util::context::{PlanCacheTracker, RangeFallbackHandler};
+use tidb_context::{PlanCacheTracker, RangeFallbackHandler};
 
 /// boundary: Go `pkg/expression/exprctx.BuildContext` — ranger's context
 /// stores the interface value and swaps it on detach without calling it, so
@@ -95,7 +95,7 @@ impl<'a> RangerContext<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_util::context::StaticWarnHandler;
+    use tidb_context::StaticWarnHandler;
 
     struct StaticExprCtx;
 

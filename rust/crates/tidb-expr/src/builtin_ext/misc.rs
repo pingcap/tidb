@@ -19,7 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::coerce::coerce_str;
 use crate::{Datum, Decimal, EvalError};
-use tidb_util::vitess::hash_uint64;
+use tidb_vitess::hash_uint64;
 
 /// Dispatches this family's builtins; `None` if `name` isn't one of them.
 #[cfg(test)]

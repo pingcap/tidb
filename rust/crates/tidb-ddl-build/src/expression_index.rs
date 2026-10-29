@@ -534,11 +534,11 @@ impl AdmissibilityScan {
         if self.illegal_func {
             return Err(match self.gen_type {
                 GenType::Column => tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_GENERATED_COLUMN_FUNCTION_IS_NOT_ALLOWED
+                    &tidb_dbterror::ERR_GENERATED_COLUMN_FUNCTION_IS_NOT_ALLOWED
                         .generate_with_stack_by_args(&[name.to_owned().into()]),
                 ),
                 GenType::Index => tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_FUNCTION_IS_NOT_ALLOWED
+                    &tidb_dbterror::ERR_FUNCTIONAL_INDEX_FUNCTION_IS_NOT_ALLOWED
                         .generate_with_stack_by_args(&[name.to_owned().into()]),
                 ),
             });
@@ -552,11 +552,11 @@ impl AdmissibilityScan {
         if self.row_val {
             return Err(match self.gen_type {
                 GenType::Column => tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_GENERATED_COLUMN_ROW_VALUE_IS_NOT_ALLOWED
+                    &tidb_dbterror::ERR_GENERATED_COLUMN_ROW_VALUE_IS_NOT_ALLOWED
                         .generate_with_stack_by_args(&[name.to_owned().into()]),
                 ),
                 GenType::Index => tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_ROW_VALUE_IS_NOT_ALLOWED
+                    &tidb_dbterror::ERR_FUNCTIONAL_INDEX_ROW_VALUE_IS_NOT_ALLOWED
                         .generate_with_stack_by_args(&[name.to_owned().into()]),
                 ),
             });
@@ -578,7 +578,7 @@ impl AdmissibilityScan {
                 .allows_expression_index
         {
             return Err(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_UNSUPPORTED_EXPRESSION_INDEX
+                &tidb_dbterror::ERR_UNSUPPORTED_EXPRESSION_INDEX
                     .generate_with_stack_by_args(&[]),
             ));
         }
@@ -660,7 +660,7 @@ pub fn build_hidden_columns_with_like_default_escape(
         // hidden column rather than the index.
         if name.chars().count() > MAX_COLUMN_NAME_LENGTH {
             return Err(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_TOO_LONG_IDENT.generate_with_stack_by_args(&[
+                &tidb_dbterror::ERR_TOO_LONG_IDENT.generate_with_stack_by_args(&[
                     ("hidden column".to_owned()).to_string().into(),
                 ]),
             ));
@@ -719,7 +719,7 @@ pub fn build_hidden_columns_with_like_default_escape(
         // caught, exactly as Go's `expr.(*expression.Column)` is.
         if matches!(built_expr, tidb_expr::expression::Expression::Column(_)) {
             return Err(tidb_error::mysql::MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_ON_FIELD
+                &tidb_dbterror::ERR_FUNCTIONAL_INDEX_ON_FIELD
                     .generate_with_stack_by_args(&[]),
             ));
         }
@@ -794,13 +794,13 @@ pub fn build_hidden_columns_with_like_default_escape(
 /// Go restores an expression index's key part with the same flag set a
 /// generated column uses, which is why `SHOW CREATE TABLE` prints
 /// `` KEY `idx` ((`a` + 1)) ``.
-fn hidden_restore_flags() -> tidb_ast::RestoreFlags {
-    tidb_ast::RestoreFlags::STRING_SINGLE_QUOTES
-        | tidb_ast::RestoreFlags::KEYWORD_LOWERCASE
-        | tidb_ast::RestoreFlags::NAME_BACK_QUOTES
-        | tidb_ast::RestoreFlags::SPACES_AROUND_BINARY_OPERATION
-        | tidb_ast::RestoreFlags::WITHOUT_SCHEMA_NAME
-        | tidb_ast::RestoreFlags::WITHOUT_TABLE_NAME
+fn hidden_restore_flags() -> tidb_parser_format::RestoreFlags {
+    tidb_parser_format::RestoreFlags::STRING_SINGLE_QUOTES
+        | tidb_parser_format::RestoreFlags::KEYWORD_LOWERCASE
+        | tidb_parser_format::RestoreFlags::NAME_BACK_QUOTES
+        | tidb_parser_format::RestoreFlags::SPACES_AROUND_BINARY_OPERATION
+        | tidb_parser_format::RestoreFlags::WITHOUT_SCHEMA_NAME
+        | tidb_parser_format::RestoreFlags::WITHOUT_TABLE_NAME
 }
 
 /// Whether an index has at least one expression key part, which is what makes

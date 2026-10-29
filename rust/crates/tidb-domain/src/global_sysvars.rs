@@ -625,7 +625,7 @@ impl GlobalSysvars {
             if tidb_config::deploymode::is_starter() {
                 return Ok("ON".to_owned());
             }
-            return Ok(if tidb_util::tls::REQUIRE_SECURE_TRANSPORT
+            return Ok(if tidb_tls::REQUIRE_SECURE_TRANSPORT
                 .load(std::sync::atomic::Ordering::SeqCst)
             {
                 "ON"
@@ -1089,7 +1089,7 @@ impl GlobalSysvars {
         use tidb_vardef::tidb_vars::*;
         let on = value.eq_ignore_ascii_case("ON") || value == "1";
         match name {
-            REQUIRE_SECURE_TRANSPORT => tidb_util::tls::REQUIRE_SECURE_TRANSPORT
+            REQUIRE_SECURE_TRANSPORT => tidb_tls::REQUIRE_SECURE_TRANSPORT
                 .store(!tidb_config::deploymode::is_starter() && on, SeqCst),
             PERFORMANCE_SCHEMA_SESSION_CONNECT_ATTRS_SIZE => tidb_vardef::CONNECT_ATTRS_SIZE.store(
                 tidb_variable::varsutil::tidb_opt_int64(
@@ -1250,7 +1250,7 @@ impl GlobalSysvars {
             }
             _ if is_stmt_summary_setting(name) => self.publish_stmt_summary_setting(name, value),
             _ if Self::is_memory_arbitration_setting(name) => {
-                let _ = tidb_util::memory::apply_process_memory_setting(name, value);
+                let _ = tidb_memory::apply_process_memory_setting(name, value);
             }
             _ => {}
         }
@@ -1380,7 +1380,7 @@ impl GlobalSysvars {
             ));
         }
         if self.publishes_runtime_settings && Self::is_memory_arbitration_setting(&key) {
-            tidb_util::memory::validate_process_memory_setting(&key, &stored_value)
+            tidb_memory::validate_process_memory_setting(&key, &stored_value)
                 .map_err(VarError::unknown)?;
         }
         // Go's `tidb_trace_event` GLOBAL hook owns the process-wide flight
@@ -1390,15 +1390,15 @@ impl GlobalSysvars {
         // malformed trigger cannot leave a half-applied setting behind.
         if self.publishes_runtime_settings && key == "tidb_trace_event" {
             if stored_value.is_empty() {
-                if let Some(recorder) = tidb_util::traceevent::get_flight_recorder() {
+                if let Some(recorder) = tidb_traceevent::get_flight_recorder() {
                     recorder.close();
                 }
             } else {
-                let config = serde_json::from_str::<tidb_util::traceevent::FlightRecorderConfig>(
+                let config = serde_json::from_str::<tidb_traceevent::FlightRecorderConfig>(
                     &stored_value,
                 )
                 .map_err(|error| tidb_error::mysql::MysqlError::unknown(error.to_string()))?;
-                tidb_util::traceevent::start_log_flight_recorder(config)
+                tidb_traceevent::start_log_flight_recorder(config)
                     .map_err(VarError::unknown)?;
             }
         }

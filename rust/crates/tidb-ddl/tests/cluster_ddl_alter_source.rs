@@ -95,7 +95,7 @@ fn rebase_auto_increment_moves_the_counter_and_floors_without_force() {
     // recorded base and the counter therefore stay put.
     let write = plan(&mut store, "ALTER TABLE u6.t AUTO_INCREMENT = 10", 300);
     assert_eq!(
-        write.warnings.iter().map(tidb_util::context::SqlWarn::parts).collect::<Vec<_>>(),
+        write.warnings.iter().map(tidb_context::SqlWarn::parts).collect::<Vec<_>>(),
         vec![(DdlWarningLevel::Warning, 1105, "Can't reset AUTO_INCREMENT to 10 without FORCE option, using 500 instead".to_owned())]
     );
     apply(&mut store, &write);
@@ -211,7 +211,7 @@ fn accepted_no_op_alters_publish_nothing_and_order_by_warns_under_a_primary_key(
 
     let (_, warnings) = satisfied(&mut store, "ALTER TABLE u6.keyed ORDER BY v", 400);
     assert_eq!(
-        warnings.iter().map(tidb_util::context::SqlWarn::parts).collect::<Vec<_>>(),
+        warnings.iter().map(tidb_context::SqlWarn::parts).collect::<Vec<_>>(),
         vec![(DdlWarningLevel::Warning, 1105, "ORDER BY ignored as there is a user-defined clustered index in the table 'keyed'".to_owned())]
     );
 
@@ -358,7 +358,7 @@ fn rename_index_rewrites_the_name_and_rejects_a_collision() {
     )
     .expect_err("a collision is refused");
     assert!(
-        error.equal(&tidb_util::dbterror::ERR_DUP_KEY_NAME)
+        error.equal(&tidb_dbterror::ERR_DUP_KEY_NAME)
             && error.to_string().contains("Duplicate key name 'ib'"),
         "{error:?}"
     );
@@ -726,7 +726,7 @@ fn drop_primary_key_refuses_a_clustered_one_and_drops_a_nonclustered_one() {
     )
     .expect_err("a missing primary key is refused");
     assert!(
-        error.equal(&tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY)
+        error.equal(&tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY)
             && error.to_string().contains("Can't DROP 'PRIMARY'"),
         "{error:?}"
     );

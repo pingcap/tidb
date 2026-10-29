@@ -20,7 +20,7 @@ use std::any::Any;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tidb_util::execdetails::{format_duration, RuntimeStats, TP_HASH_JOIN_RUNTIME_STATS_V2};
+use tidb_execdetails::{format_duration, RuntimeStats, TP_HASH_JOIN_RUNTIME_STATS_V2};
 
 /// Go `spillStats`.
 #[derive(Clone, Debug, Default)]

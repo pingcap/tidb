@@ -15,7 +15,7 @@
 //! Remaining direct restore tables from `pkg/parser/ast/ddl_test.go`.
 
 use super::*;
-use tidb_ast::RestoreFlags;
+use tidb_parser_format::RestoreFlags;
 
 #[test]
 fn test_admin_repair_table_restore() {

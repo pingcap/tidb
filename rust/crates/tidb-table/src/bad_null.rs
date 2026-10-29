@@ -116,8 +116,8 @@ pub fn handle_bad_null(
     if level == NullLevel::Error {
         return Err(ColumnError::ColumnCannotBeNull(column.to_owned()));
     }
-    ctx.append_sql_warn(tidb_util::context::SqlWarn::raised(
-        tidb_util::context::WarningLevel::Warning,
+    ctx.append_sql_warn(tidb_context::SqlWarn::raised(
+        tidb_context::WarningLevel::Warning,
         tidb_error::catalog::table::ERR_COLUMN_CANT_NULL
             .generate_with_stack_by_args(&[column.into()]),
     ));
@@ -149,8 +149,8 @@ pub fn handle_bad_null_in_load_data(
             ),
         ));
     }
-    ctx.append_sql_warn(tidb_util::context::SqlWarn::of(
-        tidb_util::context::WarningLevel::Warning,
+    ctx.append_sql_warn(tidb_context::SqlWarn::of(
+        tidb_context::WarningLevel::Warning,
         &tidb_error::catalog::table::ERR_WARN_NULL_TO_NOTNULL,
         message,
     ));

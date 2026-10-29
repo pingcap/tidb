@@ -8,6 +8,8 @@ repository.workspace = true
 description = "Go pkg/meta/autoid for the TiDB Rust rewrite: the auto id allocator below pkg/table."
 
 [dependencies]
+tidb-sqlkiller = { path = "../tidb-sqlkiller" }
+tidb-tracing = { path = "../tidb-tracing" }
 tidb-meta = { path = "../tidb-meta" }
 tidb-model = { path = "../tidb-model" }
 tidb-pd-client = { path = "../tidb-pd-client" }

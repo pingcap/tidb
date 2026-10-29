@@ -18,7 +18,7 @@
 
 use std::sync::{Arc, Condvar, Mutex};
 
-use tidb_util::timeutil::TimeZone;
+use tidb_timeutil::TimeZone;
 
 use crate::error::{Result, TimerError};
 use crate::go_time::GoTime;

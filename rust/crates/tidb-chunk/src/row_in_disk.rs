@@ -40,10 +40,10 @@
 
 use std::io;
 
-use tidb_util::disk;
-use tidb_util::layered_io::{ReadAt, ReadAtResult};
-use tidb_util::memory::LABEL_FOR_CHUNK_DATA_IN_DISK_BY_ROWS;
-use tidb_util::spill_storage::SpillStorage;
+use tidb_disk as disk;
+use tidb_layered_io::{ReadAt, ReadAtResult};
+use tidb_memory::LABEL_FOR_CHUNK_DATA_IN_DISK_BY_ROWS;
+use tidb_spill_storage::SpillStorage;
 
 use crate::chunk::Chunk;
 use crate::chunk_in_disk::DiskError;
@@ -510,7 +510,7 @@ mod tests {
     use super::*;
     use std::io;
     use tidb_datatype::{BinaryJSON, FieldTypeCode as C};
-    use tidb_util::layered_io::{ReadAtError, ReadAtResult};
+    use tidb_layered_io::{ReadAtError, ReadAtResult};
 
     struct SliceReadAt {
         bytes: Vec<u8>,
@@ -575,7 +575,7 @@ mod tests {
             .collect()
     }
 
-    fn fixture_cipher(key: &str) -> tidb_util::encrypt::CtrCipher {
+    fn fixture_cipher(key: &str) -> tidb_encrypt::CtrCipher {
         let specification = encrypted_go_vector(key);
         let (key_hex, nonce_hex) = specification
             .strip_prefix("key=")
@@ -583,7 +583,7 @@ mod tests {
             .expect("key and nonce fixture");
         let key: [u8; 16] = bytes_of(key_hex).try_into().expect("AES-128 key");
         let nonce: [u8; 8] = bytes_of(nonce_hex).try_into().expect("CTR nonce");
-        tidb_util::encrypt::CtrCipher::new_for_test(key, u64::from_be_bytes(nonce))
+        tidb_encrypt::CtrCipher::new_for_test(key, u64::from_be_bytes(nonce))
             .expect("fixture cipher")
     }
 
@@ -593,7 +593,7 @@ mod tests {
 
     use crate::test_temp_storage::isolated_storage;
     use std::sync::Arc;
-    use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage};
+    use tidb_spill_storage::{SpillEncryptionMethod, SpillStorage};
 
     /// Go generator case `mixed`.
     fn mixed_case() -> (Vec<FieldType>, Vec<Chunk>) {

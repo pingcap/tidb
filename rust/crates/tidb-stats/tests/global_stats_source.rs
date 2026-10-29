@@ -23,7 +23,7 @@ use tidb_stats::{
     CmsSketch, FmSketch, GlobalStatsMergeError, GlobalStatsMergeMode, PartitionStatsItem, TopN,
     MAX_PARTITION_MERGE_BATCH_SIZE, MAX_SKETCH_SIZE,
 };
-use tidb_util::sqlkiller::{KillSignal, SqlKiller};
+use tidb_sqlkiller::{KillSignal, SqlKiller};
 
 fn encoded(value: i64) -> Vec<u8> {
     encode_key(&[Datum::Int(value)]).expect("integer key encodes")

@@ -1,0 +1,15 @@
+[package]
+name = "tidb-domainutil"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/util/domainutil: the repair-mode table lists (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }

@@ -1,0 +1,17 @@
+[package]
+name = "tidb-planner-util"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go `pkg/planner/util`: ORDER BY items, index-column helpers, null rejection and handle columns."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-planner-cascades-base = { path = "../tidb-planner-cascades-base" }
+tidb-ast = { path = "../tidb-ast" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-expr = { path = "../tidb-expr" }

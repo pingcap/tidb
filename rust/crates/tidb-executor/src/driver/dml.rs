@@ -1282,8 +1282,8 @@ fn run_insert_rows(
                 // failed conversion's zero datum.
                 Err(error) if lenient && load_restrictive.is_some() => {
                     let rendered = error.to_mysql_error();
-                    ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
-            tidb_util::context::WarningLevel::Warning,
+                    ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
+            tidb_context::WarningLevel::Warning,
             rendered.code,
             rendered.message.clone(),
             rendered.identity,
@@ -1486,7 +1486,7 @@ fn run_insert_rows(
                         ctx.next_row_id_shard(1),
                     )
                     .map_err(|error| match error {
-                        AutoRandomError::ExplicitInsertDisabled => DriverError::from(tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[("Explicit insertion on auto_random column is disabled. Try to set @@allow_auto_random_explicit_insert = true."
+                        AutoRandomError::ExplicitInsertDisabled => DriverError::from(tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[("Explicit insertion on auto_random column is disabled. Try to set @@allow_auto_random_explicit_insert = true."
                                 .to_owned()).into()])),
                         AutoRandomError::AutoId(AutoIdError::Exhausted) => {
                             DriverError::from(tidb_error::catalog::autoid::ERR_AUTO_RAND_READ_FAILED.generate_with_stack_by_args(&[]))
@@ -1543,7 +1543,7 @@ fn run_insert_rows(
                 // `table.AllocAutoIncrementValue` per row. A VALUES list
                 // allocates its batch at once, with no such region.
                 let _alloc = (insert.source.is_some() && load_restrictive.is_none()).then(|| {
-                    tidb_util::tracing::start_thread_region_ex("table.AllocAutoIncrementValue")
+                    tidb_tracing::start_thread_region_ex("table.AllocAutoIncrementValue")
                 });
                 let outcome = match kv.apply_auto_increment_in(
                     &mut new_rows[*index],
@@ -1580,8 +1580,8 @@ fn run_insert_rows(
                                             )),
                                     ));
                                 }
-                                ctx.append_sql_warn(tidb_util::context::SqlWarn::raised(
-                                    tidb_util::context::WarningLevel::Warning,
+                                ctx.append_sql_warn(tidb_context::SqlWarn::raised(
+                                    tidb_context::WarningLevel::Warning,
                                     tidb_error::catalog::types::ERR_OVERFLOW.generate_with_stack(
                                         format!("constant {value} overflows {type_name}"),
                                     ),
@@ -1593,8 +1593,8 @@ fn run_insert_rows(
                                                 .generate_with_stack_by_args(&[]),
                                         ));
                                     }
-                                    ctx.append_sql_warn(tidb_util::context::SqlWarn::raised(
-                                        tidb_util::context::WarningLevel::Warning,
+                                    ctx.append_sql_warn(tidb_context::SqlWarn::raised(
+                                        tidb_context::WarningLevel::Warning,
                                         tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED
                                             .generate_with_stack_by_args(&[]),
                                     ));
@@ -1723,7 +1723,7 @@ fn run_insert_rows(
     };
     let mut batches = batch_ends.iter().copied().peekable();
     let mut batch_start = 0;
-    let mut batch_check: Option<tidb_util::tracing::ThreadRegion> = None;
+    let mut batch_check: Option<tidb_tracing::ThreadRegion> = None;
     // Generated columns belong to the writable row; the extra handle is
     // candidate identity and must not affect row equality or FK callbacks.
     fn split_candidate<'r>(
@@ -1752,7 +1752,7 @@ fn run_insert_rows(
                 batch_start = end;
                 // Go `InsertExec.exec`'s event; REPLACE logs none.
                 if !insert.replace {
-                    tidb_util::tracing::thread_event(|| {
+                    tidb_tracing::thread_event(|| {
                         format!(
                             "insert {} rows into table `{}`",
                             rows.len(),
@@ -1766,7 +1766,7 @@ fn run_insert_rows(
                         // Go `prefetchDataCache` (none for a temporary table).
                         if !table.is_temporary() {
                             let _prefetch =
-                                tidb_util::tracing::start_thread_region("prefetchDataCache");
+                                tidb_tracing::start_thread_region("prefetchDataCache");
                             let values = table
                                 .prefetch_unique_indices(&rows, ctx)
                                 .map_err(kv_write_error)?;
@@ -1777,7 +1777,7 @@ fn run_insert_rows(
                     } else {
                         // Go `batchCheckAndInsert`, which IGNORE runs over
                         // the batch's rows.
-                        batch_check = Some(tidb_util::tracing::start_thread_region(
+                        batch_check = Some(tidb_tracing::start_thread_region(
                             "InsertValues.batchCheckAndInsert",
                         ));
                         if !table.is_temporary() {
@@ -1908,8 +1908,8 @@ fn run_insert_rows(
             } else if insert.ignore {
                 let conflict = conflicts.into_iter().next().expect("a conflict was found");
                 let warning = kv_write_error(conflict.error).to_mysql_error();
-                ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
-            tidb_util::context::WarningLevel::Warning,
+                ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
+            tidb_context::WarningLevel::Warning,
             warning.code,
             warning.message.clone(),
             warning.identity,
@@ -1931,8 +1931,8 @@ fn run_insert_rows(
             ) {
                 if error.equal(&tidb_error::plannererrors::ERR_NO_REFERENCED_ROW2) {
                     let warning = error.to_mysql_error();
-                    ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
-            tidb_util::context::WarningLevel::Warning,
+                    ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
+            tidb_context::WarningLevel::Warning,
             warning.code,
             warning.message.clone(),
             warning.identity,
@@ -2129,8 +2129,8 @@ fn handle_partition_write_error(
                     || error.equal(&tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED)) =>
         {
             let warning = error.to_mysql_error();
-            ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
-                tidb_util::context::WarningLevel::Warning,
+            ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
+                tidb_context::WarningLevel::Warning,
                 warning.code,
                 warning.message.clone(),
                 warning.identity,
@@ -2669,7 +2669,7 @@ impl CachedDmlPlan {
 #[derive(Debug)]
 pub struct PreparedDmlExecution {
     parameters: Arc<[Datum]>,
-    planning_warnings: std::sync::Mutex<Vec<tidb_util::context::SqlWarn>>,
+    planning_warnings: std::sync::Mutex<Vec<tidb_context::SqlWarn>>,
     plan: Arc<PreparedDmlPlan>,
     cached_plan: Arc<std::sync::Mutex<CachedDmlPlan>>,
     generation: u64,
@@ -2948,7 +2948,7 @@ impl PreparedDmlExecution {
         Arc::clone(&self.parameters)
     }
     /// Takes warnings produced by this execution's cache-miss planning once.
-    pub fn take_planning_warnings(&self) -> Vec<tidb_util::context::SqlWarn> {
+    pub fn take_planning_warnings(&self) -> Vec<tidb_context::SqlWarn> {
         std::mem::take(
             &mut *self
                 .planning_warnings

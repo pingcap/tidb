@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB statistics sync load and cache refresh: Go pkg/statistics/handle/syncload (Rust rewrite)."
 
 [dependencies]
+tidb-logutil = { path = "../tidb-logutil" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-infoschema = { path = "../tidb-infoschema" }

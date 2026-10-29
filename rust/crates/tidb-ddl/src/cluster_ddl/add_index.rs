@@ -214,14 +214,14 @@ pub enum AddIndexSubmission {
     /// statement before submitting it.
     Job(
         Box<crate::ddl_job_submit::JobSpec>,
-        Vec<tidb_util::context::SqlWarn>,
+        Vec<tidb_context::SqlWarn>,
     ),
     /// `IF NOT EXISTS` over an existing index: a Note, no job.
     AlreadySatisfied {
         /// What was already true.
         detail: String,
         /// The Note.
-        warnings: Vec<tidb_util::context::SqlWarn>,
+        warnings: Vec<tidb_context::SqlWarn>,
     },
 }
 
@@ -298,7 +298,7 @@ pub(super) fn check_added_primary_key_holds_no_null(
         };
         if nullable && has_null(stored, id)? {
             return Err(coded_refusal(
-                &tidb_util::dbterror::ERR_INVALID_USE_OF_NULL,
+                &tidb_dbterror::ERR_INVALID_USE_OF_NULL,
                 "Invalid use of NULL value",
             ));
         }
@@ -338,7 +338,7 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
     }
     if index.primary && expressions.iter().any(Option::is_some) {
         return Err(coded_refusal(
-            &tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_PRIMARY_KEY,
+            &tidb_dbterror::ERR_FUNCTIONAL_INDEX_PRIMARY_KEY,
             "The primary key cannot be an expression index",
         ));
     }
@@ -352,13 +352,13 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
                     existing.name.original()
                 ),
                 warnings: vec![crate::real_tikv_ddl::ddl_note(
-                    tidb_util::dbterror::ERR_DUP_KEY_NAME
+                    tidb_dbterror::ERR_DUP_KEY_NAME
                         .generate_with_stack_by_args(&[name.into()]),
                 )],
             }));
         }
         return Err(DdlPlanError::from(
-            tidb_util::dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&[name.into()]),
+            tidb_dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&[name.into()]),
         ));
     }
     let hypo = index.tp == tidb_ast::IndexType::HYPO && !index.primary;
@@ -515,7 +515,7 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
 
 pub(super) fn unsupported_partial_index() -> DdlPlanError {
     coded_refusal(
-        &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX,
+        &tidb_dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX,
         "Unsupported add partial index: add partial index without fast reorg is not supported",
     )
 }
@@ -746,7 +746,7 @@ fn check_and_build_index_info(
                 ));
             }
             return Err(DdlPlanError::from(
-                tidb_util::dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&[(arg
+                tidb_dbterror::ERR_DUP_KEY_NAME.generate_with_stack_by_args(&[(arg
                     .index_name
                     .original()
                     .to_owned())
@@ -918,7 +918,7 @@ pub(super) fn plan_persisted_add_index_job_step<S: MetaSnapshot>(
         return Err(cancel_ddl_job(
             active,
             coded_refusal(
-                &tidb_util::dbterror::ERR_OPT_ON_CACHE_TABLE,
+                &tidb_dbterror::ERR_OPT_ON_CACHE_TABLE,
                 "'Create Index' is unsupported on cache tables.",
             ),
         ));
@@ -989,7 +989,7 @@ pub(super) fn plan_persisted_add_index_job_step<S: MetaSnapshot>(
             snapshot, catalog, active, info, indexes, outcome, start_ts, is_pk, row_ids,
         ),
         state => Err(DdlPlanError::from(
-            tidb_util::dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+            tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
                 FormatArg::from("index"),
                 FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
             ]),
@@ -1399,7 +1399,7 @@ fn plan_rollback_add_index(
             })
         }
         state => Err(DdlPlanError::from(
-            tidb_util::dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
+            tidb_dbterror::ERR_INVALID_DDL_STATE.generate_with_stack_by_args(&[
                 FormatArg::from("index"),
                 FormatArg::new(state.to_string(), state.0.to_string(), "model.SchemaState"),
             ]),
@@ -1530,7 +1530,7 @@ pub(super) fn plan_cancel_add_index(
         return Err(cancelled_ddl_job(active));
     }
     let error = DdlPlanError::from(
-        tidb_util::dbterror::ERR_CANCELLED_DDL_JOB
+        tidb_dbterror::ERR_CANCELLED_DDL_JOB
             .generate(tidb_error::tidb::errname::ErrCancelledDDLJob.raw),
     );
     let (write, error) = convert_add_index_to_rollback(active, &mut info, &indexes, error)?;

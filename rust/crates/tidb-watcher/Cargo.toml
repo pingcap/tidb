@@ -1,0 +1,15 @@
+[package]
+name = "tidb-watcher"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/watcher: Go pkg/util/watcher (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+crossbeam-channel = "0.5"
+tempfile.workspace = true

@@ -13,6 +13,7 @@ name = "all"
 path = "tests/all.rs"
 
 [dependencies]
+tidb-planner-cascades-base = { path = "../tidb-planner-cascades-base" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }

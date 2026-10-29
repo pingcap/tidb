@@ -9,3 +9,6 @@ description = "O(1) byte-keyed LRU cache for TiDB package consumers."
 
 [lints]
 workspace = true
+
+[dependencies]
+tidb-memory = { path = "../tidb-memory" }

@@ -701,7 +701,7 @@ fn ddl_column_def_restore_transcreates_every_original_go_row() {
 
 #[test]
 fn if_exists_restore_transcreates_every_original_go_row() {
-    use tidb_ast::RestoreFlags;
+    use tidb_parser_format::RestoreFlags;
 
     let rows = [
         (
@@ -779,7 +779,7 @@ fn if_exists_restore_transcreates_every_original_go_row() {
 
 #[test]
 fn alter_database_restore_transcreates_every_original_go_row() {
-    use tidb_ast::RestoreFlags;
+    use tidb_parser_format::RestoreFlags;
 
     for (sql, expected_normal, expected_special) in [
         (

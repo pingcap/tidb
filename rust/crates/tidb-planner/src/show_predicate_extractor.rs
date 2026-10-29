@@ -19,7 +19,7 @@
 use tidb_datatype::CollationCollator;
 use tidb_ast::{Expr, ShowStmt, ShowStmtType};
 use tidb_hack::go_to_lower;
-use tidb_util::stringutil::{compile_pattern, is_exact_match};
+use tidb_stringutil::{compile_pattern, is_exact_match};
 
 /// Go `ShowBaseExtractor`.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

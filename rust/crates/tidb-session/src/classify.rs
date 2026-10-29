@@ -360,7 +360,7 @@ impl Session {
         match local_temporary {
             Some(name) if catalog.table_in(partitioned.0, partitioned.1).is_some() => {
                 Err(DriverError::from(
-                    (&tidb_util::dbterror::ERR_PARTITION_EXCHANGE_TEMP_TABLE).generate_with_stack(
+                    (&tidb_dbterror::ERR_PARTITION_EXCHANGE_TEMP_TABLE).generate_with_stack(
                         format!("Table to exchange with partition is temporary: '{name}'"),
                     ),
                 ))

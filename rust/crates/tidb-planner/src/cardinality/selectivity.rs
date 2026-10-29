@@ -45,7 +45,7 @@ pub struct SelectivityContext<'a> {
     /// Constant evaluation in the statement's expression context.
     pub evaluate: &'a ExpressionEvaluator<'a>,
     /// Records a range-memory fallback the way the ranger context does.
-    pub range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
+    pub range_fallback_handler: Option<&'a tidb_context::RangeFallbackHandler>,
     /// `ExprCtx.IsUseCache()`, consulted by `MaybeOverOptimized4PlanCache`.
     pub use_plan_cache: bool,
     /// Go `recordUsedItemStatsStatus`: told of every column (by its

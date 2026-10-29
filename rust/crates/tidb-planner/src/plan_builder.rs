@@ -1888,8 +1888,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         let mut query = query.clone();
         let mut handler = tidb_hint::QBHintHandler::build_query(&mut query);
         for warning in handler.take_warnings() {
-            self.ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
-            tidb_util::context::WarningLevel::Warning,
+            self.ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
+            tidb_context::WarningLevel::Warning,
             warning.code,
             warning.message.clone(),
             warning.identity,
@@ -1914,8 +1914,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                 self.ctx.append_warning(1815, &warning);
             }
             for warning in handler.take_warnings() {
-                self.ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
-            tidb_util::context::WarningLevel::Warning,
+                self.ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
+            tidb_context::WarningLevel::Warning,
             warning.code,
             warning.message.clone(),
             warning.identity,
@@ -1955,8 +1955,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                 self.sub_query_ctx == SubQueryCtx::NotHandlingSubquery,
             );
         for warning in hint_warnings {
-            self.ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
-            tidb_util::context::WarningLevel::Warning,
+            self.ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
+            tidb_context::WarningLevel::Warning,
             warning.code,
             warning.message.clone(),
             warning.identity,
@@ -3483,7 +3483,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         );
         self.handle_helper.push_map(handle_map);
 
-        let sample_info = crate::table_sampler::new_table_sample_info(
+        let sample_info = tidb_planner_tablesampler::new_table_sample_info(
             table_ref.sample.as_ref(),
             &Schema::new(schema_columns.clone()),
             if table_ref.partitions.is_empty() {
@@ -3876,7 +3876,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     }
 
     fn plan_handle_cols(&self, handle_cols: &[Column], handle_is_int: bool) -> PlanHandleCols {
-        use crate::handle_cols::{CommonHandleIdentity, HandleColumnIdentity, IntHandleIdentity};
+        use tidb_planner_util::handle_cols::{CommonHandleIdentity, HandleColumnIdentity, IntHandleIdentity};
         let identities: Vec<HandleColumnIdentity> = handle_cols
             .iter()
             .map(|column| HandleColumnIdentity::new(column.id, column.unique_id, column.index))
@@ -5226,8 +5226,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let mut source = select.clone();
             let mut handler = tidb_hint::QBHintHandler::build_dml_source(&mut source);
             for warning in handler.take_warnings() {
-                self.ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
-            tidb_util::context::WarningLevel::Warning,
+                self.ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
+            tidb_context::WarningLevel::Warning,
             warning.code,
             warning.message.clone(),
             warning.identity,

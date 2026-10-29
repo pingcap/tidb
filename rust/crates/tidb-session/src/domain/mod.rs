@@ -46,12 +46,12 @@ pub(crate) mod embedded_resource_groups;
 pub mod mock_store;
 
 #[cfg(test)]
-use tidb_util::test_isolation::isolate_process_globals;
+use tidb_test_isolation::isolate_process_globals;
 
 
 
 
-use tidb_util::logutil::{log_recovered_panic, zap_error, zap_stack};
+use tidb_logutil::{log_recovered_panic, zap_error, zap_stack};
 use tidb_domain_core::node_config;
 
 /// Go `net.JoinHostPort`.
@@ -66,7 +66,7 @@ pub fn join_host_port(host: &str, port: impl std::fmt::Display) -> String {
 /// Go `listenStatusHTTPServer`'s line, logged before the status port is
 /// bound.
 pub fn log_status_listen(host: &str, port: u16) {
-    tidb_util::logutil::bg_logger().info(
+    tidb_logutil::bg_logger().info(
         "for status and metrics report",
         &[tidb_log::Field::new(
             "listening on addr",
@@ -77,12 +77,12 @@ pub fn log_status_listen(host: &str, port: u16) {
 
 /// Go `listenStatusHTTPServer`'s line when the status port cannot be bound.
 pub fn log_status_listen_failed(error: &std::io::Error) {
-    tidb_util::logutil::bg_logger().info("listen failed", &[zap_error(error)]);
+    tidb_logutil::bg_logger().info("listen failed", &[zap_error(error)]);
 }
 
 /// Go `Server.initTiDBListener`'s line once the MySQL port is bound.
 pub fn log_mysql_listening(host: &str, port: impl std::fmt::Display) {
-    tidb_util::logutil::bg_logger().info(
+    tidb_logutil::bg_logger().info(
         "server is running MySQL protocol",
         &[tidb_log::Field::new(
             "addr",
@@ -93,51 +93,51 @@ pub fn log_mysql_listening(host: &str, port: impl std::fmt::Display) {
 
 pub fn open_spill_storage(
     config: &NodeConfig,
-) -> Result<Arc<tidb_util::spill_storage::SpillStorage>, RunConfiguredNodeError> {
+) -> Result<Arc<tidb_spill_storage::SpillStorage>, RunConfiguredNodeError> {
     tidb_deadlockhistory::recording::configure_deadlock_history(
         config.deadlock_history_capacity,
         config.deadlock_history_collect_retryable,
     );
     tidb_variable::sysvar::install_sem_v2_sysvar_registry();
     if config.sem_enabled && !config.sem_config.is_empty() {
-        tidb_util::sem::disable();
-        tidb_util::sem_v2::enable(&config.sem_config)
+        tidb_sem::disable();
+        tidb_sem_v2::enable(&config.sem_config)
             .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     } else if config.sem_enabled {
-        tidb_util::sem_v2::disable();
-        tidb_util::sem::enable();
+        tidb_sem_v2::disable();
+        tidb_sem::enable();
     } else {
-        tidb_util::sem_v2::disable();
-        tidb_util::sem::disable();
+        tidb_sem_v2::disable();
+        tidb_sem::disable();
     }
-    tidb_util::spill_storage::SpillStorage::open(config.spill_storage.clone())
+    tidb_spill_storage::SpillStorage::open(config.spill_storage.clone())
         .map(Arc::new)
         .map_err(RunConfiguredNodeError::Spill)
 }
 
 fn open_memory_arbitrator(
     config: &NodeConfig,
-) -> Result<Option<Arc<tidb_util::memory::MemArbitrator>>, RunConfiguredNodeError> {
-    let mode = tidb_util::memory::parse_work_mode_text(&config.memory_arbitrator.mode);
+) -> Result<Option<Arc<tidb_memory::MemArbitrator>>, RunConfiguredNodeError> {
+    let mode = tidb_memory::parse_work_mode_text(&config.memory_arbitrator.mode);
     let limit =
-        tidb_util::memory::parse_server_memory_limit(&config.memory_arbitrator.server_memory_limit)
+        tidb_memory::parse_server_memory_limit(&config.memory_arbitrator.server_memory_limit)
             .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     let (soft_bytes, soft_ratio, soft_mode) =
-        tidb_util::memory::parse_soft_limit_text(&config.memory_arbitrator.soft_limit);
+        tidb_memory::parse_soft_limit_text(&config.memory_arbitrator.soft_limit);
     let state_dir = config.spill_storage.path.join("mem-arbitrator");
-    let arbitrator = tidb_util::memory::MemArbitrator::new(
+    let arbitrator = tidb_memory::MemArbitrator::new(
         i64::try_from(limit).expect("validated server memory limit fits i64"),
-        tidb_util::memory::DEF_POOL_STATUS_SHARDS,
-        tidb_util::memory::DEF_POOL_QUOTA_SHARDS,
+        tidb_memory::DEF_POOL_STATUS_SHARDS,
+        tidb_memory::DEF_POOL_QUOTA_SHARDS,
         64 << 10,
-        Box::new(tidb_util::memory::RuntimeMemStateRecorder::new(&state_dir)),
+        Box::new(tidb_memory::RuntimeMemStateRecorder::new(&state_dir)),
     );
     arbitrator.set_soft_limit(soft_bytes, soft_ratio, soft_mode);
     if !arbitrator.auto_run(
-        tidb_util::memory::MemArbitratorActions::default(),
-        tidb_util::memory::DEF_AWAIT_FREE_POOL_ALLOC_ALIGN_SIZE,
-        tidb_util::memory::DEF_AWAIT_FREE_POOL_SHARD_NUM,
-        tidb_util::memory::DEF_TASK_TICK_DUR,
+        tidb_memory::MemArbitratorActions::default(),
+        tidb_memory::DEF_AWAIT_FREE_POOL_ALLOC_ALIGN_SIZE,
+        tidb_memory::DEF_AWAIT_FREE_POOL_SHARD_NUM,
+        tidb_memory::DEF_TASK_TICK_DUR,
     ) {
         return Err(RunConfiguredNodeError::Engine(SqlQueryError::unknown(
             "failed to start global memory arbitrator".to_owned(),
@@ -148,8 +148,8 @@ fn open_memory_arbitrator(
 }
 
 pub struct MemoryArbitratorAuthority {
-    arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
-    registration: Option<tidb_util::memory::ProcessArbitratorRegistration>,
+    arbitrator: Option<Arc<tidb_memory::MemArbitrator>>,
+    registration: Option<tidb_memory::ProcessArbitratorRegistration>,
 }
 
 impl MemoryArbitratorAuthority {
@@ -157,14 +157,14 @@ impl MemoryArbitratorAuthority {
         let arbitrator = open_memory_arbitrator(config)?;
         let registration = arbitrator
             .as_ref()
-            .map(tidb_util::memory::install_process_arbitrator);
+            .map(tidb_memory::install_process_arbitrator);
         Ok(Self {
             arbitrator,
             registration,
         })
     }
 
-    pub fn arbitrator(&self) -> Option<Arc<tidb_util::memory::MemArbitrator>> {
+    pub fn arbitrator(&self) -> Option<Arc<tidb_memory::MemArbitrator>> {
         self.arbitrator.as_ref().map(Arc::clone)
     }
 }

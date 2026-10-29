@@ -221,7 +221,7 @@ fn run_load_workers<T: Sync>(
             // goroutine; the default thread stack does not hold that path.
             let spawned = std::thread::Builder::new()
                 .name("load-stats-partition".to_owned())
-                .stack_size(tidb_util::worker_stack::WORKER_STACK_BYTES)
+                .stack_size(tidb_worker_stack::WORKER_STACK_BYTES)
                 .spawn_scoped(scope, || loop {
                     if first_error
                         .lock()

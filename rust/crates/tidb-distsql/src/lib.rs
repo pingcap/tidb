@@ -26,6 +26,7 @@
 mod chblock;
 mod chunk_decode;
 mod context;
+pub mod select_result_stats;
 pub mod cop_paging;
 mod copr_cache;
 mod copr_cache_metrics;
@@ -96,21 +97,21 @@ pub use select_iter::SelectResultRow;
 pub use signed_handle_range::{signed_handle_ranges_to_kv_ranges, SignedHandleRange};
 pub use table_handle_ranges::table_handles_to_kv_ranges;
 use tidb_txnkv::IsolationLevel;
-use tidb_txnkv::ReplicaRead;
+use tidb_tiflash::ReplicaRead;
 use tidb_txnkv::ReplicaReadType;
 use tidb_txnkv::RequestSource;
 use tidb_txnkv::RequestType;
 use tidb_txnkv::StoreLabel;
 use tidb_txnkv::StoreType;
 pub use tidb_txnkv::Priority as KvPriority;
-use tidb_util::paging::grow_paging_size;
-pub use tidb_util::paging::calculate_seek_cnt as calculate_seek_count;
-pub use tidb_util::paging::THRESHOLD as PAGING_THRESHOLD;
+use tidb_paging::grow_paging_size;
+pub use tidb_paging::calculate_seek_cnt as calculate_seek_count;
+pub use tidb_paging::THRESHOLD as PAGING_THRESHOLD;
 pub use transport::RegionTaskRequest;
 use tidb_txnkv::TransportRequestError;
 use tidb_txnkv::TransportRequest;
 use tidb_txnkv::TransportBinding;
-use tidb_util::context::{Warning, WarningClass, WarningCollector, WarningLevel};
+use tidb_context::{Warning, WarningClass, WarningCollector, WarningLevel};
 
 pub mod remote_scan;
 #[cfg(test)]

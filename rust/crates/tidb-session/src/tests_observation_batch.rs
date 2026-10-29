@@ -16,7 +16,7 @@
 use crate::domain::resultset_source::ResultSetSource;
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::*;
-use tidb_util::topsql_stmtstats::{global_aggregator, Collector, StatementStatsMap};
+use tidb_topsql_stmtstats::{global_aggregator, Collector, StatementStatsMap};
 
 #[test]
 fn observation_batch_completed_sql_reaches_summary_reader() {
@@ -43,7 +43,7 @@ impl Collector for Capture {
 
 #[test]
 fn observation_batch_completed_sql_reaches_topsql_aggregator() {
-    use tidb_util::topsql_state::{disable_top_sql, enable_top_sql};
+    use tidb_topsql_state::{disable_top_sql, enable_top_sql};
     enable_top_sql();
     let capture = Arc::new(Capture::default());
     let collector: Arc<dyn Collector> = capture.clone();
@@ -360,7 +360,7 @@ fn observation_batch_durable_named_execute_keeps_retained_sql() {
 
 #[test]
 fn observation_batch_failed_physical_planning_is_not_an_execution() {
-    use tidb_util::topsql_state::{disable_top_sql, enable_top_sql};
+    use tidb_topsql_state::{disable_top_sql, enable_top_sql};
     enable_top_sql();
     let mut session = Session::new();
     let sql = "SELECT * FROM observation_missing_compile_table";
@@ -432,7 +432,7 @@ fn observation_batch_real_query_records_parse_and_compile_phases() {
 
 #[test]
 fn observation_batch_prepared_cache_keeps_tables_and_one_execution_per_call() {
-    use tidb_util::topsql_state::{disable_top_sql, enable_top_sql};
+    use tidb_topsql_state::{disable_top_sql, enable_top_sql};
     enable_top_sql();
     let mut session = Session::new();
     session.set_user("root@%".into(), "root@localhost".into());
@@ -518,7 +518,7 @@ fn observation_batch_frontend_parse_is_transferred_and_not_reused() {
 
 #[test]
 fn observation_batch_prelock_breakpoint_does_not_suppress_execution_counter() {
-    use tidb_util::topsql_state::{disable_top_sql, enable_top_sql};
+    use tidb_topsql_state::{disable_top_sql, enable_top_sql};
     enable_top_sql();
     let mut session = Session::new();
     // Cluster pre-lock runs before the fused Session executor and consumes
@@ -542,7 +542,7 @@ fn observation_batch_prelock_breakpoint_does_not_suppress_execution_counter() {
 
 #[test]
 fn observation_batch_routed_prelock_failure_counts_one_execution() {
-    use tidb_util::topsql_state::{disable_top_sql, enable_top_sql};
+    use tidb_topsql_state::{disable_top_sql, enable_top_sql};
     enable_top_sql();
     let mut session = Session::new();
     let sql = "UPDATE observation_prelock_failure SET id=1";
@@ -590,7 +590,7 @@ fn observation_plan_batch_encoded_plan_reaches_summary() {
     let sql = "SELECT id FROM observation_encoded WHERE id > 71";
     session.run(sql).unwrap();
     let (plan, _) = observation_plan_samples(sql);
-    let decoded = String::from_utf8(tidb_util::plancodec::decode_plan(plan).unwrap()).unwrap();
+    let decoded = String::from_utf8(tidb_plancodec::decode_plan(plan).unwrap()).unwrap();
     assert!(
         decoded.contains("observation_encoded"),
         "missing encoded plan: {decoded}"
@@ -647,7 +647,7 @@ fn observation_plan_batch_binary_prepared_keeps_summary_plan() {
         !encoded.is_empty(),
         "prepared summary lost its encoded plan"
     );
-    assert!(tidb_util::plancodec::decode_binary_plan(binary)
+    assert!(tidb_plancodec::decode_binary_plan(binary)
         .unwrap()
         .contains("observation_binary_prepared"));
     assert!(
@@ -662,7 +662,7 @@ fn observation_plan_batch_binary_prepared_keeps_summary_plan() {
 }
 
 fn observation_plan_toggle(sql: &str, begin_enabled: bool, end_enabled: bool) -> StatementStatsMap {
-    use tidb_util::topsql_state::{disable_top_sql, enable_top_sql};
+    use tidb_topsql_state::{disable_top_sql, enable_top_sql};
     disable_top_sql();
     let mut session = Session::new();
     session
@@ -779,13 +779,13 @@ fn observation_plan_batch_join_cte_and_dml_keep_tree_ownership() {
     ] {
         session.run(sql).unwrap();
         let (encoded, binary) = observation_plan_samples(sql);
-        let text = String::from_utf8(tidb_util::plancodec::decode_plan(encoded).unwrap()).unwrap();
+        let text = String::from_utf8(tidb_plancodec::decode_plan(encoded).unwrap()).unwrap();
         assert!(text.contains(expected), "{sql}: {text}");
         assert!(
             !text.contains("UnknownPlanID"),
             "unrecognized physical operator: {text}"
         );
-        assert!(!tidb_util::plancodec::decode_binary_plan(binary)
+        assert!(!tidb_plancodec::decode_binary_plan(binary)
             .unwrap()
             .is_empty());
     }
@@ -793,7 +793,7 @@ fn observation_plan_batch_join_cte_and_dml_keep_tree_ownership() {
 
 #[test]
 fn observation_plan_batch_disabled_set_skips_begin_but_dml_does_not() {
-    tidb_util::topsql_state::disable_top_sql();
+    tidb_topsql_state::disable_top_sql();
     let mut session = Session::new();
     session
         .run("CREATE TABLE observation_fast_dml (id INT PRIMARY KEY)")
@@ -882,7 +882,7 @@ fn ddl_visit_batch_summary_keeps_both_rename_tables_and_like_source() {
 
 #[test]
 fn kv_exec_counter_batch_admission_and_request_enable_windows() {
-    use tidb_util::topsql_state::{disable_top_sql, enable_top_sql};
+    use tidb_topsql_state::{disable_top_sql, enable_top_sql};
     for (admitted, send_enabled, expected) in [(true, true, 2), (false, true, 0), (true, false, 0)]
     {
         disable_top_sql();
@@ -1119,7 +1119,7 @@ fn failed_statement_summary_counts_no_warning_for_its_error_row() {
 /// statement summary with the table it read, and Top SQL sees it begin.
 #[test]
 fn observation_binary_point_get_reaches_summary_and_top_sql() {
-    use tidb_util::topsql_state::{disable_top_sql, enable_top_sql};
+    use tidb_topsql_state::{disable_top_sql, enable_top_sql};
     enable_top_sql();
     let mut session = Session::new();
     session.set_user("root@%".into(), "root@localhost".into());
@@ -1161,7 +1161,7 @@ fn observation_binary_point_get_reaches_summary_and_top_sql() {
     assert!(compile > std::time::Duration::ZERO, "the point plan's compile time");
     let (encoded, binary) = observation_plan_samples(sql);
     assert!(!encoded.is_empty(), "the summary samples the point plan");
-    assert!(tidb_util::plancodec::decode_binary_plan(binary)
+    assert!(tidb_plancodec::decode_binary_plan(binary)
         .unwrap()
         .contains("observation_point_get"));
 }

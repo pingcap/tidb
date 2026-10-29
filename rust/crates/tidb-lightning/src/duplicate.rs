@@ -24,7 +24,7 @@ use std::time::Duration;
 use crossbeam_channel::{Receiver, Sender, TrySendError};
 use tidb_log::{Field, Level, Value};
 
-use tidb_util::extsort::{ExternalSorter, Writer as ExternalWriter};
+use tidb_extsort::{ExternalSorter, Writer as ExternalWriter};
 use crate::log::Logger;
 
 /// Error returned by duplicate detection.
@@ -65,8 +65,8 @@ impl StdError for Error {
     }
 }
 
-impl From<tidb_util::extsort::Error> for Error {
-    fn from(error: tidb_util::extsort::Error) -> Self {
+impl From<tidb_extsort::Error> for Error {
+    fn from(error: tidb_extsort::Error) -> Self {
         Self {
             message: error.to_string(),
             source: Some(Box::new(error)),
@@ -614,7 +614,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use tidb_util::extsort::{open_disk_sorter, DiskSorterOptions};
+    use tidb_extsort::{open_disk_sorter, DiskSorterOptions};
 
     #[test]
     fn internal_key() {

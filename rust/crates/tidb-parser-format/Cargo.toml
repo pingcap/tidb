@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB text formatting: Go pkg/parser/format (Rust rewrite)."
 
 [dependencies]
+tidb-mysql = { path = "../tidb-mysql" }
 
 [lints]
 workspace = true

@@ -33,7 +33,8 @@ use std::time::Duration;
 
 use tidb_txnkv::driver::tikv_store::TikvStore;
 use tidb_txnkv::retry::{RegionBackoffBudget, RegionBackoffKind};
-use tidb_txnkv::{ReplicaRead, MAX_REMOTE_READ_COUNT_PER_NODE_FOR_CLOSEST_REPLICAS};
+use tidb_tiflash::ReplicaRead;
+use tidb_tiflash::MAX_REMOTE_READ_COUNT_PER_NODE_FOR_CLOSEST_REPLICAS;
 use tikv_client::TiFlashLabelFilter;
 
 /// Go `copBuildTaskMaxBackoff`.

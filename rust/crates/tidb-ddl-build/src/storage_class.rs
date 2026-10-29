@@ -52,7 +52,7 @@ impl StorageClassDef {
 fn parse_engine_attribute(input: &str) -> Result<tidb_model::EngineAttribute, MysqlError> {
     tidb_model::parse_engine_attribute_from_string(input).map_err(|error| {
         MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_ENGINE_ATTRIBUTE_INVALID_FORMAT
+            &tidb_dbterror::ERR_ENGINE_ATTRIBUTE_INVALID_FORMAT
                 .generate_with_stack_by_args(&[format!("'{}'", (&error)).into()]),
         )
     })
@@ -80,7 +80,7 @@ pub fn build_storage_class_settings_from_json(
             .take(192)
             .collect::<String>();
         MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(&[
+            &tidb_dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(&[
                 (format!("invalid storage class def: '{text}'"))
                     .to_string()
                     .into(),
@@ -125,7 +125,7 @@ pub fn build_storage_class_settings_from_json(
                 .map(|def| {
                     let mut def = def.ok_or_else(|| {
                         MysqlError::from_terror(
-                            &tidb_util::dbterror::ERR_STORAGE_CLASS_INVALID_SPEC
+                            &tidb_dbterror::ERR_STORAGE_CLASS_INVALID_SPEC
                                 .generate_with_stack_by_args(&[
                                     "storage class def must not be null".into(),
                                 ]),
@@ -251,7 +251,7 @@ fn check_tier(tier: &str) -> Result<(), MysqlError> {
         return Ok(());
     }
     Err(MysqlError::from_terror(
-        &tidb_util::dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(&[
+        &tidb_dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(&[
             (format!("invalid storage class tier: {tier}"))
                 .to_string()
                 .into(),
@@ -271,7 +271,7 @@ fn check_transitions(
         && rules[0].total_seconds() > 0;
     if !allowed {
         return Err(MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(&[
+            &tidb_dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(&[
                 "only transition from 'STANDARD' to 'IA' is allowed".into(),
             ]),
         ));
@@ -290,7 +290,7 @@ fn check_storage_class_def(def: &StorageClassDef) -> Result<(), MysqlError> {
         + usize::from(!def.values_in.is_empty());
     if scopes > 1 {
         return Err(MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(&[
+            &tidb_dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(&[
                 "can not specify 'names_in', 'less_than', or 'values_in' together".into(),
             ]),
         ));
@@ -300,7 +300,7 @@ fn check_storage_class_def(def: &StorageClassDef) -> Result<(), MysqlError> {
 
 fn engine_attribute_and_storage_class_conflict() -> MysqlError {
     MysqlError::from_terror(
-        &tidb_util::dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(&[
+        &tidb_dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(&[
             "can not specify 'ENGINE_ATTRIBUTE' and 'STORAGE_CLASS' together".into(),
         ]),
     )
@@ -361,7 +361,7 @@ fn validate_engine_attribute_table_option(input: &str) -> Result<(), MysqlError>
     let attribute = parse_engine_attribute(input)?;
     let Some(storage_class) = attribute.storage_class else {
         return Err(MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_ENGINE_ATTRIBUTE.generate_with_stack_by_args(&[]),
+            &tidb_dbterror::ERR_UNSUPPORTED_ENGINE_ATTRIBUTE.generate_with_stack_by_args(&[]),
         ));
     };
     build_storage_class_settings_from_json(Some(&storage_class.bytes()))?;
@@ -412,7 +412,7 @@ pub fn simple_table_storage_class_for_show_create(
     // attribute qualifies only when `storage_class` is its single key.
     let fields = serde_json::from_str::<Map<String, Value>>(engine_attribute).map_err(|error| {
         MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_ENGINE_ATTRIBUTE_INVALID_FORMAT
+            &tidb_dbterror::ERR_ENGINE_ATTRIBUTE_INVALID_FORMAT
                 .generate_with_stack_by_args(&[format!("'{}'", (&error.to_string())).into()]),
         )
     })?;
@@ -537,7 +537,7 @@ fn check_storage_class_partition_scope(
     let method = partition_method(kind);
     if !def.has_no_scope_def() && method == PartitionMethod::HashOrKey {
         return Err(MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(&[
+            &tidb_dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(&[
                 "partition-scoped storage_class does not support HASH or KEY partitions".into(),
             ]),
         ));
@@ -545,7 +545,7 @@ fn check_storage_class_partition_scope(
     if def.less_than.is_some() {
         if method != PartitionMethod::Range {
             return Err(MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(
+                &tidb_dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(
                     &["'less_than' only supports RANGE partitions".into()],
                 ),
             ));
@@ -555,7 +555,7 @@ fn check_storage_class_partition_scope(
             .any(|partition| partition.less_than.len() != 1)
         {
             return Err(MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(
+                &tidb_dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(
                     &["'less_than' only supports single-column RANGE partitions".into()],
                 ),
             ));
@@ -564,7 +564,7 @@ fn check_storage_class_partition_scope(
     if !def.values_in.is_empty() {
         if method != PartitionMethod::List {
             return Err(MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(
+                &tidb_dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(
                     &["'values_in' only supports LIST partitions".into()],
                 ),
             ));
@@ -574,7 +574,7 @@ fn check_storage_class_partition_scope(
             .any(|partition| partition.in_values.iter().any(|values| values.len() != 1))
         {
             return Err(MysqlError::from_terror(
-                &tidb_util::dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(
+                &tidb_dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(
                     &["'values_in' only supports single-column LIST partitions".into()],
                 ),
             ));
@@ -659,7 +659,7 @@ fn compare_range_partition_values(
         PartitionKind::RangeColumns { field_types, .. } => {
             let Some(column) = field_types.first() else {
                 return Err(MysqlError::from_terror(
-                    &tidb_util::dbterror::ERR_STORAGE_CLASS_INVALID_SPEC
+                    &tidb_dbterror::ERR_STORAGE_CLASS_INVALID_SPEC
                         .generate_with_stack_by_args(&[
                             "'less_than' can not find RANGE COLUMNS partition column".into(),
                         ]),
@@ -691,7 +691,7 @@ fn compare_range_columns_partition_values(
     };
     let invalid = || {
         MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(&[
+            &tidb_dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(&[
                 (format!("invalid 'less_than' value: {right}"))
                     .to_string()
                     .into(),
@@ -733,7 +733,7 @@ fn compare_numeric_range_partition_values(
 ) -> Result<i32, MysqlError> {
     let left_value = get_range_value(left, unsigned, ctx).ok_or_else(|| {
         MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(&[
+            &tidb_dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(&[
                 (format!("invalid RANGE partition value: {left}"))
                     .to_string()
                     .into(),
@@ -742,7 +742,7 @@ fn compare_numeric_range_partition_values(
     })?;
     let right_value = get_range_value(right, unsigned, ctx).ok_or_else(|| {
         MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(&[
+            &tidb_dbterror::ERR_STORAGE_CLASS_INVALID_SPEC.generate_with_stack_by_args(&[
                 (format!("invalid 'less_than' value: {right}"))
                     .to_string()
                     .into(),

@@ -362,7 +362,7 @@ pub(crate) fn scan_concurrency(
         return configured as u64;
     }
     let Some(pd_cli) = pd_http_client else {
-        tidb_util::logutil::bg_logger().warn(
+        tidb_logutil::bg_logger().warn(
             "fail to TryGetPDHTTPClient",
             &[tidb_log::Field::new(
                 "error",
@@ -387,7 +387,7 @@ pub(crate) fn scan_concurrency(
     match count {
         Ok(count) => concurrency_for_stores(count),
         Err(error) => {
-            tidb_util::logutil::bg_logger().warn(
+            tidb_logutil::bg_logger().warn(
                 "fail to get stores info",
                 &[tidb_log::Field::new("error", tidb_log::Value::Str(error))],
             );
@@ -403,7 +403,7 @@ struct SamplingCancellation {
 
 impl SamplingCancellation {
     fn start(
-        killer: &tidb_util::sqlkiller::SqlKiller,
+        killer: &tidb_sqlkiller::SqlKiller,
         cancellation: std::sync::Arc<tidb_txnkv::CancelHandle>,
     ) -> Result<Self, AnalyzeError> {
         let killed = killer.get_kill_event_chan();
@@ -443,7 +443,7 @@ pub(crate) fn analyze_table<S>(
     selected_columns: Option<&std::collections::HashSet<i64>>,
     concurrency: u64,
     timeout: std::time::Duration,
-    killer: &tidb_util::sqlkiller::SqlKiller,
+    killer: &tidb_sqlkiller::SqlKiller,
     resource_group: &str,
     progress: &dyn Fn(i64),
 ) -> Result<super::AnalyzeReport, AnalyzeError>
@@ -842,10 +842,10 @@ mod tests {
 
     #[test]
     fn kill_cancels_sampling_and_completed_guard_does_not_wait_for_kill() {
-        let killer = tidb_util::sqlkiller::SqlKiller::default();
+        let killer = tidb_sqlkiller::SqlKiller::default();
         let cancellation = std::sync::Arc::new(tidb_txnkv::CancelHandle::default());
         let guard = super::SamplingCancellation::start(&killer, cancellation.clone()).unwrap();
-        killer.send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+        killer.send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
         for _ in 0..100 {
             if cancellation.is_cancelled() {
                 break;

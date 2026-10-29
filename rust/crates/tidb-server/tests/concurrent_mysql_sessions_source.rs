@@ -19,7 +19,7 @@ use tidb_protocol::{
 };
 use tidb_server::{ActiveQueryCancellation, ConcurrentSqlNode, ConfiguredUserStore, ConnectionCancellation, NodeConfig, QueryCancellationLease, QueryResult, QuerySession, QuerySessionFactory, ResultSetSource, SessionContext};
 use tidb_store_driver::sql_query_error::SqlQueryError;
-use tidb_util::globalconn::{parse_conn_id, Gcid};
+use tidb_globalconn::{parse_conn_id, Gcid};
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
 const CLIENT_SECURE_CONNECTION: u32 = 1 << 15;

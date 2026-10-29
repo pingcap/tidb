@@ -1,0 +1,21 @@
+[package]
+name = "tidb-globalconn"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/globalconn: Go pkg/util/globalconn (Rust rewrite)."
+build = "build.rs"
+
+[lints]
+workspace = true
+
+[build-dependencies]
+
+[dependencies]
+tracing = "0.1"
+
+[[bench]]
+name = "globalconn"
+harness = false

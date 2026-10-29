@@ -1,0 +1,36 @@
+[package]
+name = "tidb-disk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/disk: Go pkg/util/disk (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+enableassert = ["tidb-memory/enableassert"]
+failpoints = ["tidb-memory/failpoints"]
+intest = ["tidb-memory/intest"]
+jemalloc = ["tidb-memory/jemalloc"]
+
+[dependencies]
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-memory = { path = "../tidb-memory" }
+tidb-config = { path = "../tidb-config" }
+rustix = { workspace = true, features = ["fs", "pipe", "stdio", "system", "thread"] }
+tempfile.workspace = true
+tracing = "0.1"
+
+[target.'cfg(windows)'.dependencies]
+fs4 = { version = "=1.1.0", default-features = false }
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tidb-intest = { path = "../tidb-intest", features = ["intest"] }

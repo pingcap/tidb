@@ -173,7 +173,7 @@ impl BindingCallbacks {
         if let Some(observer) = observer {
             observer(binding);
         }
-        tidb_util::logutil::bg_logger().warn(
+        tidb_logutil::bg_logger().warn(
             &format!("binding cache memory limit reached, evict or reject binding: sqlDigest={}, bindSQL={}", binding.sql_digest, binding.bind_sql), &[],
         );
     }

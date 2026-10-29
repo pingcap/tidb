@@ -13,6 +13,9 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-timeutil = { path = "../tidb-timeutil" }
 chrono.workspace = true
 chrono-tz.workspace = true
 getrandom.workspace = true

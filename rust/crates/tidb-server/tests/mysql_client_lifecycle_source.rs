@@ -26,7 +26,7 @@ use tidb_server::{serve_mysql_connection, ConfiguredUserStore, ConnectionCancell
 use tidb_store_driver::sql_query_error::SqlQueryError;
 use tidb_executor::ddl_exec::WriteOutcome;
 use tidb_executor::stmt_ctx_build::ResultMaterializationAuthority;
-use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+use tidb_spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
 const CLIENT_SECURE_CONNECTION: u32 = 1 << 15;

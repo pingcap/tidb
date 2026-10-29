@@ -207,8 +207,8 @@ impl Executor for BuildSource {
 fn native_build_partition_spill_source() {
     use std::sync::Arc;
     use tidb_executor::hash_join_v2::spill::HashJoinSpill;
-    use tidb_util::memory::ActionOnExceed;
-    use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+    use tidb_memory::ActionOnExceed;
+    use tidb_spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
     for concurrency in [1, 2, 4, 5] {
         for mode in 0..6 {
             let path = std::env::temp_dir().join(format!(
@@ -269,7 +269,7 @@ fn native_build_partition_spill_source() {
             if mode == 4 {
                 memory
                     .sql_killer()
-                    .send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+                    .send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
             }
             let mut spill = HashJoinSpill::new(
                 concurrency,
@@ -453,7 +453,7 @@ fn native_hash_join_recursive_restore_source() {
         schema::Schema,
         NoColumns,
     };
-    use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
+    use tidb_spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
     for concurrency in [2, 4, 5] {
         for kind in [
             JoinType::Inner,
@@ -662,7 +662,7 @@ fn native_hash_join_recursive_restore_source() {
 #[test]
 fn native_hash_bucket_allocation_spill_source() {
     use tidb_executor::hash_join_v2::spill::HashJoinSpill;
-    use tidb_util::memory::ActionOnExceed;
+    use tidb_memory::ActionOnExceed;
     let memory = StatementMemory::new(-1, OomAction::Cancel, 1);
     let mut exec = HashJoinV2Exec::new(HashJoinCtxV2::new(4, JoinType::Inner, true), &[0], &[true]);
     let tracker = exec.hash_table_context.memory_tracker.clone();
@@ -787,7 +787,7 @@ fn native_build_stage_consumes_child_chunks_and_links_all_rows_source() {
 // deterministic failures so the original error and post-join cleanup are exact.
 #[test]
 fn native_build_stage_errors_join_workers_and_release_memory_source() {
-    use tidb_util::sqlkiller::KillSignal;
+    use tidb_sqlkiller::KillSignal;
     let layout = one_int_key_layout();
     let keys = key_columns(FieldTypeCode::LongLong);
     struct FilterContext<'a> {
@@ -1830,7 +1830,7 @@ fn outer_join_worker_scan_waits_for_all_probers_source() {
 fn join_worker_close_and_kill_release_queue_waits_source() {
     use crossbeam_channel::bounded;
     use std::time::Duration;
-    use tidb_util::sqlkiller::KillSignal;
+    use tidb_sqlkiller::KillSignal;
     let layout = preserved_int_key_layout();
     let (exec, _) = built_exec(
         1,
@@ -2496,8 +2496,8 @@ fn check_semi_family(
 // Go killedDuringProbe: cancellation must be observed inside Probe/Scan,
 // before the worker transport can publish a partially constructed result.
 fn assert_probe_canceled(probe: &mut dyn ProbeV2, input: Chunk, new_output: &dyn Fn() -> Chunk) {
-    let killer = tidb_util::sqlkiller::SqlKiller::default();
-    killer.send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+    let killer = tidb_sqlkiller::SqlKiller::default();
+    killer.send_kill_signal(tidb_sqlkiller::KillSignal::QueryInterrupted);
     probe.set_chunk_for_probe(input).unwrap();
     let mut output = new_output();
     assert!(matches!(probe.probe(&mut output, &killer),
@@ -2526,7 +2526,7 @@ fn native_hash_join_executor_lifecycle_source() {
         schema::Schema,
         NoColumns,
     };
-    use tidb_util::sqlkiller::KillSignal;
+    use tidb_sqlkiller::KillSignal;
     fn statement_context_can_cross_worker_lanes<
         C: tidb_expr::Columns + Clone + Send + Sync + 'static,
     >() {
@@ -2862,7 +2862,7 @@ fn native_probe_stage_next_close_and_error_source() {
     use std::sync::Arc;
     use std::time::Duration;
     use tidb_executor::hash_join_v2::probe_stage::ProbeStage;
-    use tidb_util::sqlkiller::KillSignal;
+    use tidb_sqlkiller::KillSignal;
     for concurrency in [1, 4, 5] {
         for kind in [JoinType::Inner, JoinType::LeftOuter, JoinType::RightOuter] {
             for mode in 0..9 {
@@ -3508,7 +3508,7 @@ fn check_join_other_condition(join_type: JoinType, residual: bool, filtered: boo
                     .unwrap();
                 let mut output = Chunk::new(&output_types, 128, 128);
                 assert_eq!(
-                    failing_probe.probe(&mut output, &tidb_util::sqlkiller::SqlKiller::default()),
+                    failing_probe.probe(&mut output, &tidb_sqlkiller::SqlKiller::default()),
                     Err(tidb_executor::base_join_probe::ProbeError::Expression(
                         tidb_expr::EvalError::ParamIndexExceedParamCounts
                     ))

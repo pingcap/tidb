@@ -23,7 +23,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::RawValue;
 use tidb_datatype::{Datum, FieldType};
 use tidb_model::index::IndexInfo;
-use tidb_util::context::SqlWarn;
+use tidb_context::SqlWarn;
 
 /// Go `SessionStateType`: the type of a session state the connection
 /// layer (not the session) owns.
@@ -333,7 +333,7 @@ pub(crate) fn deserialize_go_bytes<'de, D: Deserializer<'de>>(deserializer: D) -
 
 /// Go `encoding/json`'s `float64`.
 fn serialize_go_float<S: Serializer>(value: &f64, serializer: S) -> Result<S::Ok, S::Error> {
-    RawValue::from_string(tidb_util::stringutil::go_json_float(*value))
+    RawValue::from_string(tidb_stringutil::go_json_float(*value))
         .map_err(serde::ser::Error::custom)?
         .serialize(serializer)
 }

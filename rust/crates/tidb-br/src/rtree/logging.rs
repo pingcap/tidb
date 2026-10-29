@@ -14,7 +14,7 @@
 
 //! Go `br/pkg/rtree/logging.go`: how a range and a slice of ranges print.
 
-use tidb_util::redact;
+use tidb_redact as redact;
 
 use super::rtree::KeyRange;
 

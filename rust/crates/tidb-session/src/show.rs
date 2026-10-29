@@ -245,7 +245,7 @@ impl tidb_executor::show::exec::ShowExec for Session {
         Session::viewer_state(self)
     }
 
-    fn process_registry(&self) -> Option<tidb_executor::process::ProcessRegistry> {
+    fn process_registry(&self) -> Option<tidb_sessmgr::ProcessRegistry> {
         self.process.as_ref().map(|guard| guard.registry().clone())
     }
 
@@ -312,11 +312,11 @@ impl tidb_executor::index_advisor::IndexAdvisorExec for Session {
         self.hypo_indexes = indexes;
     }
 
-    fn warnings_snapshot(&self) -> Vec<tidb_util::context::SqlWarn> {
+    fn warnings_snapshot(&self) -> Vec<tidb_context::SqlWarn> {
         self.warnings.clone()
     }
 
-    fn restore_warnings(&mut self, warnings: Vec<tidb_util::context::SqlWarn>) {
+    fn restore_warnings(&mut self, warnings: Vec<tidb_context::SqlWarn>) {
         self.warnings = warnings;
     }
 

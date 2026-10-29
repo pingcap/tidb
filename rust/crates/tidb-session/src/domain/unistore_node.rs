@@ -276,8 +276,8 @@ impl Drop for EmbeddedResourceGroups {
 pub fn unistore_cluster_session_stack(
     config: &tidb_domain_core::node_config::NodeConfig,
     users: &Arc<crate::domain::configured_user_store::ConfiguredUserStore>,
-    spill_storage: Option<Arc<tidb_util::spill_storage::SpillStorage>>,
-    memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
+    spill_storage: Option<Arc<tidb_spill_storage::SpillStorage>>,
+    memory_arbitrator: Option<Arc<tidb_memory::MemArbitrator>>,
 ) -> Result<UnistoreClusterStack, crate::domain::real_tikv_node::RunConfiguredNodeError> {
     unistore_cluster_session_stack_from(config, users, spill_storage, memory_arbitrator, None, 0)
 }
@@ -478,8 +478,8 @@ impl BootstrapImage {
 pub fn unistore_cluster_session_stack_from(
     config: &tidb_domain_core::node_config::NodeConfig,
     users: &Arc<crate::domain::configured_user_store::ConfiguredUserStore>,
-    spill_storage: Option<Arc<tidb_util::spill_storage::SpillStorage>>,
-    memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
+    spill_storage: Option<Arc<tidb_spill_storage::SpillStorage>>,
+    memory_arbitrator: Option<Arc<tidb_memory::MemArbitrator>>,
     image: Option<&BootstrapImage>,
     mock_tiflash: usize,
 ) -> Result<UnistoreClusterStack, crate::domain::real_tikv_node::RunConfiguredNodeError> {

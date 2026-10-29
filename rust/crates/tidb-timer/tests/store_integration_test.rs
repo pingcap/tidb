@@ -42,7 +42,7 @@ use tidb_timer::timer::{
 };
 use tidb_timer::uuid::new_uuid_hex;
 use tidb_timer::TimerError;
-use tidb_util::timeutil::{load_location, set_system_tz, system_location, zone_name, TimeZone};
+use tidb_timeutil::{load_location, set_system_tz, system_location, zone_name, TimeZone};
 
 const ONE_MINUTE: Duration = Duration::from_secs(60);
 

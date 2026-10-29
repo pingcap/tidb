@@ -11,6 +11,8 @@ description = "TiDB system-internal session ownership and pooling."
 workspace = true
 
 [dependencies]
+tidb-intest = { path = "../tidb-intest" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-expr = { path = "../tidb-expr" }

@@ -23,7 +23,7 @@ use std::time::Instant;
 use prometheus::{exponential_buckets, HistogramOpts, HistogramVec};
 use tidb_datatype::Datum;
 use tidb_sqlexec::{ExecutionContext, RecordSet};
-use tidb_util::sqlescape::SqlArg;
+use tidb_sqlescape::SqlArg;
 
 /// Go `kv.InternalTxnDDL`.
 pub const INTERNAL_TXN_DDL: &str = "ddl";

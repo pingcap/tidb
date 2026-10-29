@@ -151,7 +151,7 @@ pub(crate) fn family_catalog() -> Vec<(String, String)> {
     for (fq, help) in tidb_metrics::meta::histogram_definitions() {
         catalog.push((fq.to_owned(), help.to_owned()));
     }
-    for (fq, help) in tidb_util::topsql_reporter::metrics::histogram_definitions() {
+    for (fq, help) in tidb_topsql_reporter_metrics::histogram_definitions() {
         catalog.push((fq.to_owned(), help.to_owned()));
     }
     for (fq, help) in tidb_txnkv::client_go_metrics::histogram_definitions() {
@@ -318,9 +318,9 @@ mod init_tests {
     #[test]
     fn init_registers_every_family() {
         super::init();
-        tidb_util::topsql_reporter::metrics::init_metrics_vars();
+        tidb_topsql_reporter_metrics::init_metrics_vars();
         let catalog = super::family_catalog();
-        for (name, help) in tidb_util::topsql_reporter::metrics::histogram_definitions() {
+        for (name, help) in tidb_topsql_reporter_metrics::histogram_definitions() {
             assert!(
                 catalog.contains(&(name.to_owned(), help.to_owned())),
                 "{name} missing from the server metric catalog"

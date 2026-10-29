@@ -4214,8 +4214,8 @@ fn cast_string_numeric_argument(
                 crate::ErrorLevel::Error => return Err(EvalError::Conversion(error)),
                 crate::ErrorLevel::Warn => {
                     let warning = error.to_sql_error();
-                    ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
-            tidb_util::context::WarningLevel::Warning,
+                    ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
+            tidb_context::WarningLevel::Warning,
             warning.code,
             warning.message.clone(),
             warning.identity,

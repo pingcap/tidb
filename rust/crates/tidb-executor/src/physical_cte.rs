@@ -25,7 +25,7 @@ use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::schema::Schema;
 
-use crate::cte_storage::CteStorage;
+use tidb_cteutil::CteStorage;
 use crate::executor::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use crate::StmtContext;
@@ -400,7 +400,7 @@ impl CteProducer {
         if self.current_iteration > self.context.cte_max_recursion_depth() as usize {
             return Err(ExecError::Mysql(
                 tidb_error::mysql::MysqlError::from_terror(
-                    &tidb_util::dbterror::exeerrors::ERR_CTE_MAX_RECURSION_DEPTH
+                    &tidb_dbterror::exeerrors::ERR_CTE_MAX_RECURSION_DEPTH
                         .generate_with_stack_by_args(&[(self.current_iteration as u64).into()]),
                 ),
             ));
@@ -441,7 +441,7 @@ impl CteProducer {
             if self.current_iteration > self.context.cte_max_recursion_depth() as usize {
                 return Err(ExecError::Mysql(
                     tidb_error::mysql::MysqlError::from_terror(
-                        &tidb_util::dbterror::exeerrors::ERR_CTE_MAX_RECURSION_DEPTH
+                        &tidb_dbterror::exeerrors::ERR_CTE_MAX_RECURSION_DEPTH
                             .generate_with_stack_by_args(&[(self.current_iteration as u64).into()]),
                     ),
                 ));

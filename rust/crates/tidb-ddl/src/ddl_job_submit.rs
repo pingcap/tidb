@@ -425,7 +425,7 @@ impl JobSubmitError {
                     ]),
             ),
             Self::BdrRestricted(role) => Some(
-                tidb_util::dbterror::ERR_BDR_RESTRICTED_DDL
+                tidb_dbterror::ERR_BDR_RESTRICTED_DDL
                     .generate_with_stack_by_args(&[role.as_str().into()]),
             ),
             Self::InvalidInvolvingSchemaInfo(_) | Self::FlashbackClusterJob => None,
@@ -524,7 +524,7 @@ pub fn prepare_spec_for_submit(
     };
     if job.cdc_write_source == 0
         && role.is_some()
-        && !tidb_util::filter::is_system_schema(&job.schema_name.to_utf8_lossy_go())
+        && !tidb_filter::is_system_schema(&job.schema_name.to_utf8_lossy_go())
     {
         let denied = if job.type_ == ActionType::ACTION_MULTI_SCHEMA_CHANGE {
             job.multi_schema_info.as_ref().is_some_and(|info| {

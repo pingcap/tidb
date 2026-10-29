@@ -77,10 +77,10 @@ use std::collections::BTreeMap;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 
-use tidb_executor::process::{ProcessKillTarget, ProcessRegistry};
+use tidb_sessmgr::{ProcessKillTarget, ProcessRegistry};
 use tidb_session::{Session};
 use tidb_privilege::PrivilegeRegistry;
-use tidb_util::sqlkiller::KillSignal;
+use tidb_sqlkiller::KillSignal;
 
 /// The connection every script starts on, and the name `connection default`
 /// switches back to.
@@ -695,6 +695,6 @@ pub fn recording_server_time_zone() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         std::env::set_var("TZ", "Asia/Shanghai");
-        tidb_util::memory::override_mem_total(Some(64 << 30));
+        tidb_memory::override_mem_total(Some(64 << 30));
     });
 }

@@ -348,7 +348,7 @@ fn a_sandboxed_session_may_only_fix_its_own_password() {
     for sql in ["SELECT 1", "SHOW DATABASES", "BEGIN", "SET @x = 1"] {
         assert!(
             sandbox.run(sql).is_err_and(
-                |error| error.equal(&tidb_util::dbterror::exeerrors::ERR_MUST_CHANGE_PASSWORD)
+                |error| error.equal(&tidb_dbterror::exeerrors::ERR_MUST_CHANGE_PASSWORD)
             ),
             "{sql} must be gated"
         );

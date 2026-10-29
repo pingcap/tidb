@@ -1,0 +1,18 @@
+[package]
+name = "tidb-worker-stack"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util: Go pkg/util (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[[test]]
+name = "default_thread_stack"
+path = "tests/default_thread_stack.rs"
+harness = false

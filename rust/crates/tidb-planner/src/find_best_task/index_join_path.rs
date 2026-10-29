@@ -50,7 +50,7 @@ pub(crate) struct IndexJoinRangeEnv<'a> {
     /// plan cache, we don't restrict range mem limit").
     pub range_max_size: i64,
     /// Go `StmtCtx.RecordRangeFallback`'s sink.
-    pub fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
+    pub fallback_handler: Option<&'a tidb_context::RangeFallbackHandler>,
     /// Go `RangerContext.OptPrefixIndexSingleScan`.
     pub opt_prefix_index_single_scan: bool,
     /// The statement's constant evaluator.
@@ -761,7 +761,7 @@ mod tests {
         FieldName, FieldNameMetadata, FieldType, FieldTypeCode, IdentifierMetadata,
         UNSPECIFIED_LENGTH,
     };
-    use tidb_util::context::{PlanCacheTracker, RangeFallbackHandler, StaticWarnHandler, WarnHandler};
+    use tidb_context::{PlanCacheTracker, RangeFallbackHandler, StaticWarnHandler, WarnHandler};
 
     struct Fixture {
         ds_schema: Schema,

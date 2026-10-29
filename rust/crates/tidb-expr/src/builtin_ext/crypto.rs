@@ -304,16 +304,16 @@ fn eval_aes_bytes(
     } else {
         None
     };
-    let key = tidb_util::encrypt::derive_key_mysql(password, mode.key_size());
+    let key = tidb_encrypt::derive_key_mysql(password, mode.key_size());
     let encrypted = function == "aes_encrypt";
     let result = match mode {
         BlockEncryptionMode::Aes128Ecb
         | BlockEncryptionMode::Aes192Ecb
         | BlockEncryptionMode::Aes256Ecb => {
             if encrypted {
-                tidb_util::encrypt::aes_encrypt_with_ecb(input, &key)
+                tidb_encrypt::aes_encrypt_with_ecb(input, &key)
             } else {
-                tidb_util::encrypt::aes_decrypt_with_ecb(input, &key)
+                tidb_encrypt::aes_decrypt_with_ecb(input, &key)
             }
         }
         BlockEncryptionMode::Aes128Cbc
@@ -321,9 +321,9 @@ fn eval_aes_bytes(
         | BlockEncryptionMode::Aes256Cbc => {
             let iv = iv.expect("CBC mode requires an IV");
             if encrypted {
-                tidb_util::encrypt::aes_encrypt_with_cbc(input, &key, iv)
+                tidb_encrypt::aes_encrypt_with_cbc(input, &key, iv)
             } else {
-                tidb_util::encrypt::aes_decrypt_with_cbc(input, &key, iv)
+                tidb_encrypt::aes_decrypt_with_cbc(input, &key, iv)
             }
         }
         BlockEncryptionMode::Aes128Ofb
@@ -331,9 +331,9 @@ fn eval_aes_bytes(
         | BlockEncryptionMode::Aes256Ofb => {
             let iv = iv.expect("OFB mode requires an IV");
             if encrypted {
-                tidb_util::encrypt::aes_encrypt_with_ofb(input, &key, iv)
+                tidb_encrypt::aes_encrypt_with_ofb(input, &key, iv)
             } else {
-                tidb_util::encrypt::aes_decrypt_with_ofb(input, &key, iv)
+                tidb_encrypt::aes_decrypt_with_ofb(input, &key, iv)
             }
         }
         BlockEncryptionMode::Aes128Cfb
@@ -341,9 +341,9 @@ fn eval_aes_bytes(
         | BlockEncryptionMode::Aes256Cfb => {
             let iv = iv.expect("CFB mode requires an IV");
             if encrypted {
-                tidb_util::encrypt::aes_encrypt_with_cfb(input, &key, iv)
+                tidb_encrypt::aes_encrypt_with_cfb(input, &key, iv)
             } else {
-                tidb_util::encrypt::aes_decrypt_with_cfb(input, &key, iv)
+                tidb_encrypt::aes_decrypt_with_cfb(input, &key, iv)
             }
         }
     };
@@ -393,7 +393,7 @@ fn password_hash(value: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
 
 /// The deterministic MySQL 3.21 stream cipher used by TiDB's deprecated
 /// `ENCODE(str, password)` function. The byte algorithm is owned once by
-/// `tidb_util::encrypt`, the direct transcreation of `pkg/util/encrypt`.
+/// `tidb_encrypt`, the direct transcreation of `pkg/util/encrypt`.
 fn sql_encode(data: &Datum, password: &Datum) -> Result<Datum, EvalError> {
     let Some(data) = sql_string_bytes(data)? else {
         return Ok(Datum::Null);
@@ -401,7 +401,7 @@ fn sql_encode(data: &Datum, password: &Datum) -> Result<Datum, EvalError> {
     let Some(password) = sql_string_bytes(password)? else {
         return Ok(Datum::Null);
     };
-    Ok(Datum::new_string(tidb_util::encrypt::sql_encode(
+    Ok(Datum::new_string(tidb_encrypt::sql_encode(
         &data, &password,
     )))
 }
@@ -414,7 +414,7 @@ fn sql_decode(data: &Datum, password: &Datum) -> Result<Datum, EvalError> {
     let Some(password) = sql_string_bytes(password)? else {
         return Ok(Datum::Null);
     };
-    Ok(Datum::new_string(tidb_util::encrypt::sql_decode(
+    Ok(Datum::new_string(tidb_encrypt::sql_decode(
         &data, &password,
     )))
 }
@@ -445,7 +445,7 @@ fn sql_string_bytes(value: &Datum) -> Result<Option<Vec<u8>>, EvalError> {
 
 struct EvalGlobalVars<'a>(&'a dyn Columns);
 
-impl tidb_util::password_validation::GlobalVarAccessor for EvalGlobalVars<'_> {
+impl tidb_password_validation::GlobalVarAccessor for EvalGlobalVars<'_> {
     type Error = EvalError;
 
     fn get_global_sys_var(&self, name: &str) -> Result<String, Self::Error> {
@@ -473,8 +473,8 @@ impl tidb_util::password_validation::GlobalVarAccessor for EvalGlobalVars<'_> {
     }
 }
 
-fn password_eval_error(error: tidb_util::password_validation::PwdError<EvalError>) -> EvalError {
-    use tidb_util::password_validation::PwdError;
+fn password_eval_error(error: tidb_password_validation::PwdError<EvalError>) -> EvalError {
+    use tidb_password_validation::PwdError;
     match error {
         PwdError::Accessor(error) => error,
         PwdError::ParseInt(error) => EvalError::IncorrectArguments(format!(
@@ -490,7 +490,7 @@ fn identity_username(identity: &str) -> &str {
 
 /// `VALIDATE_PASSWORD_STRENGTH(str)`.
 fn validate_password_strength(value: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    use tidb_util::password_validation::{self, PasswordUser};
+    use tidb_password_validation::{self as password_validation, PasswordUser};
 
     let Some(password) = sql_string_bytes(value)? else {
         return Ok(Datum::Null);

@@ -113,7 +113,7 @@ fn pd_response_handler(
             None => Ok(()),
         };
     }
-    tidb_util::logutil::bg_logger().warn(
+    tidb_logutil::bg_logger().warn(
         "response not 200",
         &[
             tidb_log::Field::new(
