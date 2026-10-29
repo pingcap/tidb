@@ -53,7 +53,7 @@ pub fn optimize_by_shuffle(
         task,
         options,
         allocator,
-        &crate::ranger::points::evaluate_static,
+        &tidb_ranger::points::evaluate_static,
     )
 }
 
@@ -61,7 +61,7 @@ pub(crate) fn optimize_by_shuffle_in(
     task: Task,
     options: ShuffleOptions,
     allocator: &PlanIdAllocator,
-    evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+    evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
 ) -> Result<Task, PlanError> {
     let Some(plan) = task.plan() else {
         return Ok(task);

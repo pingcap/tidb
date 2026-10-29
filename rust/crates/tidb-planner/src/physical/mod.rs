@@ -915,7 +915,7 @@ pub struct PhysicalIndexJoin {
     /// `completePhysicalIndexJoin` after the inner task returns feedback.
     pub equal_conditions: Vec<tidb_expr::scalar_function::ScalarFunction>,
     /// The current mutable ranges owned by the index join.
-    pub ranges: crate::ranger::types::Ranges,
+    pub ranges: tidb_ranger::types::Ranges,
     /// Go `PhysicalIndexJoin.KeyOff2IdxOff`.
     pub key_off2_idx_off: Vec<i64>,
     /// Go `PhysicalIndexJoin.IdxColLens`.
@@ -954,7 +954,7 @@ impl Default for PhysicalIndexJoin {
             outer_hash_keys: Vec::new(),
             inner_hash_keys: Vec::new(),
             equal_conditions: Vec::new(),
-            ranges: crate::ranger::types::Ranges::default(),
+            ranges: tidb_ranger::types::Ranges::default(),
             key_off2_idx_off: Vec::new(),
             idx_col_lens: Vec::new(),
             compare_filters: None,
@@ -1269,7 +1269,7 @@ pub struct PhysicalTableScan {
     pub desc: bool,
     /// Go `Ranges`: the scan's key ranges (`ranger.Ranges`). Empty means
     /// the builder predates range filling and reads as the full scan.
-    pub ranges: crate::ranger::types::Ranges,
+    pub ranges: tidb_ranger::types::Ranges,
     /// Go `GroupByColIdxs`: the range columns each range holds one constant
     /// of. Non-empty means the reader splits `ranges` into groups that agree
     /// on those columns (`GroupRangesByCols`), reads each group in order and
@@ -2520,7 +2520,7 @@ pub struct PhysicalIndexScan {
     /// Go `Desc`.
     pub desc: bool,
     /// Go `Ranges` (`ranger.Ranges`); empty reads as the full range.
-    pub ranges: crate::ranger::types::Ranges,
+    pub ranges: tidb_ranger::types::Ranges,
     /// Go `GroupByColIdxs`; see [`PhysicalTableScan::group_by_col_idxs`].
     pub group_by_col_idxs: Vec<usize>,
     /// Go `ByItems`: the sort items a keep-order read merge-sorts its range
@@ -2551,7 +2551,7 @@ impl PhysicalIndexScan {
     #[must_use]
     pub fn resolved_explain_id(&self, ignore_suffix: bool) -> String {
         let plan_type = if self.ranges.is_empty()
-            || crate::ranger::types::has_full_range(&self.ranges, false)
+            || tidb_ranger::types::has_full_range(&self.ranges, false)
         {
             "IndexFullScan"
         } else {
@@ -2785,7 +2785,7 @@ pub struct PhysicalPointGet {
     /// plan whose lookup contributes network cost.
     pub access_cols: Option<Vec<tidb_expr::column::Column>>,
     /// The single point range represented by this plan.
-    pub ranges: crate::ranger::types::Ranges,
+    pub ranges: tidb_ranger::types::Ranges,
     /// Parameter-dependent range metadata retained for cache rebuilding.
     pub range_rebuild: Option<crate::physical_plan_cache::PointRangeRebuild>,
     /// Go `PointGetPlan.Lock`: the enclosing UPDATE/DELETE, or a locking
@@ -2823,7 +2823,7 @@ pub struct PhysicalBatchPointGet {
     /// (`strconv.FormatUint`), never the signed reinterpretation.
     pub unsigned_handle: bool,
     /// One range per retained point key.
-    pub ranges: crate::ranger::types::Ranges,
+    pub ranges: tidb_ranger::types::Ranges,
     /// Physical partition ID per retained range, for a routed fast batch.
     pub partition_ids: Option<Vec<i64>>,
     /// Go `BatchPointGetPlan.PartitionNames`: the PARTITION clause, which a

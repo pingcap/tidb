@@ -39,27 +39,27 @@ fn check_column_can_use_index(
     mut conditions: Vec<Expression>,
 ) -> bool {
     let detach = |columns: &[Column], lengths: &[i64]| {
-        let options = crate::ranger::detacher::RangerOptions {
+        let options = tidb_ranger::detacher::RangerOptions {
             opt_prefix_index_single_scan: ctx.opt_prefix_index_single_scan,
             ..ctx.estimator_options.ranger_options()
         };
         if let Some(handler) = ctx.range_fallback_handler {
-            crate::ranger::detacher::detach_index_range_with_fallback_handler_in(
+            tidb_ranger::detacher::detach_index_range_with_fallback_handler_in(
                 &conditions,
                 columns,
                 lengths,
                 ctx.range_max_size,
                 handler,
-                &crate::ranger::points::evaluate_static,
+                &tidb_ranger::points::evaluate_static,
                 options,
             )
         } else {
-            crate::ranger::detacher::detach_cond_and_build_range_for_index_in(
+            tidb_ranger::detacher::detach_cond_and_build_range_for_index_in(
                 &conditions,
                 columns,
                 lengths,
                 ctx.range_max_size,
-                &crate::ranger::points::evaluate_static,
+                &tidb_ranger::points::evaluate_static,
                 options,
             )
         }
@@ -90,7 +90,7 @@ fn check_column_can_use_index(
                                 .first()
                                 .is_some_and(|handle| handle.unique_id == column.unique_id)
                             {
-                                return crate::ranger::detacher::detach_conds_for_column(
+                                return tidb_ranger::detacher::detach_conds_for_column(
                                     &conditions,
                                     column,
                                     true,
@@ -154,7 +154,7 @@ fn check_column_can_use_index(
                             {
                                 // Go stops the complete search on this matching handle,
                                 // including when residual filters make it unusable.
-                                return crate::ranger::detacher::detach_conds_for_column(
+                                return tidb_ranger::detacher::detach_conds_for_column(
                                     &conditions,
                                     column,
                                     true,

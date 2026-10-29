@@ -1,0 +1,24 @@
+[package]
+name = "tidb-ranger"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB range building: Go pkg/util/ranger (Rust rewrite)."
+
+[dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-codec = { path = "../tidb-codec" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-error = { path = "../tidb-error" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-goruntime = { path = "../tidb-goruntime" }
+tidb-hack = { path = "../tidb-hack" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-util = { path = "../tidb-util" }
+
+[lints]
+workspace = true

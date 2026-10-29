@@ -75,7 +75,7 @@ pub enum EstimationError {
     /// A range endpoint cannot be encoded as a statistics key.
     Codec(tidb_codec::CodecError),
     /// Range construction failed before an estimate could be formed.
-    Range(crate::ranger::points::PointBuilderError),
+    Range(tidb_ranger::points::PointBuilderError),
 }
 
 impl std::fmt::Display for EstimationError {
@@ -100,8 +100,8 @@ impl std::error::Error for EstimationError {
     }
 }
 
-impl From<crate::ranger::points::PointBuilderError> for EstimationError {
-    fn from(error: crate::ranger::points::PointBuilderError) -> Self {
+impl From<tidb_ranger::points::PointBuilderError> for EstimationError {
+    fn from(error: tidb_ranger::points::PointBuilderError) -> Self {
         Self::Range(error)
     }
 }
@@ -163,8 +163,8 @@ pub struct EstimatorOptions {
 impl EstimatorOptions {
     /// The statement's Go `RangerContext` switches.
     #[must_use]
-    pub fn ranger_options(&self) -> crate::ranger::detacher::RangerOptions {
-        crate::ranger::detacher::RangerOptions {
+    pub fn ranger_options(&self) -> tidb_ranger::detacher::RangerOptions {
+        tidb_ranger::detacher::RangerOptions {
             regard_null_as_point: self.regard_null_as_point,
             opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
             fix_44389: self.fix_44389,
@@ -264,7 +264,7 @@ impl ColumnRange {
 
 /// The ranger's range, including per-column collators. Cardinality must not
 /// project this into a second representation that loses range metadata.
-pub use crate::ranger::Range as IndexRangeDatums;
+pub use tidb_ranger::Range as IndexRangeDatums;
 
 fn topn_num(topn: Option<&TopN>) -> usize {
     topn.map_or(0, TopN::num)
@@ -1264,7 +1264,7 @@ pub fn get_index_row_count(
     let Some(index) = stats.index.filter(|index| index.total_row_count() != 0.0) else {
         if !virtual_columns.is_empty()
             && stats.columns.iter().any(Option::is_some)
-            && !crate::ranger::types::has_full_range(ranges, false)
+            && !tidb_ranger::types::has_full_range(ranges, false)
         {
             let columns = stats
                 .columns
@@ -1297,7 +1297,7 @@ pub fn get_index_row_count(
             }
         }
         return Ok(RowEstimate::default_est(
-            crate::ranger::stats_bridge::pseudo_count_by_index_ranges(
+            crate::ranger_stats_bridge::pseudo_count_by_index_ranges(
                 ranges,
                 stats.row_counts.table_realtime as f64,
                 stats.unique_columns,

@@ -16,7 +16,7 @@
 
 use tidb_datatype::{Collation, Datum};
 use tidb_planner::cardinality::cross_estimation::{convert_range_from_expected_cnt, CountedRange};
-use tidb_planner::ranger::types::Range;
+use tidb_ranger::types::Range;
 
 fn counted(low: i64, high: i64, low_exclude: bool, high_exclude: bool, rows: f64) -> CountedRange {
     CountedRange::new(

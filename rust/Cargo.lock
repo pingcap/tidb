@@ -4026,6 +4026,7 @@ dependencies = [
  "tidb-privilege",
  "tidb-proto",
  "tidb-protocol",
+ "tidb-ranger",
  "tidb-resolve",
  "tidb-session",
  "tidb-sessionctx",
@@ -4532,6 +4533,7 @@ dependencies = [
  "tidb-mysql",
  "tidb-parser",
  "tidb-proto",
+ "tidb-ranger",
  "tidb-resolve",
  "tidb-sessionctx",
  "tidb-stats",
@@ -4601,6 +4603,23 @@ dependencies = [
  "tidb-goruntime",
  "tidb-hack",
  "zstd",
+]
+
+[[package]]
+name = "tidb-ranger"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-chunk",
+ "tidb-codec",
+ "tidb-datatype",
+ "tidb-error",
+ "tidb-expr",
+ "tidb-goruntime",
+ "tidb-hack",
+ "tidb-parser",
+ "tidb-tablecodec",
+ "tidb-util",
 ]
 
 [[package]]

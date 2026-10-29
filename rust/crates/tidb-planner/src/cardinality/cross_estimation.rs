@@ -19,7 +19,7 @@ use crate::cardinality::row_count_estimator::{
     ColumnRange, EstimatorOptions, get_index_row_count,
     get_row_count_by_column_ranges,
 };
-use crate::ranger::types::Range;
+use tidb_ranger::types::Range;
 use crate::stats_info::HistColl;
 use tidb_datatype::{Collation, Datum};
 use tidb_expr::column::Column;
@@ -184,21 +184,21 @@ pub fn estimate_table_cross_row_count(
     path_count_after_access: f64,
     descending: bool,
     range_max_size: i64,
-    expression_evaluator: &crate::ranger::points::ExpressionEvaluator<'_>,
+    expression_evaluator: &tidb_ranger::points::ExpressionEvaluator<'_>,
     estimator_options: EstimatorOptions,
 ) -> (f64, bool, f64) {
     let Some(field_type) = column.ret_type.as_ref() else {
         return (0.0, false, correlation);
     };
     let (access_conditions, remained_conditions) =
-        crate::ranger::detacher::detach_conds_for_column(filters, column, true);
+        tidb_ranger::detacher::detach_conds_for_column(filters, column, true);
     if access_conditions.is_empty() {
         return (0.0, false, correlation);
     }
-    let Ok(built) = crate::ranger::ranger::build_column_range_in(
+    let Ok(built) = tidb_ranger::ranger::build_column_range_in(
         &access_conditions,
         field_type,
-        crate::ranger::checker::UNSPECIFIED_LENGTH,
+        tidb_ranger::checker::UNSPECIFIED_LENGTH,
         range_max_size,
         expression_evaluator,
     ) else {
@@ -313,7 +313,7 @@ mod tests {
         estimate_table_cross_row_count,
     };
     use tidb_stats::table_statistics::ColumnStats;
-    use crate::ranger::types::Range;
+    use tidb_ranger::types::Range;
     use crate::stats_info::HistColl;
     use std::sync::Arc;
     use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
@@ -445,7 +445,7 @@ mod tests {
             100.0,
             false,
             0,
-            &crate::ranger::points::evaluate_static,
+            &tidb_ranger::points::evaluate_static,
             EstimatorOptions::default(),
         );
         let negative_correlation = estimate_table_cross_row_count(
@@ -458,7 +458,7 @@ mod tests {
             100.0,
             true,
             0,
-            &crate::ranger::points::evaluate_static,
+            &tidb_ranger::points::evaluate_static,
             EstimatorOptions::default(),
         );
 
@@ -493,7 +493,7 @@ mod tests {
             100.0,
             false,
             0,
-            &crate::ranger::points::evaluate_static,
+            &tidb_ranger::points::evaluate_static,
             EstimatorOptions::default(),
         );
         let with_residual = estimate_table_cross_row_count(
@@ -506,7 +506,7 @@ mod tests {
             100.0,
             false,
             0,
-            &crate::ranger::points::evaluate_static,
+            &tidb_ranger::points::evaluate_static,
             EstimatorOptions::default(),
         );
 
@@ -528,7 +528,7 @@ mod tests {
             100.0,
             false,
             0,
-            &crate::ranger::points::evaluate_static,
+            &tidb_ranger::points::evaluate_static,
             EstimatorOptions::default(),
         );
         assert_eq!(result, (0.0, false, 0.95));
@@ -579,7 +579,7 @@ mod tests {
             100.0,
             false,
             0,
-            &crate::ranger::points::evaluate_static,
+            &tidb_ranger::points::evaluate_static,
             EstimatorOptions::default(),
         );
 
@@ -595,7 +595,7 @@ mod tests {
             100.0,
             false,
             0,
-            &crate::ranger::points::evaluate_static,
+            &tidb_ranger::points::evaluate_static,
             EstimatorOptions::default(),
         );
         assert!(

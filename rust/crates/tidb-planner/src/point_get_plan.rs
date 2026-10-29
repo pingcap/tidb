@@ -93,9 +93,9 @@ pub fn fast_point_schema(table: &KvTable, output: &FastPointOutput) -> Schema {
     Schema::new(columns)
 }
 
-fn closed_point_ranges(keys: &[Vec<Datum>]) -> crate::ranger::types::Ranges {
+fn closed_point_ranges(keys: &[Vec<Datum>]) -> tidb_ranger::types::Ranges {
     keys.iter()
-        .map(|values| crate::ranger::types::Range {
+        .map(|values| tidb_ranger::types::Range {
             low_val: values.clone(),
             high_val: values.clone(),
             collators: vec![tidb_datatype::Collation::Binary; values.len()],

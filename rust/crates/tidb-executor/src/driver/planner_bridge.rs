@@ -355,7 +355,7 @@ fn locate_list_columns_condition(
                     return Ok(ListColumnsLocated::Full);
                 };
                 let detached =
-                    tidb_planner::ranger::detacher::detach_partition_range_with_fallback_handler(
+                    tidb_ranger::detacher::detach_partition_range_with_fallback_handler(
                         std::slice::from_ref(condition),
                         std::slice::from_ref(&columns[column_index]),
                         &[tidb_datatype::UNSPECIFIED_LENGTH],
@@ -566,7 +566,7 @@ fn partition_indices_for_spec(
         ));
     }
     let lengths = vec![tidb_datatype::UNSPECIFIED_LENGTH; columns.len()];
-    let Ok(detached) = tidb_planner::ranger::detacher::detach_partition_range_with_fallback_handler(
+    let Ok(detached) = tidb_ranger::detacher::detach_partition_range_with_fallback_handler(
         &conditions,
         &columns,
         &lengths,
@@ -3805,7 +3805,7 @@ mod statistics_initialization_tests {
                     |expression: &Expression| tidb_expr::eval_expression_once(expression, &context);
                 if !bound {
                     // Go buildFromBinOp deliberately returns no points on Eval error.
-                    let comparison_ranges = tidb_planner::ranger::detacher::detach_index_range_with_fallback_handler_in(
+                    let comparison_ranges = tidb_ranger::detacher::detach_index_range_with_fallback_handler_in(
                         std::slice::from_ref(&comparison), std::slice::from_ref(&column), &[-1],
                         context.range_max_size(), context.range_fallback_handler(), &evaluate,
                         context.ranger_options(),
@@ -3813,7 +3813,7 @@ mod statistics_initialization_tests {
                     assert!(comparison_ranges.ranges.is_empty());
                 }
                 let direct =
-                    tidb_planner::ranger::detacher::detach_index_range_with_fallback_handler_in(
+                    tidb_ranger::detacher::detach_index_range_with_fallback_handler_in(
                         &source.pushed_down_conds,
                         &[column],
                         &[-1],
@@ -3824,8 +3824,8 @@ mod statistics_initialization_tests {
                     );
                 assert_eq!(direct.is_err(), !bound, "direct result: {direct:?}");
                 let expected_error = direct.err().map(|error| match error {
-                    tidb_planner::ranger::points::PointBuilderError::Eval(error) => error.into(),
-                    tidb_planner::ranger::points::PointBuilderError::Unsupported(message) => {
+                    tidb_ranger::points::PointBuilderError::Eval(error) => error.into(),
+                    tidb_ranger::points::PointBuilderError::Unsupported(message) => {
                         assert!(message.ends_with("is not evaluated"));
                         tidb_planner::plan_base::PlanError::from(
                             tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE

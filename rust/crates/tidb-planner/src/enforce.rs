@@ -141,7 +141,7 @@ pub fn enforce_property(
         prop,
         task,
         allocator,
-        &crate::ranger::points::evaluate_static,
+        &tidb_ranger::points::evaluate_static,
         None,
     )
 }
@@ -150,7 +150,7 @@ pub(crate) fn enforce_property_in(
     prop: &PhysicalProperty,
     mut task: Task,
     allocator: &PlanIdAllocator,
-    evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+    evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     mpp_warning_sink: Option<&dyn crate::find_best_task::dispatch::MppWarningSink>,
 ) -> Result<Task, PlanError> {
     if prop.task_tp == TaskType::Mpp {

@@ -78,7 +78,7 @@ pub struct IndexJoinInfo {
     /// The selected secondary index, or `None` for a table/common-handle path.
     pub index_id: Option<i64>,
     /// The ranges built for the selected inner access.
-    pub ranges: crate::ranger::types::Ranges,
+    pub ranges: tidb_ranger::types::Ranges,
     /// Go `IndexJoinInfo.IdxColLens`.
     pub idx_col_lens: Vec<i64>,
     /// Go `IndexJoinInfo.KeyOff2IdxOff`; `-1` means the selected access cannot
@@ -333,13 +333,13 @@ impl MppTask {
         self,
         allocator: &crate::plan_base::PlanIdAllocator,
     ) -> Result<Task, PlanError> {
-        self.into_root_task_in(allocator, &crate::ranger::points::evaluate_static)
+        self.into_root_task_in(allocator, &tidb_ranger::points::evaluate_static)
     }
 
     fn into_root_task_in(
         mut self,
         allocator: &crate::plan_base::PlanIdAllocator,
-        evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+        evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     ) -> Result<Task, PlanError> {
         let mut plan = self
             .plan
@@ -594,7 +594,7 @@ impl CopTask {
         mut root: RootTask,
         allocator: &crate::plan_base::PlanIdAllocator,
         stats_context: TaskStatsContext,
-        evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+        evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     ) -> RootTask {
         if conds.is_empty() {
             return root;
@@ -818,13 +818,13 @@ impl CopTask {
         self,
         allocator: &crate::plan_base::PlanIdAllocator,
     ) -> Result<Task, PlanError> {
-        self.convert_to_root_task_impl_in(allocator, &crate::ranger::points::evaluate_static)
+        self.convert_to_root_task_impl_in(allocator, &tidb_ranger::points::evaluate_static)
     }
 
     fn convert_to_root_task_impl_in(
         mut self,
         allocator: &crate::plan_base::PlanIdAllocator,
-        evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+        evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     ) -> Result<Task, PlanError> {
         // Go calls `FinishIndexPlan` first, for every branch: a double read
         // converted right after a Limit attached to its open index half
@@ -880,7 +880,7 @@ impl CopTask {
     fn convert_expanded_to_root_task(
         mut self,
         allocator: &crate::plan_base::PlanIdAllocator,
-        evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+        evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     ) -> Result<Task, PlanError> {
         let stats_context = self.stats_context.clone();
         if !self.idx_merge_part_plans.is_empty() {
@@ -1229,7 +1229,7 @@ impl Task {
     pub(crate) fn convert_to_root_task_in(
         &self,
         allocator: &crate::plan_base::PlanIdAllocator,
-        evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+        evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     ) -> Result<Task, PlanError> {
         self.copy().into_root_task_in(allocator, evaluate)
     }
@@ -1238,7 +1238,7 @@ impl Task {
     pub(crate) fn into_root_task_in(
         self,
         allocator: &crate::plan_base::PlanIdAllocator,
-        evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+        evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     ) -> Result<Task, PlanError> {
         match self {
             Task::Root(task) => Ok(Task::Root(task)),
@@ -1252,7 +1252,7 @@ impl Task {
         self,
         allocator: &crate::plan_base::PlanIdAllocator,
     ) -> Result<Task, PlanError> {
-        self.into_root_task_in(allocator, &crate::ranger::points::evaluate_static)
+        self.into_root_task_in(allocator, &tidb_ranger::points::evaluate_static)
     }
 
     /// Go `AppendWarning(err)`.
@@ -1357,7 +1357,7 @@ mod tests {
         });
         let evaluate = |expression: &Expression| match expression {
             Expression::Constant(value) if value.param_marker.is_some() => Ok(Datum::Int(3)),
-            _ => crate::ranger::points::evaluate_static(expression),
+            _ => tidb_ranger::points::evaluate_static(expression),
         };
         fn filter_rows(plan: &PhysicalPlan) -> Option<f64> {
             if let PhysicalPlan::Selection(selection) = plan {
@@ -1419,7 +1419,7 @@ mod tests {
             store_type: crate::physical_table_reader::StoreType::TiKv,
             keep_order: false,
             desc: false,
-            ranges: crate::ranger::types::Ranges::new(),
+            ranges: tidb_ranger::types::Ranges::new(),
             ..Default::default()
         })
     }
@@ -1723,7 +1723,7 @@ mod tests {
             store_type: crate::physical_table_reader::StoreType::TiKv,
             keep_order: false,
             desc: false,
-            ranges: crate::ranger::types::Ranges::new(),
+            ranges: tidb_ranger::types::Ranges::new(),
             ..Default::default()
         });
         let mut cop = CopTask {
@@ -2658,7 +2658,7 @@ fn attach_hash_agg_to_mpp(
     mpp: MppTask,
     column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
     allocator: &crate::plan_base::PlanIdAllocator,
-    evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+    evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     group_ndv_skew_ratio: f64,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Result<Task, PlanError> {
@@ -3217,7 +3217,7 @@ fn attach_limit_to_index_merge(
     plan: PhysicalPlan,
     mut cop: CopTask,
     allocator: &crate::plan_base::PlanIdAllocator,
-    evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+    evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
 ) -> Result<Task, PlanError> {
     let PhysicalPlan::Limit(limit) = &plan else {
         unreachable!()
@@ -3270,7 +3270,7 @@ fn attach_advisory_topn_to_index_merge(
     topn: &crate::physical::PhysicalTopN,
     mut cop: CopTask,
     allocator: &crate::plan_base::PlanIdAllocator,
-    evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+    evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
 ) -> Result<Task, PlanError> {
     let order = cop
         .idx_merge_order
@@ -3380,7 +3380,7 @@ fn push_limit_down_to_tidb_cop(
     topn: &crate::physical::PhysicalTopN,
     mut cop: CopTask,
     allocator: &crate::plan_base::PlanIdAllocator,
-    evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+    evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
 ) -> Result<Result<Task, CopTask>, PlanError> {
     if cop.index_plan.is_some() || cop.table_plan.is_none() {
         return Ok(Err(cop));
@@ -3505,7 +3505,7 @@ fn attach_agg_over_cop(
     mut cop: CopTask,
     column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
     allocator: &crate::plan_base::PlanIdAllocator,
-    evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+    evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Result<Task, PlanError> {
     let Some(column_ids) = column_ids else {
@@ -3835,7 +3835,7 @@ pub fn attach2_task_with_group_ndv_skew_ratio(
         column_ids,
         allocator,
         group_ndv_skew_ratio,
-        &crate::ranger::points::evaluate_static,
+        &tidb_ranger::points::evaluate_static,
         &Default::default(),
     )
 }
@@ -3847,7 +3847,7 @@ pub(crate) fn attach2_task_in(
     column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
     allocator: &crate::plan_base::PlanIdAllocator,
     group_ndv_skew_ratio: f64,
-    evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+    evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Result<Task, PlanError> {
     // The caller hands over owned candidate tasks. Go copies task headers
@@ -5447,7 +5447,7 @@ mod attach_tests {
                 table_id: 7,
                 index_id: Some(8),
                 range_bare: false,
-                ranges: crate::ranger::types::Ranges::new(),
+                ranges: tidb_ranger::types::Ranges::new(),
                 idx_col_lens: vec![tidb_datatype::UNSPECIFIED_LENGTH],
                 key_off2_idx_off: vec![0, -1],
                 access_conditions: vec![],
@@ -5552,7 +5552,7 @@ mod attach_tests {
                 table_id: 7,
                 index_id: Some(8),
                 range_bare: false,
-                ranges: crate::ranger::types::Ranges::new(),
+                ranges: tidb_ranger::types::Ranges::new(),
                 idx_col_lens: vec![tidb_datatype::UNSPECIFIED_LENGTH],
                 key_off2_idx_off: vec![-1],
                 access_conditions: vec![],
@@ -5877,7 +5877,7 @@ mod attach_tests {
                 store_type: crate::physical_table_reader::StoreType::TiKv,
                 keep_order: false,
                 desc: false,
-                ranges: crate::ranger::types::Ranges::new(),
+                ranges: tidb_ranger::types::Ranges::new(),
                 ..Default::default()
             })
         };

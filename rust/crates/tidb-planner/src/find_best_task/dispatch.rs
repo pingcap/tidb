@@ -128,7 +128,7 @@ pub struct DispatchContext<'a> {
     /// Statement warning and plan-cache fallback state.
     pub range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
     /// Statement parameter values, warnings and coercion settings used by ranger.
-    pub expression_evaluator: &'a crate::ranger::points::ExpressionEvaluator<'a>,
+    pub expression_evaluator: &'a tidb_ranger::points::ExpressionEvaluator<'a>,
     /// Go `SessionVars.OptOrderingIdxSelRatio`, used by the ordered LIMIT
     /// row-count adjustment for table and index scans.
     pub ordering_index_selectivity_ratio: f64,
@@ -246,7 +246,7 @@ impl<'a> DispatchContext<'a> {
             // Go `vardef.DefOptSelectivityFactor`.
             selectivity_factor: crate::cost_factors::SELECTION_FACTOR,
             range_fallback_handler: None,
-            expression_evaluator: &crate::ranger::points::evaluate_static,
+            expression_evaluator: &tidb_ranger::points::evaluate_static,
             ordering_index_selectivity_ratio: 0.01,
             ordering_index_selectivity_threshold:
                 tidb_vardef::defaults::DEF_TIDB_OPT_ORDERING_IDX_SEL_THRESH,
@@ -359,7 +359,7 @@ impl<'a> DispatchContext<'a> {
         conditions: &[tidb_expr::expression::Expression],
         columns: &[tidb_expr::column::Column],
         lengths: &[i64],
-    ) -> Result<crate::ranger::detacher::DetachRangeResult, crate::ranger::points::PointBuilderError>
+    ) -> Result<tidb_ranger::detacher::DetachRangeResult, tidb_ranger::points::PointBuilderError>
     {
         self.access_path_derivation_context()
             .detach_index_range(conditions, columns, lengths)
@@ -392,7 +392,7 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub fn with_expression_evaluator(
         mut self,
-        evaluator: &'a crate::ranger::points::ExpressionEvaluator<'a>,
+        evaluator: &'a tidb_ranger::points::ExpressionEvaluator<'a>,
     ) -> Self {
         self.expression_evaluator = evaluator;
         self
@@ -1176,7 +1176,7 @@ fn exhaust_physical_plans(
                             outer_hash_keys: Vec::new(),
                             inner_hash_keys: Vec::new(),
                             equal_conditions: op.equal_conditions.clone(),
-                            ranges: crate::ranger::types::Ranges::default(),
+                            ranges: tidb_ranger::types::Ranges::default(),
                             key_off2_idx_off: Vec::new(),
                             idx_col_lens: Vec::new(),
                             compare_filters: None,
@@ -1860,7 +1860,7 @@ fn match_sort_items(
     columns: &[(tidb_expr::column::Column, i64)],
     fixed: &[i64],
     prop: &PhysicalProperty,
-    ranges: Option<&crate::ranger::types::Ranges>,
+    ranges: Option<&tidb_ranger::types::Ranges>,
 ) -> OrderMatch {
     if columns.len() < prop.sort_items.len() {
         return OrderMatch::NOT_MATCHED;
@@ -1929,7 +1929,7 @@ fn match_sort_items(
 /// encoding failed, or Go's cap is exceeded. Multiple ranges fit one cop
 /// task but groups are forced apart, so the cap bounds that overhead.
 pub(super) fn range_group_count<'a>(
-    ranges: impl IntoIterator<Item = &'a crate::ranger::types::Range>,
+    ranges: impl IntoIterator<Item = &'a tidb_ranger::types::Range>,
     group_by_col_idxs: &[usize],
 ) -> Option<usize> {
     const MAX_GROUP_COUNT: usize = 2048;
@@ -1949,8 +1949,8 @@ pub(super) fn range_group_count<'a>(
 /// such a path keeps the Sort instead.
 fn grouping_ranges<'a>(
     ds: &crate::logical::DataSource,
-    ranges: Option<&'a crate::ranger::types::Ranges>,
-) -> Option<&'a crate::ranger::types::Ranges> {
+    ranges: Option<&'a tidb_ranger::types::Ranges>,
+) -> Option<&'a tidb_ranger::types::Ranges> {
     ranges.filter(|_| {
         !tidb_expr::expr_util::predicates::contain_correlated_column(&ds.pushed_down_conds)
     })
@@ -1962,7 +1962,7 @@ fn grouping_ranges<'a>(
 pub(super) fn table_path_matches_order(
     ds: &crate::logical::DataSource,
     prop: &PhysicalProperty,
-    ranges: Option<&crate::ranger::types::Ranges>,
+    ranges: Option<&tidb_ranger::types::Ranges>,
 ) -> OrderMatch {
     // Go `matchProperty`: "TableScan with cluster table can't keep order."
     if ds.is_cluster_table && !prop.sort_items.is_empty() {
@@ -2005,7 +2005,7 @@ pub(super) fn index_path_matches_order(
     ds: &crate::logical::DataSource,
     index: &tidb_infoschema::table_source::SourceIndex,
     prop: &PhysicalProperty,
-    ranges: Option<&crate::ranger::types::Ranges>,
+    ranges: Option<&tidb_ranger::types::Ranges>,
 ) -> OrderMatch {
     let (all_same, _) = prop.all_same_order();
     if prop.is_sort_item_empty() || !all_same {
@@ -2894,7 +2894,7 @@ mod cross_estimate_dispatch_tests {
                 100.0,
                 false,
                 0,
-                &crate::ranger::points::evaluate_static,
+                &tidb_ranger::points::evaluate_static,
                 Default::default(),
             );
         let mut base = BaseLogicalPlan::new(&allocator, DataSource::TYPE, 0);
@@ -3241,7 +3241,7 @@ fn find_best_task_4_logical_data_source_paths(
                             result.core.chosen_remained.clone(),
                         ),
                         None => (
-                            crate::ranger::points::full_int_range(handle_type.is_unsigned()),
+                            tidb_ranger::points::full_int_range(handle_type.is_unsigned()),
                             Vec::new(),
                             ds.pushed_down_conds.clone(),
                         ),
@@ -3263,7 +3263,7 @@ fn find_best_task_4_logical_data_source_paths(
                             })
                             .cloned()
                             .collect::<Vec<_>>();
-                        table_filters = crate::ranger::detacher::append_conditions_if_not_exist(
+                        table_filters = tidb_ranger::detacher::append_conditions_if_not_exist(
                             table_filters,
                             &inner_only,
                         );
@@ -3480,7 +3480,7 @@ fn find_best_task_4_logical_data_source_paths(
                 // column.
                 let point_handle_ok = common_handle.map_or(handle_column.is_some(), |index| {
                     index.unique
-                        && !crate::ranger::ranger::has_prefix(
+                        && !tidb_ranger::ranger::has_prefix(
                             &index
                                 .columns
                                 .iter()
@@ -3797,7 +3797,7 @@ fn find_best_task_4_logical_data_source_paths(
                         .clone()
                         .or_else(|| ds.base.base.stats_info().cloned()),
                 );
-                let ranges = crate::ranger::points::full_int_range(false);
+                let ranges = tidb_ranger::points::full_int_range(false);
                 let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
                     by_items: Vec::new(),
                     group_by_col_idxs: Vec::new(),
@@ -3908,7 +3908,7 @@ fn find_best_task_4_logical_data_source_paths(
                 // entry holds `'abc'` where the row holds `'abcdef'`, and a
                 // point get has no residual predicate to notice, so a prefix
                 // index must stay an IndexReader/IndexLookUp candidate.
-                let declared_index_has_prefix = crate::ranger::ranger::has_prefix(
+                let declared_index_has_prefix = tidb_ranger::ranger::has_prefix(
                     &source_index
                         .columns
                         .iter()
@@ -3946,7 +3946,7 @@ fn find_best_task_4_logical_data_source_paths(
                     Some(result) => result.core.ranges.clone(),
                     None => detach
                         .as_ref()
-                        .map_or_else(crate::ranger::points::full_range, |result| {
+                        .map_or_else(tidb_ranger::points::full_range, |result| {
                             result.ranges.clone()
                         }),
                 };
@@ -4280,7 +4280,7 @@ fn find_best_task_4_logical_data_source_paths(
                                 } else {
                                     ranges.clone()
                                 };
-                            Some(crate::ranger::stats_bridge::pseudo_count_by_ranges(
+                            Some(crate::ranger_stats_bridge::pseudo_count_by_ranges(
                                 &estimate_ranges,
                                 base_stats.row_count(),
                             ))
@@ -4576,7 +4576,7 @@ fn find_best_task_4_logical_data_source_paths(
                         desc: false,
                         // The lookup's table side reads BY HANDLE from
                         // the index rows, not by its own ranges.
-                        ranges: crate::ranger::types::Ranges::new(),
+                        ranges: tidb_ranger::types::Ranges::new(),
                         range_rebuild: None,
                         table_scan_penalty: ds.table_scan_penalty,
                         tikv_pushdown: None,
@@ -6066,7 +6066,7 @@ mod tests {
         };
         assert_eq!(scan.ranges.len(), 1);
         assert_eq!(scan.ranges[0].to_display_string(), "(5,+inf]");
-        assert!(!crate::ranger::types::has_full_range(&scan.ranges, false));
+        assert!(!tidb_ranger::types::has_full_range(&scan.ranges, false));
         // Go's `adjustCountAfterAccess` raises the pseudo range estimate to
         // the logical DataSource row count when the access estimate is lower.
         let scanned = scan.base.base.stats_info().expect("stats").row_count();
@@ -6096,7 +6096,7 @@ mod tests {
             }
             other => panic!("the scan, got {other:?}"),
         };
-        assert!(crate::ranger::types::has_full_range(&scan.ranges, false));
+        assert!(tidb_ranger::types::has_full_range(&scan.ranges, false));
         assert_eq!(
             scan.base.base.stats_info().expect("stats").row_count(),
             100.0,
@@ -6302,7 +6302,7 @@ mod tests {
         let rendered = scan
             .ranges
             .iter()
-            .map(crate::ranger::types::Range::to_display_string)
+            .map(tidb_ranger::types::Range::to_display_string)
             .collect::<Vec<_>>();
         assert_eq!(rendered, ["[1,+inf]"]);
     }

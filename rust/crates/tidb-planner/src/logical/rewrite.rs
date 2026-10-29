@@ -187,7 +187,7 @@ pub(crate) fn analyzed_filter_selectivity_with_options(
         table_stats,
         conditions,
         options,
-        &crate::ranger::points::evaluate_static,
+        &tidb_ranger::points::evaluate_static,
     )
 }
 
@@ -230,7 +230,7 @@ pub fn analyzed_filter_selectivity_with_evaluator(
     table_stats: &StatsInfo,
     conditions: &[Expression],
     options: &crate::cardinality::row_count_estimator::EstimatorOptions,
-    evaluate: &crate::ranger::points::ExpressionEvaluator<'_>,
+    evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
 ) -> Option<f64> {
     filter_selectivity(
         table_stats,
@@ -2286,7 +2286,7 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                             })
                         };
                         let evaluate =
-                            crate::ranger::points::StatementRangerEvaluator(self.eval_context);
+                            tidb_ranger::points::StatementRangerEvaluator(self.eval_context);
                         let derivation = crate::access_path::AccessPathDerivationContext {
                             opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
                             expr_pushdown_blacklist: self.expr_pushdown_blacklist,
@@ -2682,7 +2682,7 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
             if let LogicalPlan::DataSource(source) = &mut node {
                 if !source_had_stats || source.derived_access_paths.is_none() {
                     let evaluate =
-                        crate::ranger::points::StatementRangerEvaluator(self.eval_context);
+                        tidb_ranger::points::StatementRangerEvaluator(self.eval_context);
                     let derivation = crate::access_path::AccessPathDerivationContext {
                         opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
                         expr_pushdown_blacklist: self.expr_pushdown_blacklist,
@@ -2919,7 +2919,7 @@ mod analyzed_filter_selectivity_tests {
         let options = EstimatorOptions::default();
         let ctx = crate::cardinality::selectivity::SelectivityContext::new(
             &options,
-            &crate::ranger::points::evaluate_static,
+            &tidb_ranger::points::evaluate_static,
         );
         let hist = stats.hist_coll().unwrap();
         let estimate = |exprs: &[Expression]| {

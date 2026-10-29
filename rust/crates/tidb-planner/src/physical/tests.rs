@@ -41,7 +41,7 @@ fn scan(id: i32, columns: &[i64]) -> PhysicalPlan {
         store_type: Default::default(),
         keep_order: false,
         desc: false,
-        ranges: crate::ranger::types::Ranges::new(),
+        ranges: tidb_ranger::types::Ranges::new(),
         range_rebuild: None,
         table_scan_penalty: Default::default(),
         tikv_pushdown: None,
@@ -95,8 +95,8 @@ fn parameter_in_condition(column: Column, orders: &[i64]) -> Expression {
     ))
 }
 
-fn point_range(value: i64) -> crate::ranger::types::Range {
-    crate::ranger::types::Range {
+fn point_range(value: i64) -> tidb_ranger::types::Range {
+    tidb_ranger::types::Range {
         low_val: vec![Datum::Int(value)],
         high_val: vec![Datum::Int(value)],
         collators: vec![tidb_datatype::Collation::DEFAULT],
@@ -448,7 +448,7 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
     let int_type = FieldType::new(FieldTypeCode::LongLong);
     let first = Column::new(3, int_type.clone());
     let second = Column::new(4, int_type.clone());
-    let template_range = crate::ranger::types::Range {
+    let template_range = tidb_ranger::types::Range {
         low_val: vec![Datum::Int(0), Datum::Int(0)],
         high_val: vec![Datum::Int(0), Datum::Int(0)],
         collators: vec![tidb_datatype::Collation::DEFAULT; 2],
@@ -547,7 +547,7 @@ fn cached_point_plan_rebuilds_a_collated_string_key_as_its_sort_key() {
     );
     eq.collation
         .set_charset_and_collation("utf8mb4", "utf8mb4_general_ci");
-    let template_range = crate::ranger::types::Range {
+    let template_range = tidb_ranger::types::Range {
         low_val: vec![Datum::Bytes(Vec::new())],
         high_val: vec![Datum::Bytes(Vec::new())],
         collators: vec![tidb_datatype::Collation::Binary],
@@ -622,7 +622,7 @@ fn cached_batch_point_plan_rebuilds_dnf_equalities_as_unioned_points() {
         FieldType::new(FieldTypeCode::Tiny),
         vec![conjunction([0, 1]), conjunction([2, 3])],
     ));
-    let template_range = crate::ranger::types::Range {
+    let template_range = tidb_ranger::types::Range {
         low_val: vec![Datum::Int(0), Datum::Int(0)],
         high_val: vec![Datum::Int(0), Datum::Int(0)],
         collators: vec![tidb_datatype::Collation::DEFAULT; 2],

@@ -24,7 +24,7 @@ use tidb_table::partition_routing::{
     PartitionDef, PartitionKind, PartitionSpec, RangeColumnBound,
 };
 use tidb_expr::{column::Column, expression::Expression, NoColumns};
-use tidb_planner::ranger::types::Range;
+use tidb_ranger::types::Range;
 
 const PARTITION_COUNTS: [usize; 5] = [2, 10, 100, 1_000, 8_000];
 const ITERATIONS: usize = 10_000;

@@ -24,8 +24,8 @@ use tidb_expr::schema::Schema;
 
 use crate::physical::{IndexJoinCompareFilters, IndexJoinCompareOp};
 use crate::plan_base::PlanError;
-use crate::ranger::points::ExpressionEvaluator;
-use crate::ranger::types::{Range, Ranges};
+use tidb_ranger::points::ExpressionEvaluator;
+use tidb_ranger::types::{Range, Ranges};
 
 /// Go `indexJoinPathInfo`: what the join tells the inner path.
 #[derive(Clone, Copy)]
@@ -134,7 +134,7 @@ pub(crate) fn index_join_path_build(
         return Ok(IndexJoinPathOutcome::NotApplicable);
     }
     let mut tmp = index_join_path_tmp_init(info, idx_cols, idx_col_lens);
-    let extraction = crate::ranger::detacher::extract_eq_and_in_condition_in(
+    let extraction = tidb_ranger::detacher::extract_eq_and_in_condition_in(
         info.inner_pushed_conditions,
         &tmp.cur_not_used_index_cols,
         &tmp.cur_not_used_col_lens,
@@ -163,7 +163,7 @@ pub(crate) fn index_join_path_build(
         return Ok(IndexJoinPathOutcome::NotApplicable);
     }
     let mut accesses = not_key_eq_and_in.clone();
-    remained = crate::ranger::detacher::append_conditions_if_not_exist(remained, &remained_eq_and_in);
+    remained = tidb_ranger::detacher::append_conditions_if_not_exist(remained, &remained_eq_and_in);
     let mut last_col_pos = matched_key_cnt + not_key_eq_and_in.len();
     if last_col_pos == 0 {
         return Ok(IndexJoinPathOutcome::NotApplicable);
@@ -214,7 +214,7 @@ pub(crate) fn index_join_path_build(
         if matched_key_cnt == 0 {
             return Ok(IndexJoinPathOutcome::NotApplicable);
         }
-        let (mut col_accesses, mut col_remained) = crate::ranger::detacher::detach_conds_for_column(
+        let (mut col_accesses, mut col_remained) = tidb_ranger::detacher::detach_conds_for_column(
             &range_filter_candidates,
             last_possible_col,
             env.opt_prefix_index_single_scan,
@@ -225,7 +225,7 @@ pub(crate) fn index_join_path_build(
                 .ret_type
                 .clone()
                 .unwrap_or_else(|| tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong));
-            let built = crate::ranger::ranger::build_column_range_in(
+            let built = tidb_ranger::ranger::build_column_range_in(
                 &col_accesses,
                 &field_type,
                 idx_col_lens[last_col_pos],
@@ -514,7 +514,7 @@ fn index_join_path_build_tmp_range(
                 .ret_type
                 .clone()
                 .unwrap_or_else(|| tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong));
-            let built = crate::ranger::ranger::build_column_range_in(
+            let built = tidb_ranger::ranger::build_column_range_in(
                 exprs,
                 &field_type,
                 tmp.cur_not_used_col_lens[j],
@@ -539,7 +539,7 @@ fn index_join_path_build_tmp_range(
                 });
             }
             let fallback;
-            (ranges, fallback) = crate::ranger::ranger::append_ranges_to_point_ranges(
+            (ranges, fallback) = tidb_ranger::ranger::append_ranges_to_point_ranges(
                 ranges,
                 &built.ranges,
                 env.range_max_size,
@@ -558,7 +558,7 @@ fn index_join_path_build_tmp_range(
     }
     if let Some(next_col_range) = next_col_range.filter(|ranges| !ranges.is_empty()) {
         let fallback;
-        (ranges, fallback) = crate::ranger::ranger::append_ranges_to_point_ranges(
+        (ranges, fallback) = tidb_ranger::ranger::append_ranges_to_point_ranges(
             ranges,
             next_col_range,
             env.range_max_size,
@@ -600,8 +600,8 @@ fn index_join_path_build_tmp_range(
 /// refused when the estimate exceeds `range_max_size`.
 fn append_tail_template_range(mut ranges: Ranges, range_max_size: i64) -> (Ranges, bool) {
     if range_max_size > 0
-        && crate::ranger::types::ranges_mem_usage(&ranges)
-            + (crate::ranger::types::EMPTY_DATUM_SIZE * 2 + 16) * ranges.len() as i64
+        && tidb_ranger::types::ranges_mem_usage(&ranges)
+            + (tidb_ranger::types::EMPTY_DATUM_SIZE * 2 + 16) * ranges.len() as i64
             > range_max_size
     {
         return (ranges, true);
@@ -628,7 +628,7 @@ fn index_join_path_update_tmp_range(
         *off = -1;
     }
     let dropped = accesses.split_off(tmp_range.eq_and_in_cnt_in_range.min(accesses.len()));
-    let remained = crate::ranger::detacher::append_conditions_if_not_exist(remained, &dropped);
+    let remained = tidb_ranger::detacher::append_conditions_if_not_exist(remained, &dropped);
     (last_col_pos, accesses, remained)
 }
 
@@ -933,7 +933,7 @@ mod tests {
             range_max_size,
             fallback_handler: handler,
             opt_prefix_index_single_scan: true,
-            evaluate: &crate::ranger::points::evaluate_static,
+            evaluate: &tidb_ranger::points::evaluate_static,
             plan_cache_marker: None,
         };
         let outcome = index_join_path_build(
@@ -1185,7 +1185,7 @@ mod tests {
                         .contains("'tidb_opt_range_max_size' exceeded when building ranges")
                 });
                 assert_eq!(fell_back, i > 0, "{} output {i}", case.pushed);
-                range_max_size = crate::ranger::types::ranges_mem_usage(&ranges) - 1;
+                range_max_size = tidb_ranger::types::ranges_mem_usage(&ranges) - 1;
             }
         }
 
@@ -1203,7 +1203,7 @@ mod tests {
             opt_prefix_index_single_scan: true,
         };
         let (ranges, skip_plan_cache) = rebuild
-            .rebuild(&crate::ranger::points::evaluate_static)
+            .rebuild(&tidb_ranger::points::evaluate_static)
             .expect("rebuilds");
         assert_eq!(skip_plan_cache, None);
         let ranges = ranges.expect("a range");
@@ -1211,6 +1211,6 @@ mod tests {
             render_ranges(&ranges),
             "[[NULL 1 NULL 2,NULL 1 NULL 2] [NULL 1 NULL 4,NULL 1 NULL 4] [NULL 3 NULL 2,NULL 3 NULL 2] [NULL 3 NULL 4,NULL 3 NULL 4]]"
         );
-        assert!(crate::ranger::types::ranges_mem_usage(&ranges) > 1);
+        assert!(tidb_ranger::types::ranges_mem_usage(&ranges) > 1);
     }
 }

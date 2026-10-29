@@ -130,7 +130,7 @@ pub mod plan_hint;
 pub mod point_get_value;
 pub mod preprocess;
 pub mod pushdown;
-pub mod ranger;
+pub mod ranger_stats_bridge;
 pub mod transaction_control;
 pub mod txn_mode;
 pub mod selectivity_greedy;

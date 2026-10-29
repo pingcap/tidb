@@ -426,7 +426,7 @@ impl DataSource {
         index: &tidb_infoschema::table_source::SourceIndex,
         conds: Vec<Expression>,
         regard_null_as_point: bool,
-    ) -> Result<Vec<Expression>, crate::ranger::points::PointBuilderError> {
+    ) -> Result<Vec<Expression>, tidb_ranger::points::PointBuilderError> {
         let idx_cols: Vec<Column> = self
             .declared_index_columns(index)
             .into_iter()
@@ -446,7 +446,7 @@ impl DataSource {
                 ));
             }
         }
-        crate::ranger::detacher::add_expr4_eq_and_in_condition(
+        tidb_ranger::detacher::add_expr4_eq_and_in_condition(
             &conds,
             &idx_cols,
             regard_null_as_point,
@@ -1085,7 +1085,7 @@ fn add_expr_prefix4_dnf_cond(
                 continue;
             }
         };
-        match crate::ranger::detacher::add_expr4_eq_and_in_condition(
+        match tidb_ranger::detacher::add_expr4_eq_and_in_condition(
             &accesses,
             idx_cols,
             regard_null_as_point,

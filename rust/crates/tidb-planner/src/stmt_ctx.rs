@@ -22,7 +22,7 @@ use std::sync::Arc;
 use tidb_sessionctx::{CostSessionValues, StmtContext, StmtContextData};
 
 use crate::find_best_task::coster::CostEnv;
-use crate::ranger::detacher::RangerOptions;
+use tidb_ranger::detacher::RangerOptions;
 
 /// The planner's state on a statement context.
 pub trait PlannerStmtCtx {

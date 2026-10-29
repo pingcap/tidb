@@ -104,7 +104,7 @@ pub fn ids_for_selected_partitions(
 /// retain that metadata through `minCmp`/`maxCmp`.
 pub fn pruned_ids_from_ranger(
     spec: &PartitionSpec,
-    ranger_ranges: &[tidb_planner::ranger::types::Range],
+    ranger_ranges: &[tidb_ranger::types::Range],
     ctx: &impl tidb_expr::Columns,
 ) -> Result<Option<Vec<i64>>, tidb_expr::EvalError> {
     let ranges = ranger_ranges
@@ -958,7 +958,7 @@ mod tests {
             .iter()
             .map(|range| {
                 let width = range.low.len().max(range.high.len());
-                tidb_planner::ranger::types::Range {
+                tidb_ranger::types::Range {
                     low_val: range.low.clone(),
                     high_val: range.high.clone(),
                     collators: field_types.map_or_else(
@@ -1667,7 +1667,7 @@ mod tests {
             field_types: vec![field_type],
         };
         spec.definitions.truncate(2);
-        let range = tidb_planner::ranger::types::Range {
+        let range = tidb_ranger::types::Range {
             low_val: vec![Datum::new_string("B")],
             high_val: vec![Datum::new_string("B")],
             collators: vec![Collation::Utf8Mb4Bin],

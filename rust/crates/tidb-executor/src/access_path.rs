@@ -5631,7 +5631,7 @@ impl IndexJoinLookupExec {
             .get(key.len())
             .copied()
             .unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH);
-        let ranges = tidb_planner::ranger::ranger::build_column_range(
+        let ranges = tidb_ranger::ranger::build_column_range(
             &conditions,
             target_type,
             col_length,
@@ -5684,7 +5684,7 @@ impl IndexJoinLookupExec {
         }
         let ranges = ranges
             .into_iter()
-            .map(|range| tidb_planner::ranger::types::Range {
+            .map(|range| tidb_ranger::types::Range {
                 low_val: range.low,
                 high_val: range.high,
                 collators: Vec::new(),
@@ -5692,7 +5692,7 @@ impl IndexJoinLookupExec {
                 high_exclude: range.high_exclusive,
             })
             .collect();
-        let ranges = tidb_planner::ranger::ranger::union_ranges(ranges, true)
+        let ranges = tidb_ranger::ranger::union_ranges(ranges, true)
             .map_err(|error| ExecError::internal(format!("index-join range union: {error}")))?;
         Ok(ranges
             .into_iter()

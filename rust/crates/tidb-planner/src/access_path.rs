@@ -56,7 +56,7 @@ pub(crate) struct AccessPathDerivationContext<'a> {
     pub estimator_options: crate::cardinality::row_count_estimator::EstimatorOptions,
     pub range_max_size: i64,
     pub range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
-    pub expression_evaluator: &'a crate::ranger::points::ExpressionEvaluator<'a>,
+    pub expression_evaluator: &'a tidb_ranger::points::ExpressionEvaluator<'a>,
     /// Go `sctx.SetSkipPlanCache` from the ranger; `None` unless the
     /// statement uses the plan cache (Go's tracker ignores it otherwise).
     pub plan_cache_marker: Option<&'a dyn crate::logical::rule::PlanCacheMarker>,
@@ -71,14 +71,14 @@ impl AccessPathDerivationContext<'_> {
         conditions: &[tidb_expr::expression::Expression],
         columns: &[tidb_expr::column::Column],
         lengths: &[i64],
-    ) -> Result<crate::ranger::detacher::DetachRangeResult, crate::ranger::points::PointBuilderError>
+    ) -> Result<tidb_ranger::detacher::DetachRangeResult, tidb_ranger::points::PointBuilderError>
     {
-        let options = crate::ranger::detacher::RangerOptions {
+        let options = tidb_ranger::detacher::RangerOptions {
             opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
             ..self.estimator_options.ranger_options()
         };
         let detached = match self.range_fallback_handler {
-            Some(handler) => crate::ranger::detacher::detach_index_range_with_fallback_handler_in(
+            Some(handler) => tidb_ranger::detacher::detach_index_range_with_fallback_handler_in(
                 conditions,
                 columns,
                 lengths,
@@ -87,7 +87,7 @@ impl AccessPathDerivationContext<'_> {
                 self.expression_evaluator,
                 options,
             ),
-            None => crate::ranger::detacher::detach_cond_and_build_range_for_index_in(
+            None => tidb_ranger::detacher::detach_cond_and_build_range_for_index_in(
                 conditions,
                 columns,
                 lengths,

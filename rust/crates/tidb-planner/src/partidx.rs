@@ -19,9 +19,9 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
 
-use crate::ranger::checker::UNSPECIFIED_LENGTH;
-use crate::ranger::detacher::extract_access_conditions_for_column;
-use crate::ranger::ranger::{build_column_range, union_ranges};
+use tidb_ranger::checker::UNSPECIFIED_LENGTH;
+use tidb_ranger::detacher::extract_access_conditions_for_column;
+use tidb_ranger::ranger::{build_column_range, union_ranges};
 
 /// Go `CheckConstraints`: whether `filters` imply the partial index's stored
 /// predicate.

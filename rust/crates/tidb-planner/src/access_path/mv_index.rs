@@ -38,7 +38,7 @@ use super::index_merge::{
 use super::{AccessPathDerivationContext, IndexPathState};
 use crate::logical::DataSource;
 use crate::plan_base::PlanError;
-use crate::ranger::points::ExpressionEvaluator;
+use tidb_ranger::points::ExpressionEvaluator;
 use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
@@ -391,12 +391,12 @@ fn build_partial_path_for_mv_index(
     let detached = ctx
         .detach_index_range(access_filters, &cols, &lengths)
         .map_err(|error| match error {
-            crate::ranger::points::PointBuilderError::Eval(error) => error.into(),
-            crate::ranger::points::PointBuilderError::Value(error) => PlanError::from(
+            tidb_ranger::points::PointBuilderError::Eval(error) => error.into(),
+            tidb_ranger::points::PointBuilderError::Value(error) => PlanError::from(
                 tidb_error::plannererrors::ERR_INTERNAL
                     .generate_with_stack_by_args(&[(error.to_string()).into()]),
             ),
-            crate::ranger::points::PointBuilderError::Unsupported(message) => PlanError::from(
+            tidb_ranger::points::PointBuilderError::Unsupported(message) => PlanError::from(
                 tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE.generate_with_stack(message),
             ),
         })?;

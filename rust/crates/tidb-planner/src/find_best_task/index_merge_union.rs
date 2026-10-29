@@ -61,7 +61,7 @@ fn partial_matches_order(
     // order only outright; a correlated condition elsewhere (a table filter,
     // an index filter on top of constant ranges) leaves the range groups
     // valid, as in Go.
-    let allow_groups = |detached: &crate::ranger::detacher::DetachRangeResult| {
+    let allow_groups = |detached: &tidb_ranger::detacher::DetachRangeResult| {
         !tidb_expr::expr_util::predicates::contain_correlated_column(&detached.access_conds)
     };
     match partial {
@@ -132,7 +132,7 @@ fn index_partial_matches_order(
 /// columns of a merge sort over the range groups).
 fn key_columns_match_order(
     columns: &[(tidb_expr::column::Column, i64)],
-    ranges: &[crate::ranger::types::Range],
+    ranges: &[tidb_ranger::types::Range],
     items: &[crate::physical_property::SortItem],
     allow_groups: bool,
 ) -> Option<Vec<usize>> {
@@ -651,7 +651,7 @@ pub(super) fn build_converged_union_index_merge_task(
                 store_type: crate::physical_table_reader::StoreType::TiKv,
                 keep_order: false,
                 desc: false,
-                ranges: crate::ranger::types::Ranges::new(),
+                ranges: tidb_ranger::types::Ranges::new(),
                 range_rebuild: None,
                 table_scan_penalty: ds.table_scan_penalty,
                 tikv_pushdown: None,
@@ -1225,7 +1225,7 @@ mod tests {
             estimator_options: Default::default(),
             range_max_size: 64 * 1024 * 1024,
             range_fallback_handler: None,
-            expression_evaluator: &crate::ranger::points::evaluate_static,
+            expression_evaluator: &tidb_ranger::points::evaluate_static,
             plan_cache_marker: None,
             used_stats_recorder: None,
         };

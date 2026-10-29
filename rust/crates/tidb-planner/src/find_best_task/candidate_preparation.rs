@@ -247,7 +247,7 @@ fn range_scan_flags(
             // a preferred range scan only when it serves the required order.
             (
                 (prop.is_sort_item_empty() || metrics.is_some_and(|metrics| metrics.matches_property))
-                    && !crate::ranger::types::has_full_range(
+                    && !tidb_ranger::types::has_full_range(
                         &table.detached.ranges,
                         ds.table_scan_penalty.unsigned_int_handle,
                     ),
@@ -288,7 +288,7 @@ fn range_scan_flags(
                 (prefer_merge
                     || ((single_scan || index_filters)
                         && (prop.is_sort_item_empty() || matches_property)))
-                    && !crate::ranger::types::has_full_range(&filled.detached.ranges, false),
+                    && !tidb_ranger::types::has_full_range(&filled.detached.ranges, false),
                 ds.forced_index_ids.contains(&index.id) || index.global || index.is_multi_valued,
             )
         }

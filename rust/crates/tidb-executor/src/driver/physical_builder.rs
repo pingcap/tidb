@@ -186,7 +186,7 @@ struct BuildState {
     /// The range group a grouped-range reader is being built for (Go
     /// `GroupedRanges`): the one scan carrying `group_by_col_idxs` reads
     /// these ranges instead of its own.
-    range_group: Option<tidb_planner::ranger::types::Ranges>,
+    range_group: Option<tidb_ranger::types::Ranges>,
     /// Go `executorBuilder.hasLock`: a `SELECT ... FOR UPDATE` below keeps the
     /// projections above it serial for the same reason.
     has_lock: bool,
@@ -532,7 +532,7 @@ impl GoExecutorTrace {
                         let ranges = scan
                             .ranges
                             .iter()
-                            .map(tidb_planner::ranger::types::Range::to_display_string)
+                            .map(tidb_ranger::types::Range::to_display_string)
                             .collect::<Vec<_>>()
                             .join(" ");
                         format!(
@@ -1083,12 +1083,12 @@ fn correlated_index_range_rebuilder(
     Some(std::sync::Arc::new(move || {
         let access = substitute_correlated_access(&rebuild.access_conditions, &ctx)?;
         let (ranges, _, _) =
-            tidb_planner::ranger::detacher::detach_simple_cond_and_build_range_for_index_in(
+            tidb_ranger::detacher::detach_simple_cond_and_build_range_for_index_in(
                 &access,
                 &rebuild.index_columns,
                 &rebuild.index_column_lengths,
                 0,
-                &tidb_planner::ranger::points::StatementRangerEvaluator(&ctx),
+                &tidb_ranger::points::StatementRangerEvaluator(&ctx),
                 ctx.ranger_options(),
             )
             .map_err(|error| tidb_driver_error::ExecError::internal(format!("{error:?}")))?;
@@ -1110,15 +1110,15 @@ fn correlated_table_range_rebuilder(
     let ctx = ctx.clone();
     Some(std::sync::Arc::new(move || {
         let access = substitute_correlated_access(&rebuild.access_conditions, &ctx)?;
-        let evaluate = tidb_planner::ranger::points::StatementRangerEvaluator(&ctx);
+        let evaluate = tidb_ranger::points::StatementRangerEvaluator(&ctx);
         let ranges = match &rebuild.handle_type {
             Some(handle_type) => {
-                tidb_planner::ranger::ranger::build_table_range_in(&access, handle_type, 0, &evaluate)
+                tidb_ranger::ranger::build_table_range_in(&access, handle_type, 0, &evaluate)
                     .map_err(|error| tidb_driver_error::ExecError::internal(format!("{error:?}")))?
                     .ranges
             }
             None => {
-                tidb_planner::ranger::detacher::detach_cond_and_build_range_for_index_in(
+                tidb_ranger::detacher::detach_cond_and_build_range_for_index_in(
                     &access,
                     &rebuild.common_handle_columns,
                     &rebuild.common_handle_lengths,
@@ -1134,7 +1134,7 @@ fn correlated_table_range_rebuilder(
     }))
 }
 
-fn executor_ranges(ranges: &tidb_planner::ranger::types::Ranges) -> Vec<IndexRange> {
+fn executor_ranges(ranges: &tidb_ranger::types::Ranges) -> Vec<IndexRange> {
     ranges
         .iter()
         .map(|range| IndexRange {
@@ -1235,7 +1235,7 @@ fn build_table_scan(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     net_bytes: Option<f64>,
-    range_group: Option<&tidb_planner::ranger::types::Ranges>,
+    range_group: Option<&tidb_ranger::types::Ranges>,
     storage: &ReaderStorage,
     cop_chain: Option<&CopChain>,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -2579,7 +2579,7 @@ fn build_index_reader(
     lookup_pushdown: bool,
     scan_limit: Option<u64>,
     net_bytes: Option<f64>,
-    range_group: Option<&tidb_planner::ranger::types::Ranges>,
+    range_group: Option<&tidb_ranger::types::Ranges>,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     storage: &ReaderStorage,
@@ -4629,7 +4629,7 @@ fn table_output_columns(
 }
 
 fn point_range_values(
-    range: &tidb_planner::ranger::types::Range,
+    range: &tidb_ranger::types::Range,
 ) -> Result<&[tidb_datatype::Datum], DriverError> {
     if range.low_exclude || range.high_exclude || range.low_val != range.high_val {
         return Err(DriverError::unsupported(
@@ -4641,7 +4641,7 @@ fn point_range_values(
 
 fn point_handles(
     table: &crate::KvTable,
-    ranges: &tidb_planner::ranger::types::Ranges,
+    ranges: &tidb_ranger::types::Ranges,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<tidb_table::kv_table::TableHandle>, DriverError> {
     ranges
@@ -4685,7 +4685,7 @@ fn point_handles(
 fn unique_index_point_values(
     table: &crate::KvTable,
     index_id: i64,
-    ranges: &tidb_planner::ranger::types::Ranges,
+    ranges: &tidb_ranger::types::Ranges,
     ctx: &crate::StmtContext,
     skip_null: bool,
     keep_order: bool,
@@ -4778,12 +4778,12 @@ fn point_partition_id(
             // expression's inputs.
             Some(tidb_planner::physical_plan_cache::PointRangeRebuild::Index(rebuild)) => {
                 let result =
-                    tidb_planner::ranger::detacher::detach_cond_and_build_range_for_partition_in(
+                    tidb_ranger::detacher::detach_cond_and_build_range_for_partition_in(
                         &rebuild.access_conditions,
                         &rebuild.index_columns,
                         &rebuild.index_column_lengths,
                         0,
-                        &tidb_planner::ranger::points::StatementRangerEvaluator(ctx),
+                        &tidb_ranger::points::StatementRangerEvaluator(ctx),
                         ctx.ranger_options(),
                     )
                     .map_err(|error| {
@@ -4833,12 +4833,12 @@ fn point_partition_id(
                 "partition point lost its access conditions",
             ));
         };
-        let result = tidb_planner::ranger::detacher::detach_cond_and_build_range_for_partition_in(
+        let result = tidb_ranger::detacher::detach_cond_and_build_range_for_partition_in(
             &rebuild.access_conditions,
             &rebuild.common_handle_columns,
             &rebuild.common_handle_lengths,
             0,
-            &tidb_planner::ranger::points::StatementRangerEvaluator(ctx),
+            &tidb_ranger::points::StatementRangerEvaluator(ctx),
             ctx.ranger_options(),
         )
         .map_err(|error| DriverError::unsupported(format!("point partition range: {error:?}")))?;
@@ -5688,7 +5688,7 @@ fn build_index_merge_reader(
         // Go `buildPartialWorkerKVRanges`: a partial whose ranges pin the
         // group-by columns reads every (range group, partition) pair as its
         // own ordered stream, merged below like the partitions are.
-        let range_groups: Vec<Option<tidb_planner::ranger::types::Ranges>> =
+        let range_groups: Vec<Option<tidb_ranger::types::Ranges>> =
             match partial_range_groups(partial)? {
                 Some(groups) => groups.into_iter().map(Some).collect(),
                 None => vec![None],
@@ -5871,7 +5871,7 @@ fn build_index_merge_reader(
 /// `GroupByColIdxs`, or `None` when it reads its ranges as one stream.
 fn partial_range_groups(
     partial: &PhysicalPlan,
-) -> Result<Option<Vec<tidb_planner::ranger::types::Ranges>>, DriverError> {
+) -> Result<Option<Vec<tidb_ranger::types::Ranges>>, DriverError> {
     let grouped = embedded_index_scan(partial)
         .map(|scan| (&scan.group_by_col_idxs, &scan.ranges))
         .or_else(|| embedded_table_scan(partial).map(|scan| (&scan.group_by_col_idxs, &scan.ranges)));
@@ -5884,7 +5884,7 @@ fn partial_range_groups(
 }
 
 /// Points the grouped scan of a cloned plan at one range group.
-fn narrow_scan_ranges(plan: &mut PhysicalPlan, ranges: &tidb_planner::ranger::types::Ranges) {
+fn narrow_scan_ranges(plan: &mut PhysicalPlan, ranges: &tidb_ranger::types::Ranges) {
     match plan {
         PhysicalPlan::TableScan(scan) if !scan.group_by_col_idxs.is_empty() => {
             scan.ranges = ranges.clone();
@@ -6442,11 +6442,11 @@ fn build_reader_node(
 /// group. Go collects a map's values, so its group order is unspecified; the
 /// first-appearance order used here is one valid order.
 fn group_ranges_by_cols(
-    ranges: &tidb_planner::ranger::types::Ranges,
+    ranges: &tidb_ranger::types::Ranges,
     group_by_col_idxs: &[usize],
-) -> Result<Vec<tidb_planner::ranger::types::Ranges>, DriverError> {
+) -> Result<Vec<tidb_ranger::types::Ranges>, DriverError> {
     let mut positions: HashMap<Vec<u8>, usize> = HashMap::new();
-    let mut groups: Vec<tidb_planner::ranger::types::Ranges> = Vec::new();
+    let mut groups: Vec<tidb_ranger::types::Ranges> = Vec::new();
     for range in ranges {
         let datums = group_by_col_idxs
             .iter()
@@ -6471,7 +6471,7 @@ fn group_ranges_by_cols(
 /// the planner built it under.
 fn range_grouped_scan(
     plan: &PhysicalPlan,
-) -> Option<(&[usize], &tidb_planner::ranger::types::Ranges, Option<&tidb_planner::physical_property::PhysicalProperty>)> {
+) -> Option<(&[usize], &tidb_ranger::types::Ranges, Option<&tidb_planner::physical_property::PhysicalProperty>)> {
     let leaf = match plan {
         PhysicalPlan::TableReader(reader) => reader.table_plan.as_deref().and_then(|plan| {
             embedded_table_scan(plan).map(|scan| {
@@ -8625,7 +8625,7 @@ use super::*;
             base,
             table_id,
             cost_columns: schema.columns,
-            ranges: vec![tidb_planner::ranger::types::Range {
+            ranges: vec![tidb_ranger::types::Range {
                 low_val: vec![tidb_datatype::Datum::Int(low)],
                 high_val: vec![tidb_datatype::Datum::Int(high)],
                 collators: vec![tidb_datatype::Collation::Binary],
@@ -8816,7 +8816,7 @@ use super::*;
             index_id: None,
             lock: false,
             access_cols: None,
-            ranges: vec![tidb_planner::ranger::types::Range {
+            ranges: vec![tidb_ranger::types::Range {
                 low_val: vec![Datum::Int(2)],
                 high_val: vec![Datum::Int(2)],
                 collators: vec![tidb_datatype::Collation::Binary],
@@ -8884,7 +8884,7 @@ use super::*;
             index_id: Some(8),
             lock: false,
             access_cols: None,
-            ranges: vec![tidb_planner::ranger::types::Range {
+            ranges: vec![tidb_ranger::types::Range {
                 low_val: vec![Datum::Int(20)],
                 high_val: vec![Datum::Int(20)],
                 collators: vec![tidb_datatype::Collation::Binary],
@@ -8925,7 +8925,7 @@ use super::*;
 
         let mut base = BasePhysicalPlan::with_id(11, "BatchPointGet", 0);
         base.base.set_schema(Some(two_long_schema()));
-        let point_range = |value| tidb_planner::ranger::types::Range {
+        let point_range = |value| tidb_ranger::types::Range {
             low_val: vec![Datum::Int(value)],
             high_val: vec![Datum::Int(value)],
             collators: vec![tidb_datatype::Collation::Binary],
@@ -8996,7 +8996,7 @@ use super::*;
 
         let mut base = BasePhysicalPlan::with_id(12, "BatchPointGet", 0);
         base.base.set_schema(Some(two_long_schema()));
-        let point_range = |value| tidb_planner::ranger::types::Range {
+        let point_range = |value| tidb_ranger::types::Range {
             low_val: vec![Datum::Int(value)],
             high_val: vec![Datum::Int(value)],
             collators: vec![tidb_datatype::Collation::Binary],
@@ -9041,7 +9041,7 @@ use super::*;
             cost_columns: schema.columns,
             index_id,
             index_name: "value_idx".to_owned(),
-            ranges: vec![tidb_planner::ranger::types::Range {
+            ranges: vec![tidb_ranger::types::Range {
                 low_val: vec![tidb_datatype::Datum::Int(low)],
                 high_val: vec![tidb_datatype::Datum::Int(high)],
                 collators: vec![tidb_datatype::Collation::Binary],

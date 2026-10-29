@@ -649,10 +649,10 @@ fn frame_bound_text(
     format!("{operand} {direction}")
 }
 
-fn scan_ranges_text(ranges: &tidb_planner::ranger::types::Ranges) -> String {
+fn scan_ranges_text(ranges: &tidb_ranger::types::Ranges) -> String {
     ranges
         .iter()
-        .map(tidb_planner::ranger::types::Range::to_display_string)
+        .map(tidb_ranger::types::Range::to_display_string)
         // Go's EXPLAIN separates multiple intervals with ", " —
         // `range:[-inf,5), (5,+inf]`.
         .collect::<Vec<_>>()
@@ -1013,7 +1013,7 @@ fn physical_operator_name(
         }
         PhysicalPlan::IndexScan(scan) => {
             let static_range = !scan.ranges.is_empty()
-                && !tidb_planner::ranger::types::has_full_range(&scan.ranges, false);
+                && !tidb_ranger::types::has_full_range(&scan.ranges, false);
             // Go names an index scan `IndexRangeScan` when it carries either
             // static ranges or a runtime `RangeInfo`: the IndexJoin's inner
             // probe owns only the latter (the ranges are decided by the join
@@ -1169,7 +1169,7 @@ fn dynamic_partition_access(plan: &PhysicalPlan) -> Option<AccessObject> {
         .or_else(|| plan.children().iter().find_map(dynamic_partition_access))
 }
 
-fn point_handle_text(range: &tidb_planner::ranger::types::Range) -> String {
+fn point_handle_text(range: &tidb_ranger::types::Range) -> String {
     range
         .low_val
         .first()
@@ -1181,7 +1181,7 @@ fn point_handle_text(range: &tidb_planner::ranger::types::Range) -> String {
 /// handle values print as their uint64 reading (`strconv.FormatUint`) — a
 /// `BIGINT UNSIGNED` handle's `u64::MAX` is `18446744073709551615`, never the
 /// signed reinterpretation `-1`.
-fn point_handle_text_unsigned(range: &tidb_planner::ranger::types::Range) -> String {
+fn point_handle_text_unsigned(range: &tidb_ranger::types::Range) -> String {
     match range.low_val.first() {
         Some(tidb_datatype::Datum::Int(value)) => format!("{}", *value as u64),
         Some(value) => value.sql_string().unwrap_or_default(),
@@ -1495,7 +1495,7 @@ fn physical_operator_info(
             } else if let Some(conditions) = correlated_access_conditions(plan) {
                 parts.push(correlated_decided_by_text(eval_ctx, conditions));
             } else if !scan.ranges.is_empty()
-                && !tidb_planner::ranger::types::has_full_range(&scan.ranges, false)
+                && !tidb_ranger::types::has_full_range(&scan.ranges, false)
             {
                 parts.push(format!("range:{}", scan_ranges_text(&scan.ranges)));
             }
@@ -1578,7 +1578,7 @@ fn physical_operator_info(
                 .kv_table_by_id(batch.table_id)
                 .is_some_and(|table| !table.common_handle_offsets().is_empty());
             let prefix = if batch.index_id.is_none() && !common_handle {
-                let handle_text = |range: &tidb_planner::ranger::types::Range| {
+                let handle_text = |range: &tidb_ranger::types::Range| {
                     if batch.unsigned_handle {
                         point_handle_text_unsigned(range)
                     } else {

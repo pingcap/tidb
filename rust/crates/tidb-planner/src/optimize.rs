@@ -413,7 +413,7 @@ pub fn optimize_physical<C: OptimizeContext>(
     let begin_physical_opt = ctx.take_begin_physical_opt().unwrap_or_else(Instant::now);
     let optimizer_cost_env = ctx.optimizer_cost_env();
     let coster = Ver2Coster::from_env(optimizer_cost_env);
-    let evaluate = crate::ranger::points::StatementRangerEvaluator(ctx);
+    let evaluate = tidb_ranger::points::StatementRangerEvaluator(ctx);
     let mut dispatch = DispatchContext::new(
         plan_ids,
         &coster,

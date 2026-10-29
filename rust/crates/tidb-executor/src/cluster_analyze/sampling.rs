@@ -305,7 +305,7 @@ impl SamplingSchema {
 /// a range whose end is its start's `PrefixNext` as a point get of the start,
 /// and no row key is the bare `t{id}_r`, so that range samples no rows.
 fn analyze_handle_ranges(table: &TableInfo) -> Vec<tidb_distsql::DatumRange> {
-    use tidb_planner::ranger::points::{full_int_range, full_not_null_range};
+    use tidb_ranger::points::{full_int_range, full_not_null_range};
     let unsigned_pk = table
         .pk_is_handle
         .then(|| table.get_pk_col_info())

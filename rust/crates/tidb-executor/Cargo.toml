@@ -14,6 +14,7 @@ autotests = false
 test-util = []
 
 [dependencies]
+tidb-ranger = { path = "../tidb-ranger" }
 tidb-fixcontrol = { path = "../tidb-fixcontrol" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-stats-handle-history = { path = "../tidb-stats-handle-history" }

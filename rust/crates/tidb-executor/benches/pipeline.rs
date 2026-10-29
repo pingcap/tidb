@@ -61,9 +61,11 @@ use tidb_ast::CiString;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::Datum;
 use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_executor::executor::{ExecError, Executor, ExecutorMeta};
+use tidb_driver_error::ExecError;
+use tidb_executor::executor::{Executor, ExecutorMeta};
 use tidb_executor::hash_agg::{AggFunc, AggKind, HashAggContext, HashAggExec};
-use tidb_kv::mem_quota::{OomAction, StatementMemory};
+use tidb_kv::mem_quota::StatementMemory;
+use tidb_vardef::OomAction;
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
@@ -910,9 +912,10 @@ fn main() {
 /// splitting and paging attempts, without timing TiKV or the network.
 fn bench_read_task_setup() {
     use tidb_distsql::{
-        CancelHandle, CopPagingState, KvRequestMetadata, ReadEngineGeneration, RegionTaskTopology,
-        RegionTaskRequest, RequestKeyRange, RequestKeyRanges, TransportRequest,
+        CopPagingState, ReadEngineGeneration, RegionTaskTopology, RegionTaskRequest,
+        RequestKeyRange, RequestKeyRanges,
     };
+    use tidb_txnkv::{CancelHandle, KvRequestMetadata, TransportRequest};
     use tidb_txnkv::RequestType;
 
     for count in [1024_u32, 20_000] {

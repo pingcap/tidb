@@ -137,7 +137,7 @@ pub(super) fn build_prepared_index_merge_task(
         store_type: crate::physical_table_reader::StoreType::TiKv,
         keep_order: false,
         desc: false,
-        ranges: crate::ranger::types::Ranges::new(),
+        ranges: tidb_ranger::types::Ranges::new(),
         range_rebuild: None,
         table_scan_penalty: ds.table_scan_penalty,
         tikv_pushdown: None,

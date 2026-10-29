@@ -582,7 +582,7 @@ pub fn build_table_range<'a>(
         access_conditions,
         tp,
         range_max_size,
-        &crate::ranger::points::evaluate_static,
+        &crate::points::evaluate_static,
     )
 }
 
@@ -616,7 +616,7 @@ pub fn build_column_range<'a, E: std::borrow::Borrow<Expression>>(
         tp,
         col_len,
         range_mem_quota,
-        &crate::ranger::points::evaluate_static,
+        &crate::points::evaluate_static,
     )
 }
 

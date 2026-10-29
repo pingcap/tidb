@@ -431,7 +431,7 @@ impl Ver2Coster {
                             // Go `ranger.HasFullRange(ts.Ranges, unsignedIntHandle)`;
                             // an unfilled range list reads as the full scan.
                             has_full_range_scan: scan.ranges.is_empty()
-                                || crate::ranger::types::has_full_range(
+                                || tidb_ranger::types::has_full_range(
                                     &scan.ranges,
                                     scan.table_scan_penalty.unsigned_int_handle,
                                 ),

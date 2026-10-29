@@ -35,7 +35,7 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 
 use crate::physical::{PhysicalPlan, PhysicalTableScan};
-use crate::ranger::types::{has_full_range, Ranges};
+use tidb_ranger::types::{has_full_range, Ranges};
 
 /// Session inputs read by Go's `isPlanCacheable` /
 /// `isPhysicalPlanCacheable` after physical optimization.
@@ -401,7 +401,7 @@ impl PointConstantsRebuild {
         }
         Ok(keys
             .into_iter()
-            .map(|values| crate::ranger::types::Range {
+            .map(|values| tidb_ranger::types::Range {
                 collators: vec![tidb_datatype::Collation::Binary; values.len()],
                 low_val: values.clone(),
                 high_val: values,
@@ -421,7 +421,7 @@ pub struct CachedPlanRebuildContext<'a> {
     parameters: &'a [Datum],
     deferred_evaluator: Option<&'a DeferredExpressionEvaluator<'a>>,
     /// The executing statement's Go `RangerContext` switches.
-    ranger_options: crate::ranger::detacher::RangerOptions,
+    ranger_options: tidb_ranger::detacher::RangerOptions,
     /// The first reason the ranger passed to Go's `SetSkipPlanCache` while
     /// rebuilding; like Go, the rebuild goes on to its range checks.
     skip_plan_cache: std::sync::OnceLock<String>,
@@ -435,7 +435,7 @@ impl<'a> CachedPlanRebuildContext<'a> {
         Self {
             parameters,
             deferred_evaluator: None,
-            ranger_options: crate::ranger::detacher::RangerOptions {
+            ranger_options: tidb_ranger::detacher::RangerOptions {
                 regard_null_as_point: true,
                 opt_prefix_index_single_scan: true,
                 fix_44389: false,
@@ -449,7 +449,7 @@ impl<'a> CachedPlanRebuildContext<'a> {
     #[must_use]
     pub const fn with_ranger_options(
         mut self,
-        options: crate::ranger::detacher::RangerOptions,
+        options: tidb_ranger::detacher::RangerOptions,
     ) -> Self {
         self.ranger_options = options;
         self
@@ -817,7 +817,7 @@ fn rebuild_table_scan(
     bind_conditions(&mut rebuild.access_conditions, context)?;
     let original = scan.ranges.clone();
     if let Some(handle_type) = &rebuild.handle_type {
-        let result = crate::ranger::ranger::build_table_range_in(
+        let result = tidb_ranger::ranger::build_table_range_in(
             &rebuild.access_conditions,
             handle_type,
             0,
@@ -853,7 +853,7 @@ fn rebuild_table_scan(
             detail: "common-handle columns and lengths must be non-empty and aligned",
         });
     }
-    let result = crate::ranger::detacher::detach_cond_and_build_range_for_index_in(
+    let result = tidb_ranger::detacher::detach_cond_and_build_range_for_index_in(
         &rebuild.access_conditions,
         &rebuild.common_handle_columns,
         &rebuild.common_handle_lengths,
@@ -895,7 +895,7 @@ fn rebuild_index_scan(
         });
     }
     bind_conditions(&mut rebuild.access_conditions, context)?;
-    let result = crate::ranger::detacher::detach_cond_and_build_range_for_index_in(
+    let result = tidb_ranger::detacher::detach_cond_and_build_range_for_index_in(
         &rebuild.access_conditions,
         &rebuild.index_columns,
         &rebuild.index_column_lengths,
@@ -939,7 +939,7 @@ fn rebuild_point_ranges(
         PointRangeRebuild::Table(rebuild) => {
             bind_conditions(&mut rebuild.access_conditions, context)?;
             if let Some(handle_type) = &rebuild.handle_type {
-                let result = crate::ranger::ranger::build_table_range_in(
+                let result = tidb_ranger::ranger::build_table_range_in(
                     &rebuild.access_conditions,
                     handle_type,
                     0,
@@ -970,7 +970,7 @@ fn rebuild_point_ranges(
                 // Go `buildRangesForPointGet` (`plan_cache_rebuild.go:263`):
                 // a point get carrying access conditions is one the optimizer
                 // built, and its ranges come from the detacher, nothing else.
-                let result = crate::ranger::detacher::detach_cond_and_build_range_for_index_in(
+                let result = tidb_ranger::detacher::detach_cond_and_build_range_for_index_in(
                     &rebuild.access_conditions,
                     &rebuild.common_handle_columns,
                     &rebuild.common_handle_lengths,
@@ -1024,7 +1024,7 @@ fn rebuild_point_ranges(
             bind_conditions(&mut rebuild.access_conditions, context)?;
             // Go `buildRangesForPointGet` (`plan_cache_rebuild.go:265`):
             // `DetachCondAndBuildRangeForIndex` on the access conditions.
-            let result = crate::ranger::detacher::detach_cond_and_build_range_for_index_in(
+            let result = tidb_ranger::detacher::detach_cond_and_build_range_for_index_in(
                 &rebuild.access_conditions,
                 &rebuild.index_columns,
                 &rebuild.index_column_lengths,

@@ -23,7 +23,7 @@ pub struct FilledIndexPath {
     /// Full index key layout, retaining unresolved positions and handle suffixes.
     pub full_columns: Vec<Option<(Column, i64)>>,
     /// Range expressions and access-coverage metadata from the same detach run.
-    pub detached: crate::ranger::detacher::DetachRangeResult,
+    pub detached: tidb_ranger::detacher::DetachRangeResult,
     /// Filters evaluated before the table lookup.
     pub index_filters: Vec<Expression>,
     /// Filters requiring the table row or a full prefix-index value.
@@ -79,8 +79,8 @@ pub(crate) fn fill_index_path(
     full_columns.extend(suffix.iter().cloned().map(Some));
     columns.extend(suffix);
     let mut detached = if conditions.is_empty() || columns.is_empty() {
-        crate::ranger::detacher::DetachRangeResult {
-            ranges: crate::ranger::points::full_range(),
+        tidb_ranger::detacher::DetachRangeResult {
+            ranges: tidb_ranger::points::full_range(),
             remained_conds: conditions.to_vec(),
             ..Default::default()
         }
@@ -89,12 +89,12 @@ pub(crate) fn fill_index_path(
         context
             .detach_index_range(conditions, &cols, &lengths)
             .map_err(|error| match error {
-                crate::ranger::points::PointBuilderError::Eval(error) => error.into(),
-                crate::ranger::points::PointBuilderError::Value(error) => PlanError::from(
+                tidb_ranger::points::PointBuilderError::Eval(error) => error.into(),
+                tidb_ranger::points::PointBuilderError::Value(error) => PlanError::from(
                     tidb_error::plannererrors::ERR_INTERNAL
                         .generate_with_stack_by_args(&[(error.to_string()).into()]),
                 ),
-                crate::ranger::points::PointBuilderError::Unsupported(message) => PlanError::from(
+                tidb_ranger::points::PointBuilderError::Unsupported(message) => PlanError::from(
                     tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE.generate_with_stack(message),
                 ),
             })?
@@ -135,7 +135,7 @@ pub(crate) fn fill_index_path(
 /// at most one closing correlated range) whose ranges the executor rebuilds
 /// for every outer row. Returns how many conditions moved.
 fn split_correlated_access(
-    detached: &mut crate::ranger::detacher::DetachRangeResult,
+    detached: &mut tidb_ranger::detacher::DetachRangeResult,
     columns: &[(Column, i64)],
 ) -> usize {
     if columns.is_empty() || detached.eq_or_in_count != detached.access_conds.len() {
@@ -291,7 +291,7 @@ pub struct FilledTablePath {
     /// Usable leading clustered-primary-key columns and their prefix lengths.
     pub common_columns: Vec<(Column, i64)>,
     /// Access ranges, absorbed conditions and residual table filters.
-    pub detached: crate::ranger::detacher::DetachRangeResult,
+    pub detached: tidb_ranger::detacher::DetachRangeResult,
     /// Access count before a physical property's LIMIT/probe adjustment.
     pub count_after_access: Option<f64>,
     /// Go's retained lower access-count bound.
@@ -333,20 +333,20 @@ pub(crate) fn detach_table_path(
     let common_columns =
         common_index.map_or_else(Vec::new, |index| source.index_range_columns(index));
     let map_error = |error| match error {
-        crate::ranger::points::PointBuilderError::Eval(error) => PlanError::from(error),
-        crate::ranger::points::PointBuilderError::Value(error) => PlanError::from(
+        tidb_ranger::points::PointBuilderError::Eval(error) => PlanError::from(error),
+        tidb_ranger::points::PointBuilderError::Value(error) => PlanError::from(
             tidb_error::plannererrors::ERR_INTERNAL
                 .generate_with_stack_by_args(&[(error.to_string()).into()]),
         ),
-        crate::ranger::points::PointBuilderError::Unsupported(message) => PlanError::from(
+        tidb_ranger::points::PointBuilderError::Unsupported(message) => PlanError::from(
             tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE.generate_with_stack(message),
         ),
     };
     let mut correlated_access_count = 0;
     let detached = if common_index.is_some() {
         if conditions.is_empty() || common_columns.is_empty() {
-            crate::ranger::detacher::DetachRangeResult {
-                ranges: crate::ranger::points::full_not_null_range(),
+            tidb_ranger::detacher::DetachRangeResult {
+                ranges: tidb_ranger::points::full_not_null_range(),
                 remained_conds: conditions.to_vec(),
                 ..Default::default()
             }
@@ -362,12 +362,12 @@ pub(crate) fn detach_table_path(
         }
     } else {
         let access = handle_column.as_ref().map_or_else(Vec::new, |handle| {
-            crate::ranger::detacher::extract_access_conditions_for_column(conditions, handle, true)
+            tidb_ranger::detacher::extract_access_conditions_for_column(conditions, handle, true)
                 .into_iter()
                 .cloned()
                 .collect::<Vec<_>>()
         });
-        let built = crate::ranger::ranger::build_table_range_in(
+        let built = tidb_ranger::ranger::build_table_range_in(
             &access,
             &handle_type,
             context.range_max_size,
@@ -385,10 +385,10 @@ pub(crate) fn detach_table_path(
                 handler.record_range_fallback(context.range_max_size);
             }
         }
-        let mut detached = crate::ranger::detacher::DetachRangeResult {
+        let mut detached = tidb_ranger::detacher::DetachRangeResult {
             ranges: built.ranges,
             access_conds: built.access_conds.to_vec(),
-            remained_conds: crate::ranger::detacher::remove_conditions(
+            remained_conds: tidb_ranger::detacher::remove_conditions(
                 conditions,
                 built.access_conds,
             ),
@@ -446,14 +446,14 @@ fn is_handle_eq_correlated(condition: &Expression, handle: &Column) -> bool {
 /// ranges `detachCondAndBuildRangeForPath` estimates once an appended handle
 /// follows the declared index columns.
 pub(crate) fn prune_estimate_range(
-    ranges: &[crate::ranger::Range],
+    ranges: &[tidb_ranger::Range],
     keep_columns: usize,
-) -> Vec<crate::ranger::Range> {
+) -> Vec<tidb_ranger::Range> {
     ranges
         .iter()
         .map(|range| {
             let width = keep_columns.min(range.low_val.len());
-            crate::ranger::Range {
+            tidb_ranger::Range {
                 low_val: range.low_val[..width].to_vec(),
                 high_val: range.high_val[..width].to_vec(),
                 collators: range.collators[..width.min(range.collators.len())].to_vec(),

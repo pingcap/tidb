@@ -170,10 +170,10 @@ fn optional_subtree_usage(node: Option<&PhysicalPlan>) -> i64 {
 /// Go `ranger.FullIntRange` weighs this when a scan reads everything: this
 /// port leaves such a scan's range list empty ("reads as the full scan"), so
 /// the one range Go holds is charged here.
-fn scan_ranges_memory_usage(ranges: &crate::ranger::types::Ranges, reads_by_handle: bool) -> i64 {
+fn scan_ranges_memory_usage(ranges: &tidb_ranger::types::Ranges, reads_by_handle: bool) -> i64 {
     // A lookup's row-id side reads by handle and holds no ranges in Go either.
     if ranges.is_empty() && !reads_by_handle {
-        crate::ranger::points::full_int_range(false)
+        tidb_ranger::points::full_int_range(false)
             .iter()
             .map(|range| range.mem_usage())
             .sum()

@@ -97,7 +97,7 @@ pub struct CandidateMetrics {
     pub max_count_after_access: f64,
 }
 
-pub(super) fn equality_facts(detached: &crate::ranger::detacher::DetachRangeResult) -> (usize, bool) {
+pub(super) fn equality_facts(detached: &tidb_ranger::detacher::DetachRangeResult) -> (usize, bool) {
     use tidb_expr::expression::Expression;
     fn only_equal(expression: &Expression) -> bool {
         let Expression::ScalarFunction(function) = expression else {
@@ -486,7 +486,7 @@ mod skyline_tests {
                 columns: vec![(a.clone(), -1)],
                 // The unresolved middle key cannot erase a later index filter.
                 full_columns: vec![Some((a.clone(), -1)), None, Some((c.clone(), 4))],
-                detached: crate::ranger::detacher::DetachRangeResult {
+                detached: tidb_ranger::detacher::DetachRangeResult {
                     access_conds: vec![eq(&a)],
                     eq_or_in_count: 1,
                     ..Default::default()

@@ -652,7 +652,7 @@ pub(super) fn estimate_partial_index_ranges(
 pub(super) fn estimate_index_ranges(
     ds: &DataSource,
     source_index: &tidb_infoschema::table_source::SourceIndex,
-    ranges: &crate::ranger::types::Ranges,
+    ranges: &tidb_ranger::types::Ranges,
     columns: &[(tidb_expr::column::Column, i64)],
     ctx: &AccessPathDerivationContext<'_>,
 ) -> Result<crate::cardinality::row_count_column::RowEstimate, PlanError> {
@@ -665,7 +665,7 @@ pub(super) fn estimate_index_ranges(
         // Go's table always carries a collection; a profile without one
         // keeps the pseudo rate.
         return Ok(crate::cardinality::row_count_column::RowEstimate::default_est(
-            crate::ranger::stats_bridge::pseudo_count_by_index_ranges(
+            crate::ranger_stats_bridge::pseudo_count_by_index_ranges(
                 ranges,
                 ds.table_stats
                     .as_ref()
@@ -781,7 +781,7 @@ fn generate_and_index_merge_for_normal_index(
         let Some(filled) = &mut path.filled else {
             continue;
         };
-        if crate::ranger::types::has_full_range(&filled.detached.ranges, false) {
+        if tidb_ranger::types::has_full_range(&filled.detached.ranges, false) {
             continue;
         }
         if composed_with_mv_index {

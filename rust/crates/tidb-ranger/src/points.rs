@@ -533,7 +533,7 @@ pub fn evaluate_static(expression: &Expression) -> Result<Datum, tidb_expr::Eval
 
 impl Default for PointBuilder<'_> {
     fn default() -> Self {
-        Self::new(&crate::ranger::points::evaluate_static)
+        Self::new(&crate::points::evaluate_static)
     }
 }
 

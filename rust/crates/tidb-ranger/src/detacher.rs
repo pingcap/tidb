@@ -296,7 +296,7 @@ pub fn get_potential_eq_or_in_col_offset(
         expr,
         cols,
         regard_null_as_point,
-        &crate::ranger::points::evaluate_static,
+        &crate::points::evaluate_static,
     )
 }
 
@@ -630,7 +630,7 @@ pub fn extract_eq_and_in_condition<'a>(
         cols,
         lengths,
         regard_null_as_point,
-        &crate::ranger::points::evaluate_static,
+        &crate::points::evaluate_static,
     )
 }
 
@@ -1126,7 +1126,7 @@ pub fn detach_simple_cond_and_build_range_for_index(
         cols,
         lengths,
         range_max_size,
-        &crate::ranger::points::evaluate_static,
+        &crate::points::evaluate_static,
         RangerOptions::default(),
     )
 }
@@ -1807,7 +1807,7 @@ pub fn detach_cond_and_build_range_for_index(
         cols,
         lengths,
         range_max_size,
-        &crate::ranger::points::evaluate_static,
+        &crate::points::evaluate_static,
         RangerOptions::default(),
     )
 }
@@ -1889,7 +1889,7 @@ pub fn detach_cond_and_build_range_for_partition(
         cols,
         lengths,
         range_max_size,
-        &crate::ranger::points::evaluate_static,
+        &crate::points::evaluate_static,
         RangerOptions::default(),
     )
 }

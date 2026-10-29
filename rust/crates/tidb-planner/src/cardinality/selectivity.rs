@@ -33,7 +33,7 @@ use super::row_count_estimator::{
     ColumnRange, EstimationError, EstimatorOptions, IndexRangeDatums, get_index_row_count,
     get_row_count_by_column_ranges,
 };
-use crate::ranger::points::{ExpressionEvaluator, PointBuilderError};
+use tidb_ranger::points::{ExpressionEvaluator, PointBuilderError};
 use crate::selectivity_greedy::{StatsNode, StatsNodeType, get_usable_sets_by_greedy};
 use crate::stats_info::HistColl;
 
@@ -200,13 +200,13 @@ pub fn selectivity(
         let mut lengths: Vec<i64> = (0..index_columns.len().min(declared))
             .map(|position| {
                 info.and_then(|info| info.column_lengths.get(position).copied())
-                    .unwrap_or(crate::ranger::checker::UNSPECIFIED_LENGTH)
+                    .unwrap_or(tidb_ranger::checker::UNSPECIFIED_LENGTH)
             })
             .collect();
         // The found columns exceed the index's own: the integer handle the
         // key stores after the index columns.
         if index_columns.len() > declared {
-            lengths.push(crate::ranger::checker::UNSPECIFIED_LENGTH);
+            lengths.push(tidb_ranger::checker::UNSPECIFIED_LENGTH);
         }
         // Go `getMaskAndRanges` takes a filled access path's own ranges
         // (`cachedPath`) instead of building them again; this port derives
@@ -343,7 +343,7 @@ pub fn selectivity(
         {
             return true;
         }
-        let items = crate::ranger::detacher::merge_dnf_items_4_col(
+        let items = tidb_ranger::detacher::merge_dnf_items_4_col(
             &tidb_expr::expr_util::normal_form::flatten_dnf_conditions(function),
             ctx.options.opt_prefix_index_single_scan,
         );
@@ -442,7 +442,7 @@ fn column_mask_and_ranges(
     column: &Column,
     field_type: &tidb_datatype::FieldType,
 ) -> Result<(i64, Vec<ColumnRange>), EstimationError> {
-    let access: Vec<Expression> = crate::ranger::detacher::extract_access_conditions_for_column(
+    let access: Vec<Expression> = tidb_ranger::detacher::extract_access_conditions_for_column(
         exprs,
         column,
         ctx.options.opt_prefix_index_single_scan,
@@ -450,10 +450,10 @@ fn column_mask_and_ranges(
     .into_iter()
     .cloned()
     .collect();
-    let built = crate::ranger::ranger::build_column_range_in(
+    let built = tidb_ranger::ranger::build_column_range_in(
         &access,
         field_type,
-        crate::ranger::checker::UNSPECIFIED_LENGTH,
+        tidb_ranger::checker::UNSPECIFIED_LENGTH,
         ctx.options.range_max_size,
         ctx.evaluate,
     )?;
@@ -486,12 +486,12 @@ fn detach_index_range(
     columns: &[Column],
     lengths: &[i64],
     cached_path: bool,
-) -> Result<crate::ranger::detacher::DetachRangeResult, PointBuilderError> {
-    let quiet = crate::ranger::points::QuietRangerEvaluator(ctx.evaluate);
-    let evaluate: &crate::ranger::points::ExpressionEvaluator<'_> =
+) -> Result<tidb_ranger::detacher::DetachRangeResult, PointBuilderError> {
+    let quiet = tidb_ranger::points::QuietRangerEvaluator(ctx.evaluate);
+    let evaluate: &tidb_ranger::points::ExpressionEvaluator<'_> =
         if cached_path { &quiet } else { ctx.evaluate };
     let detached = match ctx.range_fallback_handler {
-        Some(handler) => crate::ranger::detacher::detach_index_range_with_fallback_handler_in(
+        Some(handler) => tidb_ranger::detacher::detach_index_range_with_fallback_handler_in(
             exprs,
             columns,
             lengths,
@@ -500,7 +500,7 @@ fn detach_index_range(
             evaluate,
             ctx.options.ranger_options(),
         ),
-        None => crate::ranger::detacher::detach_cond_and_build_range_for_index_in(
+        None => tidb_ranger::detacher::detach_cond_and_build_range_for_index_in(
             exprs,
             columns,
             lengths,
@@ -758,7 +758,7 @@ fn find_available_stats_for_col(coll: &HistColl, unique_id: i64) -> Option<Filte
         let prefix = coll
             .index_info(index_id)
             .and_then(|info| info.column_lengths.first().copied())
-            .is_some_and(|length| length != crate::ranger::checker::UNSPECIFIED_LENGTH);
+            .is_some_and(|length| length != tidb_ranger::checker::UNSPECIFIED_LENGTH);
         if prefix || coll.pseudo() || !coll.index_is_full_load(index_id) {
             return None;
         }
