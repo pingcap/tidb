@@ -1,0 +1,40 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "mvservice",
+    srcs = [
+        "backpressure.go",
+        "consistenthash.go",
+        "executor.go",
+        "server_maintainer.go",
+        "time_proxy.go",
+        "time_proxy_intest.go",  #keep
+        "utils.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/mvservice",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/util/cpu",
+        "//pkg/util/logutil",
+        "//pkg/util/memory",
+        "@com_github_twmb_murmur3//:murmur3",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "mvservice_test",
+    timeout = "short",
+    srcs = [
+        "executor_test.go",  #keep
+        "server_maintainer_test.go",
+        "test_helpers_test.go",
+        "time_proxy_test.go",  #keep
+        "utils_test.go",
+    ],
+    embed = [":mvservice"],
+    flaky = True,
+    gotags = ["intest"],
+    shard_count = 30,
+    deps = ["@com_github_stretchr_testify//require"],
+)
