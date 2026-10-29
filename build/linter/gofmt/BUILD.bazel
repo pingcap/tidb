@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "gofmt",
@@ -7,7 +7,17 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",
-        "@com_github_golangci_gofmt//gofmt",
+        "@com_github_golangci_gofmt//:gofmt",
+        "@com_github_rogpeppe_go_internal//diff",
         "@org_golang_x_tools//go/analysis",
     ],
+)
+
+go_test(
+    name = "gofmt_test",
+    timeout = "short",
+    srcs = ["analyzer_test.go"],
+    embed = [":gofmt"],
+    flaky = True,
+    deps = ["@org_golang_x_tools//go/analysis"],
 )

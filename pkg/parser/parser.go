@@ -17137,7 +17137,7 @@ yynewstate:
 		{
 			v, rangeErrMsg := getInt64FromNUM(yyS[yypt-0].item)
 			if len(rangeErrMsg) != 0 {
-				yylex.AppendError(yylex.Errorf(rangeErrMsg))
+				yylex.AppendError(yylex.Errorf("%s", rangeErrMsg))
 				return 1
 			}
 			parser.yyVAL.item = v
