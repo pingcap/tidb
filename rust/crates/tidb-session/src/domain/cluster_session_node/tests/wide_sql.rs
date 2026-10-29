@@ -7,7 +7,7 @@ use super::super::*;
 use super::node_fixture::*;
 use crate::domain::resultset_source::ResultSetSource;
 use tidb_datatype::Datum;
-use tidb_protocol::PreparedValue;
+use tidb_param::PreparedValue;
 
 fn execute_prepared_rows(
     session: &mut Session,

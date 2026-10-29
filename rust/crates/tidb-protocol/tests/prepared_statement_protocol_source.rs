@@ -34,7 +34,7 @@ use tidb_protocol::PreparedParameterType;
 use tidb_protocol::PreparedParameterTypes;
 use tidb_protocol::PreparedStatementError;
 use tidb_protocol::PreparedStatementSendLongData;
-use tidb_protocol::PreparedValue;
+use tidb_param::PreparedValue;
 use tidb_protocol::ResultSetOptions;
 use tidb_protocol::BINARY_DEFAULT_COLLATION_ID;
 use tidb_protocol::TYPE_JSON;

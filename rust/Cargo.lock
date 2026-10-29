@@ -5608,6 +5608,10 @@ name = "tidb-paging"
 version = "0.0.0"
 
 [[package]]
+name = "tidb-param"
+version = "0.0.0"
+
+[[package]]
 name = "tidb-parser"
 version = "0.0.0"
 dependencies = [
@@ -6024,6 +6028,7 @@ dependencies = [
  "tidb-goruntime",
  "tidb-hack",
  "tidb-mysql",
+ "tidb-param",
  "zstd",
 ]
 
@@ -6357,6 +6362,7 @@ dependencies = [
  "tidb-monotime",
  "tidb-mysql",
  "tidb-owner",
+ "tidb-param",
  "tidb-parser",
  "tidb-pd-client",
  "tidb-planner",
@@ -6535,6 +6541,7 @@ dependencies = [
  "tidb-model",
  "tidb-mysql",
  "tidb-owner",
+ "tidb-param",
  "tidb-parser",
  "tidb-parser-format",
  "tidb-parser-types",

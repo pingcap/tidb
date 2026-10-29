@@ -265,7 +265,7 @@ pub(crate) fn execute_binary(
     use crate::domain::session_api::GeneralExecuteOutcome;
     let values: Vec<_> = params
         .iter()
-        .map(|value| tidb_protocol::PreparedValue::SignedLongLong(*value))
+        .map(|value| tidb_param::PreparedValue::SignedLongLong(*value))
         .collect();
     match session.node_conn().execute_general(prepared, &values).unwrap() {
         GeneralExecuteOutcome::Write(outcome) => StmtOutput::Affected(outcome.affected_rows),

@@ -976,7 +976,7 @@ fn the_backoff_jitter_is_not_degenerate_at_the_small_bounds() {
 /// sysbench's prepared UPDATE/DELETE shapes are ordinary SQL there.
 #[test]
 fn a_prepared_write_executes_the_bound_statement_not_a_reparse() {
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
     let (mut session, _cluster) = open_session();
     session
         .node_conn()
@@ -1022,7 +1022,7 @@ fn a_prepared_write_executes_the_bound_statement_not_a_reparse() {
 
 #[test]
 fn optimistic_autocommit_point_write_uses_its_snapshot_without_prelocking() {
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
     // This backend opens optimistic autocommit transactions; its pessimistic
     // lock entry point rejects calls instead of silently accepting them.
     let (mut session, _cluster) = open_session();

@@ -223,7 +223,7 @@ pub trait QuerySession {
     fn execute_general<'a>(
         &'a mut self,
         _statement: &PreparedGeneral,
-        _values: &[tidb_protocol::PreparedValue],
+        _values: &[tidb_param::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
         Err(SqlQueryError::unknown(
             "this session does not support general prepared statements",

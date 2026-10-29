@@ -71,7 +71,7 @@ fn seed(session: &mut Session) {
 
 #[test]
 fn cached_prepared_index_lookup_uses_one_timestamp() {
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
 
     let (mut session, node) = open_session();
     session
@@ -145,7 +145,7 @@ fn prepared_cursor_retains_its_statement_overlay() {
     let GeneralExecuteOutcome::Rows(mut result) = session
         .node_conn().execute_general(
             &prepared,
-            &[tidb_protocol::PreparedValue::SignedLongLong(1)],
+            &[tidb_param::PreparedValue::SignedLongLong(1)],
         )
         .unwrap()
     else {
@@ -206,7 +206,7 @@ fn autocommit_point_get_on_the_primary_key_takes_no_timestamp() {
 /// A range reader still needs one statement timestamp when it returns one row.
 #[test]
 fn a_bounded_single_row_cluster_scan_keeps_its_statement_timestamp() {
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
 
     let (mut session, node) = open_session();
     seed(&mut session);
@@ -255,7 +255,7 @@ fn a_bounded_single_row_cluster_scan_keeps_its_statement_timestamp() {
 /// only to the text protocol, which is the protocol nothing measures.
 #[test]
 fn a_prepared_point_get_takes_no_timestamp_either() {
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
 
     let (mut session, node) = open_session();
     seed(&mut session);
@@ -292,7 +292,7 @@ fn a_prepared_point_get_takes_no_timestamp_either() {
 /// row 2 here rather than the row 1 selected while the entry was populated.
 #[test]
 fn a_prepared_point_get_reuses_the_plan_with_each_executions_handle() {
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
 
     let (mut session, _) = open_session();
     seed(&mut session);
@@ -345,7 +345,7 @@ fn a_prepared_point_get_reuses_the_plan_with_each_executions_handle() {
 /// sysbench's prepared `oltp_read_only` transaction.
 #[test]
 fn a_prepared_range_executes_the_general_cached_plan() {
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
 
     let (mut session, node) = open_session();
     seed(&mut session);
@@ -437,7 +437,7 @@ fn an_aggregate_point_get_prepares_and_waits_for_one_ordinary_snapshot() {
 /// can report start_ts=0 even though the read used MaxTS).
 #[test]
 fn fix_52592_preserves_max_ts_for_a_complete_clustered_key() {
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
 
     let (mut session, node) = open_session();
     seed(&mut session);
@@ -904,7 +904,7 @@ fn a_double_reads_row_lookup_does_not_take_the_shortcut() {
 /// plan must not turn it into the single-read MaxTS case.
 #[test]
 fn a_prepared_unique_index_point_get_does_not_take_the_shortcut() {
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
 
     let (mut session, node) = open_session();
     session

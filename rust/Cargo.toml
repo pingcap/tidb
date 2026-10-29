@@ -283,6 +283,7 @@ members = [
     "crates/tidb-autoid",
     "crates/tidb-table",
     "crates/tidb-tblctx",
+    "crates/tidb-param",
     "crates/tidb-executor-aggregate",
     "crates/tidb-exprctx",
     "crates/tidb-tablecodec-rowindexcodec",

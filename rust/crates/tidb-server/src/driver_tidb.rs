@@ -235,7 +235,7 @@ impl QuerySession for Session {
     fn execute_general<'a>(
         &'a mut self,
         statement: &PreparedGeneral,
-        values: &[tidb_protocol::PreparedValue],
+        values: &[tidb_param::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
         self.node_conn().execute_general(statement, values)
     }

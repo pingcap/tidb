@@ -57,7 +57,7 @@ fn prepared_dml_retains_the_parse_tree_for_execute() {
 /// column layout each time and therefore never produced a plan-cache hit.
 #[test]
 fn prepared_insert_reuses_the_planned_dml() {
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
 
     let (mut session, _) = open_session();
     let statement = session
@@ -98,7 +98,7 @@ fn prepared_insert_reuses_the_planned_dml() {
 /// both the first execution and the cache hit.
 #[test]
 fn prepared_insert_with_omitted_column_reuses_common_dml() {
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
 
     let (mut session, _) = open_session();
     let statement = session
@@ -134,7 +134,7 @@ fn prepared_insert_with_omitted_column_reuses_common_dml() {
 /// so it could never report or realize a plan-cache hit.
 #[test]
 fn prepared_point_update_reuses_the_planned_dml() {
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
 
     let (mut session, _) = open_session();
     session
@@ -172,7 +172,7 @@ fn prepared_point_update_reuses_the_planned_dml() {
 /// handle value. Stock sysbench executes exactly this prepared shape.
 #[test]
 fn prepared_point_delete_reuses_the_planned_dml() {
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
 
     let (mut session, _) = open_session();
     session
@@ -199,7 +199,7 @@ fn prepared_point_delete_reuses_the_planned_dml() {
 
 #[test]
 fn prepared_point_update_preserves_typed_handle_coercion() {
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
 
     let (mut session, _) = open_session();
     session
@@ -485,7 +485,7 @@ fn an_explicit_transaction_does_not_lock_what_go_would_lock() {
 /// and every prepared payment failed.
 #[test]
 fn a_prepared_update_the_cached_executor_declines_binds_its_parameters() {
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
 
     let (mut session, _node) = open_session();
     session

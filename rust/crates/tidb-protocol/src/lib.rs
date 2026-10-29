@@ -33,7 +33,7 @@ pub mod resultset_stream;
 
 pub use binary_params::{
     parse_binary_params, parse_length_encoded_bytes, parse_length_encoded_int,
-    parse_null_term_string, BinaryParam, BinaryParamError, TYPE_NULL, TYPE_UNSPECIFIED,
+    parse_null_term_string, BinaryParamError, TYPE_NULL, TYPE_UNSPECIFIED,
 };
 pub use column::{
     dump_column, dump_column_with_default, dump_flag, dump_type, ColumnDefault, ColumnInfo,
@@ -67,7 +67,7 @@ pub use prepared_statement::{
     is_binary_integer_result_type, is_binary_string_result_type, split_prepared_statement_execute,
     BinaryDateTimeType, BinaryResultCell, BinaryResultSetStream, PreparedParameterType,
     PreparedParameterTypes, PreparedStatementError, PreparedStatementExecute,
-    PreparedStatementExecutePacket, PreparedStatementSendLongData, PreparedValue,
+    PreparedStatementExecutePacket, PreparedStatementSendLongData,
     CURSOR_TYPE_READ_ONLY, MAX_STMT_FETCH_SIZE, MYSQL_TYPE_LONGLONG, MYSQL_UNSIGNED_FLAG,
 };
 pub use result::{

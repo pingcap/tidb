@@ -758,7 +758,7 @@ impl QuerySession for MetricsSession {
     fn execute_general<'a>(
         &'a mut self,
         statement: &tidb_server::PreparedGeneral,
-        _values: &[tidb_protocol::PreparedValue],
+        _values: &[tidb_param::PreparedValue],
     ) -> Result<tidb_server::GeneralExecuteOutcome<'a>, SqlQueryError> {
         if statement.sql() != "BEGIN" {
             return Err(SqlQueryError::unknown("only a prepared BEGIN is part of this fixture"));

@@ -1545,8 +1545,8 @@ fn transaction_observation_batch_text_prepared_and_failed_commit_share_history()
                     .node_conn().execute_general(
                         prepared,
                         &[
-                            tidb_protocol::PreparedValue::SignedLongLong(1),
-                            tidb_protocol::PreparedValue::SignedLongLong(1),
+                            tidb_param::PreparedValue::SignedLongLong(1),
+                            tidb_param::PreparedValue::SignedLongLong(1),
                         ],
                     )
                     .unwrap();

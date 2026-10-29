@@ -23,6 +23,7 @@
 //! decimal parser. Typed interpretation remains a downstream step, matching
 //! Go's `expression.ExecBinaryParam` boundary.
 
+use tidb_param::BinaryParam;
 use std::{convert::TryFrom, io};
 
 use tidb_charset::find_encoding_take_utf8_as_noop;
@@ -53,24 +54,6 @@ pub const TYPE_UNSPECIFIED: u8 = 0;
 /// The MySQL binary-protocol unsigned flag bit in a parameter's type pair.
 const UNSIGNED_FLAG: u8 = 0x80;
 
-/// One split binary parameter: the raw value bytes plus the type tags that
-/// select how a later stage interprets them.
-///
-/// This mirrors Go `param.BinaryParam`. `val` holds the raw little-endian /
-/// text bytes exactly as they arrived, except that the string group is decoded
-/// from the connection's client charset to UTF-8 as Go does.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BinaryParam {
-    /// The MySQL field type declared for this parameter (a `TYPE_*` code).
-    pub tp: u8,
-    /// Whether the parameter's type pair set the unsigned flag bit.
-    pub is_unsigned: bool,
-    /// Whether the value is SQL `NULL` (a declared `TypeNull` or a
-    /// length-encoded NULL marker; the NULL-bitmap path uses `tp == TYPE_NULL`).
-    pub is_null: bool,
-    /// The raw value bytes sliced from the execute packet.
-    pub val: Vec<u8>,
-}
 
 /// A rejection from [`parse_binary_params`], mirroring Go's two error returns.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -2358,7 +2358,7 @@ impl<'s> ClusterServerSession<'s> {
     pub fn execute_general(
         mut self,
         statement: &PreparedGeneral,
-        values: &[tidb_protocol::PreparedValue],
+        values: &[tidb_param::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'s>, SqlQueryError> {
         self.session.restore_statement_variables();
         let process_statement = self

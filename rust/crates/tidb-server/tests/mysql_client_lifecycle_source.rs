@@ -543,11 +543,11 @@ impl QuerySession for PreparedSession {
     fn execute_general<'a>(
         &'a mut self,
         statement: &PreparedGeneral,
-        values: &[tidb_protocol::PreparedValue],
+        values: &[tidb_param::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
         let mut integers = Vec::with_capacity(values.len());
         for value in values {
-            let tidb_protocol::PreparedValue::SignedLongLong(value) = value else {
+            let tidb_param::PreparedValue::SignedLongLong(value) = value else {
                 return Err(SqlQueryError::unknown("expected signed integer parameters"));
             };
             integers.push(*value);
@@ -671,7 +671,7 @@ impl QuerySession for CursorEncodingSession {
     fn execute_general<'a>(
         &'a mut self,
         _statement: &PreparedGeneral,
-        _values: &[tidb_protocol::PreparedValue],
+        _values: &[tidb_param::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
         let field = FieldType::new(FieldTypeCode::Varchar);
         let authority = ResultMaterializationAuthority::new(
@@ -889,7 +889,7 @@ impl QuerySession for CursorReaderFailureSession {
     fn execute_general<'a>(
         &'a mut self,
         _statement: &PreparedGeneral,
-        _values: &[tidb_protocol::PreparedValue],
+        _values: &[tidb_param::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
         let field = FieldType::new(FieldTypeCode::Varchar).with_flen(4096);
         let memory = StatementMemory::new(1, OomAction::Cancel, 9)
@@ -2116,12 +2116,12 @@ enum BoundValue {
 }
 
 impl BoundValue {
-    fn of(value: &tidb_protocol::PreparedValue) -> Self {
+    fn of(value: &tidb_param::PreparedValue) -> Self {
         match value {
-            tidb_protocol::PreparedValue::SignedLongLong(value) => Self::Int(*value),
-            tidb_protocol::PreparedValue::String(bytes)
-            | tidb_protocol::PreparedValue::Bytes(bytes) => Self::Bytes(bytes.clone()),
-            tidb_protocol::PreparedValue::Null => Self::Null,
+            tidb_param::PreparedValue::SignedLongLong(value) => Self::Int(*value),
+            tidb_param::PreparedValue::String(bytes)
+            | tidb_param::PreparedValue::Bytes(bytes) => Self::Bytes(bytes.clone()),
+            tidb_param::PreparedValue::Null => Self::Null,
             other => panic!("unexpected long-data test parameter {other:?}"),
         }
     }
@@ -2160,7 +2160,7 @@ impl QuerySession for LongDataSession {
     fn execute_general<'a>(
         &'a mut self,
         _statement: &PreparedGeneral,
-        values: &[tidb_protocol::PreparedValue],
+        values: &[tidb_param::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
         self.bound
             .lock()

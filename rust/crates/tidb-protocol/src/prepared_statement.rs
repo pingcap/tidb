@@ -14,10 +14,11 @@
 
 //! MySQL binary prepared-statement packet framing.
 //!
-//! Packet splitting uses [`crate::BinaryParam`] as the one raw parameter
+//! Packet splitting uses [`tidb_param::BinaryParam`] as the one raw parameter
 //! authority. Typed values are derived only after that split, matching Go's
 //! `parseBinaryParams` -> `expression.ExecBinaryParam` boundary.
 
+use tidb_param::PreparedValue;
 use crate::append_length_encoded_bytes;
 use crate::append_length_encoded_int;
 use crate::encode_eof_packet;
@@ -103,43 +104,6 @@ impl PreparedParameterType {
     }
 }
 
-/// A decoded prepared-statement value admitted by this protocol leaf.
-///
-/// A signed integer width interprets to one `i64` (Go `ExecBinaryParam`
-/// sign-extends `int8`/`int16`/`int32`/`int64`); a string parameter carries its
-/// raw length-encoded bytes.
-///
-/// The string and BLOB families stay apart because Go binds them to
-/// different datums: `TypeVarchar`/`TypeString`/... become a string datum
-/// (`types.NewDatum(string)`, the default `utf8mb4_bin` collation) while
-/// `TypeBlob`/`TypeTinyBlob`/... become a bytes datum (`NewBytesDatum`, the
-/// binary collation). A string parameter that arrived as binary bytes
-/// compared with a `utf8mb4` column in the binary collation, which kept the
-/// predicate out of the coprocessor.
-#[derive(Clone, Debug, PartialEq)]
-pub enum PreparedValue {
-    /// A signed integer parameter, sign-extended to 64 bits from its wire width.
-    SignedLongLong(i64),
-    /// A string-family parameter's raw bytes (utf8 for the configured node).
-    String(Vec<u8>),
-    /// A BLOB-family parameter's raw bytes, Go's `NewBytesDatum` arm.
-    Bytes(Vec<u8>),
-    /// An unsigned integer parameter, widened to 64 bits.
-    UnsignedLongLong(u64),
-    /// A `FLOAT` parameter, widened to `f64` the way Go widens `float32`.
-    Float(f32),
-    /// A `DOUBLE` parameter.
-    Double(f64),
-    /// A `DECIMAL` parameter's digits, which Go parses with
-    /// `MyDecimal.FromString`.
-    Decimal(Vec<u8>),
-    /// A parameter the execute packet marked NULL in its bitmap.
-    Null,
-    /// A temporal parameter, rendered the way Go renders it before parsing:
-    /// `binaryDate`/`binaryDateTime`/`binaryTimestamp` produce the date-time
-    /// text and `binaryDuration` the day/time span text.
-    Temporal(String),
-}
 
 /// Whether an execute packet supplied a new parameter type vector.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -471,7 +435,7 @@ pub fn decode_prepared_statement_execute_with_bound_params(
 }
 
 fn prepared_value_from_binary_param(
-    parameter: crate::BinaryParam,
+    parameter: tidb_param::BinaryParam,
 ) -> Result<PreparedValue, PreparedStatementError> {
     if parameter.tp == crate::TYPE_NULL {
         return Ok(PreparedValue::Null);

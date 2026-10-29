@@ -10387,7 +10387,7 @@ fn begin_inside_a_transaction_implicitly_commits_it() {
 #[test]
 fn prepared_select_replans_after_another_session_changes_columns() {
     use crate::domain::resultset_source::ResultSetSource;
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
 
     let (stack, _users) = cop_backed_stack();
     let mut reader = stack
@@ -10460,7 +10460,7 @@ fn prepared_select_replans_after_another_session_changes_columns() {
 
 #[test]
 fn prepared_update_replans_after_another_session_adds_a_column() {
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
 
     let (stack, _users) = cop_backed_stack();
     let mut writer = stack
@@ -10528,7 +10528,7 @@ fn prepared_update_replans_after_another_session_adds_a_column() {
 /// mode the same statement takes no lock and reads the committed row.
 #[test]
 fn a_pessimistic_autocommit_point_update_locks_from_its_plan() {
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
 
     struct ConfigGuard;
     impl Drop for ConfigGuard {
@@ -10882,7 +10882,7 @@ fn an_update_in_a_transaction_stages_untouched_index_entries_like_go() {
 
 #[test]
 fn a_prepared_point_update_locks_its_row_before_reading_it() {
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
 
     let (stack, _users) = cop_backed_stack();
     let factory = &stack.factory;
@@ -11421,7 +11421,7 @@ fn locking_range_reselects_with_protocol(
             let crate::domain::session_api::GeneralExecuteOutcome::Rows(mut result) = session
                 .node_conn().execute_general(
                     &statement,
-                    &[1, 1].map(tidb_protocol::PreparedValue::SignedLongLong),
+                    &[1, 1].map(tidb_param::PreparedValue::SignedLongLong),
                 )
                 .expect("execute locking range")
             else {
@@ -11683,7 +11683,7 @@ fn a_locking_range_sees_rows_committed_after_begin() {
 #[test]
 fn a_locking_batch_locks_missing_primary_keys() {
     use crate::domain::resultset_source::ResultSetSource;
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
 
     let (stack, _users) = cop_backed_stack();
     let factory = &stack.factory;
@@ -11824,7 +11824,7 @@ fn a_locking_batch_locks_missing_primary_keys() {
 /// take the row immediately (`OnPessimisticStmtEnd(isSuccessful=false)`).
 #[test]
 fn a_failed_prelocked_update_releases_its_row() {
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
 
     let (stack, _users) = cop_backed_stack();
     let factory = &stack.factory;
@@ -12136,7 +12136,7 @@ fn generated_write_policy_reaches_cluster_storage_and_prepared_execution() {
     let error = session
         .node_conn().execute_general(
             &prepared,
-            &[tidb_protocol::PreparedValue::SignedLongLong(2000)],
+            &[tidb_param::PreparedValue::SignedLongLong(2000)],
         )
         .err()
         .expect("prepared UPDATE uses its execution-time statement policy");
@@ -12149,7 +12149,7 @@ fn generated_write_policy_reaches_cluster_storage_and_prepared_execution() {
     session
         .node_conn().execute_general(
             &prepared,
-            &[tidb_protocol::PreparedValue::SignedLongLong(2000)],
+            &[tidb_param::PreparedValue::SignedLongLong(2000)],
         )
         .unwrap();
     // Go answers a non-strict UPDATE's generated-column overflow with the
@@ -13119,7 +13119,7 @@ fn deferred_uniqueness_batch_scope_tombstones_and_successful_commit() {
 
 #[test]
 fn deferred_uniqueness_batch_binary_prepared_dml_shares_abort_policy() {
-    use tidb_protocol::PreparedValue;
+    use tidb_param::PreparedValue;
     let (stack, _users) = cop_backed_stack();
     let mut session = stack.factory.open_session(session_context(944)).unwrap();
     rows(&mut session, "CREATE DATABASE deferred_binary");

@@ -39,28 +39,28 @@ use crate::domain::wire_status::WireStatus;
 /// evaluates locally after fetching the whole scanned range instead of
 /// pushing it to the coprocessor (TPC-C ORDER_STATUS by customer name).
 pub fn prepared_parameters(
-    values: &[tidb_protocol::PreparedValue],
+    values: &[tidb_param::PreparedValue],
 ) -> Vec<tidb_datatype::Datum> {
     values
         .iter()
         .map(|value| match value {
-            tidb_protocol::PreparedValue::SignedLongLong(value) => {
+            tidb_param::PreparedValue::SignedLongLong(value) => {
                 tidb_datatype::Datum::Int(*value)
             }
-            tidb_protocol::PreparedValue::UnsignedLongLong(value) => {
+            tidb_param::PreparedValue::UnsignedLongLong(value) => {
                 tidb_datatype::Datum::UInt(*value)
             }
-            tidb_protocol::PreparedValue::String(bytes) => {
+            tidb_param::PreparedValue::String(bytes) => {
                 tidb_datatype::Datum::new_string(bytes.clone())
             }
-            tidb_protocol::PreparedValue::Bytes(bytes) => {
+            tidb_param::PreparedValue::Bytes(bytes) => {
                 tidb_datatype::Datum::new_bytes(bytes.clone())
             }
-            tidb_protocol::PreparedValue::Float(value) => {
+            tidb_param::PreparedValue::Float(value) => {
                 tidb_datatype::Datum::Float32(f64::from(*value))
             }
-            tidb_protocol::PreparedValue::Double(value) => tidb_datatype::Datum::Real(*value),
-            tidb_protocol::PreparedValue::Decimal(digits) => {
+            tidb_param::PreparedValue::Double(value) => tidb_datatype::Datum::Real(*value),
+            tidb_param::PreparedValue::Decimal(digits) => {
                 match std::str::from_utf8(digits) {
                     Ok(text) => {
                         tidb_datatype::Datum::Decimal(tidb_datatype::Decimal::from_literal(text))
@@ -71,13 +71,13 @@ pub fn prepared_parameters(
                     Err(_) => tidb_datatype::Datum::Null,
                 }
             }
-            tidb_protocol::PreparedValue::Null => tidb_datatype::Datum::Null,
+            tidb_param::PreparedValue::Null => tidb_datatype::Datum::Null,
             // Go parses the rendered text into a Time or Duration datum.
             // This tier keeps temporal values as their formatted text --
             // the same documented divergence the temporal casts and the
             // date/time builtins carry -- so the text IS the value here, and
             // it is the string datum a quoted temporal literal would be.
-            tidb_protocol::PreparedValue::Temporal(text) => {
+            tidb_param::PreparedValue::Temporal(text) => {
                 tidb_datatype::Datum::new_string(text.clone())
             }
         })
@@ -294,7 +294,7 @@ mod tests {
     #[test]
     fn a_binary_protocol_string_parameter_binds_the_same_datum_kind_as_a_text_literal() {
         let bound =
-            prepared_parameters(&[tidb_protocol::PreparedValue::String(b"BARBARBAR".to_vec())]);
+            prepared_parameters(&[tidb_param::PreparedValue::String(b"BARBARBAR".to_vec())]);
         assert_eq!(bound.len(), 1);
         assert!(
             matches!(bound[0], Datum::String(_)),
@@ -308,7 +308,7 @@ mod tests {
         );
 
         // The BLOB family stays a bytes datum, as Go's `NewBytesDatum` arm is.
-        let blob = prepared_parameters(&[tidb_protocol::PreparedValue::Bytes(b"raw".to_vec())]);
+        let blob = prepared_parameters(&[tidb_param::PreparedValue::Bytes(b"raw".to_vec())]);
         assert_eq!(blob[0], Datum::new_bytes(b"raw".to_vec()));
     }
 }
