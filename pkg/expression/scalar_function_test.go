@@ -133,8 +133,8 @@ func TestScalarFunctionCloneIsolatesRetType(t *testing.T) {
 	require.NotSame(t, sf.RetType, cloned.RetType)
 	// The clone's RetType must be the very type its builtin reports, so that a
 	// later in-place change of one is seen by the other.
-	require.Same(t, cloned.Function.getRetTp(), cloned.RetType)
-	require.NotSame(t, sf.Function.getRetTp(), cloned.Function.getRetTp())
+	require.Same(t, cloned.Function.rawRetTp(), cloned.RetType)
+	require.NotSame(t, sf.Function.rawRetTp(), cloned.Function.rawRetTp())
 
 	// Mutating the clone, as a REAL cast of a comparison operand does, must not
 	// leak into the original.
@@ -142,7 +142,7 @@ func TestScalarFunctionCloneIsolatesRetType(t *testing.T) {
 	cloned.RetType.SetFlen(48)
 	require.Equal(t, origFlen, sf.RetType.GetFlen())
 	require.Equal(t, origDecimal, sf.RetType.GetDecimal())
-	require.Equal(t, origDecimal, sf.Function.getRetTp().GetDecimal())
+	require.Equal(t, origDecimal, sf.Function.rawRetTp().GetDecimal())
 }
 
 func TestIssue23309(t *testing.T) {
