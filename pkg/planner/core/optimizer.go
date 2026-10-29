@@ -474,6 +474,7 @@ func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.Physical
 	countStarRewrite(plan)
 	disableReuseChunkIfNeeded(sctx, plan)
 	generateRuntimeFilter(sctx, plan)
+	attachPKRangeProbes(sctx, plan)
 	return plan
 }
 

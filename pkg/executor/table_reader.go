@@ -203,6 +203,9 @@ type TableReaderExecutor struct {
 	// If dummy flag is set, this is not a real TableReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
 	dummy bool
+
+	// pkRangeProber, when set, narrows the key ranges to read. See pkRangeProber.
+	pkRangeProber *pkRangeProber
 }
 
 // Table implements the dataSourceExecutor interface.
@@ -290,6 +293,15 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		groupedRanges = [][]*ranger.Range{e.ranges}
 	}
 
+	if e.pkRangeProber != nil && !e.dummy {
+		if err := e.evaluatePKRangeProbes(); err != nil {
+			return err
+		}
+		if e.pkRangeProber.empty {
+			groupedRanges = nil
+		}
+	}
+
 	var firstPartGroupedRanges, secondPartGroupedRanges [][]*ranger.Range
 	for _, ranges := range groupedRanges {
 		signedRanges, unsignedRanges := distsql.SplitRangesAcrossInt64Boundary(ranges, e.keepOrder, e.desc, e.table.Meta() != nil && e.table.Meta().IsCommonHandle)
@@ -358,6 +370,18 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		e.kvRanges = append(firstKVRanges, e.kvRanges...)
 	}
 	e.resultHandler.open(firstResult, secondResult)
+	return nil
+}
+
+func (e *TableReaderExecutor) evaluatePKRangeProbes() error {
+	alreadyEvaluated := e.pkRangeProber.evaluated
+	if err := e.pkRangeProber.evaluate(e.rctx, e.dctx); err != nil {
+		return err
+	}
+	if !alreadyEvaluated && e.dctx.RuntimeStatsColl != nil {
+		e.pkRangeProber.stats.result = e.pkRangeProber.result()
+		e.dctx.RuntimeStatsColl.RegisterStats(e.ID(), &e.pkRangeProber.stats)
+	}
 	return nil
 }
 
@@ -595,6 +619,12 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 			return nil, err
 		}
 		reqBuilder = builder.SetPartitionKeyRanges(kvRange)
+	} else if e.pkRangeProber != nil && e.pkRangeProber.lo != nil {
+		keyRanges, err := distsql.TableHandleRangesToKVRanges(e.dctx, []int64{getPhysicalTableID(e.table)}, e.table.Meta().IsCommonHandle, ranges)
+		if err != nil {
+			return nil, err
+		}
+		reqBuilder = builder.SetKeyRanges(e.pkRangeProber.intersect(keyRanges.FirstPartitionRange()))
 	} else {
 		reqBuilder = builder.SetHandleRanges(e.dctx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges)
 	}

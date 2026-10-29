@@ -57,6 +57,10 @@ const (
 	// TiDBOptDeriveTopN is used to enable/disable the optimizer rule of deriving topN.
 	TiDBOptDeriveTopN = "tidb_opt_derive_topn"
 
+	// TiDBOptGeneratePKFilter enables bounding large table scans in the chosen plan by the handles that a secondary
+	// index, fully fixed by the scan's equality conditions, holds for those values. The bounds are probed at execution.
+	TiDBOptGeneratePKFilter = "tidb_opt_generate_pk_filter"
+
 	// TiDBOptCartesianBCJ is used to disable/enable broadcast cartesian join in MPP mode
 	TiDBOptCartesianBCJ = "tidb_opt_broadcast_cartesian_join"
 
@@ -1557,6 +1561,7 @@ const (
 	DefSkipASCIICheck                   = false
 	DefOptAggPushDown                   = false
 	DefOptDeriveTopN                    = false
+	DefOptGeneratePKFilter              = false
 	DefOptCartesianBCJ                  = 1
 	DefOptMPPOuterJoinFixedBuildSide    = false
 	DefOptWriteRowID                    = false

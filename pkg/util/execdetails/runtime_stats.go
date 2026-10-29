@@ -82,6 +82,8 @@ const (
 	TpMViewDeltaMergeAggRuntimeStats
 	// TpMViewCompleteDeltaApplyRuntimeStats is the type for MV complete delta apply.
 	TpMViewCompleteDeltaApplyRuntimeStats
+	// TpPKRangeProbeRuntimeStats is the type for a table reader's PK range probes.
+	TpPKRangeProbeRuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.

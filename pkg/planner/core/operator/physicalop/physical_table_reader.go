@@ -81,6 +81,10 @@ type PhysicalTableReader struct {
 	PlanPartInfo *PhysPlanPartInfo
 	// Used by MPP, because MPP plan may contain join/union/union all, it is possible that a physical table reader contains more than 1 table scan
 	TableScanAndPartitionInfos []TableScanAndPartitionInfo `plan-cache-clone:"must-nil"`
+
+	// PKRangeProbes, when set, make the executor bound the handle range of the
+	// table scan before reading it. See PKRangeProbe.
+	PKRangeProbes []*PKRangeProbe
 }
 
 // Init initializes PhysicalTableReader.
@@ -155,6 +159,7 @@ func (p *PhysicalTableReader) MemoryUsage() (sum int64) {
 	for _, pInfo := range p.TableScanAndPartitionInfos {
 		sum += pInfo.MemoryUsage()
 	}
+	sum += size.SizeOfSlice + int64(cap(p.PKRangeProbes))*size.SizeOfPointer
 	return
 }
 
@@ -262,7 +267,7 @@ func (p *PhysicalTableReader) ExplainInfo() string {
 		return fmt.Sprintf("MppVersion: %d, %s", p.SCtx().GetSessionVars().ChooseMppVersion(), tablePlanInfo)
 	}
 
-	return tablePlanInfo
+	return tablePlanInfo + explainPKRangeProbes(p.PKRangeProbes)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
@@ -272,7 +277,7 @@ func (*PhysicalTableReader) ExplainNormalizedInfo() string {
 
 // OperatorInfo return other operator information to be explained.
 func (p *PhysicalTableReader) OperatorInfo(_ bool) string {
-	return "data:" + p.TablePlan.ExplainID().String()
+	return "data:" + p.TablePlan.ExplainID().String() + explainPKRangeProbes(p.PKRangeProbes)
 }
 
 // ResolveIndices implements Plan interface.

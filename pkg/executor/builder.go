@@ -4407,6 +4407,21 @@ func (b *executorBuilder) buildTableReader(v *physicalop.PhysicalTableReader) ex
 	ret.groupByColIdxs = ts.GroupByColIdxs
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 
+	// The prober reads the snapshot the reader reads, without the
+	// transaction's own writes, so it's skipped for a dirty table.
+	if len(v.PKRangeProbes) > 0 && ts.Table.GetPartitionInfo() == nil && !b.sctx.GetPlanCtx().HasDirtyContent(ts.Table.ID) {
+		snapshot, err := b.getSnapshot()
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		ret.pkRangeProber = &pkRangeProber{
+			probes:   v.PKRangeProbes,
+			snapshot: snapshot,
+			tableID:  getPhysicalTableID(ret.table),
+		}
+	}
+
 	if !b.sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return ret
 	}
