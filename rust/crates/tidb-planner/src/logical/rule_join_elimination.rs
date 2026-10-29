@@ -29,7 +29,7 @@ use crate::access_path::DataSourceAccessPath;
 use crate::expression_rewriter::{
     extract_correlated_cols_4_logical_plan, matching_cor_columns_by_schema,
 };
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 
 use super::rule::{LogicalOptRule, RuleContext};
 use super::window::{BoundType, FrameType};

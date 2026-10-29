@@ -290,6 +290,7 @@ members = [
     "crates/tidb-autoid",
     "crates/tidb-table",
     "crates/tidb-tblctx",
+    "crates/tidb-planner-util",
     "crates/tidb-planner-core-rule-util",
     "crates/tidb-server-internal-util",
     "crates/tidb-param",

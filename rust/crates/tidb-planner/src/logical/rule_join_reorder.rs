@@ -30,7 +30,7 @@ use super::projection::LogicalProjection;
 use super::rule::{LogicalOptRule, RuleContext};
 use super::selection::LogicalSelection;
 use super::{BaseLogicalPlan, LogicalPlan, PlanError};
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 use crate::joinorder::JoinMethodHint;
 
 #[derive(Clone, Debug)]

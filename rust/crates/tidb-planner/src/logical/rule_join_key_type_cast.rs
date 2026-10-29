@@ -21,7 +21,7 @@
 //! This makes the physical index-join ranger see the original integer key
 //! without changing the result for strings such as `"1.5"`.
 
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 use crate::logical::projection::LogicalProjection;
 use crate::logical::rule::{LogicalOptRule, RuleContext};
 use crate::logical::{BaseLogicalPlan, LogicalPlan, LogicalSelection};

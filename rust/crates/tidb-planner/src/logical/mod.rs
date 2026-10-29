@@ -1090,9 +1090,9 @@ impl LogicalPlan {
                 if left_keys.len() > 1
                     && matches!(
                         op.join_type,
-                        crate::find_best_task::LogicalJoinType::Inner
-                            | crate::find_best_task::LogicalJoinType::LeftOuter
-                            | crate::find_best_task::LogicalJoinType::RightOuter
+                        tidb_planner_core_base::LogicalJoinType::Inner
+                            | tidb_planner_core_base::LogicalJoinType::LeftOuter
+                            | tidb_planner_core_base::LogicalJoinType::RightOuter
                     )
                 {
                     left_keys.sort_by_key(|column| column.unique_id);
@@ -1104,12 +1104,12 @@ impl LogicalPlan {
                 // (`p.Children()[0].Schema()` / `p.Children()[1].Schema()`);
                 // only the schema itself may be absent.
                 let outer_schema = match op.join_type {
-                    crate::find_best_task::LogicalJoinType::LeftOuter
-                    | crate::find_best_task::LogicalJoinType::LeftOuterSemi
-                    | crate::find_best_task::LogicalJoinType::AntiLeftOuterSemi => {
+                    tidb_planner_core_base::LogicalJoinType::LeftOuter
+                    | tidb_planner_core_base::LogicalJoinType::LeftOuterSemi
+                    | tidb_planner_core_base::LogicalJoinType::AntiLeftOuterSemi => {
                         self.children()[0].schema()
                     }
-                    crate::find_best_task::LogicalJoinType::RightOuter => {
+                    tidb_planner_core_base::LogicalJoinType::RightOuter => {
                         self.children()[1].schema()
                     }
                     _ => None,

@@ -42,7 +42,7 @@ fn physical_apply_is_not_physical_join() {
     let join = PhysicalPlan::HashJoin(PhysicalHashJoin::default());
     assert_eq!(
         join.join_type(),
-        Some(tidb_planner::find_best_task::LogicalJoinType::Inner)
+        Some(tidb_planner_core_base::LogicalJoinType::Inner)
     );
 }
 

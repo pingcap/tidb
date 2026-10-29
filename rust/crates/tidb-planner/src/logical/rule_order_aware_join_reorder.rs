@@ -323,7 +323,7 @@ fn rewrite_ordering_for_projection(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::find_best_task::LogicalJoinType;
+    use tidb_planner_core_base::LogicalJoinType;
     use crate::logical::data_source::DataSource;
     use crate::logical::join::LogicalJoin;
     use crate::logical::topn::LogicalTopN;

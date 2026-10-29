@@ -119,7 +119,7 @@ use tidb_expr::schema::{merge_schema, Schema};
 use tidb_exprctx::Columns;
 
 use crate::expression_rewriter::{extract_cor_columns_by_schema_4_logical_plan, ClauseCode};
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 use crate::logical::apply::LogicalApply;
 use crate::logical::join::LogicalJoin;
 use crate::logical::lock::{LogicalLock, SelectLockType};
@@ -673,21 +673,6 @@ pub fn is_immediate_lateral_table_source(node: &JoinNode) -> bool {
     }
 }
 
-/// Go `util.ResetNotNullFlag(schema, start, end)`
-/// (`pkg/planner/util/misc.go`): the outer-join side becomes nullable.
-pub fn reset_not_null_flag(schema: &mut Schema, start: usize, end: usize) {
-    let end = end.min(schema.columns.len());
-    for column in schema.columns.iter_mut().take(end).skip(start) {
-        if let Some(ret_type) = column.ret_type.as_mut() {
-            if ret_type.has_flag(FieldTypeFlags::NOT_NULL) {
-                // Go clones the type before clearing so the SOURCE column's
-                // type is untouched; `ret_type` is already owned here.
-                ret_type.del_flags(FieldTypeFlags::NOT_NULL);
-            }
-        }
-    }
-}
-
 /// Go `getTableRefsAlias(tableRefs)` (`preprocess.go:2389`), the READ half of
 /// `aliasChecker`; the DELETE-tagging half is a boundary above.
 #[must_use]
@@ -1100,12 +1085,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             JoinType::Left => {
                 self.opt_flag |= flags::ELIMINATE_OUTER_JOIN | flags::OUTER_JOIN_TO_SEMI_JOIN;
                 join_plan.join_type = LogicalJoinType::LeftOuter;
-                reset_not_null_flag(&mut schema, left_len, schema_len);
+                tidb_planner_util::null_misc::reset_not_null_flag(&mut schema, left_len, schema_len);
             }
             JoinType::Right => {
                 self.opt_flag |= flags::ELIMINATE_OUTER_JOIN | flags::OUTER_JOIN_TO_SEMI_JOIN;
                 join_plan.join_type = LogicalJoinType::RightOuter;
-                reset_not_null_flag(&mut schema, 0, left_len);
+                tidb_planner_util::null_misc::reset_not_null_flag(&mut schema, 0, left_len);
             }
             JoinType::Cross => join_plan.join_type = LogicalJoinType::Inner,
         }
@@ -1130,7 +1115,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             merge_schema(Some(&l_full_schema), Some(&r_full_schema)).unwrap_or_default();
         if matches!(join_node.tp, JoinType::Left | JoinType::Right) {
             let full_len = full_schema.columns.len();
-            reset_not_null_flag(&mut full_schema, l_full_len, full_len);
+            tidb_planner_util::null_misc::reset_not_null_flag(&mut full_schema, l_full_len, full_len);
         }
         join_plan.full_schema = Some(full_schema);
         join_plan.full_names = l_full_names
@@ -1281,7 +1266,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut schema = merge_schema(Some(&left_schema), Some(&right_schema)).unwrap_or_default();
         if join_type == LogicalJoinType::LeftOuter {
             let schema_len = schema.len();
-            reset_not_null_flag(&mut schema, left_schema.len(), schema_len);
+            tidb_planner_util::null_misc::reset_not_null_flag(&mut schema, left_schema.len(), schema_len);
         }
         apply.join.base.base.set_schema(Some(schema));
         // `:1017` The names are CLONED and the `DBName` is deliberately NOT
@@ -1303,7 +1288,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             merge_schema(Some(&l_full_schema), Some(&r_full_schema)).unwrap_or_default();
         if join_type == LogicalJoinType::LeftOuter {
             let full_len = full_schema.len();
-            reset_not_null_flag(&mut full_schema, l_full_schema.len(), full_len);
+            tidb_planner_util::null_misc::reset_not_null_flag(&mut full_schema, l_full_schema.len(), full_len);
         }
         apply.join.full_schema = Some(full_schema);
         apply.join.full_names = l_full_names
@@ -1421,11 +1406,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         match join_tp {
             JoinType::Left => {
                 let len = rsc.columns.len();
-                reset_not_null_flag(&mut rsc, 0, len);
+                tidb_planner_util::null_misc::reset_not_null_flag(&mut rsc, 0, len);
             }
             JoinType::Right => {
                 let len = lsc.columns.len();
-                reset_not_null_flag(&mut lsc, 0, len);
+                tidb_planner_util::null_misc::reset_not_null_flag(&mut lsc, 0, len);
             }
             JoinType::Cross => {}
         }

@@ -1118,10 +1118,10 @@ impl Ver2Coster {
                         num_ranges: number_of_ranges(probe) as f64,
                         is_semi_join: matches!(
                             join.join_type,
-                            crate::find_best_task::LogicalJoinType::Semi
-                                | crate::find_best_task::LogicalJoinType::AntiSemi
-                                | crate::find_best_task::LogicalJoinType::LeftOuterSemi
-                                | crate::find_best_task::LogicalJoinType::AntiLeftOuterSemi
+                            tidb_planner_core_base::LogicalJoinType::Semi
+                                | tidb_planner_core_base::LogicalJoinType::AntiSemi
+                                | tidb_planner_core_base::LogicalJoinType::LeftOuterSemi
+                                | tidb_planner_core_base::LogicalJoinType::AntiLeftOuterSemi
                         ),
                         kind: join.kind,
                     },

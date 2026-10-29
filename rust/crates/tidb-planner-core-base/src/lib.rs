@@ -430,6 +430,26 @@ impl std::fmt::Display for PlanError {
 
 impl std::error::Error for PlanError {}
 
+/// Go `base.JoinType` (`plan_base.go`): the join kinds a logical join and
+/// its physical alternatives carry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LogicalJoinType {
+    /// `InnerJoin`.
+    Inner,
+    /// `LeftOuterJoin`.
+    LeftOuter,
+    /// `RightOuterJoin`.
+    RightOuter,
+    /// `SemiJoin`.
+    Semi,
+    /// `AntiSemiJoin`.
+    AntiSemi,
+    /// `LeftOuterSemiJoin`.
+    LeftOuterSemi,
+    /// `AntiLeftOuterSemiJoin`.
+    AntiLeftOuterSemi,
+}
+
 /// Go `base.PossiblePropertiesInfo` (`plan_base.go:383`).
 ///
 /// `Orders` holds `*expression.Column`; the identity Go compares with is

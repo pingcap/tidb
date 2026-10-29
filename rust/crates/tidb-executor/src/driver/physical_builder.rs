@@ -76,7 +76,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
 use tidb_hack::GoCaseCompare;
-use tidb_planner::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner::physical::{
     PhysicalBatchPointGet, PhysicalIndexScan, PhysicalMemTable, PhysicalPlan, PhysicalPointGet,
     PhysicalTableSample, PhysicalTableScan,

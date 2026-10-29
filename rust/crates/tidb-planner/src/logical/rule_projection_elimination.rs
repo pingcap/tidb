@@ -24,7 +24,7 @@ use tidb_expr::expression::{Expression, ScalarFunction};
 use tidb_expr::schema::{merge_schema, Schema};
 
 use crate::base_arms;
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanError;
 
 use super::fold::{fold_owned, Descend, OwnedRewrite};
@@ -244,14 +244,14 @@ fn apply_schema(plan: &LogicalPlan, join_type: LogicalJoinType) -> Option<Schema
                         .as_ref()
                         .expect("apply join schema nil-derefs the left schema for outer joins")
                         .len();
-                    crate::plan_builder::from::reset_not_null_flag(&mut schema, left_len, total);
+                    tidb_planner_util::null_misc::reset_not_null_flag(&mut schema, left_len, total);
                 }
                 LogicalJoinType::RightOuter => {
                     let left_len = left_schema
                         .as_ref()
                         .expect("apply join schema nil-derefs the left schema for outer joins")
                         .len();
-                    crate::plan_builder::from::reset_not_null_flag(&mut schema, 0, left_len);
+                    tidb_planner_util::null_misc::reset_not_null_flag(&mut schema, 0, left_len);
                 }
                 _ => {}
             }
@@ -574,7 +574,7 @@ mod tests {
 mod apply_schema_tests {
     
 
-    use crate::find_best_task::LogicalJoinType;
+    use tidb_planner_core_base::LogicalJoinType;
     use crate::logical::join::LogicalJoin;
     use crate::logical::table_dual::LogicalTableDual;
     use crate::logical::{BaseLogicalPlan, LogicalPlan};

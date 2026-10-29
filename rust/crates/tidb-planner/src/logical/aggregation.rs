@@ -571,7 +571,7 @@ impl LogicalAggregation {
         let group_by_cols = self.get_group_by_cols();
         let mut orders = Vec::with_capacity(child_props.orders.len());
         for candidate in &child_props.orders {
-            if max_sort_prefix_len(candidate, &group_by_cols) == group_by_cols.len() {
+            if tidb_planner_util::misc::max_sort_prefix_len(candidate, &group_by_cols) == group_by_cols.len() {
                 orders.push(candidate[..group_by_cols.len()].to_vec());
             }
         }
@@ -705,25 +705,6 @@ pub fn agg_func_result_matches_arg_for_non_empty_group(func: &AggFuncDesc) -> bo
         return false;
     }
     func.args()[0].const_level() >= ConstLevel::ONLY_IN_CONTEXT
-}
-
-/// Go `util.GetMaxSortPrefix(sortCols, allCols)`
-/// (`pkg/planner/util/misc.go`): how many leading `sort_cols` are also in
-/// `all_cols`, positionally.
-#[must_use]
-pub fn max_sort_prefix_len(sort_cols: &[Column], all_cols: &[Column]) -> usize {
-    let limit = sort_cols.len().min(all_cols.len());
-    let mut length = 0;
-    while length < limit {
-        if !all_cols
-            .iter()
-            .any(|column| column.unique_id == sort_cols[length].unique_id)
-        {
-            break;
-        }
-        length += 1;
-    }
-    length
 }
 
 impl LogicalAggregation {

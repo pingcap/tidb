@@ -35,7 +35,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
 
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanIdAllocator;
 
 use super::aggregation::{LogicalAggregation, AGG_FUNC_COUNT, AGG_FUNC_FIRST_ROW};

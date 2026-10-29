@@ -74,6 +74,21 @@ pub fn is_null_rejected_by(predicate: &Expression, nullified: &[i64]) -> bool {
     prove_null_rejected(nullified, predicate)
 }
 
+/// Go `util.ResetNotNullFlag(schema, start, end)`
+/// (`null_misc.go`): the outer-join side becomes nullable.
+pub fn reset_not_null_flag(schema: &mut tidb_expr::schema::Schema, start: usize, end: usize) {
+    let end = end.min(schema.columns.len());
+    for column in schema.columns.iter_mut().take(end).skip(start) {
+        if let Some(ret_type) = column.ret_type.as_mut() {
+            if ret_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL) {
+                // Go clones the type before clearing so the SOURCE column's
+                // type is untouched; `ret_type` is already owned here.
+                ret_type.del_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

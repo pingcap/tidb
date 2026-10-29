@@ -56,7 +56,7 @@ struct ConflictRule {
 #[derive(Clone, Debug)]
 struct Edge {
     index: u64,
-    join_type: crate::find_best_task::LogicalJoinType,
+    join_type: tidb_planner_core_base::LogicalJoinType,
     equal_conditions: Vec<ScalarFunction>,
     non_equal_conditions: Vec<Expression>,
     total_eligibility_set: FastIntSet,
@@ -140,22 +140,22 @@ fn extract_join_group(context: &RuleContext<'_>, plan: Rc<LogicalPlan>) -> JoinG
     let reorderable = !join.straight_join
         && matches!(
             join.join_type,
-            crate::find_best_task::LogicalJoinType::Inner
-                | crate::find_best_task::LogicalJoinType::LeftOuter
-                | crate::find_best_task::LogicalJoinType::RightOuter
+            tidb_planner_core_base::LogicalJoinType::Inner
+                | tidb_planner_core_base::LogicalJoinType::LeftOuter
+                | tidb_planner_core_base::LogicalJoinType::RightOuter
         )
         && (context.outer_join_reorder
             || !matches!(
                 join.join_type,
-                crate::find_best_task::LogicalJoinType::LeftOuter
-                    | crate::find_best_task::LogicalJoinType::RightOuter
+                tidb_planner_core_base::LogicalJoinType::LeftOuter
+                    | tidb_planner_core_base::LogicalJoinType::RightOuter
             ))
         && (context.advanced_join_hint || join.prefer_join_type == 0)
         && !join
             .equal_conditions
             .iter()
             .any(|condition| condition.func_name.lowercase() == "nulleq")
-        && (join.join_type == crate::find_best_task::LogicalJoinType::Inner
+        && (join.join_type == tidb_planner_core_base::LogicalJoinType::Inner
             || !join.equal_conditions.is_empty());
 
     if !reorderable {
@@ -176,7 +176,7 @@ fn extract_join_group(context: &RuleContext<'_>, plan: Rc<LogicalPlan>) -> JoinG
         leading_hints: Vec::new(),
         has_user_leading_hint: false,
         vertex_hints: BTreeMap::new(),
-        all_inner_join: join.join_type == crate::find_best_task::LogicalJoinType::Inner,
+        all_inner_join: join.join_type == tidb_planner_core_base::LogicalJoinType::Inner,
         selection_conditions: BTreeMap::new(),
     };
 
@@ -478,7 +478,7 @@ impl ConflictDetector {
                     ))
                 })?;
             let mut edge = self.make_edge_internal(
-                crate::find_best_task::LogicalJoinType::Inner,
+                tidb_planner_core_base::LogicalJoinType::Inner,
                 FastIntSet::default(),
                 FastIntSet::default(),
                 &[],
@@ -506,7 +506,7 @@ impl ConflictDetector {
         if left_vertexes.intersects(&right_vertexes) {
             return Err(PlanError::internal("conflicting join edges detected"));
         }
-        let current_edges = if join.join_type == crate::find_best_task::LogicalJoinType::Inner {
+        let current_edges = if join.join_type == tidb_planner_core_base::LogicalJoinType::Inner {
             self.make_inner_edges(
                 join,
                 left_vertexes.copy(),
@@ -552,7 +552,7 @@ impl ConflictDetector {
         let mut result = Vec::new();
         if join.equal_conditions.is_empty() && non_equal_conditions.is_empty() {
             result.push(self.make_edge(
-                crate::find_best_task::LogicalJoinType::Inner,
+                tidb_planner_core_base::LogicalJoinType::Inner,
                 &[],
                 left_vertexes.copy(),
                 right_vertexes.copy(),
@@ -563,7 +563,7 @@ impl ConflictDetector {
         for condition in &join.equal_conditions {
             let expression = Expression::ScalarFunction(condition.clone());
             let mut edge = self.make_edge(
-                crate::find_best_task::LogicalJoinType::Inner,
+                tidb_planner_core_base::LogicalJoinType::Inner,
                 std::slice::from_ref(&expression),
                 left_vertexes.copy(),
                 right_vertexes.copy(),
@@ -576,7 +576,7 @@ impl ConflictDetector {
         }
         for condition in non_equal_conditions {
             let mut edge = self.make_edge(
-                crate::find_best_task::LogicalJoinType::Inner,
+                tidb_planner_core_base::LogicalJoinType::Inner,
                 std::slice::from_ref(&condition),
                 left_vertexes.copy(),
                 right_vertexes.copy(),
@@ -633,7 +633,7 @@ impl ConflictDetector {
 
     fn make_edge(
         &mut self,
-        join_type: crate::find_best_task::LogicalJoinType,
+        join_type: tidb_planner_core_base::LogicalJoinType,
         conditions: &[Expression],
         left_vertexes: FastIntSet,
         right_vertexes: FastIntSet,
@@ -653,7 +653,7 @@ impl ConflictDetector {
 
     fn make_edge_internal(
         &mut self,
-        join_type: crate::find_best_task::LogicalJoinType,
+        join_type: tidb_planner_core_base::LogicalJoinType,
         left_vertexes: FastIntSet,
         right_vertexes: FastIntSet,
         left_edges: &[Edge],
@@ -696,7 +696,7 @@ impl ConflictDetector {
                 }
             }
         }
-        if join_type == crate::find_best_task::LogicalJoinType::Inner {
+        if join_type == tidb_planner_core_base::LogicalJoinType::Inner {
             self.inner_edges.push(edge.clone());
         } else {
             self.non_inner_edges.push(edge.clone());
@@ -705,7 +705,7 @@ impl ConflictDetector {
     }
 
     fn replace_stored_edge(&mut self, edge: &Edge) {
-        let stored = if edge.join_type == crate::find_best_task::LogicalJoinType::Inner {
+        let stored = if edge.join_type == tidb_planner_core_base::LogicalJoinType::Inner {
             &mut self.inner_edges
         } else {
             &mut self.non_inner_edges
@@ -854,7 +854,7 @@ impl ConflictDetector {
     ) -> Option<CheckConnectionResult> {
         self.all_inner_join.then(|| {
             let cartesian_edge = self.make_edge(
-                crate::find_best_task::LogicalJoinType::Inner,
+                tidb_planner_core_base::LogicalJoinType::Inner,
                 &[],
                 left.bit_set.copy(),
                 right.bit_set.copy(),
@@ -969,7 +969,7 @@ fn align_equal_conditions(
 
 pub(crate) fn new_cartesian_join(
     context: &RuleContext<'_>,
-    join_type: crate::find_best_task::LogicalJoinType,
+    join_type: tidb_planner_core_base::LogicalJoinType,
     left: LogicalPlan,
     right: LogicalPlan,
 ) -> Result<LogicalJoin, PlanError> {
@@ -989,21 +989,21 @@ pub(crate) fn new_cartesian_join(
         -1
     };
     let mut schema = match join_type {
-        crate::find_best_task::LogicalJoinType::Semi
-        | crate::find_best_task::LogicalJoinType::AntiSemi => left_schema.clone(),
+        tidb_planner_core_base::LogicalJoinType::Semi
+        | tidb_planner_core_base::LogicalJoinType::AntiSemi => left_schema.clone(),
         _ => merge_schema(Some(&left_schema), Some(&right_schema)).unwrap_or_default(),
     };
     match join_type {
-        crate::find_best_task::LogicalJoinType::LeftOuter => {
+        tidb_planner_core_base::LogicalJoinType::LeftOuter => {
             let len = schema.columns.len();
-            crate::plan_builder::from::reset_not_null_flag(
+            tidb_planner_util::null_misc::reset_not_null_flag(
                 &mut schema,
                 left_schema.columns.len(),
                 len,
             );
         }
-        crate::find_best_task::LogicalJoinType::RightOuter => {
-            crate::plan_builder::from::reset_not_null_flag(
+        tidb_planner_core_base::LogicalJoinType::RightOuter => {
+            tidb_planner_util::null_misc::reset_not_null_flag(
                 &mut schema,
                 0,
                 left_schema.columns.len(),
@@ -1312,8 +1312,8 @@ fn left_to_right_rule(child: &Edge) -> ConflictRule {
     }
 }
 
-fn join_type_table_index(join_type: crate::find_best_task::LogicalJoinType) -> usize {
-    use crate::find_best_task::LogicalJoinType;
+fn join_type_table_index(join_type: tidb_planner_core_base::LogicalJoinType) -> usize {
+    use tidb_planner_core_base::LogicalJoinType;
     match join_type {
         LogicalJoinType::Inner => 0,
         LogicalJoinType::LeftOuter => 1,
@@ -2642,7 +2642,7 @@ mod tests {
 
     fn edge(
         index: u64,
-        join_type: crate::find_best_task::LogicalJoinType,
+        join_type: tidb_planner_core_base::LogicalJoinType,
         left: &[i64],
         right: &[i64],
         eligibility: &[i64],
@@ -2669,7 +2669,7 @@ mod tests {
 
     #[test]
     fn conflict_edges_enforce_eligibility_rules_and_outer_direction() {
-        use crate::find_best_task::LogicalJoinType;
+        use tidb_planner_core_base::LogicalJoinType;
 
         let mut inner = edge(0, LogicalJoinType::Inner, &[0], &[1], &[0, 1]);
         assert!(inner.inner_applicable(&node(&[0]), &node(&[1])));
@@ -2698,7 +2698,7 @@ mod tests {
 
     #[test]
     fn conflict_rule_tables_and_cartesian_gate_match_pinned_go() {
-        use crate::find_best_task::LogicalJoinType;
+        use tidb_planner_core_base::LogicalJoinType;
 
         let inner = edge(0, LogicalJoinType::Inner, &[0], &[1], &[0, 1]);
         let left = edge(1, LogicalJoinType::LeftOuter, &[0], &[1], &[0, 1]);
@@ -2737,7 +2737,7 @@ mod tests {
 
     #[test]
     fn remaining_edge_subset_requires_a_real_fully_contained_edge() {
-        use crate::find_best_task::LogicalJoinType;
+        use tidb_planner_core_base::LogicalJoinType;
 
         let mut real = edge(7, LogicalJoinType::Inner, &[0], &[1], &[0, 1]);
         real.non_equal_conditions
@@ -2755,7 +2755,7 @@ mod tests {
 
     #[test]
     fn dp_builds_a_four_table_bushy_result_from_nested_inner_joins() {
-        use crate::find_best_task::LogicalJoinType;
+        use tidb_planner_core_base::LogicalJoinType;
         // q10's SF50 shape: lineitem(300M) x orders(75M) x customer(7.5M) x
         // nation(25). Go master's DP builds the cheaper 2-subset
         // (orders x customer) first and stitches nation to it.
@@ -2856,7 +2856,7 @@ mod tests {
 
     #[test]
     fn conflict_detector_builds_edges_from_the_real_logical_tree() {
-        use crate::find_best_task::LogicalJoinType;
+        use tidb_planner_core_base::LogicalJoinType;
 
         let allocator = PlanIdAllocator::new();
         let left = data_source_plan(&allocator, 1, 10.0);

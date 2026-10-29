@@ -20,7 +20,7 @@ use std::collections::HashSet;
 use tidb_ast::{Hint, HintKind, HintTable, LeadingElement};
 use tidb_hint::{generate_qb_name, remove_duplicated_hints, NodeType};
 
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 use crate::physical::PhysicalPlan;
 use crate::physical_table_reader::StoreType;
 use crate::plan_cost_ver2::IndexJoinKind;

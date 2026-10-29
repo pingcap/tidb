@@ -18,7 +18,7 @@
 use tidb_expr::expr_util::substitute::SubstituteOptions;
 use tidb_expr::expression::{is_null_rejected, Expression};
 
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 
 use super::rule::{LogicalOptRule, RuleContext};
 use super::{LogicalJoin, LogicalPlan, PlanError};

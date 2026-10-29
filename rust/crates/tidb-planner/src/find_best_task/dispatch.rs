@@ -1474,7 +1474,7 @@ fn admits_index_join_inner_child_pattern(
         }
         LogicalPlan::Selection(_) | LogicalPlan::Projection(_) => multi_pattern,
         LogicalPlan::Join(join) => {
-            multi_pattern && join.join_type == crate::find_best_task::LogicalJoinType::Inner
+            multi_pattern && join.join_type == tidb_planner_core_base::LogicalJoinType::Inner
         }
         LogicalPlan::Aggregation(agg) => {
             if !multi_pattern {
@@ -5706,7 +5706,7 @@ mod tests {
         base.base.set_schema(outer.schema().cloned());
         base.base.set_stats(Some(StatsInfo::new(apply_rows, [(1, outer_ndv)])));
         base.set_children(vec![outer, dual(&allocator, 10.0)]);
-        let mut apply = crate::logical::LogicalApply::new(base, crate::find_best_task::LogicalJoinType::Inner);
+        let mut apply = crate::logical::LogicalApply::new(base, tidb_planner_core_base::LogicalJoinType::Inner);
         apply.is_lateral = true;
         apply.cor_cols = vec![tidb_expr::column::CorrelatedColumn::new(column)];
         let prop = PhysicalProperty {
@@ -7384,7 +7384,7 @@ mod tests {
     /// Sort, Limit, TopN, Window, a non-inner Join) always refused.
     #[test]
     fn admits_index_join_inner_child_pattern_matches_go() {
-        use crate::find_best_task::LogicalJoinType;
+        use tidb_planner_core_base::LogicalJoinType;
         use crate::logical::{
             DataSource, LogicalAggregation, LogicalJoin, LogicalSort, LogicalUnionScan,
             data_source::PREFER_TIFLASH,

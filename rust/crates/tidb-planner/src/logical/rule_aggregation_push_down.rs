@@ -40,7 +40,7 @@ use tidb_expr::simple_expr::extract_columns;
 use tidb_exprctx::NoColumns;
 
 use crate::final_mode_agg::{build_final_mode_aggregation, AggInfo};
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanError;
 
 use super::rule::{LogicalOptRule, RuleContext};
@@ -849,18 +849,6 @@ fn cross_projection(
     Ok(CrossOutcome::Crossed(projection_child))
 }
 
-/// Go `util.ResetNotNullFlag(schema, start, end)` (`pkg/planner/util/null_misc.go`):
-/// clear the NOT-NULL flag on the merged join schema's columns `[start, end)`
-/// — the null-filling side of an outer join can emit NULLs for columns its
-/// child declared NOT NULL.
-fn reset_not_null_flag(schema: &mut Schema, start: usize, end: usize) {
-    for column in schema.columns.get_mut(start..end).into_iter().flatten() {
-        if let Some(field_type) = column.ret_type.as_mut() {
-            field_type.del_flags(FieldTypeFlags::NOT_NULL);
-        }
-    }
-}
-
 /// Go `aggPushDown`'s JOIN arm (`rule_aggregation_push_down.go:497`): the
 /// split was valid; push one partial aggregation into each side, rebuild the
 /// join's children/schema/keys, then run Go's post-push elimination re-checks.
@@ -946,10 +934,10 @@ fn push_down_over_join(
     match join.join_type {
         LogicalJoinType::LeftOuter => {
             let end = schema.columns.len();
-            reset_not_null_flag(&mut schema, l_len, end);
+            tidb_planner_util::null_misc::reset_not_null_flag(&mut schema, l_len, end);
         }
         LogicalJoinType::RightOuter => {
-            reset_not_null_flag(&mut schema, 0, l_len);
+            tidb_planner_util::null_misc::reset_not_null_flag(&mut schema, 0, l_len);
         }
         _ => {}
     }

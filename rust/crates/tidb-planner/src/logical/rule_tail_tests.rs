@@ -40,7 +40,7 @@ use tidb_expr::schema::Schema;
 
 use tidb_planner_core_base::PlanIdAllocator;
 
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 
 use super::aggregation::{LogicalAggregation, AGG_FUNC_MAX};
 use super::cte::{CteClass, LogicalCTE};

@@ -21,7 +21,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::{merge_schema, Schema};
 
 use crate::expression_rewriter::PREFER_REWRITE_SEMI_JOIN;
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 use crate::logical::aggregation::AGG_FUNC_FIRST_ROW;
 
 use super::rule::{LogicalOptRule, RuleContext};

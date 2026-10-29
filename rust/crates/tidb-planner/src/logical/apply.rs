@@ -58,7 +58,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
 
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 use crate::logical::join::LogicalJoin;
 use crate::logical::selection::SELECTION_FACTOR;
 use crate::logical::{BaseLogicalPlan, LogicalPlan};

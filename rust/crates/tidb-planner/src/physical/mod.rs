@@ -53,7 +53,7 @@ use tidb_expr::expression::{Column, CorrelatedColumn};
 use tidb_expr::schema::Schema;
 
 use tidb_planner_costusage::{CostVer2, PlanCostOption};
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_property::{
     choose_partition_keys, ColumnSortItem, MppPartitionColumn, MppPartitionType, PhysicalProperty,
     TaskType,
@@ -2224,7 +2224,7 @@ pub fn build_physical_join_schema(
                         .as_ref()
                         .expect("physical join schema nil-derefs the left schema for outer joins")
                         .len();
-                    crate::plan_builder::from::reset_not_null_flag(
+                    tidb_planner_util::null_misc::reset_not_null_flag(
                         &mut new_schema,
                         left_len,
                         total,
@@ -2235,7 +2235,7 @@ pub fn build_physical_join_schema(
                         .as_ref()
                         .expect("physical join schema nil-derefs the left schema for outer joins")
                         .len();
-                    crate::plan_builder::from::reset_not_null_flag(&mut new_schema, 0, left_len);
+                    tidb_planner_util::null_misc::reset_not_null_flag(&mut new_schema, 0, left_len);
                 }
                 _ => {}
             }

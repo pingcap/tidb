@@ -23,7 +23,7 @@
 //! reverse later physical-join choices.
 
 use crate::base_arms;
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanError;
 use tidb_datatype::{Datum, FieldType, FieldTypeFlags};
 use tidb_expression_aggregation::{names, AggFuncDesc, AggFunctionMode};

@@ -29,7 +29,7 @@ use super::{
     LogicalSort,
 };
 use crate::access_path::{AccessPathStore, DataSourceAccessPath};
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanError;
 
 fn check_column_can_use_index(

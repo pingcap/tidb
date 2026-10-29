@@ -28,7 +28,7 @@ use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
 
 use tidb_planner_core_cost::SELECTION_FACTOR;
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanIdAllocator;
 use tidb_planner_property::stats_info::StatsInfo;
 

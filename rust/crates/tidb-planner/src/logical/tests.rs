@@ -25,7 +25,7 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
 use tidb_expr::schema::Schema;
 
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 
 use super::*;
 

@@ -16,6 +16,7 @@
 pub mod by_item;
 pub mod column_length;
 pub mod index_columns;
+pub mod misc;
 pub mod null_misc;
 pub mod handle_cols;
 

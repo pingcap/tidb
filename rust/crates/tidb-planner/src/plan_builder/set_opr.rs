@@ -91,7 +91,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_exprctx::Columns;
 
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 use crate::logical::join::LogicalJoin;
 use crate::logical::projection::LogicalProjection;
 use crate::logical::rule::flags;

@@ -22,7 +22,7 @@ use tidb_expr::expr_util::extract::is_col_op_col;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 use crate::logical::{BaseLogicalPlan, LogicalJoin, LogicalPlan, LogicalProjection};
 use tidb_planner_core_base::PlanError;
 

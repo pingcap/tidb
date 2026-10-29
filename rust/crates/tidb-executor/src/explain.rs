@@ -260,8 +260,8 @@ fn topn_info(eval_ctx: &dyn tidb_exprctx::Columns, topn: &tidb_planner::physical
     text
 }
 
-fn join_type_text(join_type: tidb_planner::find_best_task::LogicalJoinType) -> &'static str {
-    use tidb_planner::find_best_task::LogicalJoinType;
+fn join_type_text(join_type: tidb_planner_core_base::LogicalJoinType) -> &'static str {
+    use tidb_planner_core_base::LogicalJoinType;
     match join_type {
         LogicalJoinType::Inner => "inner join",
         LogicalJoinType::LeftOuter => "left outer join",
@@ -312,7 +312,7 @@ fn sorted_expressions_text(
 /// `left cond`.
 fn join_info(
     eval_ctx: &dyn tidb_exprctx::Columns,
-    join_type: tidb_planner::find_best_task::LogicalJoinType,
+    join_type: tidb_planner_core_base::LogicalJoinType,
     left_child: Option<&PhysicalPlan>,
     ignore_explain_id_suffix: bool,
     merge: bool,
@@ -326,7 +326,7 @@ fn join_info(
     other_conditions: &[tidb_expr::expression::Expression],
 ) -> String {
     let mut parts = vec![join_type_text(join_type).to_owned()];
-    if join_type != tidb_planner::find_best_task::LogicalJoinType::Inner {
+    if join_type != tidb_planner_core_base::LogicalJoinType::Inner {
         if let Some(child) = left_child {
             parts.push(format!(
                 "left side:{}",
@@ -1319,7 +1319,7 @@ fn physical_operator_info(
                     plan_explain_id(inner, ignore_explain_id_suffix)
                 ));
             }
-            if join.join_type != tidb_planner::find_best_task::LogicalJoinType::Inner {
+            if join.join_type != tidb_planner_core_base::LogicalJoinType::Inner {
                 if let Some(left) = join.base.children().first() {
                     parts.push(format!(
                         "left side:{}",
@@ -1981,7 +1981,7 @@ fn physical_explain_operator(
         PhysicalPlan::Apply(apply) => Some(1usize.saturating_sub(apply.hash_join.inner_child_idx)),
         PhysicalPlan::IndexJoin(join) => Some(1usize.saturating_sub(join.inner_child_idx)),
         PhysicalPlan::MergeJoin(join) => Some(
-            if join.join_type == tidb_planner::find_best_task::LogicalJoinType::RightOuter {
+            if join.join_type == tidb_planner_core_base::LogicalJoinType::RightOuter {
                 0
             } else {
                 1
@@ -2776,10 +2776,10 @@ fn normalized_expression_list(
 
 /// Go `explainJoinLeftSide` with `normalized`: the left child by plan TYPE.
 fn normalized_left_side(
-    join_type: tidb_planner::find_best_task::LogicalJoinType,
+    join_type: tidb_planner_core_base::LogicalJoinType,
     left_child: Option<&PhysicalPlan>,
 ) -> Option<String> {
-    if join_type == tidb_planner::find_best_task::LogicalJoinType::Inner {
+    if join_type == tidb_planner_core_base::LogicalJoinType::Inner {
         return None;
     }
     left_child.map(|child| format!("left side:{}", plan_explain_id(child, true)))
@@ -4360,7 +4360,7 @@ mod tests {
         let index_join = PhysicalPlan::IndexJoin(PhysicalIndexJoin {
             base: index_base,
             inner_child_idx: 1,
-            join_type: tidb_planner::find_best_task::LogicalJoinType::Inner,
+            join_type: tidb_planner_core_base::LogicalJoinType::Inner,
             ..Default::default()
         });
 
@@ -4455,7 +4455,7 @@ mod tests {
             )
         };
         let mut merge = tidb_planner::physical::PhysicalMergeJoin::default();
-        merge.join_type = tidb_planner::find_best_task::LogicalJoinType::Inner;
+        merge.join_type = tidb_planner_core_base::LogicalJoinType::Inner;
         merge.left_join_keys = vec![column(1), column(2)];
         merge.right_join_keys = vec![column(3), column(4)];
         // Go sorts the rendered conditions; `eq` precedes `gt` here.
@@ -4483,7 +4483,7 @@ mod tests {
         let child = || PhysicalPlan::HashJoin(tidb_planner::physical::PhysicalHashJoin::default());
 
         let mut outer = tidb_planner::physical::PhysicalHashJoin::default();
-        outer.join_type = tidb_planner::find_best_task::LogicalJoinType::LeftOuterSemi;
+        outer.join_type = tidb_planner_core_base::LogicalJoinType::LeftOuterSemi;
         outer.left_join_keys = vec![column(1)];
         outer.right_join_keys = vec![column(2)];
         outer.base.set_children(vec![child()]);
@@ -4504,7 +4504,7 @@ mod tests {
 
         // Go's `explainJoinLeftSide` writes nothing for an INNER join.
         let mut inner = tidb_planner::physical::PhysicalHashJoin::default();
-        inner.join_type = tidb_planner::find_best_task::LogicalJoinType::Inner;
+        inner.join_type = tidb_planner_core_base::LogicalJoinType::Inner;
         inner.left_join_keys = vec![column(1)];
         inner.right_join_keys = vec![column(2)];
         inner.base.set_children(vec![child()]);
@@ -4525,7 +4525,7 @@ mod tests {
     #[test]
     fn hash_join_without_equality_explains_as_cartesian() {
         let mut join = tidb_planner::physical::PhysicalHashJoin::default();
-        join.join_type = tidb_planner::find_best_task::LogicalJoinType::Inner;
+        join.join_type = tidb_planner_core_base::LogicalJoinType::Inner;
         assert_eq!(
             physical_operator_info(
                 &crate::StmtContext::default(),
@@ -4544,7 +4544,7 @@ mod tests {
         let column =
             |id| tidb_expr::column::Column::new(id, FieldType::new(FieldTypeCode::LongLong));
         let mut join = tidb_planner::physical::PhysicalHashJoin::default();
-        join.join_type = tidb_planner::find_best_task::LogicalJoinType::Semi;
+        join.join_type = tidb_planner_core_base::LogicalJoinType::Semi;
         join.left_join_keys = vec![column(1), column(2)];
         join.right_join_keys = vec![column(3), column(4)];
         join.is_null_eq = vec![true, false];

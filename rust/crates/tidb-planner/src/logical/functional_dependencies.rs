@@ -22,7 +22,7 @@ use tidb_intset::FastIntSet;
 
 use super::aggregation::AGG_FUNC_FIRST_ROW;
 use super::LogicalPlan;
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 
 #[derive(Default)]
 struct FdExtractionContext {

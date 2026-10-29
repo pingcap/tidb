@@ -301,7 +301,7 @@ fn test_intersect_builds_a_semi_join_over_a_de_duplicated_left_side() {
     let LogicalPlan::Join(join) = &plan else {
         panic!("expected a Join at the root, got {}", plan.tp());
     };
-    assert_eq!(join.join_type, crate::find_best_task::LogicalJoinType::Semi);
+    assert_eq!(join.join_type, tidb_planner_core_base::LogicalJoinType::Semi);
     assert_eq!(join.base.children()[0].tp(), "Aggregation");
     // The two branches carry the same column type, so the `<=>` becomes a
     // JOIN KEY rather than a general condition.
@@ -318,7 +318,7 @@ fn test_except_builds_an_anti_semi_join() {
     };
     assert_eq!(
         join.join_type,
-        crate::find_best_task::LogicalJoinType::AntiSemi
+        tidb_planner_core_base::LogicalJoinType::AntiSemi
     );
 }
 
@@ -350,7 +350,7 @@ fn test_except_and_union_share_a_precedence_and_fold_left_to_right() {
     };
     assert_eq!(
         join.join_type,
-        crate::find_best_task::LogicalJoinType::AntiSemi
+        tidb_planner_core_base::LogicalJoinType::AntiSemi
     );
     assert!(find(&join.base.children()[0], "Union").is_some());
 }

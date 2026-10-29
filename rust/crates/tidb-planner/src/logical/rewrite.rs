@@ -45,7 +45,7 @@ use tidb_planner_cardinality::join::{
     FullJoinRowCountInput, JoinKeyEstimate, estimate_full_join_row_count,
 };
 use crate::expression_rewriter::ColumnIdAllocator;
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanError;
 use tidb_planner_property::stats_info::StatsInfo;
 
@@ -109,10 +109,10 @@ fn build_logical_join_schema(
             let end = schema.columns.len();
             match join_type {
                 LogicalJoinType::LeftOuter => {
-                    crate::plan_builder::from::reset_not_null_flag(&mut schema, left_len, end);
+                    tidb_planner_util::null_misc::reset_not_null_flag(&mut schema, left_len, end);
                 }
                 LogicalJoinType::RightOuter => {
-                    crate::plan_builder::from::reset_not_null_flag(&mut schema, 0, left_len);
+                    tidb_planner_util::null_misc::reset_not_null_flag(&mut schema, 0, left_len);
                 }
                 _ => {}
             }

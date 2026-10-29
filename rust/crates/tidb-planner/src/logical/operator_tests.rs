@@ -31,7 +31,7 @@ use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
 
 use super::aggregation::{
-    agg_func_result_matches_arg_for_non_empty_group, max_sort_prefix_len, LogicalAggregation,
+    agg_func_result_matches_arg_for_non_empty_group, LogicalAggregation,
     AGG_FUNC_FIRST_ROW, AGG_FUNC_MAX,
 };
 use super::apply::{find_child_full_schema, LogicalApply};
@@ -75,7 +75,7 @@ use super::window::{
     BoundType, FrameBound, FrameType, LogicalWindow, RangeCmpDataType, WindowFrame,
 };
 use super::{BaseLogicalPlan, LogicalPlan};
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::{PlanIdAllocator, PossiblePropertiesInfo};
 use tidb_planner_property::stats_info::StatsInfo;
 
@@ -662,16 +662,6 @@ fn aggregation_possible_properties_keep_prefix_orders() {
     let props = scalar.prepare_possible_properties(Some(&child));
     assert_eq!(props.orders.len(), 1);
     assert!(props.orders[0].is_empty());
-}
-
-/// Go `util.GetMaxSortPrefix`, as `PreparePossibleProperties` uses it.
-#[test]
-fn max_sort_prefix_stops_at_the_first_miss() {
-    assert_eq!(
-        max_sort_prefix_len(&[column(1), column(9), column(2)], &[column(1), column(2)]),
-        1
-    );
-    assert_eq!(max_sort_prefix_len(&[], &[column(1)]), 0);
 }
 
 /// Go `LogicalAggregation.DeriveStats` (`logical_aggregation.go:219`): the

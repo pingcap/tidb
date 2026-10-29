@@ -27,7 +27,7 @@ use tidb_disjointset::SimpleIntSet;
 use super::{
     BasePhysicalPlan, PhysicalHashJoin, PhysicalIndexJoin, PhysicalMergeJoin, PhysicalPlan,
 };
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanError;
 
 fn bind(expr: &mut Expression, schema: &Schema) -> Result<(), PlanError> {

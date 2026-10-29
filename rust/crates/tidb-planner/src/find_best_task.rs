@@ -53,44 +53,23 @@
 //!
 use crate::logical::LogicalPlan;
 use tidb_planner_property::{PhysicalProperty, SortItem, TaskType};
-use tidb_planner_core_base::PlanError;
+use tidb_planner_core_base::{LogicalJoinType, PlanError};
 use crate::plan_cost_ver2::IndexJoinKind;
 
-/// `base.JoinType`, the subset a root-task join enumeration branches on.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum LogicalJoinType {
-    /// `InnerJoin`.
-    Inner,
-    /// `LeftOuterJoin`.
-    LeftOuter,
-    /// `RightOuterJoin`.
-    RightOuter,
-    /// `SemiJoin`.
-    Semi,
-    /// `AntiSemiJoin`.
-    AntiSemi,
-    /// `LeftOuterSemiJoin`.
-    LeftOuterSemi,
-    /// `AntiLeftOuterSemiJoin`.
-    AntiLeftOuterSemi,
-}
-
-impl LogicalJoinType {
-    /// `tryToEnumerateIndexJoin`: which side may be the OUTER one.
-    ///
-    /// An index join reads its inner side once per outer row, so a preserved
-    /// side can never be the inner one.
-    #[must_use]
-    pub const fn index_join_outer_sides(self) -> &'static [usize] {
-        match self {
-            Self::Inner => &[0, 1],
-            Self::Semi
-            | Self::AntiSemi
-            | Self::LeftOuterSemi
-            | Self::AntiLeftOuterSemi
-            | Self::LeftOuter => &[0],
-            Self::RightOuter => &[1],
-        }
+/// `tryToEnumerateIndexJoin`: which side may be the OUTER one.
+///
+/// An index join reads its inner side once per outer row, so a preserved
+/// side can never be the inner one.
+#[must_use]
+pub const fn index_join_outer_sides(join_type: LogicalJoinType) -> &'static [usize] {
+    match join_type {
+        LogicalJoinType::Inner => &[0, 1],
+        LogicalJoinType::Semi
+        | LogicalJoinType::AntiSemi
+        | LogicalJoinType::LeftOuterSemi
+        | LogicalJoinType::AntiLeftOuterSemi
+        | LogicalJoinType::LeftOuter => &[0],
+        LogicalJoinType::RightOuter => &[1],
     }
 }
 
@@ -642,7 +621,7 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
     if !all {
         return out;
     }
-    for outer_idx in join.join_type.index_join_outer_sides().iter().copied() {
+    for outer_idx in index_join_outer_sides(join.join_type).iter().copied() {
         let outer_schema = if outer_idx == 0 {
             &join.left_schema
         } else {

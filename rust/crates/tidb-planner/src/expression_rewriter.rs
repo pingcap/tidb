@@ -140,7 +140,7 @@ use tidb_expr::schema::{merge_schema, Schema};
 use tidb_expr::simple_expr::{compose_cnf_condition, compose_dnf_condition, extract_columns};
 use tidb_exprctx::Columns;
 
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 use crate::logical::aggregation::LogicalAggregation;
 use crate::logical::apply::LogicalApply;
 use crate::logical::join::LogicalJoin;

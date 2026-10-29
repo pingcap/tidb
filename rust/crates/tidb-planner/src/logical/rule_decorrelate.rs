@@ -42,7 +42,7 @@ use tidb_expr::schema::{merge_schema, Schema};
 use tidb_expr::simple_expr::{extract_columns, extract_cor_columns};
 use tidb_exprctx::NoColumns;
 
-use crate::find_best_task::LogicalJoinType;
+use tidb_planner_core_base::LogicalJoinType;
 
 use super::aggregation::LogicalAggregation;
 use super::apply::LogicalApply;

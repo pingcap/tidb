@@ -5711,7 +5711,7 @@ mod attach_tests {
         let apply = PhysicalPlan::Apply(crate::physical::PhysicalApply {
             hash_join: crate::physical::PhysicalHashJoin {
                 base: op_with_stats("Apply", 5.0),
-                join_type: crate::find_best_task::LogicalJoinType::LeftOuter,
+                join_type: tidb_planner_core_base::LogicalJoinType::LeftOuter,
                 inner_child_idx: 1,
                 ..crate::physical::PhysicalHashJoin::default()
             },
