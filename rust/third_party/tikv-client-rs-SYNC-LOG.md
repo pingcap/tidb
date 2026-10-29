@@ -147,3 +147,4 @@ currently built against" — see `docs/client-rust-migration-execplan.md`.
 - 2026-10-24T05:26:04Z: synced to ngaut/client-rust@6f6b89e89704222bc07b8c67d36ba1f2b40a1cf7 (committed 2026-10-23T22:25:51-07:00), patches: 4 applied
 - 2026-10-24T18:53:05Z: synced to ngaut/client-rust@08b1556e6330773e224976e1b67439802dcc9be1 (committed 2026-10-24T11:52:50-07:00), patches: 4 applied
 - 2026-10-24T20:29:35Z: synced to ngaut/client-rust@19f866eb732f045f0621f9ad2ddaffb531d7a392 (committed 2026-10-24T13:29:18-07:00), patches: 4 applied
+- 2026-10-29T11:48:00Z: vendored copy verified equal (diff, generated code excluded) to ngaut/client-rust@4e5b133e97543a158bcc84cddc98b792abea3c3f (committed 2026-10-29T19:47:08+08:00) with 4 patches; the script's proto regeneration did not run (needs libprotoc 36.2, found 33.4), and no .proto changed since 19f866e

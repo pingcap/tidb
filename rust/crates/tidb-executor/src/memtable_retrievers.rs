@@ -1238,20 +1238,20 @@ mod tests {
 pub fn table_storage_statistics_catalog_of(
     mut scratch: crate::Catalog,
     stats_handle: &tidb_stats_handle::StatsHandle,
-    table_storage_stats: Option<&dyn crate::table_size_stats::TableStorageStatsProvider>,
+    table_storage_stats: Option<&dyn tidb_stats_handle::table_size_stats::TableStorageStatsProvider>,
     resource_group: &str,
     needs_column_lengths: bool,
 ) -> Result<crate::Catalog, DriverError> {
     let estimates = match table_storage_stats {
         Some(provider) => {
-            let physical_ids = crate::table_size_stats::physical_table_ids(&scratch);
+            let physical_ids = tidb_stats_handle::table_size_stats::physical_table_ids(&scratch);
             match provider.load_table_row_stats(
                 resource_group,
                 needs_column_lengths,
                 &physical_ids,
             ) {
                 Ok(row_stats) => {
-                    crate::table_size_stats::table_storage_estimates_from_row_stats(
+                    tidb_stats_handle::table_size_stats::table_storage_estimates_from_row_stats(
                         &scratch, &row_stats,
                     )
                 }
@@ -1271,7 +1271,7 @@ pub fn table_storage_statistics_catalog_of(
         // The in-process store is its own statistics handle: Go's
         // `TableRowStatsCache` reads `stats_meta` and the column
         // histograms, which here are the catalog's table statistics.
-        None => crate::table_size_stats::table_storage_estimates(&scratch, stats_handle),
+        None => tidb_stats_handle::table_size_stats::table_storage_estimates(&scratch, stats_handle),
     };
     for estimate in estimates {
         scratch.set_table_storage_statistics(
@@ -1289,14 +1289,14 @@ pub fn table_storage_statistics_catalog_of(
 /// statement was built with and a snapshot of what the viewer may see.
 pub struct InformationSchemaRetriever {
     visibility: SchemaVisibility,
-    table_storage_stats: Option<std::sync::Arc<dyn crate::table_size_stats::TableStorageStatsProvider>>,
+    table_storage_stats: Option<std::sync::Arc<dyn tidb_stats_handle::table_size_stats::TableStorageStatsProvider>>,
     resource_group: String,
 }
 
 impl InformationSchemaRetriever {
     pub fn new(
         visibility: SchemaVisibility,
-        table_storage_stats: Option<std::sync::Arc<dyn crate::table_size_stats::TableStorageStatsProvider>>,
+        table_storage_stats: Option<std::sync::Arc<dyn tidb_stats_handle::table_size_stats::TableStorageStatsProvider>>,
         resource_group: String,
     ) -> Self {
         Self {

@@ -10,6 +10,7 @@ description = "Session lifecycle and state authority for the TiDB Rust rewrite."
 autotests = false
 
 [dependencies]
+tidb-stats-handle-usage-predicatecolumn = { path = "../tidb-stats-handle-usage-predicatecolumn" }
 tidb-pdhelper = { path = "../tidb-pdhelper" }
 tidb-tblctx = { path = "../tidb-tblctx" }
 tidb-stmtctx = { path = "../tidb-stmtctx" }

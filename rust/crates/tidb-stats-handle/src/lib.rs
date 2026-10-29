@@ -20,6 +20,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+pub mod table_size_stats;
 pub mod bootstrap;
 pub mod catalog_statistics;
 pub mod source;

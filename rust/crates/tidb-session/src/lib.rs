@@ -221,22 +221,23 @@ pub enum StmtResult {
 }
 
 use tidb_executor::StmtOutput;
-use tidb_executor::memtable_reader::{DataLockWaitsProvider, DdlJobHistoryStore};
+use tidb_ddl::ddl_history::DdlJobHistoryStore;
+use tidb_kv::lock_waits::DataLockWaitsProvider;
 
 
 
-use tidb_executor::show::stats::ColumnStatsUsageProvider;
+use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::ColumnStatsUsageProvider;
 
-use tidb_executor::show::stats::AnalyzeStatusProvider;
+use tidb_stats_handle_autoanalyze::analyze_jobs::AnalyzeStatusProvider;
 
 
 /// The cluster's BDR role, Go's meta key `BDRRole`, where a front end keeps
 /// it in a shared store rather than in its own catalog.
 use tidb_domain_core::domain::GlobalIdGenerator;
 
-use tidb_executor::admin::BdrRoleStore;
+use tidb_meta::BdrRoleStore;
 
-use tidb_executor::table_size_stats::TableStorageStatsProvider;
+use tidb_stats_handle::table_size_stats::TableStorageStatsProvider;
 use tidb_executor::stmt_ctx_build::ResultMaterializationAuthority;
 
 

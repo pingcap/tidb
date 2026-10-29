@@ -1127,16 +1127,16 @@ mod tests {
                 rows
             }
             "DATA_LOCK_WAITS" => {
-                struct Waits(Vec<tidb_executor::memtable_reader::DataLockWait>);
-                impl tidb_executor::memtable_reader::DataLockWaitsProvider for Waits {
-                    fn lock_waits(&self) -> Result<Vec<tidb_executor::memtable_reader::DataLockWait>, String> {
+                struct Waits(Vec<tidb_kv::lock_waits::DataLockWait>);
+                impl tidb_kv::lock_waits::DataLockWaitsProvider for Waits {
+                    fn lock_waits(&self) -> Result<Vec<tidb_kv::lock_waits::DataLockWait>, String> {
                         Ok(self.0.clone())
                     }
                 }
                 let mut tag = tidb_txnkv::ResourceGroupTagBuilder::new(None);
                 tag.set_sql_digest(&[0xaa, 0xbb, 0xcc, 0xdd, 0x11, 0x44]);
                 session.set_data_lock_waits_provider(Arc::new(Waits(vec![
-                    tidb_executor::memtable_reader::DataLockWait {
+                    tidb_kv::lock_waits::DataLockWait {
                         txn: 1,
                         wait_for_txn: 2,
                         key: vec![],
@@ -1422,9 +1422,9 @@ mod tests {
         let mut info = tidb_stmtsummary::v2::record::generate_stmt_exec_info_4_test("c1c2");
         info.normalized_sql = "local normalized statement".into();
         tidb_stmtsummary::statement_summary::STMT_SUMMARY_BY_DIGEST_MAP.add_statement(&info);
-        struct Waits(Vec<tidb_executor::memtable_reader::DataLockWait>);
-        impl tidb_executor::memtable_reader::DataLockWaitsProvider for Waits {
-            fn lock_waits(&self) -> Result<Vec<tidb_executor::memtable_reader::DataLockWait>, String> {
+        struct Waits(Vec<tidb_kv::lock_waits::DataLockWait>);
+        impl tidb_kv::lock_waits::DataLockWaitsProvider for Waits {
+            fn lock_waits(&self) -> Result<Vec<tidb_kv::lock_waits::DataLockWait>, String> {
                 Ok(self.0.clone())
             }
         }
@@ -1435,7 +1435,7 @@ mod tests {
                     .map(|digest| {
                         let mut tag = tidb_txnkv::ResourceGroupTagBuilder::new(None);
                         tag.set_sql_digest(digest);
-                        tidb_executor::memtable_reader::DataLockWait {
+                        tidb_kv::lock_waits::DataLockWait {
                             resource_group_tag: tag.encode_tag_with_key(&[]),
                             ..Default::default()
                         }

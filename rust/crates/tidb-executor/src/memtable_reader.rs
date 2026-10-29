@@ -21,6 +21,8 @@
 //! `Next`), so what they need of the viewing session is a [`ViewerState`]
 //! the session snapshots when a scan first asks for one of them.
 
+use tidb_ddl::ddl_history::DdlJobHistoryStore;
+use tidb_kv::lock_waits::DataLockWaitsProvider;
 use tidb_sessmgr as process;
 use crate::StatsStmtCtx as _;
 use std::sync::Arc;
@@ -71,7 +73,7 @@ pub struct ViewerState {
     /// The DDL job store a node installs (Go reads the store's meta).
     pub ddl_job_history_store: Option<Arc<dyn DdlJobHistoryStore>>,
     /// The analyze-job reader, absent for a session with no statistics.
-    pub analyze_status: Option<Arc<dyn crate::show::stats::AnalyzeStatusProvider>>,
+    pub analyze_status: Option<Arc<dyn tidb_stats_handle_autoanalyze::analyze_jobs::AnalyzeStatusProvider>>,
     /// Go's SQL-digest text retriever over this node and its peers.
     pub digest_retriever: SqlDigestTextRetriever,
     pub data_lock_waits: Option<Arc<dyn DataLockWaitsProvider>>,
@@ -426,38 +428,6 @@ impl MemTableRetriever for InstanceStateRetriever {
             .statement_summary_rows(table, &columns, &ctx.session_zone(), false, None)
     }
 }
-
-/// One pessimistic wait-for edge returned by the active storage backend.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct DataLockWait {
-    /// Transaction waiting for the lock.
-    pub txn: u64,
-    /// Transaction currently holding the lock.
-    pub wait_for_txn: u64,
-    /// Encoded locked key.
-    pub key: Vec<u8>,
-    /// Encoded TopSQL resource-group tag.
-    pub resource_group_tag: Vec<u8>,
-}
-
-
-/// Storage boundary for `information_schema.DATA_LOCK_WAITS`.
-pub trait DataLockWaitsProvider: Send + Sync {
-    /// Reads the current wait-for edges from the backend.
-    fn lock_waits(&self) -> Result<Vec<DataLockWait>, String>;
-}
-
-
-/// The cluster's DDL jobs, Go's `mysql.tidb_ddl_job` and meta
-/// `DDLJobHistory`, where a front end keeps them in a shared store rather
-/// than in its own catalog.
-pub trait DdlJobHistoryStore: Send + Sync {
-    /// Go `IterAllDDLJobs`' order: the running jobs (`GetAllDDLJobs`, by job
-    /// ID), then the meta history newest first
-    /// (`GetLastHistoryDDLJobsIterator`).
-    fn all_ddl_jobs(&self) -> Result<(Vec<tidb_model::Job>, Vec<tidb_model::Job>), String>;
-}
-
 
 /// Go `RestrictedSQLExecutor.ExecRestrictedSQL` with no options: one
 /// schema-qualified statement on an internal session, answering its rows.

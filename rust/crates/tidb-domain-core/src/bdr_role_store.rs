@@ -40,7 +40,7 @@ impl<S: StoreClient> ClusterBdrRoleStore<S> {
     }
 }
 
-impl<S> tidb_executor::admin::BdrRoleStore for ClusterBdrRoleStore<S>
+impl<S> tidb_meta::BdrRoleStore for ClusterBdrRoleStore<S>
 where
     S: StoreClient,
 {

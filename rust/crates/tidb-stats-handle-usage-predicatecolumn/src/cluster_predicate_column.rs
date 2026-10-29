@@ -211,3 +211,19 @@ pub fn plan_get_predicate_columns<S: MetaSnapshot>(
     }
     Ok((columns, plan))
 }
+
+/// Storage-backed reader used by pinned Go `SHOW COLUMN_STATS_USAGE`.
+pub trait ColumnStatsUsageProvider: Send + Sync {
+    /// Loads the complete shared usage table at a fresh statement snapshot.
+    fn load_column_stats_usage(
+        &self,
+        location: &tidb_datatype::SessionTimeZone,
+        resource_group: &str,
+    ) -> Result<
+        std::collections::HashMap<
+            tidb_model::TableItemID,
+            (Option<tidb_datatype::Time>, Option<tidb_datatype::Time>),
+        >,
+        String,
+    >;
+}

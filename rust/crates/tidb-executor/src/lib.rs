@@ -91,7 +91,6 @@ pub mod join_table_meta;
 pub mod show_regions;
 pub mod row_table_builder;
 pub mod split_region;
-pub mod table_size_stats;
 pub mod tagged_ptr;
 
 pub mod access_cost;

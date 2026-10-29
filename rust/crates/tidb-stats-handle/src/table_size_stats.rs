@@ -25,7 +25,7 @@
 //! walked are the statement's own schema.
 
 use tidb_table::kv_table::KvTable;
-use crate::Catalog;
+use tidb_infoschema::Catalog;
 use tidb_datatype::{UNSPECIFIED_LENGTH, VAR_STORAGE_LEN};
 
 /// `(rows, average row length, data length, index length)`.
@@ -47,7 +47,7 @@ pub struct TableStorageEstimate {
 #[must_use]
 pub fn table_storage_estimates(
     catalog: &Catalog,
-    handle: &tidb_stats_handle::StatsHandle,
+    handle: &crate::StatsHandle,
 ) -> Vec<TableStorageEstimate> {
     estimates_from(catalog, &CatalogTableStatistics(catalog, handle))
 }
@@ -72,7 +72,7 @@ pub fn physical_table_ids(catalog: &Catalog) -> Vec<i64> {
     let mut ids = Vec::new();
     for database in catalog.database_names() {
         for name in catalog.table_names(&database).unwrap_or_default() {
-            let Some(crate::TableEntry::Kv(table)) = catalog.table_in(&database, &name) else {
+            let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_in(&database, &name) else {
                 continue;
             };
             ids.push(table.table_id());
@@ -100,7 +100,7 @@ fn estimates_from(catalog: &Catalog, source: &dyn TableSizeSource) -> Vec<TableS
     let mut estimates = Vec::new();
     for database in catalog.database_names() {
         for name in catalog.table_names(&database).unwrap_or_default() {
-            let Some(crate::TableEntry::Kv(table)) = catalog.table_in(&database, &name) else {
+            let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_in(&database, &name) else {
                 continue;
             };
             let partitions = table
@@ -145,7 +145,7 @@ trait TableSizeSource {
 }
 
 /// The in-process catalog's table statistics.
-struct CatalogTableStatistics<'a>(&'a Catalog, &'a tidb_stats_handle::StatsHandle);
+struct CatalogTableStatistics<'a>(&'a Catalog, &'a crate::StatsHandle);
 
 impl TableSizeSource for CatalogTableStatistics<'_> {
     fn table_rows(&self, physical_id: i64) -> u64 {

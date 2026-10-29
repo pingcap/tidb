@@ -40,7 +40,7 @@ impl<S: StoreClient> ClusterDdlJobHistoryStore<S> {
     }
 }
 
-impl<S> tidb_executor::memtable_reader::DdlJobHistoryStore for ClusterDdlJobHistoryStore<S>
+impl<S> tidb_ddl::ddl_history::DdlJobHistoryStore for ClusterDdlJobHistoryStore<S>
 where
     S: StoreClient,
 {

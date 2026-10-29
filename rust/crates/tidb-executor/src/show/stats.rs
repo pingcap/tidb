@@ -14,6 +14,7 @@
 
 //! SHOW statistics and analyze-status result sets.
 
+use tidb_stats_handle_autoanalyze::analyze_jobs::AnalyzeStatusProvider;
 use tidb_stats_handle::catalog_statistics::CatalogStatistics;
 use tidb_datatype::Datum;
 
@@ -185,38 +186,3 @@ pub(crate) fn stats_row_admitted(
     }
 }
 
-/// Storage-backed reader used by pinned Go `SHOW ANALYZE STATUS`.
-pub trait AnalyzeStatusProvider: Send + Sync {
-    /// Runs Go's fresh restricted read of the thirty newest persisted jobs.
-    fn load_analyze_status(
-        &self,
-        resource_group: &str,
-    ) -> Result<Vec<tidb_stats::AnalyzeStatusJob>, String>;
-
-    /// Go `GlobalPDHelper.GetApproximateTableCountFromStorage`. Errors and a
-    /// backend without PD both produce zero, as its caller ignores `hasPD`.
-    fn approximate_table_count(
-        &self,
-        resource_group: &str,
-        physical_id: i64,
-        database: &str,
-        table: &str,
-        partition: &str,
-    ) -> i64;
-}
-
-/// Storage-backed reader used by pinned Go `SHOW COLUMN_STATS_USAGE`.
-pub trait ColumnStatsUsageProvider: Send + Sync {
-    /// Loads the complete shared usage table at a fresh statement snapshot.
-    fn load_column_stats_usage(
-        &self,
-        location: &tidb_datatype::SessionTimeZone,
-        resource_group: &str,
-    ) -> Result<
-        std::collections::HashMap<
-            tidb_model::TableItemID,
-            (Option<tidb_datatype::Time>, Option<tidb_datatype::Time>),
-        >,
-        String,
-    >;
-}

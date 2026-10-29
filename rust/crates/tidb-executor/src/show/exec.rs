@@ -19,6 +19,8 @@
 
 use tidb_stats_handle::catalog_statistics::CatalogStatistics;
 use tidb_datatype::Datum;
+use tidb_stats_handle_autoanalyze::analyze_jobs::AnalyzeStatusProvider;
+use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::ColumnStatsUsageProvider;
 use tidb_hack::{GoCaseCompare, GoToLower};
 use tidb_hack::go_to_lower;
 

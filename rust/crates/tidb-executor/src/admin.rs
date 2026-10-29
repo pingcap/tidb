@@ -32,6 +32,7 @@
 //! answered OK. Same for the multi-table `ADMIN CHECK TABLE t1, t2` form,
 //! which Go's own planner rejects.
 
+use tidb_meta::BdrRoleStore;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
 use crate::KvTableDdl;
@@ -1383,11 +1384,3 @@ pub(crate) fn admin_check_error(error: crate::admin_check::AdminCheckError) -> D
     }
 }
 
-/// Go `meta.Mutator`'s BDR role key, read and written in a new transaction.
-pub trait BdrRoleStore: Send + Sync {
-    /// Go `AdminShowBDRRoleExec`: `meta.Mutator.GetBDRRole` in a new
-    /// transaction; "" when unset.
-    fn get(&self) -> Result<String, String>;
-    /// Go `meta.Mutator.SetBDRRole`, or `ClearBDRRole` for "".
-    fn set(&self, role: &str) -> Result<(), String>;
-}

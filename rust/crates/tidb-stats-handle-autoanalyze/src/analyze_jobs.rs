@@ -471,3 +471,23 @@ fn datum_u64(value: Option<&Datum>) -> Option<u64> {
         _ => None,
     }
 }
+
+/// Storage-backed reader used by pinned Go `SHOW ANALYZE STATUS`.
+pub trait AnalyzeStatusProvider: Send + Sync {
+    /// Runs Go's fresh restricted read of the thirty newest persisted jobs.
+    fn load_analyze_status(
+        &self,
+        resource_group: &str,
+    ) -> Result<Vec<tidb_stats::AnalyzeStatusJob>, String>;
+
+    /// Go `GlobalPDHelper.GetApproximateTableCountFromStorage`. Errors and a
+    /// backend without PD both produce zero, as its caller ignores `hasPD`.
+    fn approximate_table_count(
+        &self,
+        resource_group: &str,
+        physical_id: i64,
+        database: &str,
+        table: &str,
+        partition: &str,
+    ) -> i64;
+}

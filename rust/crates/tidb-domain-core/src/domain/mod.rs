@@ -44,7 +44,7 @@ use tidb_domain::historical_stats::{
 use tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader;
 use tidb_stats_handle_syncload::stats_watch::SharedStats;
 use tidb_sessmgr::ProcessRegistry;
-use tidb_executor::table_size_stats::TableStorageStatsProvider;
+use tidb_stats_handle::table_size_stats::TableStorageStatsProvider;
 use tidb_kv::cluster_storage::MutationBuffer;
 use tidb_privilege::PrivilegeRegistry;
 use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId};
@@ -233,7 +233,7 @@ impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
         resource_group: &str,
         need_column_lengths: bool,
         physical_ids: &[i64],
-    ) -> Result<tidb_executor::table_size_stats::TableRowStatsSnapshot, String> {
+    ) -> Result<tidb_stats_handle::table_size_stats::TableRowStatsSnapshot, String> {
         // The latest catalog only locates `mysql.stats_meta` and
         // `mysql.stats_histograms`, as Go's restricted SQL resolves them; the
         // tables sized are the statement's own (`physical_ids`).
@@ -263,7 +263,7 @@ impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
         // refresh attempt, so the returned values are the cache's, whatever
         // the fresh reads did.
         let (rows, lengths) = self.row_stats_cache.snapshot();
-        Ok(tidb_executor::table_size_stats::TableRowStatsSnapshot {
+        Ok(tidb_stats_handle::table_size_stats::TableRowStatsSnapshot {
             table_rows: rows.into_iter().collect(),
             column_lengths: lengths.into_iter().collect(),
         })
@@ -389,7 +389,7 @@ pub struct ClusterAnalyzeStatusProvider {
     pub approximate_counts: Arc<ClusterApproximateTableCountProvider>,
 }
 
-impl tidb_executor::show::stats::AnalyzeStatusProvider for ClusterAnalyzeStatusProvider {
+impl tidb_stats_handle_autoanalyze::analyze_jobs::AnalyzeStatusProvider for ClusterAnalyzeStatusProvider {
     fn load_analyze_status(
         &self,
         resource_group: &str,
@@ -448,7 +448,7 @@ pub(crate) fn exact_physical_row_count(
     }
 }
 
-impl tidb_executor::show::stats::ColumnStatsUsageProvider for ClusterColumnStatsUsageProvider {
+impl tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::ColumnStatsUsageProvider for ClusterColumnStatsUsageProvider {
     fn load_column_stats_usage(
         &self,
         location: &tidb_datatype::SessionTimeZone,
@@ -590,12 +590,12 @@ impl tidb_stats_handle::StatisticsItemLoader for ClusterStatisticsItemLoader {
     }
 }
 
-impl tidb_executor::memtable_reader::DataLockWaitsProvider for ClusterDataLockWaits {
-    fn lock_waits(&self) -> Result<Vec<tidb_executor::memtable_reader::DataLockWait>, String> {
+impl tidb_kv::lock_waits::DataLockWaitsProvider for ClusterDataLockWaits {
+    fn lock_waits(&self) -> Result<Vec<tidb_kv::lock_waits::DataLockWait>, String> {
         self.transactions.lock_waits().map(|entries| {
             entries
                 .into_iter()
-                .map(|entry| tidb_executor::memtable_reader::DataLockWait {
+                .map(|entry| tidb_kv::lock_waits::DataLockWait {
                     txn: entry.txn,
                     wait_for_txn: entry.wait_for_txn,
                     key: entry.key,
@@ -716,7 +716,7 @@ pub struct Domain {
     pub region_store: Option<Arc<dyn tidb_kv::region_map::RegionStore>>,
     /// Go `executor.TakeSnapshot`, which the workload repository installs
     /// when the server's main sets it up (`SetupRepository`).
-    pub take_snapshot: std::sync::OnceLock<tidb_executor::admin::TakeSnapshot>,
+    pub take_snapshot: std::sync::OnceLock<std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>>,
     /// Go `Domain.etcdClient`: the node's one etcd client, when it has PD.
     etcd_client: std::sync::OnceLock<Arc<tidb_pd_client::EtcdClient>>,
     /// Go Domain/StatsHandle's one node-global usage implementation.
@@ -740,9 +740,9 @@ pub struct Domain {
     ru_stats_writer: std::sync::OnceLock<ru_stats_writer::RuStatsWriterWorker>,
     /// The cluster's BDR role in TiKV meta, which every session's ADMIN
     /// BDR ROLE statements read and write.
-    pub bdr_role_store: std::sync::OnceLock<Arc<dyn tidb_executor::admin::BdrRoleStore>>,
+    pub bdr_role_store: std::sync::OnceLock<Arc<dyn tidb_meta::BdrRoleStore>>,
     pub ddl_job_history_store:
-        std::sync::OnceLock<Arc<dyn tidb_executor::memtable_reader::DdlJobHistoryStore>>,
+        std::sync::OnceLock<Arc<dyn tidb_ddl::ddl_history::DdlJobHistoryStore>>,
     /// Go `autoAnalyzeWorker`, installed after stable `Arc` ownership.
     pub auto_analyze_worker: std::sync::OnceLock<AutoAnalyzeWorker>,
     /// Go Domain's capacity-16 historical-statistics mailbox.
@@ -1712,8 +1712,8 @@ impl Domain {
     /// Installs Go `executor.TakeSnapshot`, once.
     pub fn set_take_snapshot(
         &self,
-        take_snapshot: tidb_executor::admin::TakeSnapshot,
-    ) -> Result<(), tidb_executor::admin::TakeSnapshot> {
+        take_snapshot: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
+    ) -> Result<(), std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>> {
         self.take_snapshot.set(take_snapshot)
     }
 

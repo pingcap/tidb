@@ -50,3 +50,12 @@ pub mod transaction;
 pub mod value;
 
 pub use error::{MetaError, Result};
+
+/// Go `meta.Mutator`'s BDR role key, read and written in a new transaction.
+pub trait BdrRoleStore: Send + Sync {
+    /// Go `AdminShowBDRRoleExec`: `meta.Mutator.GetBDRRole` in a new
+    /// transaction; "" when unset.
+    fn get(&self) -> std::result::Result<String, String>;
+    /// Go `meta.Mutator.SetBDRRole`, or `ClearBDRRole` for "".
+    fn set(&self, role: &str) -> std::result::Result<(), String>;
+}

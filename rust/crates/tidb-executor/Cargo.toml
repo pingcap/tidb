@@ -14,6 +14,7 @@ autotests = false
 test-util = ["tidb-sessmgr/test-util"]
 
 [dependencies]
+tidb-meta = { path = "../tidb-meta" }
 tidb-pdhelper = { path = "../tidb-pdhelper" }
 tidb-tblctx = { path = "../tidb-tblctx" }
 tidb-stmtctx = { path = "../tidb-stmtctx" }
@@ -148,6 +149,7 @@ tidb-resolve = { path = "../tidb-resolve" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-stats-handle-metrics = { path = "../tidb-stats-handle-metrics" }
 tidb-stats-handle-usage = { path = "../tidb-stats-handle-usage" }
+tidb-stats-handle-autoanalyze = { path = "../tidb-stats-handle-autoanalyze" }
 tidb-stats-handle-usage-indexusage = { path = "../tidb-stats-handle-usage-indexusage" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-txnkv = { path = "../tidb-txnkv" }
@@ -156,7 +158,6 @@ tidb-vardef = { path = "../tidb-vardef" }
 tracing = "0.1"
 
 [dev-dependencies]
-tidb-stats-handle-autoanalyze = { path = "../tidb-stats-handle-autoanalyze" }
 tidb-session = { path = "../tidb-session" }
 tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
 tidb-sessionctx = { path = "../tidb-sessionctx", features = ["test-util"] }
