@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	clientutil "github.com/tikv/client-go/v2/util"
 )
 
 // fullTextScan describes a partial plan that reads a FULLTEXT index built in
@@ -166,9 +167,12 @@ func (e *IndexMergeReaderExecutor) startPartialFullTextWorker(ctx context.Contex
 		e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(worker.planID, true)
 	}
 
+	ruDetails, _ := ctx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
+	e.fullTextReads.open(ruDetails)
 	go func() {
 		defer trace.StartRegion(ctx, "IndexMergePartialFullTextWorker").End()
 		defer e.idxWorkerWg.Done()
+		defer e.fullTextReads.close()
 		util.WithRecovery(
 			func() {
 				if worker.scanStats != nil {
@@ -241,6 +245,9 @@ func (w *partialFullTextWorker) scanPhysicalTable(ctx context.Context, physicalI
 		keyPrefix:       w.keyPrefix,
 		handleRanges:    w.handleRanges,
 		stats:           w.scanStats,
+		killer:          &e.Ctx().GetSessionVars().SQLKiller,
+		reads:           e.fullTextReads,
+		memTracker:      e.memTracker,
 	}
 	iter, err := w.query.OpenPostings(source)
 	if err != nil {

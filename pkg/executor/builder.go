@@ -5126,6 +5126,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *physicalop.PhysicalInde
 	isCorColInPartialAccess := make([]bool, 0, partialPlanCount)
 	hasGlobalIndex := false
 	var fullTextSnapshot kv.Snapshot
+	var fullTextReads *fullTextReadAccount
 	fullTextScans := make([]*fullTextScan, partialPlanCount)
 	for i := range partialPlanCount {
 		var tempReq *tipb.DAGRequest
@@ -5139,6 +5140,8 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *physicalop.PhysicalInde
 				if fullTextSnapshot, err = b.getSnapshot(); err != nil {
 					return nil, err
 				}
+				fullTextReads = newFullTextReadAccount(b.sctx)
+				fullTextReads.attach(fullTextSnapshot)
 			}
 			if fullTextScans[i], err = newFullTextScan(is); err != nil {
 				return nil, err
@@ -5215,6 +5218,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *physicalop.PhysicalInde
 		keepOrder:                v.KeepOrder,
 		hasGlobalIndex:           hasGlobalIndex,
 		fullTextSnapshot:         fullTextSnapshot,
+		fullTextReads:            fullTextReads,
 		fullTextScans:            fullTextScans,
 	}
 	collectTable := false

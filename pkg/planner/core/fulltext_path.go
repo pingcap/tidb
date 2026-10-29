@@ -110,6 +110,12 @@ func generateFullTextIndexPaths(ds *logicalop.DataSource) error {
 				return err
 			}
 			if path != nil {
+				if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), match.GetArgs()[0]) {
+					// The path is built for this execution's search string,
+					// which the scan reads from the plan; a cached plan would
+					// search a later execution's string with this one.
+					ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("MATCH...AGAINST with a mutable search string uses a FULLTEXT index")
+				}
 				paths = append(paths, path)
 				forced = forced || fullTextIndexNamedByHints(ds, idx)
 			}
@@ -231,9 +237,9 @@ func scanIndexHints(ds *logicalop.DataSource) []*ast.IndexHint {
 }
 
 // fullTextMatchOnColumn reports whether cond is a locally evaluated
-// MATCH(col) AGAINST('constant' IN BOOLEAN MODE) over the given column whose
-// analyzer is the index's, and returns the search string with the query it
-// compiles to.
+// MATCH(col) AGAINST('constant' IN BOOLEAN MODE), the constant possibly a
+// parameter, over the given column whose analyzer is the index's, and
+// returns the search string with the query it compiles to.
 func fullTextMatchOnColumn(ds *logicalop.DataSource, cond expression.Expression, colInfo *model.ColumnInfo, config fulltext.AnalyzerConfig) (*expression.ScalarFunction, string, *fulltext.Query, bool) {
 	sf, ok := cond.(*expression.ScalarFunction)
 	if !ok || sf.FuncName.L != ast.FTSMysqlMatchAgainst {
@@ -255,8 +261,10 @@ func fullTextMatchOnColumn(ds *logicalop.DataSource, cond expression.Expression,
 	if !ok || !info.AnalyzerConfig.Equal(config) {
 		return nil, "", nil, false
 	}
+	// A parameter or another mutable constant is searched with its value in
+	// this execution; the caller keeps such a plan out of the plan cache.
 	constant, ok := args[0].(*expression.Constant)
-	if !ok || expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), constant) {
+	if !ok {
 		return nil, "", nil, false
 	}
 	value, err := constant.Eval(ds.SCtx().GetExprCtx().GetEvalCtx(), chunk.Row{})
