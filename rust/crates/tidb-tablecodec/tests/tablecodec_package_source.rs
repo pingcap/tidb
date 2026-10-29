@@ -18,10 +18,8 @@ use std::collections::BTreeMap;
 
 /// Go `time.UTC`, the zone these source tests encode and decode in.
 const UTC: tidb_datatype::SessionTimeZone = tidb_datatype::SessionTimeZone::Named(chrono_tz::UTC);
-use tidb_codec::{
-    cut_one, decode_int, decode_one, decode_table_id, encode_bytes, encode_int, encode_key,
-    encode_row, encode_value, ColumnInfo, Encoder, BYTES_FLAG, DECIMAL_FLAG,
-};
+use tidb_codec::{cut_one, decode_int, decode_one, decode_table_id, encode_bytes, encode_int, encode_key, encode_value, Encoder, BYTES_FLAG, DECIMAL_FLAG};
+use tidb_rowcodec::{encode_row, ColumnInfo};
 use tidb_datatype::{
     BinaryLiteral, BinaryLiteralWidth, Collation, CoreTime, Datum, Decimal, FieldType,
     FieldTypeCode, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType, UNSPECIFIED_LENGTH,

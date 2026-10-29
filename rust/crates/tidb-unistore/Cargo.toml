@@ -11,6 +11,7 @@ description = "TiDB pkg/store/mockstore/unistore: the in-process TiKV and PD (Ru
 workspace = true
 
 [dependencies]
+tidb-rowcodec = { path = "../tidb-rowcodec" }
 tidb-unistore-lockstore = { path = "../tidb-unistore-lockstore" }
 tidb-unistore-lockwaiter = { path = "../tidb-unistore-lockwaiter" }
 tidb-unistore-mvcc = { path = "../tidb-unistore-mvcc" }

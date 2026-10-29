@@ -27,11 +27,8 @@ use tidb_codec::table_key::encode_index_seek_key;
 use tidb_codec::table_key::{
     is_untouched_index_kv, MAX_OLD_ENCODE_VALUE_LEN, TEMP_INDEX_PREFIX, UNCOMMITTED_INDEX_KV_FLAG,
 };
-use tidb_codec::{
-    cut_one, decode_int, decode_one, decode_row_to_old_bytes, encode_bytes, encode_int, encode_row,
-    encode_value, CodecError, ColumnInfo, Encoder, RowPackageError, BYTES_FLAG, INT_FLAG,
-    ROW_CODEC_VERSION,
-};
+use tidb_codec::{cut_one, decode_int, decode_one, encode_bytes, encode_int, encode_value, CodecError, Encoder, BYTES_FLAG, INT_FLAG};
+use tidb_rowcodec::{decode_row_to_old_bytes, encode_row, ColumnInfo, RowPackageError, ROW_CODEC_VERSION};
 
 const ID_LEN: usize = 8;
 const PREFIX_LEN: usize = 1 + ID_LEN + 2;

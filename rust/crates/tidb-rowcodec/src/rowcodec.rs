@@ -31,13 +31,32 @@ use tidb_datatype::{
     Time, TimeType, TruncationPolicy,
 };
 
-use crate::{
-    decode_decimal, decode_float, decode_raw_int, decode_raw_uint, encode_compact_bytes,
-    encode_decimal_fixed, encode_float, encode_raw_int, encode_raw_row, encode_raw_uint,
-    encode_uvarint, encode_varint, CodecError, RawRowColumn, RawRowValue, RowDecoder,
-    COMPACT_BYTES_FLAG, DECIMAL_FLAG, FLOAT_FLAG, INT_FLAG, JSON_FLAG, NIL_FLAG, UINT_FLAG,
-    UVARINT_FLAG, VARINT_FLAG, VECTOR_FLOAT32_FLAG,
-};
+use crate::decode_raw_int;
+use crate::decode_raw_uint;
+use crate::encode_raw_int;
+use crate::encode_raw_row;
+use crate::encode_raw_uint;
+use crate::RawRowColumn;
+use crate::RawRowValue;
+use crate::RowDecoder;
+use tidb_codec::decode_decimal;
+use tidb_codec::decode_float;
+use tidb_codec::encode_compact_bytes;
+use tidb_codec::encode_decimal_fixed;
+use tidb_codec::encode_float;
+use tidb_codec::encode_uvarint;
+use tidb_codec::encode_varint;
+use tidb_codec::CodecError;
+use tidb_codec::COMPACT_BYTES_FLAG;
+use tidb_codec::DECIMAL_FLAG;
+use tidb_codec::FLOAT_FLAG;
+use tidb_codec::INT_FLAG;
+use tidb_codec::JSON_FLAG;
+use tidb_codec::NIL_FLAG;
+use tidb_codec::UINT_FLAG;
+use tidb_codec::UVARINT_FLAG;
+use tidb_codec::VARINT_FLAG;
+use tidb_codec::VECTOR_FLOAT32_FLAG;
 
 const CHECKSUM_VERSION_RAW_HANDLE: u8 = 2;
 const KEYSPACE_PREFIX_LEN: usize = 4;
@@ -75,7 +94,7 @@ impl Handle {
         match self {
             Self::Int(value) => {
                 let mut bytes = Vec::with_capacity(8);
-                crate::encode_int(&mut bytes, *value);
+                tidb_codec::encode_int(&mut bytes, *value);
                 bytes
             }
             Self::Common(parts) => parts.concat(),
@@ -587,7 +606,7 @@ fn encode_old_raw(column: &ColumnInfo, bytes: &[u8]) -> Result<Vec<u8>, RowPacka
     let flag = field_type_to_flag(&column.field_type);
     let mut output = Vec::with_capacity(bytes.len() + 10);
     match flag {
-        crate::BYTES_FLAG => {
+        tidb_codec::BYTES_FLAG => {
             output.push(COMPACT_BYTES_FLAG);
             encode_compact_bytes(&mut output, bytes);
         }
@@ -622,10 +641,10 @@ fn encode_old_handle(
             output.reserve(9);
             if column.field_type.is_unsigned() {
                 output.push(UINT_FLAG);
-                crate::encode_uint(&mut output, *value as u64);
+                tidb_codec::encode_uint(&mut output, *value as u64);
             } else {
                 output.push(INT_FLAG);
-                crate::encode_int(&mut output, *value);
+                tidb_codec::encode_int(&mut output, *value);
             }
             Ok(Some(output))
         }
@@ -674,7 +693,7 @@ fn decode_handle_column(
                 return Ok(None);
             };
             Ok(
-                crate::decode_one_typed_in_timezone(encoded, &column.field_type, timezone)
+                tidb_codec::decode_one_typed_in_timezone(encoded, &column.field_type, timezone)
                     .ok()
                     .map(|(_, datum)| datum),
             )
@@ -1050,7 +1069,7 @@ fn field_type_to_flag(field_type: &FieldType) -> u8 {
         | FieldTypeCode::LongBlob
         | FieldTypeCode::String
         | FieldTypeCode::Varchar
-        | FieldTypeCode::VarString => crate::BYTES_FLAG,
+        | FieldTypeCode::VarString => tidb_codec::BYTES_FLAG,
         FieldTypeCode::Datetime | FieldTypeCode::Date | FieldTypeCode::Timestamp => UINT_FLAG,
         FieldTypeCode::Duration | FieldTypeCode::Year => INT_FLAG,
         FieldTypeCode::NewDecimal => DECIMAL_FLAG,

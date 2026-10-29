@@ -625,7 +625,7 @@ pub enum PointReadValues {
 /// like Go NewRowDecoder. Mixed old/new rows initialize each path at most once.
 pub struct PointRowDecoder {
     ordinary_columns: bool,
-    v2: Option<(Vec<tidb_codec::ColumnInfo>, Vec<i64>)>,
+    v2: Option<(Vec<tidb_rowcodec::ColumnInfo>, Vec<i64>)>,
     general: Option<RowDecoder>,
 }
 
@@ -648,13 +648,13 @@ impl PointRowDecoder {
         entry: &[u8],
         context: &RowDecodeContext,
     ) -> Result<Vec<Datum>, KvTableError> {
-        if tidb_codec::is_new_format(entry) && self.ordinary_columns {
+        if tidb_rowcodec::is_new_format(entry) && self.ordinary_columns {
             let (columns, handle_column_ids) = self.v2.get_or_insert_with(|| {
                 let columns = table
                     .columns
                     .iter()
                     .enumerate()
-                    .map(|(offset, column)| tidb_codec::ColumnInfo {
+                    .map(|(offset, column)| tidb_rowcodec::ColumnInfo {
                         id: column.id,
                         is_pk_handle: table.pk_handle_offset == Some(offset),
                         virtual_generated: false,
@@ -680,7 +680,7 @@ impl PointRowDecoder {
                 (columns, ids)
             });
             let codec_handle = match handle {
-                TableHandle::Int(value) => tidb_codec::Handle::Int(*value),
+                TableHandle::Int(value) => tidb_rowcodec::Handle::Int(*value),
                 TableHandle::Common(encoded) => {
                     let common = CommonHandle::new(encoded.clone())
                         .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
@@ -694,7 +694,7 @@ impl PointRowDecoder {
                         })
                         .filter_map(|(index, _)| common.encoded_column(index).map(<[u8]>::to_vec))
                         .collect();
-                    tidb_codec::Handle::Common(parts)
+                    tidb_rowcodec::Handle::Common(parts)
                 }
             };
             let default_datum = |index: usize| {
@@ -702,15 +702,15 @@ impl PointRowDecoder {
                     .origin_default_value(context.type_flags(), context.zone())
                     .map_err(|error| error.to_string())
             };
-            return tidb_codec::decode_row_to_datums(
+            return tidb_rowcodec::decode_row_to_datums(
                 entry,
                 columns,
-                &tidb_codec::DecodeRowOptions {
+                &tidb_rowcodec::DecodeRowOptions {
                     handle_column_ids,
                     handle: Some(&codec_handle),
                     default_datum: Some(&default_datum),
                     timezone: Some(context.zone()),
-                    ..tidb_codec::DecodeRowOptions::default()
+                    ..tidb_rowcodec::DecodeRowOptions::default()
                 },
             )
             .map(|row| row.values)

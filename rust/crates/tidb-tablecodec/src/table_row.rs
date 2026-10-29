@@ -25,11 +25,8 @@ use tidb_datatype::{
     TimeType,
 };
 
-use tidb_codec::{
-    cut_column_id, cut_one, decode_one, decode_row_to_map, encode_row, encode_row_with_checksum,
-    encode_value_in_timezone, is_new_format, CodecError, ColumnInfo, RowChecksumPolicy,
-    RowPackageError, NIL_FLAG,
-};
+use tidb_codec::{cut_column_id, cut_one, decode_one, encode_value_in_timezone, CodecError, NIL_FLAG};
+use tidb_rowcodec::{decode_row_to_map, encode_row, encode_row_with_checksum, is_new_format, ColumnInfo, RowChecksumPolicy, RowPackageError};
 use tidb_txnkv::Handle;
 
 /// Failure while translating table rows between SQL datums and persisted

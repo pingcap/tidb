@@ -14,10 +14,7 @@
 
 //! Source-shaped tests for `pkg/util/rowcodec/{common,row}.go` framing.
 
-use tidb_codec::{
-    is_new_format, is_row_key, ColumnLookup, RowCodecError, RowLayout, CHECKSUM_FLAG_EXTRA,
-    ROW_CODEC_VERSION, ROW_FLAG_CHECKSUM, ROW_FLAG_LARGE,
-};
+use tidb_rowcodec::{is_new_format, is_row_key, ColumnLookup, RowCodecError, RowLayout, CHECKSUM_FLAG_EXTRA, ROW_CODEC_VERSION, ROW_FLAG_CHECKSUM, ROW_FLAG_LARGE};
 
 fn put_u16(output: &mut Vec<u8>, value: u16) {
     output.extend_from_slice(&value.to_le_bytes());

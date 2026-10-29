@@ -15,26 +15,23 @@
 //! Source-shaped tests for the dependency-closed part of
 //! `pkg/util/rowcodec/decoder.go`.
 
-use tidb_codec::{
-    decode_raw_int, decode_raw_uint, encode_raw_int, encode_raw_row, encode_raw_uint, RawRowValue,
-    RowDecodeError, RowDecoder, RowLayout, ROW_CODEC_VERSION,
-};
+use tidb_rowcodec::{decode_raw_int, decode_raw_uint, encode_raw_int, encode_raw_row, encode_raw_uint, RawRowValue, RowDecodeError, RowDecoder, RowLayout, ROW_CODEC_VERSION};
 
 #[test]
 fn raw_decoder_looks_up_sorted_partitions_without_typed_schema_state() {
     let mut encoded = Vec::new();
     encode_raw_row(
         &[
-            tidb_codec::RawRowColumn {
+            tidb_rowcodec::RawRowColumn {
                 id: 8,
                 value: Some(b"right"),
             },
-            tidb_codec::RawRowColumn { id: 2, value: None },
-            tidb_codec::RawRowColumn {
+            tidb_rowcodec::RawRowColumn { id: 2, value: None },
+            tidb_rowcodec::RawRowColumn {
                 id: 4,
                 value: Some(b"left"),
             },
-            tidb_codec::RawRowColumn { id: 1, value: None },
+            tidb_rowcodec::RawRowColumn { id: 1, value: None },
         ],
         &mut encoded,
     );
@@ -111,7 +108,7 @@ fn raw_decoder_keeps_row_layout_boundary_errors_typed() {
     assert_eq!(
         RowDecoder::parse(&[ROW_CODEC_VERSION - 1, 0, 0, 0, 0, 0]),
         Err(RowDecodeError::Layout(
-            tidb_codec::RowCodecError::InvalidCodecVersion {
+            tidb_rowcodec::RowCodecError::InvalidCodecVersion {
                 found: ROW_CODEC_VERSION - 1,
             }
         ))

@@ -25,7 +25,9 @@
 
 use std::fmt;
 
-use crate::{ColumnLookup, RowCodecError, RowLayout};
+use crate::ColumnLookup;
+use crate::RowCodecError;
+use crate::RowLayout;
 
 /// One column result from a raw row lookup.
 ///

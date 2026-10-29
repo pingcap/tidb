@@ -195,6 +195,7 @@ members = [
     "crates/tidb-stats-handle-usage-indexusage",
     "crates/tidb-stats-handle-usage",
     "crates/tidb-codec",
+    "crates/tidb-rowcodec",
     "crates/tidb-txnkv",
     "crates/tidb-tiflash",
     "crates/tidb-trxevents",

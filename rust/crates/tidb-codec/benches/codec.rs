@@ -18,11 +18,8 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use tidb_codec::{
-    decode, decode_decimal, decode_one, decode_one_typed, decode_row_to_datums, encode_bytes,
-    encode_decimal_fixed, encode_int, encode_row, encode_value, ColumnInfo, DatumColumn,
-    DecodeRowOptions, RowData, BYTES_FLAG,
-};
+use tidb_codec::{decode, decode_decimal, decode_one, decode_one_typed, encode_bytes, encode_decimal_fixed, encode_int, encode_value, BYTES_FLAG};
+use tidb_rowcodec::{decode_row_to_datums, encode_row, ColumnInfo, DatumColumn, DecodeRowOptions, RowData};
 use tidb_datatype::{Collation, Datum, Decimal, FieldType, FieldTypeCode};
 
 const ITERATIONS: usize = 10_000;

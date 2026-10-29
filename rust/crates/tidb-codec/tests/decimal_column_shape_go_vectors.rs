@@ -25,7 +25,8 @@
 
 use std::collections::BTreeMap;
 
-use tidb_codec::{decode_row_to_map, encode_key, encode_row, encode_value, ColumnInfo};
+use tidb_codec::{encode_key, encode_value};
+use tidb_rowcodec::{decode_row_to_map, encode_row, ColumnInfo};
 use tidb_datatype::{
     Datum, Decimal, FieldType, FieldTypeCode, SessionTimeZone, DEFAULT_STATEMENT_FLAGS,
 };

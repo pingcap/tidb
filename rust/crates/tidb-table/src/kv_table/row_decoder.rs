@@ -86,7 +86,7 @@ pub struct RowDecoder {
     /// Table/point readers use FillVirtualColumnValue; reorg uses RowDecoder.
     fill_virtual_values: bool,
     /// Row V2 metadata built once per cursor rather than once per row.
-    v2_columns: Vec<tidb_codec::ColumnInfo>,
+    v2_columns: Vec<tidb_rowcodec::ColumnInfo>,
     /// Column IDs supplied by the clustered handle in Row V2.
     v2_handle_column_ids: Vec<i64>,
     /// The common table-read shape can decode directly into a datum vector.
@@ -143,7 +143,7 @@ pub struct PreparedPointGetRowDecoder {
     /// Row V2 metadata is immutable for the schema-versioned prepared plan.
     /// Keeping it here avoids cloning ten `ColumnInfo`s and handle IDs on each
     /// YCSB execute.
-    v2_columns: Vec<tidb_codec::ColumnInfo>,
+    v2_columns: Vec<tidb_rowcodec::ColumnInfo>,
     v2_handle_column_ids: Vec<i64>,
 }
 
@@ -238,7 +238,7 @@ impl PreparedPointGetRowDecoder {
             .collect();
         let v2_columns = projected
             .iter()
-            .map(|output| tidb_codec::ColumnInfo {
+            .map(|output| tidb_rowcodec::ColumnInfo {
                 id: output.column.id,
                 is_pk_handle: output.from_handle,
                 virtual_generated: false,
@@ -278,10 +278,10 @@ impl PreparedPointGetRowDecoder {
         // Row V2 stores a column directory and can decode directly into the
         // requested projection. This avoids the legacy BTreeMap allocation on
         // every prepared point read (the YCSB hot path).
-        if tidb_codec::is_new_format(value) {
+        if tidb_rowcodec::is_new_format(value) {
             let codec_handle = self.needs_handle.then(|| match handle {
                 TableHandle::Int(handle_value) => {
-                    Ok::<_, KvTableError>(tidb_codec::Handle::Int(*handle_value))
+                    Ok::<_, KvTableError>(tidb_rowcodec::Handle::Int(*handle_value))
                 }
                 TableHandle::Common(encoded) => {
                     let common = CommonHandle::new(encoded.clone())
@@ -291,7 +291,7 @@ impl PreparedPointGetRowDecoder {
                         .iter()
                         .filter_map(|part| common.encoded_column(*part).map(<[u8]>::to_vec))
                         .collect();
-                    Ok(tidb_codec::Handle::Common(parts))
+                    Ok(tidb_rowcodec::Handle::Common(parts))
                 }
             });
             let codec_handle = codec_handle.transpose()?;
@@ -301,17 +301,17 @@ impl PreparedPointGetRowDecoder {
                     .origin_default_value(context.origin_default_flags(), context.zone())
                     .map_err(|error| error.to_string())
             };
-            return tidb_codec::decode_row_to_datums(
+            return tidb_rowcodec::decode_row_to_datums(
                 value,
                 &self.v2_columns,
-                &tidb_codec::DecodeRowOptions {
+                &tidb_rowcodec::DecodeRowOptions {
                     handle_column_ids: &self.v2_handle_column_ids,
                     handle: codec_handle.as_ref(),
                     default_datum: self.has_origin_defaults.then_some(
                         &default_datum as &(dyn Fn(usize) -> Result<Datum, String> + '_),
                     ),
                     timezone: Some(context.zone()),
-                    ..tidb_codec::DecodeRowOptions::default()
+                    ..tidb_rowcodec::DecodeRowOptions::default()
                 },
             )
             .map(|row| row.values)
@@ -577,7 +577,7 @@ impl RowDecoder {
         let v2_columns = columns
             .iter()
             .enumerate()
-            .map(|(offset, column)| tidb_codec::ColumnInfo {
+            .map(|(offset, column)| tidb_rowcodec::ColumnInfo {
                 id: column.id,
                 is_pk_handle: pk_handle_offset == Some(offset),
                 virtual_generated: false,
@@ -890,13 +890,13 @@ impl RowDecoder {
         value: &[u8],
     ) -> Result<(TableHandle, Vec<Datum>), KvTableError> {
         let handle = self.record_handle(key)?;
-        if self.v2_fast_path && tidb_codec::is_new_format(value) {
+        if self.v2_fast_path && tidb_rowcodec::is_new_format(value) {
             let codec_handle = match &handle {
-                TableHandle::Int(value) => tidb_codec::Handle::Int(*value),
+                TableHandle::Int(value) => tidb_rowcodec::Handle::Int(*value),
                 TableHandle::Common(encoded) => {
                     let common = tidb_txnkv::CommonHandle::new(encoded.clone())
                         .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
-                    tidb_codec::Handle::Common(
+                    tidb_rowcodec::Handle::Common(
                         self.common_handle_offsets
                             .iter()
                             .enumerate()
@@ -911,14 +911,14 @@ impl RowDecoder {
                     )
                 }
             };
-            let values = tidb_codec::decode_row_to_datums(
+            let values = tidb_rowcodec::decode_row_to_datums(
                 value,
                 &self.v2_columns,
-                &tidb_codec::DecodeRowOptions {
+                &tidb_rowcodec::DecodeRowOptions {
                     handle_column_ids: &self.v2_handle_column_ids,
                     handle: Some(&codec_handle),
                     timezone: Some(self.context.zone()),
-                    ..tidb_codec::DecodeRowOptions::default()
+                    ..tidb_rowcodec::DecodeRowOptions::default()
                 },
             )
             .map_err(|error| KvTableError::Decode(format!("{error:?}")))?
@@ -1054,7 +1054,7 @@ pub fn row_checksum(
     value: &[u8],
     context: &RowDecodeContext,
 ) -> Result<Datum, KvTableError> {
-    if !tidb_codec::is_new_format(value) {
+    if !tidb_rowcodec::is_new_format(value) {
         return Ok(Datum::Null);
     }
     let decode_error = |error: &dyn std::fmt::Debug| KvTableError::Decode(format!("{error:?}"));
@@ -1090,13 +1090,13 @@ pub fn row_checksum(
         &mut datums,
     )
     .map_err(|error| decode_error(&error))?;
-    let mut row = tidb_codec::RowData::default();
+    let mut row = tidb_rowcodec::RowData::default();
     for column in columns {
         let datum = match datums.remove(&column.id) {
             Some(datum) => datum,
             None => column_origin_default_for_checksum(column, context)?,
         };
-        row.columns.push(tidb_codec::DatumColumn {
+        row.columns.push(tidb_rowcodec::DatumColumn {
             id: column.id,
             field_type: column.field_type.clone(),
             datum,

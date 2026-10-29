@@ -491,7 +491,7 @@ fn exec_index_scan(
         .iter()
         .zip(&field_types)
         .filter(|(column, _)| column.column_id() != EXTRA_HANDLE_ID)
-        .map(|(column, field_type)| tidb_codec::ColumnInfo {
+        .map(|(column, field_type)| tidb_rowcodec::ColumnInfo {
             id: column.column_id(),
             is_pk_handle: column.pk_handle(),
             virtual_generated: false,

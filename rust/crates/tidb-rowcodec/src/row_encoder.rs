@@ -20,7 +20,8 @@
 //! integration remain outside this leaf. Keeping those boundaries explicit is
 //! important: a row byte layout is not a substitute for a typed row codec.
 
-use crate::{ROW_CODEC_VERSION, ROW_FLAG_LARGE};
+use crate::ROW_CODEC_VERSION;
+use crate::ROW_FLAG_LARGE;
 
 /// One source-owned row column entry for [`encode_raw_row`].
 ///
@@ -125,7 +126,7 @@ pub fn encode_raw_row(columns: &[RawRowColumn<'_>], buffer: &mut Vec<u8>) {
 
 /// Appends the compact little-endian signed payload used by rowcodec.
 ///
-/// This is deliberately distinct from [`crate::encode_int`], which is the
+/// This is deliberately distinct from [`tidb_codec::encode_int`], which is the
 /// fixed-width mem-comparable key encoding. The rowcodec encoder chooses the
 /// shortest 1/2/4/8-byte two's-complement representation.
 pub fn encode_raw_int(buffer: &mut Vec<u8>, value: i64) {
@@ -142,7 +143,7 @@ pub fn encode_raw_int(buffer: &mut Vec<u8>, value: i64) {
 
 /// Appends the compact little-endian unsigned payload used by rowcodec.
 ///
-/// This is deliberately distinct from [`crate::encode_uint`], which is the
+/// This is deliberately distinct from [`tidb_codec::encode_uint`], which is the
 /// fixed-width mem-comparable key encoding. The rowcodec encoder chooses the
 /// shortest 1/2/4/8-byte representation.
 pub fn encode_raw_uint(buffer: &mut Vec<u8>, value: u64) {

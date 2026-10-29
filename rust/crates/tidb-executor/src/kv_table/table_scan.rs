@@ -2444,7 +2444,7 @@ impl KvTableReader for KvTable {
             .iter()
             .map(|offset| {
                 let column = &self.columns()[*offset];
-                tidb_codec::ColumnInfo {
+                tidb_rowcodec::ColumnInfo {
                     id: column.id,
                     is_pk_handle: false,
                     virtual_generated: false,

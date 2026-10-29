@@ -1,0 +1,17 @@
+[package]
+name = "tidb-rowcodec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go `pkg/util/rowcodec`: TiDB's row format v2 (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-codec = { path = "../tidb-codec" }
+chrono.workspace = true
+crc32fast.workspace = true
+tidb-datatype = { path = "../tidb-datatype" }

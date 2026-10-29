@@ -38,7 +38,7 @@
 //! There are THREE places it lives, and naming only the first is how a
 //! mutation probe comes back green against a real bug:
 //!
-//! * the v2 row format, `tidb_codec::rowcodec`'s `encode_column_value` and
+//! * the v2 row format, `tidb_rowcodec::rowcodec`'s `encode_column_value` and
 //!   `decode_column_value` (Go `pkg/util/rowcodec/encoder.go` and
 //!   `decoder.go`), which is what a byte-backed table actually stores;
 //! * index keys, `tidb_codec::package::encode_mysql_time` under

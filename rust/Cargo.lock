@@ -3613,6 +3613,7 @@ dependencies = [
  "crc32fast",
  "tidb-chunk",
  "tidb-datatype",
+ "tidb-rowcodec",
 ]
 
 [[package]]
@@ -4398,6 +4399,7 @@ dependencies = [
  "tidb-redact",
  "tidb-resolve",
  "tidb-resourcegrouptag",
+ "tidb-rowcodec",
  "tidb-selection",
  "tidb-sem-compat",
  "tidb-sem-v2",
@@ -4698,6 +4700,7 @@ dependencies = [
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
+ "tidb-rowcodec",
  "tidb-sessionctx",
  "tidb-stats",
  "tidb-table",
@@ -5471,6 +5474,16 @@ dependencies = [
  "crossbeam-channel",
  "rand 0.10.2",
  "xxhash-rust",
+]
+
+[[package]]
+name = "tidb-rowcodec"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "crc32fast",
+ "tidb-codec",
+ "tidb-datatype",
 ]
 
 [[package]]
@@ -6548,6 +6561,7 @@ dependencies = [
  "tidb-mysql",
  "tidb-parser",
  "tidb-parser-format",
+ "tidb-rowcodec",
  "tidb-sessionstates",
  "tidb-tablecodec",
  "tidb-timeutil",
@@ -6593,6 +6607,7 @@ dependencies = [
  "chrono-tz",
  "tidb-codec",
  "tidb-datatype",
+ "tidb-rowcodec",
  "tidb-txnkv",
 ]
 
@@ -6854,6 +6869,7 @@ dependencies = [
  "tidb-log",
  "tidb-model",
  "tidb-proto",
+ "tidb-rowcodec",
  "tidb-stats",
  "tidb-tablecodec",
  "tidb-txnkv",

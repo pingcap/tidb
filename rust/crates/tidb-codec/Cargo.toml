@@ -9,6 +9,7 @@ description = "TiDB mem-comparable scalar and datum-key codec."
 autotests = false
 
 [dev-dependencies]
+tidb-rowcodec = { path = "../tidb-rowcodec" }
 bytes.workspace = true
 
 [lints]

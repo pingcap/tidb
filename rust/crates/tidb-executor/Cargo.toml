@@ -14,6 +14,7 @@ autotests = false
 test-util = ["tidb-sessmgr/test-util"]
 
 [dependencies]
+tidb-rowcodec = { path = "../tidb-rowcodec" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-parser-types = { path = "../tidb-parser-types" }
 tidb-lightning-mydump = { path = "../tidb-lightning-mydump" }

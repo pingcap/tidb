@@ -753,7 +753,7 @@ pub struct IndexDecodeMeta {
     /// column(s).
     pub types: Vec<FieldType>,
     /// The rowcodec column info `tablecodec.DecodeIndexKVEx` needs.
-    pub column_infos: Vec<tidb_codec::ColumnInfo>,
+    pub column_infos: Vec<tidb_rowcodec::ColumnInfo>,
     /// Go `TableInfo.IsCommonHandle`.
     pub common_handle: bool,
     /// Go `IndexInfo.Global`.

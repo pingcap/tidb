@@ -28,11 +28,7 @@ mod join_keys;
 mod json;
 mod number;
 mod package;
-mod row_decoder;
-mod row_encoder;
 mod row_index;
-mod row_layout;
-mod rowcodec;
 pub mod table_key;
 mod temporal;
 mod value;
@@ -79,21 +75,8 @@ pub use package::{
     HashColumnOutput, SerializeMode,
 };
 pub(crate) use package::{value_size_of_signed_int, value_size_of_unsigned_int};
-pub use row_decoder::{decode_raw_int, decode_raw_uint, RawRowValue, RowDecodeError, RowDecoder};
-pub use row_encoder::{encode_raw_int, encode_raw_row, encode_raw_uint, RawRowColumn};
 pub use row_index::{
     decode_table_id, encode_row_key, gen_table_record_prefix, get_key_kind, KeyKind,
-};
-pub use row_layout::{
-    is_new_format, is_row_key, ColumnLookup, RowChecksum, RowCodecError, RowHeader, RowLayout,
-    CHECKSUM_FLAG_EXTRA, CHECKSUM_VERSION_MASK, ROW_CODEC_VERSION, ROW_FLAG_CHECKSUM,
-    ROW_FLAG_LARGE, ROW_HEADER_LEN,
-};
-pub use rowcodec::{
-    calculate_raw_checksum, decode_row_to_datums, decode_row_to_map, decode_row_to_old_bytes,
-    encode_row, encode_row_with_checksum, field_type_from_column, remove_keyspace_prefix,
-    ColumnInfo, DatumColumn, DecodeRowOptions, DecodedRow, Handle, RowChecksumPolicy, RowData,
-    RowPackageError,
 };
 pub use temporal::{decode_packed_time, encode_packed_time};
 pub use value::{

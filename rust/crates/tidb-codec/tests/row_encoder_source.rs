@@ -14,9 +14,7 @@
 
 //! Source-shaped tests for `pkg/util/rowcodec/encoder.go`.
 
-use tidb_codec::{
-    encode_raw_int, encode_raw_row, encode_raw_uint, ColumnLookup, RawRowColumn, RowLayout,
-};
+use tidb_rowcodec::{encode_raw_int, encode_raw_row, encode_raw_uint, ColumnLookup, RawRowColumn, RowLayout};
 
 #[test]
 fn row_encoder_uses_source_compact_little_endian_integer_widths() {

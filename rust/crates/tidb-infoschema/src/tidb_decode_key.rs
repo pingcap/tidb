@@ -17,7 +17,7 @@ use std::fmt::Write as _;
 
 use serde_json::{Map, Number, Value};
 use tidb_codec::table_key::{decode_index_key, decode_key_head, decode_record_key, KeyHead};
-use tidb_codec::ColumnInfo;
+use tidb_rowcodec::ColumnInfo;
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_hack::GoToLower;
 use tidb_tablecodec::{decode_column_value, decode_index_kv, HandleStatus};
