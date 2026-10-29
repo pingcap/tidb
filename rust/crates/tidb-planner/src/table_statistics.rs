@@ -43,7 +43,7 @@ impl TableStatisticsExt for TableStatistics {
         full_loaded_columns: &std::collections::BTreeSet<i64>,
         full_loaded_indexes: &std::collections::BTreeSet<i64>,
     ) -> Option<f64> {
-        crate::logical::init_stats::estimate_column_ndv(
+        tidb_planner_cardinality::ndv::estimate_column_ndv(
             self,
             column_id,
             full_loaded_columns,

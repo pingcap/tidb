@@ -208,3 +208,78 @@ fn estimate_skewed_ndv(original_ndv: f64, original_rows: f64, selected_rows: f64
     }
     original_ndv * selected_rows / original_rows
 }
+
+/// Go `cardinality.EstimateColumnNDV` and its `getTotalRowCount` helper.
+///
+/// Lite statistics initialization keeps every histogram's NDV metadata but
+/// loads buckets and TopN only for the items the query needs. An evicted
+/// column therefore borrows the analyzed row count from the first fully
+/// loaded, same-version index, then from a column. The Rust catalog keeps
+/// the payloads eagerly, so callers pass the items Go's predicate-statistics
+/// collection would have marked fully loaded for this query.
+pub fn estimate_column_ndv(
+    s: &dyn tidb_stats::table_statistics::TableStatsSnapshot,
+    column_id: i64,
+    full_loaded_columns: &std::collections::BTreeSet<i64>,
+    full_loaded_indexes: &std::collections::BTreeSet<i64>,
+) -> Option<f64> {
+    let column = s.columns().get(&column_id)?;
+    // Go reads the histogram's NDV only when `IsStatsInitialized()`; an
+    // `EmptyColumn` placeholder -- a never-analyzed column a load request
+    // published -- takes the `RealtimeCount * distinctFactor` branch.
+    if !s
+        .column_load_status()
+        .get(&column_id)
+        .is_some_and(|status| status.stats_initialized())
+    {
+        return None;
+    }
+    let version = column.histogram.last_update_version;
+    let analyzed_count = if full_loaded_columns.contains(&column_id) {
+        column.total_row_count() as i64
+    } else {
+        full_loaded_indexes
+            .iter()
+            .find_map(|id| {
+                s.indexes().get(id).and_then(|index| {
+                    (index.histogram.last_update_version == version)
+                        .then(|| index.total_row_count() as i64)
+                })
+            })
+            .unwrap_or_else(|| {
+                full_loaded_columns
+                    .iter()
+                    .filter(|id| **id != column_id)
+                    .find_map(|id| {
+                        s.columns().get(id).and_then(|candidate| {
+                            let same_version = candidate.histogram.last_update_version == version;
+                            // A candidate whose histogram never got
+                            // buckets stores its rows in TopN only, and
+                            // the persisted TopN total can sit BELOW the
+                            // analyze-time row count (TPC-H SF50
+                            // lineitem.l_quantity is 26 rows short of
+                            // 300,005,811). Charging the factor with
+                            // that short total skewed every borrowed
+                            // NDV; an evicted column must then fall
+                            // through to no-factor (Go's shape, which
+                            // loads the needed column itself).
+                            // REVERTED to this guard after an experiment
+                            // borrowing from any allLoaded column (the
+                            // literal Go-source shape): TPC-DS q13/q48/
+                            // q49/q91 flipped inconsistent and the full
+                            // capture dropped to 67/83. The guard is
+                            // empirically load-bearing on this capture.
+                            let buckets_loaded = !candidate.histogram.buckets.is_empty();
+                            (same_version && buckets_loaded)
+                                .then(|| candidate.total_row_count() as i64)
+                        })
+                    })
+                    .unwrap_or(0)
+            })
+    };
+    let mut ndv = column.histogram.ndv as f64;
+    if analyzed_count > 0 {
+        ndv *= s.row_count() as f64 / analyzed_count as f64;
+    }
+    Some(ndv)
+}

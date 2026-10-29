@@ -1223,7 +1223,8 @@ impl InitStats<'_> {
         // The cache's explicit status excludes evicted metadata from NDV
         // scaling and histogram estimates without inferring state from buckets.
         let predicate_loaded = self.predicate_loaded_items(source, statistics);
-        source.init_stats(
+        tidb_planner::stats::init_stats::init_stats(
+            source,
             statistics.map(|statistics| statistics as &dyn tidb_stats::table_statistics::TableStatsSnapshot),
             row_count,
             predicate_loaded,

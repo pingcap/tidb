@@ -17,6 +17,8 @@
 //! `utilfuncp.DeriveStats4DataSource` ([`CoreDataSourceStats`]), and the
 //! `cardinality.Selectivity` wrappers it estimates with.
 
+pub mod init_stats;
+
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_hack::go_to_lower;
