@@ -461,9 +461,9 @@ pub struct Session {
     /// `TableInfo` against. `None` for a session no node opened.
     info_schema: Option<Arc<tidb_infoschema::cluster_catalog::ClusterCatalog>>,
     /// Go `SessionVars.HypoIndexes`: session state, never schema.
-    hypo_indexes: Arc<tidb_executor::ddl::HypoIndexes>,
+    hypo_indexes: Arc<tidb_table::hypo_index::HypoIndexes>,
     /// Go `SessionVars.HypoTiFlashReplicas`: session state, never schema.
-    hypo_tiflash_replicas: Arc<tidb_executor::ddl::HypoTiFlashReplicas>,
+    hypo_tiflash_replicas: Arc<tidb_table::hypo_index::HypoTiFlashReplicas>,
     /// Go `SessionVars.TxnCtx.TemporaryTables`: the rows this session has
     /// written to GLOBAL temporary tables, by physical table id.
     ///
@@ -840,7 +840,7 @@ impl Session {
             tidb_decode_key_cache: std::sync::Mutex::new(None),
             session_memory: tidb_executor::SessionMemory::new(
                 tidb_util::memory::DEF_MEM_QUOTA_QUERY,
-                tidb_executor::OomAction::Cancel,
+                tidb_vardef::OomAction::Cancel,
                 0,
             ),
             statement_result_authority: std::cell::RefCell::new(None),
@@ -1131,8 +1131,8 @@ mod record_set;
 mod session_plan_cache;
 use record_set::StatementCompletion;
 pub use record_set::{SessionRecordSet, StatementExecution};
-pub use tidb_executor::record_set::OpenedStatement;
-pub use tidb_executor::record_set::StatementRecordSet;
+use tidb_executor::record_set::OpenedStatement;
+use tidb_executor::record_set::StatementRecordSet;
 mod resource_group;
 mod table_lock;
 mod temptable;
@@ -1160,7 +1160,7 @@ pub use classify::StmtKind;
 pub use prepared_ast::PreparedAst;
 pub(crate) use variables::datum_text;
 pub use warnings::SqlWarning;
-pub use tidb_util::context::WarningLevel;
+use tidb_util::context::WarningLevel;
 #[cfg(test)]
 mod tests_expensivequery;
 mod privilege_tables;

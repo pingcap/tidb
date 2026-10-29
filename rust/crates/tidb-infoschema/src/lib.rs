@@ -66,7 +66,7 @@ pub mod infoschema_meta;
 pub mod metricsschema;
 pub mod perfschema;
 pub mod tidb_decode_key;
-pub use tidb_decode_key::TidbDecodeKeySnapshot;
+use tidb_decode_key::TidbDecodeKeySnapshot;
 pub mod planner_view;
 pub mod table_source;
 pub mod sequence;

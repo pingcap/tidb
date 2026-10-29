@@ -308,7 +308,7 @@ impl tidb_executor::bind_exec::SqlBindExec for Session {
 
 impl tidb_executor::index_advisor::IndexAdvisorExec for Session {
 
-    fn set_hypo_indexes(&mut self, indexes: std::sync::Arc<tidb_executor::ddl::HypoIndexes>) {
+    fn set_hypo_indexes(&mut self, indexes: std::sync::Arc<tidb_table::hypo_index::HypoIndexes>) {
         self.hypo_indexes = indexes;
     }
 

@@ -20,7 +20,7 @@ use std::any::Any;
 use std::collections::BTreeMap;
 use std::time::Duration as StdDuration;
 
-use tidb_distsql::LimiterWaitStats;
+use tidb_txnkv::LimiterWaitStats;
 
 use tidb_util::execdetails::runtime_stats::{
     format_duration, CanGetFloat64, Duration, Int64, Percentile, RuntimeStats,

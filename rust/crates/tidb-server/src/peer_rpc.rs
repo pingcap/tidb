@@ -670,7 +670,7 @@ fn peer_aggregate(
         let mut key = Vec::new();
         for (expr, ft) in group_by.iter().zip(&group_types) {
             let value = expr.eval(&ctx, row.to_row()).map_err(|error| {
-                tidb_executor::DriverError::from(tidb_executor::ExecError::Eval(error)).to_string()
+                tidb_executor::DriverError::from(tidb_driver_error::ExecError::Eval(error)).to_string()
             })?;
             tidb_codec::append_hash_group_key_in_timezone(&chrono::Utc, &value, ft, &mut key)
                 .map_err(|error| format!("{error:?}"))?;

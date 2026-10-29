@@ -230,7 +230,7 @@ impl Session {
                 catalog,
                 &current_db,
                 &ctx,
-                tidb_executor::ExplainFormat::Brief,
+                tidb_sessionctx::explain_format::ExplainFormat::Brief,
             )
             .map(|_| ())
         })

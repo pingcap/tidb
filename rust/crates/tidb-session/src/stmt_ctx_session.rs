@@ -45,7 +45,7 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &self.pushdown_blacklists
     }
 
-    fn hypo_indexes(&self) -> std::sync::Arc<tidb_executor::ddl::HypoIndexes> {
+    fn hypo_indexes(&self) -> std::sync::Arc<tidb_table::hypo_index::HypoIndexes> {
         std::sync::Arc::clone(&self.hypo_indexes)
     }
 
@@ -89,11 +89,11 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &mut self.executor_first_run_breakpoint
     }
 
-    fn hypo_tiflash_replicas_ref(&self) -> &Arc<tidb_executor::ddl::HypoTiFlashReplicas> {
+    fn hypo_tiflash_replicas_ref(&self) -> &Arc<tidb_table::hypo_index::HypoTiFlashReplicas> {
         &self.hypo_tiflash_replicas
     }
 
-    fn hypo_tiflash_replicas_mut(&mut self) -> &mut Arc<tidb_executor::ddl::HypoTiFlashReplicas> {
+    fn hypo_tiflash_replicas_mut(&mut self) -> &mut Arc<tidb_table::hypo_index::HypoTiFlashReplicas> {
         &mut self.hypo_tiflash_replicas
     }
 

@@ -30,7 +30,7 @@ use tidb_stats_handle::catalog_statistics::CatalogStatistics;
 use std::sync::Arc;
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use crate::ddl::HypoIndexes;
+use tidb_table::hypo_index::HypoIndexes;
 use crate::DriverError;
 use tidb_hack::GoToLower;
 

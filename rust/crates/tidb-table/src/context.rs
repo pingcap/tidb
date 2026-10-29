@@ -100,7 +100,7 @@ pub trait MutateContext: tidb_expr::Columns + Send + Sync {
     }
 
     /// The session time zone the statement evaluates in.
-    fn session_zone(&self) -> tidb_expr::SessionTimeZone {
+    fn session_zone(&self) -> tidb_datatype::SessionTimeZone {
         self.time_zone()
     }
 }

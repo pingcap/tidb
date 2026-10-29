@@ -34,10 +34,10 @@ impl tidb_expr::rewriter::ColumnResolver for FoldResolver {
         None
     }
 
-    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
         // Go's MockContext sessions default to the system zone; these cases
         // never observe it (no temporal literals outside CAST comparisons).
-        tidb_expr::SessionTimeZone::utc()
+        tidb_datatype::SessionTimeZone::utc()
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {

@@ -15,6 +15,7 @@ failpoints = ["dep:fail", "fail/failpoints", "tidb-util/failpoints"]
 intest = ["tidb-util/intest"]
 
 [dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
 fail = { version = "0.4", optional = true }
 tidb-hack = { path = "../tidb-hack" }
 tidb-ast = { path = "../tidb-ast" }

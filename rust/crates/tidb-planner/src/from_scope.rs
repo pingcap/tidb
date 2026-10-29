@@ -60,7 +60,7 @@ pub struct FromScope {
     /// on the scope because the scope is the one value every rewrite over
     /// this `FROM` already receives; the statement build points set it from
     /// `StmtContext::session_zone` and every derived scope clones it along.
-    pub zone: tidb_expr::SessionTimeZone,
+    pub zone: tidb_datatype::SessionTimeZone,
     pub like_default_escape: u8,
     pub no_unsigned_subtraction: bool,
     pub div_precision_increment: u32,
@@ -89,7 +89,7 @@ impl Default for FromScope {
             constant_context: None,
             coalesced: Vec::new(),
             star: Vec::new(),
-            zone: tidb_expr::SessionTimeZone::utc(),
+            zone: tidb_datatype::SessionTimeZone::utc(),
             like_default_escape: b'\\',
             no_unsigned_subtraction: false,
             div_precision_increment: 4,
@@ -214,7 +214,7 @@ impl ColumnResolver for ScopeResolver<'_> {
 
     /// The zone the scope's build point took from the statement's
     /// `StmtContext` -- see [`FromScope::zone`].
-    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
         self.scope.zone.clone()
     }
 

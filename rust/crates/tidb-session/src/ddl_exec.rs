@@ -116,7 +116,7 @@ impl Session {
     /// order; `DROP TEMPORARY TABLE` must name nothing else; a DROP left
     /// naming nothing returns without a job.
     fn drop_table_next<'a>(&self, drop: &tidb_ast::DropTableStmt) -> DdlExecNext<'a> {
-        let (persistent, local) = tidb_executor::split_drop_table_targets(drop, |path| {
+        let (persistent, local) = tidb_ddl_build::table_lifecycle::split_drop_table_targets(drop, |path| {
             self.is_local_temporary_table_path(path)
         });
         if drop.temporary == tidb_ast::DropTemporary::Local && !persistent.names.is_empty() {

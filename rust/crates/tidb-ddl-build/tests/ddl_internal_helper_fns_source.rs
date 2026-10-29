@@ -16,7 +16,8 @@
 //! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
 
 use tidb_ddl_build::cluster::{merge_continuous_key_ranges, KeyRangeMayExclude};
-use tidb_model::{GoSharedSlice, PartitionDefinition, PartitionInfo};
+use tidb_model::{PartitionDefinition, PartitionInfo};
+use tidb_goruntime::go_runtime::GoSharedSlice;
 use tidb_txnkv::{Key, KeyRange};
 
 // --- TestFindNextNonTouchedPartitionID (pkg/ddl/ddl_test.go:323) ---

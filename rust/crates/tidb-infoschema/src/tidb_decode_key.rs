@@ -102,7 +102,7 @@ impl TidbDecodeKeySnapshot {
         let table = self.tables.get(&physical_table_id);
         let output = if tidb_tablecodec::is_record_key(&key) {
             decode_record(&key, physical_table_id, table, zone)?
-        } else if tidb_tablecodec::is_index_key(&key) {
+        } else if tidb_codec::table_key::is_index_key(&key) {
             decode_index(&key, physical_table_id, table, zone)?
         } else if tidb_tablecodec::is_table_key(&key) {
             decode_table(physical_table_id, table)

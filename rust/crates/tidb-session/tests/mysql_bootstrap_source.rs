@@ -438,7 +438,7 @@ fn every_seeded_row_carries_the_index_entries_its_table_declares() {
     let index_entries = write
         .mutations
         .iter()
-        .filter(|mutation| tidb_tablecodec::is_index_key(mutation.key()))
+        .filter(|mutation| tidb_codec::table_key::is_index_key(mutation.key()))
         .count();
     let records = write
         .mutations

@@ -18,7 +18,8 @@
 use prost::Message;
 use tidb_codec::{encode_int, encode_key, encode_row_key};
 use tidb_datatype::Datum;
-use tidb_distsql::{build_table_ranges, index_ranges_to_kv_ranges, table_handles_to_kv_ranges, table_ranges_to_kv_ranges, DatumRange, DistSqlContext, ExecutorKind, ExecutorShape, KvPriority, KvRequestMetadata, PagingConfig, RequestBuilder, RequestEnvelope, RequestKeyRange, TableRangeSpec, DC_LABEL_KEY, DEFAULT_DIST_SQL_CONCURRENCY, GLOBAL_REPLICA_SCOPE};
+use tidb_distsql::{build_table_ranges, index_ranges_to_kv_ranges, table_handles_to_kv_ranges, table_ranges_to_kv_ranges, DatumRange, DistSqlContext, ExecutorKind, ExecutorShape, KvPriority, PagingConfig, RequestBuilder, RequestEnvelope, RequestKeyRange, TableRangeSpec, DC_LABEL_KEY, DEFAULT_DIST_SQL_CONCURRENCY, GLOBAL_REPLICA_SCOPE};
+use tidb_txnkv::KvRequestMetadata;
 use tidb_txnkv::StoreType;
 use tidb_txnkv::StoreLabel;
 use tidb_txnkv::RequestType;
@@ -451,7 +452,7 @@ fn complete_metadata_setters_and_read_consistency_reach_transport_snapshot() {
         .set_paging(false)
         .set_replica_read(ReplicaReadType::Closest);
     let transport = builder
-        .build_transport_request(std::sync::Arc::new(tidb_distsql::CancelHandle::default()))
+        .build_transport_request(std::sync::Arc::new(tidb_txnkv::CancelHandle::default()))
         .unwrap();
     let request = transport.metadata();
     assert_eq!(request.start_ts, 42);
@@ -643,7 +644,7 @@ fn test_request_builder_handle() {
         .set_dag_request(RequestEnvelope::new(Vec::new()), DAG_BYTES)
         .set_resource_group_tagger(ResourceGroupTagBuilder::new(None));
     let transport = builder
-        .build_transport_request(std::sync::Arc::new(tidb_distsql::CancelHandle::default()))
+        .build_transport_request(std::sync::Arc::new(tidb_txnkv::CancelHandle::default()))
         .expect("transport envelope");
     let encoded = transport.resource_group_tag().expect("resource tag");
     let tag = ResourceGroupTag::decode(encoded.as_slice()).expect("valid tag");
@@ -656,7 +657,8 @@ fn go_partition_table_scan_keeps_partition_ids_next_to_ranges() {
     // `pkg/distsql/request_builder.go:311-314` keep TiFlash partition
     // ranges separate from ordinary `KeyRanges`.  Preserve source order and
     // bytes at the request boundary; region splitting is checked separately.
-    use tidb_distsql::{KvRequestBuilder, PartitionIdAndRanges};
+    use tidb_distsql::KvRequestBuilder;
+    use tidb_txnkv::PartitionIdAndRanges;
 
     let mut builder = KvRequestBuilder::new();
     builder.set_partition_id_and_ranges(vec![

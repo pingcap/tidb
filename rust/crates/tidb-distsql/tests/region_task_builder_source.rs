@@ -18,13 +18,15 @@
 use std::collections::BTreeMap;
 
 use prost::Message;
-use tidb_distsql::{KvRequestBuilder, KvRequestMetadata, ReadBytesEma, RegionTaskEnvelope, RegionTaskRequest, RegionTaskPeer, RegionTaskTopology, RequestKeyRange, RequestKeyRanges, TransportRequest};
+use tidb_distsql::{KvRequestBuilder, ReadBytesEma, RegionTaskEnvelope, RegionTaskRequest, RegionTaskPeer, RegionTaskTopology, RequestKeyRange, RequestKeyRanges};
+use tidb_txnkv::KvRequestMetadata;
+use tidb_txnkv::TransportRequest;
 use tidb_txnkv::StoreType;
 
 fn transport_request(metadata: KvRequestMetadata) -> TransportRequest {
     TransportRequest::new(
         metadata,
-        std::sync::Arc::new(tidb_distsql::CancelHandle::default()),
+        std::sync::Arc::new(tidb_txnkv::CancelHandle::default()),
     )
 }
 use tidb_proto::StoreBatchTask;

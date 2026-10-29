@@ -706,7 +706,7 @@ fn table_access(catalog: &Catalog, table_id: i64, alias: Option<&str>) -> ScanAc
 
 fn index_access(
     catalog: &Catalog,
-    hypo_indexes: Option<&crate::ddl::HypoIndexes>,
+    hypo_indexes: Option<&tidb_table::hypo_index::HypoIndexes>,
     table_id: i64,
     alias: Option<&str>,
     index_id: i64,
@@ -767,7 +767,7 @@ fn index_access(
 
 fn point_access(
     catalog: &Catalog,
-    hypo_indexes: Option<&crate::ddl::HypoIndexes>,
+    hypo_indexes: Option<&tidb_table::hypo_index::HypoIndexes>,
     table_id: i64,
     index_id: Option<i64>,
 ) -> ScanAccessObject {
@@ -1047,7 +1047,7 @@ fn physical_operator_name(
 fn physical_access(
     plan: &PhysicalPlan,
     catalog: &Catalog,
-    hypo_indexes: Option<&crate::ddl::HypoIndexes>,
+    hypo_indexes: Option<&tidb_table::hypo_index::HypoIndexes>,
 ) -> Option<AccessObject> {
     match plan {
         // Go reader AccessObject reports dynamic pruning; scan AccessObject

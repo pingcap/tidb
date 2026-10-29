@@ -404,7 +404,7 @@ struct SamplingCancellation {
 impl SamplingCancellation {
     fn start(
         killer: &tidb_util::sqlkiller::SqlKiller,
-        cancellation: std::sync::Arc<tidb_distsql::CancelHandle>,
+        cancellation: std::sync::Arc<tidb_txnkv::CancelHandle>,
     ) -> Result<Self, AnalyzeError> {
         let killed = killer.get_kill_event_chan();
         let (done, finished) = crossbeam_channel::bounded(1);
@@ -450,7 +450,7 @@ pub(crate) fn analyze_table<S>(
 where
     S: tidb_txnkv::transaction::StoreClient,
 {
-    let cancellation = std::sync::Arc::new(tidb_distsql::CancelHandle::default());
+    let cancellation = std::sync::Arc::new(tidb_txnkv::CancelHandle::default());
     let _cancel_guard = SamplingCancellation::start(killer, cancellation.clone())?;
     let plan = super::cluster_analyze_plan(table, selected_columns)?
         .with_time_zone(statement.eval_context.session_zone());
@@ -594,7 +594,7 @@ pub(super) fn collect_regions<S>(
     concurrency: u64,
     store_batch_size: i64,
     timeout: std::time::Duration,
-    cancellation: std::sync::Arc<tidb_distsql::CancelHandle>,
+    cancellation: std::sync::Arc<tidb_txnkv::CancelHandle>,
     resource_group: &str,
     progress: &dyn Fn(i64),
 ) -> Result<tidb_stats::row_sample_collector::RowSampleCollector, AnalyzeError>
@@ -691,7 +691,7 @@ fn collect_index_ndv<S>(
     snapshot: u64,
     concurrency: u64,
     timeout: std::time::Duration,
-    cancellation: std::sync::Arc<tidb_distsql::CancelHandle>,
+    cancellation: std::sync::Arc<tidb_txnkv::CancelHandle>,
     resource_group: &str,
 ) -> Result<(i64, tidb_stats::FmSketch), AnalyzeError>
 where
@@ -843,7 +843,7 @@ mod tests {
     #[test]
     fn kill_cancels_sampling_and_completed_guard_does_not_wait_for_kill() {
         let killer = tidb_util::sqlkiller::SqlKiller::default();
-        let cancellation = std::sync::Arc::new(tidb_distsql::CancelHandle::default());
+        let cancellation = std::sync::Arc::new(tidb_txnkv::CancelHandle::default());
         let guard = super::SamplingCancellation::start(&killer, cancellation.clone()).unwrap();
         killer.send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
         for _ in 0..100 {
@@ -855,7 +855,7 @@ mod tests {
         assert!(cancellation.is_cancelled());
         drop(guard);
         killer.reset();
-        let cancellation = std::sync::Arc::new(tidb_distsql::CancelHandle::default());
+        let cancellation = std::sync::Arc::new(tidb_txnkv::CancelHandle::default());
         drop(super::SamplingCancellation::start(&killer, cancellation.clone()).unwrap());
         assert!(!cancellation.is_cancelled());
     }

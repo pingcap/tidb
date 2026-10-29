@@ -52,7 +52,7 @@ pub use chunk_decode::{
     RawChunkRow, RawColumnarChunk, TypedColumnarChunk,
 };
 pub use context::{DistSqlContext, PagingConfig, RequestContext, SessionContext, DEFAULT_DIST_SQL_CONCURRENCY};
-pub use tidb_mysql::Priority;
+use tidb_mysql::Priority;
 pub use cop_paging::{
     calculate_paging_remain, calculate_paging_retry, coprocessor_response_process_time_nanos,
     paging_response_read_bytes, BatchBucketVersionUpdate, CopIterator, CopPagingError,
@@ -66,19 +66,17 @@ pub use copr_cache::{
 pub use copr_cache_metrics::{copr_cache_metric_snapshot, CoprCacheMetricSnapshot};
 pub use coprocessor_request::CoprocessorRequestEnvelope;
 pub use distsql_runtime::{analyze_request_source, analyze_result_metadata, checksum_result_metadata, mpp_result_metadata, select_result_metadata, select_with_runtime_stats, system_endian, EncodeType, SelectInput, SelectResultMetadata, SelectResultRuntimeStats, SystemEndian, ANALYZE_RESULT_LABEL, CHECKSUM_RESULT_LABEL, DAG_RESULT_LABEL, GENERAL_SQL_TYPE, INTERNAL_SQL_TYPE, INTERNAL_TXN_STATS_SOURCE, MPP_RESULT_LABEL};
-pub use tidb_txnkv::LimiterWaitStats;
+use tidb_txnkv::LimiterWaitStats;
 pub use envelope::{ExecutorKind, ExecutorShape, RequestEnvelope, ESTIMATED_REGION_ROW_COUNT};
 pub use execution::{CpuUsage, ExecutionState, KillHandle};
-pub use tidb_txnkv::KvVariables;
-pub use tidb_txnkv::CancelHandle;
+use tidb_txnkv::KvVariables;
+use tidb_txnkv::CancelHandle;
 pub use kv_request::{request_from_context, RequestKeyRange, RequestKeyRanges, DC_LABEL_KEY, GLOBAL_REPLICA_SCOPE};
-pub use tidb_txnkv::PartitionIdAndRanges;
-pub use tidb_txnkv::KvRequestMetadata;
-pub use query_runtime::{
-    checksum, select_with_runtime_stats_over_client, send_request, CopInfo, InjectedQueryRuntime,
-    QueryDispatch, QueryOperation, QueryResponse, QueryResponseError, QueryResultContext,
-    QueryRuntimeError, QueryTransport,
-};
+use tidb_txnkv::PartitionIdAndRanges;
+use tidb_txnkv::KvRequestMetadata;
+pub use query_runtime::{checksum, select_with_runtime_stats_over_client, send_request, InjectedQueryRuntime, QueryDispatch, QueryOperation, QueryResponse, QueryResultContext, QueryRuntimeError, QueryTransport};
+use tidb_txnkv::CopInfo;
+use tidb_txnkv::QueryResponseError;
 pub use read_bytes_ema::ReadBytesEma;
 pub use region_location::RegionTaskLocation;
 pub use region_task::{
@@ -92,8 +90,8 @@ pub use request_builder::{
     KvRequestBuildError, KvRequestBuilder, RequestBuilder, TableIndexRangeSpec, TableRangeSpec,
 };
 pub use response_channel::{CopResponseSink, ResponseChannel, ResponseChannelError, ResponseChannelEvent, ResponseChannelState, SelectResultClose, ResponseChannelUnsupported, SelectResponseIter};
-pub use tidb_txnkv::ResponseRuntimeStats;
-pub use tidb_txnkv::RequestStatsSample;
+use tidb_txnkv::ResponseRuntimeStats;
+use tidb_txnkv::RequestStatsSample;
 pub use select_iter::SelectResultRow;
 pub use signed_handle_range::{signed_handle_ranges_to_kv_ranges, SignedHandleRange};
 pub use table_handle_ranges::table_handles_to_kv_ranges;
@@ -109,9 +107,9 @@ use tidb_util::paging::grow_paging_size;
 pub use tidb_util::paging::calculate_seek_cnt as calculate_seek_count;
 pub use tidb_util::paging::THRESHOLD as PAGING_THRESHOLD;
 pub use transport::RegionTaskRequest;
-pub use tidb_txnkv::TransportRequestError;
-pub use tidb_txnkv::TransportRequest;
-pub use tidb_txnkv::TransportBinding;
+use tidb_txnkv::TransportRequestError;
+use tidb_txnkv::TransportRequest;
+use tidb_txnkv::TransportBinding;
 use tidb_util::context::{Warning, WarningClass, WarningCollector, WarningLevel};
 
 pub mod remote_scan;

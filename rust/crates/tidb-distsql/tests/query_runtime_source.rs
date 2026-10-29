@@ -21,18 +21,22 @@ use std::sync::{Arc, Mutex};
 use prost::Message;
 use tidb_codec::encode_value_in_timezone;
 use tidb_datatype::{parse_datetime, Datum, FieldType, FieldTypeCode, SessionTimeZone, TimeType};
-use tidb_distsql::query_runtime::{QueryResponseError, QueryResultSubset};
-use tidb_distsql::{InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryOperation, QueryResultContext, QueryRuntimeError, QueryTransport, ResponseChannel, ResponseRuntimeStats, SelectInput, TransportBinding, TransportRequest, ANALYZE_RESULT_LABEL, CHECKSUM_RESULT_LABEL, DAG_RESULT_LABEL, GENERAL_SQL_TYPE, INTERNAL_SQL_TYPE, INTERNAL_TXN_STATS_SOURCE};
+use tidb_txnkv::QueryResponseError;
+use tidb_txnkv::QueryResultSubset;
+use tidb_distsql::{InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryOperation, QueryResultContext, QueryRuntimeError, QueryTransport, ResponseChannel, SelectInput, ANALYZE_RESULT_LABEL, CHECKSUM_RESULT_LABEL, DAG_RESULT_LABEL, GENERAL_SQL_TYPE, INTERNAL_SQL_TYPE, INTERNAL_TXN_STATS_SOURCE};
+use tidb_txnkv::ResponseRuntimeStats;
+use tidb_txnkv::TransportBinding;
+use tidb_txnkv::TransportRequest;
 use tidb_util::context::WarningCollector;
 use tidb_txnkv::StoreType;
 use tidb_proto::tipb::SelectResponse;
 use tidb_proto::{Chunk, EncodeType, KvrpcLockInfo};
 use tidb_txnkv::{wrap_cop_meet_lock, CopMeetLock, EventCallback};
 
-fn transport_request(metadata: tidb_distsql::KvRequestMetadata) -> TransportRequest {
+fn transport_request(metadata: tidb_txnkv::KvRequestMetadata) -> TransportRequest {
     TransportRequest::new(
         metadata,
-        std::sync::Arc::new(tidb_distsql::CancelHandle::default()),
+        std::sync::Arc::new(tidb_txnkv::CancelHandle::default()),
     )
 }
 
@@ -76,7 +80,7 @@ impl QueryTransport for ScriptedTransport {
 struct TrackingResponse {
     subsets: VecDeque<QueryResultSubset>,
     closed: Arc<AtomicBool>,
-    limiter_wait: tidb_distsql::LimiterWaitStats,
+    limiter_wait: tidb_txnkv::LimiterWaitStats,
 }
 
 impl tidb_txnkv::Response for TrackingResponse {
@@ -89,7 +93,7 @@ impl tidb_txnkv::Response for TrackingResponse {
         self.subsets.clear();
     }
 
-    fn limiter_wait_stats(&self) -> tidb_distsql::LimiterWaitStats {
+    fn limiter_wait_stats(&self) -> tidb_txnkv::LimiterWaitStats {
         self.limiter_wait
     }
 }
@@ -322,7 +326,7 @@ fn query_result_has_one_close_owner() {
             runtime: None,
         }]),
         closed: Arc::clone(&closed),
-        limiter_wait: tidb_distsql::LimiterWaitStats::default(),
+        limiter_wait: tidb_txnkv::LimiterWaitStats::default(),
     };
     let mut runtime = InjectedQueryRuntime::new(TrackingTransport(Some(response)));
     let mut result = runtime
@@ -424,7 +428,7 @@ fn raw_then_select_conversion_consumes_each_subset_once() {
             },
         ]),
         closed: Arc::clone(&closed),
-        limiter_wait: tidb_distsql::LimiterWaitStats::default(),
+        limiter_wait: tidb_txnkv::LimiterWaitStats::default(),
     };
     let mut runtime = InjectedQueryRuntime::new(TrackingTransport(Some(response)));
     let mut result = runtime
@@ -449,7 +453,7 @@ fn select_conversion_transfers_limiter_wait_stats_to_the_result_iterator() {
             runtime: None,
         }]),
         closed: Arc::new(AtomicBool::new(false)),
-        limiter_wait: tidb_distsql::LimiterWaitStats {
+        limiter_wait: tidb_txnkv::LimiterWaitStats {
             total_ns: 17,
             max_ns: 11,
         },

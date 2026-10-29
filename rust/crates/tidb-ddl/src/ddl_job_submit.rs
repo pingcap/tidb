@@ -21,11 +21,8 @@ use std::fmt;
 
 use tidb_meta::{key, value};
 use tidb_metadef::MAX_USER_GLOBAL_ID;
-use tidb_model::{
-    ActionType, AdminCommandOperator, AlterTableModeArgs, AlterTableModeTarget, GoField, GoShared,
-    GoSharedSlice, HistoryInfo, InvolvingSchemaInfo, Job, JobArgsValue, JobState, JobVersion,
-    PartitionInfo, TableInfo, TraceInfo,
-};
+use tidb_model::{ActionType, AdminCommandOperator, AlterTableModeArgs, AlterTableModeTarget, GoField, GoShared, HistoryInfo, InvolvingSchemaInfo, Job, JobArgsValue, JobState, JobVersion, PartitionInfo, TableInfo, TraceInfo};
+use tidb_goruntime::go_runtime::GoSharedSlice;
 use tidb_txnkv::transaction::BufferMutation;
 
 use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};

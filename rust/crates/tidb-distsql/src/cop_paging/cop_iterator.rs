@@ -24,7 +24,9 @@ use tidb_txnkv::rpc::{
     go_max_procs, query_worker_runtime, wait_with_call, CompletionError, UnaryCallContext,
 };
 
-use crate::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
+use crate::query_runtime::QueryResponse;
+use tidb_txnkv::QueryResponseError;
+use tidb_txnkv::QueryResultSubset;
 
 pub(crate) trait CopTaskSource: QueryResponse {
     fn try_next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError>;
@@ -59,7 +61,7 @@ pub struct CopIterator<R: QueryResponse> {
     start: Option<ConcurrentStart<R>>,
     lite: Option<Arc<AtomicBool>>,
     limiter_wait: crate::LimiterWaitStats,
-    info: Option<crate::query_runtime::CopInfo>,
+    info: Option<tidb_txnkv::CopInfo>,
 }
 
 impl<R: QueryResponse> CopIterator<R> {
@@ -154,7 +156,7 @@ impl<R: CopTaskSource> tidb_txnkv::Response for CopIterator<R> {
         self.close_inner();
     }
 
-    fn cop_info(&self) -> Option<crate::query_runtime::CopInfo> {
+    fn cop_info(&self) -> Option<tidb_txnkv::CopInfo> {
         self.info
     }
 

@@ -184,7 +184,7 @@ impl crate::find_best_task::dispatch::MppWarningSink for StmtContext {
 
 /// Go `base.PlanContext` as `pkg/planner/core`'s optimizer reads it.
 impl crate::optimize::OptimizeContext for StmtContext {
-    fn session_zone(&self) -> tidb_expr::SessionTimeZone {
+    fn session_zone(&self) -> tidb_datatype::SessionTimeZone {
         StmtContext::session_zone(self)
     }
     fn static_partition_prune(&self) -> bool {

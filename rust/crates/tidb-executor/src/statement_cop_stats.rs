@@ -20,7 +20,8 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use tidb_distsql::{CopResponseSink, ResponseRuntimeStats, SelectResultMetadata};
+use tidb_distsql::{CopResponseSink, SelectResultMetadata};
+use tidb_txnkv::ResponseRuntimeStats;
 use tidb_proto::ExecutorExecutionSummary;
 
 use tidb_util::execdetails::exec_details::{
@@ -409,7 +410,7 @@ mod runtime_stats_coll_sink_tests {
             &metadata,
             &tidb_distsql::SelectResultClose {
                 fetch_duration: Duration::from_micros(756),
-                cop_info: Some(tidb_distsql::CopInfo {
+                cop_info: Some(tidb_txnkv::CopInfo {
                     concurrency: 1,
                     extra_concurrency: 0,
                     build_task_elapsed: Duration::from_nanos(3_540),

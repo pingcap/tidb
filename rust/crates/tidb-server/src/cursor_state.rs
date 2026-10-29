@@ -310,13 +310,13 @@ impl Drop for CursorState {
     }
 }
 
-fn cursor_exec_error(error: tidb_executor::ExecError) -> SqlQueryError {
+fn cursor_exec_error(error: tidb_driver_error::ExecError) -> SqlQueryError {
     let mapped = tidb_executor::DriverError::Exec(error).to_mysql_error();
     SqlQueryError::from(mapped)
 }
 
 fn cursor_disk_error(error: DiskError) -> SqlQueryError {
-    cursor_exec_error(tidb_executor::ExecError::SpillFailed(error.to_string()))
+    cursor_exec_error(tidb_driver_error::ExecError::SpillFailed(error.to_string()))
 }
 
 #[cfg(test)]
@@ -327,7 +327,8 @@ mod tests {
     use std::sync::Mutex;
 
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-    use tidb_executor::{OomAction, StatementMemory};
+    use tidb_executor::StatementMemory;
+    use tidb_vardef::OomAction;
     use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 
     use super::*;

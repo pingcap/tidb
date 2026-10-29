@@ -146,7 +146,7 @@ pub use kv_response::{
 };
 pub use mem_storage::{MemIterator, MemStorage, MemStorageError};
 pub use mpp::{CancelMppTasksParam, MppBuildTasksRequest, MppClient, MppContext, MppCoordinator, MppDispatchRequest, MppError, MppQueryId, MppStoreTask, MppStreamResponse, MppTask, MppTaskLocation, MppTaskState, MppVersion};
-pub use tidb_proto::MppTaskMeta;
+use tidb_proto::MppTaskMeta;
 pub use mpp_probe::{
     global_mpp_failed_store_prober, global_mpp_server_info_manager, MppAliveClient,
     MppFailedStoreProber, MppServerInfo, MppServerInfoManager, DETECT_PERIOD, DETECT_TIMEOUT_LIMIT,

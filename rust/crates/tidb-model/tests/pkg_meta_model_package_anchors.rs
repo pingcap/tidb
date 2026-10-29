@@ -14,12 +14,8 @@
 
 //! Dedicated semantic boundaries for `pkg/meta/model`.
 
-use tidb_model::{
-    BackfillMeta, BackfillState, ColumnInfo, DDLReorgMeta, EngineAttribute, GoAny, GoShared,
-    GoSharedPointerSlice, GoSharedSlice, IndexInfo, Job, JobState, MaskingPolicyInfo,
-    MultiSchemaInfo, PartitionDefinition, PartitionInfo, PlacementSettings, RenameTableArgs,
-    SchemaDiff, StorageClassTransitRule, TableInfo,
-};
+use tidb_model::{BackfillMeta, BackfillState, ColumnInfo, DDLReorgMeta, EngineAttribute, GoAny, GoShared, GoSharedPointerSlice, IndexInfo, Job, JobState, MaskingPolicyInfo, MultiSchemaInfo, PartitionDefinition, PartitionInfo, PlacementSettings, RenameTableArgs, SchemaDiff, StorageClassTransitRule, TableInfo};
+use tidb_goruntime::go_runtime::GoSharedSlice;
 
 #[test]
 fn pkg_meta_model_column_boundary() {

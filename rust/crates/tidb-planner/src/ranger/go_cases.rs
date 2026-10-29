@@ -73,8 +73,8 @@ impl ColumnResolver for TestTable {
         }
     }
 
-    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
-        tidb_expr::SessionTimeZone::utc()
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        tidb_datatype::SessionTimeZone::utc()
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
@@ -110,8 +110,8 @@ fn retained_conditions_rebuild_current_ranges_without_rewriting() {
         }
     }
     impl ColumnResolver for Context {
-        fn time_zone(&self) -> tidb_expr::SessionTimeZone {
-            tidb_expr::SessionTimeZone::utc()
+        fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+            tidb_datatype::SessionTimeZone::utc()
         }
         fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
             self.table.resolve(path)
@@ -389,8 +389,8 @@ impl ColumnResolver for ColumnRangeTable {
         self.by_name(&name.to_ascii_lowercase()).cloned()
     }
 
-    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
-        tidb_expr::SessionTimeZone::utc()
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        tidb_datatype::SessionTimeZone::utc()
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
@@ -589,8 +589,8 @@ impl ColumnResolver for UnsignedTable {
         Some(self.columns[offset].clone())
     }
 
-    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
-        tidb_expr::SessionTimeZone::utc()
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        tidb_datatype::SessionTimeZone::utc()
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
@@ -892,8 +892,8 @@ impl ColumnResolver for YearTable {
         None
     }
 
-    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
-        tidb_expr::SessionTimeZone::utc()
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        tidb_datatype::SessionTimeZone::utc()
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
@@ -1008,8 +1008,8 @@ impl ColumnResolver for PrefixScanTable {
         None
     }
 
-    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
-        tidb_expr::SessionTimeZone::utc()
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        tidb_datatype::SessionTimeZone::utc()
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
@@ -1255,8 +1255,8 @@ impl ColumnResolver for IndexRangeTable {
         Some(self.columns[offset].clone())
     }
 
-    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
-        tidb_expr::SessionTimeZone::utc()
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        tidb_datatype::SessionTimeZone::utc()
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
@@ -1714,8 +1714,8 @@ impl ColumnResolver for Issue40997Table {
         Some(self.columns[offset].clone())
     }
 
-    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
-        tidb_expr::SessionTimeZone::utc()
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        tidb_datatype::SessionTimeZone::utc()
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
@@ -1823,8 +1823,8 @@ impl ColumnResolver for MinAccessTable {
         Some(self.columns[offset].clone())
     }
 
-    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
-        tidb_expr::SessionTimeZone::utc()
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        tidb_datatype::SessionTimeZone::utc()
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
@@ -2541,8 +2541,8 @@ impl ColumnResolver for PrefixNullTable {
         Some(self.columns[offset].clone())
     }
 
-    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
-        tidb_expr::SessionTimeZone::utc()
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        tidb_datatype::SessionTimeZone::utc()
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
@@ -2763,7 +2763,7 @@ fn range_mem_usage_matches_go() {
 /// range ["A","A"] — an IndexRangeScan, not a full scan.
 #[test]
 fn taobench_edge_dnf_index_ranges_match_go() {
-    use tidb_expr::SessionTimeZone;
+    use tidb_datatype::SessionTimeZone;
 
     struct EdgesTable;
     impl EdgesTable {

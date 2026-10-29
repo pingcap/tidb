@@ -27,7 +27,8 @@ use tidb_expr::aggregation::{AggFuncDesc, AggFunctionMode, ByItems};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::{SessionTimeZone, ZonedNoColumns};
+use tidb_expr::ZonedNoColumns;
+use tidb_datatype::SessionTimeZone;
 
 use tidb_planner::expression_rewriter::ColumnIdAllocator;
 use tidb_planner::final_mode_agg::{build_final_mode_aggregation, AggInfo};

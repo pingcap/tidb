@@ -63,10 +63,8 @@ use tidb_model::partition::{PartitionDefinition, PartitionInfo};
 use tidb_model::schema_diff::{AffectedOption, SchemaDiff};
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
-use tidb_model::{
-    get_job_ver_in_use, AddCheckConstraintArgs, CheckConstraintArgs, GoField, GoShared,
-    GoSharedPointerSlice, GoSharedSlice, HistoryInfo, Job, JobArgsValue, JobState, TraceInfo,
-};
+use tidb_model::{get_job_ver_in_use, AddCheckConstraintArgs, CheckConstraintArgs, GoField, GoShared, GoSharedPointerSlice, HistoryInfo, Job, JobArgsValue, JobState, TraceInfo};
+use tidb_goruntime::go_runtime::GoSharedSlice;
 use tidb_txnkv::transaction::{BufferMutation, MutationSetError};
 
 use tidb_infoschema::cluster_catalog::{

@@ -29,7 +29,7 @@ pub(crate) struct TableResolver<'a> {
     pub(crate) constant_context: crate::StmtContext,
     /// The statement's session `time_zone` (see [`ColumnResolver::time_zone`]),
     /// taken from the write's `StmtContext` at each build site.
-    pub(crate) zone: tidb_expr::SessionTimeZone,
+    pub(crate) zone: tidb_datatype::SessionTimeZone,
     pub(crate) no_unsigned_subtraction: bool,
     pub(crate) div_precision_increment: u32,
     /// Go `clauseMsg` for this resolver's statement clause: the write lists
@@ -70,7 +70,7 @@ impl ColumnResolver for TableResolver<'_> {
         tidb_expr::Columns::param_value(&self.constant_context, order)
     }
 
-    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
         self.zone.clone()
     }
 

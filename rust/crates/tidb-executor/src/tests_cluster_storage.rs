@@ -496,7 +496,7 @@ use tidb_txnkv::Key;
         );
         let index_key = marks
             .iter()
-            .find(|key| tidb_tablecodec::is_index_key(key.as_bytes()))
+            .find(|key| tidb_codec::table_key::is_index_key(key.as_bytes()))
             .unwrap()
             .clone();
 

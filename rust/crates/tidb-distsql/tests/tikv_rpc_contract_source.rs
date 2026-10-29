@@ -20,7 +20,8 @@ use prost::Message;
 use tidb_distsql::cop_paging::{
     build_tikv_unary_request, decode_tikv_unary_response, CopReadTaskRuntime,
 };
-use tidb_distsql::{CopPagingState, KvPriority, KvRequestMetadata, ReadEngineGeneration, RegionTaskEpoch, RegionTaskPeer, RegionTaskTopology, RequestKeyRange, RequestKeyRanges};
+use tidb_distsql::{CopPagingState, KvPriority, ReadEngineGeneration, RegionTaskEpoch, RegionTaskPeer, RegionTaskTopology, RequestKeyRange, RequestKeyRanges};
+use tidb_txnkv::KvRequestMetadata;
 use tidb_txnkv::StoreType;
 use tidb_txnkv::RequestType;
 use tidb_txnkv::RequestSource;

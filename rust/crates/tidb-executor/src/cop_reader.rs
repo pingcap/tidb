@@ -53,7 +53,8 @@ use std::sync::{Arc, Mutex};
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_distsql::{CancelHandle, DistSqlContext, EncodeType, ExecutorKind, ExecutorShape, QueryResultContext, RequestBuilder, RequestEnvelope, SelectInput, SelectResponseIter};
+use tidb_distsql::{DistSqlContext, EncodeType, ExecutorKind, ExecutorShape, QueryResultContext, RequestBuilder, RequestEnvelope, SelectInput, SelectResponseIter};
+use tidb_txnkv::CancelHandle;
 use tidb_util::context::WarningCollector;
 use tidb_planner::cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
 use tidb_planner::physical::{PhysicalIndexScan, PhysicalTableScan};
@@ -748,7 +749,7 @@ struct RemoteScanPlan {
     estimated_net_bytes: f64,
     max_execution_time_ms: u64,
     /// Go `RequestBuilder.getKVPriority(StmtCtx.Priority)` for this request.
-    priority: tidb_distsql::Priority,
+    priority: tidb_mysql::Priority,
     /// Go `StmtCtx.NotFillCache` for this request.
     not_fill_cache: bool,
     /// Go `SessionVars.DistSQLScanConcurrency()` for this request.
@@ -1330,8 +1331,8 @@ mod tests {
 
     #[test]
     fn registered_storage_errors_reach_coprocessor_rows_and_chunks() {
-        use tidb_distsql::query_runtime::QueryResultSubset;
-        use tidb_distsql::QueryResponseError;
+        use tidb_txnkv::QueryResultSubset;
+        use tidb_txnkv::QueryResponseError;
 
         struct Failure;
         impl tidb_txnkv::Response for Failure {

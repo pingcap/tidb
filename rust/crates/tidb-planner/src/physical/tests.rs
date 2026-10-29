@@ -1287,7 +1287,8 @@ fn mpp_hash_agg_enumeration_matches_go_run_modes() {
     use crate::physical::{get_hash_aggs_with_mpp, AggMppRunMode, PhysicalPlan};
     use crate::stats_info::StatsInfo;
     use tidb_expr::aggregation::{names, AggFuncDesc};
-    use tidb_expr::{SessionTimeZone, ZonedNoColumns};
+    use tidb_expr::ZonedNoColumns;
+    use tidb_datatype::SessionTimeZone;
 
     let allocator = PlanIdAllocator::new();
     let input = Column::new(1, FieldType::new(FieldTypeCode::LongLong));

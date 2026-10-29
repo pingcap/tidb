@@ -114,8 +114,8 @@ pub fn normalize_split_policy(
         ));
     }
     let policy = RegionSplitPolicy {
-        lower: tidb_model::GoSharedSlice::from_vec(restored_bounds(lower)?),
-        upper: tidb_model::GoSharedSlice::from_vec(restored_bounds(upper)?),
+        lower: tidb_goruntime::go_runtime::GoSharedSlice::from_vec(restored_bounds(lower)?),
+        upper: tidb_goruntime::go_runtime::GoSharedSlice::from_vec(restored_bounds(upper)?),
         regions,
     };
     Ok((index_name, policy))

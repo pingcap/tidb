@@ -474,9 +474,10 @@ pub fn key_needs_pessimistic_lock(
     value: &[u8],
     flags: tikv_client::kv::KeyFlags,
 ) -> bool {
-    use tidb_tablecodec::{
-        index_kv_is_unique, is_index_key, is_record_key, is_temp_index_key, is_untouched_index_kv,
-    };
+    use tidb_tablecodec::{index_kv_is_unique, is_record_key};
+    use tidb_codec::table_key::is_index_key;
+    use tidb_codec::table_key::is_temp_index_key;
+    use tidb_codec::table_key::is_untouched_index_kv;
     if !key.starts_with(b"t") {
         return true;
     }

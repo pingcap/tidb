@@ -36,7 +36,9 @@ use tidb_proto::{Chunk as ResponseChunk, EncodeType, ExecutorExecutionSummary, S
 use super::chunk_decode::{decode_chunk, decode_select_response, ChunkDecodeError};
 use super::distsql_runtime::{SelectResultMetadata, SelectResultRuntimeStats};
 use tidb_txnkv::LimiterWaitStats;
-use super::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
+use super::query_runtime::QueryResponse;
+use tidb_txnkv::QueryResponseError;
+use tidb_txnkv::QueryResultSubset;
 use tidb_txnkv::ResponseRuntimeStats;
 use super::select_iter::SelectResultRow;
 use crate::{Warning, WarningCollector, WarningLevel};
@@ -98,7 +100,7 @@ pub struct SelectResultClose {
     /// Go `HasLimiterWaitStats.GetLimiterWaitStats`.
     pub limiter_wait: LimiterWaitStats,
     /// Go `copr.CopInfo`.
-    pub cop_info: Option<crate::query_runtime::CopInfo>,
+    pub cop_info: Option<tidb_txnkv::CopInfo>,
 }
 
 static SELECT_RESULT_STREAMS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -417,7 +419,7 @@ enum SelectResponseSource {
 }
 
 impl SelectResponseSource {
-    fn cop_info(&self) -> Option<crate::query_runtime::CopInfo> {
+    fn cop_info(&self) -> Option<tidb_txnkv::CopInfo> {
         match self {
             Self::Channel(_) => None,
             Self::Query(source) => source.cop_info(),

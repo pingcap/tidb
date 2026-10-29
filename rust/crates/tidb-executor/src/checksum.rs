@@ -33,7 +33,8 @@ use std::sync::{Arc, Mutex};
 
 use prost::Message;
 use tidb_datatype::Datum;
-use tidb_distsql::{DatumRange, RequestBuilder, TransportRequest};
+use tidb_distsql::{DatumRange, RequestBuilder};
+use tidb_txnkv::TransportRequest;
 use tidb_proto::tipb;
 
 use tidb_kv::storage::StorageError;

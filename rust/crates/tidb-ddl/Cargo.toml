@@ -12,6 +12,7 @@ description = "Go pkg/ddl's worker side: the owner-stepped DDL job scheduler, th
 workspace = true
 
 [dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }

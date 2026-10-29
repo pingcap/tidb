@@ -160,7 +160,8 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use tidb_model::{GoShared, GoSharedSlice, PartitionDefinition, PartitionInfo, TableInfo};
+    use tidb_model::{GoShared, PartitionDefinition, PartitionInfo, TableInfo};
+    use tidb_goruntime::go_runtime::GoSharedSlice;
 
     use super::{InfoSchema, TableInfoGetter, TableItem};
 

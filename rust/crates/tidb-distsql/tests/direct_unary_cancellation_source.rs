@@ -10,7 +10,10 @@
 
 use std::sync::Arc;
 
-use tidb_distsql::{ExecutionState, KvRequestMetadata, TransportBinding, TransportRequest};
+use tidb_distsql::ExecutionState;
+use tidb_txnkv::KvRequestMetadata;
+use tidb_txnkv::TransportBinding;
+use tidb_txnkv::TransportRequest;
 
 #[test]
 fn detached_execution_fans_out_to_the_bound_request_authority() {
@@ -70,7 +73,7 @@ fn closing_one_bound_request_does_not_cancel_its_execution_or_sibling() {
 #[test]
 fn concurrent_execution_cancel_cannot_miss_a_registering_request() {
     for _ in 0..64 {
-        let execution = Arc::new(tidb_distsql::CancelHandle::default());
+        let execution = Arc::new(tidb_txnkv::CancelHandle::default());
         let barrier = Arc::new(std::sync::Barrier::new(2));
         let child_execution = Arc::clone(&execution);
         let child_barrier = Arc::clone(&barrier);

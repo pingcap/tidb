@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Go pkg/kv for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-codec = { path = "../tidb-codec" }
 tracing = "0.1"
 smallvec = { workspace = true }
 tidb-datatype = { path = "../tidb-datatype" }
@@ -21,7 +22,6 @@ tidb-config = { path = "../tidb-config" }
 tikv-client = { workspace = true }
 
 [dev-dependencies]
-tidb-codec = { path = "../tidb-codec" }
 
 [features]
 test-util = []

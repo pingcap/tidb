@@ -10,6 +10,7 @@ description = "Session lifecycle and state authority for the TiDB Rust rewrite."
 autotests = false
 
 [dependencies]
+tidb-driver-error = { path = "../tidb-driver-error" }
 tidb-fixcontrol = { path = "../tidb-fixcontrol" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-stats-handle-history = { path = "../tidb-stats-handle-history" }

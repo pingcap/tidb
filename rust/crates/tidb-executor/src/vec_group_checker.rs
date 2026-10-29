@@ -1426,7 +1426,8 @@ mod tests {
     #[test]
     fn timestamp_boundary_errors_follow_statement_policy() {
         use tidb_datatype::{CoreTime, Time, TimeType};
-        use tidb_expr::{ErrorLevel, SessionTimeZone};
+        use tidb_expr::ErrorLevel;
+        use tidb_datatype::SessionTimeZone;
         struct Context {
             level: ErrorLevel,
             zone: SessionTimeZone,
@@ -1693,7 +1694,7 @@ mod tests {
             ),
         ];
         let ctx = tidb_sessionctx::StmtContext::default().with_time_zone(
-            tidb_expr::SessionTimeZone::Fixed {
+            tidb_datatype::SessionTimeZone::Fixed {
                 name: "+08:00".to_owned(),
                 offset_secs: 8 * 3600,
             },

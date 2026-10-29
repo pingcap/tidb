@@ -24,7 +24,7 @@ use tidb_stmtsummary::statement_summary::{
     EncodedPlanError, StmtExecInfo, StmtExecLazyInfo, StmtSummaryStmtCtx,
     STMT_SUMMARY_BY_DIGEST_MAP,
 };
-use tidb_tablecodec::is_index_key;
+use tidb_codec::table_key::is_index_key;
 use tidb_codec::table_key::RecordHandle;
 use tidb_codec::table_key::encode_row_key_with_handle;
 

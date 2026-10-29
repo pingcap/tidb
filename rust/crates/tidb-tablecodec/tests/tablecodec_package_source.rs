@@ -52,22 +52,11 @@ use tidb_codec::table_key::decode_meta_key;
 use tidb_codec::table_key::decode_index_id;
 use tidb_codec::table_key::cut_row_key_prefix;
 use tidb_codec::table_key::cut_index_prefix;
-use tidb_tablecodec::{
-    cut_index_key, cut_index_key_by_ids, cut_table_row,
-    decode_column_value,
-    decode_handle_in_index_value, decode_index_handle, decode_index_kv, decode_table_row_into_map,
-    decode_table_row_to_map, decode_temp_index_value, encode_handle_in_unique_index_value,
-    encode_old_table_row, encode_table_row, encode_table_value,
-    filter_overwritten_temp_index_values, generate_index_key, generate_index_value,
-    get_table_index_key_range, index_key_to_temp_index_key,
-    index_kv_is_unique, is_index_key, is_record_key, is_table_key,
-    is_temp_index_key, is_untouched_index_kv, split_index_value,
-    temp_index_key_to_index_key, temp_index_value_is_untouched, truncate_index_value,
-    unflatten_datum, unflatten_datums, verify_table_ids_for_ranges, HandleStatus, IndexColumn,
-    IndexInfo, TableColumn, TableInfo, TableKeyRange, TempIndexValue, TempIndexValueElem,
-    COMMON_HANDLE_FLAG, INDEX_ID_MASK, INDEX_VERSION_FLAG, PARTITION_ID_FLAG,
-    UNCOMMITTED_INDEX_KV_FLAG,
-};
+use tidb_tablecodec::{cut_index_key, cut_index_key_by_ids, cut_table_row, decode_column_value, decode_handle_in_index_value, decode_index_handle, decode_index_kv, decode_table_row_into_map, decode_table_row_to_map, decode_temp_index_value, encode_handle_in_unique_index_value, encode_old_table_row, encode_table_row, encode_table_value, filter_overwritten_temp_index_values, generate_index_key, generate_index_value, get_table_index_key_range, index_key_to_temp_index_key, index_kv_is_unique, is_record_key, is_table_key, split_index_value, temp_index_key_to_index_key, temp_index_value_is_untouched, truncate_index_value, unflatten_datum, unflatten_datums, verify_table_ids_for_ranges, HandleStatus, IndexColumn, IndexInfo, TableColumn, TableInfo, TableKeyRange, TempIndexValue, TempIndexValueElem, COMMON_HANDLE_FLAG, INDEX_ID_MASK, INDEX_VERSION_FLAG, PARTITION_ID_FLAG};
+use tidb_codec::table_key::is_index_key;
+use tidb_codec::table_key::is_temp_index_key;
+use tidb_codec::table_key::is_untouched_index_kv;
+use tidb_codec::table_key::UNCOMMITTED_INDEX_KV_FLAG;
 use tidb_txnkv::{CommonHandle, Handle, IntHandle, PartitionHandle};
 
 fn int_handle(value: i64) -> Handle {

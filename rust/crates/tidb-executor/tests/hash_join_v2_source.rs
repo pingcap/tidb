@@ -38,7 +38,9 @@ use tidb_executor::join_row_table::{RowLayoutMeta, RowTableSegment};
 use tidb_executor::join_table_meta::{ColumnType, JoinTableMeta, KeyMode};
 use tidb_executor::row_table_builder::{get_partition_mask_offset, BuildContext, PartitionInfo};
 use tidb_executor::joiner::JoinType;
-use tidb_executor::{ExecError, Executor, ExecutorMeta, OomAction, StatementMemory};
+use tidb_executor::{Executor, ExecutorMeta, StatementMemory};
+use tidb_driver_error::ExecError;
+use tidb_vardef::OomAction;
 
 // ---------------------------------------------------------------------------
 // Fixtures

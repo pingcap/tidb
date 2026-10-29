@@ -926,7 +926,7 @@ fn schemata_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Da
 fn partitions_rows(
     catalog: &Catalog,
     visibility: &SchemaVisibility,
-    zone: &tidb_expr::SessionTimeZone,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
     // One row of an object with no partitions: every partition cell NULL, the
@@ -1115,7 +1115,7 @@ use tidb_hack::{GoCaseCompare, GoToLower};
 /// `TIDB_TABLE_ID` comes from `tableIDMap`. Emitted for EVERY table Go
 /// registers, served here or not -- the id and the name are the table's
 /// METADATA, from Go's own source; only QUERYING an unserved one refuses.
-fn information_schema_tables_rows(zone: &tidb_expr::SessionTimeZone) -> Vec<Vec<Datum>> {
+fn information_schema_tables_rows(zone: &tidb_datatype::SessionTimeZone) -> Vec<Vec<Datum>> {
     INFORMATION_SCHEMA_TABLE_IDS
         .iter()
         .map(|(offset, name)| {
@@ -2190,7 +2190,7 @@ pub fn sys_tables() -> [(&'static str, i64); 1] {
 /// A `DATETIME` for a table's `UpdateTS` TSO in the session zone (Go
 /// `types.FromGoTime(table.GetUpdateTime().In(loc))`), NULL for a table whose
 /// creating tier recorded no TSO.
-pub fn update_time_datum(update_ts: u64, zone: &tidb_expr::SessionTimeZone) -> Datum {
+pub fn update_time_datum(update_ts: u64, zone: &tidb_datatype::SessionTimeZone) -> Datum {
     use chrono::{Datelike, TimeZone, Timelike};
     // Go `TSConvert2Time`: a table that never recorded a TSO (the seeded
     // `metrics_schema` ones) reads as the epoch in the session zone.
@@ -2224,7 +2224,7 @@ pub fn update_time_datum(update_ts: u64, zone: &tidb_expr::SessionTimeZone) -> D
 pub fn show_table_status_rows(
     catalog: &Catalog,
     visibility: &SchemaVisibility,
-    zone: &tidb_expr::SessionTimeZone,
+    zone: &tidb_datatype::SessionTimeZone,
     database: &str,
 ) -> Vec<Vec<Datum>> {
     const TABLE_SCHEMA: usize = 1;
@@ -2259,7 +2259,7 @@ pub fn show_table_status_rows(
 fn tables_rows(
     catalog: &Catalog,
     visibility: &SchemaVisibility,
-    zone: &tidb_expr::SessionTimeZone,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Vec<Vec<Datum>> {
     // go's TABLES output lists the USER schemas first (the ci-alphabetical
     // order), then information_schema's own tables, then the
@@ -2479,7 +2479,7 @@ fn view_tables_row(
     schema: &str,
     table_name: &str,
     view: &crate::ViewDef,
-    zone: &tidb_expr::SessionTimeZone,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Vec<Datum> {
     let mut row = vec![text(CATALOG), text(schema), text(table_name), text("VIEW")];
     // ENGINE through CREATE_OPTIONS: sixteen columns a view has no value for.
@@ -2507,7 +2507,7 @@ fn view_tables_row(
 fn sequence_tables_row(
     schema: &str,
     sequence: &tidb_table::sequence::SequenceDef,
-    zone: &tidb_expr::SessionTimeZone,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Vec<Datum> {
     vec![
         text(CATALOG),

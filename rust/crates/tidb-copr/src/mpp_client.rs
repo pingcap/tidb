@@ -1995,7 +1995,7 @@ mod mpp_read_batch_tests {
     #[test]
     fn quota_exceeded_is_a_typed_sql_failure_and_cleans_up() {
         let fixture = Fixture::new();
-        let memory = tidb_kv::mem_quota::StatementMemory::new(2, tidb_executor::OomAction::Cancel, 42);
+        let memory = tidb_kv::mem_quota::StatementMemory::new(2, tidb_vardef::OomAction::Cancel, 42);
         let error = match fixture.open_with_memory(memory.clone()) {
             Err(error) => error,
             Ok(_) => panic!("the first packet must be accounted before setup returns"),

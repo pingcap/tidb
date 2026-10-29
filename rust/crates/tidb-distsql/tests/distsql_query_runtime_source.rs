@@ -15,7 +15,8 @@
 #![allow(missing_docs)]
 
 use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_distsql::{InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryResultContext, QueryTransport, ResponseChannel, SelectInput, TransportRequest};
+use tidb_distsql::{InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryResultContext, QueryTransport, ResponseChannel, SelectInput};
+use tidb_txnkv::TransportRequest;
 use tidb_util::context::WarningCollector;
 use tidb_txnkv::StoreType;
 
@@ -47,7 +48,7 @@ fn injected_query_runtime_feeds_the_existing_recordset_consumer() {
     let mut builder = KvRequestBuilder::new();
     let request = TransportRequest::new(
         builder.build().unwrap(),
-        std::sync::Arc::new(tidb_distsql::CancelHandle::default()),
+        std::sync::Arc::new(tidb_txnkv::CancelHandle::default()),
     );
     let mut runtime = InjectedQueryRuntime::new(OneResponse(Some(source)));
     let result = runtime

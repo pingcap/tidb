@@ -20,7 +20,8 @@
 use std::fmt;
 use std::sync::Arc;
 
-use tidb_distsql::{QueryDispatch, QueryTransport, TransportRequest};
+use tidb_distsql::{QueryDispatch, QueryTransport};
+use tidb_txnkv::TransportRequest;
 use tidb_txnkv::RequestTypeSupportedChecker;
 
 use tidb_store_driver::real_tikv_read::RealTiKvSessionTransportFactory;

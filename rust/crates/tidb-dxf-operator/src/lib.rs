@@ -21,9 +21,9 @@ mod wrapper;
 
 pub use compose::{compose, SimpleDataChannel, WithSink, WithSource};
 pub use operator::{AsyncOperator, Context, Operator, OperatorError, TunableOperator};
-pub use tidb_resourcemanager::workerpool::Worker;
-pub use tidb_resourcemanager::workerpool::TaskMayPanic;
-pub use tidb_resourcemanager::workerpool::NoResult;
+use tidb_resourcemanager::workerpool::Worker;
+use tidb_resourcemanager::workerpool::TaskMayPanic;
+use tidb_resourcemanager::workerpool::NoResult;
 pub use pipeline::AsyncPipeline;
 pub use wrapper::SimpleDataSource;
 

@@ -548,7 +548,7 @@ impl Session {
         // must be able to raise a quota after a cancelled query.
         if is_set_literal(bound) {
             return tidb_expr::eval(bound)
-                .map_err(|error| DriverError::Exec(tidb_executor::ExecError::Eval(error)));
+                .map_err(|error| DriverError::Exec(tidb_driver_error::ExecError::Eval(error)));
         }
         // A scalar subquery value runs as its own SELECT: Go's executor
         // evaluates the subplan and enforces the one-row scalar contract

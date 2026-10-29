@@ -44,7 +44,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use prost::Message as _;
 
-use crate::query_runtime::{QueryDispatch, QueryOperation, QueryResponseError, QueryResultSubset, QueryTransport};
+use crate::query_runtime::{QueryDispatch, QueryOperation, QueryTransport};
+use tidb_txnkv::QueryResponseError;
+use tidb_txnkv::QueryResultSubset;
 use crate::{
     CancelHandle, CoprCache, RegionTaskEpoch, RegionTaskPeer, RegionTaskTopology,
     ResponseChannelEvent, TransportRequest,
@@ -956,7 +958,7 @@ impl<S: NativeCopStore + ?Sized> tidb_txnkv::Response for NativeCopResponse<S> {
     /// Go `copClient.Send`'s concurrency: the request's, capped by the task
     /// count and by the tasks that are not small, with the extra workers the
     /// small tasks get (`smallTaskConcurrency`).
-    fn cop_info(&self) -> Option<crate::query_runtime::CopInfo> {
+    fn cop_info(&self) -> Option<tidb_txnkv::CopInfo> {
         let tasks = self.logical_order.len();
         let use_row_hints = !self.metadata.request_source.internal;
         let small = if use_row_hints {
@@ -978,7 +980,7 @@ impl<S: NativeCopStore + ?Sized> tidb_txnkv::Response for NativeCopResponse<S> {
         if self.metadata.keep_order {
             extra = extra.min(20);
         }
-        Some(crate::query_runtime::CopInfo {
+        Some(tidb_txnkv::CopInfo {
             concurrency,
             extra_concurrency: extra,
             build_task_elapsed: self.build_task_elapsed,
@@ -1080,7 +1082,7 @@ impl<S: NativeCopStore + ?Sized> super::cop_iterator::CopWorkerSource for Native
 #[cfg(test)]
 mod tests {
     use super::NativeCopError;
-    use crate::query_runtime::QueryResponseError;
+    use tidb_txnkv::QueryResponseError;
 
     /// Go `ToTiDBErr`: a read whose region-miss budget ran out fails with
     /// `ErrRegionUnavailable` (9005), and the task state machine's

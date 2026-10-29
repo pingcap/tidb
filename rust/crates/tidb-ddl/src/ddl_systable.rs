@@ -21,7 +21,8 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::Duration;
 
 use tidb_datatype::Datum;
-use tidb_model::{GoShared, GoSharedSlice, Job, JobW};
+use tidb_model::{GoShared, Job, JobW};
+use tidb_goruntime::go_runtime::GoSharedSlice;
 
 use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
 use crate::ddl_job_table::{DdlJobTable, DdlJobTableError};

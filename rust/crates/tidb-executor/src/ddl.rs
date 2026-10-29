@@ -208,12 +208,12 @@ mod tests_table_partition;
 
 
 pub use table_partition::{append_partition_defs, build_partition_metadata, escape_identifier, linear_partitioning_warning, partition_placement_text, StoredPartitionMetadata};
-pub use tidb_table::partition_metadata::{partition_spec_from_metadata, StoredPartitionDefinition};
+use tidb_table::partition_metadata::{partition_spec_from_metadata, StoredPartitionDefinition};
 
 pub use hypo_index::set_advisor_hypo_index;
-pub use tidb_sessionstates::HypoIndexMap;
-pub use tidb_table::hypo_index::HypoIndexes;
-pub use tidb_table::hypo_index::HypoTiFlashReplicas;
+use tidb_sessionstates::HypoIndexMap;
+use tidb_table::hypo_index::HypoIndexes;
+use tidb_table::hypo_index::HypoTiFlashReplicas;
 pub use indexes::{index_backfill_error};
 
 

@@ -45,7 +45,7 @@ use crate::plan_base::{PlanError, PlanIdAllocator};
 /// settings (`SessionVars`), its warnings and phase clocks (`StmtCtx`).
 pub trait OptimizeContext: tidb_expr::Columns + PlanCacheMarker + HintWarningSink + MppWarningSink {
     /// Go `SessionVars.Location()` as the expression resolver reads it.
-    fn session_zone(&self) -> tidb_expr::SessionTimeZone;
+    fn session_zone(&self) -> tidb_datatype::SessionTimeZone;
     /// Go `!SessionVars.UseDynamicPartitionPrune()`.
     fn static_partition_prune(&self) -> bool;
     /// Go `SessionVars.EnableStableResultMode`.

@@ -823,7 +823,7 @@ pub struct StmtContextData {
     /// consumed only if the lazy statement clock is initialized.
     statement_timestamp: Option<f64>,
     sysdate_is_now: bool,
-    time_zone: Option<tidb_expr::SessionTimeZone>,
+    time_zone: Option<tidb_datatype::SessionTimeZone>,
     /// Go `StmtCtx.ResourceGroupName`: the statement hint's group when one
     /// is present, otherwise the connection's selected resource group.
     resource_group_name: String,
@@ -2426,7 +2426,7 @@ context_configuration! {
     pub fn with_lazy_clock(
         mut self,
         timestamp: Option<f64>,
-        time_zone: tidb_expr::SessionTimeZone,
+        time_zone: tidb_datatype::SessionTimeZone,
     ) -> Self {
         self.statement_clock = Some(Arc::new(OnceLock::new()));
         self.statement_timestamp = timestamp;
@@ -4665,7 +4665,7 @@ impl StmtContext {
     pub fn with_clock(
         mut self,
         now: (i64, u32, i32),
-        time_zone: tidb_expr::SessionTimeZone,
+        time_zone: tidb_datatype::SessionTimeZone,
     ) -> Self {
         self.statement_clock = Some(Arc::new(OnceLock::from(now)));
         self.statement_timestamp = None;
@@ -4680,7 +4680,7 @@ impl StmtContext {
     /// those two facts separate avoids manufacturing a clock reading merely
     /// to carry the session's real zone.
     #[must_use]
-    pub fn with_time_zone(mut self, time_zone: tidb_expr::SessionTimeZone) -> Self {
+    pub fn with_time_zone(mut self, time_zone: tidb_datatype::SessionTimeZone) -> Self {
         self.time_zone = Some(time_zone);
         self
     }
@@ -4961,7 +4961,7 @@ impl StmtContext {
     /// values with. Inherent so the storage seam can ask for it without
     /// pulling the whole [`tidb_expr::Columns`] trait into scope.
     #[must_use]
-    pub fn session_zone(&self) -> tidb_expr::SessionTimeZone {
+    pub fn session_zone(&self) -> tidb_datatype::SessionTimeZone {
         <Self as tidb_expr::Columns>::time_zone(self)
     }
 
@@ -5775,7 +5775,7 @@ impl tidb_table::context::MutateContext for StmtContext {
         StmtContext::append_warning_parts(self, code, message);
     }
 
-    fn session_zone(&self) -> tidb_expr::SessionTimeZone {
+    fn session_zone(&self) -> tidb_datatype::SessionTimeZone {
         StmtContext::session_zone(self)
     }
 }
@@ -5946,10 +5946,10 @@ impl Columns for StmtContext {
         self.sysdate_is_now
     }
 
-    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
         self.time_zone
             .clone()
-            .unwrap_or(tidb_expr::SessionTimeZone::Fixed {
+            .unwrap_or(tidb_datatype::SessionTimeZone::Fixed {
                 name: "UTC".to_owned(),
                 offset_secs: 0,
             })
@@ -6533,7 +6533,7 @@ mod tests {
     fn lazy_statement_clock_initializes_once_across_clones() {
         let ctx = StmtContext::for_query().with_lazy_clock(
             Some(1_700_000_000.654_321),
-            tidb_expr::SessionTimeZone::Fixed {
+            tidb_datatype::SessionTimeZone::Fixed {
                 name: "+00:00".to_owned(),
                 offset_secs: 0,
             },

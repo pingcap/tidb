@@ -176,7 +176,7 @@ fn tidb_decode_key_uses_table_column_and_index_metadata() {
                 .stored_keys()
                 .unwrap()
                 .into_iter()
-                .find(|key| tidb_tablecodec::is_index_key(key))
+                .find(|key| tidb_codec::table_key::is_index_key(key))
                 .unwrap())
         })
         .unwrap();
@@ -218,7 +218,7 @@ fn tidb_decode_key_distinguishes_clustered_and_partition_handles() {
                     .unwrap()
                     .clone(),
                 keys.iter()
-                    .find(|key| tidb_tablecodec::is_index_key(key))
+                    .find(|key| tidb_codec::table_key::is_index_key(key))
                     .unwrap()
                     .clone(),
             ))

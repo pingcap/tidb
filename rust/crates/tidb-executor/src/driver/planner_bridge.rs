@@ -1766,7 +1766,7 @@ fn subquery_evaluator<'a>(
     plan_ids: &'a PlanIdAllocator,
     column_ids: &'a ColumnIdAllocator,
     use_plan_cache: bool,
-    session_zone: &'a tidb_expr::SessionTimeZone,
+    session_zone: &'a tidb_datatype::SessionTimeZone,
     registry: &ScalarSubqueryRegistry,
 ) -> impl Fn(
     &LogicalPlan,
@@ -2834,7 +2834,7 @@ fn optimize_built_logical(
     use_plan_cache: bool,
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
-    _session_zone: &tidb_expr::SessionTimeZone,
+    _session_zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<LogicalPlan, tidb_planner::plan_base::PlanError> {
     struct PlannerStatisticsLoad<'a> {
         catalog: &'a Catalog,
@@ -3846,7 +3846,7 @@ mod statistics_initialization_tests {
                     false,
                     &plan_ids,
                     &column_ids,
-                    &tidb_expr::SessionTimeZone::utc(),
+                    &tidb_datatype::SessionTimeZone::utc(),
                 );
                 if bound {
                     let plan = optimized.expect("bound parameter plans");

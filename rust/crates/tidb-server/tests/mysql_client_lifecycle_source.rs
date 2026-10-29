@@ -14,7 +14,8 @@ use std::sync::{Arc, Mutex};
 
 use sha1::{Digest, Sha1};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_executor::{OomAction, StatementMemory};
+use tidb_executor::StatementMemory;
+use tidb_vardef::OomAction;
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
 use tidb_protocol::{
     PacketReader, PacketWriter, COM_INIT_DB, COM_PING, COM_QUERY, COM_QUIT,

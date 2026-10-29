@@ -205,7 +205,7 @@ mod tests {
                 .collect();
             table.partition = Some(tidb_model::GoShared::new(tidb_model::PartitionInfo {
                 enable: true,
-                definitions: tidb_model::GoSharedSlice::from_vec(definitions),
+                definitions: tidb_goruntime::go_runtime::GoSharedSlice::from_vec(definitions),
                 ..tidb_model::PartitionInfo::default()
             }));
         }

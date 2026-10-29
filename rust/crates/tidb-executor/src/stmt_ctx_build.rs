@@ -31,7 +31,7 @@ use std::sync::Mutex;
 
 use tidb_datatype::Datum;
 
-use crate::ddl::HypoIndexes;
+use tidb_table::hypo_index::HypoIndexes;
 use crate::{DriverError, MysqlRng, StmtOutput};
 
 use tidb_hack::GoToLower;
@@ -2145,9 +2145,9 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// Go `SessionVars` / `StmtCtx` state `executor_first_run_breakpoint`, mutably.
     fn executor_first_run_breakpoint_mut(&mut self) -> &mut Arc<std::sync::atomic::AtomicBool>;
     /// Go `SessionVars` / `StmtCtx` state `hypo_tiflash_replicas`, read.
-    fn hypo_tiflash_replicas_ref(&self) -> &Arc<crate::ddl::HypoTiFlashReplicas>;
+    fn hypo_tiflash_replicas_ref(&self) -> &Arc<tidb_table::hypo_index::HypoTiFlashReplicas>;
     /// Go `SessionVars` / `StmtCtx` state `hypo_tiflash_replicas`, mutably.
-    fn hypo_tiflash_replicas_mut(&mut self) -> &mut Arc<crate::ddl::HypoTiFlashReplicas>;
+    fn hypo_tiflash_replicas_mut(&mut self) -> &mut Arc<tidb_table::hypo_index::HypoTiFlashReplicas>;
     /// Go `SessionVars` / `StmtCtx` state `local_temporary_tables`, read.
     fn local_temporary_tables_ref(&self) -> &Vec<(String, String, crate::KvTable)>;
     /// Go `SessionVars` / `StmtCtx` state `local_temporary_tables`, mutably.

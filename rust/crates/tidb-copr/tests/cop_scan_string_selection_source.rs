@@ -35,8 +35,10 @@ use std::sync::{Arc, Mutex};
 
 use prost::Message;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_distsql::query_runtime::{QueryResponseError, QueryResultSubset};
-use tidb_distsql::{QueryDispatch, QueryTransport, TransportRequest};
+use tidb_txnkv::QueryResponseError;
+use tidb_txnkv::QueryResultSubset;
+use tidb_distsql::{QueryDispatch, QueryTransport};
+use tidb_txnkv::TransportRequest;
 use tidb_copr::cop_client::CopClient;
 use tidb_store_driver::real_tikv_read::RealTiKvSessionTransportFactory;
 use tidb_kv::cluster_storage::{
@@ -503,7 +505,7 @@ fn a_refused_string_comparison_still_answers_right_and_sends_the_whole_relation(
 /// so the two cannot drift apart: they are one assertion run twice.
 #[test]
 fn each_request_carries_the_issuing_statements_time_zone() {
-    let zoned = |zone: tidb_expr::SessionTimeZone| {
+    let zoned = |zone: tidb_datatype::SessionTimeZone| {
         let (catalog, region) = fixture("utf8mb4_bin");
         let context = StmtContext::for_query().with_clock((0, 0, 0), zone);
         run_select_on("SELECT id, s FROM t WHERE s = 'a'", &catalog, &context)
