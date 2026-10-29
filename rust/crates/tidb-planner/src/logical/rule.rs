@@ -680,6 +680,8 @@ pub struct RuleContext<'a> {
     /// driver-owned whole-query optimizer a CTE class runs the first time its
     /// statistics are asked for (`logical_cte.go:172`).
     pub cte_optimizer: Option<&'a dyn CteOptimizer>,
+    /// Go `utilfuncp.DeriveStats4DataSource`: core's `deriveStats4DataSource`.
+    pub data_source_stats: &'a dyn super::rewrite::DataSourceStatsDeriver,
 }
 
 /// Go `LogicalCTE.DeriveStats`' lazy `DoOptimize` of a CTE class: the seed

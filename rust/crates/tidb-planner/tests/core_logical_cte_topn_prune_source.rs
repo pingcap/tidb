@@ -114,6 +114,7 @@ fn test_context<'a>(allocator: &'a PlanIdAllocator) -> RuleContext<'a> {
         hint_warning_sink: None,
         used_stats_recorder: None,
         cte_optimizer: None,
+        data_source_stats: &tidb_planner::stats::CoreDataSourceStats,
     }
 }
 

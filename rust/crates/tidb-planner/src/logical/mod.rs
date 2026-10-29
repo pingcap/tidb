@@ -992,9 +992,11 @@ impl LogicalPlan {
     pub fn recursive_derive_stats(
         &mut self,
         col_groups: &[Vec<Column>],
+        data_source_stats: &dyn rewrite::DataSourceStatsDeriver,
     ) -> Result<(StatsInfo, bool), PlanError> {
         let plan = std::mem::replace(self, Self::TableDual(LogicalTableDual::default()));
-        let (plan, result) = rewrite::recursive_derive_stats(plan, col_groups.to_vec(), 0);
+        let (plan, result) =
+            rewrite::recursive_derive_stats(plan, col_groups.to_vec(), 0, data_source_stats);
         *self = plan;
         result
     }

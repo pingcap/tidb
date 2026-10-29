@@ -105,6 +105,7 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         hint_warning_sink: None,
         used_stats_recorder: None,
         cte_optimizer: None,
+        data_source_stats: &crate::stats::CoreDataSourceStats,
     }
 }
 

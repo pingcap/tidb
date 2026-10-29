@@ -31,7 +31,7 @@ pub(crate) fn filter_selectivity(
     let record_used_item = |item_id, is_index| {
         source.record_used_item(context.used_stats_recorder, item_id, is_index);
     };
-    crate::logical::rewrite::analyzed_filter_selectivity_in(
+    crate::stats::analyzed_filter_selectivity_in(
         stats,
         conditions,
         context,

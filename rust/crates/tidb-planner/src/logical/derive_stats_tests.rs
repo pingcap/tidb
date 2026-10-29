@@ -126,7 +126,7 @@ fn attach_pseudo_collection(op: &mut DataSource) {
 }
 
 fn derive(plan: &mut LogicalPlan) -> Result<(StatsInfo, bool), tidb_planner_core_base::PlanError> {
-    plan.recursive_derive_stats(&[])
+    plan.recursive_derive_stats(&[], &crate::stats::CoreDataSourceStats)
 }
 
 fn derive_with_group_ndv_skew_ratio(

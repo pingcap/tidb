@@ -609,7 +609,7 @@ impl CopTask {
             .as_deref()
             .or_else(|| plan.stats_info())
             .and_then(|stats| {
-                crate::logical::rewrite::analyzed_filter_selectivity_with_evaluator(
+                crate::stats::analyzed_filter_selectivity_with_evaluator(
                     stats,
                     &conds,
                     &stats_context.estimator_options,

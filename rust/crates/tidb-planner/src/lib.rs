@@ -89,6 +89,7 @@ pub mod find_best_task;
 pub mod from_scope;
 pub mod point_get_key;
 pub mod point_get_plan;
+pub mod stats;
 pub mod stmt_ctx;
 pub mod fulltext;
 pub mod index_task;

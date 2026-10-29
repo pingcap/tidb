@@ -226,6 +226,7 @@ fn without_projection_inline<'a>(context: &RuleContext<'a>) -> RuleContext<'a> {
         hint_warning_sink: context.hint_warning_sink,
         used_stats_recorder: context.used_stats_recorder,
         cte_optimizer: context.cte_optimizer,
+        data_source_stats: &crate::stats::CoreDataSourceStats,
     }
 }
 

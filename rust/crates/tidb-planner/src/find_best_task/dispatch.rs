@@ -310,7 +310,7 @@ impl<'a> DispatchContext<'a> {
             .table_stats
             .as_ref()
             .and_then(|stats| {
-                crate::logical::rewrite::analyzed_filter_selectivity_with_evaluator(
+                crate::stats::analyzed_filter_selectivity_with_evaluator(
                     stats,
                     filters,
                     &self.estimator_options,
@@ -3407,7 +3407,7 @@ fn find_best_task_4_logical_data_source_paths(
                         .and_then(|stats| {
                             // Go passes ds.PossibleAccessPaths; once derived,
                             // each path's IdxCols equal Idx2ColUniqueIDs.
-                            crate::logical::rewrite::analyzed_filter_selectivity_in(
+                            crate::stats::analyzed_filter_selectivity_in(
                                 stats,
                                 &residual_table_filters,
                                 &ctx.access_path_derivation_context(),
@@ -4404,7 +4404,7 @@ fn find_best_task_4_logical_data_source_paths(
                             return 1.0;
                         }
                         table_stats.as_ref().and_then(|stats| {
-                            crate::logical::rewrite::analyzed_filter_selectivity_in(
+                            crate::stats::analyzed_filter_selectivity_in(
                                 stats, filters, &ctx.access_path_derivation_context(), None, None,
                             )
                         }).filter(|ratio| *ratio > 0.0)
@@ -4647,7 +4647,7 @@ fn find_best_task_4_logical_data_source_paths(
                                 .table_stats
                                 .as_ref()
                                 .and_then(|table_stats| {
-                                    crate::logical::rewrite::analyzed_filter_selectivity(
+                                    crate::stats::analyzed_filter_selectivity(
                                         table_stats,
                                         &index_filters,
                                     )
