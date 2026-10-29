@@ -18,8 +18,8 @@
 use std::fmt;
 
 use tidb_mysql::errors::FormatArg;
-use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError, ERR_RESULT_UNDETERMINED};
-use tidb_error::tidb;
+use tidb_terror::{TerrorClass, TerrorCode, TerrorError, ERR_RESULT_UNDETERMINED};
+use tidb_errno as tidb;
 use tidb_mysql::errors::ErrMessage;
 
 use crate::driver::transaction_error::{Redaction, TransactionError, WriteConflict};

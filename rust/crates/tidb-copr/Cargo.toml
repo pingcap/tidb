@@ -9,6 +9,7 @@ description = "TiDB coprocessor and MPP clients: Go pkg/store/copr (Rust rewrite
 autotests = false
 
 [dependencies]
+tidb-terror = { path = "../tidb-terror" }
 tidb-tiflash = { path = "../tidb-tiflash" }
 tidb-fastrand = { path = "../tidb-fastrand" }
 tidb-logutil = { path = "../tidb-logutil" }
@@ -20,7 +21,6 @@ tidb-vardef = { path = "../tidb-vardef" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-config = { path = "../tidb-config" }
 tidb-distsql = { path = "../tidb-distsql" }
-tidb-error = { path = "../tidb-error" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-log = { path = "../tidb-log" }
 tidb-pd-client = { path = "../tidb-pd-client" }

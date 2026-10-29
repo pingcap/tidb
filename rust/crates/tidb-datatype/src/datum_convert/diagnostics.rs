@@ -14,7 +14,7 @@
 
 use tidb_parser_types::parser_types_errors::{ERR_OVERFLOW, ERR_TRUNCATED_WRONG_VALUE};
 use crate::{ConversionContext, Datum, ScalarConversionError, ScalarConversionEvent};
-use tidb_error::terror::TerrorError;
+use tidb_terror::TerrorError;
 
 /// Go Datum.ConvertTo's best-effort value and final error. Warnings are
 /// delivered in order to the caller's existing context, not stored here.
@@ -959,7 +959,7 @@ impl<'a, 'w> Diagnostics<'a, 'w> {
         // registered RFC identity and therefore preserves SQL fallback 1105.
         self.replace_error(|| {
             TerrorError::compatible(
-                tidb_error::terror::CODE_UNKNOWN,
+                tidb_terror::CODE_UNKNOWN,
                 format!(
                     "cannot convert datum from {} to type {}",
                     source.as_str(),

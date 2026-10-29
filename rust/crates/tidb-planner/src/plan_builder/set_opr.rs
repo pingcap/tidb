@@ -225,7 +225,7 @@ fn divide_union_select_plans(
 /// Go `plannererrors.ErrWrongNumberOfColumnsInSelect` (MySQL 1222).
 fn wrong_number_of_columns() -> PlanError {
     PlanError::from(
-        tidb_error::plannererrors::ERR_WRONG_NUMBER_OF_COLUMNS_IN_SELECT
+        tidb_plannererrors::ERR_WRONG_NUMBER_OF_COLUMNS_IN_SELECT
             .generate_with_stack_by_args(&[]),
     )
 }

@@ -18,7 +18,7 @@ use std::fmt;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use tidb_error::terror::TerrorError;
+use tidb_terror::TerrorError;
 
 /// Level "Error" for `SHOW WARNINGS`.
 pub const WARN_LEVEL_ERROR: &str = "Error";
@@ -108,7 +108,7 @@ impl SqlWarn {
             WarnErr::Message(message)
         } else {
             WarnErr::Terror(TerrorError::compatible(
-                tidb_error::terror::TerrorCode::new(isize::try_from(code).unwrap_or(isize::MAX)),
+                tidb_terror::TerrorCode::new(isize::try_from(code).unwrap_or(isize::MAX)),
                 message,
             ))
         };
@@ -123,7 +123,7 @@ impl SqlWarn {
         level: super::WarningLevel,
         code: u16,
         message: impl Into<String>,
-        identity: Option<tidb_error::terror::TerrorIdentity>,
+        identity: Option<tidb_terror::TerrorIdentity>,
     ) -> Self {
         match identity {
             Some(identity) => Self::new(
@@ -422,7 +422,7 @@ impl<F: Fn(&str, WarnErr)> WarnAppender for FuncWarnAppender<F> {
 mod tests {
     use super::*;
     use tidb_mysql::errors::FormatArg;
-    use tidb_error::terror::ERR_RESULT_UNDETERMINED;
+    use tidb_terror::ERR_RESULT_UNDETERMINED;
 
     fn warn(level: &str, err: WarnErr) -> SqlWarn {
         SqlWarn {

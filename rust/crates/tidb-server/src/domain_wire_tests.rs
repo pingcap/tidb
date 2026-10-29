@@ -50,7 +50,7 @@ mod tests {
         assert!(matches!(
             write_error,
             MysqlConnectionError::ResultUndetermined(message)
-                if message == tidb_error::terror::ERR_RESULT_UNDETERMINED.message()
+                if message == tidb_terror::ERR_RESULT_UNDETERMINED.message()
         ));
         assert!(
             output.0.is_empty(),
@@ -75,7 +75,7 @@ mod tests {
         assert_eq!(packet[0], 0xff);
         assert_eq!(
             u16::from_le_bytes([packet[1], packet[2]]),
-            tidb_error::tidb::errcode::ErrTiKVStaleCommand
+            tidb_errno::errcode::ErrTiKVStaleCommand
         );
         assert!(String::from_utf8_lossy(&packet[9..]).contains("TiKV server reports stale command"));
     }

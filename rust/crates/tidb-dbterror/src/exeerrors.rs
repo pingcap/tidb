@@ -24,8 +24,8 @@
 
 use std::sync::LazyLock;
 
-use tidb_error::terror::TerrorError;
-use tidb_error::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 use super::{CLASS_DDL, CLASS_EXECUTOR, CLASS_PRIVILEGE, CLASS_TABLE};
 

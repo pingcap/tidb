@@ -77,7 +77,7 @@ impl CreateTableConstraintNames {
 pub struct ConstraintNameError {
     /// `dbterror.ErrDupKeyName` (1061), `ErrFkDupName` (1826) or
     /// `ErrCheckConstraintDupName` (3822).
-    pub proto: &'static tidb_error::terror::TerrorError,
+    pub proto: &'static tidb_terror::TerrorError,
     /// The duplicate name as it is spelled.
     pub name: String,
     /// Go's message, naming the duplicate as it is spelled.

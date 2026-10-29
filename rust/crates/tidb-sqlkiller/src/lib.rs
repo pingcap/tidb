@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 use tidb_mysql::errors::FormatArg;
-use tidb_error::terror::TerrorError;
+use tidb_terror::TerrorError;
 
 use tidb_dbterror::exeerrors;
 use tidb_intest as intest;

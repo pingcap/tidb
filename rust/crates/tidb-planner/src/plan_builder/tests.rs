@@ -542,7 +542,7 @@ fn a_having_subquery_names_the_having_clause_for_an_unresolved_outer_column() {
         ))
         .expect_err("t.b is not in the select list");
     assert!(
-        error.equal(&tidb_error::plannererrors::ERR_UNKNOWN_COLUMN)
+        error.equal(&tidb_plannererrors::ERR_UNKNOWN_COLUMN)
             && error.message() == "Unknown column 't.b' in 'having clause'",
         "{error:?}"
     );
@@ -583,7 +583,7 @@ fn an_unknown_column_from_the_rewriter_keeps_its_clause() {
         "having clause",
     ));
     assert!(
-        error.equal(&tidb_error::plannererrors::ERR_UNKNOWN_COLUMN)
+        error.equal(&tidb_plannererrors::ERR_UNKNOWN_COLUMN)
             && error.message() == "Unknown column 't.b' in 'having clause'",
         "{error:?}"
     );
@@ -771,7 +771,7 @@ fn test_partition_clause_matches_partition_metadata() {
     let error = builder
         .build_select(&parse_select("SELECT a FROM t PARTITION (p0)"))
         .expect_err("a partition clause on a nonpartitioned table is rejected");
-    assert!(error.equal(&tidb_error::plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED));
+    assert!(error.equal(&tidb_plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED));
 
     harness.tables_mut()[0].is_partitioned = true;
     harness.tables_mut()[0].partition_definition_names = vec!["p0".to_owned()];
@@ -866,7 +866,7 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
     let error = builder
         .build_select(&parse_select("SELECT a FROM t IGNORE INDEX (missing)"))
         .expect_err("table-syntax unknown indexes are errors");
-    assert!(error.equal(&tidb_error::plannererrors::ERR_KEY_DOES_NOT_EXIST));
+    assert!(error.equal(&tidb_plannererrors::ERR_KEY_DOES_NOT_EXIST));
     assert_eq!(error.message(), "Key 'missing' doesn't exist in table 't'");
 }
 

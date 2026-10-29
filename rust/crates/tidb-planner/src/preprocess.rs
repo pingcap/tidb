@@ -146,7 +146,7 @@ pub fn handle_table_name<N: Visitable>(node: &mut N, current_db: &str) -> Result
     node.accept(&mut pinner);
     if pinner.unresolved {
         return Err(PlanError::from(
-            tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+            tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
         ));
     }
     Ok(())
@@ -188,7 +188,7 @@ pub fn resolve_show_stmt(
         if let [name] = table.as_slice() {
             if current_db.is_empty() {
                 return Err(PlanError::from(
-                    tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                    tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
                 ));
             }
             *table = vec![current_db.to_owned(), name.clone()];
@@ -219,7 +219,7 @@ use tidb_ast::{
 };
 use tidb_datatype::FieldTypeCode;
 
-use tidb_error::MysqlError;
+use tidb_terror::MysqlError;
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 
@@ -401,13 +401,13 @@ fn check_create_table(create: &CreateTableStmt, strict: bool) -> Result<(), Mysq
             match option {
                 TableOption::ShardRowIdBits(_) => {
                     return Err(MysqlError::from_terror(
-                        &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                        &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                             .generate_with_stack_by_args(&["shard_row_id_bits".into()]),
                     ))
                 }
                 TableOption::PlacementPolicy(_) => {
                     return Err(MysqlError::from_terror(
-                        &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                        &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                             .generate_with_stack_by_args(&["PLACEMENT".into()]),
                     ))
                 }
@@ -676,7 +676,7 @@ fn check_column_options(temporary: bool, options: &[ColumnOption]) -> Result<usi
             }
             ColumnOption::AutoRandom(_) if temporary => {
                 return Err(MysqlError::from_terror(
-                    &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                    &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                         .generate_with_stack_by_args(&["auto_random".into()]),
                 ));
             }
@@ -716,7 +716,7 @@ enum ColumnCheckError {
 impl ColumnCheckError {
     fn into_driver_error(self, column: &ColumnDef) -> MysqlError {
         let name = &column.name;
-        let coded = |proto: &'static tidb_error::terror::TerrorError, message: String| {
+        let coded = |proto: &'static tidb_terror::TerrorError, message: String| {
             MysqlError::from_terror(&proto.generate_with_stack(message))
         };
         match self {

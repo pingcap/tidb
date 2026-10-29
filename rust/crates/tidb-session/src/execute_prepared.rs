@@ -56,7 +56,7 @@ impl Session {
                     == Some(tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.identity());
                 if table_gone {
                     Err(DriverError::Mysql(tidb_executor::MysqlError::from_terror(
-                        &tidb_error::plannererrors::ERR_SCHEMA_CHANGED.generate_with_stack(
+                        &tidb_plannererrors::ERR_SCHEMA_CHANGED.generate_with_stack(
                             format!("Schema change caused error: {}", inner.error_string()),
                         ),
                     )))
@@ -77,12 +77,12 @@ impl Session {
             .get(name)
             .cloned()
             .ok_or(DriverError::from(
-                tidb_error::plannererrors::ERR_STMT_NOT_FOUND.generate_with_stack_by_args(&[]),
+                tidb_plannererrors::ERR_STMT_NOT_FOUND.generate_with_stack_by_args(&[]),
             ))?;
         // Go `planCachePreprocess` step 1, before any value is evaluated.
         if using.len() != prepared.param_count {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_WRONG_PARAM_COUNT.generate_with_stack_by_args(&[]),
+                tidb_plannererrors::ERR_WRONG_PARAM_COUNT.generate_with_stack_by_args(&[]),
             ));
         }
         // Go `SetParameterValuesIntoSCtx`: each `USING` entry is evaluated to
@@ -106,7 +106,7 @@ impl Session {
                 Some(Datum::UInt(_)) => {}
                 _ => {
                     return Err(DriverError::from(
-                        tidb_error::plannererrors::ERR_WRONG_ARGUMENTS
+                        tidb_plannererrors::ERR_WRONG_ARGUMENTS
                             .generate_with_stack_by_args(&["LIMIT".into()]),
                     ))
                 }

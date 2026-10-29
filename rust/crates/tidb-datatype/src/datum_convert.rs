@@ -1506,7 +1506,7 @@ fn produce_string_reported(
     Ok(Converted { value, event })
 }
 
-fn float_target_overflow(value: f64, target: &FieldType) -> tidb_error::terror::TerrorError {
+fn float_target_overflow(value: f64, target: &FieldType) -> tidb_terror::TerrorError {
     ERR_OVERFLOW.generate(format!(
         "constant {} overflows {}",
         crate::format_float_g_shortest(value),
@@ -1514,7 +1514,7 @@ fn float_target_overflow(value: f64, target: &FieldType) -> tidb_error::terror::
     ))
 }
 
-fn decimal_target_overflow(target: &FieldType) -> tidb_error::terror::TerrorError {
+fn decimal_target_overflow(target: &FieldType) -> tidb_terror::TerrorError {
     ERR_OVERFLOW.generate(format!(
         "DECIMAL value is out of range in '({}, {})'",
         target.flen(),
@@ -1927,9 +1927,9 @@ mod tests {
 
     #[test]
     fn calendar_batch_context_retains_parser_warning_and_unsigned_error() {
-        struct Warnings(std::cell::RefCell<Vec<tidb_error::terror::TerrorError>>);
+        struct Warnings(std::cell::RefCell<Vec<tidb_terror::TerrorError>>);
         impl crate::ConversionWarningAppender for Warnings {
-            fn append_conversion_warning(&self, e: tidb_error::terror::TerrorError) {
+            fn append_conversion_warning(&self, e: tidb_terror::TerrorError) {
                 self.0.borrow_mut().push(e);
             }
         }
@@ -1965,9 +1965,9 @@ mod tests {
 
     #[test]
     fn calendar_batch_context_distinguishes_typed_and_string_dst() {
-        struct Warnings(std::cell::RefCell<Vec<tidb_error::terror::TerrorError>>);
+        struct Warnings(std::cell::RefCell<Vec<tidb_terror::TerrorError>>);
         impl crate::ConversionWarningAppender for Warnings {
-            fn append_conversion_warning(&self, e: tidb_error::terror::TerrorError) {
+            fn append_conversion_warning(&self, e: tidb_terror::TerrorError) {
                 self.0.borrow_mut().push(e);
             }
         }

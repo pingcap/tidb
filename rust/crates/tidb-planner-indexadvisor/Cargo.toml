@@ -11,12 +11,12 @@ description = "TiDB pkg/planner/indexadvisor: the index advisor behind RECOMMEND
 workspace = true
 
 [dependencies]
+tidb-terror = { path = "../tidb-terror" }
 tidb-config-configtypes = { path = "../tidb-config-configtypes" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-context = { path = "../tidb-context" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-driver-error = { path = "../tidb-driver-error" }
-tidb-error = { path = "../tidb-error" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-metadef = { path = "../tidb-metadef" }

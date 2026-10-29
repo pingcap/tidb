@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{std_err, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `server/err.ErrInvalidType` (`pkg/server/err/error.go:24`).
 pub static ERR_INVALID_TYPE: LazyLock<TerrorError> =

@@ -16,7 +16,7 @@
 
 use tidb_datatype::{parse_hex_str, TruncationPolicy};
 use tidb_mysql::errors::{errcode as mysql, FormatArg, SqlError};
-use tidb_error::tidb::errcode as tidb;
+use tidb_errno::errcode as tidb;
 
 #[test]
 fn binary_literal_to_int_uses_the_source_context_policy() {

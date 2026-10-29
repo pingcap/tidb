@@ -54,13 +54,13 @@ pub struct CheckConstraintForeignKey {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckConstraintError {
     /// The Go definition the CHECK validation raises (class and code).
-    pub proto: &'static tidb_error::terror::TerrorError,
+    pub proto: &'static tidb_terror::TerrorError,
     /// Client-visible message.
     pub message: String,
 }
 
 impl CheckConstraintError {
-    fn new(proto: &'static tidb_error::terror::TerrorError, message: impl Into<String>) -> Self {
+    fn new(proto: &'static tidb_terror::TerrorError, message: impl Into<String>) -> Self {
         Self {
             proto,
             message: message.into(),
@@ -223,7 +223,7 @@ pub fn build_constraint_infos(
                     return Err(unknown_column(&name, &missing, mode));
                 }
                 return Err(CheckConstraintError::new(
-                    &tidb_error::plannererrors::ERR_UNKNOWN,
+                    &tidb_plannererrors::ERR_UNKNOWN,
                     format!("{error:?}"),
                 ));
             }

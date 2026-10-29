@@ -332,7 +332,7 @@ fn set_own_output_names(plan: &mut LogicalPlan, names: Vec<tidb_datatype::FieldN
 /// Go `plannererrors.ErrCTERecursiveRequiresNonRecursiveFirst` (MySQL 3574).
 fn err_recursive_requires_non_recursive_first(name: &str) -> PlanError {
     PlanError::from(
-        tidb_error::plannererrors::ERR_CTERECURSIVE_REQUIRES_NON_RECURSIVE_FIRST
+        tidb_plannererrors::ERR_CTERECURSIVE_REQUIRES_NON_RECURSIVE_FIRST
             .generate_with_stack_by_args(&[name.into()]),
     )
 }
@@ -340,7 +340,7 @@ fn err_recursive_requires_non_recursive_first(name: &str) -> PlanError {
 /// Go `plannererrors.ErrCTERecursiveRequiresUnion` (MySQL 3573).
 fn err_recursive_requires_union(name: &str) -> PlanError {
     PlanError::from(
-        tidb_error::plannererrors::ERR_CTERECURSIVE_REQUIRES_UNION
+        tidb_plannererrors::ERR_CTERECURSIVE_REQUIRES_UNION
             .generate_with_stack_by_args(&[name.into()]),
     )
 }
@@ -348,7 +348,7 @@ fn err_recursive_requires_union(name: &str) -> PlanError {
 /// Go `plannererrors.ErrInvalidRequiresSingleReference` (MySQL 3577).
 fn err_invalid_requires_single_reference(name: &str) -> PlanError {
     PlanError::from(
-        tidb_error::plannererrors::ERR_INVALID_REQUIRES_SINGLE_REFERENCE
+        tidb_plannererrors::ERR_INVALID_REQUIRES_SINGLE_REFERENCE
             .fast_generate_by_args(&[name.into()]),
     )
 }
@@ -356,7 +356,7 @@ fn err_invalid_requires_single_reference(name: &str) -> PlanError {
 /// Go `plannererrors.ErrNotSupportedYet` (MySQL 1235).
 fn err_not_supported_yet(what: &str) -> PlanError {
     PlanError::from(
-        tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET
+        tidb_plannererrors::ERR_NOT_SUPPORTED_YET
             .generate_with_stack_by_args(&[what.into()]),
     )
 }
@@ -868,7 +868,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let recur_schema = recur.schema().cloned().unwrap_or_default();
         if seed_schema.columns.len() != recur_schema.columns.len() {
             return Err(PlanError::from(
-                tidb_error::plannererrors::ERR_WRONG_NUMBER_OF_COLUMNS_IN_SELECT
+                tidb_plannererrors::ERR_WRONG_NUMBER_OF_COLUMNS_IN_SELECT
                     .generate_with_stack_by_args(&[]),
             ));
         }
@@ -1161,7 +1161,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if cte.recur_lp.is_some() {
             if cte.force_inline_by_hint_or_var {
                 self.ctx.append_go_warning(
-                    &tidb_error::plannererrors::ERR_INTERNAL,
+                    &tidb_plannererrors::ERR_INTERNAL,
                     &format!(
                         "Recursive CTE {} can not be inlined by merge() or tidb_opt_force_inline_cte.",
                         cte.name_original
@@ -1172,7 +1172,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         } else if cte.contain_recursive_forbidden_operator && building_recursive {
             if cte.force_inline_by_hint_or_var {
                 self.ctx.append_go_warning(
-                    &tidb_error::plannererrors::ERR_CTERECURSIVE_FORBIDS_AGGREGATION,
+                    &tidb_plannererrors::ERR_CTERECURSIVE_FORBIDS_AGGREGATION,
                     &format!(
                         "Recursive Common Table Expression '{}' can contain neither aggregation nor window functions in recursive query block",
                         cte.name_original

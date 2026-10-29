@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{plain_err, std_err, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `util/workloadrepo.errWrongValueForVar` (`pkg/util/workloadrepo/const.go:46`).
 pub static ERR_WRONG_VALUE_FOR_VAR: LazyLock<TerrorError> =

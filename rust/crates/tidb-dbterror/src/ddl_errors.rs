@@ -32,8 +32,8 @@
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
-use tidb_error::terror::{TerrorError, CODE_RESULT_UNDETERMINED};
-use tidb_error::tidb::errcode;
+use tidb_terror::{TerrorError, CODE_RESULT_UNDETERMINED};
+use tidb_errno::errcode;
 
 use super::{catalog_message, CLASS_DDL};
 

@@ -446,7 +446,7 @@ pub fn cluster_table(
             };
             Some(
                 crate::column_default::build(&marker, &name, &column.field_type, |_| {
-                    Err(tidb_error::MysqlError::unknown(
+                    Err(tidb_terror::MysqlError::unknown(
                         "a clock marker never folds",
                     ))
                 })
@@ -994,7 +994,7 @@ fn fk_action_from_stored(action: i64) -> crate::kv_table::FkAction {
 pub fn partition_spec_for(
     table_columns: &[GoShared<tidb_model::column::ColumnInfo>],
     partition: &tidb_model::partition::PartitionInfo,
-) -> Result<crate::partition_routing::PartitionSpec, tidb_error::MysqlError> {
+) -> Result<crate::partition_routing::PartitionSpec, tidb_terror::MysqlError> {
     let names: Vec<String> = table_columns
         .iter()
         .map(|column| column.read().name.original().to_owned())

@@ -471,7 +471,7 @@ pub fn set_preferred_join_type_and_order(
             let matched_any = matched_lhs || matched_rhs;
             if matched_any {
                 ctx.append_go_warning(
-                    &tidb_error::plannererrors::ERR_INTERNAL,
+                    &tidb_plannererrors::ERR_INTERNAL,
                     &format!(
                         "The join can not push down to the MPP side, the {}() hint is invalid",
                         if flag == f::BC_JOIN {
@@ -522,7 +522,7 @@ pub fn set_preferred_join_type_and_order(
     };
     if has_conflict {
         ctx.append_go_warning(
-            &tidb_error::plannererrors::ERR_INTERNAL,
+            &tidb_plannererrors::ERR_INTERNAL,
             "Join hints are conflict, you can only specify one type of join",
         );
         join.prefer_join_type = 0;
@@ -754,7 +754,7 @@ pub fn is_table_alias_duplicate(
             existing
         };
         return Err(PlanError::from(
-            tidb_error::plannererrors::ERR_NON_UNIQ_TABLE
+            tidb_plannererrors::ERR_NON_UNIQ_TABLE
                 .generate_with_stack_by_args(&[existing.into()]),
         ));
     }
@@ -1063,7 +1063,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if let LogicalPlan::CTETable(cte) = &right_plan {
             if join_node.tp == JoinType::Left {
                 return Err(PlanError::from(
-                    tidb_error::plannererrors::ERR_CTERECURSIVE_FORBIDDEN_JOIN_ORDER
+                    tidb_plannererrors::ERR_CTERECURSIVE_FORBIDDEN_JOIN_ORDER
                         .generate_with_stack_by_args(&[(cte.name.clone()).into()]),
                 ));
             }
@@ -1218,14 +1218,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // LATERAL derived tables."
         if join_node.natural {
             return Err(PlanError::from(
-                tidb_error::plannererrors::ERR_INVALID_LATERAL_JOIN.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_INVALID_LATERAL_JOIN.generate_with_stack_by_args(&[
                     "NATURAL JOIN is not supported with LATERAL".into(),
                 ]),
             ));
         }
         if !join_node.using.is_empty() {
             return Err(PlanError::from(
-                tidb_error::plannererrors::ERR_INVALID_LATERAL_JOIN.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_INVALID_LATERAL_JOIN.generate_with_stack_by_args(&[
                     "USING clause is not supported with LATERAL".into(),
                 ]),
             ));
@@ -1234,7 +1234,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let join_type = match join_node.tp {
             JoinType::Left => {
                 return Err(PlanError::from(
-                    tidb_error::plannererrors::ERR_INVALID_LATERAL_JOIN
+                    tidb_plannererrors::ERR_INVALID_LATERAL_JOIN
                         .generate_with_stack_by_args(&[
                             "LEFT JOIN is not supported with LATERAL".into()
                         ]),
@@ -1242,7 +1242,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
             JoinType::Right => {
                 return Err(PlanError::from(
-                    tidb_error::plannererrors::ERR_INVALID_LATERAL_JOIN
+                    tidb_plannererrors::ERR_INVALID_LATERAL_JOIN
                         .generate_with_stack_by_args(&[
                             "RIGHT JOIN is not supported with LATERAL".into()
                         ]),
@@ -1545,7 +1545,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             if !filter.is_empty() && filter.len() != common_len {
                 if let Some((column, _)) = filter.iter().find(|(_, not_exist)| **not_exist) {
                     return Err(PlanError::from(
-                        tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(
+                        tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(
                             &[tidb_hack::go_to_lower(column).into(), "from clause".into()],
                         ),
                     ));
@@ -1754,7 +1754,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // view contains a recursive definition."
         if self.building_view_stack.contains(&key) {
             return Err(PlanError::from(
-                tidb_error::plannererrors::ERR_VIEW_RECURSIVE
+                tidb_plannererrors::ERR_VIEW_RECURSIVE
                     .generate_with_stack_by_args(&[db_name.into(), table_name.into()]),
             ));
         }
@@ -1762,7 +1762,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // message."
         if self.renaming_view_name.as_ref() == Some(&key) {
             return Err(PlanError::from(
-                tidb_error::plannererrors::ERR_NO_SUCH_TABLE
+                tidb_plannererrors::ERR_NO_SUCH_TABLE
                     .generate_with_stack_by_args(&[db_name.into(), table_name.into()]),
             ));
         }
@@ -1839,7 +1839,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     tidb_mysql::SelectPriv,
                 ) {
                     return Err(PlanError::from(
-                        tidb_error::plannererrors::ERR_VIEW_NO_EXPLAIN
+                        tidb_plannererrors::ERR_VIEW_NO_EXPLAIN
                             .generate_with_stack_by_args(&[]),
                     ));
                 }
@@ -1857,7 +1857,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         visit.privilege,
                     ) {
                         return Err(PlanError::from(
-                            tidb_error::plannererrors::ERR_VIEW_INVALID
+                            tidb_plannererrors::ERR_VIEW_INVALID
                                 .generate_with_stack_by_args(&[
                                     (&view.db_name).into(),
                                     (&view.view_name).into(),
@@ -1941,7 +1941,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         self.building_cte = saved_building_cte;
         let plan = built.map_err(|error| {
             use crate::plan_base::PlanErrorKind;
-            use tidb_error::plannererrors as pe;
+            use tidb_plannererrors as pe;
             // Go BuildDataSourceFromView preserves these planner errors;
             // ordinary missing dependencies instead invalidate the view.
             // A message-only refusal of this tier is `ErrInternal`'s kind.
@@ -2196,7 +2196,7 @@ fn is_extra_column_name(lower: &str) -> bool {
 /// Go `plannererrors.ErrAmbiguous.GenWithStackByArgs(name, "from clause")`.
 fn ambiguous(column: &str) -> PlanError {
     PlanError::from(
-        tidb_error::plannererrors::ERR_AMBIGUOUS
+        tidb_plannererrors::ERR_AMBIGUOUS
             .generate_with_stack_by_args(&[column.into(), "from clause".into()]),
     )
 }
@@ -2204,7 +2204,7 @@ fn ambiguous(column: &str) -> PlanError {
 /// Go `plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, name.O)`.
 fn view_invalid(db_name: &str, view_name: &str) -> PlanError {
     PlanError::from(
-        tidb_error::plannererrors::ERR_VIEW_INVALID
+        tidb_plannererrors::ERR_VIEW_INVALID
             .generate_with_stack_by_args(&[db_name.into(), view_name.into()]),
     )
 }

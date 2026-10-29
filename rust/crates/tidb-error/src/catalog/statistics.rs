@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{std_err, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `statistics.ErrQueryInterrupted` (`pkg/statistics/cmsketch.go:50`).
 pub static ERR_QUERY_INTERRUPTED: LazyLock<TerrorError> =

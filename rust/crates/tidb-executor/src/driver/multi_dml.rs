@@ -137,7 +137,7 @@ fn selected_partition_ids(
     };
     let Some(spec) = kv.partition() else {
         return Err(DriverError::from(
-            tidb_error::plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
+            tidb_plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
                 .generate_with_stack_by_args(&[]),
         ));
     };
@@ -483,7 +483,7 @@ fn check_update_list(
                     || partition_col_updated
                 {
                     return Err(DriverError::Mysql(MysqlError::from_terror(
-                        &tidb_error::plannererrors::ERR_MULTI_UPDATE_KEY_CONFLICT
+                        &tidb_plannererrors::ERR_MULTI_UPDATE_KEY_CONFLICT
                             .generate_with_stack_by_args(&[
                                 other.name.clone().into(),
                                 table.visible.clone().into(),

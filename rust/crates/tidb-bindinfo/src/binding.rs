@@ -293,7 +293,7 @@ pub fn collect_physical_table_refs(stmt: &Stmt) -> Vec<Vec<String>> {
 /// [`tidb_planner::preprocess::handle_table_name`].
 pub fn pin_current_database(stmt: &mut Stmt, current_db: &str) -> Result<(), DriverError> {
     tidb_planner::preprocess::handle_table_name(stmt, current_db).map_err(|_| {
-        DriverError::from(tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]))
+        DriverError::from(tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]))
     })
 }
 
@@ -566,7 +566,7 @@ pub fn check_origin_matches_hinted(
     if origin_normalized == hinted_normalized {
         return Ok(());
     }
-    Err(DriverError::from(tidb_error::MysqlError::unknown(format!("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:{}, hintedSQL:{}", origin_normalized.to_owned(), hinted_normalized.to_owned()))))
+    Err(DriverError::from(tidb_terror::MysqlError::unknown(format!("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:{}, hintedSQL:{}", origin_normalized.to_owned(), hinted_normalized.to_owned()))))
 }
 
 /// Persisted binding projection. Cluster sessions match against a node-owned

@@ -22,7 +22,7 @@ use std::sync::{Mutex, OnceLock};
 
 use serde_json::value::RawValue;
 use tidb_datatype::GoString;
-use tidb_error::terror::TerrorError;
+use tidb_terror::TerrorError;
 
 use crate::action_type::ActionType;
 use crate::db::DBInfo;

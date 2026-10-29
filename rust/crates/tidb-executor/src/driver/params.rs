@@ -56,7 +56,7 @@ pub fn bind_statement(mut stmt: Stmt, values: &[Datum]) -> Result<Stmt, DriverEr
     bind_statement_markers(&mut stmt, values, &mut bound)?;
     if bound != values.len() {
         return Err(DriverError::from(
-            tidb_error::plannererrors::ERR_WRONG_PARAM_COUNT.generate_with_stack_by_args(&[]),
+            tidb_plannererrors::ERR_WRONG_PARAM_COUNT.generate_with_stack_by_args(&[]),
         ));
     }
     Ok(stmt)
@@ -74,7 +74,7 @@ pub fn bind_prepared_statement(stmt: &Stmt, values: &[Datum]) -> Result<Stmt, Dr
     install_statement_marker_values(&mut bound_stmt, values, &mut bound)?;
     if bound != values.len() {
         return Err(DriverError::from(
-            tidb_error::plannererrors::ERR_WRONG_PARAM_COUNT.generate_with_stack_by_args(&[]),
+            tidb_plannererrors::ERR_WRONG_PARAM_COUNT.generate_with_stack_by_args(&[]),
         ));
     }
     Ok(bound_stmt)
@@ -106,7 +106,7 @@ pub fn bound_parameter_values(
         .collect::<Option<Vec<_>>>()
         .map(|values| Some(values.into()))
         .ok_or(DriverError::from(
-            tidb_error::plannererrors::ERR_WRONG_PARAM_COUNT.generate_with_stack_by_args(&[]),
+            tidb_plannererrors::ERR_WRONG_PARAM_COUNT.generate_with_stack_by_args(&[]),
         ))
 }
 
@@ -122,7 +122,7 @@ pub(crate) fn bind_prepared_statement_in_place(
     install_statement_marker_values(stmt, values, &mut bound)?;
     if bound != values.len() {
         return Err(DriverError::from(
-            tidb_error::plannererrors::ERR_WRONG_PARAM_COUNT.generate_with_stack_by_args(&[]),
+            tidb_plannererrors::ERR_WRONG_PARAM_COUNT.generate_with_stack_by_args(&[]),
         ));
     }
     Ok(())
@@ -164,7 +164,7 @@ fn install_marker_values<T: tidb_ast::Visitable>(
             }
             None => {
                 failure = Some(DriverError::from(
-                    tidb_error::plannererrors::ERR_WRONG_PARAM_COUNT
+                    tidb_plannererrors::ERR_WRONG_PARAM_COUNT
                         .generate_with_stack_by_args(&[]),
                 ))
             }
@@ -244,7 +244,7 @@ fn bind_statement_markers<N: tidb_ast::Visitable>(
             },
             None => {
                 failure = Some(DriverError::from(
-                    tidb_error::plannererrors::ERR_WRONG_PARAM_COUNT
+                    tidb_plannererrors::ERR_WRONG_PARAM_COUNT
                         .generate_with_stack_by_args(&[]),
                 ))
             }

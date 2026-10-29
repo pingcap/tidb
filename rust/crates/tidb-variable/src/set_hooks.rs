@@ -51,7 +51,7 @@ impl SessionVars {
     pub fn append_stmt_warning(
         &mut self,
         level: VarWarningLevel,
-        proto: &tidb_error::terror::TerrorError,
+        proto: &tidb_terror::TerrorError,
         message: String,
     ) {
         self.stmt_warnings
@@ -150,7 +150,7 @@ impl SessionVars {
                     .validate_in_scope(&value, crate::sysvar::SCOPE_GLOBAL)
                     .map_err(|error| validation_var_error(name, &value, error))?;
                 if normalized.value == "ON" && self.tls_connection_state.is_none() {
-                    return Err(tidb_error::MysqlError::unknown("require_secure_transport can only be set to ON if the connection issuing the change is secure"
+                    return Err(tidb_terror::MysqlError::unknown("require_secure_transport can only be set to ON if the connection issuing the change is secure"
                             .to_owned()));
                 }
             }
@@ -235,7 +235,7 @@ impl SessionVars {
                     &tidb_error::catalog::variable::ERR_FUNCTIONS_NOOP_IMPL,
                     message,
                 );
-                Err(tidb_error::MysqlError::from_terror(
+                Err(tidb_terror::MysqlError::from_terror(
                     &tidb_error::catalog::variable::ERR_FUNCTIONS_NOOP_IMPL
                         .generate_with_stack_by_args(&[(clause).into()]),
                 ))
@@ -291,7 +291,7 @@ impl SessionVars {
             .get_system("tidb_skip_isolation_level_check")
             .is_ok_and(|value| value.eq_ignore_ascii_case("ON"));
         if !skip {
-            return Err(tidb_error::MysqlError::from_terror(
+            return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_UNSUPPORTED_ISOLATION_LEVEL
                     .generate_with_stack_by_args(&[(normalized).into()]),
             ));
@@ -365,7 +365,7 @@ impl SessionVars {
                 Err(error) => return Err(validation_var_error(name, value, error)),
             }
         }
-        Err(tidb_error::MysqlError::from_terror(
+        Err(tidb_terror::MysqlError::from_terror(
             &tidb_error::catalog::variable::ERR_READ_ONLY.generate_with_stack_by_args(&[
                 "SESSION".into(),
                 ("max_allowed_packet".to_owned()).into(),

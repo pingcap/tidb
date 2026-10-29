@@ -36,8 +36,8 @@ use std::fmt;
 use std::ops::{Index, IndexMut};
 use std::sync::{Arc, LazyLock};
 
-use crate::terror::{root_cause, TerrorError};
-use crate::tidb::errcode;
+use tidb_terror::{root_cause, TerrorError};
+use tidb_errno::errcode;
 
 /// A shared error value, standing in for Go's `error` interface value in the
 /// positions where `errctx` stores or returns one error in several places.

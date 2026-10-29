@@ -157,7 +157,7 @@ fn on_duplicate_key_values_form_and_constant_assignments_match_mysql_affected_ro
     )
     .unwrap_err();
     assert!(
-        error.equal(&tidb_error::plannererrors::ERR_UNKNOWN_COLUMN),
+        error.equal(&tidb_plannererrors::ERR_UNKNOWN_COLUMN),
         "unexpected error: {error:?}"
     );
     assert_eq!(error.to_string(), "Unknown column 'c' in 'field list'");

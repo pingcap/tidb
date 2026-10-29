@@ -20,12 +20,12 @@ use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use tidb_error::errctx::{
+use tidb_errctx::{
     err_group_for_code, new_context, new_context_with_levels, resolve_err_level, ErrGroup, Level,
     LevelMap, MultiError, SharedError, WarnAppender, STRICT_NO_WARNING_CONTEXT,
 };
-use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
-use tidb_error::tidb::errcode;
+use tidb_terror::{TerrorClass, TerrorCode, TerrorError};
+use tidb_errno::errcode;
 
 /// A plain error, standing in for Go's `errors.New`.
 #[derive(Debug)]

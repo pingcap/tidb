@@ -79,7 +79,7 @@ fn tidb_decode_key(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, Eva
 /// `TIDB_DECODE_SQL_DIGESTS` requires, at build time and at evaluation.
 pub(crate) fn process_privilege_denied() -> EvalError {
     EvalError::Conversion(
-        tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+        tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
             .generate_with_stack_by_args(&[tidb_mysql::errors::FormatArg::from("PROCESS")]),
     )
 }

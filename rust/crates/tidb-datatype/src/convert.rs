@@ -1291,7 +1291,7 @@ pub(crate) fn json_to_decimal_reported(
 pub(crate) fn decimal_conversion_error(
     error: crate::DecimalError,
     input: &[u8],
-) -> tidb_error::terror::TerrorError {
+) -> tidb_terror::TerrorError {
     match error {
         crate::DecimalError::Truncated => tidb_parser_types::parser_types_errors::ERR_TRUNCATED.clone(),
         crate::DecimalError::Overflow => tidb_parser_types::parser_types_errors::ERR_OVERFLOW.clone(),

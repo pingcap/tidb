@@ -16,8 +16,8 @@
 use std::sync::LazyLock;
 
 use tidb_mysql::errors::errcode;
-use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
-use tidb_error::tidb::errcode as tidb_errcode;
+use tidb_terror::{TerrorClass, TerrorCode, TerrorError};
+use tidb_errno::errcode as tidb_errcode;
 
 fn types_error(code: u16) -> TerrorError {
     TerrorError::registered_from_catalog(
@@ -29,7 +29,7 @@ fn types_error(code: u16) -> TerrorError {
 }
 
 fn tidb_error(class: TerrorClass, code: u16) -> TerrorError {
-    let message = tidb_error::tidb::message_by_code(code)
+    let message = tidb_errno::message_by_code(code)
         .copied()
         .expect("TiDB error code exists in the generated catalog");
     TerrorError::registered_standard(

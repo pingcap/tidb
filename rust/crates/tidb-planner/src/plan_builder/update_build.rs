@@ -88,7 +88,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     let position = tidb_expr::find_field_name(&frozen_names, &column)
                         .map_err(|_| {
                             PlanError::from(
-                                tidb_error::plannererrors::ERR_AMBIGUOUS
+                                tidb_plannererrors::ERR_AMBIGUOUS
                                     .generate_with_stack_by_args(&[
                                         (column.display_name()).into(),
                                         "field list".into(),
@@ -97,7 +97,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         })?
                         .ok_or_else(|| {
                             PlanError::from(
-                                tidb_error::plannererrors::ERR_UNKNOWN_COLUMN
+                                tidb_plannererrors::ERR_UNKNOWN_COLUMN
                                     .generate_with_stack_by_args(&[
                                         tidb_hack::go_to_lower(column.column.original.clone())
                                             .into(),
@@ -154,7 +154,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     };
                     if !same {
                         return Err(PlanError::from(
-                            tidb_error::plannererrors::ERR_BAD_GENERATED_COLUMN
+                            tidb_plannererrors::ERR_BAD_GENERATED_COLUMN
                                 .generate_with_stack_by_args(&[
                                     (table.columns[offset].name.clone()).into(),
                                     (table.table_name.clone()).into(),

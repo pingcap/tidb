@@ -18,8 +18,8 @@
 //! callers invoke this converter only for the `Err` arm of a `Result`, so the
 //! `Ok` arm constructs no `StorageDriverError` and needs no sentinel value.
 
-use tidb_error::terror::{TerrorClass, CODE_RESULT_UNDETERMINED};
-use tidb_error::tidb;
+use tidb_terror::{TerrorClass, CODE_RESULT_UNDETERMINED};
+use tidb_errno as tidb;
 use tidb_txnkv::{to_tidb_driver_error, ConvertedDriverError, MysqlErrorCode, StorageDriverError};
 
 #[test]

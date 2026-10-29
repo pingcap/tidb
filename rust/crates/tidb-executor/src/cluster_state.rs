@@ -56,7 +56,7 @@ impl ViewerState {
         }
         if !self.config_scoped {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
                     .generate_with_stack_by_args(&["CONFIG".into()]),
             ));
         }
@@ -173,7 +173,7 @@ impl ViewerState {
         };
         if !self.process_scoped {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
                     .generate_with_stack_by_args(&["PROCESS".into()]),
             ));
         }
@@ -423,7 +423,7 @@ impl ViewerState {
             "DEADLOCKS" => {
                 if !self.has_process {
                     return Err(DriverError::from(
-                        tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                        tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
                             .generate_with_stack_by_args(&["PROCESS".into()]),
                     ));
                 }
@@ -616,7 +616,7 @@ impl ViewerState {
 
         if !self.has_process {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
                     .generate_with_stack_by_args(&["PROCESS".into()]),
             ));
         }
@@ -871,7 +871,7 @@ impl ViewerState {
         }
         if !self.process_scoped {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
                     .generate_with_stack_by_args(&["PROCESS".into()]),
             ));
         }
@@ -918,7 +918,7 @@ impl ViewerState {
         };
         if !allowed {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
                     .generate_with_stack_by_args(&[name.to_owned().into()]),
             ));
         }
@@ -1064,7 +1064,7 @@ impl crate::mem_table_retrieval::MemTableRetriever for ClusterTablesRetriever {
         // CLUSTER_INFO: Go `memtableRetriever.retrieve` needs PROCESS.
         if !self.viewer.process_scoped {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
                     .generate_with_stack_by_args(&["PROCESS".into()]),
             ));
         }

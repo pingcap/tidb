@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{std_err, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `util/logutil/consistency.ErrAdminCheckInconsistent` (`pkg/util/logutil/consistency/reporter.go:43`).
 pub static ERR_ADMIN_CHECK_INCONSISTENT: LazyLock<TerrorError> =

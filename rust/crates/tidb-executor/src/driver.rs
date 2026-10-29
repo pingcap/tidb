@@ -382,12 +382,12 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
             use tidb_expr::aggregation::AggDescError;
             match aggregate {
                 AggDescError::ApproxPercentileOutOfRange(value) => {
-                    DriverError::from(tidb_error::MysqlError::unknown(format!("Percentage value {} is out of range [1, 100]", *value)))
+                    DriverError::from(tidb_terror::MysqlError::unknown(format!("Percentage value {} is out of range [1, 100]", *value)))
                 }
-                AggDescError::ApproxPercentileArgCount => DriverError::from(tidb_error::MysqlError::unknown("APPROX_PERCENTILE should take 2 arguments")),
-                AggDescError::ApproxPercentileNotConstant => DriverError::from(tidb_error::MysqlError::unknown("APPROX_PERCENTILE should take a constant expression as percentage argument")),
+                AggDescError::ApproxPercentileArgCount => DriverError::from(tidb_terror::MysqlError::unknown("APPROX_PERCENTILE should take 2 arguments")),
+                AggDescError::ApproxPercentileNotConstant => DriverError::from(tidb_terror::MysqlError::unknown("APPROX_PERCENTILE should take a constant expression as percentage argument")),
                 AggDescError::ApproxPercentileNullPercentage => {
-                    DriverError::from(tidb_error::MysqlError::unknown("APPROX_PERCENTILE: Percentage value cannot be NULL"))
+                    DriverError::from(tidb_terror::MysqlError::unknown("APPROX_PERCENTILE: Percentage value cannot be NULL"))
                 }
                 AggDescError::Expr(eval) => DriverError::Exec(ExecError::Eval(eval.clone())),
                 other => DriverError::unsupported(other.to_string()),
@@ -395,14 +395,14 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
         }
         tidb_planner::plan_base::PlanErrorKind::Eval(tidb_expr::EvalError::InvalidGroupFuncUse) => {
             DriverError::from(
-                tidb_error::plannererrors::ERR_INVALID_GROUP_FUNC_USE
+                tidb_plannererrors::ERR_INVALID_GROUP_FUNC_USE
                     .generate_with_stack_by_args(&[]),
             )
         }
         tidb_planner::plan_base::PlanErrorKind::Eval(
             tidb_expr::EvalError::FieldInGroupingNotGroupBy(index),
         ) => DriverError::from(
-            tidb_error::plannererrors::ERR_FIELD_IN_GROUPING_NOT_GROUP_BY
+            tidb_plannererrors::ERR_FIELD_IN_GROUPING_NOT_GROUP_BY
                 .generate_with_stack_by_args(&[format!("#{}", *index).into()]),
         ),
         tidb_planner::plan_base::PlanErrorKind::Eval(eval) => {

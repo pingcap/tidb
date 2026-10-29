@@ -75,22 +75,22 @@ pub(crate) fn aggregate_kind(
         "APPROX_COUNT_DISTINCT" => AggKind::ApproxCountDistinct(Default::default()),
         "APPROX_PERCENTILE" => {
             let [value, percentage] = args else {
-                return Err(DriverError::from(tidb_error::MysqlError::unknown(
+                return Err(DriverError::from(tidb_terror::MysqlError::unknown(
                     "APPROX_PERCENTILE should take 2 arguments",
                 )));
             };
             let Some(folded) = fold_constant(percentage) else {
-                return Err(DriverError::from(tidb_error::MysqlError::unknown(
+                return Err(DriverError::from(tidb_terror::MysqlError::unknown(
                     "APPROX_PERCENTILE should take a constant expression as percentage argument",
                 )));
             };
             let Some(percent) = constant_eval_int(&folded) else {
-                return Err(DriverError::from(tidb_error::MysqlError::unknown(
+                return Err(DriverError::from(tidb_terror::MysqlError::unknown(
                     "APPROX_PERCENTILE: Percentage value cannot be NULL",
                 )));
             };
             if !(1..=100).contains(&percent) {
-                return Err(DriverError::from(tidb_error::MysqlError::unknown(
+                return Err(DriverError::from(tidb_terror::MysqlError::unknown(
                     format!("Percentage value {} is out of range [1, 100]", percent),
                 )));
             }

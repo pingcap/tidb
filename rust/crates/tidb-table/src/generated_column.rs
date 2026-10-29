@@ -413,7 +413,7 @@ pub enum GeneratedDdlError {
     /// unknown function (3102), an aggregate (1111), a row value (3764), a
     /// window function (3593), a wrong argument count (1582), or
     /// `CAST(... AS ... ARRAY)`, which belongs to functional indexes (1235).
-    IllegalFunction(tidb_error::MysqlError),
+    IllegalFunction(tidb_terror::MysqlError),
     /// Go `ErrUnsupportedOnGeneratedColumn` (3106) with the reason as its
     /// argument, e.g. `Defining a virtual generated column as primary key`.
     Unsupported(&'static str),

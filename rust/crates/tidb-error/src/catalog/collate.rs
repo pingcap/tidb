@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{plain_err, std_err, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `util/collate.ErrUnsupportedCollation` (`pkg/util/collate/collate.go:43`).
 pub static ERR_UNSUPPORTED_COLLATION: LazyLock<TerrorError> = LazyLock::new(|| {

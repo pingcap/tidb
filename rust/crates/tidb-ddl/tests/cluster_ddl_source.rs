@@ -576,8 +576,8 @@ fn persisted_catalog_actions_share_sync_and_history_lifecycle() {
         let queue = DdlJobTable::locate(&catalog).unwrap();
         // Go retains earlier retry diagnostics on the job. A later successful
         // action must finish normally, not treat this as a fresh cancellation.
-        job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
-            tidb_error::terror::TerrorCode::new(1105),
+        job.error = Some(GoShared::new(tidb_terror::TerrorError::compatible(
+            tidb_terror::TerrorCode::new(1105),
             "earlier retry failed",
         )));
         job.error_count = 2;
@@ -837,7 +837,7 @@ fn persisted_cancellation_precedes_forward_action() {
         assert_eq!(job.error_count, 3);
         assert_eq!(
             job.error.as_ref().unwrap().read().code().value(),
-            tidb_error::tidb::errcode::ErrCancelledDDLJob as isize,
+            tidb_errno::errcode::ErrCancelledDDLJob as isize,
             "{action}"
         );
         assert_eq!(job.raw_args, raw);
@@ -851,7 +851,7 @@ fn persisted_cancellation_precedes_forward_action() {
 
 #[test]
 fn persisted_cancellation_distinguishes_errors_with_the_same_number() {
-    use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
+    use tidb_terror::{TerrorClass, TerrorCode, TerrorError};
     for (original, expected_rfc, expected_message) in [
         (
             TerrorError::synthesize(
@@ -977,8 +977,8 @@ fn persisted_action_panic_preserves_checkpoint_and_discards_unfinished_metadata(
         assert_eq!(history.raw_args, raw);
         let error = history.error.as_ref().unwrap().read();
         if limit == 0 {
-            assert_eq!(error.class(), tidb_error::terror::TerrorClass::Ddl);
-            assert_eq!(error.code(), tidb_error::terror::CODE_UNKNOWN);
+            assert_eq!(error.class(), tidb_terror::TerrorClass::Ddl);
+            assert_eq!(error.code(), tidb_terror::CODE_UNKNOWN);
             assert_eq!(
                 error.message(),
                 "panic in handling DDL logic and error count beyond the limitation 0, cancelled"
@@ -986,7 +986,7 @@ fn persisted_action_panic_preserves_checkpoint_and_discards_unfinished_metadata(
         } else {
             assert_eq!(
                 error.code().value(),
-                tidb_error::tidb::errcode::ErrCancelledDDLJob as isize
+                tidb_errno::errcode::ErrCancelledDDLJob as isize
             );
         }
     }
@@ -1030,8 +1030,8 @@ fn persisted_panic_during_cancellation_or_rollback_keeps_go_budget_and_prior_err
         job.state = initial_state;
         job.version = JobVersion::V2;
         job.error_count = 2;
-        job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
-            tidb_error::terror::TerrorCode::new(3819),
+        job.error = Some(GoShared::new(tidb_terror::TerrorError::compatible(
+            tidb_terror::TerrorCode::new(3819),
             "original validation failure",
         )));
         job.fill_args(Some(GoShared::new(tidb_model::AddCheckConstraintArgs {
@@ -1106,7 +1106,7 @@ fn persisted_panic_during_cancellation_or_rollback_keeps_go_budget_and_prior_err
             assert_eq!(error.message(), "original validation failure");
         } else {
             assert_eq!(history.error_count, 4);
-            assert_eq!(error.code(), tidb_error::terror::CODE_UNKNOWN);
+            assert_eq!(error.code(), tidb_terror::CODE_UNKNOWN);
             assert_eq!(
                 error.message(),
                 "panic in handling DDL logic and error count beyond the limitation 3, cancelled"
@@ -1300,7 +1300,7 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
         assert_eq!(saved.message(), message);
         assert_eq!(saved.rfc_code(), expected_rfc);
         if code == -1 {
-            assert_eq!(saved.class(), tidb_error::terror::TerrorClass::Ddl);
+            assert_eq!(saved.class(), tidb_terror::TerrorClass::Ddl);
         }
         assert_eq!(
             tidb_ddl::cluster_ddl::ddl_job_error_to_sql_error(&saved),
@@ -1337,7 +1337,7 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
 
 #[test]
 fn persisted_check_failure_uses_source_identity_for_rollback() {
-    use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
+    use tidb_terror::{TerrorClass, TerrorCode, TerrorError};
     for (error, state, rfc) in [
         (
             DdlPlanError::from(
@@ -1432,8 +1432,8 @@ fn persisted_action_error_is_checkpointed_before_retry() {
         assert_eq!(active.job.state, JobState::RUNNING);
         assert_eq!(active.job.raw_args, raw);
         let error = active.job.error.as_ref().unwrap().read();
-        assert_eq!(error.class(), tidb_error::terror::TerrorClass::Ddl);
-        assert_eq!(error.code(), tidb_error::terror::CODE_UNKNOWN);
+        assert_eq!(error.class(), tidb_terror::TerrorClass::Ddl);
+        assert_eq!(error.code(), tidb_terror::CODE_UNKNOWN);
     }
     let PersistedDdlJobPlan::Step(step) = plan_persisted_ddl_job_step(
         &mut store,
@@ -1731,7 +1731,7 @@ fn persisted_check_cancellation_restores_metadata_before_history() {
                 assert_eq!(history.state, JobState::CANCELLED);
                 assert_eq!(
                     history.error.as_ref().unwrap().read().code().value(),
-                    tidb_error::tidb::errcode::ErrCancelledDDLJob as isize
+                    tidb_errno::errcode::ErrCancelledDDLJob as isize
                 );
             }
         }
@@ -2001,10 +2001,10 @@ fn persisted_check_lookup_failures_cancel_before_retry() {
             assert_eq!(
                 history.error.as_ref().unwrap().read().code().value(),
                 match invalid {
-                    "nonpublic" => tidb_error::tidb::errcode::ErrInvalidDDLState as isize,
-                    "missingdb" => tidb_error::tidb::errcode::ErrBadDB as isize,
-                    "constraint" => tidb_error::tidb::errcode::ErrConstraintNotFound as isize,
-                    _ => tidb_error::tidb::errcode::ErrNoSuchTable as isize,
+                    "nonpublic" => tidb_errno::errcode::ErrInvalidDDLState as isize,
+                    "missingdb" => tidb_errno::errcode::ErrBadDB as isize,
+                    "constraint" => tidb_errno::errcode::ErrConstraintNotFound as isize,
+                    _ => tidb_errno::errcode::ErrNoSuchTable as isize,
                 }
             );
         }
@@ -2038,8 +2038,8 @@ fn persisted_pausing_jobs_checkpoint_only_control_state() {
         job.version = JobVersion::V2;
         // These args cannot run an action: Go pauses before decoding them.
         job.fill_v2_arg(serde_json::from_str(r#"{"preserve":"unknown action fields"}"#).unwrap());
-        job.error = Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
-            tidb_error::terror::TerrorCode::new(1105),
+        job.error = Some(GoShared::new(tidb_terror::TerrorError::compatible(
+            tidb_terror::TerrorCode::new(1105),
             "earlier retry failed",
         )));
         job.error_count = 2;
@@ -2215,11 +2215,11 @@ fn persisted_actions_cancel_through_shared_worker_without_schema_changes() {
                         ..Default::default()
                     }))),
                 })));
-                tidb_error::tidb::errcode::ErrDBCreateExists
+                tidb_errno::errcode::ErrDBCreateExists
             }
             ActionType::ACTION_CREATE_TABLE => {
                 job.fill_args(Some(GoShared::new(table(901, "existing"))));
-                tidb_error::tidb::errcode::ErrTableExists
+                tidb_errno::errcode::ErrTableExists
             }
             ActionType::ACTION_CREATE_TABLES => {
                 job.fill_args(Some(GoShared::new(BatchCreateTableArgs {
@@ -2227,16 +2227,16 @@ fn persisted_actions_cancel_through_shared_worker_without_schema_changes() {
                         vec![table(902, "must_not_publish"), table(901, "existing")].into(),
                     ),
                 })));
-                tidb_error::tidb::errcode::ErrTableExists
+                tidb_errno::errcode::ErrTableExists
             }
             ActionType::ACTION_DROP_SCHEMA => {
                 job.schema_id = 999;
                 job.fill_args(Some(GoShared::new(tidb_model::DropSchemaArgs::default())));
-                tidb_error::tidb::errcode::ErrDBDropExists
+                tidb_errno::errcode::ErrDBDropExists
             }
             _ => {
                 job.fill_v2_arg(serde_json::from_str("{}").unwrap());
-                tidb_error::tidb::errcode::ErrNoSuchTable
+                tidb_errno::errcode::ErrNoSuchTable
             }
         };
         let mut mutations = Vec::new();
@@ -2339,7 +2339,7 @@ fn persisted_action_decode_errors_use_shared_cancellation() {
         assert_eq!(finished.state, JobState::CANCELLED);
         assert_eq!(finished.error_count, 1);
         let error = finished.error.as_ref().unwrap().read();
-        assert_eq!(error.code(), tidb_error::terror::CODE_UNKNOWN);
+        assert_eq!(error.code(), tidb_terror::CODE_UNKNOWN);
         assert_eq!(error.rfc_code(), "ddl:-1");
         assert_eq!(
             tidb_ddl::cluster_ddl::ddl_job_error_to_sql_error(&error).code,

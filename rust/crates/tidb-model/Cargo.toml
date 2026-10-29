@@ -13,12 +13,13 @@ name = "all"
 path = "tests/all.rs"
 
 [dependencies]
+tidb-errno = { path = "../tidb-errno" }
+tidb-terror = { path = "../tidb-terror" }
 tidb-parser-types = { path = "../tidb-parser-types" }
 tidb-planner-cascades-base = { path = "../tidb-planner-cascades-base" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
-tidb-error = { path = "../tidb-error" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }

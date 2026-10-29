@@ -1110,7 +1110,7 @@ impl<S: StoreClient> SessionTransaction<S> {
                 &call,
             ),
             SessionTransactionState::Optimistic(_) => LockKeysOutcome::TransactionError(
-                LockSqlError::from(tidb_error::MysqlError::unknown(
+                LockSqlError::from(tidb_terror::MysqlError::unknown(
                     "a pessimistic lock requires a pessimistic transaction",
                 )),
             ),
@@ -2194,7 +2194,7 @@ fn classify(error: OptimisticCoordinatorError) -> StorageError {
     ) {
         let sql = coordinator_sql_error(error);
         return StorageError::Sql(
-            tidb_error::MysqlError::from_parts(sql.code, sql.state, sql.message)
+            tidb_terror::MysqlError::from_parts(sql.code, sql.state, sql.message)
                 .with_identity_opt(sql.identity),
         );
     }

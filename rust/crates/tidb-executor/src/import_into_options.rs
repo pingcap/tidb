@@ -76,7 +76,7 @@ enum OptionValue {
     Other,
 }
 
-fn code(proto: &'static tidb_error::terror::TerrorError, message: String) -> DriverError {
+fn code(proto: &'static tidb_terror::TerrorError, message: String) -> DriverError {
     DriverError::from((proto).generate_with_stack(message))
 }
 

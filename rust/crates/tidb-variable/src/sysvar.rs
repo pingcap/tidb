@@ -1123,7 +1123,7 @@ impl SysVarDef {
         // (ErrDDLSetting, 8246) for either scope.
         if self.name == "tidb_enable_ddl" && (value.eq_ignore_ascii_case("OFF") || value == "0") {
             return Err(ValidationError::SqlError(SqlError::new_f(
-                tidb_error::tidb::errcode::ErrDDLSetting,
+                tidb_errno::errcode::ErrDDLSetting,
                 "Error happened when disabling DDL: can not disable ddl owner when it is the only one tidb instance",
                 &[],
                 &[],
@@ -1533,8 +1533,8 @@ impl SysVarDef {
                 "utf8mb4_bin" | "utf8mb4_general_ci" | "utf8mb4_0900_ai_ci"
             ) {
                 return Err(ValidationError::SqlError(SqlError::new_f(
-                    tidb_error::tidb::errcode::ErrInvalidDefaultUTF8MB4Collation,
-                    tidb_error::tidb::errname::ErrInvalidDefaultUTF8MB4Collation.raw,
+                    tidb_errno::errcode::ErrInvalidDefaultUTF8MB4Collation,
+                    tidb_errno::errname::ErrInvalidDefaultUTF8MB4Collation.raw,
                     &[],
                     &[FormatArg::from(collation.name.as_str())],
                 )));

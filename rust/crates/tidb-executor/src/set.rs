@@ -80,7 +80,7 @@ fn set_sys_variable(
             // Removed vars permit parse-but-ignore.
             return Ok(());
         }
-        return Err(tidb_error::MysqlError::from_terror(
+        return Err(tidb_terror::MysqlError::from_terror(
             &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
                 .generate_with_stack_by_args(&[(name.to_owned()).into()]),
         )
@@ -98,7 +98,7 @@ fn set_sys_variable(
                     format!("SUPER or {privilege}")
                 };
                 return Err(DriverError::from(
-                    tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                    tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
                         .generate_with_stack_by_args(&[msg.into()]),
                 ));
             }
@@ -112,7 +112,7 @@ fn set_sys_variable(
             .request_dynamic_verification("RESTRICTED_VARIABLES_ADMIN", false)
     {
         return Err(DriverError::from(
-            tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+            tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
                 .generate_with_stack_by_args(&["RESTRICTED_VARIABLES_ADMIN".into()]),
         ));
     }

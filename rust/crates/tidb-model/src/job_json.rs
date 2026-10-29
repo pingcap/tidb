@@ -18,7 +18,7 @@
 use serde::de::DeserializeSeed;
 use serde::Deserialize;
 use serde_json::value::RawValue;
-use tidb_error::terror::{TerrorCode, TerrorError};
+use tidb_terror::{TerrorCode, TerrorError};
 
 use tidb_goruntime::go_runtime::GoSliceElementLayout;
 use tidb_goruntime::go_runtime::GoSharedSlice;

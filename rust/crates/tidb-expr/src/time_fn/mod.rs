@@ -362,9 +362,9 @@ fn no_clock_err() -> EvalError {
 /// Go `types.ErrSyntax.GenWithStack(util.SyntaxErrorPrefix)`: a clock
 /// function's precision outside `0..=MaxInt32`.
 pub(crate) fn fsp_syntax_error() -> EvalError {
-    EvalError::Conversion(tidb_error::terror::TerrorError::registered(
-        tidb_error::terror::TerrorClass::Types,
-        tidb_error::terror::TerrorCode::new(1064),
+    EvalError::Conversion(tidb_terror::TerrorError::registered(
+        tidb_terror::TerrorClass::Types,
+        tidb_terror::TerrorCode::new(1064),
         "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use",
     ))
 }

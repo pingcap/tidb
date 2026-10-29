@@ -148,7 +148,7 @@ pub(super) fn plan_persisted_alter_schema_job_step<S: MetaSnapshot>(
             active,
             DdlPlanError::from(
                 tidb_dbterror::CLASS_SCHEMA
-                    .new_std(tidb_error::tidb::errcode::ErrBadDB)
+                    .new_std(tidb_errno::errcode::ErrBadDB)
                     .generate(format!(
                         "Unknown database '(Schema ID {})'",
                         active.job.schema_id

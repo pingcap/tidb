@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{std_err, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `util/hint.ErrWarnConflictingHint` (`pkg/util/hint/hint.go:1275`).
 pub static ERR_WARN_CONFLICTING_HINT: LazyLock<TerrorError> =

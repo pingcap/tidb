@@ -275,7 +275,7 @@ mod tests {
             .inc();
         EVENT_TOTAL.with_label_values(&["server-start"]).inc();
         let label = execute_error_to_label(Some(
-            tidb_error::plannererrors::ERR_STMT_NOT_FOUND.identity(),
+            tidb_plannererrors::ERR_STMT_NOT_FOUND.identity(),
         ));
         EXECUTE_ERROR_TOTAL
             .with_label_values(&[&label, "", "default"])

@@ -21,7 +21,7 @@
 //! [`CastCompletion`]. `RawCast` is the caller that completes nothing.
 
 use tidb_datatype::{Datum, FieldType};
-use tidb_error::MysqlError;
+use tidb_terror::MysqlError;
 
 /// Go `table.CastValue`'s returned `error`: a cast-family `terror` already
 /// rendered with its identity, or the evaluation error Go returns unchanged
@@ -349,7 +349,7 @@ fn cast_contextual_value(
     force_ignore: bool,
     flags: tidb_datatype::ConversionFlags,
 ) -> Result<Datum, CastError> {
-    use tidb_error::terror::TerrorError;
+    use tidb_terror::TerrorError;
     #[derive(Default)]
     struct Warnings(std::cell::RefCell<Vec<TerrorError>>);
     impl tidb_datatype::ConversionWarningAppender for Warnings {
@@ -536,7 +536,7 @@ pub fn truncate_char_trailing_spaces(value: Datum, field_type: &FieldType) -> Da
 ///
 /// Measured against TiDB for every row, with
 /// `insert into k (id) values (1) on duplicate key update <col> = <value>`.
-fn conversion_failure(source: &Datum, field_type: &FieldType) -> tidb_error::terror::TerrorError {
+fn conversion_failure(source: &Datum, field_type: &FieldType) -> tidb_terror::TerrorError {
     use tidb_datatype::{EvalType, FieldTypeCode};
 
     let text = datum_error_text(source);
@@ -569,7 +569,7 @@ fn conversion_failure(source: &Datum, field_type: &FieldType) -> tidb_error::ter
 }
 
 /// Go `types.ErrWrongValue.GenWithStackByArgs(types.TypeStr(tp), str)`.
-fn wrong_value(field_type: &FieldType, text: &str) -> tidb_error::terror::TerrorError {
+fn wrong_value(field_type: &FieldType, text: &str) -> tidb_terror::TerrorError {
     tidb_error::catalog::types::ERR_WRONG_VALUE.generate_with_stack_by_args(&[
         tidb_datatype::type_str(field_type.code()).into(),
         text.into(),

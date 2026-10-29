@@ -17,7 +17,7 @@
 //! by [`tidb_parser::auth`]; this module selects the plugin and maps account
 //! statement forms onto that single implementation.
 
-use tidb_error::MysqlError;
+use tidb_terror::MysqlError;
 use tidb_mysql::consts::{
     AuthCachingSha2Password, AuthLDAPSASL, AuthLDAPSimple, AuthNativePassword, AuthSocket,
     AuthTiDBAuthToken, AuthTiDBSM3Password, PWDHashLen, SHAPWDHashLen, SM3PWDHashLen,
@@ -193,7 +193,7 @@ pub fn encode_password_for_plugin(
             if shaped {
                 Ok((*hash).to_owned())
             } else {
-                Err(tidb_error::MysqlError::from_terror(
+                Err(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::exeerrors::ERR_PASSWORD_FORMAT
                         .generate_with_stack_by_args(&[]),
                 ))

@@ -1,0 +1,19 @@
+[package]
+name = "tidb-terror"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/parser/terror: TiDB's classified errors (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-errno = { path = "../tidb-errno" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-terror-identity = { path = "../tidb-terror-identity" }
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+tracing = "0.1"

@@ -19,7 +19,7 @@
 //! `terror.go` wraps `parser/terror.ErrClass` with the subsystem class
 //! constants and `NewStd`, which resolves the standard message for an error
 //! code from `pkg/errno`'s catalog — in this workspace that superset catalog
-//! (standard MySQL codes plus TiDB's 8xxx range) is `tidb_error::tidb`, not
+//! (standard MySQL codes plus TiDB's 8xxx range) is `tidb_errno`, not
 //! the `parser/mysql`-only `tidb_mysql::errors` one.
 //!
 //! `ddl_terror.go` is a 228-entry table of DDL error prototypes. The Rust
@@ -35,7 +35,7 @@ pub mod exeerrors;
 
 pub use ddl_errors::*;
 
-use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
+use tidb_terror::{TerrorClass, TerrorCode, TerrorError};
 use tidb_mysql::errors::ErrMessage;
 
 /// A class of errors (Go `dbterror.ErrClass`, wrapping `terror.ErrClass`).
@@ -90,7 +90,7 @@ pub const CLASS_UTIL: ErrClass = ErrClass(TerrorClass::Util);
 /// Resolves the standard `pkg/errno` catalog message (raw text + redaction
 /// positions) for an error code. This is Go's `errno.MySQLErrName[code]`.
 fn catalog_message(code: u16) -> ErrMessage {
-    *tidb_error::tidb::message_by_code(code)
+    *tidb_errno::message_by_code(code)
         .expect("dbterror code exists in the errno message catalog")
 }
 
@@ -119,7 +119,7 @@ impl ErrClass {
 mod tests {
     use super::*;
     use tidb_mysql::errors::{set_redaction_mode, FormatArg, RedactionMode};
-    use tidb_error::tidb::errcode;
+    use tidb_errno::errcode;
 
     /// Every generated DDL error must match the identity and message dumped
     /// from the REAL Go package variable (`Code()`/`RFCCode()`/`GetMsg()`).

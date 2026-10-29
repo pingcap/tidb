@@ -36,7 +36,7 @@ pub fn execute_use(
     // answers it, not an unknown database.
     if name.is_empty() {
         return Err(DriverError::from(
-            tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+            tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
         ));
     }
     if !ctx.privilege_manager().db_is_visible(name) {
@@ -47,7 +47,7 @@ pub fn execute_use(
             .and_then(|identity| identity.split_once('@'))
             .unwrap_or_default();
         return Err(DriverError::from(
-            tidb_error::plannererrors::ERR_DBACCESS_DENIED.generate_with_stack_by_args(&[
+            tidb_plannererrors::ERR_DBACCESS_DENIED.generate_with_stack_by_args(&[
                 user.to_owned().into(),
                 host.to_owned().into(),
                 name.to_owned().into(),

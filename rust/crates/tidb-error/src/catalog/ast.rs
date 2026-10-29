@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{std_err, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `parser/ast.ErrNoParts` (`pkg/parser/ast/ddl.go:4418`).
 pub static ERR_NO_PARTS: LazyLock<TerrorError> =

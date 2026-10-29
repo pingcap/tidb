@@ -1869,7 +1869,7 @@ impl Session {
     /// The current database, or Go's `ErrNoDB` when none is selected.
     fn require_current_database(&self) -> Result<&str, DriverError> {
         if self.vars.current_db.is_empty() {
-            return Err(DriverError::from(tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[])));
+            return Err(DriverError::from(tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[])));
         }
         Ok(&self.vars.current_db)
     }
@@ -2655,7 +2655,7 @@ impl Session {
         &mut self,
         code: u16,
         message: String,
-        identity: Option<tidb_error::terror::TerrorIdentity>,
+        identity: Option<tidb_terror::TerrorIdentity>,
     ) {
         self.warnings.clear();
         self.append_sql_warning(SqlWarning::from_error(WarningLevel::Error, code, message, identity));
@@ -2668,7 +2668,7 @@ impl Session {
         &mut self,
         code: u16,
         message: String,
-        identity: Option<tidb_error::terror::TerrorIdentity>,
+        identity: Option<tidb_terror::TerrorIdentity>,
     ) {
         // go `driver_tidb.go:376` appends the error, but the DDL execution
         // path may have already recorded it (HandleStatusErr in the

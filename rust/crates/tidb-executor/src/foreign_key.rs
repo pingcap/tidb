@@ -253,12 +253,12 @@ fn targets(node: &FkTriggerNode, database: &str, table: &str) -> bool {
 fn planned_violation(node: &FkTriggerNode) -> DriverError {
     if node.kind == FkTriggerKind::ChildCheck {
         DriverError::from(
-            tidb_error::plannererrors::ERR_NO_REFERENCED_ROW2
+            tidb_plannererrors::ERR_NO_REFERENCED_ROW2
                 .fast_generate_by_args(&[node.fk_string.clone().into()]),
         )
     } else {
         DriverError::from(
-            tidb_error::plannererrors::ERR_ROW_IS_REFERENCED2
+            tidb_plannererrors::ERR_ROW_IS_REFERENCED2
                 .generate_with_stack_by_args(&[node.fk_string.clone().into()]),
         )
     }

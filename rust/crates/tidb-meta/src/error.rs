@@ -237,7 +237,7 @@ impl MetaError {
     /// `pkg/structure/structure.go`, and the `pkg/kv` errors they propagate):
     /// class and code travel with the value.
     #[must_use]
-    pub fn proto(&self) -> Option<&'static tidb_error::terror::TerrorError> {
+    pub fn proto(&self) -> Option<&'static tidb_terror::TerrorError> {
         use tidb_error::catalog::{kv, meta, structure};
         Some(match self {
             Self::InvalidFieldPrefix(_) => &meta::ERR_INVALID_STRING,

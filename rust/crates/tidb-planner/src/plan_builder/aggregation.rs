@@ -766,7 +766,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         .or_else(|| field.text.clone())
                         .unwrap_or_default();
                     return Err(PlanError::from(
-                        tidb_error::plannererrors::ERR_WRONG_GROUP_FIELD
+                        tidb_plannererrors::ERR_WRONG_GROUP_FIELD
                             .generate_with_stack_by_args(&[label.into()]),
                     ));
                 }
@@ -796,7 +796,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     Ok(index) => index,
                     Err(_) => {
                         error = Some(PlanError::from(
-                            tidb_error::plannererrors::ERR_AMBIGUOUS.generate_with_stack_by_args(
+                            tidb_plannererrors::ERR_AMBIGUOUS.generate_with_stack_by_args(
                                 &[
                                     (path
                                         .last()
@@ -819,7 +819,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 let field = &fields[index];
                 if aggregate_anywhere(&field.expr) {
                     error = Some(PlanError::from(
-                        tidb_error::plannererrors::ERR_ILLEGAL_REFERENCE
+                        tidb_plannererrors::ERR_ILLEGAL_REFERENCE
                             .generate_with_stack_by_args(&[
                                 (path.last().cloned().unwrap_or_default()).into(),
                                 "reference to group function".into(),
@@ -827,7 +827,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     ));
                 } else if has_window_flag(&field.expr) {
                     error = Some(PlanError::from(
-                        tidb_error::plannererrors::ERR_ILLEGAL_REFERENCE
+                        tidb_plannererrors::ERR_ILLEGAL_REFERENCE
                             .generate_with_stack_by_args(&[
                                 (path.last().cloned().unwrap_or_default()).into(),
                                 "reference to window function".into(),
@@ -964,7 +964,7 @@ pub fn resolve_from_select_fields(
                 // the other (`Name.Match`), naming the later column.
                 if !column_paths_match(earlier, current) {
                     return Err(PlanError::from(
-                        tidb_error::plannererrors::ERR_AMBIGUOUS.generate_with_stack_by_args(&[
+                        tidb_plannererrors::ERR_AMBIGUOUS.generate_with_stack_by_args(&[
                             (current
                                 .last()
                                 .map(|name| tidb_mysql::to_lowercase(name))
@@ -1050,7 +1050,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         visit_exprs(having, &mut |node| {
             if let Expr::Window { name, .. } = node {
                 error = Some(PlanError::from(
-                    tidb_error::plannererrors::ERR_WINDOW_INVALID_WINDOW_FUNC_USE
+                    tidb_plannererrors::ERR_WINDOW_INVALID_WINDOW_FUNC_USE
                         .generate_with_stack_by_args(&[(name).to_ascii_lowercase().into()]),
                 ));
                 return true;
@@ -1201,7 +1201,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 .any(|scope| find_field_name(scope, &path).is_some())
             {
                 error = Some(PlanError::from(
-                    tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                    tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
                         tidb_hack::go_to_lower(path.join(".")).into(),
                         "having clause".into(),
                     ]),
@@ -1373,7 +1373,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     Some((position, text)) => {
                         args.get(position.wrapping_sub(1)).cloned().ok_or_else(|| {
                             PlanError::from(
-                                tidb_error::plannererrors::ERR_UNKNOWN_COLUMN
+                                tidb_plannererrors::ERR_UNKNOWN_COLUMN
                                     .generate_with_stack_by_args(&[
                                         tidb_hack::go_to_lower(text).into(),
                                         "order clause".into(),

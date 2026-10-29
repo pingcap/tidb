@@ -182,7 +182,7 @@ fn process_admin_batch_sem_target_defaults_and_caller_active_roles() {
     tidb_sem::enable();
     crate::tests_support::assert_go_error(
         bob.run(&kill_victim),
-        &tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED,
+        &tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED,
         &["RESTRICTED_CONNECTION_ADMIN".into()],
     );
     assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 0);
@@ -597,7 +597,7 @@ fn kill_of_another_users_connection_requires_super() {
     // Go `buildSimple`'s `ErrSpecificAccessDenied("SUPER or CONNECTION_ADMIN")`.
     crate::tests_support::assert_go_error(
         bob.run("kill 4"),
-        &tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED,
+        &tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED,
         &["SUPER or CONNECTION_ADMIN".into()],
     );
 
@@ -642,7 +642,7 @@ fn kill_of_another_users_connection_accepts_connection_admin() {
     // Go `buildSimple`'s `ErrSpecificAccessDenied("SUPER or CONNECTION_ADMIN")`.
     crate::tests_support::assert_go_error(
         bob.run("kill 4"),
-        &tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED,
+        &tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED,
         &["SUPER or CONNECTION_ADMIN".into()],
     );
 
@@ -667,7 +667,7 @@ fn kill_of_another_users_connection_accepts_connection_admin() {
         .unwrap();
     crate::tests_support::assert_go_error(
         bob.run("kill 4"),
-        &tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED,
+        &tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED,
         &["SUPER or CONNECTION_ADMIN".into()],
     );
 }

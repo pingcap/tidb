@@ -339,7 +339,7 @@ pub use tidb_context::WarningLevel as DdlWarningLevel;
 /// Go `StmtCtx.AppendNote(proto.GenWithStackByArgs(...))`: the note an
 /// `IF [NOT] EXISTS` files, carrying the Go error `proto` it suppressed.
 #[must_use]
-pub fn ddl_note(error: tidb_error::terror::TerrorError) -> tidb_context::SqlWarn {
+pub fn ddl_note(error: tidb_terror::TerrorError) -> tidb_context::SqlWarn {
     tidb_context::SqlWarn::new(
         DdlWarningLevel::Note,
         tidb_context::WarnErr::Terror(error),
@@ -421,7 +421,7 @@ pub trait IndexBackfiller {
         _snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
         _buffer: &MutationBuffer,
     ) -> Result<(), LockSqlError> {
-        Err(LockSqlError::from(tidb_error::MysqlError::unknown(
+        Err(LockSqlError::from(tidb_terror::MysqlError::unknown(
             "this path cannot validate an exchanged partition's rows",
         )))
     }
@@ -449,7 +449,7 @@ pub trait IndexBackfiller {
         _snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
         _buffer: &MutationBuffer,
     ) -> Result<bool, LockSqlError> {
-        Err(LockSqlError::from(tidb_error::MysqlError::unknown(
+        Err(LockSqlError::from(tidb_terror::MysqlError::unknown(
             "this path cannot read a table's rows",
         )))
     }
@@ -461,7 +461,7 @@ pub trait IndexBackfiller {
         _snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
         _buffer: &MutationBuffer,
     ) -> Result<AddIndexReorgAnswer, LockSqlError> {
-        Err(LockSqlError::from(tidb_error::MysqlError::unknown(
+        Err(LockSqlError::from(tidb_terror::MysqlError::unknown(
             "this path cannot reorganize an index",
         )))
     }
@@ -548,14 +548,14 @@ pub enum AddIndexReorgAnswer {
 
 /// The default for a backfiller that cannot read a table's stored bytes.
 fn cache_table_check_unavailable() -> LockSqlError {
-    LockSqlError::from(tidb_error::MysqlError::unknown(
+    LockSqlError::from(tidb_terror::MysqlError::unknown(
         "this path cannot measure a table for ALTER TABLE ... CACHE",
     ))
 }
 
 /// The default for a backfiller that cannot read a child and its parent.
 fn foreign_key_check_unavailable() -> LockSqlError {
-    LockSqlError::from(tidb_error::MysqlError::unknown(
+    LockSqlError::from(tidb_terror::MysqlError::unknown(
         "this path cannot check a foreign key's existing rows",
     ))
 }
@@ -1506,7 +1506,7 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
                 .has_null_value(table, column_id, Arc::clone(&null_snapshot), &null_buffer)
                 .map_err(|error| {
                     DdlPlanError::from_mysql_error(
-                        tidb_error::MysqlError::from_parts(
+                        tidb_terror::MysqlError::from_parts(
                             error.code,
                             error.state,
                             error.message,
@@ -2157,7 +2157,7 @@ mod tests {
     #[test]
     fn committed_action_retry_matches_go_classification_and_budget() {
         let coded = |code, message: &str| {
-            DdlPlanError::from_mysql_error(tidb_error::MysqlError::sql_error(code, message))
+            DdlPlanError::from_mysql_error(tidb_terror::MysqlError::sql_error(code, message))
         };
         for &code in tidb_dbterror::REORG_RETRYABLE_ERR_CODES.iter() {
             let error = coded(code, "temporary source error");
@@ -2183,9 +2183,9 @@ mod tests {
             tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED.generate("invalid row"),
         );
         assert!(!is_retryable_job_error(&permanent, 1, 3));
-        let unknown = DdlPlanError::from(tidb_error::terror::TerrorError::synthesize(
-            tidb_error::terror::TerrorClass::Ddl,
-            tidb_error::terror::CODE_UNKNOWN,
+        let unknown = DdlPlanError::from(tidb_terror::TerrorError::synthesize(
+            tidb_terror::TerrorClass::Ddl,
+            tidb_terror::CODE_UNKNOWN,
             "typed unknown",
         ));
         assert!(
@@ -2215,7 +2215,7 @@ mod tests {
 
     #[test]
     fn session_ddl_commit_classification_preserves_determinate_errors() {
-        let conflict = LockSqlError::from(tidb_error::MysqlError::from_terror(
+        let conflict = LockSqlError::from(tidb_terror::MysqlError::from_terror(
             &tidb_error::catalog::kv::ERR_WRITE_CONFLICT
                 .generate_with_stack("write conflict at schema version key"),
         ));
@@ -2227,7 +2227,7 @@ mod tests {
             }
         ));
 
-        let ordinary = LockSqlError::from(tidb_error::MysqlError::unknown(
+        let ordinary = LockSqlError::from(tidb_terror::MysqlError::unknown(
             "prewrite transport failed definitively",
         ));
         assert!(matches!(
@@ -2281,7 +2281,7 @@ pub fn cluster_ddl_error(error: ClusterDdlError) -> tidb_store_driver_error::sql
         // The wire triple of the persisted job error, labelled with the Go
         // identity only when the refusal was a Go error (a plain one has none).
         ClusterDdlError::Plan(error) => tidb_store_driver_error::sql_query_error::SqlQueryError::from(
-            tidb_error::MysqlError::from_sql_error(error.to_sql_error()),
+            tidb_terror::MysqlError::from_sql_error(error.to_sql_error()),
         )
         .with_identity(error.identity()),
         other => tidb_store_driver_error::sql_query_error::SqlQueryError::unknown(other.to_string()),

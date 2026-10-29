@@ -71,7 +71,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let (database, name) = match insert.table.as_slice() {
             [_] if self.source.current_database().is_empty() => {
                 return Err(PlanError::from(
-                    tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                    tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
                 ))
             }
             [name] => (self.source.current_database(), name.as_str()),
@@ -128,7 +128,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         .position(|(candidate, _)| go_to_lower(candidate) == go_to_lower(name))
                         .ok_or_else(|| {
                             PlanError::from(
-                                tidb_error::plannererrors::ERR_UNKNOWN_COLUMN
+                                tidb_plannererrors::ERR_UNKNOWN_COLUMN
                                     .generate_with_stack_by_args(&[
                                         tidb_hack::go_to_lower(name.clone()).into(),
                                         "field list".into(),
@@ -233,14 +233,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ) -> Result<(), PlanError> {
         if select_width != target.offsets.len() {
             return Err(PlanError::from(
-                tidb_error::plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
+                tidb_plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
                     .generate_with_stack_by_args(&[1.into()]),
             ));
         }
         for &offset in &target.offsets {
             if target.generated[offset] {
                 return Err(PlanError::from(
-                    tidb_error::plannererrors::ERR_BAD_GENERATED_COLUMN
+                    tidb_plannererrors::ERR_BAD_GENERATED_COLUMN
                         .generate_with_stack_by_args(&[
                             (target.columns[offset].0.clone()).into(),
                             (target.table.clone()).into(),
@@ -282,7 +282,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let width = row.len();
             if (index > 0 || names_a_column || width > 0) && width != previous_width {
                 return Err(PlanError::from(
-                    tidb_error::plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
+                    tidb_plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
                         .generate_with_stack_by_args(&[(index + 1).into()]),
                 ));
             }
@@ -348,7 +348,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         .find(|column| go_to_lower(&column.name) == go_to_lower(written))
                         .ok_or_else(|| {
                             PlanError::from(
-                                tidb_error::plannererrors::ERR_UNKNOWN_COLUMN
+                                tidb_plannererrors::ERR_UNKNOWN_COLUMN
                                     .generate_with_stack_by_args(&[
                                         tidb_hack::go_to_lower(written.clone()).into(),
                                         "field list".into(),
@@ -359,7 +359,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     let same = go_to_lower(&found.name) == go_to_lower(column_name);
                     if !same && (generated || found.is_generated) {
                         return Err(PlanError::from(
-                            tidb_error::plannererrors::ERR_BAD_GENERATED_COLUMN
+                            tidb_plannererrors::ERR_BAD_GENERATED_COLUMN
                                 .generate_with_stack_by_args(&[
                                     (column_name.clone()).into(),
                                     (target.table.clone()).into(),
@@ -391,7 +391,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // Go: a generated column written explicitly accepts only DEFAULT.
         if generated {
             return Err(PlanError::from(
-                tidb_error::plannererrors::ERR_BAD_GENERATED_COLUMN.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_BAD_GENERATED_COLUMN.generate_with_stack_by_args(&[
                     (column_name.clone()).into(),
                     (target.table.clone()).into(),
                 ]),

@@ -118,7 +118,7 @@ struct Offender {
 /// Go `plannererrors.ErrFieldNotInGroupBy` (1055).
 fn err_field_not_in_group_by(position: usize, clause: Clause, column: &str) -> PlanError {
     PlanError::from(
-        tidb_error::plannererrors::ERR_FIELD_NOT_IN_GROUP_BY.generate_with_stack_by_args(&[
+        tidb_plannererrors::ERR_FIELD_NOT_IN_GROUP_BY.generate_with_stack_by_args(&[
             position.into(),
             (clause.label()).into(),
             column.into(),
@@ -129,7 +129,7 @@ fn err_field_not_in_group_by(position: usize, clause: Clause, column: &str) -> P
 /// Go `plannererrors.ErrMixOfGroupFuncAndFields` (8123).
 fn err_field_not_in_aggregated_query(position: usize, column: &str) -> PlanError {
     PlanError::from(
-        tidb_error::plannererrors::ERR_MIX_OF_GROUP_FUNC_AND_FIELDS
+        tidb_plannererrors::ERR_MIX_OF_GROUP_FUNC_AND_FIELDS
             .generate_with_stack_by_args(&[position.into(), column.into()]),
     )
 }
@@ -137,7 +137,7 @@ fn err_field_not_in_aggregated_query(position: usize, column: &str) -> PlanError
 /// Go `plannererrors.ErrAggregateOrderNonAggQuery` (3029).
 fn err_aggregate_order_non_agg_query(position: usize) -> PlanError {
     PlanError::from(
-        tidb_error::plannererrors::ERR_AGGREGATE_ORDER_NON_AGG_QUERY
+        tidb_plannererrors::ERR_AGGREGATE_ORDER_NON_AGG_QUERY
             .generate_with_stack_by_args(&[position.into()]),
     )
 }
@@ -145,7 +145,7 @@ fn err_aggregate_order_non_agg_query(position: usize) -> PlanError {
 /// Go `plannererrors.ErrFieldInOrderNotSelect` (3065).
 fn err_field_in_order_not_select(position: usize, column: &str) -> PlanError {
     PlanError::from(
-        tidb_error::plannererrors::ERR_FIELD_IN_ORDER_NOT_SELECT.generate_with_stack_by_args(&[
+        tidb_plannererrors::ERR_FIELD_IN_ORDER_NOT_SELECT.generate_with_stack_by_args(&[
             position.into(),
             column.into(),
             "DISTINCT".into(),
@@ -156,7 +156,7 @@ fn err_field_in_order_not_select(position: usize, column: &str) -> PlanError {
 /// Go `plannererrors.ErrAggregateInOrderNotSelect` (3066).
 fn err_aggregate_in_order_not_select(position: usize) -> PlanError {
     PlanError::from(
-        tidb_error::plannererrors::ERR_AGGREGATE_IN_ORDER_NOT_SELECT
+        tidb_plannererrors::ERR_AGGREGATE_IN_ORDER_NOT_SELECT
             .generate_with_stack_by_args(&[position.into(), "DISTINCT".into()]),
     )
 }
@@ -308,7 +308,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // `Argument 2 of GROUPING function is not in GROUP BY`).
             if offender.clause == Clause::Select && select.rollup {
                 return Err(PlanError::from(
-                    tidb_error::plannererrors::ERR_FIELD_IN_GROUPING_NOT_GROUP_BY
+                    tidb_plannererrors::ERR_FIELD_IN_GROUPING_NOT_GROUP_BY
                         .generate_with_stack_by_args(&[offender.position.to_string().into()]),
                 ));
             }
@@ -869,7 +869,7 @@ fn func_depend_col(
     for path in [left, right] {
         if let Some(column) = super::field_name_ambiguity(names, path) {
             return Err(PlanError::from(
-                tidb_error::plannererrors::ERR_AMBIGUOUS
+                tidb_plannererrors::ERR_AMBIGUOUS
                     .generate_with_stack_by_args(&[column.into(), "field list".into()]),
             ));
         }
@@ -883,7 +883,7 @@ fn func_depend_col(
             right
         };
         return Err(PlanError::from(
-            tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+            tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
                 tidb_hack::go_to_lower(unknown.join(".")).into(),
                 "where clause".into(),
             ]),

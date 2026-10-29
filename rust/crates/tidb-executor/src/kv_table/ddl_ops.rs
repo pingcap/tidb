@@ -118,7 +118,7 @@ impl KvTableDdl for KvTable {
             .any(|existing| existing.name.go_lower_eq(&index.name))
         {
             return Err(KvTableError::Mysql(
-                tidb_error::MysqlError::from_terror(
+                tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_DUP_KEY_NAME
                         .generate_with_stack_by_args(&[(index.name.clone()).into()]),
                 ),
@@ -265,7 +265,7 @@ impl KvTableDdl for KvTable {
             }
             if value.is_null() {
                 return Ok(Some(KvTableError::Mysql(
-                    tidb_error::MysqlError::from_terror(
+                    tidb_terror::MysqlError::from_terror(
                         &tidb_dbterror::ERR_INVALID_USE_OF_NULL
                             .generate_with_stack_by_args(&[]),
                     ),
@@ -273,7 +273,7 @@ impl KvTableDdl for KvTable {
             }
             let shown = value.sql_bytes().unwrap_or_default();
             return Ok(Some(KvTableError::Mysql(
-                tidb_error::MysqlError::from_terror(
+                tidb_terror::MysqlError::from_terror(
                     &tidb_error::catalog::types::ERR_TRUNCATED.generate_with_stack(format!(
                         "Data truncated for column '{}', value is '{}'",
                         (column),

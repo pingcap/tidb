@@ -14,7 +14,7 @@
 
 use std::borrow::Cow;
 
-use tidb_error::terror::TerrorError;
+use tidb_terror::TerrorError;
 
 use crate::ExecError;
 

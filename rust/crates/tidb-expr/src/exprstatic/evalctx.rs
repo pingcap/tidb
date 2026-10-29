@@ -27,11 +27,11 @@ use tidb_datatype::{
     str_to_float, ConversionContext, ConversionFlags, ConversionLocation,
     ConversionWarningAppender, Datum, STRICT_FLAGS,
 };
-use tidb_error::errctx::{
+use tidb_errctx::{
     new_context_with_levels, Context as ErrCtxContext, LevelMap, SharedError,
     WarnAppender as ErrCtxWarnAppender,
 };
-use tidb_error::terror::TerrorError;
+use tidb_terror::TerrorError;
 use tidb_mysql::consts::{format_sql_mode_str, get_sql_mode, DefaultSQLMode, SqlMode};
 use tidb_context::WarnHandler;
 use tidb_context::{gen_context_id, SqlWarn, StaticWarnHandler, WarnAppender, WarnErr};
@@ -1055,8 +1055,8 @@ mod tests {
     };
     use crate::metabuild::MetaOnlyInfoSchema;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use tidb_error::errctx::{ErrGroup, Level};
-    use tidb_error::terror::TerrorCode;
+    use tidb_errctx::{ErrGroup, Level};
+    use tidb_terror::TerrorCode;
     use tidb_mysql::consts::{
         ModeAllowInvalidDates, ModeNoZeroDate, ModeOnlyFullGroupBy, ModeStrictTransTables,
     };
@@ -1818,11 +1818,11 @@ impl crate::Columns for EvalContext {
     }
 
     fn truncate_level(&self) -> crate::ErrorLevel {
-        eval_error_level(self.err_level_map().get(tidb_error::errctx::ErrGroup::Truncate))
+        eval_error_level(self.err_level_map().get(tidb_errctx::ErrGroup::Truncate))
     }
 
     fn division_by_zero_level(&self) -> crate::ErrorLevel {
-        eval_error_level(self.err_level_map().get(tidb_error::errctx::ErrGroup::DividedByZero))
+        eval_error_level(self.err_level_map().get(tidb_errctx::ErrGroup::DividedByZero))
     }
 
     fn append_warning(&self, code: u16, message: &str) {
@@ -1872,11 +1872,11 @@ impl crate::Columns for EvalContext {
     }
 }
 
-fn eval_error_level(level: tidb_error::errctx::Level) -> crate::ErrorLevel {
+fn eval_error_level(level: tidb_errctx::Level) -> crate::ErrorLevel {
     match level {
-        tidb_error::errctx::Level::Error => crate::ErrorLevel::Error,
-        tidb_error::errctx::Level::Warn => crate::ErrorLevel::Warn,
-        tidb_error::errctx::Level::Ignore => crate::ErrorLevel::Ignore,
+        tidb_errctx::Level::Error => crate::ErrorLevel::Error,
+        tidb_errctx::Level::Warn => crate::ErrorLevel::Warn,
+        tidb_errctx::Level::Ignore => crate::ErrorLevel::Ignore,
     }
 }
 

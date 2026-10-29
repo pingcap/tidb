@@ -14,4 +14,4 @@
 
 /// Go's `error` from the variable package (`tidb_variable::VarError`, the
 /// same type).
-pub type VarError = tidb_error::MysqlError;
+pub type VarError = tidb_terror::MysqlError;

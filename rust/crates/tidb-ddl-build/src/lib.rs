@@ -17,7 +17,7 @@
 //! metadata (`BuildTableInfoWithStmt` and the builders under it), below the
 //! executor. The job workers that publish the metadata are `tidb-ddl`'s.
 
-use tidb_error::MysqlError;
+use tidb_terror::MysqlError;
 
 pub mod column_defaults;
 pub mod column_field_type;
@@ -158,7 +158,7 @@ pub fn create_table_ttl_info(
             .iter()
             .any(|option| matches!(option, tidb_ast::TableOption::TtlEnable(_)))
         {
-            return Err(tidb_error::MysqlError::from_terror(
+            return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
                     .generate_with_stack_by_args(&[("TTL_ENABLE".to_owned()).to_string().into()]),
             ));
@@ -167,7 +167,7 @@ pub fn create_table_ttl_info(
             .iter()
             .any(|option| matches!(option, tidb_ast::TableOption::TtlJobInterval(_)))
         {
-            return Err(tidb_error::MysqlError::from_terror(
+            return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
                     .generate_with_stack_by_args(&[("TTL_JOB_INTERVAL".to_owned())
                         .to_string()
@@ -204,14 +204,14 @@ pub fn validate_temporary_table_create(
         for option in &create.table_options {
             match option {
                 tidb_ast::TableOption::ShardRowIdBits(_) => {
-                    return Err(tidb_error::MysqlError::from_terror(
-                        &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                    return Err(tidb_terror::MysqlError::from_terror(
+                        &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                             .generate_with_stack_by_args(&["shard_row_id_bits".into()]),
                     ));
                 }
                 tidb_ast::TableOption::PlacementPolicy(_) => {
-                    return Err(tidb_error::MysqlError::from_terror(
-                        &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                    return Err(tidb_terror::MysqlError::from_terror(
+                        &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                             .generate_with_stack_by_args(&["PLACEMENT".into()]),
                     ));
                 }
@@ -224,8 +224,8 @@ pub fn validate_temporary_table_create(
                 .iter()
                 .any(|option| matches!(option, tidb_ast::ColumnOption::AutoRandom(_)))
         }) {
-            return Err(tidb_error::MysqlError::from_terror(
-                &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+            return Err(tidb_terror::MysqlError::from_terror(
+                &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                     .generate_with_stack_by_args(&["auto_random".into()]),
             ));
         }
@@ -244,7 +244,7 @@ pub fn check_create_table_like_source(
 ) -> Result<(), MysqlError> {
     if source.temp_table_type != tidb_model::TempTableType::NONE {
         return Err(MysqlError::from_terror(
-            &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+            &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                 .generate_with_stack_by_args(&["create table like".into()]),
         ));
     }
@@ -253,30 +253,30 @@ pub fn check_create_table_like_source(
     }
     if source.auto_random_bits != 0 {
         return Err(MysqlError::from_terror(
-            &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+            &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                 .generate_with_stack_by_args(&["auto_random".into()]),
         ));
     }
     if source.pre_split_regions != 0 {
         return Err(MysqlError::from_terror(
-            &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+            &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                 .generate_with_stack_by_args(&["pre split regions".into()]),
         ));
     }
     if source.partition.is_some() {
         return Err(MysqlError::from_terror(
-            &tidb_error::plannererrors::ERR_PARTITION_NO_TEMPORARY,
+            &tidb_plannererrors::ERR_PARTITION_NO_TEMPORARY,
         ));
     }
     if source.shard_row_id_bits != 0 {
         return Err(MysqlError::from_terror(
-            &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+            &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                 .generate_with_stack_by_args(&["shard_row_id_bits".into()]),
         ));
     }
     if source.placement_policy_ref.is_some() {
         return Err(MysqlError::from_terror(
-            &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+            &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                 .generate_with_stack_by_args(&["placement".into()]),
         ));
     }
@@ -296,7 +296,7 @@ pub fn set_temporary_type(
             if on_commit_delete {
                 Ok(tidb_model::TempTableType::GLOBAL)
             } else {
-                Err(tidb_error::MysqlError::from_terror(
+                Err(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_UNSUPPORTED_ON_COMMIT_PRESERVE
                         .generate_with_stack_by_args(&[]),
                 ))
@@ -315,7 +315,7 @@ pub const MAX_IDENTIFIER_LENGTH: usize = 64;
 /// characters.
 pub fn check_too_long_identifier(name: &str) -> Result<(), MysqlError> {
     if name.chars().count() > MAX_IDENTIFIER_LENGTH {
-        return Err(tidb_error::MysqlError::from_terror(
+        return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_TOO_LONG_IDENT
                 .generate_with_stack_by_args(&[name.to_owned().into()]),
         ));
@@ -343,7 +343,7 @@ pub fn ttl_info_from_options(
         {
             let interval_time_unit =
                 tidb_model::time_unit_type_from_keyword(unit).ok_or_else(|| {
-                    tidb_error::MysqlError::unknown(format!(
+                    tidb_terror::MysqlError::unknown(format!(
                         "`{unit}` is not a TTL interval unit"
                     ))
                 })?;

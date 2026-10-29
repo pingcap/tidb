@@ -43,7 +43,7 @@ impl tidb_ddl_build::partition_ddl::ReorgHost for AdmissionReorgHost {
     fn resolve_placement(
         &self,
         definitions: &mut [tidb_table::partition_routing::PartitionDef],
-    ) -> Result<(), tidb_error::MysqlError> {
+    ) -> Result<(), tidb_terror::MysqlError> {
         for definition in definitions {
             if let Some(reference) = definition.placement_policy.as_mut() {
                 let Some(found) = self
@@ -51,7 +51,7 @@ impl tidb_ddl_build::partition_ddl::ReorgHost for AdmissionReorgHost {
                     .iter()
                     .find(|policy| policy.name.lowercase() == reference.name.lowercase())
                 else {
-                    return Err(tidb_error::MysqlError::from_terror(
+                    return Err(tidb_terror::MysqlError::from_terror(
                         &tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS
                             .generate_with_stack_by_args(&[(reference.name.original()).into()]),
                     ));
@@ -1282,7 +1282,7 @@ pub(super) fn plan_cancel_reorganize_partition(
         start_ts,
         DdlPlanError::from(
             tidb_dbterror::ERR_CANCELLED_DDL_JOB
-                .generate(tidb_error::tidb::errname::ErrCancelledDDLJob.raw),
+                .generate(tidb_errno::errname::ErrCancelledDDLJob.raw),
         ),
     )
 }

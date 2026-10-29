@@ -10,6 +10,9 @@ description = "Session lifecycle and state authority for the TiDB Rust rewrite."
 autotests = false
 
 [dependencies]
+tidb-plannererrors = { path = "../tidb-plannererrors" }
+tidb-errno = { path = "../tidb-errno" }
+tidb-terror = { path = "../tidb-terror" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-config-configtypes = { path = "../tidb-config-configtypes" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }

@@ -20,7 +20,7 @@
 use tidb_ast::TableLockType;
 use tidb_model::{SessionInfo, TableLockInfo, TableLockState};
 
-use tidb_error::MysqlError;
+use tidb_terror::MysqlError;
 
 /// Go `TableInfo.IsLocked`.
 #[must_use]

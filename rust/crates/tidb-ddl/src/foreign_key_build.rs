@@ -67,7 +67,7 @@ pub(crate) fn check_foreign_key_valid(
                 ))
             }
             None => {
-                return Err(refusal(tidb_error::MysqlError::from_terror(
+                return Err(refusal(tidb_terror::MysqlError::from_terror(
                     &tidb_error::catalog::infoschema::ERR_FOREIGN_KEY_CANNOT_OPEN_PARENT
                         .generate_with_stack_by_args(&[(fk.ref_table.original())
                             .to_string()
@@ -382,7 +382,7 @@ pub(crate) fn check_modify_column_with_foreign_key_constraint(
             };
             let refer_col = refer_col.read();
             if new.code() != refer_col.field_type.code() {
-                return Err(refusal(tidb_error::MysqlError::from_terror(
+                return Err(refusal(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_FK_INCOMPATIBLE_COLUMNS.generate_with_stack_by_args(
                         &[
                             (new_col.name.original()).to_string().into(),
@@ -393,7 +393,7 @@ pub(crate) fn check_modify_column_with_foreign_key_constraint(
                 )));
             }
             if !is_acceptable_foreign_key_column_change(new_col, original_col, &refer_col) {
-                return Err(refusal(tidb_error::MysqlError::from_terror(
+                return Err(refusal(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_FOREIGN_KEY_COLUMN_CANNOT_CHANGE
                         .generate_with_stack_by_args(&[
                             (original_col.name.original()).to_string().into(),
@@ -429,7 +429,7 @@ pub(crate) fn check_modify_column_with_foreign_key_constraint(
             };
             let child_col = child_col.read();
             if new.code() != child_col.field_type.code() {
-                return Err(refusal(tidb_error::MysqlError::from_terror(
+                return Err(refusal(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_FK_INCOMPATIBLE_COLUMNS.generate_with_stack_by_args(
                         &[
                             (child_col.name.original()).to_string().into(),
@@ -440,7 +440,7 @@ pub(crate) fn check_modify_column_with_foreign_key_constraint(
                 )));
             }
             if !is_acceptable_foreign_key_column_change(new_col, original_col, &child_col) {
-                return Err(refusal(tidb_error::MysqlError::from_terror(
+                return Err(refusal(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_FOREIGN_KEY_COLUMN_CANNOT_CHANGE_CHILD
                         .generate_with_stack_by_args(&[
                             (original_col.name.original()).to_string().into(),

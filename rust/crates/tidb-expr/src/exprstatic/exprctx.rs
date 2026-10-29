@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-use tidb_error::errctx::{ErrGroup, Level};
+use tidb_errctx::{ErrGroup, Level};
 use tidb_context::PlanCacheTracker;
 use tidb_mathutil::MysqlRng;
 use tidb_vardef::defaults::{

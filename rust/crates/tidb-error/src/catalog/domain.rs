@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{std_err, std_err_msg, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `domain.ErrInfoSchemaExpired` (`pkg/domain/domain.go:3020`).
 pub static ERR_INFO_SCHEMA_EXPIRED: LazyLock<TerrorError> =

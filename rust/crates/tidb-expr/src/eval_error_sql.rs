@@ -19,9 +19,9 @@
 //! executor and the coprocessor (`toPBError`) both answer through it.
 
 use tidb_error::catalog::{charset, collate, expression, types};
-use tidb_error::MysqlError;
+use tidb_terror::MysqlError;
 use tidb_mysql::errors::SqlError;
-use tidb_error::terror::TerrorError;
+use tidb_terror::TerrorError;
 use tidb_hack::GoToLower;
 
 use crate::EvalError;
@@ -96,7 +96,7 @@ impl EvalError {
                 &expression::ERR_FUNCTION_NOT_EXISTS,
                 &["FUNCTION".into(), name.into()],
             ),
-            EvalError::NoDatabaseSelected => go(&tidb_error::plannererrors::ERR_NO_DB, &[]),
+            EvalError::NoDatabaseSelected => go(&tidb_plannererrors::ERR_NO_DB, &[]),
             // A typed temporal literal raises 1292 (22007) for a parse failure and
             // 1525 (HY000) for its regex gate, so the code travels with the
             // message and the SQLSTATE is derived from it like the JSON class
@@ -118,14 +118,14 @@ impl EvalError {
                 classed(&expression::ERR_INCORRECT_ARGS, message)
             }
             EvalError::InvalidGroupFuncUse => {
-                go(&tidb_error::plannererrors::ERR_INVALID_GROUP_FUNC_USE, &[])
+                go(&tidb_plannererrors::ERR_INVALID_GROUP_FUNC_USE, &[])
             }
             EvalError::TooManyGroupingArguments => go(
-                &tidb_error::plannererrors::ERR_INVALID_NUMBER_OF_ARGS,
+                &tidb_plannererrors::ERR_INVALID_NUMBER_OF_ARGS,
                 &["GROUPING".into(), 64.into()],
             ),
             EvalError::FieldInGroupingNotGroupBy(index) => go(
-                &tidb_error::plannererrors::ERR_FIELD_IN_GROUPING_NOT_GROUP_BY,
+                &tidb_plannererrors::ERR_FIELD_IN_GROUPING_NOT_GROUP_BY,
                 &[format!("#{index}").into()],
             ),
             // Go `types.ErrTooBigPrecision` (1426): the clock signatures raise it
@@ -160,14 +160,14 @@ impl EvalError {
                 // go folds an UNQUOTED identifier to its stored lowercase form
                 // before naming it in ErrBadField.
                 go(
-                    &tidb_error::plannererrors::ERR_UNKNOWN_COLUMN,
+                    &tidb_plannererrors::ERR_UNKNOWN_COLUMN,
                     &[column.go_to_lower().into(), "expression".into()],
                 )
             }
             // Go `ErrBadField` with the clause the name was written in
             // (`clauseMsg`), for example `Unknown column 'j' in 'order clause'`.
             EvalError::UnknownColumnInClause(column, clause) => go(
-                &tidb_error::plannererrors::ERR_UNKNOWN_COLUMN,
+                &tidb_plannererrors::ERR_UNKNOWN_COLUMN,
                 &[column.go_to_lower().into(), clause.into()],
             ),
             EvalError::UnsupportedOperandPair(lhs, rhs) => sql_error(

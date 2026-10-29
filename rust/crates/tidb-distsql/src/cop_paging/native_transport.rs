@@ -93,7 +93,7 @@ impl From<NativeCopError> for QueryResponseError {
     fn from(error: NativeCopError) -> Self {
         match error {
             NativeCopError::Task(CopReadTaskError::MaxKeysRead) => Self::Sql {
-                code: tidb_error::tidb::errcode::ErrMaxKeysReadExceeded,
+                code: tidb_errno::errcode::ErrMaxKeysReadExceeded,
                 message: "tidb_max_keys_read limit exceeded".to_owned(),
             },
             NativeCopError::Task(error) => Self::Source(format!("cop read task failed: {error}")),

@@ -8,8 +8,8 @@ repository.workspace = true
 description = "TiDB metrics: Go pkg/metrics (Rust rewrite)."
 
 [dependencies]
+tidb-terror = { path = "../tidb-terror" }
 prometheus = { version = "0.14", default-features = false }
-tidb-error = { path = "../tidb-error" }
 
 [lints]
 workspace = true

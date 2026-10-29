@@ -38,7 +38,7 @@ use tidb_kv::mem_quota::StatementMemory;
 use tidb_vardef::OomAction;
 use crate::statement_pushdown::{push_down_flags, PushDownFlagsInput, StatementKind};
 use tidb_driver_error::DriverError;
-use tidb_error::errctx::{ErrGroup, Level, LevelMap};
+use tidb_errctx::{ErrGroup, Level, LevelMap};
 use tidb_spill_storage::SpillStorage;
 
 static NEXT_STATEMENT_CONTEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -3248,7 +3248,7 @@ impl StmtContext {
         schema: &str,
         table: &str,
         index: tidb_model::index::IndexInfo,
-    ) -> Result<(), tidb_error::MysqlError> {
+    ) -> Result<(), tidb_terror::MysqlError> {
         self.with_hypo_index_writes(|indexes| indexes.add(schema, table, index))
     }
 
@@ -3259,7 +3259,7 @@ impl StmtContext {
         table: &str,
         index: &str,
         if_exists: bool,
-    ) -> Result<(), tidb_error::MysqlError> {
+    ) -> Result<(), tidb_terror::MysqlError> {
         self.with_hypo_index_writes(|indexes| indexes.remove(schema, table, index, if_exists))
     }
 
@@ -5520,9 +5520,9 @@ impl StmtContext {
                 tidb_context::WarningClass::TiKv => SqlWarn::new(
                     warning.level,
                     tidb_context::WarnErr::Terror(
-                        tidb_error::terror::TerrorError::synthesize(
-                            tidb_error::terror::TerrorClass::TiKv,
-                            tidb_error::terror::TerrorCode::new(isize::try_from(code).unwrap_or(isize::MAX)),
+                        tidb_terror::TerrorError::synthesize(
+                            tidb_terror::TerrorClass::TiKv,
+                            tidb_terror::TerrorCode::new(isize::try_from(code).unwrap_or(isize::MAX)),
                             warning.message,
                         ),
                     ),
@@ -5562,7 +5562,7 @@ impl StmtContext {
 
     /// Go `StmtCtx.AppendWarning` / `AppendNote` / `AppendError` of the error
     /// `error`, which keeps its identity.
-    pub fn append_mysql_error(&self, level: WarningLevel, error: &tidb_error::MysqlError) {
+    pub fn append_mysql_error(&self, level: WarningLevel, error: &tidb_terror::MysqlError) {
         self.push_warning(sql_warn_of(level, error));
     }
 
@@ -5832,7 +5832,7 @@ impl tidb_expr::metabuild::EvalContext for StmtContext {
 
 /// The `(code, message)` pair `SHOW WARNINGS` reports for one warning.
 /// The warning Go's `StmtCtx` keeps for `error`.
-pub fn sql_warn_of(level: WarningLevel, error: &tidb_error::MysqlError) -> SqlWarn {
+pub fn sql_warn_of(level: WarningLevel, error: &tidb_terror::MysqlError) -> SqlWarn {
     SqlWarn::from_error(level, error.code, error.message.clone(), error.identity)
 }
 

@@ -12,6 +12,9 @@ description = "Go pkg/ddl's worker side: the owner-stepped DDL job scheduler, th
 workspace = true
 
 [dependencies]
+tidb-plannererrors = { path = "../tidb-plannererrors" }
+tidb-errno = { path = "../tidb-errno" }
+tidb-terror = { path = "../tidb-terror" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-ddl-bdr = { path = "../tidb-ddl-bdr" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }

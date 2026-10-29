@@ -805,7 +805,7 @@ fn a_select_field_containing_an_aggregate_is_an_aggregate_query() {
     ] {
         let error = session.run(sql).unwrap_err();
         assert!(
-            error.equal(&tidb_error::plannererrors::ERR_AGGREGATE_ORDER_NON_AGG_QUERY)
+            error.equal(&tidb_plannererrors::ERR_AGGREGATE_ORDER_NON_AGG_QUERY)
                 && error
                     .to_string()
                     .starts_with(&format!("Expression #{position} ")),
@@ -1114,7 +1114,7 @@ fn grouping_with_rollup() {
     );
     let invalid = session.run("SELECT a, GROUPING(a) FROM t");
     assert!(
-        invalid.as_ref().is_err_and(|error| error.equal(&tidb_error::plannererrors::ERR_INVALID_GROUP_FUNC_USE)),
+        invalid.as_ref().is_err_and(|error| error.equal(&tidb_plannererrors::ERR_INVALID_GROUP_FUNC_USE)),
         "{invalid:?}"
     );
 

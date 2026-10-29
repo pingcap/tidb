@@ -275,7 +275,7 @@ impl From<EvalError> for PlanError {
     fn from(error: EvalError) -> Self {
         match error {
             EvalError::UnknownColumnInClause(column, clause) => Self::from(
-                tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
                     tidb_hack::go_to_lower(column).into(),
                     clause.into(),
                 ]),
@@ -1783,9 +1783,9 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         names: &[FieldName],
     ) -> Result<Expression, EvalError> {
         let ambiguous = |path: &[String]| {
-            EvalError::Conversion(tidb_error::terror::TerrorError::registered(
-                tidb_error::terror::TerrorClass::Expression,
-                tidb_error::terror::TerrorCode::new(1052),
+            EvalError::Conversion(tidb_terror::TerrorError::registered(
+                tidb_terror::TerrorClass::Expression,
+                tidb_terror::TerrorCode::new(1052),
                 format!("Column '{}' in field list is ambiguous", path.join(".")),
             ))
         };
@@ -1820,9 +1820,9 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             // Go `table.ErrNoDefaultValue.GenWithStackByArgs(name.ColName)`:
             // a column some expression computed has no default.
             return Err(EvalError::Conversion(
-                tidb_error::terror::TerrorError::registered(
-                    tidb_error::terror::TerrorClass::Table,
-                    tidb_error::terror::TerrorCode::new(1364),
+                tidb_terror::TerrorError::registered(
+                    tidb_terror::TerrorClass::Table,
+                    tidb_terror::TerrorCode::new(1364),
                     format!(
                         "Field '{}' doesn't have a default value",
                         name.names.column.original
@@ -2181,7 +2181,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             if let Expr::Window { name, .. } = node {
                 if window_error.is_none() {
                     window_error = Some(PlanError::from(
-                        tidb_error::plannererrors::ERR_WINDOW_INVALID_WINDOW_FUNC_USE
+                        tidb_plannererrors::ERR_WINDOW_INVALID_WINDOW_FUNC_USE
                             .generate_with_stack_by_args(&[(name).to_ascii_lowercase().into()]),
                     ));
                 }
@@ -2202,7 +2202,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
                 if resolver.ambiguous_column.borrow().as_deref() == Some(column.as_str()) =>
             {
                 Err(PlanError::from(
-                    tidb_error::plannererrors::ERR_AMBIGUOUS
+                    tidb_plannererrors::ERR_AMBIGUOUS
                         .generate_with_stack_by_args(&[column.into(), "field list".into()]),
                 ))
             }
@@ -2900,13 +2900,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ) -> Result<LogicalPlan, PlanError> {
         if !table_ref.partitions.is_empty() {
             return Err(PlanError::from(
-                tidb_error::plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
+                tidb_plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
                     .generate_with_stack_by_args(&[]),
             ));
         }
         if let Some(index) = table_ref.hints.iter().flat_map(|hint| &hint.indexes).next() {
             return Err(PlanError::from(
-                tidb_error::plannererrors::ERR_KEY_DOES_NOT_EXIST
+                tidb_plannererrors::ERR_KEY_DOES_NOT_EXIST
                     .generate_with_stack_by_args(&[(index.clone()).into(), sequence_name.into()]),
             ));
         }
@@ -3062,7 +3062,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // planned -- never as an unknown database named ''.
             [_] if self.source.current_database().is_empty() => {
                 return Err(PlanError::from(
-                    tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                    tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
                 ));
             }
             [table] => (self.source.current_database().to_owned(), table.clone()),
@@ -3098,7 +3098,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // view has no index: an SQL index hint naming one is an error.
             if let Some(index) = table_ref.hints.iter().flat_map(|hint| &hint.indexes).next() {
                 return Err(PlanError::from(
-                    tidb_error::plannererrors::ERR_KEY_DOES_NOT_EXIST.generate_with_stack_by_args(
+                    tidb_plannererrors::ERR_KEY_DOES_NOT_EXIST.generate_with_stack_by_args(
                         &[(index.clone()).into(), (view.view_name.clone()).into()],
                     ),
                 ));
@@ -3156,7 +3156,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // temporary table belongs to one connection and dies with it.
         if self.is_create_view && table.is_local_temporary {
             return Err(PlanError::from(
-                tidb_error::plannererrors::ERR_VIEW_SELECT_TEMPORARY_TABLE
+                tidb_plannererrors::ERR_VIEW_SELECT_TEMPORARY_TABLE
                     .generate_with_stack_by_args(&[(&table_name).into()]),
             ));
         }
@@ -3222,7 +3222,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
         } else if !table_ref.partitions.is_empty() {
             return Err(PlanError::from(
-                tidb_error::plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
+                tidb_plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
                     .generate_with_stack_by_args(&[]),
             ));
         }
@@ -3689,7 +3689,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 // Go `ErrNoAvailablePath` answers as ErrInternal (1815):
                 // `Internal : No access path for table ... Please check
                 // tiflash replica.` -- the errno template adds the prefix.
-                return Err(PlanError::from(tidb_error::plannererrors::ERR_INTERNAL.generate_with_stack_by_args(&[(format!(
+                return Err(PlanError::from(tidb_plannererrors::ERR_INTERNAL.generate_with_stack_by_args(&[(format!(
                     "No access path for table '{}' is found with 'tidb_isolation_read_engines' = '{}', valid values can be '{}'{help}.",
                     table.table_name,
                     self.isolation_read_engines_value,
@@ -4331,7 +4331,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     let list = Self::unfold_wild_star(path, wildcard_schema, wildcard_names);
                     if list.is_empty() {
                         return Err(PlanError::from(
-                            tidb_error::plannererrors::ERR_BAD_TABLE.generate_with_stack_by_args(
+                            tidb_plannererrors::ERR_BAD_TABLE.generate_with_stack_by_args(
                                 &[(path.last().map(String::as_str).unwrap_or("")).into()],
                             ),
                         ));
@@ -4909,7 +4909,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         .filter(|column| !(column.is_hidden && column.virtual_expr.is_some()))
                         .ok_or_else(|| {
                             PlanError::from(
-                                tidb_error::plannererrors::ERR_UNKNOWN_COLUMN
+                                tidb_plannererrors::ERR_UNKNOWN_COLUMN
                                     .generate_with_stack_by_args(&[
                                         tidb_hack::go_to_lower(position.to_string()).into(),
                                         "order clause".into(),
@@ -5459,7 +5459,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if self.building_recursive_part_for_cte {
             if select.distinct {
                 return Err(PlanError::from(
-                    tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET.generate_with_stack_by_args(
+                    tidb_plannererrors::ERR_NOT_SUPPORTED_YET.generate_with_stack_by_args(
                         &[
                             "SELECT DISTINCT in recursive query block of Common Table Expression"
                                 .into(),
@@ -5470,11 +5470,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             if (!select.order_by.is_empty() || select.limit.is_some())
                 && !self.building_lateral_subquery
             {
-                return Err(PlanError::from(tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET.generate_with_stack_by_args(&["ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)".into()])));
+                return Err(PlanError::from(tidb_plannererrors::ERR_NOT_SUPPORTED_YET.generate_with_stack_by_args(&["ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)".into()])));
             }
             if !select.group_by.is_empty() {
                 return Err(PlanError::from(
-                    tidb_error::plannererrors::ERR_CTERECURSIVE_FORBIDS_AGGREGATION
+                    tidb_plannererrors::ERR_CTERECURSIVE_FORBIDS_AGGREGATION
                         .fast_generate_by_args(&[(self.gen_cte_table_name_for_error()).into()]),
                 ));
             }
@@ -5543,7 +5543,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             && self.building_recursive_part_for_cte
         {
             return Err(PlanError::from(
-                tidb_error::plannererrors::ERR_CTERECURSIVE_FORBIDS_AGGREGATION
+                tidb_plannererrors::ERR_CTERECURSIVE_FORBIDS_AGGREGATION
                     .fast_generate_by_args(&[(self.gen_cte_table_name_for_error()).into()]),
             ));
         }
@@ -5726,7 +5726,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                             continue;
                         }
                         return Err(PlanError::from(
-                            tidb_error::plannererrors::ERR_UNKNOWN_TABLE
+                            tidb_plannererrors::ERR_UNKNOWN_TABLE
                                 .generate_with_stack_by_args(&[
                                     (target.join(".")).into(),
                                     "locking clause".into(),
@@ -5783,7 +5783,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             !select_aggs.is_empty() || !having_aggs.is_empty() || !select.group_by.is_empty();
         if has_agg && self.building_recursive_part_for_cte {
             return Err(PlanError::from(
-                tidb_error::plannererrors::ERR_CTERECURSIVE_FORBIDS_AGGREGATION
+                tidb_plannererrors::ERR_CTERECURSIVE_FORBIDS_AGGREGATION
                     .fast_generate_by_args(&[(self.gen_cte_table_name_for_error()).into()]),
             ));
         }

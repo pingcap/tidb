@@ -650,12 +650,12 @@ fn resolve_insert_target(
         )
     })?;
     if table.is_view() {
-        return Err(DriverError::from(tidb_error::MysqlError::unknown(
+        return Err(DriverError::from(tidb_terror::MysqlError::unknown(
             format!("insert into view {} is not supported now", table_name),
         )));
     }
     if table.is_sequence() {
-        return Err(DriverError::from(tidb_error::MysqlError::unknown(
+        return Err(DriverError::from(tidb_terror::MysqlError::unknown(
             format!("insert into sequence {} is not supported now", table_name),
         )));
     }
@@ -727,7 +727,7 @@ fn refuse_generated_insert_select_targets(layout: &InsertTargetLayout) -> Result
     for &offset in &layout.target_offsets {
         if layout.generated_targets[offset] {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_BAD_GENERATED_COLUMN.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_BAD_GENERATED_COLUMN.generate_with_stack_by_args(&[
                     (layout.column_list[offset].0.clone()).into(),
                     layout.table_name.clone().into(),
                 ]),
@@ -752,7 +752,7 @@ pub(crate) fn validate_insert_for_explain(
     if insert.source.is_some() {
         if select_width.is_some_and(|width| width != target_width) {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
+                tidb_plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
                     .generate_with_stack_by_args(&[1.into()]),
             ));
         }
@@ -765,7 +765,7 @@ pub(crate) fn validate_insert_for_explain(
         let expected = if index == 0 { target_width } else { previous_width };
         if (index > 0 || names_a_column || width > 0) && width != expected {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
+                tidb_plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
                     .generate_with_stack_by_args(&[(index + 1).into()]),
             ));
         }
@@ -1037,7 +1037,7 @@ fn run_insert_rows(
     } else {
         let Some(spec) = kv.partition() else {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
+                tidb_plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
                     .generate_with_stack_by_args(&[]),
             ));
         };
@@ -1123,7 +1123,7 @@ fn run_insert_rows(
                 // Go's INSERT SELECT check (planbuilder.go:4474) always
                 // reports row 1.
                 return Err(DriverError::from(
-                    tidb_error::plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
+                    tidb_plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
                         .generate_with_stack_by_args(&[1.into()]),
                 ));
             }
@@ -1496,7 +1496,7 @@ fn run_insert_rows(
                             type_name,
                         }) => DriverError::from(tidb_error::catalog::types::ERR_OVERFLOW.generate_with_stack(format!("constant {} overflows {}", value, type_name))),
                         AutoRandomError::AutoId(AutoIdError::Store(detail)) => {
-                            DriverError::from(tidb_error::MysqlError::unknown(detail.0))
+                            DriverError::from(tidb_terror::MysqlError::unknown(detail.0))
                         }
                         AutoRandomError::NotApplicable
                         | AutoRandomError::RebaseOverflow { .. }
@@ -1607,7 +1607,7 @@ fn run_insert_rows(
                             }
                             AutoIdError::Store(detail) => {
                                 return Err(DriverError::from(
-                                    tidb_error::MysqlError::unknown(detail.0),
+                                    tidb_terror::MysqlError::unknown(detail.0),
                                 ));
                             }
                         }
@@ -1929,7 +1929,7 @@ fn run_insert_rows(
                 &[row.to_vec()],
                 ctx,
             ) {
-                if error.equal(&tidb_error::plannererrors::ERR_NO_REFERENCED_ROW2) {
+                if error.equal(&tidb_plannererrors::ERR_NO_REFERENCED_ROW2) {
                     let warning = error.to_mysql_error();
                     ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
             tidb_context::WarningLevel::Warning,
@@ -2407,7 +2407,7 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
         if super::planner_bridge::is_cte(update.with.as_ref(), table) {
             super::planner_bridge::update_target_columns(update, catalog, current_db, ctx)?;
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE
+                tidb_plannererrors::ERR_NON_UPDATABLE_TABLE
                     .generate_with_stack_by_args(&[(table.name.join(".")).into(), "UPDATE".into()]),
             ));
         }
@@ -2568,7 +2568,7 @@ fn update_assignments_for_plan(
     match table {
         TableEntry::View(_) => {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE
+                tidb_plannererrors::ERR_NON_UPDATABLE_TABLE
                     .generate_with_stack_by_args(&[(name.clone()).into(), "UPDATE".into()]),
             ))
         }
@@ -3295,7 +3295,7 @@ fn run_update_with_physical(
     match table {
         TableEntry::View(_) => {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE
+                tidb_plannererrors::ERR_NON_UPDATABLE_TABLE
                     .generate_with_stack_by_args(&[(name.clone()).into(), "UPDATE".into()]),
             ))
         }
@@ -3740,7 +3740,7 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
         // `isCTE(tblW)` comes first: a CTE shadows any table of its name.
         if super::planner_bridge::is_cte(delete.with.as_ref(), table_ref) {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_NON_UPDATABLE_TABLE.generate_with_stack_by_args(&[
                     (table_ref.name.join(".")).into(),
                     "DELETE".into(),
                 ]),
@@ -3749,12 +3749,12 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
         let (database, name) = single_table_name(table_ref, current_db)?;
         match catalog.get_in(&database, &name) {
             Some(TableEntry::View(_)) => {
-                return Err(DriverError::from(tidb_error::MysqlError::unknown(
+                return Err(DriverError::from(tidb_terror::MysqlError::unknown(
                     format!("delete view {} is not supported now", name),
                 )));
             }
             Some(TableEntry::Sequence(_)) => {
-                return Err(DriverError::from(tidb_error::MysqlError::unknown(
+                return Err(DriverError::from(tidb_terror::MysqlError::unknown(
                     format!("delete sequence {} is not supported now", name),
                 )));
             }

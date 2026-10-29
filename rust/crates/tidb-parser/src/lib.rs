@@ -110,7 +110,7 @@ pub struct ParseError {
     /// yacc's 1064 — `ast.ErrNoParts` is `[ddl:1504]` straight from the
     /// grammar action. This is that Go definition (class and code); `None` is
     /// the ordinary 1064 syntax error.
-    pub terror: Option<&'static tidb_error::terror::TerrorError>,
+    pub terror: Option<&'static tidb_terror::TerrorError>,
 }
 
 impl ParseError {
@@ -1272,7 +1272,7 @@ impl Parser {
     /// A terror-coded parser warning (`p.warns = append(p.warns,
     /// ErrX.FastGenByArgs(...))`), which `util.SyntaxWarn` passes through
     /// with its own code.
-    fn warn_coded(&mut self, proto: &'static tidb_error::terror::TerrorError, message: &str) {
+    fn warn_coded(&mut self, proto: &'static tidb_terror::TerrorError, message: &str) {
         self.warnings.push(HintDiagnostic::classed(proto, message));
     }
 
@@ -1377,7 +1377,7 @@ impl Parser {
 
     /// A grammar-action refusal that carries its own Go error, the way Go's
     /// parser raises `ast.ErrNoParts` as `[ddl:1504]` rather than 1064.
-    fn err_coded(&self, terror: &'static tidb_error::terror::TerrorError, msg: &str) -> ParseError {
+    fn err_coded(&self, terror: &'static tidb_terror::TerrorError, msg: &str) -> ParseError {
         ParseError {
             terror: Some(terror),
             ..self.err_here(msg)

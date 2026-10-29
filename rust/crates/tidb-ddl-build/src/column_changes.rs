@@ -16,7 +16,7 @@
 //! Go `ModifyColumn`'s qualifier check and the client error of a failed data
 //! step.
 
-use tidb_error::MysqlError;
+use tidb_terror::MysqlError;
 use tidb_hack::GoToLower;
 
 /// Go `ModifyColumn`'s check of a qualified column name (`db.t.c`): its
@@ -68,7 +68,7 @@ pub fn modify_column_error(error: tidb_table::kv_table::KvTableError) -> MysqlEr
     match error {
         // Go `updateColumnWorker.reformatErrors`' text and code.
         KvTableError::Mysql(error) => error,
-        other => tidb_error::MysqlError::from_terror(&tidb_util::misc::syntax_error(
+        other => tidb_terror::MysqlError::from_terror(&tidb_util::misc::syntax_error(
             format!("column modification failed: {other:?}"),
         )),
     }

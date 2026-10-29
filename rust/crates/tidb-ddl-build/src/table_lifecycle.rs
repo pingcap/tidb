@@ -15,7 +15,7 @@
 //! The checks of the statements that move or remove a whole table, Go
 //! `pkg/ddl/executor.go`'s `dropTableObject` and `renameTable` admission.
 
-use tidb_error::MysqlError;
+use tidb_terror::MysqlError;
 use tidb_hack::GoToLower;
 
 /// The object kind relevant to Go's DROP TABLE / DROP VIEW admission.
@@ -55,7 +55,7 @@ pub fn check_drop_object(
     }
     match expected {
         DropObjectKind::View if actual != DropObjectKind::View => {
-            Err(tidb_error::MysqlError::from_terror(
+            Err(tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::infoschema::ERR_WRONG_OBJECT.generate_with_stack_by_args(&[
                     schema.into(),
                     name.into(),
@@ -64,7 +64,7 @@ pub fn check_drop_object(
             ))
         }
         DropObjectKind::Table if actual != DropObjectKind::Table => Ok(false),
-        DropObjectKind::Table if cached => Err(tidb_error::MysqlError::from_terror(
+        DropObjectKind::Table if cached => Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_OPT_ON_CACHE_TABLE
                 .generate_with_stack_by_args(&["Drop Table".into()]),
         )),
@@ -132,7 +132,7 @@ pub fn check_rename(admission: RenameAdmission<'_>) -> Result<bool, MysqlError> 
         is_alter,
     } = admission;
     let occupied = || {
-        tidb_error::MysqlError::from_terror(
+        tidb_terror::MysqlError::from_terror(
             &tidb_error::catalog::infoschema::ERR_TABLE_EXISTS
                 .generate_with_stack_by_args(&[(&format!("{to_db}.{to_name}")).into()]),
         )
@@ -141,7 +141,7 @@ pub fn check_rename(admission: RenameAdmission<'_>) -> Result<bool, MysqlError> 
         if !is_alter && target_exists {
             return Err(occupied());
         }
-        return Err(tidb_error::MysqlError::from_terror(
+        return Err(tidb_terror::MysqlError::from_terror(
             &tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
                 .generate_with_stack_by_args(&[from_db.into(), from_name.into()]),
         ));
@@ -159,7 +159,7 @@ pub fn check_rename(admission: RenameAdmission<'_>) -> Result<bool, MysqlError> 
         ));
     }
     if !target_schema_exists {
-        return Err(tidb_error::MysqlError::from_terror(
+        return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_ERROR_ON_RENAME.generate_with_stack_by_args(&[
                 (&format!("{from_db}.{from_name}")).into(),
                 (&format!("{to_db}.{to_name}")).into(),
@@ -172,7 +172,7 @@ pub fn check_rename(admission: RenameAdmission<'_>) -> Result<bool, MysqlError> 
         return Err(occupied());
     }
     if to_name.go_to_lower().chars().count() > 64 {
-        return Err(tidb_error::MysqlError::from_terror(
+        return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_TOO_LONG_IDENT
                 .generate_with_stack_by_args(&[to_name.to_string().into()]),
         ));
@@ -213,11 +213,11 @@ pub fn check_view_target(
     existing: Option<bool>,
 ) -> Result<(), MysqlError> {
     match existing {
-        Some(_) if !or_replace => Err(tidb_error::MysqlError::from_terror(
+        Some(_) if !or_replace => Err(tidb_terror::MysqlError::from_terror(
             &tidb_error::catalog::infoschema::ERR_TABLE_EXISTS
                 .generate_with_stack_by_args(&[(&format!("{database}.{name}")).into()]),
         )),
-        Some(false) => Err(tidb_error::MysqlError::from_terror(
+        Some(false) => Err(tidb_terror::MysqlError::from_terror(
             &tidb_error::catalog::infoschema::ERR_WRONG_OBJECT.generate_with_stack_by_args(&[
                 database.into(),
                 name.into(),

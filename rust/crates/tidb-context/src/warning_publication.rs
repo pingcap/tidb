@@ -21,7 +21,7 @@
 use std::sync::Mutex;
 
 use tidb_datatype::ConversionWarningAppender;
-use tidb_error::terror::TerrorError;
+use tidb_terror::TerrorError;
 
 /// SHOW WARNINGS levels, Go `contextutil.WarnLevel*`.
 pub use crate::WarningLevel;
@@ -343,7 +343,7 @@ impl<'a> WarningPublication<'a> {
 mod tests {
     use super::{StaticWarningHandler, WarningHandler};
     use tidb_datatype::{ConversionContext, ConversionLocation, STRICT_FLAGS};
-    use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
+    use tidb_terror::{TerrorClass, TerrorCode, TerrorError};
 
     #[test]
     fn executor_warning_handler_is_the_conversion_context_sink() {

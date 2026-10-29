@@ -114,11 +114,11 @@ use tidb_datatype::{
     str_to_float, ConversionContext, ConversionFlags, ConversionLocation,
     ConversionWarningAppender, Datum,
 };
-use tidb_error::errctx::{
+use tidb_errctx::{
     new_context_with_levels, Context as ErrCtxContext, LevelMap, SharedError,
     WarnAppender as ErrCtxWarnAppender,
 };
-use tidb_error::terror::TerrorError;
+use tidb_terror::TerrorError;
 use tidb_mysql::consts::SqlMode;
 use tidb_mysql::privilege::PrivilegeType;
 use tidb_parser::auth::{RoleIdentity, UserIdentity};
@@ -1086,8 +1086,8 @@ mod tests {
     use std::sync::Mutex;
 
     use tidb_datatype::STRICT_FLAGS;
-    use tidb_error::errctx::{ErrGroup, Level};
-    use tidb_error::terror::TerrorCode;
+    use tidb_errctx::{ErrGroup, Level};
+    use tidb_terror::TerrorCode;
     use tidb_mysql::consts::{get_sql_mode, ModeNoZeroDate, ModeStrictTransTables};
     use tidb_mysql::privilege::{CreatePriv, SuperPriv};
     use tidb_context::{

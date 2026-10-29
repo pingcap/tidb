@@ -348,7 +348,7 @@ fn plain_having_filters_and_sees_only_the_select_list() {
     ] {
         let error = run(sql).unwrap_err();
         assert!(
-            error.equal(&tidb_error::plannererrors::ERR_UNKNOWN_COLUMN),
+            error.equal(&tidb_plannererrors::ERR_UNKNOWN_COLUMN),
             "expected 1054 for `{sql}`, got {error:?}"
         );
         assert_eq!(
@@ -509,7 +509,7 @@ fn an_empty_correlated_having_subquery_is_null_and_drops_its_row() {
     ] {
         let error = run(sql).unwrap_err();
         assert!(
-            error.equal(&tidb_error::plannererrors::ERR_UNKNOWN_COLUMN),
+            error.equal(&tidb_plannererrors::ERR_UNKNOWN_COLUMN),
             "expected 1054 for `{sql}`, got {error:?}"
         );
         assert_eq!(

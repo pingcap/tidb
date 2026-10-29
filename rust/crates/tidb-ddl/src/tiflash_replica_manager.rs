@@ -497,7 +497,7 @@ impl TiFlashReplicaManager {
                     Field::new("tableID", Value::I64(table_id)),
                     Field::new("isPartition", Value::Bool(table.is_partition)),
                 ];
-                if code == tidb_error::tidb::errcode::ErrNoSuchTable && table.is_partition {
+                if code == tidb_errno::errcode::ErrNoSuchTable && table.is_partition {
                     // May be due to blocking add partition.
                     tidb_ddl_logutil::ddl_logger().info(
                         "updating TiFlash replica status err, maybe false alarm by blocking add",

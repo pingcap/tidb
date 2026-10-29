@@ -233,7 +233,7 @@ impl<S: IndexAdvisorExec> SessionOptimizer<'_, S> {
                         _ => ("DELETE", first_table_name(statement)),
                     };
                     Err(DriverError::Mysql(crate::MysqlError::from_terror(
-                        &tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE
+                        &tidb_plannererrors::ERR_NON_UPDATABLE_TABLE
                             .generate_with_stack_by_args(&[table.into(), verb.into()]),
                     )))
                 }

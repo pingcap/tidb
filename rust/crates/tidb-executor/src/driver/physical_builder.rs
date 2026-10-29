@@ -1934,7 +1934,7 @@ fn build_window(
                     .first()
                     .cloned()
                     .ok_or(DriverError::from(
-                        tidb_error::plannererrors::ERR_WRONG_ARGUMENTS
+                        tidb_plannererrors::ERR_WRONG_ARGUMENTS
                             .generate_with_stack_by_args(&["window value function".into()]),
                     ))?;
                 let nth = if name == "nth_value" {
@@ -1944,7 +1944,7 @@ fn build_window(
                         .get(1)
                         .and_then(|arg| tidb_expr::expr_util::get_uint64_from_constant(arg, ctx))
                         .ok_or(DriverError::from(
-                            tidb_error::plannererrors::ERR_WRONG_ARGUMENTS
+                            tidb_plannererrors::ERR_WRONG_ARGUMENTS
                                 .generate_with_stack_by_args(&["nth_value".into()]),
                         ))?;
                     (!is_null).then_some(value)
@@ -1964,7 +1964,7 @@ fn build_window(
                         tidb_expr::expr_util::get_uint64_from_constant(arg, ctx)
                             .filter(|(_, is_null)| !is_null)
                             .ok_or(DriverError::from(
-                                tidb_error::plannererrors::ERR_WRONG_ARGUMENTS
+                                tidb_plannererrors::ERR_WRONG_ARGUMENTS
                                     .generate_with_stack_by_args(&["lead/lag".into()]),
                             ))?
                             .0
@@ -1972,7 +1972,7 @@ fn build_window(
                     None => 1,
                 };
                 let arg = args.first().cloned().ok_or(DriverError::from(
-                    tidb_error::plannererrors::ERR_WRONG_ARGUMENTS
+                    tidb_plannererrors::ERR_WRONG_ARGUMENTS
                         .generate_with_stack_by_args(&["lead/lag".into()]),
                 ))?;
                 let mut default = args.get(2).cloned();
@@ -2005,7 +2005,7 @@ fn build_window(
                     .first()
                     .and_then(|arg| tidb_expr::expr_util::get_uint64_from_constant(arg, ctx))
                     .ok_or(DriverError::from(
-                        tidb_error::plannererrors::ERR_WRONG_ARGUMENTS
+                        tidb_plannererrors::ERR_WRONG_ARGUMENTS
                             .generate_with_stack_by_args(&["ntile".into()]),
                     ))?;
                 WindowFunction::Ntile((!value.1).then_some(value.0))

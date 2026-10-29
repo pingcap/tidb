@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{std_err, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `util/timeutil.ErrUnknownTimeZone` (`pkg/util/timeutil/errors.go:23`).
 pub static ERR_UNKNOWN_TIME_ZONE: LazyLock<TerrorError> =

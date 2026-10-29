@@ -564,7 +564,7 @@ impl PreparedStatementRegistry {
         }
         if statement.bound_params_too_large {
             return Some(SqlQueryError::from(
-                tidb_error::MysqlError::from_terror(
+                tidb_terror::MysqlError::from_terror(
                     &tidb_error::catalog::servererr::ERR_NET_PACKET_TOO_LARGE
                         .generate_with_stack_by_args(&[]),
                 ),
@@ -701,11 +701,11 @@ impl<O: ConnectionPacketOutput> ConnectionPacketOutput for ClientErrorRecordingO
     }
 
     fn record_client_error(&self, code: u16) {
-        tidb_error::tidb::infoschema::increment_error(code, &self.user, &self.host);
+        tidb_errno::infoschema::increment_error(code, &self.user, &self.host);
     }
 
     fn record_client_warning(&self, code: u16) {
-        tidb_error::tidb::infoschema::increment_warning(code, &self.user, &self.host);
+        tidb_errno::infoschema::increment_warning(code, &self.user, &self.host);
     }
 
     fn compressed_sequence(&self) -> Option<u8> {
@@ -1493,7 +1493,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     }
     // Go `openSessionAndDoAuth`: `auth_socket` is refused off a Unix socket.
     if !peer_addr.is_unix_socket() && client_plugin == tidb_mysql::consts::AuthSocket {
-        let error = tidb_error::server_errors::ERR_ACCESS_DENIED_NO_PASSWORD
+        let error = tidb_server_err::ERR_ACCESS_DENIED_NO_PASSWORD
             .generate_with_stack_by_args(&[
                 tidb_mysql::errors::FormatArg::from(response_user.as_str()),
                 tidb_mysql::errors::FormatArg::from(peer_addr.host()),
@@ -1501,7 +1501,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         return rejected_login(
             &mut output,
             response_sequence,
-            tidb_error::tidb::errcode::ErrAccessDeniedNoPassword,
+            tidb_errno::errcode::ErrAccessDeniedNoPassword,
             *b"28000",
             error.message().to_owned(),
             protocol_41,
@@ -2377,7 +2377,7 @@ fn run_connection_commands<S: QuerySession>(
                                     if let Some(path) = engine.take_local_infile_request() {
                                         if capabilities & CLIENT_LOCAL_FILES == 0 {
                                             let error = SqlQueryError::from(
-                                                tidb_error::MysqlError::from_terror(
+                                                tidb_terror::MysqlError::from_terror(
                                                     &tidb_error::catalog::servererr::ERR_NOT_ALLOWED_COMMAND
                                                         .generate_with_stack_by_args(&[]),
                                                 ),
@@ -3191,7 +3191,7 @@ mod client_error_recording_output_tests {
 #[cfg(test)]
 mod undetermined_tests {
     use tidb_store_driver_error::sql_query_error::SqlQueryError;
-    use tidb_error::terror::ERR_RESULT_UNDETERMINED;
+    use tidb_terror::ERR_RESULT_UNDETERMINED;
 
     /// Go `pkg/server/conn.go:1288-1291` returns from the command loop for an
     /// undetermined result, writing no ERR packet: the client must not be able

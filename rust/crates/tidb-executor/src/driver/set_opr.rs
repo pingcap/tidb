@@ -60,7 +60,7 @@ pub(super) fn validate_set_opr_usage(stmt: &tidb_ast::SetOprStmt) -> Result<(), 
             tidb_ast::SetOprTermBody::Select(select) if index + 1 < stmt.terms.len() => {
                 if select.into_outfile.is_some() {
                     return Err(DriverError::from(
-                        tidb_error::plannererrors::ERR_WRONG_USAGE
+                        tidb_plannererrors::ERR_WRONG_USAGE
                             .generate_with_stack_by_args(&["UNION".into(), ("INTO").into()]),
                     ));
                 }
@@ -69,13 +69,13 @@ pub(super) fn validate_set_opr_usage(stmt: &tidb_ast::SetOprStmt) -> Result<(), 
                 }
                 if select.limit.is_some() {
                     return Err(DriverError::from(
-                        tidb_error::plannererrors::ERR_WRONG_USAGE
+                        tidb_plannererrors::ERR_WRONG_USAGE
                             .generate_with_stack_by_args(&["UNION".into(), ("LIMIT").into()]),
                     ));
                 }
                 if !select.order_by.is_empty() {
                     return Err(DriverError::from(
-                        tidb_error::plannererrors::ERR_WRONG_USAGE
+                        tidb_plannererrors::ERR_WRONG_USAGE
                             .generate_with_stack_by_args(&["UNION".into(), ("ORDER BY").into()]),
                     ));
                 }

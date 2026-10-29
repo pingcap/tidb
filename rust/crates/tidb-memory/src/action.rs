@@ -18,8 +18,8 @@ use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 
 use tidb_mysql::errors::FormatArg;
-use tidb_error::terror::TerrorError;
-use tidb_error::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 use super::Tracker;
 use tidb_sqlkiller::{KillSignal, SqlKiller};

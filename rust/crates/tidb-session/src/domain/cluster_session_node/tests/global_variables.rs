@@ -161,11 +161,11 @@ fn global_sysvar_commit_keeps_a_backoff_driver_error_coded_on_the_wire() {
         .expect_err("SET GLOBAL cannot answer success after a rolled-back commit");
     assert_eq!(
         query_error.code,
-        tidb_error::tidb::errcode::ErrTiKVMaxTimestampNotSynced
+        tidb_errno::errcode::ErrTiKVMaxTimestampNotSynced
     );
     assert_query_error_packet(
         &query_error,
-        tidb_error::tidb::errcode::ErrTiKVMaxTimestampNotSynced,
+        tidb_errno::errcode::ErrTiKVMaxTimestampNotSynced,
         "TiKV max timestamp is not synced",
     );
     assert_eq!(

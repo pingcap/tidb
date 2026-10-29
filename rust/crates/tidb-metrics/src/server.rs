@@ -485,7 +485,7 @@ pub static MEMORY_USAGE: LazyLock<IntGaugeVec> = LazyLock::new(|| {
 /// Go `ExecuteErrorToLabel` (`pkg/metrics/server.go:483`): the label is the
 /// error's RFC code string (`"<pkg>:<code>"`), or `unknown` for a plain
 /// error. The Go identity travels on the error (`SqlQueryError::identity`).
-pub fn execute_error_to_label(identity: Option<tidb_error::terror::TerrorIdentity>) -> String {
+pub fn execute_error_to_label(identity: Option<tidb_terror::TerrorIdentity>) -> String {
     identity.map_or_else(|| "unknown".to_owned(), |identity| identity.rfc_code())
 }
 

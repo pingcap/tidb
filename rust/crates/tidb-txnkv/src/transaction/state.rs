@@ -24,7 +24,7 @@ pub enum TransactionCause {
     SchemaLease {
         /// The Go error: `ErrInfoSchemaChanged` (8028) or
         /// `ErrInfoSchemaExpired` (8027).
-        error: tidb_error::terror::TerrorError,
+        error: tidb_terror::TerrorError,
     },
     /// Insert assertion observed an existing encoded key.
     AlreadyExists {

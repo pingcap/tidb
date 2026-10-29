@@ -185,7 +185,7 @@ fn complete_func_index_error(
     error: tidb_expr::EvalError,
 ) -> tidb_expr::EvalError {
     use tidb_mysql::errors::FormatArg;
-    use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
+    use tidb_terror::{TerrorClass, TerrorCode, TerrorError};
     let tidb_expr::EvalError::Conversion(cause) = &error else {
         return error;
     };
@@ -202,20 +202,20 @@ fn complete_func_index_error(
     let identity = cause.identity();
     if cause.class() == TerrorClass::Expression
         && cause.code()
-            == TerrorCode::new(tidb_error::tidb::errcode::ErrInvalidJSONValueForFuncIndex as isize)
+            == TerrorCode::new(tidb_errno::errcode::ErrInvalidJSONValueForFuncIndex as isize)
     {
         completed(
-            tidb_error::tidb::errcode::ErrInvalidJSONValueForFuncIndex,
+            tidb_errno::errcode::ErrInvalidJSONValueForFuncIndex,
             &[FormatArg::from(name)],
         )
     } else if identity == tidb_parser_types::parser_types_errors::ERR_OVERFLOW.identity() {
         completed(
-            tidb_error::tidb::errcode::ErrDataOutOfRangeFunctionalIndex,
+            tidb_errno::errcode::ErrDataOutOfRangeFunctionalIndex,
             &[FormatArg::from(name), FormatArg::from(row_index + 1)],
         )
     } else if identity == tidb_parser_types::parser_types_errors::ERR_DATA_TOO_LONG.identity() {
         completed(
-            tidb_error::tidb::errcode::ErrFunctionalIndexDataIsTooLong,
+            tidb_errno::errcode::ErrFunctionalIndexDataIsTooLong,
             &[FormatArg::from(name)],
         )
     } else {

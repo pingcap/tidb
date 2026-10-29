@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{std_err, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `table/tables.ErrInconsistentRowValue` (`pkg/table/tables/mutation_checker.go:39`).
 pub static ERR_INCONSISTENT_ROW_VALUE: LazyLock<TerrorError> =

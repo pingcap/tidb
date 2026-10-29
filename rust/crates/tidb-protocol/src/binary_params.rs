@@ -26,7 +26,7 @@
 use std::{convert::TryFrom, io};
 
 use tidb_datatype::{find_encoding_take_utf8_as_noop, TransformOp};
-use tidb_error::tidb::errcode;
+use tidb_errno::errcode;
 
 use crate::{
     TYPE_BIT, TYPE_BLOB, TYPE_DATE, TYPE_DATETIME, TYPE_DOUBLE, TYPE_DURATION, TYPE_ENUM,

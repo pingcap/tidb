@@ -466,7 +466,7 @@ impl Session {
         let value = self.eval_value(expr)?;
         let as_of_error = |cause: &str| {
             DriverError::from(
-                tidb_error::plannererrors::ERR_AS_OF
+                tidb_plannererrors::ERR_AS_OF
                     .generate_with_stack_by_args(&[(cause.to_owned()).into()]),
             )
         };

@@ -14,7 +14,7 @@
 
 //! Source translation of `pkg/errno/infoschema_test.go`.
 
-use tidb_error::tidb::infoschema::{
+use tidb_errno::infoschema::{
     flush_stats, global_stats, host_stats, increment_error, increment_warning, user_stats,
 };
 

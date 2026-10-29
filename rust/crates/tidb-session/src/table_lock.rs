@@ -484,7 +484,7 @@ impl Session {
     fn table_lock_name(&self, path: &[String]) -> Result<(String, String), DriverError> {
         match path {
             [_] if self.vars.current_db.is_empty() => Err(DriverError::from(
-                tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
             )),
             [table] => Ok((self.vars.current_db.clone(), table.clone())),
             [db, table] => Ok((db.clone(), table.clone())),

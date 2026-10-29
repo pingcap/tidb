@@ -520,8 +520,8 @@ pub(crate) fn eval_json_sum_crc32(
             .ok_or(EvalError::Unsupported("a JSON array element is missing"))?;
         let converted = convert_json_to_type(&item, &element).map_err(|error| {
             if is_invalid_json_for_func_index(&error) {
-                EvalError::Conversion(tidb_error::terror::TerrorError::compatible(
-                    tidb_error::terror::TerrorCode::new(1105),
+                EvalError::Conversion(tidb_terror::TerrorError::compatible(
+                    tidb_terror::TerrorCode::new(1105),
                     format!(
                         "Invalid JSON value for CAST to type {}",
                         element.compact_str(tidb_datatype::STRICT_INTEGER_DISPLAY_WIDTH)
@@ -565,7 +565,7 @@ fn crc32_ieee(bytes: &[u8]) -> u32 {
 
 /// Whether `error` is Go's `ErrInvalidJSONForFuncIndex` (3903).
 fn is_invalid_json_for_func_index(error: &EvalError) -> bool {
-    matches!(error, EvalError::Conversion(terror) if terror.code() == tidb_error::terror::TerrorCode::new(3903))
+    matches!(error, EvalError::Conversion(terror) if terror.code() == tidb_terror::TerrorCode::new(3903))
 }
 
 /// `CreateBinaryJSON` over the Go value `convertJSON2Tp` returned.
@@ -590,9 +590,9 @@ fn array_element_json(value: Datum) -> Result<tidb_datatype::BinaryJSONValue, Ev
 /// index name: the DML that evaluated the expression names the index
 /// (`completeError`).
 pub fn invalid_json_for_func_index() -> EvalError {
-    EvalError::Conversion(tidb_error::terror::TerrorError::registered_std(
-        tidb_error::terror::TerrorClass::Expression,
-        tidb_error::terror::TerrorCode::new(3903),
+    EvalError::Conversion(tidb_terror::TerrorError::registered_std(
+        tidb_terror::TerrorClass::Expression,
+        tidb_terror::TerrorCode::new(3903),
     ))
 }
 
@@ -1890,7 +1890,7 @@ fn cast_to_time_value(
         {
             handle_invalid_time_error(
                 ctx,
-                tidb_error::tidb::errcode::ErrIncorrectDatetimeValue,
+                tidb_errno::errcode::ErrIncorrectDatetimeValue,
                 &format!("Incorrect datetime value: '{s}'"),
             )?;
             return Ok(None);
@@ -1922,7 +1922,7 @@ fn cast_to_time_value(
                 };
                 handle_invalid_time_error(
                     ctx,
-                    tidb_error::tidb::errcode::ErrTruncatedWrongValue,
+                    tidb_errno::errcode::ErrTruncatedWrongValue,
                     &format!("Incorrect time value: '{signed}'"),
                 )?;
             }
@@ -2415,7 +2415,7 @@ fn handle_invalid_time_error(
             Ok(())
         }
         crate::ErrorLevel::Error
-            if code == tidb_error::tidb::errcode::ErrIncorrectDatetimeValue =>
+            if code == tidb_errno::errcode::ErrIncorrectDatetimeValue =>
         {
             Err(EvalError::Conversion(
                 tidb_parser_types::parser_types_errors::ERR_INCORRECT_DATETIME_VALUE.generate(message.to_owned()),

@@ -20,10 +20,10 @@
 
 use std::sync::LazyLock;
 
-use crate::terror::{TerrorClass, TerrorCode, TerrorError};
+use tidb_terror::{TerrorClass, TerrorCode, TerrorError};
 
 fn prototype(code: u16) -> TerrorError {
-    let message = crate::tidb::message_by_code(code)
+    let message = tidb_errno::message_by_code(code)
         .copied()
         .expect("pkg/server/err code must exist in the pkg/errno catalog");
     TerrorError::registered_standard(
@@ -35,46 +35,46 @@ fn prototype(code: u16) -> TerrorError {
 
 /// Go `err.ErrInvalidType`.
 pub static ERR_INVALID_TYPE: LazyLock<TerrorError> =
-    LazyLock::new(|| prototype(crate::tidb::errcode::ErrInvalidType));
+    LazyLock::new(|| prototype(tidb_errno::errcode::ErrInvalidType));
 /// Go `err.ErrInvalidSequence`.
 pub static ERR_INVALID_SEQUENCE: LazyLock<TerrorError> =
-    LazyLock::new(|| prototype(crate::tidb::errcode::ErrInvalidSequence));
+    LazyLock::new(|| prototype(tidb_errno::errcode::ErrInvalidSequence));
 /// Go `err.ErrNotAllowedCommand`.
 pub static ERR_NOT_ALLOWED_COMMAND: LazyLock<TerrorError> =
-    LazyLock::new(|| prototype(crate::tidb::errcode::ErrNotAllowedCommand));
+    LazyLock::new(|| prototype(tidb_errno::errcode::ErrNotAllowedCommand));
 /// Go `err.ErrAccessDenied`.
 pub static ERR_ACCESS_DENIED: LazyLock<TerrorError> =
-    LazyLock::new(|| prototype(crate::tidb::errcode::ErrAccessDenied));
+    LazyLock::new(|| prototype(tidb_errno::errcode::ErrAccessDenied));
 /// Go `err.ErrAccessDeniedNoPassword`.
 pub static ERR_ACCESS_DENIED_NO_PASSWORD: LazyLock<TerrorError> =
-    LazyLock::new(|| prototype(crate::tidb::errcode::ErrAccessDeniedNoPassword));
+    LazyLock::new(|| prototype(tidb_errno::errcode::ErrAccessDeniedNoPassword));
 /// Go `err.ErrConCount`.
 pub static ERR_CON_COUNT: LazyLock<TerrorError> =
-    LazyLock::new(|| prototype(crate::tidb::errcode::ErrConCount));
+    LazyLock::new(|| prototype(tidb_errno::errcode::ErrConCount));
 /// Go `err.ErrTooManyUserConnections`.
 pub static ERR_TOO_MANY_USER_CONNECTIONS: LazyLock<TerrorError> =
-    LazyLock::new(|| prototype(crate::tidb::errcode::ErrTooManyUserConnections));
+    LazyLock::new(|| prototype(tidb_errno::errcode::ErrTooManyUserConnections));
 /// Go `err.ErrSecureTransportRequired`.
 pub static ERR_SECURE_TRANSPORT_REQUIRED: LazyLock<TerrorError> =
-    LazyLock::new(|| prototype(crate::tidb::errcode::ErrSecureTransportRequired));
+    LazyLock::new(|| prototype(tidb_errno::errcode::ErrSecureTransportRequired));
 /// Go `err.ErrUserPrefixMismatch`.
 pub static ERR_USER_PREFIX_MISMATCH: LazyLock<TerrorError> =
-    LazyLock::new(|| prototype(crate::tidb::errcode::ErrUserPrefixMismatch));
+    LazyLock::new(|| prototype(tidb_errno::errcode::ErrUserPrefixMismatch));
 /// Go `err.ErrMultiStatementDisabled`.
 pub static ERR_MULTI_STATEMENT_DISABLED: LazyLock<TerrorError> =
-    LazyLock::new(|| prototype(crate::tidb::errcode::ErrMultiStatementDisabled));
+    LazyLock::new(|| prototype(tidb_errno::errcode::ErrMultiStatementDisabled));
 /// Go `err.ErrNewAbortingConnection`.
 pub static ERR_NEW_ABORTING_CONNECTION: LazyLock<TerrorError> =
-    LazyLock::new(|| prototype(crate::tidb::errcode::ErrNewAbortingConnection));
+    LazyLock::new(|| prototype(tidb_errno::errcode::ErrNewAbortingConnection));
 /// Go `err.ErrNotSupportedAuthMode`.
 pub static ERR_NOT_SUPPORTED_AUTH_MODE: LazyLock<TerrorError> =
-    LazyLock::new(|| prototype(crate::tidb::errcode::ErrNotSupportedAuthMode));
+    LazyLock::new(|| prototype(tidb_errno::errcode::ErrNotSupportedAuthMode));
 /// Go `err.ErrNetPacketTooLarge`.
 pub static ERR_NET_PACKET_TOO_LARGE: LazyLock<TerrorError> =
-    LazyLock::new(|| prototype(crate::tidb::errcode::ErrNetPacketTooLarge));
+    LazyLock::new(|| prototype(tidb_errno::errcode::ErrNetPacketTooLarge));
 /// Go `err.ErrMustChangePassword`.
 pub static ERR_MUST_CHANGE_PASSWORD: LazyLock<TerrorError> =
-    LazyLock::new(|| prototype(crate::tidb::errcode::ErrMustChangePassword));
+    LazyLock::new(|| prototype(tidb_errno::errcode::ErrMustChangePassword));
 /// Go `err.ErrServerShutdown`.
 pub static ERR_SERVER_SHUTDOWN: LazyLock<TerrorError> =
-    LazyLock::new(|| prototype(crate::tidb::errcode::ErrServerShutdown));
+    LazyLock::new(|| prototype(tidb_errno::errcode::ErrServerShutdown));

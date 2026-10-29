@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{std_err, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `store/driver/error.ErrTokenLimit` (`pkg/store/driver/error/error.go:34`).
 pub static ERR_TOKEN_LIMIT: LazyLock<TerrorError> =

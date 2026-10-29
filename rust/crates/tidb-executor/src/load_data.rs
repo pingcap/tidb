@@ -118,7 +118,7 @@ pub fn prepare_load_data(
         [database, name] => (database.clone(), name.clone()),
         [_] if current_db.is_empty() => {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
             ));
         }
         [name] => (current_db.to_owned(), name.clone()),
@@ -133,7 +133,7 @@ pub fn prepare_load_data(
     check_privileges(&database, &name)?;
     let TableEntry::Kv(table) = entry else {
         return Err(DriverError::from(
-            tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE
+            tidb_plannererrors::ERR_NON_UPDATABLE_TABLE
                 .generate_with_stack_by_args(&[name.into(), "LOAD".into()]),
         ));
     };
@@ -256,7 +256,7 @@ pub fn prepare_load_data(
             });
         let Some(found) = found else {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
                     tidb_hack::go_to_lower(&name.clone()).into(),
                     ("field list".to_owned()).into(),
                 ]),
@@ -414,7 +414,7 @@ pub fn run_load_data(
         })?
     else {
         return Err(DriverError::from(
-            tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE
+            tidb_plannererrors::ERR_NON_UPDATABLE_TABLE
                 .generate_with_stack_by_args(&[prepared.table.clone().into(), "LOAD".into()]),
         ));
     };
@@ -437,7 +437,7 @@ pub fn run_load_data(
         let expr = tidb_expr::rewriter::rewrite_expr_resolved(&assignment.value, &resolver)
             .map_err(|error| match error {
                 tidb_expr::EvalError::UnknownColumn(column) => DriverError::from(
-                    tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                    tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
                         tidb_hack::go_to_lower(&column.go_to_lower()).into(),
                         ("expression".to_owned()).into(),
                     ]),
@@ -683,7 +683,7 @@ pub trait LoadDataExec: crate::show::exec::ShowExec {
                     .unwrap_or_else(|| self.has_scoped_privilege(schema, table, privilege));
             if !granted {
                 return Err(DriverError::from(
-                    tidb_error::plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(
+                    tidb_plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(
                         &[
                             privilege.print_name().into(),
                             user.to_owned().into(),

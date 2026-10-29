@@ -191,7 +191,7 @@ impl Session {
         if let Some((_, user, host)) = self.privilege_context() {
             if !self.has_any_scoped_privilege(&database, &name, tidb_privilege::any_priv_mask()) {
                 return Err(DriverError::from(
-                    tidb_error::plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(
+                    tidb_plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(
                         &[
                             verb.into(),
                             user.to_owned().into(),

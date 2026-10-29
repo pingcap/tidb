@@ -18,7 +18,7 @@
 //! recorded on the table (`TableInfo.TableSplitPolicy`) or on an index
 //! (`IndexInfo.RegionSplitPolicy`) and printed back by SHOW CREATE TABLE.
 
-use tidb_error::MysqlError;
+use tidb_terror::MysqlError;
 
 use tidb_hack::GoToLower;
 use tidb_model::RegionSplitPolicy;
@@ -132,7 +132,7 @@ fn restored_bounds(bounds: &[tidb_ast::Expr]) -> Result<Vec<String>, MysqlError>
                 bound,
                 &tidb_expr::simple_expr::BuildOptions::default(),
             )
-            .map_err(|error| tidb_error::MysqlError::unknown(error.to_string()))?;
+            .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;
             built
                 .eval(&tidb_expr::NoColumns, tidb_chunk::row::Row::empty())
                 .map_err(|error| error.to_mysql_error())?;

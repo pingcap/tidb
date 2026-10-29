@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{plain_err, std_err, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `expression.errCannotConvertString` (`pkg/expression/builtin_convert_charset.go:43`).
 pub static ERR_CANNOT_CONVERT_STRING: LazyLock<TerrorError> =

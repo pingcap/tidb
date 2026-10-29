@@ -107,7 +107,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                         tidb_mysql::UpdatePriv,
                     ))
                 {
-                    return Err(DriverError::from(tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED.generate_with_stack_by_args(&["CREATE USER".into()])));
+                    return Err(DriverError::from(tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED.generate_with_stack_by_args(&["CREATE USER".into()])));
                 }
             }
             // Go: self-service dual-password additionally requires
@@ -122,7 +122,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                     )
                     || self.has_dynamic_privilege("APPLICATION_PASSWORD_ADMIN", false))
             {
-                return Err(DriverError::from(tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED.generate_with_stack_by_args(&["APPLICATION_PASSWORD_ADMIN".into()])));
+                return Err(DriverError::from(tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED.generate_with_stack_by_args(&["APPLICATION_PASSWORD_ADMIN".into()])));
             }
         Ok(need_admin_check)
     }
@@ -279,7 +279,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
             if spec_retain {
                 let resolved = effective(&current_plugin);
                 if !tidb_mysql::is_auth_plugin_clear_text(&resolved) {
-                    return Err(DriverError::from(tidb_error::MysqlError::unknown(format!("Dual password is not supported for users authenticating with plugin '{}'", resolved))));
+                    return Err(DriverError::from(tidb_terror::MysqlError::unknown(format!("Dual password is not supported for users authenticating with plugin '{}'", resolved))));
                 }
                 match &spec.auth {
                     None => {
@@ -319,7 +319,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                 super::account::max_user_connections_option(&alter.resource_options)
             {
                 if !self.has_scoped_privilege("", "", tidb_mysql::CreateUserPriv) {
-                    return Err(DriverError::from(tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED.generate_with_stack_by_args(&["CREATE USER".into()])));
+                    return Err(DriverError::from(tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED.generate_with_stack_by_args(&["CREATE USER".into()])));
                 }
                 mirror_fields.push(format!("max_user_connections={count}"));
                 registry.set_max_user_connections(&user, &host, count);
@@ -560,7 +560,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
             )
         {
             let (caller, caller_host) = self.own_account()?;
-            return Err(DriverError::from(tidb_error::plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(&["SELECT".into(), caller.into(), caller_host.into(), (tidb_mysql::consts::UserTable.to_owned()).into()])));
+            return Err(DriverError::from(tidb_plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(&["SELECT".into(), caller.into(), caller_host.into(), (tidb_mysql::consts::UserTable.to_owned()).into()])));
         }
         let Some(registry) = self.privilege_registry().cloned() else {
             return Err(DriverError::unsupported(
@@ -745,7 +745,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
         // check (the corpus's `dpsetap` case: 1044, not success).
         if !set_for_self && !self.has_scoped_privilege("", "", tidb_mysql::SuperPriv) {
             let (caller, caller_host) = self.own_account()?;
-            return Err(DriverError::from(tidb_error::plannererrors::ERR_DBACCESS_DENIED.generate_with_stack_by_args(&[caller.into(), caller_host.into(), (tidb_mysql::consts::SystemDB.to_owned()).into()])));
+            return Err(DriverError::from(tidb_plannererrors::ERR_DBACCESS_DENIED.generate_with_stack_by_args(&[caller.into(), caller_host.into(), (tidb_mysql::consts::SystemDB.to_owned()).into()])));
         }
         // Go: self-service `SET PASSWORD ... RETAIN CURRENT PASSWORD`
         // requires APPLICATION_PASSWORD_ADMIN (CREATE USER / UPDATE on the
@@ -761,7 +761,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                     tidb_mysql::UpdatePriv,
                 ))
         {
-            return Err(DriverError::from(tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED.generate_with_stack_by_args(&["APPLICATION_PASSWORD_ADMIN".into()])));
+            return Err(DriverError::from(tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED.generate_with_stack_by_args(&["APPLICATION_PASSWORD_ADMIN".into()])));
         }
         let Some(plugin) = registry.plugin(&user, &host) else {
             return Err(DriverError::from(tidb_dbterror::exeerrors::ERR_PASSWORD_NO_MATCH.generate_with_stack_by_args(&[])));
@@ -773,7 +773,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
         // resolution has nothing to resolve here.
         if set_password.retain_current_password {
             if !tidb_mysql::is_auth_plugin_clear_text(&plugin) {
-                return Err(DriverError::from(tidb_error::MysqlError::unknown(format!("Dual password is not supported for users authenticating with plugin '{}'", plugin))));
+                return Err(DriverError::from(tidb_terror::MysqlError::unknown(format!("Dual password is not supported for users authenticating with plugin '{}'", plugin))));
             }
             if set_password.password.is_empty() {
                 return Err(DriverError::from(tidb_dbterror::exeerrors::ERR_CURRENT_PASSWORD_CANNOT_BE_RETAINED.generate_with_stack_by_args(&[user.into(), host.into()])));

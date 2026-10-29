@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{std_err, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `parser/charset.ErrInvalidCharacterString` (`pkg/parser/charset/encoding_base.go:29`).
 pub static ERR_INVALID_CHARACTER_STRING: LazyLock<TerrorError> =

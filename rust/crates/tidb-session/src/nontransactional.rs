@@ -405,7 +405,7 @@ impl Session {
         if unqualified && current_db.is_empty() {
             // Go `ErrNoDB`.
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
             ));
         }
         let mut qualify = Qualify {

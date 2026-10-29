@@ -79,7 +79,7 @@ pub trait DdlSessionContext: Send + Sync {
         schema: &str,
         table: &str,
         index: tidb_model::index::IndexInfo,
-    ) -> Result<(), tidb_error::MysqlError>;
+    ) -> Result<(), tidb_terror::MysqlError>;
     /// Go `dropHypoIndexFromCtx`: 1091 for a missing index unless
     /// `if_exists`.
     fn drop_hypo_index(
@@ -88,7 +88,7 @@ pub trait DdlSessionContext: Send + Sync {
         table: &str,
         index: &str,
         if_exists: bool,
-    ) -> Result<(), tidb_error::MysqlError>;
+    ) -> Result<(), tidb_terror::MysqlError>;
     /// The statement's warnings, taken.
     fn take_warnings(&self) -> Vec<tidb_context::SqlWarn>;
 
@@ -202,7 +202,7 @@ impl<T: DdlSessionContext + ?Sized> DdlSessionContext for std::sync::Arc<T> {
         schema: &str,
         table: &str,
         index: tidb_model::index::IndexInfo,
-    ) -> Result<(), tidb_error::MysqlError> {
+    ) -> Result<(), tidb_terror::MysqlError> {
         (**self).add_hypo_index(schema, table, index)
     }
 
@@ -212,7 +212,7 @@ impl<T: DdlSessionContext + ?Sized> DdlSessionContext for std::sync::Arc<T> {
         table: &str,
         index: &str,
         if_exists: bool,
-    ) -> Result<(), tidb_error::MysqlError> {
+    ) -> Result<(), tidb_terror::MysqlError> {
         (**self).drop_hypo_index(schema, table, index, if_exists)
     }
 

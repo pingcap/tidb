@@ -18,7 +18,7 @@
 //! Both production symbols (`RangerContext` and `Detach`) are here. Field
 //! types map to their already-transcreated homes — `types.Context` is
 //! [`tidb_datatype::ConversionContext`], `errctx.Context` is
-//! [`tidb_error::errctx::Context`], and the two embedded `contextutil`
+//! [`tidb_errctx::Context`], and the two embedded `contextutil`
 //! pointers are `Arc`s of [`tidb_context::RangeFallbackHandler`] /
 //! [`tidb_context::PlanCacheTracker`] — except one:
 //!
@@ -35,7 +35,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tidb_datatype::ConversionContext;
-use tidb_error::errctx;
+use tidb_errctx as errctx;
 use tidb_context::{PlanCacheTracker, RangeFallbackHandler};
 
 /// boundary: Go `pkg/expression/exprctx.BuildContext` — ranger's context

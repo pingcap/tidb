@@ -24,8 +24,8 @@ pub use time_zone::{
 
 use std::sync::{Arc, Condvar, LazyLock, Mutex};
 use std::time::{Duration, Instant};
-use tidb_error::terror::TerrorError;
-use tidb_error::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 #[derive(Debug, Default)]
 struct SleepContextState {

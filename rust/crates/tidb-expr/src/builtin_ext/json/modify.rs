@@ -49,8 +49,8 @@ pub(super) fn binary_json_error(error: BinaryJSONError) -> EvalError {
         BinaryJSONError::InvalidPath => EvalError::Json(JsonError::InvalidPathMultipleSelection),
         // A plain Go error, which reaches the client as 1105 with its text.
         BinaryJSONError::Unquote(message) => {
-            EvalError::Conversion(tidb_error::terror::TerrorError::compatible(
-                tidb_error::terror::TerrorCode::new(1105),
+            EvalError::Conversion(tidb_terror::TerrorError::compatible(
+                tidb_terror::TerrorCode::new(1105),
                 message,
             ))
         }

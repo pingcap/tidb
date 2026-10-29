@@ -76,8 +76,8 @@ impl ExecError {
 
 /// A Go `*terror.Error` the executor raises (`return ErrX`,
 /// `ErrX.GenWithStackByArgs(...)`).
-impl From<tidb_error::terror::TerrorError> for ExecError {
-    fn from(error: tidb_error::terror::TerrorError) -> Self {
+impl From<tidb_terror::TerrorError> for ExecError {
+    fn from(error: tidb_terror::TerrorError) -> Self {
         ExecError::Mysql(crate::MysqlError::from_terror(&error))
     }
 }

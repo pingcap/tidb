@@ -1415,7 +1415,7 @@ impl KvTable {
             Ok(())
         } else {
             Err(KvTableError::Mysql(
-                tidb_error::MysqlError::from_terror(
+                tidb_terror::MysqlError::from_terror(
                     &tidb_error::catalog::table::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET
                         .generate_with_stack_by_args(&[]),
                 ),
@@ -2409,7 +2409,7 @@ impl KvTable {
             })? {
                 Some(false) => {
                     return Err(KvTableError::Mysql(
-                        tidb_error::MysqlError::from_terror(
+                        tidb_terror::MysqlError::from_terror(
                             &tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED
                                 .fast_generate_by_args(&[(constraint.name.clone()).into()]),
                         ),
@@ -2473,7 +2473,7 @@ impl KvTable {
                     .alloc(1, 1)
                     .map_err(|error| match error {
                         AutoIdError::Store(detail) => KvTableError::Encode(detail.0),
-                        _ => KvTableError::Mysql(tidb_error::MysqlError::from_terror(
+                        _ => KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
                             &tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED
                                 .generate_with_stack_by_args(&[]),
                         )),
@@ -2967,7 +2967,7 @@ impl KvTable {
                 };
                 found.push(RowConflict {
                     handle,
-                    error: KvTableError::Mysql(tidb_error::MysqlError::from_terror(
+                    error: KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
                         &tidb_error::catalog::kv::ERR_KEY_EXISTS.fast_generate_by_args(&[
                             value.into(),
                             (self.qualified_key("PRIMARY")).into(),
@@ -3008,7 +3008,7 @@ impl KvTable {
                 if !found.iter().any(|conflict| conflict.handle == handle) {
                     found.push(RowConflict {
                         handle,
-                        error: KvTableError::Mysql(tidb_error::MysqlError::from_terror(
+                        error: KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
                             &tidb_error::catalog::kv::ERR_KEY_EXISTS.fast_generate_by_args(&[
                                 // Both renderings read the key's values: Go's
                                 // batch checker formats `FetchValues` after
@@ -3718,7 +3718,7 @@ impl KvTable {
                 > statement.tmp_table_max_size()
             {
                 return Err(KvTableError::Mysql(
-                    tidb_error::MysqlError::from_terror(
+                    tidb_terror::MysqlError::from_terror(
                         &tidb_error::catalog::table::ERR_TEMP_TABLE_FULL
                             .generate_with_stack_by_args(&[self.name().into()]),
                     ),
@@ -4417,13 +4417,13 @@ fn fmt_non_ascii_printable_char_to_hex(bytes: &[u8]) -> String {
 fn routing_error(error: crate::partition_routing::RoutingError) -> KvTableError {
     match error {
         crate::partition_routing::RoutingError::NoPartitionForValue(value) => {
-            KvTableError::Mysql(tidb_error::MysqlError::from_terror(
+            KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::table::ERR_NO_PARTITION_FOR_GIVEN_VALUE
                     .generate_with_stack_by_args(&[value.into()]),
             ))
         }
         crate::partition_routing::RoutingError::ValueOverflowsBigint(value) => {
-            KvTableError::Mysql(tidb_error::MysqlError::from_terror(
+            KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::types::ERR_OVERFLOW.generate_with_stack(format!(
                     "constant {} overflows {}",
                     (value),
@@ -4478,12 +4478,12 @@ pub fn convert_failure(column: &str, target: &FieldType, value: &Datum) -> KvTab
             | tidb_datatype::EvalType::Decimal
     );
     if source_is_string && numeric_target {
-        return KvTableError::Mysql(tidb_error::MysqlError::from_terror(
+        return KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
             &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL
                 .generate_with_stack_by_args(&["DOUBLE".into(), text.into()]),
         ));
     }
-    KvTableError::Mysql(tidb_error::MysqlError::from_terror(
+    KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
         &tidb_error::catalog::types::ERR_TRUNCATED.generate_with_stack(format!(
             "Data truncated for column '{}', value is '{}'",
             (column.to_owned()),

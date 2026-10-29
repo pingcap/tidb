@@ -7,6 +7,11 @@
 resolver = "2"
 members = [
     "crates/tidb-error",
+    "crates/tidb-server-err",
+    "crates/tidb-plannererrors",
+    "crates/tidb-errctx",
+    "crates/tidb-terror",
+    "crates/tidb-errno",
     "crates/tidb-terror-identity",
     "crates/tidb-errmsg",
     "crates/tidb-allocator-stats",

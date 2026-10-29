@@ -491,7 +491,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                     } else {
                         "TTL_JOB_INTERVAL"
                     };
-                    let error = tidb_error::MysqlError::from_terror(
+                    let error = tidb_terror::MysqlError::from_terror(
                         &tidb_dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
                             .generate_with_stack_by_args(&[option.to_string().into()]),
                     );
@@ -896,7 +896,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
     )))
 }
 
-fn driver_refusal(error: impl Into<tidb_error::MysqlError>) -> DdlPlanError {
+fn driver_refusal(error: impl Into<tidb_terror::MysqlError>) -> DdlPlanError {
     DdlPlanError::from_mysql_error(error.into())
 }
 
@@ -965,7 +965,7 @@ fn partition_of(table: &TableInfo, physical_id: i64) -> bool {
 /// Go `tables.FindPartitionByName` for a partition-management statement.
 fn find_partition_id(table: &TableInfo, partition: &str) -> Result<i64, DdlPlanError> {
     let Some(partitioning) = table.get_partition_info() else {
-        return Err(driver_refusal(tidb_error::MysqlError::from_terror(
+        return Err(driver_refusal(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
                 .generate_with_stack_by_args(&[]),
         )));
@@ -979,7 +979,7 @@ fn find_partition_id(table: &TableInfo, partition: &str) -> Result<i64, DdlPlanE
         .find(|definition| definition.name.lowercase() == name)
         .map(|definition| definition.id);
     found.ok_or_else(|| {
-        driver_refusal(tidb_error::MysqlError::from_terror(
+        driver_refusal(tidb_terror::MysqlError::from_terror(
             &tidb_error::catalog::table::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[
                 name.to_string().into(),
                 (table.name.original().to_owned()).to_string().into(),
@@ -1300,9 +1300,9 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
                     adjust_new_base_to_next_global_id(snapshot, kind, schema_id, &info, new_base)?;
                 if adjusted != new_base {
                     active.job.warning =
-                        Some(GoShared::new(tidb_error::terror::TerrorError::synthesize(
-                            tidb_error::terror::TerrorClass::Ddl,
-                            tidb_error::terror::TerrorCode::new(isize::from(
+                        Some(GoShared::new(tidb_terror::TerrorError::synthesize(
+                            tidb_terror::TerrorClass::Ddl,
+                            tidb_terror::TerrorCode::new(isize::from(
                                 tidb_mysql::errors::errcode::ErrUnknown as i16,
                             )),
                             cant_reset_auto_increment(new_base, adjusted),
@@ -1339,7 +1339,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
                 )
             };
             let set_ttl_option = |option: &str| {
-                let error = tidb_error::MysqlError::from_terror(
+                let error = tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
                         .generate_with_stack_by_args(&[option.to_string().into()]),
                 );

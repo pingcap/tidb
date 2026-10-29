@@ -28,7 +28,7 @@ use openssl::sign::{RsaPssSaltlen, Signer, Verifier};
 use openssl::x509::X509;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tidb_mysql::errors::FormatArg;
-use tidb_error::terror::TerrorError;
+use tidb_terror::TerrorError;
 
 use crate::session_states::{deserialize_go_bytes, serialize_go_bytes};
 

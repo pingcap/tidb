@@ -12,22 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Shared error-number, message, redaction, SQLSTATE, `SQLError`, and TiDB
-//! class/code/RFC identity authority.
-//!
-//! `pkg/errno/{errcode,errname}.go`, Go's `parser/terror`, `errctx`,
-//! `plannererrors`, `server/err` and every package's error prototypes
-//! (`catalog`); `pkg/parser/mysql`'s errors are tidb-mysql's (`errors`). Protocol, execution, and transactional
-//! crates depend on this leaf instead of copying numeric registries or local
-//! terror-class markers.
+//! Every Go package's error prototypes (`ErrFoo = ClassBar.NewStd(...)`),
+//! one module per package (`catalog`). Not a Go package: each prototype
+//! belongs to its package's crate, and moves there as that crate's callers
+//! allow. The error machinery itself is its Go packages' crates: tidb-errno,
+//! tidb-terror, tidb-errctx, tidb-plannererrors, tidb-server-err, and
+//! tidb-mysql's `errors`.
 
 pub mod catalog;
-pub mod errctx;
-mod mysql_error;
-pub mod plannererrors;
-pub mod server_errors;
-pub mod terror;
-pub mod tidb;
 
-pub use mysql_error::MysqlError;
 

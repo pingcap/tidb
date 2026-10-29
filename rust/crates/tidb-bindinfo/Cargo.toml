@@ -8,6 +8,8 @@ repository.workspace = true
 description = "TiDB SQL bindings: Go pkg/bindinfo (Rust rewrite)."
 
 [dependencies]
+tidb-plannererrors = { path = "../tidb-plannererrors" }
+tidb-terror = { path = "../tidb-terror" }
 tidb-store-driver-error = { path = "../tidb-store-driver-error" }
 tidb-timeutil = { path = "../tidb-timeutil" }
 tidb-variable = { path = "../tidb-variable" }
@@ -26,7 +28,6 @@ tidb-metrics = { path = "../tidb-metrics" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-driver-error = { path = "../tidb-driver-error" }
-tidb-error = { path = "../tidb-error" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-hint = { path = "../tidb-hint" }
 tidb-mysql = { path = "../tidb-mysql" }

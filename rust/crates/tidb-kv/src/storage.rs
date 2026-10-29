@@ -45,7 +45,7 @@ use tidb_txnkv::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StorageError {
     /// A SQL error returned by the coprocessor, retained without string encoding.
-    Sql(tidb_error::MysqlError),
+    Sql(tidb_terror::MysqlError),
     /// Go `kv.ErrNotExist`: the key has no value.
     NotFound,
     /// The iterator is exhausted, so it cannot advance further.

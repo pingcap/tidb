@@ -17,6 +17,7 @@ nextgen = ["tidb-config/nextgen"]
 workspace = true
 
 [dependencies]
+tidb-terror = { path = "../tidb-terror" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-partialjson = { path = "../tidb-partialjson" }
 serde.workspace = true

@@ -592,7 +592,7 @@ pub trait PreparedExec: super::CompilerSession {
                 Ok(())
             }
             None => Err(DriverError::from(
-                tidb_error::plannererrors::ERR_STMT_NOT_FOUND.generate_with_stack_by_args(&[]),
+                tidb_plannererrors::ERR_STMT_NOT_FOUND.generate_with_stack_by_args(&[]),
             )),
         }
     }

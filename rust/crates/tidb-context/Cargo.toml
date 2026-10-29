@@ -11,8 +11,8 @@ description = "TiDB util/context: Go pkg/util/context (Rust rewrite)."
 workspace = true
 
 [dependencies]
+tidb-terror = { path = "../tidb-terror" }
 tidb-mysql = { path = "../tidb-mysql" }
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 tidb-datatype = { path = "../tidb-datatype" }
-tidb-error = { path = "../tidb-error" }

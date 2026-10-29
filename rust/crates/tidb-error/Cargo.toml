@@ -5,13 +5,14 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Single source-backed MySQL and TiDB error catalog for the TiDB Rust rewrite."
+description = "Every Go package's error prototypes, pending their move to their packages' crates (not a Go package)."
 
 autotests = false
 
 [dependencies]
+tidb-errno = { path = "../tidb-errno" }
+tidb-terror = { path = "../tidb-terror" }
 tidb-mysql = { path = "../tidb-mysql" }
-tidb-terror-identity = { path = "../tidb-terror-identity" }
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
 tracing = "0.1"
@@ -22,3 +23,7 @@ workspace = true
 [[test]]
 name = "all"
 path = "tests/all.rs"
+
+[dev-dependencies]
+tidb-errctx = { path = "../tidb-errctx" }
+tidb-server-err = { path = "../tidb-server-err" }

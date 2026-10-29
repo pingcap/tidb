@@ -65,7 +65,7 @@ pub fn prepare_cluster_stats_lock_parsed(
             let (schema, table) = match target.name.as_slice() {
                 [table] if !default_schema.is_empty() => (default_schema.to_owned(), table.clone()),
                 [_table] => {
-                    return Err(tidb_error::plannererrors::ERR_NO_DB
+                    return Err(tidb_plannererrors::ERR_NO_DB
                         .generate_with_stack_by_args(&[])
                         .into())
                 }
@@ -99,7 +99,7 @@ pub enum ClusterStatsLockError {
     /// The error value Go's `LOCK STATS` / `UNLOCK STATS` planning raises as
     /// it is: `ErrNoDB` for a bare table name with no selected schema,
     /// `ErrTableNotExists`, `ErrUnknownPartition`.
-    Mysql(tidb_error::MysqlError),
+    Mysql(tidb_terror::MysqlError),
     /// Missing table or invalid target.
     Invalid(String),
     /// System-row read failure.
@@ -122,9 +122,9 @@ impl std::fmt::Display for ClusterStatsLockError {
 impl std::error::Error for ClusterStatsLockError {}
 
 /// A Go error raised as the statement's failure.
-impl From<tidb_error::terror::TerrorError> for ClusterStatsLockError {
-    fn from(error: tidb_error::terror::TerrorError) -> Self {
-        Self::Mysql(tidb_error::MysqlError::from_terror(&error))
+impl From<tidb_terror::TerrorError> for ClusterStatsLockError {
+    fn from(error: tidb_terror::TerrorError) -> Self {
+        Self::Mysql(tidb_terror::MysqlError::from_terror(&error))
     }
 }
 

@@ -17,7 +17,7 @@
 
 use std::collections::HashSet;
 
-use tidb_error::MysqlError;
+use tidb_terror::MysqlError;
 
 /// Go `checkOperateSameColAndIdx`: a multi-schema change names one column
 /// or index at most once among its actions.

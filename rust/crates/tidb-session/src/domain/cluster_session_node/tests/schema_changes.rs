@@ -218,11 +218,11 @@ fn full_cluster_ddl_keeps_a_region_backoff_error_coded_on_the_wire() {
     let query_error = cluster_ddl_error(classify_session_ddl_commit_error(61, lock_error));
     assert_eq!(
         query_error.code,
-        tidb_error::tidb::errcode::ErrRegionUnavailable
+        tidb_errno::errcode::ErrRegionUnavailable
     );
     assert_query_error_packet(
         &query_error,
-        tidb_error::tidb::errcode::ErrRegionUnavailable,
+        tidb_errno::errcode::ErrRegionUnavailable,
         "Region is unavailable",
     );
 }

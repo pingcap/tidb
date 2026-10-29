@@ -11,11 +11,11 @@ description = "Go `pkg/store/driver/txn`: the TiKV transaction (`tikvTxn`) a ses
 workspace = true
 
 [dependencies]
+tidb-terror = { path = "../tidb-terror" }
 tidb-store-driver-error = { path = "../tidb-store-driver-error" }
 tidb-meta = { path = "../tidb-meta" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-deadlockhistory = { path = "../tidb-deadlockhistory" }
-tidb-error = { path = "../tidb-error" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-kv = { path = "../tidb-kv" }
 tikv-client.workspace = true

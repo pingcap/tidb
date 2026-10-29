@@ -144,7 +144,7 @@ pub fn fetch_show_tables(
             .and_then(|identity| identity.split_once('@'))
             .unwrap_or_default();
         return Err(crate::DriverError::from(
-            tidb_error::plannererrors::ERR_DBACCESS_DENIED.generate_with_stack_by_args(&[
+            tidb_plannererrors::ERR_DBACCESS_DENIED.generate_with_stack_by_args(&[
                 user.to_owned().into(),
                 host.to_owned().into(),
                 database.to_owned().into(),

@@ -22,7 +22,7 @@ use serde::de::{DeserializeSeed, MapAccess, Visitor};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
 use tidb_datatype::GoString;
-use tidb_error::terror::{TerrorCode, TerrorError};
+use tidb_terror::{TerrorCode, TerrorError};
 
 use crate::go_runtime::GoShared;
 use tidb_goruntime::go_runtime::GoSharedSlice;
@@ -1142,8 +1142,8 @@ mod tests {
         assert_eq!(with_newline.start_key.capacity(), 3);
 
         let escaped = BackfillMeta {
-            error: Some(GoShared::new(tidb_error::terror::TerrorError::compatible(
-                tidb_error::terror::TerrorCode::new(2),
+            error: Some(GoShared::new(tidb_terror::TerrorError::compatible(
+                tidb_terror::TerrorCode::new(2),
                 "<>&\u{2028}\u{2029}",
             ))),
             ..Default::default()

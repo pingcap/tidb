@@ -1102,9 +1102,9 @@ pub fn partition_expr_build_ctx() -> tidb_expr::exprstatic::EvalContext {
                 .with_ignore_zero_in_date_err(true)
                 .with_ignore_invalid_date_err(true),
         ),
-        with_err_level_map(tidb_error::errctx::LevelMap::strict().with_level(
-            tidb_error::errctx::ErrGroup::Truncate,
-            tidb_error::errctx::Level::Ignore,
+        with_err_level_map(tidb_errctx::LevelMap::strict().with_level(
+            tidb_errctx::ErrGroup::Truncate,
+            tidb_errctx::Level::Ignore,
         )),
     ])
 }

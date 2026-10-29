@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{std_err, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `sessionctx/sessionstates.ErrCannotMigrateSession` (`pkg/sessionctx/sessionstates/session_states.go:31`).
 pub static ERR_CANNOT_MIGRATE_SESSION: LazyLock<TerrorError> =

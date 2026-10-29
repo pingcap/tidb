@@ -471,7 +471,7 @@ pub trait RangerEvaluator {
 
     /// Go `TypeCtx.AppendWarning(err)` of the Go error `proto` with
     /// `message`.
-    fn append_go_warning(&self, proto: &tidb_error::terror::TerrorError, message: &str) {
+    fn append_go_warning(&self, proto: &tidb_terror::TerrorError, message: &str) {
         let error = proto.generate(message.to_owned()).to_sql_error();
         self.append_warning(error.code, &error.message);
     }
@@ -521,7 +521,7 @@ impl RangerEvaluator for StatementRangerEvaluator<'_> {
         self.0.append_warning(code, message);
     }
 
-    fn append_go_warning(&self, proto: &tidb_error::terror::TerrorError, message: &str) {
+    fn append_go_warning(&self, proto: &tidb_terror::TerrorError, message: &str) {
         self.0.append_go_warning(proto, message);
     }
 }

@@ -431,7 +431,7 @@ fn job_database<'a>(
                 active,
                 DdlPlanError::from(
                     tidb_dbterror::CLASS_SCHEMA
-                        .new_std(tidb_error::tidb::errcode::ErrBadDB)
+                        .new_std(tidb_errno::errcode::ErrBadDB)
                         .generate(format!(
                             "Unknown database '(Schema ID {})'",
                             active.job.schema_id
@@ -444,7 +444,7 @@ fn job_database<'a>(
 fn table_exists_in_owner(schema: &str, name: &str) -> DdlPlanError {
     DdlPlanError::from(
         tidb_dbterror::CLASS_SCHEMA
-            .new_std(tidb_error::tidb::errcode::ErrTableExists)
+            .new_std(tidb_errno::errcode::ErrTableExists)
             .generate(format!("Table '{schema}.{name}' already exists")),
     )
 }

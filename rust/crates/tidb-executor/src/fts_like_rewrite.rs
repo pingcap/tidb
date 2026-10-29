@@ -136,7 +136,7 @@ fn rewrite_boolean_root(
 /// Go `ErrNotSupportedYet.GenWithStackByArgs` (1235).
 fn not_supported_yet(feature: &str) -> DriverError {
     DriverError::from(
-        tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET
+        tidb_plannererrors::ERR_NOT_SUPPORTED_YET
             .generate_with_stack_by_args(&[feature.to_owned().into()]),
     )
 }
@@ -185,7 +185,7 @@ fn build_fts_like(
     tidb_expr::fts::validate_fts_search_string_for_like_fallback(&search, modifier).map_err(
         |error| {
             DriverError::from(
-                tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET
+                tidb_plannererrors::ERR_NOT_SUPPORTED_YET
                     .generate_with_stack_by_args(&[error.message.into()]),
             )
         },

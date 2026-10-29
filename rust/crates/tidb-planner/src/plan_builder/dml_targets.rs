@@ -121,7 +121,7 @@ impl<S: TableSource, C: tidb_expr::Columns> PlanBuilder<'_, S, C> {
                 [schema, name] => (go_to_lower(schema), name.as_str()),
                 _ => {
                     return Err(PlanError::from(
-                        tidb_error::plannererrors::ERR_UNKNOWN_TABLE.generate_with_stack_by_args(
+                        tidb_plannererrors::ERR_UNKNOWN_TABLE.generate_with_stack_by_args(
                             &[(target.join(".")).into(), "MULTI DELETE".into()],
                         ),
                     ))
@@ -143,13 +143,13 @@ impl<S: TableSource, C: tidb_expr::Columns> PlanBuilder<'_, S, C> {
             }
             let Some((can_update, key)) = found else {
                 return Err(PlanError::from(
-                    tidb_error::plannererrors::ERR_UNKNOWN_TABLE
+                    tidb_plannererrors::ERR_UNKNOWN_TABLE
                         .generate_with_stack_by_args(&[written.into(), "MULTI DELETE".into()]),
                 ));
             };
             if !can_update {
                 return Err(PlanError::from(
-                    tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE
+                    tidb_plannererrors::ERR_NON_UPDATABLE_TABLE
                         .generate_with_stack_by_args(&[written.into(), "DELETE".into()]),
                 ));
             }

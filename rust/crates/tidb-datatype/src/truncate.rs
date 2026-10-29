@@ -15,8 +15,8 @@
 //! Typed truncation handling from `pkg/types/truncate.go`.
 
 use tidb_mysql::errors::SqlError;
-use tidb_error::terror::TerrorError;
-use tidb_error::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 use crate::{ConversionContext, ConversionFlags, STRICT_FLAGS};
 

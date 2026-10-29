@@ -1531,7 +1531,7 @@ pub(super) fn plan_cancel_add_index(
     }
     let error = DdlPlanError::from(
         tidb_dbterror::ERR_CANCELLED_DDL_JOB
-            .generate(tidb_error::tidb::errname::ErrCancelledDDLJob.raw),
+            .generate(tidb_errno::errname::ErrCancelledDDLJob.raw),
     );
     let (write, error) = convert_add_index_to_rollback(active, &mut info, &indexes, error)?;
     Ok(PersistedDdlActionStep {

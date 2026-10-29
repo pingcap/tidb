@@ -454,7 +454,7 @@ pub trait SqlBindExec: crate::show::exec::ShowExec {
                     Some(crate::TableEntry::Kv(found)) if found.is_temporary()
                 ) {
                     return Err(DriverError::from(
-                        tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                        tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                             .generate_with_stack_by_args(&["create binding".into()]),
                     ));
                 }

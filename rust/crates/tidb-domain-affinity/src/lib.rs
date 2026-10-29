@@ -356,7 +356,7 @@ fn is_pd_http_service_error_without_status(error: &PdHttpError) -> bool {
     matches!(
         error,
         PdHttpError::Coded { code, .. }
-            if *code == tidb_error::tidb::errcode::ErrHTTPServiceError
+            if *code == tidb_errno::errcode::ErrHTTPServiceError
     )
 }
 
@@ -693,7 +693,7 @@ mod tests {
     /// Go `pdHTTPServiceErr`.
     fn pd_http_service_err(message: &str) -> PdHttpError {
         PdHttpError::Coded {
-            code: tidb_error::tidb::errcode::ErrHTTPServiceError,
+            code: tidb_errno::errcode::ErrHTTPServiceError,
             message: format!("HTTP request failed with status {message}"),
         }
     }

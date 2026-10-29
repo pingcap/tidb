@@ -139,7 +139,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             | T::Affinity => {
                 if matches!(show.tp, T::Tables | T::TableStatus) && show.db_name.is_empty() {
                     return Err(PlanError::from(
-                        tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                        tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
                     ));
                 }
                 if let Some(extractor) = ShowBaseExtractor::extract(show) {
@@ -297,7 +297,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     .is_some_and(|info| info.read().temp_table_type != TempTableType::NONE);
                 if is_temporary {
                     return Err(PlanError::from(
-                        tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                        tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                             .generate_with_stack_by_args(&[(if show.tp == T::Regions {
                                 "show table regions"
                             } else {
@@ -309,7 +309,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
             T::ReplicaStatus => {
                 return Err(PlanError::from(
-                    tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET
+                    tidb_plannererrors::ERR_NOT_SUPPORTED_YET
                         .generate_with_stack_by_args(&["SHOW {REPLICA | SLAVE} STATUS".into()]),
                 ));
             }

@@ -414,7 +414,7 @@ fn window_ntile_argument_domain() {
     ] {
         assert!(
             session.run(sql).is_err_and(|error| error
-                .equal(&tidb_error::plannererrors::ERR_WRONG_ARGUMENTS)
+                .equal(&tidb_plannererrors::ERR_WRONG_ARGUMENTS)
                 && error.to_string() == "Incorrect arguments to ntile"),
             "expected ErrWrongArguments for {sql}"
         );

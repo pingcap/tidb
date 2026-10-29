@@ -17,7 +17,7 @@
 //! `SHOW WARNINGS`, the log) reads. Lives beside [`tidb_mysql::errors::SqlError`], the
 //! `mysql.SQLError` view it is converted from.
 
-use crate::terror::{TerrorClass, TerrorCode, TerrorError, TerrorIdentity};
+use crate::{TerrorClass, TerrorCode, TerrorError, TerrorIdentity};
 
 /// The MySQL error a driver failure becomes on the wire, which is also what
 /// `SHOW WARNINGS` reports for a failed statement.
@@ -262,7 +262,7 @@ impl From<&str> for MysqlError {
 /// The codes `ClassTiKV` registers (`pkg/store/driver/error/error.go`,
 /// `pkg/kv/error.go`): the only ones a coprocessor error keeps.
 const CLASS_TIKV_CODES: &[u16] = {
-    use crate::tidb::errcode::*;
+    use tidb_errno::errcode::*;
     &[
         ErrSharedLockLost,
         ErrLockExpire,

@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{std_err, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `table.ErrColumnCantNull` (`pkg/table/table.go:71`).
 pub static ERR_COLUMN_CANT_NULL: LazyLock<TerrorError> =

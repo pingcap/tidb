@@ -232,7 +232,7 @@ fn stats_lock_planning_keeps_go_error_identities() {
     let cases = [
         (
             ClusterStatsLockError::from(
-                tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
             ),
             1046,
             *b"3D000",
@@ -327,11 +327,11 @@ fn analyze_commit_keeps_a_backoff_driver_error_coded_on_the_wire() {
     );
     assert_eq!(
         query_error.code,
-        tidb_error::tidb::errcode::ErrTiKVStaleCommand
+        tidb_errno::errcode::ErrTiKVStaleCommand
     );
     assert_query_error_packet(
         &query_error,
-        tidb_error::tidb::errcode::ErrTiKVStaleCommand,
+        tidb_errno::errcode::ErrTiKVStaleCommand,
         "TiKV server reports stale command",
     );
 }

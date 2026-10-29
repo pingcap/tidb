@@ -21,7 +21,7 @@ use tidb_datatype::{
     parse_hex_str, ConversionContext, ConversionFlags, ConversionLocation,
     ConversionWarningAppender, DEFAULT_STATEMENT_FLAGS, STRICT_FLAGS,
 };
-use tidb_error::terror::{TerrorClass, TerrorError};
+use tidb_terror::{TerrorClass, TerrorError};
 
 #[derive(Default)]
 struct WarningStore(Mutex<Vec<TerrorError>>);

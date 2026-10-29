@@ -102,7 +102,7 @@ pub trait StatsExec: AnalyzeExec {
                                 ids: &mut Vec<i64>,
                                 warnings: &mut Vec<(u16, String)>| {
                 let Some(TableEntry::Kv(table)) = catalog.table_in(database, table) else {
-                    let error = tidb_error::MysqlError::from_terror(
+                    let error = tidb_terror::MysqlError::from_terror(
                         &tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
                             .generate_with_stack_by_args(&[database.into(), table.into()]),
                     );
@@ -123,7 +123,7 @@ pub trait StatsExec: AnalyzeExec {
                                 append_table(database, &table, &mut ids, &mut warnings);
                             }
                         } else {
-                            let error = tidb_error::MysqlError::from_terror(
+                            let error = tidb_terror::MysqlError::from_terror(
                                 &tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
                                     .generate_with_stack_by_args(&[database.as_str().into()]),
                             );
@@ -199,7 +199,7 @@ pub trait StatsExec: AnalyzeExec {
             };
             if database.is_empty() {
                 return Err(DriverError::from(
-                    tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                    tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
                 ));
             }
             let table =

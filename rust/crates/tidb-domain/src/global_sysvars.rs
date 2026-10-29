@@ -178,7 +178,7 @@ impl tidb_variable::GlobalVarAccessor for GlobalSysvars {
             .get(&name.to_ascii_lowercase())
             .cloned();
         match hook {
-            Some(hook) => hook(value).map_err(tidb_error::MysqlError::unknown),
+            Some(hook) => hook(value).map_err(tidb_terror::MysqlError::unknown),
             None => Ok(()),
         }
     }
@@ -605,7 +605,7 @@ impl GlobalSysvars {
             }
         }
         let Some(index) = tidb_variable::sysvar::sys_var_index_lookup(name) else {
-            return Err(tidb_error::MysqlError::from_terror(
+            return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
@@ -696,13 +696,13 @@ impl GlobalSysvars {
     /// SESSION-only variable has no global copy (Go error 1238).
     pub fn get_for_global_scope(&self, name: &str) -> Result<String, VarError> {
         let def = get_sys_var(name).ok_or_else(|| {
-            tidb_error::MysqlError::from_terror(
+            tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         if !def.has_global_scope() && !def.has_instance_scope() && def.has_session_scope() {
-            return Err(tidb_error::MysqlError::from_terror(
+            return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
                     (name.to_ascii_lowercase()).into(),
                     "SESSION".into(),
@@ -916,7 +916,7 @@ impl GlobalSysvars {
         if name.eq_ignore_ascii_case("tidb_external_ts") {
             if let Some(provider) = self.external_timestamp_provider() {
                 if value.is_empty() {
-                    return Err(tidb_error::MysqlError::from_sql_error(
+                    return Err(tidb_terror::MysqlError::from_sql_error(
                         tidb_mysql::errors::SqlError::new_f(
                             tidb_mysql::errors::errcode::ErrTruncatedWrongValue,
                             "Incorrect datetime value: '%s'",
@@ -948,13 +948,13 @@ impl GlobalSysvars {
     /// session-only variable gets.
     pub fn set_instance(&self, name: &str, value: String) -> Result<bool, VarError> {
         let def = get_sys_var(name).ok_or_else(|| {
-            tidb_error::MysqlError::from_terror(
+            tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         if !def.is_read_only() && !def.has_instance_scope() {
-            return Err(tidb_error::MysqlError::from_terror(
+            return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_LOCAL_VARIABLE
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
@@ -1258,13 +1258,13 @@ impl GlobalSysvars {
 
     fn write(&self, name: &str, value: String, scope: u8) -> Result<bool, VarError> {
         let def = get_sys_var(name).ok_or_else(|| {
-            tidb_error::MysqlError::from_terror(
+            tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         if def.is_read_only() {
-            return Err(tidb_error::MysqlError::from_terror(
+            return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
                     (name.to_ascii_lowercase()).into(),
                     "read only".into(),
@@ -1272,7 +1272,7 @@ impl GlobalSysvars {
             ));
         }
         if !def.has_global_scope() && !def.has_instance_scope() {
-            return Err(tidb_error::MysqlError::from_terror(
+            return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_LOCAL_VARIABLE
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
@@ -1287,12 +1287,12 @@ impl GlobalSysvars {
                 .map(|(bytes, _)| bytes)
                 .or_else(|| validated.value.parse::<u64>().ok());
             let Some(bytes) = bytes else {
-                return Err(tidb_error::MysqlError::unknown(format!(
+                return Err(tidb_terror::MysqlError::unknown(format!(
                     "invalid tidb_instance_plan_cache_max_mem_size value {value}"
                 )));
             };
             if bytes < 100 * 1024 * 1024 {
-                return Err(tidb_error::MysqlError::unknown(
+                return Err(tidb_terror::MysqlError::unknown(
                     "tidb_instance_plan_cache_max_mem_size should be at least 100MiB".to_owned(),
                 ));
             }
@@ -1312,7 +1312,7 @@ impl GlobalSysvars {
                 tidb_vardef::defaults::DEF_TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE,
             );
             if !run_auto_analyze || !enable_auto_analyze_priority_queue {
-                return Err(tidb_error::MysqlError::unknown(format!(
+                return Err(tidb_terror::MysqlError::unknown(format!(
                     "cannot set {}: requires both tidb_enable_auto_analyze and tidb_enable_auto_analyze_priority_queue to be true. Current values: tidb_enable_auto_analyze={}, tidb_enable_auto_analyze_priority_queue={}",
                     tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY,
                     run_auto_analyze,
@@ -1328,12 +1328,12 @@ impl GlobalSysvars {
             && validated.value == "ON"
             && !self.global_bool_value("tidb_enable_historical_stats", false)
         {
-            return Err(tidb_error::MysqlError::unknown("tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture"
+            return Err(tidb_terror::MysqlError::unknown("tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture"
                     .to_owned()));
         }
         if key == tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL {
             OptimizerFixControl::parse(&validated.value)
-                .map_err(|error| tidb_error::MysqlError::unknown(error.to_string()))?;
+                .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;
         }
         let stored_value = validated.value;
         // Go's GOGC tuner bounds are cross-validated against the current
@@ -1348,7 +1348,7 @@ impl GlobalSysvars {
                 .and_then(|value| value.parse::<i64>().ok())
                 .unwrap_or(tidb_vardef::defaults::DEF_TIDB_GOGC_MIN_VALUE);
             if stored_value.parse::<i64>().unwrap_or_default() <= min_value {
-                return Err(tidb_error::MysqlError::unknown(
+                return Err(tidb_terror::MysqlError::unknown(
                     "tidb_gogc_tuner_max_value should be more than tidb_gogc_tuner_min_value"
                         .to_owned(),
                 ));
@@ -1361,7 +1361,7 @@ impl GlobalSysvars {
                 .and_then(|value| value.parse::<i64>().ok())
                 .unwrap_or(tidb_vardef::defaults::DEF_TIDB_GOGC_MAX_VALUE);
             if stored_value.parse::<i64>().unwrap_or_default() >= max_value {
-                return Err(tidb_error::MysqlError::unknown(
+                return Err(tidb_terror::MysqlError::unknown(
                     "tidb_gogc_tuner_min_value should be less than tidb_gogc_tuner_max_value"
                         .to_owned(),
                 ));
@@ -1374,7 +1374,7 @@ impl GlobalSysvars {
             && stored_value == "OFF"
             && self.get("tidb_restricted_read_only").ok().as_deref() == Some("ON")
         {
-            return Err(tidb_error::MysqlError::unknown(
+            return Err(tidb_terror::MysqlError::unknown(
                 "can't turn off tidb_super_read_only when tidb_restricted_read_only is on"
                     .to_owned(),
             ));
@@ -1397,7 +1397,7 @@ impl GlobalSysvars {
                 let config = serde_json::from_str::<tidb_traceevent::FlightRecorderConfig>(
                     &stored_value,
                 )
-                .map_err(|error| tidb_error::MysqlError::unknown(error.to_string()))?;
+                .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;
                 tidb_traceevent::start_log_flight_recorder(config)
                     .map_err(VarError::unknown)?;
             }
@@ -1559,13 +1559,13 @@ impl GlobalSysvars {
     /// table whose row the default replaces).
     pub fn reset(&self, name: &str) -> Result<(), VarError> {
         let def = get_sys_var(name).ok_or_else(|| {
-            tidb_error::MysqlError::from_terror(
+            tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         if def.is_read_only() {
-            return Err(tidb_error::MysqlError::from_terror(
+            return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
                     (name.to_ascii_lowercase()).into(),
                     "read only".into(),
@@ -1573,7 +1573,7 @@ impl GlobalSysvars {
             ));
         }
         if !def.has_global_scope() && !def.has_instance_scope() {
-            return Err(tidb_error::MysqlError::from_terror(
+            return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_LOCAL_VARIABLE
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));
@@ -1595,13 +1595,13 @@ impl GlobalSysvars {
     /// same scope validation as [`Self::set_instance`].
     pub fn reset_instance(&self, name: &str) -> Result<(), VarError> {
         let def = get_sys_var(name).ok_or_else(|| {
-            tidb_error::MysqlError::from_terror(
+            tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             )
         })?;
         if def.is_read_only() {
-            return Err(tidb_error::MysqlError::from_terror(
+            return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
                     (name.to_ascii_lowercase()).into(),
                     "read only".into(),
@@ -1609,7 +1609,7 @@ impl GlobalSysvars {
             ));
         }
         if !def.has_instance_scope() {
-            return Err(tidb_error::MysqlError::from_terror(
+            return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_LOCAL_VARIABLE
                     .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
             ));

@@ -30,7 +30,7 @@
 //! text; the client receives `terror.ToSQLError`'s message, which is
 //! `GetMsg()` -- the same text without the `[class:code]` prefix.
 
-use tidb_error::terror::ERR_RESULT_UNDETERMINED;
+use tidb_terror::ERR_RESULT_UNDETERMINED;
 use tidb_kv::cluster_storage::DuplicateKeyHint;
 use tidb_txnkv::driver::transaction_error::WriteConflictArgs;
 use tidb_txnkv::retry::RegionBackoffKind;
@@ -90,13 +90,13 @@ pub struct LockSqlError {
     /// The Go `*terror.Error` identity the failure is raised as (`[kv:9007]`,
     /// `[tikv:1205]`, ...), `None` for a plain error. The wire drops it;
     /// `err.Error()` -- `@@tidb_last_query_info`, logs -- prints it.
-    pub identity: Option<tidb_error::terror::TerrorIdentity>,
+    pub identity: Option<tidb_terror::TerrorIdentity>,
 }
 
 /// A Go error raised as the statement's failure: its code, SQLSTATE, message
 /// and identity, with no write-conflict arguments.
-impl From<tidb_error::MysqlError> for LockSqlError {
-    fn from(error: tidb_error::MysqlError) -> Self {
+impl From<tidb_terror::MysqlError> for LockSqlError {
+    fn from(error: tidb_terror::MysqlError) -> Self {
         Self {
             code: error.code,
             state: error.state,
@@ -139,7 +139,7 @@ impl PessimisticStatementRetry {
                 .pessimistic_txn
                 .max_retry_count
         {
-            return Err(LockSqlError::from(tidb_error::MysqlError::unknown(
+            return Err(LockSqlError::from(tidb_terror::MysqlError::unknown(
                 "pessimistic lock retry limit reached",
             )));
         }
@@ -166,18 +166,18 @@ pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlErr
         // Go `ExecStmt.handlePessimisticLockError`: client-go's deadlock
         // becomes `exeerrors.ErrDeadlock`.
         PessimisticLockFailure::Deadlock(_) => {
-            LockSqlError::from(tidb_error::MysqlError::from_terror(
+            LockSqlError::from(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::exeerrors::ERR_DEADLOCK.generate_with_stack_by_args(&[]),
             ))
         }
         PessimisticLockFailure::LockAcquireFailAndNoWaitSet { .. } => {
-            LockSqlError::from(tidb_error::MysqlError::from_terror(
+            LockSqlError::from(tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::tikv::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET
                     .generate_with_stack_by_args(&[]),
             ))
         }
         PessimisticLockFailure::LockWaitTimeout { .. } => {
-            LockSqlError::from(tidb_error::MysqlError::from_terror(
+            LockSqlError::from(tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::tikv::ERR_LOCK_WAIT_TIMEOUT.generate_with_stack_by_args(&[]),
             ))
         }
@@ -192,7 +192,7 @@ pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlErr
             | TransactionCause::AssertionFailed { .. }),
         ) => transaction_cause_to_sql_error(cause),
         PessimisticLockFailure::Transaction(cause) => {
-            LockSqlError::from(tidb_error::MysqlError::unknown(format!(
+            LockSqlError::from(tidb_terror::MysqlError::unknown(format!(
                 "pessimistic transaction aborted: {cause}"
             )))
         }
@@ -242,14 +242,14 @@ pub fn commit_outcome_to_sql_error_with_hint(
             Err(transaction_cause_to_sql_error(&failed.cause))
         }
         OptimisticCommitOutcome::Undetermined(_) => Err(LockSqlError::from(
-            tidb_error::MysqlError::from_terror(&ERR_RESULT_UNDETERMINED),
+            tidb_terror::MysqlError::from_terror(&ERR_RESULT_UNDETERMINED),
         )),
     }
 }
 
 /// Go `ErrKeyExists` rendered with the table's duplicate-entry hint.
 pub fn duplicate_key_sql_error(hint: &DuplicateKeyHint) -> LockSqlError {
-    LockSqlError::from(tidb_error::MysqlError::from_terror(
+    LockSqlError::from(tidb_terror::MysqlError::from_terror(
         &tidb_error::catalog::kv::ERR_KEY_EXISTS
             .generate_with_stack_by_args(&[hint.value.as_str().into(), hint.key.as_str().into()]),
     ))
@@ -258,7 +258,7 @@ pub fn duplicate_key_sql_error(hint: &DuplicateKeyHint) -> LockSqlError {
 /// Go `newWriteConflictError`'s error (`ErrWriteConflict`, 9007): `detail` is
 /// the conflict's `txnStartTS=..., key=...` description.
 fn write_conflict_error(detail: &str) -> LockSqlError {
-    LockSqlError::from(tidb_error::MysqlError::from_terror(
+    LockSqlError::from(tidb_terror::MysqlError::from_terror(
         &tidb_error::catalog::kv::ERR_WRITE_CONFLICT
             .generate_with_stack(format!("Write conflict, {detail} [try again later]")),
     ))
@@ -288,7 +288,7 @@ pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError 
         // The session's own error, rendered by the checker (Go
         // `ErrInfoSchemaChanged` 8028 / `ErrInfoSchemaExpired` 8027).
         TransactionCause::SchemaLease { error } => {
-            LockSqlError::from(tidb_error::MysqlError::from_terror(error))
+            LockSqlError::from(tidb_terror::MysqlError::from_terror(error))
         }
         TransactionCause::AssertionFailed {
             key,
@@ -330,17 +330,17 @@ pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError 
                 identity: Some(txnkv_identity(prototype)),
             }
         }
-        other => LockSqlError::from(tidb_error::MysqlError::unknown(format!(
+        other => LockSqlError::from(tidb_terror::MysqlError::unknown(format!(
             "transaction failed: {other}"
         ))),
     }
 }
 
 /// The identity a registered `pkg/kv` / `ClassTiKV` error carries.
-fn txnkv_identity(error: &tidb_txnkv::KvError) -> tidb_error::terror::TerrorIdentity {
-    tidb_error::terror::TerrorIdentity::new(
-        tidb_error::terror::TerrorClass::from_value(isize::from(error.class().as_u8())),
-        tidb_error::terror::TerrorCode::new(error.mysql_code().as_u16() as isize),
+fn txnkv_identity(error: &tidb_txnkv::KvError) -> tidb_terror::TerrorIdentity {
+    tidb_terror::TerrorIdentity::new(
+        tidb_terror::TerrorClass::from_value(isize::from(error.class().as_u8())),
+        tidb_terror::TerrorCode::new(error.mysql_code().as_u16() as isize),
     )
 }
 
@@ -371,10 +371,10 @@ fn backoff_exhausted_to_sql_error(kind: RegionBackoffKind, detail: &str) -> Lock
     let source = StorageDriverError::from_backoff(kind, detail);
     match to_tidb_driver_error(&source) {
         ConvertedDriverError::Terror(converted) => {
-            LockSqlError::from(tidb_error::MysqlError::from_terror(&converted))
+            LockSqlError::from(tidb_terror::MysqlError::from_terror(&converted))
         }
         ConvertedDriverError::Passthrough(source) => {
-            LockSqlError::from(tidb_error::MysqlError::unknown(source.to_string()))
+            LockSqlError::from(tidb_terror::MysqlError::unknown(source.to_string()))
         }
         ConvertedDriverError::Kv(_) | ConvertedDriverError::Transaction(_) => {
             unreachable!("backoff source table has no kv or transaction conversion rows")
@@ -430,7 +430,7 @@ mod tests {
         ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET, ERR_LOCK_DEADLOCK, ERR_LOCK_WAIT_TIMEOUT,
         ERR_REGION_UNAVAILABLE, ERR_SHARED_LOCK_LOST, ERR_WRITE_CONFLICT,
     };
-    use tidb_error::terror::ERR_RESULT_UNDETERMINED;
+    use tidb_terror::ERR_RESULT_UNDETERMINED;
     use tidb_kv::cluster_storage::DuplicateKeyHint;
     use tidb_txnkv::retry::RegionBackoffKind;
     use tidb_txnkv::transaction::{
@@ -618,7 +618,7 @@ mod tests {
 
     #[test]
     fn exhausted_backoff_uses_client_go_config_error_identity() {
-        use tidb_error::tidb::errcode;
+        use tidb_errno::errcode;
 
         let cases = [
             (

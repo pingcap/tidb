@@ -200,7 +200,7 @@ fn window_frame_shape_is_refused_with_gos_own_code() {
         "SELECT SUM(v) OVER (ROWS BETWEEN UNBOUNDED FOLLOWING AND UNBOUNDED FOLLOWING) FROM w1",
     ] {
         assert!(
-            (session.run(sql)).is_err_and(|error| error.equal(&tidb_error::plannererrors::ERR_WINDOW_FRAME_START_ILLEGAL)),
+            (session.run(sql)).is_err_and(|error| error.equal(&tidb_plannererrors::ERR_WINDOW_FRAME_START_ILLEGAL)),
             "expected 3584 for {sql}"
         );
     }
@@ -220,14 +220,14 @@ fn window_frame_shape_is_refused_with_gos_own_code() {
              FROM w1",
     ] {
         assert!(
-            (session.run(sql)).is_err_and(|error| error.equal(&tidb_error::plannererrors::ERR_WINDOW_FRAME_END_ILLEGAL)),
+            (session.run(sql)).is_err_and(|error| error.equal(&tidb_plannererrors::ERR_WINDOW_FRAME_END_ILLEGAL)),
             "expected 3585 for {sql}"
         );
     }
 
     // The rendered codes and messages, exactly as TiDB writes them.
     let start = DriverError::from(
-        tidb_error::plannererrors::ERR_WINDOW_FRAME_START_ILLEGAL
+        tidb_plannererrors::ERR_WINDOW_FRAME_START_ILLEGAL
             .generate_with_stack_by_args(&["<unnamed window>".into()]),
     )
     .to_mysql_error();
@@ -237,7 +237,7 @@ fn window_frame_shape_is_refused_with_gos_own_code() {
         "Window '<unnamed window>': frame start cannot be UNBOUNDED FOLLOWING."
     );
     let end = DriverError::from(
-        tidb_error::plannererrors::ERR_WINDOW_FRAME_END_ILLEGAL
+        tidb_plannererrors::ERR_WINDOW_FRAME_END_ILLEGAL
             .generate_with_stack_by_args(&["<unnamed window>".into()]),
     )
     .to_mysql_error();

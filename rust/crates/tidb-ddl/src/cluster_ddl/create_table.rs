@@ -179,7 +179,7 @@ pub(super) fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
                 active,
                 DdlPlanError::from(
                     tidb_dbterror::CLASS_SCHEMA
-                        .new_std(tidb_error::tidb::errcode::ErrBadDB)
+                        .new_std(tidb_errno::errcode::ErrBadDB)
                         .generate(format!(
                             "Unknown database '(Schema ID {})'",
                             active.job.schema_id
@@ -209,7 +209,7 @@ pub(super) fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
                     active,
                     DdlPlanError::from(
                         tidb_dbterror::CLASS_SCHEMA
-                            .new_std(tidb_error::tidb::errcode::ErrTableExists)
+                            .new_std(tidb_errno::errcode::ErrTableExists)
                             .generate(format!(
                                 "Table '{}.{}' already exists",
                                 schema,
@@ -230,7 +230,7 @@ pub(super) fn plan_persisted_create_table_job_step<S: MetaSnapshot>(
                         active,
                         DdlPlanError::from(
                             tidb_dbterror::CLASS_SCHEMA
-                                .new_std(tidb_error::tidb::errcode::ErrCheckConstraintDupName)
+                                .new_std(tidb_errno::errcode::ErrCheckConstraintDupName)
                                 .generate_with_stack_by_args(&[FormatArg::from(wanted.as_str())]),
                         ),
                     ));

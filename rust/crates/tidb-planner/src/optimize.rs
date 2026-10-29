@@ -470,7 +470,7 @@ pub fn optimize_physical<C: OptimizeContext>(
         .inspect_err(|_| ctx.set_physical_opt(begin_physical_opt.elapsed()))?;
     let mut physical = task.plan().cloned().ok_or_else(|| {
         PlanError::from(
-            tidb_error::plannererrors::ERR_INTERNAL.generate_with_stack_by_args(&[
+            tidb_plannererrors::ERR_INTERNAL.generate_with_stack_by_args(&[
                 "Can't find a proper physical plan for this query".into(),
             ]),
         )

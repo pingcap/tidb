@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{std_err, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `meta.ErrDBExists` (`pkg/meta/meta.go:151`).
 pub static ERR_DB_EXISTS: LazyLock<TerrorError> =

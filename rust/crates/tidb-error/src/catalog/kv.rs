@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{std_err, std_err_msg, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `kv.ErrNotExist` (`pkg/kv/error.go:31`).
 pub static ERR_NOT_EXIST: LazyLock<TerrorError> =

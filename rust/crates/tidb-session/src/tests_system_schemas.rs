@@ -1563,7 +1563,7 @@ fn tidb_statements_stats_reads_the_global_cumulative_summary() {
 /// `FLUSH CLIENT_ERRORS_SUMMARY`.
 #[test]
 fn client_errors_summary_uses_the_shared_counters_and_process_rules() {
-    use tidb_error::tidb::infoschema::{flush_stats, increment_error, increment_warning};
+    use tidb_errno::infoschema::{flush_stats, increment_error, increment_warning};
 
     flush_stats();
     increment_error(1064, "alice", "host-a");

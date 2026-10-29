@@ -18,7 +18,7 @@
 //! identity. It lives below the session so the DDL worker, which answers a
 //! submitted job through it, does not need the server crate.
 
-use tidb_error::terror::ERR_RESULT_UNDETERMINED;
+use tidb_terror::ERR_RESULT_UNDETERMINED;
 use tidb_txnkv::driver::transaction_error::WriteConflictArgs;
 
 use crate::pessimistic_lock_error::LockSqlError;
@@ -38,7 +38,7 @@ pub struct SqlQueryError {
     /// The Go `*terror.Error` identity the failure was raised as, `None` for a
     /// plain error. Go's `err.Error()` -- `@@tidb_last_query_info`, logs --
     /// prints it as `[class:code]message`; the wire carries only the message.
-    pub identity: Option<tidb_error::terror::TerrorIdentity>,
+    pub identity: Option<tidb_terror::TerrorIdentity>,
     /// The typed error this was rendered from, when one was (Go keeps the
     /// typed error under its wrapping, `errors.Cause`).
     pub cause: Option<ErrorCause>,
@@ -66,8 +66,8 @@ impl Eq for ErrorCause {}
 
 /// A Go error raised as the statement's failure: its code, SQLSTATE,
 /// message and identity.
-impl From<tidb_error::MysqlError> for SqlQueryError {
-    fn from(error: tidb_error::MysqlError) -> Self {
+impl From<tidb_terror::MysqlError> for SqlQueryError {
+    fn from(error: tidb_terror::MysqlError) -> Self {
         Self {
             identity: error.identity,
             ..Self::new(error.code, error.state, error.message)
@@ -78,7 +78,7 @@ impl From<tidb_error::MysqlError> for SqlQueryError {
 /// A Go error that reached the wire layer as its SQL triple and identity.
 impl From<tidb_mysql::errors::SqlError> for SqlQueryError {
     fn from(error: tidb_mysql::errors::SqlError) -> Self {
-        Self::from(tidb_error::MysqlError::from_sql_error(error))
+        Self::from(tidb_terror::MysqlError::from_sql_error(error))
     }
 }
 
@@ -112,7 +112,7 @@ impl SqlQueryError {
 
     /// Labels the failure with the Go identity it was raised as.
     #[must_use]
-    pub fn with_identity(mut self, identity: Option<tidb_error::terror::TerrorIdentity>) -> Self {
+    pub fn with_identity(mut self, identity: Option<tidb_terror::TerrorIdentity>) -> Self {
         self.identity = identity;
         self
     }
@@ -147,7 +147,7 @@ impl SqlQueryError {
     /// the connection rather than reporting either outcome.
     #[must_use]
     pub fn result_undetermined() -> Self {
-        let error = tidb_error::MysqlError::from_terror(&ERR_RESULT_UNDETERMINED);
+        let error = tidb_terror::MysqlError::from_terror(&ERR_RESULT_UNDETERMINED);
         Self {
             identity: error.identity,
             ..Self::new(error.code, error.state, error.message)

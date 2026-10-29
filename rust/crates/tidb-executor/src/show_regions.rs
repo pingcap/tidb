@@ -90,7 +90,7 @@ fn resolve<'a>(
     };
     if target.table.is_some_and(KvTable::is_temporary) {
         return Err(DriverError::from(
-            tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+            tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                 .generate_with_stack_by_args(&[what.into()]),
         ));
     }
@@ -107,7 +107,7 @@ fn physical_ids(
     let Some(partitioning) = target.table.and_then(KvTable::partition) else {
         if !partitions.is_empty() {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
+                tidb_plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
                     .generate_with_stack_by_args(&[]),
             ));
         }
@@ -381,7 +381,7 @@ pub fn show_table_regions(
             });
             let Some(found) = found else {
                 return Err(DriverError::from(
-                    tidb_error::plannererrors::ERR_KEY_DOES_NOT_EXIST.generate_with_stack_by_args(
+                    tidb_plannererrors::ERR_KEY_DOES_NOT_EXIST.generate_with_stack_by_args(
                         &[name.to_owned().into(), target.name.clone().into()],
                     ),
                 ));

@@ -108,7 +108,7 @@ pub fn split_table_path<'a>(
         [name] => {
             if current_db.is_empty() {
                 return Err(DriverError::from(
-                    tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                    tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
                 ));
             }
             Ok((current_db, name))

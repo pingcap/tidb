@@ -16,8 +16,8 @@
 
 use std::sync::LazyLock;
 
-use tidb_error::server_errors::*;
-use tidb_error::terror::{TerrorClass, TerrorError};
+use tidb_server_err::*;
+use tidb_terror::{TerrorClass, TerrorError};
 
 #[test]
 fn every_server_error_preserves_class_code_template_and_sqlstate() {

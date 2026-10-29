@@ -80,8 +80,8 @@ impl EncodingError {
     }
 
     /// Preserves Go charset.ErrInvalidCharacterString's parser error identity.
-    pub fn to_terror(&self) -> tidb_error::terror::TerrorError {
-        use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
+    pub fn to_terror(&self) -> tidb_terror::TerrorError {
+        use tidb_terror::{TerrorClass, TerrorCode, TerrorError};
         TerrorError::registered_from_catalog(TerrorClass::Parser, TerrorCode::new(1300))
             .generate(self.to_string())
     }

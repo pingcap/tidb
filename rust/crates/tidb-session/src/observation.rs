@@ -847,7 +847,7 @@ impl Session {
     pub fn err_str_for_log(
         &self,
         error_string: &str,
-        identity: Option<tidb_error::terror::TerrorIdentity>,
+        identity: Option<tidb_terror::TerrorIdentity>,
     ) -> String {
         if self.redact_log_mode() != "OFF"
             && identity == Some(tidb_error::catalog::parser::ERR_PARSE.identity())

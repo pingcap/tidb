@@ -16,7 +16,7 @@
 //! writing a table's bytes can fail with.
 
 use tidb_kv::storage::StorageError;
-use tidb_error::MysqlError;
+use tidb_terror::MysqlError;
 
 /// A failure while encoding or decoding table bytes.
 #[derive(Debug)]

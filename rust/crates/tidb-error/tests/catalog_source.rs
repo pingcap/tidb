@@ -18,8 +18,8 @@
 //! generator's own manifest (package, constant, `terror.Class*`, errno name).
 
 use tidb_error::catalog;
-use tidb_error::terror::TerrorClass;
-use tidb_error::tidb::errcode;
+use tidb_terror::TerrorClass;
+use tidb_errno::errcode;
 
 #[test]
 fn catalog_prototypes_carry_their_go_class_and_code() {

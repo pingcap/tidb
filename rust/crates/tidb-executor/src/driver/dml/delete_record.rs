@@ -56,7 +56,7 @@ impl<'a> DeleteRecords<'a> {
                 &[ParentChange::Delete(old)],
                 ctx,
             ) {
-                if error.equal(&tidb_error::plannererrors::ERR_ROW_IS_REFERENCED2) {
+                if error.equal(&tidb_plannererrors::ERR_ROW_IS_REFERENCED2) {
                     let warning = error.to_mysql_error();
                     ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
             tidb_context::WarningLevel::Warning,

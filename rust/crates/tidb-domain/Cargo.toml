@@ -11,6 +11,8 @@ description = "Go pkg/domain (seed): sysvar cache, schema checker, domain contex
 workspace = true
 
 [dependencies]
+tidb-errno = { path = "../tidb-errno" }
+tidb-terror = { path = "../tidb-terror" }
 tidb-config-deploymode = { path = "../tidb-config-deploymode" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }

@@ -90,7 +90,7 @@ pub trait ExplainCompile: super::CompilerSession {
             // format it could not match (oracle: `EXPLAIN FORMAT='tree'`
             // answers `Unknown EXPLAIN format name: 'tree'`).
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_UNKNOWN_EXPLAIN_FORMAT
+                tidb_plannererrors::ERR_UNKNOWN_EXPLAIN_FORMAT
                     .generate_with_stack_by_args(&[explain.format.clone().into()]),
             ));
         };

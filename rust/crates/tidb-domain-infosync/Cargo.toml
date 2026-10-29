@@ -11,11 +11,11 @@ description = "Go `pkg/domain/infosync`: the PD-facing label, resource-manager a
 workspace = true
 
 [dependencies]
+tidb-errno = { path = "../tidb-errno" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-domain-affinity = { path = "../tidb-domain-affinity" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tikv-client.workspace = true
-tidb-error = { path = "../tidb-error" }
 tidb-model = { path = "../tidb-model" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-ast = { path = "../tidb-ast" }

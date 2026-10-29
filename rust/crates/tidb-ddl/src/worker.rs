@@ -927,7 +927,7 @@ where
     }
 }
 
-fn persisted_job_error(error: &tidb_error::terror::TerrorError) -> SqlQueryError {
+fn persisted_job_error(error: &tidb_terror::TerrorError) -> SqlQueryError {
     let error = crate::cluster_ddl::ddl_job_error_to_sql_error(error);
     SqlQueryError::from(error)
 }
@@ -960,7 +960,7 @@ mod schema_sync_tests {
 
     #[test]
     fn persisted_history_preserves_source_sqlstate() {
-        use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
+        use tidb_terror::{TerrorClass, TerrorCode, TerrorError};
         for (code, state) in [
             (1049, *b"42000"),
             (1146, *b"42S02"),
@@ -991,7 +991,7 @@ mod schema_sync_tests {
         }
         let unknown = TerrorError::synthesize(
             TerrorClass::Ddl,
-            tidb_error::terror::CODE_UNKNOWN,
+            tidb_terror::CODE_UNKNOWN,
             "plain failure",
         );
         let actual = persisted_job_error(&unknown);
@@ -1002,7 +1002,7 @@ mod schema_sync_tests {
     #[test]
     fn check_validation_source_message() {
         let error = check_constraint_validation_table_error(
-            tidb_table::kv_table::KvTableError::Mysql(tidb_error::MysqlError::from_terror(
+            tidb_table::kv_table::KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED
                     .fast_generate_by_args(&["MixedCheck".into()]),
             )),
@@ -1494,7 +1494,7 @@ mod schema_sync_tests {
         assert_eq!(history.error_count, 3);
         assert_eq!(
             history.error.as_ref().unwrap().read().code().value(),
-            tidb_error::tidb::errcode::ErrDBDropExists as isize
+            tidb_errno::errcode::ErrDBDropExists as isize
         );
         assert_eq!(barrier.waits.lock().unwrap().len(), wait_count);
         assert_eq!(
@@ -1645,7 +1645,7 @@ mod schema_sync_tests {
         assert_eq!(history.error_count, 1);
         assert_eq!(
             history.error.as_ref().unwrap().read().code().value(),
-            tidb_error::tidb::errcode::ErrCancelledDDLJob as isize
+            tidb_errno::errcode::ErrCancelledDDLJob as isize
         );
         assert!(
             !tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout)
@@ -1978,7 +1978,7 @@ mod schema_sync_tests {
         );
         assert_eq!(
             history.error.as_ref().unwrap().read().code().value(),
-            tidb_error::tidb::errcode::ErrCheckConstraintViolated as isize
+            tidb_errno::errcode::ErrCheckConstraintViolated as isize
         );
         let sql_error = persisted_job_error(&history.error.as_ref().unwrap().read());
         assert_eq!(sql_error.code, 3819);
@@ -2115,8 +2115,8 @@ mod schema_sync_tests {
         assert_eq!(history.state, JobState::CANCELLED);
         assert_eq!(history.error_count, 1);
         let error = history.error.as_ref().unwrap().read();
-        assert_eq!(error.class(), tidb_error::terror::TerrorClass::Ddl);
-        assert_eq!(error.code(), tidb_error::terror::CODE_UNKNOWN);
+        assert_eq!(error.class(), tidb_terror::TerrorClass::Ddl);
+        assert_eq!(error.code(), tidb_terror::CODE_UNKNOWN);
         let mut tx = opener.begin_read_only().unwrap();
         assert!(tx
             .snapshot_get(
@@ -2219,7 +2219,7 @@ mod schema_sync_tests {
         );
         assert_eq!(
             history.error.as_ref().unwrap().read().code().value(),
-            tidb_error::tidb::errcode::ErrCancelledDDLJob as isize
+            tidb_errno::errcode::ErrCancelledDDLJob as isize
         );
         let after =
             tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
@@ -2571,7 +2571,7 @@ where
             };
             let mut notes = Vec::new();
             // Go `dropTableObject`'s `dropExistErr`.
-            let missing_error: &tidb_error::terror::TerrorError = if object == DropObject::Sequence
+            let missing_error: &tidb_terror::TerrorError = if object == DropObject::Sequence
             {
                 &tidb_error::catalog::infoschema::ERR_SEQUENCE_DROP_EXISTS
             } else {
@@ -2627,7 +2627,7 @@ where
             .map_err(|error| match error {
                 DropObjectsError::Target(error) => error,
                 DropObjectsError::Missing(names) => SqlQueryError::from(
-                    tidb_error::MysqlError::from_terror(&missing_raised(&names.join(","))),
+                    tidb_terror::MysqlError::from_terror(&missing_raised(&names.join(","))),
                 ),
             })?;
             let (ClusterDdlReport::Applied { warnings, .. }
@@ -2794,8 +2794,8 @@ fn reorg_meta_warnings(job: &tidb_model::Job) -> Vec<tidb_context::SqlWarn> {
                 warning.clone()
             } else {
                 // Go `dbterror.ClassTypes.Synthesize(warning.Code(), newMsg)`.
-                tidb_error::terror::TerrorError::synthesize(
-                    tidb_error::terror::TerrorClass::Types,
+                tidb_terror::TerrorError::synthesize(
+                    tidb_terror::TerrorClass::Types,
                     warning.code(),
                     format!(
                         "{count} warnings with this error code, first warning: {}",
@@ -3295,7 +3295,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
         probe.enable_cache().map_err(|error| {
             let error = match error {
                 tidb_table::kv_table::KvTableError::Mysql(error) => error,
-                other => tidb_error::MysqlError::unknown(format!(
+                other => tidb_terror::MysqlError::unknown(format!(
                     "cache table size check failed: {other:?}"
                 )),
             };
@@ -3324,7 +3324,7 @@ impl KvTableIndexBackfiller {
             })
         {
             return Err(LockSqlError::from(
-                tidb_error::MysqlError::from_terror(
+                tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_UNSUPPORTED_PARTITION_TYPE
                         .generate_with_stack_by_args(&[plan.partitioned.name.original().into()]),
                 ),
@@ -3404,7 +3404,7 @@ fn check_constraint_validation_table_error(
 }
 
 fn exchange_validation_internal(message: String) -> LockSqlError {
-    LockSqlError::from(tidb_error::MysqlError::unknown(message))
+    LockSqlError::from(tidb_terror::MysqlError::unknown(message))
 }
 
 fn exchange_validation_table_error(error: tidb_table::kv_table::KvTableError) -> LockSqlError {
@@ -3415,7 +3415,7 @@ fn exchange_validation_table_error(error: tidb_table::kv_table::KvTableError) ->
                 || error.equal(&tidb_error::catalog::table::ERR_NO_PARTITION_FOR_GIVEN_VALUE)
                 || error.equal(&tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED) =>
         {
-            LockSqlError::from(tidb_error::MysqlError::from_terror(
+            LockSqlError::from(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_ROW_DOES_NOT_MATCH_PARTITION
                     .generate_with_stack_by_args(&[]),
             ))

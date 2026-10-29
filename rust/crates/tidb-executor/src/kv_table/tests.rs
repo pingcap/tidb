@@ -156,7 +156,7 @@ fn writable_check_constraints_guard_insert_and_update() {
     .to_mysql_error();
     assert_eq!(
         wire.code,
-        tidb_error::tidb::errcode::ErrCheckConstraintViolated
+        tidb_errno::errcode::ErrCheckConstraintViolated
     );
     assert_eq!(wire.state, *b"HY000");
     assert_eq!(wire.message, "Check constraint 'positive_a' is violated.");

@@ -91,11 +91,11 @@ pub(crate) fn fill_index_path(
             .map_err(|error| match error {
                 tidb_ranger::points::PointBuilderError::Eval(error) => error.into(),
                 tidb_ranger::points::PointBuilderError::Value(error) => PlanError::from(
-                    tidb_error::plannererrors::ERR_INTERNAL
+                    tidb_plannererrors::ERR_INTERNAL
                         .generate_with_stack_by_args(&[(error.to_string()).into()]),
                 ),
                 tidb_ranger::points::PointBuilderError::Unsupported(message) => PlanError::from(
-                    tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE.generate_with_stack(message),
+                    tidb_plannererrors::ERR_UNSUPPORTED_TYPE.generate_with_stack(message),
                 ),
             })?
     };
@@ -335,11 +335,11 @@ pub(crate) fn detach_table_path(
     let map_error = |error| match error {
         tidb_ranger::points::PointBuilderError::Eval(error) => PlanError::from(error),
         tidb_ranger::points::PointBuilderError::Value(error) => PlanError::from(
-            tidb_error::plannererrors::ERR_INTERNAL
+            tidb_plannererrors::ERR_INTERNAL
                 .generate_with_stack_by_args(&[(error.to_string()).into()]),
         ),
         tidb_ranger::points::PointBuilderError::Unsupported(message) => PlanError::from(
-            tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE.generate_with_stack(message),
+            tidb_plannererrors::ERR_UNSUPPORTED_TYPE.generate_with_stack(message),
         ),
     };
     let mut correlated_access_count = 0;
@@ -588,7 +588,7 @@ pub(crate) fn estimate_int_table_path(
     .map(|estimate| estimate.est)
     .map_err(|error| {
         PlanError::from(
-            tidb_error::plannererrors::ERR_INTERNAL
+            tidb_plannererrors::ERR_INTERNAL
                 .generate_with_stack_by_args(&[(error.to_string()).into()]),
         )
     })

@@ -1,0 +1,15 @@
+[package]
+name = "tidb-server-err"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/server/err: the server's error prototypes (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-errno = { path = "../tidb-errno" }
+tidb-terror = { path = "../tidb-terror" }

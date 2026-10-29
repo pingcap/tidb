@@ -16,8 +16,8 @@ use std::cmp::Ordering;
 use std::fmt;
 
 use tidb_mysql::errors::{errcode, FormatArg, SqlError};
-use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
-use tidb_error::tidb::errname;
+use tidb_terror::{TerrorClass, TerrorCode, TerrorError};
+use tidb_errno::errname;
 
 use crate::{ConversionContext, TruncationPolicy};
 

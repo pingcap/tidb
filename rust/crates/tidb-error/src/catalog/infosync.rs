@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{std_err, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `domain/infosync.ErrHTTPServiceError` (`pkg/domain/infosync/error.go:24`).
 pub static ERR_HTTP_SERVICE_ERROR: LazyLock<TerrorError> =

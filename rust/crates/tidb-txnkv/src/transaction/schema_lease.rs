@@ -33,7 +33,7 @@ use std::sync::Arc;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SchemaLeaseError {
     /// The Go error, as the checker raises it.
-    pub error: tidb_error::terror::TerrorError,
+    pub error: tidb_terror::TerrorError,
 }
 
 /// Go `kv.SchemaChecker` / client-go `SchemaLeaseChecker`.

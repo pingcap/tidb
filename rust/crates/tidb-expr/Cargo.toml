@@ -13,6 +13,10 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-errctx = { path = "../tidb-errctx" }
+tidb-plannererrors = { path = "../tidb-plannererrors" }
+tidb-errno = { path = "../tidb-errno" }
+tidb-terror = { path = "../tidb-terror" }
 tidb-parser-types = { path = "../tidb-parser-types" }
 tidb-context = { path = "../tidb-context" }
 tidb-encrypt = { path = "../tidb-encrypt" }

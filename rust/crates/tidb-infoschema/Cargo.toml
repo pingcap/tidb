@@ -9,6 +9,8 @@ description = "TiDB infoschema: the schema image (Go pkg/infoschema) (Rust rewri
 
 
 [dependencies]
+tidb-plannererrors = { path = "../tidb-plannererrors" }
+tidb-terror = { path = "../tidb-terror" }
 tidb-rowcodec = { path = "../tidb-rowcodec" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-filter = { path = "../tidb-filter" }

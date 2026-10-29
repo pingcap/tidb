@@ -81,7 +81,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         for assignment in &update.assignments {
             let column = find_field_name(&names, &assignment.col).ok_or_else(|| {
                 PlanError::from(
-                    tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                    tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
                         tidb_hack::go_to_lower(assignment.col.join(".")).into(),
                         "field list".into(),
                     ]),
@@ -98,7 +98,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 };
                 if !own_default {
                     return Err(PlanError::from(
-                        tidb_error::plannererrors::ERR_BAD_GENERATED_COLUMN
+                        tidb_plannererrors::ERR_BAD_GENERATED_COLUMN
                             .generate_with_stack_by_args(&[
                                 (columns[column].name.clone()).into(),
                                 written.into(),

@@ -364,7 +364,7 @@ fn rename_one(
     let not_exists = || {
         DdlPlanError::from(
             tidb_dbterror::CLASS_SCHEMA
-                .new_std(tidb_error::tidb::errcode::ErrNoSuchTable)
+                .new_std(tidb_errno::errcode::ErrNoSuchTable)
                 .generate(format!(
                     "Table '{}.{}' doesn't exist",
                     info.old_schema_name.original(),
@@ -422,7 +422,7 @@ fn rename_one(
             active,
             DdlPlanError::from(
                 tidb_dbterror::CLASS_SCHEMA
-                    .new_std(tidb_error::tidb::errcode::ErrBadDB)
+                    .new_std(tidb_errno::errcode::ErrBadDB)
                     .generate(format!("Unknown database '(Schema ID {new_schema_id})'")),
             ),
         ));
@@ -548,7 +548,7 @@ pub(super) fn plan_persisted_rename_table_job_step(
                     active,
                     DdlPlanError::from(
                         tidb_dbterror::CLASS_SCHEMA
-                            .new_std(tidb_error::tidb::errcode::ErrNoSuchTable)
+                            .new_std(tidb_errno::errcode::ErrNoSuchTable)
                             .generate(format!(
                                 "Table '{}' doesn't exist",
                                 info.new_table_name.original()
@@ -598,7 +598,7 @@ pub(super) fn plan_persisted_rename_table_job_step(
                 active,
                 DdlPlanError::from(
                     tidb_dbterror::CLASS_SCHEMA
-                        .new_std(tidb_error::tidb::errcode::ErrBadDB)
+                        .new_std(tidb_errno::errcode::ErrBadDB)
                         .generate(format!(
                             "Unknown database '(Schema ID {})'",
                             info.new_schema_id
@@ -615,7 +615,7 @@ pub(super) fn plan_persisted_rename_table_job_step(
                 active,
                 DdlPlanError::from(
                     tidb_dbterror::CLASS_SCHEMA
-                        .new_std(tidb_error::tidb::errcode::ErrTableExists)
+                        .new_std(tidb_errno::errcode::ErrTableExists)
                         .generate(format!(
                             "Table '{}' already exists",
                             info.new_table_name.original()

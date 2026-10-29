@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{std_err, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `util/memory.errMemExceedThreshold` (`pkg/util/memory/action.go:190`).
 pub static ERR_MEM_EXCEED_THRESHOLD: LazyLock<TerrorError> =

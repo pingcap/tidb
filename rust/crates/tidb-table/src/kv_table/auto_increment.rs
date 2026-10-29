@@ -189,9 +189,9 @@ impl KvTable {
     /// `auto increment action failed`, an unsigned column's carries the
     /// original 1467 as its prefix. Every other allocator raises 1467 itself.
     #[must_use]
-    pub fn auto_id_exhausted_error(&self) -> tidb_error::MysqlError {
+    pub fn auto_id_exhausted_error(&self) -> tidb_terror::MysqlError {
         if self.auto_id_cache() != 1 {
-            return tidb_error::MysqlError::from_terror(
+            return tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED
                     .generate_with_stack_by_args(&[]),
             );
@@ -210,7 +210,7 @@ impl KvTable {
         } else {
             "auto increment action failed".to_owned()
         };
-        tidb_error::MysqlError::unknown(message)
+        tidb_terror::MysqlError::unknown(message)
     }
 
     /// The AUTO_INCREMENT column's offset, if any.

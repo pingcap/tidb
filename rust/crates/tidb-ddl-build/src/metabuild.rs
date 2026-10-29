@@ -141,7 +141,7 @@ impl crate::session_context::DdlSessionContext for StmtContext {
         schema: &str,
         table: &str,
         index: tidb_model::index::IndexInfo,
-    ) -> Result<(), tidb_error::MysqlError> {
+    ) -> Result<(), tidb_terror::MysqlError> {
         StmtContext::add_hypo_index(self, schema, table, index)
     }
 
@@ -151,7 +151,7 @@ impl crate::session_context::DdlSessionContext for StmtContext {
         table: &str,
         index: &str,
         if_exists: bool,
-    ) -> Result<(), tidb_error::MysqlError> {
+    ) -> Result<(), tidb_terror::MysqlError> {
         StmtContext::drop_hypo_index(self, schema, table, index, if_exists)
     }
 

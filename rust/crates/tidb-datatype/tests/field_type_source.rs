@@ -34,7 +34,7 @@ use tidb_parser_types::parser_types_errors::ERR_TRUNCATED_WRONG_VALUE;
 use tidb_datatype::UNSPECIFIED_LENGTH;
 use tidb_datatype::VAR_STORAGE_LEN;
 use tidb_mysql::errors::{errcode, errname};
-use tidb_error::terror::TerrorClass;
+use tidb_terror::TerrorClass;
 
 fn all_types() -> Vec<FieldType> {
     [

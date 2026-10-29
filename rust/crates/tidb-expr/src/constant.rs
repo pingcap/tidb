@@ -470,7 +470,7 @@ pub(crate) struct ConversionWarnings<'a, C: ?Sized>(pub(crate) &'a C);
 impl<C: crate::Columns + ?Sized> tidb_datatype::ConversionWarningAppender
     for ConversionWarnings<'_, C>
 {
-    fn append_conversion_warning(&self, warning: tidb_error::terror::TerrorError) {
+    fn append_conversion_warning(&self, warning: tidb_terror::TerrorError) {
         let warning = warning.to_sql_error();
         self.0.append_sql_warn(tidb_context::SqlWarn::from_error(
             tidb_context::WarningLevel::Warning,

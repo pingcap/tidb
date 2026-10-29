@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{std_err, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `structure.ErrInvalidHashKeyFlag` (`pkg/structure/structure.go:25`).
 pub static ERR_INVALID_HASH_KEY_FLAG: LazyLock<TerrorError> =

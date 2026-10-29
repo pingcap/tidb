@@ -24,7 +24,7 @@
 
 use std::sync::LazyLock;
 
-use crate::terror::{TerrorClass, TerrorCode, TerrorError};
+use tidb_terror::{TerrorClass, TerrorCode, TerrorError};
 
 /// Go `plannererrors.ErrUnsupportedType` (`ClassOptimizer.NewStd(errno.ErrUnsupportedType)`).
 pub static ERR_UNSUPPORTED_TYPE: LazyLock<TerrorError> =

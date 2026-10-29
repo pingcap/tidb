@@ -12,6 +12,8 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-errno = { path = "../tidb-errno" }
+tidb-terror = { path = "../tidb-terror" }
 tidb-mysql = { path = "../tidb-mysql" }
 chrono.workspace = true
 chrono-tz.workspace = true
@@ -24,7 +26,6 @@ tidb-charset = { path = "../tidb-charset" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-parser-format = { path = "../tidb-parser-format" }
 tidb-parser-types = { path = "../tidb-parser-types" }
-tidb-error = { path = "../tidb-error" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-kvcache = { path = "../tidb-kvcache" }
 unicode-general-category.workspace = true

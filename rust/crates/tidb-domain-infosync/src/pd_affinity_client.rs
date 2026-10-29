@@ -48,7 +48,7 @@ impl PdHttpAffinityClient {
         tidb_txnkv::cluster_http::block_on_pd_http(request).map_err(|message| {
             if tidb_txnkv::cluster_http::is_http_service_error(&message) {
                 PdHttpError::Coded {
-                    code: tidb_error::tidb::errcode::ErrHTTPServiceError,
+                    code: tidb_errno::errcode::ErrHTTPServiceError,
                     message,
                 }
             } else {

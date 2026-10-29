@@ -144,7 +144,7 @@ pub fn handle_bad_null_in_load_data(
     );
     if level == NullLevel::Error {
         return Err(ColumnError::Mysql(
-            tidb_error::MysqlError::from_terror(
+            tidb_terror::MysqlError::from_terror(
                 &tidb_error::catalog::table::ERR_WARN_NULL_TO_NOTNULL.generate_with_stack(message),
             ),
         ));

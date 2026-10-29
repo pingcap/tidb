@@ -126,7 +126,7 @@ struct AddColumnTarget {
 fn column_exists(name: &str) -> DdlPlanError {
     DdlPlanError::from(
         tidb_dbterror::CLASS_SCHEMA
-            .new_std(tidb_error::tidb::errcode::ErrDupFieldName)
+            .new_std(tidb_errno::errcode::ErrDupFieldName)
             .generate_with_stack_by_args(&[FormatArg::from(name)]),
     )
 }
@@ -224,7 +224,7 @@ pub(super) fn plan_persisted_add_column_job_step(
             // Go: IF NOT EXISTS turns the error into the job's warning.
             active.job.warning = Some(GoShared::new(
                 tidb_dbterror::CLASS_SCHEMA
-                    .new_std(tidb_error::tidb::errcode::ErrDupFieldName)
+                    .new_std(tidb_errno::errcode::ErrDupFieldName)
                     .generate(error.to_string()),
             ));
             active.job.state = JobState::DONE;
@@ -363,7 +363,7 @@ pub(super) fn plan_cancel_add_column(
         update_raw_args: true,
         run_error: Some(DdlPlanError::from(
             tidb_dbterror::ERR_CANCELLED_DDL_JOB
-                .generate(tidb_error::tidb::errname::ErrCancelledDDLJob.raw),
+                .generate(tidb_errno::errname::ErrCancelledDDLJob.raw),
         )),
         reorg: None,
     })

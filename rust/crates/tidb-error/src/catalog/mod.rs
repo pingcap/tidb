@@ -24,7 +24,7 @@
 //! those definitions. Module = Go package, constant = the Go name in
 //! SCREAMING_SNAKE.
 
-use crate::terror::{TerrorClass, TerrorCode, TerrorError};
+use tidb_terror::{TerrorClass, TerrorCode, TerrorError};
 use tidb_mysql::errors::ErrMessage;
 
 /// Alias keeping the generated tables short.
@@ -55,7 +55,7 @@ pub(crate) fn std_err_msg(
     message_code: u16,
     suffix: &'static str,
 ) -> TerrorError {
-    let catalog = crate::tidb::message_by_code(message_code)
+    let catalog = tidb_errno::message_by_code(message_code)
         .or_else(|| tidb_mysql::errors::message_by_code(message_code))
         .copied()
         .expect("NewStdErr message code must exist in the MySQL or TiDB catalog");

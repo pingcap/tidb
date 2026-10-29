@@ -846,7 +846,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             _ => ("", ""),
         };
         Err(DriverError::from(
-            tidb_error::plannererrors::ERR_VIEW_INVALID.generate_with_stack_by_args(&[
+            tidb_plannererrors::ERR_VIEW_INVALID.generate_with_stack_by_args(&[
                 schema.go_to_lower().into(),
                 name.go_to_lower().into(),
             ]),

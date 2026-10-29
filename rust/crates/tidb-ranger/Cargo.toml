@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB range building: Go pkg/util/ranger (Rust rewrite)."
 
 [dependencies]
+tidb-terror = { path = "../tidb-terror" }
 tidb-context = { path = "../tidb-context" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-chunk = { path = "../tidb-chunk" }

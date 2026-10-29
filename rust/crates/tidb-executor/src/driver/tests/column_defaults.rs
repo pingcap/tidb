@@ -438,7 +438,7 @@ fn generated_default_identity_matrix_and_on_duplicate_timing() {
     ] {
         assert!(
             (run_insert_on(sql, &mut catalog, &ctx)).is_err_and(
-                |error| error.equal(&tidb_error::plannererrors::ERR_BAD_GENERATED_COLUMN)
+                |error| error.equal(&tidb_plannererrors::ERR_BAD_GENERATED_COLUMN)
             ),
             "{sql}"
         );
@@ -448,7 +448,7 @@ fn generated_default_identity_matrix_and_on_duplicate_timing() {
         &mut catalog,
         &ctx,
     ))
-    .is_err_and(|error| error.equal(&tidb_error::plannererrors::ERR_BAD_GENERATED_COLUMN)));
+    .is_err_and(|error| error.equal(&tidb_plannererrors::ERR_BAD_GENERATED_COLUMN)));
     assert!(run_select_on(
         "SELECT id FROM generated_default WHERE id = 3",
         &catalog,
@@ -522,7 +522,7 @@ fn on_duplicate_defaults_cover_conflict_and_no_conflict() {
         &mut catalog,
         &ctx,
     )
-    .is_err_and(|error| error.equal(&tidb_error::plannererrors::ERR_UNKNOWN_COLUMN)));
+    .is_err_and(|error| error.equal(&tidb_plannererrors::ERR_UNKNOWN_COLUMN)));
     assert!(run_select_on(
         "SELECT id FROM duplicate_default WHERE id = 2",
         &catalog,
@@ -662,7 +662,7 @@ fn insert_select_generated_target_is_rejected_before_source_effects() {
         &mut catalog,
         &ctx,
     ))
-    .is_err_and(|error| error.equal(&tidb_error::plannererrors::ERR_BAD_GENERATED_COLUMN)));
+    .is_err_and(|error| error.equal(&tidb_plannererrors::ERR_BAD_GENERATED_COLUMN)));
     assert_eq!(variables.get_user_var_val("probe"), Some(Datum::Int(0)));
 }
 

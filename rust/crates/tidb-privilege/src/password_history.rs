@@ -17,7 +17,7 @@
 use super::*;
 use chrono::TimeZone;
 use crate::loaded::LoadedPasswordHistory;
-use tidb_error::MysqlError;
+use tidb_terror::MysqlError;
 
 impl UserRecord {
     pub(super) fn export_attributes(&self) -> Option<String> {
@@ -280,7 +280,7 @@ impl PrivilegeRegistry {
                         | tidb_mysql::consts::AuthCachingSha2Password
                         | tidb_mysql::consts::AuthTiDBSM3Password
                 ) {
-                    return Err(tidb_error::MysqlError::from_terror(
+                    return Err(tidb_terror::MysqlError::from_terror(
                         &tidb_dbterror::exeerrors::ERR_PLUGIN_IS_NOT_LOADED
                             .generate_with_stack_by_args(&[plugin.into()]),
                     ));
@@ -309,14 +309,14 @@ impl PrivilegeRegistry {
                             }
                         }
                         _ => {
-                            return Err(tidb_error::MysqlError::from_terror(
+                            return Err(tidb_terror::MysqlError::from_terror(
                                 &tidb_dbterror::exeerrors::ERR_PLUGIN_IS_NOT_LOADED
                                     .generate_with_stack_by_args(&[plugin.into()]),
                             ))
                         }
                     };
                     if matches {
-                        return Err(tidb_error::MysqlError::from_terror(
+                        return Err(tidb_terror::MysqlError::from_terror(
                             &tidb_dbterror::exeerrors::ERR_EXISTS_IN_HISTORY_PASSWORD
                                 .generate_with_stack_by_args(&[user.into(), host.into()]),
                         ));
@@ -336,7 +336,7 @@ impl PrivilegeRegistry {
             }
             if count > 0 || days > 0 {
                 if account.iter().any(|row| row.timestamp == timestamp) {
-                    return Err(tidb_error::MysqlError::from_terror(
+                    return Err(tidb_terror::MysqlError::from_terror(
                         &tidb_error::catalog::kv::ERR_KEY_EXISTS.generate_with_stack_by_args(&[
                             format!("{host}-{user}-{timestamp}").into(),
                             "mysql.password_history.PRIMARY".into(),

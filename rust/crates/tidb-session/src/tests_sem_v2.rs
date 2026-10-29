@@ -82,12 +82,12 @@ fn configured_sem_v2_policy_child() {
 
     crate::tests_support::assert_go_error(
         nobody.run("GRANT FILE ON *.* TO 'recipient'@'%'"),
-        &tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED,
+        &tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED,
         &["RESTRICTED_PRIV_ADMIN".into()],
     );
     crate::tests_support::assert_go_error(
         nobody.run("SET autocommit=0"),
-        &tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED,
+        &tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED,
         &["RESTRICTED_VARIABLES_ADMIN".into()],
     );
 

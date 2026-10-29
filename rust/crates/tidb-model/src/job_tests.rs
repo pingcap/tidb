@@ -17,7 +17,7 @@ use super::*;
 use crate::go_any::ColumnDefaultValue;
 use crate::placement::PolicyRefInfo;
 use tidb_ast::CiString;
-use tidb_error::terror::TerrorCode;
+use tidb_terror::TerrorCode;
 
 fn raw(json: &str) -> PersistedRawJson {
     PersistedRawJson::from_string(json.to_owned()).unwrap()

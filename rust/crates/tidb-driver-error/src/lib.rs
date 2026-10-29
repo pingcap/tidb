@@ -38,7 +38,7 @@ pub use var::VarError;
 mod exec_error;
 
 pub use exec_error::ExecError;
-pub use tidb_error::MysqlError;
+pub use tidb_terror::MysqlError;
 
 /// An error raised with its Go identity already rendered (Go returns it as a
 /// plain `error`): the statement reports it unchanged.
@@ -49,8 +49,8 @@ impl From<MysqlError> for DriverError {
 }
 
 /// A Go `*terror.Error` raised as is (`return ErrX`, `ErrX.GenWithStackByArgs(...)`).
-impl From<tidb_error::terror::TerrorError> for DriverError {
-    fn from(error: tidb_error::terror::TerrorError) -> Self {
+impl From<tidb_terror::TerrorError> for DriverError {
+    fn from(error: tidb_terror::TerrorError) -> Self {
         DriverError::Mysql(MysqlError::from_terror(&error))
     }
 }
@@ -115,7 +115,7 @@ mod source_tests {
     #[test]
     fn region_unavailable_uses_tidb_error_code() {
         let error = DriverError::from(tidb_error::catalog::tikv::ERR_REGION_UNAVAILABLE.generate_with_stack_by_args(&[])).to_mysql_error();
-        assert_eq!(error.code, tidb_error::tidb::errcode::ErrRegionUnavailable);
+        assert_eq!(error.code, tidb_errno::errcode::ErrRegionUnavailable);
         assert_eq!(error.state, *b"HY000");
         assert_eq!(error.message, "Region is unavailable");
     }

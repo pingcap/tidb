@@ -376,7 +376,7 @@ impl MemTableRetriever for InstanceStateRetriever {
             // Go checks PROCESS before it looks at the extractor.
             if !self.viewer.process_scoped {
                 return Err(DriverError::from(
-                    tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                    tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
                         .generate_with_stack_by_args(&["PROCESS".into()]),
                 ));
             }
@@ -552,7 +552,7 @@ pub fn statement_summary_rows(
     if table_name.go_lower_eq("STATEMENTS_SUMMARY_EVICTED") {
         if !has_process {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
                     .generate_with_stack_by_args(&["PROCESS".into()]),
             ));
         }
@@ -605,7 +605,7 @@ pub fn statement_summary_rows(
         // an unrelated v1 map for the selected persistent owner.
         if cumulative {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_NOT_SUPPORTED_YET.generate_with_stack_by_args(&[
                     "cumulative statement summary table with persistent mode (v2)".into(),
                 ]),
             ));
@@ -668,7 +668,7 @@ pub fn client_errors_summary_rows(
 ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
     use chrono::{DateTime, Local};
     use tidb_datatype::{core_time_from_datetime, CoreTime, Datum, Time, TimeType};
-    use tidb_error::tidb::infoschema::{self, ErrorStats};
+    use tidb_errno::infoschema::{self, ErrorStats};
 
     fn text(value: &str) -> Datum {
         Datum::new_string(value.as_bytes())
@@ -692,7 +692,7 @@ pub fn client_errors_summary_rows(
 
     fn message(code: u16) -> &'static str {
         tidb_mysql::errors::message_by_code(code)
-            .or_else(|| tidb_error::tidb::message_by_code(code))
+            .or_else(|| tidb_errno::message_by_code(code))
             .map_or("", |message| message.raw)
     }
 
@@ -721,7 +721,7 @@ pub fn client_errors_summary_rows(
             || table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_BY_HOST"))
     {
         return Err(DriverError::from(
-            tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+            tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
                 .generate_with_stack_by_args(&["PROCESS".into()]),
         ));
     }

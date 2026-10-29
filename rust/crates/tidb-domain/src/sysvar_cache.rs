@@ -125,7 +125,7 @@ pub enum SysVarCacheError {
 impl SysVarCacheError {
     /// The Go error this raises, `None` for the executor's own error.
     #[must_use]
-    pub fn to_terror(&self) -> Option<tidb_error::terror::TerrorError> {
+    pub fn to_terror(&self) -> Option<tidb_terror::TerrorError> {
         match self {
             Self::UnknownSystemVar(name) => Some(
                 tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR

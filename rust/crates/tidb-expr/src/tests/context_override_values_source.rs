@@ -43,7 +43,7 @@ fn test_ctx_with_handle_truncate_err_level() {
         with_location, with_type_flags, EvalContext, ExprContext,
     };
     use tidb_datatype::DEFAULT_STATEMENT_FLAGS;
-    use tidb_error::errctx::{ErrGroup, Level, LevelMap};
+    use tidb_errctx::{ErrGroup, Level, LevelMap};
     use tidb_timeutil::TimeZone;
 
     for level in [Level::Warn, Level::Ignore, Level::Error] {

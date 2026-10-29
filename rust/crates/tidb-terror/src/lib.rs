@@ -18,6 +18,10 @@
 //! registration and freeze behavior, RFC identities, MySQL conversion,
 //! compatible JSON, equality, logging/termination helpers, and stack capture.
 
+mod mysql_error;
+
+pub use mysql_error::MysqlError;
+
 use std::backtrace::Backtrace;
 use std::borrow::Cow;
 use std::error::Error;
@@ -124,7 +128,7 @@ impl TerrorError {
     pub fn registered_std(class: TerrorClass, code: TerrorCode) -> Self {
         let protocol_code = u16::try_from(code.value())
             .expect("NewStd error code must fit the uint16 catalog domain");
-        let message = crate::tidb::message_by_code(protocol_code)
+        let message = tidb_errno::message_by_code(protocol_code)
             .or_else(|| tidb_mysql::errors::message_by_code(protocol_code))
             .copied()
             .expect("NewStd error code must exist in the MySQL or TiDB catalog");
@@ -477,7 +481,8 @@ pub fn must_nil(
     process::exit(1);
 }
 
-pub(crate) fn root_cause<'a>(mut error: &'a (dyn Error + 'static)) -> &'a (dyn Error + 'static) {
+/// `github.com/pingcap/errors.Cause`: the innermost error a chain wraps.
+pub fn root_cause<'a>(mut error: &'a (dyn Error + 'static)) -> &'a (dyn Error + 'static) {
     while let Some(source) = error.source() {
         error = source;
     }
@@ -486,7 +491,9 @@ pub(crate) fn root_cause<'a>(mut error: &'a (dyn Error + 'static)) -> &'a (dyn E
 
 #[cfg(test)]
 mod registered_std_tests {
-    use super::{TerrorClass, TerrorCode, TerrorError};
+    use super::TerrorClass;
+    use super::TerrorCode;
+    use super::TerrorError;
 
     // registered_std resolves codes from both catalogs, preferring the TiDB
     // errno message for overlaps -- Go's NewStd behavior.

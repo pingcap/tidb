@@ -512,7 +512,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
             return Ok(());
         }
         Err(DriverError::from(
-            tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED.generate_with_stack_by_args(&[
+            tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED.generate_with_stack_by_args(&[
                 (if is_role {
                     "CREATE ROLE or CREATE USER"
                 } else {
@@ -540,7 +540,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
             return Ok(());
         }
         Err(DriverError::from(
-            tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED.generate_with_stack_by_args(&[
+            tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED.generate_with_stack_by_args(&[
                 (if is_role {
                     "DROP ROLE or CREATE USER"
                 } else {
@@ -576,7 +576,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         }
         if self.target_has_dynamic_privilege(user, host, "SYSTEM_USER") {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
                     .generate_with_stack_by_args(&["SYSTEM_USER or SUPER".into()]),
             ));
         }
@@ -1000,7 +1000,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
             && !self.has_scoped_privilege("", "", tidb_mysql::CreateUserPriv)
         {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
                     .generate_with_stack_by_args(&["CREATE USER".into()]),
             ));
         }
@@ -1753,7 +1753,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         let all_revokees_exist = |users: &[tidb_ast::CreateUserSpec]| -> Result<(), DriverError> {
             for spec in users {
                 if !registry.user_exists(&spec.user.user, &spec.user.host) {
-                    return Err(DriverError::from(tidb_error::MysqlError::unknown(
+                    return Err(DriverError::from(tidb_terror::MysqlError::unknown(
                         format!(
                             "Unknown user: {}@{}",
                             spec.user.user.clone(),
@@ -1781,7 +1781,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
                     if !registry.user_exists(user, host) {
-                        return Err(DriverError::from(tidb_error::MysqlError::unknown(
+                        return Err(DriverError::from(tidb_terror::MysqlError::unknown(
                             format!("Unknown user: {}@{}", user.to_owned(), host.to_owned()),
                         )));
                     }
@@ -1824,12 +1824,12 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
                     if !registry.user_exists(user, host) {
-                        return Err(DriverError::from(tidb_error::MysqlError::unknown(
+                        return Err(DriverError::from(tidb_terror::MysqlError::unknown(
                             format!("Unknown user: {}@{}", user.to_owned(), host.to_owned()),
                         )));
                     }
                     if !registry.db_grant_row_exists(user, host, &database) {
-                        return Err(DriverError::from(tidb_error::MysqlError::unknown(format!("There is no such grant defined for user '{}' on host '{}' on database {}", user.to_owned(), host.to_owned(), database.clone()))));
+                        return Err(DriverError::from(tidb_terror::MysqlError::unknown(format!("There is no such grant defined for user '{}' on host '{}' on database {}", user.to_owned(), host.to_owned(), database.clone()))));
                     }
                     registry.revoke_db(user, host, &database, mask);
                     let (user, host) = (user.to_owned(), host.to_owned());
@@ -1848,7 +1848,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
                     if !registry.user_exists(user, host) {
-                        return Err(DriverError::from(tidb_error::MysqlError::unknown(
+                        return Err(DriverError::from(tidb_terror::MysqlError::unknown(
                             format!("Unknown user: {}@{}", user.to_owned(), host.to_owned()),
                         )));
                     }
@@ -1858,7 +1858,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     // with no grant on the table reports this and not
                     // `Unknown column` (captured).
                     if !registry.table_grant_row_exists(user, host, &database, table) {
-                        return Err(DriverError::from(tidb_error::MysqlError::unknown(format!("There is no such grant defined for user '{}' on host '{}' on table {}.{}", user.to_owned(), host.to_owned(), database.clone(), table.clone()))));
+                        return Err(DriverError::from(tidb_terror::MysqlError::unknown(format!("There is no such grant defined for user '{}' on host '{}' on table {}.{}", user.to_owned(), host.to_owned(), database.clone(), table.clone()))));
                     }
                 }
                 // `REVOKE` resolves columns through `table.FindCol` too, but
@@ -1893,7 +1893,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 Ok(self.session_vars().current_db.clone())
             }
             None => Err(DriverError::from(
-                tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
             )),
         }
     }
@@ -1980,7 +1980,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     .find(|name| name.go_equal_fold(column))
                     .map(|name| (name.clone(), *mask))
                     .ok_or_else(|| {
-                        DriverError::from(tidb_error::MysqlError::unknown(format!(
+                        DriverError::from(tidb_terror::MysqlError::unknown(format!(
                             "Unknown column: {}",
                             column.clone()
                         )))
@@ -2211,7 +2211,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         {
             let (caller, caller_host) = self.own_account()?;
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_DBACCESS_DENIED.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_DBACCESS_DENIED.generate_with_stack_by_args(&[
                     caller.into(),
                     caller_host.into(),
                     (tidb_mysql::consts::SystemDB.to_owned()).into(),

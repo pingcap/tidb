@@ -800,14 +800,14 @@ pub struct HintDiagnostic {
     /// `*terror.Error` (Go's `Error()`), the bare message otherwise.
     pub message: String,
     /// The Go definition the diagnostic is raised as, `None` for a plain one.
-    pub terror: Option<&'static tidb_error::terror::TerrorError>,
+    pub terror: Option<&'static tidb_terror::TerrorError>,
 }
 
 impl HintDiagnostic {
     /// A diagnostic raised as the Go error `proto` (`ErrX.FastGenByArgs`).
     #[must_use]
     pub fn classed(
-        proto: &'static tidb_error::terror::TerrorError,
+        proto: &'static tidb_terror::TerrorError,
         body: impl Into<String>,
     ) -> Self {
         Self {

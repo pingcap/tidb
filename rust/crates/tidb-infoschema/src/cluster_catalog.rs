@@ -41,7 +41,7 @@ pub enum ClusterCatalogError {
     /// The snapshot read failed with a storage error Go's `ToTiDBErr` gives a
     /// SQL identity (`ErrTxnAbortedByGC`, an exhausted backoff, ...). Go's
     /// meta reader returns it unwrapped, so it reaches the statement as is.
-    Sql(tidb_error::MysqlError),
+    Sql(tidb_terror::MysqlError),
     /// A stored key or value did not decode.
     Decode(String),
 }

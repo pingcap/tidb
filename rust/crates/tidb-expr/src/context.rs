@@ -167,7 +167,7 @@ pub enum EvalError {
     /// error spelling as well as a warning one.
     TruncatedWrongValue(String),
     /// An original datatype error, retaining its registered SQL identity.
-    Conversion(tidb_error::terror::TerrorError),
+    Conversion(tidb_terror::TerrorError),
     /// Go `expression.ErrCutValueGroupConcat` (1260) raised when
     /// `GROUP_CONCAT` exceeds `group_concat_max_len` in a statement whose
     /// truncate policy is `Error`. Reads and non-strict writes instead append
@@ -264,7 +264,7 @@ pub enum SequenceEvalError {
 impl SequenceEvalError {
     /// The Go error this raises, as Go raises it.
     #[must_use]
-    pub fn to_terror(&self) -> tidb_error::terror::TerrorError {
+    pub fn to_terror(&self) -> tidb_terror::TerrorError {
         use tidb_error::catalog::{expression, infoschema, table};
         match self {
             SequenceEvalError::RunOut(database, name) => table::ERR_SEQUENCE_HAS_RUN_OUT
@@ -382,7 +382,7 @@ impl JsonError {
     /// The Go error this raises, as Go raises it: the `json` document / path
     /// errors in `types`, the argument errors in `expression`.
     #[must_use]
-    pub fn to_terror(&self) -> tidb_error::terror::TerrorError {
+    pub fn to_terror(&self) -> tidb_terror::TerrorError {
         use tidb_error::catalog::{expression, types};
         match self {
             JsonError::InvalidText => types::ERR_INVALID_JSON_TEXT.generate_with_stack_by_args(&[
@@ -839,7 +839,7 @@ pub trait Columns {
     /// Go `tc.HandleTruncate(err)` of an error other than
     /// `types.ErrTruncatedWrongVal`, which keeps its own class at either
     /// level.
-    fn handle_truncate_error(&self, error: tidb_error::terror::TerrorError) -> Result<(), EvalError> {
+    fn handle_truncate_error(&self, error: tidb_terror::TerrorError) -> Result<(), EvalError> {
         match self.truncate_level() {
             ErrorLevel::Ignore => Ok(()),
             ErrorLevel::Warn => {
@@ -903,7 +903,7 @@ pub trait Columns {
 
     /// Go `AppendWarning(proto.GenWithStackByArgs(...))`: a warning raised
     /// as the Go error `proto` with `message`.
-    fn append_go_warning(&self, proto: &tidb_error::terror::TerrorError, message: &str) {
+    fn append_go_warning(&self, proto: &tidb_terror::TerrorError, message: &str) {
         self.append_error_warning(&proto.generate(message.to_owned()).to_sql_error());
     }
 
@@ -915,7 +915,7 @@ pub trait Columns {
 
     /// Go `AppendNote(proto.GenWithStackByArgs(...))`: a note raised as the
     /// Go error `proto` with `message`.
-    fn append_go_note(&self, proto: &tidb_error::terror::TerrorError, message: &str) {
+    fn append_go_note(&self, proto: &tidb_terror::TerrorError, message: &str) {
         self.append_error_note(&proto.generate(message.to_owned()).to_sql_error());
     }
 

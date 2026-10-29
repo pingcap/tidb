@@ -393,11 +393,11 @@ fn build_partial_path_for_mv_index(
         .map_err(|error| match error {
             tidb_ranger::points::PointBuilderError::Eval(error) => error.into(),
             tidb_ranger::points::PointBuilderError::Value(error) => PlanError::from(
-                tidb_error::plannererrors::ERR_INTERNAL
+                tidb_plannererrors::ERR_INTERNAL
                     .generate_with_stack_by_args(&[(error.to_string()).into()]),
             ),
             tidb_ranger::points::PointBuilderError::Unsupported(message) => PlanError::from(
-                tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE.generate_with_stack(message),
+                tidb_plannererrors::ERR_UNSUPPORTED_TYPE.generate_with_stack(message),
             ),
         })?;
     // Not all filters are used in this case.

@@ -51,7 +51,7 @@ use tidb_ast::{
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_ddl_notifier::SchemaChangeEvent;
 use tidb_mysql::errors::FormatArg;
-use tidb_error::terror::TerrorError;
+use tidb_terror::TerrorError;
 use tidb_hack::GoCaseCompare;
 use tidb_meta::{key, value};
 use tidb_metadef::system_tables_def::NOTIFIER_TABLE_NAME;
@@ -1896,7 +1896,7 @@ fn check_alter_table_spec_refusals(alter: &AlterTableStmt) -> Result<(), DdlAdmi
     for action in &alter.actions {
         match action {
             tidb_ast::AlterTableAction::Partition(partition) => {
-                let (proto, message): (&tidb_error::terror::TerrorError, &str) = match partition {
+                let (proto, message): (&tidb_terror::TerrorError, &str) = match partition {
                     AlterPartitionAction::MergeFirstPartitionLessThan { .. } => {
                         (&dbt::ERR_GENERAL_UNSUPPORTED_DDL, "Unsupported MERGE FIRST PARTITION")
                     }
@@ -2084,7 +2084,7 @@ fn lower_alter_table_catalog(
         let mut actions = Vec::with_capacity(alter.actions.len());
         // Go `CheckStorageClassConflictInAlterTableSpecs`, before any
         // specification runs.
-        fn admission(error: impl Into<tidb_error::MysqlError>) -> DdlAdmissionError {
+        fn admission(error: impl Into<tidb_terror::MysqlError>) -> DdlAdmissionError {
             DdlAdmissionError::from_mysql_error(error.into())
         }
         tidb_ddl_build::storage_class::check_storage_class_conflict_in_alter_specs(
@@ -3502,7 +3502,7 @@ fn check_modify_generated_column(
     }
 
     if new.is_generated() {
-        fn admission(error: impl Into<tidb_error::MysqlError>) -> DdlPlanError {
+        fn admission(error: impl Into<tidb_terror::MysqlError>) -> DdlPlanError {
             DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error.into()))
         }
         // Rule 3: Go `checkIllegalFn4Generated(newCol.Name.L, typeColumn, ...)`.
@@ -4181,14 +4181,14 @@ pub(crate) fn checked_refusal(code: u16, message: impl Into<String>) -> DdlPlanE
         1406 => Some(&types::ERR_DATA_TOO_LONG),
         1690 => Some(&types::ERR_OVERFLOW),
         1365 => Some(&tidb_error::catalog::expression::ERR_DIVISION_BY_ZERO),
-        1451 => Some(&tidb_error::plannererrors::ERR_ROW_IS_REFERENCED2),
+        1451 => Some(&tidb_plannererrors::ERR_ROW_IS_REFERENCED2),
         1452 => Some(&tidb_dbterror::ERR_NO_REFERENCED_ROW2),
         3819 => Some(&tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED),
         _ => None,
     };
     match proto {
         Some(proto) => coded_refusal(proto, message),
-        None => DdlPlanError::from_mysql_error(tidb_error::MysqlError::sql_error(code, message)),
+        None => DdlPlanError::from_mysql_error(tidb_terror::MysqlError::sql_error(code, message)),
     }
 }
 
@@ -4593,7 +4593,7 @@ fn split_name(
         // on a node that defaulted its sessions into `test`, the same
         // statement had silently created the table in the wrong schema.
         [object] if default_schema.is_empty() => Err(DdlAdmissionError::from_terror(
-            &tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+            &tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
         )),
         [object] => Ok((default_schema.to_owned(), object.clone())),
         [schema, object] => Ok((schema.clone(), object.clone())),
@@ -4769,7 +4769,7 @@ impl fmt::Display for DdlPlanError {
 
 impl DdlPlanError {
     /// A refusal carrying an already classified driver-tier failure.
-    pub fn from_mysql_error(error: tidb_error::MysqlError) -> Self {
+    pub fn from_mysql_error(error: tidb_terror::MysqlError) -> Self {
         Self::Admission(DdlAdmissionError::from_mysql_error(error))
     }
 
@@ -4781,7 +4781,7 @@ impl DdlPlanError {
     /// The existing SQL contract is owned with the error, so direct execution
     /// and persisted action checkpoints cannot select different error numbers.
     pub(crate) fn mysql_error_code(&self) -> Option<u16> {
-        use tidb_error::tidb::errcode;
+        use tidb_errno::errcode;
         Some(match self {
             Self::Source(error) => error.to_sql_error().code,
             Self::Admission(error) => error.code,
@@ -4796,7 +4796,7 @@ impl DdlPlanError {
     /// The Go `*terror.Error` identity this refusal is raised as, `None` for
     /// the plain errors and the failures that are not Go errors at all.
     #[must_use]
-    pub fn identity(&self) -> Option<tidb_error::terror::TerrorIdentity> {
+    pub fn identity(&self) -> Option<tidb_terror::TerrorIdentity> {
         match self {
             Self::Source(error) => Some(error.identity()),
             Self::Admission(error) => error.identity,
@@ -4808,7 +4808,7 @@ impl DdlPlanError {
     /// uncoded errors follow Go `toTError`'s DDL/CodeUnknown fallback.
     /// Source RFC identities must be carried from their producers, not guessed
     /// from a MySQL number shared by several Go error classes.
-    pub fn to_job_error(&self) -> tidb_error::terror::TerrorError {
+    pub fn to_job_error(&self) -> tidb_terror::TerrorError {
         if let Self::Source(error) = self {
             return error.clone();
         }
@@ -4816,15 +4816,15 @@ impl DdlPlanError {
         // carries its class, code and RFC identity (`{"class":8,"code":1062,
         // "rfccode":"kv:1062"}`), exactly as Go persists a `*terror.Error`.
         if let Some(identity) = self.identity() {
-            return tidb_error::terror::TerrorError::synthesize(
+            return tidb_terror::TerrorError::synthesize(
                 identity.class(),
                 identity.code(),
                 self.to_string(),
             );
         }
         match self.mysql_error_code() {
-            Some(code) => tidb_error::terror::TerrorError::compatible(
-                tidb_error::terror::TerrorCode::new(
+            Some(code) => tidb_terror::TerrorError::compatible(
+                tidb_terror::TerrorCode::new(
                     isize::try_from(code).expect("u16 error code fits isize"),
                 ),
                 self.to_string(),
@@ -4845,10 +4845,10 @@ impl DdlPlanError {
     }
 }
 
-fn unknown_ddl_job_error(message: impl Into<String>) -> tidb_error::terror::TerrorError {
-    tidb_error::terror::TerrorError::synthesize(
-        tidb_error::terror::TerrorClass::Ddl,
-        tidb_error::terror::CODE_UNKNOWN,
+fn unknown_ddl_job_error(message: impl Into<String>) -> tidb_terror::TerrorError {
+    tidb_terror::TerrorError::synthesize(
+        tidb_terror::TerrorClass::Ddl,
+        tidb_terror::CODE_UNKNOWN,
         message,
     )
 }
@@ -4857,9 +4857,9 @@ fn unknown_ddl_job_error(message: impl Into<String>) -> tidb_error::terror::Terr
 /// numeric codes without RFC identities; they must remain readable after restart.
 /// SQLSTATE comes from the shared Go MySQL catalog, never a transport-local map.
 pub fn ddl_job_error_to_sql_error(
-    error: &tidb_error::terror::TerrorError,
+    error: &tidb_terror::TerrorError,
 ) -> tidb_mysql::errors::SqlError {
-    let code = u16::try_from(error.code().value()).unwrap_or(tidb_error::tidb::errcode::ErrUnknown);
+    let code = u16::try_from(error.code().value()).unwrap_or(tidb_errno::errcode::ErrUnknown);
     tidb_mysql::errors::SqlError {
         code,
         state: tidb_mysql::errors::mysql_state(code),
@@ -5777,7 +5777,7 @@ fn plan_persisted_check_constraint_job_step(
                         active,
                         DdlPlanError::from(
                             tidb_dbterror::CLASS_SCHEMA
-                                .new_std(tidb_error::tidb::errcode::ErrDupFieldName)
+                                .new_std(tidb_errno::errcode::ErrDupFieldName)
                                 .generate_with_stack_by_args(&[FormatArg::from(
                                     constraint_handle.read().name.original(),
                                 )]),
@@ -5800,7 +5800,7 @@ fn plan_persisted_check_constraint_job_step(
                     active,
                     DdlPlanError::from(
                         tidb_dbterror::CLASS_SCHEMA
-                            .new_std(tidb_error::tidb::errcode::ErrCheckConstraintDupName)
+                            .new_std(tidb_errno::errcode::ErrCheckConstraintDupName)
                             .generate_with_stack_by_args(&[FormatArg::from(wanted.as_str())]),
                     ),
                 ));
@@ -5853,7 +5853,7 @@ fn plan_persisted_check_constraint_job_step(
                     }) {
                         return Err(DdlPlanError::from(
                             tidb_dbterror::CLASS_SCHEMA
-                                .new_std(tidb_error::tidb::errcode::ErrCheckConstraintDupName)
+                                .new_std(tidb_errno::errcode::ErrCheckConstraintDupName)
                                 .generate_with_stack_by_args(&[FormatArg::from(
                                     constraint.name.lowercase(),
                                 )]),
@@ -6197,7 +6197,7 @@ fn plan_persisted_create_schema_job_step(
             active,
             DdlPlanError::from(
                 tidb_dbterror::CLASS_SCHEMA
-                    .new_std(tidb_error::tidb::errcode::ErrDBCreateExists)
+                    .new_std(tidb_errno::errcode::ErrDBCreateExists)
                     .generate(format!(
                         "Can't create database '{}'; database exists",
                         db_info.name.original()
@@ -6296,7 +6296,7 @@ fn plan_persisted_create_tables_job_step(
                 active,
                 DdlPlanError::from(
                     tidb_dbterror::CLASS_SCHEMA
-                        .new_std(tidb_error::tidb::errcode::ErrBadDB)
+                        .new_std(tidb_errno::errcode::ErrBadDB)
                         .generate(format!(
                             "Unknown database '(Schema ID {})'",
                             active.job.schema_id
@@ -6348,7 +6348,7 @@ fn plan_persisted_create_tables_job_step(
             active,
             DdlPlanError::from(
                 tidb_dbterror::CLASS_SCHEMA
-                    .new_std(tidb_error::tidb::errcode::ErrTableExists)
+                    .new_std(tidb_errno::errcode::ErrTableExists)
                     .generate(reason),
             ),
         ));
@@ -6478,7 +6478,7 @@ fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
             active,
             DdlPlanError::from(
                 tidb_dbterror::CLASS_SCHEMA
-                    .new_std(tidb_error::tidb::errcode::ErrDBDropExists)
+                    .new_std(tidb_errno::errcode::ErrDBDropExists)
                     .generate("Can't drop database ''; database doesn't exist"),
             ),
         ));
@@ -6995,7 +6995,7 @@ fn cancelled_ddl_job(active: &mut crate::ddl_job_table::ActiveDdlJob) -> DdlPlan
         active,
         DdlPlanError::from(
             tidb_dbterror::ERR_CANCELLED_DDL_JOB
-                .generate(tidb_error::tidb::errname::ErrCancelledDDLJob.raw),
+                .generate(tidb_errno::errname::ErrCancelledDDLJob.raw),
         ),
     )
 }
@@ -7040,7 +7040,7 @@ fn plan_cancel_persisted_ddl_job(
                         active,
                         DdlPlanError::from(
                             tidb_dbterror::CLASS_SCHEMA
-                                .new_std(tidb_error::tidb::errcode::ErrDBDropExists)
+                                .new_std(tidb_errno::errcode::ErrDBDropExists)
                                 .generate("Can't drop database ''; database doesn't exist"),
                         ),
                     )
@@ -7133,7 +7133,7 @@ fn checked_job_table<'a>(
                 active,
                 DdlPlanError::from(
                     tidb_dbterror::CLASS_SCHEMA
-                        .new_std(tidb_error::tidb::errcode::ErrBadDB)
+                        .new_std(tidb_errno::errcode::ErrBadDB)
                         .generate(format!(
                             "Unknown database '(Schema ID {})'",
                             active.job.schema_id
@@ -7150,7 +7150,7 @@ fn checked_job_table<'a>(
                 active,
                 DdlPlanError::from(
                     tidb_dbterror::CLASS_SCHEMA
-                        .new_std(tidb_error::tidb::errcode::ErrNoSuchTable)
+                        .new_std(tidb_errno::errcode::ErrNoSuchTable)
                         .generate(format!(
                             "Table '(Schema ID {}).(Table ID {})' doesn't exist",
                             active.job.schema_id, active.job.table_id
@@ -7165,7 +7165,7 @@ fn checked_job_table<'a>(
             active,
             DdlPlanError::from(
                 tidb_dbterror::CLASS_SCHEMA
-                    .new_std(tidb_error::tidb::errcode::ErrNoSuchTable)
+                    .new_std(tidb_errno::errcode::ErrNoSuchTable)
                     .generate(format!(
                         "Table '{}.{}' doesn't exist",
                         active.job.schema_name, active.job.table_name
@@ -8281,7 +8281,7 @@ fn build_create_table_info<S: MetaSnapshot>(
         && !crate::foreign_key_build::get_table_referred_foreign_keys(catalog, schema, table)
             .is_empty()
     {
-        let error = tidb_error::MysqlError::from_terror(
+        let error = tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_UNSUPPORTED_TTL_REFERENCED_BY_FK
                 .generate_with_stack_by_args(&[]),
         );
@@ -8617,7 +8617,7 @@ fn is_column_with_index(name: &str, table: &TableInfo) -> bool {
 }
 
 /// A lock job's refusal as the planner reports it.
-fn lock_plan_error(error: tidb_error::MysqlError) -> DdlPlanError {
+fn lock_plan_error(error: tidb_terror::MysqlError) -> DdlPlanError {
     DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error))
 }
 
@@ -8885,7 +8885,7 @@ fn warn_missing_region_split_policy(
         .any(|index| index.read().region_split_policy.is_some())
     {
         context.append_warning_parts(
-            tidb_error::tidb::errcode::ErrUnknown,
+            tidb_errno::errcode::ErrUnknown,
             &format!(
                 "It is recommended to add a region split strategy to the new index \
                  '{new_index_name}' to avoid write hotspots"

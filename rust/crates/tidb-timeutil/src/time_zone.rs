@@ -22,7 +22,7 @@ use chrono::{Local, Offset, TimeZone as _, Utc};
 use chrono_tz::Tz;
 
 use super::ERR_UNKNOWN_TIME_ZONE;
-use tidb_error::terror::TerrorError;
+use tidb_terror::TerrorError;
 
 /// The Rust shape of Go's `*time.Location`.
 #[derive(Clone, Debug, PartialEq, Eq)]

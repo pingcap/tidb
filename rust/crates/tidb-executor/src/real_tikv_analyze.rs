@@ -684,7 +684,7 @@ fn select_index_tasks(
                     })
                     .ok_or_else(|| {
                         ClusterAnalyzeError::from(
-                            tidb_error::plannererrors::ERR_ANALYZE_MISS_INDEX
+                            tidb_plannererrors::ERR_ANALYZE_MISS_INDEX
                                 .generate_with_stack_by_args(&[
                                     name.as_str().into(),
                                     table.name.original().into(),
@@ -945,7 +945,7 @@ pub enum ClusterAnalyzeError {
     /// `ErrAnalyzeMissIndex`, `ErrPartitionMgmtOnNonpartitioned`, and the
     /// global-stats `ErrPartitionStatsMissing` /
     /// `ErrPartitionColumnStatsMissing` that ANALYZE demotes to a warning.
-    Mysql(tidb_error::MysqlError),
+    Mysql(tidb_terror::MysqlError),
 }
 
 impl fmt::Display for ClusterAnalyzeError {
@@ -966,9 +966,9 @@ impl fmt::Display for ClusterAnalyzeError {
 impl std::error::Error for ClusterAnalyzeError {}
 
 /// A Go error raised as ANALYZE's failure.
-impl From<tidb_error::terror::TerrorError> for ClusterAnalyzeError {
-    fn from(error: tidb_error::terror::TerrorError) -> Self {
-        Self::Mysql(tidb_error::MysqlError::from_terror(&error))
+impl From<tidb_terror::TerrorError> for ClusterAnalyzeError {
+    fn from(error: tidb_terror::TerrorError) -> Self {
+        Self::Mysql(tidb_terror::MysqlError::from_terror(&error))
     }
 }
 
@@ -3017,7 +3017,7 @@ pub fn cluster_analyze_error(error: ClusterAnalyzeError) -> tidb_store_driver_er
         ClusterAnalyzeError::Undetermined(_) => tidb_store_driver_error::sql_query_error::SqlQueryError::result_undetermined(),
         ClusterAnalyzeError::Commit(error) => tidb_store_driver_error::sql_query_error::lock_sql_error(&error),
         ClusterAnalyzeError::Killed(error) => {
-            tidb_store_driver_error::sql_query_error::SqlQueryError::from(tidb_error::MysqlError::from_sql_error(error))
+            tidb_store_driver_error::sql_query_error::SqlQueryError::from(tidb_terror::MysqlError::from_sql_error(error))
         }
         ClusterAnalyzeError::Other(detail) => tidb_store_driver_error::sql_query_error::SqlQueryError::unknown(detail),
         ClusterAnalyzeError::Mysql(error) => tidb_store_driver_error::sql_query_error::SqlQueryError::from(error),
@@ -3833,7 +3833,7 @@ mod tests {
         assert!(matches!(
             classify_commit_outcome(&outcome),
             Err(ClusterAnalyzeError::Commit(error))
-                if error.code == tidb_error::tidb::errcode::ErrTiKVStaleCommand
+                if error.code == tidb_errno::errcode::ErrTiKVStaleCommand
         ));
     }
 

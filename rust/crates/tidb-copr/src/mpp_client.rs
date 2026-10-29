@@ -341,7 +341,7 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for TiFlashMppCli
             .compute_addresses(config.use_auto_scaler, ctx)
             .map_err(|error| match ctx.check() {
                 Err(stop) => MppError::Sql(stop),
-                Ok(()) => MppError::Sql(tidb_error::MysqlError::sql_error(
+                Ok(()) => MppError::Sql(tidb_terror::MysqlError::sql_error(
                     error.code,
                     error.message,
                 )),

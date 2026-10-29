@@ -16,4 +16,4 @@
 /// validation raises (`ErrWrongValueForVar.GenWithStackByArgs(...)` and
 /// friends), a catalogued `*mysql.SQLError`, or a `Validation` closure's own
 /// `errors.Errorf` (unclassed, reported as 1105).
-pub type VarError = tidb_error::MysqlError;
+pub type VarError = tidb_terror::MysqlError;

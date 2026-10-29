@@ -28,7 +28,7 @@ use tidb_table::kv_table::KvIndex;
 use crate::{DriverError, ExecError, MysqlError, StmtContext};
 use tidb_codec::table_key::{encode_record_key, encode_table_index_prefix, RecordHandle};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags, SessionTimeZone};
-use tidb_error::tidb::errcode;
+use tidb_errno::errcode;
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 
@@ -85,13 +85,13 @@ pub fn split_region(
     };
     if table.is_temporary() {
         return Err(DriverError::from(
-            tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+            tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                 .generate_with_stack_by_args(&["split table".into()]),
         ));
     }
     if stmt.partition_syntax && table.partition().is_none() {
         return Err(DriverError::from(
-            tidb_error::plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
+            tidb_plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
                 .generate_with_stack_by_args(&[]),
         ));
     }
@@ -186,7 +186,7 @@ fn plan_index_split<'a>(
     let clustered = table.pk_handle_offset().is_some() || !table.common_handle_offsets().is_empty();
     if index_name.go_lower_eq("primary") && clustered {
         return Err(DriverError::Mysql(MysqlError::from_terror(
-            &tidb_error::plannererrors::ERR_KEY_DOES_NOT_EXIST.generate_with_stack(
+            &tidb_plannererrors::ERR_KEY_DOES_NOT_EXIST.generate_with_stack(
                 "unable to split clustered index, please split table instead.",
             ),
         )));
@@ -198,7 +198,7 @@ fn plan_index_split<'a>(
         .ok_or_else(|| {
             // Go `buildSplitIndexRegion`: `plannererrors.ErrKeyDoesNotExist`.
             DriverError::from(
-                tidb_error::plannererrors::ERR_KEY_DOES_NOT_EXIST.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_KEY_DOES_NOT_EXIST.generate_with_stack_by_args(&[
                     index_name.to_owned().into(),
                     table_name.to_owned().into(),
                 ]),
@@ -220,7 +220,7 @@ fn plan_index_split<'a>(
             for (position, list) in lists.iter().enumerate() {
                 if list.len() > index.column_offsets.len() {
                     return Err(DriverError::from(
-                        tidb_error::plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
+                        tidb_plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
                             .generate_with_stack_by_args(&[(position + 1).into()]),
                     ));
                 }
@@ -307,7 +307,7 @@ fn plan_table_split(
                 convert_list(
                     list,
                     DriverError::from(
-                        tidb_error::plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
+                        tidb_plannererrors::ERR_WRONG_VALUE_COUNT_ON_ROW
                             .generate_with_stack_by_args(&[position.into()]),
                     ),
                 )
@@ -708,7 +708,7 @@ fn truncate_chars(text: &str, limit: usize) -> String {
 struct StatementWarnings<'a>(&'a StmtContext);
 
 impl tidb_datatype::ConversionWarningAppender for StatementWarnings<'_> {
-    fn append_conversion_warning(&self, warning: tidb_error::terror::TerrorError) {
+    fn append_conversion_warning(&self, warning: tidb_terror::TerrorError) {
         let reported = warning.to_sql_error();
         self.0
             .append_sql_warn(tidb_context::SqlWarn::from_error(

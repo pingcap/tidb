@@ -312,7 +312,7 @@ fn set_operations() {
         &crate::StmtContext::for_query()
     )
     .is_err_and(
-        |error| error.equal(&tidb_error::plannererrors::ERR_WRONG_NUMBER_OF_COLUMNS_IN_SELECT)
+        |error| error.equal(&tidb_plannererrors::ERR_WRONG_NUMBER_OF_COLUMNS_IN_SELECT)
     ));
 }
 

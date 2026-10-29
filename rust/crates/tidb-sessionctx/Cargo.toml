@@ -8,6 +8,8 @@ repository.workspace = true
 description = "TiDB session context: Go pkg/sessionctx, the context a session hands every statement's planner and executor (Rust rewrite)."
 
 [dependencies]
+tidb-errctx = { path = "../tidb-errctx" }
+tidb-terror = { path = "../tidb-terror" }
 tidb-tiflash = { path = "../tidb-tiflash" }
 tidb-context = { path = "../tidb-context" }
 tidb-execdetails = { path = "../tidb-execdetails" }
@@ -32,7 +34,6 @@ tidb-chunk = { path = "../tidb-chunk" }
 tidb-config = { path = "../tidb-config" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-distsql = { path = "../tidb-distsql" }
-tidb-error = { path = "../tidb-error" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }

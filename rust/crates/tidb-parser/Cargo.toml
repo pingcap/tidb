@@ -22,6 +22,7 @@ harness = true
 workspace = true
 
 [dependencies]
+tidb-terror = { path = "../tidb-terror" }
 tidb-parser-format = { path = "../tidb-parser-format" }
 tidb-parser-util = { path = "../tidb-parser-util" }
 tidb-error = { path = "../tidb-error" }

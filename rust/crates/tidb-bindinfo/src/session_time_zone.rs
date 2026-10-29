@@ -37,7 +37,7 @@ impl RealTiKvSessionTimeZone {
     }
 
     /// Parses the complete Go `timeutil.ParseTimeZone` domain.
-    pub fn parse(value: &str) -> Result<Self, tidb_error::terror::TerrorError> {
+    pub fn parse(value: &str) -> Result<Self, tidb_terror::TerrorError> {
         Ok(Self::from_timeutil(tidb_timeutil::parse_time_zone(
             value,
         )?))
@@ -46,9 +46,9 @@ impl RealTiKvSessionTimeZone {
 
 #[cfg(test)]
 pub fn time_zone_sql_error(
-    error: tidb_error::terror::TerrorError,
+    error: tidb_terror::TerrorError,
 ) -> tidb_store_driver_error::sql_query_error::SqlQueryError {
-    tidb_store_driver_error::sql_query_error::SqlQueryError::from(tidb_error::MysqlError::from_terror(
+    tidb_store_driver_error::sql_query_error::SqlQueryError::from(tidb_terror::MysqlError::from_terror(
         &error,
     ))
 }

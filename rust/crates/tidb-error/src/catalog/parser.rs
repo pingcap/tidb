@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{std_err, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `parser.ErrWarnOptimizerHintUnsupportedHint` (`pkg/parser/hintparser.go:1066`).
 pub static ERR_WARN_OPTIMIZER_HINT_UNSUPPORTED_HINT: LazyLock<TerrorError> =

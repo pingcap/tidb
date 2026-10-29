@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{plain_err, std_err, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `sessionctx/variable.errWarnDeprecatedSyntax` (`pkg/sessionctx/variable/error.go:25`).
 pub static ERR_WARN_DEPRECATED_SYNTAX: LazyLock<TerrorError> =

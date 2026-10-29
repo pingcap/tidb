@@ -294,7 +294,7 @@ pub(super) fn plan_persisted_exchange_partition_job_step<S: MetaSnapshot>(
             active,
             DdlPlanError::from(
                 tidb_dbterror::CLASS_SCHEMA
-                    .new_std(tidb_error::tidb::errcode::ErrBadDB)
+                    .new_std(tidb_errno::errcode::ErrBadDB)
                     .generate(format!(
                         "Unknown database '(Schema ID {})'",
                         args.pt_schema_id
@@ -312,7 +312,7 @@ pub(super) fn plan_persisted_exchange_partition_job_step<S: MetaSnapshot>(
             active,
             DdlPlanError::from(
                 tidb_dbterror::CLASS_SCHEMA
-                    .new_std(tidb_error::tidb::errcode::ErrNoSuchTable)
+                    .new_std(tidb_errno::errcode::ErrNoSuchTable)
                     .generate(format!(
                         "Table '(Schema ID {}).(Table ID {})' doesn't exist",
                         args.pt_schema_id, args.pt_table_id
@@ -623,7 +623,7 @@ fn rollback_exchange_table_partition(
             .ok_or_else(|| {
                 DdlPlanError::from(
                     tidb_dbterror::CLASS_SCHEMA
-                        .new_std(tidb_error::tidb::errcode::ErrNoSuchTable)
+                        .new_std(tidb_errno::errcode::ErrNoSuchTable)
                         .generate(format!(
                             "Table '(Schema ID {}).(Table ID {})' doesn't exist",
                             args.pt_schema_id, args.pt_table_id

@@ -22,7 +22,7 @@ use std::collections::HashSet;
 
 use tidb_ast::{Expr, PartitionDefinition, PartitionDefinitionClause, PartitionValue};
 use tidb_datatype::{Datum, DatumKind, FieldType, FieldTypeCode};
-use tidb_error::MysqlError;
+use tidb_terror::MysqlError;
 
 use crate::partition_routing::PartitionKind;
 
@@ -55,14 +55,14 @@ pub fn fold_range_column_value(
         // allowlist over each bound after folding.  COLLATE is not one of the
         // allowed value forms, even though the evaluator can otherwise pass
         // the string through unchanged.
-        return Err(tidb_error::MysqlError::from_terror(
+        return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_PARTITION_FUNCTION_IS_NOT_ALLOWED
                 .generate_with_stack_by_args(&[]),
         ));
     }
     let value = eval_column_value(expr, ctx)?;
     if !range_column_value_kind_allowed(value.kind(), field_type.code()) {
-        return Err(tidb_error::MysqlError::from_terror(
+        return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
         ));
     }
@@ -89,8 +89,8 @@ pub fn partition_value_resolver(
 pub fn partition_value_failure(error: tidb_expr::EvalError, otherwise: MysqlError) -> MysqlError {
     match error {
         tidb_expr::EvalError::UnknownColumnInClause(column, clause) => {
-            tidb_error::MysqlError::from_terror(
-                &tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+            tidb_terror::MysqlError::from_terror(
+                &tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
                     tidb_hack::go_to_lower(column).into(),
                     clause.to_owned().into(),
                 ]),
@@ -111,7 +111,7 @@ pub fn eval_column_value(
         &partition_value_resolver(ctx),
     )
     .map_err(|_| {
-        tidb_error::MysqlError::from_terror(
+        tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
         )
     })?;
@@ -120,7 +120,7 @@ pub fn eval_column_value(
     rewritten
         .eval(ctx.get_expr_ctx().get_eval_ctx(), dual.get_row(0))
         .map_err(|_| {
-            tidb_error::MysqlError::from_terror(
+            tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
             )
         })
@@ -138,12 +138,12 @@ fn convert_column_value(
             &ctx.get_expr_ctx().get_eval_ctx().time_zone(),
         )
         .map_err(|_| {
-            tidb_error::MysqlError::from_terror(
+            tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
             )
         })?;
     if converted.event.is_some() {
-        return Err(tidb_error::MysqlError::from_terror(
+        return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
         ));
     }
@@ -192,7 +192,7 @@ pub fn build_list_values(
     definition_tail: &mut dyn FnMut(usize) -> Result<(), MysqlError>,
 ) -> Result<(PartitionKind, Option<MysqlError>), MysqlError> {
     if definitions.is_empty() {
-        return Err(tidb_error::MysqlError::from_terror(
+        return Err(tidb_terror::MysqlError::from_terror(
             &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
                 .generate_with_stack_by_args(&["LIST".into()]),
         ));
@@ -212,7 +212,7 @@ pub fn build_list_values_with_unsigned(
     definition_tail: &mut dyn FnMut(usize) -> Result<(), MysqlError>,
 ) -> Result<(PartitionKind, Option<MysqlError>), MysqlError> {
     if definitions.is_empty() {
-        return Err(tidb_error::MysqlError::from_terror(
+        return Err(tidb_terror::MysqlError::from_terror(
             &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
                 .generate_with_stack_by_args(&["LIST".into()]),
         ));
@@ -234,7 +234,7 @@ pub fn build_list_values_with_unsigned(
         match &definition.clause {
             PartitionDefinitionClause::Default => {
                 if default_partition.replace(ordinal).is_some() {
-                    duplicate.get_or_insert(tidb_error::MysqlError::from_terror(
+                    duplicate.get_or_insert(tidb_terror::MysqlError::from_terror(
                         &tidb_dbterror::ERR_MULTIPLE_DEF_CONST_IN_LIST_PART
                             .generate_with_stack_by_args(&[]),
                     ));
@@ -244,7 +244,7 @@ pub fn build_list_values_with_unsigned(
                 for item in items {
                     if matches!(item, PartitionValue::Default) {
                         if default_partition.replace(ordinal).is_some() {
-                            duplicate.get_or_insert(tidb_error::MysqlError::from_terror(
+                            duplicate.get_or_insert(tidb_terror::MysqlError::from_terror(
                                 &tidb_dbterror::ERR_MULTIPLE_DEF_CONST_IN_LIST_PART
                                     .generate_with_stack_by_args(&[]),
                             ));
@@ -252,7 +252,7 @@ pub fn build_list_values_with_unsigned(
                         continue;
                     };
                     let PartitionValue::Expr(expr) = item else {
-                        return Err(tidb_error::MysqlError::from_terror(
+                        return Err(tidb_terror::MysqlError::from_terror(
                             &tidb_dbterror::ERR_VALUES_IS_NOT_INT_TYPE
                                 .generate_with_stack_by_args(&[(definition.name.clone())
                                     .to_string()
@@ -262,7 +262,7 @@ pub fn build_list_values_with_unsigned(
                     let value = fold_list_value(expr, &definition.name, unsigned, ctx)?;
                     let Some(bits) = value else {
                         if null_partition.replace(ordinal).is_some() {
-                            duplicate.get_or_insert(tidb_error::MysqlError::from_terror(
+                            duplicate.get_or_insert(tidb_terror::MysqlError::from_terror(
                                 &tidb_dbterror::ERR_MULTIPLE_DEF_CONST_IN_LIST_PART
                                     .generate_with_stack_by_args(&[]),
                             ));
@@ -272,7 +272,7 @@ pub fn build_list_values_with_unsigned(
                     if seen.insert(bits as u64) {
                         values.push((bits, ordinal));
                     } else {
-                        duplicate.get_or_insert(tidb_error::MysqlError::from_terror(
+                        duplicate.get_or_insert(tidb_terror::MysqlError::from_terror(
                             &tidb_dbterror::ERR_MULTIPLE_DEF_CONST_IN_LIST_PART
                                 .generate_with_stack_by_args(&[]),
                         ));
@@ -289,13 +289,13 @@ pub fn build_list_values_with_unsigned(
                 }
             }
             PartitionDefinitionClause::LessThan(_) => {
-                return Err(tidb_error::MysqlError::from_terror(
+                return Err(tidb_terror::MysqlError::from_terror(
                     &tidb_error::catalog::ast::ERR_PARTITION_WRONG_VALUES
                         .generate_with_stack_by_args(&["RANGE".into(), "LESS THAN".into()]),
                 ));
             }
             _ => {
-                return Err(tidb_error::MysqlError::from_terror(
+                return Err(tidb_terror::MysqlError::from_terror(
                     &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
                         .generate_with_stack_by_args(&["LIST".into()]),
                 ))
@@ -323,7 +323,7 @@ fn fold_list_value(
             |error| {
                 partition_value_failure(
                     error,
-                    tidb_error::MysqlError::from_terror(
+                    tidb_terror::MysqlError::from_terror(
                         &tidb_dbterror::ERR_VALUES_IS_NOT_INT_TYPE
                             .generate_with_stack_by_args(&[partition.to_owned().into()]),
                     ),
@@ -335,14 +335,14 @@ fn fold_list_value(
     match rewritten
         .eval(ctx.get_expr_ctx().get_eval_ctx(), dual.get_row(0))
         .map_err(|_| {
-            tidb_error::MysqlError::from_terror(
+            tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_VALUES_IS_NOT_INT_TYPE
                     .generate_with_stack_by_args(&[partition.to_owned().into()]),
             )
         })? {
         Datum::Int(value) => {
             if unsigned && value < 0 {
-                Err(tidb_error::MysqlError::from_terror(
+                Err(tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_PARTITION_CONST_DOMAIN
                         .generate_with_stack_by_args(&[]),
                 ))
@@ -352,7 +352,7 @@ fn fold_list_value(
         }
         Datum::UInt(value) => Ok(Some(value as i64)),
         Datum::Null => Ok(None),
-        _ => Err(tidb_error::MysqlError::from_terror(
+        _ => Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_VALUES_IS_NOT_INT_TYPE
                 .generate_with_stack_by_args(&[partition.to_owned().into()]),
         )),
@@ -419,7 +419,7 @@ pub fn fold_range_bound(
             |error| {
                 partition_value_failure(
                     error,
-                    tidb_error::MysqlError::from_terror(
+                    tidb_terror::MysqlError::from_terror(
                         &tidb_dbterror::ERR_VALUES_IS_NOT_INT_TYPE
                             .generate_with_stack_by_args(&[partition.to_owned().into()]),
                     ),
@@ -431,7 +431,7 @@ pub fn fold_range_bound(
     let value = rewritten
         .eval(ctx.get_expr_ctx().get_eval_ctx(), dual.get_row(0))
         .map_err(|_| {
-            tidb_error::MysqlError::from_terror(
+            tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_VALUES_IS_NOT_INT_TYPE
                     .generate_with_stack_by_args(&[partition.to_owned().into()]),
             )
@@ -439,11 +439,11 @@ pub fn fold_range_bound(
     match value {
         Datum::Int(value) => Ok(FoldedRangeBound::Signed(value)),
         Datum::UInt(value) => Ok(FoldedRangeBound::Unsigned(value)),
-        Datum::Null => Err(tidb_error::MysqlError::from_terror(
+        Datum::Null => Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION
                 .generate_with_stack_by_args(&[("NULL".to_owned()).to_string().into()]),
         )),
-        _ => Err(tidb_error::MysqlError::from_terror(
+        _ => Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_VALUES_IS_NOT_INT_TYPE
                 .generate_with_stack_by_args(&[partition.to_owned().into()]),
         )),

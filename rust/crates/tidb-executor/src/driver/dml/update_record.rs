@@ -158,8 +158,8 @@ impl<'a> UpdateRecords<'a> {
                 )
             });
             if let Err(error) = check {
-                if error.equal(&tidb_error::plannererrors::ERR_NO_REFERENCED_ROW2)
-                    || error.equal(&tidb_error::plannererrors::ERR_ROW_IS_REFERENCED2)
+                if error.equal(&tidb_plannererrors::ERR_NO_REFERENCED_ROW2)
+                    || error.equal(&tidb_plannererrors::ERR_ROW_IS_REFERENCED2)
                 {
                     let warning = error.to_mysql_error();
                     ctx.append_sql_warn(tidb_context::SqlWarn::from_error(

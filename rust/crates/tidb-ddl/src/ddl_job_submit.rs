@@ -424,7 +424,7 @@ impl JobSubmitError {
     /// The Go error this refusal is raised as, `None` for the plain errors
     /// `jobsubmit` builds with `errors.Errorf`.
     #[must_use]
-    pub fn to_terror(&self) -> Option<tidb_error::terror::TerrorError> {
+    pub fn to_terror(&self) -> Option<tidb_terror::TerrorError> {
         match self {
             Self::InvalidTableModeSet {
                 current,

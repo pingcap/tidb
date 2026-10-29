@@ -149,7 +149,7 @@ impl Session {
             return Ok(());
         }
         Err(DriverError::from(
-            tidb_error::plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(&[
+            tidb_plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(&[
                 command.into(),
                 user.to_owned().into(),
                 host.to_owned().into(),

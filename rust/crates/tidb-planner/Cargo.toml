@@ -12,6 +12,8 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-plannererrors = { path = "../tidb-plannererrors" }
+tidb-terror = { path = "../tidb-terror" }
 tidb-parser-types = { path = "../tidb-parser-types" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-planner-coreusage = { path = "../tidb-planner-coreusage" }

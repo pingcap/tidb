@@ -753,8 +753,8 @@ pub(crate) fn get_fsp_by_int_arg(args: &[Expression], func_name: &str) -> Result
         [arg] => arg,
         _ => {
             return Err(EvalError::Conversion(
-                tidb_error::terror::TerrorError::compatible(
-                    tidb_error::terror::TerrorCode::new(1105),
+                tidb_terror::TerrorError::compatible(
+                    tidb_terror::TerrorCode::new(1105),
                     format!(
                         "Should not happen, the num of argument should be 1, but got {}",
                         args.len()

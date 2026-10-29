@@ -1254,6 +1254,6 @@ pub(super) fn plan_cancel_multi_schema(
     active.job.state = JobState::ROLLINGBACK;
     Err(DdlPlanError::from(
         tidb_dbterror::ERR_CANCELLED_DDL_JOB
-            .generate(tidb_error::tidb::errname::ErrCancelledDDLJob.raw),
+            .generate(tidb_errno::errname::ErrCancelledDDLJob.raw),
     ))
 }

@@ -96,7 +96,7 @@
 //! path.
 
 
-use tidb_error::MysqlError;
+use tidb_terror::MysqlError;
 
 use tidb_datatype::FieldType;
 

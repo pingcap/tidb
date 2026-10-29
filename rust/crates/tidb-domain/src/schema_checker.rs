@@ -73,7 +73,7 @@
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::time::Duration;
 
-use tidb_error::tidb::{errcode, errname};
+use tidb_errno::{errcode, errname};
 
 /// Go `validatorapi.Result`: the verdict of one validator check.
 ///
@@ -176,7 +176,7 @@ impl SchemaCheckError {
     /// The Go definition (`domain.ErrInfoSchemaChanged` /
     /// `ErrInfoSchemaExpired`, class `domain`) this error is raised as.
     #[must_use]
-    pub fn proto(self) -> &'static tidb_error::terror::TerrorError {
+    pub fn proto(self) -> &'static tidb_terror::TerrorError {
         match self {
             Self::InfoSchemaChanged => &tidb_error::catalog::domain::ERR_INFO_SCHEMA_CHANGED,
             Self::InfoSchemaExpired => &tidb_error::catalog::domain::ERR_INFO_SCHEMA_EXPIRED,
@@ -185,7 +185,7 @@ impl SchemaCheckError {
 
     /// The Go error value: the definition with this error's message.
     #[must_use]
-    pub fn to_terror(self) -> tidb_error::terror::TerrorError {
+    pub fn to_terror(self) -> tidb_terror::TerrorError {
         self.proto().generate_with_stack(self.message())
     }
 

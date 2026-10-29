@@ -72,7 +72,7 @@ pub fn flush_stmt(flush: &tidb_ast::FlushStmt) -> Result<StmtOutput, DriverError
             ));
         }
         tidb_ast::FlushTarget::ClientErrorsSummary => {
-            tidb_error::tidb::infoschema::flush_stats();
+            tidb_errno::infoschema::flush_stats();
         }
         tidb_ast::FlushTarget::Status
         | tidb_ast::FlushTarget::Privileges
@@ -217,7 +217,7 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
                     // Go `checkAdminCheckTableGrammar` (`preprocess.go:908`).
                     Some(crate::TableEntry::Kv(table)) if table.is_temporary() => {
                         return Err(DriverError::from(
-                            tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                            tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                                 .generate_with_stack_by_args(&["admin checksum table".into()]),
                         ));
                     }
@@ -775,7 +775,7 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
             tidb_ast::AdminStmt::CreateWorkloadSnapshot => {
                 let take_snapshot = self.take_snapshot().ok_or_else(|| {
                     DriverError::from(
-                        tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET
+                        tidb_plannererrors::ERR_NOT_SUPPORTED_YET
                             .generate_with_stack_by_args(&[
                                 "Workload repository is not enabled".into()
                             ]),
@@ -784,7 +784,7 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
                 take_snapshot().map_err(|error| {
                     if error == "Workload repository is not enabled" {
                         DriverError::from(
-                            tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET
+                            tidb_plannererrors::ERR_NOT_SUPPORTED_YET
                                 .generate_with_stack_by_args(&[error.into()]),
                         )
                     } else {
@@ -949,11 +949,11 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
                 // it has no executor for (`Unsupported type *ast.HelpStmt`,
                 // 8108).
                 tidb_ast::ServerControlStmt::Restart => Err(DriverError::from(
-                    (&tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE)
+                    (&tidb_plannererrors::ERR_UNSUPPORTED_TYPE)
                         .generate_with_stack("Unsupported type *ast.RestartStmt".to_owned()),
                 )),
                 tidb_ast::ServerControlStmt::Help(_) => Err(DriverError::from(
-                    (&tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE)
+                    (&tidb_plannererrors::ERR_UNSUPPORTED_TYPE)
                         .generate_with_stack("Unsupported type *ast.HelpStmt".to_owned()),
                 )),
             },
@@ -1059,13 +1059,13 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
         let target = explain_for.connection_id;
         let Some(registry) = self.process_registry() else {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_NO_SUCH_THREAD
+                tidb_plannererrors::ERR_NO_SUCH_THREAD
                     .generate_with_stack_by_args(&[target.into()]),
             ));
         };
         let Some(target_row) = registry.snapshot().into_iter().find(|row| row.id == target) else {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_NO_SUCH_THREAD
+                tidb_plannererrors::ERR_NO_SUCH_THREAD
                     .generate_with_stack_by_args(&[target.into()]),
             ));
         };
@@ -1283,7 +1283,7 @@ pub(crate) fn admin_check_table_mut<'a>(
         // scopes are refused; the argument names the statement, which is why
         // the caller passes it.
         crate::TableEntry::Kv(table) if table.is_temporary() => Err(DriverError::from(
-            tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+            tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                 .generate_with_stack_by_args(&[statement.into()]),
         )),
         crate::TableEntry::Kv(table) => Ok(std::sync::Arc::make_mut(table)),

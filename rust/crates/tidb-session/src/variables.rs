@@ -642,7 +642,7 @@ impl Session {
                     Some(def) => def,
                     None => {
                         if let Some(reason) = sysvar::removed_sys_var_reason(name) {
-                            return Err(var_error(tidb_error::MysqlError::from_terror(
+                            return Err(var_error(tidb_terror::MysqlError::from_terror(
                                 &tidb_error::catalog::variable::ERR_VARIABLE_NO_LONGER_SUPPORTED
                                     .generate_with_stack_by_args(&[
                                         (name.to_ascii_lowercase()).into(),
@@ -650,7 +650,7 @@ impl Session {
                                     ]),
                             )));
                         }
-                        return Err(var_error(tidb_error::MysqlError::from_terror(
+                        return Err(var_error(tidb_terror::MysqlError::from_terror(
                             &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
                                 .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
                         )));
@@ -672,7 +672,7 @@ impl Session {
                         _ => None,
                     };
                     if let Some(allowed) = incorrect_scope {
-                        return Err(var_error(tidb_error::MysqlError::from_terror(
+                        return Err(var_error(tidb_terror::MysqlError::from_terror(
                             &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE
                                 .generate_with_stack_by_args(&[
                                     (name.to_ascii_lowercase()).into(),
@@ -683,7 +683,7 @@ impl Session {
                     if *scope == Some(tidb_ast::SysVarScope::Session)
                         && def.is_internal_session_variable()
                     {
-                        return Err(var_error(tidb_error::MysqlError::from_terror(
+                        return Err(var_error(tidb_terror::MysqlError::from_terror(
                             &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
                                 .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
                         )));
@@ -1054,7 +1054,7 @@ fn set_var_hint_checker(
         return (
             false,
             Some(tidb_hint::HintWarning::of(
-                &tidb_error::plannererrors::ERR_UNRESOLVED_HINT_NAME,
+                &tidb_plannererrors::ERR_UNRESOLVED_HINT_NAME,
                 format!("Unresolved name '{variable_name}' for {hint_name} hint"),
             )),
         );
@@ -1062,7 +1062,7 @@ fn set_var_hint_checker(
     let warning =
         (!tidb_variable::hint_updatable_vars::is_hint_updatable_verified(&folded)).then(|| {
             tidb_hint::HintWarning::of(
-                &tidb_error::plannererrors::ERR_NOT_HINT_UPDATABLE,
+                &tidb_plannererrors::ERR_NOT_HINT_UPDATABLE,
                 format!("Variable '{variable_name}' might not be affected by SET_VAR hint."),
             )
         });

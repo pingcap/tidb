@@ -9,13 +9,13 @@ description = "Source-backed MySQL packet framing for the TiDB Rust rewrite."
 autotests = false
 
 [dependencies]
+tidb-errno = { path = "../tidb-errno" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 flate2.workspace = true
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-hack = { path = "../tidb-hack" }
-tidb-error = { path = "../tidb-error" }
 zstd.workspace = true
 
 [[test]]

@@ -113,7 +113,7 @@ impl HypoIndexes {
         database: &str,
         table: &str,
         mut index: IndexInfo,
-    ) -> Result<(), tidb_error::MysqlError> {
+    ) -> Result<(), tidb_terror::MysqlError> {
         let indexes = self
             .by_table
             .entry(database.go_to_lower())
@@ -123,7 +123,7 @@ impl HypoIndexes {
         let name = index.name.lowercase().to_owned();
         if indexes.contains_key(&name) {
             // Go `errors.Errorf("conflict hypo index name %s", indexName.L)`.
-            return Err(tidb_error::MysqlError::unknown(format!(
+            return Err(tidb_terror::MysqlError::unknown(format!(
                 "conflict hypo index name {name}"
             )));
         }
@@ -140,7 +140,7 @@ impl HypoIndexes {
         table: &str,
         index: &str,
         if_exists: bool,
-    ) -> Result<(), tidb_error::MysqlError> {
+    ) -> Result<(), tidb_terror::MysqlError> {
         let removed = self
             .by_table
             .get_mut(&database.go_to_lower())
@@ -148,7 +148,7 @@ impl HypoIndexes {
             .and_then(|indexes| indexes.remove(&index.go_to_lower()));
         if removed.is_none() && !if_exists {
             // Go `ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist")`.
-            return Err(tidb_error::MysqlError::from_terror(
+            return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_CANT_DROP_FIELD_OR_KEY
                     .generate_with_stack(format!("index {index} doesn't exist")),
             ));

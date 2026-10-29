@@ -182,7 +182,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 // Go `buildAnalyze`.
                 if analyze.no_write_to_binlog {
                     return Err(PlanError::from(
-                        tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET
+                        tidb_plannererrors::ERR_NOT_SUPPORTED_YET
                             .generate_with_stack_by_args(&["[NO_WRITE_TO_BINLOG | LOCAL]".into()]),
                     ));
                 }
@@ -214,7 +214,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 // (a plain `stmtNode`, not a `DDLNode`): the statement falls
                 // through to the closing `ErrUnsupportedType`.
                 return Err(PlanError::from(
-                    tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE
+                    tidb_plannererrors::ERR_UNSUPPORTED_TYPE
                         .generate_with_stack("Unsupported type *ast.ProcedureInfo"),
                 ));
             }
@@ -406,11 +406,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     );
                     if !drop.if_exists {
                         return Err(PlanError::eval(tidb_expr::EvalError::Conversion(
-                            tidb_error::plannererrors::ERR_SP_DOES_NOT_EXIST.generate(message),
+                            tidb_plannererrors::ERR_SP_DOES_NOT_EXIST.generate(message),
                         )));
                     }
                     self.ctx.append_note(
-                        tidb_error::plannererrors::ERR_SP_DOES_NOT_EXIST.code().value() as u16,
+                        tidb_plannererrors::ERR_SP_DOES_NOT_EXIST.code().value() as u16,
                         &message,
                     );
                 }
@@ -429,7 +429,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             Stmt::Session(session) => match session.as_ref() {
                 SessionStmt::Use(name) if name.is_empty() => {
                     return Err(PlanError::from(
-                        tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                        tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
                     ))
                 }
                 SessionStmt::SetPassword(set) => {
@@ -542,7 +542,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let current = self.source.current_database();
             if current.is_empty() {
                 return Err(PlanError::from(
-                    tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                    tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
                 ));
             }
             db_name = if is_grant {
@@ -646,7 +646,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     let current = self.source.current_database();
                     if current.is_empty() {
                         return Err(PlanError::from(
-                            tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                            tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
                         ));
                     }
                     *database = Some(current.to_owned());
@@ -742,13 +742,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let info = info.read();
             if info.temp_table_type != tidb_model::TempTableType::NONE {
                 return Err(PlanError::from(
-                    tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                    tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                         .generate_with_stack_by_args(&["split table".into()]),
                 ));
             }
             if split.partition_syntax && info.partition.is_none() {
                 return Err(PlanError::from(
-                    tidb_error::plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
+                    tidb_plannererrors::ERR_PARTITION_CLAUSE_ON_NONPARTITIONED
                         .generate_with_stack_by_args(&[]),
                 ));
             }
@@ -827,7 +827,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             AdminStmt::CreateWorkloadSnapshot => Plan::WorkloadRepoCreate,
             _ => {
                 return Err(PlanError::from(
-                    tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE.generate_with_stack(format!(
+                    tidb_plannererrors::ERR_UNSUPPORTED_TYPE.generate_with_stack(format!(
                         "Unsupported ast.AdminStmt({}) for buildAdmin",
                         stmt.label()
                     )),
@@ -855,7 +855,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     .unwrap_or_else(|| self.source.current_database().to_owned());
                 if database.is_empty() {
                     return Err(PlanError::from(
-                        tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+                        tidb_plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
                     ));
                 }
                 self.visit_info.push(visit(

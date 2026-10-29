@@ -835,7 +835,7 @@ fn an_unresolvable_name_names_its_clause() {
     let RewriteError::Mysql(error) = err else {
         panic!("{err:?}");
     };
-    assert!(error.equal(&tidb_error::plannererrors::ERR_UNKNOWN_COLUMN));
+    assert!(error.equal(&tidb_plannererrors::ERR_UNKNOWN_COLUMN));
     assert_eq!(error.message, "Unknown column 'a' in 'where clause'");
 }
 
@@ -851,7 +851,7 @@ fn a_hidden_column_is_not_referenceable() {
         .to_column(&f.inner(), &qualified("s", "b"))
         .expect_err("hidden");
     assert!(
-        matches!(&err, RewriteError::Mysql(error) if error.equal(&tidb_error::plannererrors::ERR_UNKNOWN_COLUMN))
+        matches!(&err, RewriteError::Mysql(error) if error.equal(&tidb_plannererrors::ERR_UNKNOWN_COLUMN))
     );
 }
 

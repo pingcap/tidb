@@ -337,7 +337,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         target_names: &[FieldName],
     ) -> Result<Option<usize>, PlanError> {
         let offset = super::find_field_name(target_names, &assignment.col).ok_or_else(|| {
-            PlanError::from(tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[tidb_hack::go_to_lower(assignment.col.join(".")).into(), "field list".into()]))
+            PlanError::from(tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[tidb_hack::go_to_lower(assignment.col.join(".")).into(), "field list".into()]))
         })?;
         if target.generated[offset] {
             let same = match &assignment.value {
@@ -350,7 +350,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             if same {
                 return Ok(None);
             }
-            return Err(PlanError::from(tidb_error::plannererrors::ERR_BAD_GENERATED_COLUMN.generate_with_stack_by_args(&[(target.columns[offset].0.clone()).into(), (target.table.clone()).into()])));
+            return Err(PlanError::from(tidb_plannererrors::ERR_BAD_GENERATED_COLUMN.generate_with_stack_by_args(&[(target.columns[offset].0.clone()).into(), (target.table.clone()).into()])));
         }
         Ok(Some(offset))
     }
@@ -387,7 +387,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         collect_references(value, &mut references);
         for path in &references.values {
             if super::find_field_name(&names[..target_len], path).is_none() {
-                return Err(PlanError::from(tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[tidb_hack::go_to_lower(path.join(".")).into(), "field list".into()])));
+                return Err(PlanError::from(tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[tidb_hack::go_to_lower(path.join(".")).into(), "field list".into()])));
             }
         }
         let saved_clause = self.cur_clause;

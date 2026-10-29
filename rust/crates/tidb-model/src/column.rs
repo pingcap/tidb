@@ -46,7 +46,7 @@ use tidb_datatype::GoString;
 use tidb_parser_types::parser_types_errors::ERR_INVALID_DEFAULT;
 use tidb_datatype::STRICT_INTEGER_DISPLAY_WIDTH;
 use tidb_mysql::errors::{errname, FormatArg};
-use tidb_error::terror::TerrorError;
+use tidb_terror::TerrorError;
 
 pub use crate::go_any::{ColumnDefaultValue, GoAny};
 use crate::go_runtime::{go_64_next_slice_capacity_for_element, GoShared, GoSharedPointerSlice};
@@ -989,7 +989,7 @@ impl DuplicateColumnError {
     /// Returns Go's table-local wire error number.
     #[must_use]
     pub const fn code(&self) -> u16 {
-        tidb_error::tidb::errcode::ErrFieldSpecifiedTwice
+        tidb_errno::errcode::ErrFieldSpecifiedTwice
     }
 }
 
@@ -1221,7 +1221,7 @@ mod tests {
         let err = bit
             .set_default_value(ColumnDefaultValue::Int(1))
             .unwrap_err();
-        assert_eq!(err.class(), tidb_error::terror::TerrorClass::Types);
+        assert_eq!(err.class(), tidb_terror::TerrorClass::Types);
         assert_eq!(err.code().value(), 1067);
         assert_eq!(err.to_sql_error().code, 1067);
         assert_eq!(err.to_sql_error().state, "42000");

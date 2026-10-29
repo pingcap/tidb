@@ -23,8 +23,8 @@
 use std::sync::LazyLock;
 
 use super::{std_err, Class};
-use crate::terror::TerrorError;
-use crate::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 
 /// Source `meta/autoid.errInvalidTableID` (`pkg/meta/autoid/errors.go:24`).
 pub static ERR_INVALID_TABLE_ID: LazyLock<TerrorError> =

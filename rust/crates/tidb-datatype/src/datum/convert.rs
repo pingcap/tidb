@@ -257,7 +257,7 @@ impl Datum {
     pub fn to_decimal_with_context(
         &self,
         context: &crate::ConversionContext<'_>,
-    ) -> Result<(Decimal, Option<tidb_error::terror::TerrorError>), DatumValueError> {
+    ) -> Result<(Decimal, Option<tidb_terror::TerrorError>), DatumValueError> {
         use crate::MyDecimal;
         let (parsed, float) = match self {
             Self::String(value) => {

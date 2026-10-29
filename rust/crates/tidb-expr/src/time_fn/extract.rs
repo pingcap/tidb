@@ -19,8 +19,8 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 
 fn number(result: Result<i64, tidb_datatype::TimeError>, unit: &str) -> Result<Datum, EvalError> {
     result.map(Datum::Int).map_err(|_| {
-        EvalError::Conversion(tidb_error::terror::TerrorError::compatible(
-            tidb_error::terror::TerrorCode::new(1105),
+        EvalError::Conversion(tidb_terror::TerrorError::compatible(
+            tidb_terror::TerrorCode::new(1105),
             format!("invalid unit {unit}"),
         ))
     })

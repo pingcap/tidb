@@ -252,7 +252,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             let group_name = &contents.resource_group_name;
             let text = self.with_catalog_mut(|catalog| {
                 let group = catalog.resource_group(group_name).ok_or_else(|| {
-                    DriverError::Mysql(tidb_error::MysqlError::from_terror(
+                    DriverError::Mysql(tidb_terror::MysqlError::from_terror(
                         &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_NOT_EXISTS
                             .generate_with_stack_by_args(&[group_name.into()]),
                     ))
@@ -419,7 +419,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             };
             table
                 .next_global_row_ids()
-                .map_err(|error| DriverError::from(tidb_error::MysqlError::unknown(error.0)))
+                .map_err(|error| DriverError::from(tidb_terror::MysqlError::unknown(error.0)))
         })?;
         Ok(ids
             .into_iter()
@@ -735,7 +735,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                 tidb_privilege::column_privs_mask(),
             ) {
                 return Err(DriverError::from(
-                    tidb_error::plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(
+                    tidb_plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(
                         &[
                             "SELECT".into(),
                             user.to_owned().into(),

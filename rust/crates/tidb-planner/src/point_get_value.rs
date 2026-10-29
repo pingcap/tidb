@@ -255,7 +255,7 @@ fn compares_equal(
 struct StatementWarnings<'a>(&'a dyn Columns);
 
 impl tidb_datatype::ConversionWarningAppender for StatementWarnings<'_> {
-    fn append_conversion_warning(&self, warning: tidb_error::terror::TerrorError) {
+    fn append_conversion_warning(&self, warning: tidb_terror::TerrorError) {
         let warning = warning.to_sql_error();
         self.0.append_sql_warn(tidb_context::SqlWarn::from_error(
             tidb_context::WarningLevel::Warning,

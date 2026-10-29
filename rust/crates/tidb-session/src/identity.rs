@@ -53,7 +53,7 @@ impl Session {
             return Ok(());
         };
         Err(DriverError::from(
-            tidb_error::plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(&[
+            tidb_plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(&[
                 privilege.print_name().into(),
                 user.to_owned().into(),
                 host.to_owned().into(),
@@ -73,7 +73,7 @@ impl Session {
             return Ok(());
         };
         Err(DriverError::from(
-            tidb_error::plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(&[
+            tidb_plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(&[
                 "SHOW".into(),
                 user.to_owned().into(),
                 host.to_owned().into(),
@@ -282,7 +282,7 @@ impl Session {
         }
         let (user, host) = self.current_identity().unwrap_or_default();
         Err(DriverError::from(
-            tidb_error::plannererrors::ERR_DBACCESS_DENIED.generate_with_stack_by_args(&[
+            tidb_plannererrors::ERR_DBACCESS_DENIED.generate_with_stack_by_args(&[
                 user.to_owned().into(),
                 host.to_owned().into(),
                 database.to_owned().into(),
@@ -335,7 +335,7 @@ impl Session {
     pub(crate) fn require_sem_visible_sysvar(&self, name: &str) -> Result<(), DriverError> {
         if self.sem_hides_sysvar(name) {
             Err(DriverError::from(
-                tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
                     .generate_with_stack_by_args(&["RESTRICTED_VARIABLES_ADMIN".into()]),
             ))
         } else {
@@ -691,7 +691,7 @@ impl Session {
         for (schema, table) in missing {
             if !self.has_any_scoped_privilege(&schema, &table, u64::MAX) {
                 return Err(DriverError::from(
-                    tidb_error::plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(
+                    tidb_plannererrors::ERR_TABLEACCESS_DENIED.generate_with_stack_by_args(
                         &[command.into(), user.into(), host.into(), table.into()],
                     ),
                 ));
@@ -799,7 +799,7 @@ impl Session {
                     .is_some_and(|name| self.is_local_temporary_table_path(name))
                 {
                     return Err(DriverError::from(
-                        tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                        tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                             .generate_with_stack_by_args(&["create table like".into()]),
                     ));
                 }
@@ -823,7 +823,7 @@ impl Session {
                             })
                         {
                             return Err(DriverError::from(
-                                tidb_error::plannererrors::ERR_DROP_TABLE_ON_TEMPORARY_TABLE
+                                tidb_plannererrors::ERR_DROP_TABLE_ON_TEMPORARY_TABLE
                                     .generate_with_stack_by_args(&[]),
                             ));
                         }
@@ -906,7 +906,7 @@ impl Session {
             }
             if let Some(denial) = request.specific_denial {
                 return Err(DriverError::from(
-                    tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
+                    tidb_plannererrors::ERR_SPECIFIC_ACCESS_DENIED
                         .generate_with_stack_by_args(&[denial.to_owned().into()]),
                 ));
             }
@@ -914,7 +914,7 @@ impl Session {
                 // Go `ErrPrivilegeCheckFail.GenWithStackByArgs(v.dynamicPrivs)`
                 // prints the slice.
                 return Err(DriverError::from(
-                    tidb_error::plannererrors::ERR_PRIVILEGE_CHECK_FAIL
+                    tidb_plannererrors::ERR_PRIVILEGE_CHECK_FAIL
                         .generate_with_stack_by_args(&[(format!(
                             "[{}]",
                             request.dynamic_privileges.join(" ")
@@ -927,7 +927,7 @@ impl Session {
             }
             return Err(if request.database_named_in_error {
                 DriverError::from(
-                    tidb_error::plannererrors::ERR_DBACCESS_DENIED.generate_with_stack_by_args(&[
+                    tidb_plannererrors::ERR_DBACCESS_DENIED.generate_with_stack_by_args(&[
                         user.into(),
                         host.into(),
                         (request
@@ -944,7 +944,7 @@ impl Session {
                 // `requireInsertAndSelectPriv`).
                 match &request.table_error_override {
                     Some((command, table)) => DriverError::from(
-                        tidb_error::plannererrors::ERR_TABLEACCESS_DENIED
+                        tidb_plannererrors::ERR_TABLEACCESS_DENIED
                             .generate_with_stack_by_args(&[
                                 command.into(),
                                 user.into(),
@@ -953,7 +953,7 @@ impl Session {
                             ]),
                     ),
                     None => DriverError::from(
-                        tidb_error::plannererrors::ERR_TABLEACCESS_DENIED
+                        tidb_plannererrors::ERR_TABLEACCESS_DENIED
                             .generate_with_stack_by_args(&[
                                 request.privilege.print_name().into(),
                                 user.into(),
@@ -964,7 +964,7 @@ impl Session {
                 }
             } else {
                 DriverError::from(
-                    tidb_error::plannererrors::ERR_PRIVILEGE_CHECK_FAIL
+                    tidb_plannererrors::ERR_PRIVILEGE_CHECK_FAIL
                         .generate_with_stack_by_args(&[(request
                             .privilege
                             .check_fail_name()
@@ -1342,7 +1342,7 @@ impl Session {
 /// Go `plannererrors.ErrViewNoExplain` (1345).
 fn view_no_explain() -> DriverError {
     DriverError::Mysql(tidb_executor::MysqlError::from_terror(
-        &tidb_error::plannererrors::ERR_VIEW_NO_EXPLAIN.generate_with_stack_by_args(&[]),
+        &tidb_plannererrors::ERR_VIEW_NO_EXPLAIN.generate_with_stack_by_args(&[]),
     ))
 }
 

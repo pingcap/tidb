@@ -1452,7 +1452,7 @@ fn a_having_subquery_may_only_correlate_to_the_aggregations_output() {
     ] {
         let error = run_select_on(sql, &catalog, &crate::StmtContext::for_query()).unwrap_err();
         assert!(
-            error.equal(&tidb_error::plannererrors::ERR_UNKNOWN_COLUMN),
+            error.equal(&tidb_plannererrors::ERR_UNKNOWN_COLUMN),
             "expected 1054 for `{sql}`, got {error:?}"
         );
         assert_eq!(

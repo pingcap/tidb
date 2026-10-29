@@ -1,0 +1,15 @@
+[package]
+name = "tidb-errctx"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/errctx: how a statement handles each class of error (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-errno = { path = "../tidb-errno" }
+tidb-terror = { path = "../tidb-terror" }

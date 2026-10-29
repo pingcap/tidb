@@ -1226,7 +1226,7 @@ impl Session {
                 Some(_) => {
                     // Go refuses a statement naming two different instants.
                     return Err(DriverError::from(
-                        tidb_error::plannererrors::ERR_AS_OF.generate_with_stack_by_args(&[
+                        tidb_plannererrors::ERR_AS_OF.generate_with_stack_by_args(&[
                             ("can not set different time in the as of".to_owned()).into(),
                         ]),
                     ));
@@ -1241,7 +1241,7 @@ impl Session {
             self.vars.use_txn_read_ts();
             self.cleanup_txn_read_ts();
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_AS_OF.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_AS_OF.generate_with_stack_by_args(&[
                     "can't use select as of while already set transaction as of".into(),
                 ]),
             ));
@@ -1422,7 +1422,7 @@ impl Session {
                 String::from_utf8_lossy(stmt.text()).into_owned()
             };
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_NOT_SUPPORTED_WITH_SEM
+                tidb_plannererrors::ERR_NOT_SUPPORTED_WITH_SEM
                     .generate_with_stack_by_args(&[statement.into()]),
             ));
         }
@@ -1461,7 +1461,7 @@ impl Session {
         // pseudo column is not yet usable by SELECT, UPDATE or DELETE.
         if scan.names_commit_ts {
             return Err(DriverError::Mysql(tidb_executor::MysqlError::from_terror(
-                &tidb_error::plannererrors::ERR_INTERNAL.generate_with_stack(format!(
+                &tidb_plannererrors::ERR_INTERNAL.generate_with_stack(format!(
                     "Usage of column name '{}' is not supported for now",
                     tidb_planner::plan_builder::EXTRA_COMMIT_TS_NAME
                 )),
@@ -1515,7 +1515,7 @@ impl Session {
         }
         if scan.has_as_of && self.in_transaction() {
             return Err(DriverError::from(
-                tidb_error::plannererrors::ERR_AS_OF.generate_with_stack_by_args(&[
+                tidb_plannererrors::ERR_AS_OF.generate_with_stack_by_args(&[
                     "as of timestamp can't be set in transaction.".into(),
                 ]),
             ));
@@ -2152,7 +2152,7 @@ impl Session {
                         // `executor/executor.go`'s `Unsupported type
                         // *ast.CallStmt` (8108), not a generic 1105.
                         Err(DriverError::from(
-                            (&tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE)
+                            (&tidb_plannererrors::ERR_UNSUPPORTED_TYPE)
                                 .generate_with_stack("Unsupported type *ast.CallStmt".to_owned()),
                         ))
                     }

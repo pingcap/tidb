@@ -2337,7 +2337,7 @@ impl<'s> ClusterServerSession<'s> {
             // own failure and is reported at prepare time.
             Err(error)
                 if error.clone().to_mysql_error().identity.is_some_and(|identity| {
-                    identity.class() == tidb_error::terror::TerrorClass::Variable
+                    identity.class() == tidb_terror::TerrorClass::Variable
                 }) =>
             {
                 return Err(map_error(error))

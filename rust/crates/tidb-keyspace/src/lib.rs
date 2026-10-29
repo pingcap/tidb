@@ -32,8 +32,8 @@ use tidb_config::config_tree::config::get_global_keyspace_name;
 use tidb_config_deploymode as deploymode;
 use tidb_config_kerneltype as kerneltype;
 use tidb_mysql::errors::FormatArg;
-use tidb_error::terror::TerrorError;
-use tidb_error::tidb::errcode;
+use tidb_terror::TerrorError;
+use tidb_errno::errcode;
 use tidb_mysql::errors::ErrMessage;
 use tidb_log::{Field, Value};
 

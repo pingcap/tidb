@@ -46,7 +46,7 @@ pub(super) fn assert_undetermined_closes_without_packet(query_error: &SqlQueryEr
     );
     assert_eq!(
         query_error.message,
-        tidb_error::terror::ERR_RESULT_UNDETERMINED.message()
+        tidb_terror::ERR_RESULT_UNDETERMINED.message()
     );
 }
 

@@ -393,7 +393,7 @@ pub struct ExprRewriterPlanCtx {
 pub enum RewriteError {
     /// The error value Go's rewriter raises as it is (`ErrUnknownColumn`,
     /// `ErrAmbiguous`, ...).
-    Mysql(tidb_error::MysqlError),
+    Mysql(tidb_terror::MysqlError),
     /// Go `errors.New("We don't support <=> all or <=> any now")`.
     NullEqQuantifierUnsupported,
     /// A scalar function the builder refused, with Go's message.
@@ -781,7 +781,7 @@ impl<C: Columns> Drop for ExpressionRewriter<'_, C> {
         for warning in self.hint_warnings.drain(..) {
             self.env
                 .ctx
-                .append_go_warning(&tidb_error::plannererrors::ERR_INTERNAL, &warning);
+                .append_go_warning(&tidb_plannererrors::ERR_INTERNAL, &warning);
         }
     }
 }
@@ -2087,8 +2087,8 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
     ) -> Result<(), RewriteError> {
         let clause = self.clause();
         let idx = find_field_name(&self.names, v).map_err(|_| {
-            RewriteError::Mysql(tidb_error::MysqlError::from_terror(
-                &tidb_error::plannererrors::ERR_AMBIGUOUS.generate_with_stack_by_args(&[
+            RewriteError::Mysql(tidb_terror::MysqlError::from_terror(
+                &tidb_plannererrors::ERR_AMBIGUOUS.generate_with_stack_by_args(&[
                     v.column.original.clone().into(),
                     ClauseCode::FieldList.message().into(),
                 ]),
@@ -2100,8 +2100,8 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             let name = self.names[idx].clone();
             if column.is_hidden {
                 return Err(RewriteError::Mysql(
-                    tidb_error::MysqlError::from_terror(
-                        &tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(
+                    tidb_terror::MysqlError::from_terror(
+                        &tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(
                             &[
                                 tidb_hack::go_to_lower(v.column.original.clone()).into(),
                                 clause.message().into(),
@@ -2125,8 +2125,8 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         for i in (0..self.plan_ctx.outer_schemas.len()).rev() {
             let outer_names = &self.plan_ctx.outer_names[i];
             let idx = find_field_name(outer_names, v).map_err(|_| {
-                RewriteError::Mysql(tidb_error::MysqlError::from_terror(
-                    &tidb_error::plannererrors::ERR_AMBIGUOUS.generate_with_stack_by_args(&[
+                RewriteError::Mysql(tidb_terror::MysqlError::from_terror(
+                    &tidb_plannererrors::ERR_AMBIGUOUS.generate_with_stack_by_args(&[
                         v.column.original.clone().into(),
                         ClauseCode::FieldList.message().into(),
                     ]),
@@ -2143,8 +2143,8 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             }
         }
         Err(RewriteError::Mysql(
-            tidb_error::MysqlError::from_terror(
-                &tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+            tidb_terror::MysqlError::from_terror(
+                &tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
                     tidb_hack::go_to_lower(v.column.original.clone()).into(),
                     clause.message().into(),
                 ]),
@@ -2417,8 +2417,8 @@ fn lookup_full_names<'p>(
     };
     match find_field_name(full_names, column) {
         Err(_) => Err(RewriteError::Mysql(
-            tidb_error::MysqlError::from_terror(
-                &tidb_error::plannererrors::ERR_AMBIGUOUS.generate_with_stack_by_args(&[
+            tidb_terror::MysqlError::from_terror(
+                &tidb_plannererrors::ERR_AMBIGUOUS.generate_with_stack_by_args(&[
                     column.column.original.clone().into(),
                     ClauseCode::FieldList.message().into(),
                 ]),

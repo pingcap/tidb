@@ -1708,8 +1708,8 @@ fn default_evaluator_using<'a>(
     move |database, table, column| {
         let entry = catalog.table_in(database, table).ok_or_else(|| {
             // Go `is.TableByName` failing.
-            tidb_expr::EvalError::Conversion(tidb_error::terror::TerrorError::compatible(
-                tidb_error::terror::TerrorCode::new(1146),
+            tidb_expr::EvalError::Conversion(tidb_terror::TerrorError::compatible(
+                tidb_terror::TerrorCode::new(1146),
                 format!("Table '{database}.{table}' doesn't exist"),
             ))
         })?;
@@ -1738,9 +1738,9 @@ fn default_evaluator_using<'a>(
                     error => {
                         let error = error.to_mysql_error();
                         tidb_expr::EvalError::Conversion(
-                            tidb_error::terror::TerrorError::registered(
-                                tidb_error::terror::TerrorClass::Types,
-                                tidb_error::terror::TerrorCode::new(error.code as isize),
+                            tidb_terror::TerrorError::registered(
+                                tidb_terror::TerrorClass::Types,
+                                tidb_terror::TerrorCode::new(error.code as isize),
                                 error.message,
                             ),
                         )
@@ -3828,7 +3828,7 @@ mod statistics_initialization_tests {
                     tidb_ranger::points::PointBuilderError::Unsupported(message) => {
                         assert!(message.ends_with("is not evaluated"));
                         tidb_planner::plan_base::PlanError::from(
-                            tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE
+                            tidb_plannererrors::ERR_UNSUPPORTED_TYPE
                                 .generate_with_stack(message),
                         )
                     }
@@ -3858,7 +3858,7 @@ mod statistics_initialization_tests {
                 } else {
                     assert_eq!(optimized.err(), expected_error.clone());
                     if let Some(error) = expected_error {
-                        if error.equal(&tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE) {
+                        if error.equal(&tidb_plannererrors::ERR_UNSUPPORTED_TYPE) {
                             let expected_message = error.to_string();
                             let crate::DriverError::Mysql(mysql) =
                                 crate::driver::planner_error_to_driver(error)
@@ -3897,7 +3897,7 @@ mod subquery_error_identity_tests {
         assert_eq!(back.code, 3636);
         assert_eq!(
             back.message,
-            tidb_error::MysqlError::from_terror(&raised).message
+            tidb_terror::MysqlError::from_terror(&raised).message
         );
     }
 }

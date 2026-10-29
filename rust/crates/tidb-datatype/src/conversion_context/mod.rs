@@ -19,7 +19,7 @@ mod flags;
 use std::borrow::Cow;
 use std::fmt;
 
-use tidb_error::terror::TerrorError;
+use tidb_terror::TerrorError;
 
 pub use flags::{ConversionFlags, DateModes, DEFAULT_STATEMENT_FLAGS, STRICT_FLAGS};
 

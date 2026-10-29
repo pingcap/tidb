@@ -11,7 +11,7 @@ description = "TiDB pkg/domain/affinity: the table affinity manager (Rust)."
 workspace = true
 
 [dependencies]
-tidb-error = { path = "../tidb-error" }
+tidb-errno = { path = "../tidb-errno" }
 serde.workspace = true
 tracing = "0.1"
 base64.workspace = true

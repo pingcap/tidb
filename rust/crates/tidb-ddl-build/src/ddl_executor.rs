@@ -15,7 +15,7 @@
 //! Go `pkg/ddl/executor.go`'s session-interruption and cancellation
 //! helpers, and its TiFlash replica admission.
 
-use tidb_error::terror::TerrorError;
+use tidb_terror::TerrorError;
 use tidb_dbterror::{self as dbterror, exeerrors};
 use tidb_sqlkiller::{KillSignal, SqlKiller};
 
@@ -70,8 +70,8 @@ pub fn is_retryable_ddl_cancel_err(error: &(dyn std::error::Error + 'static)) ->
 pub fn is_table_tiflash_supported(
     db_name: &str,
     table: &tidb_model::table_info::TableInfo,
-) -> Result<(), tidb_error::MysqlError> {
-    use tidb_error::MysqlError;
+) -> Result<(), tidb_terror::MysqlError> {
+    use tidb_terror::MysqlError;
     use tidb_hack::GoToLower;
     if tidb_metadef::db::is_mem_or_sys_db(&db_name.go_to_lower()) {
         return Err(MysqlError::from_terror(
