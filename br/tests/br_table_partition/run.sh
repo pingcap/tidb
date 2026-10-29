@@ -81,3 +81,28 @@ if $fail; then
 fi
 
 run_sql "DROP DATABASE $DB;"
+
+# Exercise filtered restore without checkpoints, then schema/table name routing.
+for mode in no-checkpoint rename-schema rename-table; do
+    target_db=$DB
+    target_table=${TABLE}1
+    args=(--filter "$DB.${TABLE}1")
+    case "$mode" in
+        no-checkpoint) args+=(--use-checkpoint=false) ;;
+        rename-schema)
+            target_db=${DB}_renamed
+            args+=(--with-sys-table=false --rename "$DB:$target_db")
+            ;;
+        rename-table)
+            target_table=renamed_table
+            args+=(--with-sys-table=false --rename "$DB.${TABLE}1:$DB.$target_table")
+            ;;
+    esac
+    run_br restore full -s "local://$TEST_DIR/$DB" --pd "$PD_ADDR" "${args[@]}"
+    run_sql "SET tidb_enable_fast_table_check=0; ADMIN CHECK TABLE $target_db.$target_table;"
+    restored_count=$(run_sql "SELECT COUNT(*) FROM $target_db.$target_table;" | awk '/COUNT/{print $2}')
+    test "$restored_count" = "${row_count_ori[1]}"
+    table_count=$(run_sql "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$target_db';" | awk '/COUNT/{print $2}')
+    test "$table_count" = 1
+    run_sql "DROP DATABASE $target_db;"
+done
