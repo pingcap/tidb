@@ -12,6 +12,8 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-infoschema-isvalidator = { path = "../tidb-infoschema-isvalidator" }
+tidb-stats-handle-usage-indexusage = { path = "../tidb-stats-handle-usage-indexusage" }
 tidb-keyspace = { path = "../tidb-keyspace" }
 tidb-ddl = { path = "../tidb-ddl" }
 tidb-keydecoder = { path = "../tidb-keydecoder" }

@@ -40,7 +40,7 @@ use tidb_executor::sequence::{SequenceAllocator, SequenceInfo as SeqCounterInfo}
 use tidb_model::TableInfo;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 
-use tidb_cluster::table_from_meta::{AutoIdKind, TableAutoIds};
+use tidb_ddl_build::table_from_meta::{AutoIdKind, TableAutoIds};
 
 /// This node's allocators, keyed by table id.
 ///

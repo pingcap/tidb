@@ -24,7 +24,7 @@ use tidb_datatype::ConversionWarningAppender;
 use tidb_error::terror::TerrorError;
 
 /// SHOW WARNINGS levels, Go `contextutil.WarnLevel*`.
-pub use tidb_util::context::WarningLevel;
+pub use crate::context::WarningLevel;
 
 /// One ordered statement warning.
 #[derive(Clone, Debug, PartialEq, Eq)]

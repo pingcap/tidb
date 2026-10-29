@@ -53,7 +53,7 @@ impl DelRangeEmulator {
 pub fn start_del_range_emulator<S>(
     opener: Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
-    row_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<DelRangeEmulator, String>
 where
     S: StoreClient,
@@ -69,7 +69,7 @@ where
 fn run_emulator<S>(
     opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
-    row_ids: &Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: &Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
     woken: &Receiver<()>,
 ) where
     S: StoreClient,
@@ -102,7 +102,7 @@ struct DelRangeTables {
 pub fn do_del_range_work<S>(
     opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
-    row_ids: &Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: &Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(), ClusterDdlError>
 where
     S: StoreClient,
@@ -132,7 +132,7 @@ where
 fn do_task<S>(
     opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
-    row_ids: &Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: &Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
     tables: &DelRangeTables,
     row: &StoredDelRange,
 ) -> Result<(), ClusterDdlError>
@@ -206,7 +206,7 @@ where
 fn complete_delete_range<S>(
     opener: &Arc<RealOptimisticTransactionOpener<S>>,
     timeout: Duration,
-    row_ids: &Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: &Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
     tables: &DelRangeTables,
     task: &crate::ddl_delete_range::DelRangeTask,
 ) -> Result<(), ClusterDdlError>

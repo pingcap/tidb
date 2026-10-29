@@ -211,7 +211,7 @@ fn rewrite_partition_query_string(
         .iter_deref()
         .partition(|column| !column.read().hidden);
     columns.extend(hidden);
-    let spec = tidb_cluster::table_from_meta::partition_spec_for(&columns, &partition.read())
+    let spec = tidb_ddl_build::table_from_meta::partition_spec_for(&columns, &partition.read())
         .map_err(DdlAdmissionError::from_mysql_error)?;
     let definitions = tidb_ddl_build::table_partition::append_partition_defs(
         &spec.definitions,
@@ -5270,7 +5270,7 @@ pub fn plan_persisted_ddl_job_step<S: MetaSnapshot>(
     start_ts: u64,
     schema_state: DdlJobSchemaState,
     load_error_count_limit: &dyn Fn() -> i64,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobPlan, DdlPlanError> {
     let reorg_outcomes = schema_state.reorg.clone();
     plan_persisted_ddl_job_with(
@@ -5302,7 +5302,7 @@ fn plan_persisted_action<S: MetaSnapshot>(
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcomes: &[add_index::ReorgOutcome],
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     // A job of its own reads the latest outcome; a multi-schema change hands
     // each sub-job its own.
@@ -5489,7 +5489,7 @@ fn plan_persisted_ddl_job_with<S: MetaSnapshot>(
         &ClusterCatalog,
         &mut crate::ddl_job_table::ActiveDdlJob,
     ) -> Result<PersistedDdlActionStep, DdlPlanError>,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobPlan, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
     let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
@@ -5697,7 +5697,7 @@ fn finish_persisted_ddl_job<S: MetaSnapshot>(
     job_table: &crate::ddl_job_table::DdlJobTable,
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
     if active.job.state == JobState::DONE {
         active.job.state = JobState::SYNCED;
@@ -6463,7 +6463,7 @@ fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     active: &mut crate::ddl_job_table::ActiveDdlJob,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let ddl_job_id = active.job.id;
 
@@ -6645,7 +6645,7 @@ fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     active: &mut crate::ddl_job_table::ActiveDdlJob,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let ddl_job_id = active.job.id;
 
@@ -7303,7 +7303,7 @@ pub fn plan_persisted_ddl_job_failure<S: MetaSnapshot>(
     start_ts: u64,
     failure: PersistedDdlJobFailure,
     load_error_count_limit: &dyn Fn() -> i64,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlJobStep, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
     let job_table = crate::ddl_job_table::DdlJobTable::locate(&catalog)
@@ -7877,7 +7877,7 @@ fn stored_partition_spec(
         ))
     })?;
     let columns = stored.columns.iter_deref().collect::<Vec<_>>();
-    tidb_cluster::table_from_meta::partition_spec_for(&columns, &partition.read())
+    tidb_ddl_build::table_from_meta::partition_spec_for(&columns, &partition.read())
         .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error)))
 }
 
@@ -8999,7 +8999,7 @@ fn append_schema_change_mutations(
     ddl_job_id: i64,
     events: &[(i64, SchemaChangeEvent)],
     writes: &mut Vec<BufferMutation>,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(), DdlPlanError> {
     if events.is_empty() {
         return Ok(());

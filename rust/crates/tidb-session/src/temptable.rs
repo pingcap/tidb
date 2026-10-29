@@ -95,7 +95,7 @@ impl TemporaryTableDdl<'_> {
         info.db_id = db.id;
         let id = self.sctx.gen_global_id()?;
         let name = go_to_lower(info.name.original());
-        let table = tidb_cluster::table_from_meta::new_temporary_table_from_table_info(info, id)
+        let table = tidb_ddl_build::table_from_meta::new_temporary_table_from_table_info(info, id)
             .map_err(DriverError::unsupported)?;
         self.sctx
             .local_temporary_tables

@@ -34,7 +34,7 @@
 //! conflicting DDL, or after the node lost contact with the schema for longer
 //! than the lease, is refused with `ErrInfoSchemaChanged` (8028) or
 //! `ErrInfoSchemaExpired` (8027) rather than committing against a stale
-//! plan. The validator is [`crate::schema_validator`]; the node's reload
+//! plan. The validator is [`tidb_infoschema_isvalidator`]; the node's reload
 //! pass renews its lease on every pass and records each diff's changed
 //! tables, and the transaction tier asks it at commit
 //! (`tidb_txnkv::transaction::SchemaLeaseChecker`).

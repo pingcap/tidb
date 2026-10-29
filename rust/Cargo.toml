@@ -38,6 +38,7 @@ members = [
     "crates/tidb-executor",
     "crates/tidb-expensivequery",
     "crates/tidb-infoschema",
+    "crates/tidb-infoschema-isvalidator",
     "crates/tidb-stats-handle",
     "crates/tidb-sessionctx",
     "crates/tidb-stmtctx",

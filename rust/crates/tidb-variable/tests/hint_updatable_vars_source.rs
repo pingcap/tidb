@@ -14,7 +14,7 @@
 
 //! Source-backed tests for SET_VAR hint-updatable variables.
 
-use tidb_exec::hint_updatable_vars::{
+use tidb_variable::hint_updatable_vars::{
     is_hint_updatable_verified, HINT_UPDATABLE_VARIABLES,
     SYSVAR_DECLARED_HINT_UPDATABLE_VARIABLES,
 };

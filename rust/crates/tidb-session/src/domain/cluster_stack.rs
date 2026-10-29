@@ -228,7 +228,7 @@ pub fn cluster_session_stack(
     // table allocates from the one range this node reserved -- Go's
     // per-`tidb-server` allocator, not a per-session one. The statistics
     // writers allocate their `mysql.*` rows from it too.
-    let node_auto_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds> = Arc::new(
+    let node_auto_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds> = Arc::new(
         crate::domain::cluster_auto_id_seam::ClusterTableAutoIds::new(
             authority.transaction_opener(),
             CONTROL_PLANE_TIMEOUT,

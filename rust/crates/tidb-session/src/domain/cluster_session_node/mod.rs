@@ -184,7 +184,7 @@ use tidb_ast::Stmt;
 use tidb_cluster::catalog_watch::SharedCatalog as SharedClusterCatalog;
 use tidb_cluster::cluster_catalog::ClusterCatalog;
 use tidb_cluster::real_tikv_catalog::SnapshotMetaSnapshot;
-use tidb_cluster::schema_validator::SchemaValidator;
+use tidb_infoschema_isvalidator::SchemaValidator;
 use tidb_ddl::cluster_ddl::DdlStatement;
 use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_load_stats::prepare_cluster_load_stats_parsed;

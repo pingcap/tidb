@@ -420,7 +420,7 @@ pub struct Session {
     /// start with its digest (Go `StmtCtx.SQLDigest`) and consumed by the
     /// memory arbitration key; `None` when arbitration is off.
     statement_normalized_sql: Option<String>,
-    statement_observation: Option<tidb_exec::exec_stmt_observation::StatementObservation>,
+    statement_observation: Option<tidb_executor::exec_stmt_observation::StatementObservation>,
     pending_observation_parse: Option<(String, Duration)>,
     pending_statement_exec_details: Option<observation::PendingStatementExecDetails>,
     routed_statement_observation_depth: u32,

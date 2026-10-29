@@ -21,7 +21,6 @@ mod analyze_generated_column_source;
 mod analyze_panic_error_source;
 mod cluster_account_write_source;
 mod cluster_config_source;
-mod cluster_index_id_source;
 mod cluster_sysvar_write_source;
 mod column_flag_builders_agree_source;
 mod cop_scan_narrowed_output_source;
@@ -32,7 +31,6 @@ mod direct_unary_cancellation_source;
 mod distsql_query_runtime_source;
 mod explain_source;
 mod fair_locking_session_seam_realtikv_source;
-mod hint_updatable_vars_source;
 mod index_type_passthrough_source;
 mod mysql_bootstrap_classic_source;
 mod mysql_bootstrap_source;
@@ -41,7 +39,6 @@ mod pd_approximate_count_source;
 mod statement_exec_details_source;
 mod tikv_scan_dag_lowering_source;
 mod txn_summary_source;
-mod warning_publication_source;
 mod wide_scan_selection_source;
 
 

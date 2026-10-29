@@ -44,7 +44,7 @@ use tidb_cluster::catalog_watch::{
 use crate::ddl_systable::MinJobIdRefresher;
 use tidb_cluster::mdl_info_load::{load_mdl_jobs, MdlJob};
 use tidb_cluster::mysql_system_tables::SystemTableError;
-use tidb_cluster::schema_validator::{SchemaValidator, Validator as _};
+use tidb_infoschema_isvalidator::{SchemaValidator, Validator as _};
 use tidb_pd_client::EtcdClient;
 use tidb_schemaver::etcd_syncer::new_etcd_syncer;
 use tidb_schemaver::{Context as SchemaVersionContext, Recv, Syncer as SchemaVersionSyncer};

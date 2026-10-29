@@ -32,9 +32,9 @@ use chrono::{Datelike, Timelike, Utc};
 use tidb_cluster::catalog_watch::SharedCatalog as SharedClusterCatalog;
 use tidb_cluster::cluster_catalog::ClusterCatalog;
 use tidb_cluster::real_tikv_catalog::SnapshotMetaSnapshot;
-use tidb_cluster::schema_validator::SchemaValidator;
+use tidb_infoschema_isvalidator::SchemaValidator;
 use tidb_cluster::sql_query_error::SqlQueryError;
-use tidb_cluster::table_from_meta::TableAutoIds;
+use tidb_ddl_build::table_from_meta::TableAutoIds;
 use tidb_ddl::worker::ClusterDdl;
 use tidb_domain::global_sysvars::GlobalSysvars;
 use tidb_domain::historical_stats::{

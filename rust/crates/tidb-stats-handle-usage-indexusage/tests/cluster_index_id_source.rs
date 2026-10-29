@@ -14,7 +14,7 @@
 
 //! Source-backed tests for clustered-index ID selection.
 
-use tidb_exec::cluster_index_id::{cluster_index_id, ClusterIndexTableInfo, IndexInfo};
+use tidb_stats_handle_usage_indexusage::cluster_index_id::{cluster_index_id, ClusterIndexTableInfo, IndexInfo};
 
 #[test]
 fn cluster_index_id_matches_source_table_matrix() {

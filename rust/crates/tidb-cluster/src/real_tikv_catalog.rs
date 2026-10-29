@@ -294,7 +294,7 @@ pub fn reload_catalog_from_cluster<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
     current: &ClusterCatalog,
-    row_ids: &std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<ReloadedCatalogAt, ClusterCatalogError> {
     let mut transaction = opener
         .begin_read_only()
@@ -336,11 +336,11 @@ pub struct ReloadedCatalogAt {
 /// hit reports `oldSchemaVersion` as 0 (`loader.go:196`), and so does an
 /// unchanged pass here.
 pub fn note_reload(
-    validator: &crate::schema_validator::SchemaValidator,
+    validator: &tidb_infoschema_isvalidator::SchemaValidator,
     current_version: i64,
     at: ReloadedCatalogAt,
 ) -> crate::catalog_watch::CatalogReloadPass {
-    use crate::schema_validator::Validator as _;
+    use tidb_infoschema_isvalidator::Validator as _;
     let ReloadedCatalogAt {
         lease_grant_ts,
         reloaded,

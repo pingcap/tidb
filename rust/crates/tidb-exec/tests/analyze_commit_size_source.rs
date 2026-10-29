@@ -90,7 +90,7 @@ struct MetaStore {
     fail_scan_prefix: Option<Vec<u8>>,
     /// The node's row-ID allocators Go's internal INSERTs draw from; each
     /// reservation commits on its own, outside the planned write set.
-    row_ids: std::sync::Arc<tidb_cluster::table_from_meta::LocalTableAutoIds>,
+    row_ids: std::sync::Arc<tidb_ddl_build::table_from_meta::LocalTableAutoIds>,
 }
 
 impl MetaSnapshot for MetaStore {
@@ -3953,7 +3953,7 @@ fn live_stats_dump_refreshes_meta_after_loading_payload() {
 fn stats_writes_allocate_from_the_node_allocator_like_go() {
     let mut store = bootstrapped();
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
-    let allocators = tidb_exec::table_from_meta::LocalTableAutoIds::default();
+    let allocators = tidb_ddl_build::table_from_meta::LocalTableAutoIds::default();
     let mut job_ids = Vec::new();
     for _ in 0..2 {
         let (job_id, insert) = {

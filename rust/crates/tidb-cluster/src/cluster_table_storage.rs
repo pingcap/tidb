@@ -234,7 +234,7 @@ fn acquire_statement_locks<S: StoreClient>(
         }
         Err(failure) => {
             if let PessimisticLockFailure::Deadlock(detail) = &failure {
-                crate::deadlock_recording::record_deadlock(detail);
+                tidb_deadlockhistory::recording::record_deadlock(detail);
             }
             // Go `handlePessimisticLockError`: `ErrKeyExists` fails the
             // statement only; the transaction keeps its earlier writes and

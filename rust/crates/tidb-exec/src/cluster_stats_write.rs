@@ -286,7 +286,7 @@ pub fn plan_insert_analyze_job<S: MetaSnapshot>(
     instance: &str,
     process_id: u64,
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(AnalyzeJobId, StatsWritePlan), StatsWriteError> {
     let table = locate(catalog, "analyze_jobs")?;
     let job_id = allocate_row_id(catalog, table, row_ids)?;
@@ -347,7 +347,7 @@ fn plan_update_analyze_job<S: MetaSnapshot>(
     job_id: AnalyzeJobId,
     now: Time,
     update: impl FnOnce(&TableInfo, &mut RowValues),
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let table = locate(catalog, "analyze_jobs")?;
     let id_column = column_id(table, "id")?;
@@ -378,7 +378,7 @@ pub fn plan_start_analyze_job<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     job_id: AnalyzeJobId,
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     plan_update_analyze_job(
         snapshot,
@@ -409,7 +409,7 @@ pub fn plan_update_analyze_job_progress<S: MetaSnapshot>(
     job_id: AnalyzeJobId,
     processed_rows: i64,
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     plan_update_analyze_job(
         snapshot,
@@ -446,7 +446,7 @@ pub fn plan_finish_analyze_job<S: MetaSnapshot>(
     processed_rows: i64,
     failure: Option<&str>,
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     plan_update_analyze_job(
         snapshot,
@@ -533,7 +533,7 @@ pub fn plan_cleanup_corrupted_analyze_jobs_on_current_instance<S: MetaSnapshot>(
     instance: &str,
     current_analyze_process_ids: &HashSet<u64>,
     cutoff: &Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     plan_cleanup_corrupted_analyze_jobs(
         snapshot,
@@ -558,7 +558,7 @@ pub fn plan_cleanup_corrupted_analyze_jobs_on_dead_instances<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     alive_instances: &HashSet<String>,
     cutoff: &Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     plan_cleanup_corrupted_analyze_jobs(
         snapshot,
@@ -581,7 +581,7 @@ fn plan_cleanup_corrupted_analyze_jobs<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     cutoff: &Time,
     select: impl Fn(&TableInfo, &RowValues) -> Result<bool, StatsWriteError>,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let table = locate(catalog, "analyze_jobs")?;
     let state = column_id(table, "state")?;
@@ -708,7 +708,7 @@ pub fn plan_analyze_options_write<S: MetaSnapshot>(
     raw: AnalyzeOptionOverrides,
     columns: &AnalyzeColumnChoice,
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let stored = locate(catalog, "analyze_options")?;
     let mut rows = StatsRows::open(snapshot, stored, &["table_id"], physical_id)?;
@@ -795,7 +795,7 @@ pub fn plan_stats_write<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     stats: &ClusterTableStats,
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     plan_stats_write_impl(snapshot, catalog, stats, now, true, false, None, row_ids)
 }
@@ -806,7 +806,7 @@ pub fn plan_partition_stats_write<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     stats: &ClusterTableStats,
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     plan_stats_write_impl(snapshot, catalog, stats, now, true, true, None, row_ids)
 }
@@ -818,7 +818,7 @@ pub fn plan_partial_stats_write<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     stats: &ClusterTableStats,
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     plan_stats_write_impl(snapshot, catalog, stats, now, false, false, None, row_ids)
 }
@@ -829,7 +829,7 @@ pub fn plan_partial_partition_stats_write<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     stats: &ClusterTableStats,
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     plan_stats_write_impl(snapshot, catalog, stats, now, false, true, None, row_ids)
 }
@@ -846,7 +846,7 @@ pub fn plan_analyze_stats_write<S: MetaSnapshot>(
     meta: AnalyzeStatsMeta,
     scope: AnalyzeStatsWriteScope,
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let (replace_all, dump_fm) = match scope {
         AnalyzeStatsWriteScope::FullTable => (true, false),
@@ -881,7 +881,7 @@ pub fn plan_independent_index_stats_write<S: MetaSnapshot>(
     stats: &ClusterTableStats,
     now: Time,
     dump_fm: bool,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(StatsWritePlan, bool), StatsWriteError> {
     let mut plan = StatsWritePlan::default();
     let inserted_meta =
@@ -903,7 +903,7 @@ fn plan_stats_write_impl<S: MetaSnapshot>(
     replace_all: bool,
     dump_fm: bool,
     analyze_meta: Option<AnalyzeStatsMeta>,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
     if !plan_meta(
@@ -1185,7 +1185,7 @@ pub fn plan_loaded_stats_item_statement<S: MetaSnapshot>(
     version: u64,
     now: Time,
     statement: &LoadedStatsItemStatement,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
     match statement {
@@ -1237,7 +1237,7 @@ pub fn plan_loaded_stats_meta_write<S: MetaSnapshot>(
     modify_count: i64,
     version: u64,
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
     let table = locate(catalog, "stats_meta")?;
@@ -1317,7 +1317,7 @@ pub fn plan_insert_table_stats_statement<S: MetaSnapshot>(
     statement: &InsertTableStatsStatement,
     version: u64,
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
     let (table_name, identity, physical_id, histogram) = match statement {
@@ -1388,7 +1388,7 @@ pub fn plan_insert_column_stats<S: MetaSnapshot>(
     origin_default: Option<&Datum>,
     version: u64,
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(bool, StatsWritePlan), StatsWriteError> {
     let table = locate(catalog, "stats_histograms")?;
     let identity_columns = &["table_id", "is_index", "hist_id"];
@@ -1448,7 +1448,7 @@ pub fn plan_insert_column_default_bucket<S: MetaSnapshot>(
     count: i64,
     origin_default: &Datum,
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let table = locate(catalog, "stats_buckets")?;
     let identity_columns = &["table_id", "is_index", "hist_id", "bucket_id"];
@@ -1480,7 +1480,7 @@ pub fn plan_stats_meta_version_refresh<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     table_id: i64,
     version: u64,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
     let table = locate(catalog, "stats_meta")?;
@@ -1522,7 +1522,7 @@ pub fn plan_update_stats_table_version<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     target: StatsVersionTable,
     version: u64,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
     let (table_name, identity) = match target {
@@ -1550,7 +1550,7 @@ pub fn plan_update_stats_version<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     version: u64,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
     for target in STATS_VERSION_TABLES {
@@ -1695,7 +1695,7 @@ pub fn plan_loaded_stats_usage_write<S: MetaSnapshot>(
     table_id: i64,
     predicate_columns: &[Option<JsonPredicateColumn>],
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut usage = HashMap::with_capacity(predicate_columns.len());
     for column in predicate_columns.iter().flatten() {
@@ -1724,7 +1724,7 @@ pub fn plan_column_stats_usage_write<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     usage: &HashMap<TableItemID, ColumnStatsTimeInfo>,
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
     let table = locate(catalog, "column_stats_usage")?;
@@ -1772,7 +1772,7 @@ pub fn plan_column_stats_usage_dump<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     entries: &[(TableItemID, Time)],
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
     let table = locate(catalog, "column_stats_usage")?;
@@ -1886,7 +1886,7 @@ pub fn plan_stats_delta_statement<S: MetaSnapshot>(
     statement: &StatsDeltaStatement,
     version: u64,
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let (table_name, updates, negative) = match statement {
         StatsDeltaStatement::LockLocked(table_ids)
@@ -1972,7 +1972,7 @@ pub fn plan_exchange_partition_stats_update<S: MetaSnapshot>(
     locked: bool,
     version: u64,
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let table = locate(
         catalog,
@@ -2122,7 +2122,7 @@ pub fn plan_historical_stats_meta_replace<S: MetaSnapshot>(
     version: u64,
     source: &str,
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let history = locate(catalog, "stats_meta_history")?;
     let mut rows = StatsRows::open(snapshot, history, &["table_id", "version"], table_id)?;
@@ -2197,7 +2197,7 @@ pub fn plan_historical_stats_data_block<S: MetaSnapshot>(
     sequence: usize,
     block: &[u8],
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let history = locate(catalog, "stats_history")?;
     let mut rows = StatsRows::open(
@@ -2435,7 +2435,7 @@ pub fn plan_stats_gc_timestamp_write<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     gc_version: u64,
     now: Time,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let table = locate(catalog, "tidb")?;
     let mut rows = StatsRows::open_all(snapshot, table, &["variable_name"])?;
@@ -2499,7 +2499,7 @@ pub fn plan_stats_item_delete<S: MetaSnapshot>(
     hist_id: i64,
     is_index: bool,
     version: u64,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan =
         plan_stats_meta_version_refresh(snapshot, catalog, physical_id, version, row_ids)?;
@@ -2567,7 +2567,7 @@ fn reset_table_histograms<S: MetaSnapshot>(
     physical_id: i64,
     version: u64,
     plan: &mut StatsWritePlan,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_histograms")?;
     let mut rows = StatsRows::open(
@@ -2611,7 +2611,7 @@ pub fn plan_delete_table_stats<S: MetaSnapshot>(
     physical_ids: &[i64],
     soft: bool,
     version: u64,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let mut plan = StatsWritePlan::default();
     for &physical_id in physical_ids {
@@ -2724,7 +2724,7 @@ fn plan_loaded_meta<S: MetaSnapshot>(
     version: u64,
     now: Time,
     plan: &mut StatsWritePlan,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_meta")?;
     let mut rows = StatsRows::open(snapshot, table, &["table_id"], table_id)?;
@@ -2768,7 +2768,7 @@ fn plan_loaded_histogram<S: MetaSnapshot>(
     version: u64,
     now: Time,
     plan: &mut StatsWritePlan,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_histograms")?;
     let mut rows = StatsRows::open(
@@ -2952,7 +2952,7 @@ fn plan_loaded_buckets_insert<S: MetaSnapshot>(
     range: &Range<usize>,
     now: Time,
     plan: &mut StatsWritePlan,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_buckets")?;
     let mut rows = StatsRows::open(
@@ -3033,7 +3033,7 @@ fn plan_loaded_topn_insert<S: MetaSnapshot>(
     range: &Range<usize>,
     now: Time,
     plan: &mut StatsWritePlan,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_top_n")?;
     let mut rows = StatsRows::open(
@@ -3077,7 +3077,7 @@ fn plan_loaded_fm_insert<S: MetaSnapshot>(
     item: &ClusterStatsItem,
     now: Time,
     plan: &mut StatsWritePlan,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_fm_sketch")?;
     let Some(encoded) = encode_fm_sketch(item.fm_sketch.as_ref()) else {
@@ -3104,7 +3104,7 @@ fn store_fm_sketch(
     encoded: Vec<u8>,
     now: Time,
     plan: &mut StatsWritePlan,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
     let mut values = defaults_row(table, now)?;
     set(table, &mut values, "table_id", Datum::Int(table_id));
@@ -3144,7 +3144,7 @@ fn plan_meta<S: MetaSnapshot>(
     analyze_meta: Option<AnalyzeStatsMeta>,
     now: Time,
     plan: &mut StatsWritePlan,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<bool, StatsWriteError> {
     let table = locate(catalog, "stats_meta")?;
     let mut rows = StatsRows::open(snapshot, table, &["table_id"], stats.table_id)?;
@@ -3218,7 +3218,7 @@ fn plan_independent_index_meta<S: MetaSnapshot>(
     stats: &ClusterTableStats,
     now: Time,
     plan: &mut StatsWritePlan,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<bool, StatsWriteError> {
     let table = locate(catalog, "stats_meta")?;
     let mut rows = StatsRows::open(snapshot, table, &["table_id"], stats.table_id)?;
@@ -3252,7 +3252,7 @@ fn plan_histograms<S: MetaSnapshot>(
     now: Time,
     replace_all: bool,
     plan: &mut StatsWritePlan,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_histograms")?;
     let mut rows = StatsRows::open(
@@ -3320,7 +3320,7 @@ fn plan_buckets<S: MetaSnapshot>(
     now: Time,
     replace_all: bool,
     plan: &mut StatsWritePlan,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_buckets")?;
     let mut rows = StatsRows::open(
@@ -3387,7 +3387,7 @@ fn plan_topn<S: MetaSnapshot>(
     now: Time,
     replace_all: bool,
     plan: &mut StatsWritePlan,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_top_n")?;
     // A TopN row is named by its VALUE as well as by its histogram: one
@@ -3435,7 +3435,7 @@ fn plan_fm_sketches<S: MetaSnapshot>(
     replace_all: bool,
     dump_fm: bool,
     plan: &mut StatsWritePlan,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(), StatsWriteError> {
     let table = locate(catalog, "stats_fm_sketch")?;
     let mut rows = StatsRows::open(
@@ -3826,7 +3826,7 @@ fn decode_rows_with_keys(
 fn allocate_row_id(
     catalog: &ClusterCatalog,
     table: &TableInfo,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<i64, StatsWriteError> {
     let ids = row_ids.ok_or_else(|| {
         StatsWriteError::Encode(RowEncodeError(format!(

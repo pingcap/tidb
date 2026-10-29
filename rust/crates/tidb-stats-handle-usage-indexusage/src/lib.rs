@@ -299,3 +299,4 @@ impl StmtIndexUsageCollector {
 
 #[cfg(test)]
 mod tests;
+pub mod cluster_index_id;

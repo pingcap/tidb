@@ -3495,6 +3495,7 @@ dependencies = [
  "tidb-executor",
  "tidb-expr",
  "tidb-hack",
+ "tidb-infoschema-isvalidator",
  "tidb-keydecoder",
  "tidb-kv",
  "tidb-log",
@@ -3597,6 +3598,7 @@ dependencies = [
  "tidb-executor",
  "tidb-expr",
  "tidb-hack",
+ "tidb-infoschema-isvalidator",
  "tidb-keydecoder",
  "tidb-kv",
  "tidb-log",
@@ -3840,6 +3842,7 @@ dependencies = [
  "tidb-executor",
  "tidb-expensivequery",
  "tidb-expr",
+ "tidb-infoschema-isvalidator",
  "tidb-kv",
  "tidb-log",
  "tidb-meta",
@@ -3957,6 +3960,7 @@ dependencies = [
  "tidb-expr",
  "tidb-hack",
  "tidb-hint",
+ "tidb-infoschema-isvalidator",
  "tidb-keydecoder",
  "tidb-keyspace",
  "tidb-kv",
@@ -3977,6 +3981,7 @@ dependencies = [
  "tidb-stats",
  "tidb-stats-handle-cache",
  "tidb-stats-handle-usage",
+ "tidb-stats-handle-usage-indexusage",
  "tidb-stmtsummary",
  "tidb-sysutil",
  "tidb-table",
@@ -4041,6 +4046,7 @@ dependencies = [
  "tidb-hint",
  "tidb-infoschema",
  "tidb-keydecoder",
+ "tidb-keyspace",
  "tidb-kv",
  "tidb-lexer",
  "tidb-log",
@@ -4246,6 +4252,13 @@ dependencies = [
  "tidb-tablecodec",
  "tidb-util",
  "tidb-variable",
+]
+
+[[package]]
+name = "tidb-infoschema-isvalidator"
+version = "0.0.0"
+dependencies = [
+ "tidb-vardef",
 ]
 
 [[package]]
@@ -4660,6 +4673,7 @@ dependencies = [
  "tidb-ddl-notifier",
  "tidb-ddl-serverstate",
  "tidb-ddl-session",
+ "tidb-deadlockhistory",
  "tidb-distsql",
  "tidb-domain",
  "tidb-dxf",
@@ -4761,6 +4775,7 @@ dependencies = [
  "tidb-ddl-notifier",
  "tidb-ddl-serverstate",
  "tidb-ddl-session",
+ "tidb-deadlockhistory",
  "tidb-distsql",
  "tidb-domain",
  "tidb-domain-core",
@@ -4774,6 +4789,7 @@ dependencies = [
  "tidb-gcutil",
  "tidb-hack",
  "tidb-hint",
+ "tidb-infoschema-isvalidator",
  "tidb-keyspace",
  "tidb-kv",
  "tidb-lexer",

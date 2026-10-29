@@ -151,7 +151,7 @@ pub fn commit_cluster_drop_stats<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     physical_ids: &[i64],
     timeout: Duration,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(), ClusterLoadStatsCommitError> {
     commit_pessimistic_statement(opener, timeout, |snapshot, version| {
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
@@ -424,7 +424,7 @@ fn record_history<S: StoreClient>(
     table_id: i64,
     version: u64,
     timeout: Duration,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) {
     let _ = crate::real_tikv_stats::record_historical_stats_meta(
         opener,

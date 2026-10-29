@@ -43,6 +43,8 @@
 //! Ordinary executor timing and row counts use the statement's Go-compatible
 //! `RuntimeStatsColl` when execution-info collection is enabled.
 
+pub mod exec_stmt_observation;
+pub mod adapter;
 pub mod base_join_probe;
 pub mod concurrent_entry_map;
 pub use tidb_util::execdetails;

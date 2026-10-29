@@ -146,7 +146,7 @@ pub(crate) struct MetaStore {
     last_range: Option<(Vec<u8>, Vec<u8>)>,
     /// The node's row-ID allocators Go's internal INSERTs draw from; each
     /// reservation commits on its own, outside the planned write set.
-    row_ids: std::sync::Arc<tidb_cluster::table_from_meta::LocalTableAutoIds>,
+    row_ids: std::sync::Arc<tidb_ddl_build::table_from_meta::LocalTableAutoIds>,
 }
 
 impl MetaStore {

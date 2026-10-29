@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Executor-side admission of TiKV deadlocks into `pkg/util/deadlockhistory`.
+//! The admission of a TiKV deadlock into the history (Go's session pushes
+//! `ErrDeadlockToDeadlockRecord` unless a retryable deadlock is excluded by
+//! `pessimistic-txn.deadlock-history-collect-retryable`).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tidb_deadlockhistory::{err_deadlock_to_deadlock_record, GLOBAL_DEADLOCK_HISTORY};
+use crate::{err_deadlock_to_deadlock_record, GLOBAL_DEADLOCK_HISTORY};
 use tidb_txnkv::transaction::DeadlockDetail;
 
 static COLLECT_RETRYABLE: AtomicBool = AtomicBool::new(false);
@@ -27,7 +29,7 @@ pub fn configure_deadlock_history(capacity: usize, collect_retryable: bool) {
     GLOBAL_DEADLOCK_HISTORY.resize(capacity);
 }
 
-pub(crate) fn record_deadlock(detail: &DeadlockDetail) {
+pub fn record_deadlock(detail: &DeadlockDetail) {
     if detail.is_retryable && !COLLECT_RETRYABLE.load(Ordering::Acquire) {
         return;
     }

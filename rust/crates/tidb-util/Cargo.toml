@@ -160,3 +160,7 @@ path = "tests/systimemon_source.rs"
 name = "default_thread_stack"
 path = "tests/default_thread_stack.rs"
 harness = false
+
+[[test]]
+name = "warning_publication_source"
+path = "tests/warning_publication_source.rs"

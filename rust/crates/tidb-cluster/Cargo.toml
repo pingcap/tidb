@@ -12,6 +12,7 @@ description = "TiDB's cluster tier below the executor: the infoschema loader ove
 workspace = true
 
 [dependencies]
+tidb-infoschema-isvalidator = { path = "../tidb-infoschema-isvalidator" }
 tidb-privilege = { path = "../tidb-privilege" }
 tidb-keydecoder = { path = "../tidb-keydecoder" }
 tidb-deadlockhistory = { path = "../tidb-deadlockhistory" }

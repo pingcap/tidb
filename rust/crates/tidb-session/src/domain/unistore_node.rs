@@ -598,7 +598,7 @@ pub fn unistore_cluster_session_stack_from(
 
     // One registry for the whole node: sessions' INSERTs, the DDL owner's and
     // the statistics writers' `mysql.*` rows, and the reload's rebases.
-    let node_auto_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds> = Arc::new(
+    let node_auto_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds> = Arc::new(
         crate::domain::cluster_auto_id_seam::ClusterTableAutoIds::new(opener.clone(), IN_PROCESS_TIMEOUT),
     );
     let (catalog, reloader, schema_validator) =
@@ -960,7 +960,7 @@ mod meta_txn_tests {
 #[cfg(test)]
 mod startup_schema_lease_tests {
     use super::*;
-    use tidb_cluster::schema_validator::{Result as ValidatorResult, Validator as _};
+    use tidb_infoschema_isvalidator::{Result as ValidatorResult, Validator as _};
 
     /// Go `Domain.Init` runs `isSyncer.Reload()` before the reload loop and
     /// before any session, so the startup load's timestamp is the validator's
@@ -986,7 +986,7 @@ mod startup_schema_lease_tests {
                 lease_grant_ts,
                 opener.clone(),
                 std::time::Duration::from_secs(45),
-                Arc::new(tidb_cluster::table_from_meta::LocalTableAutoIds::default()),
+                Arc::new(tidb_ddl_build::table_from_meta::LocalTableAutoIds::default()),
             )
             .expect("catalog reloader");
         let transaction = opener.begin_read_only().expect("commit-time timestamp");

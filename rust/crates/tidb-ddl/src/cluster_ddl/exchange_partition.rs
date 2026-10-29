@@ -280,7 +280,7 @@ pub(super) fn plan_persisted_exchange_partition_job_step<S: MetaSnapshot>(
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     reorg_outcome: Option<&ReorgOutcome>,
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let (raw_args, args) = exchange_args(active)?;
     // `checkSchemaExistAndCancelNotExistJob` and the partitioned table's

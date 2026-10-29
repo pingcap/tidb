@@ -27,8 +27,6 @@
 //! it does not keep a second operator or aggregate-state implementation.
 
 pub use tidb_privilege::account_policy;
-pub mod adapter;
-pub mod exec_stmt_observation;
 pub use tidb_cluster::auto_id_client;
 mod batch_cop_tasks;
 pub use tidb_cluster::catalog_reload;
@@ -43,7 +41,6 @@ pub use tidb_ddl::cluster_ddl;
 pub use tidb_executor::cluster_diagnostics;
 pub mod cluster_discovery;
 use tidb_cluster::cluster_http;
-pub mod cluster_index_id;
 pub mod cluster_load_stats;
 pub use tidb_executor::cluster_peer;
 pub mod cluster_predicate_column;
@@ -72,10 +69,8 @@ pub mod in_memory_meta;
 pub use tidb_util::tiflashcompute as tiflash_compute;
 pub mod mpp_client;
 pub use tidb_ddl::tiflash_replica_manager;
-pub use tidb_cluster::configure_deadlock_history;
 pub use tidb_util::execdetails::exec_details;
 pub mod explain;
-pub mod hint_updatable_vars;
 pub use tidb_keydecoder as keydecoder;
 pub mod label_delivery;
 pub use tidb_cluster::mdl_info_load;
@@ -98,26 +93,20 @@ pub mod real_tikv_stats_lock;
 mod result_metadata;
 pub use tidb_util::execdetails::runtime_stats;
 pub use tidb_executor::select_result_stats;
-pub use tidb_cluster::schema_validator;
+pub use tidb_infoschema_isvalidator;
 pub use tidb_cluster::session_commit_protocol;
 pub use tidb_cluster::sql_query_error;
 pub use tidb_executor::statement_cop_stats;
 pub mod stats_watch;
 pub use tidb_cluster::system_row_write;
-pub use tidb_cluster::table_from_meta;
+pub use tidb_ddl_build::table_from_meta;
 pub mod table_info_build;
-pub(crate) mod table_write_policy;
 pub use tidb_util::execdetails::tiflash_stats;
 pub mod tikv_region_store;
 pub use tidb_executor::txn_summary;
-pub mod warning_publication;
 pub use tidb_executor::wide_scan_selection;
 
 pub use result_metadata::{
     col_names_to_result_fields, AdaptedResultField, FieldNameMetadata, IdentifierMetadata, ResultFieldMetadata,
     ResultFieldTypeMetadata, MAX_ALIAS_IDENTIFIER_LEN, NOT_FIXED_DEC, NOT_NULL_FLAG, UNSIGNED_FLAG,
-};
-pub use warning_publication::{
-    warnings_from_json, warnings_to_json, IgnoreWarnings, StatementWarning, StaticWarningHandler,
-    WarningAppender, WarningHandler, WarningLevel, WarningPublication, WarningSummary,
 };

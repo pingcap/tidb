@@ -37,7 +37,7 @@ impl Drop for ResetHistory {
     fn drop(&mut self) {
         GLOBAL_DEADLOCK_HISTORY.clear();
         STMT_SUMMARY_BY_DIGEST_MAP.clear();
-        tidb_cluster::configure_deadlock_history(0, false);
+        tidb_deadlockhistory::recording::configure_deadlock_history(0, false);
     }
 }
 
@@ -114,7 +114,7 @@ fn add_statement_summary(digest: &str, normalized_sql: &str) {
 fn deadlocks_table_exposes_package_rows_and_requires_process() {
     let _serial = GLOBAL_HISTORY_TEST.lock().unwrap();
     let _reset = ResetHistory;
-    tidb_cluster::configure_deadlock_history(10, false);
+    tidb_deadlockhistory::recording::configure_deadlock_history(10, false);
     STMT_SUMMARY_BY_DIGEST_MAP.clear();
     add_statement_summary("aabbccdd", "select * from t where id = ?");
     let history = &*GLOBAL_DEADLOCK_HISTORY;

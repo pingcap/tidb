@@ -472,7 +472,7 @@ pub trait IndexBackfiller {
 
     /// The node's live row-ID allocators, for the `mysql.*` rows the owner
     /// inserts (Go's internal INSERTs: the reorg handle, the delete ranges).
-    fn system_row_ids(&self) -> Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>;
+    fn system_row_ids(&self) -> Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>;
 }
 
 /// See [`IndexBackfiller::reorg_add_index`].

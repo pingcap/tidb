@@ -30,16 +30,12 @@ pub mod cluster_privilege_load;
 pub mod cluster_sysvar_load;
 pub mod cluster_sysvar_write;
 pub mod cluster_table_storage;
-mod deadlock_recording;
 pub mod mdl_info_load;
 pub mod mysql_system_tables;
 pub mod pessimistic_lock_error;
 pub mod real_tikv_catalog;
 pub mod real_tikv_read;
-pub mod schema_validator;
 pub mod session_commit_protocol;
 pub mod sql_query_error;
 pub mod system_row_write;
-pub mod table_from_meta;
 
-pub use deadlock_recording::configure_deadlock_history;

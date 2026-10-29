@@ -45,7 +45,7 @@ use crate::cluster_catalog::{
     load_cluster_catalog, load_database_tables, normalize_diff_loaded_table_info, ClusterCatalog,
     ClusterCatalogError, LoadedDatabase, MetaSnapshot,
 };
-use crate::schema_validator::RelatedSchemaChange;
+use tidb_infoschema_isvalidator::RelatedSchemaChange;
 
 /// Go `issyncer.LoadSchemaDiffVersionGapThreshold`: past this many versions a
 /// full load is cheaper (and less failure-prone) than replaying every diff.
@@ -207,7 +207,7 @@ fn read_schema_diff<S: MetaSnapshot>(
 pub fn reload_cluster_catalog<S: MetaSnapshot>(
     snapshot: &mut S,
     current: &ClusterCatalog,
-    row_ids: Option<&dyn crate::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<ReloadedCatalog, ClusterCatalogError> {
     let needed = schema_version_with_non_empty_diff(snapshot)?;
     let loaded = current.schema_version;
@@ -250,7 +250,7 @@ fn apply_diff_range<S: MetaSnapshot>(
     current: &ClusterCatalog,
     loaded: i64,
     needed: i64,
-    row_ids: Option<&dyn crate::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<Result<ReloadedCatalog, FullReloadReason>, ClusterCatalogError> {
     let mut catalog = current.clone();
     let mut applied = 0usize;

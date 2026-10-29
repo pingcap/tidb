@@ -14,6 +14,7 @@ autotests = false
 test-util = []
 
 [dependencies]
+tidb-keyspace = { path = "../tidb-keyspace" }
 tidb-sessionstates = { path = "../tidb-sessionstates" }
 tidb-privilege = { path = "../tidb-privilege" }
 tidb-keydecoder = { path = "../tidb-keydecoder" }

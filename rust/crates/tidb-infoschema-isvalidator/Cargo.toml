@@ -1,0 +1,14 @@
+[package]
+name = "tidb-infoschema-isvalidator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB schema validator: Go pkg/infoschema/isvalidator (Rust rewrite)."
+
+[dependencies]
+tidb-vardef = { path = "../tidb-vardef" }
+
+[lints]
+workspace = true

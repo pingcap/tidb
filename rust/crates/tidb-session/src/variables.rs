@@ -1060,7 +1060,7 @@ fn set_var_hint_checker(
         );
     }
     let warning =
-        (!tidb_exec::hint_updatable_vars::is_hint_updatable_verified(&folded)).then(|| {
+        (!tidb_variable::hint_updatable_vars::is_hint_updatable_verified(&folded)).then(|| {
             tidb_hint::HintWarning::of(
                 &tidb_error::plannererrors::ERR_NOT_HINT_UPDATABLE,
                 format!("Variable '{variable_name}' might not be affected by SET_VAR hint."),

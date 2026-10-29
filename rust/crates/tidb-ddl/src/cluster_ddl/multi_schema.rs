@@ -840,7 +840,7 @@ fn run_sub_job_step(
     skip_version: bool,
     start_ts: u64,
     outcomes: &[ReorgOutcome],
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> SubJobStep {
     let proxy_job = sub.read().to_proxy_job(&active.job, seq as i64);
     if skip_version {
@@ -964,7 +964,7 @@ pub(super) fn plan_persisted_multi_schema_job_step<S: MetaSnapshot>(
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     outcomes: &[ReorgOutcome],
-    row_ids: Option<&dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let Some(info) = active.job.multi_schema_info.clone() else {
         return Err(cancel_ddl_job(

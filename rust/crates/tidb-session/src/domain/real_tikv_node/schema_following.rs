@@ -10,7 +10,7 @@
 
 use super::*;
 use tidb_cluster::real_tikv_catalog::note_reload;
-use tidb_cluster::schema_validator::{SchemaValidator, Validator as _};
+use tidb_infoschema_isvalidator::{SchemaValidator, Validator as _};
 
 /// Connects the node's one etcd client (Go `domain.NewDomain`'s
 /// `etcdClient`, from `store.EtcdAddrs()`).
@@ -334,7 +334,7 @@ pub fn spawn_catalog_reloader<S>(
     startup_lease_grant_ts: u64,
     transaction_opener: RealOptimisticTransactionOpener<S>,
     schema_lease: Duration,
-    row_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 ) -> Result<(Arc<SharedCatalog>, CatalogReloader, Arc<SchemaValidator>), CatalogReloadError>
 where
     S: StoreClient,

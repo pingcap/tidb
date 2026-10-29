@@ -48,7 +48,7 @@ struct PersistedAnalyzeJobs {
     global_vars: crate::GlobalSysvars,
     /// The node's live row-ID allocators (Go's internal INSERT allocates
     /// `mysql.analyze_jobs.id` from the table's AUTO_INCREMENT allocator).
-    row_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 }
 
 impl PersistedAnalyzeJobs {
@@ -423,7 +423,7 @@ struct ClusterAnalyzeService {
     historical_stats_worker: Arc<
         tidb_domain::historical_stats::HistoricalStatsWorker<super::ClusterHistoricalInfoSchema>,
     >,
-    row_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 }
 
 impl crate::analyze_service::AnalyzeService for ClusterAnalyzeService {
@@ -528,7 +528,7 @@ struct ClusterStatsStatementService {
     global_vars: crate::GlobalSysvars,
     analyze: Arc<dyn crate::domain::cluster_analyze_seam::ClusterAnalyze>,
     stats_lock: Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
-    row_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 }
 
 impl crate::stats_statement_service::StatsStatementService for ClusterStatsStatementService {

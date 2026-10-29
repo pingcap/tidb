@@ -16,7 +16,7 @@
 
 use tidb_error::mysql::FormatArg;
 use tidb_error::terror::ERR_RESULT_UNDETERMINED;
-use tidb_exec::{
+use tidb_util::context::warning_publication::{
     warnings_from_json, warnings_to_json, IgnoreWarnings, StatementWarning, StaticWarningHandler,
     WarningAppender, WarningHandler, WarningLevel, WarningPublication,
 };

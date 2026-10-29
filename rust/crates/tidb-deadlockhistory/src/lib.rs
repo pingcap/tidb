@@ -502,3 +502,5 @@ mod tests {
         assert_eq!(history.get_all()[0].id, 5);
     }
 }
+
+pub mod recording;

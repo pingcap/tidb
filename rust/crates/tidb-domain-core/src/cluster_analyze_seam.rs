@@ -128,7 +128,7 @@ where
     stats_lease: Duration,
     /// The node's live row-ID allocators, which the statistics rows this
     /// analyzer writes allocate from (Go's internal INSERT).
-    row_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
+    row_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
 }
 
 impl<S> RealClusterAnalyze<S>
@@ -143,7 +143,7 @@ where
         stats: Arc<SharedStats>,
         timeout: Duration,
         stats_lease: Duration,
-        row_ids: Arc<dyn tidb_cluster::table_from_meta::TableAutoIds>,
+        row_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
     ) -> Self {
         Self {
             opener,

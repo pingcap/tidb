@@ -103,7 +103,7 @@ pub fn log_mysql_listening(host: &str, port: impl std::fmt::Display) {
 pub fn open_spill_storage(
     config: &NodeConfig,
 ) -> Result<Arc<tidb_util::spill_storage::SpillStorage>, RunConfiguredNodeError> {
-    tidb_cluster::configure_deadlock_history(
+    tidb_deadlockhistory::recording::configure_deadlock_history(
         config.deadlock_history_capacity,
         config.deadlock_history_collect_retryable,
     );

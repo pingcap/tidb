@@ -111,7 +111,7 @@ struct LazyStatement {
     encoded_plan: String,
     /// A plan published without its encodings renders them here, once, when
     /// the summary first asks (Go `LazyInfo.GetEncodedPlan`).
-    plan_source: Option<tidb_executor::PlanSource>,
+    plan_source: Option<crate::PlanSource>,
     rendered_plan: std::sync::OnceLock<(String, String)>,
     /// `tidb_generate_binary_plan` as the statement finished.
     binary_plan_enabled: bool,
@@ -155,7 +155,7 @@ impl StmtExecLazyInfo for LazyStatement {
 /// The session a statement's observation reaches back into: Go `ExecStmt`'s
 /// `sctx` as `FinishExecuteStmt`, `LogSlowQuery`, `SummaryStmt`,
 /// `updatePrevStmt` and `recordLastQueryInfo` read it.
-pub trait ExecStmtObservation: tidb_executor::sessionctx::SessionContext {
+pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
     /// The connection the statement runs on.
     fn observed_connection_id(&self) -> u64;
     /// Go `StmtHints.WriteSlowLog`: the `write_slow_log` hint.
@@ -191,7 +191,7 @@ pub trait ExecStmtObservation: tidb_executor::sessionctx::SessionContext {
     /// The user the statement summary records.
     fn summary_user(&self) -> String;
     /// The statement's published plan (Go `StmtCtx`'s plan fields).
-    fn process_plan_info_cell(&self) -> Arc<Mutex<tidb_executor::ProcessPlanInfo>>;
+    fn process_plan_info_cell(&self) -> Arc<Mutex<crate::ProcessPlanInfo>>;
 
     /// Go `vardef.ProcessGeneralLog` / `cfg.Instance.*`: an instance-scoped
     /// switch read through the session's variable table.
@@ -274,7 +274,7 @@ pub trait ExecStmtObservation: tidb_executor::sessionctx::SessionContext {
         elapsed: Duration,
         succeeded: bool,
         result_rows: i64,
-        plan: &tidb_executor::ProcessPlanInfo,
+        plan: &crate::ProcessPlanInfo,
         phases: &StatementPhases,
     ) {
         let conn_id = self.observed_connection_id();

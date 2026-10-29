@@ -19,7 +19,7 @@
 //! RPC/network/CPU measurements are not connected yet; their empty values do
 //! not certify those execution-detail contracts.
 use crate::*;
-use tidb_exec::exec_stmt_observation::{
+use tidb_executor::exec_stmt_observation::{
     ExecStmtObservation as _, StatementObservation, StatementPhases,
 };
 use tidb_util::topsql_stmtstats::{ExecFinishInfo, StatementObserver};
@@ -1148,7 +1148,7 @@ mod tests {
 }
 
 /// Go `ExecStmt`'s `sctx`, as the statement's observation reads it.
-impl tidb_exec::exec_stmt_observation::ExecStmtObservation for Session {
+impl tidb_executor::exec_stmt_observation::ExecStmtObservation for Session {
     fn observed_connection_id(&self) -> u64 {
         self.connection_id()
     }
