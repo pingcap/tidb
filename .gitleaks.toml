@@ -1,0 +1,20 @@
+# Keep the default Gitleaks rules enabled. The allowlist below is limited to
+# reviewed, deterministic test fixtures and only suppresses generic-api-key.
+title = "TiDB Gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Reviewed non-secret credential fixtures in encryption tests"
+targetRules = ["generic-api-key"]
+paths = [
+  '''(^|/)cmd/pkdb/tidb-credential/main_test\.go$''',
+  '''(^|/)dumpling/export/pkdb_credential_test\.go$''',
+  '''(^|/)dumpling/tests/encrypted_password/run\.sh$''',
+  '''(^|/)lightning/pkg/server/pkdb_credential_test\.go$''',
+  '''(^|/)lightning/tests/lightning_encrypted_password/run\.sh$''',
+  '''(^|/)pkg/server/tests/commontest/tidb_test\.go$''',
+  '''(^|/)pkg/util/pkdbcredential/pkdb_credential_test\.go$''',
+  '''(^|/)pkg/util/pkdbcredential/pkdb_file_test\.go$''',
+]
