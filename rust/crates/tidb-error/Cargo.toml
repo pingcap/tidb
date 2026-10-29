@@ -25,6 +25,7 @@ name = "all"
 path = "tests/all.rs"
 
 [dev-dependencies]
+tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-domain = { path = "../tidb-domain" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-parser = { path = "../tidb-parser" }

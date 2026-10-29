@@ -3139,7 +3139,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // schema in lower case and the table as written (captured on the
             // oracle: `ACC2.NonExistent` answers `acc2.NonExistent`).
             return Err(PlanError::from(
-                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.fast_generate_by_args(&[
+                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.fast_generate_by_args(&[
                     (tidb_hack::go_to_lower(&db_name)).into(),
                     table_name.into(),
                 ]),
@@ -3212,7 +3212,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     .any(|name| partition_name_matches(name, partition))
                 {
                     return Err(PlanError::from(
-                        tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+                        tidb_table::table_errors::ERR_UNKNOWN_PARTITION
                             .generate_with_stack_by_args(&[
                                 tidb_mysql::to_lowercase(&(partition)).into(),
                                 (&table.table_name).into(),

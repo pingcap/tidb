@@ -128,7 +128,7 @@ fn writable_check_constraints_guard_insert_and_update() {
     assert!(matches!(
         table.insert_row(&[Datum::Int(-1), Datum::Null], &tidb_expr::NoColumns),
         Err(KvTableError::Mysql(error))
-            if error.equal(&tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED)
+            if error.equal(&tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED)
                 && error.message == "Check constraint 'positive_a' is violated."
     ));
     assert!(matches!(
@@ -138,7 +138,7 @@ fn writable_check_constraints_guard_insert_and_update() {
             &crate::StmtContext::for_dml(false, false, false),
         ),
         Err(KvTableError::Mysql(error))
-            if error.equal(&tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED)
+            if error.equal(&tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED)
                 && error.message == "Check constraint 'positive_a' is violated."
     ));
     assert_eq!(
@@ -150,7 +150,7 @@ fn writable_check_constraints_guard_insert_and_update() {
     );
 
     let wire = crate::DriverError::from(
-        tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED
+        tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED
             .fast_generate_by_args(&["positive_a".into()]),
     )
     .to_mysql_error();

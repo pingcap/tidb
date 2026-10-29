@@ -431,7 +431,7 @@ impl JobSubmitError {
                 target,
                 table,
             } => Some(
-                tidb_error::catalog::infoschema::ERR_INVALID_TABLE_MODE_SET
+                tidb_infoschema::infoschema_errors::ERR_INVALID_TABLE_MODE_SET
                     .generate_with_stack_by_args(&[
                         current.to_string().into(),
                         target.to_string().into(),

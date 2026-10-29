@@ -131,7 +131,7 @@ fn selected_partition_ids(
     };
     let TableEntry::Kv(kv) = entry else {
         return Err(DriverError::from(
-            tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+            tidb_table::table_errors::ERR_UNKNOWN_PARTITION
                 .generate_with_stack_by_args(&[first.clone().into(), name.to_owned().into()]),
         ));
     };
@@ -145,7 +145,7 @@ fn selected_partition_ids(
         .map(Some)
         .map_err(|partition| {
             DriverError::from(
-                tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+                tidb_table::table_errors::ERR_UNKNOWN_PARTITION
                     .generate_with_stack_by_args(&[partition.into(), name.to_owned().into()]),
             )
         })
@@ -182,7 +182,7 @@ pub(crate) fn run_multi_update(
             .get_in(&table.database, &table.table)
             .ok_or_else(|| {
                 DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                         .generate_with_stack_by_args(&[
                             (&table.database).into(),
                             (&table.table).into(),

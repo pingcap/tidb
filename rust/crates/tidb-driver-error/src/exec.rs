@@ -96,6 +96,13 @@ mod tests {
         }
     }
 
+    /// What tidb-table's sequence raises for a `NOCYCLE` sequence read past
+    /// its end (Go `table.ErrSequenceHasRunOut`).
+    fn sequence_run_out(database: &str, sequence: &str) -> tidb_terror::TerrorError {
+        tidb_table::table_errors::ERR_SEQUENCE_HAS_RUN_OUT
+            .generate_with_stack_by_args(&[database.into(), sequence.into()])
+    }
+
     /// An error that carries a code carries its message with it. The two used
     /// to be read as two independent `Option`s, so a code with no message
     /// rendered as that number and an EMPTY string.
@@ -103,10 +110,7 @@ mod tests {
     fn an_error_with_a_code_of_its_own_never_renders_an_empty_message() {
         let coded = [
             EvalError::Json(JsonError::InvalidText),
-            EvalError::Sequence(SequenceEvalError::RunOut(
-                "test".to_owned(),
-                "s1".to_owned(),
-            )),
+            EvalError::Sequence(SequenceEvalError::Raised(sequence_run_out("test", "s1"))),
             EvalError::DivisionByZero,
             EvalError::UnknownCollation("nosuch".to_owned()),
             EvalError::CollationCharsetMismatch {
@@ -133,10 +137,10 @@ mod tests {
         // The captured wording for the two this tier can produce end to end.
         assert_eq!(
             rendered(ExecError::Eval(EvalError::Sequence(
-                SequenceEvalError::RunOut("test".to_owned(), "s1".to_owned())
+                SequenceEvalError::Raised(sequence_run_out("test", "s1"))
             ))),
             MysqlError::from_terror(
-                &tidb_error::catalog::table::ERR_SEQUENCE_HAS_RUN_OUT
+                &tidb_table::table_errors::ERR_SEQUENCE_HAS_RUN_OUT
                     .generate_with_stack("Sequence 'test.s1' has run out")
             )
             .from_evaluation()

@@ -49,7 +49,6 @@ tidb-bindinfo = { path = "../tidb-bindinfo" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-config = { path = "../tidb-config" }
 tidb-datatype = { path = "../tidb-datatype" }
-tidb-executor = { path = "../tidb-executor" }
 tidb-ddl = { path = "../tidb-ddl" }
 tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-ddl-notifier = { path = "../tidb-ddl-notifier" }
@@ -88,3 +87,6 @@ serde_json.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tidb-executor = { path = "../tidb-executor" }

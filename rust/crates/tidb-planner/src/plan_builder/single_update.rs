@@ -51,7 +51,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let (database, written) = self.update_table_path(table_ref)?;
         let table = self.source.find_table(&database, &written).ok_or_else(|| {
             PlanError::from(
-                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                     .fast_generate_by_args(&[(&database).into(), (&written).into()]),
             )
         })?;

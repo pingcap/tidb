@@ -16,6 +16,7 @@
 //! through (with the store's `kv.Client` and `kv.MPPClient`), and a
 //! transaction's staged writes. The coprocessor request a reader builds is
 //! `pkg/distsql`'s (`tidb_distsql::remote_scan`).
+pub mod tikv_region_store;
 pub mod lock_waits;
 pub mod kv_errors;
 pub mod key;

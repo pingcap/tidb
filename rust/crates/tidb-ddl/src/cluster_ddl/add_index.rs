@@ -331,7 +331,7 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
     if index.primary && (find_index(stored, "PRIMARY").is_some() || stored.pk_is_handle) {
         return Err(DdlPlanError::Admission(
             tidb_ddl_build::table_info_build::DdlAdmissionError::from_terror(
-                &tidb_error::catalog::infoschema::ERR_MULTIPLE_PRI_KEY
+                &tidb_infoschema::infoschema_errors::ERR_MULTIPLE_PRI_KEY
                     .generate_with_stack_by_args(&[]),
             ),
         ));
@@ -740,7 +740,7 @@ fn check_and_build_index_info(
             if is_pk {
                 return Err(DdlPlanError::Admission(
                     tidb_ddl_build::table_info_build::DdlAdmissionError::from_terror(
-                        &tidb_error::catalog::infoschema::ERR_MULTIPLE_PRI_KEY
+                        &tidb_infoschema::infoschema_errors::ERR_MULTIPLE_PRI_KEY
                             .generate_with_stack_by_args(&[]),
                     ),
                 ));
@@ -763,7 +763,7 @@ fn check_and_build_index_info(
                 && column.name.lowercase() == hidden.name.lowercase()
         }) {
             return Err(coded_refusal(
-                &tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS,
+                &tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS,
                 format!("Duplicate column name '{}'", hidden.name.original()),
             ));
         }

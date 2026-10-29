@@ -58,13 +58,13 @@ fn extract_tbl_infos(
     })
     .map_err(|error| match error.code {
         tidb_mysql::errors::errcode::ErrNoSuchTable => DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(&[
                 (pair.from_schema.clone()).into(),
                 (pair.from_table.clone()).into(),
             ]),
         ),
         tidb_mysql::errors::errcode::ErrTableExists => DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
                 format!("{}.{}", (pair.to_schema.clone()), (pair.to_table.clone())).into(),
             ]),
         ),
@@ -112,7 +112,7 @@ fn check_renamable(
     // Go `dbutil.CheckTableModeIsNormal`.
     if table.mode != tidb_model::TableMode::NORMAL {
         return Err(coded_refusal(
-            &tidb_error::catalog::infoschema::ERR_PROTECTED_TABLE_MODE,
+            &tidb_infoschema::infoschema_errors::ERR_PROTECTED_TABLE_MODE,
             format!("Table {} is in mode {}", table.name.original(), table.mode),
         ));
     }

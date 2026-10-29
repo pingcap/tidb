@@ -17,7 +17,6 @@ tidb-table = { path = "../tidb-table" }
 tidb-stats-handle-types = { path = "../tidb-stats-handle-types" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
-tidb-error = { path = "../tidb-error" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }

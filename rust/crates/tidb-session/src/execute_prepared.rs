@@ -53,7 +53,7 @@ impl Session {
             Err(error) => {
                 let inner = error.clone().to_mysql_error();
                 let table_gone = inner.identity
-                    == Some(tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.identity());
+                    == Some(tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.identity());
                 if table_gone {
                     Err(DriverError::Mysql(tidb_executor::MysqlError::from_terror(
                         &tidb_plannererrors::ERR_SCHEMA_CHANGED.generate_with_stack(

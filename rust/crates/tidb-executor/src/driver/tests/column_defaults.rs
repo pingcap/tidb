@@ -63,10 +63,10 @@ fn column_defaults_and_not_null() {
         &crate::StmtContext::for_query()
     ))
     .is_err_and(
-        |error| error.equal(&tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE)
+        |error| error.equal(&tidb_table::table_errors::ERR_NO_DEFAULT_VALUE)
             && error.to_string()
                 == DriverError::from(
-                    tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE
+                    tidb_table::table_errors::ERR_NO_DEFAULT_VALUE
                         .generate_with_stack_by_args(&["n".into()])
                 )
                 .to_string()
@@ -78,10 +78,10 @@ fn column_defaults_and_not_null() {
         &crate::StmtContext::for_query()
     ))
     .is_err_and(
-        |error| error.equal(&tidb_error::catalog::table::ERR_COLUMN_CANT_NULL)
+        |error| error.equal(&tidb_table::table_errors::ERR_COLUMN_CANT_NULL)
             && error.to_string()
                 == DriverError::from(
-                    tidb_error::catalog::table::ERR_COLUMN_CANT_NULL
+                    tidb_table::table_errors::ERR_COLUMN_CANT_NULL
                         .generate_with_stack_by_args(&["n".into()])
                 )
                 .to_string()
@@ -123,7 +123,7 @@ fn column_defaults_and_not_null() {
         &mut catalog,
         &crate::StmtContext::for_query()
     ))
-    .is_err_and(|error| error.equal(&tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE)));
+    .is_err_and(|error| error.equal(&tidb_table::table_errors::ERR_NO_DEFAULT_VALUE)));
 
     // An AUTO_INCREMENT column supplies its own value, so omitting it is
     // never the missing-default case (see the auto_increment test).

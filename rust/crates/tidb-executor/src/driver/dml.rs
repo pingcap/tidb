@@ -322,7 +322,7 @@ fn physical_dml_plan_with_cache_mode(
             Some(TableEntry::Mem(_))
         ) {
             return Err(DriverError::Mysql(MysqlError::from_terror(
-                &tidb_error::catalog::table::ERR_UNSUPPORTED_OP.generate_with_stack_by_args(&[]),
+                &tidb_table::table_errors::ERR_UNSUPPORTED_OP.generate_with_stack_by_args(&[]),
             )));
         }
     }
@@ -645,7 +645,7 @@ fn resolve_insert_target(
     let (database, table_name) = (database.to_owned(), table_name.to_owned());
     let table = catalog.get_in(&database, &table_name).ok_or_else(|| {
         DriverError::from(
-            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                 .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
         )
     })?;
@@ -661,7 +661,7 @@ fn resolve_insert_target(
     }
     let TableEntry::Kv(_) = table else {
         return Err(DriverError::Mysql(MysqlError::from_terror(
-            &tidb_error::catalog::table::ERR_UNSUPPORTED_OP.generate_with_stack_by_args(&[]),
+            &tidb_table::table_errors::ERR_UNSUPPORTED_OP.generate_with_stack_by_args(&[]),
         )));
     };
     // Go `getAffectCols` (`buildInsert`): the columns the statement writes,
@@ -701,7 +701,7 @@ fn resolve_insert_target(
     for (position, &offset) in target_offsets.iter().enumerate() {
         if target_offsets[..position].contains(&offset) {
             return Err(DriverError::from(
-                (&tidb_error::catalog::table::ERR_DUPLICATE_COLUMN).generate_with_stack(format!(
+                (&tidb_table::table_errors::ERR_DUPLICATE_COLUMN).generate_with_stack(format!(
                     "Column '{}' specified twice",
                     column_list[offset].0
                 )),
@@ -1045,7 +1045,7 @@ fn run_insert_rows(
             crate::partition_pruning::ids_for_selected_partitions(spec, &insert.partitions)
                 .map_err(|partition| {
                     DriverError::from(
-                        tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+                        tidb_table::table_errors::ERR_UNKNOWN_PARTITION
                             .generate_with_stack_by_args(&[
                                 partition.into(),
                                 table_name.clone().into(),
@@ -1995,7 +1995,7 @@ fn run_insert_rows(
                 // without a warning.
                 if load_restrictive.is_some()
                     && insert.ignore
-                    && rendered.equal(&tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED)
+                    && rendered.equal(&tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED)
                 {
                     copied += 1;
                     continue;
@@ -2122,11 +2122,11 @@ fn handle_partition_write_error(
         // statement from `addRecord`.
         error
             if ignore
-                && (error.equal(&tidb_error::catalog::table::ERR_NO_PARTITION_FOR_GIVEN_VALUE)
+                && (error.equal(&tidb_table::table_errors::ERR_NO_PARTITION_FOR_GIVEN_VALUE)
                     || error.equal(
-                        &tidb_error::catalog::table::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET,
+                        &tidb_table::table_errors::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET,
                     )
-                    || error.equal(&tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED)) =>
+                    || error.equal(&tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED)) =>
         {
             let warning = error.to_mysql_error();
             ctx.append_sql_warn(tidb_context::SqlWarn::from_error(
@@ -2561,7 +2561,7 @@ fn update_assignments_for_plan(
     let (database, name) = single_table_name(table_ref, current_db)?;
     let table = catalog.get_in(&database, &name).ok_or_else(|| {
         DriverError::from(
-            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                 .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
         )
     })?;
@@ -3279,13 +3279,13 @@ fn run_update_with_physical(
     let (database, name) = single_table_name(table_ref, current_db)?;
     let table = catalog.get_in(&database, &name).ok_or_else(|| {
         DriverError::from(
-            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                 .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
         )
     })?;
     if !table_ref.partitions.is_empty() && !matches!(table, TableEntry::Kv(_)) {
         return Err(DriverError::from(
-            tidb_error::catalog::table::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[
+            tidb_table::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[
                 (table_ref.partitions[0].clone()).into(),
                 name.clone().into(),
             ]),
@@ -3414,7 +3414,7 @@ fn run_update_with_physical(
         Some(TableEntry::Kv(kv)) => {
             let Some(spec) = kv.partition() else {
                 return Err(DriverError::from(
-                    tidb_error::catalog::table::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(
+                    tidb_table::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(
                         &[
                             (table_ref.partitions[0].clone()).into(),
                             name.clone().into(),
@@ -3426,7 +3426,7 @@ fn run_update_with_physical(
                 crate::partition_pruning::ids_for_selected_partitions(spec, &table_ref.partitions)
                     .map_err(|partition| {
                         DriverError::from(
-                            tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+                            tidb_table::table_errors::ERR_UNKNOWN_PARTITION
                                 .generate_with_stack_by_args(&[
                                     partition.into(),
                                     name.clone().into(),
@@ -3883,7 +3883,7 @@ fn run_delete_with_physical(
         && !matches!(catalog.get_in(&database, &name), Some(TableEntry::Kv(_)))
     {
         return Err(DriverError::from(
-            tidb_error::catalog::table::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[
+            tidb_table::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[
                 (table_ref.partitions[0].clone()).into(),
                 name.clone().into(),
             ]),
@@ -3982,13 +3982,13 @@ impl PhysicalWriteShape {
             .collect::<Result<Vec<_>, _>>()?;
         let table = catalog.get_in(database, name).ok_or_else(|| {
             DriverError::from(
-                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                     .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
             )
         })?;
         let TableEntry::Kv(table) = table else {
             return Err(DriverError::Mysql(MysqlError::from_terror(
-                &tidb_error::catalog::table::ERR_UNSUPPORTED_OP.generate_with_stack_by_args(&[]),
+                &tidb_table::table_errors::ERR_UNSUPPORTED_OP.generate_with_stack_by_args(&[]),
             )));
         };
         let stored_width = table.columns().len();

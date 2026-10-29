@@ -101,7 +101,7 @@ pub fn placement_table<'a>(
 ) -> Result<(String, String, &'a TableEntry), DriverError> {
     let missing = || {
         DriverError::from(
-            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                 .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
         )
     };

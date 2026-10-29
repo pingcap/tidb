@@ -590,7 +590,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
         } => {
             let Some(database) = find_database(catalog, schema) else {
                 return Err(DdlPlanError::from(
-                    tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                         .generate_with_stack_by_args(&[(schema.clone()).into()]),
                 ));
             };
@@ -621,7 +621,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
         } => {
             let Some(database) = find_database(catalog, schema) else {
                 return Err(DdlPlanError::from(
-                    tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                         .generate_with_stack_by_args(&[(schema.clone()).into()]),
                 ));
             };
@@ -773,7 +773,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                     .map(|stored| (database, stored))
             }) else {
                 return Err(DdlPlanError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                         .generate_with_stack_by_args(&[
                             (String::new()).into(),
                             (format!("(physical id {table_id})")).into(),
@@ -944,7 +944,7 @@ fn partition_mode_on_cache_table() -> DdlPlanError {
 /// Go `table.ErrUnknownPartition` as the partition jobs answer it.
 fn unknown_partition(info: &TableInfo) -> DdlPlanError {
     coded_refusal(
-        &tidb_error::catalog::table::ERR_UNKNOWN_PARTITION,
+        &tidb_table::table_errors::ERR_UNKNOWN_PARTITION,
         format!(
             "Unknown partition 'drop?' in table '{}'",
             info.name.original()
@@ -980,7 +980,7 @@ fn find_partition_id(table: &TableInfo, partition: &str) -> Result<i64, DdlPlanE
         .map(|definition| definition.id);
     found.ok_or_else(|| {
         driver_refusal(tidb_terror::MysqlError::from_terror(
-            &tidb_error::catalog::table::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[
+            &tidb_table::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[
                 name.to_string().into(),
                 (table.name.original().to_owned()).to_string().into(),
             ]),
@@ -1000,7 +1000,7 @@ pub(super) fn check_placement_policy_ref_valid<S: MetaSnapshot>(
     let id = reference.read().id;
     if snapshot.get(&key::policy_kv_key(id))?.is_none() {
         return Err(coded_refusal(
-            &tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS,
+            &tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_NOT_EXISTS,
             format!("Unknown placement policy '(Policy ID {id})'"),
         ));
     }
@@ -1492,7 +1492,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
                 return Err(cancel_ddl_job(
                     active,
                     DdlPlanError::from(
-                        tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS
+                        tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS
                             .generate_with_stack_by_args(&[
                                 (changed.name.original().to_owned()).into(),
                                 (table.clone()).into(),
@@ -1676,7 +1676,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
                 return Err(cancel_ddl_job(
                     active,
                     DdlPlanError::from(
-                        tidb_error::catalog::infoschema::ERR_KEY_NOT_EXISTS
+                        tidb_infoschema::infoschema_errors::ERR_KEY_NOT_EXISTS
                             .generate_with_stack_by_args(&[
                                 index_name.into(),
                                 (table.clone()).into(),

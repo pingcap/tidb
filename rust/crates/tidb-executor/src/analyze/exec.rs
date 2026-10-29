@@ -879,7 +879,7 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
                 }
                 None => {
                     return Err(DriverError::from(
-                        tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                        tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                             .generate_with_stack_by_args(&[
                                 schema.clone().into(),
                                 name.clone().into(),

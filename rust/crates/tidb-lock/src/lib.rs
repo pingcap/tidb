@@ -84,7 +84,7 @@ impl<'a> Checker<'a> {
             tidb_mysql::CreatePriv | tidb_mysql::CreateViewPriv => {
                 if self.has_locked_tables() {
                     return Err(DriverError::from(
-                        tidb_error::catalog::infoschema::ERR_TABLE_NOT_LOCKED
+                        tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_LOCKED
                             .generate_with_stack_by_args(&[table.to_owned().into()]),
                     )
                     .into());
@@ -110,7 +110,7 @@ impl<'a> Checker<'a> {
                     TableLockType::READ | TableLockType::WRITE_LOCAL | TableLockType::READ_ONLY
                 ) {
                     return Err(DriverError::from(
-                        tidb_error::catalog::infoschema::ERR_TABLE_NOT_LOCKED_FOR_WRITE
+                        tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_LOCKED_FOR_WRITE
                             .generate_with_stack_by_args(&[tb.name().into()]),
                     )
                     .into());
@@ -123,13 +123,13 @@ impl<'a> Checker<'a> {
                     return Ok(());
                 }
                 return Err(DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_LOCKED_FOR_WRITE
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_LOCKED_FOR_WRITE
                         .generate_with_stack_by_args(&[tb.name().into()]),
                 )
                 .into());
             }
             return Err(DriverError::from(
-                tidb_error::catalog::infoschema::ERR_TABLE_NOT_LOCKED
+                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_LOCKED
                     .generate_with_stack_by_args(&[tb.name().into()]),
             )
             .into());
@@ -157,7 +157,7 @@ impl<'a> Checker<'a> {
             )
         {
             return Err(DriverError::from(
-                tidb_error::catalog::table::ERR_LOCK_OR_ACTIVE_TRANSACTION
+                tidb_table::table_errors::ERR_LOCK_OR_ACTIVE_TRANSACTION
                     .generate_with_stack_by_args(&[]),
             )
             .into());

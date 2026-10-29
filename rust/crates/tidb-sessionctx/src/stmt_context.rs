@@ -3856,20 +3856,17 @@ impl StmtContext {
     /// error Go reports for a missing sequence or another kind of object.
     fn resolve_sequence(&self, path: &[String]) -> Result<&dyn SequenceTable, tidb_expr::EvalError> {
         let sequences = self.sequences();
-        let object = sequences
-            .schema_and_name(path)
-            .and_then(|(database, name)| sequences.object(database, name));
-        match object {
-            Some(Some(sequence)) => Ok(sequence),
-            Some(None) => Err(tidb_expr::EvalError::Sequence({
-                let (database, name) = sequences.key(path);
-                tidb_expr::SequenceEvalError::WrongObject(database, name)
-            })),
-            None => Err(tidb_expr::EvalError::Sequence({
-                let (database, name) = sequences.key(path);
-                tidb_expr::SequenceEvalError::NotASequence(database, name)
-            })),
-        }
+        let (database, name) = sequences.key(path);
+        // Only a one- or two-part name reaches the lookup; any other names
+        // nothing.
+        let lookup: &dyn SequenceSchema = if sequences.schema_and_name(path).is_some() {
+            sequences
+        } else {
+            &tidb_util::misc::NoSequences
+        };
+        lookup
+            .get_sequence_by_name(&database, &name)
+            .map_err(sequence_error)
     }
 
     /// See [`StmtContext::with_cte_max_recursion_depth`].
@@ -6194,16 +6191,16 @@ impl Columns for StmtContext {
     fn sequence_nextval(&self, path: &[String]) -> Result<Datum, tidb_expr::EvalError> {
         let sequence = self.resolve_sequence(path)?;
         self.check_sequence_privilege(path, true)?;
-        let value = sequence.sequence_next_val().map_err(|_| {
-            let (database, name) = self.sequences().key(path);
-            tidb_expr::EvalError::Sequence(tidb_expr::SequenceEvalError::RunOut(database, name))
-        })?;
+        let (database, name) = self.sequences().key(path);
+        let value = sequence
+            .get_sequence_next_val(self, &database, &name)
+            .map_err(sequence_error)?;
         // Go records the value in the SESSION's sequence state, which is what
         // `LASTVAL` reads back.
         self.sequence_state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(sequence.sequence_id(), value);
+            .insert(sequence.get_sequence_id(), value);
         Ok(Datum::Int(value))
     }
 
@@ -6214,7 +6211,7 @@ impl Columns for StmtContext {
             .sequence_state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&sequence.sequence_id())
+            .get(&sequence.get_sequence_id())
             .copied()
             .map_or(Datum::Null, Datum::Int))
     }
@@ -6224,12 +6221,17 @@ impl Columns for StmtContext {
         self.check_sequence_privilege(path, true)?;
         // Go `SetSequenceVal`: the reported value is NULL when the stored
         // counter was already at or past `value` (`alreadySatisfied`).
-        let reported = sequence.set_sequence_val(value).map_err(|_| {
-            let (database, name) = self.sequences().key(path);
-            tidb_expr::EvalError::Sequence(tidb_expr::SequenceEvalError::RunOut(database, name))
-        })?;
-        Ok(reported.map_or(Datum::Null, Datum::Int))
+        let (database, name) = self.sequences().key(path);
+        let (reported, already_satisfied) = sequence
+            .set_sequence_val(self, value, &database, &name)
+            .map_err(sequence_error)?;
+        Ok(if already_satisfied { Datum::Null } else { Datum::Int(reported) })
     }
+}
+
+/// A sequence error as its producer raised it.
+fn sequence_error(error: tidb_terror::TerrorError) -> tidb_expr::EvalError {
+    tidb_expr::EvalError::Sequence(tidb_expr::SequenceEvalError::Raised(error))
 }
 
 #[cfg(test)]

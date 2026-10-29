@@ -1045,7 +1045,7 @@ pub fn reject_duplicate_index_columns(
     for part in parts {
         if let tidb_ast::IndexPart::Column { name, .. } = part {
             if !seen.insert(name.go_to_lower()) {
-                return Err(tidb_terror::MysqlError::from_terror(&tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS.generate_with_stack_by_args(&[(name.clone()).to_string().into()])));
+                return Err(tidb_terror::MysqlError::from_terror(&tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS.generate_with_stack_by_args(&[(name.clone()).to_string().into()])));
             }
         }
     }

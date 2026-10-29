@@ -123,7 +123,7 @@ fn non_strict_insert_null_semantics_follow_the_values_path() {
     )
     .unwrap_err();
     assert!(
-        error.equal(&tidb_error::catalog::table::ERR_COLUMN_CANT_NULL)
+        error.equal(&tidb_table::table_errors::ERR_COLUMN_CANT_NULL)
             && error.to_string() == "Column 'col1' cannot be null",
         "unexpected error: {error:?}"
     );
@@ -135,7 +135,7 @@ fn non_strict_insert_null_semantics_follow_the_values_path() {
     )
     .unwrap_err();
     assert!(
-        error.equal(&tidb_error::catalog::table::ERR_COLUMN_CANT_NULL)
+        error.equal(&tidb_table::table_errors::ERR_COLUMN_CANT_NULL)
             && error.to_string() == "Column 'col1' cannot be null",
         "unexpected error: {error:?}"
     );

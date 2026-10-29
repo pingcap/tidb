@@ -139,7 +139,7 @@ impl Session {
                     // precedes `BuildTableInfoWithStmt`.
                     if !catalog.has_database(&database) {
                         return Err(DriverError::from(
-                            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                            tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                                 .generate_with_stack_by_args(&[(database.clone()).into()]),
                         ));
                     }
@@ -152,7 +152,7 @@ impl Session {
                         ) = catalog.table_in(schema, name)
                         {
                             return Err(DriverError::from(
-                                tidb_error::catalog::infoschema::ERR_WRONG_OBJECT
+                                tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT
                                     .generate_with_stack_by_args(&[
                                         (&database).into(),
                                         (&name).into(),
@@ -203,7 +203,7 @@ impl Session {
             }
         }
         Err(DriverError::from(
-            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                 .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
         ))
     }
@@ -221,7 +221,7 @@ impl Session {
                 Ok(())
             } else {
                 Err(DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                         .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
                 ))
             }
@@ -241,12 +241,12 @@ impl Session {
         let (database, name) = (database.to_owned(), name.to_owned());
         self.with_catalog_mut(|catalog| match catalog.table_in(&database, &name) {
             None => Err(DriverError::from(
-                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                     .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
             )),
             Some(tidb_executor::TableEntry::View(_) | tidb_executor::TableEntry::Sequence(_)) => {
                 Err(DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_WRONG_OBJECT.generate_with_stack_by_args(
+                    tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT.generate_with_stack_by_args(
                         &[(&database).into(), (&name).into(), ("BASE TABLE").into()],
                     ),
                 ))

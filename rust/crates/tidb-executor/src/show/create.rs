@@ -220,7 +220,7 @@ pub fn show_create_table_text(
                             )
                             .map_err(|_| {
                                 DriverError::from(
-                                    tidb_error::catalog::table::ERR_GET_DEFAULT_FAILED
+                                    tidb_table::table_errors::ERR_GET_DEFAULT_FAILED
                                         .generate_with_stack_by_args(&[column.name.clone().into()]),
                                 )
                             })?

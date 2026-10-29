@@ -41,7 +41,7 @@ pub fn prepare_alter_schema_job_submission<S: MetaSnapshot>(
         } => {
             let Some(database) = find_database(&catalog, name) else {
                 return Err(DdlPlanError::from(
-                    tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                         .generate_with_stack_by_args(&[(name.clone()).into()]),
                 ));
             };
@@ -69,7 +69,7 @@ pub fn prepare_alter_schema_job_submission<S: MetaSnapshot>(
         } => {
             if find_database(&catalog, name).is_none() {
                 return Err(DdlPlanError::from(
-                    tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                         .generate_with_stack_by_args(&[(name.clone()).into()]),
                 ));
             }
@@ -246,7 +246,7 @@ pub fn schema_tiflash_replica_tables<'catalog>(
 ) -> Result<(String, Vec<&'catalog TableInfo>), DdlPlanError> {
     let Some((database, tables)) = catalog.schema_by_name(name) else {
         return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
-            &tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+            &tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                 .generate_with_stack_by_args(&[name.into()]),
         )));
     };
@@ -259,7 +259,7 @@ pub fn schema_tiflash_replica_tables<'catalog>(
     let tables = tables.iter().collect::<Vec<_>>();
     if tables.is_empty() {
         return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
-            &tidb_error::catalog::infoschema::ERR_EMPTY_DATABASE
+            &tidb_infoschema::infoschema_errors::ERR_EMPTY_DATABASE
                 .generate_with_stack(format!("Empty database '{name}'")),
         )));
     }

@@ -66,7 +66,7 @@ pub fn execute_catalog_stats_lock(
                 .find(|definition| definition.name.go_to_lower() == written_name.go_to_lower())
                 .ok_or_else(|| {
                     DriverError::from(
-                        tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+                        tidb_table::table_errors::ERR_UNKNOWN_PARTITION
                             .generate_with_stack_by_args(&[
                                 written_name.go_to_lower().into(),
                                 table.name().into(),
@@ -145,7 +145,7 @@ fn kv_table<'a>(
     match catalog.table_in(database, table_name) {
         Some(TableEntry::Kv(table)) => Ok(table),
         _ => Err(DriverError::from(
-            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                 .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
         )),
     }

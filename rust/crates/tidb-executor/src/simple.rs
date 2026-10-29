@@ -56,7 +56,7 @@ pub fn execute_use(
     }
     let Some(charset) = is.database_charset(name) else {
         return Err(DriverError::from(
-            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                 .generate_with_stack_by_args(&[(name.to_owned()).into()]),
         ));
     };
@@ -85,7 +85,7 @@ pub fn execute_set_resource_group_name(
     } else {
         if is.resource_group(&stmt.name).is_none() {
             return Err(DriverError::Mysql(crate::MysqlError::from_terror(
-                &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_NOT_EXISTS
+                &tidb_infoschema::infoschema_errors::ERR_RESOURCE_GROUP_NOT_EXISTS
                     .generate_with_stack_by_args(&[stmt.name.clone().into()]),
             )));
         }

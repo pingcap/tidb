@@ -229,7 +229,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                 let (reported, charset) =
                     catalog.database_definition(database).ok_or_else(|| {
                         DriverError::from(
-                            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                            tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                                 .generate_with_stack_by_args(&[(database.clone()).into()]),
                         )
                     })?;
@@ -255,7 +255,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             let text = self.with_catalog_mut(|catalog| {
                 let group = catalog.resource_group(group_name).ok_or_else(|| {
                     DriverError::Mysql(tidb_terror::MysqlError::from_terror(
-                        &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_NOT_EXISTS
+                        &tidb_infoschema::infoschema_errors::ERR_RESOURCE_GROUP_NOT_EXISTS
                             .generate_with_stack_by_args(&[group_name.into()]),
                     ))
                 })?;
@@ -294,7 +294,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                     })
                     .ok_or_else(|| {
                         DriverError::from(
-                            tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS
+                            tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_NOT_EXISTS
                                 .generate_with_stack_by_args(&[policy_name.clone().into()]),
                         )
                     })
@@ -337,7 +337,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
         let shown = self.with_catalog_scope(include_local, |catalog| {
             let Some(entry) = catalog.table_in(&database, &table_name) else {
                 return Err(DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                         .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
                 ));
             };
@@ -353,7 +353,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                     )),
                 )),
                 _ if want_view => Err(DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_WRONG_OBJECT.generate_with_stack_by_args(
+                    tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT.generate_with_stack_by_args(
                         &[(&database).into(), (&table_name).into(), "VIEW".into()],
                     ),
                 )),
@@ -363,7 +363,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                     None,
                 )),
                 _ if want_sequence => Err(DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_WRONG_OBJECT.generate_with_stack_by_args(
+                    tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT.generate_with_stack_by_args(
                         &[(&database).into(), (&table_name).into(), "SEQUENCE".into()],
                     ),
                 )),
@@ -410,7 +410,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
         let ids = self.with_catalog_mut(|catalog| {
             let Some(entry) = catalog.persistent_table_in(database, table_name) else {
                 return Err(DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                         .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
                 ));
             };
@@ -615,7 +615,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                 self.with_catalog_mut(|catalog| {
                     let Some(entry) = catalog.table_in(&database, &table_name) else {
                         return Err(DriverError::from(
-                            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                                 .generate_with_stack_by_args(&[
                                     (&database).into(),
                                     (&table_name).into(),
@@ -671,7 +671,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                 let catalog = self.table_storage_statistics_catalog(true)?;
                 if catalog.table_names(&database).is_none() {
                     return Err(DriverError::from(
-                        tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                        tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                             .generate_with_stack_by_args(&[database.into()]),
                     ));
                 }
@@ -752,7 +752,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
         let rows = self.with_catalog_mut(|catalog| {
             let Some(entry) = catalog.table_in(&database, &table_name) else {
                 return Err(DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                         .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
                 ));
             };
@@ -1494,7 +1494,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                         .find(|name| name.go_lower_eq(database))
                     else {
                         return Err(DriverError::from(
-                            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                            tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                                 .generate_with_stack_by_args(&[(database.clone()).into()]),
                         ));
                     };
@@ -1524,7 +1524,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                         placement_table(catalog, &database, &table_name)?;
                     let unknown = || {
                         DriverError::from(
-                            tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+                            tidb_table::table_errors::ERR_UNKNOWN_PARTITION
                                 .generate_with_stack_by_args(&[
                                     partition.clone().into(),
                                     entry_name.clone().into(),

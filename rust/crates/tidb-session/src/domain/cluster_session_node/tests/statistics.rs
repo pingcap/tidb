@@ -240,7 +240,7 @@ fn stats_lock_planning_keeps_go_error_identities() {
         ),
         (
             ClusterStatsLockError::from(
-                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                     .generate_with_stack_by_args(&["app".into(), "missing".into()]),
             ),
             1146,
@@ -249,7 +249,7 @@ fn stats_lock_planning_keeps_go_error_identities() {
         ),
         (
             ClusterStatsLockError::from(
-                tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+                tidb_table::table_errors::ERR_UNKNOWN_PARTITION
                     .generate_with_stack_by_args(&["p9".into(), "t".into()]),
             ),
             1735,
@@ -457,7 +457,6 @@ fn open_session_as_with_stats_lock(
         Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
         Arc::clone(&node.sysvars) as Arc<dyn tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter>,
-        Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
         stats_lock,
         Arc::clone(&node.catalog),
         node.accounts.live.clone(),
@@ -470,6 +469,7 @@ fn open_session_as_with_stats_lock(
         crate::domain::cluster_session_node::open_pool_session,
     )
     .shared();
+    crate::domain::cluster_session_node::NodeServices::new(Arc::new(MockAnalyze)).bind(&factory);
     node.keep(&factory);
     let users =
         ConfiguredUserStore::parse(&format!("{user}\t%\tmysql_native_password\t{ABC_HASH}\n"))

@@ -537,7 +537,7 @@ pub fn build_table_info_in_schema(
             // Go `ErrDupFieldName` (1060): `Duplicate column name '%-.192s'`
             // -- the lowercased collision is reported by its original name.
             return Err(DdlAdmissionError::from_terror(
-                &tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+                &tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS
                     .generate_with_stack_by_args(&[column.name.original().into()]),
             ));
         }
@@ -885,7 +885,7 @@ pub fn check_table_info_valid_with_stmt(
     // Check if table has a primary key if required.
     if ctx.primary_key_required() && tb_info.get_pk_name().original().is_empty() {
         return Err(DdlAdmissionError::from_terror(
-            &tidb_error::catalog::infoschema::ERR_TABLE_WITHOUT_PRIMARY_KEY
+            &tidb_infoschema::infoschema_errors::ERR_TABLE_WITHOUT_PRIMARY_KEY
                 .generate_with_stack_by_args(&[]),
         ));
     }
@@ -941,7 +941,7 @@ fn check_duplicate_column(cols: &[GoShared<ColumnInfo>]) -> Refusal<()> {
         let col = col.read();
         if !col_names.insert(col.name.lowercase().to_owned()) {
             return Err(DdlAdmissionError::from_terror(
-                &tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+                &tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS
                     .generate_with_stack_by_args(&[col.name.original().into()]),
             ));
         }
@@ -3069,7 +3069,7 @@ fn build_table(
     {
         // Go `ErrMultiplePriKey` (1068).
         return Err(DdlAdmissionError::from_terror(
-            &tidb_error::catalog::infoschema::ERR_MULTIPLE_PRI_KEY.generate_with_stack_by_args(&[]),
+            &tidb_infoschema::infoschema_errors::ERR_MULTIPLE_PRI_KEY.generate_with_stack_by_args(&[]),
         ));
     }
 

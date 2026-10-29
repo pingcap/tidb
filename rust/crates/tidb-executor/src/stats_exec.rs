@@ -103,7 +103,7 @@ pub trait StatsExec: AnalyzeExec {
                                 warnings: &mut Vec<(u16, String)>| {
                 let Some(TableEntry::Kv(table)) = catalog.table_in(database, table) else {
                     let error = tidb_terror::MysqlError::from_terror(
-                        &tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                        &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                             .generate_with_stack_by_args(&[database.into(), table.into()]),
                     );
                     warnings.push((error.code, error.message));
@@ -124,7 +124,7 @@ pub trait StatsExec: AnalyzeExec {
                             }
                         } else {
                             let error = tidb_terror::MysqlError::from_terror(
-                                &tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                                &tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                                     .generate_with_stack_by_args(&[database.as_str().into()]),
                             );
                             warnings.push((error.code, error.message));
@@ -206,7 +206,7 @@ pub trait StatsExec: AnalyzeExec {
                 self.with_catalog_mut(|catalog| match catalog.table_in(&database, &name) {
                     Some(TableEntry::Kv(table)) => Ok(Arc::clone(table)),
                     _ => Err(DriverError::from(
-                        tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                        tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                             .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
                     )),
                 })?;

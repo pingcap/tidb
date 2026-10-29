@@ -56,7 +56,7 @@ pub fn check_drop_object(
     match expected {
         DropObjectKind::View if actual != DropObjectKind::View => {
             Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::infoschema::ERR_WRONG_OBJECT.generate_with_stack_by_args(&[
+                &tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT.generate_with_stack_by_args(&[
                     schema.into(),
                     name.into(),
                     "VIEW".into(),
@@ -133,7 +133,7 @@ pub fn check_rename(admission: RenameAdmission<'_>) -> Result<bool, MysqlError> 
     } = admission;
     let occupied = || {
         tidb_terror::MysqlError::from_terror(
-            &tidb_error::catalog::infoschema::ERR_TABLE_EXISTS
+            &tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS
                 .generate_with_stack_by_args(&[(&format!("{to_db}.{to_name}")).into()]),
         )
     };
@@ -142,7 +142,7 @@ pub fn check_rename(admission: RenameAdmission<'_>) -> Result<bool, MysqlError> 
             return Err(occupied());
         }
         return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+            &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                 .generate_with_stack_by_args(&[from_db.into(), from_name.into()]),
         ));
     }
@@ -154,7 +154,7 @@ pub fn check_rename(admission: RenameAdmission<'_>) -> Result<bool, MysqlError> 
     }
     if source_is_view && from_db != to_db {
         return Err(MysqlError::from_terror(
-            &tidb_error::catalog::infoschema::ERR_FORBID_SCHEMA_CHANGE
+            &tidb_infoschema::infoschema_errors::ERR_FORBID_SCHEMA_CHANGE
                 .generate_with_stack_by_args(&[from_db.into(), to_db.into()]),
         ));
     }
@@ -214,11 +214,11 @@ pub fn check_view_target(
 ) -> Result<(), MysqlError> {
     match existing {
         Some(_) if !or_replace => Err(tidb_terror::MysqlError::from_terror(
-            &tidb_error::catalog::infoschema::ERR_TABLE_EXISTS
+            &tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS
                 .generate_with_stack_by_args(&[(&format!("{database}.{name}")).into()]),
         )),
         Some(false) => Err(tidb_terror::MysqlError::from_terror(
-            &tidb_error::catalog::infoschema::ERR_WRONG_OBJECT.generate_with_stack_by_args(&[
+            &tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT.generate_with_stack_by_args(&[
                 database.into(),
                 name.into(),
                 "VIEW".into(),

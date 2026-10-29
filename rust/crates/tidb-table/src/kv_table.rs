@@ -1416,7 +1416,7 @@ impl KvTable {
         } else {
             Err(KvTableError::Mysql(
                 tidb_terror::MysqlError::from_terror(
-                    &tidb_error::catalog::table::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET
+                    &crate::table_errors::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET
                         .generate_with_stack_by_args(&[]),
                 ),
             ))
@@ -2410,7 +2410,7 @@ impl KvTable {
                 Some(false) => {
                     return Err(KvTableError::Mysql(
                         tidb_terror::MysqlError::from_terror(
-                            &tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED
+                            &crate::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED
                                 .fast_generate_by_args(&[(constraint.name.clone()).into()]),
                         ),
                     ));
@@ -3719,7 +3719,7 @@ impl KvTable {
             {
                 return Err(KvTableError::Mysql(
                     tidb_terror::MysqlError::from_terror(
-                        &tidb_error::catalog::table::ERR_TEMP_TABLE_FULL
+                        &crate::table_errors::ERR_TEMP_TABLE_FULL
                             .generate_with_stack_by_args(&[self.name().into()]),
                     ),
                 ));
@@ -4418,7 +4418,7 @@ fn routing_error(error: crate::partition_routing::RoutingError) -> KvTableError 
     match error {
         crate::partition_routing::RoutingError::NoPartitionForValue(value) => {
             KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::table::ERR_NO_PARTITION_FOR_GIVEN_VALUE
+                &crate::table_errors::ERR_NO_PARTITION_FOR_GIVEN_VALUE
                     .generate_with_stack_by_args(&[value.into()]),
             ))
         }

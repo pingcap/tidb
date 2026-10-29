@@ -229,7 +229,7 @@ pub fn partition_spec_from_metadata(
     // shape because they are different code.
     if definitions.is_empty() {
         return Err(tidb_terror::MysqlError::from_terror(
-            &tidb_error::catalog::table::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[]),
+            &crate::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[]),
         ));
     }
     let physical = definitions

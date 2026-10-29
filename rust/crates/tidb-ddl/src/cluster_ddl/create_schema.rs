@@ -48,13 +48,13 @@ pub fn prepare_create_schema_job_submission<S: MetaSnapshot>(
                     existing.info.name.original()
                 ),
                 warnings: vec![crate::real_tikv_ddl::ddl_note(
-                    tidb_error::catalog::infoschema::ERR_DATABASE_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_DATABASE_EXISTS
                         .generate_with_stack_by_args(&[name.into()]),
                 )],
             }));
         }
         return Err(DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_DATABASE_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_DATABASE_EXISTS
                 .generate_with_stack_by_args(&[(name.clone()).into()]),
         ));
     }

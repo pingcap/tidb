@@ -77,7 +77,10 @@ fn node_and_authority_failures_are_combined_after_factory_drop() {
         panic!("both independent failures must survive composition");
     };
     assert!(matches!(*run, RunConfiguredNodeError::Node(_)));
-    assert!(matches!(authority, ReadProcessShutdownError::StoreClose(_)));
+    assert!(matches!(
+        authority.downcast_ref::<ReadProcessShutdownError>(),
+        Some(ReadProcessShutdownError::StoreClose(_))
+    ));
 }
 
 #[test]

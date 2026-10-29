@@ -1727,9 +1727,9 @@ fn default_evaluator_using<'a>(
                 .map_err(|error| match error {
                     crate::DriverError::Exec(crate::ExecError::Eval(error)) => error,
                     // Go `table.ErrNoDefaultValue.GenWithStackByArgs(colName)`.
-                    error if error.equal(&tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE) => {
+                    error if error.equal(&tidb_table::table_errors::ERR_NO_DEFAULT_VALUE) => {
                         tidb_expr::EvalError::Conversion(
-                            tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE
+                            tidb_table::table_errors::ERR_NO_DEFAULT_VALUE
                                 .generate(error.to_string()),
                         )
                     }
@@ -2272,7 +2272,7 @@ pub(crate) fn view_column_types(
             .cloned()
             .ok_or_else(|| {
                 tidb_planner::plan_base::PlanError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                         .fast_generate_by_args(&[database.into(), view_name.into()]),
                 )
             })?;

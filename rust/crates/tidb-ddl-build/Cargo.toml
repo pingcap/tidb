@@ -8,6 +8,7 @@ repository.workspace = true
 description = "The metadata-building half of Go pkg/ddl for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-tblctx = { path = "../tidb-tblctx" }
 tidb-plannererrors = { path = "../tidb-plannererrors" }
 tidb-errno = { path = "../tidb-errno" }
@@ -36,7 +37,6 @@ tidb-codec = { path = "../tidb-codec" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-config = { path = "../tidb-config" }
 tidb-datatype = { path = "../tidb-datatype" }
-tidb-error = { path = "../tidb-error" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-model = { path = "../tidb-model" }
 tidb-metadef = { path = "../tidb-metadef" }

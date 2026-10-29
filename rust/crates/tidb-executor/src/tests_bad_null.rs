@@ -53,10 +53,10 @@ fn test_handle_bad_null() {
         (handle_bad_null(&mut Datum::Null, &not_null, "a", NullLevel::Error, &context,)
             .map_err(DriverError::from))
         .is_err_and(
-            |error| error.equal(&tidb_error::catalog::table::ERR_COLUMN_CANT_NULL)
+            |error| error.equal(&tidb_table::table_errors::ERR_COLUMN_CANT_NULL)
                 && error.to_string()
                     == DriverError::from(
-                        tidb_error::catalog::table::ERR_COLUMN_CANT_NULL
+                        tidb_table::table_errors::ERR_COLUMN_CANT_NULL
                             .generate_with_stack_by_args(&["a".into()])
                     )
                     .to_string()

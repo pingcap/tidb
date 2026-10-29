@@ -187,10 +187,10 @@ impl From<CastError> for DriverError {
 impl From<ColumnError> for DriverError {
     fn from(error: ColumnError) -> Self {
         match error {
-            ColumnError::ColumnCannotBeNull(column) => tidb_error::catalog::table::ERR_COLUMN_CANT_NULL
+            ColumnError::ColumnCannotBeNull(column) => tidb_table::table_errors::ERR_COLUMN_CANT_NULL
                 .generate_with_stack_by_args(&[column.into()])
                 .into(),
-            ColumnError::NoDefaultForField(field) => tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE
+            ColumnError::NoDefaultForField(field) => tidb_table::table_errors::ERR_NO_DEFAULT_VALUE
                 .generate_with_stack_by_args(&[field.into()])
                 .into(),
             ColumnError::Mysql(error) => Self::Mysql(error),

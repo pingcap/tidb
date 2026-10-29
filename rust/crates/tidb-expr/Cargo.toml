@@ -35,11 +35,11 @@ tidb-vitess = { path = "../tidb-vitess" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 stacker = { workspace = true }
 tidb-hack = { path = "../tidb-hack" }
+tidb-util = { path = "../tidb-util" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
-tidb-error = { path = "../tidb-error" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }

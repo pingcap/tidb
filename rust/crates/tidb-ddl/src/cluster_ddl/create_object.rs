@@ -56,7 +56,7 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
         } => {
             let Some(database) = find_database(&catalog, schema) else {
                 return Err(DdlPlanError::from(
-                    tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                         .generate_with_stack_by_args(&[(schema.clone()).into()]),
                 ));
             };
@@ -68,7 +68,7 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
             )
             .map_err(|error| match error.code {
                 tidb_mysql::errors::errcode::ErrTableExists => DdlPlanError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_EXISTS.generate_with_stack_by_args(
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.generate_with_stack_by_args(
                         &[format!("{}.{}", (schema.clone()), (name.clone())).into()],
                     ),
                 ),
@@ -165,7 +165,7 @@ pub(super) fn build_create_table_with_info_job(
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let Some(database) = find_database(catalog, schema) else {
         return Err(DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                 .generate_with_stack_by_args(&[(schema.to_owned()).into()]),
         ));
     };
@@ -173,7 +173,7 @@ pub(super) fn build_create_table_with_info_job(
     if let Some(existing) = find_table(database, info.name.original()) {
         let exists = || {
             DdlPlanError::from(
-                tidb_error::catalog::infoschema::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
+                tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
                     format!(
                         "{}.{}",
                         (schema.to_owned()),
@@ -188,7 +188,7 @@ pub(super) fn build_create_table_with_info_job(
                 return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                     detail: format!("`{schema}`.`{}` already exists", info.name.original()),
                     warnings: vec![crate::real_tikv_ddl::ddl_note(
-                        tidb_error::catalog::infoschema::ERR_TABLE_EXISTS
+                        tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS
                             .generate_with_stack_by_args(&[format!(
                                 "{}.{}",
                                 schema,
@@ -280,7 +280,7 @@ fn build_create_table_like_info(
     let source = resolve_like_source(catalog, source_schema, source_table, *temporary)?;
     let Some(database) = find_database(catalog, schema) else {
         return Err(DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                 .generate_with_stack_by_args(&[(schema.clone()).into()]),
         ));
     };
@@ -309,14 +309,14 @@ fn build_create_table_like_info(
                     existing.name.original()
                 ),
                 warnings: vec![crate::real_tikv_ddl::ddl_note(
-                    tidb_error::catalog::infoschema::ERR_TABLE_EXISTS.generate_with_stack_by_args(
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.generate_with_stack_by_args(
                         &[format!("{}.{}", schema, existing.name.original()).into()],
                     ),
                 )],
             }));
         }
         return Err(DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
                 format!("{}.{}", (schema.clone()), (table.clone())).into(),
             ]),
         ));
@@ -341,7 +341,7 @@ pub fn resolve_like_source<'catalog>(
     // missing table.
     let Some((_, source)) = catalog.table_by_name(source_schema, source_table) else {
         return Err(DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(&[
                 (source_schema.to_owned()).into(),
                 (source_table.to_owned()).into(),
             ]),
@@ -624,7 +624,7 @@ fn build_alter_sequence_job(
     };
     let Some(database) = find_database(catalog, schema) else {
         return Err(DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                 .generate_with_stack_by_args(&[(schema.clone()).into()]),
         ));
     };
@@ -633,13 +633,13 @@ fn build_alter_sequence_job(
             return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                 detail: format!("sequence `{schema}`.`{name}` does not exist"),
                 warnings: vec![crate::real_tikv_ddl::ddl_note(
-                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                         .generate_with_stack_by_args(&[schema.into(), name.into()]),
                 )],
             }));
         }
         return Err(DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                 .generate_with_stack_by_args(&[(schema.clone()).into(), (name.clone()).into()]),
         ));
     };

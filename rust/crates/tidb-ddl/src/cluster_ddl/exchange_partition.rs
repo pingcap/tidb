@@ -63,7 +63,7 @@ pub fn prepare_exchange_partition_job_submission<S: MetaSnapshot>(
         })
         .ok_or_else(|| {
             exchange_refusal(
-                &tidb_error::catalog::table::ERR_UNKNOWN_PARTITION,
+                &tidb_table::table_errors::ERR_UNKNOWN_PARTITION,
                 format!(
                     "Unknown partition '{partition_name}' in table '{}'",
                     partitioned.name.original()
@@ -330,7 +330,7 @@ pub(super) fn plan_persisted_exchange_partition_job_step<S: MetaSnapshot>(
             .find(|definition| definition.name.lowercase() == args.partition_name)
     }) else {
         return Err(exchange_refusal(
-            &tidb_error::catalog::table::ERR_UNKNOWN_PARTITION,
+            &tidb_table::table_errors::ERR_UNKNOWN_PARTITION,
             format!(
                 "Unknown partition '{}' in table '{}'",
                 args.partition_name,

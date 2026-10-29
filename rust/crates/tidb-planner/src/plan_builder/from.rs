@@ -971,7 +971,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         for name in &names {
             if !seen.insert(name.names.column.original.clone()) {
                 return Err(PlanError::from(
-                    tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS
                         .generate_with_stack_by_args(&[(&name.names.column.original).into()]),
                 ));
             }

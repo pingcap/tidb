@@ -12,6 +12,13 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-autoid = { path = "../tidb-autoid" }
+tidb-domain-affinity = { path = "../tidb-domain-affinity" }
+tidb-domain-infosync = { path = "../tidb-domain-infosync" }
+tidb-owner = { path = "../tidb-owner" }
+tidb-stats-handle-lockstats = { path = "../tidb-stats-handle-lockstats" }
+tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
+tidb-table = { path = "../tidb-table" }
 tidb-plannererrors = { path = "../tidb-plannererrors" }
 tidb-server-err = { path = "../tidb-server-err" }
 tidb-errno = { path = "../tidb-errno" }
@@ -104,7 +111,6 @@ tidb-unistore = { path = "../tidb-unistore" }
 tidb-executor = { path = "../tidb-executor" }
 tidb-meta = { path = "../tidb-meta" }
 tidb-stmtsummary = { path = "../tidb-stmtsummary" }
-tidb-error = { path = "../tidb-error" }
 tidb-log = { path = "../tidb-log" }
 tidb-errmsg = { path = "../tidb-errmsg" }
 tidb-model = { path = "../tidb-model" }

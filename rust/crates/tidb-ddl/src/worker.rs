@@ -1003,7 +1003,7 @@ mod schema_sync_tests {
     fn check_validation_source_message() {
         let error = check_constraint_validation_table_error(
             tidb_table::kv_table::KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED
+                &tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED
                     .fast_generate_by_args(&["MixedCheck".into()]),
             )),
             "MixedCheck",
@@ -2573,9 +2573,9 @@ where
             // Go `dropTableObject`'s `dropExistErr`.
             let missing_error: &tidb_terror::TerrorError = if object == DropObject::Sequence
             {
-                &tidb_error::catalog::infoschema::ERR_SEQUENCE_DROP_EXISTS
+                &tidb_infoschema::infoschema_errors::ERR_SEQUENCE_DROP_EXISTS
             } else {
-                &tidb_error::catalog::infoschema::ERR_TABLE_DROP_EXISTS
+                &tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
             };
             let missing_raised =
                 |names: &str| missing_error.generate_with_stack_by_args(&[names.into()]);
@@ -3388,7 +3388,7 @@ fn check_constraint_validation_table_error(
 ) -> DdlPlanError {
     match error {
         tidb_table::kv_table::KvTableError::Mysql(error)
-            if error.equal(&tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED) =>
+            if error.equal(&tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED) =>
         {
             use tidb_hack::GoToLower;
             tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED
@@ -3411,9 +3411,9 @@ fn exchange_validation_table_error(error: tidb_table::kv_table::KvTableError) ->
     match error {
         tidb_table::kv_table::KvTableError::Mysql(error)
             if error
-                .equal(&tidb_error::catalog::table::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET)
-                || error.equal(&tidb_error::catalog::table::ERR_NO_PARTITION_FOR_GIVEN_VALUE)
-                || error.equal(&tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED) =>
+                .equal(&tidb_table::table_errors::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET)
+                || error.equal(&tidb_table::table_errors::ERR_NO_PARTITION_FOR_GIVEN_VALUE)
+                || error.equal(&tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED) =>
         {
             LockSqlError::from(tidb_terror::MysqlError::from_terror(
                 &tidb_dbterror::ERR_ROW_DOES_NOT_MATCH_PARTITION

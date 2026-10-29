@@ -62,6 +62,7 @@ impl CatalogTableKey {
     }
 }
 
+pub mod infoschema_errors;
 pub mod metric_table_def;
 pub mod virtual_tables;
 pub mod infoschema_meta;
@@ -643,7 +644,7 @@ impl Catalog {
         );
         let schema = self.database_mut(&database.go_to_lower()).ok_or_else(|| {
             DriverError::from(
-                tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                crate::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                     .generate_with_stack_by_args(&[(database.to_owned()).into()]),
             )
         })?;

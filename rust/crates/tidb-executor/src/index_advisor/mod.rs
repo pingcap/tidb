@@ -183,7 +183,7 @@ impl<S: IndexAdvisorExec> SessionOptimizer<'_, S> {
                     .collect()),
                 Some(_) => Ok(Vec::new()),
                 None => Err(DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                         .generate_with_stack_by_args(&[(&schema).into(), (&table).into()]),
                 )),
             })
@@ -302,7 +302,7 @@ impl<S: IndexAdvisorExec> Optimizer for SessionOptimizer<'_, S> {
                 catalog.table_in(&index.schema_name, &index.table_name)
             else {
                 return Err(DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                         .generate_with_stack_by_args(&[
                             (&index.schema_name).into(),
                             (&index.table_name).into(),
@@ -336,7 +336,7 @@ impl<S: IndexAdvisorExec> Optimizer for SessionOptimizer<'_, S> {
         self.session.with_catalog_mut(|catalog| {
             let Some(names) = catalog.table_names(&schema) else {
                 return Err(DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                         .generate_with_stack_by_args(&[(schema.clone()).into()]),
                 ));
             };
@@ -376,7 +376,7 @@ impl<S: IndexAdvisorExec> Optimizer for SessionOptimizer<'_, S> {
             let Some(crate::TableEntry::Kv(stored)) = catalog.table_in(schema, table)
             else {
                 return Err(DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                         .generate_with_stack_by_args(&[(&schema).into(), (&table).into()]),
                 ));
             };
@@ -393,7 +393,7 @@ impl<S: IndexAdvisorExec> Optimizer for SessionOptimizer<'_, S> {
             let Some(crate::TableEntry::Kv(stored)) = catalog.table_in(database, table)
             else {
                 return Err(DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                         .generate_with_stack_by_args(&[(&database).into(), (&table).into()]),
                 ));
             };

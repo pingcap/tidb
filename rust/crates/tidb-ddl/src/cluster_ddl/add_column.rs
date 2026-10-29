@@ -72,7 +72,7 @@ pub(super) fn build_add_column_job<S: MetaSnapshot>(
             return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                 detail,
                 warnings: vec![crate::real_tikv_ddl::ddl_note(
-                    tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS
                         .generate_with_stack_by_args(&[column.name.clone().into()]),
                 )],
             }));

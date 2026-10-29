@@ -153,7 +153,7 @@ pub fn fetch_show_tables(
     }
     let Some(names) = is.table_names(database) else {
         return Err(crate::DriverError::from(
-            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                 .generate_with_stack_by_args(&[(database.to_owned()).into()]),
         ));
     };

@@ -432,7 +432,7 @@ fn check_create_table(create: &CreateTableStmt, strict: bool) -> Result<(), Mysq
         primary_keys += check_column_options(temporary, &column.options)?;
         if primary_keys > 1 {
             return Err(MysqlError::from_terror(
-                &tidb_error::catalog::infoschema::ERR_MULTIPLE_PRI_KEY
+                &tidb_infoschema::infoschema_errors::ERR_MULTIPLE_PRI_KEY
                     .generate_with_stack_by_args(&[]),
             ));
         }
@@ -443,7 +443,7 @@ fn check_create_table(create: &CreateTableStmt, strict: bool) -> Result<(), Mysq
                 IndexConstraintKind::PrimaryKey => {
                     if primary_keys > 0 {
                         return Err(MysqlError::from_terror(
-                            &tidb_error::catalog::infoschema::ERR_MULTIPLE_PRI_KEY
+                            &tidb_infoschema::infoschema_errors::ERR_MULTIPLE_PRI_KEY
                                 .generate_with_stack_by_args(&[]),
                         ));
                     }
@@ -620,7 +620,7 @@ fn check_index_info(name: &str, parts: &[IndexPart]) -> Result<(), MysqlError> {
     }
     if parts.len() > MAX_KEY_PARTS {
         return Err(MysqlError::from_terror(
-            &tidb_error::catalog::infoschema::ERR_TOO_MANY_KEY_PARTS
+            &tidb_infoschema::infoschema_errors::ERR_TOO_MANY_KEY_PARTS
                 .generate_with_stack_by_args(&[MAX_KEY_PARTS.into()]),
         ));
     }
@@ -644,7 +644,7 @@ fn check_index_info(name: &str, parts: &[IndexPart]) -> Result<(), MysqlError> {
             let folded = name.go_to_lower();
             if seen.contains(&folded) {
                 return Err(MysqlError::from_terror(
-                    &tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+                    &tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS
                         .generate_with_stack_by_args(&[(name.clone()).to_string().into()]),
                 ));
             }

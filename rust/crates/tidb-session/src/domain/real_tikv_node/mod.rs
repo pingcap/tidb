@@ -22,7 +22,6 @@ use crate::GlobalSysvars;
 use tidb_infoschema_issyncer::catalog_watch::{CatalogReloadError, CatalogReloader, SharedCatalog};
 use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_infoschema_issyncer::real_tikv_catalog::reload_catalog_from_cluster;
-use tidb_store_driver::real_tikv_read::{ProductionReadProcessAuthority, ReadProcessShutdownError};
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 use tidb_stats_handle_syncload::real_tikv_stats::{update_stats_cache_from_cluster};
 use tidb_stats_handle::bootstrap::{load_stats_snapshot_and_loader, InitialStatsLoad};
@@ -104,7 +103,7 @@ pub fn configured_account_store(
 /// one-shot startup snapshot.
 pub fn node_accounts(
     config: &NodeConfig,
-    authority: &ProductionReadProcessAuthority,
+    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener,
     global_vars: GlobalSysvars,
 ) -> Result<(Arc<ConfiguredUserStore>, Option<PrivilegeReloader>), RunConfiguredNodeError> {
     if config.skip_grant_table || !config.load_privileges {
@@ -112,7 +111,7 @@ pub fn node_accounts(
         return Ok((Arc::new(users), None));
     }
     let accounts = tidb_domain_core::real_tikv_privileges::load_accounts_from_cluster(
-        &authority.transaction_opener(),
+        opener,
         PRODUCTION_CONTROL_PLANE_TIMEOUT,
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
@@ -143,7 +142,7 @@ pub fn node_accounts(
     // hundreds of times more often than Go does.
     let reloader = PrivilegeReloader::spawn(
         users.accounts(),
-        authority.transaction_opener(),
+        opener.clone(),
         privilege_reload_interval(!config.pd_endpoints.is_empty()),
         PRODUCTION_CONTROL_PLANE_TIMEOUT,
     )
@@ -264,71 +263,6 @@ pub fn emit_connections_startup_failure(error: &impl std::fmt::Display) {
     );
 }
 
-/// Fallible unique process owner consumed after every server run path.
-pub trait ProcessReadAuthority {
-    /// Stops RegionCache, TiKV transport, and PD in dependency order.
-    fn shutdown_process(&mut self) -> Result<(), ReadProcessShutdownError>;
-}
-
-impl ProcessReadAuthority for ProductionReadProcessAuthority {
-    fn shutdown_process(&mut self) -> Result<(), ReadProcessShutdownError> {
-        self.shutdown()
-    }
-}
-
-/// Runs one node closure, drops every opener, then always shuts its authority.
-pub fn run_with_process_shutdown<F, A, R>(
-    factory: F,
-    authority: A,
-    run: R,
-) -> Result<(), RunConfiguredNodeError>
-where
-    A: ProcessReadAuthority,
-    R: FnOnce(F) -> Result<(), RunConfiguredNodeError>,
-{
-    // Go logs no final line once the server stopped.
-    run_with_process_shutdown_and_final(factory, authority, run, || {})
-}
-
-fn run_with_process_shutdown_and_final<F, A, R, S>(
-    factory: F,
-    mut authority: A,
-    run: R,
-    on_success: S,
-) -> Result<(), RunConfiguredNodeError>
-where
-    A: ProcessReadAuthority,
-    R: FnOnce(F) -> Result<(), RunConfiguredNodeError>,
-    S: FnOnce(),
-{
-    let run_result = run(factory);
-    let shutdown_result = authority.shutdown_process();
-    emit_process_shutdown_events(&shutdown_result);
-    match (run_result, shutdown_result) {
-        (Ok(()), Ok(())) => {
-            on_success();
-            Ok(())
-        }
-        (Err(run), Ok(())) => Err(run),
-        (Ok(()), Err(authority)) => Err(RunConfiguredNodeError::Authority(authority)),
-        (Err(run), Err(authority)) => Err(RunConfiguredNodeError::Combined {
-            run: Box::new(run),
-            authority,
-        }),
-    }
-}
-
-fn emit_process_shutdown_events(result: &Result<(), ReadProcessShutdownError>) {
-    // Go `closeDDLOwnerMgrDomainAndStorage`: `terror.Log(storage.Close())`
-    // logs a failed close only.
-    if let Err(ReadProcessShutdownError::StoreClose(message)) = result {
-        tidb_log::error(
-            "encountered error",
-            &[crate::domain::zap_error(message), crate::domain::zap_stack()],
-        );
-    }
-}
-
 /// Startup/runtime failure from the fully composed node.
 #[derive(Debug)]
 pub enum RunConfiguredNodeError {
@@ -342,14 +276,15 @@ pub enum RunConfiguredNodeError {
     Engine(SqlQueryError),
     /// Listener or connection runtime failed (the server's `SqlNodeError`).
     Node(Box<dyn std::error::Error + Send + Sync>),
-    /// Process authority shutdown failed after the node drained.
-    Authority(ReadProcessShutdownError),
+    /// Process authority shutdown failed after the node drained (Go
+    /// `storage.Close()`'s error).
+    Authority(Box<dyn std::error::Error + Send + Sync>),
     /// Both node execution and process authority shutdown failed.
     Combined {
         /// Node startup, admission, or drain failure.
         run: Box<RunConfiguredNodeError>,
         /// Ordered process authority shutdown failure.
-        authority: ReadProcessShutdownError,
+        authority: Box<dyn std::error::Error + Send + Sync>,
     },
     /// The loggers could not be set up (Go `setupLog`) or flushed at exit
     /// (Go `syncLog`).
@@ -390,7 +325,7 @@ impl std::error::Error for RunConfiguredNodeError {
             Self::Authority(error)
             | Self::Combined {
                 authority: error, ..
-            } => Some(error),
+            } => Some(error.as_ref()),
             Self::Engine(_) | Self::Log(_) => None,
         }
     }
@@ -626,73 +561,5 @@ mod tests {
             "the ongoing ordinary-node reload restores fail-closed admission"
         );
         reloader.shutdown().expect("the worker stops cleanly");
-    }
-
-    struct FactoryEvent(Arc<Mutex<Vec<&'static str>>>);
-
-    impl Drop for FactoryEvent {
-        fn drop(&mut self) {
-            self.0.lock().unwrap().push("factory_drop");
-        }
-    }
-
-    struct AuthorityEvent {
-        events: Arc<Mutex<Vec<&'static str>>>,
-        result: Result<(), ReadProcessShutdownError>,
-    }
-
-    impl ProcessReadAuthority for AuthorityEvent {
-        fn shutdown_process(&mut self) -> Result<(), ReadProcessShutdownError> {
-            self.events.lock().unwrap().push("authority_shutdown");
-            self.result.clone()
-        }
-    }
-
-    #[test]
-    fn final_success_event_runs_only_after_factory_drop_and_authority_shutdown() {
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let final_events = Arc::clone(&events);
-        run_with_process_shutdown_and_final(
-            FactoryEvent(Arc::clone(&events)),
-            AuthorityEvent {
-                events: Arc::clone(&events),
-                result: Ok(()),
-            },
-            |factory| {
-                drop(factory);
-                Ok(())
-            },
-            move || final_events.lock().unwrap().push("sql_node_stopped"),
-        )
-        .unwrap();
-
-        assert_eq!(
-            *events.lock().unwrap(),
-            ["factory_drop", "authority_shutdown", "sql_node_stopped"]
-        );
-    }
-
-    #[test]
-    fn authority_failure_suppresses_final_success_event() {
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let final_events = Arc::clone(&events);
-        let result = run_with_process_shutdown_and_final(
-            FactoryEvent(Arc::clone(&events)),
-            AuthorityEvent {
-                events: Arc::clone(&events),
-                result: Err(ReadProcessShutdownError::StoreClose("close failed".to_owned())),
-            },
-            |factory| {
-                drop(factory);
-                Ok(())
-            },
-            move || final_events.lock().unwrap().push("sql_node_stopped"),
-        );
-
-        assert!(matches!(result, Err(RunConfiguredNodeError::Authority(_))));
-        assert_eq!(
-            *events.lock().unwrap(),
-            ["factory_drop", "authority_shutdown"]
-        );
     }
 }

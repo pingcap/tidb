@@ -338,7 +338,7 @@ impl<'s> ClusterServerSession<'s> {
 pub(super) fn analyze_service(
     domain: &super::Domain,
 ) -> crate::domain_services::StatementService<dyn tidb_executor::analyze::exec::AnalyzeService> {
-    analyze_service_over(domain, domain.analyze())
+    analyze_service_over(domain, super::node_services(domain).analyze())
 }
 
 /// [`analyze_service`] over `analyze`, the domain's analyzer.
@@ -388,7 +388,7 @@ pub(super) fn stats_statement_service(
     let catalog = Arc::clone(&domain.catalog);
     let stats = Arc::clone(&domain.stats);
     let global_vars = domain.global_vars.clone();
-    let analyze = domain.analyze();
+    let analyze = super::node_services(domain).analyze();
     let stats_lock = Arc::clone(&domain.stats_lock);
     let row_ids = Arc::clone(&domain.auto_ids);
     Arc::new(move |session: &crate::Session| {

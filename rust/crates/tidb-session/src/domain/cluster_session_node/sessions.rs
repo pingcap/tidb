@@ -343,7 +343,8 @@ impl DomainSessions for Domain {
                 Ok(built.catalog)
             }));
         }
-        session.set_plan_cache_invalidation(Arc::clone(&self.plan_cache_invalidation));
+        let services = super::node_services(self);
+        session.set_plan_cache_invalidation(Arc::clone(&services.plan_cache_invalidation));
         session.set_plan_cache_schema_version(loaded.schema_version as u64);
         session.set_info_schema(Arc::clone(&loaded));
         let accounts = Arc::clone(&self.accounts);
@@ -395,13 +396,13 @@ impl DomainSessions for Domain {
         if let Some(syncer) = self.server_info.as_ref() {
             session.set_server_info_syncer(Arc::clone(syncer));
         }
-        if let Some(client) = &self.cluster_peer {
+        if let Some(client) = &services.cluster_peer {
             session.set_cluster_peer_client(Arc::clone(client));
         }
-        if let Some(client) = &self.cluster_config {
+        if let Some(client) = &services.cluster_config {
             session.set_cluster_config_client(Arc::clone(client));
         }
-        if let Some(client) = &self.cluster_diagnostics {
+        if let Some(client) = &services.cluster_diagnostics {
             session.set_cluster_diagnostics_client(Arc::clone(client));
         }
         if let Some(topology) = &self.cluster_topology {

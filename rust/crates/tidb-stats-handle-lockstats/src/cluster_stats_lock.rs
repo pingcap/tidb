@@ -185,7 +185,7 @@ pub(crate) fn apply_cluster_stats_lock<T: StatsLockTransaction>(
                 .next()
                 .ok_or_else(|| {
                     ClusterStatsLockApplyError::Plan(ClusterStatsLockError::from(
-                        tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+                        tidb_table::table_errors::ERR_UNKNOWN_PARTITION
                             .generate_with_stack_by_args(&[
                                 written.go_to_lower().into(),
                                 table.name.original().into(),
@@ -403,7 +403,7 @@ fn user_table<'a>(
         })
         .ok_or_else(|| {
             ClusterStatsLockError::from(
-                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                     .generate_with_stack_by_args(&[schema.into(), table.into()]),
             )
         })

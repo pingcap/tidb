@@ -174,7 +174,7 @@ impl<S: TableSource, C: tidb_expr::Columns> PlanBuilder<'_, S, C> {
             }
             let meta = self.source.find_table(database, table).ok_or_else(|| {
                 PlanError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                         .fast_generate_by_args(&[database.into(), table.into()]),
                 )
             })?;

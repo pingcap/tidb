@@ -36,7 +36,7 @@ pub mod auth_identity;
 pub mod native_password;
 pub mod secure_transport;
 pub mod cluster_session_node;
-pub mod cluster_stack;
+pub mod resource_groups_controller;
 pub mod global_config_sync;
 pub mod cluster_topology;
 pub mod serverinfo_etcd;

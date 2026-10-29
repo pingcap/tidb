@@ -207,7 +207,7 @@ impl Session {
             throw_err_if_in_mem_or_sys_db(login.as_ref(), db)?;
             let schema_id = catalog.database_id(db).ok_or_else(|| {
                 DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                         .generate_with_stack_by_args(&[(db.clone()).into()]),
                 )
             })?;
@@ -215,13 +215,13 @@ impl Session {
                 Some(TableEntry::Kv(table)) => table,
                 Some(_) => {
                     return Err(DriverError::from(
-                        tidb_error::catalog::table::ERR_UNSUPPORTED_OP
+                        tidb_table::table_errors::ERR_UNSUPPORTED_OP
                             .generate_with_stack_by_args(&[]),
                     ))
                 }
                 None => {
                     return Err(DriverError::from(
-                        tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                        tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                             .generate_with_stack_by_args(&[(&db).into(), (&name).into()]),
                     ))
                 }
@@ -229,7 +229,7 @@ impl Session {
             check_table_locked(table, lock.lock_type, &info)?;
             if !unique_table_id.insert(table.table_id()) {
                 return Err(DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_NONUNIQ_TABLE
+                    tidb_infoschema::infoschema_errors::ERR_NONUNIQ_TABLE
                         .generate_with_stack_by_args(&[table.name().into()]),
                 ));
             }
@@ -410,7 +410,7 @@ impl Session {
             throw_err_if_in_mem_or_sys_db(login.as_ref(), db)?;
             let schema_id = catalog.database_id(db).ok_or_else(|| {
                 DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                         .generate_with_stack_by_args(&[(db.clone()).into()]),
                 )
             })?;
@@ -418,13 +418,13 @@ impl Session {
                 Some(TableEntry::Kv(table)) => table,
                 Some(_) => {
                     return Err(DriverError::from(
-                        tidb_error::catalog::table::ERR_UNSUPPORTED_OP
+                        tidb_table::table_errors::ERR_UNSUPPORTED_OP
                             .generate_with_stack_by_args(&[]),
                     ))
                 }
                 None => {
                     return Err(DriverError::from(
-                        tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                        tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                             .generate_with_stack_by_args(&[(&db).into(), (&name).into()]),
                     ))
                 }
@@ -434,7 +434,7 @@ impl Session {
             }
             if !unique_table_id.insert(table.table_id()) {
                 return Err(DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_NONUNIQ_TABLE
+                    tidb_infoschema::infoschema_errors::ERR_NONUNIQ_TABLE
                         .generate_with_stack_by_args(&[table.name().into()]),
                 ));
             }

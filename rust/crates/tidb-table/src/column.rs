@@ -79,11 +79,11 @@ impl From<ColumnError> for crate::kv_table::KvTableError {
     fn from(error: ColumnError) -> Self {
         match error {
             ColumnError::ColumnCannotBeNull(column) => Self::Mysql(MysqlError::from_terror(
-                &tidb_error::catalog::table::ERR_COLUMN_CANT_NULL
+                &crate::table_errors::ERR_COLUMN_CANT_NULL
                     .generate_with_stack_by_args(&[(&column).into()]),
             )),
             ColumnError::NoDefaultForField(field) => Self::Mysql(MysqlError::from_terror(
-                &tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE
+                &crate::table_errors::ERR_NO_DEFAULT_VALUE
                     .generate_with_stack_by_args(&[(&field).into()]),
             )),
             ColumnError::Mysql(error) => Self::Mysql(error),
@@ -308,7 +308,7 @@ pub fn cast_value_with_flags(
             .collect();
         handle_raw_cast_error(
             MysqlError::from_terror(
-                &tidb_error::catalog::table::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD.fast_generate(
+                &crate::table_errors::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD.fast_generate(
                     "Incorrect string value '%s' for column '%s'",
                     &[invalid_hex.into(), column.into()],
                 ),

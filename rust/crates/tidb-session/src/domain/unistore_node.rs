@@ -263,7 +263,7 @@ pub struct EmbeddedResourceGroups {
 
 impl Drop for EmbeddedResourceGroups {
     fn drop(&mut self) {
-        crate::domain::cluster_stack::stop_resource_groups_controller(
+        crate::domain::resource_groups_controller::stop_resource_groups_controller(
             &self.store,
             &self.controller,
         );
@@ -505,7 +505,7 @@ pub fn unistore_cluster_session_stack_from(
     // `TABLESAMPLE REGIONS()` reach them: client-go's `SplitRegions` and
     // `LoadRegionsInKeyRange` over the store, as Go's mockstore runs them.
     let region_store: Arc<dyn tidb_kv::region_map::RegionStore> = Arc::new(
-        tidb_store_driver::tikv_region_store::TikvRegionStore::new((*tikv_store).clone(), Vec::new()),
+        tidb_kv::tikv_region_store::TikvRegionStore::new((*tikv_store).clone(), Vec::new()),
     );
     // Go `affinity.InitManager(nil)`: unistore has no PD HTTP client, so the
     // affinity groups live in the mock manager.
@@ -530,7 +530,7 @@ pub fn unistore_cluster_session_stack_from(
     // unistore's PD client embeds that mock, and the controller over it
     // prices every request and response into the statement's RU details.
     let resource_groups = EmbeddedResourceGroups {
-        controller: crate::domain::cluster_stack::start_resource_groups_controller_over(
+        controller: crate::domain::resource_groups_controller::start_resource_groups_controller_over(
             &tikv_store,
             0,
             Arc::new(
@@ -696,6 +696,15 @@ pub fn unistore_cluster_session_stack_from(
         })?,
     );
 
+    let analyze: Arc<dyn tidb_executor::cluster_analyze_seam::ClusterAnalyze> = Arc::new(
+        tidb_executor::cluster_analyze_seam::RealClusterAnalyze::new(
+            Arc::new(opener.clone()),
+            Arc::clone(&stats),
+            IN_PROCESS_TIMEOUT,
+            config.stats_lease.slow_save_interval(),
+            Arc::clone(&node_auto_ids),
+        ),
+    );
     let factory = Domain::new(
         Arc::new(RealClusterTransactions::new(
             opener.clone(),
@@ -715,15 +724,6 @@ pub fn unistore_cluster_session_stack_from(
             None,
             sysvar_publication_fence,
         )),
-        Arc::new(
-            tidb_executor::cluster_analyze_seam::RealClusterAnalyze::new(
-                Arc::new(opener.clone()),
-                Arc::clone(&stats),
-                IN_PROCESS_TIMEOUT,
-                config.stats_lease.slow_save_interval(),
-                Arc::clone(&node_auto_ids),
-            ),
-        ),
         Arc::new(tidb_stats_handle_lockstats::cluster_stats_lock_seam::RealClusterStatsLock::new(
             Arc::new(opener.clone()),
             IN_PROCESS_TIMEOUT,
@@ -743,6 +743,17 @@ pub fn unistore_cluster_session_stack_from(
         &config.global_config,
         None,
     ))
+    .with_stats_owner(stats_owner);
+    let factory = match spill_storage {
+        Some(storage) => factory.with_spill_storage(storage),
+        None => factory,
+    };
+    let factory = match memory_arbitrator {
+        Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
+        None => factory,
+    };
+    let factory = factory.with_bindings(Arc::clone(&bindings));
+    crate::domain::cluster_session_node::NodeServices::new(analyze)
     .with_cluster_peer_client(Arc::new(tidb_executor::cluster_peer::ClusterPeerClient::new(
         peer_store,
     )))
@@ -754,16 +765,7 @@ pub fn unistore_cluster_session_stack_from(
         tidb_executor::cluster_diagnostics::ClusterDiagnosticsClient::new(&config.cluster_security)
             .map_err(|error| engine(SqlQueryError::unknown(error)))?,
     ))
-    .with_stats_owner(stats_owner);
-    let factory = match spill_storage {
-        Some(storage) => factory.with_spill_storage(storage),
-        None => factory,
-    };
-    let factory = match memory_arbitrator {
-        Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
-        None => factory,
-    };
-    let factory = factory.with_bindings(Arc::clone(&bindings));
+    .bind(&factory);
     crate::domain::cluster_session_node::attach_binding_sessions(&factory, bindings.as_ref());
     factory.attach_login_storage(&users);
     factory.install_bdr_role_store(Arc::new(opener), IN_PROCESS_TIMEOUT);

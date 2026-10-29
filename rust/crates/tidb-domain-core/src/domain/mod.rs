@@ -51,7 +51,6 @@ use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, Table
 
 use crate::bdr_role_store;
 use crate::cluster_account_seam::ClusterAccountWriter;
-use tidb_executor::cluster_analyze_seam::ClusterAnalyze;
 use crate::cluster_session::{
     cluster_session_catalog, detached_storage, KvTableTemplates, SkippedTable,
 };
@@ -637,9 +636,6 @@ pub struct Domain {
     /// The route a `SET GLOBAL` change takes; see
     /// [`crate::cluster_sysvar_seam`].
     pub sysvars: Arc<dyn ClusterSysvarWriter>,
-    /// The route an `ANALYZE TABLE` takes; see
-    /// the executor's `cluster_analyze_seam`.
-    analyze: std::sync::RwLock<Arc<dyn ClusterAnalyze>>,
     /// The route a persisted statistics-lock operation takes.
     pub stats_lock: Arc<dyn ClusterStatsLock>,
     /// The cluster catalog, republished whole by the reload thread and by a
@@ -652,8 +648,6 @@ pub struct Domain {
     /// Go's one `sessmgr.Manager` per TiDB instance: what `SHOW PROCESSLIST`
     /// reads and `KILL` reaches into.
     pub processes: ProcessRegistry,
-    /// Domain lifetime: independent of each connection's rebuilt catalog.
-    pub plan_cache_invalidation: Arc<tidb_executor::PlanCacheInvalidation>,
     /// Go `kv.Storage.GetMPPClient()`: the TiFlash MPP client this node's
     /// sessions serve columnar reads with, when the node has one.
     pub mpp_client: Option<Arc<dyn tidb_txnkv::MppClient>>,
@@ -672,9 +666,11 @@ pub struct Domain {
     /// (auto-analyze's `NextConnID`).
     connection_ids: Arc<dyn tidb_globalconn::Allocator + Send + Sync>,
     pub cluster_topology: Option<Arc<tidb_domain::cluster_topology::ClusterTopology>>,
-    pub cluster_config: Option<Arc<tidb_executor::cluster_config::ClusterConfigClient>>,
-    pub cluster_diagnostics: Option<Arc<tidb_executor::cluster_diagnostics::ClusterDiagnosticsClient>>,
-    pub cluster_peer: Option<Arc<tidb_executor::cluster_peer::ClusterPeerClient>>,
+    /// What the session layer runs this node's sessions with, beside the
+    /// domain: Go's `createSessionWithOpt` and `cmd/tidb-server`'s main wire
+    /// these into each session, and Go's domain holds none of them. The
+    /// session layer owns their type; see [`Domain::session_services`].
+    session_services: std::sync::OnceLock<Arc<dyn std::any::Any + Send + Sync>>,
     /// Go's one process-wide `GlobalVarsAccessor`.
     pub global_vars: GlobalSysvars,
     /// The tables of the boot catalog no session can include, kept so the
@@ -772,9 +768,17 @@ pub struct Domain {
 }
 
 impl Domain {
-    /// The outgoing peer fleet, when the node has one.
-    pub fn cluster_peer(&self) -> Option<Arc<tidb_executor::cluster_peer::ClusterPeerClient>> {
-        self.cluster_peer.clone()
+    /// Binds the session layer's services to this node, once.
+    pub fn set_session_services(
+        &self,
+        services: Arc<dyn std::any::Any + Send + Sync>,
+    ) -> Result<(), Arc<dyn std::any::Any + Send + Sync>> {
+        self.session_services.set(services)
+    }
+
+    /// The session layer's services, as the type it bound them with.
+    pub fn session_services<T: std::any::Any + Send + Sync>(&self) -> Option<Arc<T>> {
+        Arc::clone(self.session_services.get()?).downcast().ok()
     }
 
     /// The node's privilege registry.
@@ -790,25 +794,6 @@ impl Domain {
     /// The node's GLOBAL variable cache.
     pub fn global_vars(&self) -> GlobalSysvars {
         self.global_vars.clone()
-    }
-
-    /// The domain's ANALYZE client.
-    pub fn analyze(&self) -> Arc<dyn ClusterAnalyze> {
-        Arc::clone(
-            &self
-                .analyze
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        )
-    }
-
-    /// Replaces the domain's ANALYZE client.
-    #[cfg(any(test, feature = "test-util"))]
-    pub fn set_analyze(&self, analyze: Arc<dyn ClusterAnalyze>) {
-        *self
-            .analyze
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = analyze;
     }
 }
 
@@ -875,7 +860,6 @@ impl Domain {
         ddl: Arc<dyn ClusterDdl>,
         accounts: Arc<dyn ClusterAccountWriter>,
         sysvars: Arc<dyn ClusterSysvarWriter>,
-        analyze: Arc<dyn ClusterAnalyze>,
         stats_lock: Arc<dyn ClusterStatsLock>,
         catalog: Arc<SharedClusterCatalog>,
         privileges: PrivilegeRegistry,
@@ -918,12 +902,10 @@ impl Domain {
             ddl,
             accounts,
             sysvars,
-            analyze: std::sync::RwLock::new(analyze),
             stats_lock,
             catalog,
             privileges,
             processes: ProcessRegistry::default(),
-            plan_cache_invalidation: Arc::default(),
             auto_ids,
             mpp_client: None,
             kv_client: None,
@@ -934,9 +916,7 @@ impl Domain {
                 None,
             ),
             cluster_topology: None,
-            cluster_config: None,
-            cluster_diagnostics: None,
-            cluster_peer: None,
+            session_services: std::sync::OnceLock::new(),
             global_vars,
             boot_skipped,
             statistics_view: Arc::new(tidb_stats_handle::StatisticsView::new(Arc::new(
@@ -1852,36 +1832,6 @@ impl Domain {
         self.statistics.push(statistics);
     }
 
-    /// Binds outgoing cluster administration to the process RPC owner.
-    pub fn with_cluster_peer_client(
-        mut self,
-        client: Arc<tidb_executor::cluster_peer::ClusterPeerClient>,
-    ) -> Self {
-        self.cluster_peer = Some(client);
-        self
-    }
-
-    /// Shares the internal HTTP configuration retriever with every SQL session.
-    #[must_use]
-    pub fn with_cluster_config_client(
-        mut self,
-        client: Arc<tidb_executor::cluster_config::ClusterConfigClient>,
-    ) -> Self {
-        self.cluster_config = Some(client);
-        self
-    }
-
-    /// Shares the diagnostics gRPC client the server-info and log cluster
-    /// tables read through with every SQL session.
-    #[must_use]
-    pub fn with_cluster_diagnostics_client(
-        mut self,
-        client: Arc<tidb_executor::cluster_diagnostics::ClusterDiagnosticsClient>,
-    ) -> Self {
-        self.cluster_diagnostics = Some(client);
-        self
-    }
-
     /// Shares topology with every session.
     #[must_use]
     pub fn with_cluster_topology(
@@ -2225,7 +2175,6 @@ impl Drop for Domain {
         for statistics in &self.statistics {
             tidb_variable::statusvar::unregister_statistics(statistics);
         }
-        self.plan_cache_invalidation.stop_maintenance();
         // Positive-lease maintenance has already joined. For zero/negative
         // leases this is Go's quitStatsOwner lifetime instead.
         if let Some(owner) = &self.stats_owner {

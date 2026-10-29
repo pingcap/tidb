@@ -1132,42 +1132,42 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
         ),
         (
             DdlPlanError::from(
-                tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                     .generate_with_stack_by_args(&["db".into()]),
             ),
             1049,
         ),
         (
             DdlPlanError::from(
-                tidb_error::catalog::infoschema::ERR_DATABASE_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_DATABASE_EXISTS
                     .generate_with_stack_by_args(&["db".into()]),
             ),
             1007,
         ),
         (
             DdlPlanError::from(
-                tidb_error::catalog::infoschema::ERR_TABLE_DROP_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
                     .generate_with_stack_by_args(&[format!("{}.{}", "db", "t").into()]),
             ),
             1051,
         ),
         (
             DdlPlanError::from(
-                tidb_error::catalog::infoschema::ERR_TABLE_DROP_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
                     .generate_with_stack_by_args(&["db.t".into()]),
             ),
             1051,
         ),
         (
             DdlPlanError::from(
-                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                     .generate_with_stack_by_args(&["db".into(), "t".into()]),
             ),
             1146,
         ),
         (
             DdlPlanError::from(
-                tidb_error::catalog::infoschema::ERR_TABLE_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS
                     .generate_with_stack_by_args(&[format!("{}.{}", "db", "t").into()]),
             ),
             1050,
@@ -1180,7 +1180,7 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
         ),
         (
             DdlPlanError::from(
-                tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS
                     .generate_with_stack_by_args(&["col".into()]),
             ),
             1060,
@@ -1194,7 +1194,7 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
         ),
         (
             DdlPlanError::from(
-                tidb_error::catalog::infoschema::ERR_KEY_NOT_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_KEY_NOT_EXISTS
                     .generate_with_stack_by_args(&["idx".into(), "t".into()]),
             ),
             1176,
@@ -1215,7 +1215,7 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
         ),
         (
             DdlPlanError::from(
-                tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS
                     .generate_with_stack_by_args(&["col".into(), "t".into()]),
             ),
             1054,
@@ -5224,7 +5224,7 @@ fn a_create_view_publishes_a_view_table_info() {
     let error = plan_ddl(&mut store, &view_statement("u6", "v", false), 103)
         .expect_err("a duplicate view name refuses");
     assert!(
-        error.equal(&tidb_error::catalog::infoschema::ERR_TABLE_EXISTS),
+        error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS),
         "{error:?}"
     );
 
@@ -5662,7 +5662,7 @@ fn modify_column_moves_the_column_and_refuses_a_self_anchor() {
     )
     .expect_err("a self-anchored MODIFY is refused");
     assert!(
-        error.equal(&tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS),
+        error.equal(&tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS),
         "{error:?}"
     );
     assert!(error.to_string().contains("Unknown column 'b'"), "{error}");
@@ -5730,7 +5730,7 @@ fn alter_index_visibility_toggles_and_refuses_a_missing_index() {
     )
     .expect_err("a missing index is refused");
     assert!(
-        error.equal(&tidb_error::catalog::infoschema::ERR_KEY_NOT_EXISTS)
+        error.equal(&tidb_infoschema::infoschema_errors::ERR_KEY_NOT_EXISTS)
             && error.to_string().contains("Key 'nosuch'"),
         "{error:?}"
     );
@@ -6100,21 +6100,21 @@ fn persisted_job_errors_carry_the_go_class() {
     for (error, rfc) in [
         (
             DdlPlanError::from(
-                tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                     .generate_with_stack_by_args(&["db".into()]),
             ),
             "schema:1049",
         ),
         (
             DdlPlanError::from(
-                tidb_error::catalog::infoschema::ERR_DATABASE_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_DATABASE_EXISTS
                     .generate_with_stack_by_args(&["db".into()]),
             ),
             "schema:1007",
         ),
         (
             DdlPlanError::from(
-                tidb_error::catalog::infoschema::ERR_TABLE_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS
                     .generate_with_stack_by_args(&[format!("{}.{}", "db", "t").into()]),
             ),
             "schema:1050",

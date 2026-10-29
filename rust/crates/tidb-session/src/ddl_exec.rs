@@ -163,7 +163,7 @@ impl Session {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let error = DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_DROP_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
                         .generate_with_stack_by_args(&[(names.join(",")).into()]),
                 );
                 if !if_exists {
@@ -236,13 +236,13 @@ impl Session {
         };
         let Some((database, _)) = info_schema.schema_by_name(schema) else {
             return Err(DriverError::from(
-                tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                     .generate_with_stack_by_args(&[(schema.to_owned()).into()]),
             ));
         };
         if self.is_local_temporary_table(schema, table) {
             let exists = DriverError::from(
-                tidb_error::catalog::infoschema::ERR_TABLE_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS
                     .generate_with_stack_by_args(&[(format!("{schema}.{table}")).into()]),
             );
             if create.if_not_exists {

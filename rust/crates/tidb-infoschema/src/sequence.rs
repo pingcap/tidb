@@ -45,17 +45,27 @@ impl tidb_util::misc::SequenceSchema for SequenceSnapshot {
         &self.current_db
     }
 
-    fn object(&self, database: &str, name: &str) -> Option<Option<&dyn tidb_util::misc::SequenceTable>> {
-        let key = CatalogTableKey::new(database, name);
+    fn get_sequence_by_name(
+        &self,
+        schema: &str,
+        sequence: &str,
+    ) -> Result<&dyn tidb_util::misc::SequenceTable, tidb_terror::TerrorError> {
+        let key = CatalogTableKey::new(schema, sequence);
         let entry = self
             .local_temporary
             .iter()
             .find(|(local, _)| *local == key)
             .map(|(_, entry)| entry)
-            .or_else(|| self.databases.get(&key.database)?.tables.get(&key.table))?;
-        Some(match entry.as_ref() {
-            TableEntry::Sequence(sequence) => Some(sequence as &dyn tidb_util::misc::SequenceTable),
-            _ => None,
-        })
+            .or_else(|| self.databases.get(&key.database)?.tables.get(&key.table))
+            .ok_or_else(|| {
+                crate::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                    .generate_with_stack_by_args(&[schema.into(), sequence.into()])
+            })?;
+        match entry.as_ref() {
+            TableEntry::Sequence(found) => Ok(found as &dyn tidb_util::misc::SequenceTable),
+            _ => Err(crate::infoschema_errors::ERR_WRONG_OBJECT.generate_with_stack_by_args(
+                &[schema.into(), sequence.into(), "SEQUENCE".into()],
+            )),
+        }
     }
 }

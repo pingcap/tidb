@@ -903,7 +903,7 @@ fn find_statement_table<'catalog>(
         })
         .ok_or_else(|| {
             ClusterAnalyzeError::from(
-                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(
+                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(
                     &[
                         statement.schema.as_str().into(),
                         statement.table.as_str().into(),

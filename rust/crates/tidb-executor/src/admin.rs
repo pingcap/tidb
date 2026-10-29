@@ -184,7 +184,7 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
                     "SPLIT names a table without regions",
                 )),
                 None => Err(DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                         .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
                 )),
             }
@@ -243,7 +243,7 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
                     }
                     None => {
                         return Err(DriverError::from(
-                            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                                 .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
                         ))
                     }
@@ -1272,7 +1272,7 @@ pub(crate) fn admin_check_table_mut<'a>(
 ) -> Result<&'a mut tidb_table::kv_table::KvTable, DriverError> {
     let Some(entry) = catalog.table_mut_in(database, name) else {
         return Err(DriverError::from(
-            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                 .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
         ));
     };
@@ -1310,7 +1310,7 @@ pub(crate) fn admin_index_table_mut<'a>(
             "ADMIN RECOVER/CLEANUP INDEX needs a storage-backed table",
         )),
         None => Err(DriverError::from(
-            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                 .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
         )),
     }

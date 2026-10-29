@@ -80,7 +80,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         };
         let table = self.source.find_table(database, name).ok_or_else(|| {
             PlanError::from(
-                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                     .fast_generate_by_args(&[database.into(), name.into()]),
             )
         })?;
@@ -164,7 +164,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .find_table(&target.database, &target.table)
             .ok_or_else(|| {
                 PlanError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.fast_generate_by_args(&[
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.fast_generate_by_args(&[
                         (&target.database).into(),
                         (&target.table).into(),
                     ]),
@@ -265,7 +265,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .find_table(&target.database, &target.table)
             .ok_or_else(|| {
                 PlanError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.fast_generate_by_args(&[
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.fast_generate_by_args(&[
                         (&target.database).into(),
                         (&target.table).into(),
                     ]),

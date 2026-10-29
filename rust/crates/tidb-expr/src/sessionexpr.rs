@@ -69,10 +69,10 @@
 //!   [`EvalContext::request_verification`] and
 //!   [`EvalContext::request_dynamic_verification`] call. An unbound manager is
 //!   `None`, which is Go's nil interface.
-//! - `// boundary:` Go `pkg/util.SequenceTable` / `util.GetSequenceByName` —
-//!   [`SequenceTable`] plus [`SessionContext::get_sequence_by_name`]. The Go
-//!   lookup goes through `infoschema`, whose table layer is not reachable from
-//!   this crate.
+//! - `// boundary:` Go `util.GetSequenceByName` —
+//!   [`SessionContext::get_sequence_by_name`], over Go `pkg/util.SequenceTable`
+//!   ([`tidb_util::misc::SequenceTable`]). The Go lookup goes through
+//!   `infoschema`, which is not reachable from this crate.
 //! - `// boundary:` Go `github.com/tikv/client-go/v2/oracle.GetTimeFromTS` —
 //!   [`get_time_from_ts`], three lines of bit-shifting that would otherwise
 //!   pull in the storage client.
@@ -228,7 +228,7 @@ pub trait SessionContext: Send + Sync {
         &self,
         db: &str,
         name: &str,
-    ) -> Result<Arc<dyn SequenceTable>, ExprOptError>;
+    ) -> Result<Arc<dyn tidb_util::misc::SequenceTable>, ExprOptError>;
     /// Go `sctx.GetPlanCtx().GetReadonlyUserVarMap()` membership, which is all
     /// `IsReadonlyUserVar` asks of the map.
     fn is_readonly_user_var(&self, name: &str) -> bool;
@@ -254,30 +254,6 @@ pub trait PrivilegeManager: Send + Sync {
         priv_name: &str,
         grantable: bool,
     ) -> bool;
-}
-
-/// boundary: Go `pkg/util.SequenceTable`, the sequence half of a table handle.
-/// Go's methods take the session as their first argument, and
-/// [`SessionSequenceOperator`] passes the one it captured; that shape is kept.
-pub trait SequenceTable: Send + Sync {
-    /// Go `SequenceTable.GetSequenceID`.
-    fn get_sequence_id(&self) -> i64;
-    /// Go `SequenceTable.GetSequenceNextVal`.
-    fn get_sequence_next_val(
-        &self,
-        sctx: &Arc<dyn SessionContext>,
-        db: &str,
-        name: &str,
-    ) -> Result<i64, ExprOptError>;
-    /// Go `SequenceTable.SetSequenceVal`, returning the value and whether
-    /// `new_val` was already under the sequence's base.
-    fn set_sequence_val(
-        &self,
-        sctx: &Arc<dyn SessionContext>,
-        new_val: i64,
-        db: &str,
-        name: &str,
-    ) -> Result<(i64, bool), ExprOptError>;
 }
 
 /// boundary: Go `github.com/tikv/client-go/v2/oracle.GetTimeFromTS`. A TSO's
@@ -1017,7 +993,7 @@ pub struct SessionSequenceOperator {
     sctx: Arc<dyn SessionContext>,
     db: String,
     name: String,
-    tbl: Arc<dyn SequenceTable>,
+    tbl: Arc<dyn tidb_util::misc::SequenceTable>,
 }
 
 impl SequenceOperator for SessionSequenceOperator {
@@ -1028,11 +1004,13 @@ impl SequenceOperator for SessionSequenceOperator {
     fn get_sequence_next_val(&self) -> Result<i64, ExprOptError> {
         self.tbl
             .get_sequence_next_val(&self.sctx, &self.db, &self.name)
+            .map_err(|error| ExprOptError::new(error.to_string()))
     }
 
     fn set_sequence_val(&self, new_val: i64) -> Result<(i64, bool), ExprOptError> {
         self.tbl
             .set_sequence_val(&self.sctx, new_val, &self.db, &self.name)
+            .map_err(|error| ExprOptError::new(error.to_string()))
     }
 }
 
@@ -1524,12 +1502,13 @@ mod tests {
             &self,
             db: &str,
             name: &str,
-        ) -> Result<Arc<dyn SequenceTable>, ExprOptError> {
-            Err(ExprOptError::new(
-                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
-                    .fast_generate_by_args(&[db.into(), name.into()])
-                    .to_string(),
-            ))
+        ) -> Result<Arc<dyn tidb_util::misc::SequenceTable>, ExprOptError> {
+            // A session with no infoschema: Go's `ErrTableNotExists`.
+            use tidb_util::misc::SequenceSchema as _;
+            let error = tidb_util::misc::NoSequences
+                .get_sequence_by_name(db, name)
+                .expect_err("no infoschema names no sequence");
+            Err(ExprOptError::new(error.to_string()))
         }
 
         fn is_readonly_user_var(&self, name: &str) -> bool {

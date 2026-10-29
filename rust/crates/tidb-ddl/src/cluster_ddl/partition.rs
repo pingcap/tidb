@@ -277,7 +277,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
                             .position(|definition| definition.name.lowercase() == lower)
                         else {
                             return Err(admission(tidb_terror::MysqlError::from_terror(
-                                &tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+                                &tidb_table::table_errors::ERR_UNKNOWN_PARTITION
                                     .generate_with_stack_by_args(&[
                                         (lower).to_string().into(),
                                         (table.clone()).to_string().into(),

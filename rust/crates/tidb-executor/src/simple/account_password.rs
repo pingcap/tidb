@@ -501,7 +501,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
         for account in skipped {
             self.append_sql_warning(tidb_context::SqlWarn::raised(
                 tidb_context::WarningLevel::Note,
-                tidb_error::catalog::infoschema::ERR_USER_DROP_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_USER_DROP_EXISTS
                     .generate_with_stack_by_args(&[account.into()]),
             ));
         }

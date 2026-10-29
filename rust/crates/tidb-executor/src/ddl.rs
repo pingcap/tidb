@@ -238,13 +238,13 @@ pub fn create_table_in_catalog(
     let (database, name) = (database.to_owned(), name.to_owned());
     let Some(charset) = catalog.database_charset(&database) else {
         return Err(DriverError::from(
-            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                 .generate_with_stack_by_args(&[(database).into()]),
         ));
     };
     if catalog.contains_in(&database, &name) {
         let exists = DriverError::from(
-            tidb_error::catalog::infoschema::ERR_TABLE_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS
                 .generate_with_stack_by_args(&[(format!("{database}.{name}")).into()]),
         );
         if create.if_not_exists {
@@ -265,7 +265,7 @@ pub fn create_table_in_catalog(
                 tidb_infoschema::split_table_path_pub(source, current_db)?;
             let not_exists = || {
                 DriverError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                         .generate_with_stack_by_args(&[
                             (&source_database).into(),
                             (&source_name).into(),
@@ -278,7 +278,7 @@ pub fn create_table_in_catalog(
                 // `ErrWrongObject`, which names the TARGET schema.
                 Some(crate::TableEntry::View(_) | crate::TableEntry::Sequence(_)) => {
                     return Err(DriverError::from(
-                        tidb_error::catalog::infoschema::ERR_WRONG_OBJECT
+                        tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT
                             .generate_with_stack_by_args(&[
                                 (&database).into(),
                                 (&source_name).into(),

@@ -745,21 +745,21 @@ fn a_catalog_refusal_carries_the_code_mysql_clients_switch_on() {
     };
 
     let (code, message) = coded(DdlPlanError::from(
-        tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+        tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
             .generate_with_stack_by_args(&[("nope".to_owned()).into()]),
     ));
     assert_eq!(code, 1049);
     assert_eq!(message, "Unknown database 'nope'");
 
     let (code, message) = coded(DdlPlanError::from(
-        tidb_error::catalog::infoschema::ERR_DATABASE_EXISTS
+        tidb_infoschema::infoschema_errors::ERR_DATABASE_EXISTS
             .generate_with_stack_by_args(&[("dup".to_owned()).into()]),
     ));
     assert_eq!(code, 1007);
     assert_eq!(message, "Can't create database 'dup'; database exists");
 
     let (code, message) = coded(DdlPlanError::from(
-        tidb_error::catalog::infoschema::ERR_TABLE_DROP_EXISTS.generate_with_stack_by_args(&[
+        tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS.generate_with_stack_by_args(&[
             format!("{}.{}", ("s".to_owned()), ("t".to_owned())).into(),
         ]),
     ));
@@ -768,7 +768,7 @@ fn a_catalog_refusal_carries_the_code_mysql_clients_switch_on() {
 
     let (code, message) =
         coded(DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
                 format!("{}.{}", ("s".to_owned()), ("t".to_owned())).into(),
             ]),
         ));
@@ -776,7 +776,7 @@ fn a_catalog_refusal_carries_the_code_mysql_clients_switch_on() {
     assert_eq!(message, "Table 's.t' already exists");
 
     let (code, message) = coded(DdlPlanError::from(
-        tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+        tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS
             .generate_with_stack_by_args(&[("a".to_owned()).into()]),
     ));
     assert_eq!(code, 1060);

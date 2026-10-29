@@ -38,7 +38,7 @@ pub fn execute_compact_table(
     let (database, name) = tidb_infoschema::split_table_path_pub(&compact.table, current_db)?;
     let Some(entry) = catalog.table_in(database, name) else {
         return Err(DriverError::from(
-            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                 .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
         ));
     };
@@ -64,7 +64,7 @@ pub fn execute_compact_table(
                 .any(|definition| definition.name.go_lower_eq(written))
         }) {
             return Err(DriverError::from(
-                tidb_error::catalog::table::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[
+                tidb_table::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[
                     unknown.clone().into(),
                     table_name.to_owned().into(),
                 ]),

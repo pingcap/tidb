@@ -26,6 +26,4 @@
 
 use tidb_terror::catalog_support::{std_err, Class};
 
-pub mod infoschema;
 pub mod infosync;
-pub mod table;

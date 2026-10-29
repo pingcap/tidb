@@ -30,7 +30,9 @@ pub(crate) fn peer_service(factory: &Arc<Domain>) -> crate::peer_rpc::PeerServic
         factory.privileges(),
         factory.server_info(),
     )
-    .with_cluster_peer_client(factory.cluster_peer())
+    .with_cluster_peer_client(
+        tidb_session::domain::cluster_session_node::node_services(factory).cluster_peer.clone(),
+    )
     .with_broadcast_query_runner(factory.broadcast_query_runner())
 }
 

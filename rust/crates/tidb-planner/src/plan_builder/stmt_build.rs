@@ -977,7 +977,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     .any(|constraint| matches!(constraint, tidb_ast::TableConstraint::ForeignKey(_)));
                 if temporary && has_fk {
                     return Err(PlanError::from(
-                        tidb_error::catalog::infoschema::ERR_CANNOT_ADD_FOREIGN
+                        tidb_infoschema::infoschema_errors::ERR_CANNOT_ADD_FOREIGN
                             .generate_with_stack_by_args(&[]),
                     ));
                 }

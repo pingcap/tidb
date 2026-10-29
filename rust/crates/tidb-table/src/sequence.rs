@@ -630,18 +630,38 @@ pub struct SequenceDef {
 
 /// Go `tableCommon`'s `util.SequenceTable` half.
 impl tidb_util::misc::SequenceTable for SequenceDef {
-    fn sequence_id(&self) -> i64 {
+    fn get_sequence_id(&self) -> i64 {
         self.id
     }
 
-    fn sequence_next_val(&self) -> Result<i64, Box<dyn std::error::Error + Send + Sync>> {
-        self.allocator.next_val().map_err(Into::into)
+    fn get_sequence_next_val(
+        &self,
+        _ctx: &dyn std::any::Any,
+        db_name: &str,
+        seq_name: &str,
+    ) -> Result<i64, tidb_terror::TerrorError> {
+        self.allocator
+            .next_val()
+            .map_err(|_| sequence_has_run_out(db_name, seq_name))
     }
 
     fn set_sequence_val(
         &self,
+        _ctx: &dyn std::any::Any,
         new_val: i64,
-    ) -> Result<Option<i64>, Box<dyn std::error::Error + Send + Sync>> {
-        self.allocator.set_val(new_val).map_err(Into::into)
+        db_name: &str,
+        seq_name: &str,
+    ) -> Result<(i64, bool), tidb_terror::TerrorError> {
+        match self.allocator.set_val(new_val) {
+            Ok(Some(value)) => Ok((value, false)),
+            Ok(None) => Ok((0, true)),
+            Err(_) => Err(sequence_has_run_out(db_name, seq_name)),
+        }
     }
+}
+
+/// Go `table.ErrSequenceHasRunOut.GenWithStackByArgs(dbName, seqName)`.
+fn sequence_has_run_out(db_name: &str, seq_name: &str) -> tidb_terror::TerrorError {
+    crate::table_errors::ERR_SEQUENCE_HAS_RUN_OUT
+        .generate_with_stack_by_args(&[db_name.into(), seq_name.into()])
 }

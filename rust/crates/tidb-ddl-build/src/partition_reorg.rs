@@ -202,7 +202,7 @@ impl KvTablePartitionReorg for KvTable {
         match self.record_physical_id(row, ctx) {
             Ok(physical_id) => Ok(physical_id != partition.definitions[ordinal].id),
             Err(KvTableError::Mysql(error))
-                if error.equal(&tidb_error::catalog::table::ERR_NO_PARTITION_FOR_GIVEN_VALUE) =>
+                if error.equal(&tidb_table::table_errors::ERR_NO_PARTITION_FOR_GIVEN_VALUE) =>
             {
                 Ok(true)
             }

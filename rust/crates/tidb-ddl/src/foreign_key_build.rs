@@ -58,7 +58,7 @@ pub(crate) fn check_foreign_key_valid(
             None if !fk_check => return Ok(()),
             None if in_owner => {
                 return Err(coded(
-                    &tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS,
+                    &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS,
                     format!(
                         "Table '{}.{}' doesn't exist",
                         fk.ref_schema.original(),
@@ -68,7 +68,7 @@ pub(crate) fn check_foreign_key_valid(
             }
             None => {
                 return Err(refusal(tidb_terror::MysqlError::from_terror(
-                    &tidb_error::catalog::infoschema::ERR_FOREIGN_KEY_CANNOT_OPEN_PARENT
+                    &tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_CANNOT_OPEN_PARENT
                         .generate_with_stack_by_args(&[(fk.ref_table.original())
                             .to_string()
                             .into()]),
@@ -361,7 +361,7 @@ pub(crate) fn check_modify_column_with_foreign_key_constraint(
                 catalog.find_table(fk.ref_schema.original(), fk.ref_table.original())
             else {
                 return Err(coded(
-                    &tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS,
+                    &tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS,
                     format!(
                         "Table '{}.{}' doesn't exist",
                         fk.ref_schema.original(),
@@ -372,7 +372,7 @@ pub(crate) fn check_modify_column_with_foreign_key_constraint(
             let Some(refer_col) = find_column_info(&refer_table.columns, ref_cols[i].lowercase())
             else {
                 return Err(coded(
-                    &tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS,
+                    &tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS,
                     format!(
                         "Unknown column '{}' in '{}'",
                         ref_cols[i].lowercase(),

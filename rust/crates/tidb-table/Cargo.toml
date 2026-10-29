@@ -34,7 +34,6 @@ tidb-parser = { path = "../tidb-parser" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
-tidb-error = { path = "../tidb-error" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }

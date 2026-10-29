@@ -707,7 +707,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 // ErrUserAlreadyExists (3163) as a NOTE under IF NOT EXISTS.
                 self.append_sql_warning(tidb_context::SqlWarn::raised(
                     tidb_context::WarningLevel::Note,
-                    tidb_error::catalog::infoschema::ERR_USER_ALREADY_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_USER_ALREADY_EXISTS
                         .generate_with_stack_by_args(&[format!("'{}'@'{}'", user, host).into()]),
                 ));
                 continue;
@@ -848,7 +848,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 // EXISTS, same as CREATE USER.
                 self.append_sql_warning(tidb_context::SqlWarn::raised(
                     tidb_context::WarningLevel::Note,
-                    tidb_error::catalog::infoschema::ERR_USER_ALREADY_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_USER_ALREADY_EXISTS
                         .generate_with_stack_by_args(&[format!("'{}'@'{}'", role, host).into()]),
                 ));
             }
@@ -1421,7 +1421,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 }
                 self.append_sql_warning(tidb_context::SqlWarn::raised(
                     tidb_context::WarningLevel::Note,
-                    tidb_error::catalog::infoschema::ERR_USER_DROP_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_USER_DROP_EXISTS
                         .generate_with_stack_by_args(&[account.into()]),
                 ));
             }
@@ -1595,7 +1595,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 let table_exists = self.lock_catalog()?.table_in(&database, table).is_some();
                 if !table_exists && !privs.contains(&tidb_mysql::CreatePriv) {
                     return Err(DriverError::from(
-                        tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                        tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                             .generate_with_stack_by_args(&[(&database).into(), table.into()]),
                     ));
                 }

@@ -124,7 +124,7 @@ impl DdlSessionPool for ExecutorDdlSessionPool {
             if partitioned.exchange_row_mismatches(ordinal, &row, &context)? {
                 return Err(KvTableError::Mysql(
                     tidb_terror::MysqlError::from_terror(
-                        &tidb_error::catalog::table::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET
+                        &tidb_table::table_errors::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET
                             .generate_with_stack_by_args(&[]),
                     ),
                 ));

@@ -46,7 +46,7 @@ pub fn table_locked_error(table: &str, lock: &TableLockInfo) -> MysqlError {
         .map(ToString::to_string)
         .unwrap_or_default();
     MysqlError::from_terror(
-        &tidb_error::catalog::infoschema::ERR_TABLE_LOCKED.generate_with_stack_by_args(&[
+        &tidb_infoschema::infoschema_errors::ERR_TABLE_LOCKED.generate_with_stack_by_args(&[
             table.into(),
             lock.tp.sql().into(),
             holder.into(),

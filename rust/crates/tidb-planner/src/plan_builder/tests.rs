@@ -784,7 +784,7 @@ fn test_partition_clause_matches_partition_metadata() {
     let error = builder
         .build_select(&parse_select("SELECT a FROM t PARTITION (Missing)"))
         .expect_err("an unknown partition is rejected");
-    assert!(error.equal(&tidb_error::catalog::table::ERR_UNKNOWN_PARTITION));
+    assert!(error.equal(&tidb_table::table_errors::ERR_UNKNOWN_PARTITION));
     assert_eq!(error.message(), "Unknown partition 'missing' in table 't'");
 }
 

@@ -228,24 +228,17 @@ pub enum EvalError {
 
 /// Why a sequence builtin failed, with the code and message TiDB reports.
 ///
-/// The two are DIFFERENT error classes in Go, and neither is the auto-id
-/// allocator's 1467: reading past the end of a `NOCYCLE` sequence is
-/// `table.ErrSequenceHasRunOut`; an absent name is
-/// `infoschema.ErrTableNotExists`, while an existing table/view is
-/// `infoschema.ErrWrongObject`.
+/// Reading past the end of a `NOCYCLE` sequence is the sequence table's
+/// `table.ErrSequenceHasRunOut`, and a name the lookup cannot use is
+/// `infoschema.GetSequenceByName`'s `ErrTableNotExists` / `ErrWrongObject`:
+/// Go returns each as its producer raised it, and so does [`Self::Raised`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SequenceEvalError {
-    /// Go `table.ErrSequenceHasRunOut` (4135) for `(database, sequence)`.
-    /// Captured: `Sequence 'test.s4' has run out`.
-    RunOut(String, String),
-    /// Go `infoschema.ErrTableNotExists` (1146) for `(database, name)`.
-    /// Captured for `select nextval(nosuch)`:
-    /// `Table 'test.nosuch' doesn't exist`.
-    NotASequence(String, String),
-    /// Go `infoschema.ErrWrongObject` (1347) for `(database, name)`. An
-    /// existing table or view was named where Go's sequence lookup requires
-    /// `SEQUENCE`.
-    WrongObject(String, String),
+    /// The error the sequence table or the sequence lookup raised. Captured:
+    /// `Sequence 'test.s4' has run out` (4135); `Table 'test.nosuch' doesn't
+    /// exist` (1146) for `select nextval(nosuch)`; 1347 for a table or view
+    /// named where the lookup requires `SEQUENCE`.
+    Raised(tidb_terror::TerrorError),
     /// Go `errSequenceAccessDenied` (`ErrTableaccessDenied`, 1142): the
     /// builtin's own `RequestVerification` refused INSERT or SELECT on the
     /// sequence.
@@ -265,19 +258,9 @@ impl SequenceEvalError {
     /// The Go error this raises, as Go raises it.
     #[must_use]
     pub fn to_terror(&self) -> tidb_terror::TerrorError {
-        use tidb_error::catalog::{infoschema, table};
         use crate::expression_errors as expression;
         match self {
-            SequenceEvalError::RunOut(database, name) => table::ERR_SEQUENCE_HAS_RUN_OUT
-                .generate_with_stack_by_args(&[database.as_str().into(), name.as_str().into()]),
-            SequenceEvalError::NotASequence(database, name) => infoschema::ERR_TABLE_NOT_EXISTS
-                .generate_with_stack_by_args(&[database.as_str().into(), name.as_str().into()]),
-            SequenceEvalError::WrongObject(database, name) => infoschema::ERR_WRONG_OBJECT
-                .generate_with_stack_by_args(&[
-                    database.as_str().into(),
-                    name.as_str().into(),
-                    "SEQUENCE".into(),
-                ]),
+            SequenceEvalError::Raised(error) => error.clone(),
             SequenceEvalError::AccessDenied {
                 privilege,
                 user,

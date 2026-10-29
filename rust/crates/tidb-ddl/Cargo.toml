@@ -42,7 +42,6 @@ tidb-config = { path = "../tidb-config" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-ddl-logutil = { path = "../tidb-ddl-logutil" }
 tidb-ddl-serverstate = { path = "../tidb-ddl-serverstate" }
-tidb-error = { path = "../tidb-error" }
 tidb-table = { path = "../tidb-table" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-autoid = { path = "../tidb-autoid" }

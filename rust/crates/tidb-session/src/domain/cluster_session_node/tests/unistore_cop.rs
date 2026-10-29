@@ -2851,7 +2851,7 @@ fn production_auto_analyze_is_killable_by_its_process_id() {
         |context| {
             super::super::cluster_stats_session(context).with_session(|session| {
                 let analyze = Arc::new(KillingSystemAnalyze {
-                    inner: session.node.domain.analyze(),
+                    inner: crate::domain::cluster_session_node::node_services(&session.node.domain).analyze(),
                     processes: factory.processes(),
                     factory: Arc::downgrade(&factory),
                     process_id: Arc::clone(&process_id),
@@ -2953,7 +2953,7 @@ fn run_tracked_auto_analyze(kill: Option<bool>) {
             super::super::cluster_stats_session(context)
                 .with_session(|session| {
                     let analyze = Arc::new(ObservedSystemAnalyze {
-                        inner: session.node.domain.analyze(),
+                        inner: crate::domain::cluster_session_node::node_services(&session.node.domain).analyze(),
                         processes: factory.processes(),
                         kill,
                         process_id,
@@ -17597,7 +17597,7 @@ fn failed_stats_cache_update_fails_the_analyze_statement() {
     rows(&mut session, "INSERT INTO analyze_update_b VALUES (3)");
     let updated = Arc::new(std::sync::Mutex::new(Vec::new()));
     let analyze = Arc::new(FailingStatsCacheUpdate {
-        inner: session.node().domain.analyze(),
+        inner: crate::domain::cluster_session_node::node_services(&session.node().domain).analyze(),
         updated: Arc::clone(&updated),
     });
     session.node_conn().set_analyzer(&stack.factory, analyze);

@@ -179,7 +179,7 @@ impl<'s> ClusterServerSession<'s> {
             .clone();
         services.analyze = super::statistics::analyze_service_over(factory, Arc::clone(&analyze));
         self.session.install_domain_services(services);
-        self.node.domain.set_analyze(analyze);
+        super::node_services(&self.node.domain).set_analyze(analyze);
     }
 
     /// Rebuilds the session's catalog when the node's schema moved on.
@@ -242,7 +242,7 @@ impl super::NodeConn {
     /// Go testkit's `dom.StatsHandle().Update(ctx, is)`: the stats cache
     /// reloads every table whose `mysql.stats_meta` moved since it last read.
     pub(crate) fn update_stats_cache(&self) -> Result<(), tidb_executor::DriverError> {
-        self.domain
+        super::node_services(&self.domain)
             .analyze()
             .update_stats_cache(Vec::new())
             .map_err(driver_error)

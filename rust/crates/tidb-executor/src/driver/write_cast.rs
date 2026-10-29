@@ -460,7 +460,7 @@ fn complete_typed_cast(
             )
         }
         1292 if insert => MysqlError::from_terror(
-            &tidb_error::catalog::table::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD
+            &tidb_table::table_errors::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD
                 .generate_with_stack_by_args(&[
                     tidb_datatype::type_str(field.code()).into(),
                     datum_error_text(source).into(),

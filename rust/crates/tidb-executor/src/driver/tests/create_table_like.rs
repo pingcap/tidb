@@ -172,7 +172,7 @@ fn like_a_view_is_wrong_object() {
 
     let error = crate::run_create_table_on("CREATE TABLE dst LIKE v", &mut catalog).unwrap_err();
     assert!(
-        error.equal(&tidb_error::catalog::infoschema::ERR_WRONG_OBJECT),
+        error.equal(&tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT),
         "{error:?}"
     );
     assert_eq!(error.to_string(), "'test.v' is not BASE TABLE");
@@ -189,7 +189,7 @@ fn like_reports_missing_source_and_existing_target() {
     let error =
         crate::run_create_table_on("CREATE TABLE dst LIKE nosuch", &mut catalog).unwrap_err();
     assert!(
-        error.equal(&tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS),
+        error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS),
         "{error:?}"
     );
     assert_eq!(error.to_string(), "Table 'test.nosuch' doesn't exist");
@@ -197,7 +197,7 @@ fn like_reports_missing_source_and_existing_target() {
     crate::run_create_table_on("CREATE TABLE dst LIKE t", &mut catalog).unwrap();
     let error = crate::run_create_table_on("CREATE TABLE dst LIKE t", &mut catalog).unwrap_err();
     assert!(
-        error.equal(&tidb_error::catalog::infoschema::ERR_TABLE_EXISTS),
+        error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS),
         "{error:?}"
     );
     assert_eq!(error.to_string(), "Table 'test.dst' already exists");

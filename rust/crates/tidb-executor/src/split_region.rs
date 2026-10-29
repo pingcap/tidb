@@ -291,7 +291,7 @@ fn plan_table_split(
                 let converted = converter.convert(value, name, field_type)?;
                 if converted.is_null() {
                     return Err(DriverError::from(
-                        tidb_error::catalog::table::ERR_COLUMN_CANT_NULL
+                        tidb_table::table_errors::ERR_COLUMN_CANT_NULL
                             .generate_with_stack_by_args(&[((*name).to_owned()).into()]),
                     ));
                 }
@@ -380,7 +380,7 @@ fn physical_ids(
                 .map(|definition| definition.id)
                 .ok_or_else(|| {
                     DriverError::from(
-                        tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+                        tidb_table::table_errors::ERR_UNKNOWN_PARTITION
                             .generate_with_stack_by_args(&[
                                 name.go_to_lower().into(),
                                 table_name.to_owned().into(),

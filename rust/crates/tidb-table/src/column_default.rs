@@ -927,7 +927,7 @@ pub fn check_no_default_value_for_insert(
         if !not_null {
             ctx.append_sql_warn(tidb_context::SqlWarn::raised(
                 tidb_context::WarningLevel::Warning,
-                tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE
+                crate::table_errors::ERR_NO_DEFAULT_VALUE
                     .generate_with_stack_by_args(&[name.into()]),
             ));
         }
@@ -1017,9 +1017,9 @@ pub fn get_col_default_value_from_nil(
     if !ctx.strict() {
         ctx.append_sql_warn(tidb_context::SqlWarn::of(
             tidb_context::WarningLevel::Warning,
-            &tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE,
+            &crate::table_errors::ERR_NO_DEFAULT_VALUE,
             MysqlError::from_terror(
-                &tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE
+                &crate::table_errors::ERR_NO_DEFAULT_VALUE
                     .generate_with_stack_by_args(&[name.into()]),
             )
             .message,

@@ -292,7 +292,7 @@ fn set_and_drop_column_default_rewrite_the_stored_column() {
     )
     .expect_err("a missing column is refused");
     assert!(
-        error.equal(&tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS)
+        error.equal(&tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS)
             && error.to_string().contains("Unknown column 'nope'"),
         "{error:?}"
     );
@@ -371,7 +371,7 @@ fn rename_index_rewrites_the_name_and_rejects_a_collision() {
     )
     .expect_err("a missing index is refused");
     assert!(
-        error.equal(&tidb_error::catalog::infoschema::ERR_KEY_NOT_EXISTS)
+        error.equal(&tidb_infoschema::infoschema_errors::ERR_KEY_NOT_EXISTS)
             && error.to_string().contains("Key 'nosuch'"),
         "{error:?}"
     );
@@ -665,7 +665,7 @@ fn create_table_like_copies_the_definition_and_resets_the_identity() {
     let error = plan_ddl(&mut store, &statement("CREATE TABLE u6.cp LIKE u6.src"), 500)
         .expect_err("an existing name is refused");
     assert!(
-        error.equal(&tidb_error::catalog::infoschema::ERR_TABLE_EXISTS)
+        error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS)
             && error.to_string().contains("u6.cp"),
         "{error:?}"
     );
@@ -785,7 +785,7 @@ fn a_missing_table_is_1146_everywhere_except_drop_table() {
     ] {
         let error = plan_ddl(&mut store, &statement(sql), 100).expect_err("refused");
         assert!(
-            error.equal(&tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS),
+            error.equal(&tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS),
             "`{sql}` must answer Go's ErrTableNotExists, got {error:?}"
         );
         assert_eq!(

@@ -27,7 +27,7 @@ use tidb_hack::GoCaseCompare;
 /// Go `ErrPlacementPolicyNotExists`.
 fn policy_not_exists(name: &str) -> DdlPlanError {
     coded_refusal(
-        &tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS,
+        &tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_NOT_EXISTS,
         format!("Unknown placement policy '{name}'"),
     )
 }
@@ -81,7 +81,7 @@ pub fn prepare_placement_policy_job_submission<S: MetaSnapshot>(
         } => {
             if name.go_lower_eq("default") {
                 return Err(coded_refusal(
-                    &tidb_error::catalog::infoschema::ERR_RESERVED_SYNTAX,
+                    &tidb_infoschema::infoschema_errors::ERR_RESERVED_SYNTAX,
                     format!(
                         "The '{name}' syntax is reserved for purposes internal to the MySQL server"
                     ),
@@ -92,13 +92,13 @@ pub fn prepare_placement_policy_job_submission<S: MetaSnapshot>(
                     return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                         detail: format!("placement policy `{name}` already exists"),
                         warnings: vec![crate::real_tikv_ddl::ddl_note(
-                            tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_EXISTS
+                            tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_EXISTS
                                 .generate_with_stack_by_args(&[name.into()]),
                         )],
                     }));
                 }
                 return Err(coded_refusal(
-                    &tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_EXISTS,
+                    &tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_EXISTS,
                     format!("Placement policy '{name}' already exists"),
                 ));
             }
@@ -152,7 +152,7 @@ pub fn prepare_placement_policy_job_submission<S: MetaSnapshot>(
                     return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                         detail: format!("placement policy `{name}` does not exist"),
                         warnings: vec![crate::real_tikv_ddl::ddl_note(
-                            tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS
+                            tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_NOT_EXISTS
                                 .generate_with_stack_by_args(&[name.into()]),
                         )],
                     }));
@@ -236,7 +236,7 @@ fn stored_policy<S: MetaSnapshot>(
         cancel_ddl_job(
             active,
             coded_refusal(
-                &tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS,
+                &tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_NOT_EXISTS,
                 format!("Unknown placement policy '(Policy ID {policy_id})'"),
             ),
         )
@@ -324,7 +324,7 @@ pub(super) fn plan_persisted_create_placement_policy_job_step<S: MetaSnapshot>(
             return Err(cancel_ddl_job(
                 active,
                 coded_refusal(
-                    &tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_EXISTS,
+                    &tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_EXISTS,
                     format!(
                         "Placement policy '{}' already exists",
                         existing.name.original()

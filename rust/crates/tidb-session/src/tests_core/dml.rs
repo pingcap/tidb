@@ -489,7 +489,7 @@ fn insert_with_an_empty_values_row_takes_every_default() {
         .unwrap();
     let error = session.run("INSERT INTO ev2 VALUES ()").unwrap_err();
     assert!(
-        error.equal(&tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE)
+        error.equal(&tidb_table::table_errors::ERR_NO_DEFAULT_VALUE)
             && error.to_string() == "Field 'a' doesn't have a default value",
         "expected 1364 for field a, got {error:?}"
     );

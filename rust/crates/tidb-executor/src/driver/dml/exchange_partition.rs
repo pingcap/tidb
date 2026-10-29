@@ -108,7 +108,7 @@ impl ExchangePartitionCheck {
             .map_err(super::kv_write_error)?;
         if located != *partition_id && located != *standalone_id {
             return Err(DriverError::from(
-                tidb_error::catalog::table::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET
+                tidb_table::table_errors::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET
                     .generate_with_stack_by_args(&[]),
             ));
         }

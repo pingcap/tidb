@@ -237,6 +237,8 @@ use crate::statement_lifecycle::{ReadStatement, StatementLifecycle};
 use crate::txn_manager::{CommitHooks, CommitTxnRegions, TxnManager};
 #[cfg(test)]
 use tidb_store_driver_txn::cluster_table_storage::LockKeysOutcome;
+mod node_services;
+pub use node_services::{node_services, NodeServices};
 mod non_transactional_dml;
 mod record_set;
 use tidb_domain_core::schema_sync;
@@ -3139,18 +3141,6 @@ impl crate::ddl_service::DdlService for ClusterDdlService {
     }
 }
 
-
-/// Go `copr.MPPClient` over the node's `KVStore`.
-#[must_use]
-pub fn build_mpp_client(
-    authority: &tidb_store_driver::real_tikv_read::ProductionReadProcessAuthority,
-    schema_version: impl Fn() -> i64 + Send + Sync + 'static,
-) -> tidb_copr::mpp_client::TiFlashMppClient {
-    tidb_copr::mpp_client::TiFlashMppClient::new(
-        authority.tikv_store().clone(),
-        schema_version,
-    )
-}
 
 /// Spawns the TiFlash replica availability poller over the node's catalog
 /// watch, DDL executor, and the store's PD HTTP client (Go

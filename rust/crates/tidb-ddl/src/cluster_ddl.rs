@@ -1754,7 +1754,7 @@ fn check_and_normalize_placement_policy<S: MetaSnapshot>(
     }
     let Some(policy) = find_policy(snapshot, name)? else {
         return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
-            &tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS
+            &tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_NOT_EXISTS
                 .generate_with_stack_by_args(&[name.into()]),
         )));
     };
@@ -3261,7 +3261,7 @@ fn prepare_rename_column(
         !candidate.hidden && candidate.name.lowercase() == wanted
     }) else {
         return Err(DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS.generate_with_stack_by_args(&[
                 (from.to_owned()).into(),
                 (table.to_owned()).into(),
             ]),
@@ -3297,7 +3297,7 @@ fn prepare_rename_column(
         .any(|candidate| candidate.read().name.lowercase() == new_name)
     {
         return Err(DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS
                 .generate_with_stack_by_args(&[(to.to_owned()).into()]),
         ));
     }
@@ -3592,7 +3592,7 @@ fn apply_rename_index(
 ) -> Result<AlterColumnOutcome, DdlPlanError> {
     if find_index(info, from).is_none() {
         return Err(DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_KEY_NOT_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_KEY_NOT_EXISTS.generate_with_stack_by_args(&[
                 (from.to_owned()).into(),
                 (table.to_owned()).into(),
             ]),
@@ -3696,7 +3696,7 @@ fn apply_index_visibility(
         .filter(|candidate| candidate.read().state == tidb_model::SchemaState::PUBLIC);
     let Some(found) = found else {
         return Err(DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_KEY_NOT_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_KEY_NOT_EXISTS.generate_with_stack_by_args(&[
                 (index.to_owned()).into(),
                 (table.to_owned()).into(),
             ]),
@@ -3747,7 +3747,7 @@ fn apply_set_column_default(
         candidate.name.lowercase() == wanted && candidate.state == tidb_model::SchemaState::PUBLIC
     }) else {
         return Err(DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS.generate_with_stack_by_args(&[
                 (column.to_owned()).into(),
                 (table.to_owned()).into(),
             ]),
@@ -4021,7 +4021,7 @@ pub(super) fn build_add_column(
             )));
         }
         return Err(DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS
                 .generate_with_stack_by_args(&[(column.name.clone()).into()]),
         ));
     }
@@ -4099,7 +4099,7 @@ fn locate_offset_to_move(
             let anchor = anchor.ok_or_else(|| {
                 // Go `infoschema.ErrColumnNotExists` (1054).
                 DdlPlanError::from(
-                    tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS
                         .generate_with_stack_by_args(&[
                             (name.clone()).into(),
                             (info.name.original().to_owned()).into(),
@@ -4170,7 +4170,7 @@ fn move_column_info(info: &mut TableInfo, from: usize, to: usize) {
 /// Go identity it was raised with. The checks raise a closed set of Go errors;
 /// this names them, and any other number stays a plain refusal.
 pub(crate) fn checked_refusal(code: u16, message: impl Into<String>) -> DdlPlanError {
-    use tidb_error::catalog::table;
+    use tidb_table::table_errors as table;
     use tidb_kv::kv_errors as kv;
     use tidb_datatype::types_errors as types;
     let proto: Option<&'static TerrorError> = match code {
@@ -6878,7 +6878,7 @@ fn stored_resource_group(
         .find(|group| group.id == group_id)
         .ok_or_else(|| {
             coded_refusal(
-                &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_NOT_EXISTS,
+                &tidb_infoschema::infoschema_errors::ERR_RESOURCE_GROUP_NOT_EXISTS,
                 format!("Unknown resource group '(Group ID {group_id})'"),
             )
         })
@@ -8265,7 +8265,7 @@ fn build_create_table_info<S: MetaSnapshot>(
 ) -> Result<Result<TableInfo, DdlPlan>, DdlPlanError> {
     let Some(database) = find_database(catalog, schema) else {
         return Err(DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                 .generate_with_stack_by_args(&[(schema.to_owned()).into()]),
         ));
     };
@@ -8304,14 +8304,14 @@ fn build_create_table_info<S: MetaSnapshot>(
                     existing.name.original()
                 ),
                 vec![crate::real_tikv_ddl::ddl_note(
-                    tidb_error::catalog::infoschema::ERR_TABLE_EXISTS.generate_with_stack_by_args(
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.generate_with_stack_by_args(
                         &[format!("{}.{}", schema, existing.name.original()).into()],
                     ),
                 )],
             )));
         }
         return Err(DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
                 format!("{}.{}", (schema.to_owned()), (table.to_owned())).into(),
             ]),
         ));
@@ -8647,7 +8647,7 @@ fn already(detail: String) -> DdlPlan {
 /// go's note for one missing table: `Note | 1051 | Unknown table 'd.t'`.
 fn missing_table_note(schema: &str, table: &str) -> tidb_context::SqlWarn {
     crate::real_tikv_ddl::ddl_note(
-        tidb_error::catalog::infoschema::ERR_TABLE_DROP_EXISTS
+        tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
             .generate_with_stack_by_args(&[format!("{}.{}", schema, table).into()]),
     )
 }
@@ -8739,13 +8739,13 @@ fn locate_table<'catalog>(
 ) -> Result<(i64, &'catalog TableInfo), DdlPlanError> {
     let Some(database) = find_database(catalog, schema) else {
         return Err(DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
                 .generate_with_stack_by_args(&[(schema.to_owned()).into()]),
         ));
     };
     let Some(stored) = find_table(database, table) else {
         return Err(DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(&[
                 (schema.to_owned()).into(),
                 (table.to_owned()).into(),
             ]),
@@ -8804,7 +8804,7 @@ fn create_foreign_key(
     // A temporary table takes no foreign key.
     if stored.temp_table_type != tidb_model::TempTableType::NONE {
         return Err(coded_refusal(
-            &tidb_error::catalog::infoschema::ERR_CANNOT_ADD_FOREIGN,
+            &tidb_infoschema::infoschema_errors::ERR_CANNOT_ADD_FOREIGN,
             "Cannot add foreign key constraint",
         ));
     }

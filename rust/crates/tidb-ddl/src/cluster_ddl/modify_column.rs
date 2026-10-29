@@ -131,14 +131,14 @@ pub(super) fn build_modify_column_job<S: MetaSnapshot>(
                 // and the statement succeeds.
                 Err(error)
                     if *if_exists
-                        && error.equal(&tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS) =>
+                        && error.equal(&tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS) =>
                 {
                     return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                         detail: format!(
                             "column `{original_col_name}` does not exist on `{schema}`.`{table}`"
                         ),
                         warnings: vec![crate::real_tikv_ddl::ddl_note(
-                            tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS
+                            tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS
                                 .generate_with_stack_by_args(&[
                                     original_col_name.into(),
                                     table.into(),
@@ -282,7 +282,7 @@ fn get_modifiable_column_job(
             candidate.state == SchemaState::PUBLIC && candidate.name.lowercase() == new_col_name
         }) {
             return Err(DdlPlanError::from(
-                tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+                tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS
                     .generate_with_stack_by_args(&[(column.name.clone()).into()]),
             ));
         }
@@ -1139,7 +1139,7 @@ fn check_and_apply_auto_random_bits<S: MetaSnapshot>(
 /// Go `ErrColumnNotExists` (1054).
 fn column_not_exists(column: &str, table: &str) -> DdlPlanError {
     DdlPlanError::from(
-        tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS
+        tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS
             .generate_with_stack_by_args(&[(column.to_owned()).into(), (table.to_owned()).into()]),
     )
 }
@@ -1280,7 +1280,7 @@ fn check_column_already_exists(
         && tidb_model::column::find_column_info(&info.columns, new.name.lowercase()).is_some()
     {
         return Err(DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS
                 .generate_with_stack_by_args(&[(new.name.original().to_owned()).into()]),
         ));
     }

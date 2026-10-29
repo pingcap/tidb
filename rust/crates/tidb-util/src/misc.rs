@@ -52,20 +52,29 @@ pub fn syntax_error(message: impl Into<String>) -> tidb_terror::TerrorError {
 
 /// Go `util.SequenceTable`: the sequence operations a table object of a
 /// `CREATE SEQUENCE` provides, so expression evaluation can drive one without
-/// depending on the table layer.
+/// depending on the table layer. `ctx` is Go's session argument; the
+/// database and sequence names are what its errors name.
 pub trait SequenceTable: std::fmt::Debug + Send + Sync {
     /// Go `GetSequenceID`.
-    fn sequence_id(&self) -> i64;
+    fn get_sequence_id(&self) -> i64;
 
     /// Go `GetSequenceNextVal`.
-    fn sequence_next_val(&self) -> Result<i64, Box<dyn std::error::Error + Send + Sync>>;
+    fn get_sequence_next_val(
+        &self,
+        ctx: &dyn std::any::Any,
+        db_name: &str,
+        seq_name: &str,
+    ) -> Result<i64, tidb_terror::TerrorError>;
 
-    /// Go `SetSequenceVal`: `None` when the counter was already at or past
-    /// `new_val` (Go's `alreadySatisfied`).
+    /// Go `SetSequenceVal`: the value set, and whether the counter was
+    /// already at or past `new_val` (Go's `alreadySatisfied`, nothing set).
     fn set_sequence_val(
         &self,
+        ctx: &dyn std::any::Any,
         new_val: i64,
-    ) -> Result<Option<i64>, Box<dyn std::error::Error + Send + Sync>>;
+        db_name: &str,
+        seq_name: &str,
+    ) -> Result<(i64, bool), tidb_terror::TerrorError>;
 }
 
 /// Go `util.GetSequenceByName` over a statement's infoschema: the
@@ -74,9 +83,14 @@ pub trait SequenceSchema: std::fmt::Debug + Send + Sync {
     /// The session's current database, lowercase: the schema of a bare name.
     fn current_db(&self) -> &str;
 
-    /// The object `(database, name)` names: `Some(Some(_))` a sequence,
-    /// `Some(None)` another kind of object, `None` nothing.
-    fn object(&self, database: &str, name: &str) -> Option<Option<&dyn SequenceTable>>;
+    /// Go `infoschema.GetSequenceByName`: the sequence `schema.sequence`
+    /// names, or the infoschema's error for a missing object or an object
+    /// that is not a sequence.
+    fn get_sequence_by_name(
+        &self,
+        schema: &str,
+        sequence: &str,
+    ) -> Result<&dyn SequenceTable, tidb_terror::TerrorError>;
 
     /// The `(database, name)` a one- or two-part sequence path names.
     fn schema_and_name<'a>(&'a self, path: &'a [String]) -> Option<(&'a str, &'a str)> {
@@ -87,7 +101,8 @@ pub trait SequenceSchema: std::fmt::Debug + Send + Sync {
         }
     }
 
-    /// The lowercase `(database, name)` an error names for `path`.
+    /// The lowercase `(database, name)` the lookup and its errors name for
+    /// `path`.
     fn key(&self, path: &[String]) -> (String, String) {
         use tidb_hack::GoToLower;
         match path {
@@ -106,7 +121,8 @@ pub trait SequenceSchema: std::fmt::Debug + Send + Sync {
     }
 }
 
-/// The sequences of a context with no infoschema: none.
+/// The sequences of a context with no infoschema: none, so every name is
+/// Go's `infoschema.ErrTableNotExists` (`ClassSchema.NewStd(ErrNoSuchTable)`).
 #[derive(Debug)]
 pub struct NoSequences;
 
@@ -115,7 +131,15 @@ impl SequenceSchema for NoSequences {
         ""
     }
 
-    fn object(&self, _database: &str, _name: &str) -> Option<Option<&dyn SequenceTable>> {
-        None
+    fn get_sequence_by_name(
+        &self,
+        schema: &str,
+        sequence: &str,
+    ) -> Result<&dyn SequenceTable, tidb_terror::TerrorError> {
+        Err(tidb_terror::catalog_support::std_err(
+            tidb_terror::catalog_support::Class::Schema,
+            tidb_errno::errcode::ErrNoSuchTable,
+        )
+        .generate_with_stack_by_args(&[schema.into(), sequence.into()]))
     }
 }

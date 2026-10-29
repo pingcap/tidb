@@ -55,7 +55,7 @@ fn resolve<'a>(
 ) -> Result<Target<'a>, DriverError> {
     let Some(entry) = catalog.table_in(database, table_name) else {
         return Err(DriverError::from(
-            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                 .generate_with_stack_by_args(&[(&database).into(), (&table_name).into()]),
         ));
     };
@@ -126,7 +126,7 @@ fn physical_ids(
             })
             .ok_or_else(|| {
                 DriverError::from(
-                    tidb_error::catalog::table::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(
+                    tidb_table::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(
                         &[name.go_to_lower().into(), target.name.clone().into()],
                     ),
                 )

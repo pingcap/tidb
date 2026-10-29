@@ -126,7 +126,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         .find_table(&assigned.target.database, &assigned.target.table)
                         .ok_or_else(|| {
                             PlanError::from(
-                                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                                     .fast_generate_by_args(&[
                                         (&assigned.target.database).into(),
                                         (&assigned.target.table).into(),

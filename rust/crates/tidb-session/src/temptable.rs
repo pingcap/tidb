@@ -77,7 +77,7 @@ impl Session {
 /// Go `checkLocalTemporaryExistsAndReturn`'s `ErrTableNotExists`.
 fn local_temporary_not_exists(schema: &str, name: &str) -> DriverError {
     DriverError::from(
-        tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+        tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
             .generate_with_stack_by_args(&[(&schema).into(), (&name).into()]),
     )
 }

@@ -126,7 +126,7 @@ pub fn prepare_load_data(
     };
     let Some(entry) = catalog.table_in(&database, &name) else {
         return Err(DriverError::from(
-            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                 .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
         ));
     };
@@ -265,7 +265,7 @@ pub fn prepare_load_data(
         // Go `table.CheckOnce`.
         if seen.iter().any(|earlier| earlier.go_lower_eq(&found)) {
             return Err(DriverError::from(
-                (&tidb_error::catalog::table::ERR_DUPLICATE_COLUMN)
+                (&tidb_table::table_errors::ERR_DUPLICATE_COLUMN)
                     .generate_with_stack(format!("Column '{found}' specified twice")),
             ));
         }
@@ -407,7 +407,7 @@ pub fn run_load_data(
         .table_in(&prepared.database, &prepared.table)
         .ok_or_else(|| {
             DriverError::from(
-                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(
+                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(
                     &[(&prepared.database).into(), (&prepared.table).into()],
                 ),
             )

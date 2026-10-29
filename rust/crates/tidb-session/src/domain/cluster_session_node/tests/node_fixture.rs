@@ -486,7 +486,6 @@ fn open_session_on_with_context_and_seams_and_usage(
         ddl,
         accounts,
         sysvars,
-        analyze,
         stats_lock,
         Arc::clone(&node.catalog),
         node.accounts.live.clone(),
@@ -499,6 +498,7 @@ fn open_session_on_with_context_and_seams_and_usage(
         crate::domain::cluster_session_node::open_pool_session,
     )
     .shared();
+    crate::domain::cluster_session_node::NodeServices::new(analyze).bind(&factory);
     node.keep(&factory);
     let usage = Arc::clone(&factory.stats_usage);
     let session = factory

@@ -102,7 +102,7 @@ pub fn prepare_drop_object_job_submission<S: MetaSnapshot>(
                     }));
                 }
                 Err(DdlPlanError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_DROP_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
                         .generate_with_stack_by_args(&[format!("{schema}.{table}").into()]),
                 ))
             };
@@ -141,7 +141,7 @@ pub fn prepare_drop_object_job_submission<S: MetaSnapshot>(
                     }));
                 }
                 return Err(DdlPlanError::from(
-                    tidb_error::catalog::infoschema::ERR_TABLE_DROP_EXISTS
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
                         .generate_with_stack_by_args(&[format!("{schema}.{name}").into()]),
                 ));
             };
@@ -196,7 +196,7 @@ pub fn prepare_drop_object_job_submission<S: MetaSnapshot>(
                 }
                 // Go `executor.DropSchema`: `ErrDatabaseDropExists` (1008).
                 return Err(DdlPlanError::Admission(DdlAdmissionError::from_terror(
-                    &tidb_error::catalog::infoschema::ERR_DATABASE_DROP_EXISTS
+                    &tidb_infoschema::infoschema_errors::ERR_DATABASE_DROP_EXISTS
                         .generate_with_stack_by_args(&[name.into()]),
                 )));
             };

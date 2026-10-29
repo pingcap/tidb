@@ -78,7 +78,6 @@ tidb-autoid = { path = "../tidb-autoid" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
 tidb-copr = { path = "../tidb-copr" }
-tidb-store-driver = { path = "../tidb-store-driver" }
 tidb-infoschema-isvalidator = { path = "../tidb-infoschema-isvalidator" }
 tidb-deadlockhistory = { path = "../tidb-deadlockhistory" }
 tidb-metrics = { path = "../tidb-metrics" }
@@ -91,7 +90,6 @@ tidb-config = { path = "../tidb-config" }
 # `information_schema.TIDB_SERVERS_INFO` reads the server-info syncer, the
 # same source Go's `setDataForServersInfo` reads through `GetAllServerInfo`.
 tidb-domain = { path = "../tidb-domain" }
-tidb-error = { path = "../tidb-error" }
 tidb-domain-core = { path = "../tidb-domain-core" }
 tidb-gcutil = { path = "../tidb-gcutil" }
 tidb-hint = { path = "../tidb-hint" }

@@ -81,12 +81,11 @@ impl PendingSysvarChange for BackoffSysvarChange {
 }
 
 fn factory_with_globals(node: &MockNode, globals: GlobalSysvars) -> Domain {
-    Domain::new(
+    let domain = Domain::new(
         Arc::new(MockTransactions(Arc::clone(&node.cluster))),
         Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
         Arc::clone(&node.sysvars) as Arc<dyn ClusterSysvarWriter>,
-        Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
         Arc::new(super::mock_seams::MockStatsLock)
             as Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
         Arc::clone(&node.catalog),
@@ -98,7 +97,9 @@ fn factory_with_globals(node: &MockNode, globals: GlobalSysvars) -> Domain {
         ),
         Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default()),
         crate::domain::cluster_session_node::open_pool_session,
-    )
+    );
+    crate::domain::cluster_session_node::NodeServices::new(Arc::new(MockAnalyze)).bind(&domain);
+    domain
 }
 
 #[test]

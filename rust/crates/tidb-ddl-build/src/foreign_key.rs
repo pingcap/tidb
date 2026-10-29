@@ -82,7 +82,7 @@ pub fn part_column(part: &IndexPart) -> Refusal<String> {
     match part {
         IndexPart::Column { name, .. } => Ok(name.clone()),
         IndexPart::Expr { .. } => Err(coded(
-            &tidb_error::catalog::infoschema::ERR_CANNOT_ADD_FOREIGN,
+            &tidb_infoschema::infoschema_errors::ERR_CANNOT_ADD_FOREIGN,
             "Cannot add foreign key constraint",
         )),
     }
@@ -90,7 +90,7 @@ pub fn part_column(part: &IndexPart) -> Refusal<String> {
 
 pub fn cannot_add() -> DdlAdmissionError {
     coded(
-        &tidb_error::catalog::infoschema::ERR_CANNOT_ADD_FOREIGN,
+        &tidb_infoschema::infoschema_errors::ERR_CANNOT_ADD_FOREIGN,
         "Cannot add foreign key constraint",
     )
 }
@@ -106,7 +106,7 @@ pub fn build_fk_info(
     let ref_parts = refer.parts.as_deref().unwrap_or(&[]);
     if keys.len() != ref_parts.len() {
         return Err(refusal(tidb_terror::MysqlError::from_terror(
-            &tidb_error::catalog::infoschema::ERR_FOREIGN_KEY_NOT_MATCH
+            &tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_NOT_MATCH
                 .generate_with_stack_by_args(&[
                     fk_name.to_owned().into(),
                     ("Key reference and table reference don't match".to_owned())
@@ -158,7 +158,7 @@ pub fn build_fk_info(
         if column.is_generated() {
             if !column.generated_stored {
                 return Err(refusal(tidb_terror::MysqlError::from_terror(
-                    &tidb_error::catalog::infoschema::ERR_FOREIGN_KEY_CANNOT_USE_VIRTUAL_COLUMN
+                    &tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_CANNOT_USE_VIRTUAL_COLUMN
                         .generate_with_stack_by_args(&[
                             fk_name.to_owned().into(),
                             (column.name.original().to_owned()).to_string().into(),
@@ -195,7 +195,7 @@ pub fn build_fk_info(
         if column.field_type.has_flag(FieldTypeFlags::NOT_NULL) && (on_delete == 3 || on_update == 3)
         {
             return Err(refusal(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::infoschema::ERR_FOREIGN_KEY_COLUMN_NOT_NULL
+                &tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_COLUMN_NOT_NULL
                     .generate_with_stack_by_args(&[
                         (column.name.original().to_owned()).to_string().into(),
                         fk_name.to_owned().into(),
@@ -337,7 +337,7 @@ pub fn check_table_foreign_key(refer: &TableInfo, table: &TableInfo, fk: &FKInfo
     }
     if refer.partition.is_some() || table.partition.is_some() {
         return Err(refusal(tidb_terror::MysqlError::from_terror(
-            &tidb_error::catalog::infoschema::ERR_FOREIGN_KEY_ON_PARTITIONED
+            &tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_ON_PARTITIONED
                 .generate_with_stack_by_args(&[]),
         )));
     }
@@ -346,7 +346,7 @@ pub fn check_table_foreign_key(refer: &TableInfo, table: &TableInfo, fk: &FKInfo
     for (i, ref_name) in ref_cols.iter().enumerate() {
         let Some(ref_col) = find_column_info(&refer.columns, ref_name.original()) else {
             return Err(refusal(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::infoschema::ERR_FOREIGN_KEY_NO_COLUMN_IN_PARENT
+                &tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_NO_COLUMN_IN_PARENT
                     .generate_with_stack_by_args(&[
                         (ref_name.original().to_owned()).to_string().into(),
                         (fk.name.original().to_owned()).to_string().into(),
@@ -357,7 +357,7 @@ pub fn check_table_foreign_key(refer: &TableInfo, table: &TableInfo, fk: &FKInfo
         let ref_col = ref_col.read();
         if ref_col.is_virtual_generated() {
             return Err(refusal(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::infoschema::ERR_FOREIGN_KEY_CANNOT_USE_VIRTUAL_COLUMN
+                &tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_CANNOT_USE_VIRTUAL_COLUMN
                     .generate_with_stack_by_args(&[
                         (fk.name.original().to_owned()).to_string().into(),
                         (ref_name.original().to_owned()).to_string().into(),
@@ -401,7 +401,7 @@ pub fn check_table_foreign_key(refer: &TableInfo, table: &TableInfo, fk: &FKInfo
     }
     if find_index_by_columns_for_foreign_key(refer, &refer.indices, &ref_cols).is_none() {
         return Err(refusal(tidb_terror::MysqlError::from_terror(
-            &tidb_error::catalog::infoschema::ERR_FOREIGN_KEY_NO_INDEX_IN_PARENT
+            &tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_NO_INDEX_IN_PARENT
                 .generate_with_stack_by_args(&[
                     (fk.name.original().to_owned()).to_string().into(),
                     (fk.ref_table.original().to_owned()).to_string().into(),

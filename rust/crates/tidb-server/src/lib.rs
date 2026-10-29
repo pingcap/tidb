@@ -25,6 +25,8 @@
 //! then reads the handshake response from the encrypted stream.
 
 
+mod cluster_stack;
+mod process_shutdown;
 mod auth_exchange;
 pub(crate) use tidb_session::domain::auth_identity;
 mod auth_plugin_registry;
@@ -118,7 +120,8 @@ pub use pipeline_session::MaterializedResultSetSource;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
-pub use real_tikv_node::{run_with_process_shutdown, ProcessReadAuthority, RunConfiguredNodeError};
+pub use process_shutdown::{run_with_process_shutdown, ProcessReadAuthority};
+pub use real_tikv_node::RunConfiguredNodeError;
 pub use resultset_source::ResultSetSource;
 pub use secure_transport::{
     SecureTransportError, SecureTransportPolicy, TransportDecision, TransportKind,

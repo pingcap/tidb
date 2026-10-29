@@ -878,56 +878,56 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_DATABASE_EXISTS.class(),
+        tidb_infoschema::infoschema_errors::ERR_DATABASE_EXISTS.class(),
         TerrorClass::Schema,
         "infoschema::ERR_DATABASE_EXISTS"
     );
     assert_eq!(
-        catalog::infoschema::ERR_DATABASE_EXISTS.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_DATABASE_EXISTS.code().value(),
         errcode::ErrDBCreateExists as isize,
         "infoschema::ERR_DATABASE_EXISTS"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_DATABASE_DROP_EXISTS.class(),
+        tidb_infoschema::infoschema_errors::ERR_DATABASE_DROP_EXISTS.class(),
         TerrorClass::Schema,
         "infoschema::ERR_DATABASE_DROP_EXISTS"
     );
     assert_eq!(
-        catalog::infoschema::ERR_DATABASE_DROP_EXISTS.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_DATABASE_DROP_EXISTS.code().value(),
         errcode::ErrDBDropExists as isize,
         "infoschema::ERR_DATABASE_DROP_EXISTS"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_ACCESS_DENIED.class(),
+        tidb_infoschema::infoschema_errors::ERR_ACCESS_DENIED.class(),
         TerrorClass::Schema,
         "infoschema::ERR_ACCESS_DENIED"
     );
     assert_eq!(
-        catalog::infoschema::ERR_ACCESS_DENIED.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_ACCESS_DENIED.code().value(),
         errcode::ErrAccessDenied as isize,
         "infoschema::ERR_ACCESS_DENIED"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_DATABASE_NOT_EXISTS.class(),
+        tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS.class(),
         TerrorClass::Schema,
         "infoschema::ERR_DATABASE_NOT_EXISTS"
     );
     assert_eq!(
-        catalog::infoschema::ERR_DATABASE_NOT_EXISTS.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS.code().value(),
         errcode::ErrBadDB as isize,
         "infoschema::ERR_DATABASE_NOT_EXISTS"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_PLACEMENT_POLICY_EXISTS.class(),
+        tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_EXISTS.class(),
         TerrorClass::Schema,
         "infoschema::ERR_PLACEMENT_POLICY_EXISTS"
     );
     assert_eq!(
-        catalog::infoschema::ERR_PLACEMENT_POLICY_EXISTS
+        tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_EXISTS
             .code()
             .value(),
         errcode::ErrPlacementPolicyExists as isize,
@@ -935,12 +935,12 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS.class(),
+        tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_NOT_EXISTS.class(),
         TerrorClass::Schema,
         "infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS"
     );
     assert_eq!(
-        catalog::infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS
+        tidb_infoschema::infoschema_errors::ERR_PLACEMENT_POLICY_NOT_EXISTS
             .code()
             .value(),
         errcode::ErrPlacementPolicyNotExists as isize,
@@ -948,12 +948,12 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_RESOURCE_GROUP_EXISTS.class(),
+        tidb_infoschema::infoschema_errors::ERR_RESOURCE_GROUP_EXISTS.class(),
         TerrorClass::Schema,
         "infoschema::ERR_RESOURCE_GROUP_EXISTS"
     );
     assert_eq!(
-        catalog::infoschema::ERR_RESOURCE_GROUP_EXISTS
+        tidb_infoschema::infoschema_errors::ERR_RESOURCE_GROUP_EXISTS
             .code()
             .value(),
         errcode::ErrResourceGroupExists as isize,
@@ -961,12 +961,12 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_RESOURCE_GROUP_NOT_EXISTS.class(),
+        tidb_infoschema::infoschema_errors::ERR_RESOURCE_GROUP_NOT_EXISTS.class(),
         TerrorClass::Schema,
         "infoschema::ERR_RESOURCE_GROUP_NOT_EXISTS"
     );
     assert_eq!(
-        catalog::infoschema::ERR_RESOURCE_GROUP_NOT_EXISTS
+        tidb_infoschema::infoschema_errors::ERR_RESOURCE_GROUP_NOT_EXISTS
             .code()
             .value(),
         errcode::ErrResourceGroupNotExists as isize,
@@ -974,12 +974,12 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_RESOURCE_GROUP_INVALID_BACKGROUND_TASK_NAME.class(),
+        tidb_infoschema::infoschema_errors::ERR_RESOURCE_GROUP_INVALID_BACKGROUND_TASK_NAME.class(),
         TerrorClass::Executor,
         "infoschema::ERR_RESOURCE_GROUP_INVALID_BACKGROUND_TASK_NAME"
     );
     assert_eq!(
-        catalog::infoschema::ERR_RESOURCE_GROUP_INVALID_BACKGROUND_TASK_NAME
+        tidb_infoschema::infoschema_errors::ERR_RESOURCE_GROUP_INVALID_BACKGROUND_TASK_NAME
             .code()
             .value(),
         errcode::ErrResourceGroupInvalidBackgroundTaskName as isize,
@@ -987,12 +987,12 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_RESOURCE_GROUP_INVALID_FOR_ROLE.class(),
+        tidb_infoschema::infoschema_errors::ERR_RESOURCE_GROUP_INVALID_FOR_ROLE.class(),
         TerrorClass::Schema,
         "infoschema::ERR_RESOURCE_GROUP_INVALID_FOR_ROLE"
     );
     assert_eq!(
-        catalog::infoschema::ERR_RESOURCE_GROUP_INVALID_FOR_ROLE
+        tidb_infoschema::infoschema_errors::ERR_RESOURCE_GROUP_INVALID_FOR_ROLE
             .code()
             .value(),
         errcode::ErrResourceGroupInvalidForRole as isize,
@@ -1000,122 +1000,122 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_RESERVED_SYNTAX.class(),
+        tidb_infoschema::infoschema_errors::ERR_RESERVED_SYNTAX.class(),
         TerrorClass::Schema,
         "infoschema::ERR_RESERVED_SYNTAX"
     );
     assert_eq!(
-        catalog::infoschema::ERR_RESERVED_SYNTAX.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_RESERVED_SYNTAX.code().value(),
         errcode::ErrReservedSyntax as isize,
         "infoschema::ERR_RESERVED_SYNTAX"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_TABLE_EXISTS.class(),
+        tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.class(),
         TerrorClass::Schema,
         "infoschema::ERR_TABLE_EXISTS"
     );
     assert_eq!(
-        catalog::infoschema::ERR_TABLE_EXISTS.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS.code().value(),
         errcode::ErrTableExists as isize,
         "infoschema::ERR_TABLE_EXISTS"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_TABLE_DROP_EXISTS.class(),
+        tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS.class(),
         TerrorClass::Schema,
         "infoschema::ERR_TABLE_DROP_EXISTS"
     );
     assert_eq!(
-        catalog::infoschema::ERR_TABLE_DROP_EXISTS.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS.code().value(),
         errcode::ErrBadTable as isize,
         "infoschema::ERR_TABLE_DROP_EXISTS"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_SEQUENCE_DROP_EXISTS.class(),
+        tidb_infoschema::infoschema_errors::ERR_SEQUENCE_DROP_EXISTS.class(),
         TerrorClass::Schema,
         "infoschema::ERR_SEQUENCE_DROP_EXISTS"
     );
     assert_eq!(
-        catalog::infoschema::ERR_SEQUENCE_DROP_EXISTS.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_SEQUENCE_DROP_EXISTS.code().value(),
         errcode::ErrUnknownSequence as isize,
         "infoschema::ERR_SEQUENCE_DROP_EXISTS"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_COLUMN_NOT_EXISTS.class(),
+        tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS.class(),
         TerrorClass::Schema,
         "infoschema::ERR_COLUMN_NOT_EXISTS"
     );
     assert_eq!(
-        catalog::infoschema::ERR_COLUMN_NOT_EXISTS.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_COLUMN_NOT_EXISTS.code().value(),
         errcode::ErrBadField as isize,
         "infoschema::ERR_COLUMN_NOT_EXISTS"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_COLUMN_EXISTS.class(),
+        tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS.class(),
         TerrorClass::Schema,
         "infoschema::ERR_COLUMN_EXISTS"
     );
     assert_eq!(
-        catalog::infoschema::ERR_COLUMN_EXISTS.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS.code().value(),
         errcode::ErrDupFieldName as isize,
         "infoschema::ERR_COLUMN_EXISTS"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_KEY_NAME_DUPLICATE.class(),
+        tidb_infoschema::infoschema_errors::ERR_KEY_NAME_DUPLICATE.class(),
         TerrorClass::Schema,
         "infoschema::ERR_KEY_NAME_DUPLICATE"
     );
     assert_eq!(
-        catalog::infoschema::ERR_KEY_NAME_DUPLICATE.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_KEY_NAME_DUPLICATE.code().value(),
         errcode::ErrDupKeyName as isize,
         "infoschema::ERR_KEY_NAME_DUPLICATE"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_NONUNIQ_TABLE.class(),
+        tidb_infoschema::infoschema_errors::ERR_NONUNIQ_TABLE.class(),
         TerrorClass::Schema,
         "infoschema::ERR_NONUNIQ_TABLE"
     );
     assert_eq!(
-        catalog::infoschema::ERR_NONUNIQ_TABLE.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_NONUNIQ_TABLE.code().value(),
         errcode::ErrNonuniqTable as isize,
         "infoschema::ERR_NONUNIQ_TABLE"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_MULTIPLE_PRI_KEY.class(),
+        tidb_infoschema::infoschema_errors::ERR_MULTIPLE_PRI_KEY.class(),
         TerrorClass::Schema,
         "infoschema::ERR_MULTIPLE_PRI_KEY"
     );
     assert_eq!(
-        catalog::infoschema::ERR_MULTIPLE_PRI_KEY.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_MULTIPLE_PRI_KEY.code().value(),
         errcode::ErrMultiplePriKey as isize,
         "infoschema::ERR_MULTIPLE_PRI_KEY"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_TOO_MANY_KEY_PARTS.class(),
+        tidb_infoschema::infoschema_errors::ERR_TOO_MANY_KEY_PARTS.class(),
         TerrorClass::Schema,
         "infoschema::ERR_TOO_MANY_KEY_PARTS"
     );
     assert_eq!(
-        catalog::infoschema::ERR_TOO_MANY_KEY_PARTS.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_TOO_MANY_KEY_PARTS.code().value(),
         errcode::ErrTooManyKeyParts as isize,
         "infoschema::ERR_TOO_MANY_KEY_PARTS"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_FOREIGN_KEY_NOT_EXISTS.class(),
+        tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_NOT_EXISTS.class(),
         TerrorClass::Schema,
         "infoschema::ERR_FOREIGN_KEY_NOT_EXISTS"
     );
     assert_eq!(
-        catalog::infoschema::ERR_FOREIGN_KEY_NOT_EXISTS
+        tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_NOT_EXISTS
             .code()
             .value(),
         errcode::ErrCantDropFieldOrKey as isize,
@@ -1123,12 +1123,12 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_TABLE_NOT_LOCKED_FOR_WRITE.class(),
+        tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_LOCKED_FOR_WRITE.class(),
         TerrorClass::Schema,
         "infoschema::ERR_TABLE_NOT_LOCKED_FOR_WRITE"
     );
     assert_eq!(
-        catalog::infoschema::ERR_TABLE_NOT_LOCKED_FOR_WRITE
+        tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_LOCKED_FOR_WRITE
             .code()
             .value(),
         errcode::ErrTableNotLockedForWrite as isize,
@@ -1136,56 +1136,56 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_TABLE_NOT_LOCKED.class(),
+        tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_LOCKED.class(),
         TerrorClass::Schema,
         "infoschema::ERR_TABLE_NOT_LOCKED"
     );
     assert_eq!(
-        catalog::infoschema::ERR_TABLE_NOT_LOCKED.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_LOCKED.code().value(),
         errcode::ErrTableNotLocked as isize,
         "infoschema::ERR_TABLE_NOT_LOCKED"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_TABLE_NOT_EXISTS.class(),
+        tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.class(),
         TerrorClass::Schema,
         "infoschema::ERR_TABLE_NOT_EXISTS"
     );
     assert_eq!(
-        catalog::infoschema::ERR_TABLE_NOT_EXISTS.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.code().value(),
         errcode::ErrNoSuchTable as isize,
         "infoschema::ERR_TABLE_NOT_EXISTS"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_KEY_NOT_EXISTS.class(),
+        tidb_infoschema::infoschema_errors::ERR_KEY_NOT_EXISTS.class(),
         TerrorClass::Schema,
         "infoschema::ERR_KEY_NOT_EXISTS"
     );
     assert_eq!(
-        catalog::infoschema::ERR_KEY_NOT_EXISTS.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_KEY_NOT_EXISTS.code().value(),
         errcode::ErrKeyDoesNotExist as isize,
         "infoschema::ERR_KEY_NOT_EXISTS"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_CANNOT_ADD_FOREIGN.class(),
+        tidb_infoschema::infoschema_errors::ERR_CANNOT_ADD_FOREIGN.class(),
         TerrorClass::Schema,
         "infoschema::ERR_CANNOT_ADD_FOREIGN"
     );
     assert_eq!(
-        catalog::infoschema::ERR_CANNOT_ADD_FOREIGN.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_CANNOT_ADD_FOREIGN.code().value(),
         errcode::ErrCannotAddForeign as isize,
         "infoschema::ERR_CANNOT_ADD_FOREIGN"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_FOREIGN_KEY_ON_PARTITIONED.class(),
+        tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_ON_PARTITIONED.class(),
         TerrorClass::Schema,
         "infoschema::ERR_FOREIGN_KEY_ON_PARTITIONED"
     );
     assert_eq!(
-        catalog::infoschema::ERR_FOREIGN_KEY_ON_PARTITIONED
+        tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_ON_PARTITIONED
             .code()
             .value(),
         errcode::ErrForeignKeyOnPartitioned as isize,
@@ -1193,12 +1193,12 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_FOREIGN_KEY_NOT_MATCH.class(),
+        tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_NOT_MATCH.class(),
         TerrorClass::Schema,
         "infoschema::ERR_FOREIGN_KEY_NOT_MATCH"
     );
     assert_eq!(
-        catalog::infoschema::ERR_FOREIGN_KEY_NOT_MATCH
+        tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_NOT_MATCH
             .code()
             .value(),
         errcode::ErrWrongFkDef as isize,
@@ -1206,100 +1206,100 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_INDEX_EXISTS.class(),
+        tidb_infoschema::infoschema_errors::ERR_INDEX_EXISTS.class(),
         TerrorClass::Schema,
         "infoschema::ERR_INDEX_EXISTS"
     );
     assert_eq!(
-        catalog::infoschema::ERR_INDEX_EXISTS.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_INDEX_EXISTS.code().value(),
         errcode::ErrDupIndex as isize,
         "infoschema::ERR_INDEX_EXISTS"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_USER_DROP_EXISTS.class(),
+        tidb_infoschema::infoschema_errors::ERR_USER_DROP_EXISTS.class(),
         TerrorClass::Schema,
         "infoschema::ERR_USER_DROP_EXISTS"
     );
     assert_eq!(
-        catalog::infoschema::ERR_USER_DROP_EXISTS.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_USER_DROP_EXISTS.code().value(),
         errcode::ErrBadUser as isize,
         "infoschema::ERR_USER_DROP_EXISTS"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_USER_ALREADY_EXISTS.class(),
+        tidb_infoschema::infoschema_errors::ERR_USER_ALREADY_EXISTS.class(),
         TerrorClass::Schema,
         "infoschema::ERR_USER_ALREADY_EXISTS"
     );
     assert_eq!(
-        catalog::infoschema::ERR_USER_ALREADY_EXISTS.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_USER_ALREADY_EXISTS.code().value(),
         errcode::ErrUserAlreadyExists as isize,
         "infoschema::ERR_USER_ALREADY_EXISTS"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_TABLE_LOCKED.class(),
+        tidb_infoschema::infoschema_errors::ERR_TABLE_LOCKED.class(),
         TerrorClass::Schema,
         "infoschema::ERR_TABLE_LOCKED"
     );
     assert_eq!(
-        catalog::infoschema::ERR_TABLE_LOCKED.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_TABLE_LOCKED.code().value(),
         errcode::ErrTableLocked as isize,
         "infoschema::ERR_TABLE_LOCKED"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_WRONG_OBJECT.class(),
+        tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT.class(),
         TerrorClass::Schema,
         "infoschema::ERR_WRONG_OBJECT"
     );
     assert_eq!(
-        catalog::infoschema::ERR_WRONG_OBJECT.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT.code().value(),
         errcode::ErrWrongObject as isize,
         "infoschema::ERR_WRONG_OBJECT"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_ADMIN_CHECK_TABLE.class(),
+        tidb_infoschema::infoschema_errors::ERR_ADMIN_CHECK_TABLE.class(),
         TerrorClass::Schema,
         "infoschema::ERR_ADMIN_CHECK_TABLE"
     );
     assert_eq!(
-        catalog::infoschema::ERR_ADMIN_CHECK_TABLE.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_ADMIN_CHECK_TABLE.code().value(),
         errcode::ErrAdminCheckTable as isize,
         "infoschema::ERR_ADMIN_CHECK_TABLE"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_EMPTY_DATABASE.class(),
+        tidb_infoschema::infoschema_errors::ERR_EMPTY_DATABASE.class(),
         TerrorClass::Schema,
         "infoschema::ERR_EMPTY_DATABASE"
     );
     assert_eq!(
-        catalog::infoschema::ERR_EMPTY_DATABASE.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_EMPTY_DATABASE.code().value(),
         errcode::ErrBadDB as isize,
         "infoschema::ERR_EMPTY_DATABASE"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_FORBID_SCHEMA_CHANGE.class(),
+        tidb_infoschema::infoschema_errors::ERR_FORBID_SCHEMA_CHANGE.class(),
         TerrorClass::Schema,
         "infoschema::ERR_FORBID_SCHEMA_CHANGE"
     );
     assert_eq!(
-        catalog::infoschema::ERR_FORBID_SCHEMA_CHANGE.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_FORBID_SCHEMA_CHANGE.code().value(),
         errcode::ErrForbidSchemaChange as isize,
         "infoschema::ERR_FORBID_SCHEMA_CHANGE"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_TABLE_WITHOUT_PRIMARY_KEY.class(),
+        tidb_infoschema::infoschema_errors::ERR_TABLE_WITHOUT_PRIMARY_KEY.class(),
         TerrorClass::Schema,
         "infoschema::ERR_TABLE_WITHOUT_PRIMARY_KEY"
     );
     assert_eq!(
-        catalog::infoschema::ERR_TABLE_WITHOUT_PRIMARY_KEY
+        tidb_infoschema::infoschema_errors::ERR_TABLE_WITHOUT_PRIMARY_KEY
             .code()
             .value(),
         errcode::ErrTableWithoutPrimaryKey as isize,
@@ -1307,12 +1307,12 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_FOREIGN_KEY_CANNOT_USE_VIRTUAL_COLUMN.class(),
+        tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_CANNOT_USE_VIRTUAL_COLUMN.class(),
         TerrorClass::Schema,
         "infoschema::ERR_FOREIGN_KEY_CANNOT_USE_VIRTUAL_COLUMN"
     );
     assert_eq!(
-        catalog::infoschema::ERR_FOREIGN_KEY_CANNOT_USE_VIRTUAL_COLUMN
+        tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_CANNOT_USE_VIRTUAL_COLUMN
             .code()
             .value(),
         errcode::ErrForeignKeyCannotUseVirtualColumn as isize,
@@ -1320,12 +1320,12 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_FOREIGN_KEY_CANNOT_OPEN_PARENT.class(),
+        tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_CANNOT_OPEN_PARENT.class(),
         TerrorClass::Schema,
         "infoschema::ERR_FOREIGN_KEY_CANNOT_OPEN_PARENT"
     );
     assert_eq!(
-        catalog::infoschema::ERR_FOREIGN_KEY_CANNOT_OPEN_PARENT
+        tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_CANNOT_OPEN_PARENT
             .code()
             .value(),
         errcode::ErrForeignKeyCannotOpenParent as isize,
@@ -1333,12 +1333,12 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_FOREIGN_KEY_NO_COLUMN_IN_PARENT.class(),
+        tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_NO_COLUMN_IN_PARENT.class(),
         TerrorClass::Schema,
         "infoschema::ERR_FOREIGN_KEY_NO_COLUMN_IN_PARENT"
     );
     assert_eq!(
-        catalog::infoschema::ERR_FOREIGN_KEY_NO_COLUMN_IN_PARENT
+        tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_NO_COLUMN_IN_PARENT
             .code()
             .value(),
         errcode::ErrForeignKeyNoColumnInParent as isize,
@@ -1346,12 +1346,12 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_FOREIGN_KEY_NO_INDEX_IN_PARENT.class(),
+        tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_NO_INDEX_IN_PARENT.class(),
         TerrorClass::Schema,
         "infoschema::ERR_FOREIGN_KEY_NO_INDEX_IN_PARENT"
     );
     assert_eq!(
-        catalog::infoschema::ERR_FOREIGN_KEY_NO_INDEX_IN_PARENT
+        tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_NO_INDEX_IN_PARENT
             .code()
             .value(),
         errcode::ErrForeignKeyNoIndexInParent as isize,
@@ -1359,12 +1359,12 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_FOREIGN_KEY_COLUMN_NOT_NULL.class(),
+        tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_COLUMN_NOT_NULL.class(),
         TerrorClass::Schema,
         "infoschema::ERR_FOREIGN_KEY_COLUMN_NOT_NULL"
     );
     assert_eq!(
-        catalog::infoschema::ERR_FOREIGN_KEY_COLUMN_NOT_NULL
+        tidb_infoschema::infoschema_errors::ERR_FOREIGN_KEY_COLUMN_NOT_NULL
             .code()
             .value(),
         errcode::ErrForeignKeyColumnNotNull as isize,
@@ -1372,12 +1372,12 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_RESOURCE_GROUP_SUPPORT_DISABLED.class(),
+        tidb_infoschema::infoschema_errors::ERR_RESOURCE_GROUP_SUPPORT_DISABLED.class(),
         TerrorClass::Schema,
         "infoschema::ERR_RESOURCE_GROUP_SUPPORT_DISABLED"
     );
     assert_eq!(
-        catalog::infoschema::ERR_RESOURCE_GROUP_SUPPORT_DISABLED
+        tidb_infoschema::infoschema_errors::ERR_RESOURCE_GROUP_SUPPORT_DISABLED
             .code()
             .value(),
         errcode::ErrResourceGroupSupportDisabled as isize,
@@ -1385,12 +1385,12 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_CHECK_CONSTRAINT_DUP_NAME.class(),
+        tidb_infoschema::infoschema_errors::ERR_CHECK_CONSTRAINT_DUP_NAME.class(),
         TerrorClass::Schema,
         "infoschema::ERR_CHECK_CONSTRAINT_DUP_NAME"
     );
     assert_eq!(
-        catalog::infoschema::ERR_CHECK_CONSTRAINT_DUP_NAME
+        tidb_infoschema::infoschema_errors::ERR_CHECK_CONSTRAINT_DUP_NAME
             .code()
             .value(),
         errcode::ErrCheckConstraintDupName as isize,
@@ -1398,23 +1398,23 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_PROTECTED_TABLE_MODE.class(),
+        tidb_infoschema::infoschema_errors::ERR_PROTECTED_TABLE_MODE.class(),
         TerrorClass::Schema,
         "infoschema::ERR_PROTECTED_TABLE_MODE"
     );
     assert_eq!(
-        catalog::infoschema::ERR_PROTECTED_TABLE_MODE.code().value(),
+        tidb_infoschema::infoschema_errors::ERR_PROTECTED_TABLE_MODE.code().value(),
         errcode::ErrProtectedTableMode as isize,
         "infoschema::ERR_PROTECTED_TABLE_MODE"
     );
     checked += 1;
     assert_eq!(
-        catalog::infoschema::ERR_INVALID_TABLE_MODE_SET.class(),
+        tidb_infoschema::infoschema_errors::ERR_INVALID_TABLE_MODE_SET.class(),
         TerrorClass::Schema,
         "infoschema::ERR_INVALID_TABLE_MODE_SET"
     );
     assert_eq!(
-        catalog::infoschema::ERR_INVALID_TABLE_MODE_SET
+        tidb_infoschema::infoschema_errors::ERR_INVALID_TABLE_MODE_SET
             .code()
             .value(),
         errcode::ErrInvalidTableModeSet as isize,
@@ -2522,166 +2522,166 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_COLUMN_CANT_NULL.class(),
+        tidb_table::table_errors::ERR_COLUMN_CANT_NULL.class(),
         TerrorClass::Table,
         "table::ERR_COLUMN_CANT_NULL"
     );
     assert_eq!(
-        catalog::table::ERR_COLUMN_CANT_NULL.code().value(),
+        tidb_table::table_errors::ERR_COLUMN_CANT_NULL.code().value(),
         errcode::ErrBadNull as isize,
         "table::ERR_COLUMN_CANT_NULL"
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_UNKNOWN_COLUMN.class(),
+        tidb_table::table_errors::ERR_UNKNOWN_COLUMN.class(),
         TerrorClass::Table,
         "table::ERR_UNKNOWN_COLUMN"
     );
     assert_eq!(
-        catalog::table::ERR_UNKNOWN_COLUMN.code().value(),
+        tidb_table::table_errors::ERR_UNKNOWN_COLUMN.code().value(),
         errcode::ErrBadField as isize,
         "table::ERR_UNKNOWN_COLUMN"
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_DUPLICATE_COLUMN.class(),
+        tidb_table::table_errors::ERR_DUPLICATE_COLUMN.class(),
         TerrorClass::Table,
         "table::ERR_DUPLICATE_COLUMN"
     );
     assert_eq!(
-        catalog::table::ERR_DUPLICATE_COLUMN.code().value(),
+        tidb_table::table_errors::ERR_DUPLICATE_COLUMN.code().value(),
         errcode::ErrFieldSpecifiedTwice as isize,
         "table::ERR_DUPLICATE_COLUMN"
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_WARN_NULL_TO_NOTNULL.class(),
+        tidb_table::table_errors::ERR_WARN_NULL_TO_NOTNULL.class(),
         TerrorClass::Executor,
         "table::ERR_WARN_NULL_TO_NOTNULL"
     );
     assert_eq!(
-        catalog::table::ERR_WARN_NULL_TO_NOTNULL.code().value(),
+        tidb_table::table_errors::ERR_WARN_NULL_TO_NOTNULL.code().value(),
         errcode::ErrWarnNullToNotnull as isize,
         "table::ERR_WARN_NULL_TO_NOTNULL"
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_GET_DEFAULT_FAILED.class(),
+        tidb_table::table_errors::ERR_GET_DEFAULT_FAILED.class(),
         TerrorClass::Table,
         "table::ERR_GET_DEFAULT_FAILED"
     );
     assert_eq!(
-        catalog::table::ERR_GET_DEFAULT_FAILED.code().value(),
+        tidb_table::table_errors::ERR_GET_DEFAULT_FAILED.code().value(),
         errcode::ErrFieldGetDefaultFailed as isize,
         "table::ERR_GET_DEFAULT_FAILED"
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_NO_DEFAULT_VALUE.class(),
+        tidb_table::table_errors::ERR_NO_DEFAULT_VALUE.class(),
         TerrorClass::Table,
         "table::ERR_NO_DEFAULT_VALUE"
     );
     assert_eq!(
-        catalog::table::ERR_NO_DEFAULT_VALUE.code().value(),
+        tidb_table::table_errors::ERR_NO_DEFAULT_VALUE.code().value(),
         errcode::ErrNoDefaultForField as isize,
         "table::ERR_NO_DEFAULT_VALUE"
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_INDEX_OUT_BOUND.class(),
+        tidb_table::table_errors::ERR_INDEX_OUT_BOUND.class(),
         TerrorClass::Table,
         "table::ERR_INDEX_OUT_BOUND"
     );
     assert_eq!(
-        catalog::table::ERR_INDEX_OUT_BOUND.code().value(),
+        tidb_table::table_errors::ERR_INDEX_OUT_BOUND.code().value(),
         errcode::ErrIndexOutBound as isize,
         "table::ERR_INDEX_OUT_BOUND"
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_UNSUPPORTED_OP.class(),
+        tidb_table::table_errors::ERR_UNSUPPORTED_OP.class(),
         TerrorClass::Table,
         "table::ERR_UNSUPPORTED_OP"
     );
     assert_eq!(
-        catalog::table::ERR_UNSUPPORTED_OP.code().value(),
+        tidb_table::table_errors::ERR_UNSUPPORTED_OP.code().value(),
         errcode::ErrUnsupportedOp as isize,
         "table::ERR_UNSUPPORTED_OP"
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_ROW_NOT_FOUND.class(),
+        tidb_table::table_errors::ERR_ROW_NOT_FOUND.class(),
         TerrorClass::Table,
         "table::ERR_ROW_NOT_FOUND"
     );
     assert_eq!(
-        catalog::table::ERR_ROW_NOT_FOUND.code().value(),
+        tidb_table::table_errors::ERR_ROW_NOT_FOUND.code().value(),
         errcode::ErrRowNotFound as isize,
         "table::ERR_ROW_NOT_FOUND"
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_TABLE_STATE_CANT_NONE.class(),
+        tidb_table::table_errors::ERR_TABLE_STATE_CANT_NONE.class(),
         TerrorClass::Table,
         "table::ERR_TABLE_STATE_CANT_NONE"
     );
     assert_eq!(
-        catalog::table::ERR_TABLE_STATE_CANT_NONE.code().value(),
+        tidb_table::table_errors::ERR_TABLE_STATE_CANT_NONE.code().value(),
         errcode::ErrTableStateCantNone as isize,
         "table::ERR_TABLE_STATE_CANT_NONE"
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_COLUMN_STATE_CANT_NONE.class(),
+        tidb_table::table_errors::ERR_COLUMN_STATE_CANT_NONE.class(),
         TerrorClass::Table,
         "table::ERR_COLUMN_STATE_CANT_NONE"
     );
     assert_eq!(
-        catalog::table::ERR_COLUMN_STATE_CANT_NONE.code().value(),
+        tidb_table::table_errors::ERR_COLUMN_STATE_CANT_NONE.code().value(),
         errcode::ErrColumnStateCantNone as isize,
         "table::ERR_COLUMN_STATE_CANT_NONE"
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_COLUMN_STATE_NON_PUBLIC.class(),
+        tidb_table::table_errors::ERR_COLUMN_STATE_NON_PUBLIC.class(),
         TerrorClass::Table,
         "table::ERR_COLUMN_STATE_NON_PUBLIC"
     );
     assert_eq!(
-        catalog::table::ERR_COLUMN_STATE_NON_PUBLIC.code().value(),
+        tidb_table::table_errors::ERR_COLUMN_STATE_NON_PUBLIC.code().value(),
         errcode::ErrColumnStateNonPublic as isize,
         "table::ERR_COLUMN_STATE_NON_PUBLIC"
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_INDEX_STATE_CANT_NONE.class(),
+        tidb_table::table_errors::ERR_INDEX_STATE_CANT_NONE.class(),
         TerrorClass::Table,
         "table::ERR_INDEX_STATE_CANT_NONE"
     );
     assert_eq!(
-        catalog::table::ERR_INDEX_STATE_CANT_NONE.code().value(),
+        tidb_table::table_errors::ERR_INDEX_STATE_CANT_NONE.code().value(),
         errcode::ErrIndexStateCantNone as isize,
         "table::ERR_INDEX_STATE_CANT_NONE"
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_INVALID_RECORD_KEY.class(),
+        tidb_table::table_errors::ERR_INVALID_RECORD_KEY.class(),
         TerrorClass::Table,
         "table::ERR_INVALID_RECORD_KEY"
     );
     assert_eq!(
-        catalog::table::ERR_INVALID_RECORD_KEY.code().value(),
+        tidb_table::table_errors::ERR_INVALID_RECORD_KEY.code().value(),
         errcode::ErrInvalidRecordKey as isize,
         "table::ERR_INVALID_RECORD_KEY"
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD.class(),
+        tidb_table::table_errors::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD.class(),
         TerrorClass::Table,
         "table::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD"
     );
     assert_eq!(
-        catalog::table::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD
+        tidb_table::table_errors::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD
             .code()
             .value(),
         errcode::ErrTruncatedWrongValueForField as isize,
@@ -2689,23 +2689,23 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_UNKNOWN_PARTITION.class(),
+        tidb_table::table_errors::ERR_UNKNOWN_PARTITION.class(),
         TerrorClass::Table,
         "table::ERR_UNKNOWN_PARTITION"
     );
     assert_eq!(
-        catalog::table::ERR_UNKNOWN_PARTITION.code().value(),
+        tidb_table::table_errors::ERR_UNKNOWN_PARTITION.code().value(),
         errcode::ErrUnknownPartition as isize,
         "table::ERR_UNKNOWN_PARTITION"
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_NO_PARTITION_FOR_GIVEN_VALUE.class(),
+        tidb_table::table_errors::ERR_NO_PARTITION_FOR_GIVEN_VALUE.class(),
         TerrorClass::Table,
         "table::ERR_NO_PARTITION_FOR_GIVEN_VALUE"
     );
     assert_eq!(
-        catalog::table::ERR_NO_PARTITION_FOR_GIVEN_VALUE
+        tidb_table::table_errors::ERR_NO_PARTITION_FOR_GIVEN_VALUE
             .code()
             .value(),
         errcode::ErrNoPartitionForGivenValue as isize,
@@ -2713,12 +2713,12 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_LOCK_OR_ACTIVE_TRANSACTION.class(),
+        tidb_table::table_errors::ERR_LOCK_OR_ACTIVE_TRANSACTION.class(),
         TerrorClass::Table,
         "table::ERR_LOCK_OR_ACTIVE_TRANSACTION"
     );
     assert_eq!(
-        catalog::table::ERR_LOCK_OR_ACTIVE_TRANSACTION
+        tidb_table::table_errors::ERR_LOCK_OR_ACTIVE_TRANSACTION
             .code()
             .value(),
         errcode::ErrLockOrActiveTransaction as isize,
@@ -2726,23 +2726,23 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_SEQUENCE_HAS_RUN_OUT.class(),
+        tidb_table::table_errors::ERR_SEQUENCE_HAS_RUN_OUT.class(),
         TerrorClass::Table,
         "table::ERR_SEQUENCE_HAS_RUN_OUT"
     );
     assert_eq!(
-        catalog::table::ERR_SEQUENCE_HAS_RUN_OUT.code().value(),
+        tidb_table::table_errors::ERR_SEQUENCE_HAS_RUN_OUT.code().value(),
         errcode::ErrSequenceRunOut as isize,
         "table::ERR_SEQUENCE_HAS_RUN_OUT"
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET.class(),
+        tidb_table::table_errors::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET.class(),
         TerrorClass::Table,
         "table::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET"
     );
     assert_eq!(
-        catalog::table::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET
+        tidb_table::table_errors::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET
             .code()
             .value(),
         errcode::ErrRowDoesNotMatchGivenPartitionSet as isize,
@@ -2750,34 +2750,34 @@ fn catalog_prototypes_carry_their_go_class_and_code() {
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_TEMP_TABLE_FULL.class(),
+        tidb_table::table_errors::ERR_TEMP_TABLE_FULL.class(),
         TerrorClass::Table,
         "table::ERR_TEMP_TABLE_FULL"
     );
     assert_eq!(
-        catalog::table::ERR_TEMP_TABLE_FULL.code().value(),
+        tidb_table::table_errors::ERR_TEMP_TABLE_FULL.code().value(),
         errcode::ErrRecordFileFull as isize,
         "table::ERR_TEMP_TABLE_FULL"
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_OPT_ON_CACHE_TABLE.class(),
+        tidb_table::table_errors::ERR_OPT_ON_CACHE_TABLE.class(),
         TerrorClass::Ddl,
         "table::ERR_OPT_ON_CACHE_TABLE"
     );
     assert_eq!(
-        catalog::table::ERR_OPT_ON_CACHE_TABLE.code().value(),
+        tidb_table::table_errors::ERR_OPT_ON_CACHE_TABLE.code().value(),
         errcode::ErrOptOnCacheTable as isize,
         "table::ERR_OPT_ON_CACHE_TABLE"
     );
     checked += 1;
     assert_eq!(
-        catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED.class(),
+        tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED.class(),
         TerrorClass::Table,
         "table::ERR_CHECK_CONSTRAINT_VIOLATED"
     );
     assert_eq!(
-        catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED.code().value(),
+        tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED.code().value(),
         errcode::ErrCheckConstraintViolated as isize,
         "table::ERR_CHECK_CONSTRAINT_VIOLATED"
     );

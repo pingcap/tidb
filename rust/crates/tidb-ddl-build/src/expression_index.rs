@@ -670,7 +670,7 @@ pub fn build_hidden_columns_with_like_default_escape(
         // 1060 against a user column literally called `_V$_idxh_0`.
         if names.iter().any(|n| n.go_equal_fold(&name.go_to_lower())) {
             return Err(tidb_terror::MysqlError::from_terror(
-                &tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+                &tidb_infoschema::infoschema_errors::ERR_COLUMN_EXISTS
                     .generate_with_stack_by_args(&[name.to_string().into()]),
             ));
         }

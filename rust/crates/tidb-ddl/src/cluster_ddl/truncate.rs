@@ -39,7 +39,7 @@ pub fn prepare_truncate_table_job_submission<S: MetaSnapshot>(
     if stored.view.is_some() || stored.is_sequence() {
         let database = find_database(&catalog, schema).expect("located above");
         return Err(DdlPlanError::from(
-            tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(&[
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(&[
                 (database.info.name.original().to_owned()).into(),
                 (stored.name.original().to_owned()).into(),
             ]),
@@ -120,7 +120,7 @@ pub(super) fn plan_persisted_truncate_table_job_step<S: MetaSnapshot>(
         return Err(cancel_ddl_job(
             active,
             DdlPlanError::from(
-                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(
+                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(
                     &[
                         (schema.clone()).into(),
                         (stored.name.original().to_owned()).into(),

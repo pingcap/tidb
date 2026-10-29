@@ -19,9 +19,10 @@
 
 use std::sync::Arc;
 
-use tidb_session::domain::cluster_stack::{cluster_session_stack, ClusterStack};
+use crate::cluster_stack::{cluster_session_stack, ClusterStack};
 use tidb_domain_core::node_config::NodeConfig;
-use tidb_session::domain::real_tikv_node::{run_with_process_shutdown, RunConfiguredNodeError};
+use crate::process_shutdown::run_with_process_shutdown;
+use tidb_session::domain::real_tikv_node::RunConfiguredNodeError;
 
 use crate::sql_node::ConcurrentSqlNode;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
