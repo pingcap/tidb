@@ -939,17 +939,12 @@ func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e exec.Execu
 // `handlePessimisticDML` gets the keys to lock from.
 func (a *ExecStmt) stmtCommitForFKCascade(ctx context.Context) error {
 	if a.Ctx.GetSessionVars().TxnCtx.IsPessimistic {
-		txn, err := a.Ctx.Txn(false)
+		txn, _ := a.Ctx.Txn(false)
+		keys, err := txn.(pessimisticTxn).KeysNeedToLock()
 		if err != nil {
 			return err
 		}
-		if pTxn, ok := txn.(pessimisticTxn); ok && txn.Valid() {
-			keys, err := pTxn.KeysNeedToLock()
-			if err != nil {
-				return err
-			}
-			a.fkCascadeKeysToLock = append(a.fkCascadeKeysToLock, keys...)
-		}
+		a.fkCascadeKeysToLock = append(a.fkCascadeKeysToLock, keys...)
 	}
 	a.Ctx.StmtCommit(ctx)
 	return nil
