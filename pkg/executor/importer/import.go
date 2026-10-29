@@ -261,8 +261,9 @@ type LoadDataReaderInfo struct {
 
 // Plan describes the plan of LOAD DATA and IMPORT INTO.
 type Plan struct {
-	DBName string
-	DBID   int64
+	QuerySource *QuerySource `json:",omitempty"`
+	DBName      string
+	DBID        int64
 	// TableInfo is the table info we used during import, we might change it
 	// if add index by SQL is enabled(it's disabled now).
 	TableInfo *model.TableInfo

@@ -87,6 +87,9 @@ type MViewDeltaMerge struct {
 	GroupKeyMVOffsets           []int
 	CountStarMVOffset           int
 	AggInfos                    []mview.AggInfo
+	// MLogEmpty means the optimizer proved that the mlog input produces no rows.
+	// MIN/MAX recomputation is unreachable, so its lookup template can be omitted.
+	MLogEmpty bool
 }
 
 // ExplainInfo returns the aggregate dependencies and lookup strategy of the merge operator.
@@ -115,7 +118,7 @@ func (p *MViewDeltaMerge) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.SimpleSchemaProducer.MemoryUsage() + size.SizeOfInterface*4 + size.SizeOfInt64*3 + size.SizeOfPointer + size.SizeOfInt*4 + size.SizeOfSlice*5
+	sum = p.SimpleSchemaProducer.MemoryUsage() + size.SizeOfInterface*4 + size.SizeOfInt64*3 + size.SizeOfPointer + size.SizeOfInt*4 + size.SizeOfSlice*5 + size.SizeOfBool
 	sum += int64(cap(p.GroupKeyMVOffsets)) * size.SizeOfInt
 	sum += int64(cap(p.AggInfos)) * size.SizeOfInterface
 	sum += int64(cap(p.FullUpdateKeyOff2IdxOff)) * size.SizeOfInt
@@ -1974,4 +1977,11 @@ func IsAutoCommitTxn(vars *variable.SessionVars) bool {
 // AdminShowBDRRole represents a show bdr role plan.
 type AdminShowBDRRole struct {
 	physicalop.SimpleSchemaProducer
+}
+
+// CompareMaterializedView represents a "COMPARE MATERIALIZED VIEW ..." plan.
+type CompareMaterializedView struct {
+	physicalop.SimpleSchemaProducer
+
+	Statement *ast.CompareMaterializedViewStmt
 }

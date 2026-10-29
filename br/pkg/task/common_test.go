@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/repo"
+	"github.com/pingcap/tidb/br/pkg/restore/nameroute"
 	restoresplit "github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -69,6 +70,12 @@ func TestUrlNoQuery(t *testing.T) {
 			expectedValue: "s3://some/what",
 		},
 		{
+			inputName:     flagStorage,
+			expectedName:  "storage",
+			inputValue:    `s3://bucket/prefix?sse-kms-context={"tenant":"#context-value"}`,
+			expectedValue: "s3://bucket/prefix",
+		},
+		{
 			inputName:     FlagStreamFullBackupStorage,
 			expectedName:  "full-backup-storage",
 			inputValue:    "s3://bucket/prefix/?access-key=1&secret-key=2",
@@ -79,6 +86,18 @@ func TestUrlNoQuery(t *testing.T) {
 			expectedName:  "pitr-add-index-sql-storage",
 			inputValue:    "s3://bucket/pitr/add-index?access-key=1&secret-key=2",
 			expectedValue: "s3://bucket/pitr/add-index",
+		},
+		{
+			inputName:     "upstream-storage",
+			expectedName:  "upstream-storage",
+			inputValue:    "s3://bucket/prefix?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D",
+			expectedValue: "s3://bucket/prefix",
+		},
+		{
+			inputName:     "downstream-storage",
+			expectedName:  "downstream-storage",
+			inputValue:    "s3://bucket/prefix?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D",
+			expectedValue: "s3://bucket/prefix",
 		},
 		{
 			inputName:     flagFullBackupCipherKey,
@@ -96,6 +115,12 @@ func TestUrlNoQuery(t *testing.T) {
 			inputName:     "azblob.encryption-key",
 			expectedName:  "azblob.encryption-key",
 			inputValue:    "SUPERSECRET_AZURE_ENCRYPTION_KEY",
+			expectedValue: "<redacted>",
+		},
+		{
+			inputName:     "s3.sse-kms-context",
+			expectedName:  "s3.sse-kms-context",
+			inputValue:    `{"tenant":"context-value"}`,
 			expectedValue: "<redacted>",
 		},
 		{
@@ -165,6 +190,13 @@ func TestFilterRestoreFilesSkipsMaterializedObjects(t *testing.T) {
 					13: {{Name: "mv_write.sst"}},
 				},
 			},
+			{
+				DB:   dbInfo,
+				Info: &model.TableInfo{ID: 14, Name: ast.NewCIStr("_mv_shadow"), MaterializedViewShadow: &model.MaterializedViewShadowInfo{SourceMViewID: 13}},
+				FilesOfPhysicals: map[int64][]*backup.File{
+					14: {{Name: "shadow_write.sst"}},
+				},
+			},
 		},
 	}
 	cfg := &RestoreConfig{
@@ -182,6 +214,7 @@ func TestFilterRestoreFilesSkipsMaterializedObjects(t *testing.T) {
 	require.Same(t, baseTable, tableMap[11])
 	require.NotContains(t, tableMap, int64(12))
 	require.NotContains(t, tableMap, int64(13))
+	require.NotContains(t, tableMap, int64(14))
 	require.Nil(t, baseTable.Info.MaterializedViewBase)
 	require.Equal(t, map[int64][]*backup.File{
 		11: {{Name: "base_table_write.sst"}},
@@ -446,6 +479,12 @@ func expectedDefaultBackupConfig() BackupConfig {
 
 func expectedDefaultRestoreConfig() RestoreConfig {
 	defaultConfig := expectedDefaultConfig()
+	// ParseFromFlags validates and caches the (empty) name router, and the flag
+	// parser materializes Rename as an empty slice, so mirror both here.
+	emptyRouter, err := nameroute.Parse([]string{})
+	if err != nil {
+		panic(err)
+	}
 	return RestoreConfig{
 		Config: defaultConfig,
 		RestoreCommonConfig: RestoreCommonConfig{
@@ -459,6 +498,7 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 			SysCheckCollation:         true,
 		},
 		NoSchema:                 false,
+		Rename:                   []string{},
 		LoadStats:                true,
 		FastLoadSysTables:        true,
 		PDConcurrency:            0x1,
@@ -471,6 +511,8 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 		Layout:                   repo.LayoutLegacy,
 		UseCheckpoint:            true,
 		AllowPITRFromIncremental: true,
+		nameRouter:               emptyRouter,
+		nameRouterRules:          []string{},
 	}
 }
 

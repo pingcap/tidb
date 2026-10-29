@@ -355,4 +355,14 @@ func TestBRIEBuilderOptions(t *testing.T) {
 	require.True(t, e.restoreCfg.WaitTiflashReady)
 	require.True(t, e.restoreCfg.WithSysTable)
 	require.True(t, e.restoreCfg.LoadStats)
+
+	// A storage query that cannot be fully decoded must not silently lose options.
+	for _, query := range []string{`{"tenant":"a;private-context"}`, `{"tenant":"private-context%zz"}`} {
+		stmt, err = p.ParseOneStmt("BACKUP TABLE `a` TO 's3://bucket/prefix?sse=aws:kms&sse-kms-context="+query+"'", "", "")
+		require.NoError(t, err)
+		builder.err = nil
+		require.Nil(t, builder.buildBRIE(stmt.(*ast.BRIEStmt), schema))
+		require.ErrorContains(t, builder.err, "parse storage URL query failed")
+		require.NotContains(t, builder.err.Error(), "private-context")
+	}
 }

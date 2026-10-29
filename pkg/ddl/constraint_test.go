@@ -97,7 +97,7 @@ func TestAlterAddConstraintStateChange(t *testing.T) {
 		}
 	})
 
-	//StatNone  StateWriteReorganization
+	// StateNone -> StateWriteOnly -> StateWriteReorganization
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockVerifyRemainDataSuccess", "return(true)"))
 	tk.MustExec("alter table t add constraint c0 check ( a > 10)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("12", "1"))
@@ -118,7 +118,7 @@ func TestAlterAddConstraintStateChange1(t *testing.T) {
 	tk1.MustExec("use test")
 	tk1.MustExec("insert into t values(12)")
 
-	// StatNone -> StateWriteOnly
+	// StateNone -> StateWriteOnly
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
 			// set constraint state
@@ -227,7 +227,7 @@ func TestAlterEnforcedConstraintStateChange(t *testing.T) {
 	tk1.MustExec("use test")
 	tk1.MustExec("insert into t values(12)")
 
-	// StateWriteReorganization -> StatePublic
+	// StatePublic -> StateWriteReorganization
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.SchemaState == model.StateWriteReorganization {
 			// set constraint state

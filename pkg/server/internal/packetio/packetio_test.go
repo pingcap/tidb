@@ -79,13 +79,24 @@ func TestPacketIOWriteCompressed(t *testing.T) {
 	err = pkt.Flush()
 	require.NoError(t, err)
 
-	compressedLength := []byte{0x18, 0x4, 0x0} // 1048 bytes
-	packetNr := []byte{0x0}
-	uncompressedLength := []byte{0x0, 0x0, 0x10} // 1048576 bytes
+	data := testdata.Bytes()
+	compressedLength := int(data[0]) | int(data[1])<<8 | int(data[2])<<16
+	require.Positive(t, compressedLength)
+	require.Less(t, compressedLength, 1048576)
+	require.GreaterOrEqual(t, len(data), 7+compressedLength)
+	require.Equal(t, byte(0), data[3])
+	require.Equal(t, []byte{0x0, 0x0, 0x10}, data[4:7]) // 1048576 bytes
 
-	require.Equal(t, compressedLength, testdata.Bytes()[:3])
-	require.Equal(t, packetNr, testdata.Bytes()[3:4])
-	require.Equal(t, uncompressedLength, testdata.Bytes()[4:7])
+	// The compressed size can change with Go's zlib implementation. Check
+	// that the header describes a complete stream with the expected contents.
+	compressedPayload := bytes.NewReader(data[7 : 7+compressedLength])
+	reader, err := zlib.NewReader(compressedPayload)
+	require.NoError(t, err)
+	decoded, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	require.NoError(t, reader.Close())
+	require.Zero(t, compressedPayload.Len())
+	require.Equal(t, payload[:1048576], decoded)
 }
 
 func TestPacketIORead(t *testing.T) {
@@ -269,21 +280,21 @@ func TestCompressedWriterLong(t *testing.T) {
 		cw.Write(payload)
 		cw.Flush()
 
-		// Header:
-		// 18 00 00   Compressed length: 24
-		// 00         Packetnr: 0
-		// 45 00 00   Uncompressed length: 69
-		compressedLength := []byte{0x18, 0x0, 0x0}
+		// The compressed length depends on the Go zlib implementation.
+		data := testdata.Bytes()
+		compressedLength := int(data[0]) | int(data[1])<<8 | int(data[2])<<16
+		require.Equal(t, len(data)-7, compressedLength)
 		packetNr := []byte{0x0}
 		uncompressedLength := []byte{0x45, 0x0, 0x0}
-		require.Equal(t, compressedLength, testdata.Bytes()[:3])
 		require.Equal(t, packetNr, testdata.Bytes()[3:4])
 		require.Equal(t, uncompressedLength, testdata.Bytes()[4:7])
 
 		// Payload:
 		r, err := zlib.NewReader(bytes.NewReader(testdata.Bytes()[7:]))
 		require.NoError(t, err)
-		io.Copy(&decoded, r)
+		_, err = io.Copy(&decoded, r)
+		require.NoError(t, err)
+		require.NoError(t, r.Close())
 		require.Equal(t, payload, decoded.Bytes())
 	})
 

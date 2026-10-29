@@ -1732,7 +1732,7 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 			BoolToOnOff(vardef.DefTiDBEnableAdaptiveLimitScan),
 			vardef.On,
 		},
-		{vardef.TiDBAnalyzeSampledNDVThreshold, "0", "500000000"},
+		{vardef.TiDBAnalyzeSampledNDVThreshold, "0", "100000000"},
 		{
 			vardef.TiDBRowFormatVersion,
 			strconv.Itoa(vardef.DefTiDBRowFormatV1),
@@ -2472,4 +2472,26 @@ func TestSkipInitIsUsed(t *testing.T) {
 			require.Equal(t, false, sv.skipInit, fmt.Sprintf("skipInit should not be set on new system variables. variable %s is in violation", sv.Name))
 		}
 	}
+}
+
+func TestSysVarCacheValues(t *testing.T) {
+	RegisterSysVar(&SysVar{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: "test_cache_session_var", Value: "a"})
+	RegisterSysVar(&SysVar{Scope: vardef.ScopeGlobal, Name: "test_cache_global_var", Value: "b"})
+	RegisterSysVar(&SysVar{Scope: vardef.ScopeGlobal, Name: "test_cache_config_var", Value: "c", IsInitedFromConfig: true})
+	defer func() {
+		UnregisterSysVar("test_cache_session_var")
+		UnregisterSysVar("test_cache_global_var")
+		UnregisterSysVar("test_cache_config_var")
+	}()
+
+	session, global := SysVarCacheValues(map[string]string{
+		"test_cache_session_var": "x",
+		"test_cache_global_var":  "y",
+		"test_cache_config_var":  "z",
+	})
+	require.Equal(t, "x", session["test_cache_session_var"])
+	require.Equal(t, "x", global["test_cache_session_var"])
+	require.NotContains(t, session, "test_cache_global_var")
+	require.Equal(t, "y", global["test_cache_global_var"])
+	require.Equal(t, "c", global["test_cache_config_var"])
 }

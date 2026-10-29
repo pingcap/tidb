@@ -544,6 +544,9 @@ const (
 	// version319 adds ndv_rate to mysql.analyze_options and keeps sampled NDV
 	// off on upgraded clusters.
 	version319 = 319
+
+	// version320 adds restore name routing identity to mysql.tidb_restore_registry.
+	version320 = 320
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -557,7 +560,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version319
+var currentBootstrapVersion int64 = version320
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -751,6 +754,7 @@ var (
 		{version: version317, fn: upgradeToVer317},
 		{version: version318, fn: upgradeToVer318},
 		{version: version319, fn: upgradeToVer319},
+		{version: version320, fn: upgradeToVer320},
 	}
 )
 
@@ -2376,4 +2380,14 @@ func upgradeToVer319(s sessionapi.Session, _ int64) {
 	// Keep sampled NDV off on upgraded clusters: old TiDB cannot read sampled
 	// sketches, so it is turned on only after every node is upgraded.
 	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeSampledNDVThreshold, 0)
+}
+
+func upgradeToVer320(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN source_filter_strings MEDIUMTEXT NOT NULL DEFAULT '' AFTER filter_hash", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN route_strings MEDIUMTEXT NOT NULL DEFAULT '' AFTER source_filter_strings", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry ADD COLUMN route_hash VARCHAR(64) NOT NULL DEFAULT '' AFTER route_strings", infoschema.ErrColumnExists)
+	doReentrantDDL(s, `ALTER TABLE mysql.tidb_restore_registry
+		ADD UNIQUE INDEX unique_registration_params_v2 (
+			filter_hash, route_hash, start_ts, restored_ts, upstream_cluster_id, with_sys_table, cmd(256))`, dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_restore_registry DROP INDEX unique_registration_params", dbterror.ErrCantDropFieldOrKey)
 }
