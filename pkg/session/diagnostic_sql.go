@@ -111,7 +111,7 @@ func diagnosticRecommendIndexQueryAllowed(stmt ast.StmtNode) bool {
 		return false
 	}
 	checker := diagnosticSQLChecker{allowSubqueries: true}
-	ast.Walk(stmt, &checker)
+	stmt.Accept(&checker)
 	return !checker.denied
 }
 
