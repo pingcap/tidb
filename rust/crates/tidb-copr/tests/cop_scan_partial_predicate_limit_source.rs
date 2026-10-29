@@ -34,7 +34,7 @@ use tidb_distsql::{QueryDispatch, QueryTransport, TransportRequest};
 use tidb_copr::cop_client::CopClient;
 use tidb_executor::cop_reader::open_cop_scan;
 use tidb_store_driver::real_tikv_read::RealTiKvSessionTransportFactory;
-use tidb_executor::cluster_storage::{
+use tidb_kv::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
 };
 use tidb_executor::driver::{run_select_on, Catalog};
@@ -43,7 +43,7 @@ use tidb_executor::remote_scan::{
     PushdownAggregateFunction, PushdownAggregateKind, PushdownPartialAggregate, PushdownScanColumn,
     PushdownScanRequest, PushdownStatementContext,
 };
-use tidb_executor::storage::StorageError;
+use tidb_kv::storage::StorageError;
 use tidb_executor::StmtContext;
 use tidb_proto::tipb::{Chunk, DagRequest, ExecType, Expr, ExprType, SelectResponse};
 use tidb_txnkv::Key;

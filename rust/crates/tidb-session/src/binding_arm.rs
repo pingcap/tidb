@@ -15,14 +15,14 @@
 //! The `CREATE BINDING` / `DROP BINDING` / `SHOW BINDINGS` arms of
 //! `tidb_executor::admin::AdminExec::admin_next`, plus the plan-time match every
 //! `SELECT` runs through. The mechanics they build on live in
-//! [`crate::binding`]; read that module's doc first.
+//! [`tidb_bindinfo::binding`]; read that module's doc first.
 
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_ast::Stmt;
 use tidb_datatype::Datum;
 use tidb_executor::DriverError;
 
-use crate::binding::{self, Binding};
+use tidb_bindinfo::binding::{self, Binding};
 use crate::Session;
 
 /// Go `bindinfo.mayHaveSQLBinding`: INSERT/REPLACE value forms have no
@@ -48,7 +48,7 @@ use tidb_bindinfo::binding::BIND_INFO_COLUMNS;
 
 impl Session {
     /// Install the node's committed global-binding cache.
-    pub fn set_global_binding_cache(&mut self, cache: crate::binding_cache::SharedBindingCache) {
+    pub fn set_global_binding_cache(&mut self, cache: tidb_bindinfo::binding_cache::SharedBindingCache) {
         self.global_binding_cache = Some(cache);
     }
 

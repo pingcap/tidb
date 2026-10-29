@@ -28,16 +28,8 @@
 mod auth_exchange;
 pub(crate) use tidb_session::domain::auth_identity;
 mod auth_plugin_registry;
-pub use tidb_session::bootstrap_publish;
-pub use tidb_session::domain::cluster_account_seam;
-pub use tidb_session::domain::cluster_analyze_seam;
-pub use tidb_session::domain::cluster_auto_id_seam;
-pub use tidb_session::domain::cluster_binding_seam;
-pub(crate) use tidb_session::domain::cluster_privileges;
-pub use tidb_session::domain::cluster_session;
-pub use tidb_session::domain::cluster_session_node;
-pub use tidb_session::domain::cluster_stats_lock_seam;
-pub use tidb_session::domain::cluster_sysvar_seam;
+pub(crate) use tidb_domain_core::cluster_privileges;
+use tidb_session::domain::cluster_session_node;
 pub(crate) use tidb_session::domain::configured_user_store;
 mod client_socket;
 pub mod column_convert;
@@ -55,16 +47,15 @@ mod mysql_connection;
 pub mod node_flags;
 mod mysql_tls;
 pub(crate) use tidb_session::domain::native_password;
-pub(crate) use tidb_session::domain::node_config;
+pub(crate) use tidb_domain_core::node_config;
 pub mod peer_rpc;
 pub(crate) use tidb_session::domain::pipeline_session;
 mod query_metrics;
 pub(crate) use tidb_session::domain::real_tikv_node;
-pub use tidb_session::domain::resultset_source;
+use tidb_session::domain::resultset_source;
 pub mod resultset_writer;
 pub(crate) use tidb_session::domain::secure_transport;
 pub mod server_metrics;
-pub use tidb_session::domain::serverinfo_etcd;
 mod shutdown_signal;
 pub mod signal_exit;
 pub(crate) use tidb_session::domain::session_api;
@@ -81,7 +72,7 @@ mod set_global_vars;
 mod sql_node;
 mod stat;
 mod status_transport;
-pub use tidb_session::domain::wire_status;
+use tidb_session::domain::wire_status;
 pub use auth_exchange::{
     decode_client_packet, AuthClientResponse, AuthExchangeError, AuthMoreData, AuthSwitchRequest,
     AUTH_MORE_DATA_PREFIX, AUTH_SWITCH_REQUEST,

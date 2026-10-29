@@ -30,7 +30,7 @@ pub trait DomainSessions {
         &self,
         session: &mut Session,
         connection_id: u64,
-        process: crate::process::ProcessGuard,
+        process: tidb_executor::process::ProcessGuard,
     );
 
     /// Go `Domain.SysSessionPool().Get()` for one internal statement: a
@@ -50,7 +50,7 @@ impl DomainSessions for Domain {
         &self,
         session: &mut Session,
         connection_id: u64,
-        process: crate::process::ProcessGuard,
+        process: tidb_executor::process::ProcessGuard,
     ) {
         session.set_connection_id(connection_id);
         process.transaction_observer().use_external_owner();
@@ -977,7 +977,7 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
 
 pub(crate) struct InternalBindingWriter {
     pub(crate) factory: Weak<Domain>,
-    pub(crate) bindings: Arc<dyn crate::domain::cluster_binding_seam::ClusterBindings>,
+    pub(crate) bindings: Arc<dyn tidb_domain_core::cluster_binding_seam::ClusterBindings>,
     pub(crate) connection_id: u64,
 }
 
@@ -1009,7 +1009,7 @@ impl crate::binding_arm::GlobalBindingWriter for InternalBindingWriter {
         let result = (|| {
             // Use Go's shared record-lock statement so binding writers on
             // different nodes serialize through the same storage transaction.
-            internal.execute_internal(crate::binding_utils::LOCK_BIND_INFO_SQL)?;
+            internal.execute_internal(tidb_bindinfo::binding_utils::LOCK_BIND_INFO_SQL)?;
             let resource_group = internal.session.current_resource_group().to_owned();
             let changed = internal.with_prelocked_statement(
                 StatementReadShape::LockingRead,

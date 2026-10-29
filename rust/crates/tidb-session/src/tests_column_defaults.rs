@@ -710,7 +710,7 @@ fn malformed_literal_timestamp_default_has_surface_specific_error_handling() {
                 panic!("bad_ts is not storage-backed");
             };
             std::sync::Arc::make_mut(table).columns_mut()[0].default_value =
-                Some(tidb_executor::column_default::ColumnDefault::Value(
+                Some(tidb_table::column_default::ColumnDefault::Value(
                     Datum::new_string("not-a-timestamp"),
                 ));
             Ok(())

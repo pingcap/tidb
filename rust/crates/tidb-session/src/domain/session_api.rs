@@ -27,7 +27,7 @@ use tidb_executor::adapter::ResultFieldMetadata;
 use crate::domain::configured_user_store::AuthenticatedIdentity;
 use crate::domain::resultset_source::ResultSetSource;
 use crate::domain::wire_status::WireStatus;
-use crate::process::ProcessKillTarget;
+use tidb_executor::process::ProcessKillTarget;
 
 pub use tidb_util::worker_stack::{sql_worker_thread, SQL_WORKER_STACK_BYTES};
 
@@ -528,7 +528,7 @@ impl<'a> QueryResult<'a> {
     #[must_use]
     pub fn with_process_statement(
         self,
-        statement: crate::process::ProcessStatementGuard,
+        statement: tidb_executor::process::ProcessStatementGuard,
     ) -> Self {
         let Self {
             source,
@@ -558,7 +558,7 @@ impl<'a> QueryResult<'a> {
 
 struct ProcessTrackedResultSet<'a> {
     inner: Box<dyn ResultSetSource + 'a>,
-    statement: Option<crate::process::ProcessStatementGuard>,
+    statement: Option<tidb_executor::process::ProcessStatementGuard>,
 }
 
 impl ResultSetSource for ProcessTrackedResultSet<'_> {
@@ -675,7 +675,7 @@ pub struct SessionContext {
     pub client_found_rows: bool,
     /// Go `cc.tlsConn.ConnectionState()`, which `OpenCtx` hands to the
     /// session's `SetTLSState`: `None` for a connection without TLS.
-    pub tls_state: Option<crate::vars::TlsConnectionState>,
+    pub tls_state: Option<tidb_variable::vars::TlsConnectionState>,
     /// Go `mysql.CompressionNone` / `CompressionZlib` / `CompressionZstd`:
     /// the codec the connection switches to once the handshake OK is out,
     /// which the session records with `SetCompressionAlgorithm`.

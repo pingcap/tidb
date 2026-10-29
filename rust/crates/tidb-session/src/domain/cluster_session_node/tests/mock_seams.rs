@@ -3,8 +3,8 @@
 //!
 //! Each replaces the 2PC of its production counterpart
 //! ([`crate::domain::cluster_session_node::RealClusterDdl`],
-//! [`crate::domain::cluster_account_seam`], [`crate::domain::cluster_sysvar_seam`],
-//! [`crate::domain::cluster_analyze_seam`]) with a switch a test can flip, keeping the
+//! [`tidb_domain_core::cluster_account_seam`], [`tidb_domain_core::cluster_sysvar_seam`],
+//! [`tidb_domain_core::cluster_analyze_seam`]) with a switch a test can flip, keeping the
 //! part this node owns: the routing contract, the published catalog moving to
 //! a new schema version, and the scratch-then-publish ordering that decides
 //! what a failed statement leaves behind.
@@ -636,8 +636,8 @@ impl MockSysvarWriter {
     }
 }
 
-impl crate::domain::cluster_sysvar_seam::ClusterSysvarWriter for MockSysvarWriter {
-    fn begin(&self) -> Result<Box<dyn crate::domain::cluster_sysvar_seam::PendingSysvarChange>, String> {
+impl tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter for MockSysvarWriter {
+    fn begin(&self) -> Result<Box<dyn tidb_domain_core::cluster_sysvar_seam::PendingSysvarChange>, String> {
         let scratch = GlobalSysvars::from_cluster_rows(self.stored.overrides());
         Ok(Box::new(MockPendingSysvarChange {
             scratch,
@@ -655,7 +655,7 @@ pub(super) struct MockPendingSysvarChange {
     pub(super) persists: Arc<AtomicBool>,
 }
 
-impl crate::domain::cluster_sysvar_seam::PendingSysvarChange for MockPendingSysvarChange {
+impl tidb_domain_core::cluster_sysvar_seam::PendingSysvarChange for MockPendingSysvarChange {
     fn table(&self) -> GlobalSysvars {
         self.scratch.clone()
     }
@@ -714,7 +714,7 @@ impl ClusterAnalyze for MockAnalyze {
 /// this seam to prove routing and statement-state behavior.
 pub(super) struct MockStatsLock;
 
-impl crate::domain::cluster_stats_lock_seam::ClusterStatsLock for MockStatsLock {
+impl tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock for MockStatsLock {
     fn execute(
         &self,
         _: &tidb_stats_handle_lockstats::lock_target::ClusterStatsLockStatement,

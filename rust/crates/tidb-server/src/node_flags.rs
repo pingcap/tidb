@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use tidb_config::config_tree::Config as SourceConfig;
 use tidb_config::kerneltype;
-use tidb_session::domain::node_config::{invalid, NodeConfig, NodeConfigError, NodeOptions};
+use tidb_domain_core::node_config::{invalid, NodeConfig, NodeConfigError, NodeOptions};
 
 /// Parses the source-shaped command line, including the executable name.
 ///
@@ -437,7 +437,7 @@ mod tests {
     use std::fs;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use tidb_session::domain::node_config::{NodeConfigError, StatsLease, StoreKind};
+    use tidb_domain_core::node_config::{NodeConfigError, StatsLease, StoreKind};
 
     use super::parse_node_config;
 

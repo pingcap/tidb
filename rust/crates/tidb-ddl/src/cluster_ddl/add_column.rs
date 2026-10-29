@@ -208,7 +208,7 @@ pub(super) fn plan_persisted_add_column_job_step(
     catalog: &ClusterCatalog,
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
-    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     if active.job.is_rollingback() {
         return drop_column::plan_persisted_drop_column_job_step(catalog, active, start_ts);

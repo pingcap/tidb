@@ -994,7 +994,7 @@ pub trait Columns {
     }
 
     /// Go `SessionVars.SQLMode`'s three temporal bits, shared with the write
-    /// path (`tidb_executor::zero_date`) so one table decides what a zero,
+    /// path (`tidb_table::zero_date`) so one table decides what a zero,
     /// zero-in, or invalid date means on BOTH sides of a value.
     ///
     /// A resolver with no session answers TiDB's shipped `DefaultSQLMode`,

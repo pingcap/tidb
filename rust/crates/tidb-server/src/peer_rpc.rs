@@ -17,7 +17,8 @@ use prost::Message;
 use std::{pin::Pin, sync::Arc};
 use tidb_datatype::SessionTimeZone;
 use tidb_proto::{coprocessor, tikvpb, tipb};
-use tidb_session::{privilege::PrivilegeRegistry, process::ProcessRegistry, Session};
+use tidb_session::{privilege::PrivilegeRegistry, Session};
+use tidb_executor::process::ProcessRegistry;
 
 type ReplyStream<T> = Pin<Box<dyn futures::Stream<Item = Result<T, tonic::Status>> + Send>>;
 
@@ -840,7 +841,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tidb_datatype::Datum;
-    use tidb_session::process::ProcessKillTarget;
+    use tidb_executor::process::ProcessKillTarget;
 
     /// The outgoing peer client over an embedded store, whose TiDB requests
     /// cross the real socket through the mock store's redirector, as Go's

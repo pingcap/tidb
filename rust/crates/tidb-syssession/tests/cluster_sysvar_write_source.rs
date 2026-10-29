@@ -105,7 +105,7 @@ impl MetaStore {
     /// Reads the cluster's current image, applies `mutate` (a `SET GLOBAL`'s
     /// own effect on a scratch table seeded from that same read -- exactly
     /// what [`crate::cluster_sysvar_seam::RealPendingSysvarChange::commit`]
-    /// does with a real [`tidb_session::vars::GlobalSysvars`] scratch copy),
+    /// does with a real [`tidb_variable::vars::GlobalSysvars`] scratch copy),
     /// plans and applies the resulting diff, and answers what the loader
     /// reads back afterwards.
     fn write(

@@ -482,7 +482,7 @@ impl tidb_txnkv::Client for TestRegion {
 }
 
 /// The committed bytes of an in-process table store.
-pub(crate) fn storage_pairs(store: &mut dyn crate::storage::TableStorage) -> Vec<(Vec<u8>, Vec<u8>)> {
+pub(crate) fn storage_pairs(store: &mut dyn tidb_kv::storage::TableStorage) -> Vec<(Vec<u8>, Vec<u8>)> {
     let mut iter = store.iter(None, None).expect("an in-process store iterates");
     let mut pairs = Vec::new();
     while iter.valid() {

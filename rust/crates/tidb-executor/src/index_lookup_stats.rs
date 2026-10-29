@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use tidb_model::go_duration::format_go_duration;
 
-use crate::execdetails::{
+use tidb_util::execdetails::{
     format_duration, RuntimeStats, TP_INDEX_LOOK_UP_RUN_TIME_STATS, TP_INDEX_MERGE_RUN_TIME_STATS,
 };
 use crate::executor::{ExecutorRuntimeStats, ExecutorRuntimeStatsSource};

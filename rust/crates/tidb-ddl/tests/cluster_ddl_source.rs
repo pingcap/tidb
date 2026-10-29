@@ -121,7 +121,7 @@ fn on_update_current_timestamp_uses_go_exact_function_and_fsp_rules() {
                 _ => None,
             })
             .expect("source column has ON UPDATE");
-        let field_type = tidb_executor::ddl::column_field_type::build_field_type(
+        let field_type = tidb_ddl_build::column_field_type::build_field_type(
             &create.columns[0].name,
             &create.columns[0].ty,
             "utf8mb4",
@@ -146,7 +146,7 @@ pub(crate) struct MetaStore {
     last_range: Option<(Vec<u8>, Vec<u8>)>,
     /// The node's row-ID allocators Go's internal INSERTs draw from; each
     /// reservation commits on its own, outside the planned write set.
-    row_ids: std::sync::Arc<tidb_ddl_build::table_from_meta::LocalTableAutoIds>,
+    row_ids: std::sync::Arc<tidb_table::table_from_meta::LocalTableAutoIds>,
 }
 
 impl MetaStore {
@@ -3853,7 +3853,7 @@ fn parsed_binary_enum_default_reaches_the_shared_normalizer_losslessly() {
         panic!("the fixture is CREATE TABLE");
     };
     let column = &create.columns[0];
-    let field_type = tidb_executor::ddl::column_field_type::build_field_type(
+    let field_type = tidb_ddl_build::column_field_type::build_field_type(
         &column.name,
         &column.ty,
         "binary",

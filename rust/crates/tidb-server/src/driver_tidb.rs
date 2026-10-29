@@ -42,7 +42,7 @@ impl QuerySessionFactory for Domain {
 
     fn install_tls_manager(
         &self,
-        manager: Arc<dyn tidb_session::process::TlsManager>,
+        manager: Arc<dyn tidb_executor::process::TlsManager>,
         variables: Vec<(&'static str, String)>,
     ) {
         Domain::install_tls_manager(self, manager, variables);

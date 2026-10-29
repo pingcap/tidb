@@ -34,7 +34,7 @@ use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_infoschema_issyncer::real_tikv_catalog::SnapshotMetaSnapshot;
 use tidb_infoschema_isvalidator::SchemaValidator;
 use tidb_store_driver::sql_query_error::SqlQueryError;
-use tidb_ddl_build::table_from_meta::TableAutoIds;
+use tidb_table::table_from_meta::TableAutoIds;
 use tidb_ddl::worker::ClusterDdl;
 use tidb_domain::global_sysvars::GlobalSysvars;
 use tidb_domain::historical_stats::{

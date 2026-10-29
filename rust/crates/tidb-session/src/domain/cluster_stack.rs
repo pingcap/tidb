@@ -29,12 +29,12 @@ use tidb_ddl::ddl_systable::MinJobIdRefresher;
 use tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster_at;
 use tidb_store_driver::real_tikv_read::ProductionReadProcessAuthority;
 
-use crate::domain::cluster_account_seam::RealClusterAccountWriter;
-use crate::domain::cluster_analyze_seam::RealClusterAnalyze;
-use crate::domain::cluster_session::SkippedTable;
-use crate::domain::cluster_stats_lock_seam::RealClusterStatsLock;
-use crate::domain::cluster_sysvar_seam::{RealClusterSysvarWriter, SysvarPublicationFence};
-use crate::domain::node_config::NodeConfig;
+use tidb_domain_core::cluster_account_seam::RealClusterAccountWriter;
+use tidb_domain_core::cluster_analyze_seam::RealClusterAnalyze;
+use tidb_domain_core::cluster_session::SkippedTable;
+use tidb_domain_core::cluster_stats_lock_seam::RealClusterStatsLock;
+use tidb_domain_core::cluster_sysvar_seam::{RealClusterSysvarWriter, SysvarPublicationFence};
+use tidb_domain_core::node_config::NodeConfig;
 use crate::domain::real_tikv_node::{
     node_accounts, spawn_catalog_reloader, spawn_privilege_watch, RunConfiguredNodeError,
 };
@@ -127,7 +127,7 @@ pub fn cluster_session_stack(
     // driver's `EnableGlobalResourceControlFunc = tikv.EnableResourceControl`,
     // before any global variable loads: the sysvar turns client-rust's
     // resource-control dispatch on and off.
-    *crate::vars::SET_GLOBAL_RESOURCE_CONTROL
+    *tidb_variable::vars::SET_GLOBAL_RESOURCE_CONTROL
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::new(|enable| {
         if enable {
@@ -228,8 +228,8 @@ pub fn cluster_session_stack(
     // table allocates from the one range this node reserved -- Go's
     // per-`tidb-server` allocator, not a per-session one. The statistics
     // writers allocate their `mysql.*` rows from it too.
-    let node_auto_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds> = Arc::new(
-        crate::domain::cluster_auto_id_seam::ClusterTableAutoIds::new(
+    let node_auto_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds> = Arc::new(
+        tidb_domain_core::cluster_auto_id_seam::ClusterTableAutoIds::new(
             authority.transaction_opener(),
             CONTROL_PLANE_TIMEOUT,
         )
@@ -263,7 +263,7 @@ pub fn cluster_session_stack(
     // trip if the etcd watch fires first. The fallback is capped at Go's
     // 30-second `LoadSysVarCacheLoop` interval even with a longer lease.
     let sysvar_publication_fence = SysvarPublicationFence::default();
-    let sysvar_reloader = crate::domain::cluster_sysvar_seam::SysvarReloader::spawn(
+    let sysvar_reloader = tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn(
         users.global_vars(),
         authority.transaction_opener(),
         crate::domain::real_tikv_node::sysvar_reload_interval(config.schema_lease),
@@ -404,7 +404,7 @@ pub fn cluster_session_stack(
             crate::domain::cluster_session_node::STATS_OWNER_KEY,
         )),
     };
-    let (bindings, binding_reloader) = crate::domain::cluster_binding_seam::start_binding_cache(
+    let (bindings, binding_reloader) = tidb_domain_core::cluster_binding_seam::start_binding_cache(
         authority.transaction_opener(),
         Arc::clone(&catalog),
         users.global_vars(),
@@ -434,11 +434,11 @@ pub fn cluster_session_stack(
     // entry, so this acknowledger is spawned exactly when the registration
     // above is -- a node with no reachable etcd registers nowhere, is waited
     // on by nobody, and correctly spawns no acknowledger either.
-    let schema_pins = Arc::new(crate::domain::cluster_session_node::schema_sync::SchemaPinRegistry::default());
+    let schema_pins = Arc::new(tidb_domain_core::schema_sync::SchemaPinRegistry::default());
     let min_job_id_refresher = Arc::new(MinJobIdRefresher::new());
     let schema_sync_ack = match etcd.clone() {
         Some(etcd) => Some(
-            crate::domain::cluster_session_node::schema_sync::SchemaSyncAck::spawn(
+            tidb_domain_core::schema_sync::SchemaSyncAck::spawn(
                 Arc::clone(&catalog),
                 authority.transaction_opener(),
                 Arc::clone(&schema_pins),
@@ -449,7 +449,7 @@ pub fn cluster_session_stack(
                 Arc::clone(&schema_validator),
                 reloader.waker(),
                 reloader.stats_source(),
-                crate::domain::cluster_session_node::schema_sync::MDL_CHECK_LOOK_DURATION,
+                tidb_domain_core::schema_sync::MDL_CHECK_LOOK_DURATION,
                 CONTROL_PLANE_TIMEOUT,
             )
             .map_err(|error| {
@@ -462,7 +462,7 @@ pub fn cluster_session_stack(
     };
     let schema_version_syncer = schema_sync_ack
         .as_ref()
-        .map(crate::domain::cluster_session_node::schema_sync::SchemaSyncAck::syncer);
+        .map(tidb_domain_core::schema_sync::SchemaSyncAck::syncer);
     let cluster_ddl = Arc::new(
         RealClusterDdl::new_with_min_job_id_refresher(
             authority.transaction_opener(),
@@ -816,7 +816,7 @@ impl std::fmt::Debug for ProcessPdRegionPolicy {
             .finish_non_exhaustive()
     }
 }
-impl crate::vars::PdRegionPolicy for ProcessPdRegionPolicy {
+impl tidb_variable::vars::PdRegionPolicy for ProcessPdRegionPolicy {
     fn set_follower_handle(&self, enabled: bool) {
         self.0.set_enable_follower_handle(enabled);
     }

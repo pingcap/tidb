@@ -15,7 +15,7 @@
 use super::merge_path_tests::as_multiset;
 use super::tests::{eq_on, join_with_memory, run, NoColumns};
 use super::*;
-use crate::mem_quota::{OomAction, StatementMemory};
+use tidb_kv::mem_quota::{OomAction, StatementMemory};
 
 /// A build side big enough that its chunks outweigh any quota worth
 /// setting, with duplicate keys so each probe row walks a multi-entry

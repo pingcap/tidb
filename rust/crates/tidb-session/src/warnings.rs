@@ -479,8 +479,8 @@ impl Session {
         // Read for every result (Go `initResultEncoder`, one
         // `GetSessionOrGlobalSystemVar` probe per command). Only the
         // name-to-index step is cached; the value read is unchanged.
-        static INDEX: crate::sysvar::StaticSysVarIndex =
-            crate::sysvar::StaticSysVarIndex::new("character_set_results");
+        static INDEX: tidb_variable::sysvar::StaticSysVarIndex =
+            tidb_variable::sysvar::StaticSysVarIndex::new("character_set_results");
         self.vars
             .system_value_at(INDEX.get())
             .unwrap_or(Cow::Borrowed(""))
@@ -490,8 +490,8 @@ impl Session {
     /// `@@character_set_client` for binary protocol string parameters.
     #[must_use]
     pub fn input_charset(&self) -> Cow<'_, str> {
-        static INDEX: crate::sysvar::StaticSysVarIndex =
-            crate::sysvar::StaticSysVarIndex::new("character_set_client");
+        static INDEX: tidb_variable::sysvar::StaticSysVarIndex =
+            tidb_variable::sysvar::StaticSysVarIndex::new("character_set_client");
         self.vars
             .system_value_at(INDEX.get())
             .unwrap_or(Cow::Borrowed("utf8mb4"))

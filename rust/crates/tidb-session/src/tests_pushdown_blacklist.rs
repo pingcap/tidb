@@ -249,10 +249,10 @@ fn blacklisting_an_aggregate_function_keeps_the_whole_aggregate_at_the_root() {
 /// Go's blacklists are package-level (`expression.DefaultExprPushDownBlacklist`,
 /// `plannercore.DefaultDisabledLogicalRulesList`), so their scope is one
 /// SERVER. A front end that opens more than one session hands them all the
-/// same [`crate::blacklist::PushdownBlacklists`] handle to reproduce that.
+/// same [`tidb_executor::blacklist::PushdownBlacklists`] handle to reproduce that.
 #[test]
 fn a_reload_on_one_session_changes_what_another_plans() {
-    let shared = crate::blacklist::PushdownBlacklists::default();
+    let shared = tidb_executor::blacklist::PushdownBlacklists::default();
 
     let mut writer = Session::new();
     let catalog = writer.shared_catalog();

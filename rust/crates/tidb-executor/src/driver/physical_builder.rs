@@ -93,7 +93,7 @@ struct CteBuildSlot {
 #[derive(Clone, Debug, Default)]
 enum ReaderStorage {
     /// The statement's snapshot alone, where the backend separates it from
-    /// the transaction's buffer ([`crate::storage::TableStorage::snapshot_reader`]).
+    /// the transaction's buffer ([`tidb_kv::storage::TableStorage::snapshot_reader`]).
     #[default]
     Snapshot,
     /// The backend's merged view: below a union scan Go's executor is not
@@ -101,7 +101,7 @@ enum ReaderStorage {
     /// rows itself.
     Merged,
     /// A `UnionScanExec`'s mem reader: the buffered entries alone.
-    MemBuffer(Arc<crate::cluster_storage::MemBufferSnapshot>),
+    MemBuffer(Arc<tidb_kv::cluster_storage::MemBufferSnapshot>),
 }
 
 impl ReaderStorage {
@@ -112,9 +112,9 @@ impl ReaderStorage {
             ReaderStorage::Snapshot => table.snapshot_reader(),
             ReaderStorage::Merged => None,
             ReaderStorage::MemBuffer(snapshot) => Some(Box::new(
-                crate::cluster_storage::MemBufferStorage::new(Arc::clone(snapshot)),
+                tidb_kv::cluster_storage::MemBufferStorage::new(Arc::clone(snapshot)),
             )
-                as Box<dyn crate::storage::TableStorage>),
+                as Box<dyn tidb_kv::storage::TableStorage>),
         };
         match store {
             Some(store) => {
@@ -324,8 +324,8 @@ fn register_concurrency_info(ctx: &crate::StmtContext, plan: &PhysicalPlan, name
     let Some(source) = ctx.executor_runtime_stats_source() else {
         return;
     };
-    let stats = crate::execdetails::RuntimeStatsWithConcurrencyInfo::default();
-    stats.set_concurrency_info(vec![crate::execdetails::ConcurrencyInfo::new(
+    let stats = tidb_util::execdetails::RuntimeStatsWithConcurrencyInfo::default();
+    stats.set_concurrency_info(vec![tidb_util::execdetails::ConcurrencyInfo::new(
         name,
         i64::try_from(num).unwrap_or(i64::MAX),
     )]);
@@ -7382,7 +7382,7 @@ impl crate::mem_reader::MemRowsIter for ReaderMemRowsIter {
 /// (`buildMemTableReader` and its index siblings) decode the membuffer
 /// entries as the reader decodes coprocessor rows; this tier builds that mem
 /// reader as the same reader over the buffered entries, copied when the
-/// statement starts ([`crate::cluster_storage::MemBufferSnapshot`]).
+/// statement starts ([`tidb_kv::cluster_storage::MemBufferSnapshot`]).
 ///
 /// A point read, a dual or a sample is returned as is (Go: they handle the
 /// buffer themselves or read disk only). A backend without a separate
@@ -9526,13 +9526,13 @@ use super::*;
                     _ => {}
                 }
                 if partitioned {
-                    table.set_partition(crate::partition_routing::PartitionSpec {
-                        kind: crate::partition_routing::PartitionKind::Hash,
+                    table.set_partition(tidb_table::partition_routing::PartitionSpec {
+                        kind: tidb_table::partition_routing::PartitionKind::Hash,
                         expr_text: "id".to_owned(),
                         expr: Expression::Column(two_long_schema().columns[0].clone()),
                         dependencies: vec!["id".to_owned()],
                         definitions: (0..2)
-                            .map(|ordinal| crate::partition_routing::PartitionDef {
+                            .map(|ordinal| tidb_table::partition_routing::PartitionDef {
                                 id: 101 + ordinal,
                                 name: format!("p{ordinal}"),
                                 ..Default::default()

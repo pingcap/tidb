@@ -30,7 +30,7 @@
 
 use crate::executor::{ExecError, Executor};
 use crate::kv_table::{KvTable, TableHandle};
-use crate::mem_quota;
+use tidb_kv::mem_quota;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tidb_ast::{JoinNode, QueryStmt, SelectField, Stmt, Visitable, Visitor};
@@ -45,7 +45,7 @@ pub use tidb_planner::plan_builder::field_name::{
 };
 
 pub mod access;
-pub use tidb_planner::point_get_plan;
+use tidb_planner::point_get_plan;
 mod agg_build;
 mod catalog_ctx;
 #[cfg(test)]
@@ -939,8 +939,8 @@ mod dml_batch_tests {
     #[test]
     fn quota_failure_stops_reading_and_closes_source() {
         let (exec, nexts, closes, types) = source(false);
-        let memory = crate::StatementMemory::new(1024, crate::mem_quota::OomAction::Cancel, 7);
-        let accountant = memory.write_accountant(crate::mem_quota::label::UPDATE);
+        let memory = crate::StatementMemory::new(1024, tidb_kv::mem_quota::OomAction::Cancel, 7);
+        let accountant = memory.write_accountant(tidb_kv::mem_quota::label::UPDATE);
         let result = visit_executor_rows(exec, &types, &memory, |row| {
             accountant.account_row(&row).map_err(DriverError::from)
         });

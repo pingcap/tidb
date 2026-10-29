@@ -16,7 +16,7 @@
 //!
 //! Every expectation here was CAPTURED from real TiDB through
 //! `rust/difftests/gorun` before it was written down; the script and its
-//! answers are quoted in `tidb_executor::expression_index`'s module doc.
+//! answers are quoted in `tidb_ddl_build::expression_index`'s module doc.
 //!
 //! The tests split in two, because the unit has two halves that fail
 //! differently:

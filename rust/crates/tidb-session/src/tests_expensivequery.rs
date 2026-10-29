@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tidb_expensivequery::Handle;
-use crate::process::{ProcessKillTarget, ProcessRegistry};
+use tidb_executor::process::{ProcessKillTarget, ProcessRegistry};
 use crate::tests_support::row_text;
 use crate::Session;
 use tidb_util::sqlkiller::KillSignal;

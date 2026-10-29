@@ -39,7 +39,7 @@ pub fn connect_etcd_client(config: &NodeConfig) -> Option<Arc<EtcdClient>> {
 /// instead of waiting out its interval.
 ///
 /// This is the same division as the global-version watch in
-/// [`crate::domain::cluster_session_node::schema_sync`]: the watch is an optimisation,
+/// [`tidb_domain_core::schema_sync`]: the watch is an optimisation,
 /// the reloader's own tick is the guarantee, and a node whose etcd is
 /// unreachable simply loses the promptness.
 pub fn spawn_privilege_watch(
@@ -72,7 +72,7 @@ pub fn spawn_privilege_watch(
 /// Mirrors [`spawn_privilege_watch`] exactly, on the sysvar key.
 pub fn spawn_sysvar_watch(
     etcd: Option<&EtcdClient>,
-    reloader: Option<&crate::domain::cluster_sysvar_seam::SysvarReloader>,
+    reloader: Option<&tidb_domain_core::cluster_sysvar_seam::SysvarReloader>,
 ) -> Option<EtcdWatcher> {
     let waker = reloader?.waker();
     match etcd?.watch_key(SYSVAR_UPDATE_KEY, 0, move |_event| {
@@ -126,10 +126,10 @@ fn current_stats_targets(catalog: &SharedCatalog) -> Vec<tidb_stats_handle_syncl
 /// Go starts `loadStatsWorker` for a zero lease using its three-second
 /// fallback, but returns from `UpdateTableStatsLoop` before starting
 /// `asyncLoadHistogram`. Only a positive lease owns that second ticker.
-fn async_stats_load_interval(stats_lease: crate::domain::node_config::StatsLease) -> Option<Duration> {
+fn async_stats_load_interval(stats_lease: tidb_domain_core::node_config::StatsLease) -> Option<Duration> {
     match stats_lease {
-        crate::domain::node_config::StatsLease::Positive(interval) => Some(interval),
-        crate::domain::node_config::StatsLease::Disabled | crate::domain::node_config::StatsLease::Zero => None,
+        tidb_domain_core::node_config::StatsLease::Positive(interval) => Some(interval),
+        tidb_domain_core::node_config::StatsLease::Disabled | tidb_domain_core::node_config::StatsLease::Zero => None,
     }
 }
 
@@ -149,7 +149,7 @@ fn async_stats_load_interval(stats_lease: crate::domain::node_config::StatsLease
 pub fn spawn_node_stats<S>(
     catalog: Arc<SharedCatalog>,
     opener: tidb_txnkv::transaction::RealOptimisticTransactionOpener<S>,
-    stats_lease: crate::domain::node_config::StatsLease,
+    stats_lease: tidb_domain_core::node_config::StatsLease,
     timeout: Duration,
 ) -> Result<(Arc<SharedStats>, StatsReloader, AsyncStatsLoader), StatsReloadError>
 where
@@ -334,7 +334,7 @@ pub fn spawn_catalog_reloader<S>(
     startup_lease_grant_ts: u64,
     transaction_opener: RealOptimisticTransactionOpener<S>,
     schema_lease: Duration,
-    row_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(Arc<SharedCatalog>, CatalogReloader, Arc<SchemaValidator>), CatalogReloadError>
 where
     S: StoreClient,
@@ -440,15 +440,15 @@ mod tests {
     #[test]
     fn asynchronous_statistics_loading_requires_a_positive_lease() {
         assert_eq!(
-            async_stats_load_interval(crate::domain::node_config::StatsLease::Disabled),
+            async_stats_load_interval(tidb_domain_core::node_config::StatsLease::Disabled),
             None
         );
         assert_eq!(
-            async_stats_load_interval(crate::domain::node_config::StatsLease::Zero),
+            async_stats_load_interval(tidb_domain_core::node_config::StatsLease::Zero),
             None
         );
         assert_eq!(
-            async_stats_load_interval(crate::domain::node_config::StatsLease::Positive(
+            async_stats_load_interval(tidb_domain_core::node_config::StatsLease::Positive(
                 Duration::from_secs(7)
             )),
             Some(Duration::from_secs(7))

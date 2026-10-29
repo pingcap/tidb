@@ -223,7 +223,7 @@ mod tests {
     #[test]
     fn binding_cache_and_dashboard_share_metric_ownership() {
         init_dashboard_series();
-        let cache = tidb_session::binding_cache::BindingCache::from_storage_rows(Vec::new(), 4096);
+        let cache = tidb_bindinfo::binding_cache::BindingCache::from_storage_rows(Vec::new(), 4096);
         assert!(std::ptr::eq(
             &*TIDB_SERVER_BINDING_CACHE_MEM_LIMIT,
             &*tidb_metrics::bindinfo::BINDING_CACHE_MEM_LIMIT

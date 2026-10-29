@@ -20,7 +20,7 @@
 //! exactly, for the same reason: the caller hands over the overrides table as
 //! it should now be (every variable a `SET GLOBAL` has ever set on this
 //! cluster, at its current value), built from a
-//! `tidb_session::vars::GlobalSysvars` scratch copy seeded from *this same
+//! `tidb_variable::vars::GlobalSysvars` scratch copy seeded from *this same
 //! snapshot* -- so the diff against the stored rows is precisely one
 //! statement's own effect and can never revert a change another node made
 //! concurrently, and a `SET GLOBAL x = DEFAULT` (which removes `x` from the

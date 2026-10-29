@@ -15,7 +15,7 @@
 //! A zero, zero-in, or invalid DATE/DATETIME/TIMESTAMP written into a column,
 //! end to end, under every SQL mode that changes the answer.
 //!
-//! The engine half is `tidb_executor::zero_date`, which mirrors Go
+//! The engine half is `tidb_table::zero_date`, which mirrors Go
 //! `pkg/table/column.go`'s `handleZeroDatetime` and the conversion flags
 //! `pkg/util/misc.go`'s `GetTypeFlagsForInsert` derives from the SQL mode.
 //!

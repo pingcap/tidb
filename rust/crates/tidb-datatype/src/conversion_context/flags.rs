@@ -32,7 +32,7 @@ pub const DEFAULT_STATEMENT_FLAGS: ConversionFlags = ConversionFlags::from_bits(
 /// This lives beside [`ConversionFlags`] rather than in the executor because
 /// BOTH sides of a temporal value need it and they sit on opposite sides of
 /// the crate graph: the write path turns these bits into a store-or-refuse
-/// decision (`tidb_executor::zero_date`), and the read path turns the SAME
+/// decision (`tidb_table::zero_date`), and the read path turns the SAME
 /// bits into the parse flags an expression converts under
 /// (`tidb_expr::cast`). A second copy would be two sources of truth for one
 /// table, which is the shape that produced the read-path divergences this

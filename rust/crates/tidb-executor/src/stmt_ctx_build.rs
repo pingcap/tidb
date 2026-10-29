@@ -2125,9 +2125,9 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// The pinned snapshot timestamp (`tidb_snapshot`) the statement reads at.
     fn statement_snapshot_ts(&self) -> Option<u64>;
     /// Go `SessionVars` / `StmtCtx` state `advisory_locks`, read.
-    fn advisory_locks_ref(&self) -> &crate::advisory_lock_state::AdvisoryLockSession;
+    fn advisory_locks_ref(&self) -> &tidb_sessionctx::advisory_lock_state::AdvisoryLockSession;
     /// Go `SessionVars` / `StmtCtx` state `advisory_locks`, mutably.
-    fn advisory_locks_mut(&mut self) -> &mut crate::advisory_lock_state::AdvisoryLockSession;
+    fn advisory_locks_mut(&mut self) -> &mut tidb_sessionctx::advisory_lock_state::AdvisoryLockSession;
     /// Go `SessionVars` / `StmtCtx` state `binary_prepared_execution`, read.
     fn binary_prepared_execution_ref(&self) -> &bool;
     /// Go `SessionVars` / `StmtCtx` state `binary_prepared_execution`, mutably.

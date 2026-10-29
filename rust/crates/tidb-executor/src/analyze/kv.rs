@@ -125,7 +125,7 @@ pub fn analyze_kv_table_columns(
     let source_columns = source_positions
         .iter()
         .map(|position| &table.columns()[*position])
-        .filter(|column| !crate::generated_column::is_virtual(*column));
+        .filter(|column| !tidb_ddl_build::generated_column::is_virtual(*column));
     for (built, column) in analyzed.columns.into_iter().zip(source_columns) {
         debug_assert_eq!(built.id, column.id);
         let unsigned = column.field_type.is_unsigned();
@@ -383,7 +383,7 @@ fn kv_analyze_plan(
             .with_virtual_columns(
                 physical_columns
                     .iter()
-                    .filter(|column| crate::generated_column::is_virtual(*column))
+                    .filter(|column| tidb_ddl_build::generated_column::is_virtual(*column))
                     .map(|column| column.id),
             ),
             source_positions,

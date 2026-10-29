@@ -68,7 +68,7 @@ pub fn column_default_text(
 /// Go stores a version-1-and-later `TIMESTAMP` default as a UTC wall clock,
 /// then `GetColDefaultValue` projects it into the reading session before any
 /// metadata surface prints it. Version 0 uses the system zone as the source;
-/// [`crate::column_default::materialize_stored_literal`] owns that
+/// [`tidb_table::column_default::materialize_stored_literal`] owns that
 /// version boundary. Other types do not pass through this cast here: their
 /// stored metadata spelling is the spelling SHOW and INFORMATION_SCHEMA
 /// report.
@@ -81,7 +81,7 @@ pub fn literal_column_default_text(
     if column.field_type.code() != tidb_datatype::FieldTypeCode::Timestamp {
         return Ok(column_default_text(value, &column.field_type));
     }
-    let converted = crate::column_default::materialize_stored_literal(
+    let converted = tidb_table::column_default::materialize_stored_literal(
         value,
         &column.field_type,
         column.column_info_version,
@@ -143,7 +143,7 @@ pub fn column_description(
         column
             .default_value
             .as_ref()
-            .is_some_and(crate::column_default::ColumnDefault::is_default_generated),
+            .is_some_and(tidb_table::column_default::ColumnDefault::is_default_generated),
     );
     let key_flag = column_key_flag(table, offset);
     // Go `NewColDesc`: a column carrying `NoDefaultValueFlag` reports no
@@ -154,7 +154,7 @@ pub fn column_description(
         .has_flag(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE);
     let default = match &column.default_value {
         _ if no_default => Datum::Null,
-        Some(crate::column_default::ColumnDefault::Value(value)) => {
+        Some(tidb_table::column_default::ColumnDefault::Value(value)) => {
             match literal_column_default_text(
                 value,
                 column,

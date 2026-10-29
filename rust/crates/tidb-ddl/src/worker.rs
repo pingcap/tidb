@@ -53,7 +53,7 @@ use tidb_pd_client::EtcdClient;
 
 use crate::real_tikv_ddl::cluster_ddl_error;
 use tidb_store_driver::sql_query_error::SqlQueryError;
-use tidb_ddl_build::table_from_meta::{cluster_table, AutoIdSource};
+use tidb_table::table_from_meta::{cluster_table, AutoIdSource};
 
 /// This node's one route to the cluster's stored schema.
 ///
@@ -275,7 +275,7 @@ where
     owner_id: String,
     /// The node's allocator registry (the scheduler's own), so the reload
     /// after a rebase drops the ranges reserved before it.
-    row_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 }
 
 struct SchedulerWorker {
@@ -301,7 +301,7 @@ where
     worker: Mutex<Option<SchedulerWorker>>,
     /// The node's row-ID allocators: Go's internal INSERTs into `mysql.*`
     /// tables allocate from them.
-    row_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
     /// Go `delRange`'s emulator, on a store without delete-range support.
     del_range: Arc<std::sync::OnceLock<crate::real_tikv_ddl::delete_range::DelRangeEmulator>>,
     /// Go `ddlJobDoneChMap`, shared by this node's submitting sessions.
@@ -375,7 +375,7 @@ where
         owner: Arc<dyn tidb_owner::Manager>,
         stop: Arc<AtomicBool>,
         stopped: Receiver<()>,
-        row_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+        row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
         del_range: Arc<
             std::sync::OnceLock<crate::real_tikv_ddl::delete_range::DelRangeEmulator>,
         >,
@@ -657,7 +657,7 @@ where
         schema_validator: Arc<SchemaValidator>,
         campaign_owner: bool,
         session_pool: Arc<dyn crate::real_tikv_ddl::DdlSessionPool>,
-        row_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+        row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
     ) -> Result<Self, String> {
         Self::new_with_min_job_id_refresher(
             opener,
@@ -688,7 +688,7 @@ where
         campaign_owner: bool,
         min_job_id_refresher: Arc<MinJobIdRefresher>,
         session_pool: Arc<dyn crate::real_tikv_ddl::DdlSessionPool>,
-        row_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+        row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
     ) -> Result<Self, String> {
         let owner_id = server_info.local_server_info().static_info.id;
         // Go `ddl.Start`: on the classic kernel, settle the job version and
@@ -951,8 +951,8 @@ mod schema_sync_tests {
     /// The backfiller the node builds, its data checks the executor's.
     fn test_backfiller() -> KvTableIndexBackfiller {
         KvTableIndexBackfiller::new(
-            &(Arc::new(tidb_ddl_build::table_from_meta::LocalTableAutoIds::default())
-                as Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>),
+            &(Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default())
+                as Arc<dyn tidb_table::table_from_meta::TableAutoIds>),
             &(Arc::new(tidb_session::ddl_session_pool::ExecutorDdlSessionPool)
                 as Arc<dyn crate::real_tikv_ddl::DdlSessionPool>),
         )
@@ -2872,7 +2872,7 @@ struct DdlTransactionAutoIds {
 
 use tidb_table::kv_table::TableAutoId;
 
-impl tidb_ddl_build::table_from_meta::TableAutoIds for DdlTransactionAutoIds {
+impl tidb_table::table_from_meta::TableAutoIds for DdlTransactionAutoIds {
     fn allocator_for(&self, db_id: i64, table: &tidb_model::TableInfo) -> TableAutoId {
         self.over(tidb_autoid::cluster_auto_id::auto_id_key_for(db_id, table))
     }
@@ -2978,14 +2978,14 @@ impl tidb_autoid::AutoIdStore for DdlTransactionAutoIdStore {
 
 struct KvTableIndexBackfiller {
     /// The node's row-ID allocators, for the reorg handle's row.
-    row_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
     /// The data checks Go runs as restricted SQL through its session pool.
     session_pool: Arc<dyn crate::real_tikv_ddl::DdlSessionPool>,
 }
 
 impl KvTableIndexBackfiller {
     fn new(
-        row_ids: &Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+        row_ids: &Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
         session_pool: &Arc<dyn crate::real_tikv_ddl::DdlSessionPool>,
     ) -> Self {
         Self {
@@ -2996,7 +2996,7 @@ impl KvTableIndexBackfiller {
 }
 
 impl IndexBackfiller for KvTableIndexBackfiller {
-    fn system_row_ids(&self) -> Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds> {
+    fn system_row_ids(&self) -> Arc<dyn tidb_table::table_from_meta::TableAutoIds> {
         Arc::clone(&self.row_ids)
     }
 

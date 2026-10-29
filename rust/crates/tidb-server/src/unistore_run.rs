@@ -48,7 +48,7 @@ fn finish_with_signal_code(
 /// There is no etcd and no peer, so the watch legs are simply absent;
 /// the reload ticks still run, against this process's own store.
 pub fn run_unistore_cluster_session(
-    config: tidb_session::domain::node_config::NodeConfig,
+    config: tidb_domain_core::node_config::NodeConfig,
     spill_storage: Arc<tidb_util::spill_storage::SpillStorage>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<(), tidb_session::domain::real_tikv_node::RunConfiguredNodeError> {

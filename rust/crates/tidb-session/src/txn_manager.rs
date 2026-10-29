@@ -32,10 +32,10 @@ use std::sync::Arc;
 
 use tidb_store_driver::session_commit_protocol::SessionTransactionOptions;
 use tidb_store_driver::sql_query_error::SqlQueryError;
-use tidb_executor::cluster_storage::{BufferCheckpoint, MutationBuffer};
+use tidb_kv::cluster_storage::{BufferCheckpoint, MutationBuffer};
 use tidb_txnkv::transaction::SchemaLeaseChecker;
 
-use crate::cluster_transactions::{
+use tidb_domain_core::cluster_transactions::{
     ClusterTransactions, CommittedTxnInfo, OpenClusterTransaction, WriteTransactionSlot,
 };
 use crate::lazy_transaction::{LazyClusterTransaction, TransactionOpener};

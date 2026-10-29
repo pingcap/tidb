@@ -25,7 +25,7 @@
 
 use std::sync::Arc;
 
-use tidb_executor::cluster_storage::ClusterTableStorage;
+use tidb_kv::cluster_storage::ClusterTableStorage;
 use crate::txn_manager::TxnManager;
 use crate::Session;
 

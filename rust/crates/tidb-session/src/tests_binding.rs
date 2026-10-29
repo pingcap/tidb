@@ -758,8 +758,8 @@ fn cte_scope_batch_pinning_respects_definition_order_and_query_boundaries() {
     for (sql, expected) in cases {
         let session = Session::new();
         let mut stmt = session.parse_statement(sql).unwrap();
-        crate::binding::pin_current_database(&mut stmt, "test").unwrap();
-        let actual = crate::binding::collect_table_names(&stmt);
+        tidb_bindinfo::binding::pin_current_database(&mut stmt, "test").unwrap();
+        let actual = tidb_bindinfo::binding::collect_table_names(&stmt);
         let expected: Vec<(String, String)> = expected
             .into_iter()
             .map(|p| {

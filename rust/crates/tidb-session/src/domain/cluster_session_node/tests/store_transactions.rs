@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Tests of the store-transaction seam (`crate::cluster_transactions`) that
+//! Tests of the store-transaction seam (`tidb_domain_core::cluster_transactions`) that
 //! need the embedded unistore the server crate owns.
 
 use std::sync::Arc;
@@ -22,12 +22,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tidb_store_driver::real_tikv_read::RealOptimisticTransactionOpener;
 use tidb_store_driver::session_commit_protocol::SessionTransactionOptions;
 use tidb_store_driver::sql_query_error::SqlQueryError;
-use tidb_executor::advisory_lock_state::{AdvisoryLockError, AdvisoryLockLease};
-use tidb_executor::cluster_storage::{ClusterSnapshot, MutationBuffer, SnapshotPairs};
-use tidb_executor::storage::StorageError;
+use tidb_sessionctx::advisory_lock_state::{AdvisoryLockError, AdvisoryLockLease};
+use tidb_kv::cluster_storage::{ClusterSnapshot, MutationBuffer, SnapshotPairs};
+use tidb_kv::storage::StorageError;
 use tidb_txnkv::Key;
 
-use crate::cluster_transactions::*;
+use tidb_domain_core::cluster_transactions::*;
 
 #[derive(Debug)]
 struct BatchCountingSnapshot {

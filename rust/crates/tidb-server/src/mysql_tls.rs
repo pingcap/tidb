@@ -528,7 +528,7 @@ impl MysqlTlsManager {
     }
 }
 
-impl tidb_session::process::TlsManager for MysqlTlsManager {
+impl tidb_executor::process::TlsManager for MysqlTlsManager {
     fn reload_tls(&self, no_rollback_on_error: bool) -> Result<(), String> {
         let next = match self.load() {
             Ok(next) => next,
@@ -1098,7 +1098,7 @@ mod account_tls_batch_tests {
         let mut config = generated_config();
         config.ssl_ca = Some(ca.clone());
         let manager = MysqlTlsManager::new(&config).unwrap();
-        let processes = tidb_session::process::ProcessRegistry::default();
+        let processes = tidb_executor::process::ProcessRegistry::default();
         processes.set_tls_manager(manager.clone());
         let mut session = tidb_session::Session::new();
         session.attach_process(

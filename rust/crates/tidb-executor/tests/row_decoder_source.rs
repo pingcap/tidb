@@ -63,7 +63,7 @@ fn generated_column(
     stored: bool,
     preceding: &[KvColumn],
     zone: &SessionTimeZone,
-) -> tidb_executor::generated_column::GeneratedColumn {
+) -> tidb_ddl_build::generated_column::GeneratedColumn {
     let names = preceding
         .iter()
         .map(|column| column.name.clone())
@@ -72,7 +72,7 @@ fn generated_column(
         .iter()
         .map(|column| column.field_type.clone())
         .collect::<Vec<_>>();
-    tidb_executor::generated_column::build_added_generated_column(
+    tidb_ddl_build::generated_column::build_added_generated_column(
         "generated",
         &parse_generated_expr(text),
         stored,
@@ -98,10 +98,8 @@ fn assert_point_chunks(
     rows: &[(TableHandle, Vec<u8>, Vec<Datum>)],
     zone: &SessionTimeZone,
 ) {
-    use tidb_executor::{
-        executor::Executor,
-        storage::{MemTableStorage, TableStorage},
-    };
+    use tidb_executor::executor::Executor;
+    use tidb_kv::storage::{MemTableStorage, TableStorage};
     let mut storage = MemTableStorage::new();
     for (handle, bytes, _) in rows {
         let handle = match handle {

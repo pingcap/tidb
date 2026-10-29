@@ -511,7 +511,7 @@ fn cascade_at_depth(
     // sub-statement's accounting, at the one place this tier reads the child.
     let accountant = ctx
         .statement_memory()
-        .write_accountant(crate::mem_quota::label::FK_CASCADE);
+        .write_accountant(tidb_kv::mem_quota::label::FK_CASCADE);
     // Every dependent's RESTRICT verdict is taken BEFORE any of them mutates,
     // so a statement whose first dependent cascades and whose second
     // restricts changes nothing at this level.

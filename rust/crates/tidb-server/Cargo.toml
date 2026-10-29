@@ -12,6 +12,10 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-bindinfo = { path = "../tidb-bindinfo" }
+tidb-domain-core = { path = "../tidb-domain-core" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-variable = { path = "../tidb-variable" }
 tidb-stats-handle-syncload = { path = "../tidb-stats-handle-syncload" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }

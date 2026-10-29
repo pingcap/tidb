@@ -87,7 +87,7 @@ fn routes_the_same_way(sql: &str) {
         .columns
         .iter()
         .map(|column| {
-            crate::ddl::column_field_type::build_field_type(
+            tidb_ddl_build::column_field_type::build_field_type(
                 &column.name,
                 &column.ty,
                 "utf8mb4",
@@ -376,7 +376,7 @@ fn partition_clause_error(expr: &str) -> Option<u16> {
         .columns
         .iter()
         .map(|column| {
-            crate::ddl::column_field_type::build_field_type(
+            tidb_ddl_build::column_field_type::build_field_type(
                 &column.name,
                 &column.ty,
                 "utf8mb4",

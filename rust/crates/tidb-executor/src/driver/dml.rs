@@ -1343,7 +1343,7 @@ fn run_insert_rows(
                 let cacheable = cache_defaults
                     && !matches!(
                         &column_meta[offset].default_value,
-                        Some(crate::column_default::ColumnDefault::Computed(computed))
+                        Some(tidb_table::column_default::ColumnDefault::Computed(computed))
                             if computed.is_expr()
                     );
                 row[offset] = match &default_cache[offset] {
@@ -4161,7 +4161,7 @@ fn stream_physical_write_rows(
 /// `field_types` is the SCHEMA the expression was built against, and it is
 /// what decides the chunk's width. A row read straight from storage is wider
 /// than that when the table has hidden expression-index columns; those are
-/// the TAIL (see `crate::expression_index`), and no expression a statement
+/// the TAIL (see `tidb_ddl_build::expression_index`), and no expression a statement
 /// can write is able to name one, so the visible prefix is exactly the row
 /// the expression means.
 pub(crate) fn row_chunk(

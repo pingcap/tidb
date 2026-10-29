@@ -63,7 +63,7 @@ pub trait KvTableDdl {
 
     /// Go `checkModifyColumnData`: the first row, in handle order, whose old
     /// value Go's check query matches
-    /// ([`crate::ddl::modify_column_type::modify_column_data_violation`]).
+    /// ([`tidb_ddl_build::modify_column_type::modify_column_data_violation`]).
     /// `Ok(Some(..))` carries Go's verdict on that row -- 1138 for a NULL,
     /// 1265 naming the value otherwise -- and `Ok(None)` means every row
     /// passed or there was nothing to check.
@@ -237,7 +237,7 @@ impl KvTableDdl for KvTable {
     ) -> Result<Option<KvTableError>, KvTableError> {
         let old_type = self.columns()[offset].field_type.clone();
         let column = tidb_hack::go_to_lower(&self.columns()[offset].name);
-        if crate::ddl::modify_column_type::modify_column_data_violation(
+        if tidb_ddl_build::modify_column_type::modify_column_data_violation(
             &old_type,
             new_type,
             check_value_range,
@@ -254,7 +254,7 @@ impl KvTableDdl for KvTable {
         )?;
         while let Some((_, row)) = cursor.next_row()? {
             let value = &row[0];
-            if crate::ddl::modify_column_type::modify_column_data_violation(
+            if tidb_ddl_build::modify_column_type::modify_column_data_violation(
                 &old_type,
                 new_type,
                 check_value_range,

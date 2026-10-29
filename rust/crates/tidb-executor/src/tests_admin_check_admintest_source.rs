@@ -113,7 +113,7 @@ fn admin_check_detects_generated_column_index_value_corruption() {
     table
         .delete_raw_key_for_test(&old_entry_key)
         .expect("old entry dropped");
-    let mut storage = table.swap_storage(Box::new(crate::storage::MemTableStorage::default()));
+    let mut storage = table.swap_storage(Box::new(tidb_kv::storage::MemTableStorage::default()));
     let crafted_handle = tidb_txnkv::Handle::Int(tidb_txnkv::IntHandle::new(match handle {
         crate::kv_table::TableHandle::Int(value) => *value,
         other => panic!("unexpected handle {other:?}"),

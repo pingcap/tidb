@@ -15,7 +15,7 @@
 //! Virtual values belong to the sample schema, but not to stored histograms.
 use super::{AnalyzeError, AnalyzePlan};
 use tidb_datatype::{Datum, FieldType};
-use crate::generated_column::{self, GeneratedColumn, GeneratedColumnSlot};
+use tidb_ddl_build::generated_column::{self, GeneratedColumn, GeneratedColumnSlot};
 use tidb_expr::Columns;
 use tidb_model::TableInfo;
 

@@ -148,7 +148,7 @@ fn usage_workers_stop_before_the_shutdown_delta_flush() {
     assert_eq!(*events.lock().unwrap(), ["stopped", "flush"]);
 }
 
-impl crate::domain::cluster_stats_lock_seam::ClusterStatsLock for WarningStatsLock {
+impl tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock for WarningStatsLock {
     fn execute(
         &self,
         statement: &tidb_stats_handle_lockstats::lock_target::ClusterStatsLockStatement,
@@ -173,7 +173,7 @@ fn stats_lock_uses_the_internal_cluster_route_without_ending_the_user_transactio
     let stats_lock = Arc::new(WarningStatsLock::default());
     let mut session = open_session_on_with_stats_lock(
         &node,
-        Arc::clone(&stats_lock) as Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
+        Arc::clone(&stats_lock) as Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
     );
 
     session.node_conn().execute_write("BEGIN").expect("begin");
@@ -208,7 +208,7 @@ fn stats_lock_checks_every_target_privilege_before_the_internal_transaction() {
     let mut session = open_session_as_with_stats_lock(
         &node,
         "low",
-        Arc::clone(&stats_lock) as Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
+        Arc::clone(&stats_lock) as Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
     );
 
     let error = session
@@ -442,21 +442,21 @@ fn open_session_as(node: &MockNode, user: &str) -> Session {
     open_session_as_with_stats_lock(
         node,
         user,
-        Arc::new(MockStatsLock) as Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
+        Arc::new(MockStatsLock) as Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
     )
 }
 
 fn open_session_as_with_stats_lock(
     node: &MockNode,
     user: &str,
-    stats_lock: Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
+    stats_lock: Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
 ) -> Session {
     let cluster = Arc::clone(&node.cluster);
     let factory = Domain::new(
         Arc::new(MockTransactions(cluster)),
         Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
-        Arc::clone(&node.sysvars) as Arc<dyn crate::domain::cluster_sysvar_seam::ClusterSysvarWriter>,
+        Arc::clone(&node.sysvars) as Arc<dyn tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter>,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
         stats_lock,
         Arc::clone(&node.catalog),
@@ -466,7 +466,7 @@ fn open_session_as_with_stats_lock(
             SharedStats::new(tidb_stats_handle_syncload::stats_watch::StatsSnapshot::new())
                 .expect("statistics cache"),
         ),
-        Arc::new(crate::domain::cluster_session::LocalTableAutoIds::default()),
+        Arc::new(tidb_domain_core::cluster_session::LocalTableAutoIds::default()),
         crate::domain::cluster_session_node::open_pool_session,
     )
     .shared();

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! Sequences through a live [`Session`]: the SQL surface, not the allocator
-//! (which `tidb_executor::sequence` covers). Every expectation is a value or
+//! (which `tidb_table::sequence` covers). Every expectation is a value or
 //! message captured from real TiDB.
 
 use crate::tests_support::*;

@@ -18,8 +18,8 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use tidb_store_driver::pessimistic_lock_error::commit_outcome_to_sql_error;
 use tidb_store_driver::session_commit_protocol::SessionTransactionOptions;
-use tidb_executor::cluster_storage::{DuplicateKeyHint, SnapshotPairs};
-use tidb_executor::storage::StorageError;
+use tidb_kv::cluster_storage::{DuplicateKeyHint, SnapshotPairs};
+use tidb_kv::storage::StorageError;
 use tidb_txnkv::retry::RegionBackoffKind;
 use tidb_txnkv::transaction::{
     CommittedTransaction, OptimisticCommitOutcome, OptimisticTransactionReceipt,
@@ -33,7 +33,7 @@ use tidb_txnkv::Key;
 /// assert.
 #[derive(Debug, Default)]
 pub(super) struct MockCluster {
-    pub(super) advisory_locks: tidb_executor::advisory_lock_state::LocalAdvisoryLockService,
+    pub(super) advisory_locks: tidb_sessionctx::advisory_lock_state::LocalAdvisoryLockService,
     pub(super) committed: Mutex<BTreeMap<Vec<u8>, Vec<u8>>>,
     /// Resource groups observed at snapshot/transaction request boundaries.
     pub(super) resource_groups: Mutex<Vec<String>>,
@@ -430,10 +430,10 @@ impl ClusterTransactions for MockTransactions {
         name: &str,
         timeout: Duration,
     ) -> Result<
-        Box<dyn tidb_executor::advisory_lock_state::AdvisoryLockLease>,
-        tidb_executor::advisory_lock_state::AdvisoryLockError,
+        Box<dyn tidb_sessionctx::advisory_lock_state::AdvisoryLockLease>,
+        tidb_sessionctx::advisory_lock_state::AdvisoryLockError,
     > {
-        tidb_executor::advisory_lock_state::AdvisoryLockService::acquire(
+        tidb_sessionctx::advisory_lock_state::AdvisoryLockService::acquire(
             &self.0.advisory_locks,
             name,
             timeout,
@@ -441,7 +441,7 @@ impl ClusterTransactions for MockTransactions {
     }
 
     fn is_advisory_lock_used(&self, name: &str) -> bool {
-        tidb_executor::advisory_lock_state::AdvisoryLockService::is_used(
+        tidb_sessionctx::advisory_lock_state::AdvisoryLockService::is_used(
             &self.0.advisory_locks,
             name,
         )

@@ -77,7 +77,7 @@ use std::collections::BTreeMap;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 
-use tidb_session::process::{ProcessKillTarget, ProcessRegistry};
+use tidb_executor::process::{ProcessKillTarget, ProcessRegistry};
 use tidb_session::{privilege::PrivilegeRegistry, Session};
 use tidb_util::sqlkiller::KillSignal;
 
@@ -102,7 +102,7 @@ pub struct Connections {
     next_connection_id: u64,
     /// Go's two package-level push-down blacklists, shared by every session
     /// this pool opens because they are one server's.
-    pushdown_blacklists: tidb_session::blacklist::PushdownBlacklists,
+    pushdown_blacklists: tidb_executor::blacklist::PushdownBlacklists,
     /// The server's `sessmgr.Manager`: every connection registers here, as
     /// Go's server does after authentication.
     processes: ProcessRegistry,
@@ -252,7 +252,7 @@ impl Connections {
             domain,
             privileges,
             next_connection_id: 1,
-            pushdown_blacklists: tidb_session::blacklist::PushdownBlacklists::default(),
+            pushdown_blacklists: tidb_executor::blacklist::PushdownBlacklists::default(),
             _watchdog: Watchdog::start(&processes),
             processes,
             kill_targets: BTreeMap::new(),

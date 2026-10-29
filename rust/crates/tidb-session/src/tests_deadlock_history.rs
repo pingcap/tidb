@@ -177,7 +177,7 @@ fn deadlocks_table_exposes_package_rows_and_requires_process() {
         is_retryable: false,
     });
 
-    let schema = tidb_executor::infoschema_meta::table_schema("DEADLOCKS").unwrap();
+    let schema = tidb_infoschema::infoschema_meta::table_schema("DEADLOCKS").unwrap();
     assert_eq!(
         schema
             .iter()

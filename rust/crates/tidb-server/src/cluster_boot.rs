@@ -5,7 +5,7 @@
 //! reads the catalog, the accounts, the global variables and the statistics
 //! out of the cluster, spawns the reloader thread and etcd watch that keep
 //! each of them following a Go peer's changes, builds the
-//! [`Domain`](crate::cluster_session_node::Domain) every connection
+//! [`Domain`](tidb_session::domain::cluster_session_node::Domain) every connection
 //! is opened from, and serves the MySQL port until shutdown. It mirrors the
 //! bootstrap half of Go's `pkg/session/session.go` (`BootstrapSession` and
 //! the `domain.Domain` reload loops it starts) rather than the statement
@@ -20,7 +20,7 @@
 use std::sync::Arc;
 
 use tidb_session::domain::cluster_stack::{cluster_session_stack, ClusterStack};
-use tidb_session::domain::node_config::NodeConfig;
+use tidb_domain_core::node_config::NodeConfig;
 use tidb_session::domain::real_tikv_node::{run_with_process_shutdown, RunConfiguredNodeError};
 
 use crate::sql_node::{ConcurrentSqlNode, SqlQueryError};

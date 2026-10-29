@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 use tidb_infoschema_issyncer::catalog_watch::SharedCatalog as SharedClusterCatalog;
 use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableView};
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
-use tidb_executor::cluster_storage::MutationBuffer;
+use tidb_kv::cluster_storage::MutationBuffer;
 use tidb_bindinfo::binding_cache::SharedBindingCache;
 use tidb_domain::global_sysvars::GlobalSysvars;
 use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};

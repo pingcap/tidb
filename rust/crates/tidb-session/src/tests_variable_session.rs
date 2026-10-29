@@ -15,8 +15,8 @@
 //! Variable-package tests that need a live `SessionVars`, which stays in
 //! this crate until Go's `SessionVars` is ported into `tidb-variable`.
 
-use crate::session_vars::*;
-use crate::sysvar::*;
+use tidb_variable::session_vars::*;
+use tidb_variable::sysvar::*;
 use tidb_vardef::{defaults, tidb_vars as names};
 
 #[test]
@@ -157,8 +157,8 @@ fn sem_enable_and_disable_change_new_session_defaults() {
 /// `SessionVars` over a fresh domain's GLOBAL tier (Go's
 /// `GlobalVarsAccessor`, with its scope checks and SetGlobal hooks), as a
 /// session installs it.
-fn mock_session_vars() -> crate::vars::SessionVars {
-    let mut vars = crate::vars::SessionVars::new();
+fn mock_session_vars() -> tidb_variable::vars::SessionVars {
+    let mut vars = tidb_variable::vars::SessionVars::new();
     vars.seed_from_globals(std::sync::Arc::new(
         tidb_domain::global_sysvars::GlobalSysvars::new(),
     ))

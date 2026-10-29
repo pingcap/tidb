@@ -906,7 +906,7 @@ pub(super) fn plan_persisted_add_index_job_step<S: MetaSnapshot>(
     active: &mut crate::ddl_job_table::ActiveDdlJob,
     start_ts: u64,
     outcome: Option<&ReorgOutcome>,
-    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     if active.job.is_rollingback() {
         return plan_rollback_add_index(catalog, active, start_ts);
@@ -1026,7 +1026,7 @@ fn plan_write_reorganization<S: MetaSnapshot>(
     outcome: Option<&ReorgOutcome>,
     start_ts: u64,
     is_pk: bool,
-    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let database_id = active.job.schema_id;
     let analyze_state = active

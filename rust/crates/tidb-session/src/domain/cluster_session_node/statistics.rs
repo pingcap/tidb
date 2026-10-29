@@ -3,7 +3,7 @@
 //!
 //! The statement is not answered by the session driver at all -- statistics
 //! are stored cluster state, so it is routed to
-//! [`ClusterAnalyze`](crate::domain::cluster_analyze_seam::ClusterAnalyze), one
+//! [`ClusterAnalyze`](tidb_domain_core::cluster_analyze_seam::ClusterAnalyze), one
 //! transaction per named table. Mirrors Go's split across
 //! `pkg/planner/core/planbuilder.go` (`requireInsertAndSelectPriv`, the
 //! privilege gate below) and `pkg/executor/analyze.go` with
@@ -48,7 +48,7 @@ struct PersistedAnalyzeJobs {
     global_vars: crate::GlobalSysvars,
     /// The node's live row-ID allocators (Go's internal INSERT allocates
     /// `mysql.analyze_jobs.id` from the table's AUTO_INCREMENT allocator).
-    row_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 }
 
 impl PersistedAnalyzeJobs {
@@ -70,7 +70,7 @@ impl PersistedAnalyzeJobs {
                 plan.mutations,
                 read_ts,
                 "default",
-                crate::domain::session_transaction::restricted_transaction_options(&self.global_vars),
+                tidb_domain_core::session_transaction::restricted_transaction_options(&self.global_vars),
             )
             .map_err(|error| error.message)
     }
@@ -101,7 +101,7 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
                     plan.mutations,
                     read_ts,
                     "default",
-                    crate::domain::session_transaction::restricted_transaction_options(&self.global_vars),
+                    tidb_domain_core::session_transaction::restricted_transaction_options(&self.global_vars),
                 )
                 .map_err(|error| error.message)?;
             Ok::<_, String>(job_id)
@@ -343,7 +343,7 @@ pub(super) fn analyze_service(
 /// [`analyze_service`] over `analyze`, the domain's analyzer.
 pub(super) fn analyze_service_over(
     domain: &super::Domain,
-    analyze: Arc<dyn crate::domain::cluster_analyze_seam::ClusterAnalyze>,
+    analyze: Arc<dyn tidb_domain_core::cluster_analyze_seam::ClusterAnalyze>,
 ) -> crate::domain_services::StatementService<dyn crate::analyze_service::AnalyzeService> {
     let stats_usage = Arc::clone(&domain.stats_usage);
     let transactions = Arc::clone(&domain.transactions);
@@ -418,12 +418,12 @@ struct ClusterAnalyzeService {
     catalog: Arc<super::SharedClusterCatalog>,
     stats: Arc<super::SharedStats>,
     global_vars: crate::GlobalSysvars,
-    analyze: Arc<dyn crate::domain::cluster_analyze_seam::ClusterAnalyze>,
+    analyze: Arc<dyn tidb_domain_core::cluster_analyze_seam::ClusterAnalyze>,
     approximate_table_counts: Arc<super::ClusterApproximateTableCountProvider>,
     historical_stats_worker: Arc<
         tidb_domain::historical_stats::HistoricalStatsWorker<super::ClusterHistoricalInfoSchema>,
     >,
-    row_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 }
 
 impl crate::analyze_service::AnalyzeService for ClusterAnalyzeService {
@@ -526,9 +526,9 @@ struct ClusterStatsStatementService {
     catalog: Arc<super::SharedClusterCatalog>,
     stats: Arc<super::SharedStats>,
     global_vars: crate::GlobalSysvars,
-    analyze: Arc<dyn crate::domain::cluster_analyze_seam::ClusterAnalyze>,
-    stats_lock: Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
-    row_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    analyze: Arc<dyn tidb_domain_core::cluster_analyze_seam::ClusterAnalyze>,
+    stats_lock: Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
+    row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 }
 
 impl crate::stats_statement_service::StatsStatementService for ClusterStatsStatementService {
@@ -565,7 +565,7 @@ impl crate::stats_statement_service::StatsStatementService for ClusterStatsState
 
     fn load_stats(
         &self,
-        json: &tidb_executor::load_stats::JsonTable,
+        json: &tidb_stats_handle::load_stats::JsonTable,
         historical_stats_enabled: bool,
     ) -> Result<(), tidb_executor::DriverError> {
         // Go's LOAD STATS path logs nothing on success.

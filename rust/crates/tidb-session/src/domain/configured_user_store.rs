@@ -361,7 +361,7 @@ impl ConfiguredUserStore {
     ///
     /// The TSV file is one way to provision the rows; a cluster whose
     /// `mysql.*` a Go TiDB already wrote is another
-    /// ([`crate::domain::cluster_privileges::registry_from_cluster`]). Both end at the
+    /// ([`tidb_domain_core::cluster_privileges::registry_from_cluster`]). Both end at the
     /// same live table, so the login path, `CREATE USER`, and `SHOW GRANTS`
     /// cannot tell which one filled it.
     #[must_use]
@@ -398,7 +398,7 @@ impl ConfiguredUserStore {
     /// The live account table, to be shared with the session factory so that
     /// `CREATE USER`/`DROP USER` and the login path see one set of rows.
     ///
-    /// Also the handle a [`crate::domain::cluster_privileges::PrivilegeReloader`]
+    /// Also the handle a [`tidb_domain_core::cluster_privileges::PrivilegeReloader`]
     /// publishes into: because every clone shares the same underlying
     /// `Mutex`es, a reload thread given this clone keeps this store (and
     /// every other clone) current without either side holding the other.

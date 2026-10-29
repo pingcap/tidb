@@ -46,7 +46,7 @@ pub fn update_stats_meta_version_for_gc<S: StoreClient>(
     physical_id: i64,
     timeout: Duration,
     record_history: bool,
-    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<u64, PessimisticStatementTransactionError> {
     let version = commit_pessimistic_statement(opener, timeout, |snapshot, version| {
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
@@ -73,7 +73,7 @@ pub fn update_stats_meta_version_for_gc<S: StoreClient>(
 pub fn update_stats_version<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
-    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<u64, PessimisticStatementTransactionError> {
     commit_pessimistic_statement(opener, timeout, |snapshot, version| {
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
@@ -107,7 +107,7 @@ pub fn record_historical_stats_meta<S: StoreClient>(
     version: u64,
     source: &str,
     timeout: Duration,
-    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(), PessimisticStatementTransactionError> {
     let transaction = SessionTransaction::begin_pessimistic(
         Arc::new(opener.clone()),

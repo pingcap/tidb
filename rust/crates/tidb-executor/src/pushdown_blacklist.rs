@@ -65,7 +65,7 @@
 //!  * Go stamps `ExprPushDownBlackListReloadTimeStamp` on every reload and
 //!    mixes it into the plan-cache key, so a reload invalidates cached plans.
 //!    This tier's plan cache stores no reusable plan (see
-//!    `tidb_session::non_prepared_plan_cache`), so there is none to
+//!    `tidb_executor::compiler::non_prepared_plan_cache`), so there is none to
 //!    invalidate; the stamp lands with the plan object.
 //!
 //! # Scope

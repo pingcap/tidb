@@ -70,13 +70,13 @@ use tidb_store_driver::cluster_table_storage::{
 use tidb_store_driver::pessimistic_lock_error::LockSqlError;
 use tidb_store_driver::real_tikv_read::RealOptimisticTransactionOpener;
 use tidb_store_driver::session_commit_protocol::SessionTransactionOptions;
-use tidb_executor::advisory_lock_state::{
+use tidb_sessionctx::advisory_lock_state::{
     AdvisoryLockError, AdvisoryLockLease, AdvisoryLockService,
 };
-use tidb_executor::cluster_storage::{
+use tidb_kv::cluster_storage::{
     ClusterSnapshot, DuplicateKeyHint, MutationBuffer, SnapshotPairs,
 };
-use tidb_executor::storage::StorageError;
+use tidb_kv::storage::StorageError;
 use tidb_txnkv::driver::transaction_error::{RedactArg, Redaction};
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::SchemaLeaseChecker;

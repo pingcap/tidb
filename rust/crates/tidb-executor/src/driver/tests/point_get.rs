@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use crate::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
+use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 use tidb_txnkv::Key;
 
 #[test]
@@ -41,7 +41,7 @@ fn fix52592_disables_unique_index_point_conversion() {
             })
             .unwrap();
             let execution = ctx.clone().with_optimizer_fix_control(fix);
-            let (rows, ops) = crate::storage::capture_storage_ops(|| {
+            let (rows, ops) = tidb_kv::storage::capture_storage_ops(|| {
                 run_select_on(&sql, &catalog, &execution).unwrap()
             });
             assert_eq!(rows, expected, "{sql}, fix={enabled}");
@@ -920,7 +920,7 @@ fn point_get_is_chosen_only_for_the_shapes_go_accepts() {
             panic!("not a select")
         };
         try_point_get(
-            &crate::driver::point_get_plan::PointPlanStmt::of_select(select),
+            &tidb_planner::point_get_plan::PointPlanStmt::of_select(select),
             table,
             &columns,
             &tidb_datatype::SessionTimeZone::utc(),
@@ -1084,7 +1084,7 @@ fn prepared_point_cache_answers_a_unique_secondary_index() {
         &crate::StmtContext::for_query(),
     )
     .unwrap();
-    let (got, operations) = crate::storage::capture_storage_ops(|| {
+    let (got, operations) = tidb_kv::storage::capture_storage_ops(|| {
         cached_rows(
             &plan,
             &mut catalog,
@@ -2074,7 +2074,7 @@ fn try_fast_plan_accepts_a_primary_key_point_read() {
         panic!("not a SELECT");
     };
     assert!(
-        crate::driver::point_get_plan::try_fast_point_physical_plan(select, &catalog, "test", &ctx,)
+        tidb_planner::point_get_plan::try_fast_point_physical_plan(select, &catalog, "test", &ctx,)
             .unwrap()
             .is_some()
     );
@@ -2166,7 +2166,7 @@ fn fast_point_get_uses_gos_smaller_index_hint_check() {
         let QueryStmt::Select(select) = &**query else {
             panic!("not a SELECT");
         };
-        crate::driver::point_get_plan::try_fast_point_physical_plan(select, &catalog, "test", &ctx).unwrap()
+        tidb_planner::point_get_plan::try_fast_point_physical_plan(select, &catalog, "test", &ctx).unwrap()
     };
     let unique_sql =
         "SELECT /*+ USE_INDEX(fast_hint, code) */ id FROM fast_hint WHERE code = 'one'";

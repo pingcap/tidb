@@ -17,7 +17,7 @@
 //!
 //! Go stamps them once, in `processColumnFlags` (`pkg/ddl/add_column.go:1297`),
 //! and this workspace now has one implementation of it too -- in
-//! `tidb_executor::ddl::column_field_type`, called by
+//! `tidb_ddl_build::column_field_type`, called by
 //! `tidb_ddl_build::table_info_build`'s `TableInfo` builder and by the runnable
 //! path's `column_types::field_type_of`. This test is the guard on the CALL:
 //! sharing the function stops the two rule sets drifting, but not one builder

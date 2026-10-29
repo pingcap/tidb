@@ -2879,7 +2879,7 @@ pub fn recheck_column_default_in_reorg_context(info: &ColumnInfo) -> Refusal<()>
     // Go's `getColDefaultValue` evaluates it (`GetTimeValue` takes
     // CURRENT_TIMESTAMP and CURRENT_DATE on a time column), which cannot fail
     // here once the session pass admitted it.
-    if info.default_is_expr || crate::table_from_meta::stored_clock_marker(info).is_some() {
+    if info.default_is_expr || tidb_table::table_from_meta::stored_clock_marker(info).is_some() {
         return Ok(());
     }
     let Some(text) = info.get_default_value().builtin_string().cloned() else {

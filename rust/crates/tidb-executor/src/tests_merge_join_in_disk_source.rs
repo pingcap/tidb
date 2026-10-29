@@ -17,7 +17,7 @@
 //! execution, not complete plan-text, failpoint, peak-tracker or concurrency
 //! obligations; those remain in the current parity audit.
 
-use crate::mem_quota::OomAction;
+use tidb_kv::mem_quota::OomAction;
 use crate::{run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
 use tidb_datatype::Datum;
 

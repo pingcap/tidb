@@ -348,7 +348,7 @@ pub trait QuerySessionFactory: Send + Sync + 'static {
     /// Connect SQL and new connections to the same process TLS owner.
     fn install_tls_manager(
         &self,
-        _manager: Arc<dyn tidb_session::process::TlsManager>,
+        _manager: Arc<dyn tidb_executor::process::TlsManager>,
         _variables: Vec<(&'static str, String)>,
     ) {
     }

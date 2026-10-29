@@ -1,6 +1,6 @@
 use crate::{Session, StmtResult};
 use tidb_datatype::Datum;
-use tidb_executor::advisory_lock_state::{AdvisoryLockService, LocalAdvisoryLockService};
+use tidb_sessionctx::advisory_lock_state::{AdvisoryLockService, LocalAdvisoryLockService};
 
 fn row(values: impl IntoIterator<Item = Datum>) -> StmtResult {
     StmtResult::Rows(vec![values.into_iter().collect()])

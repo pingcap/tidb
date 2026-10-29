@@ -85,7 +85,7 @@ use input::AggInputMode;
 use crate::approx_count_distinct::ApproxCountDistinctSketch;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_join::FastBytesMap;
-use crate::mem_quota::StatementMemory;
+use tidb_kv::mem_quota::StatementMemory;
 use spill::new_group_bytes;
 
 #[doc(inline)]
@@ -4001,7 +4001,7 @@ mod tests {
             vec![AggFunc::new(AggKind::Count, Some(col(1)))],
             source(&[(1, Some(1))]),
             NoColumns,
-            StatementMemory::new(1 << 20, crate::mem_quota::OomAction::Cancel, 42)
+            StatementMemory::new(1 << 20, tidb_kv::mem_quota::OomAction::Cancel, 42)
                 .with_tmp_storage_on_oom(false),
         );
 
@@ -4839,7 +4839,7 @@ mod tests {
         }
         let mut column = Column::new(1, field_type.clone());
         column.index = 0;
-        let memory = StatementMemory::new(1 << 20, crate::mem_quota::OomAction::Cancel, 45);
+        let memory = StatementMemory::new(1 << 20, tidb_kv::mem_quota::OomAction::Cancel, 45);
         let killer = Arc::clone(memory.sql_killer());
         let mut first_row = AggFunc::new(AggKind::FirstRow, Some(typed_col(0, field_type.clone())));
         first_row.distinct = true;

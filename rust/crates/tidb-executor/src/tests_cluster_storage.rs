@@ -19,7 +19,7 @@
 use crate::KvTableReader;
 use tidb_kv::cluster_storage::*;
 use tidb_kv::cluster_storage_test_util::*;
-use crate::storage::{StorageError, StorageIterator, TableStorage};
+use tidb_kv::storage::{StorageError, StorageIterator, TableStorage};
 use std::sync::{Arc, Mutex};
 use tidb_txnkv::Key;
     fn mutation_batch_table(store: ClusterTableStorage) -> crate::kv_table::KvTable {
@@ -146,7 +146,7 @@ use tidb_txnkv::Key;
     #[test]
     fn table_mutation_batch_partition_move_preserves_repeated_hidden_handle() {
         use crate::kv_table::{KvColumn, KvTable, TableHandle};
-        use crate::partition_routing::{PartitionDef, PartitionKind, PartitionSpec};
+        use tidb_table::partition_routing::{PartitionDef, PartitionKind, PartitionSpec};
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::expression::{Column, Expression};
         let (store, _, buffer) = storage(&[]);

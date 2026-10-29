@@ -17,7 +17,7 @@
 //! refused as a tripwire.
 //!
 //! This node stores a `PartitionSpec` (Go `model.PartitionInfo`; see
-//! `tidb_executor::partition_routing`), routes each row into one of N
+//! `tidb_table::partition_routing`), routes each row into one of N
 //! physical key prefixes exactly as Go's `locatePartition` does, PRUNES which
 //! of them a `WHERE` reads (`tidb_executor::partition_pruning`, Go
 //! `pkg/planner/core/rule/rule_partition_processor.go`), answers

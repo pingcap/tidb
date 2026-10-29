@@ -33,7 +33,7 @@ use tidb_model::{SessionInfo, TableLockTpInfo};
 use tidb_util::stringutil::go_to_lower;
 
 use crate::privilege::PrivilegeType;
-use crate::table_privilege::TablePrivilegeRequest;
+use tidb_executor::table_privilege::TablePrivilegeRequest;
 use crate::Session;
 
 /// Go `ddl.checkTableLocked` over an in-process table.

@@ -49,18 +49,18 @@ pub(super) fn cop_backed_stack() -> (UnistoreClusterStack, Arc<ConfiguredUserSto
 }
 
 fn cop_backed_stack_with_stats_lease(
-    stats_lease: Option<crate::domain::node_config::StatsLease>,
+    stats_lease: Option<tidb_domain_core::node_config::StatsLease>,
 ) -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
-    let mut config = crate::domain::node_config::NodeConfig::with_defaults(
+    let mut config = tidb_domain_core::node_config::NodeConfig::with_defaults(
         |config| {
             config.store = tidb_config::store::StoreType("unistore".to_owned());
             config.port = 0;
         },
-        crate::domain::node_config::NodeOptions {
+        tidb_domain_core::node_config::NodeOptions {
             // A requirement of the account source only: the test passes its
             // own user store below, so the option never names real rows.
             auth_file: Some("/dev/null".to_owned()),
-            ..crate::domain::node_config::NodeOptions::default()
+            ..tidb_domain_core::node_config::NodeOptions::default()
         },
     )
     .expect("node config");
@@ -1805,7 +1805,7 @@ fn global_bindings_do_not_depend_on_unrelated_staged_writes() {
         .expect("rollback reader");
 
     let assert_binding = |reader: &mut crate::Session, expected: &str, phase: &str| {
-        let (result, ops) = tidb_executor::storage::capture_storage_ops(|| {
+        let (result, ops) = tidb_kv::storage::capture_storage_ops(|| {
             rows(reader, "SELECT v FROM test.binding_visibility WHERE v=20")
         });
         assert_eq!(displayed(result), [["20"]]);
@@ -2110,7 +2110,7 @@ fn drain_stats_ddl_events_with_notifier(
 #[test]
 fn stats_ddl_wait_does_not_require_an_unready_other_subscriber() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(125))
@@ -2255,7 +2255,7 @@ fn exchange_partition_validates_and_swaps_real_rows_atomically() {
 #[test]
 fn exchange_partition_event_updates_global_statistics_like_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(83))
@@ -2493,7 +2493,7 @@ fn ddl_notifier_table_store_delivers_in_order_and_cleans_up() {
 #[test]
 fn stats_notifier_uses_a_real_internal_transaction_like_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let factory = stack.factory;
     let mut client = factory
         .open_session(session_context(85))
@@ -2710,8 +2710,8 @@ fn stats_lock_live_pessimistic_transaction_merges_partition_delta_like_go() {
 /// process tracker, releases the allocated process ID, and publishes the
 /// ordinary version-2 statistics result.
 struct ObservedSystemAnalyze {
-    inner: Arc<dyn crate::domain::cluster_analyze_seam::ClusterAnalyze>,
-    processes: crate::process::ProcessRegistry,
+    inner: Arc<dyn tidb_domain_core::cluster_analyze_seam::ClusterAnalyze>,
+    processes: tidb_executor::process::ProcessRegistry,
     kill: Option<bool>,
     process_id: u64,
     factory: std::sync::Weak<Domain>,
@@ -2719,7 +2719,7 @@ struct ObservedSystemAnalyze {
     interrupted: Arc<AtomicBool>,
 }
 
-impl crate::domain::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnalyze {
+impl tidb_domain_core::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnalyze {
     fn execute(
         &self,
         statement: &tidb_executor::cluster_analyze::AnalyzeStatement,
@@ -2772,13 +2772,13 @@ impl crate::domain::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnaly
 /// Kills the running auto-analyze through SQL `KILL QUERY`, by the process ID
 /// the shared process list shows for it, and records that ID.
 struct KillingSystemAnalyze {
-    inner: Arc<dyn crate::domain::cluster_analyze_seam::ClusterAnalyze>,
-    processes: crate::process::ProcessRegistry,
+    inner: Arc<dyn tidb_domain_core::cluster_analyze_seam::ClusterAnalyze>,
+    processes: tidb_executor::process::ProcessRegistry,
     factory: std::sync::Weak<Domain>,
     process_id: Arc<AtomicU64>,
 }
 
-impl crate::domain::cluster_analyze_seam::ClusterAnalyze for KillingSystemAnalyze {
+impl tidb_domain_core::cluster_analyze_seam::ClusterAnalyze for KillingSystemAnalyze {
     fn execute(
         &self,
         statement: &tidb_executor::cluster_analyze::AnalyzeStatement,
@@ -2831,7 +2831,7 @@ impl crate::domain::cluster_analyze_seam::ClusterAnalyze for KillingSystemAnalyz
 #[test]
 fn production_auto_analyze_is_killable_by_its_process_id() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let factory = stack.factory;
     let mut client = factory
         .open_session(session_context(86))
@@ -2908,7 +2908,7 @@ fn auto_analyze_exec_uses_live_tracking_and_current_session_like_go() {
 
 fn run_tracked_auto_analyze(kill: Option<bool>) {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let factory = stack.factory;
     let mut client = factory
         .open_session(session_context(86))
@@ -3038,7 +3038,7 @@ struct AutoAnalyzeKillTarget {
     cancelled: Arc<AtomicBool>,
 }
 
-impl crate::process::ProcessKillTarget for AutoAnalyzeKillTarget {
+impl tidb_executor::process::ProcessKillTarget for AutoAnalyzeKillTarget {
     fn cancel_query(&self) {
         self.cancelled.store(true, Ordering::SeqCst);
     }
@@ -3069,7 +3069,7 @@ fn auto_analyze_window_check_kills_only_outside_the_window_like_go() {
         "SET GLOBAL tidb_auto_analyze_end_time = '00:00 +0000'",
     );
     let cancelled = Arc::new(AtomicBool::new(false));
-    let target: Arc<dyn crate::process::ProcessKillTarget> =
+    let target: Arc<dyn tidb_executor::process::ProcessKillTarget> =
         Arc::new(AutoAnalyzeKillTarget {
             cancelled: Arc::clone(&cancelled),
         });
@@ -3122,10 +3122,10 @@ fn independent_unistore_stores_can_both_own_statistics() {
 #[test]
 fn auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let factory = stack.factory;
     factory
-        .campaign_stats_owner(crate::domain::node_config::StatsLease::Zero)
+        .campaign_stats_owner(tidb_domain_core::node_config::StatsLease::Zero)
         .expect("stats owner campaigns");
     let owner_deadline = std::time::Instant::now() + Duration::from_secs(2);
     while !factory
@@ -3296,10 +3296,10 @@ fn auto_analyze_priority_queue_uses_shared_stats_ddl_and_ordinary_analyze_path()
 #[test]
 fn auto_analyze_skips_configured_column_types_like_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let factory = stack.factory;
     factory
-        .campaign_stats_owner(crate::domain::node_config::StatsLease::Zero)
+        .campaign_stats_owner(tidb_domain_core::node_config::StatsLease::Zero)
         .expect("stats owner campaigns");
     let owner_deadline = std::time::Instant::now() + Duration::from_secs(2);
     while !factory
@@ -3364,10 +3364,10 @@ fn auto_analyze_skips_configured_column_types_like_go() {
 #[test]
 fn auto_analyze_fills_missing_partition_statistics_like_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let factory = stack.factory;
     factory
-        .campaign_stats_owner(crate::domain::node_config::StatsLease::Zero)
+        .campaign_stats_owner(tidb_domain_core::node_config::StatsLease::Zero)
         .expect("stats owner campaigns");
     let owner_deadline = std::time::Instant::now() + Duration::from_secs(2);
     while !factory
@@ -3521,7 +3521,7 @@ fn session_activation_checks_existence_for_pessimistic_locks() {
 #[test]
 fn table_lifecycle_ddl_updates_statistics_like_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(74))
@@ -3633,7 +3633,7 @@ fn table_lifecycle_ddl_updates_statistics_like_go() {
 #[test]
 fn ddl_after_loaded_statistics_matches_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(75))
@@ -3795,7 +3795,7 @@ fn ddl_after_loaded_statistics_matches_go() {
 #[test]
 fn truncate_partitioned_table_statistics_match_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(76))
@@ -3875,7 +3875,7 @@ fn truncate_partitioned_table_statistics_match_go() {
 #[test]
 fn truncate_hash_partition_statistics_match_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(77))
@@ -3944,7 +3944,7 @@ fn truncate_hash_partition_statistics_match_go() {
 #[test]
 fn add_partition_statistics_follow_global_prune_mode_like_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(78))
@@ -4030,7 +4030,7 @@ fn add_partition_statistics_follow_global_prune_mode_like_go() {
 #[test]
 fn drop_partitions_statistics_match_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(79))
@@ -4107,7 +4107,7 @@ fn drop_partitions_statistics_match_go() {
 #[test]
 fn reorganize_partition_event_updates_statistics_like_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(80))
@@ -4204,7 +4204,7 @@ fn reorganize_partition_event_updates_statistics_like_go() {
 #[test]
 fn add_and_remove_partitioning_events_move_statistics_like_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(81))
@@ -4321,7 +4321,7 @@ fn add_and_remove_partitioning_events_move_statistics_like_go() {
 #[test]
 fn flashback_cluster_event_refreshes_statistics_versions_like_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(82))
@@ -4376,7 +4376,7 @@ fn flashback_cluster_event_refreshes_statistics_versions_like_go() {
 #[test]
 fn delayed_create_and_add_column_events_preserve_newer_statistics_like_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(84))
@@ -4496,7 +4496,7 @@ fn delayed_create_and_add_column_events_preserve_newer_statistics_like_go() {
 #[test]
 fn drop_schema_ddl_retires_all_statistics_like_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(72))
@@ -4569,7 +4569,7 @@ fn drop_schema_ddl_retires_all_statistics_like_go() {
 #[test]
 fn add_column_ddl_initializes_statistics_like_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(73))
@@ -4905,7 +4905,7 @@ fn add_column_ddl_initializes_statistics_like_go() {
 fn analyze_samples_the_go_handle_ranges() {
     use tikv_client::proto::coprocessor;
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(78))
@@ -5003,7 +5003,7 @@ fn analyze_samples_the_go_handle_ranges() {
 #[test]
 fn analyze_sample_rate_reads_the_statistics_cache() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(79))
@@ -5058,7 +5058,7 @@ fn analyze_sample_rate_reads_the_statistics_cache() {
 #[test]
 fn analyze_job_lifecycle_is_persisted_like_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(77))
@@ -5104,7 +5104,7 @@ fn analyze_job_lifecycle_is_persisted_like_go() {
 #[test]
 fn show_analyze_status_reads_persisted_jobs_like_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(78))
@@ -5272,7 +5272,7 @@ fn show_analyze_status_reads_persisted_jobs_like_go() {
 #[test]
 fn failed_analysis_duration_resets_the_pooled_session_timezone() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let factory = stack.factory;
     let mut client = factory
         .open_session(session_context(80))
@@ -5378,7 +5378,7 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
 #[test]
 fn corrupted_analyze_job_cleanup_matches_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(79))
@@ -5563,13 +5563,13 @@ fn corrupted_analyze_job_cleanup_matches_go() {
 #[test]
 fn analyze_job_cleanup_worker_uses_gos_positive_lease_gate_and_stops() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let factory = stack.factory;
-    factory.start_analyze_jobs_cleanup_worker(crate::domain::node_config::StatsLease::Zero);
+    factory.start_analyze_jobs_cleanup_worker(tidb_domain_core::node_config::StatsLease::Zero);
     assert!(factory.analyze_jobs_cleanup_worker.get().is_none());
-    factory.start_analyze_jobs_cleanup_worker(crate::domain::node_config::StatsLease::Disabled);
+    factory.start_analyze_jobs_cleanup_worker(tidb_domain_core::node_config::StatsLease::Disabled);
     assert!(factory.analyze_jobs_cleanup_worker.get().is_none());
-    factory.start_analyze_jobs_cleanup_worker(crate::domain::node_config::StatsLease::Positive(
+    factory.start_analyze_jobs_cleanup_worker(tidb_domain_core::node_config::StatsLease::Positive(
         Duration::from_secs(60),
     ));
     assert!(factory.analyze_jobs_cleanup_worker.get().is_some());
@@ -5579,13 +5579,13 @@ fn analyze_job_cleanup_worker_uses_gos_positive_lease_gate_and_stops() {
 #[test]
 fn auto_analyze_worker_uses_gos_positive_lease_gate_and_stops() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let factory = stack.factory;
-    factory.start_auto_analyze_worker(crate::domain::node_config::StatsLease::Zero);
+    factory.start_auto_analyze_worker(tidb_domain_core::node_config::StatsLease::Zero);
     assert!(factory.auto_analyze_worker.get().is_none());
-    factory.start_auto_analyze_worker(crate::domain::node_config::StatsLease::Disabled);
+    factory.start_auto_analyze_worker(tidb_domain_core::node_config::StatsLease::Disabled);
     assert!(factory.auto_analyze_worker.get().is_none());
-    factory.start_auto_analyze_worker(crate::domain::node_config::StatsLease::Positive(
+    factory.start_auto_analyze_worker(tidb_domain_core::node_config::StatsLease::Positive(
         Duration::from_secs(60),
     ));
     assert!(factory.auto_analyze_worker.get().is_some());
@@ -5602,7 +5602,7 @@ fn auto_analyze_worker_observes_the_live_process_switch() {
     }
     let _restore = Restore(tidb_vardef::RUN_AUTO_ANALYZE.swap(true, Ordering::SeqCst));
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let factory = &stack.factory;
     let owner = factory.stats_owner.as_ref().unwrap();
     owner.campaign_owner(&[]).unwrap();
@@ -5614,7 +5614,7 @@ fn auto_analyze_worker_observes_the_live_process_switch() {
     let queue = factory.auto_analyze_priority_queue(Duration::ZERO);
     factory.handle_auto_analyze_tick(true, Duration::ZERO);
     assert!(queue.is_initialized());
-    factory.start_auto_analyze_worker(crate::domain::node_config::StatsLease::Positive(
+    factory.start_auto_analyze_worker(tidb_domain_core::node_config::StatsLease::Positive(
         Duration::from_millis(10),
     ));
     tidb_vardef::RUN_AUTO_ANALYZE.store(false, Ordering::SeqCst);
@@ -5635,7 +5635,7 @@ fn auto_analyze_worker_observes_the_live_process_switch() {
 #[test]
 fn partition_analyze_jobs_match_go_task_shapes() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(78))
@@ -5708,7 +5708,7 @@ fn partition_analyze_jobs_match_go_task_shapes() {
 #[test]
 fn partition_global_analyze_finishes_with_zero_in_datetime_values() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(146))
@@ -5761,7 +5761,7 @@ fn partition_global_analyze_finishes_with_zero_in_datetime_values() {
 #[test]
 fn system_table_ddl_does_not_publish_statistics_events_like_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(76))
@@ -5899,7 +5899,7 @@ fn system_table_ddl_does_not_publish_statistics_events_like_go() {
 #[test]
 fn show_stats_does_not_cache_system_table_statistics() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(147))
@@ -5926,7 +5926,7 @@ fn show_stats_does_not_cache_system_table_statistics() {
 #[test]
 fn uninitialized_statistics_remain_hidden_and_pseudo() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(148))
@@ -5974,7 +5974,7 @@ fn uninitialized_statistics_remain_hidden_and_pseudo() {
 #[test]
 fn global_statistics_skip_missing_partition_like_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(149))
@@ -6030,7 +6030,7 @@ fn global_statistics_skip_missing_partition_like_go() {
 #[test]
 fn modify_column_ddl_events_follow_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(74))
@@ -6130,7 +6130,7 @@ fn modify_column_ddl_events_follow_go() {
 #[test]
 fn analyze_records_historical_stats_through_the_domain_worker() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(75))
@@ -6232,7 +6232,7 @@ fn clear_outdated_history_stats_uses_the_go_retention_duration() {
         return;
     }
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(78))
@@ -6312,7 +6312,7 @@ fn clear_outdated_history_stats_uses_the_go_retention_duration() {
 #[test]
 fn stats_gc_runs_periodically_only_after_ownership_is_acquired() {
     let (stack, _users) = cop_backed_stack_with_stats_lease(Some(
-        crate::domain::node_config::StatsLease::Positive(Duration::from_millis(1)),
+        tidb_domain_core::node_config::StatsLease::Positive(Duration::from_millis(1)),
     ));
     let factory = &stack.factory;
     let owner = factory.stats_owner.as_ref().unwrap();
@@ -6395,8 +6395,8 @@ fn stats_gc_runs_periodically_only_after_ownership_is_acquired() {
 #[test]
 fn stats_maintenance_is_absent_for_zero_and_negative_leases() {
     for lease in [
-        crate::domain::node_config::StatsLease::Zero,
-        crate::domain::node_config::StatsLease::Disabled,
+        tidb_domain_core::node_config::StatsLease::Zero,
+        tidb_domain_core::node_config::StatsLease::Disabled,
     ] {
         let (stack, _users) = cop_backed_stack_with_stats_lease(Some(lease));
         assert!(stack._stats_maintenance.is_none());
@@ -6410,7 +6410,7 @@ fn stats_maintenance_is_absent_for_zero_and_negative_leases() {
 #[test]
 fn stats_gc_matches_go_item_and_dropped_table_phases() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(79))
@@ -6491,7 +6491,7 @@ fn stats_gc_matches_go_item_and_dropped_table_phases() {
 #[test]
 fn stats_gc_matches_go_partition_phases() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(80))
@@ -6602,7 +6602,7 @@ fn stats_gc_matches_go_partition_phases() {
 #[test]
 fn stats_gc_matches_go_column_usage_cleanup() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(81))
@@ -6666,7 +6666,7 @@ fn stats_gc_matches_go_column_usage_cleanup() {
 #[test]
 fn stats_gc_keeps_meta_for_existing_table_without_histograms() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(82))
@@ -6709,7 +6709,7 @@ fn stats_gc_keeps_meta_for_existing_table_without_histograms() {
 #[test]
 fn historical_stats_reader_falls_back_to_latest_stats_like_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(77))
@@ -6771,7 +6771,7 @@ fn historical_stats_reader_falls_back_to_latest_stats_like_go() {
 #[test]
 fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(76))
@@ -7646,7 +7646,7 @@ fn analyze_does_not_change_a_grouped_aggregate_answer() {
 #[test]
 fn partition_analyze_show_surfaces_match_global_stats_visibility() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(57))
@@ -7759,7 +7759,7 @@ fn partition_analyze_show_surfaces_match_global_stats_visibility() {
 #[test]
 fn partition_global_stats_health_matches_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(102))
@@ -7851,7 +7851,7 @@ fn partition_global_stats_health_matches_go() {
 #[test]
 fn build_global_level_stats_matches_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(103))
@@ -7963,7 +7963,7 @@ fn assert_global_topn_merge_matches_issue_24349(
     connection_id: u64,
 ) {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(connection_id))
@@ -8133,7 +8133,7 @@ fn assert_global_topn_merge_matches_issue_24349(
 #[test]
 fn merged_global_cmsketch_drives_equality_estimate() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(106))
@@ -8192,7 +8192,7 @@ fn merged_global_cmsketch_drives_equality_estimate() {
 #[test]
 fn composite_index_global_stats_match_go_types() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(107))
@@ -8349,7 +8349,7 @@ fn assert_scalar_column_and_index_global_stats_match_go(
     connection_id: u64,
 ) {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(connection_id))
@@ -8508,7 +8508,7 @@ fn assert_scalar_column_and_index_global_stats_match_go(
 #[test]
 fn global_index_statistics_match_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(110))
@@ -8667,7 +8667,7 @@ fn assert_global_statistics_and_session_bindings_match_go(
     connection_id: u64,
 ) {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(connection_id))
@@ -8809,7 +8809,7 @@ fn assert_global_statistics_and_session_bindings_match_go(
 #[test]
 fn partition_global_stats_bucket_data_matches_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(58))
@@ -8877,7 +8877,7 @@ fn partition_global_stats_bucket_data_matches_go() {
 #[test]
 fn partition_global_stats_ndv_matches_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(60))
@@ -8939,7 +8939,7 @@ fn partition_global_stats_ndv_matches_go() {
 #[test]
 fn partition_global_index_ndv_matches_go_for_all_source_types() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(61))
@@ -9057,7 +9057,7 @@ fn partition_global_index_ndv_matches_go_for_all_source_types() {
 #[test]
 fn partition_scoped_analyze_refreshes_global_count_and_modify_count() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(62))
@@ -9153,7 +9153,7 @@ fn partition_scoped_analyze_refreshes_global_count_and_modify_count() {
 #[test]
 fn flush_stats_delta_missing_targets_match_go_warnings() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(63))
@@ -9187,7 +9187,7 @@ fn flush_stats_delta_missing_targets_match_go_warnings() {
 #[test]
 fn truncate_partitions_refreshes_global_stats_meta_like_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(64))
@@ -9274,7 +9274,7 @@ fn truncate_partitions_refreshes_global_stats_meta_like_go() {
 #[test]
 fn global_stats_drive_partition_plans_like_go() {
     let (stack, _users) =
-        cop_backed_stack_with_stats_lease(Some(crate::domain::node_config::StatsLease::Zero));
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
     let mut session = stack
         .factory
         .open_session(session_context(65))
@@ -12209,12 +12209,12 @@ fn analyze_preserves_generated_execution_error() {
 #[test]
 fn analyze_preserves_generated_execution_error_under_stats_worker_passes() {
     assert_analyze_preserves_generated_execution_error(Some(
-        crate::domain::node_config::StatsLease::Positive(std::time::Duration::from_millis(5)),
+        tidb_domain_core::node_config::StatsLease::Positive(std::time::Duration::from_millis(5)),
     ));
 }
 
 fn assert_analyze_preserves_generated_execution_error(
-    stats_lease: Option<crate::domain::node_config::StatsLease>,
+    stats_lease: Option<tidb_domain_core::node_config::StatsLease>,
 ) {
     use crate::domain::resultset_source::ResultSetSource;
 
@@ -17545,11 +17545,11 @@ fn failed_select_for_update_lock_finishes_the_statement() {
 
 /// Delegates the analysis and fails the statement's closing cache update.
 struct FailingStatsCacheUpdate {
-    inner: Arc<dyn crate::domain::cluster_analyze_seam::ClusterAnalyze>,
+    inner: Arc<dyn tidb_domain_core::cluster_analyze_seam::ClusterAnalyze>,
     updated: Arc<std::sync::Mutex<Vec<i64>>>,
 }
 
-impl crate::domain::cluster_analyze_seam::ClusterAnalyze for FailingStatsCacheUpdate {
+impl tidb_domain_core::cluster_analyze_seam::ClusterAnalyze for FailingStatsCacheUpdate {
     fn execute(
         &self,
         statement: &tidb_executor::cluster_analyze::AnalyzeStatement,
@@ -20436,7 +20436,7 @@ fn binding_gc_commits_on_the_maintenance_thread() {
     );
     let bindings = Arc::clone(stack.factory.bindings.as_ref().expect("binding cache"));
     let long = Duration::from_secs(3600);
-    let worker = crate::domain::cluster_binding_seam::BindingReloader::spawn(
+    let worker = tidb_domain_core::cluster_binding_seam::BindingReloader::spawn(
         bindings,
         [long, Duration::from_millis(1), long],
         move || long,

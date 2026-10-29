@@ -20,7 +20,7 @@ use tidb_protocol::resultset_stream::{ResultSetStream, ResultSetStreamError, Tex
 use tidb_protocol::TextScalar;
 use tidb_protocol::{PacketWriter, ResultSetOptions};
 
-use crate::resultset_source::ResultSetSource;
+use tidb_session::domain::resultset_source::ResultSetSource;
 
 /// A packet sink that can report whether a failed write may have escaped.
 pub trait ResultSetSink {

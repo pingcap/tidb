@@ -327,7 +327,7 @@ fn plain_explain_evaluates_and_labels_an_uncorrelated_scalar_subquery() {
     let QueryStmt::Select(select) = &**query else {
         panic!("not a SELECT");
     };
-    let ((_, plan), operations) = crate::storage::capture_storage_ops(|| {
+    let ((_, plan), operations) = tidb_kv::storage::capture_storage_ops(|| {
         crate::explain::explain_select_stmt(
             select,
             &catalog,
@@ -339,7 +339,7 @@ fn plain_explain_evaluates_and_labels_an_uncorrelated_scalar_subquery() {
     });
     assert_ne!(
         operations,
-        crate::storage::StorageOps::default(),
+        tidb_kv::storage::StorageOps::default(),
         "the default Go branch evaluates the scalar child once",
     );
     let text = |row: &[Datum], column: usize| match &row[column] {
@@ -487,13 +487,13 @@ fn explaining_a_correlated_scalar_type_reads_no_storage() {
         let QueryStmt::Select(select) = &**query else {
             panic!("not a SELECT");
         };
-        let (explained, operations) = crate::storage::capture_storage_ops(|| {
+        let (explained, operations) = tidb_kv::storage::capture_storage_ops(|| {
             explain_select_stmt(select, catalog, "test", ctx, ExplainFormat::Brief)
         });
         let (_, plan) = explained.unwrap_or_else(|error| panic!("{sql}: {error:?}"));
         assert_eq!(
             operations,
-            crate::storage::StorageOps::default(),
+            tidb_kv::storage::StorageOps::default(),
             "plain EXPLAIN read storage for {sql}"
         );
         plan

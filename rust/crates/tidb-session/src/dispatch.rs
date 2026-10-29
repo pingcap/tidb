@@ -528,7 +528,7 @@ impl Session {
     pub fn local_cluster_table_rows(
         &mut self,
         table_name: &str,
-        registry: Option<&crate::process::ProcessRegistry>,
+        registry: Option<&tidb_executor::process::ProcessRegistry>,
         zone: &tidb_datatype::SessionTimeZone,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         self.local_cluster_table_rows_for(table_name, registry, zone, None, None)
@@ -539,7 +539,7 @@ impl Session {
     pub fn local_cluster_table_rows_for(
         &mut self,
         table_name: &str,
-        registry: Option<&crate::process::ProcessRegistry>,
+        registry: Option<&tidb_executor::process::ProcessRegistry>,
         zone: &tidb_datatype::SessionTimeZone,
         required: Option<&std::collections::HashSet<String>>,
         digests: Option<&std::collections::HashSet<String>>,
@@ -614,7 +614,7 @@ impl Session {
         &mut self,
         stmt: Stmt,
         sql: &str,
-        privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
+        privilege_requests: &[tidb_executor::table_privilege::TablePrivilegeRequest],
     ) -> Result<StmtOutput, DriverError> {
         self.execute_prepared_ast(sql, stmt, privilege_requests)
     }
@@ -625,7 +625,7 @@ impl Session {
         &mut self,
         sql: &str,
         stmt: Stmt,
-        privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
+        privilege_requests: &[tidb_executor::table_privilege::TablePrivilegeRequest],
     ) -> Result<StmtOutput, DriverError> {
         match self.prepare_bound_execution(sql, stmt, privilege_requests) {
             Ok(pending) => pending.collect(self),
@@ -648,7 +648,7 @@ impl Session {
         &mut self,
         sql: &str,
         mut stmt: Stmt,
-        privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
+        privilege_requests: &[tidb_executor::table_privilege::TablePrivilegeRequest],
     ) -> Result<PendingExecution, DriverError> {
         let parameters = tidb_executor::bound_parameter_values(&mut stmt)?;
         self.begin_prepared_statement_boundary(&stmt, parameters);
@@ -673,7 +673,7 @@ impl Session {
                 1105,
                 format!("skip prepared plan-cache: {reason}"),
             );
-        } else if crate::prepared_statements::plans_over_table_dual(&stmt) {
+        } else if tidb_executor::compiler::prepared::plans_over_table_dual(&stmt) {
             self.append_warning(
                 crate::warnings::WarningLevel::Warning,
                 1105,
@@ -852,7 +852,7 @@ impl Session {
         &mut self,
         execution: &tidb_executor::PreparedSelectExecution,
         sql: &str,
-        privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
+        privilege_requests: &[tidb_executor::table_privilege::TablePrivilegeRequest],
     ) -> Result<StmtOutput, DriverError> {
         self.execute_prepared_select_internal(execution, sql, privilege_requests, false)
             .map(|(output, _)| output)
@@ -862,7 +862,7 @@ impl Session {
         &mut self,
         execution: &tidb_executor::PreparedSelectExecution,
         sql: &str,
-        privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
+        privilege_requests: &[tidb_executor::table_privilege::TablePrivilegeRequest],
         capture_authority: bool,
     ) -> Result<(StmtOutput, Option<crate::ResultMaterializationAuthority>), DriverError> {
         self.run_with_columns_using(sql, capture_authority, |session| {
@@ -989,7 +989,7 @@ impl Session {
         &mut self,
         execution: &tidb_executor::PreparedSelectExecution,
         sql: &str,
-        privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
+        privilege_requests: &[tidb_executor::table_privilege::TablePrivilegeRequest],
     ) -> Result<PendingExecution, DriverError> {
         let mut used = false;
         let output = execution
@@ -1037,7 +1037,7 @@ impl Session {
         &mut self,
         execution: &tidb_executor::PreparedDmlExecution,
         sql: &str,
-        privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
+        privilege_requests: &[tidb_executor::table_privilege::TablePrivilegeRequest],
     ) -> Result<StmtOutput, DriverError> {
         // go's stats meta bumps the target table's row count on every INSERT
         // (`stats_meta.count`), which `I_S.TABLES`' TABLE_ROWS reads back.
@@ -1306,7 +1306,7 @@ impl Session {
         &mut self,
         sql: &str,
         stmt: Stmt,
-        prepared: Option<&[crate::table_privilege::TablePrivilegeRequest]>,
+        prepared: Option<&[tidb_executor::table_privilege::TablePrivilegeRequest]>,
     ) -> Result<StmtOutput, DriverError> {
         self.execute_parsed_statement_with_optional_physical_plan(sql, stmt, prepared, None, None)
     }
@@ -1315,7 +1315,7 @@ impl Session {
         &mut self,
         sql: &str,
         stmt: Stmt,
-        prepared: Option<&[crate::table_privilege::TablePrivilegeRequest]>,
+        prepared: Option<&[tidb_executor::table_privilege::TablePrivilegeRequest]>,
         physical: &mut tidb_planner::physical::PhysicalPlan,
     ) -> Result<StmtOutput, DriverError> {
         self.execute_parsed_statement_with_optional_physical_plan(
@@ -1331,7 +1331,7 @@ impl Session {
         &mut self,
         sql: &str,
         stmt: Stmt,
-        prepared: Option<&[crate::table_privilege::TablePrivilegeRequest]>,
+        prepared: Option<&[tidb_executor::table_privilege::TablePrivilegeRequest]>,
         select_plan: Option<RetainedSelectPlan<'_>>,
         dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
     ) -> Result<StmtOutput, DriverError> {
@@ -1362,7 +1362,7 @@ impl Session {
         &mut self,
         sql: &str,
         stmt: Stmt,
-        prepared: Option<&[crate::table_privilege::TablePrivilegeRequest]>,
+        prepared: Option<&[tidb_executor::table_privilege::TablePrivilegeRequest]>,
         select_plan: Option<RetainedSelectPlan<'_>>,
         dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
     ) -> Result<PendingExecution, DriverError> {
@@ -1432,7 +1432,7 @@ impl Session {
         &mut self,
         sql: &str,
         mut stmt: Stmt,
-        prepared: Option<&[crate::table_privilege::TablePrivilegeRequest]>,
+        prepared: Option<&[tidb_executor::table_privilege::TablePrivilegeRequest]>,
         select_plan: Option<RetainedSelectPlan<'_>>,
         dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
     ) -> Result<PendingExecution, DriverError> {
@@ -1454,7 +1454,7 @@ impl Session {
         // prepared statement it runs.
         let preprocess = (!CompileDepth::is_nested())
             .then(|| tidb_util::tracing::start_thread_region("planner.Preprocess"));
-        let scan = crate::binding::scan_statement_tables(&mut stmt);
+        let scan = tidb_bindinfo::binding::scan_statement_tables(&mut stmt);
         drop(preprocess);
         // Go `preprocessor.Enter`'s `*ast.ColumnName` arm: the commit-TS
         // pseudo column is not yet usable by SELECT, UPDATE or DELETE.
@@ -1639,7 +1639,7 @@ impl Session {
         &mut self,
         sql: &str,
         mut stmt: Stmt,
-        prepared: Option<&[crate::table_privilege::TablePrivilegeRequest]>,
+        prepared: Option<&[tidb_executor::table_privilege::TablePrivilegeRequest]>,
         mut select_plan: Option<RetainedSelectPlan<'_>>,
         dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
     ) -> Result<PendingExecution, DriverError> {
@@ -1878,8 +1878,8 @@ impl Session {
                 if let Some(parameterized) = non_prepared.as_ref() {
                     let mut effective_parameterized = parameterized.statement.clone();
                     if binding_sql.is_some() {
-                        let binding_hints = crate::binding::collect_hints(&stmt);
-                        crate::binding::bind_hints(&mut effective_parameterized, &binding_hints);
+                        let binding_hints = tidb_bindinfo::binding::collect_hints(&stmt);
+                        tidb_bindinfo::binding::bind_hints(&mut effective_parameterized, &binding_hints);
                     }
                     if let Some(execution) = self.bind_non_prepared_select(
                         parameterized,
@@ -1944,8 +1944,8 @@ impl Session {
                 if let Some(parameterized) = non_prepared_dml.as_ref() {
                     let mut effective_parameterized = parameterized.statement.clone();
                     if binding_sql.is_some() {
-                        let binding_hints = crate::binding::collect_hints(&stmt);
-                        crate::binding::bind_hints(&mut effective_parameterized, &binding_hints);
+                        let binding_hints = tidb_bindinfo::binding::collect_hints(&stmt);
+                        tidb_bindinfo::binding::bind_hints(&mut effective_parameterized, &binding_hints);
                     }
                     if let Some(execution) = self.bind_non_prepared_dml(
                         &parameterized,

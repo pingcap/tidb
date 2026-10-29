@@ -383,7 +383,7 @@ fn partial_order_topn_keeps_competing_rows_with_the_same_prefix() {
             let ctx = crate::StmtContext::for_query().with_partial_ordered_index_for_topn(enabled);
             let sql = format!("SELECT {hint} a FROM p {clause} ORDER BY a {order} LIMIT 1, 2");
             let (rows, ops) =
-                crate::storage::capture_storage_ops(|| run_select_on(&sql, &catalog, &ctx));
+                tidb_kv::storage::capture_storage_ops(|| run_select_on(&sql, &catalog, &ctx));
             let rows = rows.unwrap();
             assert_eq!(
                 ops.gets,
@@ -500,7 +500,7 @@ fn partial_order_prefix_limit_handles_null_collation_composite_keys_and_filters(
         )
         .unwrap();
         let (rows, ops) =
-            crate::storage::capture_storage_ops(|| run_select_on(sql, &catalog, &ctx));
+            tidb_kv::storage::capture_storage_ops(|| run_select_on(sql, &catalog, &ctx));
         let rows = rows.unwrap_or_else(|error| panic!("{sql}: {error:?}"));
         assert_eq!(rows.len(), 1, "{sql}");
         match expected {
@@ -561,7 +561,7 @@ fn prefix_null_conditions_use_a_covering_reader_without_exposing_prefix_values()
         ] {
             let sql = format!("SELECT {projection} FROM pn USE INDEX(idx) WHERE {condition}");
             let (rows, ops) =
-                crate::storage::capture_storage_ops(|| run_select_on(&sql, &catalog, &ctx));
+                tidb_kv::storage::capture_storage_ops(|| run_select_on(&sql, &catalog, &ctx));
             let mut rows: Vec<_> = rows
                 .unwrap_or_else(|error| panic!("{sql}: {error:?}"))
                 .iter()
@@ -645,7 +645,7 @@ fn index_join_covering_rows_match_master_with_prefix_filters_and_outer_nulls() {
     for (dirty, ctx) in [(false, crate::StmtContext::for_query()), (true, ctx)] {
         for (sql, expected, covering) in cases.clone() {
             let (rows, ops) =
-                crate::storage::capture_storage_ops(|| run_select_on(sql, &catalog, &ctx));
+                tidb_kv::storage::capture_storage_ops(|| run_select_on(sql, &catalog, &ctx));
             let mut rows: Vec<_> = rows
                 .unwrap_or_else(|error| panic!("{sql}: {error:?}"))
                 .iter()

@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use tidb_model::go_duration::format_go_duration;
 
-use crate::execdetails::{RuntimeStats, TP_HASH_AGG_RUNTIME_STAT};
+use tidb_util::execdetails::{RuntimeStats, TP_HASH_AGG_RUNTIME_STAT};
 
 fn nanos(duration: Duration) -> i64 {
     i64::try_from(duration.as_nanos()).unwrap_or(i64::MAX)

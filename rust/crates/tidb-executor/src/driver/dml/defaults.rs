@@ -21,7 +21,7 @@ use super::*;
 /// ON DUPLICATE from growing subtly different nil-default implementations.
 #[derive(Clone, Debug)]
 pub(crate) struct ColumnDefaultMeta {
-    pub(crate) default_value: Option<crate::column_default::ColumnDefault>,
+    pub(crate) default_value: Option<tidb_table::column_default::ColumnDefault>,
     pub(crate) not_null: bool,
     pub(crate) no_default_value: bool,
     pub(crate) name: String,
@@ -100,7 +100,7 @@ pub(crate) fn column_metadata(table: &TableEntry) -> Vec<ColumnDefaultMeta> {
 pub(crate) struct PreparedOnUpdateNow {
     columns: Vec<(
         usize,
-        crate::column_default::ColumnDefault,
+        tidb_table::column_default::ColumnDefault,
         ColumnDefaultMeta,
     )>,
 }
@@ -121,7 +121,7 @@ impl PreparedOnUpdateNow {
                 continue;
             }
             let value =
-                crate::column_default::on_update_current_timestamp(&meta.name, &meta.field_type)?;
+                tidb_table::column_default::on_update_current_timestamp(&meta.name, &meta.field_type)?;
             columns.push((offset, value, meta.clone()));
         }
         Ok(Self { columns })
@@ -141,7 +141,7 @@ impl PreparedOnUpdateNow {
             return Ok(false);
         }
         for (offset, default, meta) in &self.columns {
-            new_row[*offset] = crate::column_default::evaluate(
+            new_row[*offset] = tidb_table::column_default::evaluate(
                 default,
                 &meta.field_type,
                 meta.column_info_version,
@@ -183,7 +183,7 @@ pub(crate) fn materialize_column_default(
     row: tidb_chunk::row::Row<'_>,
 ) -> Result<Datum, DriverError> {
     if use_kind == DefaultUse::Insert {
-        crate::column_default::check_no_default_value_for_insert(
+        tidb_table::column_default::check_no_default_value_for_insert(
             meta.default_value.as_ref(),
             &meta.field_type,
             &meta.name,
@@ -192,7 +192,7 @@ pub(crate) fn materialize_column_default(
             ctx,
         )?;
     }
-    crate::column_default::get_col_default_value(
+    tidb_table::column_default::get_col_default_value(
         meta.default_value.as_ref(),
         &meta.field_type,
         &meta.name,
@@ -253,7 +253,7 @@ mod source_tests {
 
     fn assert_materialized(
         field_type: &FieldType,
-        default_value: Option<crate::column_default::ColumnDefault>,
+        default_value: Option<tidb_table::column_default::ColumnDefault>,
         strict: bool,
         expected: Expected,
     ) {
@@ -310,16 +310,16 @@ mod source_tests {
         );
         let enum_first = Datum::new_enum(MysqlEnum::new("abc", 1), not_null_enum.collation());
 
-        let value = |datum| Some(crate::column_default::ColumnDefault::Value(datum));
-        let computed_one = Some(crate::column_default::ColumnDefault::Computed(Box::new(
-            crate::column_default::ComputedDefault {
+        let value = |datum| Some(tidb_table::column_default::ColumnDefault::Value(datum));
+        let computed_one = Some(tidb_table::column_default::ColumnDefault::Computed(Box::new(
+            tidb_table::column_default::ComputedDefault {
                 text: "1".to_owned(),
-                kind: crate::column_default::ComputedDefaultKind::Expression,
+                kind: tidb_table::column_default::ComputedDefaultKind::Expression,
                 expr: Ok(Expression::Constant(tidb_expr::constant::Constant::new(
                     Datum::Int(1),
                     not_null_bigint.clone(),
                 ))),
-                added_origin_safety: crate::column_default::AddedOriginSafety::Safe,
+                added_origin_safety: tidb_table::column_default::AddedOriginSafety::Safe,
             },
         )));
 

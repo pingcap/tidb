@@ -30,7 +30,7 @@
 //! # How far down the streaming reaches today
 //!
 //! The executors are fully pull-based, and so is the row decoding above the
-//! [`TableStorage`](crate::storage::TableStorage) seam. Below it, neither
+//! [`TableStorage`](tidb_kv::storage::TableStorage) seam. Below it, neither
 //! backend's `iter` is lazy yet: `MemStorage::iter` copies the range's
 //! key/value bytes into a `Vec`, and `ClusterTableStorage::iter` scans the
 //! snapshot range and merges the staged buffer into another one. So a scan
@@ -229,7 +229,7 @@ pub fn statement_read_shape(
     {
         return StatementReadShape::Unknown;
     }
-    let Some(table_ref) = crate::driver::point_get_plan::single_table_ref(&select.from) else {
+    let Some(table_ref) = tidb_planner::point_get_plan::single_table_ref(&select.from) else {
         return StatementReadShape::Unknown;
     };
     let (database, table_name) = match table_ref.name.as_slice() {
@@ -257,10 +257,10 @@ pub fn statement_read_shape(
     // helpers, so a statement this predicate accepts is a statement that arm
     // accepts. It reads nothing: both helpers walk the AST only.
     let mut pairs = Vec::new();
-    if !crate::driver::point_get_plan::name_value_pairs(where_clause, &mut pairs, zone) {
+    if !tidb_planner::point_get_plan::name_value_pairs(where_clause, &mut pairs, zone) {
         return StatementReadShape::Unknown;
     }
-    if !crate::driver::point_get_plan::convert_pairs_to_column_domain(&mut pairs, &columns) {
+    if !tidb_planner::point_get_plan::convert_pairs_to_column_domain(&mut pairs, &columns) {
         return StatementReadShape::Unknown;
     }
     if let Some(handle_offset) = table.pk_handle_offset() {
@@ -2853,7 +2853,7 @@ impl IndexRangeSourceExec {
                 LookupFetch::Remote(rows, predicates_applied, wire_rows, indices) => {
                     let physical_ids = indices.iter().filter_map(|index| job.physical_ids.get(*index).copied()).collect::<Vec<_>>();
                     if wire_rows > 0 {
-                        crate::storage::note_storage_op(|ops| ops.cop_rows += wire_rows);
+                        tidb_kv::storage::note_storage_op(|ops| ops.cop_rows += wire_rows);
                     }
                     // The remote answers only the rows that survived its
                     // filter, so its own handles are the ones to keep. Move
@@ -2875,7 +2875,7 @@ impl IndexRangeSourceExec {
                 LookupFetch::RemoteChunk(chunk) => {
                     let physical_ids = chunk.request_indices.iter().filter_map(|index| job.physical_ids.get(*index).copied()).collect();
                     if chunk.wire_rows > 0 {
-                        crate::storage::note_storage_op(|ops| ops.cop_rows += chunk.wire_rows);
+                        tidb_kv::storage::note_storage_op(|ops| ops.cop_rows += chunk.wire_rows);
                     }
                     return Ok(Some(LookupBatchResult {
                         physical_ids,
@@ -3384,7 +3384,7 @@ impl IndexRangeSourceExec {
                             .input
                             .as_ref()
                             .map(|expression| {
-                                crate::generated_column::eval_over_row(
+                                tidb_ddl_build::generated_column::eval_over_row(
                                     expression,
                                     &input_types,
                                     &row,
@@ -3615,7 +3615,7 @@ impl IndexRangeSourceExec {
                                 .input
                                 .as_ref()
                                 .map(|expression| {
-                                    crate::generated_column::eval_over_row(
+                                    tidb_ddl_build::generated_column::eval_over_row(
                                         expression,
                                         &input_types,
                                         row,
@@ -6538,7 +6538,7 @@ use std::collections::HashMap;
     use crate::driver::{run_select_on, Catalog};
     use crate::explain::ExplainFormat;
     use crate::kv_table::{KvColumn, KvTable};
-    use crate::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
+    use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 
     /// A backend that counts the work a scan actually does: every entry an
     /// iterator advances past, and every point read.
@@ -6856,13 +6856,13 @@ use std::collections::HashMap;
         let gets = Arc::clone(&storage.gets);
         let mut table = KvTable::with_storage(77, vec![column("id", 1)], Box::new(storage));
         table.set_pk_handle_offset(0);
-        table.set_partition(crate::partition_routing::PartitionSpec {
-            kind: crate::partition_routing::PartitionKind::Hash,
+        table.set_partition(tidb_table::partition_routing::PartitionSpec {
+            kind: tidb_table::partition_routing::PartitionKind::Hash,
             expr_text: "id".to_owned(),
             expr: Expression::Column(tidb_expr::column::Column::new(0, long())),
             dependencies: vec!["id".to_owned()],
             definitions: (0..3)
-                .map(|ordinal| crate::partition_routing::PartitionDef {
+                .map(|ordinal| tidb_table::partition_routing::PartitionDef {
                     id: 101 + ordinal,
                     name: format!("p{ordinal}"),
                     ..Default::default()
@@ -6906,13 +6906,13 @@ use std::collections::HashMap;
             let batch_keys = Arc::clone(&storage.batch_keys);
             let mut table =
                 KvTable::with_storage(77, vec![column("p", 1), column("v", 2)], Box::new(storage));
-            table.set_partition(crate::partition_routing::PartitionSpec {
-                kind: crate::partition_routing::PartitionKind::Hash,
+            table.set_partition(tidb_table::partition_routing::PartitionSpec {
+                kind: tidb_table::partition_routing::PartitionKind::Hash,
                 expr_text: "p".to_owned(),
                 expr: Expression::Column(tidb_expr::column::Column::new(0, long())),
                 dependencies: vec!["p".to_owned()],
                 definitions: (0..2)
-                    .map(|ordinal| crate::partition_routing::PartitionDef {
+                    .map(|ordinal| tidb_table::partition_routing::PartitionDef {
                         id: 101 + ordinal,
                         name: format!("p{ordinal}"),
                         ..Default::default()

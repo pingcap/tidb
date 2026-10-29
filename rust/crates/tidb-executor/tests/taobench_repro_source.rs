@@ -10,7 +10,7 @@ use tidb_executor::driver::{run_select_on, Catalog};
 use tidb_executor::kv_table::{KvColumn, KvIndex, KvTable};
 use prost::Message;
 use tidb_proto::tipb::DagRequest;
-use tidb_executor::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
+use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 use tidb_executor::StmtContext;
 use tidb_txnkv::Key;
 

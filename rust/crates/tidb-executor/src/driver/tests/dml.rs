@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use tidb_txnkv::Key;
 
-use crate::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
+use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 
 #[test]
 fn insert_set_operation_source_uses_the_common_query_plan() {
@@ -218,7 +218,7 @@ fn ignore_uses_the_original_unique_conflict_without_reading_it_again() {
 
 #[test]
 fn storage_failures_keep_sql_identity_through_read_and_write_adapters() {
-    use crate::storage::StorageError;
+    use tidb_kv::storage::StorageError;
     for storage in [
         StorageError::Sql(crate::MysqlError::from_terror(
             &tidb_error::catalog::kv::ERR_WRITE_CONFLICT.generate_with_stack("write conflict"),
@@ -242,7 +242,7 @@ fn storage_failures_keep_sql_identity_through_read_and_write_adapters() {
 #[test]
 fn retryable_storage_errors_keep_their_transaction_identity() {
     let retryable = || {
-        crate::kv_table::KvTableError::from(crate::storage::StorageError::Retryable(
+        crate::kv_table::KvTableError::from(tidb_kv::storage::StorageError::Retryable(
             "region response no longer matches observed route".to_owned(),
         ))
     };
@@ -259,7 +259,7 @@ fn retryable_storage_errors_keep_their_transaction_identity() {
 
     let ordinary = kv_read_error(
         "row read failed",
-        crate::kv_table::KvTableError::from(crate::storage::StorageError::Backend(
+        crate::kv_table::KvTableError::from(tidb_kv::storage::StorageError::Backend(
             "disk error".to_owned(),
         )),
     );

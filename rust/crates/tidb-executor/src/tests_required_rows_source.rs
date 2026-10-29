@@ -40,7 +40,7 @@ use tidb_expr::NoColumns;
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::limit::LimitExec;
-use crate::mem_quota::StatementMemory;
+use tidb_kv::mem_quota::StatementMemory;
 use crate::projection::ProjectionExec;
 use crate::selection::SelectionExec;
 use crate::sort::SortByItem;

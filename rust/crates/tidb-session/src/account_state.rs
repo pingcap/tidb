@@ -26,8 +26,8 @@ use tidb_executor::{Catalog, DriverError};
 use tidb_hack::GoCaseCompare;
 
 use crate::privilege;
-use crate::sysvar;
-use crate::vars::SessionVars;
+use tidb_variable::sysvar;
+use tidb_variable::vars::SessionVars;
 
 /// What the account tables read of the viewing session.
 #[derive(Clone)]
@@ -289,7 +289,7 @@ impl VariablesState {
             }
             let current = self.vars.get_system(definition.name).unwrap_or_default();
             let default = if definition.has_global_scope() {
-                crate::vars::global_system_variable_initial_value(definition)
+                tidb_variable::vars::global_system_variable_initial_value(definition)
             } else {
                 sysvar::effective_default(definition)
             };

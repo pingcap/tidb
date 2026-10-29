@@ -61,7 +61,7 @@ use crate::sql_node::{
     ConnectionCancellation, ConnectionClose, ConnectionTracker, GeneralExecuteOutcome,
     PreparedGeneral, QueryResult, SessionContext, SqlQueryError,
 };
-use crate::wire_status::{WireStatus, SERVER_STATUS_CURSOR_EXISTS, SERVER_STATUS_LAST_ROW_SEND};
+use tidb_session::domain::wire_status::{WireStatus, SERVER_STATUS_CURSOR_EXISTS, SERVER_STATUS_LAST_ROW_SEND};
 
 /// Carries one client SQL payload's bytes for `@@character_set_client`.
 ///
@@ -560,7 +560,7 @@ impl PreparedStatementRegistry {
     fn long_data_error(&self, statement_id: u32, connection_id: u64) -> Option<SqlQueryError> {
         let statement = self.statements.get(&statement_id)?;
         if statement.bound_params_mem_quota_exceeded {
-            let error = tidb_executor::mem_quota::memory_exceed_for_query(connection_id);
+            let error = tidb_kv::mem_quota::memory_exceed_for_query(connection_id);
             return Some(SqlQueryError::from(error));
         }
         if statement.bound_params_too_large {
@@ -1631,7 +1631,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         identity,
         client_found_rows: capabilities & CLIENT_FOUND_ROWS != 0,
         tls_state: socket.negotiated_tls().map(|(cipher_suite, version)| {
-            tidb_session::vars::TlsConnectionState {
+            tidb_variable::vars::TlsConnectionState {
                 version,
                 cipher_suite,
             }
@@ -1889,7 +1889,7 @@ fn log_dispatch_failure<S: QuerySession>(
     let statement_text = |sql: &str, prepared: bool| match session {
         Some(session) if prepared => session.dispatch_failure_prepared_sql(sql),
         Some(session) => session.dispatch_failure_sql(sql),
-        None => tidb_session::slow_log::query_replacer(sql),
+        None => tidb_variable::slow_log::query_replacer(sql),
     };
     let statement_id = || {
         data.get(..4)
@@ -1943,8 +1943,8 @@ fn log_dispatch_failure<S: QuerySession>(
             "status",
             tidb_log::Value::Str(format!(
                 "inTxn:{}, autocommit:{}",
-                u8::from(status & crate::wire_status::SERVER_STATUS_IN_TRANS != 0),
-                u8::from(status & crate::wire_status::SERVER_STATUS_AUTOCOMMIT != 0),
+                u8::from(status & tidb_session::domain::wire_status::SERVER_STATUS_IN_TRANS != 0),
+                u8::from(status & tidb_session::domain::wire_status::SERVER_STATUS_AUTOCOMMIT != 0),
             )),
         ),
         tidb_log::Field::new("sql", tidb_log::Value::Str(sql)),
@@ -2150,7 +2150,7 @@ fn run_connection_commands<S: QuerySession>(
         {
             let idle = last_active.elapsed().as_secs_f64();
             let in_txn =
-                engine.wire_status().bits() & crate::wire_status::SERVER_STATUS_IN_TRANS != 0;
+                engine.wire_status().bits() & tidb_session::domain::wire_status::SERVER_STATUS_IN_TRANS != 0;
             crate::server_metrics::CONN_IDLE_DURATION
                 .with_label_values(&[if in_txn { "1" } else { "0" }])
                 .observe(idle);
@@ -2313,7 +2313,7 @@ fn run_connection_commands<S: QuerySession>(
                         let more_results = statement_index < last_index;
                         let stamp = |status: WireStatus| {
                             if more_results {
-                                status.with(crate::wire_status::SERVER_STATUS_MORE_RESULTS_EXISTS)
+                                status.with(tidb_session::domain::wire_status::SERVER_STATUS_MORE_RESULTS_EXISTS)
                             } else {
                                 status
                             }

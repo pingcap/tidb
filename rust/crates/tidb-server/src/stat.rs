@@ -18,7 +18,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use tidb_session::statusvar::{Statistics, DEFAULT_STATUS_VAR_SCOPE_FLAG};
+use tidb_variable::statusvar::{Statistics, DEFAULT_STATUS_VAR_SCOPE_FLAG};
 use tidb_session::SessionVars;
 
 use crate::mysql_tls::MysqlTlsManager;
@@ -75,7 +75,7 @@ pub(crate) struct CompressionStatistics;
 
 impl Statistics for CompressionStatistics {
     fn get_scope(&self, _status: &str) -> u8 {
-        tidb_session::sysvar::SCOPE_SESSION
+        tidb_variable::sysvar::SCOPE_SESSION
     }
 
     fn stats(&self, vars: Option<&SessionVars>) -> Result<BTreeMap<String, String>, String> {
@@ -102,14 +102,14 @@ pub(crate) struct RegisteredStatistics(Arc<dyn Statistics>);
 impl RegisteredStatistics {
     /// Go `variable.RegisterStatistics`.
     pub(crate) fn register(statistics: Arc<dyn Statistics>) -> Self {
-        tidb_session::statusvar::register_statistics(Arc::clone(&statistics));
+        tidb_variable::statusvar::register_statistics(Arc::clone(&statistics));
         Self(statistics)
     }
 }
 
 impl Drop for RegisteredStatistics {
     fn drop(&mut self) {
-        tidb_session::statusvar::unregister_statistics(&self.0);
+        tidb_variable::statusvar::unregister_statistics(&self.0);
     }
 }
 
@@ -118,7 +118,7 @@ impl Drop for RegisteredStatistics {
 pub(crate) fn register_compression_statistics() {
     static REGISTERED: std::sync::Once = std::sync::Once::new();
     REGISTERED.call_once(|| {
-        tidb_session::statusvar::register_statistics(Arc::new(CompressionStatistics));
+        tidb_variable::statusvar::register_statistics(Arc::new(CompressionStatistics));
     });
 }
 

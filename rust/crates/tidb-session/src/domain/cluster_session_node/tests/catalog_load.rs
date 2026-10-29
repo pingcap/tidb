@@ -20,7 +20,7 @@
 
 use super::super::*;
 use super::node_fixture::*;
-use crate::domain::cluster_session::{planner_statistics, SkippedTable};
+use tidb_domain_core::cluster_session::{planner_statistics, SkippedTable};
 use crate::StmtResult;
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, FieldType};

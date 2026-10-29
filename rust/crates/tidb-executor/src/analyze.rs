@@ -1252,7 +1252,7 @@ mod tests {
             .from_evaluation();
         for error in [
             crate::kv_table::KvTableError::Mysql(original.clone()),
-            crate::kv_table::KvTableError::Storage(crate::storage::StorageError::Sql(
+            crate::kv_table::KvTableError::Storage(tidb_kv::storage::StorageError::Sql(
                 original.clone(),
             )),
         ] {

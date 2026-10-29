@@ -52,7 +52,7 @@ use crate::apply_cache::ApplyCache;
 pub mod native;
 pub(crate) mod parallel;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
-use crate::mem_quota::StatementMemory;
+use tidb_kv::mem_quota::StatementMemory;
 pub use native::NestedLoopApplyExec;
 use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
@@ -1225,7 +1225,7 @@ mod tests {
     /// (`hash_join_v1.go:1225`) for the same reason.
     #[test]
     fn an_inner_relation_past_the_quota_is_cancelled() {
-        let memory = StatementMemory::new(1, crate::mem_quota::OomAction::Cancel, 0);
+        let memory = StatementMemory::new(1, tidb_kv::mem_quota::OomAction::Cancel, 0);
         let mut apply = LateralApplyExec::new(
             ExecutorMeta::new(schema_of(2), 1, 4, 4),
             Box::new(Counter::new(3, 7)),

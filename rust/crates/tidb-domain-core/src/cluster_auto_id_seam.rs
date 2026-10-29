@@ -36,11 +36,11 @@ use tidb_autoid::cluster_auto_id::ClusterAutoIdStore;
 use tidb_table::cluster_sequence::ClusterSequenceCounter;
 use tidb_executor::driver::SequenceDef;
 use tidb_executor::kv_table::{TableAutoId, DEFAULT_AUTO_ID_STEP};
-use tidb_executor::sequence::{SequenceAllocator, SequenceInfo as SeqCounterInfo};
+use tidb_table::sequence::{SequenceAllocator, SequenceInfo as SeqCounterInfo};
 use tidb_model::TableInfo;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 
-use tidb_ddl_build::table_from_meta::{AutoIdKind, TableAutoIds};
+use tidb_table::table_from_meta::{AutoIdKind, TableAutoIds};
 
 /// This node's allocators, keyed by table id.
 ///

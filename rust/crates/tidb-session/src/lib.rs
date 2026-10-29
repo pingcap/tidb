@@ -510,7 +510,7 @@ pub struct Session {
     /// reports. A fresh session starts with its account's DEFAULT roles
     /// (Go activates them in `Auth`); `SET ROLE` replaces the set wholesale.
     /// This connection's lock references over the domain/server lock service.
-    advisory_locks: tidb_executor::advisory_lock_state::AdvisoryLockSession,
+    advisory_locks: tidb_sessionctx::advisory_lock_state::AdvisoryLockSession,
     /// Go `session.lockedTables`: the tables this session holds a
     /// `LOCK TABLES` lock on, by table ID ([`crate::table_lock`]).
     locked_tables: std::collections::BTreeMap<i64, tidb_model::TableLockTpInfo>,
@@ -663,11 +663,11 @@ pub struct Session {
     /// without a hook per variable. Measured before the cache: the two were
     /// the hottest user-code frames under sysbench, ahead of the parser.
     statement_var_cache:
-        std::cell::RefCell<Option<std::sync::Arc<crate::stmt_ctx::StatementVarSnapshot>>>,
+        std::cell::RefCell<Option<std::sync::Arc<tidb_executor::stmt_ctx_build::StatementVarSnapshot>>>,
     cost_env_cache:
         std::cell::RefCell<Option<(u64, Arc<tidb_planner::find_best_task::coster::CostEnv>)>>,
     prepared_plan_cache_environment_cache:
-        std::cell::RefCell<Option<crate::prepared_ast::PreparedPlanCacheEnvironmentCache>>,
+        std::cell::RefCell<Option<tidb_executor::compiler::prepared_ast::PreparedPlanCacheEnvironmentCache>>,
     /// Where this session reports the tables its statements bind, for the
     /// node's metadata-lock gate; see [`MdlRelatedTableSink`].
     mdl_related_tables: Option<std::sync::Arc<dyn MdlRelatedTableSink>>,
@@ -876,7 +876,7 @@ impl Session {
             deferred_multi_statement_warning: false,
             pending_plan_cache_refusal: None,
             in_show_warning: false,
-            advisory_locks: tidb_executor::advisory_lock_state::AdvisoryLockSession::default(),
+            advisory_locks: tidb_sessionctx::advisory_lock_state::AdvisoryLockSession::default(),
             locked_tables: std::collections::BTreeMap::new(),
             selected_lock_keys: None,
             autocommit_pessimistic_statement: false,
@@ -1093,19 +1093,15 @@ fn new_time_seeded_rand() -> Arc<MysqlRng> {
 
 
 mod account;
-pub use tidb_variable::slow_log;
-pub use tidb_variable::slow_log_rules;
-pub use tidb_executor::trace;
 mod account_password;
-pub use tidb_bindinfo::binding;
+use tidb_bindinfo::binding;
 mod binding_arm;
 mod compiler_session;
 mod stmt_ctx_session;
 mod execute_prepared;
 pub use binding_arm::GlobalBindingWriter;
-pub use tidb_bindinfo::binding_cache;
-pub use tidb_bindinfo::binding_utils;
-pub use tidb_executor::blacklist;
+use tidb_bindinfo::binding_cache;
+use tidb_executor::blacklist;
 mod bootstrap;
 mod classify;
 pub mod cursor;
@@ -1118,33 +1114,27 @@ pub mod analyze_service;
 mod load_data;
 pub mod stats_statement_service;
 mod dispatch;
-pub use tidb_executor::compiler::explain as explain_arm;
 mod gcutil;
 pub mod restricted_sql;
 mod identity;
 pub mod load_stats_arm;
 mod account_state;
-pub use tidb_executor::compiler::non_prepared_plan_cache as non_prepared_plan_cache;
+use tidb_executor::compiler::non_prepared_plan_cache as non_prepared_plan_cache;
 mod nontransactional;
 pub use nontransactional::{NonTransactionalDml, NonTransactionalInput, NonTransactionalStep};
 mod noop;
 mod observation;
-pub use tidb_executor::compiler::prepared_ast as prepared_ast;
-pub use tidb_executor::compiler::plan_cacheable_checker as prepared_plan_cache;
-pub use tidb_executor::compiler::prepared as prepared_statements;
+use tidb_executor::compiler::prepared_ast as prepared_ast;
+use tidb_executor::compiler::prepared as prepared_statements;
 pub mod session_states;
 mod record_set;
 mod session_plan_cache;
 use record_set::StatementCompletion;
 pub use record_set::{OpenedStatement, SessionRecordSet, StatementExecution, StatementRecordSet};
 mod resource_group;
-pub use tidb_variable::session_vars;
-pub use tidb_executor::stmt_ctx_build as stmt_ctx;
 mod table_lock;
 mod temptable;
 pub use table_lock::ClusterDdlLockEffect;
-pub use tidb_executor::table_privilege;
-pub use tidb_domain_core::cluster_transactions;
 pub mod domain;
 pub mod lazy_transaction;
 pub mod statement_lifecycle;
@@ -1160,7 +1150,6 @@ pub use txn::{
 mod user_table;
 pub mod util_config;
 mod variables;
-pub use tidb_variable::varsutil;
 mod warnings;
 pub(crate) use classify::{
     statement_kind_of, statement_priority_of, StatementKind,
@@ -1175,12 +1164,10 @@ pub use tidb_privilege as privilege;
 mod privilege_tables;
 #[cfg(test)]
 mod tests_privilege_tls;
-pub use tidb_executor::process;
+use tidb_executor::process;
 mod process_arm;
 mod show;
-pub use tidb_variable::statusvar;
-pub use tidb_variable::sysvar;
-pub use tidb_variable::vars;
+use tidb_variable::vars;
 #[cfg(test)]
 mod tests_variable_session;
 pub use tidb_domain::global_sysvars::GlobalSysvars;
@@ -2015,8 +2002,8 @@ impl Session {
         // Read once per command (Go `getSessionVarsWaitTimeout`, one
         // `systems[name]` probe). The name-to-index step is resolved once
         // for the process so the per-command read is a plain slot read.
-        static INDEX: crate::sysvar::StaticSysVarIndex =
-            crate::sysvar::StaticSysVarIndex::new("wait_timeout");
+        static INDEX: tidb_variable::sysvar::StaticSysVarIndex =
+            tidb_variable::sysvar::StaticSysVarIndex::new("wait_timeout");
         let seconds = self
             .vars
             .system_value_at(INDEX.get())
@@ -2211,7 +2198,7 @@ impl Session {
         &mut self,
         bound: tidb_ast::Stmt,
         sql: &str,
-        privilege_requests: &[crate::table_privilege::TablePrivilegeRequest],
+        privilege_requests: &[tidb_executor::table_privilege::TablePrivilegeRequest],
     ) -> Result<StmtOutput, DriverError> {
         self.run_with_columns_using(sql, false, move |session| {
             session.execute_statement_parsed(bound, sql, privilege_requests)
@@ -2445,7 +2432,7 @@ impl Session {
             panic!("{schema}.{name} is not a stored table");
         };
         self.update_stats_cache_with(vec![Arc::new(
-            tidb_executor::load_stats::statistics_table_from_planner_statistics(
+            tidb_stats_handle::load_stats::statistics_table_from_planner_statistics(
                 table,
                 physical_id,
                 statistics,
@@ -3242,6 +3229,7 @@ mod tests_zero_date;
 pub mod mysql_bootstrap;
 pub mod bootstrap_publish;
 pub mod ddl_session_pool;
+use tidb_variable::sysvar;
 
 
 

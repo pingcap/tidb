@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use tidb_session::domain::cluster_session_node::DomainSessions as _;
 use tidb_session::domain::configured_user_store::ConfiguredUserStore;
-use tidb_session::domain::node_config::{NodeConfig, NodeOptions};
+use tidb_domain_core::node_config::{NodeConfig, NodeOptions};
 use tidb_session::domain::unistore_node::{unistore_cluster_session_stack, UnistoreClusterStack};
 use tidb_session::{Session, StmtResult};
 

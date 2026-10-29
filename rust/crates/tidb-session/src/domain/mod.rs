@@ -35,21 +35,11 @@ pub mod configured_user_store;
 pub mod auth_identity;
 pub mod native_password;
 pub mod secure_transport;
-pub use tidb_domain_core::cluster_privileges;
-pub use tidb_domain_core::cluster_account_seam;
-pub use tidb_domain_core::cluster_analyze_seam;
-pub use tidb_domain_core::cluster_auto_id_seam;
-pub use tidb_domain_core::cluster_binding_seam;
-pub use tidb_domain_core::cluster_stats_lock_seam;
-pub use tidb_domain_core::cluster_sysvar_seam;
-pub use tidb_domain_core::cluster_session;
 pub mod cluster_session_node;
 pub mod cluster_stack;
-pub use tidb_domain_core::session_transaction;
 pub mod global_config_sync;
 pub mod cluster_topology;
 pub mod serverinfo_etcd;
-pub use tidb_domain_core::node_config;
 pub mod real_tikv_node;
 pub mod unistore_node;
 pub(crate) mod embedded_resource_groups;
@@ -62,6 +52,7 @@ pub use tidb_util::test_isolation::isolate_process_globals;
 
 
 pub use tidb_util::logutil::{log_recovered_panic, zap_error, zap_stack};
+use tidb_domain_core::node_config;
 
 /// Go `net.JoinHostPort`.
 pub fn join_host_port(host: &str, port: impl std::fmt::Display) -> String {
@@ -107,7 +98,7 @@ pub fn open_spill_storage(
         config.deadlock_history_capacity,
         config.deadlock_history_collect_retryable,
     );
-    crate::sysvar::install_sem_v2_sysvar_registry();
+    tidb_variable::sysvar::install_sem_v2_sysvar_registry();
     if config.sem_enabled && !config.sem_config.is_empty() {
         tidb_util::sem::disable();
         tidb_util::sem_v2::enable(&config.sem_config)

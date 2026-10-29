@@ -2207,7 +2207,7 @@ fn show_builtins_lists_every_function_go_lists() {
 #[test]
 fn show_status_reports_the_negotiated_tls_names() {
     let mut session = Session::new();
-    session.set_tls_state(Some(crate::vars::TlsConnectionState {
+    session.set_tls_state(Some(tidb_variable::vars::TlsConnectionState {
         version: 0x0304,
         cipher_suite: 0x1301,
     }));

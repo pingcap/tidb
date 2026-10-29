@@ -21,7 +21,7 @@ use std::any::Any;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
-use crate::execdetails::{format_duration, RuntimeStats, TP_INDEX_LOOK_UP_JOIN_RUNTIME_STATS};
+use tidb_util::execdetails::{format_duration, RuntimeStats, TP_INDEX_LOOK_UP_JOIN_RUNTIME_STATS};
 
 /// Go `innerWorkerRuntimeStats`, updated by the inner workers.
 #[derive(Debug, Default)]

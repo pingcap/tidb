@@ -22,7 +22,7 @@
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_agg::{AggFunc, AggKind, HashAggExec};
-use crate::mem_quota::{OomAction, StatementMemory};
+use tidb_kv::mem_quota::{OomAction, StatementMemory};
 use crate::test_temp_storage::{scratch_dir as scratch_temp_dir, storage as test_storage};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};

@@ -37,7 +37,7 @@ use crate::remote_scan::{
     PushdownScanColumn, PushdownScanRequest, PushdownStatementContext, PushdownTopN,
     EXTRA_HANDLE_COLUMN_ID,
 };
-use crate::storage::{StorageError, StorageIterator};
+use tidb_kv::storage::{StorageError, StorageIterator};
 use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 use tidb_chunk::chunk::Chunk;
 use tidb_codec::table_key::{
@@ -1484,7 +1484,7 @@ impl KvTableReader for KvTable {
             // storage seam so a backend that REFUSED the shape (and returned
             // an `Unsupported` the caller turned into a byte-level cursor) is
             // not recorded as a coprocessor read.
-            crate::storage::note_storage_op(|ops| ops.cop_scans += 1);
+            tidb_kv::storage::note_storage_op(|ops| ops.cop_scans += 1);
             if let Some((_, parts)) = partition_scans
                 .iter_mut()
                 .find(|(id, _)| *id == physical_id)
@@ -1694,7 +1694,7 @@ impl KvTableReader for KvTable {
         let keep = scan_keep;
         let materialization = if keep
             .iter()
-            .any(|offset| crate::generated_column::is_virtual(&self.columns()[*offset]))
+            .any(|offset| tidb_ddl_build::generated_column::is_virtual(&self.columns()[*offset]))
         {
             Some(RemoteRowMaterialization::new(
                 self,
@@ -2137,7 +2137,7 @@ impl KvTableReader for KvTable {
                 close_streams(&mut streams);
                 return Ok(None);
             }
-            crate::storage::note_storage_op(|ops| ops.cop_scans += 1);
+            tidb_kv::storage::note_storage_op(|ops| ops.cop_scans += 1);
             streams.push(scan.stream);
         }
         Ok(Some(if streams.len() == 1 {
@@ -2403,7 +2403,7 @@ impl KvTableReader for KvTable {
                 close_streams(&mut streams);
                 return Ok(None);
             }
-            crate::storage::note_storage_op(|ops| ops.cop_scans += 1);
+            tidb_kv::storage::note_storage_op(|ops| ops.cop_scans += 1);
             streams.push(scan.stream);
         }
         Ok(Some(if streams.len() == 1 {
@@ -2907,7 +2907,7 @@ impl KvTableReader for KvTable {
             scan.stream.close();
             return Ok(None);
         }
-        crate::storage::note_storage_op(|ops| ops.cop_scans += 1);
+        tidb_kv::storage::note_storage_op(|ops| ops.cop_scans += 1);
         Ok(Some(RemoteIndexHandleCursor {
             inner: scan.stream,
             handle_indices: returned_handle_indices,
@@ -2983,7 +2983,7 @@ impl KvTableReader for KvTable {
             .iter()
             .enumerate()
             .filter_map(|(offset, column)| {
-                (!crate::generated_column::is_virtual(column)).then_some(offset)
+                (!tidb_ddl_build::generated_column::is_virtual(column)).then_some(offset)
             })
             .collect();
         if let Some(mut cursor) = self.pushdown_row_cursor_with_context(
@@ -3340,7 +3340,7 @@ pub(crate) fn note_decoded_column_ids(ids: impl Iterator<Item = i64>) {
 /// A forward cursor over a table's record range, decoding one row per pull.
 ///
 /// See [`KvTable::row_cursor_with_context`]. Over
-/// [`ClusterTableStorage`](crate::cluster_storage::ClusterTableStorage) the
+/// [`ClusterTableStorage`](tidb_kv::cluster_storage::ClusterTableStorage) the
 /// iterator is the merged stream (snapshot plus the session's staged mutation
 /// buffer), so a cursor sees exactly the rows a materializing scan saw.
 pub struct RowCursor {
@@ -3931,7 +3931,7 @@ impl RemoteRowCursor {
     }
 
     /// Reports rows received since the last report to
-    /// [`crate::storage::capture_storage_ops`]'s probe.
+    /// [`tidb_kv::storage::capture_storage_ops`]'s probe.
     ///
     /// The stream's own counter is the authority on what crossed the network
     /// -- a batching transport may already hold rows this cursor has not
@@ -3943,7 +3943,7 @@ impl RemoteRowCursor {
         let fresh = returned.saturating_sub(self.noted_rows);
         self.noted_rows = returned;
         if fresh > 0 {
-            crate::storage::note_storage_op(|ops| ops.cop_rows += fresh);
+            tidb_kv::storage::note_storage_op(|ops| ops.cop_rows += fresh);
         }
     }
 
@@ -4218,7 +4218,7 @@ impl RemoteIndexHandleCursor {
         let fresh = returned.saturating_sub(self.noted_rows);
         self.noted_rows = returned;
         if fresh > 0 {
-            crate::storage::note_storage_op(|ops| ops.cop_rows += fresh);
+            tidb_kv::storage::note_storage_op(|ops| ops.cop_rows += fresh);
         }
     }
 
@@ -5053,7 +5053,7 @@ impl TableScanExec {
     fn has_virtual_projection(&self) -> bool {
         self.keep
             .iter()
-            .any(|offset| crate::generated_column::is_virtual(&self.table.columns()[*offset]))
+            .any(|offset| tidb_ddl_build::generated_column::is_virtual(&self.table.columns()[*offset]))
     }
     /// The next row of whichever cursor is open, remote or local.
     ///
@@ -5239,7 +5239,7 @@ impl TableScanExec {
                             .input
                             .as_ref()
                             .map(|expression| {
-                                crate::generated_column::eval_over_row(
+                                tidb_ddl_build::generated_column::eval_over_row(
                                     expression,
                                     &input_types,
                                     &row,
@@ -5460,7 +5460,7 @@ impl TableScanExec {
                                 .input
                                 .as_ref()
                                 .map(|expression| {
-                                    crate::generated_column::eval_over_row(
+                                    tidb_ddl_build::generated_column::eval_over_row(
                                         expression,
                                         &input_types,
                                         row,
@@ -5708,7 +5708,7 @@ impl Executor for TableScanExec {
                     let fresh = returned.saturating_sub(self.partial_remote_noted);
                     self.partial_remote_noted = returned;
                     if fresh > 0 {
-                        crate::storage::note_storage_op(|ops| ops.cop_rows += fresh);
+                        tidb_kv::storage::note_storage_op(|ops| ops.cop_rows += fresh);
                     }
                     return Ok(());
                 }
@@ -5728,7 +5728,7 @@ impl Executor for TableScanExec {
                 let fresh = returned.saturating_sub(self.partial_remote_noted);
                 self.partial_remote_noted = returned;
                 if fresh > 0 {
-                    crate::storage::note_storage_op(|ops| ops.cop_rows += fresh);
+                    tidb_kv::storage::note_storage_op(|ops| ops.cop_rows += fresh);
                 }
                 for (column, value) in row.iter().enumerate() {
                     req.append_datum(column, value);
@@ -6354,7 +6354,7 @@ mod remote_cursor_tests {
     use super::*;
     use tidb_datatype::UNSPECIFIED_LENGTH;
     use crate::kv_table::KvColumn;
-    use crate::storage::{MemTableStorage, StorageError, TableStorage};
+    use tidb_kv::storage::{MemTableStorage, StorageError, TableStorage};
 
     #[test]
     fn a_full_width_projection_is_not_necessarily_identity() {
@@ -7215,9 +7215,9 @@ mod remote_cursor_tests {
             }),
         );
         table.set_pk_handle_offset(0);
-        table.set_partition(crate::partition_routing::PartitionSpec {
+        table.set_partition(tidb_table::partition_routing::PartitionSpec {
             overlapping_dropping_partition_indices: Vec::new(),
-            kind: crate::partition_routing::PartitionKind::Hash,
+            kind: tidb_table::partition_routing::PartitionKind::Hash,
             expr_text: "id".to_owned(),
             expr: tidb_expr::expression::Expression::Constant(
                 tidb_expr::expression::Constant::new(
@@ -7227,12 +7227,12 @@ mod remote_cursor_tests {
             ),
             dependencies: vec!["id".to_owned()],
             definitions: vec![
-                crate::partition_routing::PartitionDef {
+                tidb_table::partition_routing::PartitionDef {
                     id: 101,
                     name: "p0".to_owned(),
                     ..Default::default()
                 },
-                crate::partition_routing::PartitionDef {
+                tidb_table::partition_routing::PartitionDef {
                     id: 102,
                     name: "p1".to_owned(),
                     ..Default::default()

@@ -33,7 +33,7 @@ use tidb_datatype::UNSPECIFIED_LENGTH;
 use prost::Message;
 use tidb_executor::remote_scan::{PushdownPartialAggregate, PushdownStatementContext};
 use tidb_proto::tipb::DagRequest;
-use tidb_executor::storage::{StorageError, StorageIterator, TableStorage};
+use tidb_kv::storage::{StorageError, StorageIterator, TableStorage};
 use tidb_executor::{IndexRange, KvColumn, KvIndex, KvTable};
 use tidb_txnkv::Key;
 

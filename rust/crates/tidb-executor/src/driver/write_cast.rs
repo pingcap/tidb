@@ -112,10 +112,10 @@ pub(crate) fn materialize_generated_for_write(
     let result = match planned {
         // Go `Insert.GenCols`: the planner's own expressions.
         Some(planned) => {
-            crate::generated_column::materialize_planned(columns, planned, row, ctx, convert)
+            tidb_ddl_build::generated_column::materialize_planned(columns, planned, row, ctx, convert)
         }
         None => {
-            crate::generated_column::materialize_with(columns, row, false, ctx, convert)
+            tidb_ddl_build::generated_column::materialize_with(columns, row, false, ctx, convert)
         }
     };
     result.map_err(|failure| match failure {
@@ -134,7 +134,7 @@ pub(crate) fn materialize_generated_for_write(
                         table, offset, row_index, eval,
                     )))
                 }
-                (_, _, eval) => DriverError::from(crate::generated_column::GenerationError {
+                (_, _, eval) => DriverError::from(tidb_ddl_build::generated_column::GenerationError {
                     eval,
                     ..error
                 }),
@@ -146,12 +146,12 @@ pub(crate) fn materialize_generated_for_write(
 /// [`materialize_generated_for_write`]'s two failure sources, kept apart so
 /// a generation failure can still be completed with its column's index.
 enum GeneratedWriteFailure {
-    Generation(crate::generated_column::GenerationError),
+    Generation(tidb_ddl_build::generated_column::GenerationError),
     Driver(DriverError),
 }
 
-impl From<crate::generated_column::GenerationError> for GeneratedWriteFailure {
-    fn from(error: crate::generated_column::GenerationError) -> Self {
+impl From<tidb_ddl_build::generated_column::GenerationError> for GeneratedWriteFailure {
+    fn from(error: tidb_ddl_build::generated_column::GenerationError) -> Self {
         Self::Generation(error)
     }
 }

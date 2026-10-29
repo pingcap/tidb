@@ -20,7 +20,7 @@ use std::time::Instant;
 
 use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_executor::partition_pruning::pruned_ids_from_ranger;
-use tidb_executor::partition_routing::{
+use tidb_table::partition_routing::{
     PartitionDef, PartitionKind, PartitionSpec, RangeColumnBound,
 };
 use tidb_expr::{column::Column, expression::Expression, NoColumns};

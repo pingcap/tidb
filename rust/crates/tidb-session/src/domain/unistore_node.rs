@@ -78,7 +78,7 @@ impl RealTiKvSessionTransportFactory for InProcessReadSessionFactory {
 mod transaction_buffer_tests {
     use super::*;
     use tidb_store_driver::cluster_table_storage::SessionTransaction;
-    use tidb_executor::cluster_storage::MutationBuffer;
+    use tidb_kv::cluster_storage::MutationBuffer;
     use tidb_txnkv::{transaction::BufferMutation, AssertionOp, Key, UnaryCallContext};
 
     /// Go `mockstore`'s `tikv.NewKVStore` over unistore: the embedded node's
@@ -244,9 +244,9 @@ pub struct UnistoreClusterStack {
     // Guards, dropped in declaration order: reload threads first, then the
     // store they read from.
     pub _reloader: tidb_infoschema_issyncer::catalog_watch::CatalogReloader,
-    pub _sysvar_reloader: crate::domain::cluster_sysvar_seam::SysvarReloader,
+    pub _sysvar_reloader: tidb_domain_core::cluster_sysvar_seam::SysvarReloader,
     pub _stats_reloader: tidb_stats_handle_syncload::stats_watch::StatsReloader,
-    pub _binding_reloader: crate::domain::cluster_binding_seam::BindingReloader,
+    pub _binding_reloader: tidb_domain_core::cluster_binding_seam::BindingReloader,
     pub _async_stats_loader: tidb_stats_handle_syncload::stats_watch::AsyncStatsLoader,
     /// See [`InProcessStack::rpc`].
     pub rpc: tidb_unistore::rpc::RpcClient,
@@ -274,7 +274,7 @@ impl Drop for EmbeddedResourceGroups {
 /// bootstrap publish, account seeding, catalog/stats/sysvar followers, and
 /// the in-process coprocessor.
 pub fn unistore_cluster_session_stack(
-    config: &crate::domain::node_config::NodeConfig,
+    config: &tidb_domain_core::node_config::NodeConfig,
     users: &Arc<crate::domain::configured_user_store::ConfiguredUserStore>,
     spill_storage: Option<Arc<tidb_util::spill_storage::SpillStorage>>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
@@ -476,7 +476,7 @@ impl BootstrapImage {
 /// [`unistore_cluster_session_stack`] over a store that starts from `image`
 /// when one is given, skipping the bootstrap it already holds.
 pub fn unistore_cluster_session_stack_from(
-    config: &crate::domain::node_config::NodeConfig,
+    config: &tidb_domain_core::node_config::NodeConfig,
     users: &Arc<crate::domain::configured_user_store::ConfiguredUserStore>,
     spill_storage: Option<Arc<tidb_util::spill_storage::SpillStorage>>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
@@ -516,7 +516,7 @@ pub fn unistore_cluster_session_stack_from(
     // Go `initDomainSysVars` registering `setGlobalResourceControl` for every
     // store, before any global variable loads: `tidb_enable_resource_control`
     // turns client-rust's resource-control dispatch on and off.
-    *crate::vars::SET_GLOBAL_RESOURCE_CONTROL
+    *tidb_variable::vars::SET_GLOBAL_RESOURCE_CONTROL
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::new(|enable| {
         if enable {
@@ -580,7 +580,7 @@ pub fn unistore_cluster_session_stack_from(
     // `cluster_account_seam::seed_cluster_accounts` for what happened when it
     // did not.
     // Go's root INSERT in `doDMLWorks` logs nothing.
-    crate::domain::cluster_account_seam::seed_cluster_accounts(
+    tidb_domain_core::cluster_account_seam::seed_cluster_accounts(
         &opener,
         &users.accounts(),
         IN_PROCESS_TIMEOUT,
@@ -598,8 +598,8 @@ pub fn unistore_cluster_session_stack_from(
 
     // One registry for the whole node: sessions' INSERTs, the DDL owner's and
     // the statistics writers' `mysql.*` rows, and the reload's rebases.
-    let node_auto_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds> = Arc::new(
-        crate::domain::cluster_auto_id_seam::ClusterTableAutoIds::new(opener.clone(), IN_PROCESS_TIMEOUT),
+    let node_auto_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds> = Arc::new(
+        tidb_domain_core::cluster_auto_id_seam::ClusterTableAutoIds::new(opener.clone(), IN_PROCESS_TIMEOUT),
     );
     let (catalog, reloader, schema_validator) =
         crate::domain::real_tikv_node::spawn_catalog_reloader(
@@ -619,8 +619,8 @@ pub fn unistore_cluster_session_stack_from(
         )
         .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
 
-    let sysvar_publication_fence = crate::domain::cluster_sysvar_seam::SysvarPublicationFence::default();
-    let sysvar_reloader = crate::domain::cluster_sysvar_seam::SysvarReloader::spawn(
+    let sysvar_publication_fence = tidb_domain_core::cluster_sysvar_seam::SysvarPublicationFence::default();
+    let sysvar_reloader = tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn(
         users.global_vars(),
         opener.clone(),
         crate::domain::real_tikv_node::sysvar_reload_interval(config.schema_lease),
@@ -654,7 +654,7 @@ pub fn unistore_cluster_session_stack_from(
     let kv_client: Arc<dyn tidb_txnkv::Client> = Arc::new(
         tidb_copr::cop_client::CopClient::new(transport_factory),
     );
-    let (bindings, binding_reloader) = crate::domain::cluster_binding_seam::start_binding_cache(
+    let (bindings, binding_reloader) = tidb_domain_core::cluster_binding_seam::start_binding_cache(
         opener.clone(),
         Arc::clone(&catalog),
         users.global_vars(),
@@ -701,13 +701,13 @@ pub fn unistore_cluster_session_stack_from(
             IN_PROCESS_TIMEOUT,
         )),
         cluster_ddl,
-        Arc::new(crate::domain::cluster_account_seam::RealClusterAccountWriter::new(
+        Arc::new(tidb_domain_core::cluster_account_seam::RealClusterAccountWriter::new(
             Arc::new(opener.clone()),
             users.accounts(),
             IN_PROCESS_TIMEOUT,
             None,
         )),
-        Arc::new(crate::domain::cluster_sysvar_seam::RealClusterSysvarWriter::new(
+        Arc::new(tidb_domain_core::cluster_sysvar_seam::RealClusterSysvarWriter::new(
             Arc::new(opener.clone()),
             users.global_vars(),
             IN_PROCESS_TIMEOUT,
@@ -715,7 +715,7 @@ pub fn unistore_cluster_session_stack_from(
             sysvar_publication_fence,
         )),
         Arc::new(
-            crate::domain::cluster_analyze_seam::RealClusterAnalyze::new(
+            tidb_domain_core::cluster_analyze_seam::RealClusterAnalyze::new(
                 Arc::new(opener.clone()),
                 Arc::clone(&stats),
                 IN_PROCESS_TIMEOUT,
@@ -723,7 +723,7 @@ pub fn unistore_cluster_session_stack_from(
                 Arc::clone(&node_auto_ids),
             ),
         ),
-        Arc::new(crate::domain::cluster_stats_lock_seam::RealClusterStatsLock::new(
+        Arc::new(tidb_domain_core::cluster_stats_lock_seam::RealClusterStatsLock::new(
             Arc::new(opener.clone()),
             IN_PROCESS_TIMEOUT,
         )),
@@ -986,7 +986,7 @@ mod startup_schema_lease_tests {
                 lease_grant_ts,
                 opener.clone(),
                 std::time::Duration::from_secs(45),
-                Arc::new(tidb_ddl_build::table_from_meta::LocalTableAutoIds::default()),
+                Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default()),
             )
             .expect("catalog reloader");
         let transaction = opener.begin_read_only().expect("commit-time timestamp");

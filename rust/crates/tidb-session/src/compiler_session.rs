@@ -63,11 +63,11 @@ impl tidb_executor::compiler::CompilerSession for Session {
         Session::external_timestamp_read_enabled(self)
     }
 
-    fn collect_table_privileges(&self, stmt: &tidb_ast::Stmt, preparing: bool) -> Result<Vec<crate::table_privilege::TablePrivilegeRequest>, DriverError> {
+    fn collect_table_privileges(&self, stmt: &tidb_ast::Stmt, preparing: bool) -> Result<Vec<tidb_executor::table_privilege::TablePrivilegeRequest>, DriverError> {
         Session::collect_table_privileges(self, stmt, preparing)
     }
 
-    fn check_table_privilege_requests(&self, requests: &[crate::table_privilege::TablePrivilegeRequest]) -> Result<(), DriverError> {
+    fn check_table_privilege_requests(&self, requests: &[tidb_executor::table_privilege::TablePrivilegeRequest]) -> Result<(), DriverError> {
         Session::check_table_privilege_requests(self, requests)
     }
     fn prepared_statements_mut(&mut self) -> &mut tidb_executor::compiler::prepared::PreparedStore {

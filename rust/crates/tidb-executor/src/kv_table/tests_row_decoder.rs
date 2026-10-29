@@ -70,7 +70,7 @@ fn check_generated_matching(code: tidb_datatype::FieldTypeCode, mode: bool, expe
             })
             .unwrap();
         column.generated = Some(
-            crate::generated_column::build_added_generated_column(
+            tidb_ddl_build::generated_column::build_added_generated_column(
                 "v",
                 expr,
                 false,

@@ -808,7 +808,7 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
         Ok(Some((
             table_id,
             Arc::new(
-                crate::load_stats::statistics_table_from_planner_statistics(
+                tidb_stats_handle::load_stats::statistics_table_from_planner_statistics(
                     &table,
                     table_id,
                     &statistics,

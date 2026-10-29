@@ -14,7 +14,7 @@
 
 //! The PREPARED plan cache's observable contract: what
 //! `@@last_plan_from_cache` reports across `EXECUTE`s. See
-//! [`crate::prepared_plan_cache`] for what is and is not modelled.
+//! [`tidb_executor::compiler::plan_cacheable_checker`] for what is and is not modelled.
 
 use tidb_executor::compiler::PreparedAstCompile;
 use tidb_datatype::Datum;
@@ -153,7 +153,7 @@ fn the_second_execute_of_a_cacheable_statement_reports_a_hit() {
     // Go derives access-path statistics with the current ranger context.
     // Parameterized equality must cost the same range as its literal form;
     // retaining a full-table estimate can cache a scan+sort for an index read.
-    let registry = crate::process::ProcessRegistry::default();
+    let registry = tidb_executor::process::ProcessRegistry::default();
     session.attach_process(
         41,
         registry.register(41, "root".into(), "local".into(), "test".into(), None),
@@ -1464,7 +1464,7 @@ fn held_prepared_execution_reuses_published_digest() {
         .unwrap();
     let sql = "SELECT v FROM digest_reuse WHERE id=?";
     let prepared = crate::tests_support::prepare_binary(&mut session, sql);
-    let registry = crate::process::ProcessRegistry::default();
+    let registry = tidb_executor::process::ProcessRegistry::default();
     session.attach_process(
         91,
         registry.register(91, "root".into(), "local".into(), "test".into(), None),

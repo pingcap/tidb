@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use crate::domain::cluster_session_node::NodeConn;
 use crate::domain::configured_user_store::ConfiguredUserStore;
-use crate::domain::node_config::{NodeConfig, NodeOptions, StatsLease};
+use tidb_domain_core::node_config::{NodeConfig, NodeOptions, StatsLease};
 use crate::domain::unistore_node::{
     unistore_cluster_session_stack_from, BootstrapImage, UnistoreClusterStack,
 };

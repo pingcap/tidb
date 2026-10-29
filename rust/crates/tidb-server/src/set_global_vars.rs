@@ -34,7 +34,7 @@
 
 use tidb_session::GlobalSysvars;
 
-use tidb_session::domain::node_config::NodeConfig;
+use tidb_domain_core::node_config::NodeConfig;
 
 /// Applies the ported `setGlobalVars` writes to the node's sysvar registry.
 pub fn set_global_vars(config: &NodeConfig, globals: &GlobalSysvars) {
@@ -153,7 +153,7 @@ pub fn set_global_vars(config: &NodeConfig, globals: &GlobalSysvars) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_session::domain::node_config::NodeOptions;
+    use tidb_domain_core::node_config::NodeOptions;
 
     struct RestoreMemoryUsageAlarmRatio(f64);
 
@@ -173,13 +173,13 @@ mod tests {
             RestoreMemoryUsageAlarmRatio(tidb_vardef::memory_usage_alarm_ratio());
         // Registry defaults before any startup push (Go's first asserts).
         assert_eq!(
-            tidb_session::sysvar::get_sys_var("tidb_isolation_read_engines")
+            tidb_variable::sysvar::get_sys_var("tidb_isolation_read_engines")
                 .expect("registered")
                 .value,
             "tikv,tiflash,tidb"
         );
         assert_eq!(
-            tidb_session::sysvar::get_sys_var("tidb_mem_quota_query")
+            tidb_variable::sysvar::get_sys_var("tidb_mem_quota_query")
                 .expect("registered")
                 .value,
             "1073741824"

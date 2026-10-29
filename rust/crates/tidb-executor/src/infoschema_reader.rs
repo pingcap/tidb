@@ -20,7 +20,7 @@
 //! so the column lists must match exactly -- a `SELECT *` that returns the
 //! wrong arity breaks a client that reads by position.
 //!
-//! Column definitions live in `crate::infoschema_meta`. Catalog-backed
+//! Column definitions live in `tidb_infoschema::infoschema_meta`. Catalog-backed
 //! readers below share the statement's schema and privilege snapshot. Session
 //! dispatch composes process-owned providers for runtime tables. A declared
 //! virtual table does not imply that its live provider is implemented; remaining
@@ -32,7 +32,7 @@ use tidb_datatype::{
 use tidb_privilege::PrivilegeTypeExt;
 use crate::{Catalog, KvTable, TableEntry};
 
-pub use crate::infoschema_meta::{
+pub use tidb_infoschema::infoschema_meta::{
     is_information_schema, served_table_names, table_schema, INFORMATION_SCHEMA,
 };
 
@@ -2643,7 +2643,7 @@ fn columns_rows(
                 // Hidden columns are absent here, and ORDINAL_POSITION
                 // counts only the visible ones -- which needs no separate
                 // counter, because a visible column's offset IS its
-                // physical offset (see `crate::expression_index`).
+                // physical offset (see `tidb_ddl_build::expression_index`).
                 // Captured: a table with an expression index and columns
                 // `a`, `z` reports exactly a|1, z|2.
                 for (offset, column) in table.visible_columns().iter().enumerate() {
@@ -2718,13 +2718,13 @@ fn column_row(
             _ if field_type.has_flag(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE) => {
                 Datum::Null
             }
-            Some(crate::column_default::ColumnDefault::Value(Datum::Null)) | None => {
+            Some(tidb_table::column_default::ColumnDefault::Value(Datum::Null)) | None => {
                 Datum::Null
             }
             // Go `infoschema_reader.go` fills COLUMN_DEFAULT from
             // `ColDesc.DefaultValue`, the same string `SHOW COLUMNS` reports,
             // so a computed default reports its stored text unparenthesised.
-            Some(crate::column_default::ColumnDefault::Value(value)) => {
+            Some(tidb_table::column_default::ColumnDefault::Value(value)) => {
                 // Go's INFORMATION_SCHEMA retriever deliberately keeps the
                 // stored metadata text when GetColDefaultValue cannot
                 // materialize it; SHOW propagates the same conversion error.
@@ -2763,7 +2763,7 @@ fn column_row(
             column
                 .default_value
                 .as_ref()
-                .is_some_and(crate::column_default::ColumnDefault::is_default_generated),
+                .is_some_and(tidb_table::column_default::ColumnDefault::is_default_generated),
         )),
         text(privileges),
         // Go `COLUMN_COMMENT`, from `ColumnInfo.Comment`.

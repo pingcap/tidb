@@ -77,7 +77,7 @@ use crate::remote_scan::{
     CopPlanKind, PushdownAggregateKind, PushdownPartialAggregate, PushdownRowStream,
     PushdownScanColumn, PushdownScanRequest, PushdownScannerError, EXTRA_HANDLE_COLUMN_ID,
 };
-use crate::storage::StorageError;
+use tidb_kv::storage::StorageError;
 use crate::wide_scan_selection::{accepts_in, wide_scan_selection_conditions_in};
 
 enum LoweredAggregate {

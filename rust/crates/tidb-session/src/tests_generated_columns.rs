@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! `GENERATED ALWAYS AS (...)` end to end: one test per rule
-//! `tidb_executor::generated_column` transcreates, over a real session.
+//! `tidb_ddl_build::generated_column` transcreates, over a real session.
 //!
 //! Every expectation here was CAPTURED from real TiDB through
 //! `rust/difftests/gorun` before it was written down -- the whole script is

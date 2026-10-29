@@ -23,7 +23,7 @@
 //! the implementation the node hands it.
 
 use tidb_ddl_build::session_pool::{DdlSessionPool, ForeignKeyCheck, ReorgSessionVars};
-use tidb_ddl_build::table_from_meta::{cluster_table, AutoIdSource};
+use tidb_table::table_from_meta::{cluster_table, AutoIdSource};
 use tidb_error::mysql::MysqlError;
 use tidb_ddl_build::partition_reorg::KvTablePartitionReorg;
 use tidb_executor::{KvTableDdl, KvTableReader, StmtContext};

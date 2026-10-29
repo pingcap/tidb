@@ -47,7 +47,6 @@ pub mod exec_stmt_observation;
 pub mod adapter;
 pub mod base_join_probe;
 pub mod concurrent_entry_map;
-pub use tidb_util::execdetails;
 pub mod sessionctx;
 pub mod stats_stmt_ctx;
 pub use stats_stmt_ctx::{PendingStatisticsLoad, StatsStmtCtx, StatsStmtCtxData};
@@ -126,10 +125,8 @@ mod approx_count_distinct;
 pub(crate) use tidb_table::bad_null;
 #[cfg(test)]
 mod tests_bad_null;
-pub use tidb_kv::cluster_storage;
 #[cfg(test)]
 mod tests_cluster_storage;
-pub use tidb_table::column_default;
 pub mod cte_storage;
 pub mod ddl;
 pub mod ddl_sequence;
@@ -143,12 +140,10 @@ pub mod driver;
 pub mod wide_scan_selection;
 pub mod executor;
 pub mod explain;
-pub use tidb_ddl_build::expression_index;
 mod farmhash;
 pub(crate) mod foreign_key;
 pub use tidb_distsql::CopResponseSink;
 pub use foreign_key::check_foreign_key_constrain;
-pub use tidb_ddl_build::generated_column;
 #[cfg(test)]
 mod tests_generated_column_ddl;
 pub(crate) use tidb_table::handle_range;
@@ -165,9 +160,8 @@ pub use tidb_keydecoder as keydecoder;
 pub mod kv_table;
 pub mod limit;
 pub mod load_data;
-pub use tidb_stats_handle::load_stats;
 pub mod max_one_row;
-pub use tidb_kv::mem_quota;
+use tidb_kv::mem_quota;
 #[cfg(test)]
 mod tests_mem_quota;
 pub mod mem_reader;
@@ -178,7 +172,7 @@ use tidb_kv::mpp_query;
 mod tests_mpp_query;
 pub(crate) mod merge_join_plan;
 pub mod partition_pruning;
-pub use tidb_table::partition_routing;
+use tidb_table::partition_routing;
 mod physical_cte;
 pub mod select_lock;
 #[cfg(test)]
@@ -225,14 +219,12 @@ pub mod projection;
 mod pushdown_blacklist;
 pub mod remote_scan;
 pub mod selection;
-pub use tidb_table::sequence;
 pub mod show_stats;
 pub mod shuffle;
 pub mod sort;
 pub mod sort_partition;
 pub mod sort_util;
 pub mod stats_lock;
-pub use tidb_kv::storage;
 pub mod table_access;
 pub mod table_dual;
 mod table_sample;
@@ -259,7 +251,6 @@ pub mod union_scan;
 pub(crate) mod vec_group_checker;
 pub mod view;
 pub mod window;
-pub use tidb_table::zero_date;
 
 pub use apply::ApplyExec;
 pub use cte_storage::CteStorage;
@@ -267,7 +258,6 @@ pub use ddl::{append_partition_defs, escape_identifier, linear_partitioning_warn
 pub use ddl_sequence::show_create_sequence;
 #[cfg(test)]
 pub(crate) use driver::access::run_prepared_select_for_test;
-pub use tidb_infoschema::infoschema_meta;
 pub use driver::plan_cache::{PlanCacheInvalidation, SessionPlanCache};
 pub use driver::{
     access::{
@@ -369,6 +359,5 @@ pub(crate) mod test_temp_storage {
 }
 
 /// Session-owned reference counts over shared advisory-lock services.
-pub use tidb_sessionctx::advisory_lock_state;
 pub use tidb_infoschema::TidbDecodeKeySnapshot;
 pub use tidb_infoschema::StatementStage;

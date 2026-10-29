@@ -2681,7 +2681,7 @@ fn fk_access_batch_common_primary_prefix_and_exact_lookup() {
 // that no dependent row exists (Go FKCheckExec.checkKey/checkPrefixKey).
 #[test]
 fn fk_access_batch_read_errors_are_not_success_or_ignored_violations() {
-    use tidb_executor::storage::{StorageError, StorageIterator, TableStorage};
+    use tidb_kv::storage::{StorageError, StorageIterator, TableStorage};
     use tidb_txnkv::Key;
     #[derive(Debug, Clone)]
     struct FailedReads;

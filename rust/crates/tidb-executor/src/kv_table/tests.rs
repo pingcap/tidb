@@ -383,7 +383,7 @@ fn drop_index_removes_orphan_entries_without_decoding_rows() {
 
 #[test]
 fn drop_index_covers_all_partition_ranges_and_global_ownership() {
-    use crate::partition_routing::{PartitionDef, PartitionKind, PartitionSpec};
+    use tidb_table::partition_routing::{PartitionDef, PartitionKind, PartitionSpec};
     for global in [false, true] {
         let mut table = KvTable::new(42, Vec::new());
         *table.partition_mut() = Some(Box::new(PartitionSpec {

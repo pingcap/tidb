@@ -42,7 +42,7 @@ fn column_type(declaration: &str) -> FieldType {
         .next()
         .expect("a collation names its charset");
     let mut field_type =
-        crate::ddl::column_field_type::build_field_type("a", &column.ty, charset, &collate)
+        tidb_ddl_build::column_field_type::build_field_type("a", &column.ty, charset, &collate)
             .expect("the probe type resolves");
     if column
         .options

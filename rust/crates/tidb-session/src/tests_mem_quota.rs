@@ -196,7 +196,7 @@ fn set_global_is_visible_through_an_unprefixed_read_of_a_global_only_var() {
 /// `tidb_mem_quota_query = 1` Go answers 8175 even with tmp storage ON,
 /// because the READ path's own tracker is cancelled before the sort's spill
 /// action can release anything. This tier accounts in the sort only (see
-/// `tidb_executor::mem_quota`'s "WHICH OPERATORS ACCOUNT"), so with spilling
+/// `tidb_kv::mem_quota`'s "WHICH OPERATORS ACCOUNT"), so with spilling
 /// on it spills and returns rows there. Closing that needs read-path
 /// accounting, not a spill change -- so the gate below is set explicitly
 /// rather than the divergence being papered over.
@@ -422,7 +422,7 @@ fn a_hash_join_with_room_answers_what_go_answers() {
 /// Go's extra consumption is the coprocessor read path (`checkRespOOM`) and
 /// `HashAggExec.initPartialWorkers`, both visible in the 8175 stack Go
 /// prints at 4096 -- neither of which this tier accounts (see
-/// `tidb_executor::mem_quota`'s "WHICH OPERATORS ACCOUNT"). That is #289's
+/// `tidb_kv::mem_quota`'s "WHICH OPERATORS ACCOUNT"). That is #289's
 /// mechanism, not a spill defect, and closing it needs read-path accounting
 /// rather than a change here.
 ///
@@ -472,7 +472,7 @@ fn dml_batch_context_rebuild_keeps_one_active_statement_tracker() {
     );
     drop(first);
     assert!(second
-        .write_accountant(tidb_executor::mem_quota::label::UPDATE)
+        .write_accountant(tidb_kv::mem_quota::label::UPDATE)
         .account_row(&[tidb_datatype::Datum::Int(1)])
         .is_err());
 }
@@ -491,7 +491,7 @@ fn dml_batch_late_previous_authority_drop_cannot_unbind_current_oom_action() {
     drop(previous);
     assert!(
         current
-            .write_accountant(tidb_executor::mem_quota::label::UPDATE)
+            .write_accountant(tidb_kv::mem_quota::label::UPDATE)
             .account_row(&[tidb_datatype::Datum::Int(1)])
             .is_err(),
         "retiring an old result must not clear the new statement's OOM action"

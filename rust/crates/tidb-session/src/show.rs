@@ -93,12 +93,12 @@ impl Session {
     /// `Statistics` providers, sorted by name; `GLOBAL` skips the
     /// session-only ones, and SEM hides its invisible ones.
     fn show_status_rows(&self, global: bool) -> Result<Vec<Vec<Datum>>, DriverError> {
-        let status_vars = crate::statusvar::get_status_vars(Some(&self.vars))
+        let status_vars = tidb_variable::statusvar::get_status_vars(Some(&self.vars))
             .map_err(|error| DriverError::Mysql(tidb_executor::MysqlError::unknown(error)))?;
         Ok(status_vars
             .into_iter()
             .filter(|(name, status)| {
-                !(global && status.scope == crate::sysvar::SCOPE_SESSION)
+                !(global && status.scope == tidb_variable::sysvar::SCOPE_SESSION)
                     && !self.sem_hides_status_var(name)
             })
             .map(|(name, status)| {

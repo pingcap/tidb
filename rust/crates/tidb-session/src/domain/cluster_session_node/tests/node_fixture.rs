@@ -267,7 +267,7 @@ pub(super) struct MockNode {
     pub(super) factories: std::sync::Mutex<Vec<Arc<Domain>>>,
     /// The node's auto-id registry, which every connection's table
     /// allocates through.
-    pub(super) auto_ids: Arc<crate::domain::cluster_session::LocalTableAutoIds>,
+    pub(super) auto_ids: Arc<tidb_domain_core::cluster_session::LocalTableAutoIds>,
 }
 
 impl MockNode {
@@ -283,8 +283,8 @@ impl MockNode {
 /// A detached copy of one registry's rows, since
 /// [`PrivilegeRegistry::replace_from`] empties its source.
 pub(super) fn clone_registry(source: &PrivilegeRegistry) -> PrivilegeRegistry {
-    let image = crate::domain::cluster_privileges::cluster_image_from_registry(source);
-    crate::domain::cluster_privileges::registry_from_cluster(&image).registry
+    let image = tidb_domain_core::cluster_privileges::cluster_image_from_registry(source);
+    tidb_domain_core::cluster_privileges::registry_from_cluster(&image).registry
 }
 
 /// The node IS its committed store as far as an assertion is concerned, so
@@ -334,9 +334,9 @@ pub(super) fn open_session_on(node: &MockNode) -> Session {
         node,
         Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
-        Arc::clone(&node.sysvars) as Arc<dyn crate::domain::cluster_sysvar_seam::ClusterSysvarWriter>,
+        Arc::clone(&node.sysvars) as Arc<dyn tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter>,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
-        Arc::new(MockStatsLock) as Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
+        Arc::new(MockStatsLock) as Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
     )
 }
 
@@ -349,9 +349,9 @@ pub(super) fn open_session_on_with_context(node: &MockNode, context: SessionCont
         node,
         Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
-        Arc::clone(&node.sysvars) as Arc<dyn crate::domain::cluster_sysvar_seam::ClusterSysvarWriter>,
+        Arc::clone(&node.sysvars) as Arc<dyn tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter>,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
-        Arc::new(MockStatsLock) as Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
+        Arc::new(MockStatsLock) as Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
         context,
     )
 }
@@ -363,15 +363,15 @@ pub(super) fn open_session_on_with_ddl(node: &MockNode, ddl: Arc<dyn ClusterDdl>
         node,
         ddl,
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
-        Arc::clone(&node.sysvars) as Arc<dyn crate::domain::cluster_sysvar_seam::ClusterSysvarWriter>,
+        Arc::clone(&node.sysvars) as Arc<dyn tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter>,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
-        Arc::new(MockStatsLock) as Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
+        Arc::new(MockStatsLock) as Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
     )
 }
 
 pub(super) fn open_session_on_with_sysvars(
     node: &MockNode,
-    sysvars: Arc<dyn crate::domain::cluster_sysvar_seam::ClusterSysvarWriter>,
+    sysvars: Arc<dyn tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter>,
 ) -> Session {
     open_session_on_with_seams(
         node,
@@ -379,7 +379,7 @@ pub(super) fn open_session_on_with_sysvars(
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
         sysvars,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
-        Arc::new(MockStatsLock) as Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
+        Arc::new(MockStatsLock) as Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
     )
 }
 
@@ -391,21 +391,21 @@ pub(super) fn open_session_on_with_analyze(
         node,
         Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
-        Arc::clone(&node.sysvars) as Arc<dyn crate::domain::cluster_sysvar_seam::ClusterSysvarWriter>,
+        Arc::clone(&node.sysvars) as Arc<dyn tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter>,
         analyze,
-        Arc::new(MockStatsLock) as Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
+        Arc::new(MockStatsLock) as Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
     )
 }
 
 pub(super) fn open_session_on_with_stats_lock(
     node: &MockNode,
-    stats_lock: Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
+    stats_lock: Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
 ) -> Session {
     open_session_on_with_seams(
         node,
         Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
-        Arc::clone(&node.sysvars) as Arc<dyn crate::domain::cluster_sysvar_seam::ClusterSysvarWriter>,
+        Arc::clone(&node.sysvars) as Arc<dyn tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter>,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
         stats_lock,
     )
@@ -415,9 +415,9 @@ fn open_session_on_with_seams(
     node: &MockNode,
     ddl: Arc<dyn ClusterDdl>,
     accounts: Arc<dyn ClusterAccountWriter>,
-    sysvars: Arc<dyn crate::domain::cluster_sysvar_seam::ClusterSysvarWriter>,
+    sysvars: Arc<dyn tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter>,
     analyze: Arc<dyn ClusterAnalyze>,
-    stats_lock: Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
+    stats_lock: Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
 ) -> Session {
     let mut session = open_session_on_with_context_and_seams(
         node,
@@ -441,9 +441,9 @@ fn open_session_on_with_context_and_seams(
     node: &MockNode,
     ddl: Arc<dyn ClusterDdl>,
     accounts: Arc<dyn ClusterAccountWriter>,
-    sysvars: Arc<dyn crate::domain::cluster_sysvar_seam::ClusterSysvarWriter>,
+    sysvars: Arc<dyn tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter>,
     analyze: Arc<dyn ClusterAnalyze>,
-    stats_lock: Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
+    stats_lock: Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
     context: SessionContext,
 ) -> Session {
     open_session_on_with_context_and_seams_and_usage(
@@ -459,9 +459,9 @@ pub(super) fn open_session_on_with_usage(
         node,
         Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
-        Arc::clone(&node.sysvars) as Arc<dyn crate::domain::cluster_sysvar_seam::ClusterSysvarWriter>,
+        Arc::clone(&node.sysvars) as Arc<dyn tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter>,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
-        Arc::new(MockStatsLock) as Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
+        Arc::new(MockStatsLock) as Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
         session_context(1),
     );
     session
@@ -475,9 +475,9 @@ fn open_session_on_with_context_and_seams_and_usage(
     node: &MockNode,
     ddl: Arc<dyn ClusterDdl>,
     accounts: Arc<dyn ClusterAccountWriter>,
-    sysvars: Arc<dyn crate::domain::cluster_sysvar_seam::ClusterSysvarWriter>,
+    sysvars: Arc<dyn tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter>,
     analyze: Arc<dyn ClusterAnalyze>,
-    stats_lock: Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
+    stats_lock: Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
     context: SessionContext,
 ) -> (Session, Arc<tidb_stats_handle_usage::StatsUsageHandle>) {
     let cluster = Arc::clone(&node.cluster);

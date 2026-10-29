@@ -31,7 +31,6 @@ pub mod modify_column_type;
 pub mod partition_interval;
 pub mod table_partition_range;
 pub mod table_partition_list;
-pub use tidb_table::table_from_meta;
 pub mod table_info_build;
 pub mod table_partition;
 pub mod table_lock;

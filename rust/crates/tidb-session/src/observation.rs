@@ -174,7 +174,7 @@ impl Session {
 
     pub(crate) fn observe_privilege_tables(
         &self,
-        requests: &[crate::table_privilege::TablePrivilegeRequest],
+        requests: &[tidb_executor::table_privilege::TablePrivilegeRequest],
     ) {
         self.observe_statement_tables(
             requests
@@ -598,7 +598,7 @@ impl Session {
                         tidb_hint::extract_table_hints_from_stmt_node(&handled).0;
                 }
                 (observation.binding_sql, observation.binding_digest) =
-                    crate::binding::normalize_with_db(stmt, &self.vars.current_db);
+                    tidb_bindinfo::binding::normalize_with_db(stmt, &self.vars.current_db);
             }
             observation.prepared |= prepared;
             // Go's ExecuteStmt node records whatever it executes.
@@ -800,7 +800,7 @@ impl Session {
     /// `COM_STMT_PREPARE`).
     #[must_use]
     pub fn dispatch_failure_sql(&self, sql: &str) -> String {
-        crate::slow_log::format_sql(
+        tidb_variable::slow_log::format_sql(
             &tidb_parser::normalize(sql, self.redact_mode()),
             self.query_log_max_len(),
         )
@@ -819,7 +819,7 @@ impl Session {
                 &self.plan_cache_params_string(),
             ));
         }
-        crate::slow_log::format_sql(&text, self.query_log_max_len())
+        tidb_variable::slow_log::format_sql(&text, self.query_log_max_len())
     }
 
     /// Go `SessionVars.GetReadableTxnMode`: `@@tidb_txn_mode`, `OPTIMISTIC`
@@ -918,7 +918,7 @@ impl Session {
         {
             return;
         }
-        let mut query = crate::slow_log::query_replacer(&self.text_to_log(observation, false));
+        let mut query = tidb_variable::slow_log::query_replacer(&self.text_to_log(observation, false));
         let mode = self.redact_log_mode();
         if mode != "ON" {
             query.push_str(&tidb_util::redact::string(
@@ -1192,10 +1192,10 @@ impl tidb_executor::exec_stmt_observation::ExecStmtObservation for Session {
         (start_ts, for_update_ts.max(start_ts))
     }
 
-    fn slow_log_warnings(&self) -> Vec<crate::slow_log::JsonSqlWarnForSlowLog> {
+    fn slow_log_warnings(&self) -> Vec<tidb_variable::slow_log::JsonSqlWarnForSlowLog> {
         self.warnings
             .iter()
-            .map(|warning| crate::slow_log::JsonSqlWarnForSlowLog {
+            .map(|warning| tidb_variable::slow_log::JsonSqlWarnForSlowLog {
                 level: warning.level.clone(),
                 message: warning.message().to_owned(),
                 is_extra: false,

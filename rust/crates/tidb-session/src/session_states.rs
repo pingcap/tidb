@@ -123,7 +123,7 @@ impl Session {
             )));
         }
         let mut system_vars = BTreeMap::new();
-        for definition in crate::sysvar::SYS_VARS.iter() {
+        for definition in tidb_variable::sysvar::SYS_VARS.iter() {
             if !definition.has_session_scope() || definition.is_read_only() {
                 continue;
             }
@@ -329,7 +329,7 @@ impl Session {
                         )
                     })
                     .collect();
-                    let mut binding = crate::binding_utils::new_binding_from_storage(&row)
+                    let mut binding = tidb_bindinfo::binding_utils::new_binding_from_storage(&row)
                         .ok_or_else(|| invalid_state("invalid session binding"))?;
                     binding.sql_digest =
                         tidb_parser::digest_normalized(&binding.original_sql).to_string();

@@ -20,7 +20,7 @@ use std::io::{self, Read};
 
 use tidb_log::{Field, Value};
 
-use crate::sysvar::{get_sys_var, SCOPE_SESSION};
+use tidb_variable::sysvar::{get_sys_var, SCOPE_SESSION};
 use crate::SessionVars;
 
 const INNODB_LOCK_WAIT_TIMEOUT: &str = "innodb_lock_wait_timeout";

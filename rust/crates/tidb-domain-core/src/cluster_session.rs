@@ -40,10 +40,10 @@ use std::sync::{Arc, Mutex};
 use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_stats_handle_syncload::stats_watch::{StatsSnapshot, TableStatsState};
 use tidb_executor::access_cost::TableStatistics;
-use tidb_executor::cluster_storage::ClusterTableStorage;
+use tidb_kv::cluster_storage::ClusterTableStorage;
 use tidb_executor::driver::{Catalog, ViewDef};
 use tidb_executor::kv_table::KvTable;
-use tidb_executor::storage::TableStorage;
+use tidb_kv::storage::TableStorage;
 #[cfg(test)]
 use tidb_model::GoShared;
 use tidb_model::{SchemaState, TableInfo};
@@ -55,9 +55,9 @@ const PRI_KEY_FLAG: u32 = 1 << 1;
 // Go `tables.TableFromMeta` and the auto-id seam moved beside the DDL
 // planner; the server keeps reaching them by their old paths.
 #[cfg(test)]
-pub use tidb_ddl_build::table_from_meta::kv_index;
-pub use tidb_ddl_build::table_from_meta::{cluster_table, AutoIdKind};
-pub use tidb_ddl_build::table_from_meta::{AutoIdSource, LocalTableAutoIds, TableAutoIds};
+pub use tidb_table::table_from_meta::kv_index;
+pub use tidb_table::table_from_meta::{cluster_table, AutoIdKind};
+pub use tidb_table::table_from_meta::{AutoIdSource, LocalTableAutoIds, TableAutoIds};
 
 /// Why one loaded table is not part of the session's catalog.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -379,19 +379,20 @@ pub fn planner_statistics(stats: &tidb_stats::Table, table: &TableInfo) -> Table
             (index.id, index.columns.len(), index.unique)
         })
         .collect::<Vec<_>>();
-    tidb_executor::load_stats::table_statistics_from_table_schema(stats, &columns, &indexes)
+    tidb_stats_handle::load_stats::table_statistics_from_table_schema(stats, &columns, &indexes)
 }
 
 #[cfg(test)]
 mod tests {
     use tidb_executor::KvTableDdl;
 use super::*;
+use tidb_table::table_from_meta::kv_index;
 
     use std::collections::BTreeMap;
     use tidb_ast::CiString;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-    use tidb_executor::cluster_storage::{ClusterSnapshot, MutationBuffer, SnapshotPairs};
-    use tidb_executor::storage::StorageError;
+    use tidb_kv::cluster_storage::{ClusterSnapshot, MutationBuffer, SnapshotPairs};
+    use tidb_kv::storage::StorageError;
     use tidb_model::column::ColumnInfo;
     use tidb_model::db::DBInfo;
     use tidb_model::index::{IndexColumn, IndexInfo};
@@ -1059,7 +1060,7 @@ use super::*;
             .expect("a RANGE-partitioned table loads");
         let spec = loaded.partition().expect("the routing spec came back");
         assert_eq!(spec.physical_ids(), vec![701, 702]);
-        let tidb_executor::partition_routing::PartitionKind::Range { less_than, .. } = &spec.kind
+        let tidb_table::partition_routing::PartitionKind::Range { less_than, .. } = &spec.kind
         else {
             panic!(
                 "RANGE metadata must rebuild as a RANGE spec, got {:?}",
@@ -1070,8 +1071,8 @@ use super::*;
             matches!(
                 less_than.as_slice(),
                 [
-                    tidb_executor::partition_routing::RangeBound::Value(10),
-                    tidb_executor::partition_routing::RangeBound::MaxValue
+                    tidb_table::partition_routing::RangeBound::Value(10),
+                    tidb_table::partition_routing::RangeBound::MaxValue
                 ]
             ),
             "the stored text folded back to the written bounds, got {less_than:?}"
@@ -1108,7 +1109,7 @@ use super::*;
             .expect("a LIST COLUMNS table loads");
         let spec = loaded.partition().expect("the routing spec came back");
         assert_eq!(spec.physical_ids(), vec![801, 802]);
-        let tidb_executor::partition_routing::PartitionKind::ListColumns {
+        let tidb_table::partition_routing::PartitionKind::ListColumns {
             values,
             default_partition,
             ..

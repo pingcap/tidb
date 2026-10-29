@@ -112,7 +112,7 @@ fn integer_cell(value: i64, type_code: u8) -> Option<BinaryResultCell> {
     }
 }
 
-use crate::resultset_source::ResultSetSource;
+use tidb_session::domain::resultset_source::ResultSetSource;
 use crate::resultset_writer::{
     write_result_set_tracked, FramedResultSetSink, ResultSetSink, ResultSetWriteError,
     ResultSetWriteOutcome,
@@ -149,7 +149,7 @@ pub fn write_connection_result_set_to_sink<S: ResultSetSource, W: ResultSetSink>
     batch_size: usize,
 ) -> Result<ResultSetWriteOutcome, ResultSetWriteError> {
     let started = std::time::Instant::now();
-    let mut timed = crate::resultset_source::PullTimedResultSetSource::new(source);
+    let mut timed = tidb_session::domain::resultset_source::PullTimedResultSetSource::new(source);
     let result = write_result_set_tracked(&mut timed, sink, options, batch_size);
     let pulled = timed.pulled();
     let column_count = timed.column_count();
@@ -185,7 +185,7 @@ pub fn write_connection_binary_result_set_to_sink<S: ResultSetSource, W: ResultS
     batch_size: usize,
 ) -> Result<ResultSetWriteOutcome, ResultSetWriteError> {
     let started = std::time::Instant::now();
-    let mut timed = crate::resultset_source::PullTimedResultSetSource::new(source);
+    let mut timed = tidb_session::domain::resultset_source::PullTimedResultSetSource::new(source);
     let result = write_binary_result_set_tracked(&mut timed, sink, options, batch_size);
     let pulled = timed.pulled();
     let column_count = timed.column_count();
@@ -629,7 +629,7 @@ mod tests {
         result_chunk_cells: Option<i64>,
     }
 
-    impl crate::resultset_source::ResultSetSource for ReportingSource {
+    impl tidb_session::domain::resultset_source::ResultSetSource for ReportingSource {
         fn next_batch(
             &mut self,
             max_rows: usize,

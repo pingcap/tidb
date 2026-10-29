@@ -118,7 +118,7 @@
 //! quota to `1 << 18` and asserts `--error 8175`); unaccounted, this port ran
 //! until the OS killed the process, so the corpus HUNG instead of diverging.
 //!
-//! Two call sites now consume against [`crate::mem_quota::StatementMemory`],
+//! Two call sites now consume against [`tidb_kv::mem_quota::StatementMemory`],
 //! each followed immediately by `check()`, exactly as
 //! [`crate::sort::SortExec::fetch_and_sort`] does:
 //!
@@ -158,7 +158,7 @@ use crate::hash_join::{
     row_hash, row_hash_chunk, row_hash_chunk_batched, row_key, row_key_by, BuildError, BuildTable,
     Chain, EquiKey, FastBytesMap, KeyClass, KeyError,
 };
-use crate::mem_quota::StatementMemory;
+use tidb_kv::mem_quota::StatementMemory;
 mod index_hash;
 mod output;
 use index_hash::{

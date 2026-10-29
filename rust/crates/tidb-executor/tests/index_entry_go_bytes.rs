@@ -32,7 +32,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
-use tidb_executor::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
+use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 use tidb_executor::{IndexRange, KvColumn, KvIndex, KvTable};
 use tidb_txnkv::Key;
 

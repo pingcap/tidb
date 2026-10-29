@@ -1409,7 +1409,7 @@ fn failed_login_attempts_auto_lock_reports_3955_over_the_wire_until_unlocked() {
 /// session copy, made at connect) but visible immediately through that same
 /// peer's `@@global.x` -- and a BRAND NEW connection opened afterward
 /// inherits the new value as its own session default. This is the wire-level
-/// proof of the rule `tidb_session::vars` documents and the in-process
+/// proof of the rule `tidb_variable::vars` documents and the in-process
 /// `tidb_session::tests_global_vars` module unit-tests: two independently
 /// authenticated connections must actually share ONE `GlobalSysvars` table
 /// (the node's, booted over the store), not two private copies that happen

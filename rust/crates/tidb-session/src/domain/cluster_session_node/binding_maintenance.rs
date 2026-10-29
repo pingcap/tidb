@@ -15,9 +15,9 @@
 //! Binding cache refresh and maintenance use the existing internal-session
 //! authority, including its transaction, record locks and SQL executor.
 use super::{Domain, DomainSessions as _, InternalBindingWriter};
-use crate::binding::Binding;
+use tidb_bindinfo::binding::Binding;
 use crate::binding_arm::GlobalBindingWriter;
-use crate::binding_utils::{InternalSqlRunner, BINDING_STORAGE_COLUMNS};
+use tidb_bindinfo::binding_utils::{InternalSqlRunner, BINDING_STORAGE_COLUMNS};
 use crate::Session;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -49,7 +49,7 @@ impl BindingSessions {
         Ok(BindingRunner { session })
     }
 }
-impl crate::domain::cluster_binding_seam::BindingSessionPool for BindingSessions {
+impl tidb_domain_core::cluster_binding_seam::BindingSessionPool for BindingSessions {
     fn load(&self, boundary: Option<&str>) -> Result<Vec<Vec<Datum>>, String> {
         let mut runner = self.open()?;
         let (condition, args) = match boundary {
@@ -86,7 +86,7 @@ impl crate::domain::cluster_binding_seam::BindingSessionPool for BindingSessions
             .iter()
             .map(|binding| binding.usage_snapshot())
             .collect::<Vec<_>>();
-        let result = crate::binding_utils::update_binding_usage_info_to_storage(
+        let result = tidb_bindinfo::binding_utils::update_binding_usage_info_to_storage(
             &mut runner,
             &mut snapshots,
             chrono::Utc::now(),
@@ -137,7 +137,7 @@ impl InternalSqlRunner for BindingRunner {
 /// maintenance on sessions the session package opens over `domain`.
 pub fn attach_binding_sessions(
     domain: &Arc<Domain>,
-    bindings: &dyn crate::domain::cluster_binding_seam::ClusterBindings,
+    bindings: &dyn tidb_domain_core::cluster_binding_seam::ClusterBindings,
 ) {
     bindings.attach_session_pool(Arc::new(BindingSessions::new(domain)));
 }

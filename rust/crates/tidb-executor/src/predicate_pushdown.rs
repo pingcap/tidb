@@ -963,12 +963,12 @@ mod tests {
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_txnkv::Key;
 
-    use crate::cluster_storage::{
+    use tidb_kv::cluster_storage::{
         ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
     };
     use crate::driver::{run_select_on, Catalog};
     use crate::kv_table::{KvColumn, KvTable};
-    use crate::storage::StorageError;
+    use tidb_kv::storage::StorageError;
 
     /// A snapshot over a fixed map: the committed half of a cluster read.
     #[derive(Debug, Default)]

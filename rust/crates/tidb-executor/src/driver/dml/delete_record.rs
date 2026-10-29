@@ -84,7 +84,7 @@ impl<'a> DeleteRecords<'a> {
         }
         if has_triggers {
             ctx.statement_memory()
-                .write_accountant(crate::mem_quota::label::DELETE)
+                .write_accountant(tidb_kv::mem_quota::label::DELETE)
                 .account_row(old)
                 .map_err(DriverError::from)?;
             let slot = self

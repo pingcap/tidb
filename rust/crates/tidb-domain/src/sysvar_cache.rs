@@ -70,7 +70,7 @@
 //!   `skip_sysvar_cache` are the *results* of Go's `SysVar.SkipInit()` and
 //!   `SysVar.SkipSysvarCache()` (`variable.go:475` and `:489`), not the raw
 //!   `skipInit` field. The already-ported registry is
-//!   `tidb_session::sysvar`; it is deliberately not depended on, because
+//!   `tidb_variable::sysvar`; it is deliberately not depended on, because
 //!   `tidb-session` re-exports `tidb-planner` and `tidb-executor` and
 //!   `pkg/domain` must stay below them.
 //! - `// boundary:` Go `variable.SysVar.ValidateWithRelaxedValidation` and

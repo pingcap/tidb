@@ -63,7 +63,7 @@ use tidb_datatype::Datum;
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_executor::executor::{ExecError, Executor, ExecutorMeta};
 use tidb_executor::hash_agg::{AggFunc, AggKind, HashAggContext, HashAggExec};
-use tidb_executor::mem_quota::{OomAction, StatementMemory};
+use tidb_kv::mem_quota::{OomAction, StatementMemory};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;

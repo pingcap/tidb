@@ -128,9 +128,9 @@ pub fn partial_aggregate_input_offsets(aggregate: &PushdownPartialAggregate) -> 
 /// -- sends the caller to the byte-level cursor, which answers the same
 /// question from the same snapshot.
 pub fn open_remote_scan(
-    store: &dyn crate::storage::TableStorage,
+    store: &dyn tidb_kv::storage::TableStorage,
     request: &PushdownScanRequest,
-) -> Option<Result<PushdownScan, crate::storage::StorageError>> {
+) -> Option<Result<PushdownScan, tidb_kv::storage::StorageError>> {
     let client = store.client()?;
     // One staged slice per requested range, concatenated. The ranges are
     // ascending; equal point ranges are allowed by Go's table-handle lookup
@@ -176,7 +176,7 @@ pub fn open_remote_scan(
         PushdownReadEngine::TiKv => crate::cop_reader::open_cop_scan(client.as_ref(), &request),
         PushdownReadEngine::TiFlash => match store.mpp_client() {
             Some(mpp) => crate::mpp_coordinator::open_mpp_scan(&mpp, &request),
-            None => Err(PushdownScannerError::Backend(crate::storage::StorageError::Backend(
+            None => Err(PushdownScannerError::Backend(tidb_kv::storage::StorageError::Backend(
                 "tiflash mpp: this node has no TiFlash dispatch seam; \
                  the read cannot be served from the columnar replica"
                     .to_owned(),
@@ -209,7 +209,7 @@ mod tests {
 
     use super::*;
     use crate::access_path::{IndexJoinLookupExec, LookupObject, LookupProbePart};
-    use crate::cluster_storage::{
+    use tidb_kv::cluster_storage::{
         ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
     };
     use crate::driver::{
@@ -221,7 +221,7 @@ mod tests {
     use crate::kv_table::{KvColumn, KvIndex, KvTable, TableHandle};
     use crate::mem_table::MemTableSourceExec;
     use crate::run_prepared_select_for_test;
-    use crate::storage::capture_storage_ops;
+    use tidb_kv::storage::capture_storage_ops;
 
     #[test]
     fn cop_read_lookup_batches_use_their_table_width_and_handle_count() {
@@ -665,7 +665,7 @@ mod tests {
         assert_eq!(rows, vec![vec![Datum::Int(10)]]);
         assert_eq!(
             reads,
-            crate::storage::StorageOps {
+            tidb_kv::storage::StorageOps {
                 gets: 1,
                 ..Default::default()
             },
@@ -879,7 +879,7 @@ mod tests {
                 })
                 .unwrap();
             columns[1].generated = Some(
-                crate::generated_column::build_added_generated_column(
+                tidb_ddl_build::generated_column::build_added_generated_column(
                     "b",
                     expression,
                     false,
@@ -2077,7 +2077,7 @@ mod tests {
             .unwrap()
         });
         assert_eq!(rows, Vec::<Vec<Datum>>::new());
-        assert_eq!(ops, crate::storage::StorageOps::default());
+        assert_eq!(ops, tidb_kv::storage::StorageOps::default());
         assert_eq!(
             fixture.returned.load(Ordering::Relaxed),
             0,
@@ -2549,7 +2549,7 @@ mod tests {
         assert_eq!(rows.unwrap(), vec![vec![Datum::Int(50)]]);
         assert_eq!(
             ops,
-            crate::storage::StorageOps {
+            tidb_kv::storage::StorageOps {
                 gets: 1,
                 scans: 0,
                 cop_scans: 0,
@@ -2576,7 +2576,7 @@ mod tests {
             assert_eq!(rows, expected, "{sql}");
             assert_eq!(
                 ops,
-                crate::storage::StorageOps {
+                tidb_kv::storage::StorageOps {
                     gets: 1,
                     ..Default::default()
                 },

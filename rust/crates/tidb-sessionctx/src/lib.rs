@@ -16,7 +16,6 @@
 //! planner and executor -- Go's `StatementContext` together with the session
 //! state (`SessionVars`) and the `sessionctx.Context` reads they make.
 
-pub use tidb_stmtctx::used_stats;
 pub mod statement_pushdown;
 pub mod advisory_lock_state;
 pub mod explain_format;

@@ -18,9 +18,9 @@
 //! Every half of this already existed and was proven on its own. The session
 //! driver plans and executes joins, subqueries, aggregates, window functions,
 //! `SHOW` and `EXPLAIN` ([`crate::domain::pipeline_session`] serves it over TCP against
-//! an in-process catalog). [`crate::domain::cluster_session`] binds that same driver's
+//! an in-process catalog). [`tidb_domain_core::cluster_session`] binds that same driver's
 //! catalog to real transactional storage (the `cluster-session-smoke` binary
-//! proves it against a live cluster). [`crate::domain::cluster_privileges`] turns the
+//! proves it against a live cluster). [`tidb_domain_core::cluster_privileges`] turns the
 //! cluster's own `mysql.*` rows into the registry the handshake authenticates
 //! against. This module is the one node where all three run at once:
 //!
@@ -141,7 +141,7 @@
 //! is not re-derived from the AST at all; the session driver runs it against a
 //! scratch account table read from the cluster inside the change's own
 //! transaction, and the seam writes back whatever that table now says.
-//! [`crate::domain::cluster_account_seam`] states why, and what a failure leaves
+//! [`tidb_domain_core::cluster_account_seam`] states why, and what a failure leaves
 //! behind.
 //!
 //! # What this mode refuses, and why
@@ -162,7 +162,7 @@
 //! `information_schema` over the loaded catalog -- runs, and reports the
 //! driver's own error where it cannot.
 //!
-//! [`ClusterTableStorage`]: tidb_executor::cluster_storage::ClusterTableStorage
+//! [`ClusterTableStorage`]: tidb_kv::cluster_storage::ClusterTableStorage
 //! [`StatementSnapshot`]: tidb_store_driver::cluster_table_storage::StatementSnapshot
 //! [`SessionTransaction`]: tidb_store_driver::cluster_table_storage::SessionTransaction
 
@@ -195,7 +195,7 @@ use tidb_executor::real_tikv_analyze::prepare_cluster_analyze_parsed;
 use tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockCommitError;
 use tidb_stats_handle_syncload::stats_watch::SharedStats;
 use tidb_executor::access_path::StatementReadShape;
-use tidb_executor::cluster_storage::{
+use tidb_kv::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SwappableSnapshot,
 };
 use tidb_planner::transaction_control::{
@@ -205,13 +205,13 @@ use tidb_txnkv::transaction::SchemaLeaseChecker;
 
 use tidb_stats_handle_cache::StatsTableRowCache;
 
-use crate::domain::cluster_account_seam::ClusterAccountWriter;
+use tidb_domain_core::cluster_account_seam::ClusterAccountWriter;
 #[cfg(test)]
-use crate::domain::cluster_analyze_seam::ClusterAnalyze;
-use crate::domain::cluster_session::{
+use tidb_domain_core::cluster_analyze_seam::ClusterAnalyze;
+use tidb_domain_core::cluster_session::{
     cluster_session_catalog_with_templates, SkippedTable, TableAutoIds,
 };
-use crate::domain::cluster_sysvar_seam::ClusterSysvarWriter;
+use tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter;
 use crate::domain::pipeline_session::MaterializedResultSetSource;
 use crate::domain::session_api::{
     ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral, QueryResult, SessionContext,
@@ -241,10 +241,10 @@ use crate::txn_manager::{CommitHooks, CommitTxnRegions, TxnManager};
 use tidb_store_driver::cluster_table_storage::LockKeysOutcome;
 mod non_transactional_dml;
 mod record_set;
-pub use tidb_domain_core::schema_sync;
+use tidb_domain_core::schema_sync;
 mod statistics;
 mod test_session;
-use crate::cluster_transactions as transactions;
+use tidb_domain_core::cluster_transactions as transactions;
 
 pub use ddl::{ClusterDdl, RealClusterDdl};
 pub use tidb_ddl::real_tikv_ddl::ClusterDdlReport;
@@ -542,7 +542,7 @@ impl crate::txn_manager::SchemaPins for NodeSchemaPins {
 /// What a commit reads off this node: the schema lease checker, the binding
 /// cache and the catalog a write-conflict message is rewritten against.
 struct NodeCommitHooks {
-    bindings: Option<Arc<dyn crate::domain::cluster_binding_seam::ClusterBindings>>,
+    bindings: Option<Arc<dyn tidb_domain_core::cluster_binding_seam::ClusterBindings>>,
     schema_validator: Option<Arc<SchemaValidator>>,
     schema_version: i64,
     catalog: crate::SharedCatalog,
@@ -1033,12 +1033,12 @@ impl<'s> ClusterServerSession<'s> {
         mut self,
         trace: &tidb_ast::TraceStmt,
     ) -> Result<QueryResult<'s>, SqlQueryError> {
-        crate::trace::check_options(trace).map_err(SqlQueryError::unknown)?;
+        tidb_executor::trace::check_options(trace).map_err(SqlQueryError::unknown)?;
         let inner = (*trace.statement).clone();
-        let inner_sql = crate::trace::statement_text(&inner);
+        let inner_sql = tidb_executor::trace::statement_text(&inner);
         // Go `TraceExec.Next`: the statement runs under the recording
         // tracer's `trace` span, `util.ContextWithTraceExecDetails` set.
-        let recorder = crate::trace::StatementTrace::start();
+        let recorder = tidb_executor::trace::StatementTrace::start();
         let entered = recorder.enter();
         // Go `executeChild`: `ExecuteStmt`, then `drainRecordSet` pulls the
         // record set it returned under the same span.
@@ -1088,7 +1088,7 @@ impl<'s> ClusterServerSession<'s> {
         drop(entered);
         recorder.event(&format!("execute done, modify row: {affected}"));
         let (spans, started) = recorder.finish();
-        let (columns, result_rows) = crate::trace::render(&trace.format, &spans, started)
+        let (columns, result_rows) = tidb_executor::trace::render(&trace.format, &spans, started)
             .map_err(SqlQueryError::unknown)?;
         let columns = crate::domain::pipeline_session::select_fields(&columns);
         Ok(QueryResult::new(Box::new(
@@ -3072,7 +3072,7 @@ impl crate::user_table::AccountSqlSession for AccountSystemSession {
 /// [`SysvarService`]: crate::stored_state_service::SysvarService
 struct ClusterSysvarService(Arc<dyn ClusterSysvarWriter>);
 
-struct ClusterPendingSysvarChange(Box<dyn crate::domain::cluster_sysvar_seam::PendingSysvarChange>);
+struct ClusterPendingSysvarChange(Box<dyn tidb_domain_core::cluster_sysvar_seam::PendingSysvarChange>);
 
 impl crate::stored_state_service::SysvarService for ClusterSysvarService {
     fn begin(

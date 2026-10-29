@@ -152,7 +152,7 @@ fn column_defaults_and_not_null() {
     );
     // A generated column carries no DEFAULT of its own: its value source is
     // the expression, which is what the row reads back (see
-    // `crate::generated_column`).
+    // `tidb_ddl_build::generated_column`).
     crate::run_create_table_on(
         "CREATE TABLE g2 (a BIGINT, b BIGINT GENERATED ALWAYS AS (a+1) VIRTUAL)",
         &mut catalog,

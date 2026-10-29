@@ -19,7 +19,7 @@ use super::super::*;
 use super::mock_cluster::MockTransactions;
 use super::mock_seams::MockAnalyze;
 use super::node_fixture::*;
-use crate::domain::cluster_sysvar_seam::{ClusterSysvarWriter, PendingSysvarChange};
+use tidb_domain_core::cluster_sysvar_seam::{ClusterSysvarWriter, PendingSysvarChange};
 use std::sync::Arc;
 use tidb_datatype::Datum;
 use crate::GlobalSysvars;
@@ -88,7 +88,7 @@ fn factory_with_globals(node: &MockNode, globals: GlobalSysvars) -> Domain {
         Arc::clone(&node.sysvars) as Arc<dyn ClusterSysvarWriter>,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
         Arc::new(super::mock_seams::MockStatsLock)
-            as Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
+            as Arc<dyn tidb_domain_core::cluster_stats_lock_seam::ClusterStatsLock>,
         Arc::clone(&node.catalog),
         node.accounts.live.clone(),
         globals,
@@ -96,7 +96,7 @@ fn factory_with_globals(node: &MockNode, globals: GlobalSysvars) -> Domain {
             SharedStats::new(tidb_stats_handle_syncload::stats_watch::StatsSnapshot::new())
                 .expect("statistics cache"),
         ),
-        Arc::new(crate::domain::cluster_session::LocalTableAutoIds::default()),
+        Arc::new(tidb_domain_core::cluster_session::LocalTableAutoIds::default()),
         crate::domain::cluster_session_node::open_pool_session,
     )
 }

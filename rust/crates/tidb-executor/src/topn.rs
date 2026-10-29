@@ -82,7 +82,7 @@ use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
 use tidb_util::memory::{ArcAction, Tracker};
 
-use crate::mem_quota::StatementMemory;
+use tidb_kv::mem_quota::StatementMemory;
 use crate::sort::{eval_sort_key, less_by_items, validate_by_items, SortByItem};
 use crate::sort_util::recover_worker_panic;
 use crate::topn_chunk_heap::TopNChunkHeap;
@@ -1157,7 +1157,7 @@ where
 mod tests {
     use super::*;
     use crate::limit::LimitExec;
-    use crate::mem_quota::OomAction;
+    use tidb_kv::mem_quota::OomAction;
     use crate::sort::SortExec;
     use tidb_ast::CiString;
     use tidb_datatype::FieldTypeCode;
@@ -2179,7 +2179,7 @@ mod tests {
 mod spill_tests {
     use super::tests::{by, drain, schema_of, source};
     use super::*;
-    use crate::mem_quota::OomAction;
+    use tidb_kv::mem_quota::OomAction;
     use crate::test_temp_storage::{scratch_dir as scratch_temp_dir, storage as test_storage};
     use tidb_expr::NoColumns;
     use tidb_util::sqlkiller::KillSignal;

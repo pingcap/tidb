@@ -281,7 +281,7 @@ fn unparen_expression(mut expression: &tidb_ast::Expr) -> &tidb_ast::Expr {
 }
 
 fn remap_list_columns_location(
-    partition: &crate::partition_routing::PartitionSpec,
+    partition: &tidb_table::partition_routing::PartitionSpec,
     location: crate::partition_pruning::ListPartitionLocation,
 ) -> crate::partition_pruning::ListPartitionLocation {
     let mut remapped = crate::partition_pruning::ListPartitionLocation::new();
@@ -299,7 +299,7 @@ fn remap_list_columns_location(
 }
 
 fn remap_partition_indices(
-    partition: &crate::partition_routing::PartitionSpec,
+    partition: &tidb_table::partition_routing::PartitionSpec,
     partition_names: &[String],
     indices: impl IntoIterator<Item = usize>,
 ) -> Vec<usize> {
@@ -319,12 +319,12 @@ fn remap_partition_indices(
 }
 
 fn locate_list_columns_condition(
-    partition: &crate::partition_routing::PartitionSpec,
+    partition: &tidb_table::partition_routing::PartitionSpec,
     condition: &Expression,
     columns: &[tidb_expr::column::Column],
     context: &crate::StmtContext,
 ) -> Result<ListColumnsLocated, tidb_planner::plan_base::PlanError> {
-    let crate::partition_routing::PartitionKind::ListColumns {
+    let tidb_table::partition_routing::PartitionKind::ListColumns {
         values,
         default_partition,
         field_types,
@@ -399,7 +399,7 @@ fn locate_list_columns_condition(
 }
 
 fn locate_list_columns_cnf(
-    partition: &crate::partition_routing::PartitionSpec,
+    partition: &tidb_table::partition_routing::PartitionSpec,
     conditions: &[Expression],
     columns: &[tidb_expr::column::Column],
     context: &crate::StmtContext,
@@ -421,7 +421,7 @@ fn locate_list_columns_cnf(
 }
 
 fn locate_list_columns_dnf(
-    partition: &crate::partition_routing::PartitionSpec,
+    partition: &tidb_table::partition_routing::PartitionSpec,
     conditions: &[Expression],
     columns: &[tidb_expr::column::Column],
     context: &crate::StmtContext,
@@ -442,7 +442,7 @@ fn locate_list_columns_dnf(
 }
 
 fn list_columns_pruned_ids(
-    partition: &crate::partition_routing::PartitionSpec,
+    partition: &tidb_table::partition_routing::PartitionSpec,
     conditions: &[Expression],
     columns: &[tidb_expr::column::Column],
     context: &crate::StmtContext,
@@ -465,7 +465,7 @@ fn list_columns_pruned_ids(
 }
 
 fn partition_indices_for_spec(
-    partition: &crate::partition_routing::PartitionSpec,
+    partition: &tidb_table::partition_routing::PartitionSpec,
     source: &tidb_planner::logical::DataSource,
     builder: &RealFunctionBuilder<'_, crate::StmtContext>,
     context: &crate::StmtContext,
@@ -476,7 +476,7 @@ fn partition_indices_for_spec(
     // the hash values the column's width cannot produce.
     let hash = matches!(
         partition.kind,
-        crate::partition_routing::PartitionKind::Hash
+        tidb_table::partition_routing::PartitionKind::Hash
     );
     if (source.all_conds.is_empty() && !hash) || partition.dependencies.is_empty() {
         return Ok(remap_partition_indices(
@@ -517,7 +517,7 @@ fn partition_indices_for_spec(
         .collect::<Vec<_>>();
     if matches!(
         partition.kind,
-        crate::partition_routing::PartitionKind::ListColumns { .. }
+        tidb_table::partition_routing::PartitionKind::ListColumns { .. }
     ) {
         if let Some(ids) = list_columns_pruned_ids(partition, &conditions, &columns, context)? {
             surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
@@ -530,7 +530,7 @@ fn partition_indices_for_spec(
     }
     // Go `PartitionRangeForCNFExpr` prunes a single-column RANGE COLUMNS
     // table by its predicates, and only a wider one through the ranger.
-    if let ([column], crate::partition_routing::PartitionKind::RangeColumns { .. }) =
+    if let ([column], tidb_table::partition_routing::PartitionKind::RangeColumns { .. }) =
         (columns.as_slice(), &partition.kind)
     {
         if let Some(ids) = crate::partition_pruning::single_range_columns_pruned_ids(
@@ -550,7 +550,7 @@ fn partition_indices_for_spec(
     }
     // Go `PruneRangePartition` prunes `PARTITION BY RANGE (expr)` by its
     // predicates too (`PartitionRangeForCNFExpr`), never through the ranger.
-    if matches!(partition.kind, crate::partition_routing::PartitionKind::Range { .. }) {
+    if matches!(partition.kind, tidb_table::partition_routing::PartitionKind::Range { .. }) {
         if let [column] = columns.as_slice() {
             if let Some(ids) =
                 crate::partition_pruning::scalar_range_pruned_ids(partition, &conditions, column, context)
@@ -595,7 +595,7 @@ fn partition_indices_for_spec(
 #[cfg(test)]
 mod list_columns_pruning_tests {
     use super::*;
-    use crate::partition_routing::{PartitionDef, PartitionKind, PartitionSpec};
+    use tidb_table::partition_routing::{PartitionDef, PartitionKind, PartitionSpec};
     use tidb_ast::CiString;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_expr::{column::Column, constant::Constant, scalar_function::ScalarFunction};
@@ -2973,8 +2973,8 @@ fn optimize_built_logical(
                 .is_some_and(|kind| {
                     matches!(
                         kind,
-                        crate::partition_routing::PartitionKind::Hash
-                            | crate::partition_routing::PartitionKind::Range { .. }
+                        tidb_table::partition_routing::PartitionKind::Hash
+                            | tidb_table::partition_routing::PartitionKind::Range { .. }
                     )
                 });
             if spends {

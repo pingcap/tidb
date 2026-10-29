@@ -31,7 +31,7 @@ use std::time::{Duration, Instant};
 use chrono::TimeZone;
 use tidb_datatype::{FieldType, FieldTypeCode, SessionTimeZone, UNSPECIFIED_LENGTH};
 use tidb_error::mysql::SqlError;
-use crate::cluster_storage::MutationBuffer;
+use tidb_kv::cluster_storage::MutationBuffer;
 use tidb_stats::histogram::Histogram;
 use tidb_stats::row_sample_collector::adjusted_sample_rate;
 use tidb_stats::{
@@ -848,7 +848,7 @@ pub fn save_cluster_analyze_options<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     resolved: &ResolvedClusterAnalyze,
     timeout: Duration,
-    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(), ClusterAnalyzeError> {
     if !resolved.statement.persist_options {
         return Ok(());
@@ -1012,7 +1012,7 @@ pub fn commit_cluster_analyze<S: StoreClient>(
     record_history: &dyn Fn() -> bool,
     record_global_history: &dyn Fn() -> bool,
     jobs: &dyn AnalyzeJobLifecycle,
-    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let targets = if !resolved.run_full_sampling {
         Vec::new()
@@ -1375,7 +1375,7 @@ fn commit_cluster_global_stats<S: StoreClient>(
     stats_lease: Duration,
     killer: &SqlKiller,
     record_history: &dyn Fn() -> bool,
-    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(), ClusterAnalyzeError> {
     let mut transaction = opener
         .begin_read_only()
@@ -1597,7 +1597,7 @@ fn record_analyze_history<S: StoreClient>(
     table_id: i64,
     version: u64,
     timeout: Duration,
-    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) {
     let result = (|| -> Result<(), ClusterAnalyzeError> {
         let transaction = SessionTransaction::begin_pessimistic(
@@ -2187,7 +2187,7 @@ fn commit_global_stats_item<S: StoreClient>(
     item: ClusterStatsItem,
     timeout: Duration,
     stats_lease: Duration,
-    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<(u64, usize, usize, usize), ClusterAnalyzeError> {
     let started = Instant::now();
     let mut transaction = opener
@@ -2260,7 +2260,7 @@ fn refresh_stats_meta_version<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     table_id: i64,
     timeout: Duration,
-    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<u64, ClusterAnalyzeError> {
     commit_pessimistic_statement(opener, timeout, |snapshot, version| {
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
@@ -2303,7 +2303,7 @@ fn commit_cluster_analyze_target<S: StoreClient>(
     killer: &SqlKiller,
     resource_group: &str,
     build_diagnostics: &[(bool, u16, String)],
-    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let mut sample_transaction = opener
         .begin()
@@ -2508,7 +2508,7 @@ fn commit_cluster_independent_index<S: StoreClient>(
     stats_lease: Duration,
     record_history: &dyn Fn() -> bool,
     progress: &dyn Fn(i64),
-    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let started = Instant::now();
     let mut transaction = opener
@@ -2602,7 +2602,7 @@ fn finish_analyze_save<S: StoreClient>(
     timeout: Duration,
     stats_lease: Duration,
     record_history: &dyn Fn() -> bool,
-    row_ids: &std::sync::Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: &std::sync::Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<u64, ClusterAnalyzeError> {
     version = refresh_slow_stats_save_version(version, stats_lease, started.elapsed(), || {
         refresh_stats_meta_version(opener, table_id, timeout, row_ids)
@@ -2940,7 +2940,7 @@ pub fn plan_analyze_options_write<S: MetaSnapshot>(
     raw: AnalyzeOptionOverrides,
     columns: &AnalyzeColumnChoice,
     now: Time,
-    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {
     let stored = locate(catalog, "analyze_options")?;
     let mut rows = StatsRows::open(snapshot, stored, &["table_id"], physical_id)?;

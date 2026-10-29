@@ -966,8 +966,8 @@ fn check_mb4_value_in_utf8_is_typed_once_per_global_publication() {
 /// `SessionVars` over a fresh domain's GLOBAL tier (Go's
 /// `GlobalVarsAccessor`, with its scope checks and SetGlobal hooks), as a
 /// session installs it.
-fn mock_session_vars() -> crate::vars::SessionVars {
-    let mut vars = crate::vars::SessionVars::new();
+fn mock_session_vars() -> tidb_variable::vars::SessionVars {
+    let mut vars = tidb_variable::vars::SessionVars::new();
     vars.seed_from_globals(std::sync::Arc::new(
         tidb_domain::global_sysvars::GlobalSysvars::new(),
     ))

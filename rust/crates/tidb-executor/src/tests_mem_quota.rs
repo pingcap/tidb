@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::mem_quota::*;
+use tidb_kv::mem_quota::*;
 use std::sync::Arc;
 use tidb_util::memory::Tracker;
 use tidb_util::spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};

@@ -28,7 +28,7 @@ use tidb_protocol::{
     TYPE_YEAR, UNSIGNED_FLAG,
 };
 use tidb_server::connection_resultset::write_connection_result_set_to_sink;
-use tidb_server::resultset_source::ResultSetSource;
+use tidb_session::domain::resultset_source::ResultSetSource;
 use tidb_server::resultset_writer::{write_result_set, ResultSetSink, SinkWriteError};
 
 #[derive(Default)]
@@ -62,11 +62,11 @@ impl Source {
 }
 
 impl ResultSetSource for Source {
-    fn statement_status(&self) -> Option<tidb_server::resultset_source::StatementStatus<'_>> {
+    fn statement_status(&self) -> Option<tidb_session::domain::resultset_source::StatementStatus<'_>> {
         self.live_status
-            .then(|| tidb_server::resultset_source::StatementStatus {
+            .then(|| tidb_session::domain::resultset_source::StatementStatus {
                 warnings: if self.log.contains(&"finish") { 7 } else { 3 },
-                status: tidb_server::wire_status::WireStatus::AUTOCOMMIT,
+                status: tidb_session::domain::wire_status::WireStatus::AUTOCOMMIT,
                 affected_rows: 0,
                 last_insert_id: 0,
                 info: &[],

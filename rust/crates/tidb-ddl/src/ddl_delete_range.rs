@@ -604,7 +604,7 @@ pub fn add_del_range_job_mutations<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     job: &Job,
     ts: u64,
-    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<Vec<BufferMutation>, DdlPlanError> {
     if !job_need_gc(job) {
         return Ok(Vec::new());
@@ -619,7 +619,7 @@ pub fn del_range_rows_mutations<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     ranges: &[DelRangeTask],
     ts: u64,
-    row_ids: Option<&dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<Vec<BufferMutation>, DdlPlanError> {
     if ranges.is_empty() {
         return Ok(Vec::new());

@@ -662,7 +662,7 @@ fn require_secure_transport_can_only_be_enabled_by_a_secure_session() {
         "a refused assignment cannot publish partial state"
     );
 
-    secure.set_tls_state(Some(crate::vars::TlsConnectionState {
+    secure.set_tls_state(Some(tidb_variable::vars::TlsConnectionState {
         version: 0x0304,
         cipher_suite: 0x1301,
     }));
@@ -2245,7 +2245,7 @@ fn a_global_max_allowed_packet_is_rounded_down_to_1024() {
 /// * the stored value -- `SET AUTOCOMMIT=0` is read back by `@@autocommit`;
 /// * the registry LOOKUP -- Go lowercases inside `variable.GetSysVar`
 ///   (`variable.go:519`) and at `executor/set.go:91`, and every write path in
-///   [`crate::vars`] lowercases its key before it becomes a map key;
+///   [`tidb_variable::vars`] lowercases its key before it becomes a map key;
 /// * every message that INTERPOLATES the name, which Go renders lowercased:
 ///   1193 unknown, 1238 read-only, 1231 bad value, 1621 session-read-only,
 ///   and the 8142 legacy-instance-scope warning;

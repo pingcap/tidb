@@ -45,7 +45,7 @@ use crate::remote_scan::{
     PushdownReadEngine, PushdownRowStream, PushdownScanRequest, PushdownScannerError,
     PushdownStatementContext,
 };
-use crate::storage::StorageError;
+use tidb_kv::storage::StorageError;
 use crate::StatementMemory;
 
 /// The request shapes the MPP lowering builds: the single-fragment full

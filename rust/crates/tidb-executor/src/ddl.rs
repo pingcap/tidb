@@ -23,7 +23,7 @@
 //! DEFERRED (documented): the
 //! schema-version/DDL-job machinery (the driver applies metadata directly; the
 //! DDL job queue is a separate tier). Constraints/indexes and the column
-//! options are no longer deferred; see [`crate::column_default`] for what a
+//! options are no longer deferred; see [`tidb_table::column_default`] for what a
 //! `DEFAULT` may be.
 //!
 //! # `CREATE TABLE ... LIKE` copies the source's `TableInfo`
@@ -51,7 +51,7 @@
 //! which was honest but empty. It now BUILDS real HASH and RANGE
 //! partitionings: [`table_partition::build_table_partitioning`] allocates one
 //! physical table id per partition and validates the clause the way Go does,
-//! the rows are stored under those ids (see [`crate::partition_routing`]),
+//! the rows are stored under those ids (see [`tidb_table::partition_routing`]),
 //! a `WHERE` on the partition expression PRUNES which of them a scan reads
 //! (see [`crate::partition_pruning`]), and `SHOW CREATE TABLE` prints the
 //! clause back verbatim.
@@ -104,13 +104,13 @@
 //!   sat under the DDL-zone audit and read as closed: Go keeps the AST and
 //!   REWRITES it per statement, so the DDL zone never reaches the value at
 //!   all. The bug was on the READ path, and is fixed in
-//!   [`crate::generated_column`] (`GeneratedColumn::source`).
+//!   [`tidb_ddl_build::generated_column`] (`GeneratedColumn::source`).
 //! * **Expression indexes -- NOT affected.** Go refuses a zone-reading
 //!   expression there outright: `key idx((timestamp '...'))` is
 //!   `[ddl:8200] Unsupported creating expression index containing unsafe
 //!   functions without allow-expression-index in config` (captured), because
 //!   `timestampliteral` is not on `variable.GAFunction4ExpressionIndex`.
-//!   [`crate::expression_index`] ports that half of the gate.
+//!   [`tidb_ddl_build::expression_index`] ports that half of the gate.
 //! * **`CHECK` constraints -- NOT affected.** They are DISCARDED at DDL time
 //!   under the stock `tidb_enable_check_constraint = OFF`; see
 //!   [`run_create_table_in`].
@@ -201,26 +201,15 @@ pub use tidb_ddl_build::{ttl_info_from_options};
 pub use tidb_ddl_build::modify_column_type::check_modify_types;
 /// AUTO_RANDOM declaration validation shared by local and cluster DDL.
 pub use tidb_ddl_build::{check_too_long_identifier, create_table_ttl_info, table_affinity, validate_comment_length, validate_table_affinity, validate_temporary_table_create, CommentOwner, MAX_IDENTIFIER_LENGTH};
-pub use tidb_ddl_build::auto_random;
-pub use tidb_ddl_build::check_constraint;
-pub use tidb_ddl_build::column_field_type;
-pub use tidb_ddl_build::column_types;
-pub use tidb_ddl_build::constraint_names;
-pub use tidb_ddl_build::index;
 mod hypo_index;
 mod indexes;
-pub use tidb_ddl_build::modify_column_type;
 #[cfg(test)]
 mod tests_modify_column_type;
 pub use tidb_ddl_build::index::{check_and_build_index_condition_string, check_create_global_index, check_expression_index_auto_increment, check_index_condition, get_name_for_anonymous_index, IndexConditionColumn, IndexedTableColumn};
-pub use tidb_ddl_build::partition_interval;
 pub use tidb_ddl_build::split_region::{normalize_split_policy, SplitPolicyTarget};
-pub use tidb_ddl_build::storage_class;
-pub use tidb_ddl_build::table_partition;
+use tidb_ddl_build::table_partition;
 #[cfg(test)]
 mod tests_table_partition;
-pub use tidb_ddl_build::table_partition_list;
-pub use tidb_ddl_build::table_partition_range;
 
 pub use tidb_ddl_build::column_defaults::{check_column_default_value, normalize_column_default, settle_column_default, validate_column_default, SettledColumnDefault};
 
@@ -353,11 +342,11 @@ pub fn create_table_in_catalog(
     }
     info.state = tidb_model::SchemaState::PUBLIC;
     let db_id = catalog.database_id(&database).unwrap_or_default();
-    let auto_ids = tidb_ddl_build::table_from_meta::LocalTableAutoIds::default();
-    let table = tidb_ddl_build::table_from_meta::cluster_table(
+    let auto_ids = tidb_table::table_from_meta::LocalTableAutoIds::default();
+    let table = tidb_table::table_from_meta::cluster_table(
         &info,
-        &crate::storage::MemTableStorage::new(),
-        &tidb_ddl_build::table_from_meta::AutoIdSource::In { db_id, ids: &auto_ids },
+        &tidb_kv::storage::MemTableStorage::new(),
+        &tidb_table::table_from_meta::AutoIdSource::In { db_id, ids: &auto_ids },
     )
     .map_err(DriverError::unsupported)?;
     catalog.register_kv_in(&database, &name, table)?;

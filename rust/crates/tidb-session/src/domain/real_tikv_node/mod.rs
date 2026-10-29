@@ -34,9 +34,9 @@ use tidb_stats_handle_syncload::stats_watch::{
 use tidb_pd_client::{EtcdClient, EtcdWatcher, PRIVILEGE_UPDATE_KEY, SYSVAR_UPDATE_KEY};
 use tidb_txnkv::transaction::StoreClient;
 
-use crate::domain::cluster_privileges::PrivilegeReloader;
+use tidb_domain_core::cluster_privileges::PrivilegeReloader;
 use crate::domain::configured_user_store::{ConfiguredUserStore, ConfiguredUserStoreError};
-use crate::domain::node_config::NodeConfig;
+use tidb_domain_core::node_config::NodeConfig;
 use crate::domain::session_api::SqlQueryError;
 
 mod schema_following;
@@ -128,7 +128,7 @@ pub fn node_accounts(
         )));
     }
     // Go's privilege cache logs nothing on a successful load.
-    let loaded = crate::domain::cluster_privileges::registry_from_cluster(&accounts.privileges);
+    let loaded = tidb_domain_core::cluster_privileges::registry_from_cluster(&accounts.privileges);
     let users = ConfiguredUserStore::from_accounts(loaded.registry).with_global_vars(global_vars);
     // Seed the same startup snapshot's global variables now; `run_bound_*`
     // immediately replaces this with a fresh complete image and starts the
@@ -214,8 +214,8 @@ fn prepare_cluster_sysvar_runtime_with_reads(
     config: &NodeConfig,
     users: &ConfiguredUserStore,
     startup_read: impl FnOnce() -> Result<Vec<(String, String)>, String>,
-    reload_read: crate::domain::cluster_sysvar_seam::SysvarReloadRead,
-) -> Result<Option<crate::domain::cluster_sysvar_seam::SysvarReloader>, RunConfiguredNodeError> {
+    reload_read: tidb_domain_core::cluster_sysvar_seam::SysvarReloadRead,
+) -> Result<Option<tidb_domain_core::cluster_sysvar_seam::SysvarReloader>, RunConfiguredNodeError> {
     load_cluster_sysvars_with_read(users, startup_read)?;
     spawn_cluster_sysvar_reloader_with_read(config, users, reload_read)
 }
@@ -224,12 +224,12 @@ fn prepare_cluster_sysvar_runtime_with_reads(
 fn spawn_cluster_sysvar_reloader_with_read(
     config: &NodeConfig,
     users: &ConfiguredUserStore,
-    read: crate::domain::cluster_sysvar_seam::SysvarReloadRead,
-) -> Result<Option<crate::domain::cluster_sysvar_seam::SysvarReloader>, RunConfiguredNodeError> {
-    crate::domain::cluster_sysvar_seam::SysvarReloader::spawn_with_read(
+    read: tidb_domain_core::cluster_sysvar_seam::SysvarReloadRead,
+) -> Result<Option<tidb_domain_core::cluster_sysvar_seam::SysvarReloader>, RunConfiguredNodeError> {
+    tidb_domain_core::cluster_sysvar_seam::SysvarReloader::spawn_with_read(
         users.global_vars(),
         sysvar_reload_interval(config.schema_lease),
-        crate::domain::cluster_sysvar_seam::SysvarPublicationFence::default(),
+        tidb_domain_core::cluster_sysvar_seam::SysvarPublicationFence::default(),
         read,
     )
     .map(Some)
@@ -402,7 +402,7 @@ impl std::error::Error for RunConfiguredNodeError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::node_config::NodeOptions;
+    use tidb_domain_core::node_config::NodeOptions;
     use crate::domain::secure_transport::TransportKind;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;

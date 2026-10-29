@@ -97,7 +97,7 @@ pub trait ClusterAnalyze: Send + Sync {
     /// Loads one client-transferred JSON statistics dump into cluster storage.
     fn load_stats(
         &self,
-        _json: &tidb_executor::load_stats::JsonTable,
+        _json: &tidb_stats_handle::load_stats::JsonTable,
         _historical_stats_enabled: bool,
     ) -> Result<ClusterLoadStatsReport, SqlQueryError> {
         Err(SqlQueryError::unknown(
@@ -128,7 +128,7 @@ where
     stats_lease: Duration,
     /// The node's live row-ID allocators, which the statistics rows this
     /// analyzer writes allocate from (Go's internal INSERT).
-    row_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+    row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
 }
 
 impl<S> RealClusterAnalyze<S>
@@ -143,7 +143,7 @@ where
         stats: Arc<SharedStats>,
         timeout: Duration,
         stats_lease: Duration,
-        row_ids: Arc<dyn tidb_ddl_build::table_from_meta::TableAutoIds>,
+        row_ids: Arc<dyn tidb_table::table_from_meta::TableAutoIds>,
     ) -> Self {
         Self {
             opener,
@@ -270,7 +270,7 @@ where
 
     fn load_stats(
         &self,
-        json: &tidb_executor::load_stats::JsonTable,
+        json: &tidb_stats_handle::load_stats::JsonTable,
         historical_stats_enabled: bool,
     ) -> Result<ClusterLoadStatsReport, SqlQueryError> {
         let current = self.stats.load();

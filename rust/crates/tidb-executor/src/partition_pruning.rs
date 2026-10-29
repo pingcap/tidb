@@ -41,7 +41,7 @@
 //! Reading a superset costs time; reading a subset costs correctness.
 //!
 use crate::kv_table::IndexRange;
-use crate::partition_routing::{PartitionKind, PartitionSpec, RangeBound};
+use tidb_table::partition_routing::{PartitionKind, PartitionSpec, RangeBound};
 use std::collections::{BTreeMap, BTreeSet};
 use tidb_datatype::Datum;
 use tidb_hack::GoCaseCompare;
@@ -179,7 +179,7 @@ fn prune_key_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Vec<i64> {
     for range in ranges {
         if range.is_point(true) && range.low.len() == spec.dependencies.len() {
             let Ok(ordinal) =
-                crate::partition_routing::key_partition_index_for_tuple(&range.low, spec.num())
+                tidb_table::partition_routing::key_partition_index_for_tuple(&range.low, spec.num())
             else {
                 return spec
                     .definitions
@@ -260,7 +260,7 @@ fn mark_short_key_range(range: &IndexRange, partitions: u64, used: &mut [bool]) 
             Datum::Int((low as i64).wrapping_add(offset as i64))
         };
         let Ok(ordinal) =
-            crate::partition_routing::key_partition_index_for_tuple(&[value], partitions)
+            tidb_table::partition_routing::key_partition_index_for_tuple(&[value], partitions)
         else {
             continue;
         };
@@ -276,7 +276,7 @@ fn mark_short_key_range(range: &IndexRange, partitions: u64, used: &mut [bool]) 
 fn prune_range_columns_ids(
     spec: &PartitionSpec,
     ranges: &[IndexRange],
-    less_than: &[Vec<crate::partition_routing::RangeColumnBound>],
+    less_than: &[Vec<tidb_table::partition_routing::RangeColumnBound>],
     field_types: &[tidb_datatype::FieldType],
     range_collations: &[Vec<tidb_datatype::Collation>],
 ) -> Vec<i64> {
@@ -356,11 +356,11 @@ fn prune_range_columns_ids(
 }
 
 fn first_range_columns_bound(
-    bounds: &[Vec<crate::partition_routing::RangeColumnBound>],
+    bounds: &[Vec<tidb_table::partition_routing::RangeColumnBound>],
     mut compare: impl FnMut(
-        &[crate::partition_routing::RangeColumnBound],
-    ) -> Result<bool, crate::partition_routing::RoutingError>,
-) -> Result<usize, crate::partition_routing::RoutingError> {
+        &[tidb_table::partition_routing::RangeColumnBound],
+    ) -> Result<bool, tidb_table::partition_routing::RoutingError>,
+) -> Result<usize, tidb_table::partition_routing::RoutingError> {
     let mut low = 0;
     let mut high = bounds.len();
     while low < high {
@@ -375,12 +375,12 @@ fn first_range_columns_bound(
 }
 
 fn range_columns_min_cmp(
-    bound: &[crate::partition_routing::RangeColumnBound],
+    bound: &[tidb_table::partition_routing::RangeColumnBound],
     low: &[Datum],
     field_types: &[tidb_datatype::FieldType],
     collations: &[tidb_datatype::Collation],
     low_exclusive: bool,
-) -> Result<bool, crate::partition_routing::RoutingError> {
+) -> Result<bool, tidb_table::partition_routing::RoutingError> {
     for ((bound, value), collation) in bound.iter().zip(low).zip(collations) {
         match compare_range_column_bound(bound, value, *collation)? {
             Ordering::Greater => return Ok(true),
@@ -394,7 +394,7 @@ fn range_columns_min_cmp(
         }
         if matches!(
             bound[low.len()],
-            crate::partition_routing::RangeColumnBound::MaxValue
+            tidb_table::partition_routing::RangeColumnBound::MaxValue
         ) {
             return Ok(true);
         }
@@ -411,11 +411,11 @@ fn range_columns_min_cmp(
 }
 
 fn range_columns_max_cmp(
-    bound: &[crate::partition_routing::RangeColumnBound],
+    bound: &[tidb_table::partition_routing::RangeColumnBound],
     high: &[Datum],
     collations: &[tidb_datatype::Collation],
     high_exclusive: bool,
-) -> Result<bool, crate::partition_routing::RoutingError> {
+) -> Result<bool, tidb_table::partition_routing::RoutingError> {
     for ((bound, value), collation) in bound.iter().zip(high).zip(collations) {
         match compare_range_column_bound(bound, value, *collation)? {
             Ordering::Greater => return Ok(true),
@@ -426,7 +426,7 @@ fn range_columns_max_cmp(
     if high.len() < bound.len()
         && matches!(
             bound[high.len()],
-            crate::partition_routing::RangeColumnBound::MaxValue
+            tidb_table::partition_routing::RangeColumnBound::MaxValue
         )
     {
         return Ok(true);
@@ -435,11 +435,11 @@ fn range_columns_max_cmp(
 }
 
 fn compare_range_column_bound(
-    bound: &crate::partition_routing::RangeColumnBound,
+    bound: &tidb_table::partition_routing::RangeColumnBound,
     endpoint: &Datum,
     collation: tidb_datatype::Collation,
-) -> Result<Ordering, crate::partition_routing::RoutingError> {
-    let crate::partition_routing::RangeColumnBound::Value(bound) = bound else {
+) -> Result<Ordering, tidb_table::partition_routing::RoutingError> {
+    let tidb_table::partition_routing::RangeColumnBound::Value(bound) = bound else {
         return Ok(Ordering::Greater);
     };
     match endpoint {
@@ -450,15 +450,15 @@ fn compare_range_column_bound(
         }),
         Datum::MaxValue => Ok(Ordering::Less),
         _ => tidb_expr::compare_datums_with_collation(bound, endpoint, collation)
-            .map_err(crate::partition_routing::RoutingError::Eval),
+            .map_err(tidb_table::partition_routing::RoutingError::Eval),
     }
 }
 
 fn range_column_bound_is_type_minimum(
-    bound: &crate::partition_routing::RangeColumnBound,
+    bound: &tidb_table::partition_routing::RangeColumnBound,
     field_type: &tidb_datatype::FieldType,
 ) -> bool {
-    let crate::partition_routing::RangeColumnBound::Value(bound) = bound else {
+    let tidb_table::partition_routing::RangeColumnBound::Value(bound) = bound else {
         return false;
     };
     match field_type.eval_type() {
@@ -848,7 +848,7 @@ fn prune_hash_ids(
                 // be evaluated; another ranger point may still be usable.
                 continue;
             };
-            let Ok(index) = crate::partition_routing::hash_partition_index(&value, spec.num())
+            let Ok(index) = tidb_table::partition_routing::hash_partition_index(&value, spec.num())
             else {
                 continue;
             };
@@ -947,7 +947,7 @@ fn hash_pruning_integer(value: &Datum, field_type: &tidb_datatype::FieldType) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::partition_routing::PartitionDef;
+    use tidb_table::partition_routing::PartitionDef;
 
     fn pruned_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Option<Vec<i64>> {
         let field_types = match &spec.kind {
@@ -1113,7 +1113,7 @@ mod tests {
     }
 
     fn range_columns_table() -> PartitionSpec {
-        use crate::partition_routing::RangeColumnBound::{MaxValue, Value};
+        use tidb_table::partition_routing::RangeColumnBound::{MaxValue, Value};
 
         let field_types = vec![
             tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
@@ -1610,7 +1610,7 @@ mod tests {
 
     #[test]
     fn range_columns_pruning_uses_each_partition_columns_collation() {
-        use crate::partition_routing::RangeColumnBound::{MaxValue, Value};
+        use tidb_table::partition_routing::RangeColumnBound::{MaxValue, Value};
         use tidb_datatype::{Collation, FieldType, FieldTypeCode, StringDatum};
 
         let string = |text: &str, collation| {
@@ -1656,7 +1656,7 @@ mod tests {
 
     #[test]
     fn range_columns_pruning_uses_the_ranger_interval_collator() {
-        use crate::partition_routing::RangeColumnBound::{MaxValue, Value};
+        use tidb_table::partition_routing::RangeColumnBound::{MaxValue, Value};
         use tidb_datatype::{Collation, FieldType, FieldTypeCode};
 
         let field_type =
@@ -1924,7 +1924,7 @@ mod tests {
         let expected_for = |values: &[i64]| {
             let mut used = vec![false; spec.definitions.len()];
             for value in values {
-                let ordinal = crate::partition_routing::key_partition_index_for_tuple(
+                let ordinal = tidb_table::partition_routing::key_partition_index_for_tuple(
                     &[Datum::Int(*value)],
                     spec.num(),
                 )
@@ -2126,7 +2126,7 @@ fn go_sort_search(n: usize, mut predicate: impl FnMut(usize) -> bool) -> usize {
 /// ranger does not yet handle a predicate whose collation differs from the
 /// column's, which `partitionRangeForExpr` must refuse to prune.
 struct SingleRangeColumnsPruner<'a, B, C> {
-    less_than: &'a [Vec<crate::partition_routing::RangeColumnBound>],
+    less_than: &'a [Vec<tidb_table::partition_routing::RangeColumnBound>],
     bound_type: &'a tidb_datatype::FieldType,
     column: &'a tidb_expr::column::Column,
     builder: &'a B,
@@ -2285,7 +2285,7 @@ where
         let mut failed = false;
         let mut is_null = false;
         let mut compare = |ith: usize, op: &str| -> bool {
-            let crate::partition_routing::RangeColumnBound::Value(bound) = &self.less_than[ith][0]
+            let tidb_table::partition_routing::RangeColumnBound::Value(bound) = &self.less_than[ith][0]
             else {
                 return true;
             };

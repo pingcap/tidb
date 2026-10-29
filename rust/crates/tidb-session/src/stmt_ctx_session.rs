@@ -49,11 +49,11 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         std::sync::Arc::clone(&self.hypo_indexes)
     }
 
-    fn advisory_locks_ref(&self) -> &tidb_executor::advisory_lock_state::AdvisoryLockSession {
+    fn advisory_locks_ref(&self) -> &tidb_sessionctx::advisory_lock_state::AdvisoryLockSession {
         &self.advisory_locks
     }
 
-    fn advisory_locks_mut(&mut self) -> &mut tidb_executor::advisory_lock_state::AdvisoryLockSession {
+    fn advisory_locks_mut(&mut self) -> &mut tidb_sessionctx::advisory_lock_state::AdvisoryLockSession {
         &mut self.advisory_locks
     }
 
@@ -273,11 +273,11 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &mut self.statement_result_authority
     }
 
-    fn statement_var_cache_ref(&self) -> &std::cell::RefCell<Option<std::sync::Arc<crate::stmt_ctx::StatementVarSnapshot>>> {
+    fn statement_var_cache_ref(&self) -> &std::cell::RefCell<Option<std::sync::Arc<tidb_executor::stmt_ctx_build::StatementVarSnapshot>>> {
         &self.statement_var_cache
     }
 
-    fn statement_var_cache_mut(&mut self) -> &mut std::cell::RefCell<Option<std::sync::Arc<crate::stmt_ctx::StatementVarSnapshot>>> {
+    fn statement_var_cache_mut(&mut self) -> &mut std::cell::RefCell<Option<std::sync::Arc<tidb_executor::stmt_ctx_build::StatementVarSnapshot>>> {
         &mut self.statement_var_cache
     }
 

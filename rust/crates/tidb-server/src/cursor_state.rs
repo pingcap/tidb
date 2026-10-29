@@ -27,7 +27,7 @@ use tidb_util::memory::{
 
 use crate::connection_writers::{write_eof_or_ok, write_packet_to, ConnectionPacketOutput};
 use crate::mysql_connection::MysqlConnectionError;
-use crate::resultset_source::ResultSetSource;
+use tidb_session::domain::resultset_source::ResultSetSource;
 use crate::sql_node::{CursorMaterializationAuthority, QueryResult, SqlQueryError};
 
 pub(crate) struct CursorState {

@@ -727,7 +727,7 @@ fn in_lists_of_different_lengths_do_not_share_an_entry() {
 
 /// A duplicated IN-list hits, which is what TiDB does here: with `key(b)` no
 /// Batch/PointGet is chosen over `a`, so neither of the two point-get safety
-/// checks quoted in [`crate::non_prepared_plan_cache`]'s module doc is
+/// checks quoted in [`tidb_executor::compiler::non_prepared_plan_cache`]'s module doc is
 /// reached. Captured: `select a from t where a in (2, 2, 2)` reports
 /// `@@last_plan_from_cache = 1` after the three-element list ran.
 #[test]

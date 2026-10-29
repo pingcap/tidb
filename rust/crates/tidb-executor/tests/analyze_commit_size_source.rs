@@ -91,7 +91,7 @@ struct MetaStore {
     fail_scan_prefix: Option<Vec<u8>>,
     /// The node's row-ID allocators Go's internal INSERTs draw from; each
     /// reservation commits on its own, outside the planned write set.
-    row_ids: std::sync::Arc<tidb_ddl_build::table_from_meta::LocalTableAutoIds>,
+    row_ids: std::sync::Arc<tidb_table::table_from_meta::LocalTableAutoIds>,
 }
 
 impl MetaSnapshot for MetaStore {
@@ -956,7 +956,7 @@ fn stats_ndv_batch_load_stats_replaces_and_clears_fm_sketches() {
                 .unwrap();
             let table = stored.to_statistics_table(&table_info);
             let dumped =
-                tidb_executor::load_stats::gen_json_table_from_stats("test", "t", &table, None)
+                tidb_stats_handle::load_stats::gen_json_table_from_stats("test", "t", &table, None)
                     .unwrap();
             let map = if is_index {
                 dumped.indices.unwrap()
@@ -3624,7 +3624,7 @@ fn historical_stats_data_round_trips_through_stats_history() {
         })
         .collect::<Vec<_>>();
     blocks.sort_by_key(|(sequence, _)| *sequence);
-    let restored = tidb_executor::load_stats::blocks_to_json_table(
+    let restored = tidb_stats_handle::load_stats::blocks_to_json_table(
         &blocks
             .into_iter()
             .map(|(_, block)| block)
@@ -3652,7 +3652,7 @@ fn historical_stats_data_plans_one_statement_per_block() {
         ..JsonTable::default()
     };
     let blocks =
-        tidb_executor::load_stats::json_table_to_blocks(&json, 30).expect("small blocks compress");
+        tidb_stats_handle::load_stats::json_table_to_blocks(&json, 30).expect("small blocks compress");
     assert!(blocks.len() > 1);
 
     let history = catalog
@@ -3954,7 +3954,7 @@ fn live_stats_dump_refreshes_meta_after_loading_payload() {
 fn stats_writes_allocate_from_the_node_allocator_like_go() {
     let mut store = bootstrapped();
     let catalog = load_cluster_catalog(&mut store).expect("the bootstrapped catalog loads");
-    let allocators = tidb_ddl_build::table_from_meta::LocalTableAutoIds::default();
+    let allocators = tidb_table::table_from_meta::LocalTableAutoIds::default();
     let mut job_ids = Vec::new();
     for _ in 0..2 {
         let (job_id, insert) = {

@@ -171,7 +171,7 @@ impl Session {
                   table: &str,
                   _column: &str,
                   privilege: tidb_mysql::PrivilegeType| {
-                crate::table_privilege::global_privileges_of(privilege)
+                tidb_executor::table_privilege::global_privileges_of(privilege)
                     .into_iter()
                     .any(|global| {
                         scoped_privilege(&registry, &user, &host, &roles, database, table, global)
@@ -379,7 +379,7 @@ impl Session {
 
     /// Go's `CheckPrivilege` (`planner/core/optimizer.go` around line 187)
     /// over the `visitInfo` one statement collects
-    /// ([`crate::table_privilege::required_table_privileges`]).
+    /// ([`tidb_executor::table_privilege::required_table_privileges`]).
     ///
     /// Entries are checked in the order the builder appended them, and the
     /// FIRST failure is reported -- with the statement's own
@@ -423,7 +423,7 @@ impl Session {
         &self,
         stmt: &tidb_ast::Stmt,
         preparing: bool,
-    ) -> Result<Vec<crate::table_privilege::TablePrivilegeRequest>, DriverError> {
+    ) -> Result<Vec<tidb_executor::table_privilege::TablePrivilegeRequest>, DriverError> {
         self.collect_table_privileges_in(stmt, preparing, false)
     }
 
@@ -432,7 +432,7 @@ impl Session {
         stmt: &tidb_ast::Stmt,
         preparing: bool,
         in_explain: bool,
-    ) -> Result<Vec<crate::table_privilege::TablePrivilegeRequest>, DriverError> {
+    ) -> Result<Vec<tidb_executor::table_privilege::TablePrivilegeRequest>, DriverError> {
         self.validate_ddl_preprocess(stmt)?;
         self.deny_missing_tables_without_privileges(stmt)?;
         // Both resolvers plan against the same catalog image the executor will
@@ -448,7 +448,7 @@ impl Session {
                     .into(),
             );
         }
-        crate::table_privilege::required_table_privileges(
+        tidb_executor::table_privilege::required_table_privileges(
             stmt,
             &self.vars.current_db,
             |dml| {
@@ -526,7 +526,7 @@ impl Session {
     pub(crate) fn compile_stmt(
         &mut self,
         stmt: &tidb_ast::Stmt,
-        prepared: Option<&[crate::table_privilege::TablePrivilegeRequest]>,
+        prepared: Option<&[tidb_executor::table_privilege::TablePrivilegeRequest]>,
     ) -> Result<Option<tidb_planner::common_plans::Plan>, DriverError> {
         if prepared.is_none()
             && self
@@ -583,7 +583,7 @@ impl Session {
         let executor = CompiledExecutor::of(&plan);
         let requests: Vec<_> = visits
             .iter()
-            .map(crate::table_privilege::request_of_visit)
+            .map(tidb_executor::table_privilege::request_of_visit)
             .collect();
         self.check_table_privilege_requests(&requests)?;
         self.precompiled = Some(PrecompiledStatement {
@@ -680,7 +680,7 @@ impl Session {
         let (user, host) = (user.to_owned(), host.to_owned());
         let missing: Vec<(String, String)> = {
             let catalog = self.lock_catalog()?;
-            crate::table_privilege::read_tables(stmt, &self.vars.current_db)
+            tidb_executor::table_privilege::read_tables(stmt, &self.vars.current_db)
                 .into_iter()
                 .filter(|(schema, table)| {
                     catalog.table_in(schema, table).is_none()
@@ -739,7 +739,7 @@ impl Session {
                     .matching_account(user, host)
                     .unwrap_or_else(|| (user.to_owned(), host.to_owned()));
                 let roles = registry.default_roles(&account);
-                crate::table_privilege::global_privileges_of(privilege)
+                tidb_executor::table_privilege::global_privileges_of(privilege)
                     .into_iter()
                     .any(|global| {
                         scoped_privilege(
@@ -842,7 +842,7 @@ impl Session {
     ) -> Result<(), DriverError> {
         let requests: Vec<_> = visits
             .iter()
-            .map(crate::table_privilege::request_of_visit)
+            .map(tidb_executor::table_privilege::request_of_visit)
             .collect();
         self.check_table_privilege_requests(&requests)
     }
@@ -851,7 +851,7 @@ impl Session {
     /// `CheckPrivilege` against the live grants, then `CheckTableLock`.
     pub(crate) fn check_table_privilege_requests(
         &self,
-        requests: &[crate::table_privilege::TablePrivilegeRequest],
+        requests: &[tidb_executor::table_privilege::TablePrivilegeRequest],
     ) -> Result<(), DriverError> {
         self.check_privilege(requests)?;
         self.check_table_lock(requests)
@@ -860,7 +860,7 @@ impl Session {
     /// Go `CheckPrivilege` over one list of table-privilege requests.
     fn check_privilege(
         &self,
-        requests: &[crate::table_privilege::TablePrivilegeRequest],
+        requests: &[tidb_executor::table_privilege::TablePrivilegeRequest],
     ) -> Result<(), DriverError> {
         self.observe_privilege_tables(requests);
         let Some((_, user, host)) = self.privilege_context() else {
@@ -871,7 +871,7 @@ impl Session {
             // Go answers a virtual schema from fixed rules before it reads a
             // single grant, so `SELECT ... FROM information_schema.*` needs
             // nothing and a write there is refused whatever is granted.
-            use crate::table_privilege::TemporaryPrivilege;
+            use tidb_executor::table_privilege::TemporaryPrivilege;
             let granted = if !request.dynamic_privileges.is_empty() {
                 request
                     .dynamic_privileges
@@ -1062,14 +1062,14 @@ impl Session {
     /// front end the same way [`Session::attach_process`] installs the
     /// process-list registry.
     /// Installs the instance-wide push-down blacklists
-    /// ([`crate::blacklist::PushdownBlacklists`]) this session plans against.
+    /// ([`tidb_executor::blacklist::PushdownBlacklists`]) this session plans against.
     ///
     /// Go's are package-level, so `ADMIN RELOAD` on one connection changes
     /// what every other connection plans. A front end that opens more than
     /// one session hands them all the same handle to reproduce that; a
     /// session that never gets one keeps its own empty pair, which is what a
     /// single-session embedding wants.
-    pub fn attach_pushdown_blacklists(&mut self, blacklists: crate::blacklist::PushdownBlacklists) {
+    pub fn attach_pushdown_blacklists(&mut self, blacklists: tidb_executor::blacklist::PushdownBlacklists) {
         self.pushdown_blacklists = blacklists;
     }
 
@@ -1138,7 +1138,7 @@ impl Session {
 
     /// Go `session.SetTLSState`: the connection's negotiated TLS state,
     /// left as it is for a connection without TLS.
-    pub fn set_tls_state(&mut self, tls_state: Option<crate::vars::TlsConnectionState>) {
+    pub fn set_tls_state(&mut self, tls_state: Option<tidb_variable::vars::TlsConnectionState>) {
         if tls_state.is_some() {
             self.vars.tls_connection_state = tls_state;
         }
@@ -1283,10 +1283,10 @@ impl Session {
     /// evaluates lock functions.
     pub fn set_advisory_lock_service(
         &mut self,
-        service: std::sync::Arc<dyn tidb_executor::advisory_lock_state::AdvisoryLockService>,
+        service: std::sync::Arc<dyn tidb_sessionctx::advisory_lock_state::AdvisoryLockService>,
     ) {
         self.advisory_locks.release_all();
-        self.advisory_locks = tidb_executor::advisory_lock_state::AdvisoryLockSession::new(service);
+        self.advisory_locks = tidb_sessionctx::advisory_lock_state::AdvisoryLockSession::new(service);
         if let Some(connection_id) = self.vars.connection_id {
             self.advisory_locks.set_owner(connection_id);
         }
@@ -1387,7 +1387,7 @@ fn scoped_privilege(
 /// requests its visit infos made, which it passed.
 pub(crate) struct PrecompiledStatement {
     stmt: tidb_ast::Stmt,
-    requests: Vec<crate::table_privilege::TablePrivilegeRequest>,
+    requests: Vec<tidb_executor::table_privilege::TablePrivilegeRequest>,
 }
 
 /// The executor Go's `executorBuilder.build` picks for a compiled plan, as

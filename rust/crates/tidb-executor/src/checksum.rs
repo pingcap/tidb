@@ -36,7 +36,7 @@ use tidb_datatype::Datum;
 use tidb_distsql::{DatumRange, RequestBuilder, TransportRequest};
 use tidb_proto::tipb;
 
-use crate::storage::StorageError;
+use tidb_kv::storage::StorageError;
 use crate::{DriverError, ExecError, StmtContext};
 
 /// Go `checksumContext`: one table of the statement, with the metadata its

@@ -432,7 +432,7 @@ pub struct ProcessPlanInfo {
     pub previous_explain: bool,
     /// Go `StmtCtx.GetUsedStatsInfo(false)`: the statistics planning used,
     /// keyed by physical table id, for the slow log's `Stats`.
-    pub used_stats: BTreeMap<i64, crate::used_stats::UsedStatsInfoForTable>,
+    pub used_stats: BTreeMap<i64, tidb_stmtctx::used_stats::UsedStatsInfoForTable>,
     /// Go `StmtCtx.IsSyncStatsFailed`.
     pub is_sync_stats_failed: bool,
     /// Go `StmtCtx.IsTiFlash` as the planner set it (`buildDataSource`);
@@ -754,7 +754,7 @@ pub struct StmtContextData {
     /// An atomic so parallel agg workers sharing the context stay `Sync`.
     cop_eval_depth: Arc<AtomicU32>,
     /// Go `StatementContext.UsedStatsInfo`, keyed by physical table ID.
-    used_stats_info: Arc<Mutex<BTreeMap<i64, crate::used_stats::UsedStatsInfoForTable>>>,
+    used_stats_info: Arc<Mutex<BTreeMap<i64, tidb_stmtctx::used_stats::UsedStatsInfoForTable>>>,
     /// Shared by every rebuilt executor of one statement attempt. Go emits
     /// `beforeExecutorFirstRun` only for the initial executor; pessimistic
     /// lock retries use their separate after-retry breakpoint.
@@ -3586,12 +3586,12 @@ impl StmtContext {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(
                 physical_table_id,
-                crate::used_stats::UsedStatsInfoForTable {
+                tidb_stmtctx::used_stats::UsedStatsInfoForTable {
                     name,
                     version,
                     realtime_count,
                     modify_count,
-                    ..crate::used_stats::UsedStatsInfoForTable::default()
+                    ..tidb_stmtctx::used_stats::UsedStatsInfoForTable::default()
                 },
             );
     }
@@ -3617,12 +3617,12 @@ impl StmtContext {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let entry = used_stats.entry(physical_table_id).or_insert_with(|| {
-            crate::used_stats::UsedStatsInfoForTable {
+            tidb_stmtctx::used_stats::UsedStatsInfoForTable {
                 name: table_name.to_owned(),
                 version,
                 realtime_count,
                 modify_count,
-                ..crate::used_stats::UsedStatsInfoForTable::default()
+                ..tidb_stmtctx::used_stats::UsedStatsInfoForTable::default()
             }
         });
         let statuses = if is_index {
@@ -3638,7 +3638,7 @@ impl StmtContext {
     pub fn used_stats_info(
         &self,
         physical_table_id: i64,
-    ) -> Option<crate::used_stats::UsedStatsInfoForTable> {
+    ) -> Option<tidb_stmtctx::used_stats::UsedStatsInfoForTable> {
         self.used_stats_info
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

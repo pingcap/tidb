@@ -199,7 +199,7 @@ pub fn show_create_table_text(
             .has_flag(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE)
         {
             match &column.default_value {
-                Some(crate::column_default::ColumnDefault::Value(Datum::Null)) => {
+                Some(tidb_table::column_default::ColumnDefault::Value(Datum::Null)) => {
                     if column.field_type.code() == tidb_datatype::FieldTypeCode::Timestamp {
                         clause.push_str(" NULL");
                     }
@@ -211,7 +211,7 @@ pub fn show_create_table_text(
                     // `crate::show::show_create_default_clause` for which
                     // is which.
                     let literal = match default {
-                        crate::column_default::ColumnDefault::Value(value) => {
+                        tidb_table::column_default::ColumnDefault::Value(value) => {
                             literal_column_default_text(
                                 value,
                                 column,
@@ -476,7 +476,7 @@ pub fn show_create_table_text(
     // `STORAGE_CLASS` sugar when that loses nothing.
     let engine_attribute = table.engine_attribute();
     if !engine_attribute.is_empty() {
-        match crate::ddl::storage_class::simple_table_storage_class_for_show_create(
+        match tidb_ddl_build::storage_class::simple_table_storage_class_for_show_create(
             &engine_attribute,
         )? {
             Some(tier) => out.push_str(&format!(" STORAGE_CLASS='{tier}'")),

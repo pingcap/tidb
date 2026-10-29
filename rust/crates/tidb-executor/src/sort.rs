@@ -39,7 +39,7 @@ use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
 use tidb_util::memory::{ArcAction, Tracker};
 
-use crate::mem_quota::StatementMemory;
+use tidb_kv::mem_quota::StatementMemory;
 use crate::sort_partition::{spill_action, SortPartition, SPILL_CHUNK_SIZE};
 
 /// Go `planner/util.ByItems`: one `ORDER BY` item -- the key expression and
@@ -554,7 +554,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mem_quota::OomAction;
+    use tidb_kv::mem_quota::OomAction;
     use tidb_ast::CiString;
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_expr::column::Column;

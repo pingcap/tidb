@@ -127,7 +127,7 @@ pub trait CompilerSession: crate::admin::AdminExec {
     /// VALUE. `MemTableStorage` copies its bytes, so the rows come back. A
     /// storage whose `clone_box` clones a shared HANDLE does not: the image
     /// and the original write into the same place, so a failed statement's
-    /// rows survive this restore. `tidb_executor::cluster_storage` is exactly
+    /// rows survive this restore. `tidb_kv::cluster_storage` is exactly
     /// that -- its `MutationBuffer` and snapshot are `Arc`s shared by every
     /// table of the session -- so on the cluster path the guard is NOT this
     /// function. It is the statement savepoint the convergence node takes over

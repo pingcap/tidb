@@ -1546,7 +1546,7 @@ mod tests {
 
     #[test]
     fn cluster_lifecycle_batch_standalone_publishes_its_allocator_identity() {
-        let mut info = crate::serverinfo_etcd::node_server_info(&test_config());
+        let mut info = tidb_session::domain::serverinfo_etcd::node_server_info(&test_config());
         let encoded = info.marshal().unwrap();
         let value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
         assert_eq!(value["server_id"], 1);
@@ -1568,7 +1568,7 @@ mod tests {
             tidb_pd_client::EtcdClient::connect(["127.0.0.1:1"], Duration::from_millis(100))
                 .unwrap();
         let identity = tidb_domain::server_id::ServerIdAuthority::new(
-            Some(Arc::new(crate::serverinfo_etcd::EtcdClientOps::new(
+            Some(Arc::new(tidb_session::domain::serverinfo_etcd::EtcdClientOps::new(
                 Arc::new(client),
             ))),
             true,
