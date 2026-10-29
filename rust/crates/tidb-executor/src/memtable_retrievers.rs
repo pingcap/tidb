@@ -28,7 +28,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use tidb_datatype::Datum;
 use tidb_kv::region_map::RegionStore;
-use crate::{Catalog, DriverError};
+use crate::Catalog;
+use crate::DriverError;
 use tidb_hack::{GoCaseCompare, GoToLower};
 use tidb_planner::logical::mem_table::QueryTimeRange;
 use tidb_planner::memtable_predicate_extractor::{
@@ -38,7 +39,7 @@ use tidb_planner::memtable_predicate_extractor::{
 use tikv_client::pd_http;
 
 use crate::infoschema_reader::{PrivMask, SchemaVisibility};
-use crate::store_helper::{self, PD_HTTP_CLIENT_UNAVAILABLE};
+use tidb_store_helper::{self as store_helper, PD_HTTP_CLIENT_UNAVAILABLE};
 
 fn text(value: &str) -> Datum {
     Datum::Bytes(value.as_bytes().to_vec())

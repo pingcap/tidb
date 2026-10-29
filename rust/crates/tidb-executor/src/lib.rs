@@ -77,7 +77,6 @@ pub mod show;
 pub mod ddl_jobs;
 pub mod infoschema_reader;
 pub mod memtable_retrievers;
-pub mod store_helper;
 pub mod compact_table;
 pub mod set;
 pub mod simple;

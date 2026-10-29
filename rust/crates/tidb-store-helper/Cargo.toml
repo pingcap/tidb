@@ -1,0 +1,23 @@
+[package]
+name = "tidb-store-helper"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/store/helper: the PD region reads the memory tables use (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-log = { path = "../tidb-log" }
+tikv-client = { workspace = true }
+tidb-hack = { path = "../tidb-hack" }
+tidb-codec = { path = "../tidb-codec" }
+tidb-metadef = { path = "../tidb-metadef" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-txnkv = { path = "../tidb-txnkv" }

@@ -131,6 +131,7 @@ members = [
     "crates/tidb-chunk",
     "crates/tidb-driver-error",
     "crates/tidb-executor",
+    "crates/tidb-store-helper",
     "crates/tidb-pdhelper",
     "crates/tidb-lock",
     "crates/tidb-sessmgr",

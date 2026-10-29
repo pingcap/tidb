@@ -950,7 +950,7 @@ pub fn peer_cluster_table_rows(
         peer.ok_or_else(|| DriverError::unsupported("TiDB peer RPC client is not installed"))?;
     let result = client.scan_projected(
         &servers,
-        crate::infoschema_reader::memory_table_id(table_name)
+        tidb_infoschema::infoschema_meta::memory_table_id(table_name)
             .expect("registered memory table"),
         columns,
         offsets,

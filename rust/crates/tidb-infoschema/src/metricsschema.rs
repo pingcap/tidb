@@ -31,21 +31,39 @@ pub const METRICS_SCHEMA: &str = "metrics_schema";
 /// Go `autoid.MetricSchemaDBID` (`SystemSchemaIDFlag | 20000`).
 pub const METRICS_SCHEMA_DB_ID: i64 = (1 << 62) | 20000;
 
+/// Every metric table's `(name, table id)`: Go sorts the names before
+/// numbering them from `METRICS_SCHEMA_DB_ID + 1`, so "the id is stable
+/// across different TiDB instances".
+pub fn table_ids() -> &'static [(&'static str, i64)] {
+    static IDS: OnceLock<Vec<(&'static str, i64)>> = OnceLock::new();
+    IDS.get_or_init(|| {
+        let mut names = crate::metric_table_def::METRIC_TABLE_MAP
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>();
+        names.sort_unstable();
+        names
+            .into_iter()
+            .enumerate()
+            .map(|(index, name)| (name, METRICS_SCHEMA_DB_ID + 1 + index as i64))
+            .collect()
+    })
+}
+
 /// Every metric table as a catalog entry, keyed by name.
 pub fn tables() -> HashMap<String, Arc<TableEntry>> {
     static TABLES: OnceLock<HashMap<String, Arc<TableEntry>>> = OnceLock::new();
     TABLES
         .get_or_init(|| {
             let mut scratch = Catalog::memory_schema_scratch();
-            // Go sorts by name before numbering: "the id is stable across
-            // different TiDB instances".
-            let mut defs = crate::metric_table_def::METRIC_TABLE_MAP
-                .iter()
-                .collect::<Vec<_>>();
-            defs.sort_by(|(left, _), (right, _)| left.cmp(right));
-            for (index, (name, def)) in defs.into_iter().enumerate() {
+            for &(name, id) in table_ids() {
+                let def = crate::metric_table_def::METRIC_TABLE_MAP
+                    .iter()
+                    .find(|(candidate, _)| *candidate == name)
+                    .map(|(_, def)| def)
+                    .expect("every numbered metric table has a definition");
                 let mut info = go_table_info(name, def);
-                info.id = METRICS_SCHEMA_DB_ID + 1 + index as i64;
+                info.id = id;
                 let table = tidb_table::table_from_meta::cluster_table(
                     &info,
                     &tidb_kv::storage::MemTableStorage::new(),

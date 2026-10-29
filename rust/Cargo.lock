@@ -4515,6 +4515,7 @@ dependencies = [
  "tidb-stmtsummary",
  "tidb-store-driver-error",
  "tidb-store-driver-txn",
+ "tidb-store-helper",
  "tidb-stringutil",
  "tidb-syssession",
  "tidb-sysutil",
@@ -6672,6 +6673,22 @@ dependencies = [
  "tidb-terror",
  "tidb-txnkv",
  "tidb-vardef",
+ "tikv-client",
+]
+
+[[package]]
+name = "tidb-store-helper"
+version = "0.0.0"
+dependencies = [
+ "tidb-codec",
+ "tidb-hack",
+ "tidb-infoschema",
+ "tidb-kv",
+ "tidb-log",
+ "tidb-logutil",
+ "tidb-metadef",
+ "tidb-mysql",
+ "tidb-txnkv",
  "tikv-client",
 ]
 

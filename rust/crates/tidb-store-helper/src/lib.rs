@@ -30,7 +30,8 @@ use tidb_codec::table_key::{
     get_table_handle_key_range, KeyHead, RecordHandle, TABLE_PREFIX, TABLE_SPLIT_KEY_LEN,
 };
 use tidb_kv::region_map::RegionStore;
-use crate::{Catalog, TableEntry};
+use tidb_infoschema::Catalog;
+use tidb_infoschema::TableEntry;
 use tidb_hack::GoToLower;
 use tikv_client::pd_http;
 
@@ -107,45 +108,45 @@ pub fn get_pd_region_stats(
 /// and `Name.O`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HelperPartition {
-    pub(crate) id: i64,
-    pub(crate) name: String,
+    pub id: i64,
+    pub name: String,
 }
 
 /// One index of a [`HelperTable`]: Go `model.IndexInfo`'s ID, `Name.O` and
 /// `Global`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HelperIndex {
-    pub(crate) id: i64,
-    pub(crate) name: String,
-    pub(crate) global: bool,
+    pub id: i64,
+    pub name: String,
+    pub global: bool,
 }
 
 /// The facts of a Go `model.TableInfo` the helper reads.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HelperTable {
-    pub(crate) id: i64,
+    pub id: i64,
     /// Go `TableInfo.Name.O`.
-    pub(crate) name: String,
+    pub name: String,
     /// Go `TableInfo.Partition.Definitions`; empty for a table without
     /// partitioning.
-    pub(crate) partitions: Vec<HelperPartition>,
+    pub partitions: Vec<HelperPartition>,
     /// Go `TableInfo.Indices`.
-    pub(crate) indices: Vec<HelperIndex>,
+    pub indices: Vec<HelperIndex>,
     /// Go `TableInfo.IsCommonHandle`.
-    pub(crate) is_common_handle: bool,
+    pub is_common_handle: bool,
 }
 
 /// One Go `model.DBInfo` with its `SchemaTableInfos`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HelperSchema {
     /// Go `DBInfo.Name.O`.
-    pub(crate) name: String,
-    pub(crate) tables: Vec<HelperTable>,
+    pub name: String,
+    pub tables: Vec<HelperTable>,
 }
 
 impl HelperSchema {
     /// Go `metadef.IsMemDB(db.Name.L)`.
-    pub(crate) fn is_mem_db(&self) -> bool {
+    pub fn is_mem_db(&self) -> bool {
         tidb_metadef::db::is_mem_db(&self.name.go_to_lower())
     }
 }
@@ -239,7 +240,7 @@ pub fn all_schemas(catalog: &Catalog) -> Vec<HelperSchema> {
         .unwrap_or_default()
         .into_iter()
         .filter_map(|name| {
-            crate::infoschema_reader::memory_table_id(&name).map(|id| memory_table(id, &name))
+            tidb_infoschema::infoschema_meta::memory_table_id(&name).map(|id| memory_table(id, &name))
         })
         .collect::<Vec<_>>();
     if !information_schema.is_empty() {
@@ -251,7 +252,7 @@ pub fn all_schemas(catalog: &Catalog) -> Vec<HelperSchema> {
     if catalog.has_database("metrics_schema") {
         schemas.push(HelperSchema {
             name: "METRICS_SCHEMA".to_owned(),
-            tables: crate::infoschema_reader::METRICS_SCHEMA_TABLES
+            tables: tidb_infoschema::metricsschema::table_ids()
                 .iter()
                 .map(|(name, id)| memory_table(*id, name))
                 .collect(),
@@ -265,20 +266,20 @@ pub fn all_schemas(catalog: &Catalog) -> Vec<HelperSchema> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TableInfo {
     /// Go `DB.Name.O`.
-    pub(crate) db_name: String,
+    pub db_name: String,
     /// Go `Table.ID`, the logical table's.
-    pub(crate) table_id: i64,
+    pub table_id: i64,
     /// Go `Table.Name.O`.
-    pub(crate) table_name: String,
+    pub table_name: String,
     /// Go `Partition` when `IsPartition`.
-    pub(crate) partition: Option<HelperPartition>,
+    pub partition: Option<HelperPartition>,
     /// Go `Index` when `IsIndex`.
-    pub(crate) index: Option<HelperIndex>,
+    pub index: Option<HelperIndex>,
 }
 
 impl TableInfo {
     /// Go `metadef.IsMemDB(DB.Name.L)`.
-    pub(crate) fn is_mem_db(&self) -> bool {
+    pub fn is_mem_db(&self) -> bool {
         tidb_metadef::db::is_mem_db(&self.db_name.go_to_lower())
     }
 }
@@ -287,9 +288,9 @@ impl TableInfo {
 /// region key range as upper-case hex.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TableInfoWithKeyRange {
-    pub(crate) table_info: TableInfo,
-    pub(crate) start_key: String,
-    pub(crate) end_key: String,
+    pub table_info: TableInfo,
+    pub start_key: String,
+    pub end_key: String,
 }
 
 /// Go `bytesKeyToHex`.
@@ -442,9 +443,9 @@ pub fn get_regions_table_info(
 /// Go `helper.RegionMetric`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RegionMetric {
-    pub(crate) flow_bytes: u64,
-    pub(crate) max_hot_degree: i64,
-    pub(crate) count: i64,
+    pub flow_bytes: u64,
+    pub max_hot_degree: i64,
+    pub count: i64,
 }
 
 /// Go `helper.HotRead` / `helper.HotWrite`.
@@ -495,19 +496,19 @@ pub fn region_metrics(
 /// here prints.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FrameItem {
-    pub(crate) db_name: String,
-    pub(crate) table_name: String,
-    pub(crate) table_id: i64,
-    pub(crate) is_record: bool,
-    pub(crate) index_name: String,
-    pub(crate) index_id: i64,
+    pub db_name: String,
+    pub table_name: String,
+    pub table_id: i64,
+    pub is_record: bool,
+    pub index_name: String,
+    pub index_id: i64,
 }
 
 /// Go `helper.RegionFrameRange`: the frames at a region's two ends.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RegionFrameRange {
-    pub(crate) first: FrameItem,
-    pub(crate) last: FrameItem,
+    pub first: FrameItem,
+    pub last: FrameItem,
 }
 
 /// Go `helper.NewRegionFrameRange` over a region's decoded key bounds.
@@ -593,7 +594,7 @@ pub fn new_frame_item_from_region_key(key: &[u8]) -> Result<FrameItem, String> {
 
 impl RegionFrameRange {
     /// Go `RegionFrameRange.GetRecordFrame`.
-    pub(crate) fn get_record_frame(
+    pub fn get_record_frame(
         &mut self,
         table_id: i64,
         db_name: &str,
@@ -628,7 +629,7 @@ impl RegionFrameRange {
     }
 
     /// Go `RegionFrameRange.GetIndexFrame`.
-    pub(crate) fn get_index_frame(
+    pub fn get_index_frame(
         &mut self,
         table_id: i64,
         index_id: i64,
@@ -739,13 +740,13 @@ pub fn find_table_index_of_region(
 /// Go `helper.HotTableIndex`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HotTableIndex {
-    pub(crate) region_id: u64,
-    pub(crate) region_metric: RegionMetric,
-    pub(crate) db_name: String,
-    pub(crate) table_name: String,
-    pub(crate) table_id: i64,
-    pub(crate) index_name: String,
-    pub(crate) index_id: i64,
+    pub region_id: u64,
+    pub region_metric: RegionMetric,
+    pub db_name: String,
+    pub table_name: String,
+    pub table_id: i64,
+    pub index_name: String,
+    pub index_id: i64,
 }
 
 /// Go `Helper.FetchRegionTableIndex`: each hot region with the table or
