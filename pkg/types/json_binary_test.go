@@ -466,6 +466,8 @@ func BenchmarkParseBinaryJSONFromString(b *testing.B) {
 		{name: "Flat32Numbers", input: makeJSONBenchmarkObject(32, "123456789")},
 		{name: "Flat32Strings", input: makeJSONBenchmarkObject(32, `"abcdefghijklmnopqrstuvwxyz0123456789"`)},
 		{name: "NestedObjects", input: makeJSONBenchmarkObject(32, `{"nested":[1,2,3,{"text":"abcdefghijklmnopqrstuvwxyz"}]}`)},
+		{name: "LargeArray", input: "[" + strings.TrimSuffix(strings.Repeat(
+			`{"id":12345,"name":"some name here","tags":["a","b","c"],"score":1.5},`, 8000), ",") + "]"},
 	}
 	implementations := []struct {
 		name  string
@@ -668,6 +670,13 @@ func TestParseBinaryFromString(t *testing.T) {
 	_, actualErr := ParseBinaryJSONFromString(longKey)
 	require.True(t, ErrJSONObjectKeyTooLong.Equal(expectedErr))
 	require.True(t, ErrJSONObjectKeyTooLong.Equal(actualErr))
+	// A long key dropped with a duplicate key does not fail the document.
+	shadowedLongKey := `{"a":{"` + strings.Repeat("a", math.MaxUint16+1) + `":1},"a":0}`
+	expected, expectedErr := parseBinaryJSONFromStringLegacy(shadowedLongKey)
+	require.NoError(t, expectedErr)
+	actual, actualErr := ParseBinaryJSONFromString(shadowedLongKey)
+	require.NoError(t, actualErr)
+	require.Equal(t, expected, actual)
 
 	tooDeep := strings.Repeat("[", maxJSONDepth+1) + "0" + strings.Repeat("]", maxJSONDepth+1)
 	_, expectedErr = parseBinaryJSONFromStringLegacy(tooDeep)
@@ -679,6 +688,14 @@ func TestParseBinaryFromString(t *testing.T) {
 	_, actualErr = ParseBinaryJSONFromString(veryDeep)
 	require.True(t, ErrJSONDocumentTooDeep.Equal(expectedErr))
 	require.True(t, ErrJSONDocumentTooDeep.Equal(actualErr))
+	// Beyond the nesting limit of the tokenizer, the error is the same as before
+	// instead of a stack overflow.
+	nestedTooMuch := strings.Repeat("[", 1<<17) + strings.Repeat("]", 1<<17)
+	_, expectedErr = parseBinaryJSONFromStringLegacy(nestedTooMuch)
+	_, actualErr = ParseBinaryJSONFromString(nestedTooMuch)
+	require.Error(t, expectedErr)
+	require.Error(t, actualErr)
+	require.Equal(t, expectedErr.Error(), actualErr.Error())
 
 	legacyBJ, expectedErr := unmarshalBinaryJSONLegacy([]byte("1 2"))
 	require.NoError(t, expectedErr)
@@ -983,6 +1000,18 @@ func FuzzParseBinaryJSONFromString(f *testing.F) {
 		`01`,
 		`1e400`,
 		`{"a":}`,
+		"\"\\\"\\/\\b\\f\\n\\r\\t\\u0000\"",
+		"\"\xff\xfe\x80\"",
+		"{\"\xff\":1,\"\xc3\":2}",
+		"\"\x01\"",
+		`[-0,9223372036854775807,9223372036854775808,18446744073709551615,18446744073709551616]`,
+		`[-9223372036854775808,-9223372036854775809,1.7976931348623157e308,1e-400,0.1e1,1E+2]`,
+		`[1 2]`,
+		`{"a":1,}`,
+		`  {"a" : [ 1 , 2 ] }  `,
+		`1 2`,
+		`{"b":1,"a":2,"c":{"b":1,"a":[]},"c":{"z":{}}}`,
+		`{"":0,"a":{"a":{"a":1},"a":2}}`,
 	} {
 		f.Add(input)
 	}
@@ -1107,5 +1136,103 @@ func FuzzJSONExtract(f *testing.F) {
 		}
 
 		require.Equal(t, *mysqlResult, output.String(), "Expect %v, got %v", []byte(*mysqlResult), []byte(output.String()))
+	})
+}
+
+func FuzzUnmarshalBinaryJSON(f *testing.F) {
+	for _, input := range []string{
+		`null`,
+		`{"a":1,"a":2}`,
+		`1 2`,
+		`[1] garbage`,
+		"\"\xff\" 1",
+		`{"a":`,
+		``,
+	} {
+		f.Add([]byte(input))
+	}
+
+	f.Fuzz(func(t *testing.T, input []byte) {
+		expected, expectedErr := unmarshalBinaryJSONLegacy(input)
+		var actual BinaryJSON
+		actualErr := actual.UnmarshalJSON(input)
+		if expectedErr == nil {
+			require.NoError(t, actualErr)
+			require.Equal(t, expected, actual)
+			return
+		}
+		// The legacy errors come from encoding/json, so only compare the kind.
+		require.Error(t, actualErr)
+		require.Equal(t, ErrJSONObjectKeyTooLong.Equal(expectedErr), ErrJSONObjectKeyTooLong.Equal(actualErr))
+		require.Equal(t, ErrJSONDocumentTooDeep.Equal(expectedErr), ErrJSONDocumentTooDeep.Equal(actualErr))
+	})
+}
+
+// generateFuzzJSON builds a mostly valid JSON document from data, with nested
+// containers, duplicate keys, escapes and boundary numbers, which random text
+// rarely reaches.
+func generateFuzzJSON(data []byte) string {
+	var builder strings.Builder
+	pos := 0
+	next := func() byte {
+		if pos >= len(data) {
+			return 0
+		}
+		pos++
+		return data[pos-1]
+	}
+	strs := []string{`"a"`, `"b"`, `""`, `"\u00e9"`, `"\ud834\udd1e"`, `"\ud800"`, "\"\xff\"", `"\n\t\\\""`, `"long` + strings.Repeat("x", 40) + `"`}
+	nums := []string{`0`, `-0`, `1`, `-1`, `1.5`, `1e3`, `9223372036854775807`, `9223372036854775808`, `-9223372036854775809`, `18446744073709551615`, `18446744073709551616`, `1e400`, `0.000001`}
+	var gen func(depth int)
+	gen = func(depth int) {
+		b := next()
+		switch kind := b % 8; {
+		case kind == 0 && depth < 120:
+			builder.WriteByte('[')
+			for i := range int(next() % 5) {
+				if i > 0 {
+					builder.WriteByte(',')
+				}
+				gen(depth + 1)
+			}
+			builder.WriteByte(']')
+		case kind == 1 && depth < 120:
+			builder.WriteByte('{')
+			for i := range int(next() % 5) {
+				if i > 0 {
+					builder.WriteByte(',')
+				}
+				builder.WriteString(strs[int(next())%len(strs)])
+				builder.WriteByte(':')
+				gen(depth + 1)
+			}
+			builder.WriteByte('}')
+		case kind == 2:
+			builder.WriteString(strs[int(next())%len(strs)])
+		case kind == 3:
+			builder.WriteString([]string{`true`, `false`, `null`}[int(next())%3])
+		default:
+			builder.WriteString(nums[int(next())%len(nums)])
+		}
+	}
+	gen(0)
+	return builder.String()
+}
+
+func FuzzParseGeneratedBinaryJSON(f *testing.F) {
+	f.Add([]byte{0, 3, 1, 2, 1, 4, 3})
+	f.Add([]byte{1, 4, 0, 1, 1, 0, 2, 1, 1, 9, 4, 6})
+	f.Add([]byte{0, 0, 0, 0, 0, 0, 0, 0})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		input := generateFuzzJSON(data)
+		expected, expectedErr := parseBinaryJSONFromStringLegacy(input)
+		actual, actualErr := ParseBinaryJSONFromString(input)
+		if expectedErr == nil {
+			require.NoError(t, actualErr, input)
+			require.Equal(t, expected, actual, input)
+			return
+		}
+		require.Error(t, actualErr, input)
+		require.Equal(t, expectedErr.Error(), actualErr.Error(), input)
 	})
 }

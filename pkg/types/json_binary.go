@@ -20,6 +20,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"io"
 	"math"
@@ -28,11 +29,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 	"unsafe"
 
-	jsoniter "github.com/json-iterator/go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -553,7 +554,8 @@ func ParseBinaryJSONFromString(s string) (bj BinaryJSON, err error) {
 	return
 }
 
-// UnmarshalJSON implements the json.Unmarshaler interface.
+// UnmarshalJSON implements the json.Unmarshaler interface. It parses the first
+// JSON value in data and ignores the bytes after it.
 func (bj *BinaryJSON) UnmarshalJSON(data []byte) error {
 	// Decoder.Decode historically accepted bytes after the first value in this method.
 	newBJ, err := parseBinaryJSONFromBytes(data, false)
@@ -566,8 +568,10 @@ func (bj *BinaryJSON) UnmarshalJSON(data []byte) error {
 }
 
 type binaryJSONTextNode struct {
-	stringValue string
-	key         string
+	// value is the string, or the text of a number that does not fit, and key
+	// is the key of an object member, both in binaryJSONTextParser.text.
+	value       binaryJSONTextSpan
+	key         binaryJSONTextSpan
 	numberBits  uint64
 	valueSize   uint64
 	childStart  int32
@@ -580,43 +584,56 @@ type binaryJSONTextNode struct {
 
 const binaryJSONInvalidNumberTypeCode = 0xff
 
+// binaryJSONTextSpan is a range of binaryJSONTextParser.text.
+type binaryJSONTextSpan struct {
+	off, len uint32
+}
+
 type binaryJSONTextParser struct {
-	iter       *jsoniter.Iterator
+	// input is a bytes.Buffer, which the decoder parses directly instead of
+	// copying it first.
+	input      bytes.Buffer
+	dec        jsontext.Decoder
 	nodes      []binaryJSONTextNode
 	childOrder []int32
+	// text holds the unquoted strings and keys, so that they need no allocation
+	// each.
+	text       []byte
 	keyTooLong bool
 	badNumber  bool
 }
 
+// maxPooledJSONTextLen is the size of the largest document whose parser goes
+// back to binaryJSONTextParserPool.
+const maxPooledJSONTextLen = 64 * 1024
+
+var binaryJSONTextParserPool = sync.Pool{New: func() any { return new(binaryJSONTextParser) }}
+
 // parseBinaryJSONFromBytes parses JSON text into compact metadata, then writes the
 // final BinaryJSON once into an exactly sized buffer.
 func parseBinaryJSONFromBytes(data []byte, requireEOF bool) (BinaryJSON, error) {
-	// jsoniter's escaped-string slow path accepts raw control characters after
-	// an escape. Validate only inputs that can exercise that path and contain a
-	// raw control byte; ordinary and normally escaped JSON avoid this extra pass.
-	if bytes.IndexByte(data, '\\') >= 0 && containsJSONControlByte(data) &&
-		!validJSONForParseMode(data, requireEOF) {
-		return BinaryJSON{}, errors.New("invalid control character in JSON string")
-	}
-
-	nodeCapacity := max(8, len(data)/32)
-	parser := binaryJSONTextParser{
-		iter:       jsoniter.ParseBytes(jsoniter.ConfigDefault, data),
-		nodes:      make([]binaryJSONTextNode, 0, nodeCapacity),
-		childOrder: make([]int32, 0, nodeCapacity),
-	}
+	parser := binaryJSONTextParserPool.Get().(*binaryJSONTextParser)
+	defer func() {
+		parser.reset(nil)
+		// The parser keeps its buffers, so do not pool one used for a large document.
+		if len(data) <= maxPooledJSONTextLen {
+			binaryJSONTextParserPool.Put(parser)
+		}
+	}()
+	parser.reset(data)
 	root, err := parser.decodeValue()
 	if err != nil {
 		return BinaryJSON{}, err
 	}
-	if requireEOF && (parser.iter.WhatIsNext() != jsoniter.InvalidValue || parser.iter.Error != io.EOF) {
-		return BinaryJSON{}, errors.New("the document root must not be followed by other values")
+	if requireEOF {
+		if _, err := parser.dec.ReadToken(); err != io.EOF {
+			return BinaryJSON{}, errors.New("the document root must not be followed by other values")
+		}
 	}
-	if parser.keyTooLong {
-		return BinaryJSON{}, ErrJSONObjectKeyTooLong
-	}
-	if parser.badNumber {
-		if err := parser.validateReachableNumbers(root); err != nil {
+	// A long key or a bad number only fails the document if it is not dropped
+	// with a duplicate key, like when the legacy path encodes the decoded value.
+	if parser.keyTooLong || parser.badNumber {
+		if err := parser.validateReachable(root); err != nil {
 			return BinaryJSON{}, err
 		}
 	}
@@ -630,59 +647,73 @@ func parseBinaryJSONFromBytes(data []byte, requireEOF bool) (BinaryJSON, error) 
 	return BinaryJSON{TypeCode: rootNode.typeCode, Value: value}, nil
 }
 
-func containsJSONControlByte(data []byte) bool {
-	for _, value := range data {
-		if value < ' ' {
-			return true
-		}
-	}
-	return false
+func (parser *binaryJSONTextParser) reset(data []byte) {
+	parser.input = *bytes.NewBuffer(data)
+	// Like encoding/json, the last duplicate key wins and invalid UTF-8 is
+	// replaced with U+FFFD.
+	parser.dec.Reset(&parser.input, jsontext.AllowDuplicateNames(true), jsontext.AllowInvalidUTF8(true))
+	parser.nodes = parser.nodes[:0]
+	parser.childOrder = parser.childOrder[:0]
+	parser.text = parser.text[:0]
+	parser.keyTooLong = false
+	parser.badNumber = false
 }
 
-func validJSONForParseMode(data []byte, requireEOF bool) bool {
-	if requireEOF {
-		return json.Valid(data)
+// readString reads a string or a key into parser.text.
+func (parser *binaryJSONTextParser) readString() (binaryJSONTextSpan, error) {
+	value, err := parser.dec.ReadValue()
+	if err != nil {
+		return binaryJSONTextSpan{}, err
 	}
-	var raw json.RawMessage
-	return json.NewDecoder(bytes.NewReader(data)).Decode(&raw) == nil
+	off := len(parser.text)
+	// The only error left after ReadValue is invalid UTF-8, which is replaced.
+	parser.text, _ = jsontext.AppendUnquote(parser.text, value)
+	return binaryJSONTextSpan{off: uint32(off), len: uint32(len(parser.text) - off)}, nil
+}
+
+func (parser *binaryJSONTextParser) textOf(span binaryJSONTextSpan) []byte {
+	return parser.text[span.off : span.off+span.len]
 }
 
 func (parser *binaryJSONTextParser) appendNode(node binaryJSONTextNode) int {
 	node.nextSibling = -1
+	if len(parser.nodes) == cap(parser.nodes) {
+		// Double the capacity, as append grows a large slice by only 1.25x,
+		// which allocates several times the final size for a large document.
+		parser.nodes = slices.Grow(parser.nodes, max(cap(parser.nodes), 8))
+	}
 	parser.nodes = append(parser.nodes, node)
 	return len(parser.nodes) - 1
 }
 
 func (parser *binaryJSONTextParser) decodeValue() (int, error) {
-	switch parser.iter.WhatIsNext() {
-	case jsoniter.StringValue:
-		value := normalizeJSONUTF8(parser.iter.ReadString())
-		if err := parser.iteratorError(); err != nil {
+	switch parser.dec.PeekKind() {
+	case '"':
+		value, err := parser.readString()
+		if err != nil {
 			return 0, err
 		}
 		return parser.appendNode(binaryJSONTextNode{
-			typeCode:    JSONTypeCodeString,
-			stringValue: value,
-			valueSize:   uint64(binaryJSONUvarintLen(uint64(len(value))) + len(value)),
-			depth:       1,
+			typeCode:  JSONTypeCodeString,
+			value:     value,
+			valueSize: uint64(binaryJSONUvarintLen(uint64(value.len)) + int(value.len)),
+			depth:     1,
 		}), nil
-	case jsoniter.NumberValue:
-		number := parser.iter.ReadNumber()
-		// ReadNumber accepts some forms that are not valid JSON numbers.
-		if !json.Valid(hack.Slice(number.String())) {
-			return 0, errors.Errorf("invalid JSON number %q", number)
-		}
-		if err := parser.iteratorError(); err != nil {
+	case '0':
+		raw, err := parser.dec.ReadValue()
+		if err != nil {
 			return 0, err
 		}
-		typeCode, numberBits, err := parseBinaryNumber(number)
+		typeCode, numberBits, err := parseBinaryNumber(json.Number(hack.String(raw)))
 		if err != nil {
 			parser.badNumber = true
+			off := len(parser.text)
+			parser.text = append(parser.text, raw...)
 			return parser.appendNode(binaryJSONTextNode{
-				typeCode:    binaryJSONInvalidNumberTypeCode,
-				stringValue: number.String(),
-				valueSize:   8,
-				depth:       1,
+				typeCode:  binaryJSONInvalidNumberTypeCode,
+				value:     binaryJSONTextSpan{off: uint32(off), len: uint32(len(raw))},
+				valueSize: 8,
+				depth:     1,
 			}), nil
 		}
 		return parser.appendNode(binaryJSONTextNode{
@@ -691,27 +722,19 @@ func (parser *binaryJSONTextParser) decodeValue() (int, error) {
 			valueSize:  8,
 			depth:      1,
 		}), nil
-	case jsoniter.NilValue:
-		if !parser.iter.ReadNil() {
-			return 0, errors.New("invalid JSON null literal")
-		}
-		if err := parser.iteratorError(); err != nil {
-			return 0, err
-		}
-		return parser.appendNode(binaryJSONTextNode{
-			typeCode:  JSONTypeCodeLiteral,
-			literal:   JSONLiteralNil,
-			valueSize: 1,
-			depth:     1,
-		}), nil
-	case jsoniter.BoolValue:
-		value := parser.iter.ReadBool()
-		if err := parser.iteratorError(); err != nil {
-			return 0, err
-		}
-		literal := JSONLiteralFalse
-		if value {
+	}
+	tok, err := parser.dec.ReadToken()
+	if err != nil {
+		return 0, err
+	}
+	switch tok.Kind() {
+	case 'n', 't', 'f':
+		literal := JSONLiteralNil
+		switch tok.Kind() {
+		case 't':
 			literal = JSONLiteralTrue
+		case 'f':
+			literal = JSONLiteralFalse
 		}
 		return parser.appendNode(binaryJSONTextNode{
 			typeCode:  JSONTypeCodeLiteral,
@@ -719,39 +742,40 @@ func (parser *binaryJSONTextParser) decodeValue() (int, error) {
 			valueSize: 1,
 			depth:     1,
 		}), nil
-	case jsoniter.ArrayValue:
+	case '[':
 		return parser.decodeArray()
-	case jsoniter.ObjectValue:
+	case '{':
 		return parser.decodeObject()
 	default:
-		if parser.iter.Error == io.EOF {
-			return 0, io.EOF
-		}
-		return 0, errors.New("invalid JSON value")
+		return 0, errors.Errorf("unexpected JSON token %v", tok.Kind())
 	}
 }
 
-func (parser *binaryJSONTextParser) validateReachableNumbers(nodeIndex int) error {
+// validateReachable checks the keys and numbers of the values that are kept
+// after removing duplicate keys, in the order that appendBinaryObject checks
+// them: the keys of an object before its values.
+func (parser *binaryJSONTextParser) validateReachable(nodeIndex int) error {
 	node := parser.nodes[nodeIndex]
 	if node.typeCode == binaryJSONInvalidNumberTypeCode {
-		_, _, err := parseBinaryNumber(json.Number(node.stringValue))
+		_, _, err := parseBinaryNumber(json.Number(parser.textOf(node.value)))
 		return err
 	}
 	if node.typeCode != JSONTypeCodeArray && node.typeCode != JSONTypeCodeObject {
 		return nil
 	}
 	childStart := int(node.childStart)
-	for _, childIndex := range parser.childOrder[childStart : childStart+int(node.childCount)] {
-		if err := parser.validateReachableNumbers(int(childIndex)); err != nil {
-			return err
+	children := parser.childOrder[childStart : childStart+int(node.childCount)]
+	if node.typeCode == JSONTypeCodeObject {
+		for _, childIndex := range children {
+			if parser.nodes[int(childIndex)].key.len > math.MaxUint16 {
+				return ErrJSONObjectKeyTooLong
+			}
 		}
 	}
-	return nil
-}
-
-func (parser *binaryJSONTextParser) iteratorError() error {
-	if parser.iter.Error != nil && parser.iter.Error != io.EOF {
-		return parser.iter.Error
+	for _, childIndex := range children {
+		if err := parser.validateReachable(int(childIndex)); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -759,20 +783,14 @@ func (parser *binaryJSONTextParser) iteratorError() error {
 func (parser *binaryJSONTextParser) decodeArray() (int, error) {
 	nodeIndex := parser.appendNode(binaryJSONTextNode{typeCode: JSONTypeCodeArray})
 	firstChild, lastChild := -1, -1
-	var decodeErr error
-	parser.iter.ReadArrayCB(func(_ *jsoniter.Iterator) bool {
+	for parser.dec.PeekKind() != ']' {
 		child, err := parser.decodeValue()
 		if err != nil {
-			decodeErr = err
-			return false
+			return 0, err
 		}
 		firstChild, lastChild = parser.linkChild(firstChild, lastChild, child)
-		return true
-	})
-	if decodeErr != nil {
-		return 0, decodeErr
 	}
-	if err := parser.iteratorError(); err != nil {
+	if _, err := parser.dec.ReadToken(); err != nil {
 		return 0, err
 	}
 	parser.finishContainer(nodeIndex, firstChild, false)
@@ -782,25 +800,22 @@ func (parser *binaryJSONTextParser) decodeArray() (int, error) {
 func (parser *binaryJSONTextParser) decodeObject() (int, error) {
 	nodeIndex := parser.appendNode(binaryJSONTextNode{typeCode: JSONTypeCodeObject})
 	firstChild, lastChild := -1, -1
-	var decodeErr error
-	parser.iter.ReadMapCB(func(_ *jsoniter.Iterator, key string) bool {
-		key = normalizeJSONUTF8(key)
-		if len(key) > math.MaxUint16 {
+	for parser.dec.PeekKind() != '}' {
+		key, err := parser.readString()
+		if err != nil {
+			return 0, err
+		}
+		if key.len > math.MaxUint16 {
 			parser.keyTooLong = true
 		}
 		child, err := parser.decodeValue()
 		if err != nil {
-			decodeErr = err
-			return false
+			return 0, err
 		}
 		parser.nodes[child].key = key
 		firstChild, lastChild = parser.linkChild(firstChild, lastChild, child)
-		return true
-	})
-	if decodeErr != nil {
-		return 0, decodeErr
 	}
-	if err := parser.iteratorError(); err != nil {
+	if _, err := parser.dec.ReadToken(); err != nil {
 		return 0, err
 	}
 	parser.finishContainer(nodeIndex, firstChild, true)
@@ -836,7 +851,7 @@ func (parser *binaryJSONTextParser) finishContainer(nodeIndex, firstChild int, o
 		child := parser.nodes[int(childIndex)]
 		node.depth = max(node.depth, child.depth+1)
 		if object {
-			node.valueSize += uint64(len(child.key))
+			node.valueSize += uint64(child.key.len)
 		}
 		if child.typeCode != JSONTypeCodeLiteral {
 			node.valueSize += child.valueSize
@@ -848,17 +863,18 @@ func (parser *binaryJSONTextParser) sortAndDeduplicateObjectChildren(childStart 
 	children := parser.childOrder[childStart:]
 	slices.SortFunc(children, func(leftIndex, rightIndex int32) int {
 		left, right := parser.nodes[int(leftIndex)], parser.nodes[int(rightIndex)]
-		if keyOrder := cmp.Compare(left.key, right.key); keyOrder != 0 {
+		if keyOrder := bytes.Compare(parser.textOf(left.key), parser.textOf(right.key)); keyOrder != 0 {
 			return keyOrder
 		}
-		// Node indexes increase in source order, so the last duplicate sorts last.
+		// Like MySQL, the last value of a duplicate key wins. Node indexes
+		// increase in source order, so the last duplicate sorts last.
 		return cmp.Compare(leftIndex, rightIndex)
 	})
 
 	write := childStart
 	for begin := 0; begin < len(children); {
 		end := begin + 1
-		for end < len(children) && parser.nodes[int(children[end])].key == parser.nodes[int(children[begin])].key {
+		for end < len(children) && bytes.Equal(parser.textOf(parser.nodes[int(children[end])].key), parser.textOf(parser.nodes[int(children[begin])].key)) {
 			end++
 		}
 		parser.childOrder[write] = children[end-1]
@@ -876,8 +892,8 @@ func (parser *binaryJSONTextParser) encodeValue(buf []byte, nodeIndex int) []byt
 	case JSONTypeCodeInt64, JSONTypeCodeUint64, JSONTypeCodeFloat64:
 		return appendBinaryUint64(buf, node.numberBits)
 	case JSONTypeCodeString:
-		buf = binary.AppendUvarint(buf, uint64(len(node.stringValue)))
-		return append(buf, node.stringValue...)
+		buf = binary.AppendUvarint(buf, uint64(node.value.len))
+		return append(buf, parser.textOf(node.value)...)
 	case JSONTypeCodeArray:
 		return parser.encodeArray(buf, node)
 	case JSONTypeCodeObject:
@@ -917,8 +933,8 @@ func (parser *binaryJSONTextParser) encodeObject(buf []byte, node binaryJSONText
 		child := parser.nodes[int(childIndex)]
 		keyEntryOff := keyEntryBegin + i*keyEntrySize
 		jsonEndian.PutUint32(buf[keyEntryOff:], uint32(len(buf)-documentStart))
-		jsonEndian.PutUint16(buf[keyEntryOff+keyLenOff:], uint16(len(child.key)))
-		buf = append(buf, child.key...)
+		jsonEndian.PutUint16(buf[keyEntryOff+keyLenOff:], uint16(child.key.len))
+		buf = append(buf, parser.textOf(child.key)...)
 	}
 	for i, childIndex := range children {
 		buf = parser.encodeChildValue(buf, documentStart, valEntryBegin+i*valEntrySize, int(childIndex))
@@ -941,25 +957,6 @@ func (parser *binaryJSONTextParser) encodeChildValue(
 	}
 	jsonEndian.PutUint32(buf[entryOffset+1:], uint32(len(buf)-documentStart))
 	return parser.encodeValue(buf, childIndex)
-}
-
-func normalizeJSONUTF8(value string) string {
-	if utf8.ValidString(value) {
-		return value
-	}
-
-	var builder strings.Builder
-	builder.Grow(len(value))
-	for len(value) > 0 {
-		r, size := utf8.DecodeRuneInString(value)
-		if r == utf8.RuneError && size == 1 {
-			builder.WriteRune(utf8.RuneError)
-		} else {
-			builder.WriteString(value[:size])
-		}
-		value = value[size:]
-	}
-	return builder.String()
 }
 
 func binaryJSONUvarintLen(value uint64) int {
