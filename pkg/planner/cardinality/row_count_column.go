@@ -256,6 +256,19 @@ func betweenRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, l, 
 	return histBetweenCnt
 }
 
+// allColumnsHaveStats returns true if the first n columns of idxCols all have valid column statistics.
+func allColumnsHaveStats(sctx planctx.PlanContext, coll *statistics.HistColl, idxCols []*expression.Column, n int) bool {
+	if n > len(idxCols) {
+		return false
+	}
+	for _, col := range idxCols[:n] {
+		if statistics.ColumnStatsIsInvalid(coll.GetCol(col.UniqueID), sctx, coll, col.UniqueID) {
+			return false
+		}
+	}
+	return true
+}
+
 // getPseudoRowCountWithPartialStats calculates the row count if there are no statistics on the index, but there are column stats available.
 func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistics.HistColl, indexRanges []*ranger.Range,
 	tableRowCount float64, idxCols []*expression.Column) (totalCount float64, maxCount float64, err error) {
@@ -289,9 +302,11 @@ func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistic
 		colsIDs[i] = col.UniqueID
 	}
 	for _, indexRange := range indexRanges {
-		// Prefer exponential backoff over the columns with statistics. Assuming independence by multiplying
-		// the single column selectivities can badly underestimate an index whose columns each have a low NDV.
-		if len(indexRange.LowVal) > 1 {
+		// Prefer exponential backoff when every column of the range has statistics. Assuming independence by
+		// multiplying the single column selectivities can badly underestimate an index whose columns each have
+		// a low NDV. If any column lacks statistics (e.g. a virtual column), exponential backoff would skip it
+		// entirely, so fall back to the pseudo estimation for that column below.
+		if len(indexRange.LowVal) > 1 && allColumnsHaveStats(sctx, coll, idxCols, len(indexRange.LowVal)) {
 			sel, _, maxSel, ok, err := expBackoffEstimationByColIDs(sctx, coll, colsIDs, 0, len(idxCols), false, indexRange, idxCols)
 			if err != nil {
 				return 0, 0, errors.Trace(err)

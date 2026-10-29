@@ -1014,6 +1014,22 @@ func TestNewIndexWithLowNDVColumnStats(t *testing.T) {
 	require.Greater(t, estRows, 10.0)
 }
 
+func TestMissingStatsIndexWithVirtualColumn(t *testing.T) {
+	// An index without statistics on a virtual column (which has no column statistics) and a column with
+	// statistics must still account for the virtual column, and report its statistics as missing.
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(int_col int, string_col varchar(255))")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec(`insert into t values (-1, "foo"), (1, "bar")`)
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("create index combined_index on t((int_col + int_col), string_col)")
+	testKit.MustQuery(`explain format='brief' select * from t where int_col + int_col = 2 and string_col = "bar"`).
+		CheckContain("stats:partial[combined_index:missing, _v$_combined_index_0:missing]")
+}
+
 func TestIssue71999(t *testing.T) {
 	// An index without statistics must not prune an index with statistics via the prefer-range
 	// skyline rule unless its access columns cover the other index's access columns.
