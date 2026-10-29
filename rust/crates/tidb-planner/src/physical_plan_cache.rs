@@ -414,7 +414,7 @@ impl PointConstantsRebuild {
 
 /// An evaluator for a deferred constant such as a non-deterministic function.
 pub type DeferredExpressionEvaluator<'a> =
-    dyn Fn(&Expression) -> Result<Datum, tidb_expr::EvalError> + Send + Sync + 'a;
+    dyn Fn(&Expression) -> Result<Datum, tidb_exprctx::EvalError> + Send + Sync + 'a;
 
 /// Per-execution inputs to cached-plan rebuilding.
 pub struct CachedPlanRebuildContext<'a> {
@@ -465,7 +465,7 @@ impl<'a> CachedPlanRebuildContext<'a> {
         self
     }
 
-    fn evaluate(&self, expression: &Expression) -> Result<Datum, tidb_expr::EvalError> {
+    fn evaluate(&self, expression: &Expression) -> Result<Datum, tidb_exprctx::EvalError> {
         match self.deferred_evaluator {
             Some(evaluate) => evaluate(expression),
             None => tidb_expr::eval_expression_once(expression, self),
@@ -473,16 +473,16 @@ impl<'a> CachedPlanRebuildContext<'a> {
     }
 }
 
-impl tidb_expr::Columns for CachedPlanRebuildContext<'_> {
+impl tidb_exprctx::Columns for CachedPlanRebuildContext<'_> {
     fn get(&self, _: &[String]) -> Option<Datum> {
         None
     }
 
-    fn param_value(&self, order: usize) -> Result<Datum, tidb_expr::EvalError> {
+    fn param_value(&self, order: usize) -> Result<Datum, tidb_exprctx::EvalError> {
         self.parameters
             .get(order)
             .cloned()
-            .ok_or(tidb_expr::EvalError::Unsupported(
+            .ok_or(tidb_exprctx::EvalError::Unsupported(
                 "unbound prepared parameter",
             ))
     }

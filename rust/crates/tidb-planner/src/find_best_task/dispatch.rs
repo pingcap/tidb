@@ -6107,13 +6107,13 @@ mod tests {
         // Go's ranger reads PlanCacheParams, not Constant.Value saved at
         // PREPARE. Cover both table ranges and index detachment in this funnel.
         struct Parameters(Datum);
-        impl tidb_expr::Columns for Parameters {
+        impl tidb_exprctx::Columns for Parameters {
             fn get(&self, _: &[String]) -> Option<Datum> {
                 None
             }
-            fn param_value(&self, order: usize) -> Result<Datum, tidb_expr::EvalError> {
+            fn param_value(&self, order: usize) -> Result<Datum, tidb_exprctx::EvalError> {
                 std::slice::from_ref(&self.0).get(order).cloned().ok_or(
-                    tidb_expr::EvalError::Unsupported("unbound prepared parameter"),
+                    tidb_exprctx::EvalError::Unsupported("unbound prepared parameter"),
                 )
             }
         }

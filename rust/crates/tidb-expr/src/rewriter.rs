@@ -23,7 +23,7 @@ use tidb_datatype::CollationCollator;
 use crate::column::Column;
 use crate::constant::Constant;
 use crate::constant_fold::ConstantFoldMode;
-use crate::context::JsonError;
+use tidb_exprctx::context::JsonError;
 use crate::expression::{Expression, ScalarFunction};
 use crate::scalar_function::{binary_op_name, unary_op_name};
 use crate::EvalError;
@@ -229,7 +229,7 @@ pub trait ColumnResolver {
     /// resolver can expose it so conversion diagnostics are raised once at
     /// build time; context-free resolvers retain the historical no-warning
     /// structural rewrite.
-    fn comparison_context(&self) -> Option<&dyn crate::context::Columns> {
+    fn comparison_context(&self) -> Option<&dyn tidb_exprctx::context::Columns> {
         None
     }
 
@@ -3759,7 +3759,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::NoColumns;
+    use tidb_exprctx::context::NoColumns;
     use tidb_ast::{BinaryOp, UnaryOp};
     use tidb_chunk::chunk::Chunk;
 
@@ -4598,7 +4598,7 @@ mod literal_tests {
             let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
             chunk.set_num_virtual_rows(1);
             let got = rewrite(text)
-                .eval(&crate::context::NoColumns, chunk.get_row(0))
+                .eval(&tidb_exprctx::context::NoColumns, chunk.get_row(0))
                 .expect(text);
             assert_eq!(got, want, "{text}");
         }
@@ -4695,7 +4695,7 @@ mod builtin_type_tests {
         let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
         chunk.set_num_virtual_rows(1);
         rewrite(sql_expr)
-            .eval(&crate::context::NoColumns, chunk.get_row(0))
+            .eval(&tidb_exprctx::context::NoColumns, chunk.get_row(0))
             .expect("evaluates")
     }
 

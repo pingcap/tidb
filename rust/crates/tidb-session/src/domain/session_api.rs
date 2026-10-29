@@ -270,7 +270,7 @@ pub struct QueryResult<'a> {
 /// Typed statement policy retained only when a prepared cursor materializes
 /// this result after execution.
 pub struct CursorMaterializationAuthority {
-    pub current_tso: Option<tidb_expr::CurrentTso>,
+    pub current_tso: Option<tidb_exprctx::CurrentTso>,
     pub start_ts_guard: Option<Arc<tidb_txnkv::StartTsGuard>>,
     pub field_types: Vec<tidb_datatype::FieldType>,
     pub init_chunk_size: usize,

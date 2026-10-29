@@ -15,7 +15,7 @@
 //! Shared planner helpers from Go `pkg/planner/util/coreusage`.
 
 use tidb_expr::aggregation::{AggDescError, AggFuncDesc, AggFunctionMode};
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 /// Go `coreusage.WrapCastForAggFuncs`: cast aggregate arguments to the
 /// descriptor result type except when they already carry a partial result.

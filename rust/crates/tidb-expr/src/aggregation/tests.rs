@@ -29,7 +29,7 @@ use super::wrap_cast::type_of;
 use super::*;
 use crate::column::Column;
 use crate::constant::Constant;
-use crate::context::NoColumns;
+use tidb_exprctx::context::NoColumns;
 use crate::expression::Expression;
 use crate::scalar_function::ScalarFunction;
 use tidb_ast::CiString;
@@ -610,7 +610,7 @@ fn sum_int_keeps_the_unsigned_flag_and_rejects_non_integers() {
 fn avg_scales_by_the_division_precision_increment() {
     // NoColumns reports Go's default div_precision_increment of 4.
     assert_eq!(
-        crate::context::Columns::div_precision_increment(&NoColumns),
+        tidb_exprctx::context::Columns::div_precision_increment(&NoColumns),
         4
     );
 

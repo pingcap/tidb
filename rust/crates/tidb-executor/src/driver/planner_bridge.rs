@@ -1683,7 +1683,7 @@ fn driver_error_to_plan(error: crate::DriverError) -> tidb_planner::plan_base::P
 fn default_evaluator<'a>(
     catalog: &'a Catalog,
     ctx: &'a crate::StmtContext,
-) -> impl Fn(&str, &str, &str) -> Result<Expression, tidb_expr::EvalError> + 'a {
+) -> impl Fn(&str, &str, &str) -> Result<Expression, tidb_exprctx::EvalError> + 'a {
     default_evaluator_using(catalog, ctx, super::dml::DefaultUse::Expression)
 }
 
@@ -1694,11 +1694,11 @@ fn default_evaluator_using<'a>(
     catalog: &'a Catalog,
     ctx: &'a crate::StmtContext,
     default_use: super::dml::DefaultUse,
-) -> impl Fn(&str, &str, &str) -> Result<Expression, tidb_expr::EvalError> + 'a {
+) -> impl Fn(&str, &str, &str) -> Result<Expression, tidb_exprctx::EvalError> + 'a {
     move |database, table, column| {
         let entry = catalog.table_in(database, table).ok_or_else(|| {
             // Go `is.TableByName` failing.
-            tidb_expr::EvalError::Conversion(tidb_terror::TerrorError::compatible(
+            tidb_exprctx::EvalError::Conversion(tidb_terror::TerrorError::compatible(
                 tidb_terror::TerrorCode::new(1146),
                 format!("Table '{database}.{table}' doesn't exist"),
             ))
@@ -1708,7 +1708,7 @@ fn default_evaluator_using<'a>(
             .find(|meta| meta.name.go_lower_eq(column))
             .ok_or_else(|| {
                 // Go `ErrUnknownColumn.GenWithStackByArgs(colName, "field_list")`.
-                tidb_expr::EvalError::UnknownColumnInClause(column.go_to_lower(), "field_list")
+                tidb_exprctx::EvalError::UnknownColumnInClause(column.go_to_lower(), "field_list")
             })?;
         let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
         chunk.set_num_virtual_rows(1);
@@ -1718,7 +1718,7 @@ fn default_evaluator_using<'a>(
                     crate::DriverError::Exec(crate::ExecError::Eval(error)) => error,
                     // Go `table.ErrNoDefaultValue.GenWithStackByArgs(colName)`.
                     error if error.equal(&tidb_table::table_errors::ERR_NO_DEFAULT_VALUE) => {
-                        tidb_expr::EvalError::Conversion(
+                        tidb_exprctx::EvalError::Conversion(
                             tidb_table::table_errors::ERR_NO_DEFAULT_VALUE
                                 .generate(error.to_string()),
                         )
@@ -1727,7 +1727,7 @@ fn default_evaluator_using<'a>(
                     // instance) keeps the code the client would have seen.
                     error => {
                         let error = error.to_mysql_error();
-                        tidb_expr::EvalError::Conversion(
+                        tidb_exprctx::EvalError::Conversion(
                             tidb_terror::TerrorError::registered(
                                 tidb_terror::TerrorClass::Types,
                                 tidb_terror::TerrorCode::new(error.code as isize),
@@ -1836,7 +1836,7 @@ fn dynamic_prune_fallback<'a>(
             return false;
         }
         ctx.disable_dynamic_prune();
-        tidb_expr::Columns::append_warning(
+        tidb_exprctx::Columns::append_warning(
             ctx,
             1105,
             &format!("disable dynamic pruning due to {table_name} has no global stats"),
@@ -3191,7 +3191,7 @@ pub(super) fn rebuild_evaluate(
     statement: Option<&crate::StmtContext>,
     parameters: &tidb_planner::physical_plan_cache::CachedPlanRebuildContext<'_>,
     needs_statement: &std::sync::atomic::AtomicBool,
-) -> Result<tidb_datatype::Datum, tidb_expr::EvalError> {
+) -> Result<tidb_datatype::Datum, tidb_exprctx::EvalError> {
     if let Some(statement) = statement {
         return tidb_expr::eval_expression_once(expression, statement);
     }
@@ -3203,7 +3203,7 @@ pub(super) fn rebuild_evaluate(
         }
         _ => {
             needs_statement.store(true, std::sync::atomic::Ordering::Relaxed);
-            Err(tidb_expr::EvalError::Unsupported(
+            Err(tidb_exprctx::EvalError::Unsupported(
                 "the expression needs the executing statement",
             ))
         }

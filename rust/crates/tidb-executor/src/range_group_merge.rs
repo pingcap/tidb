@@ -30,7 +30,7 @@ use crate::{ExecError, Executor, ExecutorMeta};
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 /// Go `sortedSelectResults.heap` element: `chunk.RowPtr` plus the evaluated
 /// key of that row.

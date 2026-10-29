@@ -124,7 +124,7 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::{CorrelatedColumn, Expression};
 use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::{extract_columns, extract_cor_columns};
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 use tidb_infoschema::table_source::TableSource;
 use super::marker::{self, MarkerKind, PlanMarker};

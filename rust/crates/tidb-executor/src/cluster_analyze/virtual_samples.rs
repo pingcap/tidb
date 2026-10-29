@@ -18,7 +18,7 @@ use tidb_datatype::{Datum, FieldType};
 use tidb_ddl_build::generated_column;
 use tidb_table::generated_column::GeneratedColumnSlot;
 use tidb_table::generated_column::GeneratedColumn;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 use tidb_model::TableInfo;
 
 struct SampleColumn {

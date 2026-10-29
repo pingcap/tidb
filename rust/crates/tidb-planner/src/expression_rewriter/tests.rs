@@ -25,7 +25,7 @@ use tidb_datatype::{
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::NoColumns;
+use tidb_exprctx::NoColumns;
 
 use crate::logical::limit::LogicalLimit;
 
@@ -489,7 +489,7 @@ fn in_subquery_arity_mismatch_is_refused() {
         .expect_err("arity mismatch");
     assert_eq!(
         err,
-        RewriteError::Eval(tidb_expr::EvalError::OperandColumns(1))
+        RewriteError::Eval(tidb_exprctx::EvalError::OperandColumns(1))
     );
 }
 
@@ -660,7 +660,7 @@ fn an_ordered_quantifier_refuses_a_row_on_the_left() {
         .expect_err("row < any");
     assert_eq!(
         err,
-        RewriteError::Eval(tidb_expr::EvalError::OperandColumns(1))
+        RewriteError::Eval(tidb_exprctx::EvalError::OperandColumns(1))
     );
 }
 
@@ -766,7 +766,7 @@ fn mismatched_row_widths_are_refused() {
         .expect_err("width mismatch");
     assert_eq!(
         err,
-        RewriteError::Eval(tidb_expr::EvalError::OperandColumns(2))
+        RewriteError::Eval(tidb_exprctx::EvalError::OperandColumns(2))
     );
 }
 

@@ -57,7 +57,7 @@ pub trait KvTablePartitionReorg {
         &self,
         ordinal: usize,
         row: &[Datum],
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<bool, KvTableError>;
 }
 
@@ -171,7 +171,7 @@ impl KvTablePartitionReorg for KvTable {
         &self,
         ordinal: usize,
         row: &[Datum],
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<bool, KvTableError> {
         let partition = self.partition().expect("validated by DDL");
         if let PartitionKind::Hash = partition.kind {

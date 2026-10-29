@@ -22,7 +22,8 @@ use std::thread;
 
 use tidb_datatype::{BinaryJSON, Datum, Decimal, FieldType, FieldTypeCode};
 use tidb_charset::Collation;
-use tidb_expr::{column::Column, expression::Expression, NoColumns};
+use tidb_expr::{column::Column, expression::Expression};
+use tidb_exprctx::NoColumns;
 
 use crate::apply_cache::{apply_cache_kv_mem, ApplyCache};
 use crate::vec_group_checker::VecGroupChecker;

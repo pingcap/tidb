@@ -296,7 +296,7 @@ fn cast_char_binary_charset_truncates_bytes_not_chars() {
             },
             crate::Datum::new_string(value),
             None,
-            &crate::context::NoColumns,
+            &tidb_exprctx::context::NoColumns,
         )
         .unwrap()
     }

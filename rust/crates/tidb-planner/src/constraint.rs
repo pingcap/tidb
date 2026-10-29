@@ -18,7 +18,7 @@ use tidb_datatype::{Datum, FieldTypeFlags};
 use tidb_expr::expr_util::predicates::maybe_over_optimized_4_plan_cache;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 /// Go `DeleteTrueExprs`: remove constants that successfully convert to SQL
 /// true, except parameter/deferred constants whose removal would over-optimize
@@ -151,7 +151,7 @@ mod tests {
 
         let result = delete_true_exprs(
             true,
-            &tidb_expr::NoColumns,
+            &tidb_exprctx::NoColumns,
             vec![
                 plain_true,
                 false_value.clone(),
@@ -168,12 +168,12 @@ mod tests {
     }
 
     struct WarningContext {
-        level: tidb_expr::ErrorLevel,
+        level: tidb_exprctx::ErrorLevel,
         warnings: std::cell::RefCell<Vec<(u16, String)>>,
     }
 
     impl WarningContext {
-        fn new(level: tidb_expr::ErrorLevel) -> Self {
+        fn new(level: tidb_exprctx::ErrorLevel) -> Self {
             Self {
                 level,
                 warnings: Default::default(),
@@ -185,7 +185,7 @@ mod tests {
         fn get(&self, _: &[String]) -> Option<Datum> {
             None
         }
-        fn truncate_level(&self) -> tidb_expr::ErrorLevel {
+        fn truncate_level(&self) -> tidb_exprctx::ErrorLevel {
             self.level
         }
         fn append_warning(&self, code: u16, message: &str) {
@@ -196,9 +196,9 @@ mod tests {
     #[test]
     fn conversion_uses_statement_warning_and_ignore_policy() {
         for level in [
-            tidb_expr::ErrorLevel::Error,
-            tidb_expr::ErrorLevel::Warn,
-            tidb_expr::ErrorLevel::Ignore,
+            tidb_exprctx::ErrorLevel::Error,
+            tidb_exprctx::ErrorLevel::Warn,
+            tidb_exprctx::ErrorLevel::Ignore,
         ] {
             let context = WarningContext::new(level);
             let input = [
@@ -217,14 +217,14 @@ mod tests {
             let result = delete_true_exprs(false, &context, input);
             assert_eq!(
                 result.len(),
-                if level == tidb_expr::ErrorLevel::Error {
+                if level == tidb_exprctx::ErrorLevel::Error {
                     2
                 } else {
                     1
                 }
             );
             let warnings = context.warnings.borrow();
-            if level == tidb_expr::ErrorLevel::Warn {
+            if level == tidb_exprctx::ErrorLevel::Warn {
                 assert_eq!(
                     *warnings,
                     vec![
@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn binary_truncation_and_plan_cache_guard_use_the_same_context() {
-        let context = WarningContext::new(tidb_expr::ErrorLevel::Warn);
+        let context = WarningContext::new(tidb_exprctx::ErrorLevel::Warn);
         let literal = tidb_datatype::BinaryLiteral::from(vec![1; 9]);
         let expected = format!("Truncated incorrect BINARY value: '{literal}'");
         let constant = Constant::new(Datum::BinaryLiteral(literal), integer_type(false));
@@ -273,7 +273,7 @@ mod tests {
             Datum::new_string("1garbage"),
             FieldType::new(FieldTypeCode::VarString),
         ));
-        let context = WarningContext::new(tidb_expr::ErrorLevel::Error);
+        let context = WarningContext::new(tidb_exprctx::ErrorLevel::Error);
         assert_eq!(delete_true_exprs(false, &context, vec![condition]).len(), 1);
         assert!(context.warnings.borrow().is_empty());
     }

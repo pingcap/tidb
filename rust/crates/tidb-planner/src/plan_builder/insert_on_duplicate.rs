@@ -30,7 +30,7 @@ use tidb_datatype::{Datum, FieldName, FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 use tidb_hack::go_to_lower;
 
 use tidb_infoschema::table_source::TableSource;

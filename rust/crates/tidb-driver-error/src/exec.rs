@@ -22,7 +22,7 @@
 //! text before, which is a message no MySQL client can read and a leak of the
 //! enum's internal shape.
 
-use tidb_expr::EvalError;
+use tidb_exprctx::EvalError;
 
 use super::{DriverError, MysqlError};
 use crate::ExecError;
@@ -73,7 +73,8 @@ pub fn coprocessor_evaluation_error(error: EvalError) -> ExecError {
 mod tests {
     use super::*;
     use tidb_datatype::DatumKind;
-    use tidb_expr::{JsonError, SequenceEvalError};
+    use tidb_exprctx::JsonError;
+use tidb_exprctx::SequenceEvalError;
 
     fn rendered(error: ExecError) -> MysqlError {
         DriverError::Exec(error).to_mysql_error()

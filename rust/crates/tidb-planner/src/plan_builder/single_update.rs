@@ -17,7 +17,7 @@
 
 use tidb_ast::{Expr, UpdateKind, UpdateStmt};
 use tidb_datatype::{FieldName, FieldNameMetadata, IdentifierMetadata};
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 use tidb_infoschema::table_source::TableSource;
 use super::update_build::WRITE_ROW_ID_REFUSED;

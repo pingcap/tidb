@@ -33,7 +33,7 @@
 use std::borrow::Cow;
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 /// Go `checkCanConvertInPointGet`: pairings whose conversion is meaningful
 /// for storage but wrong for key equality, so no point plan may be built.

@@ -653,14 +653,14 @@ pub fn stage_pessimistic_statement<T>(
 #[derive(Clone, Debug, Default)]
 pub struct StatementReadTs {
     value: Arc<Mutex<Option<u64>>>,
-    current_tso: tidb_expr::CurrentTso,
+    current_tso: tidb_exprctx::CurrentTso,
     observer: Option<tidb_sessmgr::ProcessTransactionObserver>,
     /// Where the open records Go's `DurationWaitTS`.
     phase_durations: Option<tidb_variable::phase_durations::SessionPhaseDurations>,
 }
 
 impl StatementReadTs {
-    pub fn new(current_tso: tidb_expr::CurrentTso) -> Self {
+    pub fn new(current_tso: tidb_exprctx::CurrentTso) -> Self {
         Self {
             value: Arc::default(),
             current_tso,

@@ -1171,7 +1171,7 @@ impl KvTable {
         index_id: i64,
         values: &[Vec<Datum>],
         zone: &SessionTimeZone,
-        route_ctx: Option<&dyn tidb_expr::Columns>,
+        route_ctx: Option<&dyn tidb_exprctx::Columns>,
     ) -> Result<Vec<Option<(Key, Option<i64>)>>, KvTableError> {
         let Some(index) = self
             .indexes

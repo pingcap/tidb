@@ -39,7 +39,7 @@ use crate::aggregation::wrap_cast::{
 };
 use crate::builtin_arithmetic::new_return_field_type;
 use crate::constant::Constant;
-use crate::context::{Columns, EvalError};
+use tidb_exprctx::context::{Columns, EvalError};
 use crate::expression::Expression;
 use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode, FieldTypeFlags};
 
@@ -553,7 +553,7 @@ pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) -> Result<()
 /// [`refine_comparisons`] pass remains responsible for the session-sensitive
 /// rules and warning policy.
 pub(crate) fn refine_integer_comparison_for_rewrite(name: &str, arguments: &mut [Expression]) {
-    refine_integer_comparison_for_rewrite_with_context(name, arguments, &crate::context::NoColumns);
+    refine_integer_comparison_for_rewrite_with_context(name, arguments, &tidb_exprctx::context::NoColumns);
 }
 
 /// The same context-free integer comparison rewrite, but with the live
@@ -1841,8 +1841,8 @@ mod tests {
             fn get(&self, _: &[String]) -> Option<Datum> {
                 None
             }
-            fn truncate_level(&self) -> crate::context::ErrorLevel {
-                crate::context::ErrorLevel::Error
+            fn truncate_level(&self) -> tidb_exprctx::context::ErrorLevel {
+                tidb_exprctx::context::ErrorLevel::Error
             }
         }
 

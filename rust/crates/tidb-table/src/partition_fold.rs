@@ -86,9 +86,9 @@ pub fn partition_value_resolver(
 /// Go's `EvalSimpleAst` hands the rewriter's own error back, so a partition
 /// bound naming a column is 1054 ("Unknown column 'a' in 'expression'"), not
 /// the value-type refusal the other failures keep.
-pub fn partition_value_failure(error: tidb_expr::EvalError, otherwise: MysqlError) -> MysqlError {
+pub fn partition_value_failure(error: tidb_exprctx::EvalError, otherwise: MysqlError) -> MysqlError {
     match error {
-        tidb_expr::EvalError::UnknownColumnInClause(column, clause) => {
+        tidb_exprctx::EvalError::UnknownColumnInClause(column, clause) => {
             tidb_terror::MysqlError::from_terror(
                 &tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
                     tidb_hack::go_to_lower(column).into(),

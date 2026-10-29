@@ -27,7 +27,7 @@ use tidb_datatype::{Datum, Decimal, EvalType, FieldType, FieldTypeCode};
 
 use crate::column::{Column, CorrelatedColumn};
 use crate::constant::{Constant, ParamMarker};
-use crate::context::NoColumns;
+use tidb_exprctx::context::NoColumns;
 use crate::expr_util::{FunctionBuilder, RealFunctionBuilder};
 use crate::expression::{ConstLevel, Expression};
 use crate::scalar_function::ScalarFunction;

@@ -104,7 +104,7 @@ use tidb_charset::Collation;
 use tidb_expr::compare_datums;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 use tidb_disk as disk;
 use tidb_memory::{ActionOnExceed, ArcAction, Tracker};
 use tidb_selection::{select, Selectable};
@@ -3811,7 +3811,7 @@ mod tests {
     use super::*;
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_expr::column::Column;
-    use tidb_expr::NoColumns;
+    use tidb_exprctx::NoColumns;
 
     fn long() -> FieldType {
         FieldType::new(FieldTypeCode::LongLong)

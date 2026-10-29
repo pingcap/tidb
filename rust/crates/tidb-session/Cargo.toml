@@ -10,6 +10,7 @@ description = "Session lifecycle and state authority for the TiDB Rust rewrite."
 autotests = false
 
 [dependencies]
+tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-charset = { path = "../tidb-charset" }
 tidb-metabuild = { path = "../tidb-metabuild" }
 tidb-temptable = { path = "../tidb-temptable" }

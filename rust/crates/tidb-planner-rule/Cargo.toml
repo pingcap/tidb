@@ -11,6 +11,7 @@ description = "TiDB pkg/planner/core/rule: partition pruning and selection (Rust
 workspace = true
 
 [dependencies]
+tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-charset = { path = "../tidb-charset" }
 tidb-ranger = { path = "../tidb-ranger" }
 tidb-table = { path = "../tidb-table" }

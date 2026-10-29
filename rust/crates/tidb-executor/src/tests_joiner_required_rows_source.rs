@@ -13,7 +13,7 @@
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::iterator::LendingIterator;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 use tidb_vardef::defaults::DEF_MAX_CHUNK_SIZE;
 
 use crate::joiner::{new_joiner, JoinType, JoinerChunkSizes, NAAJType};

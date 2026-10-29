@@ -674,7 +674,7 @@ impl DataSource {
         &mut self,
         predicates: Vec<Expression>,
         blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
-        warnings: Option<&dyn tidb_expr::Columns>,
+        warnings: Option<&dyn tidb_exprctx::Columns>,
     ) -> Vec<Expression> {
         self.derived_access_paths = None;
         if predicates.is_empty() && !self.pushed_down_conds.is_empty() {

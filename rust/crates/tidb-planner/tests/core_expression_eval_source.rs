@@ -22,7 +22,8 @@ use tidb_expr::exprctx::{PlanColumnIdAllocator, SimplePlanColumnIdAllocator};
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::NoResolver;
 use tidb_expr::simple_expr::{build_simple_expr, parse_simple_expr, BuildOptions, ColumnInfoSource};
-use tidb_expr::{fold_constant_in_mode, NoColumns};
+use tidb_expr::fold_constant_in_mode;
+use tidb_exprctx::NoColumns;
 
 /// A no-column resolver that folds built nodes like a session context would
 /// (Go's rewriter folds while it builds; [`NoResolver`]'s default only derives

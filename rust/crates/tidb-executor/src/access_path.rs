@@ -6916,7 +6916,7 @@ use std::collections::HashMap;
         });
         for value in 1..=3 {
             table
-                .insert_row(&[Datum::Int(value)], &tidb_expr::NoColumns)
+                .insert_row(&[Datum::Int(value)], &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -7219,7 +7219,7 @@ use std::collections::HashMap;
             table
                 .insert_row(
                     &[Datum::Int(i), Datum::Int(i), Datum::Int(n - i)],
-                    &tidb_expr::NoColumns,
+                    &tidb_exprctx::NoColumns,
                 )
                 .unwrap();
         }
@@ -8105,7 +8105,7 @@ use std::collections::HashMap;
         );
         for i in 1..=ROWS {
             table
-                .insert_row(&[Datum::Int(i)], &tidb_expr::NoColumns)
+                .insert_row(&[Datum::Int(i)], &tidb_exprctx::NoColumns)
                 .unwrap();
         }
         entries.store(0, Ordering::Relaxed);
@@ -8322,7 +8322,7 @@ use std::collections::HashMap;
             table
                 .insert_row(
                     &[Datum::Int(1), Datum::Int(1), Datum::Int(o_id)],
-                    &tidb_expr::NoColumns,
+                    &tidb_exprctx::NoColumns,
                 )
                 .unwrap();
         }
@@ -8395,7 +8395,7 @@ use std::collections::HashMap;
                                 Datum::Int(line_number),
                                 Datum::Int(o_id * 10 + line_number),
                             ],
-                            &tidb_expr::NoColumns,
+                            &tidb_exprctx::NoColumns,
                         )
                         .unwrap();
                 }
@@ -8715,7 +8715,7 @@ use std::collections::HashMap;
             table
                 .insert_row(
                     &[Datum::Int(a), Datum::Int(b), Datum::Int(c)],
-                    &tidb_expr::NoColumns,
+                    &tidb_exprctx::NoColumns,
                 )
                 .unwrap();
         }
@@ -8896,7 +8896,7 @@ use std::collections::HashMap;
             table
                 .insert_row(
                     &[Datum::Int(handle), Datum::Int(b), Datum::Int(c)],
-                    &tidb_expr::NoColumns,
+                    &tidb_exprctx::NoColumns,
                 )
                 .unwrap();
         }

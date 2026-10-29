@@ -393,14 +393,14 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
                 other => DriverError::unsupported(other.to_string()),
             }
         }
-        tidb_planner::plan_base::PlanErrorKind::Eval(tidb_expr::EvalError::InvalidGroupFuncUse) => {
+        tidb_planner::plan_base::PlanErrorKind::Eval(tidb_exprctx::EvalError::InvalidGroupFuncUse) => {
             DriverError::from(
                 tidb_plannererrors::ERR_INVALID_GROUP_FUNC_USE
                     .generate_with_stack_by_args(&[]),
             )
         }
         tidb_planner::plan_base::PlanErrorKind::Eval(
-            tidb_expr::EvalError::FieldInGroupingNotGroupBy(index),
+            tidb_exprctx::EvalError::FieldInGroupingNotGroupBy(index),
         ) => DriverError::from(
             tidb_plannererrors::ERR_FIELD_IN_GROUPING_NOT_GROUP_BY
                 .generate_with_stack_by_args(&[format!("#{}", *index).into()]),

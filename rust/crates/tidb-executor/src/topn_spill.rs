@@ -56,7 +56,7 @@ use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
 use tidb_datatype::{Datum, FieldType};
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 use tidb_disk as disk;
 use tidb_memory::{
     ActionOnExceed, ArcAction, BaseOomAction, Tracker, DEF_SPILL_PRIORITY, LABEL_FOR_ROW_CONTAINER,

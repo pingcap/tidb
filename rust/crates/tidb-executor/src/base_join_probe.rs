@@ -133,7 +133,7 @@ pub enum ProbeError {
     /// Canonical SQL cancellation from inside a probe or scan loop.
     Killed(tidb_mysql::errors::SqlError),
     /// Typed expression failure; preserve it for SQL error conversion.
-    Expression(tidb_expr::EvalError),
+    Expression(tidb_exprctx::EvalError),
     /// Go: `errors.New("Previous chunk is not probed yet")`.
     PreviousChunkNotProbed,
     /// A [`JoinKeyColumns`] or [`ProbeFilter`] failed.
@@ -243,12 +243,12 @@ impl BuildRowSource for RowBytesMap {
 /// borrows a whole chunk and returns the worker's reusable physical-row mask.
 pub struct JoinFilter<'a> {
     evaluate: Box<
-        dyn Fn(&Chunk, Vec<bool>) -> Result<Vec<bool>, tidb_expr::EvalError> + Send + Sync + 'a,
+        dyn Fn(&Chunk, Vec<bool>) -> Result<Vec<bool>, tidb_exprctx::EvalError> + Send + Sync + 'a,
     >,
 }
 
 impl<'a> JoinFilter<'a> {
-    pub fn new<C: tidb_expr::Columns + Send + Sync + 'a>(
+    pub fn new<C: tidb_exprctx::Columns + Send + Sync + 'a>(
         context: C,
         predicates: Vec<tidb_expr::expression::Expression>,
         vectorized: bool,
@@ -270,7 +270,7 @@ impl<'a> JoinFilter<'a> {
         &self,
         chunk: &Chunk,
         selected: Vec<bool>,
-    ) -> Result<Vec<bool>, tidb_expr::EvalError> {
+    ) -> Result<Vec<bool>, tidb_exprctx::EvalError> {
         (self.evaluate)(chunk, selected)
     }
 }

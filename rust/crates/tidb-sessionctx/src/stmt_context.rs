@@ -26,9 +26,9 @@ use tidb_context::WarningLevel;
 use tidb_context::WarningCollector;
 use tidb_txnkv::ReplicaReadType;
 use tidb_context::SqlWarn;
-use tidb_expr::Columns;
-use tidb_expr::CurrentTso;
-use tidb_expr::ErrorLevel;
+use tidb_exprctx::Columns;
+use tidb_exprctx::CurrentTso;
+use tidb_exprctx::ErrorLevel;
 use tidb_mathutil::MysqlRng;
 
 const MAX_WARNING_COUNT: usize = u16::MAX as usize;
@@ -700,7 +700,7 @@ pub struct StmtContextData {
     connection_id: Option<u64>,
     /// Go `expression.DecodeKeyFromString` over this statement's catalog
     /// version, which `TIDB_DECODE_KEY` runs.
-    decode_key_from_string: Option<tidb_expr::DecodeKeyFromString>,
+    decode_key_from_string: Option<tidb_exprctx::DecodeKeyFromString>,
     /// Go session advisory-lock map and its shared physical lock authority.
     advisory_locks: crate::advisory_lock_state::AdvisoryLockSession,
     selected_lock_keys: Option<crate::select_lock::SelectedLockKeys>,
@@ -1251,7 +1251,7 @@ pub struct StmtContextData {
     /// `SyncWaitStatsLoadPoint`.
     pending_statistics_load: Arc<Mutex<Option<PendingStatisticsLoad>>>,
     /// The validated statement snapshot of `@@block_encryption_mode`.
-    block_encryption_mode: tidb_expr::BlockEncryptionMode,
+    block_encryption_mode: tidb_exprctx::BlockEncryptionMode,
     /// `@@max_allowed_packet`, which the result-sizing string builtins read.
     max_allowed_packet: u64,
     /// `@@group_concat_max_len`, the BYTE budget `GROUP_CONCAT` truncates its
@@ -1574,7 +1574,7 @@ context_configuration! {
 
     /// Attaches the AES mode selected by this session for the statement.
     #[must_use]
-    pub fn with_block_encryption_mode(mut self, mode: tidb_expr::BlockEncryptionMode) -> Self {
+    pub fn with_block_encryption_mode(mut self, mode: tidb_exprctx::BlockEncryptionMode) -> Self {
         self.block_encryption_mode = mode;
         self
     }
@@ -2276,7 +2276,7 @@ context_configuration! {
     /// Attaches `TIDB_DECODE_KEY`'s decoder over the catalog visible to this
     /// statement.
     #[must_use]
-    pub fn with_decode_key_from_string(mut self, decode: tidb_expr::DecodeKeyFromString) -> Self {
+    pub fn with_decode_key_from_string(mut self, decode: tidb_exprctx::DecodeKeyFromString) -> Self {
         self.decode_key_from_string = Some(decode);
         self
     }
@@ -2751,7 +2751,7 @@ impl StmtContext {
 
             range_fallback: Arc::default(),
             pending_statistics_load: Arc::default(),
-            block_encryption_mode: tidb_expr::BlockEncryptionMode::default(),
+            block_encryption_mode: tidb_exprctx::BlockEncryptionMode::default(),
             // Go `vardef.DefMaxAllowedPacket`, the value a default server runs
             // with and the one the `Columns` trait default already used.
             max_allowed_packet: 64 << 20,
@@ -3735,7 +3735,7 @@ impl StmtContext {
         &self,
         path: &[String],
         insert: bool,
-    ) -> Result<(), tidb_expr::EvalError> {
+    ) -> Result<(), tidb_exprctx::EvalError> {
         let Some(check) = &self.sequence_privilege else {
             return Ok(());
         };
@@ -3746,8 +3746,8 @@ impl StmtContext {
             return Ok(());
         }
         let (user, host) = self.authenticated_identity().unwrap_or(("", ""));
-        Err(tidb_expr::EvalError::Sequence(
-            tidb_expr::SequenceEvalError::AccessDenied {
+        Err(tidb_exprctx::EvalError::Sequence(
+            tidb_exprctx::SequenceEvalError::AccessDenied {
                 privilege: if insert { "INSERT" } else { "SELECT" },
                 user: user.to_owned(),
                 host: host.to_owned(),
@@ -3850,13 +3850,13 @@ impl StmtContext {
             .unwrap_or(&tidb_util::misc::NoSequences)
     }
 
-    pub fn validate_sequence_path(&self, path: &[String]) -> Result<(), tidb_expr::EvalError> {
+    pub fn validate_sequence_path(&self, path: &[String]) -> Result<(), tidb_exprctx::EvalError> {
         self.resolve_sequence(path).map(|_| ())
     }
 
     /// Go `infoschema.GetSequenceByName`: the sequence `path` names, or the
     /// error Go reports for a missing sequence or another kind of object.
-    fn resolve_sequence(&self, path: &[String]) -> Result<&dyn SequenceTable, tidb_expr::EvalError> {
+    fn resolve_sequence(&self, path: &[String]) -> Result<&dyn SequenceTable, tidb_exprctx::EvalError> {
         let sequences = self.sequences();
         let (database, name) = sequences.key(path);
         // Only a one- or two-part name reaches the lookup; any other names
@@ -4866,10 +4866,10 @@ impl StmtContext {
     /// The statement's `time_zone`: Go's `SessionVars.Location()`, which
     /// `types.Context` carries and the storage codecs convert `TIMESTAMP`
     /// values with. Inherent so the storage seam can ask for it without
-    /// pulling the whole [`tidb_expr::Columns`] trait into scope.
+    /// pulling the whole [`tidb_exprctx::Columns`] trait into scope.
     #[must_use]
     pub fn session_zone(&self) -> tidb_datatype::SessionTimeZone {
-        <Self as tidb_expr::Columns>::time_zone(self)
+        <Self as tidb_exprctx::Columns>::time_zone(self)
     }
 
     /// Returns the statement's Apply-cache byte budget.
@@ -5779,18 +5779,18 @@ impl Columns for StmtContext {
         None
     }
 
-    fn param_value(&self, order: usize) -> Result<Datum, tidb_expr::EvalError> {
+    fn param_value(&self, order: usize) -> Result<Datum, tidb_exprctx::EvalError> {
         self.prepared_params
             .as_deref()
             .unwrap_or_default()
             .get(order)
             .cloned()
-            .ok_or(tidb_expr::EvalError::Unsupported(
+            .ok_or(tidb_exprctx::EvalError::Unsupported(
                 "unbound prepared parameter",
             ))
     }
 
-    fn current_insert_value(&self, offset: usize) -> Result<Option<Datum>, tidb_expr::EvalError> {
+    fn current_insert_value(&self, offset: usize) -> Result<Option<Datum>, tidb_exprctx::EvalError> {
         let values = self
             .current_insert_values
             .lock()
@@ -5803,7 +5803,7 @@ impl Columns for StmtContext {
         }
         values.get(offset).cloned().map_or_else(
             || {
-                Err(tidb_expr::EvalError::IncorrectArguments(format!(
+                Err(tidb_exprctx::EvalError::IncorrectArguments(format!(
                     "Session current insert values len {} and column's offset {offset} don't match",
                     values.len()
                 )))
@@ -5895,30 +5895,30 @@ impl Columns for StmtContext {
         &self,
         name: &str,
         timeout: std::time::Duration,
-    ) -> Result<bool, tidb_expr::EvalError> {
+    ) -> Result<bool, tidb_exprctx::EvalError> {
         use crate::advisory_lock_state::AdvisoryLockError;
         match self.advisory_locks.acquire(name, timeout) {
             Ok(()) => Ok(true),
             Err(AdvisoryLockError::Timeout) => Ok(false),
-            Err(AdvisoryLockError::Deadlock) => Err(tidb_expr::EvalError::AdvisoryLock {
+            Err(AdvisoryLockError::Deadlock) => Err(tidb_exprctx::EvalError::AdvisoryLock {
                 code: 3058,
                 message: "Deadlock found when trying to get user-level lock; try rolling back transaction/releasing locks and restarting lock acquisition.".to_owned(),
             }),
             Err(AdvisoryLockError::Internal(message)) => {
-                Err(tidb_expr::EvalError::AdvisoryLock { code: 1105, message })
+                Err(tidb_exprctx::EvalError::AdvisoryLock { code: 1105, message })
             }
         }
     }
 
-    fn advisory_lock_owner(&self, name: &str) -> Result<Option<u64>, tidb_expr::EvalError> {
+    fn advisory_lock_owner(&self, name: &str) -> Result<Option<u64>, tidb_exprctx::EvalError> {
         Ok(self.advisory_locks.owner(name))
     }
 
-    fn release_advisory_lock(&self, name: &str) -> Result<bool, tidb_expr::EvalError> {
+    fn release_advisory_lock(&self, name: &str) -> Result<bool, tidb_exprctx::EvalError> {
         Ok(self.advisory_locks.release(name))
     }
 
-    fn release_all_advisory_locks(&self) -> Result<usize, tidb_expr::EvalError> {
+    fn release_all_advisory_locks(&self) -> Result<usize, tidb_exprctx::EvalError> {
         Ok(self.advisory_locks.release_all())
     }
 
@@ -5947,7 +5947,7 @@ impl Columns for StmtContext {
         tidb_printer::get_tidb_info()
     }
 
-    fn block_encryption_mode(&self) -> tidb_expr::BlockEncryptionMode {
+    fn block_encryption_mode(&self) -> tidb_exprctx::BlockEncryptionMode {
         self.block_encryption_mode
     }
 
@@ -6049,17 +6049,17 @@ impl Columns for StmtContext {
         self.truncate
     }
 
-    fn handle_sleep_incorrect_argument(&self) -> Result<(), tidb_expr::EvalError> {
+    fn handle_sleep_incorrect_argument(&self) -> Result<(), tidb_exprctx::EvalError> {
         let message = "Incorrect arguments to sleep";
         match self.bad_null {
             ErrorLevel::Ignore => Ok(()),
             ErrorLevel::Warn => {
                 self.append_error_warning(
-                    &tidb_expr::EvalError::IncorrectArguments(message.to_owned()).to_sql_error(),
+                    &tidb_exprctx::EvalError::IncorrectArguments(message.to_owned()).to_sql_error(),
                 );
                 Ok(())
             }
-            ErrorLevel::Error => Err(tidb_expr::EvalError::IncorrectArguments(message.to_owned())),
+            ErrorLevel::Error => Err(tidb_exprctx::EvalError::IncorrectArguments(message.to_owned())),
         }
     }
 
@@ -6173,7 +6173,7 @@ impl Columns for StmtContext {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(value);
     }
 
-    fn sequence_nextval(&self, path: &[String]) -> Result<Datum, tidb_expr::EvalError> {
+    fn sequence_nextval(&self, path: &[String]) -> Result<Datum, tidb_exprctx::EvalError> {
         let sequence = self.resolve_sequence(path)?;
         self.check_sequence_privilege(path, true)?;
         let (database, name) = self.sequences().key(path);
@@ -6189,7 +6189,7 @@ impl Columns for StmtContext {
         Ok(Datum::Int(value))
     }
 
-    fn sequence_lastval(&self, path: &[String]) -> Result<Datum, tidb_expr::EvalError> {
+    fn sequence_lastval(&self, path: &[String]) -> Result<Datum, tidb_exprctx::EvalError> {
         let sequence = self.resolve_sequence(path)?;
         self.check_sequence_privilege(path, false)?;
         Ok(self
@@ -6201,7 +6201,7 @@ impl Columns for StmtContext {
             .map_or(Datum::Null, Datum::Int))
     }
 
-    fn sequence_setval(&self, path: &[String], value: i64) -> Result<Datum, tidb_expr::EvalError> {
+    fn sequence_setval(&self, path: &[String], value: i64) -> Result<Datum, tidb_exprctx::EvalError> {
         let sequence = self.resolve_sequence(path)?;
         self.check_sequence_privilege(path, true)?;
         // Go `SetSequenceVal`: the reported value is NULL when the stored
@@ -6215,8 +6215,8 @@ impl Columns for StmtContext {
 }
 
 /// A sequence error as its producer raised it.
-fn sequence_error(error: tidb_terror::TerrorError) -> tidb_expr::EvalError {
-    tidb_expr::EvalError::Sequence(tidb_expr::SequenceEvalError::Raised(error))
+fn sequence_error(error: tidb_terror::TerrorError) -> tidb_exprctx::EvalError {
+    tidb_exprctx::EvalError::Sequence(tidb_exprctx::SequenceEvalError::Raised(error))
 }
 
 #[cfg(test)]
@@ -6308,7 +6308,7 @@ mod tests {
         ctx.mark_physical_table_reader();
 
         let started = std::time::Instant::now();
-        assert!(tidb_expr::Columns::sleep_for(
+        assert!(tidb_exprctx::Columns::sleep_for(
             &ctx,
             std::time::Duration::from_secs(1)
         ));
@@ -6317,7 +6317,7 @@ mod tests {
         // Go retains the killer when `StmtCtx.TableIDs` is non-empty, so the
         // rest of a table-backed evaluation is interrupted too.
         let started = std::time::Instant::now();
-        assert!(tidb_expr::Columns::sleep_for(
+        assert!(tidb_exprctx::Columns::sleep_for(
             &ctx,
             std::time::Duration::from_secs(1)
         ));
@@ -6376,7 +6376,7 @@ mod tests {
     /// oversized `SPACE()` silently stored NULL.
     #[test]
     fn a_strict_write_raises_the_packet_overflow_as_an_error() {
-        use tidb_expr::Columns;
+        
         // `for_dml(error_for_division_by_zero, strict, ignore_err)`.
         let strict = StmtContext::for_dml(true, true, false).with_max_allowed_packet(1024);
         let error = tidb_expr::expression_errors::handle_allowed_packet_overflowed(&strict, "space")

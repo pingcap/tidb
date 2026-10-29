@@ -428,7 +428,7 @@ struct IndexConditionContext<'a> {
     zone: &'a SessionTimeZone,
 }
 
-impl tidb_expr::Columns for IndexConditionContext<'_> {
+impl tidb_exprctx::Columns for IndexConditionContext<'_> {
     fn get(&self, path: &[String]) -> Option<Datum> {
         let name = path.last()?;
         let offset = self
@@ -1375,7 +1375,7 @@ impl KvTable {
     pub fn record_physical_id(
         &self,
         row: &[Datum],
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<i64, KvTableError> {
         let Some(partition) = &self.partition else {
             return Ok(self.table_id);
@@ -1390,7 +1390,7 @@ impl KvTable {
         &self,
         handle: &TableHandle,
         row: &[Datum],
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<Vec<u8>, KvTableError> {
         Ok(encode_row_key_with_handle(
             self.record_physical_id(row, ctx)?,
@@ -1409,7 +1409,7 @@ impl KvTable {
         &self,
         row: &[Datum],
         selected: &[i64],
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<(), KvTableError> {
         if selected.contains(&self.record_physical_id(row, ctx)?) {
             Ok(())
@@ -1435,7 +1435,7 @@ impl KvTable {
         old_row: &[Datum],
         new_row: &[Datum],
         selected: &[i64],
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<(), KvTableError> {
         self.validate_insert_partitions(old_row, selected, ctx)?;
         self.validate_insert_partitions(new_row, selected, ctx)
@@ -1452,7 +1452,7 @@ impl KvTable {
         &self,
         handles: &[TableHandle],
         zone: &SessionTimeZone,
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Vec<Option<(usize, i64)>> {
         if self.partition.is_none() {
             return vec![None; handles.len()];
@@ -1475,7 +1475,7 @@ impl KvTable {
     pub fn row_partition_route(
         &self,
         row: &[Datum],
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Option<(usize, i64)> {
         let partition = self.partition.as_ref()?;
         let ordinal = partition.locate_ordinal(row, &self.columns, ctx).ok()?;
@@ -1518,7 +1518,7 @@ impl KvTable {
         &self,
         handles: &[TableHandle],
         zone: &SessionTimeZone,
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Vec<String> {
         let Some(partition) = &self.partition else {
             return Vec::new();
@@ -2143,7 +2143,7 @@ impl KvTable {
     pub fn locate_physical_id(
         &self,
         row: &[Datum],
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<i64, KvTableError> {
         self.record_physical_id(row, ctx)
     }
@@ -2354,7 +2354,7 @@ impl KvTable {
     pub fn validate_check_constraints(
         &self,
         row: &[Datum],
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<(), KvTableError> {
         for constraint in self.check_constraints.iter() {
             let rebuilt;
@@ -2915,7 +2915,7 @@ impl KvTable {
     pub fn row_conflicts(
         &mut self,
         row: &[Datum],
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<Vec<RowConflict>, KvTableError> {
         self.row_conflicts_reported_as(row, None, ctx, DuplicateText::TableLayer)
     }
@@ -2927,7 +2927,7 @@ impl KvTable {
         &mut self,
         row: &[Datum],
         row_id: Option<i64>,
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<Vec<RowConflict>, KvTableError> {
         self.row_conflicts_reported_as(row, row_id, ctx, DuplicateText::BatchChecker)
     }
@@ -2936,7 +2936,7 @@ impl KvTable {
         &mut self,
         row: &[Datum],
         row_id: Option<i64>,
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
         text: DuplicateText,
     ) -> Result<Vec<RowConflict>, KvTableError> {
         let zone = ctx.time_zone();
@@ -3040,7 +3040,7 @@ impl KvTable {
         &mut self,
         row: &[Datum],
         row_id: Option<i64>,
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<(Option<Key>, Vec<Key>), KvTableError> {
         let zone = ctx.time_zone();
         let physical_id = self.record_physical_id(row, ctx)?;
@@ -3081,7 +3081,7 @@ impl KvTable {
     pub fn prefetch_unique_indices(
         &mut self,
         rows: &[(&[Datum], Option<i64>)],
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<std::collections::HashMap<Key, Vec<u8>>, KvTableError> {
         let _region = tidb_tracing::start_thread_region_ex("prefetchUniqueIndices");
         let mut keys = Vec::new();
@@ -3107,7 +3107,7 @@ impl KvTable {
         &mut self,
         rows: &[(&[Datum], Option<i64>)],
         values: &std::collections::HashMap<Key, Vec<u8>>,
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<(), KvTableError> {
         let _region = tidb_tracing::start_thread_region_ex("prefetchConflictedOldRows");
         let mut keys = Vec::new();
@@ -3153,7 +3153,7 @@ impl KvTable {
     pub fn all_clustered_insert_keys_absent(
         &mut self,
         rows: &[Vec<Datum>],
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<Option<bool>, KvTableError> {
         if rows.is_empty()
             || (self.pk_handle_offset.is_none() && self.common_handle_offsets.is_empty())
@@ -3529,7 +3529,7 @@ impl KvTable {
     pub fn insert_row(
         &mut self,
         row: &[Datum],
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<TableHandle, KvTableError> {
         self.insert_row_with_row_id(row, None, 0, ctx)
     }
@@ -3551,7 +3551,7 @@ impl KvTable {
         row: &[Datum],
         row_id: Option<i64>,
         shard: i64,
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<TableHandle, KvTableError> {
         self.insert_row_in(row, row_id, shard, ctx, false, false, None, true)
     }
@@ -3703,7 +3703,7 @@ impl KvTable {
         row: &[Datum],
         row_id: Option<i64>,
         shard: i64,
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
         lazy_dup_check: bool,
         skip_primary_duplicate_check: bool,
         stats_ctx: Option<&dyn tidb_tblctx::MutateContext>,
@@ -3733,7 +3733,7 @@ impl KvTable {
         // Go `AddRecord` writes `WritableCols`: past the public columns, the
         // ones a DDL is adding or changing.
         let write_row =
-            self.insert_write_row(row, stats_ctx, tidb_expr::Columns::type_flags(ctx), &zone)?;
+            self.insert_write_row(row, stats_ctx, tidb_exprctx::Columns::type_flags(ctx), &zone)?;
         let row = write_row.as_deref().unwrap_or(row);
         let value = self.encode_row_value(row, &zone)?;
         // Go `addRecord`: every record key is unique. A clustered key derives

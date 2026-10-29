@@ -28,7 +28,7 @@ use tidb_datatype::FieldType;
 use tidb_expr::evaluator::{EvaluatorError, EvaluatorProgram, EvaluatorSuite};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 /// Marks an evaluation context [`ProjectionExec`] accepts.
 ///
@@ -51,7 +51,7 @@ pub trait ProjectionContext: Columns + Send + Sync {
     }
 }
 
-impl ProjectionContext for tidb_expr::NoColumns {
+impl ProjectionContext for tidb_exprctx::NoColumns {
     fn parallel_next_bridge(
         exec: &mut ProjectionExec<Self>,
         req: &mut Chunk,
@@ -452,7 +452,7 @@ mod tests {
     use tidb_expr::constant::Constant;
     use tidb_expr::evaluator::EvaluatorProgram;
     use tidb_expr::expression::ScalarFunction;
-    use tidb_expr::NoColumns;
+    use tidb_exprctx::NoColumns;
 
     fn long() -> FieldType {
         FieldType::new(FieldTypeCode::Long)
@@ -559,20 +559,20 @@ mod tests {
         let expression = Expression::Constant(constant);
         for (level, input, expected, warning_count) in [
             (
-                tidb_expr::ErrorLevel::Warn,
+                tidb_exprctx::ErrorLevel::Warn,
                 "12tail",
                 Some(Datum::Int(12)),
                 1,
             ),
-            (tidb_expr::ErrorLevel::Error, "12tail", None, 0),
+            (tidb_exprctx::ErrorLevel::Error, "12tail", None, 0),
             (
-                tidb_expr::ErrorLevel::Ignore,
+                tidb_exprctx::ErrorLevel::Ignore,
                 "12tail",
                 Some(Datum::Int(12)),
                 0,
             ),
-            (tidb_expr::ErrorLevel::Warn, "128tail", None, 1),
-            (tidb_expr::ErrorLevel::Warn, "7", Some(Datum::Int(7)), 0),
+            (tidb_exprctx::ErrorLevel::Warn, "128tail", None, 1),
+            (tidb_exprctx::ErrorLevel::Warn, "7", Some(Datum::Int(7)), 0),
         ] {
             let ctx = crate::StmtContext::for_query()
                 .with_truncate_level(level)
@@ -881,7 +881,7 @@ mod tests {
             None
         }
 
-        fn param_value(&self, _order: usize) -> Result<Datum, tidb_expr::EvalError> {
+        fn param_value(&self, _order: usize) -> Result<Datum, tidb_exprctx::EvalError> {
             let call = {
                 let mut state = self.gate.state.lock().unwrap();
                 state.0 += 1;
@@ -893,7 +893,7 @@ mod tests {
                 self.gate.wait_for(|state| state.0 == 2);
                 match self.first_result {
                     FirstResult::Error => {
-                        return Err(tidb_expr::EvalError::Unsupported("evaluation failed"))
+                        return Err(tidb_exprctx::EvalError::Unsupported("evaluation failed"))
                     }
                     FirstResult::Panic => panic!("projection evaluation panic"),
                     FirstResult::Row | FirstResult::ChildError => {}

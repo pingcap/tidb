@@ -2174,7 +2174,7 @@ fn statement_instant_text(
     decimal: i64,
 ) -> String {
     use chrono::{Datelike, Timelike};
-    let (seconds, nanos, offset) = tidb_expr::Columns::now(context.get_expr_ctx().get_eval_ctx()).unwrap_or_else(|| {
+    let (seconds, nanos, offset) = tidb_exprctx::Columns::now(context.get_expr_ctx().get_eval_ctx()).unwrap_or_else(|| {
         let now = chrono::Local::now();
         (
             now.timestamp(),
@@ -3309,7 +3309,7 @@ fn stage_column_default(
                             &[tidb_hack::go_to_lower(name).into(), "expression".into()],
                         ),
                     ),
-                    (None, tidb_expr::EvalError::Unsupported(message)) => {
+                    (None, tidb_exprctx::EvalError::Unsupported(message)) => {
                         MysqlError::unknown(message)
                     }
                     (None, _) => MysqlError::unknown("a DEFAULT this node cannot evaluate"),

@@ -38,7 +38,7 @@
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 
 use crate::column::Column;
-use crate::context::NoColumns;
+use tidb_exprctx::context::NoColumns;
 use crate::expr_util::{
     evaluate_expr_with_null, fold_constant_with, FoldOptions, FunctionBuildError, FunctionBuilder,
     PreservingFunctionBuilder, RealFunctionBuilder, SubstituteOptions,
@@ -54,12 +54,12 @@ use tidb_ast::CiString;
 /// [`crate::builtin_compare::infer_compare_type`] when the caller hands an
 /// `Unspecified`/absent return type, standing in for
 /// `compareFunctionClass.getFunction`'s own result-type inference.
-pub struct MasterFunctionBuilder<'a, C: crate::context::Columns> {
+pub struct MasterFunctionBuilder<'a, C: tidb_exprctx::context::Columns> {
     ctx: &'a C,
     delegate: RealFunctionBuilder<'a, C>,
 }
 
-impl<'a, C: crate::context::Columns> MasterFunctionBuilder<'a, C> {
+impl<'a, C: tidb_exprctx::context::Columns> MasterFunctionBuilder<'a, C> {
     /// Binds the evaluation context both halves read.
     pub fn new(ctx: &'a C) -> Self {
         Self {
@@ -69,7 +69,7 @@ impl<'a, C: crate::context::Columns> MasterFunctionBuilder<'a, C> {
     }
 }
 
-impl<C: crate::context::Columns> FunctionBuilder for MasterFunctionBuilder<'_, C> {
+impl<C: tidb_exprctx::context::Columns> FunctionBuilder for MasterFunctionBuilder<'_, C> {
     fn new_function(
         &self,
         func_name: &str,
@@ -233,7 +233,7 @@ fn evaluate_expr_with_null_meets_rebuild_error() {
     assert!(evaluate_expr_with_null(&outer, &schema, true, &ctx, &options).is_err());
 }
 
-impl<C: crate::context::Columns> MasterFunctionBuilder<'_, C> {
+impl<C: tidb_exprctx::context::Columns> MasterFunctionBuilder<'_, C> {
     /// Reuses the typing delegate without going through the composed fold --
     /// the MeetError port only needs a well-typed ifnull wrapper.
     fn clone_builder(&self) -> RealFunctionBuilder<'_, C> {

@@ -23,7 +23,7 @@ use tidb_expr::constant::Constant;
 use tidb_expr::expression::Expression;
 use tidb_hack::go_to_lower;
 
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 use tidb_infoschema::table_source::TableSource;
 use super::visit_info::VisitAuthError;
@@ -66,7 +66,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             if tidb_config_kerneltype::is_next_gen()
                 && tidb_vardef::is_read_only_var_in_next_gen(&var_name)
             {
-                return Err(PlanError::eval(tidb_expr::EvalError::Conversion(
+                return Err(PlanError::eval(tidb_exprctx::EvalError::Conversion(
                     tidb_variable::variable_errors::ERR_NOT_SUPPORTED_IN_NEXT_GEN
                         .generate(format!("setting {var_name} is not supported in the next generation of TiDB")),
                 )));

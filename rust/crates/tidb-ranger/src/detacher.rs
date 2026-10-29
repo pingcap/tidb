@@ -541,7 +541,7 @@ fn points_to_eq_or_in_cond(
         .ret_type
         .clone()
         .unwrap_or_else(|| tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong));
-    let ctx = tidb_expr::NoColumns;
+    let ctx = tidb_exprctx::NoColumns;
     let mut args: Vec<Expression> = vec![Expression::Column(col.clone())];
     let mut or_args: Vec<Expression> = Vec::new();
     let mut i = 0;
@@ -2650,7 +2650,7 @@ fn eval_virtual_expr_at(
     let mut substituted = substitute(virtual_expr, value);
     tidb_expr::fold_constant_in_mode(
         &mut substituted,
-        &tidb_expr::NoColumns,
+        &tidb_exprctx::NoColumns,
         tidb_expr::ConstantFoldMode::Normal,
     );
     match substituted {
@@ -2667,7 +2667,7 @@ fn eq_function(
     right: Expression,
 ) -> Result<Expression, super::points::PointBuilderError> {
     tidb_expr::new_function::new_function(
-        &tidb_expr::NoColumns,
+        &tidb_exprctx::NoColumns,
         "eq",
         left_type.clone(),
         vec![left, right],
@@ -2765,7 +2765,7 @@ pub fn add_gc_column4_in_cond(
             member.clone(),
         )?;
         let and_expr = tidb_expr::new_function::new_function(
-            &tidb_expr::NoColumns,
+            &tidb_exprctx::NoColumns,
             "and",
             and_type.clone(),
             vec![shard_eq, member_eq],
@@ -2774,7 +2774,7 @@ pub fn add_gc_column4_in_cond(
         and_or = Some(match and_or {
             None => and_expr,
             Some(previous) => tidb_expr::new_function::new_function(
-                &tidb_expr::NoColumns,
+                &tidb_exprctx::NoColumns,
                 "or",
                 and_type.clone(),
                 vec![previous, and_expr],

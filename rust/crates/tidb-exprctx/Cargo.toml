@@ -1,0 +1,20 @@
+[package]
+name = "tidb-exprctx"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB expression/exprctx: Go pkg/expression/exprctx (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-context = { path = "../tidb-context" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-printer = { path = "../tidb-printer" }
+tidb-terror = { path = "../tidb-terror" }
+tidb-variable = { path = "../tidb-variable" }

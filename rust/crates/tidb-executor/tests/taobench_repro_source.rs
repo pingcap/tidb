@@ -100,7 +100,7 @@ fn edge_table() -> KvTable {
                 Datum::Int(1660627540589311589),
                 Datum::new_string("hello"),
             ],
-            &tidb_expr::NoColumns,
+            &tidb_exprctx::NoColumns,
         )
         .unwrap();
     table
@@ -379,7 +379,7 @@ fn edges_table_on_capturing_store(captured: Arc<Mutex<Vec<DagRequest>>>) -> KvTa
                 Datum::Int(1660627540589311589),
                 Datum::new_string("hello"),
             ],
-            &tidb_expr::NoColumns,
+            &tidb_exprctx::NoColumns,
         )
         .unwrap();
     table

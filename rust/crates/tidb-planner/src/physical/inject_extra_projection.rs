@@ -50,7 +50,7 @@ use tidb_expr::aggregation::ByItems;
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::NoColumns;
+use tidb_exprctx::NoColumns;
 
 use crate::expression_rewriter::ColumnIdAllocator;
 use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalProjection};

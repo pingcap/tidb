@@ -2541,7 +2541,7 @@ mod tests {
     use std::cell::RefCell;
 
     use super::*;
-    use crate::context::NoColumns;
+    use tidb_exprctx::context::NoColumns;
 
     struct WarningContext(RefCell<Vec<(u16, String)>>);
 
@@ -2623,12 +2623,12 @@ mod tests {
     }
 
     fn string_cast_policy(cast: CastType) {
-        struct Policy(crate::context::ErrorLevel, RefCell<Vec<u16>>);
+        struct Policy(tidb_exprctx::context::ErrorLevel, RefCell<Vec<u16>>);
         impl crate::Columns for Policy {
             fn get(&self, _: &[String]) -> Option<Datum> {
                 None
             }
-            fn truncate_level(&self) -> crate::context::ErrorLevel {
+            fn truncate_level(&self) -> tidb_exprctx::context::ErrorLevel {
                 self.0
             }
             fn append_warning(&self, code: u16, _: &str) {
@@ -2636,13 +2636,13 @@ mod tests {
             }
         }
         for level in [
-            crate::context::ErrorLevel::Error,
-            crate::context::ErrorLevel::Warn,
-            crate::context::ErrorLevel::Ignore,
+            tidb_exprctx::context::ErrorLevel::Error,
+            tidb_exprctx::context::ErrorLevel::Warn,
+            tidb_exprctx::context::ErrorLevel::Ignore,
         ] {
             let ctx = Policy(level, RefCell::new(Vec::new()));
             let result = eval_cast(&cast, Datum::new_string("abc"), None, &ctx);
-            if level == crate::context::ErrorLevel::Error {
+            if level == tidb_exprctx::context::ErrorLevel::Error {
                 assert!(
                     matches!(result, Err(EvalError::Conversion(ref e)) if e.to_sql_error().code == 1406),
                     "{result:?}"
@@ -2652,7 +2652,7 @@ mod tests {
             }
             assert_eq!(
                 *ctx.1.borrow(),
-                if level == crate::context::ErrorLevel::Warn {
+                if level == tidb_exprctx::context::ErrorLevel::Warn {
                     vec![1406]
                 } else {
                     vec![]

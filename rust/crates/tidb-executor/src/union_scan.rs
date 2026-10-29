@@ -180,7 +180,7 @@ use tidb_datatype::{Datum, FieldType, FieldTypeFlags};
 use tidb_charset::Collation;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 use tidb_tablecodec::table_key::encode_row_key_with_handle;
 use tidb_txnkv::Key;
 
@@ -728,7 +728,7 @@ mod tests {
     use super::*;
     use tidb_datatype::FieldTypeCode;
     use tidb_expr::column::Column;
-    use tidb_expr::NoColumns;
+    use tidb_exprctx::NoColumns;
 
     use crate::mem_reader::DefaultRowsIter;
 

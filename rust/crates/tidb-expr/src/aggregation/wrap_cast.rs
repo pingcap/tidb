@@ -62,7 +62,7 @@
 //!   flag appearing on an aliased `*ScalarFunction`'s type, which no
 //!   aggregate path does.
 
-use crate::context::{Columns, EvalError};
+use tidb_exprctx::context::{Columns, EvalError};
 use crate::expression::{ConstLevel, Expression};
 use crate::simple_expr::build_cast_function;
 use tidb_datatype::{

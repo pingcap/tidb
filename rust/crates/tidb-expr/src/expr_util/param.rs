@@ -20,7 +20,7 @@
 //! (`GetIntFromConstant`).
 
 use crate::constant::{Constant, ParamMarker};
-use crate::context::{Columns, EvalError};
+use tidb_exprctx::context::{Columns, EvalError};
 use crate::expression::Expression;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 

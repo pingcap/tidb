@@ -139,7 +139,7 @@ fn compare_string_source_column_pairs_agree_with_scalar() {
                 4,
                 tidb_charset::Collation::Utf8GeneralCi,
                 crate::ops::Operands::LITERALS,
-                &crate::context::NoColumns,
+                &tidb_exprctx::context::NoColumns,
             ),
             Ok(crate::Datum::Int(1)),
             "{left:?} = {right:?} under utf8_general_ci"

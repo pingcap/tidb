@@ -275,7 +275,7 @@ pub enum RoutingError {
     /// `[types:1690]constant 18446744073709551615 overflows bigint`.
     ValueOverflowsBigint(String),
     /// The partition expression could not be evaluated over this row.
-    Eval(tidb_expr::EvalError),
+    Eval(tidb_exprctx::EvalError),
     /// A LIST COLUMNS value could not be normalized into its declared field
     /// type or codec key. Stored rows normally make this unreachable.
     Conversion(String),
@@ -357,7 +357,7 @@ impl PartitionSpec {
         &self,
         row: &[Datum],
         columns: &[S],
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<i64, RoutingError> {
         let index = self.locate_index(row, columns, ctx)?;
         Ok(self.definitions[index].id)
@@ -374,7 +374,7 @@ impl PartitionSpec {
         &self,
         row: &[Datum],
         columns: &[S],
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<usize, RoutingError> {
         self.locate_index(row, columns, ctx)
     }
@@ -385,7 +385,7 @@ impl PartitionSpec {
         &self,
         row: &[Datum],
         columns: &[S],
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<usize, RoutingError> {
         match &self.kind {
             PartitionKind::Key => key_partition_index(row, columns, &self.dependencies, self.num()),
@@ -519,7 +519,7 @@ fn range_columns_partition_index<S: crate::generated_column::GeneratedColumnSlot
     names: &[String],
     field_types: &[FieldType],
     less_than: &[Vec<RangeColumnBound>],
-    ctx: &dyn tidb_expr::Columns,
+    ctx: &dyn tidb_exprctx::Columns,
 ) -> Result<usize, RoutingError> {
     let tuple = partition_column_tuple(row, columns, names, field_types, ctx)?;
     range_columns_partition_index_for_tuple(&tuple, less_than, field_types)
@@ -534,7 +534,7 @@ fn partition_column_tuple<S: crate::generated_column::GeneratedColumnSlot>(
     columns: &[S],
     names: &[String],
     field_types: &[FieldType],
-    ctx: &dyn tidb_expr::Columns,
+    ctx: &dyn tidb_exprctx::Columns,
 ) -> Result<Vec<Datum>, RoutingError> {
     let mut tuple = Vec::with_capacity(names.len());
     for (name, field_type) in names.iter().zip(field_types) {
@@ -608,7 +608,7 @@ fn list_columns_partition_index<S: crate::generated_column::GeneratedColumnSlot>
     field_types: &[tidb_datatype::FieldType],
     keys: &HashMap<Vec<u8>, usize>,
     default_partition: Option<usize>,
-    ctx: &dyn tidb_expr::Columns,
+    ctx: &dyn tidb_exprctx::Columns,
 ) -> Result<usize, RoutingError> {
     let tuple = partition_column_tuple(row, columns, names, field_types, ctx)?;
     let key = tidb_codec::encode_key_in_timezone(&ctx.time_zone(), &tuple)

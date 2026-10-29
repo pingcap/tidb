@@ -29,7 +29,7 @@ use tidb_ast::{QueryStmt, Stmt};
 use tidb_datatype::{
     FieldType, FieldTypeCode, FieldTypeFlags, SessionTimeZone, UNSPECIFIED_LENGTH,
 };
-use tidb_expr::ZonedNoColumns;
+use tidb_exprctx::ZonedNoColumns;
 use tidb_intset::FastIntSet;
 
 use tidb_infoschema::table_source::TableSource;

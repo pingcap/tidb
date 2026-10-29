@@ -30,7 +30,7 @@ use super::*;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 /// A `Columns` context with no columns and no session state. It must be
 /// `Clone` because Go's `baseJoiner.Clone` copies the `sessionctx`.

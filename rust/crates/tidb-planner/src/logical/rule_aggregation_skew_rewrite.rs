@@ -21,7 +21,7 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::extract_columns;
-use tidb_expr::NoColumns;
+use tidb_exprctx::NoColumns;
 
 use super::rule::{LogicalOptRule, RuleContext};
 use super::{BaseLogicalPlan, LogicalAggregation, LogicalPlan, LogicalProjection, PlanError};

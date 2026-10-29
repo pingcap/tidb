@@ -27,7 +27,8 @@ use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, StringDatum};
 use tidb_charset::Collation;
 use tidb_expr::{collation_derive::collation_of_node, expression::Expression};
-use tidb_expr::{Columns, EvalError};
+use tidb_exprctx::Columns;
+use tidb_exprctx::EvalError;
 
 /// Splits sorted chunks into adjacent equal-key groups.
 #[derive(Clone, Debug)]
@@ -242,8 +243,8 @@ impl VecGroupChecker {
             .clone()
             .next_back()
             .expect("the non-empty iterator has a last key");
-        let first_encoded = encode_boundary_key(&tidb_expr::NoColumns, first, collations)?;
-        let last_encoded = encode_boundary_key(&tidb_expr::NoColumns, last, collations)?;
+        let first_encoded = encode_boundary_key(&tidb_exprctx::NoColumns, first, collations)?;
+        let last_encoded = encode_boundary_key(&tidb_exprctx::NoColumns, last, collations)?;
         let continues_previous = self
             .previous_last_key
             .as_ref()
@@ -585,7 +586,8 @@ fn keys_equal(
 mod tests {
     use super::*;
     use tidb_datatype::{BinaryJSON, Decimal, FieldType, FieldTypeCode, MysqlEnum};
-    use tidb_expr::{column::Column, NoColumns};
+    use tidb_expr::column::Column;
+use tidb_exprctx::NoColumns;
 
     fn column(index: usize, field_type: FieldType) -> Expression {
         let mut column = Column::new(index as i64 + 1, field_type);
@@ -641,7 +643,7 @@ mod tests {
         for vectorized in [false, true] {
             let ctx = tidb_sessionctx::StmtContext::default()
                 .with_enable_vectorized_expression(vectorized)
-                .with_truncate_level(tidb_expr::ErrorLevel::Warn);
+                .with_truncate_level(tidb_exprctx::ErrorLevel::Warn);
             let field = FieldType::new(FieldTypeCode::LongLong);
             let constant =
                 Expression::Constant(Constant::new(Datum::new_string("12tail"), field.clone()));
@@ -903,7 +905,7 @@ mod tests {
                 ));
                 let ctx = tidb_sessionctx::StmtContext::default()
                     .with_enable_vectorized_expression(vectorized)
-                    .with_truncate_level(tidb_expr::ErrorLevel::Warn);
+                    .with_truncate_level(tidb_exprctx::ErrorLevel::Warn);
                 let mut input = Chunk::new_with_capacity(&[field], 4);
                 for value in [1, 1, 2, 2] {
                     input.append_int64(0, value);
@@ -984,7 +986,7 @@ mod tests {
                 };
                 let ctx = tidb_sessionctx::StmtContext::default()
                     .with_enable_vectorized_expression(vectorized)
-                    .with_truncate_level(tidb_expr::ErrorLevel::Warn);
+                    .with_truncate_level(tidb_exprctx::ErrorLevel::Warn);
                 let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 4);
                 for value in [1, 1, 2, 2] {
                     chunk.append_int64(0, value);
@@ -1088,7 +1090,8 @@ mod tests {
 
     #[test]
     fn constant_decimal_conversion_preserves_error_order() {
-        use tidb_expr::{constant::Constant, ErrorLevel};
+        use tidb_expr::constant::Constant;
+use tidb_exprctx::ErrorLevel;
         let truncated = (1265, "Data truncated for column '%s' at row %d");
         let overflow = (1690, "%s value is out of range in '%s'");
         let cases = [
@@ -1427,7 +1430,7 @@ mod tests {
     #[test]
     fn timestamp_boundary_errors_follow_statement_policy() {
         use tidb_datatype::{CoreTime, Time, TimeType};
-        use tidb_expr::ErrorLevel;
+        use tidb_exprctx::ErrorLevel;
         use tidb_datatype::SessionTimeZone;
         struct Context {
             level: ErrorLevel,
@@ -1788,7 +1791,7 @@ mod tests {
 
     #[test]
     fn bit_boundary_overflow_preserves_go_error_policy() {
-        use tidb_expr::ErrorLevel;
+        use tidb_exprctx::ErrorLevel;
         struct Context {
             level: ErrorLevel,
             warnings: std::cell::RefCell<Vec<(u16, String)>>,

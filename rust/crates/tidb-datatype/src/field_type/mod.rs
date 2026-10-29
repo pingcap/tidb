@@ -48,7 +48,7 @@ impl RuntimeCollator for FieldType {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_field_type_for_value, FieldTypeCode, FieldTypeValue, UNSPECIFIED_LENGTH};
+    use super::{default_field_type_for_value, FieldTypeCode, FieldTypeValue};
 
     #[test]
     fn default_float_type_width_uses_go_infinity_spelling() {

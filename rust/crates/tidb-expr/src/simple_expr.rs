@@ -1115,7 +1115,7 @@ pub fn column_infos_to_columns_and_names_with_collate<C: ColumnInfoSource>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::NoColumns;
+    use tidb_exprctx::context::NoColumns;
     use crate::exprctx::SimplePlanColumnIdAllocator;
     use crate::expression::Constant;
     use crate::rewriter::NoResolver;
@@ -1611,7 +1611,7 @@ mod tests {
     /// none), and LAST_INSERT_ID(expr) records the integer and returns it.
     #[test]
     fn info_functions_read_and_record_session_counts() {
-        use crate::context::Columns;
+        use tidb_exprctx::context::Columns;
         use crate::expression::Constant;
 
         struct CountingContext {
@@ -1811,7 +1811,7 @@ mod tests {
             let chunk = tidb_chunk::chunk::Chunk::new(&[], 1, 1);
             let row = chunk.get_row(0);
             let value = node
-                .eval(&crate::context::NoColumns, row)
+                .eval(&tidb_exprctx::context::NoColumns, row)
                 .unwrap_or_else(|error| panic!("{name}({argument:?}): {error:?}"));
             let text = value.sql_string().expect("string result");
             assert_eq!(text, *expected, "{name}({argument:?})");
@@ -1829,7 +1829,7 @@ mod tests {
         let chunk = tidb_chunk::chunk::Chunk::new(&[], 1, 1);
         let row = chunk.get_row(0);
         assert!(node
-            .eval(&crate::context::NoColumns, row)
+            .eval(&tidb_exprctx::context::NoColumns, row)
             .unwrap()
             .is_null());
     }

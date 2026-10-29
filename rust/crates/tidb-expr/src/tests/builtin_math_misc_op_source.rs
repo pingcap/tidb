@@ -106,7 +106,7 @@ fn eval_as(
 
 /// Same evaluation with the discarding default context.
 fn eval_default(name: &str, args: Vec<Datum>, ret_type: FieldType) -> Result<Datum, EvalError> {
-    eval_as(name, args, ret_type, &crate::context::NoColumns)
+    eval_as(name, args, ret_type, &tidb_exprctx::context::NoColumns)
 }
 
 fn empty_row() -> tidb_chunk::row::Row<'static> {
@@ -183,7 +183,7 @@ fn chunk_row_value(sql: &str, columns: &[(&str, FieldType, Datum)]) -> String {
     for (index, (_, _, value)) in columns.iter().enumerate() {
         chunk.append_datum(index, value);
     }
-    match rewritten.eval(&crate::context::NoColumns, chunk.get_row(0)) {
+    match rewritten.eval(&tidb_exprctx::context::NoColumns, chunk.get_row(0)) {
         Ok(value) => value.label(),
         Err(err) => format!("{err:?}"),
     }
@@ -204,8 +204,8 @@ fn bin_str(bytes: &[u8]) -> Datum {
 /// dispatcher preserves warnings but the comparison/misc leaf level of these
 /// tests is warning-free by construction.
 fn call(name: &str, vals: &[Datum]) -> Datum {
-    compare2_dispatch(name, vals, &crate::context::NoColumns)
-        .or_else(|| misc_dispatch_in(name, vals, &crate::context::NoColumns))
+    compare2_dispatch(name, vals, &tidb_exprctx::context::NoColumns)
+        .or_else(|| misc_dispatch_in(name, vals, &tidb_exprctx::context::NoColumns))
         .unwrap_or_else(|| panic!("{name} must belong to a ported family"))
         .unwrap_or_else(|err| panic!("{name}({vals:?}): {err:?}"))
 }
@@ -640,14 +640,14 @@ fn vectorized_builtin_math_func_for_rand() {
 #[test]
 fn uuid_generation_v1_v4_v7_shapes() {
     for (name, version_digit) in [("UUID", '1'), ("UUID_V4", '4'), ("UUID_V7", '7')] {
-        let first = misc_dispatch_in(name, &[], &crate::context::NoColumns)
+        let first = misc_dispatch_in(name, &[], &tidb_exprctx::context::NoColumns)
             .unwrap_or_else(|| panic!("{name} belongs to the misc family"))
             .unwrap_or_else(|err| panic!("{name}: {err:?}"));
         let text = uuid_spelling_of(&first, name);
         check_shape_and_version(name, &text, version_digit);
         // Generators accept ZERO constants (Go:
         // `funcs[tf.funcName].getFunction(ctx, datumsToConstants(nil))`).
-        assert!(misc_dispatch_in(name, &[], &crate::context::NoColumns).is_some());
+        assert!(misc_dispatch_in(name, &[], &tidb_exprctx::context::NoColumns).is_some());
     }
 }
 
@@ -737,7 +737,7 @@ fn vectorized_builtin_miscellaneous_eval_one_vec() {
     // pinned by compare2::inet_aton_go_vectors).
     for text in [".122", ".123.123"] {
         // Only reachability is exercised; the arm has no output pin.
-        let _ = compare2_dispatch("INET_ATON", &[s(text)], &crate::context::NoColumns)
+        let _ = compare2_dispatch("INET_ATON", &[s(text)], &tidb_exprctx::context::NoColumns)
             .expect("InetAton owns INET_ATON");
     }
     // IsIPv4Mapped / IsIPv4Compat byte-generator shapes: a mapped address's
@@ -765,7 +765,7 @@ fn vectorized_builtin_miscellaneous_eval_one_vec() {
             misc_dispatch_in(
                 "ANY_VALUE",
                 std::slice::from_ref(&value),
-                &crate::context::NoColumns
+                &tidb_exprctx::context::NoColumns
             )
             .expect("ANY_VALUE arity")
             .unwrap(),
@@ -777,7 +777,7 @@ fn vectorized_builtin_miscellaneous_eval_one_vec() {
         misc_dispatch_in(
             "NAME_CONST",
             &[s("label"), Datum::Int(5)],
-            &crate::context::NoColumns
+            &tidb_exprctx::context::NoColumns
         )
         .unwrap()
         .unwrap(),
@@ -786,7 +786,7 @@ fn vectorized_builtin_miscellaneous_eval_one_vec() {
     let echoed = misc_dispatch_in(
         "NAME_CONST",
         &[s("label"), json.clone()],
-        &crate::context::NoColumns,
+        &tidb_exprctx::context::NoColumns,
     )
     .unwrap()
     .unwrap();
@@ -795,7 +795,7 @@ fn vectorized_builtin_miscellaneous_eval_one_vec() {
         misc_dispatch_in(
             "NAME_CONST",
             &[s("label"), Datum::Null],
-            &crate::context::NoColumns
+            &tidb_exprctx::context::NoColumns
         )
         .unwrap()
         .unwrap(),
@@ -844,7 +844,7 @@ fn vectorized_builtin_miscellaneous_func() {
     assert!(misc_dispatch_in(
         "BIN_TO_UUID",
         &[Datum::new_bytes(normal[..15].to_vec())],
-        &crate::context::NoColumns
+        &tidb_exprctx::context::NoColumns
     )
     .unwrap()
     .is_err());

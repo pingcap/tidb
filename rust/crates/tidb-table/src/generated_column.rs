@@ -183,7 +183,7 @@ pub struct GenerationError {
     /// rather than the cast into the column's declared type. It carries the
     /// MySQL code the statement has to report -- 1365 for a zero divisor
     /// under `ERROR_FOR_DIVISION_BY_ZERO` -- which a rendered string does not.
-    pub eval: Option<tidb_expr::EvalError>,
+    pub eval: Option<tidb_exprctx::EvalError>,
 }
 
 /// Go FillVirtualColumnValue: cast with the caller's context, then apply
@@ -193,7 +193,7 @@ pub fn fill_virtual_column_values<S: GeneratedColumnSlot>(
     row: &mut [Datum],
     ctx: &dyn tidb_tblctx::MutateContext,
 ) -> Result<(), crate::column::ColumnError> {
-    let flags = tidb_expr::Columns::type_flags(ctx);
+    let flags = tidb_exprctx::Columns::type_flags(ctx);
     materialize_with(columns, row, true, ctx, |column, value| {
         cast_virtual_column_value(
             value,
@@ -244,7 +244,7 @@ pub fn materialize_with<S: GeneratedColumnSlot, E: From<GenerationError>>(
     columns: &[S],
     row: &mut [Datum],
     only_virtual: bool,
-    ctx: &dyn tidb_expr::Columns,
+    ctx: &dyn tidb_exprctx::Columns,
     mut convert: impl FnMut(&S, Datum) -> Result<Datum, E>,
 ) -> Result<(), E> {
     if !columns.iter().any(|c| c.generation().is_some()) {
@@ -300,7 +300,7 @@ pub fn materialize_planned<S: GeneratedColumnSlot, E: From<GenerationError>>(
     columns: &[S],
     planned: &[Option<Expression>],
     row: &mut [Datum],
-    ctx: &dyn tidb_expr::Columns,
+    ctx: &dyn tidb_exprctx::Columns,
     mut convert: impl FnMut(&S, Datum) -> Result<Datum, E>,
 ) -> Result<(), E> {
     let types: Vec<FieldType> = columns
@@ -346,7 +346,7 @@ pub fn materialize_planned<S: GeneratedColumnSlot, E: From<GenerationError>>(
 ///
 /// # Errors
 ///
-/// [`tidb_expr::EvalError`] from the expression, or `Unsupported` when a
+/// [`tidb_exprctx::EvalError`] from the expression, or `Unsupported` when a
 /// dependency names a column the table no longer defines -- which DDL
 /// refuses to create (3837 / 1054), so it is a corruption report, not a
 /// user-reachable path.
@@ -355,12 +355,12 @@ pub fn eval_over_dependencies<S: GeneratedColumnSlot>(
     dependencies: &[String],
     columns: &[S],
     row: &[Datum],
-    ctx: &dyn tidb_expr::Columns,
-) -> Result<Datum, tidb_expr::EvalError> {
+    ctx: &dyn tidb_exprctx::Columns,
+) -> Result<Datum, tidb_exprctx::EvalError> {
     let mut types = Vec::with_capacity(dependencies.len());
     let mut values = Vec::with_capacity(dependencies.len());
     for name in dependencies {
-        let offset = offset_of(columns, name).ok_or(tidb_expr::EvalError::Unsupported(
+        let offset = offset_of(columns, name).ok_or(tidb_exprctx::EvalError::Unsupported(
             "a generated or partition expression names a column the table no longer defines",
         ))?;
         types.push(columns[offset].column_type().clone());
@@ -380,8 +380,8 @@ pub fn eval_over_row(
     expr: &Expression,
     types: &[FieldType],
     row: &[Datum],
-    ctx: &dyn tidb_expr::Columns,
-) -> Result<Datum, tidb_expr::EvalError> {
+    ctx: &dyn tidb_exprctx::Columns,
+) -> Result<Datum, tidb_exprctx::EvalError> {
     let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(types, 1);
     for (index, value) in row.iter().enumerate() {
         chunk.append_datum(index, value);
@@ -423,16 +423,16 @@ pub enum GeneratedDdlError {
     /// An error the expression builder raised with its own MySQL identity,
     /// which Go's `buildColumnAndConstraint` returns as it is: 1582 for a
     /// wrong argument count, 3146 for a JSON argument of the wrong type.
-    Eval(tidb_expr::EvalError),
+    Eval(tidb_exprctx::EvalError),
 }
 
 /// The generated-column error for a failed rewrite: an unresolved NAME is
 /// Go's 1054, an error carrying its own identity propagates, and only a form
 /// this tier does not build is [`GeneratedDdlError::Unbuildable`].
-pub fn rewrite_error(error: tidb_expr::EvalError, missing_name: Option<String>) -> GeneratedDdlError {
+pub fn rewrite_error(error: tidb_exprctx::EvalError, missing_name: Option<String>) -> GeneratedDdlError {
     match (missing_name, error) {
         (Some(name), _) => GeneratedDdlError::UnknownDependency(name),
-        (None, tidb_expr::EvalError::Unsupported(_)) => {
+        (None, tidb_exprctx::EvalError::Unsupported(_)) => {
             GeneratedDdlError::Unbuildable("this generated-column expression is not supported yet")
         }
         (None, error) => GeneratedDdlError::Eval(error),

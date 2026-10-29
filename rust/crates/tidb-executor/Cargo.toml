@@ -14,6 +14,7 @@ autotests = false
 test-util = ["tidb-sessmgr/test-util"]
 
 [dependencies]
+tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-charset = { path = "../tidb-charset" }
 tidb-planner-rule = { path = "../tidb-planner-rule" }
 tidb-store-helper = { path = "../tidb-store-helper" }

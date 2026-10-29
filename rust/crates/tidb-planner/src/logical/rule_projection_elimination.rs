@@ -323,7 +323,7 @@ fn merge_adjacent_projections(
             }
             None => tidb_expr::expr_util::fold::fold_constant(
                 &replaced,
-                &tidb_expr::NoColumns,
+                &tidb_exprctx::NoColumns,
                 &options,
             ),
         };

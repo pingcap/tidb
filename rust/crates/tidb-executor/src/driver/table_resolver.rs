@@ -66,8 +66,8 @@ impl ColumnResolver for TableResolver<'_> {
         self.clause_message
     }
 
-    fn param_value(&self, order: usize) -> Result<Datum, tidb_expr::EvalError> {
-        tidb_expr::Columns::param_value(&self.constant_context, order)
+    fn param_value(&self, order: usize) -> Result<Datum, tidb_exprctx::EvalError> {
+        tidb_exprctx::Columns::param_value(&self.constant_context, order)
     }
 
     fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
@@ -75,7 +75,7 @@ impl ColumnResolver for TableResolver<'_> {
     }
 
     fn date_modes(&self) -> tidb_datatype::DateModes {
-        tidb_expr::Columns::date_modes(&self.constant_context)
+        tidb_exprctx::Columns::date_modes(&self.constant_context)
     }
 
     fn connection_charset_info(&self) -> (&str, &str) {
@@ -95,14 +95,14 @@ impl ColumnResolver for TableResolver<'_> {
     }
 
     fn current_database(&self) -> Option<String> {
-        tidb_expr::Columns::current_database(&self.constant_context)
+        tidb_exprctx::Columns::current_database(&self.constant_context)
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
         tidb_expr::fold_constant_in_mode(expression, &self.constant_context, mode);
     }
 
-    fn eval_constant(&self, expression: &Expression) -> Result<Datum, tidb_expr::EvalError> {
+    fn eval_constant(&self, expression: &Expression) -> Result<Datum, tidb_exprctx::EvalError> {
         tidb_expr::eval_expression_once(expression, &self.constant_context)
     }
 

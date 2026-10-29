@@ -28,7 +28,7 @@
 //!   `TypeCtx().Flags()`, `AppendWarning`, `AppendNote`). The crate-local
 //!   `exprctx` module is still a seed without these interfaces. Go's
 //!   `EvalContext` is also what an expression evaluates in; this crate's
-//!   evaluator reads that through [`tidb_expr::Columns`], so [`EvalContext`]
+//!   evaluator reads that through [`tidb_exprctx::Columns`], so [`EvalContext`]
 //!   extends it rather than repeating `Location`, `CurrentDB`,
 //!   `CurrentTime` and the error-level reads here.
 //!   Both are implemented for the real [`tidb_expr::exprstatic`] contexts, which
@@ -62,8 +62,8 @@ use tidb_vardef::modes::ClusteredIndexDefMode;
 ///
 /// boundary: Go `pkg/expression/exprctx.EvalContext` (`SQLMode`,
 /// `TypeCtx`, `AppendWarning`, `AppendNote`); the evaluation half
-/// (`Location`, `CurrentDB`, `CurrentTime`, ...) is [`tidb_expr::Columns`].
-pub trait EvalContext: tidb_expr::Columns {
+/// (`Location`, `CurrentDB`, `CurrentTime`, ...) is [`tidb_exprctx::Columns`].
+pub trait EvalContext: tidb_exprctx::Columns {
     /// Go `EvalContext.SQLMode`: the SQL mode the context evaluates under.
     fn sql_mode(&self) -> SqlMode;
     /// Go `EvalContext.TypeCtx().Flags()`: the flags a value converts under.

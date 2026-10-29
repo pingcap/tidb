@@ -301,8 +301,9 @@ use tidb_txnkv::ReplicaReadType;
 /// without depending on `tidb-distsql` directly.
 use tidb_expr::builtin_registry::builtin_list;
 use tidb_expr::infer_pushdown::{blacklist_name, blacklist_store_mask, ExprPushDownBlacklist};
-use tidb_expr::CurrentTso;
-use tidb_expr::{BlockEncryptionMode, EvalError};
+use tidb_exprctx::CurrentTso;
+use tidb_exprctx::BlockEncryptionMode;
+use tidb_exprctx::EvalError;
 use tidb_datatype::SessionTimeZone;
 use tidb_mathutil::MysqlRng;
 pub use topn::TopNExec;

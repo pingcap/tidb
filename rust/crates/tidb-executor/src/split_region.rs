@@ -660,7 +660,7 @@ impl ValueConverter<'_> {
             .map_err(ExecError::Eval)?;
         // Go `ResetContextOfStmt` for a `SplitRegionStmt`: truncation is an
         // error, zero-in-date is ignored, invalid dates follow the mode.
-        let flags = tidb_expr::Columns::type_flags(self.ctx)
+        let flags = tidb_exprctx::Columns::type_flags(self.ctx)
             .with_ignore_truncate_err(false)
             .with_truncate_as_warning(false)
             .with_ignore_zero_in_date_err(true)

@@ -2670,7 +2670,7 @@ fn attach_hash_agg_to_mpp(
     let enable_3_stage_distinct_agg = hash_agg.enable_3_stage_distinct_agg;
     let enable_3_stage_multi_distinct_agg = hash_agg.enable_3_stage_multi_distinct_agg;
     let tiflash_pre_agg_mode = hash_agg.tiflash_pre_agg_mode.clone();
-    let expr_ctx = tidb_expr::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
+    let expr_ctx = tidb_exprctx::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
     let multi_distinct_grouping_sets = if mode == crate::physical::AggMppRunMode::MppScalar {
         let PhysicalPlan::HashAgg(hash_agg) = &mut plan else {
             unreachable!("MPP scalar aggregate is a HashAgg");
@@ -3515,7 +3515,7 @@ fn attach_agg_over_cop(
     };
     // Go's expression context is consulted only for argument TYPES during
     // the split's TypeInfer; a column-free context is exact for that.
-    let ctx = tidb_expr::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
+    let ctx = tidb_exprctx::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
     let query_block_offset = plan.query_block_offset();
     // Go `NewPartialAggregate(cop.GetStoreType(), false)`.
     let (partial, final_plan) = if cop.get_store_type() == StoreType::TiDb {
@@ -5005,7 +5005,7 @@ mod attach_tests {
         use crate::physical::{AggMppRunMode, PhysicalHashAgg};
         use crate::physical_property::MppPartitionColumn;
         use tidb_expr::aggregation::{names, AggFuncDesc};
-        use tidb_expr::ZonedNoColumns;
+        use tidb_exprctx::ZonedNoColumns;
         use tidb_datatype::SessionTimeZone;
 
         let plan_allocator = PlanIdAllocator::new();
@@ -5088,7 +5088,7 @@ mod attach_tests {
         use crate::expression_rewriter::ColumnIdAllocator;
         use crate::physical::{AggMppRunMode, PhysicalHashAgg};
         use tidb_expr::aggregation::{names, AggFuncDesc};
-        use tidb_expr::ZonedNoColumns;
+        use tidb_exprctx::ZonedNoColumns;
         use tidb_datatype::SessionTimeZone;
 
         let plan_allocator = PlanIdAllocator::new();
@@ -5198,7 +5198,7 @@ mod attach_tests {
         use crate::expression_rewriter::ColumnIdAllocator;
         use crate::physical::{AggMppRunMode, PhysicalHashAgg};
         use tidb_expr::aggregation::{names, AggFuncDesc};
-        use tidb_expr::ZonedNoColumns;
+        use tidb_exprctx::ZonedNoColumns;
         use tidb_datatype::SessionTimeZone;
 
         let plan_allocator = PlanIdAllocator::new();

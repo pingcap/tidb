@@ -38,7 +38,7 @@ use tidb_chunk::chunk::Chunk;
 use tidb_chunk::row::Row;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 use crate::executor::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;

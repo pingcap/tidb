@@ -122,7 +122,7 @@ fn key_at(row: &[Datum], offsets: &[usize]) -> Option<Vec<Datum>> {
 fn same_key(left: &[Datum], right: &[Datum], ctx: &crate::StmtContext) -> bool {
     let zone = ctx.session_zone();
     let context = tidb_datatype::ConversionContext::new(
-        tidb_expr::Columns::type_flags(ctx),
+        tidb_exprctx::Columns::type_flags(ctx),
         tidb_datatype::ConversionLocation::from_time_zone(&zone),
         &tidb_context::IGNORE_CONVERSION_WARNINGS,
     );

@@ -32,7 +32,7 @@ use crate::sql_node::{CursorMaterializationAuthority, QueryResult};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 pub(crate) struct CursorState {
-    current_tso: Option<tidb_expr::CurrentTso>,
+    current_tso: Option<tidb_exprctx::CurrentTso>,
     _start_ts_guard: Option<Arc<tidb_txnkv::StartTsGuard>>,
     columns: Vec<tidb_protocol::ColumnInfo>,
     field_types: Vec<tidb_datatype::FieldType>,
@@ -341,7 +341,7 @@ mod tests {
     }
 
     struct CountingRows {
-        current_tso: tidb_expr::CurrentTso,
+        current_tso: tidb_exprctx::CurrentTso,
         fields: Vec<tidb_executor::adapter::ResultFieldMetadata>,
         rows: VecDeque<Vec<Datum>>,
         lifecycle: Arc<Mutex<SourceLifecycle>>,
@@ -406,7 +406,7 @@ mod tests {
         let disk_tracker = Arc::clone(memory.session_disk_tracker());
         let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
         let lifecycle = Arc::new(Mutex::new(SourceLifecycle::default()));
-        let current_tso = tidb_expr::CurrentTso::default();
+        let current_tso = tidb_exprctx::CurrentTso::default();
         let source = CountingRows {
             current_tso: current_tso.clone(),
             fields: select_fields(&[("v".to_owned(), fields[0].clone())]),

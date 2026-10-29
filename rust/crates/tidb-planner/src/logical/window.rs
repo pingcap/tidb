@@ -131,7 +131,7 @@ pub struct FrameBound {
 
 impl FrameBound {
     /// Go FrameBound.UpdateCompareCols, called by the window executor builder.
-    pub fn update_compare_cols(&mut self, order_by: &[Column]) -> Result<(), tidb_expr::EvalError> {
+    pub fn update_compare_cols(&mut self, order_by: &[Column]) -> Result<(), tidb_exprctx::EvalError> {
         let Some(calc) = self.calc_funcs.first() else {
             return Ok(());
         };

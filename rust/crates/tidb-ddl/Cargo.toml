@@ -12,6 +12,7 @@ description = "Go pkg/ddl's worker side: the owner-stepped DDL job scheduler, th
 workspace = true
 
 [dependencies]
+tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-charset = { path = "../tidb-charset" }
 tidb-timeutil = { path = "../tidb-timeutil" }
 tidb-metabuild = { path = "../tidb-metabuild" }

@@ -718,9 +718,9 @@ impl Expression {
     /// parameters. The expression tree itself stays immutable across calls.
     pub fn eval(
         &self,
-        ctx: &dyn crate::context::Columns,
+        ctx: &dyn tidb_exprctx::context::Columns,
         row: tidb_chunk::row::Row<'_>,
-    ) -> Result<tidb_datatype::Datum, crate::context::EvalError> {
+    ) -> Result<tidb_datatype::Datum, tidb_exprctx::context::EvalError> {
         let value = match self {
             Expression::Column(c) => c.eval(row),
             Expression::Constant(c) => c
@@ -736,9 +736,9 @@ impl Expression {
     /// when evaluation fails. Ordinary callers continue to use `eval`.
     pub(crate) fn eval_with_error_value(
         &self,
-        ctx: &dyn crate::context::Columns,
+        ctx: &dyn tidb_exprctx::context::Columns,
         row: tidb_chunk::row::Row<'_>,
-    ) -> Result<tidb_datatype::Datum, (tidb_datatype::Datum, crate::context::EvalError)> {
+    ) -> Result<tidb_datatype::Datum, (tidb_datatype::Datum, tidb_exprctx::context::EvalError)> {
         if let Expression::Constant(constant) = self {
             return constant
                 .eval_on_row_with_error_value(ctx, row)
@@ -799,7 +799,7 @@ impl Expression {
 mod tests {
     use super::*;
     use crate::constant::Constant;
-    use crate::context::NoColumns;
+    use tidb_exprctx::context::NoColumns;
     use sha2::{Digest, Sha256};
     use std::collections::{BTreeMap, BTreeSet};
     use tidb_chunk::chunk::Chunk;

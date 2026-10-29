@@ -1127,7 +1127,7 @@ fn round_truncate_return_type(name: &str, args: &[Expression]) -> Option<FieldTy
                 crate::cast::cast_arg_as_int(
                     &value,
                     constant.ret_type.as_ref(),
-                    &crate::context::NoColumns,
+                    &tidb_exprctx::context::NoColumns,
                 )
                 .ok()
             })

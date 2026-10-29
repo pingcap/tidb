@@ -608,7 +608,8 @@ mod tests {
     use crate::joiner::JoinType;
     use tidb_datatype::FieldTypeCode;
     use tidb_expr::column::Column;
-    use tidb_expr::{expression::Expression, Columns};
+    use tidb_expr::expression::Expression;
+use tidb_exprctx::Columns;
 
     fn long() -> FieldType {
         FieldType::new(FieldTypeCode::Long)
@@ -873,7 +874,7 @@ mod tests {
             fn get(&self, _: &[String]) -> Option<Datum> {
                 None
             }
-            fn param_value(&self, _: usize) -> Result<Datum, tidb_expr::EvalError> {
+            fn param_value(&self, _: usize) -> Result<Datum, tidb_exprctx::EvalError> {
                 self.0.fetch_add(1, Ordering::SeqCst);
                 Ok(Datum::Int(1))
             }

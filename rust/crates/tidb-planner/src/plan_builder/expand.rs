@@ -70,7 +70,7 @@ use tidb_datatype::{
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 use tidb_infoschema::table_source::TableSource;
 use super::{snapshot_schema_and_names, BlockExpand, PlanBuilder};
@@ -547,8 +547,9 @@ impl BlockExpand {
     pub(super) fn rewrite_grouping(
         &self,
         args: &[Expression],
-    ) -> Result<Expression, tidb_expr::EvalError> {
-        use tidb_expr::{scalar_function::ScalarFunction, EvalError};
+    ) -> Result<Expression, tidb_exprctx::EvalError> {
+        use tidb_expr::scalar_function::ScalarFunction;
+use tidb_exprctx::EvalError;
         if args.len() > 64 {
             return Err(EvalError::TooManyGroupingArguments);
         }

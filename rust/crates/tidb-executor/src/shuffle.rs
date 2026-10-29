@@ -34,7 +34,7 @@ use tidb_chunk::chunk::Chunk;
 use tidb_datatype::FieldType;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 use crate::executor::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
@@ -891,7 +891,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use tidb_datatype::FieldTypeCode;
     use tidb_expr::column::Column;
-    use tidb_expr::NoColumns;
+    use tidb_exprctx::NoColumns;
 
     const MAX_CHUNK: usize = 4;
 

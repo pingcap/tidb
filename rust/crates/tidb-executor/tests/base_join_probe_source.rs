@@ -301,7 +301,7 @@ fn set_chunk_for_probe_zeroes_headers_for_filtered_and_null_key_rows() {
         ),
     );
     let filter =
-        tidb_executor::base_join_probe::JoinFilter::new(tidb_expr::NoColumns, vec![predicate], true);
+        tidb_executor::base_join_probe::JoinFilter::new(tidb_exprctx::NoColumns, vec![predicate], true);
     probe
         .set_chunk_for_probe(
             &ctx,
@@ -321,7 +321,7 @@ fn set_chunk_for_probe_zeroes_headers_for_filtered_and_null_key_rows() {
     let parameter =
         tidb_expr::constant::Constant::new(tidb_datatype::Datum::Int(0), int_fields(1)[0].clone());
     let failing_filter = tidb_executor::base_join_probe::JoinFilter::new(
-        tidb_expr::NoColumns,
+        tidb_exprctx::NoColumns,
         vec![tidb_expr::expression::Expression::ScalarFunction(
             tidb_expr::expression::ScalarFunction::new(
                 tidb_ast::CiString::new("getparam"),
@@ -340,7 +340,7 @@ fn set_chunk_for_probe_zeroes_headers_for_filtered_and_null_key_rows() {
             &key_columns(FieldTypeCode::LongLong)
         ),
         Err(ProbeError::Expression(
-            tidb_expr::EvalError::ParamIndexExceedParamCounts
+            tidb_exprctx::EvalError::ParamIndexExceedParamCounts
         ))
     );
 }

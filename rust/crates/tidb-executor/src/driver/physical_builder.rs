@@ -1967,7 +1967,7 @@ fn build_window(
                 if let Some(Expression::Constant(constant)) = &default {
                     if let Ok(converted) = constant.value.convert_to_in(
                         &output_type,
-                        tidb_expr::Columns::type_flags(ctx),
+                        tidb_exprctx::Columns::type_flags(ctx),
                         &ctx.session_zone(),
                     ) {
                         default = Some(Expression::Constant(tidb_expr::constant::Constant::new(
@@ -8729,11 +8729,11 @@ use super::*;
         let ctx = crate::StmtContext::for_query_with_memory(session.statement());
         let _executor = build(&plan, &catalog, &ctx).expect("build physical table reader");
 
-        assert!(tidb_expr::Columns::sleep_for(
+        assert!(tidb_exprctx::Columns::sleep_for(
             &ctx,
             std::time::Duration::from_secs(1)
         ));
-        assert!(tidb_expr::Columns::sleep_for(
+        assert!(tidb_exprctx::Columns::sleep_for(
             &ctx,
             std::time::Duration::from_secs(1)
         ));
@@ -8748,7 +8748,7 @@ use super::*;
                     &[Datum::Int(value)],
                     Some(row_id),
                     0,
-                    &tidb_expr::NoColumns,
+                    &tidb_exprctx::NoColumns,
                 )
                 .expect("seed heap row");
         }
@@ -8791,7 +8791,7 @@ use super::*;
             table
                 .insert_row(
                     &[Datum::Int(value), Datum::Int(value * 10)],
-                    &tidb_expr::NoColumns,
+                    &tidb_exprctx::NoColumns,
                 )
                 .expect("seed clustered row");
         }
@@ -8859,7 +8859,7 @@ use super::*;
             table
                 .insert_row(
                     &[Datum::Int(value), Datum::Int(value * 10)],
-                    &tidb_expr::NoColumns,
+                    &tidb_exprctx::NoColumns,
                 )
                 .expect("seed common-handle row");
         }
@@ -8907,7 +8907,7 @@ use super::*;
             table
                 .insert_row(
                     &[Datum::Int(value), Datum::Int(value * 10)],
-                    &tidb_expr::NoColumns,
+                    &tidb_exprctx::NoColumns,
                 )
                 .expect("seed clustered row");
         }
@@ -8978,7 +8978,7 @@ use super::*;
             table
                 .insert_row(
                     &[Datum::Int(value), Datum::Int(value * 10)],
-                    &tidb_expr::NoColumns,
+                    &tidb_exprctx::NoColumns,
                 )
                 .expect("seed unique-index row");
         }
@@ -9079,7 +9079,7 @@ use super::*;
                     &[Datum::Int(id), Datum::Int(id * 10)],
                     None,
                     0,
-                    &tidb_expr::NoColumns,
+                    &tidb_exprctx::NoColumns,
                 )
                 .unwrap();
         }
@@ -9271,7 +9271,7 @@ use super::*;
                     &[Datum::Int(id), Datum::Int(id * 10)],
                     None,
                     0,
-                    &tidb_expr::NoColumns,
+                    &tidb_exprctx::NoColumns,
                 )
                 .unwrap();
         }
@@ -9356,7 +9356,7 @@ use super::*;
                     &[Datum::Int(id), Datum::Int(id * 10)],
                     None,
                     0,
-                    &tidb_expr::NoColumns,
+                    &tidb_exprctx::NoColumns,
                 )
                 .unwrap();
         }
@@ -9413,7 +9413,7 @@ use super::*;
                     &[Datum::Int(id), Datum::Int(id * 10)],
                     None,
                     0,
-                    &tidb_expr::NoColumns,
+                    &tidb_exprctx::NoColumns,
                 )
                 .unwrap();
         }
@@ -9563,7 +9563,7 @@ use super::*;
                             // must survive dedup AND fetch the correct record.
                             (partitioned && handle_kind == "heap").then_some((value + 1) / 2),
                             0,
-                            &tidb_expr::NoColumns,
+                            &tidb_exprctx::NoColumns,
                         )
                         .expect("seed row");
                 }

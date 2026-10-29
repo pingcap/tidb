@@ -345,7 +345,8 @@ mod tests {
     use super::*;
     use crate::hash_agg::{AggFunc, AggKind};
     use tidb_datatype::FieldTypeCode;
-    use tidb_expr::{column::Column, schema::Schema, NoColumns};
+    use tidb_expr::{column::Column, schema::Schema};
+use tidb_exprctx::NoColumns;
 
     fn schema(width: usize) -> Schema {
         Schema::new(

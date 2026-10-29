@@ -267,7 +267,8 @@ mod tests {
     #[test]
     fn sliding_states_keep_absolute_indexes_after_input_expiry() {
         use crate::hash_agg::{AggFunc, AggKind, WindowAggState};
-        use tidb_expr::{column::Column, expression::Expression, NoColumns};
+        use tidb_expr::{column::Column, expression::Expression};
+use tidb_exprctx::NoColumns;
         let ty = FieldType::new(FieldTypeCode::LongLong);
         let mut decimal = FieldType::new(FieldTypeCode::NewDecimal);
         decimal.set_decimal(0);

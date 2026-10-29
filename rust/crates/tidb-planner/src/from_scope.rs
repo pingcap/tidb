@@ -200,12 +200,12 @@ impl ColumnResolver for ScopeResolver<'_> {
         self.scope.constant_context.as_ref()?.user_vars()
     }
 
-    fn param_value(&self, order: usize) -> Result<Datum, tidb_expr::EvalError> {
-        tidb_expr::Columns::param_value(
+    fn param_value(&self, order: usize) -> Result<Datum, tidb_exprctx::EvalError> {
+        tidb_exprctx::Columns::param_value(
             self.scope
                 .constant_context
                 .as_ref()
-                .ok_or(tidb_expr::EvalError::Unsupported(
+                .ok_or(tidb_exprctx::EvalError::Unsupported(
                     "unbound prepared parameter",
                 ))?,
             order,
@@ -222,7 +222,7 @@ impl ColumnResolver for ScopeResolver<'_> {
         self.scope
             .constant_context
             .as_ref()
-            .map(tidb_expr::Columns::date_modes)
+            .map(tidb_exprctx::Columns::date_modes)
             .unwrap_or(tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE)
     }
 
@@ -256,7 +256,7 @@ impl ColumnResolver for ScopeResolver<'_> {
         self.scope
             .constant_context
             .as_ref()
-            .and_then(tidb_expr::Columns::current_database)
+            .and_then(tidb_exprctx::Columns::current_database)
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {

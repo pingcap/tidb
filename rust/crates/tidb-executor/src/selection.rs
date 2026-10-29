@@ -35,7 +35,8 @@ use tidb_datatype::{Datum, FieldType};
 use tidb_expr::evaluator::{vectorizable, vectorized_filter_consider_null};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::{truthy_of, Columns};
+use tidb_expr::truthy_of;
+use tidb_exprctx::Columns;
 use tidb_memory::Tracker;
 
 use crate::StatementMemory;
@@ -447,7 +448,7 @@ mod tests {
     use tidb_expr::column::Column;
     use tidb_expr::constant::Constant;
     use tidb_expr::expression::ScalarFunction;
-    use tidb_expr::NoColumns;
+    use tidb_exprctx::NoColumns;
 
     use crate::{OomAction, StatementMemory};
 

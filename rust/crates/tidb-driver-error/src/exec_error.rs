@@ -14,7 +14,7 @@
 
 use std::borrow::Cow;
 
-use tidb_expr::EvalError;
+use tidb_exprctx::EvalError;
 
 /// An execution error. Go returns a bare `error`; this wraps the failures the
 /// ported executors can surface.

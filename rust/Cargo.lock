@@ -3845,6 +3845,7 @@ dependencies = [
  "tidb-errno",
  "tidb-executor",
  "tidb-expr",
+ "tidb-exprctx",
  "tidb-filter",
  "tidb-goruntime",
  "tidb-hack",
@@ -3916,6 +3917,7 @@ dependencies = [
  "tidb-domain-infosync",
  "tidb-errno",
  "tidb-expr",
+ "tidb-exprctx",
  "tidb-goruntime",
  "tidb-hack",
  "tidb-infoschema",
@@ -4185,7 +4187,7 @@ dependencies = [
  "tidb-driver-error",
  "tidb-executor",
  "tidb-expensivequery",
- "tidb-expr",
+ "tidb-exprctx",
  "tidb-fastrand",
  "tidb-globalconn",
  "tidb-infoschema",
@@ -4298,6 +4300,7 @@ dependencies = [
  "tidb-dbterror",
  "tidb-errno",
  "tidb-expr",
+ "tidb-exprctx",
  "tidb-kv",
  "tidb-mysql",
  "tidb-spill-storage",
@@ -4428,6 +4431,7 @@ dependencies = [
  "tidb-errno",
  "tidb-execdetails",
  "tidb-expr",
+ "tidb-exprctx",
  "tidb-filter",
  "tidb-fixcontrol",
  "tidb-format",
@@ -4578,6 +4582,7 @@ dependencies = [
  "tidb-encrypt",
  "tidb-errctx",
  "tidb-errno",
+ "tidb-exprctx",
  "tidb-go-regexp",
  "tidb-goruntime",
  "tidb-hack",
@@ -4603,6 +4608,19 @@ dependencies = [
  "tidb-vardef",
  "tidb-variable",
  "tidb-vitess",
+]
+
+[[package]]
+name = "tidb-exprctx"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-context",
+ "tidb-datatype",
+ "tidb-mysql",
+ "tidb-printer",
+ "tidb-terror",
+ "tidb-variable",
 ]
 
 [[package]]
@@ -5110,6 +5128,7 @@ dependencies = [
  "tidb-context",
  "tidb-datatype",
  "tidb-expr",
+ "tidb-exprctx",
  "tidb-infoschema-context",
  "tidb-mysql",
  "tidb-vardef",
@@ -5342,6 +5361,7 @@ dependencies = [
  "tidb-disjointset",
  "tidb-driver-error",
  "tidb-expr",
+ "tidb-exprctx",
  "tidb-filter",
  "tidb-fixcontrol",
  "tidb-funcdep",
@@ -5411,6 +5431,7 @@ name = "tidb-planner-coreusage"
 version = "0.0.0"
 dependencies = [
  "tidb-expr",
+ "tidb-exprctx",
 ]
 
 [[package]]
@@ -5447,6 +5468,7 @@ dependencies = [
  "tidb-chunk",
  "tidb-datatype",
  "tidb-expr",
+ "tidb-exprctx",
  "tidb-hack",
  "tidb-ranger",
  "tidb-table",
@@ -5582,6 +5604,7 @@ dependencies = [
  "tidb-context",
  "tidb-datatype",
  "tidb-expr",
+ "tidb-exprctx",
  "tidb-goruntime",
  "tidb-hack",
  "tidb-parser",
@@ -5819,6 +5842,7 @@ dependencies = [
  "tidb-executor",
  "tidb-expensivequery",
  "tidb-expr",
+ "tidb-exprctx",
  "tidb-gcworker",
  "tidb-globalconn",
  "tidb-hack",
@@ -5981,6 +6005,7 @@ dependencies = [
  "tidb-executor",
  "tidb-expensivequery",
  "tidb-expr",
+ "tidb-exprctx",
  "tidb-fastrand",
  "tidb-fixcontrol",
  "tidb-gcutil",
@@ -6100,6 +6125,7 @@ dependencies = [
  "tidb-errctx",
  "tidb-execdetails",
  "tidb-expr",
+ "tidb-exprctx",
  "tidb-fastrand",
  "tidb-fixcontrol",
  "tidb-hack",
@@ -6823,6 +6849,7 @@ dependencies = [
  "tidb-errctx",
  "tidb-errno",
  "tidb-expr",
+ "tidb-exprctx",
  "tidb-goruntime",
  "tidb-hack",
  "tidb-kv",
@@ -6900,7 +6927,7 @@ dependencies = [
  "chrono",
  "tidb-context",
  "tidb-datatype",
- "tidb-expr",
+ "tidb-exprctx",
  "tidb-fastrand",
  "tidb-kv",
  "tidb-mysql",
@@ -7121,6 +7148,7 @@ dependencies = [
  "tidb-codec",
  "tidb-datatype",
  "tidb-expr",
+ "tidb-exprctx",
  "tidb-model",
  "tidb-mysql",
  "tidb-parser-format",
@@ -7219,6 +7247,7 @@ dependencies = [
  "tidb-codec",
  "tidb-datatype",
  "tidb-expr",
+ "tidb-exprctx",
  "tidb-model",
  "tidb-proto",
  "tidb-rowcodec",

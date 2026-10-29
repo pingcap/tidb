@@ -63,7 +63,7 @@ fn go_eval(name: &str, args: &[Datum]) -> Result<Datum, crate::EvalError> {
         .unwrap_or_else(|| panic!("{name}: no inferred type"));
     let function =
         crate::scalar_function::ScalarFunction::new(tidb_ast::CiString::new(name), ret_type, exprs);
-    let cols = crate::context::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
+    let cols = tidb_exprctx::context::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
     let empty = tidb_chunk::chunk::Chunk::new_with_capacity(&[], 1);
     function.eval(&cols, empty.get_row(0))
 }

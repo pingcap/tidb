@@ -139,7 +139,7 @@ pub trait HashAggContext: Columns + Send {
     }
 }
 
-impl HashAggContext for tidb_expr::NoColumns {
+impl HashAggContext for tidb_exprctx::NoColumns {
     const PARALLEL_WORKERS_MAY_EVAL: bool = true;
 
     fn run_parallel_pipeline_bridge(exec: &mut HashAggExec<Self>) -> Option<Result<(), ExecError>> {
@@ -3068,7 +3068,7 @@ mod tests {
     use super::*;
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_expr::column::Column;
-    use tidb_expr::NoColumns;
+    use tidb_exprctx::NoColumns;
 
     fn long() -> FieldType {
         FieldType::new(FieldTypeCode::LongLong)

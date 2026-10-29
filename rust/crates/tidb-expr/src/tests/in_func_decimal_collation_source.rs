@@ -86,9 +86,9 @@ fn in_decimal_across_scales_compares_numerically() {
 
     for (index, (_low, high)) in left.iter().zip(right.iter()).enumerate() {
         let row = input.get_row(index);
-        let lhs_value = lhs.eval(&crate::context::NoColumns, row).unwrap();
+        let lhs_value = lhs.eval(&tidb_exprctx::context::NoColumns, row).unwrap();
         assert_eq!(
-            in_func.eval(&crate::context::NoColumns, row).unwrap(),
+            in_func.eval(&tidb_exprctx::context::NoColumns, row).unwrap(),
             Datum::Int(1),
             "row {index}: {lhs_value:?} in ({high:?}) must compare equal across scales"
         );

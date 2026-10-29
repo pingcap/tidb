@@ -37,7 +37,7 @@ use tidb_chunk::row::Row;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 use tidb_memory::{ArcAction, Tracker};
 
 use tidb_kv::mem_quota::StatementMemory;
@@ -562,7 +562,7 @@ mod tests {
     use tidb_expr::constant::Constant;
     use tidb_expr::expression::Expression;
     use tidb_expr::scalar_function::ScalarFunction;
-    use tidb_expr::NoColumns;
+    use tidb_exprctx::NoColumns;
     use tidb_sqlkiller::KillSignal;
 
     fn long() -> FieldType {

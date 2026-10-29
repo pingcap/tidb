@@ -564,7 +564,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
 
     /// Go `expression.DecodeKeyFromString` over this statement's catalog
     /// version.
-    fn decode_key_from_string(&self) -> tidb_expr::DecodeKeyFromString {
+    fn decode_key_from_string(&self) -> tidb_exprctx::DecodeKeyFromString {
         let snapshot = self.tidb_decode_key_snapshot();
         Arc::new(move |input, zone| snapshot.decode(input, zone))
     }

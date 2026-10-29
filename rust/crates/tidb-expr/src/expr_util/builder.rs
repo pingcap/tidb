@@ -130,7 +130,7 @@ pub trait FunctionBuilder {
     /// `NoColumns` fold silently drops go's 1292 rows (oracle:
     /// `SELECT CAST(j AS SIGNED) FROM (SELECT CAST('{}' AS JSON) AS j) t`
     /// warns `Truncated incorrect INTEGER value: '{}'`).
-    fn fold_context(&self) -> Option<&dyn crate::context::Columns> {
+    fn fold_context(&self) -> Option<&dyn tidb_exprctx::context::Columns> {
         None
     }
 
@@ -232,19 +232,19 @@ impl FunctionBuilder for PreservingFunctionBuilder {
 /// contract [`PreservingFunctionBuilder`] defers.
 ///
 /// Prefer this wherever an evaluation context is available.
-pub struct RealFunctionBuilder<'a, C: crate::context::Columns> {
+pub struct RealFunctionBuilder<'a, C: tidb_exprctx::context::Columns> {
     ctx: &'a C,
 }
 
-impl<'a, C: crate::context::Columns> RealFunctionBuilder<'a, C> {
+impl<'a, C: tidb_exprctx::context::Columns> RealFunctionBuilder<'a, C> {
     /// Binds Go's `BuildContext` for the rebuilds this builder performs.
     pub fn new(ctx: &'a C) -> Self {
         RealFunctionBuilder { ctx }
     }
 }
 
-impl<C: crate::context::Columns> FunctionBuilder for RealFunctionBuilder<'_, C> {
-    fn fold_context(&self) -> Option<&dyn crate::context::Columns> {
+impl<C: tidb_exprctx::context::Columns> FunctionBuilder for RealFunctionBuilder<'_, C> {
+    fn fold_context(&self) -> Option<&dyn tidb_exprctx::context::Columns> {
         Some(self.ctx)
     }
 

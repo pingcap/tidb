@@ -775,7 +775,7 @@ use tidb_charset::Collation;
     /// Captured with `gorunmsg` on `FORMAT(1234567.891, 2, <locale>)`.
     #[test]
     fn unknown_and_null_locales_warn_1649() {
-        use crate::context::Columns;
+        use tidb_exprctx::context::Columns;
 
         #[derive(Default)]
         struct Sink(std::cell::RefCell<Vec<(u16, String)>>);

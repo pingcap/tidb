@@ -18,7 +18,7 @@ use tidb_datatype::{Decimal, FieldTypeCode};
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
 use tidb_expr::scalar_function::ScalarFunction;
-pub(super) use tidb_expr::NoColumns;
+pub(super) use tidb_exprctx::NoColumns;
 
 const CHUNK: usize = 1024;
 

@@ -95,7 +95,7 @@ fn collect_join<'a>(
     }
 }
 
-impl<S: TableSource, C: tidb_expr::Columns> PlanBuilder<'_, S, C> {
+impl<S: TableSource, C: tidb_exprctx::Columns> PlanBuilder<'_, S, C> {
     /// The tables a multi-table DELETE removes rows from, in the order its
     /// target list names them, each once.
     ///

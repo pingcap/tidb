@@ -779,7 +779,7 @@ use tidb_table::table_from_meta::kv_index;
             .expect("the writer builds this table");
         for id in 1..=3 {
             writer
-                .insert_row(&[Datum::Int(id), Datum::Int(id)], &tidb_expr::NoColumns)
+                .insert_row(&[Datum::Int(id), Datum::Int(id)], &tidb_exprctx::NoColumns)
                 .expect("the row is staged");
         }
         assert_eq!(buffer.len(), 3, "three rows are staged for the walk");
@@ -905,7 +905,7 @@ use tidb_table::table_from_meta::kv_index;
             let mut loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
                 .expect("a reorganizing table loads");
             let handle = loaded
-                .insert_row(&[Datum::Int(3)], &tidb_expr::NoColumns)
+                .insert_row(&[Datum::Int(3)], &tidb_exprctx::NoColumns)
                 .expect("the insert succeeds");
             let key = |id: i64, physical: i64| {
                 tidb_tablecodec::table_key::encode_row_key(

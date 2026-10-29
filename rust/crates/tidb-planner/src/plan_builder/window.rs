@@ -127,7 +127,7 @@ use tidb_expr::expr_util::get_uint64_from_constant;
 use tidb_expr::expression::Expression;
 use tidb_expr::new_function::new_function_base;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 use super::aggregation::{has_window_flag, is_aggregate_call, visit_exprs, walk_exprs};
 use tidb_infoschema::table_source::TableSource;

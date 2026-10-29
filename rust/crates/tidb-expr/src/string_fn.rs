@@ -31,13 +31,13 @@ use tidb_charset::TransformOp;
 
 /// CONCAT: `NULL` if any argument is `NULL`, else the concatenation.
 pub(crate) fn concat(vals: &[Datum]) -> Result<Datum, EvalError> {
-    concat_with_context(vals, &crate::context::NoColumns)
+    concat_with_context(vals, &tidb_exprctx::context::NoColumns)
 }
 
 /// Value-evaluated CONCAT with the statement packet limit applied.
 pub(crate) fn concat_with_context(
     vals: &[Datum],
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<Datum, EvalError> {
     if vals.is_empty() {
         return Err(EvalError::Unsupported(
@@ -178,7 +178,7 @@ pub(crate) fn str_take(vals: &[Datum], from_left: bool) -> Result<Datum, EvalErr
 /// string.
 pub(crate) fn substring(
     vals: &[Datum],
-    cols: &dyn crate::context::Columns,
+    cols: &dyn tidb_exprctx::context::Columns,
 ) -> Result<Datum, EvalError> {
     if vals.contains(&Datum::Null) {
         return Ok(Datum::Null);
@@ -1147,13 +1147,13 @@ pub(crate) fn elt(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// `NULL` separator yields `NULL` (confirmed via `gorun`).
 #[cfg(test)]
 pub(crate) fn concat_ws(vals: &[Datum]) -> Result<Datum, EvalError> {
-    concat_ws_with_context(vals, &crate::context::NoColumns)
+    concat_ws_with_context(vals, &tidb_exprctx::context::NoColumns)
 }
 
 /// Value-evaluated CONCAT_WS with the statement packet limit applied.
 pub(crate) fn concat_ws_with_context(
     vals: &[Datum],
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<Datum, EvalError> {
     if vals.len() < 2 {
         return Err(EvalError::Unsupported(
@@ -1927,12 +1927,12 @@ fn format_number_parts(negative: bool, integer: String, fraction: Vec<u8>) -> St
 /// does, including invalid UTF-8 and embedded NUL.
 #[cfg(test)]
 pub(crate) fn char_func(vals: &[Datum]) -> Result<Datum, EvalError> {
-    char_func_with_context(vals, &crate::context::NoColumns)
+    char_func_with_context(vals, &tidb_exprctx::context::NoColumns)
 }
 
 pub(crate) fn char_func_with_context(
     vals: &[Datum],
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<Datum, EvalError> {
     // The last argument is the charset sentinel appended by the parser.
     let Some((charset, nums)) = vals.split_last() else {
@@ -2092,12 +2092,12 @@ mod bit_count_tests {
         ];
         for (input, want) in cases {
             assert_eq!(
-                bit_count(&[input], &crate::context::NoColumns),
+                bit_count(&[input], &tidb_exprctx::context::NoColumns),
                 Ok(Datum::Int(want))
             );
         }
         assert_eq!(
-            bit_count(&[Datum::Null], &crate::context::NoColumns),
+            bit_count(&[Datum::Null], &tidb_exprctx::context::NoColumns),
             Ok(Datum::Null)
         );
         // Go's string conversion is byte-prefix based, so malformed UTF-8
@@ -2105,7 +2105,7 @@ mod bit_count_tests {
         assert_eq!(
             bit_count(
                 &[Datum::new_bytes(vec![b'1', 0xff])],
-                &crate::context::NoColumns
+                &tidb_exprctx::context::NoColumns
             ),
             Ok(Datum::Int(1))
         );
@@ -2414,7 +2414,7 @@ mod export_set_tests {
         let result = crate::func::eval_func_values(
             "EXPORT_SET",
             &[Datum::Int(5), d("Y"), d("N"), d(","), Datum::Int(4)],
-            &crate::context::NoColumns,
+            &tidb_exprctx::context::NoColumns,
         );
         assert!(result.is_some(), "the dispatch must own EXPORT_SET");
         assert_eq!(result.unwrap().unwrap(), d("Y,N,Y,N"));
@@ -2430,7 +2430,7 @@ mod cast_in_union_tests {
     /// unsigned target instead of the unsigned wrap.
     #[test]
     fn cast_unsigned_in_union_clamps_negatives_to_zero() {
-        let ctx = crate::context::NoColumns;
+        let ctx = tidb_exprctx::context::NoColumns;
         let result =
             crate::func::eval_func_values("cast_unsigned_in_union", &[Datum::Int(-1)], &ctx);
         assert_eq!(result.unwrap().unwrap(), Datum::UInt(0));
@@ -2438,7 +2438,7 @@ mod cast_in_union_tests {
 
     #[test]
     fn cast_unsigned_in_union_keeps_non_negatives() {
-        let ctx = crate::context::NoColumns;
+        let ctx = tidb_exprctx::context::NoColumns;
         let result =
             crate::func::eval_func_values("cast_unsigned_in_union", &[Datum::Int(7)], &ctx);
         assert_eq!(result.unwrap().unwrap(), Datum::UInt(7));

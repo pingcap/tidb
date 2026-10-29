@@ -116,7 +116,7 @@ use tidb_expr::expr_util::normal_form::into_cnf_items;
 use tidb_expr::expr_util::{FunctionBuilder, RealFunctionBuilder, SubstituteOptions};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::{merge_schema, Schema};
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 use crate::expression_rewriter::{extract_cor_columns_by_schema_4_logical_plan, ClauseCode};
 use crate::find_best_task::LogicalJoinType;
@@ -425,7 +425,7 @@ pub fn set_preferred_join_type_and_order(
     hints: &Rc<JoinHints>,
     (left_names, left_offset): (&[FieldName], i32),
     (right_names, right_offset): (&[FieldName], i32),
-    ctx: &dyn tidb_expr::Columns,
+    ctx: &dyn tidb_exprctx::Columns,
 ) {
     use join_hint_flags as f;
 

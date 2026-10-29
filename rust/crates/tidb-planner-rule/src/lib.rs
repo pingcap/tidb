@@ -105,16 +105,16 @@ pub fn ids_for_selected_partitions(
 pub fn pruned_ids_from_ranger(
     spec: &PartitionSpec,
     ranger_ranges: &[tidb_ranger::types::Range],
-    ctx: &impl tidb_expr::Columns,
-) -> Result<Option<Vec<i64>>, tidb_expr::EvalError> {
+    ctx: &impl tidb_exprctx::Columns,
+) -> Result<Option<Vec<i64>>, tidb_exprctx::EvalError> {
     pruned_ids_impl(spec, ranger_ranges, ctx)
 }
 
 fn pruned_ids_impl(
     spec: &PartitionSpec,
     ranges: &[Range],
-    ctx: &impl tidb_expr::Columns,
-) -> Result<Option<Vec<i64>>, tidb_expr::EvalError> {
+    ctx: &impl tidb_exprctx::Columns,
+) -> Result<Option<Vec<i64>>, tidb_exprctx::EvalError> {
     Ok(match &spec.kind {
         // Every row is in partition 0, so there is nothing to prune away.
         PartitionKind::None => None,
@@ -485,7 +485,7 @@ pub fn list_column_location_for_ranges(
     default_partition: Option<usize>,
     field_types: &[tidb_datatype::FieldType],
     column_index: usize,
-) -> Result<Option<ListPartitionLocation>, tidb_expr::EvalError> {
+) -> Result<Option<ListPartitionLocation>, tidb_exprctx::EvalError> {
     let Some(field_type) = field_types.get(column_index) else {
         return Ok(None);
     };
@@ -570,13 +570,13 @@ fn tuple_in_range(
     tuple: &[Datum],
     range: &Range,
     field_types: &[tidb_datatype::FieldType],
-) -> Result<bool, tidb_expr::EvalError> {
+) -> Result<bool, tidb_exprctx::EvalError> {
     let width = range.low_val.len().min(range.high_val.len()).min(tuple.len());
     if width == 0 {
         return Ok(true);
     }
     if width > field_types.len() {
-        return Err(tidb_expr::EvalError::Unsupported(
+        return Err(tidb_exprctx::EvalError::Unsupported(
             "LIST COLUMNS range wider than its field types",
         ));
     }
@@ -599,7 +599,7 @@ fn tuple_endpoint_order(
     tuple: &[Datum],
     endpoint: &[Datum],
     field_types: &[tidb_datatype::FieldType],
-) -> Result<Ordering, tidb_expr::EvalError> {
+) -> Result<Ordering, tidb_exprctx::EvalError> {
     for ((value, endpoint), field_type) in tuple.iter().zip(endpoint).zip(field_types) {
         let order = match endpoint {
             Datum::MinNotNull => {
@@ -629,8 +629,8 @@ fn prune_list_ids(
     null_partition: Option<usize>,
     default_partition: Option<usize>,
     unsigned: bool,
-    ctx: &impl tidb_expr::Columns,
-) -> Result<Vec<i64>, tidb_expr::EvalError> {
+    ctx: &impl tidb_exprctx::Columns,
+) -> Result<Vec<i64>, tidb_exprctx::EvalError> {
     let full = || {
         spec.definitions
             .iter()
@@ -692,14 +692,14 @@ fn prune_list_ids(
         .collect())
 }
 
-fn list_pruning_integer(value: &Datum) -> Result<(i64, bool), tidb_expr::EvalError> {
+fn list_pruning_integer(value: &Datum) -> Result<(i64, bool), tidb_exprctx::EvalError> {
     Ok(match value {
         Datum::Null => (0, true),
         Datum::Int(value) => (*value, false),
         Datum::UInt(value) => (*value as i64, false),
         Datum::Bit(value) | Datum::BinaryLiteral(value) => (value.to_int().value() as i64, false),
         _ => {
-            return Err(tidb_expr::EvalError::Unsupported(
+            return Err(tidb_exprctx::EvalError::Unsupported(
                 "LIST partition expression did not evaluate as integer",
             ));
         }
@@ -821,7 +821,7 @@ enum RangeMonotoneMode {
 fn prune_hash_ids(
     spec: &PartitionSpec,
     ranges: &[Range],
-    ctx: &impl tidb_expr::Columns,
+    ctx: &impl tidb_exprctx::Columns,
 ) -> Option<Vec<i64>> {
     let mut used = vec![false; spec.definitions.len()];
     for range in ranges {
@@ -960,7 +960,7 @@ mod tests {
                 }
             })
             .collect::<Vec<_>>();
-        super::pruned_ids_from_ranger(spec, &ranger_ranges, &tidb_expr::NoColumns)
+        super::pruned_ids_from_ranger(spec, &ranger_ranges, &tidb_exprctx::NoColumns)
             .expect("partition pruning")
     }
 
@@ -1273,7 +1273,7 @@ mod tests {
         column: &tidb_expr::column::Column,
         conditions: &[tidb_expr::expression::Expression],
     ) -> Option<Vec<i64>> {
-        scalar_range_pruned_ids(spec, conditions, column, &tidb_expr::NoColumns)
+        scalar_range_pruned_ids(spec, conditions, column, &tidb_exprctx::NoColumns)
     }
 
     /// The captured queries, as the partitions each must read: `a < 10` is
@@ -1673,7 +1673,7 @@ use tidb_charset::Collation;
         };
 
         assert_eq!(
-            pruned_ids_from_ranger(&spec, &[range], &tidb_expr::NoColumns).unwrap(),
+            pruned_ids_from_ranger(&spec, &[range], &tidb_exprctx::NoColumns).unwrap(),
             Some(vec![301]),
             "Go minCmp/maxCmp compare this binary-collation point before the lowercase bound"
         );
@@ -2133,7 +2133,7 @@ struct SingleRangeColumnsPruner<'a, B, C> {
 impl<B, C> SingleRangeColumnsPruner<'_, B, C>
 where
     B: tidb_expr::expr_util::builder::FunctionBuilder,
-    C: tidb_expr::Columns,
+    C: tidb_exprctx::Columns,
 {
     fn full(&self) -> PartitionRangeOr {
         PartitionRangeOr::full(self.less_than.len())
@@ -2358,7 +2358,7 @@ struct DataForPrune {
     unsigned: bool,
 }
 
-impl<C: tidb_expr::Columns> ScalarRangePruner<'_, C> {
+impl<C: tidb_exprctx::Columns> ScalarRangePruner<'_, C> {
     fn full(&self) -> PartitionRangeOr {
         PartitionRangeOr::full(self.less_than.len())
     }
@@ -2726,7 +2726,7 @@ pub fn scalar_range_pruned_ids(
     spec: &PartitionSpec,
     conditions: &[tidb_expr::expression::Expression],
     column: &tidb_expr::column::Column,
-    ctx: &impl tidb_expr::Columns,
+    ctx: &impl tidb_exprctx::Columns,
 ) -> Option<Vec<i64>> {
     let PartitionKind::Range { less_than, .. } = &spec.kind else {
         return None;
@@ -2763,7 +2763,7 @@ pub fn single_range_columns_pruned_ids(
     conditions: &[tidb_expr::expression::Expression],
     column: &tidb_expr::column::Column,
     builder: &impl tidb_expr::expr_util::builder::FunctionBuilder,
-    ctx: &impl tidb_expr::Columns,
+    ctx: &impl tidb_exprctx::Columns,
 ) -> Option<Vec<i64>> {
     let PartitionKind::RangeColumns {
         less_than,

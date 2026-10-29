@@ -17,7 +17,11 @@
 use std::cell::Cell;
 
 use tidb_datatype::Datum;
-use tidb_expr::{rewriter::rewrite_expr, Columns, ErrorLevel, EvalError, NoColumns};
+use tidb_expr::rewriter::rewrite_expr;
+use tidb_exprctx::Columns;
+use tidb_exprctx::ErrorLevel;
+use tidb_exprctx::EvalError;
+use tidb_exprctx::NoColumns;
 
 fn parse_expr(sql_expr: &str) -> tidb_ast::Expr {
     let statement = tidb_parser::parse(&format!("SELECT {sql_expr}")).expect("parses");

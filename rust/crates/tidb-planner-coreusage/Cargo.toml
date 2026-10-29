@@ -11,4 +11,5 @@ description = "TiDB pkg/planner/util/coreusage: shared planner helpers (Rust)."
 workspace = true
 
 [dependencies]
+tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-expr = { path = "../tidb-expr" }

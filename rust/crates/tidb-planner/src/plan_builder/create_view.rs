@@ -54,7 +54,7 @@ use std::collections::BTreeMap;
 
 use tidb_ast::{CreateViewStmt, Expr, QueryStmt, SelectField, SelectStmt, SetOprTermBody};
 use tidb_datatype::FieldName;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 use tidb_hack::GoToLower;
 
 use super::aggregation::{

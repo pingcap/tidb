@@ -21,7 +21,8 @@ use std::sync::{Arc, Mutex};
 use tidb_chunk::{chunk::Chunk, column::get_fixed_len};
 use tidb_codec::JoinKeyColumns;
 use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
-use tidb_expr::{expression::Expression, schema::Schema, Columns};
+use tidb_expr::{expression::Expression, schema::Schema};
+use tidb_exprctx::Columns;
 
 use super::probe_stage::ProbeStage;
 use super::spill::{HashJoinSpill, PartitionFiles, SPILL_CHUNK_SIZE};

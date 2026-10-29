@@ -21,7 +21,7 @@
 
 use super::traits::is_mutable_effects_function;
 use crate::column::Column;
-use crate::context::{Columns, EvalError};
+use tidb_exprctx::context::{Columns, EvalError};
 use crate::expression::{ConstLevel, Expression};
 use crate::scalar_function::is_unfoldable_function;
 use std::collections::BTreeSet;
@@ -563,8 +563,8 @@ mod mutable_constant_tests {
         fn get(&self, _: &[String]) -> Option<Datum> {
             None
         }
-        fn truncate_level(&self) -> crate::context::ErrorLevel {
-            crate::context::ErrorLevel::Error
+        fn truncate_level(&self) -> tidb_exprctx::context::ErrorLevel {
+            tidb_exprctx::context::ErrorLevel::Error
         }
     }
 

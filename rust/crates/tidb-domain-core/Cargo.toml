@@ -12,6 +12,7 @@ description = "TiDB domain: Go pkg/domain's Domain and the cluster services it o
 test-util = []
 
 [dependencies]
+tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-charset = { path = "../tidb-charset" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-pdhelper = { path = "../tidb-pdhelper" }
@@ -53,7 +54,6 @@ tidb-ddl = { path = "../tidb-ddl" }
 tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-ddl-notifier = { path = "../tidb-ddl-notifier" }
 tidb-domain = { path = "../tidb-domain" }
-tidb-expr = { path = "../tidb-expr" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-log = { path = "../tidb-log" }
 tidb-meta = { path = "../tidb-meta" }

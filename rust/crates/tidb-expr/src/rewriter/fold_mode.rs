@@ -132,7 +132,7 @@ impl ColumnResolver for FoldModeResolver<'_> {
         self.base.no_unsigned_subtraction()
     }
 
-    fn comparison_context(&self) -> Option<&dyn crate::context::Columns> {
+    fn comparison_context(&self) -> Option<&dyn tidb_exprctx::context::Columns> {
         self.base.comparison_context()
     }
 

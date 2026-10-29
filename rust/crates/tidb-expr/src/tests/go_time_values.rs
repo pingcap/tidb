@@ -41,7 +41,7 @@ fn eval_named(name: &str, args: Vec<Datum>) -> Result<Datum, crate::EvalError> {
         FieldType::new(C::VarString),
         args.into_iter().map(const_arg).collect(),
     );
-    let cols = crate::context::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
+    let cols = tidb_exprctx::context::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
     let empty = tidb_chunk::chunk::Chunk::new_with_capacity(&[], 1);
     function.eval(&cols, empty.get_row(0))
 }

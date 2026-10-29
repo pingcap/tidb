@@ -733,7 +733,7 @@ mod tests {
     use tidb_ast::CiString;
     use tidb_expr::expr_util::builder::{FunctionBuilder, RealFunctionBuilder};
     use tidb_expr::scalar_function::ScalarFunction;
-    use tidb_expr::NoColumns;
+    use tidb_exprctx::NoColumns;
 
     use super::*;
     use crate::logical::rule_tests::test_context;
@@ -760,15 +760,15 @@ mod tests {
     }
 
     struct WarningContext {
-        level: tidb_expr::ErrorLevel,
+        level: tidb_exprctx::ErrorLevel,
         warnings: std::cell::RefCell<Vec<(u16, String)>>,
     }
 
-    impl tidb_expr::Columns for WarningContext {
+    impl tidb_exprctx::Columns for WarningContext {
         fn get(&self, _: &[String]) -> Option<Datum> {
             None
         }
-        fn truncate_level(&self) -> tidb_expr::ErrorLevel {
+        fn truncate_level(&self) -> tidb_exprctx::ErrorLevel {
             self.level
         }
         fn append_warning(&self, code: u16, message: &str) {
@@ -949,9 +949,9 @@ mod tests {
     #[test]
     fn logical_constant_obeys_statement_truncation_policy() {
         for level in [
-            tidb_expr::ErrorLevel::Error,
-            tidb_expr::ErrorLevel::Warn,
-            tidb_expr::ErrorLevel::Ignore,
+            tidb_exprctx::ErrorLevel::Error,
+            tidb_exprctx::ErrorLevel::Warn,
+            tidb_exprctx::ErrorLevel::Ignore,
         ] {
             let context = WarningContext {
                 level,
@@ -970,14 +970,14 @@ mod tests {
                 );
                 assert_eq!(
                     logical_constant(&ctx, &constant),
-                    if level == tidb_expr::ErrorLevel::Error {
+                    if level == tidb_exprctx::ErrorLevel::Error {
                         PredicateType::Other
                     } else {
                         expected
                     }
                 );
             }
-            let expected = if level == tidb_expr::ErrorLevel::Warn {
+            let expected = if level == tidb_exprctx::ErrorLevel::Warn {
                 vec![
                     (
                         1292,
@@ -998,7 +998,7 @@ mod tests {
     #[test]
     fn short_circuit_preserves_go_conversion_order_and_cache_guard() {
         let context = WarningContext {
-            level: tidb_expr::ErrorLevel::Warn,
+            level: tidb_exprctx::ErrorLevel::Warn,
             warnings: Default::default(),
         };
         let allocator = PlanIdAllocator::new();
@@ -1034,7 +1034,7 @@ mod tests {
     #[test]
     fn strict_short_circuit_retains_truncated_operands() {
         let context = WarningContext {
-            level: tidb_expr::ErrorLevel::Error,
+            level: tidb_exprctx::ErrorLevel::Error,
             warnings: Default::default(),
         };
         let allocator = PlanIdAllocator::new();

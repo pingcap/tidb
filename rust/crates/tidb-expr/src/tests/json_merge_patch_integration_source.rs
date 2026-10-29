@@ -31,7 +31,7 @@
 //! spacing before comparison.
 
 use super::*;
-use crate::context::NoColumns;
+use tidb_exprctx::context::NoColumns;
 use crate::rewriter::{rewrite_expr, rewrite_expr_resolved, ColumnResolver};
 use tidb_ast::{QueryStmt, SelectField, Stmt};
 use tidb_datatype::{BinaryJSON, FieldType, FieldTypeCode};
@@ -213,7 +213,7 @@ fn test_builtin_func_json_merge_patch_in_column_table() {
     let err =
         eval_in_column(Some(r#"{"a":1}"#), Some("[1]}")).expect_err("invalid vc document errors");
     assert!(
-        matches!(err, EvalError::Json(crate::context::JsonError::InvalidText)),
+        matches!(err, EvalError::Json(tidb_exprctx::context::JsonError::InvalidText)),
         "{err:?}"
     );
 }
@@ -512,7 +512,7 @@ fn test_builtin_func_json_merge_patch_in_expression_table() {
     ] {
         let err = eval_in_expression(args).expect_err("invalid document errors");
         assert!(
-            matches!(err, EvalError::Json(crate::context::JsonError::InvalidText)),
+            matches!(err, EvalError::Json(tidb_exprctx::context::JsonError::InvalidText)),
             "{args:?}: {err:?}"
         );
     }

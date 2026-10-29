@@ -121,7 +121,7 @@ use tidb_ast::{
 use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags, IdentifierMetadata};
 use tidb_expr::column::Column;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 use crate::logical::cte::{CteClass, LogicalCTE, LogicalCTETable};
 use crate::logical::rule::flags;

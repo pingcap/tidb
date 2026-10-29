@@ -36,7 +36,7 @@ pub(crate) use pb_builtin::PbBuiltin;
 use std::collections::BTreeSet;
 use std::hash::{Hash, Hasher};
 
-use crate::context::{Columns, EvalError};
+use tidb_exprctx::context::{Columns, EvalError};
 use crate::expr_collation::CollationInfo;
 use crate::expression::{ConstLevel, Expression, SCALAR_FUNCTION_FLAG};
 use crate::grouping::{GroupingMetadata, GroupingMetadataError, GroupingMode};
@@ -4150,7 +4150,7 @@ fn cast_numeric_argument_in_mode(
         let (decimal, error) = tidb_datatype::MyDecimal::from_float64(*real);
         match error {
             Some(tidb_datatype::DecimalError::Overflow) => {
-                if ctx.truncate_level() == crate::context::ErrorLevel::Error {
+                if ctx.truncate_level() == tidb_exprctx::context::ErrorLevel::Error {
                     return Err(EvalError::Conversion(tidb_parser_types::parser_types_errors::ERR_OVERFLOW.clone()));
                 }
                 crate::expression_errors::handle_truncate(ctx, &format!(
@@ -5519,7 +5519,7 @@ mod tests {
                 vec![decimal(), scale()],
             );
             let value = function
-                .eval(&crate::context::NoColumns, tidb_chunk::row::Row::empty())
+                .eval(&tidb_exprctx::context::NoColumns, tidb_chunk::row::Row::empty())
                 .expect("decimal ROUND/TRUNCATE must evaluate");
             let Datum::Decimal(value) = value else {
                 panic!("{name} returned a non-decimal value")
@@ -5640,7 +5640,7 @@ mod tests {
 
     #[test]
     fn eval_bridges_values_only_builtins() {
-        use crate::context::NoColumns;
+        use tidb_exprctx::context::NoColumns;
         use tidb_chunk::chunk::Chunk;
 
         let chk = Chunk::new_with_capacity(std::slice::from_ref(&ft()), 1);
@@ -5737,7 +5737,7 @@ mod tests {
     /// (`zz_dump_frozjson_test.go`, `TestZZDumpFrozJSONBinaryOpaque`).
     #[test]
     fn eval_renders_binary_charset_column_as_json_opaque() {
-        use crate::context::NoColumns;
+        use tidb_exprctx::context::NoColumns;
         use tidb_chunk::chunk::Chunk;
         use tidb_datatype::FieldTypeCode;
 use tidb_charset::Collation;
@@ -5947,7 +5947,7 @@ use tidb_charset::Collation;
     /// answers the composed tree.
     #[test]
     fn fast_integer_path_answers_the_join_residual_shape() {
-        use crate::context::NoColumns;
+        use tidb_exprctx::context::NoColumns;
         use tidb_chunk::chunk::Chunk;
 
         let probe_col = || {
@@ -5998,7 +5998,7 @@ use tidb_charset::Collation;
     /// stay NULL (never false).
     #[test]
     fn fast_integer_path_propagates_null_like_the_ladder() {
-        use crate::context::NoColumns;
+        use tidb_exprctx::context::NoColumns;
         use tidb_chunk::chunk::Chunk;
 
         let chk = Chunk::new_with_capacity(std::slice::from_ref(&ft()), 1);
@@ -6037,7 +6037,7 @@ use tidb_charset::Collation;
     /// operand through its own argument field type before comparing.
     #[test]
     fn fast_integer_path_orders_mixed_signedness_by_value() {
-        use crate::context::NoColumns;
+        use tidb_exprctx::context::NoColumns;
         use tidb_chunk::chunk::Chunk;
 
         let signed_type = ft();
@@ -6098,7 +6098,7 @@ use tidb_charset::Collation;
     /// UNSIGNED wording (1690), not a wrapped value: `1u - 2` overflows.
     #[test]
     fn fast_integer_path_reports_unsigned_subtraction_overflow() {
-        use crate::context::NoColumns;
+        use tidb_exprctx::context::NoColumns;
         use tidb_chunk::chunk::Chunk;
 
         let unsigned_type = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
@@ -6134,7 +6134,7 @@ use tidb_charset::Collation;
     /// semantics are untouched by the gate.
     #[test]
     fn fast_integer_gate_leaves_string_operands_on_the_ladder() {
-        use crate::context::NoColumns;
+        use tidb_exprctx::context::NoColumns;
         use tidb_chunk::chunk::Chunk;
 
         let string_type = text_ft();
@@ -6187,7 +6187,7 @@ use tidb_charset::Collation;
             &Datum::Decimal(tidb_datatype::Decimal::from_literal("2.500")),
         );
         let datum = least
-            .eval(&crate::context::NoColumns, chunk.get_row(0))
+            .eval(&tidb_exprctx::context::NoColumns, chunk.get_row(0))
             .unwrap();
         let Datum::Decimal(dec) = &datum else {
             panic!("least over a decimal aggregate answers a decimal");
@@ -6212,7 +6212,7 @@ use tidb_charset::Collation;
             &Datum::Decimal(tidb_datatype::Decimal::from_literal("2.500")),
         );
         let datum = least_mixed
-            .eval(&crate::context::NoColumns, chunk.get_row(0))
+            .eval(&tidb_exprctx::context::NoColumns, chunk.get_row(0))
             .unwrap();
         let Datum::Decimal(dec) = &datum else {
             panic!("least over a decimal aggregate answers a decimal");
@@ -6243,7 +6243,7 @@ use tidb_charset::Collation;
             vec![],
         ));
         let error = function
-            .eval(&crate::context::NoColumns, empty_row())
+            .eval(&tidb_exprctx::context::NoColumns, empty_row())
             .unwrap_err();
         assert!(
             matches!(
@@ -6265,7 +6265,7 @@ use tidb_charset::Collation;
             ))],
         ));
         assert_eq!(
-            function.eval(&crate::context::NoColumns, empty_row()),
+            function.eval(&tidb_exprctx::context::NoColumns, empty_row()),
             Err(EvalError::WrongParameterCount("tidb_is_ddl_owner"))
         );
     }

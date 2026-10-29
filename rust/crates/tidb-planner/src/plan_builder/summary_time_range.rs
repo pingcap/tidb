@@ -23,7 +23,7 @@
 
 use chrono::{DateTime, Duration, Local, NaiveDate, NaiveDateTime, TimeZone, Timelike};
 
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 use tidb_infoschema::table_source::TableSource;
 use super::PlanBuilder;

@@ -20,7 +20,7 @@ use std::cell::RefCell;
 use super::*;
 use crate::aggregation::{names, AggFuncDesc, AggFunctionMode};
 use crate::column::Column;
-use crate::context::NoColumns;
+use tidb_exprctx::context::NoColumns;
 use crate::expression::Expression;
 use crate::scalar_function::ScalarFunction;
 use tidb_ast::CiString;
@@ -1562,7 +1562,7 @@ fn wrap_and_eval(expr: Expression, ctx: &WarningCtx) -> (i64, f64, Decimal, Stri
         wrap_with_cast_as_decimal, wrap_with_cast_as_int, wrap_with_cast_as_real,
         wrap_with_cast_as_string,
     };
-    let connection = crate::context::NoColumns.connection_charset_info();
+    let connection = tidb_exprctx::context::NoColumns.connection_charset_info();
     let int_expr = wrap_with_cast_as_int(expr.clone(), None).unwrap();
     let int_res = match int_expr.eval(ctx, tidb_chunk::row::Row::empty()).unwrap() {
         Datum::Int(v) => v,
@@ -1744,7 +1744,7 @@ fn test_wrap_with_cast_as_types_classes_temporal_rows() {
 fn test_wrap_with_cast_as_types_classes_unsigned_extras() {
     let ctx = WarningCtx::default();
     use crate::aggregation::wrap_cast::{wrap_with_cast_as_decimal, wrap_with_cast_as_string};
-    let connection = crate::context::NoColumns.connection_charset_info();
+    let connection = tidb_exprctx::context::NoColumns.connection_charset_info();
     let mut unsigned_col_ft = int_ft();
     unsigned_col_ft.add_flags(FieldTypeFlags::UNSIGNED);
     unsigned_col_ft.set_flen(20);
@@ -1949,7 +1949,7 @@ fn test_cast_duration_as_year_honors_concat_mode() {
 #[test]
 fn test_wrap_with_cast_as_string() {
     use crate::aggregation::wrap_cast::wrap_with_cast_as_string;
-    let connection = crate::context::NoColumns.connection_charset_info();
+    let connection = tidb_exprctx::context::NoColumns.connection_charset_info();
     let int_ft_collation_bin = |code: C| {
         let mut ft = FieldType::new(code);
         ft.set_collation_name("binary");

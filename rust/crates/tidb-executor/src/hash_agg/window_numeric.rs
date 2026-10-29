@@ -110,7 +110,7 @@ impl NumericWindowState {
                             &Decimal::from_int(self.count),
                             ctx.div_precision_increment(),
                         )
-                        .ok_or_else(|| ExecError::Eval(tidb_expr::EvalError::DivisionByZero))?;
+                        .ok_or_else(|| ExecError::Eval(tidb_exprctx::EvalError::DivisionByZero))?;
                     check_decimal(warning)?;
                     Ok(Datum::Decimal(value.round_to_scale(scale)))
                 } else {
@@ -195,7 +195,7 @@ fn check_decimal(warning: Option<tidb_datatype::DecimalCodecWarning>) -> Result<
         Some(DecimalCodecWarning::Overflow) => (*tidb_parser_types::parser_types_errors::ERR_OVERFLOW).clone(),
         Some(DecimalCodecWarning::Truncated) => (*tidb_parser_types::parser_types_errors::ERR_TRUNCATED).clone(),
     };
-    Err(ExecError::Eval(tidb_expr::EvalError::Conversion(error)))
+    Err(ExecError::Eval(tidb_exprctx::EvalError::Conversion(error)))
 }
 
 #[cfg(test)]
@@ -204,7 +204,8 @@ mod tests {
     use std::cell::Cell;
     use tidb_expr::column::Column;
     use tidb_expr::constant::{Constant, ParamMarker};
-    use tidb_expr::{EvalError, NoColumns};
+    use tidb_exprctx::NoColumns;
+use tidb_exprctx::EvalError;
 
     fn decimal_type(scale: i64) -> FieldType {
         let mut field_type = FieldType::new(FieldTypeCode::NewDecimal);

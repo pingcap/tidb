@@ -798,7 +798,7 @@ mod tests {
             fn get(&self, _: &[String]) -> Option<Datum> {
                 None
             }
-            fn param_value(&self, _: usize) -> Result<Datum, tidb_expr::EvalError> {
+            fn param_value(&self, _: usize) -> Result<Datum, tidb_exprctx::EvalError> {
                 self.0.set(self.0.get() + 1);
                 Ok(Datum::Int(1))
             }
@@ -994,7 +994,7 @@ mod tests {
                 while !state.done {
                     let mut result = Chunk::new(&output.output_types, 1, 1);
                     state
-                        .drain(&output, &tidb_expr::NoColumns, &outer, &inner, &mut result)
+                        .drain(&output, &tidb_exprctx::NoColumns, &outer, &inner, &mut result)
                         .unwrap();
                     for i in 0..result.num_rows() {
                         let row = result.get_row(i);

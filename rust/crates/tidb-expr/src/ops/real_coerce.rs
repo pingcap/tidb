@@ -40,7 +40,7 @@ pub(super) fn float_binary(
     op: BinaryOp,
     l: Datum,
     r: Datum,
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<Datum, EvalError> {
     use BinaryOp::*;
     if op == NullEq {
@@ -109,7 +109,7 @@ pub(super) fn float_binary(
 pub(super) fn decimal_div_operand(
     value: Datum,
     operand: Operand<'_>,
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<Decimal, EvalError> {
     match value {
         Datum::Decimal(value) => Ok(value),
@@ -219,7 +219,7 @@ pub(crate) fn to_f64(v: Datum) -> f64 {
 ///    calling builtin -- see [`raise_truncated_double`].
 pub(crate) fn to_f64_with_mysql_string(
     v: &Datum,
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<f64, EvalError> {
     match v {
         Datum::String(s) => bytes_to_f64(s.bytes(), ctx),
@@ -253,7 +253,7 @@ pub(crate) fn to_f64_with_mysql_string(
 /// warning at all where `'abc' + 1` raises 1292.
 pub(crate) fn bytes_to_f64(
     bytes: &[u8],
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<f64, EvalError> {
     let text = String::from_utf8_lossy(bytes);
     let converted = tidb_datatype::str_to_float(&text, true);
@@ -276,7 +276,7 @@ pub(crate) fn bytes_to_f64(
 /// `SELECT ABS(a), a+0 FROM t` over three rows lists all six). Nothing here
 /// deduplicates, for the same reason.
 pub(crate) fn raise_truncated_double(
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
     text: &str,
 ) -> Result<(), EvalError> {
     crate::expression_errors::handle_truncate(ctx, &format!("Truncated incorrect DOUBLE value: '{text}'"))

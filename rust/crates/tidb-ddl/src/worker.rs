@@ -3197,7 +3197,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                             index.name.original(),
                             &condition,
                             &tidb_tblctx::MutateContext::session_zone(context),
-                            tidb_expr::Columns::like_default_escape(context),
+                            tidb_exprctx::Columns::like_default_escape(context),
                         )
                         .map_err(backfill_failure)?;
                 }

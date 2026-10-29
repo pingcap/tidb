@@ -43,7 +43,7 @@ use crate::plan_base::{PlanError, PlanIdAllocator};
 
 /// Go `base.PlanContext` as the optimizer reads it: the statement's session
 /// settings (`SessionVars`), its warnings and phase clocks (`StmtCtx`).
-pub trait OptimizeContext: tidb_expr::Columns + PlanCacheMarker + HintWarningSink + MppWarningSink {
+pub trait OptimizeContext: tidb_exprctx::Columns + PlanCacheMarker + HintWarningSink + MppWarningSink {
     /// Go `SessionVars.Location()` as the expression resolver reads it.
     fn session_zone(&self) -> tidb_datatype::SessionTimeZone;
     /// Go `!SessionVars.UseDynamicPartitionPrune()`.
@@ -342,7 +342,7 @@ pub fn check_partial_index_paths<C: OptimizeContext>(
 
     let resolver = tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(
         ctx.session_zone(),
-        tidb_expr::Columns::like_default_escape(ctx),
+        tidb_exprctx::Columns::like_default_escape(ctx),
     );
     fold_owned(
         &mut PartialIndexChecker {
@@ -432,7 +432,7 @@ pub fn optimize_physical<C: OptimizeContext>(
     .with_opt_prefix_index_single_scan(ctx.opt_prefix_index_single_scan())
     .with_mpp_warning_sink(ctx)
     .with_plan_cache(
-        tidb_expr::Columns::use_plan_cache(ctx),
+        tidb_exprctx::Columns::use_plan_cache(ctx),
         ctx,
         ctx.optimizer_fix_control()
             .get_bool_with_default(tidb_fixcontrol::FIX_44830, false),

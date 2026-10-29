@@ -135,7 +135,7 @@ fn restored_bounds(bounds: &[tidb_ast::Expr]) -> Result<Vec<String>, MysqlError>
             )
             .map_err(|error| tidb_terror::MysqlError::unknown(error.to_string()))?;
             built
-                .eval(&tidb_expr::NoColumns, tidb_chunk::row::Row::empty())
+                .eval(&tidb_exprctx::NoColumns, tidb_chunk::row::Row::empty())
                 .map_err(|error| error.to_mysql_error())?;
             Ok(bound.restore_with_flags(tidb_parser_format::RestoreFlags::DEFAULT))
         })

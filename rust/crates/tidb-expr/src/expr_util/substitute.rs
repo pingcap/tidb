@@ -28,7 +28,7 @@ use super::extract::set_expr_column_in_operand;
 use super::traits::check_collation_strictness;
 use crate::collation_derive::{check_and_derive_collation_from_exprs, coercibility_of};
 use crate::constant::Constant;
-use crate::context::{Columns, EvalError};
+use tidb_exprctx::context::{Columns, EvalError};
 use crate::expression::Expression;
 use crate::schema::Schema;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -739,7 +739,7 @@ impl std::error::Error for SubstituteError {}
 /// row, which is what a wholly constant subtree needs.
 pub(super) fn eval_once(
     expr: &Expression,
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<Datum, EvalError> {
     let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
     chunk.set_num_virtual_rows(1);

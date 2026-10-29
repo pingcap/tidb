@@ -48,7 +48,7 @@ fn eval_as(name: &str, args: Vec<Datum>, ret_type: FieldType) -> Result<Datum, c
         ret_type,
         args.into_iter().map(const_arg).collect(),
     );
-    let cols = crate::context::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
+    let cols = tidb_exprctx::context::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
     let empty = tidb_chunk::chunk::Chunk::new_with_capacity(&[], 1);
     function.eval(&cols, empty.get_row(0))
 }

@@ -81,7 +81,7 @@ impl ColumnResolver for TestTable {
         // The production resolvers fold through the same entry (Go folds
         // during expression rewrite); without it `-1` stays a unary tree
         // and the checker refuses it.
-        tidb_expr::fold_constant_in_mode(expression, &tidb_expr::NoColumns, mode);
+        tidb_expr::fold_constant_in_mode(expression, &tidb_exprctx::NoColumns, mode);
     }
 }
 
@@ -92,15 +92,15 @@ fn retained_conditions_rebuild_current_ranges_without_rewriting() {
         params: Vec<Datum>,
         warnings: std::cell::Cell<usize>,
     }
-    impl tidb_expr::Columns for Context {
+    impl tidb_exprctx::Columns for Context {
         fn get(&self, _: &[String]) -> Option<Datum> {
             None
         }
-        fn param_value(&self, order: usize) -> Result<Datum, tidb_expr::EvalError> {
+        fn param_value(&self, order: usize) -> Result<Datum, tidb_exprctx::EvalError> {
             self.params
                 .get(order)
                 .cloned()
-                .ok_or(tidb_expr::EvalError::Unsupported(
+                .ok_or(tidb_exprctx::EvalError::Unsupported(
                     "unbound prepared parameter",
                 ))
         }
@@ -119,8 +119,8 @@ fn retained_conditions_rebuild_current_ranges_without_rewriting() {
         fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
             self.table.resolve(path)
         }
-        fn param_value(&self, order: usize) -> Result<Datum, tidb_expr::EvalError> {
-            tidb_expr::Columns::param_value(self, order)
+        fn param_value(&self, order: usize) -> Result<Datum, tidb_exprctx::EvalError> {
+            tidb_exprctx::Columns::param_value(self, order)
         }
         fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
             tidb_expr::fold_constant_in_mode(expression, self, mode);
@@ -256,7 +256,7 @@ fn build_ranges_for(expr_text: &str) -> Result<String, String> {
     let rewritten = rewrite_expr_resolved(&where_clause, &table)
         .map_err(|error| format!("rewrite: {error:?}"))?;
     // Go: selection.Conditions are the CNF items; each runs PushDownNot.
-    let ctx = tidb_expr::NoColumns;
+    let ctx = tidb_exprctx::NoColumns;
     let builder = RealFunctionBuilder::new(&ctx);
     let conds: Vec<Expression> = split_cnf_items(&rewritten)
         .iter()
@@ -397,7 +397,7 @@ impl ColumnResolver for ColumnRangeTable {
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
-        tidb_expr::fold_constant_in_mode(expression, &tidb_expr::NoColumns, mode);
+        tidb_expr::fold_constant_in_mode(expression, &tidb_exprctx::NoColumns, mode);
     }
 }
 
@@ -416,7 +416,7 @@ fn build_column_ranges_for(expr_text: &str, col_pos: usize, length: i64) -> Resu
     let where_clause = select.where_clause.ok_or("no where")?;
     let rewritten = rewrite_expr_resolved(&where_clause, &table)
         .map_err(|error| format!("rewrite: {error:?}"))?;
-    let ctx = tidb_expr::NoColumns;
+    let ctx = tidb_exprctx::NoColumns;
     let builder = RealFunctionBuilder::new(&ctx);
     let conds: Vec<Expression> = split_cnf_items(&rewritten)
         .iter()
@@ -597,7 +597,7 @@ impl ColumnResolver for UnsignedTable {
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
-        tidb_expr::fold_constant_in_mode(expression, &tidb_expr::NoColumns, mode);
+        tidb_expr::fold_constant_in_mode(expression, &tidb_exprctx::NoColumns, mode);
     }
 }
 
@@ -802,7 +802,7 @@ fn build_index_ranges_for(expr_text: &str, index_pos: usize) -> Result<String, S
     let where_clause = select.where_clause.ok_or("no where")?;
     let rewritten = rewrite_expr_resolved(&where_clause, &table)
         .map_err(|error| format!("rewrite: {error:?}"))?;
-    let ctx = tidb_expr::NoColumns;
+    let ctx = tidb_exprctx::NoColumns;
     let builder = RealFunctionBuilder::new(&ctx);
     let conds: Vec<Expression> = split_cnf_items(&rewritten)
         .iter()
@@ -900,7 +900,7 @@ impl ColumnResolver for YearTable {
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
-        tidb_expr::fold_constant_in_mode(expression, &tidb_expr::NoColumns, mode);
+        tidb_expr::fold_constant_in_mode(expression, &tidb_exprctx::NoColumns, mode);
     }
 }
 
@@ -941,7 +941,7 @@ fn year_index_ranges_match_go() {
             let where_clause = select.where_clause.ok_or("no where")?;
             let rewritten = rewrite_expr_resolved(&where_clause, &table)
                 .map_err(|error| format!("rewrite: {error:?}"))?;
-            let ctx = tidb_expr::NoColumns;
+            let ctx = tidb_exprctx::NoColumns;
             let builder = RealFunctionBuilder::new(&ctx);
             let conds: Vec<Expression> = split_cnf_items(&rewritten)
                 .iter()
@@ -1016,7 +1016,7 @@ impl ColumnResolver for PrefixScanTable {
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
-        tidb_expr::fold_constant_in_mode(expression, &tidb_expr::NoColumns, mode);
+        tidb_expr::fold_constant_in_mode(expression, &tidb_exprctx::NoColumns, mode);
     }
 }
 
@@ -1109,7 +1109,7 @@ fn prefix_index_range_scan_matches_go() {
             let where_clause = select.where_clause.ok_or("no where")?;
             let rewritten = rewrite_expr_resolved(&where_clause, &table)
                 .map_err(|error| format!("rewrite: {error:?}"))?;
-            let ctx = tidb_expr::NoColumns;
+            let ctx = tidb_exprctx::NoColumns;
             let builder = RealFunctionBuilder::new(&ctx);
             let conds: Vec<Expression> = split_cnf_items(&rewritten)
                 .iter()
@@ -1263,7 +1263,7 @@ impl ColumnResolver for IndexRangeTable {
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
-        tidb_expr::fold_constant_in_mode(expression, &tidb_expr::NoColumns, mode);
+        tidb_expr::fold_constant_in_mode(expression, &tidb_exprctx::NoColumns, mode);
     }
 }
 
@@ -1567,7 +1567,7 @@ fn index_ranges_match_go() {
             let where_clause = select.where_clause.ok_or("no where")?;
             let rewritten = rewrite_expr_resolved(&where_clause, &table)
                 .map_err(|error| format!("rewrite: {error:?}"))?;
-            let ctx = tidb_expr::NoColumns;
+            let ctx = tidb_exprctx::NoColumns;
             let builder = RealFunctionBuilder::new(&ctx);
             // Go's PushDownNot builds through NewFunction, which DERIVES
             // collation; this crate's `new_function` deliberately defers
@@ -1722,7 +1722,7 @@ impl ColumnResolver for Issue40997Table {
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
-        tidb_expr::fold_constant_in_mode(expression, &tidb_expr::NoColumns, mode);
+        tidb_expr::fold_constant_in_mode(expression, &tidb_exprctx::NoColumns, mode);
     }
 }
 
@@ -1746,7 +1746,7 @@ fn issue_40997_dnf_ranges_match_go() {
     };
     let rewritten =
         rewrite_expr_resolved(&select.where_clause.expect("where"), &table).expect("rewrites");
-    let ctx = tidb_expr::NoColumns;
+    let ctx = tidb_exprctx::NoColumns;
     let builder = RealFunctionBuilder::new(&ctx);
     let conds: Vec<Expression> = split_cnf_items(&rewritten)
         .iter()
@@ -1831,7 +1831,7 @@ impl ColumnResolver for MinAccessTable {
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
-        tidb_expr::fold_constant_in_mode(expression, &tidb_expr::NoColumns, mode);
+        tidb_expr::fold_constant_in_mode(expression, &tidb_exprctx::NoColumns, mode);
     }
 }
 
@@ -1955,7 +1955,7 @@ fn shard_index_func_suites_match_go() {
 
     let longlong = || FieldType::new(FieldTypeCode::LongLong);
     let column = |unique_id: i64| Column::new(unique_id, longlong());
-    let ctx = tidb_expr::NoColumns;
+    let ctx = tidb_exprctx::NoColumns;
     let build = |name: &str, args: Vec<Expression>| {
         tidb_expr::new_function::new_function(&ctx, name, longlong(), args).expect("builds")
     };
@@ -2549,7 +2549,7 @@ impl ColumnResolver for PrefixNullTable {
     }
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
-        tidb_expr::fold_constant_in_mode(expression, &tidb_expr::NoColumns, mode);
+        tidb_expr::fold_constant_in_mode(expression, &tidb_exprctx::NoColumns, mode);
     }
 }
 
@@ -2659,7 +2659,7 @@ fn prefix_index_null_ranges_match_go() {
             let where_clause = select.where_clause.ok_or("no where")?;
             let rewritten = rewrite_expr_resolved(&where_clause, &table)
                 .map_err(|error| format!("rewrite: {error:?}"))?;
-            let ctx = tidb_expr::NoColumns;
+            let ctx = tidb_exprctx::NoColumns;
             let builder = RealFunctionBuilder::new(&ctx);
             let conds: Vec<Expression> = split_cnf_items(&rewritten)
                 .iter()
@@ -2809,7 +2809,7 @@ fn taobench_edge_dnf_index_ranges_match_go() {
             SessionTimeZone::utc()
         }
         fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
-            tidb_expr::fold_constant_in_mode(expression, &tidb_expr::NoColumns, mode);
+            tidb_expr::fold_constant_in_mode(expression, &tidb_exprctx::NoColumns, mode);
         }
     }
 
@@ -2823,7 +2823,7 @@ fn taobench_edge_dnf_index_ranges_match_go() {
         };
         let rewritten = rewrite_expr_resolved(&select.where_clause.expect("where"), &EdgesTable)
             .map_err(|error| format!("rewrite: {error:?}"))?;
-        let ctx = tidb_expr::NoColumns;
+        let ctx = tidb_exprctx::NoColumns;
         let builder = RealFunctionBuilder::new(&ctx);
         let conds: Vec<Expression> = split_cnf_items(&rewritten)
             .iter()

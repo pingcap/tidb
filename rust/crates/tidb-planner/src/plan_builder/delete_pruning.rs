@@ -25,7 +25,7 @@
 use std::collections::BTreeSet;
 
 use tidb_ast::SelectStmt;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 use tidb_hack::go_to_lower;
 
 use tidb_infoschema::table_source::TableSource;

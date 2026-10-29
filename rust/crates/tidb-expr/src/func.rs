@@ -1188,14 +1188,14 @@ mod cast_real_int_in_union_tests {
     /// with an in-union unsigned int target clamps a negative to 0.
     #[test]
     fn cast_real_int_in_union_clamps_negatives_to_zero() {
-        let ctx = crate::context::NoColumns;
+        let ctx = tidb_exprctx::context::NoColumns;
         let result = eval_func_values("cast_real_int_in_union", &[Datum::Real(-2.5)], &ctx);
         assert_eq!(result.unwrap().unwrap(), Datum::Int(0));
     }
 
     #[test]
     fn cast_real_int_in_union_keeps_non_negatives() {
-        let ctx = crate::context::NoColumns;
+        let ctx = tidb_exprctx::context::NoColumns;
         let result = eval_func_values("cast_real_int_in_union", &[Datum::Real(7.5)], &ctx);
         assert_eq!(result.unwrap().unwrap(), Datum::Int(7));
     }
@@ -1210,7 +1210,7 @@ mod cast_real_to_decimal_in_union_tests {
     /// negative yields the ZERO decimal.
     #[test]
     fn cast_real_to_decimal_in_union_clamps_negatives_to_zero() {
-        let ctx = crate::context::NoColumns;
+        let ctx = tidb_exprctx::context::NoColumns;
         let result = eval_func_values("cast_real_to_decimal_in_union", &[Datum::Real(-2.5)], &ctx);
         assert_eq!(
             result.unwrap().unwrap(),
@@ -1220,7 +1220,7 @@ mod cast_real_to_decimal_in_union_tests {
 
     #[test]
     fn cast_real_to_decimal_in_union_keeps_non_negatives_like_go() {
-        let ctx = crate::context::NoColumns;
+        let ctx = tidb_exprctx::context::NoColumns;
         let result = eval_func_values("cast_real_to_decimal_in_union", &[Datum::Real(7.5)], &ctx);
         let expected = tidb_datatype::Decimal::from_f64(7.5).unwrap();
         assert_eq!(result.unwrap().unwrap(), Datum::Decimal(expected));

@@ -32,7 +32,7 @@ use tidb_expr::expr_util::RealFunctionBuilder;
 use tidb_expr::expression::{ConstLevel, CorrelatedColumn, Expression};
 use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::{extract_columns, extract_cor_columns};
-use tidb_expr::NoColumns;
+use tidb_exprctx::NoColumns;
 
 use tidb_planner_cascades_base::{new_hash_equaler, Hasher};
 use crate::logical::schema_producer;

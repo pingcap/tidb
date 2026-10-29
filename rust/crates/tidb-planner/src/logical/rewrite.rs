@@ -1734,7 +1734,7 @@ impl OwnedRewrite for PushDownTopN<'_> {
                             &op.exprs,
                             &opts,
                         ),
-                        &tidb_expr::NoColumns,
+                        &tidb_exprctx::NoColumns,
                         &opts,
                     );
                     // "if the order-by expression is un-deterministic like
@@ -2072,7 +2072,7 @@ pub fn split_cnf(predicates: &[Expression]) -> Vec<Expression> {
 ///   [`LogicalPlan::recursive_derive_stats`] passes.
 struct DeriveStatsFold<'a> {
     expr_pushdown_blacklist: &'a tidb_expr::infer_pushdown::ExprPushDownBlacklist,
-    eval_context: &'a dyn tidb_expr::Columns,
+    eval_context: &'a dyn tidb_exprctx::Columns,
     builder: &'a dyn tidb_expr::expr_util::FunctionBuilder,
     estimator_options: &'a crate::cardinality::row_count_estimator::EstimatorOptions,
     /// The first failure, per the module header's first-failure discipline.
@@ -2760,8 +2760,8 @@ pub fn recursive_derive_stats(
         64 * 1024 * 1024,
         crate::cost_factors::SELECTION_FACTOR,
         None,
-        &tidb_expr::expr_util::RealFunctionBuilder::new(&tidb_expr::NoColumns),
-        &tidb_expr::NoColumns,
+        &tidb_expr::expr_util::RealFunctionBuilder::new(&tidb_exprctx::NoColumns),
+        &tidb_exprctx::NoColumns,
         &crate::cardinality::row_count_estimator::EstimatorOptions::default(),
         tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
         crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
@@ -2807,7 +2807,7 @@ fn recursive_derive_stats_with_range_quota(
     selectivity_factor: f64,
     range_fallback_handler: Option<&tidb_context::RangeFallbackHandler>,
     builder: &dyn tidb_expr::expr_util::FunctionBuilder,
-    eval_context: &dyn tidb_expr::Columns,
+    eval_context: &dyn tidb_exprctx::Columns,
     estimator_options: &crate::cardinality::row_count_estimator::EstimatorOptions,
     group_ndv_skew_ratio: f64,
     scale_ndv_skew_ratio: f64,
@@ -3495,7 +3495,7 @@ mod analyzed_filter_selectivity_tests {
         // derived collation decide whether the ranger accepts the pattern.
         let like = |pattern: &str| {
             tidb_expr::new_function::new_function(
-                &tidb_expr::NoColumns,
+                &tidb_exprctx::NoColumns,
                 "like",
                 FieldType::new(FieldTypeCode::LongLong),
                 vec![
@@ -3568,17 +3568,17 @@ mod access_path_context_tests {
 
     struct Parameters([i64; 2]);
 
-    impl tidb_expr::Columns for Parameters {
+    impl tidb_exprctx::Columns for Parameters {
         fn get(&self, _: &[String]) -> Option<Datum> {
             None
         }
 
-        fn param_value(&self, order: usize) -> Result<Datum, tidb_expr::EvalError> {
+        fn param_value(&self, order: usize) -> Result<Datum, tidb_exprctx::EvalError> {
             self.0
                 .get(order)
                 .copied()
                 .map(Datum::Int)
-                .ok_or(tidb_expr::EvalError::Unsupported(
+                .ok_or(tidb_exprctx::EvalError::Unsupported(
                     "unbound prepared parameter",
                 ))
         }

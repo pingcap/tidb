@@ -35,7 +35,7 @@ use std::collections::BTreeSet;
 
 use crate::column::Column;
 use crate::constant::Constant;
-use crate::context::{EvalError, NoColumns};
+use tidb_exprctx::context::{EvalError, NoColumns};
 use crate::expr_util::{column_substitute_impl, PreservingFunctionBuilder, SubstituteOptions};
 use crate::expression::{expressions_semantic_equal, ConstLevel, Expression};
 use crate::grouping::GroupingMode;

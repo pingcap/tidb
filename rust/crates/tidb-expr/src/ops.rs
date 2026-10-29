@@ -37,7 +37,7 @@ pub(crate) fn eval_unary(
     op: UnaryOp,
     v: Datum,
     arg: Operand<'_>,
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<Datum, EvalError> {
     use UnaryOp::*;
     // Every unary operator applied to NULL is NULL.
@@ -165,7 +165,7 @@ pub(crate) fn eval_binary_with_div_precision(
     l: Datum,
     r: Datum,
     div_precision_increment: u32,
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<Datum, EvalError> {
     eval_binary_full(
         op,
@@ -190,7 +190,7 @@ pub(crate) fn eval_binary_in(
     op: BinaryOp,
     l: Datum,
     r: Datum,
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<Datum, EvalError> {
     eval_binary_with_div_precision(op, l, r, ctx.div_precision_increment(), ctx)
 }
@@ -234,7 +234,7 @@ pub(crate) fn eval_binary_full(
     div_precision_increment: u32,
     collation: tidb_charset::Collation,
     operands: Operands<'_>,
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<Datum, EvalError> {
     use BinaryOp::*;
     if l.is_range_sentinel() || r.is_range_sentinel() {
@@ -906,7 +906,7 @@ pub(crate) fn integer_binary_typed(
     l: Datum,
     r: Datum,
     signed_operands: [bool; 2],
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<Option<Datum>, EvalError> {
     debug_assert!(matches!(
         op,
@@ -946,7 +946,7 @@ pub(crate) fn integer_binary_typed(
 /// Evaluates a context-free binary operation with TiDB's default
 /// `div_precision_increment` of 4.
 pub(crate) fn eval_binary(op: BinaryOp, l: Datum, r: Datum) -> Result<Datum, EvalError> {
-    eval_binary_with_div_precision(op, l, r, 4, &crate::context::NoColumns)
+    eval_binary_with_div_precision(op, l, r, 4, &tidb_exprctx::context::NoColumns)
 }
 
 /// TiDB preserves a declared decimal division result scale when the session
@@ -969,7 +969,7 @@ pub(crate) fn decimal_integer_division(
     a: &Decimal,
     b: &Decimal,
     unsigned: bool,
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<Datum, EvalError> {
     if b.is_zero() {
         crate::expression_errors::handle_division_by_zero(ctx)?;
@@ -1051,7 +1051,7 @@ fn decimal_binary(
     l: Datum,
     r: Datum,
     unsigned_pair: bool,
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<Datum, EvalError> {
     use BinaryOp::*;
     if op == NullEq {
@@ -1149,7 +1149,7 @@ fn decimal_binary(
 /// which only happens because the saturated `i64::MIN` is truthy.
 fn decimal_bit_operand(
     value: &Decimal,
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<i64, EvalError> {
     if let Some(exact) = value.round_to_i64() {
         return Ok(exact);
@@ -1174,7 +1174,7 @@ fn time_compare(
     op: BinaryOp,
     l: &Datum,
     r: &Datum,
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<Datum, EvalError> {
     let ordering = match (l, r) {
         (Datum::Time(a), Datum::Time(b)) => a.compare(*b),
@@ -1227,7 +1227,7 @@ fn numeric_context_value(value: Datum) -> Datum {
 fn time_compare_ordering(
     time: tidb_datatype::Time,
     other: &Datum,
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<Option<std::cmp::Ordering>, EvalError> {
     let text = match other {
         Datum::String(value) => String::from_utf8_lossy(value.bytes()).into_owned(),
@@ -1381,7 +1381,7 @@ fn string_compare(
 /// go `ToBool`'s string path parses the leading float and raises
 /// `Truncated incorrect DOUBLE value` when the text is not fully numeric;
 /// the logical operators' truthiness coercion carries that warning.
-fn warn_string_double_truncation(values: &[&Datum], ctx: &dyn crate::context::Columns) {
+fn warn_string_double_truncation(values: &[&Datum], ctx: &dyn tidb_exprctx::context::Columns) {
     for value in values {
         if matches!(value, Datum::String(_) | Datum::Bytes(_)) {
             let _ = crate::math_fn::numeric_arg(value, ctx);
@@ -1392,7 +1392,7 @@ fn warn_string_double_truncation(values: &[&Datum], ctx: &dyn crate::context::Co
 pub(crate) fn logic_and(
     l: Datum,
     r: Datum,
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<Datum, EvalError> {
     warn_string_double_truncation(&[&l, &r], ctx);
     Ok(match (truthy_of(&l)?, truthy_of(&r)?) {
@@ -1402,7 +1402,7 @@ pub(crate) fn logic_and(
     })
 }
 
-fn logic_or(l: Datum, r: Datum, ctx: &dyn crate::context::Columns) -> Result<Datum, EvalError> {
+fn logic_or(l: Datum, r: Datum, ctx: &dyn tidb_exprctx::context::Columns) -> Result<Datum, EvalError> {
     warn_string_double_truncation(&[&l, &r], ctx);
     // TRUE dominates; otherwise NULL propagates if either side is unknown.
     Ok(match (truthy_of(&l)?, truthy_of(&r)?) {
@@ -1412,7 +1412,7 @@ fn logic_or(l: Datum, r: Datum, ctx: &dyn crate::context::Columns) -> Result<Dat
     })
 }
 
-fn logic_xor(l: Datum, r: Datum, ctx: &dyn crate::context::Columns) -> Result<Datum, EvalError> {
+fn logic_xor(l: Datum, r: Datum, ctx: &dyn tidb_exprctx::context::Columns) -> Result<Datum, EvalError> {
     warn_string_double_truncation(&[&l, &r], ctx);
     Ok(match (truthy_of(&l)?, truthy_of(&r)?) {
         (Some(a), Some(b)) => bool_int(a ^ b),

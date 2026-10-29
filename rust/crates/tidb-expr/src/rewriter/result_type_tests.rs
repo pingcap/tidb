@@ -45,7 +45,7 @@ fn cast_binary_padding_gates_on_the_fixed_type_string_code() {
     chunk.append_int64(0, 0);
     let row = chunk.get_row(0);
     let Datum::Bytes(unpadded) = adjusted_var_string
-        .eval(&crate::context::NoColumns, row)
+        .eval(&tidb_exprctx::context::NoColumns, row)
         .unwrap()
     else {
         panic!("expected bytes")
@@ -57,7 +57,7 @@ fn cast_binary_padding_gates_on_the_fixed_type_string_code() {
         binary_target(FieldTypeCode::String),
         vec![constant],
     );
-    let Datum::Bytes(padded) = fixed_string.eval(&crate::context::NoColumns, row).unwrap() else {
+    let Datum::Bytes(padded) = fixed_string.eval(&tidb_exprctx::context::NoColumns, row).unwrap() else {
         panic!("expected bytes")
     };
     assert_eq!(padded.len(), 20, "BINARY(20) pads with NUL bytes");
@@ -272,7 +272,7 @@ mod round_truncate_type_source_tests {
                 vec![value.clone(), scale.clone()],
             );
             let Datum::Decimal(answer) = function
-                .eval(&crate::context::NoColumns, chunk.get_row(0))
+                .eval(&tidb_exprctx::context::NoColumns, chunk.get_row(0))
                 .unwrap()
             else {
                 panic!("{name} returned a non-decimal value")
@@ -351,7 +351,7 @@ mod ceil_floor_type_source_tests {
                 );
                 let result =
                     ScalarFunction::new(tidb_ast::CiString::new(name), result_type, vec![argument])
-                        .eval(&crate::context::NoColumns, chunk.get_row(0))
+                        .eval(&tidb_exprctx::context::NoColumns, chunk.get_row(0))
                         .unwrap();
                 let expected = if name == "floor" { -2 } else { -1 };
                 if expect_decimal {

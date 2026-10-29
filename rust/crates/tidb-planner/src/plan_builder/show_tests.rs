@@ -16,7 +16,7 @@
 
 use tidb_ast::Stmt;
 use tidb_datatype::SessionTimeZone;
-use tidb_expr::ZonedNoColumns;
+use tidb_exprctx::ZonedNoColumns;
 
 use tidb_infoschema::table_source::TableSource;
 use tidb_infoschema::table_source::SourceTable;

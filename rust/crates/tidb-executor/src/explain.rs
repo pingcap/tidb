@@ -59,7 +59,7 @@ fn planner_explain_format(format: ExplainFormat) -> PlannerExplainFormat {
 }
 
 fn expression_text(
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     expression: &tidb_expr::expression::Expression,
 ) -> String {
     tidb_expr::explain::physical_expression_text_with_columns(
@@ -75,7 +75,7 @@ fn expression_text(
 /// for a Projection's own expressions, where a nested string constant prints
 /// bare instead of quoted.
 fn expression_string_text(
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     expression: &tidb_expr::expression::Expression,
 ) -> String {
     tidb_expr::explain::physical_expression_text_with_columns(
@@ -156,7 +156,7 @@ fn used_stats_suffix_for_scan(
 }
 
 fn expressions_text(
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     expressions: &[tidb_expr::expression::Expression],
 ) -> String {
     expressions
@@ -171,7 +171,7 @@ fn expressions_text(
 /// `expr->Column#N`, EXCEPT a direct column whose own text already equals the
 /// output column's.
 fn projection_text(
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     expressions: &[tidb_expr::expression::Expression],
     schema: Option<&tidb_expr::schema::Schema>,
 ) -> String {
@@ -204,7 +204,7 @@ fn projection_text(
 }
 
 fn by_items_text(
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     items: &[tidb_expr::aggregation::ByItems],
 ) -> String {
     items
@@ -224,7 +224,7 @@ fn by_items_text(
 /// Go `PhysicalTopN.ExplainInfo` (`physical_topn.go:134`): the partition
 /// columns, `order by` only after a partition, the by-items, then the
 /// partial-order prefix column a prefix index supplies.
-fn topn_info(eval_ctx: &dyn tidb_expr::Columns, topn: &tidb_planner::physical::PhysicalTopN) -> String {
+fn topn_info(eval_ctx: &dyn tidb_exprctx::Columns, topn: &tidb_planner::physical::PhysicalTopN) -> String {
     let column_text = |column: &tidb_expr::column::Column| {
         expression_text(eval_ctx, &tidb_expr::expression::Expression::Column(column.clone()))
     };
@@ -291,7 +291,7 @@ fn plan_explain_id(plan: &PhysicalPlan, ignore_suffix: bool) -> String {
 /// `PhysicalMergeJoin`'s `right cond`/`other cond` both use it, and so does
 /// MergeJoin's `left cond`.
 fn sorted_expressions_text(
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     expressions: &[tidb_expr::expression::Expression],
 ) -> String {
     let mut rendered = expressions
@@ -311,7 +311,7 @@ fn sorted_expressions_text(
 /// join renders its equal conditions, and only the HASH join brackets
 /// `left cond`.
 fn join_info(
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     join_type: tidb_planner::find_best_task::LogicalJoinType,
     left_child: Option<&PhysicalPlan>,
     ignore_explain_id_suffix: bool,
@@ -438,7 +438,7 @@ fn join_info(
 }
 
 fn aggregate_info(
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     functions: &[tidb_expr::aggregation::AggFuncDesc],
     group_by: &[tidb_expr::expression::Expression],
     schema: Option<&tidb_expr::schema::Schema>,
@@ -480,7 +480,7 @@ fn aggregate_info(
 /// GROUP_CONCAT's last argument is its separator, printed after the
 /// aggregate's own ORDER BY.
 fn agg_func_text(
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     function: &tidb_expr::aggregation::AggFuncDesc,
 ) -> String {
     let mut text = format!("{}(", function.base.name);
@@ -521,7 +521,7 @@ fn agg_func_text(
 /// (each consuming its trailing schema column) followed by
 /// `over(partition by ... order by ... <frame>)`.
 fn window_info(
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     window: &tidb_planner::physical::PhysicalWindow,
 ) -> String {
     use tidb_expr::expression::Expression;
@@ -600,7 +600,7 @@ fn window_info(
 /// its calc function (`interval "2:30" "MINUTE_SECOND"` for date arithmetic,
 /// the offset constant for plus/minus), a ROWS bound its row count.
 fn frame_bound_text(
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     bound: Option<&tidb_planner::logical::window::FrameBound>,
 ) -> String {
     use tidb_expr::expression::Expression;
@@ -852,7 +852,7 @@ fn is_index_join_index_range(
 /// Go `indexJoinPathRangeInfo`: `eq(inner_idx_col, outer_key)` for every
 /// matched key, then `chosenAccess`.
 fn index_join_decided_by_text(
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     context: IndexJoinExplainContext<'_>,
 ) -> String {
     let mut keys = context
@@ -897,7 +897,7 @@ fn index_join_decided_by_text(
 /// scan's `decided by` text is the OUTER join keys rendered alone --
 /// `indexJoinIntPKRangeInfo` writes each outer key with no eq wrapping.
 fn index_join_int_pk_decided_by_text(
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     context: &IndexJoinExplainContext<'_>,
 ) -> String {
     let decided = context
@@ -917,7 +917,7 @@ fn index_join_int_pk_decided_by_text(
 /// Integer table handles use Go's `indexJoinIntPKRangeInfo`; common handles
 /// use the equality pairs for the matched index columns.
 fn index_join_decided_by_text_for_scan(
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     context: &IndexJoinExplainContext<'_>,
 ) -> String {
     // Master picks the integer-PK spelling when the join probes the table's
@@ -933,7 +933,7 @@ fn index_join_decided_by_text_for_scan(
 }
 
 fn columns_text(
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     columns: &[tidb_expr::column::Column],
 ) -> String {
     columns
@@ -973,7 +973,7 @@ fn correlated_access_conditions(plan: &PhysicalPlan) -> Option<&[tidb_expr::expr
 /// Go's `range: decided by [...]` over correlated access conditions, each
 /// rendered with `StringWithCtx` and separated by a space.
 fn correlated_decided_by_text(
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     conditions: &[tidb_expr::expression::Expression],
 ) -> String {
     format!(
@@ -1190,7 +1190,7 @@ fn point_handle_text_unsigned(range: &tidb_ranger::types::Range) -> String {
 
 /// The session facts a memory-table extractor's `ExplainInfo` reads.
 struct MemTableExplainSession<'a> {
-    eval_ctx: &'a dyn tidb_expr::Columns,
+    eval_ctx: &'a dyn tidb_exprctx::Columns,
 }
 
 impl MemTableExplainSession<'_> {
@@ -1234,7 +1234,7 @@ impl tidb_planner::memtable_predicate_extractor::MemTableExplainEnv for MemTable
 }
 
 fn physical_operator_info(
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     statement_context: &crate::StmtContext,
     plan: &PhysicalPlan,
     catalog: &Catalog,
@@ -1692,7 +1692,7 @@ fn runtime_rows(
 
 fn physical_explain_operator(
     costs: Option<&Ver2Coster>,
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     statement_context: &crate::StmtContext,
     brief_binary: bool,
     plan: &PhysicalPlan,
@@ -2096,7 +2096,7 @@ fn physical_explain_operator(
 
 fn cte_definitions(
     costs: Option<&Ver2Coster>,
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     statement_context: &crate::StmtContext,
     brief_binary: bool,
     plan: &PhysicalPlan,
@@ -2289,7 +2289,7 @@ fn cte_definitions(
 
 fn physical_explain_roots(
     costs: Option<&Ver2Coster>,
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     statement_context: &crate::StmtContext,
     brief_binary: bool,
     physical: &PhysicalPlan,
@@ -2345,7 +2345,7 @@ fn physical_explain_roots(
 /// whose single child is the optimized subquery plan.
 fn scalar_subquery_root(
     costs: Option<&Ver2Coster>,
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     statement_context: &crate::StmtContext,
     brief_binary: bool,
     subquery: &crate::driver::planner_bridge::RegisteredScalarSubquery,
@@ -2837,7 +2837,7 @@ fn hash_join_normalized_info(
 
 /// Go `PhysicalMergeJoin.explainInfo(true)` (`physical_merge_join.go:292`).
 fn merge_join_normalized_info(
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     join: &tidb_planner::physical::PhysicalMergeJoin,
 ) -> String {
     let mut text = join_type_text(join.join_type).to_owned();
@@ -2875,7 +2875,7 @@ fn merge_join_normalized_info(
 /// Go `PhysicalIndexJoin.ExplainInfoInternal(true, isIndexMergeJoin)`
 /// (`physical_index_join.go:147`).
 fn index_join_normalized_info(
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     join: &tidb_planner::physical::PhysicalIndexJoin,
 ) -> String {
     let mut parts = vec![join_type_text(join.join_type).to_owned()];
@@ -3007,7 +3007,7 @@ fn topn_normalized_info(topn: &tidb_planner::physical::PhysicalTopN) -> String {
 /// normalized body (constants as `?`, no ranges or statistics, children by
 /// plan type); every other operator inherits the empty base implementation.
 fn physical_normalized_info(
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     statement_context: &crate::StmtContext,
     plan: &PhysicalPlan,
     catalog: &Catalog,
@@ -3448,7 +3448,7 @@ fn register_ru_runtime_stats(
 }
 
 fn render_physical_plan(
-    eval_ctx: &dyn tidb_expr::Columns,
+    eval_ctx: &dyn tidb_exprctx::Columns,
     statement_context: &crate::StmtContext,
     physical: &PhysicalPlan,
     catalog: &Catalog,

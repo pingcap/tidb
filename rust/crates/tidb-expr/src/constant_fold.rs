@@ -15,7 +15,7 @@
 //! Go `pkg/expression/constant_fold.go`, reduced to the part this tier can
 //! observe.
 
-use crate::context::Columns;
+use tidb_exprctx::context::Columns;
 use crate::expression::Expression;
 use tidb_datatype::Datum;
 
@@ -509,7 +509,7 @@ fn fold_value(expr: &mut Expression) -> Option<Datum> {
         chunk
     };
     let value = expr
-        .eval(&crate::context::NoColumns, chunk.get_row(0))
+        .eval(&tidb_exprctx::context::NoColumns, chunk.get_row(0))
         .ok()?;
     if !has_null_arg {
         let Expression::ScalarFunction(func) = expr else {
@@ -573,7 +573,7 @@ pub(crate) fn folded_value(expr: &Expression) -> Option<Datum> {
     }
     let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
     chunk.set_num_virtual_rows(1);
-    expr.eval(&crate::context::NoColumns, chunk.get_row(0)).ok()
+    expr.eval(&tidb_exprctx::context::NoColumns, chunk.get_row(0)).ok()
 }
 
 /// Go `unFoldableFunctions` (`pkg/expression/function_traits.go`): the
@@ -669,9 +669,9 @@ fn is_deferred_function(name: &str, arg_count: usize) -> bool {
 
 #[cfg(test)]
 mod deferred_function_tests {
-    use super::super::context::Columns;
+    use tidb_exprctx::Columns;
     use super::*;
-    use crate::context::NoColumns;
+    use tidb_exprctx::context::NoColumns;
     use crate::expression::{Expression, ScalarFunction};
     use tidb_ast::CiString;
     use tidb_datatype::FieldType;

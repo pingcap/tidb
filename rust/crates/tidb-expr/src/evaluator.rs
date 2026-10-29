@@ -22,7 +22,7 @@ use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_util::ColumnSwapHelper;
 use tidb_datatype::Datum;
 
-use crate::context::{Columns, EvalError};
+use tidb_exprctx::context::{Columns, EvalError};
 use crate::expression::Expression;
 
 /// Go `HasGetSetVarFunc`: whether an expression contains a user-variable read

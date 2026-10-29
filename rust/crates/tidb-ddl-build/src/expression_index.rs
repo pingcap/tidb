@@ -696,7 +696,7 @@ pub fn build_hidden_columns_with_like_default_escape(
                             ],
                         ),
                     ),
-                    (None, tidb_expr::EvalError::Unsupported(_)) => {
+                    (None, tidb_exprctx::EvalError::Unsupported(_)) => {
                         tidb_terror::MysqlError::unknown(
                             "this expression index's expression is not supported yet",
                         )

@@ -975,7 +975,7 @@ pub fn try_batch_point_get(
     table: &KvTable,
     columns: &[(String, FieldType)],
     zone: &tidb_datatype::SessionTimeZone,
-    statement: Option<&dyn tidb_expr::Columns>,
+    statement: Option<&dyn tidb_exprctx::Columns>,
 ) -> Result<Option<BatchPointLookup>, DriverError> {
     let stmt = PointPlanStmt::of_select(select);
     try_batch_point_get_stmt(&stmt, table, columns, zone, statement)
@@ -987,7 +987,7 @@ pub fn try_batch_point_get(
 /// (`id IN ('a', 'b')` warns for `'a'` twice, then for `'b'` twice), or
 /// silently by the detached rule for a caller outside planning.
 fn batch_key_value(
-    statement: Option<&dyn tidb_expr::Columns>,
+    statement: Option<&dyn tidb_exprctx::Columns>,
     column: &FieldType,
     value: &Datum,
 ) -> Option<Datum> {
@@ -1002,7 +1002,7 @@ pub fn try_batch_point_get_stmt(
     table: &KvTable,
     columns: &[(String, FieldType)],
     zone: &tidb_datatype::SessionTimeZone,
-    statement: Option<&dyn tidb_expr::Columns>,
+    statement: Option<&dyn tidb_exprctx::Columns>,
 ) -> Result<Option<BatchPointLookup>, DriverError> {
     if select.having.is_some()
         || !select.order_by.is_empty()
@@ -1573,7 +1573,7 @@ pub fn try_point_get(
     table: &KvTable,
     columns: &[(String, FieldType)],
     zone: &tidb_datatype::SessionTimeZone,
-    statement: Option<&dyn tidb_expr::Columns>,
+    statement: Option<&dyn tidb_exprctx::Columns>,
     table_dual: &mut bool,
 ) -> Result<Option<PointGetPin>, DriverError> {
     if select.having.is_some() || !select.order_by.is_empty() || !select.group_by.is_empty() {

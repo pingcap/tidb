@@ -18,7 +18,7 @@ use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
-use tidb_expr::NoColumns;
+use tidb_exprctx::NoColumns;
 
 use crate::shuffle::{PartitionRangeSplitter, PartitionSplitter};
 

@@ -39,7 +39,7 @@ use tidb_expr::expr_util::normal_form::split_dnf_items;
 use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 use tidb_hack::{go_to_lower, go_to_upper};
 
 pub use crate::memtable_infoschema_extractor::{InfoSchemaBaseExtractor, InfoSchemaExtractorKind};

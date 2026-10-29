@@ -21,7 +21,7 @@ use tidb_datatype::{Decimal, FieldType, FieldTypeCode, MySqlDuration, Time, Time
 use super::*;
 use crate::column::Column;
 use crate::constant::Constant;
-use crate::context::NoColumns;
+use tidb_exprctx::context::NoColumns;
 use crate::evaluator::EvaluatorSuite;
 use crate::expression::Expression;
 use crate::scalar_function::ScalarFunction;

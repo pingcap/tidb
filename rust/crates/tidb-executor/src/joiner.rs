@@ -105,7 +105,7 @@ use tidb_chunk::mutrow::MutRow;
 use tidb_chunk::row::Row;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 use tidb_driver_error::ExecError;
 

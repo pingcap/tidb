@@ -37,7 +37,7 @@ use tidb_expr::expr_util::substitute::{
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::{merge_schema, Schema};
 use tidb_expr::simple_expr::extract_columns;
-use tidb_expr::NoColumns;
+use tidb_exprctx::NoColumns;
 
 use crate::final_mode_agg::{build_final_mode_aggregation, AggInfo};
 use crate::find_best_task::LogicalJoinType;

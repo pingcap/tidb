@@ -21,7 +21,7 @@ use tidb_ast::{Expr, TableRef};
 use tidb_datatype::{FieldName, FieldNameMetadata, FieldType, FieldTypeCode};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 use tidb_infoschema::table_source::TableSource;
 use super::marker::MarkerKind;
@@ -41,7 +41,7 @@ pub fn cast_point_update_assignment(
     expression: Expression,
     target: &FieldType,
     ctx: &dyn Columns,
-) -> Result<Expression, tidb_expr::EvalError> {
+) -> Result<Expression, tidb_exprctx::EvalError> {
     let mut cast_to = target.clone();
     let unsigned_numeric = cast_to.has_flag(tidb_datatype::FieldTypeFlags::UNSIGNED)
         && matches!(

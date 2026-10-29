@@ -15,10 +15,11 @@
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
+use tidb_charset::get_charset_info;
 use crate::{
     CollationCollator,
     binary_collation_name, binary_collator, collation_id_to_name, collation_name_to_id,
-    collation_to_proto, compatible_collate, get_binary_collator_slice, get_charset_info,
+    collation_to_proto, compatible_collate, get_binary_collator_slice,
     get_collator, get_collator_by_id, get_collator_with_mode, get_supported_collation_by_name,
     is_bin_collation, is_ci_collation, is_default_collation_for_utf8mb4, is_pad_space_collation,
     new_collation_enabled, proto_to_collation, restore_collation_id_if_needed,

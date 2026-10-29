@@ -26,7 +26,7 @@ use tidb_ast::{Expr, ShowStmt, ShowStmtType};
 use tidb_expr::aggregation::ByItems;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 use tidb_model::TempTableType;
 
 use tidb_infoschema::table_source::TableSource;

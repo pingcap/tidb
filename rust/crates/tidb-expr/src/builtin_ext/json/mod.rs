@@ -83,20 +83,20 @@ fn verify_json_args_type(
         match field_type.eval_type() {
             tidb_datatype::EvalType::String => {
                 if field_type.charset_name() == "binary" {
-                    return Err(EvalError::Json(crate::context::JsonError::InvalidCharset));
+                    return Err(EvalError::Json(tidb_exprctx::context::JsonError::InvalidCharset));
                 }
             }
             tidb_datatype::EvalType::Json => {}
             _ if use_json_err => {
                 return Err(EvalError::Json(
-                    crate::context::JsonError::InvalidTypeForJson {
+                    tidb_exprctx::context::JsonError::InvalidTypeForJson {
                         argument: index + 1,
                         function,
                     },
                 ));
             }
             _ => {
-                return Err(EvalError::Json(crate::context::JsonError::IncorrectType {
+                return Err(EvalError::Json(tidb_exprctx::context::JsonError::IncorrectType {
                     argument: index + 1,
                     function,
                 }));
@@ -156,7 +156,7 @@ pub(crate) fn verify_json_function_args(
                         && field_type.eval_type() != tidb_datatype::EvalType::String
                 })
             {
-                return Err(EvalError::Json(crate::context::JsonError::IncorrectType {
+                return Err(EvalError::Json(tidb_exprctx::context::JsonError::IncorrectType {
                     argument: 1,
                     function: "json_quote",
                 }));
@@ -169,7 +169,7 @@ pub(crate) fn verify_json_function_args(
                     field_type.eval_type() == tidb_datatype::EvalType::String
                         && field_type.charset_name() == "binary"
                 }) {
-                    return Err(EvalError::Json(crate::context::JsonError::InvalidCharset));
+                    return Err(EvalError::Json(tidb_exprctx::context::JsonError::InvalidCharset));
                 }
             }
             return Ok(());
@@ -207,7 +207,7 @@ fn verify_json_schema_valid_constants(
         }
     }
     let empty = |argument| {
-        EvalError::Json(crate::context::JsonError::InvalidTextInParam {
+        EvalError::Json(tidb_exprctx::context::JsonError::InvalidTextInParam {
             argument,
             function: "json_schema_valid",
             reason: "The document is empty.",

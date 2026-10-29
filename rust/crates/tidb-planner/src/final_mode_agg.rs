@@ -39,7 +39,7 @@ use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 use crate::cardinality::ndv::GroupNdv;
 use crate::expression_rewriter::ColumnIdAllocator;
@@ -549,7 +549,7 @@ pub fn adjust_three_stage_multi_distinct_with_group_ndv_skew_ratio(
         group_ndv_skew_ratio,
     );
 
-    let eval_ctx = tidb_expr::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
+    let eval_ctx = tidb_exprctx::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
     let builder = RealFunctionBuilder::new(&eval_ctx);
     let mut projection_exprs = expand_schema
         .columns
@@ -832,7 +832,7 @@ pub fn convert_avg_for_mpp(
         return Ok(None);
     }
 
-    let ctx = tidb_expr::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
+    let ctx = tidb_exprctx::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
     let builder = RealFunctionBuilder::new(&ctx);
     let mut new_schema = Schema {
         columns: Vec::with_capacity(original_schema.columns.len() + agg.agg_funcs.len()),
@@ -1792,7 +1792,7 @@ fn new_partial_aggregate_for_store(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_expr::ZonedNoColumns;
+    use tidb_exprctx::ZonedNoColumns;
     use tidb_datatype::SessionTimeZone;
 
     fn ctx() -> ZonedNoColumns {

@@ -26,7 +26,7 @@ use tidb_expr::aggregation::{check_agg_push_down, names, AggFuncDesc};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::infer_pushdown::PushDownStore;
-use tidb_expr::NoColumns;
+use tidb_exprctx::NoColumns;
 
 /// Go `pkg/executor/aggfuncs/aggfunc_test.go:1331::TestAggApproxCountDistinctPushDown`:
 /// `approx_count_distinct` over a single `TypeLonglong` column can only be

@@ -134,7 +134,7 @@ impl KvTable {
     pub fn locate_reorg_partition(
         &self,
         row: &[Datum],
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<Option<i64>, KvTableError> {
         let Some(reorg) = self.partition_reorg.as_deref() else {
             return Ok(None);
@@ -267,7 +267,7 @@ impl KvTable {
         lazy_dup_check: bool,
         pessimistic: bool,
         check_in_prewrite: bool,
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
     ) -> Result<(), KvTableError> {
         if self.reorg_delete_only() || !self.reorganizes(physical_id) {
             return Ok(());

@@ -28,7 +28,7 @@ use super::builder::PreservingFunctionBuilder;
 use super::*;
 use crate::column::{Column, CorrelatedColumn};
 use crate::constant::Constant;
-use crate::context::NoColumns;
+use tidb_exprctx::context::NoColumns;
 use crate::expression::Expression;
 use crate::scalar_function::ScalarFunction;
 use tidb_ast::CiString;

@@ -34,7 +34,7 @@ pub enum CastError {
     /// `ErrDataTooLong`, `ErrWarnDataOutOfRange`, ...), rendered.
     Column(MysqlError),
     /// An evaluation error the cast returns as it is.
-    Eval(tidb_expr::EvalError),
+    Eval(tidb_exprctx::EvalError),
 }
 
 impl CastError {
@@ -68,7 +68,7 @@ pub enum ColumnError {
     /// A Go error already rendered with its identity.
     Mysql(MysqlError),
     /// A typed evaluation failure.
-    Eval(tidb_expr::EvalError),
+    Eval(tidb_exprctx::EvalError),
     /// A stored definition this layer cannot read (Go's parser errors).
     Parse(String),
 }
@@ -126,7 +126,7 @@ pub fn cast_table_value(
         field_type,
         column,
         ctx,
-        tidb_expr::Columns::type_flags(ctx),
+        tidb_exprctx::Columns::type_flags(ctx),
         force_ignore_truncate,
     )
 }
@@ -386,7 +386,7 @@ fn cast_contextual_value(
         Ok(converted) => converted,
         Err(error) => {
             if field.code() == tidb_datatype::FieldTypeCode::VectorFloat32 {
-                return Err(CastError::Eval(tidb_expr::EvalError::Vector(
+                return Err(CastError::Eval(tidb_exprctx::EvalError::Vector(
                     error.to_string(),
                 )));
             }
@@ -685,16 +685,16 @@ fn apply_zero_date(
 /// value" that every other failed column cast reports. That distinction is
 /// SQL-visible: it survives `sql_mode = ''` as an ERROR, because it is the
 /// document that cannot exist, not a value that can be clamped.
-pub fn json_write_error(error: &tidb_datatype::DatumValueError) -> Option<tidb_expr::EvalError> {
+pub fn json_write_error(error: &tidb_datatype::DatumValueError) -> Option<tidb_exprctx::EvalError> {
     let json = match error {
-        tidb_datatype::DatumValueError::InvalidJsonCharset => tidb_expr::JsonError::InvalidCharset,
+        tidb_datatype::DatumValueError::InvalidJsonCharset => tidb_exprctx::JsonError::InvalidCharset,
         tidb_datatype::DatumValueError::Json(tidb_datatype::BinaryJSONError::EmptyDocument) => {
-            tidb_expr::JsonError::EmptyText
+            tidb_exprctx::JsonError::EmptyText
         }
-        tidb_datatype::DatumValueError::Json(_) => tidb_expr::JsonError::InvalidText,
+        tidb_datatype::DatumValueError::Json(_) => tidb_exprctx::JsonError::InvalidText,
         _ => return None,
     };
-    Some(tidb_expr::EvalError::Json(json))
+    Some(tidb_exprctx::EvalError::Json(json))
 }
 
 /// A value as MySQL prints it inside a conversion error message.

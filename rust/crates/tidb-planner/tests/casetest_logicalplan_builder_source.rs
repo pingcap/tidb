@@ -18,7 +18,7 @@
 
 use tidb_ast::Stmt;
 use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
-use tidb_expr::ZonedNoColumns;
+use tidb_exprctx::ZonedNoColumns;
 use tidb_datatype::SessionTimeZone;
 use tidb_planner::expression_rewriter::ColumnIdAllocator;
 use tidb_planner::logical::LogicalPlan;

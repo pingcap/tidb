@@ -346,7 +346,6 @@ pub use constant_fold::{
     derive_constant_null_flag, fold_constant_in_mode,
     fold_constant_in_mode_preserving_warning_casts, ConstantFoldMode,
 };
-mod context;
 pub mod convert_charset;
 mod eval_error_sql;
 pub use eval_error_sql::{EvalErrorSql, ToTerror};
@@ -392,8 +391,9 @@ pub use field_name::{find_field_name, find_field_name_index_by_column, NonUnique
 
 pub use build::{BuildContext, BuiltStringLength, StringLengthFunction, StringLengthSignature};
 pub use coerce::{truthy_in, truthy_of};
-pub use context::{BlockEncryptionMode, Columns, CurrentTso, DecodeKeyFromString, ErrorLevel, EvalError, JsonError, NoColumns, SequenceEvalError, ZonedNoColumns};
-use tidb_datatype::SessionTimeZone;
+pub(crate) use tidb_exprctx::{BlockEncryptionMode, Columns, ErrorLevel, EvalError, JsonError, NoColumns, SequenceEvalError};
+#[cfg(test)]
+pub(crate) use tidb_exprctx::ZonedNoColumns;
 pub use grouping::{GroupingFunction, GroupingMetadata, GroupingMetadataError, GroupingMode};
 pub use like::{ilike_match, like_match_with_collation};
 pub use regexp::regexp_match_bin_collation;
@@ -712,7 +712,7 @@ pub fn apply_binary_with_div_precision(
     l: Datum,
     r: Datum,
     div_precision_increment: u32,
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<Datum, EvalError> {
     eval_binary_with_div_precision(op, l, r, div_precision_increment, ctx)
 }
@@ -721,7 +721,7 @@ pub fn apply_binary_with_div_precision(
 pub fn apply_unary(
     op: tidb_ast::UnaryOp,
     v: Datum,
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<Datum, EvalError> {
     eval_unary(op, v, ops::Operand::Literal, ctx)
 }

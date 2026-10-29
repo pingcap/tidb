@@ -36,7 +36,7 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::{Constant, Expression, ScalarFunction};
 use tidb_expr::schema::Schema;
 
-use tidb_expr::NoColumns;
+use tidb_exprctx::NoColumns;
 
 use crate::executor::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;

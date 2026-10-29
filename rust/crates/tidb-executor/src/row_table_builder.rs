@@ -195,7 +195,7 @@ impl<'a> BuildContext<'a> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RowTableBuildError {
     /// Original expression error from the build-side filter.
-    Expression(tidb_expr::EvalError),
+    Expression(tidb_exprctx::EvalError),
     /// Canonical SQL cancellation, including quota exhaustion before allocation.
     Killed(tidb_mysql::errors::SqlError),
     /// Codec failure while constructing the chunk's join keys.

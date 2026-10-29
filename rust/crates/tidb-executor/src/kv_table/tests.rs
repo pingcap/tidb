@@ -120,13 +120,13 @@ fn writable_check_constraints_guard_insert_and_update() {
         .expect("persisted CHECK expression builds");
 
     let handle = table
-        .insert_row(&[Datum::Int(1), Datum::Null], &tidb_expr::NoColumns)
+        .insert_row(&[Datum::Int(1), Datum::Null], &tidb_exprctx::NoColumns)
         .expect("TRUE passes CHECK");
     table
-        .insert_row(&[Datum::Null, Datum::Null], &tidb_expr::NoColumns)
+        .insert_row(&[Datum::Null, Datum::Null], &tidb_exprctx::NoColumns)
         .expect("UNKNOWN passes CHECK");
     assert!(matches!(
-        table.insert_row(&[Datum::Int(-1), Datum::Null], &tidb_expr::NoColumns),
+        table.insert_row(&[Datum::Int(-1), Datum::Null], &tidb_exprctx::NoColumns),
         Err(KvTableError::Mysql(error))
             if error.equal(&tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED)
                 && error.message == "Check constraint 'positive_a' is violated."
@@ -515,7 +515,7 @@ fn update_rewrites_only_index_entries_whose_bytes_change() {
     table
         .insert_row(
             &[Datum::Int(1), Datum::Bytes(b"s0".to_vec()), Datum::Int(10)],
-            &tidb_expr::NoColumns,
+            &tidb_exprctx::NoColumns,
         )
         .unwrap();
     let handle = TableHandle::Int(1);
@@ -585,20 +585,20 @@ fn row_conflicts_only_include_matching_partial_indexes() {
     table
         .insert_row(
             &[Datum::Int(1), Datum::Bytes(b"same".to_vec())],
-            &tidb_expr::NoColumns,
+            &tidb_exprctx::NoColumns,
         )
         .unwrap();
     assert!(table
         .row_conflicts(
             &[Datum::Int(-1), Datum::Bytes(b"same".to_vec())],
-            &tidb_expr::NoColumns
+            &tidb_exprctx::NoColumns
         )
         .unwrap()
         .is_empty());
     let conflicts = table
         .row_conflicts(
             &[Datum::Int(2), Datum::Bytes(b"same".to_vec())],
-            &tidb_expr::NoColumns,
+            &tidb_exprctx::NoColumns,
         )
         .unwrap();
     assert_eq!(conflicts.len(), 1);
@@ -659,7 +659,7 @@ fn a_nonpublic_index_is_written_by_its_backfill_state() {
         };
         table.add_nonpublic_index(index.clone(), state, backfill);
         let row = [Datum::Int(7), Datum::Null];
-        table.insert_row(&row, &tidb_expr::NoColumns).unwrap();
+        table.insert_row(&row, &tidb_exprctx::NoColumns).unwrap();
         // No reader sees an index a DDL has not made public.
         assert!(table.index_entries_for_check(1).is_err());
         let handle = table
@@ -733,10 +733,10 @@ fn test_unique_index_multiple_null_entries() {
     );
 
     table
-        .insert_row(&[Datum::Int(1), Datum::Null], &tidb_expr::NoColumns)
+        .insert_row(&[Datum::Int(1), Datum::Null], &tidb_exprctx::NoColumns)
         .unwrap();
     table
-        .insert_row(&[Datum::Int(2), Datum::Null], &tidb_expr::NoColumns)
+        .insert_row(&[Datum::Int(2), Datum::Null], &tidb_exprctx::NoColumns)
         .unwrap();
     assert_eq!(
         table
@@ -797,10 +797,10 @@ fn test_iter_records() {
     );
     table.set_pk_handle_offset(0);
     table
-        .insert_row(&[Datum::Int(-1), Datum::Int(2)], &tidb_expr::NoColumns)
+        .insert_row(&[Datum::Int(-1), Datum::Int(2)], &tidb_exprctx::NoColumns)
         .unwrap();
     table
-        .insert_row(&[Datum::Int(2), Datum::Null], &tidb_expr::NoColumns)
+        .insert_row(&[Datum::Int(2), Datum::Null], &tidb_exprctx::NoColumns)
         .unwrap();
 
     let rows = table
@@ -831,7 +831,7 @@ fn scan_reports_the_handles_the_key_codec_wrote() {
         handles.push(
             t.insert_row(
                 &[Datum::Int(i * 10), Datum::Bytes(b"x".to_vec())],
-                &tidb_expr::NoColumns,
+                &tidb_exprctx::NoColumns,
             )
             .unwrap(),
         );
@@ -878,7 +878,7 @@ fn scan_covers_the_whole_table_and_stops_at_its_range() {
     for i in 0..3 {
         t.insert_row(
             &[Datum::Int(i), Datum::Bytes(b"x".to_vec())],
-            &tidb_expr::NoColumns,
+            &tidb_exprctx::NoColumns,
         )
         .unwrap();
     }
@@ -887,7 +887,7 @@ fn scan_covers_the_whole_table_and_stops_at_its_range() {
     neighbour
         .insert_row(
             &[Datum::Int(99), Datum::Bytes(b"y".to_vec())],
-            &tidb_expr::NoColumns,
+            &tidb_exprctx::NoColumns,
         )
         .unwrap();
 
@@ -914,9 +914,9 @@ fn insert_encodes_real_bytes_and_scan_decodes() {
     let mut t = test_table();
     let mut s1 = Datum::Null;
     s1.set_bytes(b"hello".to_vec());
-    t.insert_row(&[Datum::Int(7), s1.clone()], &tidb_expr::NoColumns)
+    t.insert_row(&[Datum::Int(7), s1.clone()], &tidb_exprctx::NoColumns)
         .unwrap();
-    t.insert_row(&[Datum::Int(8), Datum::Null], &tidb_expr::NoColumns)
+    t.insert_row(&[Datum::Int(8), Datum::Null], &tidb_exprctx::NoColumns)
         .unwrap();
     assert_eq!(t.len(), 2);
 
@@ -940,7 +940,7 @@ fn table_scan_exec_emits_chunks() {
     let mut t = test_table();
     let mut s = Datum::Null;
     s.set_bytes(b"x".to_vec());
-    t.insert_row(&[Datum::Int(1), s], &tidb_expr::NoColumns)
+    t.insert_row(&[Datum::Int(1), s], &tidb_exprctx::NoColumns)
         .unwrap();
 
     let mut out_cols = Vec::new();
@@ -1039,7 +1039,7 @@ fn a_short_common_handle_indexes_under_the_key_the_delete_path_computes() {
                 Datum::Decimal(tidb_datatype::Decimal::from_int(5)),
                 Datum::Int(42),
             ],
-            &tidb_expr::NoColumns,
+            &tidb_exprctx::NoColumns,
         )
         .unwrap();
     // The handle a WRITE derives from the row and the handle a READ

@@ -36,7 +36,7 @@ fn json_comparison_parses_an_explicit_cast_string_as_a_document() {
     // pkg/expression/builtin_compare.go::generateCmpSigs clears
     // ParseToJSONFlag on non-column JSON operands. Therefore the explicit
     // cast contributes the JSON string "1", not the JSON number 1.
-    use crate::context::NoColumns;
+    use tidb_exprctx::context::NoColumns;
     use crate::rewriter::{rewrite_expr_resolved, ColumnResolver};
     use tidb_ast::{QueryStmt, SelectField, Stmt};
     use tidb_datatype::{BinaryJSON, FieldType, FieldTypeCode};
@@ -166,7 +166,7 @@ fn eval_over_date_column(sql: &str, code: tidb_datatype::FieldTypeCode, literal:
         };
     let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(&[field_type], 1);
     chunk.append_time(0, parsed.time);
-    match rewritten.eval(&crate::context::NoColumns, chunk.get_row(0)) {
+    match rewritten.eval(&tidb_exprctx::context::NoColumns, chunk.get_row(0)) {
         Ok(value) => value.label(),
         Err(err) => format!("{err:?}"),
     }

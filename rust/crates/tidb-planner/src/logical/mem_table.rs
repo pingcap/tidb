@@ -177,7 +177,7 @@ impl LogicalMemTable {
     /// extractor, and whatever it does not claim comes back.
     pub fn predicate_push_down(
         &mut self,
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
         schema: &Schema,
         names: &[FieldName],
         predicates: Vec<Expression>,

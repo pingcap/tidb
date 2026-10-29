@@ -23,7 +23,7 @@ use tidb_executor::mem_table::MemTableSourceExec;
 use tidb_executor::window::{
     WindowBound, WindowExec, WindowFrameSpec, WindowFuncSpec, WindowFunction,
 };
-use tidb_expr::NoColumns;
+use tidb_exprctx::NoColumns;
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
@@ -379,7 +379,8 @@ fn moving_count_evaluates_only_entering_and_leaving_rows() {
         atomic::{AtomicUsize, Ordering},
     };
     use tidb_expr::constant::{Constant, ParamMarker};
-    use tidb_expr::{Columns, EvalError};
+    use tidb_exprctx::Columns;
+use tidb_exprctx::EvalError;
 
     struct Parameters(Arc<AtomicUsize>);
     impl Columns for Parameters {
@@ -736,7 +737,8 @@ fn partition_aggregates_are_evaluated_once_across_chunks() {
         atomic::{AtomicUsize, Ordering},
     };
     use tidb_expr::constant::{Constant, ParamMarker};
-    use tidb_expr::{Columns, EvalError};
+    use tidb_exprctx::Columns;
+use tidb_exprctx::EvalError;
     struct Parameters(Arc<AtomicUsize>);
     impl Columns for Parameters {
         fn get(&self, _: &[String]) -> Option<Datum> {
@@ -830,7 +832,8 @@ fn partition_aggregates_are_evaluated_once_across_chunks() {
 fn partition_update_precedes_lead_lag_result_evaluation() {
     use std::sync::{Arc, Mutex};
     use tidb_expr::constant::{Constant, ParamMarker};
-    use tidb_expr::{Columns, EvalError};
+    use tidb_exprctx::Columns;
+use tidb_exprctx::EvalError;
     struct Parameters(Arc<Mutex<Vec<usize>>>);
     impl Columns for Parameters {
         fn get(&self, _: &[String]) -> Option<Datum> {
@@ -915,7 +918,8 @@ fn partition_update_precedes_lead_lag_result_evaluation() {
 fn partition_update_error_precedes_aggregate_finalization_error() {
     use tidb_datatype::Decimal;
     use tidb_expr::constant::{Constant, ParamMarker};
-    use tidb_expr::{Columns, EvalError};
+    use tidb_exprctx::Columns;
+use tidb_exprctx::EvalError;
     struct FailingParameter;
     impl Columns for FailingParameter {
         fn get(&self, _: &[String]) -> Option<Datum> {
@@ -1004,7 +1008,8 @@ fn nonranking_windows_do_not_compare_order_keys() {
         atomic::{AtomicUsize, Ordering},
     };
     use tidb_expr::constant::{Constant, ParamMarker};
-    use tidb_expr::{Columns, EvalError};
+    use tidb_exprctx::Columns;
+use tidb_exprctx::EvalError;
     struct Parameters(Arc<AtomicUsize>);
     impl Columns for Parameters {
         fn get(&self, _: &[String]) -> Option<Datum> {
@@ -1067,7 +1072,8 @@ fn nonranking_windows_do_not_compare_order_keys() {
 fn ranking_comparisons_follow_result_evaluation_order() {
     use std::sync::{Arc, Mutex};
     use tidb_expr::constant::{Constant, ParamMarker};
-    use tidb_expr::{Columns, EvalError};
+    use tidb_exprctx::Columns;
+use tidb_exprctx::EvalError;
     struct Parameters(Arc<Mutex<Vec<usize>>>);
     impl Columns for Parameters {
         fn get(&self, _: &[String]) -> Option<Datum> {

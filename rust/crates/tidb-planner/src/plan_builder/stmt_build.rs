@@ -24,7 +24,7 @@
 //! Go's `session.ExecuteStmt` answers them around `Compile`.
 
 use tidb_ast::{AdminStmt, DdlStmt, SessionStmt, Stmt};
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 use tidb_hack::go_to_lower;
 use tidb_mysql::PrivilegeType;
 
@@ -405,7 +405,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         self.source.current_database()
                     );
                     if !drop.if_exists {
-                        return Err(PlanError::eval(tidb_expr::EvalError::Conversion(
+                        return Err(PlanError::eval(tidb_exprctx::EvalError::Conversion(
                             tidb_plannererrors::ERR_SP_DOES_NOT_EXIST.generate(message),
                         )));
                     }

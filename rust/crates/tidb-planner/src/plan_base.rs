@@ -50,7 +50,7 @@ use std::sync::Arc;
 use tidb_datatype::FieldName;
 use tidb_expr::column::Column;
 use tidb_expr::schema::Schema;
-use tidb_expr::EvalError;
+use tidb_exprctx::EvalError;
 
 use crate::stats_info::StatsInfo;
 

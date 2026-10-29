@@ -179,8 +179,8 @@ impl CopExecError {
     }
 }
 
-impl From<tidb_expr::EvalError> for CopExecError {
-    fn from(error: tidb_expr::EvalError) -> Self {
+impl From<tidb_exprctx::EvalError> for CopExecError {
+    fn from(error: tidb_exprctx::EvalError) -> Self {
         let error = error.to_sql_error();
         CopExecError::Sql {
             code: error.code,
@@ -1846,9 +1846,9 @@ fn eval_shared(
 /// Decode without a DAG for standalone callers. Request execution uses
 /// `convert_expr_with_context` to retain its own settings and scan types.
 pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
-    use tidb_expr::Columns;
+    use tidb_exprctx::Columns;
     let context = Arc::new(RequestEvalContext::new(
-        tidb_expr::NoColumns.time_zone(),
+        tidb_exprctx::NoColumns.time_zone(),
         4,
         tidb_model::flags::FLAG_TRUNCATE_AS_WARNING
             | tidb_model::flags::FLAG_DIVIDED_BY_ZERO_AS_WARNING,

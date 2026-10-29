@@ -183,7 +183,7 @@ pub enum EvalError {
     /// Go `types.ErrWrongValue` (1292) / `ErrWrongValue2` (1525) raised while
     /// BUILDING a typed temporal literal (`DATE 'lit'`, `TIMESTAMP 'lit'`).
     /// Unlike the cast of the same text, these reject the whole statement --
-    /// see `crate::time_literal` for the three ways the literal differs from
+    /// see `tidb_expr::time_literal` for the three ways the literal differs from
     /// the cast. The code is carried because this one syntax raises both.
     WrongTemporalLiteral {
         /// The MySQL error number, 1292 or 1525.
@@ -801,7 +801,7 @@ pub trait Columns {
 
     /// Removes and returns the warnings at and after `bookmark`. The plan
     /// builder's fold uses this to RE-HOME fold-time diagnostics into the
-    /// thread stash ([`crate::constant_fold::record_fold_warning`]): the
+    /// thread stash (`tidb_expr::constant_fold::record_fold_warning`): the
     /// stash survives the statement boundary's warning reset, while entries
     /// appended straight into the live list during PLANNING are cleared by
     /// it before execution reads them.
@@ -963,7 +963,7 @@ impl Columns for NoColumns {
 
 /// [`NoColumns`] carrying the session's `time_zone`.
 ///
-/// The eval-time twin of [`crate::rewriter::ZonedNoResolver`], and it exists
+/// The eval-time twin of `tidb_expr::rewriter::ZonedNoResolver`, and it exists
 /// for the same reason: [`NoColumns`] answers the trait's DEFAULT zone
 /// (`UTC+11`, the goeval oracle's mock session), which is nobody's session.
 /// Any evaluation that HAS a session behind it -- restoring a virtual

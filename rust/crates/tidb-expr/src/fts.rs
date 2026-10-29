@@ -824,7 +824,7 @@ mod tests {
     // ---------------------------------------------------------------
 
     use crate::column::Column;
-    use crate::context::NoColumns;
+    use tidb_exprctx::context::NoColumns;
 
     fn varchar_column(unique_id: i64) -> Expression {
         Expression::Column(Column::new(

@@ -180,7 +180,7 @@ use tidb_chunk::row_container::RowContainer;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 use tidb_memory::{ArcAction, Tracker};
 
 /// Which side, if any, keeps rows that match nothing.

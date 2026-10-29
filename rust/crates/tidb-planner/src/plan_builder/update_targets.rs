@@ -81,7 +81,7 @@ pub(super) fn assignment_column(assignment: &Assignment) -> Result<QualifiedColu
     path_column(&assignment.col)
 }
 
-impl<S: TableSource, C: tidb_expr::Columns> PlanBuilder<'_, S, C> {
+impl<S: TableSource, C: tidb_exprctx::Columns> PlanBuilder<'_, S, C> {
     /// A table reference's schema and name, the current database filling a
     /// missing schema.
     pub(super) fn update_table_path(&self, table: &TableRef) -> Result<(String, String), PlanError> {

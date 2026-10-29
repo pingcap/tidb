@@ -26,7 +26,7 @@
 use tidb_datatype::RuntimeCollator;
 use std::hash::{Hash, Hasher};
 
-use crate::context::EvalError;
+use tidb_exprctx::context::EvalError;
 use crate::expr_collation::CollationInfo;
 use crate::expression::{ConstLevel, Expression, COLUMN_FLAG};
 use crate::schema::Schema;

@@ -16,7 +16,7 @@
 //! `ErrTableaccessDenied` `authErr`).
 
 use tidb_ast::{DeleteKind, DeleteStmt, Expr, InsertStmt, UpdateKind, UpdateStmt};
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 use tidb_infoschema::table_source::TableSource;
 use super::dml_source::{dml_source_select, single_table_join};

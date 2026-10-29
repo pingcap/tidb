@@ -21,7 +21,7 @@ use std::cmp::Ordering;
 
 use tidb_datatype::{BinaryLiteralIntOutcome, Datum, Decimal, StringDatum};
 
-use crate::context::EvalError;
+use tidb_exprctx::context::EvalError;
 
 /// The integral portion of a datum, retaining signedness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

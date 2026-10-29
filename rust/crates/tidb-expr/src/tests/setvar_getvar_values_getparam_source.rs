@@ -28,7 +28,7 @@ use crate::scalar_function::ScalarFunction;
 use tidb_ast::CiString;
 use tidb_datatype::{FieldType, FieldTypeCode as C, Time, TimeType};
 
-/// A [`crate::context::Columns`] stub whose only live behavior is a user
+/// A [`tidb_exprctx::context::Columns`] stub whose only live behavior is a user
 /// variable store behind interior mutability — the value-domain stand-in for
 /// Go's `SessionVars.SetUserVarVal`/`GetUserVarVal`.
 #[derive(Default)]
@@ -42,7 +42,7 @@ impl VarStore {
     }
 }
 
-impl crate::context::Columns for VarStore {
+impl tidb_exprctx::context::Columns for VarStore {
     fn get(&self, _: &[String]) -> Option<Datum> {
         None
     }
@@ -59,7 +59,7 @@ struct ParamStore {
     params: Vec<Datum>,
 }
 
-impl crate::context::Columns for ParamStore {
+impl tidb_exprctx::context::Columns for ParamStore {
     fn get(&self, _: &[String]) -> Option<Datum> {
         None
     }
@@ -85,7 +85,7 @@ impl InsertValuesStore {
     }
 }
 
-impl crate::context::Columns for InsertValuesStore {
+impl tidb_exprctx::context::Columns for InsertValuesStore {
     fn get(&self, _: &[String]) -> Option<Datum> {
         None
     }

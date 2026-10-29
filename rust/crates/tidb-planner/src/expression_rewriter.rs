@@ -138,7 +138,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::find_field_name;
 use tidb_expr::schema::{merge_schema, Schema};
 use tidb_expr::simple_expr::{compose_cnf_condition, compose_dnf_condition, extract_columns};
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 use crate::find_best_task::LogicalJoinType;
 use crate::logical::aggregation::LogicalAggregation;
@@ -399,7 +399,7 @@ pub enum RewriteError {
     /// A scalar function the builder refused, with Go's message.
     FunctionBuild(String),
     /// An evaluation error that keeps its typed identity.
-    Eval(tidb_expr::EvalError),
+    Eval(tidb_exprctx::EvalError),
     /// An aggregate function the builder refused, with Go's message.
     AggFuncBuild(String),
     /// A plan whose rewriter has no schema to resolve columns against.
@@ -878,7 +878,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             return self.new_function(op, tiny(), vec![l.clone(), r.clone()]);
         }
         if r_len != l_len {
-            return Err(RewriteError::Eval(tidb_expr::EvalError::OperandColumns(
+            return Err(RewriteError::Eval(tidb_exprctx::EvalError::OperandColumns(
                 l_len,
             )));
         }
@@ -1300,10 +1300,10 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         let can_multi_col = (!all && op == CompareOp::Eq) || (all && op == CompareOp::Ne);
         let l_len = get_row_len(lexpr);
         if !can_multi_col && (l_len != 1 || np_schema.len() != 1) {
-            return Err(RewriteError::Eval(tidb_expr::EvalError::OperandColumns(1)));
+            return Err(RewriteError::Eval(tidb_exprctx::EvalError::OperandColumns(1)));
         }
         if l_len != np_schema.len() {
-            return Err(RewriteError::Eval(tidb_expr::EvalError::OperandColumns(
+            return Err(RewriteError::Eval(tidb_exprctx::EvalError::OperandColumns(
                 l_len,
             )));
         }
@@ -1788,7 +1788,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         let np_schema = np.schema().ok_or(RewriteError::MissingSchema)?.clone();
         let l_len = get_row_len(lexpr);
         if l_len != np_schema.len() {
-            return Err(RewriteError::Eval(tidb_expr::EvalError::OperandColumns(
+            return Err(RewriteError::Eval(tidb_exprctx::EvalError::OperandColumns(
                 l_len,
             )));
         }

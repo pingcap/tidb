@@ -26,7 +26,7 @@ pub use static_mutate::{resolve_statement_clock, StaticMutateContext};
 
 /// Go `table.MutateContext` together with its expression context
 /// (`GetExprCtx`), which is the supertrait.
-pub trait MutateContext: tidb_expr::Columns + Send + Sync {
+pub trait MutateContext: tidb_exprctx::Columns + Send + Sync {
     /// The implementation, for the layer that built it to read back.
     fn as_any(&self) -> &dyn std::any::Any;
 

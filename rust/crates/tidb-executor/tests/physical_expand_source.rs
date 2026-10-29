@@ -17,7 +17,7 @@ use tidb_executor::executor::{Executor, ExecutorMeta};
 use tidb_executor::expand::ExpandExec;
 use tidb_executor::projection::ProjectionExec;
 use tidb_executor::table_dual::TableDualExec;
-use tidb_expr::NoColumns;
+use tidb_exprctx::NoColumns;
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
 use tidb_expr::expression::Expression;

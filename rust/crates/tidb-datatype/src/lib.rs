@@ -69,7 +69,6 @@ mod duration_tests;
 #[cfg(test)]
 mod collation_tests;
 
-
 #[cfg(test)]
 mod enum_set_tests;
 
@@ -99,24 +98,11 @@ pub use binary_literal::{
     BinaryLiteralWidth, BitLiteral, HexLiteral, InvalidBinaryLiteralWidth,
 };
 pub(crate) use tidb_charset::{charset, encoding_base};
-pub(crate) use tidb_charset::{
-    add_charset, add_collation, add_supported_collation, charset_known, get_charset_info,
-    get_charset_info_by_id, get_collation_by_id, get_collation_by_name,
-    get_default_charset_and_collate, get_default_collation, get_default_collation_legacy,
-    get_supported_charsets, get_supported_collations, is_new_collation_supported, remove_charset,
-    valid_charset_and_collation, Charset, CharsetError, CharsetInfo, CharsetName, Collation,
-    CollationInfo, PAD_NONE, PAD_SPACE, TIFLASH_SUPPORTED_CHARSETS,
-};
-pub(crate) use tidb_charset::{TransformOp, TransformResult};
-pub(crate) use tidb_charset::{lookup_encoding, HtmlEncoding, HtmlEncodingError};
-pub(crate) use tidb_charset::{
-    count_valid_bytes, count_valid_bytes_decode, find_encoding, find_encoding_take_utf8_as_noop,
-    is_supported_encoding, Encoding, EncodingError, EncodingResult, EncodingType,
-};
-pub(crate) use tidb_charset::{
-    Utf8Encoding, Utf8Mb3StrictEncoding, Utf8Op, Utf8TransformError, Utf8TransformResult,
-    UTF8_ENCODING, UTF8_MB3_STRICT_ENCODING,
-};
+pub(crate) use tidb_charset::{Charset, CharsetError, Collation, CollationInfo};
+pub(crate) use tidb_charset::TransformOp;
+
+pub(crate) use tidb_charset::{find_encoding, find_encoding_take_utf8_as_noop, Encoding, EncodingResult, EncodingType};
+
 pub use char_length::{produce_char_value, DataTooLongError};
 pub use collation::{
     CollationCollator,
@@ -201,11 +187,11 @@ pub use field_type::{
     MAX_DECIMAL_SCALE, MAX_DECIMAL_WIDTH, STRICT_INTEGER_DISPLAY_WIDTH, UNSPECIFIED_LENGTH,
     VAR_STORAGE_LEN,
 };
-pub(crate) use tidb_parser_format::{output_format, FlatFormatter, FormatFragment, Formatter, IndentFormatter};
+
 pub use fsp::{
     align_frac, check_fsp, parse_frac, FspError, DEFAULT_FSP, MAX_FSP, MIN_FSP, UNSPECIFIED_FSP,
 };
-pub(crate) use tidb_goruntime::{decode_go_utf8_lossy, go_chars, GoChars, GoString, GoStringSource};
+pub(crate) use tidb_goruntime::{GoString, GoStringSource};
 pub use json_path::{
     parse_json_path_expr, JSONPathArraySelection, JSONPathError, JSONPathExpression, JSONPathLeg,
 };

@@ -467,7 +467,7 @@ pub trait PreparedExec: super::CompilerSession {
                             DriverError::Unsupported(_)
                                 | DriverError::Exec(crate::ExecError::Unsupported(_))
                                 | DriverError::Exec(crate::ExecError::Eval(
-                                    tidb_expr::EvalError::Unsupported(_)
+                                    tidb_exprctx::EvalError::Unsupported(_)
                                 ))
                         )
                     };

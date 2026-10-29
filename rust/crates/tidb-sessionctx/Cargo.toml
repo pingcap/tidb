@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB session context: Go pkg/sessionctx, the context a session hands every statement's planner and executor (Rust rewrite)."
 
 [dependencies]
+tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-infoschema-context = { path = "../tidb-infoschema-context" }
 tidb-metabuild = { path = "../tidb-metabuild" }
 tidb-tblctx = { path = "../tidb-tblctx" }

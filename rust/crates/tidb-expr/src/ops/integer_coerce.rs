@@ -98,7 +98,7 @@ pub(crate) fn integer_binary(
     op: BinaryOp,
     a: Integer,
     b: Integer,
-    ctx: &dyn crate::context::Columns,
+    ctx: &dyn tidb_exprctx::context::Columns,
 ) -> Result<Datum, EvalError> {
     use BinaryOp::*;
     let lhs_unsigned = matches!(a, Integer::Unsigned(_));
@@ -320,7 +320,7 @@ pub(super) fn shift_right(a: u64, b: u64) -> u64 {
 mod source_tests {
     use super::*;
     use crate::column::Column;
-    use crate::context::NoColumns;
+    use tidb_exprctx::context::NoColumns;
     use crate::expression::Expression;
     use tidb_datatype::{FieldTypeBuilder, FieldTypeCode, FieldTypeFlags};
 

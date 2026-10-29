@@ -20,7 +20,8 @@ use crate::ExecError;
 use tidb_datatype::{Datum, EvalType, FieldTypeCode};
 use tidb_expr::aggregation::{AggFuncDesc, AggFunctionMode};
 use tidb_expr::expression::Expression;
-use tidb_expr::{eval_expression_once, Columns};
+use tidb_expr::eval_expression_once;
+use tidb_exprctx::Columns;
 
 impl AggFunc {
     /// Build one execution's aggregate from a resolved, type-inferred descriptor.

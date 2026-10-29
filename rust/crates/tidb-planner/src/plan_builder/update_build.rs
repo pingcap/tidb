@@ -21,7 +21,7 @@ use tidb_ast::{Expr, SelectStmt, UpdateKind, UpdateStmt};
 use tidb_datatype::FieldName;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 use tidb_hack::go_to_lower;
 
 use tidb_infoschema::table_source::TableSource;

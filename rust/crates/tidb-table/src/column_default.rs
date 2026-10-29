@@ -90,7 +90,7 @@ pub struct ComputedDefault {
     /// accepted at DDL time -- Go only whitelists the function -- and fails
     /// with the rewriter's own error (1054) when an INSERT needs the value, so
     /// that failure is kept here rather than refused at CREATE.
-    pub expr: Result<Expression, tidb_expr::EvalError>,
+    pub expr: Result<Expression, tidb_exprctx::EvalError>,
     /// Whether ADD COLUMN may evaluate this once for pre-existing rows.
     pub added_origin_safety: AddedOriginSafety,
 }
@@ -661,10 +661,10 @@ fn func_call_default(
 /// at INSERT, not at CREATE) and refuses every other failure.
 fn build_deferred_expression(
     expr: &Expr,
-) -> Result<Result<Expression, tidb_expr::EvalError>, MysqlError> {
+) -> Result<Result<Expression, tidb_exprctx::EvalError>, MysqlError> {
     match rewrite_expr_resolved(expr, &NoResolver) {
         Ok(expression) => Ok(Ok(expression)),
-        Err(error @ tidb_expr::EvalError::UnknownColumnInClause(..)) => Ok(Err(error)),
+        Err(error @ tidb_exprctx::EvalError::UnknownColumnInClause(..)) => Ok(Err(error)),
         Err(_) => Err(MysqlError::unknown(
             "a DEFAULT expression this node cannot evaluate",
         )),
@@ -871,9 +871,9 @@ pub fn evaluate(
     field_type: &FieldType,
     column_info_version: u64,
     flags: ConversionFlags,
-    ctx: &dyn tidb_expr::Columns,
+    ctx: &dyn tidb_exprctx::Columns,
     row: tidb_chunk::row::Row<'_>,
-) -> Result<Datum, tidb_expr::EvalError> {
+) -> Result<Datum, tidb_exprctx::EvalError> {
     let ColumnDefault::Computed(computed) = default else {
         let ColumnDefault::Value(value) = default else {
             unreachable!("a default is settled or computed")
@@ -886,7 +886,7 @@ pub fn evaluate(
             &ctx.time_zone(),
         )
         .map(|converted| converted.value)
-        .map_err(|_| tidb_expr::EvalError::Unsupported("a stored DEFAULT the column cannot hold"));
+        .map_err(|_| tidb_exprctx::EvalError::Unsupported("a stored DEFAULT the column cannot hold"));
     };
     let value = computed.expr.as_ref().map_err(Clone::clone)?.eval(ctx, row)?;
     if value.is_null() {
@@ -900,9 +900,9 @@ pub fn evaluate(
         .map(|converted| converted.value)
         .map_err(|error| {
             if field_type.code() == FieldTypeCode::VectorFloat32 {
-                tidb_expr::EvalError::Vector(error.to_string())
+                tidb_exprctx::EvalError::Vector(error.to_string())
             } else {
-                tidb_expr::EvalError::Unsupported("a computed DEFAULT the column cannot hold")
+                tidb_exprctx::EvalError::Unsupported("a computed DEFAULT the column cannot hold")
             }
         })
 }

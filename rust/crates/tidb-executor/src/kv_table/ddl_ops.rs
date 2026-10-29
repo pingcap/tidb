@@ -33,14 +33,14 @@ pub trait KvTableDdl {
     fn create_index_in(
         &mut self,
         index: KvIndex,
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
         decode_context: &RowDecodeContext,
     ) -> Result<usize, KvTableError>;
 
     fn backfill_index(
         &mut self,
         index: KvIndex,
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
         decode_context: &RowDecodeContext,
     ) -> Result<usize, KvTableError>;
 
@@ -57,7 +57,7 @@ pub trait KvTableDdl {
     fn recover_index(
         &mut self,
         index_name: &str,
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
         decode_context: &RowDecodeContext,
     ) -> Result<Option<(i64, i64)>, KvTableError>;
 
@@ -90,7 +90,7 @@ impl KvTableDdl for KvTable {
     fn create_index_in(
         &mut self,
         index: KvIndex,
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
         decode_context: &RowDecodeContext,
     ) -> Result<usize, KvTableError> {
         // Go's transaction owns backfill rollback: the backfill's writes sit
@@ -108,7 +108,7 @@ impl KvTableDdl for KvTable {
     fn backfill_index(
         &mut self,
         index: KvIndex,
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
         decode_context: &RowDecodeContext,
     ) -> Result<usize, KvTableError> {
         let zone = ctx.time_zone();
@@ -170,7 +170,7 @@ impl KvTableDdl for KvTable {
     fn recover_index(
         &mut self,
         index_name: &str,
-        ctx: &dyn tidb_expr::Columns,
+        ctx: &dyn tidb_exprctx::Columns,
         decode_context: &RowDecodeContext,
     ) -> Result<Option<(i64, i64)>, KvTableError> {
         let Some(index) = self

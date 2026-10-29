@@ -46,7 +46,7 @@ fn sorted_fixture(n: i64, modulus: i64, nulls: bool) -> Vec<Vec<Datum>> {
     rows
 }
 
-fn large_duplicate_group_merge(memory: StatementMemory) -> super::JoinExec<tidb_expr::NoColumns> {
+fn large_duplicate_group_merge(memory: StatementMemory) -> super::JoinExec<tidb_exprctx::NoColumns> {
     let left = vec![vec![Datum::Int(1), Datum::Int(0)]];
     let right: Vec<Vec<Datum>> = (0..5000)
         .map(|value| vec![Datum::Int(1), Datum::Int(value)])

@@ -67,7 +67,7 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         allocator,
         column_allocator: &COLUMN_ALLOCATOR,
         builder: &TEST_BUILDER,
-        eval_context: &tidb_expr::NoColumns,
+        eval_context: &tidb_exprctx::NoColumns,
         use_plan_cache: false,
         plan_cache_marker: None,
         // Go's `AllowDeriveTopN` defaults ON in `sessionVars`.

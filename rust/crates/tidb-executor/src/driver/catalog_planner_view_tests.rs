@@ -205,7 +205,7 @@
         Arc::make_mut(od)
             .insert_row(
                 &[tidb_datatype::Datum::Int(1), tidb_datatype::Datum::Int(2)],
-                &tidb_expr::NoColumns,
+                &tidb_exprctx::NoColumns,
             )
             .unwrap();
         assert!(

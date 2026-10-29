@@ -52,7 +52,7 @@ pub fn compare_extreme(
     candidate: &Datum,
     current: &Datum,
     collation: Collation,
-) -> Result<std::cmp::Ordering, tidb_expr::EvalError> {
+) -> Result<std::cmp::Ordering, tidb_exprctx::EvalError> {
     fn name(datum: &Datum) -> Option<&[u8]> {
         match datum {
             Datum::Enum(value, _) => Some(value.name_bytes()),

@@ -1387,7 +1387,7 @@ mod tests {
                 .is_none_or(|task| task.invalid()),
             "Go builds no union whose branches all use one index");
         let must_not_evaluate =
-            |_: &Expression| -> Result<tidb_datatype::Datum, tidb_expr::EvalError> {
+            |_: &Expression| -> Result<tidb_datatype::Datum, tidb_exprctx::EvalError> {
                 panic!("physical property search must consume logical ranges")
             };
         // Go recomputes OR cardinality after choosing property-compatible

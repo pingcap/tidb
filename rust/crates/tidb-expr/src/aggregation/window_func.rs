@@ -20,7 +20,7 @@
 
 use super::names;
 use super::{AggDescError, BaseFuncDesc};
-use crate::context::Columns;
+use tidb_exprctx::context::Columns;
 use crate::expr_util::get_uint64_from_constant;
 use crate::expression::Expression;
 use tidb_datatype::FieldTypeFlags;

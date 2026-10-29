@@ -145,7 +145,8 @@ mod tests {
     use std::cell::Cell;
     use tidb_expr::column::Column;
     use tidb_expr::constant::{Constant, ParamMarker};
-    use tidb_expr::{EvalError, NoColumns};
+    use tidb_exprctx::EvalError;
+use tidb_exprctx::NoColumns;
 
     fn long() -> FieldType {
         FieldType::new(FieldTypeCode::LongLong)

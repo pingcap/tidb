@@ -171,7 +171,7 @@ impl Executor for BuildSource {
         assert_ne!(self.panic_at, Some(self.calls), "build source panic");
         if self.fail_at == Some(self.calls) {
             return Err(ExecError::Eval(
-                tidb_expr::EvalError::ParamIndexExceedParamCounts,
+                tidb_exprctx::EvalError::ParamIndexExceedParamCounts,
             ));
         }
         output.reset();
@@ -292,7 +292,7 @@ fn native_build_partition_spill_source() {
                 assert!(matches!(
                     result,
                     Err(ExecError::Eval(
-                        tidb_expr::EvalError::ParamIndexExceedParamCounts
+                        tidb_exprctx::EvalError::ParamIndexExceedParamCounts
                     ))
                 ));
             } else if concurrency == 1 || mode == 5 {
@@ -451,8 +451,8 @@ fn native_hash_join_recursive_restore_source() {
         column::Column,
         expression::{Constant, Expression, ScalarFunction},
         schema::Schema,
-        NoColumns,
     };
+    use tidb_exprctx::NoColumns;
     use tidb_spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
     for concurrency in [2, 4, 5] {
         for kind in [
@@ -794,11 +794,11 @@ fn native_build_stage_errors_join_workers_and_release_memory_source() {
         mode: usize,
         memory: &'a StatementMemory,
     }
-    impl tidb_expr::Columns for FilterContext<'_> {
+    impl tidb_exprctx::Columns for FilterContext<'_> {
         fn get(&self, _: &[String]) -> Option<tidb_datatype::Datum> {
             None
         }
-        fn param_value(&self, _: usize) -> Result<tidb_datatype::Datum, tidb_expr::EvalError> {
+        fn param_value(&self, _: usize) -> Result<tidb_datatype::Datum, tidb_exprctx::EvalError> {
             assert_ne!(self.mode, 2, "build worker panic");
             if self.mode == 3 {
                 self.memory
@@ -806,7 +806,7 @@ fn native_build_stage_errors_join_workers_and_release_memory_source() {
                     .send_kill_signal(KillSignal::QueryInterrupted);
             }
             if self.mode == 6 {
-                return Err(tidb_expr::EvalError::ParamIndexExceedParamCounts);
+                return Err(tidb_exprctx::EvalError::ParamIndexExceedParamCounts);
             }
             Ok(tidb_datatype::Datum::Int(1))
         }
@@ -848,7 +848,7 @@ fn native_build_stage_errors_join_workers_and_release_memory_source() {
         match mode {
             0 | 6 => assert!(matches!(
                 error,
-                ExecError::Eval(tidb_expr::EvalError::ParamIndexExceedParamCounts)
+                ExecError::Eval(tidb_exprctx::EvalError::ParamIndexExceedParamCounts)
             )),
             1 | 2 => assert!(
                 matches!(error, ExecError::Internal(ref message) if message.contains("build source panic") || message.contains("build worker panic"))
@@ -2226,8 +2226,8 @@ fn check_semi_family(
     use tidb_expr::{
         column::Column,
         expression::{Constant, Expression, ScalarFunction},
-        NoColumns,
     };
+    use tidb_exprctx::NoColumns;
     let int = FieldType::new(FieldTypeCode::LongLong);
     let types = vec![int.clone(); 2];
     let all_types = vec![int.clone(); 4];
@@ -2416,7 +2416,7 @@ fn check_semi_family(
         assert!(matches!(
             result,
             Err(ExecError::Eval(
-                tidb_expr::EvalError::ParamIndexExceedParamCounts
+                tidb_exprctx::EvalError::ParamIndexExceedParamCounts
             ))
         ));
         return;
@@ -2524,11 +2524,11 @@ fn native_hash_join_executor_lifecycle_source() {
         column::Column,
         expression::{Constant, Expression, ScalarFunction},
         schema::Schema,
-        NoColumns,
     };
+    use tidb_exprctx::NoColumns;
     use tidb_sqlkiller::KillSignal;
     fn statement_context_can_cross_worker_lanes<
-        C: tidb_expr::Columns + Clone + Send + Sync + 'static,
+        C: tidb_exprctx::Columns + Clone + Send + Sync + 'static,
     >() {
     }
     statement_context_can_cross_worker_lanes::<tidb_sessionctx::StmtContext>();
@@ -2746,7 +2746,7 @@ fn native_hash_join_executor_lifecycle_source() {
                         4 | 5 | 10 | 13 => assert!(matches!(
                             result,
                             Err(ExecError::Eval(
-                                tidb_expr::EvalError::ParamIndexExceedParamCounts
+                                tidb_exprctx::EvalError::ParamIndexExceedParamCounts
                             ))
                         )),
                         9 => assert!(matches!(result, Err(ExecError::MemoryExceedForQuery { .. }) | Err(ExecError::Killed(_)))
@@ -2958,7 +2958,7 @@ fn native_probe_stage_next_close_and_error_source() {
                             max_chunk_size: 3,
                         };
                         let filter = tidb_executor::base_join_probe::JoinFilter::new(
-                            tidb_expr::NoColumns,
+                            tidb_exprctx::NoColumns,
                             vec![tidb_expr::expression::Expression::ScalarFunction(
                                 tidb_expr::expression::ScalarFunction::new(
                                     tidb_ast::CiString::new("getparam"),
@@ -3080,7 +3080,7 @@ fn native_probe_stage_next_close_and_error_source() {
                     1 | 8 => assert!(matches!(
                         result,
                         Err(ExecError::Eval(
-                            tidb_expr::EvalError::ParamIndexExceedParamCounts
+                            tidb_exprctx::EvalError::ParamIndexExceedParamCounts
                         ))
                     )),
                     2 | 3 => assert!(
@@ -3172,8 +3172,8 @@ fn check_join_other_condition(join_type: JoinType, residual: bool, filtered: boo
     use tidb_expr::{
         column::Column,
         expression::{Expression, ScalarFunction},
-        NoColumns,
     };
+    use tidb_exprctx::NoColumns;
     let int = FieldType::new(FieldTypeCode::LongLong);
     let string = FieldType::new(FieldTypeCode::VarString);
     let left_types = vec![
@@ -3510,7 +3510,7 @@ fn check_join_other_condition(join_type: JoinType, residual: bool, filtered: boo
                 assert_eq!(
                     failing_probe.probe(&mut output, &tidb_sqlkiller::SqlKiller::default()),
                     Err(tidb_executor::base_join_probe::ProbeError::Expression(
-                        tidb_expr::EvalError::ParamIndexExceedParamCounts
+                        tidb_exprctx::EvalError::ParamIndexExceedParamCounts
                     ))
                 );
                 assert_eq!(output.num_rows(), 0);
@@ -3522,7 +3522,7 @@ fn check_join_other_condition(join_type: JoinType, residual: bool, filtered: boo
                         Chunk::new(&output_types, 128, 128)
                     }),
                     Err(ExecError::Eval(
-                        tidb_expr::EvalError::ParamIndexExceedParamCounts
+                        tidb_exprctx::EvalError::ParamIndexExceedParamCounts
                     ))
                 ));
             }
@@ -3878,7 +3878,7 @@ use tidb_charset::Collation;
                     plan,
                     source(),
                     source(),
-                    tidb_expr::NoColumns,
+                    tidb_exprctx::NoColumns,
                     memory.clone(),
                 );
                 native.open().unwrap();

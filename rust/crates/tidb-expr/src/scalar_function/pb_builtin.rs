@@ -16,7 +16,7 @@
 //! SQL function names are diagnostic metadata, never an overload selector here.
 
 use super::{cast_json_argument_value, eval_numeric_operand_row, eval_numeric_row, ScalarFunction};
-use crate::context::{Columns, EvalError};
+use tidb_exprctx::context::{Columns, EvalError};
 use crate::expression::ConstLevel;
 use tidb_ast::BinaryOp;
 use tidb_chunk::row::Row;

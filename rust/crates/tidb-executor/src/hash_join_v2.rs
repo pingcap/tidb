@@ -1127,7 +1127,7 @@ pub struct JoinOtherCondition<'a> {
 
 impl<'a> JoinOtherCondition<'a> {
     /// Binds the statement expression context once per probe worker.
-    pub fn new<C: tidb_expr::Columns + 'a>(
+    pub fn new<C: tidb_exprctx::Columns + 'a>(
         context: C,
         predicates: Vec<tidb_expr::expression::Expression>,
         joined_types: &[tidb_datatype::FieldType],

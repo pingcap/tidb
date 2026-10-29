@@ -526,7 +526,7 @@ mod tests {
     };
     use crate::column::Column;
     use crate::constant::{Constant, ParamMarker};
-    use crate::context::NoColumns;
+    use tidb_exprctx::context::NoColumns;
     use crate::expr_util::{FunctionBuilder, RealFunctionBuilder};
     use crate::expression::Expression;
     use crate::scalar_function::ScalarFunction;

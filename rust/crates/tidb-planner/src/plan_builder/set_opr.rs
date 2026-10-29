@@ -89,7 +89,7 @@ use tidb_expr::expr_util::extract::is_col_op_col;
 use tidb_expr::expr_util::{FunctionBuilder, RealFunctionBuilder};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::Columns;
+use tidb_exprctx::Columns;
 
 use crate::find_best_task::LogicalJoinType;
 use crate::logical::join::LogicalJoin;
@@ -811,7 +811,7 @@ fn breaks_intersect_run(term: &SetOprTerm) -> bool {
 
 /// Go `collate.ErrIllegalMixCollation.GenWithStackByArgs("UNION")` (MySQL 1271).
 fn illegal_mix_collation() -> PlanError {
-    PlanError::eval(tidb_expr::EvalError::IllegalMixCollationGeneric(
+    PlanError::eval(tidb_exprctx::EvalError::IllegalMixCollationGeneric(
         "Illegal mix of collations for operation 'UNION'".to_owned(),
     ))
 }

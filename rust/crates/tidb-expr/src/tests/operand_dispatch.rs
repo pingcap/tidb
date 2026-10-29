@@ -74,7 +74,7 @@ fn over_columns(sql: &str, columns: &[(&str, FieldType, Datum)]) -> String {
     for (index, (_, _, value)) in columns.iter().enumerate() {
         chunk.append_datum(index, value);
     }
-    match rewritten.eval(&crate::context::NoColumns, chunk.get_row(0)) {
+    match rewritten.eval(&tidb_exprctx::context::NoColumns, chunk.get_row(0)) {
         Ok(value) => value.label(),
         Err(err) => format!("{err:?}"),
     }

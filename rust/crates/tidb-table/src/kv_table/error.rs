@@ -39,7 +39,7 @@ pub enum KvTableError {
         /// The evaluation failure itself, when it carries a MySQL code the
         /// statement has to report (1365 for a zero divisor under
         /// `ERROR_FOR_DIVISION_BY_ZERO`).
-        eval: Option<tidb_expr::EvalError>,
+        eval: Option<tidb_exprctx::EvalError>,
     },
     /// A persisted CHECK expression could not be built or evaluated.
     CheckConstraint {
@@ -49,14 +49,14 @@ pub enum KvTableError {
         detail: String,
         /// The evaluation error when evaluation, rather than metadata build,
         /// failed.
-        eval: Option<tidb_expr::EvalError>,
+        eval: Option<tidb_exprctx::EvalError>,
     },
     /// A stored value failed to decode.
     Decode(String),
     /// The partition expression could not be evaluated over the row; the
     /// evaluation failure carries the MySQL code the statement reports (1365
     /// for a zero divisor under `ERROR_FOR_DIVISION_BY_ZERO`).
-    PartitionEval(tidb_expr::EvalError),
+    PartitionEval(tidb_exprctx::EvalError),
     /// The storage layer refused a read or write.
     Storage(StorageError),
 }

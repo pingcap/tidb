@@ -482,7 +482,7 @@ pub fn cluster_table(
             // it (Go answers 1054 at INSERT).
             let rewritten = match tidb_expr::rewriter::rewrite_expr(expr) {
                 Ok(expression) => Ok(expression),
-                Err(error @ tidb_expr::EvalError::UnknownColumnInClause(..)) => Err(error),
+                Err(error @ tidb_exprctx::EvalError::UnknownColumnInClause(..)) => Err(error),
                 Err(error) => {
                     return Err(format!(
                         "its column {name} has an unresolvable default {error:?}"

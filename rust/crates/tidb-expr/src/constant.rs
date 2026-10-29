@@ -23,7 +23,7 @@
 use tidb_datatype::RuntimeCollator;
 use std::hash::{Hash, Hasher};
 
-use crate::context::EvalError;
+use tidb_exprctx::context::EvalError;
 use crate::expr_collation::CollationInfo;
 use crate::expression::{ConstLevel, Expression, CONSTANT_FLAG, PARAMETER_FLAG};
 use tidb_codec::{encode_int, hash_code};

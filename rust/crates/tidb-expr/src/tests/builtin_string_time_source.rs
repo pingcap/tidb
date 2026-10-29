@@ -2648,7 +2648,7 @@ fn test_current_date_current_time_utc_time_clocks() {
 /// the bounds and matches through the collator.
 #[test]
 fn locate_with_position_matches_go_three_args_signature() {
-    use crate::context::NoColumns;
+    use tidb_exprctx::context::NoColumns;
     let text = FieldType::new(FieldTypeCode::VarString);
     let int = FieldType::new(FieldTypeCode::LongLong);
     let eval = |substr: &str, hay: &str, pos: i64| {

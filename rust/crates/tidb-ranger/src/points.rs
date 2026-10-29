@@ -403,7 +403,7 @@ pub enum PointBuilderError {
     /// A datum comparison/conversion failure.
     Value(tidb_datatype::DatumValueError),
     /// Failure evaluating a parameter or deferred endpoint in this statement.
-    Eval(tidb_expr::EvalError),
+    Eval(tidb_exprctx::EvalError),
 }
 
 impl std::fmt::Display for PointBuilderError {
@@ -460,7 +460,7 @@ pub type ExpressionEvaluator<'a> = dyn RangerEvaluator + 'a;
 /// bare evaluator closure converts in UTC and drops warnings.
 pub trait RangerEvaluator {
     /// Evaluates one constant-foldable expression.
-    fn eval(&self, expression: &Expression) -> Result<Datum, tidb_expr::EvalError>;
+    fn eval(&self, expression: &Expression) -> Result<Datum, tidb_exprctx::EvalError>;
 
     /// Go `TypeCtx.Location()`.
     fn location(&self) -> tidb_datatype::SessionTimeZone {
@@ -480,9 +480,9 @@ pub trait RangerEvaluator {
 
 impl<F> RangerEvaluator for F
 where
-    F: Fn(&Expression) -> Result<Datum, tidb_expr::EvalError>,
+    F: Fn(&Expression) -> Result<Datum, tidb_exprctx::EvalError>,
 {
-    fn eval(&self, expression: &Expression) -> Result<Datum, tidb_expr::EvalError> {
+    fn eval(&self, expression: &Expression) -> Result<Datum, tidb_exprctx::EvalError> {
         self(expression)
     }
 }
@@ -495,7 +495,7 @@ where
 pub struct QuietRangerEvaluator<'a>(pub &'a ExpressionEvaluator<'a>);
 
 impl RangerEvaluator for QuietRangerEvaluator<'_> {
-    fn eval(&self, expression: &Expression) -> Result<Datum, tidb_expr::EvalError> {
+    fn eval(&self, expression: &Expression) -> Result<Datum, tidb_exprctx::EvalError> {
         self.0.eval(expression)
     }
 
@@ -507,10 +507,10 @@ impl RangerEvaluator for QuietRangerEvaluator<'_> {
 /// The ranger context of one statement: its expressions evaluate, and its
 /// points convert, under the statement's own evaluation context (session
 /// location and warnings).
-pub struct StatementRangerEvaluator<'a>(pub &'a dyn tidb_expr::Columns);
+pub struct StatementRangerEvaluator<'a>(pub &'a dyn tidb_exprctx::Columns);
 
 impl RangerEvaluator for StatementRangerEvaluator<'_> {
-    fn eval(&self, expression: &Expression) -> Result<Datum, tidb_expr::EvalError> {
+    fn eval(&self, expression: &Expression) -> Result<Datum, tidb_exprctx::EvalError> {
         tidb_expr::eval_expression_once(expression, self.0)
     }
 
@@ -528,8 +528,8 @@ impl RangerEvaluator for StatementRangerEvaluator<'_> {
 }
 
 /// Evaluate an expression without execution bindings.
-pub fn evaluate_static(expression: &Expression) -> Result<Datum, tidb_expr::EvalError> {
-    expression.eval(&tidb_expr::NoColumns, tidb_chunk::row::Row::empty())
+pub fn evaluate_static(expression: &Expression) -> Result<Datum, tidb_exprctx::EvalError> {
+    expression.eval(&tidb_exprctx::NoColumns, tidb_chunk::row::Row::empty())
 }
 
 impl Default for PointBuilder<'_> {
@@ -1979,15 +1979,15 @@ mod tests {
     fn compiled_range_endpoints_use_current_parameters() {
         use tidb_expr::constant::{Constant, ParamMarker};
         struct Params(Vec<Datum>);
-        impl tidb_expr::Columns for Params {
+        impl tidb_exprctx::Columns for Params {
             fn get(&self, _: &[String]) -> Option<Datum> {
                 None
             }
-            fn param_value(&self, order: usize) -> Result<Datum, tidb_expr::EvalError> {
+            fn param_value(&self, order: usize) -> Result<Datum, tidb_exprctx::EvalError> {
                 self.0
                     .get(order)
                     .cloned()
-                    .ok_or(tidb_expr::EvalError::Unsupported(
+                    .ok_or(tidb_exprctx::EvalError::Unsupported(
                         "unbound prepared parameter",
                     ))
             }

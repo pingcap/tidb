@@ -217,7 +217,8 @@ use tidb_expr::expr_util::normal_form::into_cnf_items;
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
 use tidb_expr::schema::Schema;
-use tidb_expr::{Columns, EvalError};
+use tidb_exprctx::Columns;
+use tidb_exprctx::EvalError;
 
 use crate::expression_rewriter::{
     ClauseCode, ColumnIdAllocator, CompareOp, ExprRewriterPlanCtx, ExpressionRewriter,
@@ -942,7 +943,7 @@ pub fn hide_rewrite_columns(plan: &mut LogicalPlan, original_len: usize) {
 /// The truncation error a strict statement context raises.
 pub fn constant_is_always_false(
     constant: &Constant,
-    ctx: &dyn tidb_expr::Columns,
+    ctx: &dyn tidb_exprctx::Columns,
     ignore_truncate: bool,
 ) -> Result<Option<bool>, PlanError> {
     if constant.deferred_expr.is_some() || constant.param_marker.is_some() {
@@ -1007,7 +1008,7 @@ pub struct PlanScopeResolver<'a> {
     div_precision_increment: u32,
     /// The live statement context used by Go's comparison constant
     /// refinement to retain build-time conversion warnings.
-    warning_context: Option<&'a dyn tidb_expr::Columns>,
+    warning_context: Option<&'a dyn tidb_exprctx::Columns>,
     /// Go `er.clause()`: the clause an unknown-column error names. The
     /// default is Go's `expressionClause` spelling.
     clause_message: &'static str,
@@ -1220,7 +1221,7 @@ impl<'a> PlanScopeResolver<'a> {
 
     /// Attach the live statement context used by Go's comparison builder.
     #[must_use]
-    pub fn with_warning_context<C: tidb_expr::Columns>(mut self, ctx: &'a C) -> Self {
+    pub fn with_warning_context<C: tidb_exprctx::Columns>(mut self, ctx: &'a C) -> Self {
         self.warning_context = Some(ctx);
         self
     }
@@ -1383,7 +1384,7 @@ impl ColumnResolver for PlanScopeResolver<'_> {
         self.div_precision_increment
     }
 
-    fn comparison_context(&self) -> Option<&dyn tidb_expr::Columns> {
+    fn comparison_context(&self) -> Option<&dyn tidb_exprctx::Columns> {
         self.warning_context
     }
 
@@ -1424,7 +1425,7 @@ impl ColumnResolver for PlanScopeResolver<'_> {
         if mode != tidb_expr::ConstantFoldMode::Disabled {
             tidb_expr::fold_constant_in_mode_preserving_warning_casts(
                 expression,
-                &tidb_expr::ZonedNoColumns(self.time_zone.clone()),
+                &tidb_exprctx::ZonedNoColumns(self.time_zone.clone()),
                 mode,
             );
         } else {
@@ -1556,7 +1557,7 @@ impl ColumnResolver for PlanScopeResolver<'_> {
 
     fn current_database(&self) -> Option<String> {
         self.warning_context
-            .and_then(tidb_expr::Columns::current_database)
+            .and_then(tidb_exprctx::Columns::current_database)
     }
 }
 

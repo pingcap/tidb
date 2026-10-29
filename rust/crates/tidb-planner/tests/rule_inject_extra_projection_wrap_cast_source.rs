@@ -46,7 +46,7 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_expr::aggregation::{names, AggFuncDesc, AggFunctionMode};
 use tidb_expr::constant::Constant;
 use tidb_expr::expression::Expression;
-use tidb_expr::NoColumns;
+use tidb_exprctx::NoColumns;
 use tidb_planner_coreusage::wrap_cast_for_agg_funcs;
 
 /// Go `aggNames := []string{ast.AggFuncSum}`

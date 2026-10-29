@@ -437,7 +437,7 @@ pub fn run_load_data(
     for assignment in &prepared.assignments {
         let expr = tidb_expr::rewriter::rewrite_expr_resolved(&assignment.value, &resolver)
             .map_err(|error| match error {
-                tidb_expr::EvalError::UnknownColumn(column) => DriverError::from(
+                tidb_exprctx::EvalError::UnknownColumn(column) => DriverError::from(
                     tidb_plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
                         tidb_hack::go_to_lower(&column.go_to_lower()).into(),
                         ("expression".to_owned()).into(),

@@ -102,10 +102,10 @@ impl RowDecodeContext {
             type_flags: ctx
                 .write_conversion_flags()
                 .with_ignore_truncate_err(
-                    tidb_expr::Columns::truncate_level(ctx) == tidb_expr::ErrorLevel::Ignore,
+                    tidb_exprctx::Columns::truncate_level(ctx) == tidb_exprctx::ErrorLevel::Ignore,
                 )
                 .with_truncate_as_warning(
-                    tidb_expr::Columns::truncate_level(ctx) == tidb_expr::ErrorLevel::Warn,
+                    tidb_exprctx::Columns::truncate_level(ctx) == tidb_exprctx::ErrorLevel::Warn,
                 ),
             zone: ctx.session_zone(),
             expression: ctx.to_shared(),

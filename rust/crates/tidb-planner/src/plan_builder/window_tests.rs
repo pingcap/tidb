@@ -36,7 +36,7 @@ use tidb_ast::{
 };
 use tidb_datatype::{EvalType, FieldType, FieldTypeCode, SessionTimeZone, UNSPECIFIED_LENGTH};
 use tidb_expr::column::Column;
-use tidb_expr::ZonedNoColumns;
+use tidb_exprctx::ZonedNoColumns;
 
 use tidb_infoschema::table_source::TableSource;
 use tidb_infoschema::table_source::SourceTable;

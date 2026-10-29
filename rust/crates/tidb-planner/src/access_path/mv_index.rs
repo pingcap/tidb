@@ -485,7 +485,7 @@ pub(crate) fn mv_index_partial_access_filters(
     evaluate: &ExpressionEvaluator<'_>,
     access_filters: &[Expression],
     idx_cols: &[Column],
-) -> Result<Option<(Vec<Vec<Expression>>, bool)>, tidb_expr::EvalError> {
+) -> Result<Option<(Vec<Vec<Expression>>, bool)>, tidb_exprctx::EvalError> {
     let Some(vir_col_id) = idx_cols.iter().position(is_mv_virtual_column) else {
         return Ok(None);
     };
@@ -520,7 +520,7 @@ pub(crate) fn mv_index_partial_access_filters(
     let mut filter_sets = Vec::with_capacity(values.len());
     for value in values {
         let eq = tidb_expr::new_function::new_function(
-            &tidb_expr::NoColumns,
+            &tidb_exprctx::NoColumns,
             "eq",
             FieldType::new(FieldTypeCode::Tiny),
             vec![Expression::Column(vir_col.clone()), value],

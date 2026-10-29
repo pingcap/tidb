@@ -19,7 +19,7 @@
 //! The Go harness drives a real unistore-backed session whose `SessionVars`
 //! owns the lock map (`pkg/executor/simple.go`, `func (s *session)` lock
 //! helpers behind `getLock`/`releaseLock`). The Rust evaluator carries those
-//! calls as [`crate::context::Columns`] hooks, so this port evaluates the same
+//! calls as [`tidb_exprctx::context::Columns`] hooks, so this port evaluates the same
 //! SQL against one shared session stub that records acquisitions/releases --
 //! identical behavior table, no real server.
 //!
@@ -166,7 +166,7 @@ fn test_get_lock_call_semantics_table() {
         fn append_warning(&self, code: u16, message: &str) {
             self.warnings.borrow_mut().push((code, message.to_owned()));
         }
-        fn truncate_level(&self) -> crate::context::ErrorLevel {
+        fn truncate_level(&self) -> tidb_exprctx::context::ErrorLevel {
             ErrorLevel::Warn
         }
     }

@@ -576,7 +576,7 @@ fn statement_context_reads_global_sysvars_through_the_live_accessor() {
     let globals = session.vars().global_sysvars();
     let context = session.statement_context(false);
     let read = || {
-        tidb_expr::Columns::sysvar(
+        tidb_exprctx::Columns::sysvar(
             &context,
             Some(tidb_ast::SysVarScope::Global),
             "validate_password.enable",

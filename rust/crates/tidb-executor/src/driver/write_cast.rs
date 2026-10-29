@@ -182,11 +182,11 @@ fn complete_func_index_error(
     table: &tidb_table::kv_table::KvTable,
     offset: usize,
     row_index: usize,
-    error: tidb_expr::EvalError,
-) -> tidb_expr::EvalError {
+    error: tidb_exprctx::EvalError,
+) -> tidb_exprctx::EvalError {
     use tidb_mysql::errors::FormatArg;
     use tidb_terror::{TerrorClass, TerrorCode, TerrorError};
-    let tidb_expr::EvalError::Conversion(cause) = &error else {
+    let tidb_exprctx::EvalError::Conversion(cause) = &error else {
         return error;
     };
     let name = table
@@ -194,7 +194,7 @@ fn complete_func_index_error(
         .unwrap_or("expression_index")
         .to_owned();
     let completed = |code: u16, args: &[FormatArg]| {
-        tidb_expr::EvalError::Conversion(
+        tidb_exprctx::EvalError::Conversion(
             TerrorError::registered_std(TerrorClass::Expression, TerrorCode::new(code as isize))
                 .generate_with_stack_by_args(args),
         )
@@ -1002,10 +1002,10 @@ use tidb_charset::Collation;
     fn generated_read_policy_raw_cast_honors_flags_before_force_ignore() {
         let field = FieldType::new(FieldTypeCode::Tiny);
         for (level, force, should_fail, warning_count) in [
-            (tidb_expr::ErrorLevel::Error, false, true, 0),
-            (tidb_expr::ErrorLevel::Error, true, false, 0),
-            (tidb_expr::ErrorLevel::Warn, true, false, 1),
-            (tidb_expr::ErrorLevel::Ignore, true, false, 0),
+            (tidb_exprctx::ErrorLevel::Error, false, true, 0),
+            (tidb_exprctx::ErrorLevel::Error, true, false, 0),
+            (tidb_exprctx::ErrorLevel::Warn, true, false, 1),
+            (tidb_exprctx::ErrorLevel::Ignore, true, false, 0),
         ] {
             let ctx = crate::StmtContext::for_dml(false, true, false).with_truncate_level(level);
             let value = cast_table_value(Datum::Int(300), &field, "b", &ctx, force);

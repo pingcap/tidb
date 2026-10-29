@@ -49,7 +49,7 @@ fn eval_string_sig(name: &str, args: Vec<Datum>) -> Result<Datum, crate::EvalErr
         ret,
         args.into_iter().map(const_arg).collect(),
     );
-    let cols = crate::context::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
+    let cols = tidb_exprctx::context::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
     let empty = tidb_chunk::chunk::Chunk::new_with_capacity(&[], 1);
     function.eval(&cols, empty.get_row(0))
 }
@@ -60,7 +60,7 @@ fn eval_int_sig(name: &str, args: Vec<Datum>) -> Result<Datum, crate::EvalError>
         FieldType::new(C::LongLong),
         args.into_iter().map(const_arg).collect(),
     );
-    let cols = crate::context::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
+    let cols = tidb_exprctx::context::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
     let empty = tidb_chunk::chunk::Chunk::new_with_capacity(&[], 1);
     function.eval(&cols, empty.get_row(0))
 }
@@ -157,7 +157,7 @@ fn go_test_repeat() {
     // default session the same rows simply repeat.
     {
         struct SmallPacket;
-        impl crate::context::Columns for SmallPacket {
+        impl tidb_exprctx::context::Columns for SmallPacket {
             fn get(&self, _: &[String]) -> Option<Datum> {
                 None
             }

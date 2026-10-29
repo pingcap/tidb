@@ -347,7 +347,7 @@ pub fn max_user_connections_option(
 /// column's `Invalid JSON text` (3140).
 pub fn invalid_user_attribute_json() -> DriverError {
     DriverError::Mysql(crate::MysqlError::from_terror(
-        &tidb_expr::JsonError::InvalidText.to_terror(),
+        &tidb_exprctx::JsonError::InvalidText.to_terror(),
     ))
 }
 

@@ -23,7 +23,7 @@ use tidb_ast::{Expr, SelectStmt, Stmt};
 use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags, SessionTimeZone};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_expr::ZonedNoColumns;
+use tidb_exprctx::ZonedNoColumns;
 use tidb_intset::FastIntSet;
 
 use tidb_infoschema::table_source::SourceTable;
@@ -816,15 +816,15 @@ fn grouping_sql_retains_source_validation_errors() {
     for (sql, expected) in [
         (
             "SELECT GROUPING(b) FROM t".to_owned(),
-            tidb_expr::EvalError::InvalidGroupFuncUse,
+            tidb_exprctx::EvalError::InvalidGroupFuncUse,
         ),
         (
             "SELECT GROUPING(c) FROM t GROUP BY b WITH ROLLUP".to_owned(),
-            tidb_expr::EvalError::FieldInGroupingNotGroupBy(0),
+            tidb_exprctx::EvalError::FieldInGroupingNotGroupBy(0),
         ),
         (
             format!("SELECT GROUPING({args}) FROM t GROUP BY b WITH ROLLUP"),
-            tidb_expr::EvalError::TooManyGroupingArguments,
+            tidb_exprctx::EvalError::TooManyGroupingArguments,
         ),
     ] {
         let error = harness

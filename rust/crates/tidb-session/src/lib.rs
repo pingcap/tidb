@@ -554,11 +554,11 @@ pub struct Session {
     /// Go `SessionVars.TxnCtx.StartTS`, shared with statement contexts so a
     /// lazily opened cluster snapshot becomes visible inside the statement
     /// that opened it.
-    current_tso: tidb_expr::CurrentTso,
+    current_tso: tidb_exprctx::CurrentTso,
     /// Go `SessionVars.TxnCtx.forUpdateTS` as the cluster tier last published
     /// it for a pessimistic statement. A value older than the open
     /// transaction's start is stale and `GetForUpdateTS` answers the start.
-    current_for_update_ts: tidb_expr::CurrentTso,
+    current_for_update_ts: tidb_exprctx::CurrentTso,
     /// The running statement's own `TxnCtx.StartTS` when its tier tore the
     /// autocommit transaction down (clearing [`Self::current_tso`]) before
     /// the statement finished; zero otherwise.
@@ -891,8 +891,8 @@ impl Session {
             statement_kind: StatementKind::Other,
             statement_in_select: false,
             statement_keys_read: Arc::default(),
-            current_tso: tidb_expr::CurrentTso::default(),
-            current_for_update_ts: tidb_expr::CurrentTso::default(),
+            current_tso: tidb_exprctx::CurrentTso::default(),
+            current_for_update_ts: tidb_exprctx::CurrentTso::default(),
             statement_txn_start_ts: 0,
             statement_ended_txn_start_ts: None,
             statement_began_txn: false,
@@ -1200,7 +1200,7 @@ impl Session {
 
     /// The live transaction timestamp authority used by storage integration.
     #[must_use]
-    pub fn current_tso(&self) -> tidb_expr::CurrentTso {
+    pub fn current_tso(&self) -> tidb_exprctx::CurrentTso {
         self.current_tso.clone()
     }
 
@@ -1213,7 +1213,7 @@ impl Session {
 
     /// Where the cluster tier publishes the open pessimistic transaction's
     /// for-update timestamp (Go `TxnCtx.SetForUpdateTS`).
-    pub fn current_for_update_ts(&self) -> tidb_expr::CurrentTso {
+    pub fn current_for_update_ts(&self) -> tidb_exprctx::CurrentTso {
         self.current_for_update_ts.clone()
     }
 

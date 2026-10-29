@@ -16,7 +16,8 @@
 
 use std::sync::{Arc, Mutex};
 use tidb_datatype::{Datum, SessionTimeZone};
-use tidb_expr::{Columns, ErrorLevel};
+use tidb_exprctx::Columns;
+use tidb_exprctx::ErrorLevel;
 use tidb_model::flags::*;
 
 #[derive(Debug)]
@@ -576,7 +577,7 @@ mod next_boundary_audit {
                     Err(error) => return ("decode_error".to_owned(), error),
                 };
                 match expr.eval(&context, tidb_chunk::row::Row::empty()) {
-                    Err(tidb_expr::EvalError::Conversion(error)) => {
+                    Err(tidb_exprctx::EvalError::Conversion(error)) => {
                         let expected = String::from_utf8(unhex(fields[4])).unwrap();
                         assert_eq!(error.to_string(), expected, "{name} flags={flags}");
                         ("error".to_owned(), error.to_string())
@@ -696,7 +697,7 @@ mod next_boundary_audit {
                 if errors && flags == 0 {
                     assert!(matches!(
                         result,
-                        Err(tidb_expr::EvalError::TruncatedWrongValue(_))
+                        Err(tidb_exprctx::EvalError::TruncatedWrongValue(_))
                     ));
                 } else {
                     assert_eq!(result.unwrap(), Datum::Null);
@@ -735,7 +736,7 @@ mod next_boundary_audit {
                 if let Some(expected) = expected {
                     assert_eq!(result.unwrap(), Datum::Real(expected));
                 } else {
-                    assert!(matches!(result, Err(tidb_expr::EvalError::Conversion(_))));
+                    assert!(matches!(result, Err(tidb_exprctx::EvalError::Conversion(_))));
                 }
                 assert!(context.take_warnings().is_empty());
                 // Go CastRealAsReal does not run the string producer.
@@ -876,7 +877,7 @@ mod next_boundary_audit {
         let expr = tidb_expr::distsql_builtin::pb_to_expr(&pb, &[]).unwrap();
         let result = expr.eval(context.as_ref(), tidb_chunk::row::Row::empty());
         assert!(
-            matches!(result, Err(tidb_expr::EvalError::Conversion(_))),
+            matches!(result, Err(tidb_exprctx::EvalError::Conversion(_))),
             "Go typed IF returns conversion error: {result:?}"
         );
     }
@@ -893,7 +894,7 @@ mod next_boundary_audit {
         let expr = tidb_expr::distsql_builtin::pb_to_expr(&pb, &[]).unwrap();
         let result = expr.eval(context.as_ref(), tidb_chunk::row::Row::empty());
         assert!(
-            matches!(result, Err(tidb_expr::EvalError::Conversion(_))),
+            matches!(result, Err(tidb_exprctx::EvalError::Conversion(_))),
             "Go EvalReal propagates conversion error: {result:?}"
         );
     }
@@ -916,7 +917,7 @@ mod next_boundary_audit {
         });
         let expr = tidb_expr::distsql_builtin::pb_to_expr(&pb, &[]).unwrap();
         let result = expr
-            .eval(&tidb_expr::NoColumns, tidb_chunk::row::Row::empty())
+            .eval(&tidb_exprctx::NoColumns, tidb_chunk::row::Row::empty())
             .unwrap();
         assert_eq!(result.sql_bytes().unwrap(), b"ab");
     }

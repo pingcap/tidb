@@ -69,7 +69,7 @@ impl From<ExecError> for DriverError {
             // level build error, not an evaluation event -- the warning buffer
             // records the 1105 row beside the argument casts' truncation
             // warnings (oracle: CHAR('中文测试', 'ünïcödé')).
-            ExecError::Eval(tidb_expr::EvalError::Unsupported(message))
+            ExecError::Eval(tidb_exprctx::EvalError::Unsupported(message))
                 if message.starts_with("Unknown charset ") =>
             {
                 DriverError::Unsupported(message.into())

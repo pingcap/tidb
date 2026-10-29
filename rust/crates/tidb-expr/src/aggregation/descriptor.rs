@@ -23,7 +23,7 @@ use super::window_func::WindowFuncDesc;
 use super::{AggDescError, AggFunctionMode, BaseFuncDesc};
 use crate::column::Column;
 use crate::constant::Constant;
-use crate::context::Columns;
+use tidb_exprctx::context::Columns;
 use crate::expr_util::{evaluate_expr_with_null, RealFunctionBuilder, SubstituteOptions};
 use crate::expression::Expression;
 use crate::schema::Schema;

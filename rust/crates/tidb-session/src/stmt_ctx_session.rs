@@ -378,7 +378,7 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::effective_replica_read(self, mode)
     }
 
-    fn current_tso(&self) -> tidb_expr::CurrentTso {
+    fn current_tso(&self) -> tidb_exprctx::CurrentTso {
         Session::current_tso(self)
     }
 

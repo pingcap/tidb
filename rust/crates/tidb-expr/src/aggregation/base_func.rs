@@ -24,7 +24,7 @@ use super::wrap_cast::{
     self, set_bin_chs_cln_flag, type_of, MAX_BLOB_WIDTH, MAX_FIELD_CHAR_LENGTH, MAX_REAL_WIDTH,
     NOT_FIXED_DEC,
 };
-use crate::context::{Columns, EvalError};
+use tidb_exprctx::context::{Columns, EvalError};
 use crate::expression::{ConstLevel, Expression};
 use tidb_datatype::{
     Datum, EvalType, FieldType, FieldTypeCode, FieldTypeFlags, MAX_DECIMAL_SCALE,
