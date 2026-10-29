@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -411,6 +412,49 @@ func TestGreatestLeastFunc(t *testing.T) {
 	require.NoError(t, err)
 	_, err = funcs[ast.Least].getFunction(ctx, []Expression{NewZero(), NewOne()})
 	require.NoError(t, err)
+}
+
+func TestGreatestLeastReturnDecimalsAtTheResultScale(t *testing.T) {
+	ctx := createContext(t)
+	decimalType := func(flen, decimal int) *types.FieldType {
+		return types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(flen).SetDecimal(decimal).BuildP()
+	}
+	decimal := func(s string) Expression {
+		return primitiveValsToConstants(ctx, []any{types.NewDecFromStringForTest(s)})[0]
+	}
+	widest := strings.Repeat("9", mysql.MaxDecimalWidth)
+	unbounded := "1" + strings.Repeat("0", 30)
+	scale0 := &Column{Index: 0, RetType: decimalType(10, 0)}
+	scale2 := &Column{Index: 1, RetType: decimalType(10, 2)}
+	widestColumn := &Column{Index: 2, RetType: decimalType(mysql.MaxDecimalWidth, 0)}
+	intColumn := &Column{Index: 3, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	unboundedColumn := &Column{Index: 4, RetType: decimalType(types.UnspecifiedLength, 0)}
+	row := chunk.MutRowFromDatums([]types.Datum{
+		types.NewDecimalDatum(types.NewDecFromInt(0)),
+		types.NewDecimalDatum(types.NewDecFromStringForTest("1.50")),
+		types.NewDecimalDatum(types.NewDecFromStringForTest(widest)),
+		types.NewIntDatum(7),
+		types.NewDecimalDatum(types.NewDecFromStringForTest(unbounded)),
+	}).ToRow()
+	for _, c := range []struct {
+		funcName string
+		args     []Expression
+		expected string
+	}{
+		{ast.Least, []Expression{scale0, decimal("1.0")}, "0.0"},
+		{ast.Greatest, []Expression{scale0, decimal("-1.0")}, "0.0"},
+		{ast.Least, []Expression{scale0, scale2}, "0.00"},
+		{ast.Greatest, []Expression{scale2, primitiveValsToConstants(ctx, []any{int64(1)})[0], decimal("1.125")}, "1.500"},
+		{ast.Greatest, []Expression{widestColumn, decimal("1.5")}, widest},
+		{ast.Greatest, []Expression{intColumn, scale0}, "7"},
+		{ast.Greatest, []Expression{unboundedColumn, decimal("1.5")}, unbounded},
+	} {
+		f, err := newFunctionForTest(ctx, c.funcName, c.args...)
+		require.NoError(t, err)
+		d, err := f.Eval(ctx, row)
+		require.NoError(t, err)
+		require.Equal(t, c.expected, d.GetMysqlDecimal().String(), "%s", f)
+	}
 }
 
 func TestRefineArgsWithCastEnum(t *testing.T) {
