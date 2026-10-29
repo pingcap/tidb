@@ -400,6 +400,12 @@ func JobNeedGC(job *model.Job) bool {
 			}
 			return false
 		}
+	} else if job.Type == model.ActionMViewRefreshOutOfPlaceCutover {
+		// Placement and TiFlash PD rules can survive rollback of the replacement log's metadata.
+		// Return true to queue a delete-range record for NewMLogID: processing that
+		// record also removes those rules, even if the log contains no data.
+		args, err := model.GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(job)
+		return err == nil && args.NewMLogID != 0
 	}
 	return false
 }

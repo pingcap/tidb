@@ -28,8 +28,14 @@ Refresh the parent before the child to propagate base-table changes. Refreshing 
 only consumes already committed parent changes; refresh does not cascade or enforce ancestor
 freshness. Purging the parent's MLog retains changes needed by the child's last successful read TSO.
 
-A target with its own MLog still rejects `COMPLETE IN PLACE`. A target with its own MLog or direct
-child MVs still rejects `COMPLETE OUT OF PLACE`; this change does not migrate dependency metadata.
+A target with its own MLog still rejects `COMPLETE IN PLACE`. `COMPLETE OUT OF PLACE` replaces
+both its physical MV ID and its output MLog ID in one cutover DDL transaction. The replacement
+MLog preserves the log definition and purge configuration, starts empty, and records only later
+refresh changes. All upstream reverse references and direct children's `BaseTableIDs` move to
+the new MV. Children keep their registered old input log IDs and successful watermarks: their
+existing data remains queryable, while FAST requires a successful COMPLETE to establish the new
+input baseline. Each child recovers independently; COMPLETE DELTA APPLY preserves its own output
+log, whereas its own OOP replaces that log and invalidates the next level.
 
 ## Runtime `NEXT_REFRESH_UNIX_SECONDS` Update (Internal SQL Success Path)
 
@@ -331,19 +337,50 @@ Current execution model:
    - keep the shadow as a normal table during build (`MaterializedView == nil`);
    - load shadow data with `IMPORT INTO ... FROM (<mv_select_sql>) WITH disable_precheck` on TiKV storage,
      otherwise fallback to `INSERT INTO <shadow> <mv_select_sql>`;
-   - capture build read tso from build session `@@tidb_last_query_info.start_ts`.
+   - capture build read tso from build session `@@tidb_last_query_info.start_ts` and resolve input
+     log IDs from that computation snapshot.
 3. Executor submits a dedicated DDL cutover action carrying at least:
    - old MV id;
    - shadow table id;
    - build read tso;
-   - expected pre-cutover refresh-info watermark / nullness for CAS-style migration.
-4. DDL worker atomically:
+   - expected pre-cutover refresh-info watermark / nullness and MV revision;
+   - captured input sources, old output log ID, and a new output log ID allocated once at submission;
+   - exclusive DDL scheduling claims for upstream sources, source logs whose `DependentMViewIDs`
+     contains the old MV ID, the target/shadow, its output log, and direct children. The worker
+     rereads metadata and checks the expected MV revision before cutover.
+4. If the target owns an output MLog, the DDL worker cancels running purges and acquires the
+   old log's shared advisory lock before any mutations or schema-version allocation. It retries
+   cancellation and lock acquisition on contention, with a five-second lock wait per attempt and
+   a one-minute total budget, while keeping the DDL transaction optimistic. Budget exhaustion
+   cancels the cutover job without changing the serving MV/MLog; a later refresh can retry.
+   The scheduler retains an acquired lock until the job finishes. The DDL worker then atomically:
    - transfers the logical MV name to the shadow table;
    - moves MV definition metadata to the new physical table;
-   - rewrites base-table reverse references (`MaterializedViewBase.MViewIDs`);
-   - migrates `mysql.tidb_mview_refresh_info` ownership from old `MVIEW_ID` to shadow ID;
-   - sets `LAST_SUCCESS_READ_TSO = build_read_tso` and preserves `NEXT_REFRESH_UNIX_SECONDS`.
-5. On success, finalize history as `success`; on failure, keep the old MV serving path unchanged and do best-effort shadow cleanup.
+   - rewrites upstream source and log reverse references and every direct child's source ID;
+   - creates the replacement output log and its independent purge-info using normal CREATE schedule
+     initialization, and deletes the old log's purge-info and metadata in the same transaction;
+   - preserves the output log's TiFlash replica configuration, resets its availability for the new
+     physical ID, and configures that ID's PD placement rule before publishing the schema change;
+   - preserves its ordinary placement policy, including an inherited database default, and publishes
+     the replacement physical ID's placement bundle to PD before committing cutover;
+   - migrates `mysql.tidb_mview_refresh_info` and the target's confirmed input log registrations to
+     the shadow ID, preserving each child's registrations and watermark;
+   - sets `LAST_SUCCESS_READ_TSO = build_read_tso` and preserves `NEXT_REFRESH_UNIX_SECONDS`;
+   - publishes all affected objects in the schema diff and reports both MV and output-log replacement
+     in the cutover event for statistics. Old MV and log ranges enter the existing delete-range / GC
+     flow without waiting for children to recover.
+5. After successful cutover, clear TiFlash progress for the retired MV and output log. Their placement
+   rules are removed by normal delete-range GC. Finalize history as `success`; on failure, keep the old
+   MV serving path and its TiFlash progress unchanged and do best-effort shadow cleanup. A cancelled
+   cutover queues only its unused replacement output log ID for GC, so PD rules created before rollback
+   are removed without retiring the old serving MV or log.
+
+By design, cutover's MDL wait set (`mysql.tidb_ddl_job.table_ids`) contains only the old MV,
+shadow MV, and optional old/new output MLogs. The DDL scheduling claims remain broader.
+Upstream sources/logs only change reverse references; direct children keep
+their physical storage and row layout, while child refresh reads the parent MV/MLog already
+covered by the MDL set. Adding all these metadata dependencies to `table_ids` would unnecessarily
+make cutover wait for transactions on otherwise unchanged physical objects.
 
 #### Next design evolution: protected shadow table
 

@@ -224,11 +224,15 @@ func TestMViewRefreshOutOfPlaceCutoverStats(t *testing.T) {
 	testKit.MustExec("create materialized view log on t_mv_oop_stats (a, b) purge next date_add(now(), interval 1 hour)")
 	testKit.MustExec("create materialized view mv_oop_stats (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mv_oop_stats group by a")
 
+	testKit.MustExec("create materialized view log on mv_oop_stats (a, s, cnt)")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_oop_stats"))
 	require.NoError(t, err)
 	oldTableInfo := tbl.Meta()
+	oldMLog, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$mv_oop_stats"))
+	require.NoError(t, err)
 	testKit.MustExec("analyze table mv_oop_stats")
+	testKit.MustExec("analyze table `$mlog$mv_oop_stats`")
 	require.NoError(t, h.Update(context.Background(), is))
 	statsTbl := h.GetPhysicalTableStats(oldTableInfo.ID, oldTableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -239,6 +243,8 @@ func TestMViewRefreshOutOfPlaceCutoverStats(t *testing.T) {
 	).Rows()
 	require.Len(t, rows, 1)
 	oldVersion := rows[0][0].(string)
+	oldLogVersion := testKit.MustQuery("select version from mysql.stats_meta where table_id = ?", oldMLog.Meta().ID).Rows()
+	require.Len(t, oldLogVersion, 1)
 
 	testKit.MustExec("insert into t_mv_oop_stats values (3, 4)")
 	testKit.MustExec("refresh materialized view mv_oop_stats complete out of place")
@@ -250,6 +256,13 @@ func TestMViewRefreshOutOfPlaceCutoverStats(t *testing.T) {
 	require.NoError(t, err)
 	newTableInfo := tbl.Meta()
 	require.NotEqual(t, oldTableInfo.ID, newTableInfo.ID)
+	newMLog, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$mv_oop_stats"))
+	require.NoError(t, err)
+	require.NotEqual(t, oldMLog.Meta().ID, newMLog.Meta().ID)
+	testKit.MustQuery("select count from mysql.stats_meta where table_id = ?", newMLog.Meta().ID).Check(testkit.Rows("0"))
+	newLogVersion := testKit.MustQuery("select version from mysql.stats_meta where table_id = ?", oldMLog.Meta().ID).Rows()
+	require.Len(t, newLogVersion, 1)
+	require.NotEqual(t, oldLogVersion, newLogVersion)
 
 	rows = testKit.MustQuery(
 		"select version from mysql.stats_meta where table_id = ?",

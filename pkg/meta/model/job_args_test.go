@@ -668,6 +668,8 @@ func TestGetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(t *testing.T) {
 	expectedOldMViewRevision := uint64(505)
 	testCases := []*RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
 		{
+			OldMLogID:                          501,
+			NewMLogID:                          502,
 			OldMViewID:                         101,
 			ShadowTableID:                      202,
 			BuildReadTSO:                       (uint64(1) << 63) + 303,

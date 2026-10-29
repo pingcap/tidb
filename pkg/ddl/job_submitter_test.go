@@ -599,8 +599,11 @@ func TestRefreshMaterializedViewCompleteOutOfPlaceCutoverJobTableIDs(t *testing.
 	const (
 		oldMViewID   int64  = 900000000000000020
 		shadowTblID  int64  = 900000000000000022
+		oldMLogID    int64  = 900000000000000024
 		buildReadTSO uint64 = 12345
 	)
+	// The metadata write set includes upstream sources/logs and children, but MDL
+	// only waits on the physical MV/MLog instances replaced by cutover.
 	jobW := ddl.NewJobWrapperWithArgs(
 		&model.Job{
 			Version:    model.GetJobVerInUse(),
@@ -608,11 +611,20 @@ func TestRefreshMaterializedViewCompleteOutOfPlaceCutoverJobTableIDs(t *testing.
 			SchemaName: "test",
 			TableName:  "mv_cutover",
 			TableID:    oldMViewID,
+			InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+				{Database: "test", Table: "mv_cutover", Mode: model.ExclusiveInvolving},
+				{Database: "test", Table: "mv_shadow", Mode: model.ExclusiveInvolving},
+				{Database: "test", Table: "output_log", Mode: model.ExclusiveInvolving},
+				{Database: "test", Table: "source", Mode: model.ExclusiveInvolving},
+				{Database: "test", Table: "source_log", Mode: model.ExclusiveInvolving},
+				{Database: "test", Table: "child_mv", Mode: model.ExclusiveInvolving},
+			},
 		},
 		&model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
 			OldMViewID:    oldMViewID,
 			ShadowTableID: shadowTblID,
 			BuildReadTSO:  buildReadTSO,
+			OldMLogID:     oldMLogID,
 		},
 		false,
 	)
@@ -624,11 +636,21 @@ func TestRefreshMaterializedViewCompleteOutOfPlaceCutoverJobTableIDs(t *testing.
 	require.Len(t, rows, 1)
 
 	tableIDs := strings.Split(rows[0][0].(string), ",")
-	require.Len(t, tableIDs, 2)
+	args := jobW.JobArgs.(*model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs)
+	require.Positive(t, args.NewMLogID)
+	require.Len(t, tableIDs, 4)
 	require.ElementsMatch(t, []string{
 		strconv.FormatInt(oldMViewID, 10),
 		strconv.FormatInt(shadowTblID, 10),
+		strconv.FormatInt(oldMLogID, 10),
+		strconv.FormatInt(args.NewMLogID, 10),
 	}, tableIDs)
+	var persisted model.Job
+	require.NoError(t, persisted.Decode([]byte(fmt.Sprint(tk.MustQuery(fmt.Sprintf("select job_meta from mysql.tidb_ddl_job where job_id = %d", jobW.ID)).Rows()[0][0]))))
+	require.Equal(t, jobW.InvolvingSchemaInfo, persisted.InvolvingSchemaInfo)
+	persistedArgs, err := model.GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(&persisted)
+	require.NoError(t, err)
+	require.Equal(t, args, persistedArgs)
 }
 
 var (

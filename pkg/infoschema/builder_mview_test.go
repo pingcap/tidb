@@ -45,11 +45,24 @@ func TestApplyMViewRefreshOutOfPlaceCutoverDiff(t *testing.T) {
 			shadowTable := internal.MockTableInfo(t, re.Store(), "__mv_shadow")
 			shadowTable.DBID = dbInfo.ID
 			shadowTable.MaterializedViewShadow = &model.MaterializedViewShadowInfo{SourceMViewID: oldMView.ID}
-			dbInfo.Deprecated.Tables = []*model.TableInfo{baseTable, oldMView, shadowTable}
+			oldMLog := internal.MockTableInfo(t, re.Store(), "$mlog$mv")
+			oldMLog.DBID = dbInfo.ID
+			child := internal.MockTableInfo(t, re.Store(), "child")
+			child.DBID = dbInfo.ID
+			child.MaterializedView = &model.MaterializedViewInfo{BaseTableIDs: []int64{oldMView.ID, baseTable.ID}}
+			oldMView.MaterializedViewBase = &model.MaterializedViewBaseInfo{MLogID: oldMLog.ID, MViewIDs: []int64{child.ID}}
+			oldMLog.MaterializedViewLog = &model.MaterializedViewLogInfo{BaseTableID: oldMView.ID, DependentMViewIDs: []int64{child.ID}}
+			newMLog := internal.MockTableInfo(t, re.Store(), "$mlog$mv")
+			newMLog.DBID = dbInfo.ID
+			newMLog.MaterializedViewLog = oldMLog.MaterializedViewLog.Clone()
+			newMLog.MaterializedViewLog.BaseTableID = shadowTable.ID
+			dbInfo.Deprecated.Tables = []*model.TableInfo{baseTable, oldMView, shadowTable, oldMLog, child}
 			internal.AddDB(t, re.Store(), dbInfo)
 			internal.AddTable(t, re.Store(), dbInfo.ID, baseTable)
 			internal.AddTable(t, re.Store(), dbInfo.ID, oldMView)
 			internal.AddTable(t, re.Store(), dbInfo.ID, shadowTable)
+			internal.AddTable(t, re.Store(), dbInfo.ID, oldMLog)
+			internal.AddTable(t, re.Store(), dbInfo.ID, child)
 
 			data := infoschema.NewData()
 			builder := infoschema.NewBuilder(re, nil, data, useV2)
@@ -60,6 +73,13 @@ func TestApplyMViewRefreshOutOfPlaceCutoverDiff(t *testing.T) {
 			newMView.Name = oldMView.Name
 			newMView.MaterializedView = oldMView.MaterializedView
 			newMView.MaterializedViewShadow = nil
+			newMView.MaterializedViewBase = oldMView.MaterializedViewBase.Clone()
+			newMView.MaterializedViewBase.MLogID = newMLog.ID
+			childAfterCutover := child.Clone()
+			childAfterCutover.MaterializedView.BaseTableIDs = []int64{newMView.ID, baseTable.ID}
+			internal.UpdateTable(t, re.Store(), dbInfo, childAfterCutover)
+			internal.AddTable(t, re.Store(), dbInfo.ID, newMLog)
+			internal.DropTable(t, re.Store(), dbInfo, oldMLog.ID, oldMLog.Name.O)
 			baseAfterCutover := baseTable.Clone()
 			baseAfterCutover.MaterializedViewBase.MViewIDs = []int64{shadowTable.ID}
 			internal.UpdateTable(t, re.Store(), dbInfo, baseAfterCutover)
@@ -79,10 +99,11 @@ func TestApplyMViewRefreshOutOfPlaceCutoverDiff(t *testing.T) {
 				TableID:    shadowTable.ID,
 				OldTableID: oldMView.ID,
 				Version:    2,
-				AffectedOpts: []*model.AffectedOption{{
-					SchemaID: dbInfo.ID, OldSchemaID: dbInfo.ID,
-					TableID: baseTable.ID, OldTableID: baseTable.ID,
-				}},
+				AffectedOpts: []*model.AffectedOption{
+					{SchemaID: dbInfo.ID, OldSchemaID: dbInfo.ID, TableID: baseTable.ID, OldTableID: baseTable.ID},
+					{SchemaID: dbInfo.ID, OldSchemaID: dbInfo.ID, TableID: newMLog.ID, OldTableID: oldMLog.ID},
+					{SchemaID: dbInfo.ID, OldSchemaID: dbInfo.ID, TableID: child.ID, OldTableID: child.ID},
+				},
 			})
 			require.NoError(t, err)
 
@@ -103,6 +124,20 @@ func TestApplyMViewRefreshOutOfPlaceCutoverDiff(t *testing.T) {
 			base, exists := is.TableByID(context.Background(), baseTable.ID)
 			require.True(t, exists)
 			require.Equal(t, []int64{shadowTable.ID}, base.Meta().MaterializedViewBase.MViewIDs)
+			_, exists = is.TableByID(context.Background(), oldMLog.ID)
+			require.False(t, exists)
+			log, err := is.TableByName(context.Background(), dbInfo.Name, oldMLog.Name)
+			require.NoError(t, err)
+			require.Equal(t, newMLog.ID, log.Meta().ID)
+			require.Equal(t, newMView.ID, log.Meta().MaterializedViewLog.BaseTableID)
+			require.Equal(t, []int64{child.ID}, log.Meta().MaterializedViewLog.DependentMViewIDs)
+			newChild, exists := is.TableByID(context.Background(), child.ID)
+			require.True(t, exists)
+			require.Equal(t, []int64{newMView.ID, baseTable.ID}, newChild.Meta().MaterializedView.BaseTableIDs)
+			// Applying the diff must leave an existing snapshot's graph intact.
+			oldChild, exists := oldInfoSchema.TableByID(context.Background(), child.ID)
+			require.True(t, exists)
+			require.Equal(t, []int64{oldMView.ID, baseTable.ID}, oldChild.Meta().MaterializedView.BaseTableIDs)
 		})
 	}
 }

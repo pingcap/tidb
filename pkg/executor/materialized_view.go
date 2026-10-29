@@ -2412,6 +2412,19 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	)
 	sqlExec := purgeSctx.GetSQLExecutor()
 
+	advisoryLockName := mviewutil.PurgeAdvisoryLockName(mlogID)
+	if err := purgeSctx.GetAdvisoryLock(advisoryLockName, 1); err != nil {
+		if storeerr.ErrLockWaitTimeout.Equal(err) {
+			return errors.Annotatef(errMLogPurgeLockConflict,
+				"another purge or materialized view cutover is running for materialized view log on %s.%s, please retry later",
+				schemaName.O, s.Table.Name.O)
+		}
+		return errors.Trace(err)
+	}
+	// Do not retry acquisition: this statement may hold MDL needed by cutover.
+	// The later transaction cleanup runs before this advisory lock is released.
+	defer purgeSctx.ReleaseAdvisoryLock(advisoryLockName)
+
 	deleteSctx, err := e.GetSysSession()
 	if err != nil {
 		return err
@@ -4790,18 +4803,6 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 ) (buildReadTSO uint64, err error) {
 	if err := kctx.Err(); err != nil {
 		return 0, err
-	}
-	currentTbl, ok := domain.GetDomain(e.Ctx()).InfoSchema().TableByID(context.Background(), tblInfo.ID)
-	if !ok {
-		return 0, infoschema.ErrTableNotExists.GenWithStackByArgs(schemaName, tblInfo.Name)
-	}
-	if baseInfo := currentTbl.Meta().MaterializedViewBase; baseInfo != nil &&
-		(baseInfo.MLogID != 0 || len(baseInfo.MViewIDs) != 0) {
-		return 0, errors.Errorf(
-			"refresh materialized view complete OUT OF PLACE is not supported for materialized view %s.%s with a materialized view log or dependent materialized view",
-			schemaName.O,
-			tblInfo.Name.O,
-		)
 	}
 	buildSctx, err := e.GetSysSession()
 	if err != nil {

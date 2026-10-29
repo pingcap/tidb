@@ -78,8 +78,8 @@ func queryDeleteRangeCnt(sessPool *sess.Pool, jobID int64) (int, error) {
 }
 
 func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
-	if job.State == model.JobStateCancelled {
-		// Cancelled job should not have any delete range.
+	if job.IsCancelled() && job.Type != model.ActionMViewRefreshOutOfPlaceCutover {
+		// A cancelled cutover can still retire an unused replacement log.
 		return 0, nil
 	}
 	switch job.Type {
@@ -101,6 +101,19 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		}
 		return 0, nil
 	case model.ActionMViewRefreshOutOfPlaceCutover:
+		args, err := model.GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(job)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if job.IsCancelled() {
+			if args.NewMLogID != 0 {
+				return 1, nil
+			}
+			return 0, nil
+		}
+		if args.OldMLogID != 0 {
+			return 2, nil
+		}
 		return 1, nil
 	case model.ActionTruncateTable, model.ActionTruncateTablePartition:
 		args, err := model.GetFinishedTruncateTableArgs(job)

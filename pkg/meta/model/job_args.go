@@ -826,6 +826,8 @@ type MViewRefreshSource struct {
 // RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs is the arguments for
 // ActionMViewRefreshOutOfPlaceCutover ddl.
 type RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs struct {
+	OldMLogID                          int64                `json:"old_mlog_id,omitempty"`
+	NewMLogID                          int64                `json:"new_mlog_id,omitempty"`
 	BuildSources                       []MViewRefreshSource `json:"build_sources"`
 	OldMViewID                         int64                `json:"old_mview_id,omitempty"`
 	ShadowTableID                      int64                `json:"shadow_table_id,omitempty"`
@@ -848,6 +850,8 @@ func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) getArgsV1(*Job) [
 		a.ShouldUpdateNextRefreshUnixSeconds,
 		a.ExpectedOldMViewRevision,
 		a.BuildSources,
+		a.OldMLogID,
+		a.NewMLogID,
 	}
 }
 
@@ -862,6 +866,8 @@ func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) decodeV1(job *Job
 		&a.ShouldUpdateNextRefreshUnixSeconds,
 		&a.ExpectedOldMViewRevision,
 		&a.BuildSources,
+		&a.OldMLogID,
+		&a.NewMLogID,
 	))
 }
 
