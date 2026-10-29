@@ -3598,11 +3598,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 .iter()
                 .filter(|name| {
                     !resolution.paths.iter().any(|path| match path {
-                        crate::access_path::PossiblePath::Table { .. }
-                        | crate::access_path::PossiblePath::TiFlashTable => {
+                        tidb_planner_util::path::PossiblePath::Table { .. }
+                        | tidb_planner_util::path::PossiblePath::TiFlashTable => {
                             lower_name_matches(name, "primary")
                         }
-                        crate::access_path::PossiblePath::Index { index } => table
+                        tidb_planner_util::path::PossiblePath::Index { index } => table
                             .indexes
                             .get(*index)
                             .is_some_and(|index| lower_name_matches(&index.name, name)),
@@ -3638,19 +3638,19 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     .rev()
                     .fold(Vec::<&'static str>::new(), |mut engines, path| {
                         let engine = match path {
-                            crate::access_path::PossiblePath::TiFlashTable => "tiflash",
-                            crate::access_path::PossiblePath::Table { .. }
-                            | crate::access_path::PossiblePath::Index { .. } => "tikv",
+                            tidb_planner_util::path::PossiblePath::TiFlashTable => "tiflash",
+                            tidb_planner_util::path::PossiblePath::Table { .. }
+                            | tidb_planner_util::path::PossiblePath::Index { .. } => "tikv",
                         };
                         if !engines.contains(&engine) {
                             engines.push(engine);
                         }
                         engines
                     });
-            let permitted = |path: &crate::access_path::PossiblePath| match path {
-                crate::access_path::PossiblePath::TiFlashTable => self.tiflash_in_isolation_read,
-                crate::access_path::PossiblePath::Table { .. }
-                | crate::access_path::PossiblePath::Index { .. } => self.tikv_in_isolation_read,
+            let permitted = |path: &tidb_planner_util::path::PossiblePath| match path {
+                tidb_planner_util::path::PossiblePath::TiFlashTable => self.tiflash_in_isolation_read,
+                tidb_planner_util::path::PossiblePath::Table { .. }
+                | tidb_planner_util::path::PossiblePath::Index { .. } => self.tikv_in_isolation_read,
             };
             public_paths.retain(&permitted);
             resolution.paths.retain(permitted);
@@ -3786,8 +3786,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             if data_source.enumerated_paths.iter().any(|path| {
                 matches!(
                     path,
-                    crate::access_path::PossiblePath::Table { .. }
-                        | crate::access_path::PossiblePath::Index { .. }
+                    tidb_planner_util::path::PossiblePath::Table { .. }
+                        | tidb_planner_util::path::PossiblePath::Index { .. }
                 )
             }) {
                 data_source.prefer_store_type |= PREFER_TIKV;
@@ -3825,7 +3825,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             if data_source
                 .enumerated_paths
                 .iter()
-                .any(|path| matches!(path, crate::access_path::PossiblePath::TiFlashTable))
+                .any(|path| matches!(path, tidb_planner_util::path::PossiblePath::TiFlashTable))
             {
                 data_source.prefer_store_type |= PREFER_TIFLASH;
                 data_source

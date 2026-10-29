@@ -18,7 +18,7 @@
 use std::cmp::Ordering;
 use std::collections::HashSet;
 
-use crate::access_path::PossiblePath;
+use tidb_planner_util::path::PossiblePath;
 
 use super::data_source::DataSource;
 

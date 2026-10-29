@@ -18,7 +18,7 @@
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 
-use crate::access_path::PossiblePath;
+use tidb_planner_util::path::PossiblePath;
 use tidb_planner_core_base::PossiblePropertiesInfo;
 
 use super::fold::{fold_owned, Descend, OwnedRewrite};

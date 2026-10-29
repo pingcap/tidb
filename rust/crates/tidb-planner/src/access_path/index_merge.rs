@@ -15,6 +15,7 @@
 //! Derivation consumes expression, range and statistics inputs only. Physical
 //! property convergence and task construction belong to `find_best_task`.
 
+use tidb_planner_util::path::{IndexMergePartial, IndexMergePath, Partial, UnionIndexMergePath};
 use super::AccessPathDerivationContext;
 use crate::logical::DataSource;
 use tidb_planner_core_base::PlanError;
@@ -55,63 +56,13 @@ pub(crate) fn index_merge_hint_specifies(ds: &DataSource, index_name: &str) -> b
 pub(crate) fn enumerated_index_mask(ds: &DataSource) -> Vec<bool> {
     let mut indexes = vec![false; ds.indexes.len()];
     for path in &ds.enumerated_paths {
-        if let crate::access_path::PossiblePath::Index { index } = path {
+        if let tidb_planner_util::path::PossiblePath::Index { index } = path {
             if let Some(enumerated) = indexes.get_mut(*index) {
                 *enumerated = true;
             }
         }
     }
     indexes
-}
-
-/// One viable partial access for a single disjunct.
-#[derive(Clone, Debug)]
-pub(crate) enum Partial {
-    /// A secondary-index range scan; rows are (index cols..., handle...).
-    Index {
-        index_pos: usize,
-        filled: super::ordinary::FilledIndexPath,
-        rows: f64,
-        keep_source_filter: bool,
-    },
-    /// A table-handle alternative retaining residuals until schema narrowing.
-    Table {
-        filled: super::ordinary::FilledTablePath,
-        rows: f64,
-        keep_source_filter: bool,
-    },
-    /// Go's MV alternative (`buildIntoAccessPath`'s MV arm): one partial path
-    /// per value over a multi-valued index, whose handles unite.
-    MvIndex {
-        index_pos: usize,
-        paths: Vec<IndexMergePartial>,
-        keep_source_filter: bool,
-    },
-}
-
-impl IndexMergePartial {
-    /// Go `CountAfterAccess`.
-    pub(crate) fn rows(&self) -> f64 {
-        self.path.count_after_access().unwrap_or(0.0)
-    }
-
-    /// The partial's filled ranges and filters.
-    pub(crate) fn filled(&self) -> &super::ordinary::FilledIndexPath {
-        self.path
-            .filled
-            .as_ref()
-            .expect("index merge partials are filled logical paths")
-    }
-}
-
-/// Logical access ranges and counts, prepared before physical path costing.
-#[derive(Clone, Debug)]
-pub struct UnionIndexMergePath {
-    pub(crate) alternatives: Vec<Vec<Partial>>,
-    pub(crate) count_after_access: f64,
-    pub(crate) source_filter: Expression,
-    pub(crate) table_filters: Vec<Expression>,
-    pub(crate) use_plan_cache: bool,
 }
 
 #[cfg(test)]
@@ -179,11 +130,11 @@ fn prepare_union_index_merge_path_for_or(
         // (`IsIntHandlePath`) or a clustered common handle
         // (`IsCommonHandlePath`, ranged over its PRIMARY index's columns).
         let table_primary = ds.enumerated_paths.iter().find_map(|path| match path {
-            crate::access_path::PossiblePath::Table {
+            tidb_planner_util::path::PossiblePath::Table {
                 is_int_handle: true,
                 ..
             } if ds.handle_is_int && !ds.handle_cols.is_empty() => Some(None),
-            crate::access_path::PossiblePath::Table {
+            tidb_planner_util::path::PossiblePath::Table {
                 is_int_handle: false,
                 primary_index: Some(primary),
             } if ds.is_common_handle => Some(Some(*primary)),
@@ -640,7 +591,7 @@ pub(crate) fn compare_alternatives(
 pub(super) fn estimate_partial_index_ranges(
     ds: &DataSource,
     source_index: &tidb_infoschema::table_source::SourceIndex,
-    filled: &super::ordinary::FilledIndexPath,
+    filled: &tidb_planner_util::path::FilledIndexPath,
     ctx: &AccessPathDerivationContext<'_>,
 ) -> Result<f64, PlanError> {
     estimate_index_ranges(ds, source_index, &filled.detached.ranges, &filled.columns, ctx)
@@ -692,29 +643,6 @@ pub(super) fn estimate_index_ranges(
                 .generate_with_stack_by_args(&[(error.to_string()).into()]),
         )
     })
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct IndexMergePartial {
-    pub(crate) index_pos: usize,
-    pub(crate) path: super::IndexPathState,
-}
-
-/// Go's finished index-merge `AccessPath` (`PartialIndexPaths` set): the
-/// partials are fixed at logical derivation, unlike the OR alternatives of
-/// [`UnionIndexMergePath`] that converge only under physical properties.
-#[derive(Clone, Debug)]
-pub struct IndexMergePath {
-    pub(crate) partials: Vec<IndexMergePartial>,
-    pub(crate) count_after_access: f64,
-    pub(crate) table_filters: Vec<Expression>,
-    /// Go `IndexMergeIsIntersection`.
-    pub(crate) is_intersection: bool,
-    /// Go `IndexMergeAccessMVIndex`.
-    pub(crate) access_mv_index: bool,
-    /// Go `NoncacheableReason`/`SetSkipPlanCache` for a path whose ranges
-    /// depend on parameter values.
-    pub(crate) noncacheable_reason: Option<String>,
 }
 
 /// Go `generateNormalIndexPartialPath4And`.

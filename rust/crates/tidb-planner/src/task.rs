@@ -433,7 +433,7 @@ pub struct CopTask {
     pub common_handle_cols: Vec<tidb_expr::column::Column>,
     /// Go `IndexLookUpPushDownBy`: whether a double read should become one
     /// storage-side local index lookup, and which authority requested it.
-    pub index_lookup_push_down_by: crate::access_path::IndexLookupPushDownBy,
+    pub index_lookup_push_down_by: tidb_planner_util::path::IndexLookupPushDownBy,
     /// Go `IndexPlanFinished`: whether the index half is sealed, which
     /// decides which half [`CopTask::plan`] and [`CopTask::count`] read.
     pub index_plan_finished: bool,
@@ -666,11 +666,11 @@ impl CopTask {
         base.base.set_stats(table_plan.stats_info().cloned());
         base.base.set_schema(table_plan.schema().cloned());
         let mut index_lookup_push_down = if self.index_lookup_push_down_by
-            == crate::access_path::IndexLookupPushDownBy::None
+            == tidb_planner_util::path::IndexLookupPushDownBy::None
         {
             false
         } else if self.keep_order {
-            if self.index_lookup_push_down_by == crate::access_path::IndexLookupPushDownBy::Hint {
+            if self.index_lookup_push_down_by == tidb_planner_util::path::IndexLookupPushDownBy::Hint {
                 self.warnings.append_warning(
                     "hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported.",
                 );
@@ -1609,7 +1609,7 @@ mod tests {
                 table_schema.clone(),
                 1_000.0,
             ))),
-            index_lookup_push_down_by: crate::access_path::IndexLookupPushDownBy::Hint,
+            index_lookup_push_down_by: tidb_planner_util::path::IndexLookupPushDownBy::Hint,
             ..CopTask::default()
         })
         .convert_to_root_task(&allocator)
@@ -1638,7 +1638,7 @@ mod tests {
                 1_000.0,
             ))),
             common_handle_cols: vec![column_with_id(1), column_with_id(2)],
-            index_lookup_push_down_by: crate::access_path::IndexLookupPushDownBy::Hint,
+            index_lookup_push_down_by: tidb_planner_util::path::IndexLookupPushDownBy::Hint,
             ..CopTask::default()
         })
         .convert_to_root_task(&allocator)
@@ -1694,7 +1694,7 @@ mod tests {
         let complex = Task::Cop(CopTask {
             index_plan: Some(Box::new(limit)),
             table_plan: Some(Box::new(table_scan)),
-            index_lookup_push_down_by: crate::access_path::IndexLookupPushDownBy::Hint,
+            index_lookup_push_down_by: tidb_planner_util::path::IndexLookupPushDownBy::Hint,
             ..CopTask::default()
         })
         .convert_to_root_task(&allocator)
@@ -2448,7 +2448,7 @@ mod tests {
             Task::Cop(CopTask {
                 index_plan: Some(Box::new(dual_with_rows(1.0))),
                 table_plan: Some(Box::new(dual_with_rows(1.0))),
-                index_lookup_push_down_by: crate::access_path::IndexLookupPushDownBy::Hint,
+                index_lookup_push_down_by: tidb_planner_util::path::IndexLookupPushDownBy::Hint,
                 keep_order,
                 ..CopTask::default()
             })

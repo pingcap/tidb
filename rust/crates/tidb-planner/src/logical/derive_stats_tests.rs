@@ -719,7 +719,7 @@ fn deriving_a_data_source_fills_each_index_path_row_count_from_its_collection() 
         }],
         ..Default::default()
     }];
-    op.enumerated_paths = vec![crate::access_path::PossiblePath::Index { index: 0 }];
+    op.enumerated_paths = vec![tidb_planner_util::path::PossiblePath::Index { index: 0 }];
     op.pushed_down_conds = vec![Expression::ScalarFunction(eq_condition_to_constant(1, 7))];
     op.derived_index_paths.entry(8).or_default().row_estimate =
         Some(tidb_stats::default_row_est(1.0));
@@ -782,7 +782,7 @@ fn deriving_an_index_path_records_the_index_in_the_used_stats_ledger() {
             }],
             ..Default::default()
         }];
-        op.enumerated_paths = vec![crate::access_path::PossiblePath::Index { index: 0 }];
+        op.enumerated_paths = vec![tidb_planner_util::path::PossiblePath::Index { index: 0 }];
         op.pushed_down_conds = conditions
             .into_iter()
             .map(Expression::ScalarFunction)

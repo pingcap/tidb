@@ -273,7 +273,7 @@ impl DataSource {
                 // which only ever appends the integer handle, and runs only
                 // for the paths in AllPossibleAccessPaths.
                 let has_possible_path = source.enumerated_paths.iter().any(|path| {
-                    matches!(path, crate::access_path::PossiblePath::Index { index: position }
+                    matches!(path, tidb_planner_util::path::PossiblePath::Index { index: position }
                         if source.indexes.get(*position).is_some_and(|candidate| candidate.id == index.id))
                 });
                 if has_possible_path && columns.len() == index.columns.len() {
@@ -723,7 +723,7 @@ use tidb_charset::Collation;
                 is_multi_valued: multi_valued,
                 ..Default::default()
             }];
-            source.enumerated_paths = vec![crate::access_path::PossiblePath::Index { index: 0 }];
+            source.enumerated_paths = vec![tidb_planner_util::path::PossiblePath::Index { index: 0 }];
             source.init_stats(Some(snapshot), snapshot.row_count as f64, None);
             let hist = source
                 .table_stats

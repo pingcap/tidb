@@ -184,6 +184,7 @@ tidb-vardef = { path = "../tidb-vardef" }
 tracing = "0.1"
 
 [dev-dependencies]
+tidb-planner-util = { path = "../tidb-planner-util" }
 tidb-metabuild = { path = "../tidb-metabuild" }
 tidb-session = { path = "../tidb-session" }
 tidb-sessionctx = { path = "../tidb-sessionctx", features = ["test-util"] }

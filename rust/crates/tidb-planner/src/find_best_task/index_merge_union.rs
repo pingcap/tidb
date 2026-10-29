@@ -13,9 +13,9 @@
 //! Physical property convergence and cop-task conversion for ordinary OR
 //! alternatives derived by `access_path::index_merge`.
 
-use crate::access_path::index_merge::{
-    compare_alternatives, Partial, UnionIndexMergePath,
-};
+use crate::access_path::index_merge::compare_alternatives;
+
+use tidb_planner_util::path::{Partial, UnionIndexMergePath};
 use crate::find_best_task::dispatch::DispatchContext;
 use crate::logical::DataSource;
 use crate::physical::PhysicalPlan;
@@ -114,7 +114,7 @@ fn partial_matches_order(
 fn index_partial_matches_order(
     ds: &DataSource,
     index_pos: usize,
-    filled: &crate::access_path::ordinary::FilledIndexPath,
+    filled: &tidb_planner_util::path::FilledIndexPath,
     items: &[tidb_planner_property::SortItem],
     allow_groups: bool,
 ) -> Option<Vec<usize>> {
@@ -806,7 +806,7 @@ fn keeps_phys_tbl_id(ds: &DataSource) -> bool {
 /// Go `PhysicalIndexScan.AccessCondition` / `IdxCols` / `IdxColLens` of a
 /// merge partial, which `rebuildRange` re-detaches on a plan-cache hit.
 pub(crate) fn partial_index_range_rebuild(
-    filled: &crate::access_path::ordinary::FilledIndexPath,
+    filled: &tidb_planner_util::path::FilledIndexPath,
 ) -> Option<crate::physical_plan_cache::IndexRangeRebuild> {
     if filled.detached.access_conds.is_empty() {
         return None;
@@ -823,7 +823,7 @@ pub(crate) fn partial_index_range_rebuild(
 /// handle, which `buildRangeForTableScan` re-detaches on a plan-cache hit.
 fn partial_table_range_rebuild(
     ds: &DataSource,
-    filled: &crate::access_path::ordinary::FilledTablePath,
+    filled: &tidb_planner_util::path::FilledTablePath,
 ) -> Option<crate::physical_plan_cache::TableRangeRebuild> {
     let access_conds = &filled.detached.access_conds;
     if access_conds.is_empty() {
@@ -852,7 +852,7 @@ fn push_index_partial(
     ds: &DataSource,
     ctx: &DispatchContext<'_>,
     index_pos: usize,
-    filled: &crate::access_path::ordinary::FilledIndexPath,
+    filled: &tidb_planner_util::path::FilledIndexPath,
     rows: f64,
     scan_rows: f64,
     matched: bool,
@@ -1186,7 +1186,7 @@ mod tests {
                 is_primary_key: true,
                 is_not_null: true,
             }],
-            enumerated_paths: vec![crate::access_path::PossiblePath::Index { index: 0 }],
+            enumerated_paths: vec![tidb_planner_util::path::PossiblePath::Index { index: 0 }],
             index_merge_hints: vec![Default::default()],
             common_handle_cols: vec![a.clone()],
             is_common_handle: true,
@@ -1251,7 +1251,7 @@ mod tests {
         choices.indexes.push(shorter);
         choices
             .enumerated_paths
-            .push(crate::access_path::PossiblePath::Index { index: 1 });
+            .push(tidb_planner_util::path::PossiblePath::Index { index: 1 });
         let alternatives = prepare_union_index_merge_path(&choices, &derivation)
             .unwrap()
             .unwrap();
@@ -1308,7 +1308,7 @@ mod tests {
             });
             multiple_or
                 .enumerated_paths
-                .push(crate::access_path::PossiblePath::Index { index: multiple_or.indexes.len() - 1 });
+                .push(tidb_planner_util::path::PossiblePath::Index { index: multiple_or.indexes.len() - 1 });
         }
         multiple_or.pushed_down_conds.push(Expression::ScalarFunction(ScalarFunction::new(
             tidb_ast::CiString::new("or"), ty.clone(), vec![eq_b(1), eq_b(2)],
@@ -1346,7 +1346,7 @@ mod tests {
                 .is_some_and(|paths| paths
                     .paths
                     .iter()
-                    .all(|path| matches!(path, crate::access_path::DerivedAccessPath::Union(_)))
+                    .all(|path| matches!(path, tidb_planner_util::path::DerivedAccessPath::Union(_)))
                     && !paths.paths.is_empty()),
             "logical derivation must retain hinted merge alternatives even with cached row statistics"
         );
@@ -1405,7 +1405,7 @@ mod tests {
         assert_eq!(allocator.current(), before_convergence,
             "merge convergence must finish before physical allocation");
         let retained = &derived_source.derived_access_paths.as_ref().unwrap().paths;
-        let crate::access_path::DerivedAccessPath::Union(retained_union) = &retained[0] else {
+        let tidb_planner_util::path::DerivedAccessPath::Union(retained_union) = &retained[0] else {
             unreachable!()
         };
         for property in [
@@ -1490,8 +1490,8 @@ mod tests {
             .retain(|path| {
                 matches!(
                     path,
-                    crate::access_path::DerivedAccessPath::Ordinary(
-                        crate::access_path::PossiblePath::Index { index: 0 }
+                    tidb_planner_util::path::DerivedAccessPath::Ordinary(
+                        tidb_planner_util::path::PossiblePath::Index { index: 0 }
                     )
                 )
             });
@@ -1518,7 +1518,7 @@ mod tests {
         table_source.index_merge_hints.clear();
         table_source.indexes[0].primary = true;
         table_source.indexes[0].unique = true;
-        table_source.enumerated_paths = vec![crate::access_path::PossiblePath::Table {
+        table_source.enumerated_paths = vec![tidb_planner_util::path::PossiblePath::Table {
             is_int_handle: false,
             primary_index: Some(0),
         }];

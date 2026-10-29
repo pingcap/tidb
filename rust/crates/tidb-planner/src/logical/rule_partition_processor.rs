@@ -402,7 +402,7 @@ impl LogicalOptRule for PartitionProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::access_path::PossiblePath;
+    use tidb_planner_util::path::PossiblePath;
     use crate::logical::data_source::{DataSourceIndexHint, DataSourceIndexMergeHint};
     use tidb_infoschema::table_source::SourceIndex;
 

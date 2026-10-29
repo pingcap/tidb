@@ -52,7 +52,7 @@ pub(crate) fn collect_candidates(
         return;
     };
     for path in &source.enumerated_paths {
-        let crate::access_path::PossiblePath::Index { index } = path else {
+        let tidb_planner_util::path::PossiblePath::Index { index } = path else {
             continue;
         };
         let Some(index) = source.indexes.get(*index) else {

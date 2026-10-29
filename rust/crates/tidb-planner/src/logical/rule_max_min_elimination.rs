@@ -78,7 +78,7 @@ fn check_column_can_use_index(
             // DataSourceAccessPath. Go's AllPossibleAccessPaths already contains
             // these hint-filtered entries at this stage.
             if source.all_possible_access_paths.is_empty() {
-                use crate::access_path::PossiblePath;
+                use tidb_planner_util::path::PossiblePath;
                 for path in &source.enumerated_paths {
                     let (columns, lengths): (Vec<Column>, Vec<i64>) = match path {
                         PossiblePath::Table {

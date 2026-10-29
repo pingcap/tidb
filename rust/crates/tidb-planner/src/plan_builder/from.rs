@@ -103,7 +103,6 @@
 //!   [`PlanBuilder::view_depth`]; recursion is refused by the name-keyed
 //!   stack, and the counter's only reader is the `ErrViewNoExplain` arm.
 
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 

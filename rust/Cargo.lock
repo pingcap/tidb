@@ -4560,6 +4560,7 @@ dependencies = [
  "tidb-planner-indexadvisor",
  "tidb-planner-property",
  "tidb-planner-rule",
+ "tidb-planner-util",
  "tidb-plannererrors",
  "tidb-ppcpuusage",
  "tidb-privilege",
@@ -6005,6 +6006,8 @@ dependencies = [
  "tidb-hint",
  "tidb-mysql",
  "tidb-planner-cascades-base",
+ "tidb-ranger",
+ "tidb-stats",
 ]
 
 [[package]]

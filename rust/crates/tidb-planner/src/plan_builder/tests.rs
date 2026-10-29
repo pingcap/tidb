@@ -746,7 +746,7 @@ fn test_dynamic_partition_pruning_retains_global_index_paths() {
     assert_eq!(flags & flags::PARTITION_PROCESSOR, 0);
     assert!(source
         .enumerated_paths
-        .contains(&crate::access_path::PossiblePath::Index { index: 0 }));
+        .contains(&tidb_planner_util::path::PossiblePath::Index { index: 0 }));
 
     let mut builder = harness.builder();
     let (plan, flags) = builder
@@ -761,7 +761,7 @@ fn test_dynamic_partition_pruning_retains_global_index_paths() {
     assert_ne!(flags & flags::PARTITION_PROCESSOR, 0);
     assert!(!source
         .enumerated_paths
-        .contains(&crate::access_path::PossiblePath::Index { index: 0 }));
+        .contains(&tidb_planner_util::path::PossiblePath::Index { index: 0 }));
 }
 
 #[test]
@@ -803,7 +803,7 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
     };
     assert_eq!(
         source.enumerated_paths,
-        vec![crate::access_path::PossiblePath::Index { index: 0 }]
+        vec![tidb_planner_util::path::PossiblePath::Index { index: 0 }]
     );
     assert_eq!(
         source.forced_index_ids,
@@ -822,7 +822,7 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
     };
     assert_eq!(
         source.enumerated_paths,
-        vec![crate::access_path::PossiblePath::Index { index: 0 }]
+        vec![tidb_planner_util::path::PossiblePath::Index { index: 0 }]
     );
     assert_eq!(
         source.forced_index_ids,
@@ -843,7 +843,7 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
     };
     assert!(matches!(
         source.enumerated_paths.as_slice(),
-        [crate::access_path::PossiblePath::Table { .. }]
+        [tidb_planner_util::path::PossiblePath::Table { .. }]
     ));
     assert!(source.force_keep_order_table_path);
 
@@ -859,7 +859,7 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
     };
     assert!(matches!(
         source.enumerated_paths.as_slice(),
-        [crate::access_path::PossiblePath::Table { .. }]
+        [tidb_planner_util::path::PossiblePath::Table { .. }]
     ));
 
     let mut builder = harness.builder();
@@ -1008,7 +1008,7 @@ fn test_read_from_storage_is_resolved_from_plan_hints_like_go() {
 
 #[test]
 fn test_index_hints_respect_tikv_isolation_like_go() {
-    use crate::access_path::PossiblePath;
+    use tidb_planner_util::path::PossiblePath;
 
     let mut harness = Harness::new();
     harness.tables_mut()[0].tiflash_replica = Some(tidb_model::TiFlashReplicaInfo {
@@ -1108,7 +1108,7 @@ fn test_no_index_lookup_pushdown_matches_and_overrides_positive_hint() {
     assert!(source.index_lookup_push_down_by.is_empty());
     assert!(matches!(
         source.enumerated_paths.as_slice(),
-        [crate::access_path::PossiblePath::Table { .. }]
+        [tidb_planner_util::path::PossiblePath::Table { .. }]
     ));
     assert_eq!(
         *warnings
@@ -1158,7 +1158,7 @@ fn test_lookup_pushdown_rejects_go_unsupported_index_metadata() {
         assert!(source.index_lookup_push_down_by.is_empty());
         assert!(matches!(
             source.enumerated_paths.as_slice(),
-            [crate::access_path::PossiblePath::Table { .. }]
+            [tidb_planner_util::path::PossiblePath::Table { .. }]
         ));
         assert_eq!(
             *warnings
@@ -1175,10 +1175,8 @@ fn test_lookup_pushdown_rejects_go_unsupported_index_metadata() {
 
 #[test]
 fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
-    use crate::access_path::{
-        apply_table_index_hints, get_possible_access_paths, IndexLookupPushDownBy,
-        IndexLookupPushDownPolicy, IndexLookupPushDownSession,
-    };
+    use crate::access_path::{apply_table_index_hints, get_possible_access_paths, IndexLookupPushDownPolicy, IndexLookupPushDownSession};
+    use tidb_planner_util::path::{IndexLookupPushDownBy};
     use crate::logical::data_source::DataSourceIndexHint;
 
     let hint = DataSourceIndexHint {
@@ -1659,7 +1657,7 @@ fn a_built_data_source_enumerates_its_access_paths() {
     // Go `getPossibleAccessPaths` (`planbuilder.go:1320`) runs during
     // `buildDataSource`: the fixture table (`a BIGINT PRIMARY KEY, KEY
     // idx_b(b)`) yields the int-handle table path first, then `idx_b`.
-    use crate::access_path::PossiblePath;
+    use tidb_planner_util::path::PossiblePath;
     let harness = Harness::new();
     let mut builder = harness.builder();
     let select = parse_select("SELECT * FROM t");

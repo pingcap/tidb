@@ -28,7 +28,7 @@ use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 /// remain as a Selection on the final table lookup.
 pub(super) fn build_prepared_index_merge_task(
     ds: &DataSource,
-    path: &crate::access_path::index_merge::IndexMergePath,
+    path: &tidb_planner_util::path::IndexMergePath,
     ctx: &DispatchContext<'_>,
 ) -> Result<Task, PlanError> {
     let partials = &path.partials;

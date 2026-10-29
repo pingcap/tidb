@@ -149,14 +149,14 @@ pub struct DataSource {
     /// Go `AllConds`: every condition on this table, pushed down or not.
     pub all_conds: Vec<Expression>,
     /// Go `getPossibleAccessPaths`' answer at BUILD time — the newborn form
-    /// (`crate::access_path::PossiblePath`), before ranger and statistics
+    /// (`tidb_planner_util::path::PossiblePath`), before ranger and statistics
     /// grow it. Go mutates one `util.AccessPath` through both stages; this
     /// port keeps the stages as two typed lists, and the grown lists below
     /// stay empty until the costing seam fills them.
-    pub enumerated_paths: Vec<crate::access_path::PossiblePath>,
+    pub enumerated_paths: Vec<tidb_planner_util::path::PossiblePath>,
     /// The unfiltered public paths from which static partition children rerun
     /// Go `getPossibleAccessPaths` after partition-scoped hint selection.
-    pub public_enumerated_paths: Vec<crate::access_path::PossiblePath>,
+    pub public_enumerated_paths: Vec<tidb_planner_util::path::PossiblePath>,
     /// Go `AstIndexHints`: table-syntax hints, which apply to every child.
     pub ast_index_hints: Vec<tidb_ast::IndexHint>,
     /// Go `IndexHints`: comment-style hints matched to this DataSource.
@@ -238,7 +238,7 @@ pub struct DataSource {
     pub force_no_keep_order_table_path: bool,
     /// Go `AccessPath.IndexLookUpPushDownBy`, keyed by index ID.
     pub index_lookup_push_down_by:
-        std::collections::BTreeMap<i64, crate::access_path::IndexLookupPushDownBy>,
+        std::collections::BTreeMap<i64, tidb_planner_util::path::IndexLookupPushDownBy>,
     /// Index IDs carrying Go `AccessPath.NoncacheableReason` after
     /// `CheckPartialIndexes` rejects the general cached-plan proof.
     pub partial_index_noncacheable_ids: std::collections::BTreeSet<i64>,
@@ -256,10 +256,10 @@ pub struct DataSource {
     /// Go `TableStats`: the table-level profile before any filtering.
     pub table_stats: Option<StatsInfo>,
     /// Candidates retained by logical derivation; physical search consumes them.
-    pub derived_access_paths: Option<crate::access_path::DerivedAccessPaths>,
+    pub derived_access_paths: Option<tidb_planner_util::path::DerivedAccessPaths>,
     /// Occurrence-local ordinary index records, keyed by catalog ID.
     /// Declared key slots precede statistics, estimates and covering decisions.
-    pub derived_index_paths: std::collections::BTreeMap<i64, crate::access_path::IndexPathState>,
+    pub derived_index_paths: std::collections::BTreeMap<i64, tidb_planner_util::path::IndexPathState>,
     /// Go ColAndIdxExistenceMap.HasAnalyzed, independent of payload eviction.
     pub analyzed_index_ids: std::collections::BTreeSet<i64>,
     /// The table/session facts that Go retains on `PhysicalTableScan` for
@@ -363,8 +363,8 @@ impl DataSource {
     pub fn initialize_index_columns(&mut self) {
         for path in &self.enumerated_paths {
             let position = match path {
-                crate::access_path::PossiblePath::Index { index }
-                | crate::access_path::PossiblePath::Table {
+                tidb_planner_util::path::PossiblePath::Index { index }
+                | tidb_planner_util::path::PossiblePath::Table {
                     primary_index: Some(index),
                     ..
                 } => *index,
@@ -378,7 +378,7 @@ impl DataSource {
             // unique secondary index of more than one column whose first
             // column is a `tidb_shard()` generated column.
             let is_uk_shard_index_path =
-                matches!(path, crate::access_path::PossiblePath::Index { .. })
+                matches!(path, tidb_planner_util::path::PossiblePath::Index { .. })
                     && columns
                         .first()
                         .and_then(Option::as_ref)
@@ -407,7 +407,7 @@ impl DataSource {
         }
         let mut new_conds = conds.clone();
         for path in &self.enumerated_paths {
-            let crate::access_path::PossiblePath::Index { index } = path else {
+            let tidb_planner_util::path::PossiblePath::Index { index } = path else {
                 continue;
             };
             let Some(index) = self.indexes.get(*index) else {
@@ -505,7 +505,7 @@ impl DataSource {
         let mut paths = tidb_planner_cardinality::selectivity::FilledPaths::new();
         for path in &self.enumerated_paths {
             match path {
-                crate::access_path::PossiblePath::Table {
+                tidb_planner_util::path::PossiblePath::Table {
                     primary_index: Some(position),
                     ..
                 } => {
@@ -513,7 +513,7 @@ impl DataSource {
                         paths.insert(index.id, Vec::new());
                     }
                 }
-                crate::access_path::PossiblePath::Index { index: position } => {
+                tidb_planner_util::path::PossiblePath::Index { index: position } => {
                     if let Some(index) = self.indexes.get(*position) {
                         // The path's `IdxCols`: the schema columns behind the
                         // collection's ids, a prefix up to the first absent one.
@@ -535,8 +535,8 @@ impl DataSource {
                         paths.insert(index.id, columns);
                     }
                 }
-                crate::access_path::PossiblePath::Table { .. }
-                | crate::access_path::PossiblePath::TiFlashTable => {}
+                tidb_planner_util::path::PossiblePath::Table { .. }
+                | tidb_planner_util::path::PossiblePath::TiFlashTable => {}
             }
         }
         paths
@@ -743,7 +743,7 @@ impl DataSource {
         let mut has_partial_index = false;
 
         for path in &self.enumerated_paths {
-            let crate::access_path::PossiblePath::Index { index } = path else {
+            let tidb_planner_util::path::PossiblePath::Index { index } = path else {
                 continue;
             };
             let Some(metadata) = self.indexes.get(*index) else {
@@ -786,12 +786,12 @@ impl DataSource {
         };
         self.derived_access_paths = None;
         self.enumerated_paths.retain(|path| match path {
-            crate::access_path::PossiblePath::Index { index } => self
+            tidb_planner_util::path::PossiblePath::Index { index } => self
                 .indexes
                 .get(*index)
                 .is_some_and(|metadata| keep_index_id(metadata.id)),
-            crate::access_path::PossiblePath::Table { .. }
-            | crate::access_path::PossiblePath::TiFlashTable => !partial_index_used_hint,
+            tidb_planner_util::path::PossiblePath::Table { .. }
+            | tidb_planner_util::path::PossiblePath::TiFlashTable => !partial_index_used_hint,
         });
         self.all_possible_access_paths.retain(|path| match path {
             DataSourceAccessPath::Index(index) => keep_index_id(index.candidate().index_id),

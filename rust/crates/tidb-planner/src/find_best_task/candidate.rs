@@ -126,7 +126,7 @@ pub(super) fn equality_facts(detached: &tidb_ranger::detacher::DetachRangeResult
 pub(crate) fn index_candidate_metrics(
     source: &crate::logical::DataSource,
     index: &tidb_infoschema::table_source::SourceIndex,
-    path: &crate::access_path::IndexPathState,
+    path: &tidb_planner_util::path::IndexPathState,
     single_scan: bool,
     matches_property: bool,
 ) -> Option<CandidateMetrics> {
@@ -445,7 +445,7 @@ mod skyline_tests {
 
     #[test]
     fn index_facts_keep_full_key_filters_and_dnf_equality_counts() {
-        use crate::access_path::{IndexPathState, ordinary::FilledIndexPath};
+        use tidb_planner_util::path::{IndexPathState, FilledIndexPath};
         use tidb_infoschema::table_source::SourceIndexColumn;
         use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};

@@ -3460,7 +3460,7 @@ mod statistics_initialization_tests {
         source.physical_table_id = 7;
         source.derived_index_paths.insert(
             99,
-            tidb_planner::access_path::IndexPathState {
+            tidb_planner_util::path::IndexPathState {
                 row_estimate: Some(
                     tidb_stats::RowEstimate::new(
                         900.0, 800.0, 1000.0,
@@ -3472,7 +3472,7 @@ mod statistics_initialization_tests {
         );
         source.derived_index_paths.insert(
             77,
-            tidb_planner::access_path::IndexPathState {
+            tidb_planner_util::path::IndexPathState {
                 declared_columns: Some(vec![Some((
                     Column::new(1, FieldType::new(FieldTypeCode::LongLong)),
                     -1,
@@ -3486,7 +3486,7 @@ mod statistics_initialization_tests {
                 ..Default::default()
             },
         );
-        source.derived_access_paths = Some(tidb_planner::access_path::DerivedAccessPaths {
+        source.derived_access_paths = Some(tidb_planner_util::path::DerivedAccessPaths {
             table_path: None,
             paths: Vec::new(),
             min_selectivity: 0.01,
@@ -3764,7 +3764,7 @@ mod statistics_initialization_tests {
             is_visible: true,
             ..Default::default()
         }];
-        source.enumerated_paths = vec![tidb_planner::access_path::PossiblePath::Index { index: 0 }];
+        source.enumerated_paths = vec![tidb_planner_util::path::PossiblePath::Index { index: 0 }];
         let mut parameter = Constant::new(Datum::Int(1), field_type);
         parameter.param_marker = Some(ParamMarker { order: 0 });
         let comparison = Expression::ScalarFunction(ScalarFunction::new(

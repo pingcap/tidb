@@ -11,31 +11,11 @@
 
 //! Range/filter derivation shared by ordinary and index-merge alternatives.
 
-use super::{AccessPathDerivationContext, PossiblePath};
+use tidb_planner_util::path::{FilledIndexPath, FilledTablePath, PossiblePath};
+use super::AccessPathDerivationContext;
 use crate::logical::DataSource;
 use tidb_planner_core_base::PlanError;
 use tidb_expr::{column::Column, expression::Expression};
-
-/// Go's detached ranges and the subsequent index/table filter partition.
-#[derive(Clone, Debug)]
-pub struct FilledIndexPath {
-    /// Usable key layout at logical derivation, including eligible handles.
-    pub columns: Vec<(Column, i64)>,
-    /// Full index key layout, retaining unresolved positions and handle suffixes.
-    pub full_columns: Vec<Option<(Column, i64)>>,
-    /// Range expressions and access-coverage metadata from the same detach run.
-    pub detached: tidb_ranger::detacher::DetachRangeResult,
-    /// Filters evaluated before the table lookup.
-    pub index_filters: Vec<Expression>,
-    /// Filters requiring the table row or a full prefix-index value.
-    pub table_filters: Vec<Expression>,
-    /// Go CountAfterIndex; absent when the access estimate is unavailable.
-    pub count_after_index: Option<f64>,
-    /// How many trailing access conditions `SplitCorColAccessCondFromFilters`
-    /// moved from the filters: `index_col = correlated_col` equalities, at
-    /// most one closing range, whose ranges are rebuilt per execution.
-    pub correlated_access_count: usize,
-}
 
 pub(crate) fn filter_selectivity(
     source: &DataSource,
@@ -280,29 +260,6 @@ pub(crate) fn fill_ordinary_index_paths(
         state.filled = Some(filled);
     }
     Ok(())
-}
-
-/// Logical integer/common-handle ranges and residuals shared by table candidates.
-#[derive(Clone, Debug)]
-pub struct FilledTablePath {
-    /// Integer handle present in the source schema, including an explicit rowid.
-    pub handle_column: Option<Column>,
-    /// The integer ranger's conversion type.
-    pub handle_type: tidb_datatype::FieldType,
-    /// Usable leading clustered-primary-key columns and their prefix lengths.
-    pub common_columns: Vec<(Column, i64)>,
-    /// Access ranges, absorbed conditions and residual table filters.
-    pub detached: tidb_ranger::detacher::DetachRangeResult,
-    /// Access count before a physical property's LIMIT/probe adjustment.
-    pub count_after_access: Option<f64>,
-    /// Go's retained lower access-count bound.
-    pub min_count_after_access: f64,
-    /// Go's retained upper access-count bound.
-    pub max_count_after_access: f64,
-    /// Access conditions over a correlated column, whose ranges the executor
-    /// rebuilds per outer row: the integer handle's `pk = correlated_col`
-    /// (`deriveTablePathStats`), or the common handle's split prefix.
-    pub correlated_access_count: usize,
 }
 
 /// Derive a table alternative from its own conditions without applying the

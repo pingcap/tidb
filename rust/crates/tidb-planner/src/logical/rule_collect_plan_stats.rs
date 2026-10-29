@@ -705,7 +705,7 @@ mod tests {
     use tidb_expr::schema::Schema;
 
     use super::*;
-    use crate::access_path::PossiblePath;
+    use tidb_planner_util::path::PossiblePath;
     use crate::logical::data_source::DataSourceColumn;
     use crate::logical::join::LogicalJoin;
     use crate::logical::projection::LogicalProjection;

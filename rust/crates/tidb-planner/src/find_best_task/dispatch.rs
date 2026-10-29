@@ -2263,7 +2263,7 @@ fn index_join_range_env<'a>(
 /// (`getIndexCandidateForIndexJoin`) and equality-prefix NDV.
 fn build_index_join_path_result(
     ds: &crate::logical::DataSource,
-    path: &crate::access_path::PossiblePath,
+    path: &tidb_planner_util::path::PossiblePath,
     position: usize,
     runtime: &tidb_planner_property::IndexJoinRuntimeProp,
     ctx: &DispatchContext<'_>,
@@ -2272,7 +2272,7 @@ fn build_index_join_path_result(
         return Ok(IndexJoinPathAnswer::NotApplicable);
     };
     let source_index = match path {
-        crate::access_path::PossiblePath::Index { index } => {
+        tidb_planner_util::path::PossiblePath::Index { index } => {
             let Some(source_index) = ds.indexes.get(*index) else {
                 return Ok(IndexJoinPathAnswer::NotApplicable);
             };
@@ -2283,7 +2283,7 @@ fn build_index_join_path_result(
             }
             Some(source_index)
         }
-        crate::access_path::PossiblePath::Table { .. } if !ds.handle_is_int => None,
+        tidb_planner_util::path::PossiblePath::Table { .. } if !ds.handle_is_int => None,
         _ => return Ok(IndexJoinPathAnswer::NotApplicable),
     };
     let (idx_cols, idx_col_lens): (Vec<_>, Vec<_>) = match source_index {
@@ -2432,14 +2432,14 @@ fn index_join_candidate(
 /// range on any path answers no index join at all.
 fn choose_index_join_index_path(
     ds: &crate::logical::DataSource,
-    paths: &[&crate::access_path::PossiblePath],
+    paths: &[&tidb_planner_util::path::PossiblePath],
     runtime: &tidb_planner_property::IndexJoinRuntimeProp,
     ctx: &DispatchContext<'_>,
     table_pseudo: bool,
 ) -> Option<IndexJoinPathResult> {
     let mut best: Option<IndexJoinPathResult> = None;
     for (position, path) in paths.iter().enumerate() {
-        if !matches!(path, crate::access_path::PossiblePath::Index { .. }) {
+        if !matches!(path, tidb_planner_util::path::PossiblePath::Index { .. }) {
             continue;
         }
         // Go logs a failed build and moves to the next path.
@@ -2460,12 +2460,12 @@ fn choose_index_join_index_path(
 /// common handle path is the only candidate (`IsCommonHandlePath`).
 fn choose_index_join_common_handle_path(
     ds: &crate::logical::DataSource,
-    paths: &[&crate::access_path::PossiblePath],
+    paths: &[&tidb_planner_util::path::PossiblePath],
     runtime: &tidb_planner_property::IndexJoinRuntimeProp,
     ctx: &DispatchContext<'_>,
 ) -> Option<IndexJoinPathResult> {
     let (position, path) = paths.iter().enumerate().find(|(_, path)| {
-        matches!(path, crate::access_path::PossiblePath::Table { .. })
+        matches!(path, tidb_planner_util::path::PossiblePath::Table { .. })
     })?;
     match build_index_join_path_result(ds, path, position, runtime, ctx) {
         Ok(IndexJoinPathAnswer::Built(result)) => Some(result),
@@ -2827,7 +2827,7 @@ mod cross_estimate_dispatch_tests {
         DispatchContext, PhysicalProperty, Task, TaskType,
         find_best_task_4_logical_data_source_without_enforcer,
     };
-    use crate::access_path::PossiblePath;
+    use tidb_planner_util::path::PossiblePath;
     use tidb_stats::table_statistics::ColumnStats;
     use crate::find_best_task::coster::Ver2Coster;
     use crate::logical::data_source::DataSourceColumn;
@@ -3011,7 +3011,7 @@ fn find_best_task_4_logical_data_source_paths(
         if !ds
             .enumerated_paths
             .iter()
-            .any(|path| matches!(path, crate::access_path::PossiblePath::Table { .. }))
+            .any(|path| matches!(path, tidb_planner_util::path::PossiblePath::Table { .. }))
         {
             return Ok(Task::invalid_task());
         }
@@ -3047,7 +3047,7 @@ fn find_best_task_4_logical_data_source_paths(
                 .paths
                 .iter()
                 .filter_map(|path| match path {
-                    crate::access_path::DerivedAccessPath::Ordinary(path) => Some(path),
+                    tidb_planner_util::path::DerivedAccessPath::Ordinary(path) => Some(path),
                     _ => None,
                 })
                 .collect()
@@ -3069,11 +3069,11 @@ fn find_best_task_4_logical_data_source_paths(
                 let tiflash_kept = ds.prefer_store_type
                     & crate::logical::data_source::PREFER_TIFLASH
                     != 0
-                    && !matches!(path, crate::access_path::PossiblePath::TiFlashTable)
+                    && !matches!(path, tidb_planner_util::path::PossiblePath::TiFlashTable)
                     && ds
                         .enumerated_paths
                         .iter()
-                        .any(|path| matches!(path, crate::access_path::PossiblePath::TiFlashTable));
+                        .any(|path| matches!(path, tidb_planner_util::path::PossiblePath::TiFlashTable));
                 if !tiflash_kept && ctx.heuristic_noted.insert(std::ptr::from_ref(ds).addr()) {
                     sink.append_planner_note(&heuristic_selection_note(
                         ds,
@@ -3132,15 +3132,15 @@ fn find_best_task_4_logical_data_source_paths(
     let phys_plan_part_info = crate::physical::PhysPlanPartInfo::from_data_source(ds);
     'paths: for (path_position, path) in ordinary_paths.iter().enumerate() {
         if (ds.prefer_store_type & crate::logical::data_source::PREFER_TIFLASH != 0
-            && !matches!(path, crate::access_path::PossiblePath::TiFlashTable))
+            && !matches!(path, tidb_planner_util::path::PossiblePath::TiFlashTable))
             || (ds.prefer_store_type & crate::logical::data_source::PREFER_TIKV != 0
-                && matches!(path, crate::access_path::PossiblePath::TiFlashTable))
+                && matches!(path, tidb_planner_util::path::PossiblePath::TiFlashTable))
         {
             continue;
         }
         if let Some(runtime) = &prop.index_join_prop {
             let admitted = match path {
-                crate::access_path::PossiblePath::Table { .. }
+                tidb_planner_util::path::PossiblePath::Table { .. }
                     if runtime.table_range_scan && ds.handle_is_int =>
                 {
                     index_join_int_pk_info(ds, runtime).is_some()
@@ -3154,7 +3154,7 @@ fn find_best_task_4_logical_data_source_paths(
             }
         }
         let cop = match path {
-            crate::access_path::PossiblePath::Table { primary_index, .. } => {
+            tidb_planner_util::path::PossiblePath::Table { primary_index, .. } => {
                 if partial_order.is_some() {
                     // Go's skyline pruning deliberately omits table paths for
                     // partial-order TopN; a full table scan cannot provide the
@@ -3779,7 +3779,7 @@ fn find_best_task_4_logical_data_source_paths(
                     ..crate::task::CopTask::default()
                 })
             }
-            crate::access_path::PossiblePath::TiFlashTable => {
+            tidb_planner_util::path::PossiblePath::TiFlashTable => {
                 if partial_order.is_some() || cop_multi_read || prop.index_join_prop.is_some() {
                     continue 'paths;
                 }
@@ -3871,7 +3871,7 @@ fn find_best_task_4_logical_data_source_paths(
                     ..crate::task::CopTask::default()
                 })
             }
-            crate::access_path::PossiblePath::Index { index } => 'index_path: {
+            tidb_planner_util::path::PossiblePath::Index { index } => 'index_path: {
                 let Some(source_index) = ds.indexes.get(*index) else {
                     continue 'paths;
                 };
@@ -4775,12 +4775,12 @@ fn find_best_task_4_logical_data_source_paths(
                         .flatten(),
                     common_handle_cols: ds.common_handle_cols.clone(),
                     index_lookup_push_down_by: if single_scan {
-                        crate::access_path::IndexLookupPushDownBy::None
+                        tidb_planner_util::path::IndexLookupPushDownBy::None
                     } else {
                         ds.index_lookup_push_down_by
                             .get(&source_index.id)
                             .copied()
-                            .unwrap_or(crate::access_path::IndexLookupPushDownBy::None)
+                            .unwrap_or(tidb_planner_util::path::IndexLookupPushDownBy::None)
                     },
                     stats_context: ctx.task_stats_context(ds, &root_task_conds),
                     root_task_conds,
@@ -4887,13 +4887,13 @@ fn note_table_name(ds: &crate::logical::DataSource) -> &str {
 /// (`stats.go`, "is selected since the path ...").
 fn heuristic_selection_note(
     ds: &crate::logical::DataSource,
-    path: &crate::access_path::PossiblePath,
+    path: &tidb_planner_util::path::PossiblePath,
     refined: bool,
     single_scan: bool,
 ) -> String {
     let table = note_table_name(ds);
     let index = match path {
-        crate::access_path::PossiblePath::Index { index } => ds.indexes.get(*index),
+        tidb_planner_util::path::PossiblePath::Index { index } => ds.indexes.get(*index),
         _ => None,
     };
     let Some(index) = index else {
@@ -4920,13 +4920,13 @@ fn heuristic_selection_note(
 /// order of `PossibleAccessPaths`, when pruning removed any.
 fn pruning_info_message(
     ds: &crate::logical::DataSource,
-    derived: &crate::access_path::DerivedAccessPaths,
-    ordinary: &[&crate::access_path::PossiblePath],
+    derived: &tidb_planner_util::path::DerivedAccessPaths,
+    ordinary: &[&tidb_planner_util::path::PossiblePath],
     merges: &[super::candidate_preparation::PreparedMerge<'_>],
     merge_positions: &[usize],
     prop: &PhysicalProperty,
 ) -> Option<String> {
-    use crate::access_path::{DerivedAccessPath, PossiblePath};
+    use tidb_planner_util::path::{DerivedAccessPath, PossiblePath};
     use super::candidate_preparation::PreparedMerge;
     if ordinary.len() + merges.len() == derived.paths.len() {
         return None;
@@ -4966,11 +4966,11 @@ fn pruning_info_message(
                         .partials()
                         .iter()
                         .map(|partial| match partial {
-                            crate::access_path::index_merge::Partial::Index { index_pos, .. }
-                            | crate::access_path::index_merge::Partial::MvIndex {
+                            tidb_planner_util::path::Partial::Index { index_pos, .. }
+                            | tidb_planner_util::path::Partial::MvIndex {
                                 index_pos, ..
                             } => index_name(*index_pos),
-                            crate::access_path::index_merge::Partial::Table { .. } => {
+                            tidb_planner_util::path::Partial::Table { .. } => {
                                 table.to_owned()
                             }
                         })
@@ -5644,7 +5644,7 @@ mod tests {
         // The table-path slice end to end: DataSource -> TableScan in a cop
         // task -> convertToRootTaskImpl's reader -> the Selection attaches
         // above it. The first table query plannable start to finish.
-        use crate::access_path::PossiblePath;
+        use tidb_planner_util::path::PossiblePath;
         use crate::logical::DataSource;
 
         let allocator = PlanIdAllocator::new();
@@ -5864,7 +5864,7 @@ mod tests {
         // sort item on the pk-is-handle column admits the scan with
         // KeepOrder (and Desc for a descending item); any other order
         // refuses.
-        use crate::access_path::PossiblePath;
+        use tidb_planner_util::path::PossiblePath;
         use crate::logical::DataSource;
         use tidb_datatype::{FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
@@ -5907,7 +5907,7 @@ mod tests {
 
     #[test]
     fn read_from_storage_tiflash_selects_the_tiflash_table_path() {
-        use crate::access_path::PossiblePath;
+        use tidb_planner_util::path::PossiblePath;
         use crate::logical::DataSource;
         use crate::logical::data_source::PREFER_TIFLASH;
 
@@ -5969,7 +5969,7 @@ mod tests {
         // The ranger wire-in: `WHERE pk > 5` on the int handle fills the
         // table scan's ranges with `(5, +inf]`; an indexed `b = 7` fills
         // the index scan's ranges with the point.
-        use crate::access_path::PossiblePath;
+        use tidb_planner_util::path::PossiblePath;
         use crate::logical::DataSource;
         use crate::logical::data_source::DataSourceColumn;
         use tidb_infoschema::table_source::SourceIndexColumn;
@@ -6202,7 +6202,7 @@ mod tests {
         // Go's `fillIndexPath` never appends a clustered common handle, so a
         // tuple comparison ranges over the declared `a` key part alone;
         // Go prints `range:[1,+inf]` for this shape.
-        use crate::access_path::PossiblePath;
+        use tidb_planner_util::path::PossiblePath;
         use crate::logical::DataSource;
         use crate::logical::data_source::DataSourceColumn;
         use tidb_infoschema::table_source::SourceIndexColumn;
@@ -6482,7 +6482,7 @@ mod tests {
         // cop task carries BOTH halves and converts through
         // `BuildIndexLookUpTask` — while a covering index still plans the
         // plain IndexReader.
-        use crate::access_path::PossiblePath;
+        use tidb_planner_util::path::PossiblePath;
         use crate::logical::DataSource;
         use crate::logical::data_source::DataSourceColumn;
         use tidb_infoschema::table_source::SourceIndexColumn;
@@ -6626,7 +6626,7 @@ mod tests {
 
     #[test]
     fn a_prefix_index_matches_partial_order_and_carries_the_match_result() {
-        use crate::access_path::PossiblePath;
+        use tidb_planner_util::path::PossiblePath;
         use crate::logical::DataSource;
         use crate::logical::data_source::DataSourceColumn;
         use tidb_infoschema::table_source::SourceIndexColumn;
@@ -6968,7 +6968,7 @@ mod tests {
         // offset removed — under the reader, and the ROOT limit above keeps
         // the offset. `derive_limit_stats`' recorded verdict ("awaiting
         // core/task.go") is hereby closed: its Go caller arrived.
-        use crate::access_path::PossiblePath;
+        use tidb_planner_util::path::PossiblePath;
         use crate::logical::{DataSource, LogicalLimit};
 
         let allocator = PlanIdAllocator::new();
@@ -7030,7 +7030,7 @@ mod tests {
         // `physical_limit.go:198`): ORDER BY pk LIMIT plans the keep-order
         // scan through the child property's order, the pushed partial limit
         // inside the reader, and the root limit above — no Sort anywhere.
-        use crate::access_path::PossiblePath;
+        use tidb_planner_util::path::PossiblePath;
         use crate::logical::{DataSource, LogicalTopN};
         use tidb_datatype::{FieldType, FieldTypeCode};
         use tidb_expression_aggregation::ByItems;
@@ -7099,7 +7099,7 @@ mod tests {
         // reader (`getPushedDownTopN`'s simple half: Count = Offset +
         // Count, offset removed, DeriveLimitStats) and the root TopN keeps
         // the offset. Go's exact plan for this query shape.
-        use crate::access_path::PossiblePath;
+        use tidb_planner_util::path::PossiblePath;
         use crate::logical::{DataSource, LogicalTopN};
         use tidb_datatype::{FieldType, FieldTypeCode};
         use tidb_expression_aggregation::ByItems;
@@ -7163,7 +7163,7 @@ mod tests {
         // `attach2Task4PhysicalHashAgg` now SPLITS — the partial half rides
         // inside the TableReader next to the scan, and the final half
         // merges above it.
-        use crate::access_path::PossiblePath;
+        use tidb_planner_util::path::PossiblePath;
         use crate::logical::{DataSource, LogicalAggregation};
 
         let allocator = PlanIdAllocator::new();
@@ -7241,7 +7241,7 @@ mod tests {
 
     #[test]
     fn a_global_aggregate_costs_stream_and_hash_over_the_same_child() {
-        use crate::access_path::PossiblePath;
+        use tidb_planner_util::path::PossiblePath;
         use crate::logical::{DataSource, LogicalAggregation};
         use tidb_planner_core_base::PossiblePropertiesInfo;
 

@@ -16,7 +16,7 @@ use super::dispatch::{
     index_path_matches_order, match_partial_order_property, table_path_matches_order,
     DispatchContext,
 };
-use crate::access_path::PossiblePath;
+use tidb_planner_util::path::PossiblePath;
 use crate::logical::{data_source::index_path_is_single_scan, DataSource};
 use tidb_planner_property::{PhysicalProperty, TaskType};
 
@@ -298,7 +298,7 @@ fn range_scan_flags(
 
 pub(super) enum PreparedMerge<'a> {
     Union(super::index_merge_union::ConvergedUnionPath<'a>),
-    IndexMerge(&'a crate::access_path::index_merge::IndexMergePath),
+    IndexMerge(&'a tidb_planner_util::path::IndexMergePath),
 }
 
 pub(super) struct PreparedDataSourcePaths<'a> {
@@ -330,7 +330,7 @@ pub(super) fn prepare_access_paths<'a>(
         if let Some(paths) = &ds.derived_access_paths {
             for (position, path) in paths.paths.iter().enumerate() {
                 match path {
-                    crate::access_path::DerivedAccessPath::Union(path) => {
+                    tidb_planner_util::path::DerivedAccessPath::Union(path) => {
                         if let Some(path) =
                             super::index_merge_union::converge_union_index_merge_path(
                                 ds, path, prop, ctx,
@@ -343,13 +343,13 @@ pub(super) fn prepare_access_paths<'a>(
                     // Go `isMatchPropForIndexMerge` refuses an order to an
                     // intersection; a finished union keeps no order here
                     // either, since its partials scan single element values.
-                    crate::access_path::DerivedAccessPath::IndexMerge(path) => {
+                    tidb_planner_util::path::DerivedAccessPath::IndexMerge(path) => {
                         if prop.is_sort_item_empty() {
                             merges.push(PreparedMerge::IndexMerge(path));
                             merge_positions.push(position);
                         }
                     }
-                    crate::access_path::DerivedAccessPath::Ordinary(_) => {}
+                    tidb_planner_util::path::DerivedAccessPath::Ordinary(_) => {}
                 }
             }
         }

@@ -18,6 +18,7 @@
 //! before physical index conversion. Both are explicit at this boundary, so a
 //! generic Rust candidate cannot silently become an index scan.
 
+use tidb_planner_util::path::{DerivedAccessPath, DerivedAccessPaths, IndexLookupPushDownBy, PossiblePath};
 use tidb_sessionctx::{IndexLookupPushDownPolicy, IndexLookupPushDownSession};
 use tidb_ranger::Range;
 use tidb_planner_cardinality::{
@@ -27,7 +28,6 @@ use crate::tikv_scan_spec::{
         IndexPushdownMetadataError, ResolvedIndexDescriptor, TiKvIndexScanSpec, TiKvTableScanSpec,
         ValidatedIndexPushdown,
     };
-
 
 pub(crate) mod index_merge;
 pub(crate) mod mv_index;
@@ -102,66 +102,6 @@ impl AccessPathDerivationContext<'_> {
         }
         Ok(detached)
     }
-}
-
-/// Occurrence-local state for one ordinary index access path. Go retains
-/// these fields together on `util.AccessPath`; a datasource occurrence owns
-/// the record independently of shared catalog metadata.
-#[derive(Clone, Debug, Default)]
-pub struct IndexPathState {
-    /// Logically detached ranges and filter stages shared by ordinary and merge paths.
-    pub filled: Option<ordinary::FilledIndexPath>,
-    /// Go's FullIdxCols/FullIdxColLens at plan construction, before ranger
-    /// appends handles. None denotes the static metadata-only pruning path;
-    /// unresolved positions remain None instead of shortening the key.
-    pub declared_columns: Option<Vec<Option<(tidb_expr::column::Column, i64)>>>,
-    /// Access estimate and its skyline risk bounds, adjusted together.
-    pub row_estimate: Option<tidb_stats::RowEstimate>,
-    /// Go `IsSingleScan`, evaluated during pruning and refreshed at the first
-    /// logical statistics derivation, before final column pruning.
-    /// None means the covering decision has not been derived yet.
-    pub is_single_scan: Option<bool>,
-    /// Go `IsUkShardIndexPath`: a unique secondary index of more than one
-    /// column led by a `tidb_shard()` generated column.
-    pub is_uk_shard_index_path: bool,
-}
-
-impl IndexPathState {
-    /// Go `CountAfterAccess`, from the same estimate as its uncertainty bounds.
-    #[must_use]
-    pub fn count_after_access(&self) -> Option<f64> {
-        self.row_estimate.map(|estimate| estimate.est)
-    }
-}
-
-/// Candidate identities and merge alternatives retained after logical derivation.
-/// Ordinary index identities refer to the datasource's filled index states.
-#[derive(Clone, Debug)]
-pub enum DerivedAccessPath {
-    /// An ordinary table/index candidate from the logical pruning boundary.
-    Ordinary(PossiblePath),
-    /// OR alternatives converge only when physical properties are known.
-    Union(index_merge::UnionIndexMergePath),
-    /// A finished index merge (Go `PartialIndexPaths`): the hinted normal
-    /// intersection and the multi-valued index paths, whose residual
-    /// predicates attach on the table side.
-    IndexMerge(index_merge::IndexMergePath),
-}
-
-/// Go's post-derivation PossibleAccessPaths and their shared minimum selectivity.
-#[derive(Clone, Debug)]
-pub struct DerivedAccessPaths {
-    /// Integer/common-handle state derived before property search.
-    pub table_path: Option<ordinary::FilledTablePath>,
-    /// Ordinary and merge candidates compete through one retained collection.
-    pub paths: Vec<DerivedAccessPath>,
-    /// Includes merge estimates before ordered-index expected-count adjustment.
-    pub min_selectivity: f64,
-    /// Go `generateIndexMergePath`'s `maxRowCount`: the largest index-merge
-    /// `CountAfterAccess`, present only when merges were built from more
-    /// conditions (`AllConds`) than the DataSource statistics saw
-    /// (`PushedDownConds`). The statistics are rescaled down to it.
-    pub index_merge_max_count: Option<f64>,
 }
 
 pub(crate) fn derive_access_paths(
@@ -299,7 +239,7 @@ pub(crate) fn derive_access_paths(
                                 .iter()
                                 .flatten()
                                 .any(|partial| match partial {
-                                    index_merge::Partial::MvIndex { paths, .. } => {
+                                    tidb_planner_util::path::Partial::MvIndex { paths, .. } => {
                                         !paths.is_empty()
                                     }
                                     _ => false,
@@ -1115,49 +1055,6 @@ mod tests {
 // Go `getPossibleAccessPaths` (`planbuilder.go:1320`): the ENUMERATION step.
 // ---------------------------------------------------------------------------
 
-/// What one enumerated path reads, at enumeration time.
-///
-/// Go's `util.AccessPath` is born nearly empty — `{StoreType, Index,
-/// IsIntHandlePath/IsCommonHandlePath}` — and only later grows ranges and
-/// counts (`deriveStatsByFilter`). This type is that newborn form;
-/// [`DataSourceAccessPath`] above is the grown, costing-time form the bounded
-/// scanner builds. Two stages, as in Go, where one struct mutates through
-/// both.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PossiblePath {
-    /// The table path, always first (`publicPaths[0]`).
-    Table {
-        /// Go `IsIntHandlePath`: the table is not common-handle.
-        is_int_handle: bool,
-        /// Go `fillContentForTablePath`: a common-handle table path carries
-        /// its PRIMARY index, by offset into the catalog's index list.
-        primary_index: Option<usize>,
-    },
-    /// Go `genTiFlashPath`: a table path served by an available TiFlash
-    /// replica.
-    TiFlashTable,
-    /// One public index, by offset into the catalog's index list.
-    Index {
-        /// The offset into `SourceTable::indexes`.
-        index: usize,
-    },
-}
-
-/// Go `util.IndexLookUpPushDownByType`.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum IndexLookupPushDownBy {
-    /// Go `IndexLookUpPushDownNone`.
-    #[default]
-    None,
-    /// Go `IndexLookUpPushDownByHint`.
-    Hint,
-    /// Go `IndexLookUpPushDownBySysVar`.
-    SysVar,
-}
-
-
-
-
 /// Go `getPossibleAccessPaths` (`planbuilder.go:1320-1441`) without hints —
 /// the enumeration Go performs before any hint filtering.
 ///
@@ -1647,7 +1544,9 @@ pub fn fast_index_is_available_by_hints(
 mod enumeration_tests {
     use std::collections::BTreeMap;
 
-    use super::{get_possible_access_paths as enumerate_possible_access_paths, PossiblePath};
+    use super::{get_possible_access_paths as enumerate_possible_access_paths};
+
+    use tidb_planner_util::path::{PossiblePath};
     use tidb_infoschema::table_source::LatestIndexSchema;
     use tidb_infoschema::table_source::SourceTable;
     use tidb_infoschema::table_source::SourceIndex;

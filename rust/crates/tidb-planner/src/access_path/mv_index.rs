@@ -31,11 +31,11 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use super::index_merge::{
-    enumerated_index_mask, estimate_partial_index_ranges, index_merge_hint_allows,
-    IndexMergePartial, IndexMergePath,
-};
-use super::{AccessPathDerivationContext, IndexPathState};
+use super::index_merge::{enumerated_index_mask, estimate_partial_index_ranges, index_merge_hint_allows};
+
+use tidb_planner_util::path::{IndexMergePartial, IndexMergePath};
+use super::AccessPathDerivationContext;
+use tidb_planner_util::path::IndexPathState;
 use crate::logical::DataSource;
 use tidb_planner_core_base::PlanError;
 use tidb_ranger::points::ExpressionEvaluator;
@@ -404,7 +404,7 @@ fn build_partial_path_for_mv_index(
     if detached.access_conds.len() != access_filters.len() || !detached.remained_conds.is_empty() {
         return Ok(None);
     }
-    let filled = super::ordinary::FilledIndexPath {
+    let filled = tidb_planner_util::path::FilledIndexPath {
         full_columns: columns.iter().cloned().map(Some).collect(),
         columns,
         detached,
@@ -851,7 +851,7 @@ pub(crate) fn generate_and_index_merge_for_composed_index(
 /// IndexMerge path, every path not reading it is dropped.
 pub(crate) fn clean_access_path_for_mv_index_hint(
     ds: &DataSource,
-    paths: &mut Vec<super::DerivedAccessPath>,
+    paths: &mut Vec<tidb_planner_util::path::DerivedAccessPath>,
 ) {
     let forced: std::collections::BTreeSet<usize> = ds
         .indexes
@@ -863,8 +863,8 @@ pub(crate) fn clean_access_path_for_mv_index_hint(
     if forced.is_empty() {
         return;
     }
-    let reads_forced = |path: &super::DerivedAccessPath| match path {
-        super::DerivedAccessPath::IndexMerge(path) => path
+    let reads_forced = |path: &tidb_planner_util::path::DerivedAccessPath| match path {
+        tidb_planner_util::path::DerivedAccessPath::IndexMerge(path) => path
             .partials
             .iter()
             .any(|partial| forced.contains(&partial.index_pos)),
