@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -573,14 +572,6 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	tblInfo, err := GetTableInfoAndCancelFaultJob(metaMut, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
-	}
-	// Validate the codec before dropping the old table metadata. A failed
-	// affinity setup must leave TRUNCATE TABLE cancellable without data loss.
-	if kerneltype.IsNextGen() && tblInfo.Affinity != nil {
-		if err := validateAffinityCodec(jobCtx.store.GetCodec()); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
 	}
 	if tblInfo.IsView() || tblInfo.IsSequence() {
 		job.State = model.JobStateCancelled

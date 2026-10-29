@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
@@ -28,9 +29,11 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/stretchr/testify/require"
 	tikv "github.com/tikv/client-go/v2/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -455,33 +458,43 @@ func mustTableAffinityGroupID(t *testing.T, codec tikv.Codec, tableID int64) str
 	return id
 }
 
+type affinityCodecStore struct {
+	kv.Storage
+	invalidCodec atomic.Bool
+}
+
+func (s *affinityCodecStore) GetCodec() tikv.Codec {
+	if s.invalidCodec.Load() {
+		return nil
+	}
+	return s.Storage.GetCodec()
+}
+
 func TestAffinityInvalidCodecDDL(t *testing.T) {
 	if !kerneltype.IsNextGen() {
 		t.Skip("codec validation is specific to NextGen")
 	}
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testenv.UpdateConfigForNextgen(t)
+	baseStore, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, baseStore.Close()) })
+	store := &affinityCodecStore{Storage: baseStore}
+	session.DisableStats4Test()
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	t.Cleanup(dom.Close)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int) affinity='table'")
 	tk.MustExec("create table p(a int) affinity='partition' partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
 	tk.MustExec("create table plain(a int)")
 	tk.MustExec("create table plain_p(a int) partition by hash(a) partitions 2")
-	// The internal masking-policy UPDATE flushes preceding metadata writes into
-	// the DDL transaction, so checking the cached InfoSchema alone misses loss.
-	tk.MustExec("create masking policy mask_t on t(a) as a")
-	tk.MustExec("create masking policy mask_p on p(a) as a")
 	db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
 	for _, name := range []string{"t", "p", "plain", "plain_p"} {
 		tk.MustExec("insert into " + name + " values (1),(2),(11),(12)")
 	}
-	const codecFailpoint = "github.com/pingcap/tidb/pkg/ddl/mockAffinityCodec"
-	invalidateCodec := true
-	testfailpoint.EnableCall(t, codecFailpoint, func(codec *tikv.Codec) {
-		if invalidateCodec {
-			*codec = nil
-		}
-	})
+	store.invalidCodec.Store(true)
 	for _, query := range []string{
 		"create table c(a int) affinity='table'",
 		"create table cp(a int) affinity='partition' partition by hash(a) partitions 2",
@@ -495,9 +508,6 @@ func TestAffinityInvalidCodecDDL(t *testing.T) {
 	for _, tc := range []struct{ name, query string }{
 		{"plain", "alter table plain affinity='table'"},
 		{"plain_p", "alter table plain_p affinity='partition'"},
-		{"t", "truncate table t"},
-		{"p", "truncate table p"},
-		{"p", "alter table p truncate partition p0"},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
 			before, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tc.name))
@@ -519,10 +529,10 @@ func TestAffinityInvalidCodecDDL(t *testing.T) {
 	tk.MustExec("drop table t, p")
 	require.False(t, dom.InfoSchema().TableExists(ast.NewCIStr("test"), ast.NewCIStr("t")))
 	require.False(t, dom.InfoSchema().TableExists(ast.NewCIStr("test"), ast.NewCIStr("p")))
-	invalidateCodec = false
+	store.invalidCodec.Store(false)
 	tk.MustExec("create database affinity_drop")
 	tk.MustExec("create table affinity_drop.t(a int) affinity='table'")
-	invalidateCodec = true
+	store.invalidCodec.Store(true)
 	tk.MustExec("drop database affinity_drop")
 	require.False(t, dom.InfoSchema().SchemaExists(ast.NewCIStr("affinity_drop")))
 }

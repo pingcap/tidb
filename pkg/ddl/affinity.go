@@ -18,7 +18,6 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain/affinity"
@@ -64,7 +63,6 @@ func validateAffinityCodec(codec tikv.Codec) error {
 	if !kerneltype.IsNextGen() {
 		return nil
 	}
-	failpoint.InjectCall("mockAffinityCodec", &codec)
 	// client-go validates the keyspace identity when constructing CodecV2.
 	if codec == nil || codec.GetKeyspaceMeta() == nil {
 		return errors.New("affinity requires a valid APIv2 keyspace codec in NextGen")
