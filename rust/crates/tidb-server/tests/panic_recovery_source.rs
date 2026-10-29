@@ -107,7 +107,6 @@ impl ResultSetSource for PanickingRows {
             name: "value".into(),
             org_name: "value".into(),
             empty_org_name: false,
-            default_value: None,
             field_type: ResultFieldTypeMetadata {
                 code: FieldTypeCode::LongLong,
                 flags: 0,

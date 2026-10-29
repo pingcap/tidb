@@ -170,7 +170,6 @@ tidb-meta = { path = "../tidb-meta" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-owner = { path = "../tidb-owner" }
 tidb-stats-handle-metrics = { path = "../tidb-stats-handle-metrics" }
-tidb-protocol = { path = "../tidb-protocol" }
 tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
 tidb-stats-handle-autoanalyze-exec = { path = "../tidb-stats-handle-autoanalyze-exec" }
 tidb-stats-handle-autoanalyze-priorityqueue = { path = "../tidb-stats-handle-autoanalyze-priorityqueue" }

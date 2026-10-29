@@ -193,7 +193,7 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
         .map_err(|message| tracked_after_pull(message, sink, false))?;
     let mut options = options;
     if let Some(status) = source.statement_status() {
-        status.apply(&mut options);
+        apply_statement_status(&status, &mut options);
     }
     let mut stream = ResultSetStream::new(columns, options);
     // One coalesced transport write for ALL metadata packets. A socket sink
@@ -222,7 +222,7 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
             .finish()
             .map_err(|message| tracked_after_pull(message, sink, true))?;
         if let Some(status) = source.statement_status() {
-            stream.update_statement_status(|options| status.apply(options));
+            stream.update_statement_status(|options| apply_statement_status(&status, options));
         }
         let terminal = stream
             .finish_packet()
@@ -283,7 +283,7 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
                 return Err(tracked_after_pull(message, sink, true));
             }
             if let Some(status) = source.statement_status() {
-                stream.update_statement_status(|options| status.apply(options));
+                stream.update_statement_status(|options| apply_statement_status(&status, options));
             }
             let terminal = stream
                 .finish_packet()
@@ -324,7 +324,7 @@ fn write_chunk_result_set<S: ResultSetSource, W: ResultSetSink>(
         .map(|fields| crate::column_convert::convert_column_infos(&fields))
         .map_err(|error| tracked_after_pull(error, sink, false))?;
     if let Some(status) = source.statement_status() {
-        status.apply(&mut options);
+        apply_statement_status(&status, &mut options);
     }
     let mut stream = ResultSetStream::new(columns, options);
     let metadata = stream
@@ -356,7 +356,7 @@ fn write_chunk_result_set<S: ResultSetSource, W: ResultSetSink>(
         .finish()
         .map_err(|error| tracked_after_pull(error, sink, true))?;
     if let Some(status) = source.statement_status() {
-        stream.update_statement_status(|options| status.apply(options));
+        stream.update_statement_status(|options| apply_statement_status(&status, options));
     }
     let terminal = stream
         .finish_packet()
@@ -547,4 +547,21 @@ fn append_owned_chunk_text(
         OwnedTextKind::Temporal => TextScalar::Temporal(&value),
     };
     writer.append(scalar)
+}
+
+/// Go `writeResultSet`/`writeEOF`'s status word and OK fields: the statement's
+/// live session bits and counters over the command-owned flags (more results,
+/// cursor) the options already carry.
+pub(crate) fn apply_statement_status(
+    status: &tidb_session::domain::resultset_source::StatementStatus<'_>,
+    options: &mut tidb_protocol::ResultSetOptions,
+) {
+    const SESSION_BITS: u16 = tidb_session::domain::wire_status::SERVER_STATUS_IN_TRANS
+        | tidb_session::domain::wire_status::SERVER_STATUS_AUTOCOMMIT;
+    options.status_flags = (options.status_flags & !SESSION_BITS) | status.status.bits();
+    options.warnings = status.warnings;
+    options.affected_rows = status.affected_rows;
+    options.last_insert_id = status.last_insert_id;
+    options.info.clear();
+    options.info.extend_from_slice(status.info);
 }

@@ -106,7 +106,6 @@ impl ResultSetSource for Rows {
             name: "id".to_owned(),
             org_name: "id".to_owned(),
             empty_org_name: false,
-            default_value: None,
             field_type: ResultFieldTypeMetadata {
                 code: tidb_datatype::FieldTypeCode::LongLong,
                 flags: 0x0003,

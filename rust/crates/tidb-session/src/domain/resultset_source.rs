@@ -31,20 +31,6 @@ pub struct StatementStatus<'a> {
     pub info: &'a [u8],
 }
 
-impl StatementStatus<'_> {
-    pub fn apply(&self, options: &mut tidb_protocol::ResultSetOptions) {
-        // Keep command-owned flags (more results/cursor) alongside live session bits.
-        const SESSION_BITS: u16 = crate::domain::wire_status::SERVER_STATUS_IN_TRANS
-            | crate::domain::wire_status::SERVER_STATUS_AUTOCOMMIT;
-        options.status_flags = (options.status_flags & !SESSION_BITS) | self.status.bits();
-        options.warnings = self.warnings;
-        options.affected_rows = self.affected_rows;
-        options.last_insert_id = self.last_insert_id;
-        options.info.clear();
-        options.info.extend_from_slice(self.info);
-    }
-}
-
 /// Lazy source consumed by the connection result-set writer.
 pub trait ResultSetSource {
     /// Live statement state when execution belongs to this source.

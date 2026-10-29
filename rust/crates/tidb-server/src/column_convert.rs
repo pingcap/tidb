@@ -52,7 +52,9 @@ pub fn convert_column_info(field: &ResultFieldMetadata) -> ColumnInfo {
         flag: field.field_type.flags,
         decimal: decimal_places(&field.field_type),
         type_code,
-        default_value: field.default_value.clone(),
+        // Go `ConvertColumnInfo` also carries `fld.Column.GetDefaultValue()` for
+        // `COM_FIELD_LIST`; the result fields do not carry the column's default yet.
+        default_value: None,
     }
 }
 
@@ -165,7 +167,7 @@ mod tests {
     use tidb_datatype::FieldTypeCode;
 use tidb_charset::Collation;
     use tidb_executor::adapter::{ResultFieldMetadata, ResultFieldTypeMetadata, NOT_FIXED_DEC, UNSIGNED_FLAG};
-    use tidb_protocol::{ColumnDefault, TYPE_VAR_STRING};
+    use tidb_protocol::TYPE_VAR_STRING;
 
     use super::convert_column_info;
 
@@ -177,7 +179,6 @@ use tidb_charset::Collation;
             name: "display".to_owned(),
             org_name: "original".to_owned(),
             empty_org_name: false,
-            default_value: Some(ColumnDefault::Text("default".to_owned())),
             field_type: ResultFieldTypeMetadata {
                 code,
                 flags: UNSIGNED_FLAG,
@@ -189,7 +190,7 @@ use tidb_charset::Collation;
     }
 
     #[test]
-    fn conversion_preserves_names_defaults_flags_and_varchar_compatibility() {
+    fn conversion_preserves_names_flags_and_varchar_compatibility() {
         let mut input = field(FieldTypeCode::Varchar);
         input.field_type.flen = Some(10);
         let output = convert_column_info(&input);
@@ -204,10 +205,6 @@ use tidb_charset::Collation;
         assert_eq!(output.type_code, TYPE_VAR_STRING);
         assert_eq!(output.column_length, 40);
         assert_eq!(output.decimal, NOT_FIXED_DEC);
-        assert_eq!(
-            output.default_value,
-            Some(ColumnDefault::Text("default".to_owned()))
-        );
 
         input.empty_org_name = true;
         assert!(convert_column_info(&input).org_name.is_empty());

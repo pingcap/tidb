@@ -19,7 +19,6 @@
 use tidb_datatype::FieldTypeCode;
 use tidb_charset::Collation;
 use tidb_datatype::{FieldNameMetadata, IdentifierMetadata};
-use tidb_protocol::ColumnDefault;
 
 /// The source's MySQL `NotFixedDec` marker.
 pub const NOT_FIXED_DEC: u8 = 31;
@@ -67,8 +66,6 @@ pub struct ResultFieldMetadata {
     pub org_name: String,
     /// Go's expression-only `EmptyOrgName` bit.
     pub empty_org_name: bool,
-    /// Optional default value for a `COM_FIELD_LIST` response.
-    pub default_value: Option<ColumnDefault>,
     /// Resolved field type metadata.
     pub field_type: ResultFieldTypeMetadata,
 }
@@ -112,7 +109,6 @@ impl AdaptedResultField {
             name: self.column_as_name.original.clone(),
             org_name: self.column_name.original.clone(),
             empty_org_name: self.empty_org_name,
-            default_value: None,
             field_type: self.field_type.clone(),
         }
     }

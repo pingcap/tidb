@@ -96,7 +96,6 @@ pub fn select_fields(columns: &[(String, FieldType)]) -> Vec<ResultFieldMetadata
             name: name.clone(),
             org_name: name.clone(),
             empty_org_name: false,
-            default_value: None,
             field_type: result_field_type(field_type),
         })
         .collect()

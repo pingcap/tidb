@@ -63,7 +63,6 @@ impl ResultSetSource for Rows {
                 name: "amount".to_owned(),
                 org_name: "balance".to_owned(),
                 empty_org_name: false,
-                default_value: None,
                 field_type: ResultFieldTypeMetadata {
                     code: FieldTypeCode::LongLong,
                     flags: 0x0001,
@@ -79,7 +78,6 @@ impl ResultSetSource for Rows {
                 name: "id".to_owned(),
                 org_name: "id".to_owned(),
                 empty_org_name: false,
-                default_value: None,
                 field_type: ResultFieldTypeMetadata {
                     code: FieldTypeCode::LongLong,
                     flags: 0x0003,
@@ -443,7 +441,6 @@ fn prepared_balance_column() -> ResultFieldMetadata {
         name: "balance".to_owned(),
         org_name: "balance".to_owned(),
         empty_org_name: false,
-        default_value: None,
         field_type: ResultFieldTypeMetadata {
             code: FieldTypeCode::LongLong,
             flags: 0x0001,
@@ -797,7 +794,6 @@ impl ResultSetSource for CursorReaderFailureRows {
             name: "v".to_owned(),
             org_name: "v".to_owned(),
             empty_org_name: false,
-            default_value: None,
             field_type: ResultFieldTypeMetadata {
                 code: FieldTypeCode::Blob,
                 flags: 0,
@@ -874,7 +870,6 @@ impl QuerySession for CursorReaderFailureSession {
                 name: "v".to_owned(),
                 org_name: "v".to_owned(),
                 empty_org_name: false,
-                default_value: None,
                 field_type: ResultFieldTypeMetadata {
                     code: FieldTypeCode::Blob,
                     flags: 0,

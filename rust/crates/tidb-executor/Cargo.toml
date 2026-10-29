@@ -105,7 +105,6 @@ tidb-stats-handle-storage = { path = "../tidb-stats-handle-storage" }
 tidb-stats-handle-syncload = { path = "../tidb-stats-handle-syncload" }
 tidb-syssession = { path = "../tidb-syssession" }
 tidb-stats-handle-lockstats = { path = "../tidb-stats-handle-lockstats" }
-tidb-protocol = { path = "../tidb-protocol" }
 tidb-copr = { path = "../tidb-copr" }
 tidb-murmur3 = { path = "../tidb-murmur3" }
 tidb-keyspace = { path = "../tidb-keyspace" }

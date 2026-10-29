@@ -180,7 +180,6 @@ fn column() -> ResultFieldMetadata {
         name: "a".to_owned(),
         org_name: String::new(),
         empty_org_name: true,
-        default_value: None,
         field_type: ResultFieldTypeMetadata {
             code: tidb_datatype::FieldTypeCode::Long,
             flags: 0,

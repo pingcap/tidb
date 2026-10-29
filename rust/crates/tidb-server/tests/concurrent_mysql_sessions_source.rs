@@ -245,7 +245,6 @@ impl ResultSetSource for BlockingResultSet {
             name: "id".to_owned(),
             org_name: "id".to_owned(),
             empty_org_name: false,
-            default_value: None,
             field_type: ResultFieldTypeMetadata {
                 code: FieldTypeCode::LongLong,
                 flags: 0x0003,

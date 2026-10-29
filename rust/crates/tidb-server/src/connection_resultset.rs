@@ -251,7 +251,7 @@ fn write_binary_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
         .map_err(|message| binary_failure(message, sink, false))?;
     let mut options = options;
     if let Some(status) = source.statement_status() {
-        status.apply(&mut options);
+        crate::resultset_writer::apply_statement_status(&status, &mut options);
     }
     let mut stream = BinaryResultSetStream::new(columns.clone(), options)
         .map_err(|error| binary_failure(error.to_string(), sink, false))?;
@@ -338,7 +338,7 @@ fn write_binary_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
         .finish()
         .map_err(|message| binary_failure(message, sink, true))?;
     if let Some(status) = source.statement_status() {
-        stream.update_statement_status(|options| status.apply(options));
+        stream.update_statement_status(|options| crate::resultset_writer::apply_statement_status(&status, options));
     }
     let terminal = stream
         .finish_packet()
