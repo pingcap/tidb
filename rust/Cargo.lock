@@ -4476,6 +4476,7 @@ dependencies = [
  "tidb-planner",
  "tidb-planner-costusage",
  "tidb-planner-indexadvisor",
+ "tidb-planner-rule",
  "tidb-plannererrors",
  "tidb-ppcpuusage",
  "tidb-privilege",
@@ -5435,6 +5436,19 @@ dependencies = [
  "tidb-sqlescape",
  "tidb-terror",
  "tidb-util",
+]
+
+[[package]]
+name = "tidb-planner-rule"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-chunk",
+ "tidb-datatype",
+ "tidb-expr",
+ "tidb-hack",
+ "tidb-ranger",
+ "tidb-table",
 ]
 
 [[package]]

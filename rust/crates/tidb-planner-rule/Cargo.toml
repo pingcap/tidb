@@ -1,0 +1,20 @@
+[package]
+name = "tidb-planner-rule"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/planner/core/rule: partition pruning and selection (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-ranger = { path = "../tidb-ranger" }
+tidb-table = { path = "../tidb-table" }
+tidb-hack = { path = "../tidb-hack" }
+tidb-ast = { path = "../tidb-ast" }
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-expr = { path = "../tidb-expr" }

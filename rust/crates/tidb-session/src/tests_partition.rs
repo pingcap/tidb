@@ -19,7 +19,7 @@
 //! This node stores a `PartitionSpec` (Go `model.PartitionInfo`; see
 //! `tidb_table::partition_routing`), routes each row into one of N
 //! physical key prefixes exactly as Go's `locatePartition` does, PRUNES which
-//! of them a `WHERE` reads (`tidb_executor::partition_pruning`, Go
+//! of them a `WHERE` reads (`tidb_planner_rule`, Go
 //! `pkg/planner/core/rule/rule_partition_processor.go`), answers
 //! `... PARTITION (p)` from the named partitions alone, and prints the clause
 //! back through `SHOW CREATE TABLE`.

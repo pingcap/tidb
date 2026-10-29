@@ -283,7 +283,7 @@ pub trait TableAccess {
     /// leaves the default `false`.
     ///
     /// `ids` are physical partition ids of this source's own table, ascending
-    /// (see [`crate::partition_pruning`]).
+    /// (see [`tidb_planner_rule`]).
     fn accept_partition_pruning(&mut self, ids: &[i64]) -> bool {
         let _ = ids;
         false

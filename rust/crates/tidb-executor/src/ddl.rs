@@ -53,7 +53,7 @@
 //! physical table id per partition and validates the clause the way Go does,
 //! the rows are stored under those ids (see [`tidb_table::partition_routing`]),
 //! a `WHERE` on the partition expression PRUNES which of them a scan reads
-//! (see [`crate::partition_pruning`]), and `SHOW CREATE TABLE` prints the
+//! (see [`tidb_planner_rule`]), and `SHOW CREATE TABLE` prints the
 //! clause back verbatim.
 //!
 //! KEY is still refused, because

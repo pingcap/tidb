@@ -87,7 +87,7 @@ pub fn ids_for_selected_partitions(
 /// `None` for it one level up.
 ///
 /// An EMPTY `ranges` is therefore the ranger's contradictory `WHERE` -- the
-/// same reading [`crate::table_access::TableAccess::accept_handle_ranges`]
+/// same reading the executor's `TableAccess::accept_handle_ranges`
 /// gives it -- and prunes every partition away. Reading it as "no
 /// restriction" instead would turn `a >= 10 AND a < 10` into a full scan.
 ///
@@ -489,7 +489,7 @@ fn range_column_bound_is_type_minimum(
 /// Go `ListPartitionLocation`: each partition maps to the VALUES IN tuple
 /// groups still compatible with one predicate. Group `-1` is Go's special
 /// DEFAULT identity, which deliberately intersects only another DEFAULT.
-pub(crate) type ListPartitionLocation = BTreeMap<usize, BTreeSet<isize>>;
+pub type ListPartitionLocation = BTreeMap<usize, BTreeSet<isize>>;
 
 /// Go `ForListColumnPruning.LocatePartition`/`LocateRanges` for one LIST
 /// COLUMNS component. The caller performs Go's recursive CNF/DNF traversal
@@ -497,7 +497,7 @@ pub(crate) type ListPartitionLocation = BTreeMap<usize, BTreeSet<isize>>;
 ///
 /// `None` means the comparison cannot safely prune and must become a full
 /// scan. An empty map is a proven contradiction for this predicate.
-pub(crate) fn list_column_location_for_ranges(
+pub fn list_column_location_for_ranges(
     ranges: &[IndexRange],
     values: &[(Vec<Datum>, usize)],
     default_partition: Option<usize>,
@@ -562,7 +562,7 @@ pub(crate) fn list_column_location_for_ranges(
     Ok(Some(location))
 }
 
-pub(crate) fn union_list_partition_location(
+pub fn union_list_partition_location(
     location: &mut ListPartitionLocation,
     other: ListPartitionLocation,
 ) {
@@ -571,7 +571,7 @@ pub(crate) fn union_list_partition_location(
     }
 }
 
-pub(crate) fn intersect_list_partition_location(
+pub fn intersect_list_partition_location(
     location: &mut ListPartitionLocation,
     other: &ListPartitionLocation,
 ) {
@@ -2725,7 +2725,7 @@ fn partition_fn_of_column(
 
 /// Go `PruneRangePartition` for `PARTITION BY RANGE (expr)`: the physical ids
 /// `conditions` can reach, or `None` when Go cannot prune this table.
-pub(crate) fn scalar_range_pruned_ids(
+pub fn scalar_range_pruned_ids(
     spec: &PartitionSpec,
     conditions: &[tidb_expr::expression::Expression],
     column: &tidb_expr::column::Column,
@@ -2761,7 +2761,7 @@ pub(crate) fn scalar_range_pruned_ids(
 
 /// Go `pruneRangeColumnsPartition` for a single-column RANGE COLUMNS table:
 /// the physical ids `conditions` can reach.
-pub(crate) fn single_range_columns_pruned_ids(
+pub fn single_range_columns_pruned_ids(
     spec: &PartitionSpec,
     conditions: &[tidb_expr::expression::Expression],
     column: &tidb_expr::column::Column,

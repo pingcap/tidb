@@ -17,17 +17,17 @@
 //!
 //! The three tests below reproduce Go's package-private partition-range
 //! algebra line-for-line. The ordinary pruning path and all remaining original
-//! cases are owned by `tidb_executor::partition_pruning`; the benchmark cases
+//! cases are owned by `tidb_planner_rule`; the benchmark cases
 //! are owned by the `tidb-executor` `partition_pruning` benchmark target.
 //!
 //! | Go function (`rule_partition_pruning_test.go`) | Rust test |
 //! | --- | --- |
-//! | `:35 TestCanBePrune` | `tidb_executor::partition_pruning::tests::range_pruning_matches_go_monotone_datetime_and_timestamp_cases` |
+//! | `:35 TestCanBePrune` | `tidb_planner_rule::tests::range_pruning_matches_go_monotone_datetime_and_timestamp_cases` |
 //! | `:85 TestPruneUseBinarySearchSigned` | [`prune_use_binary_search_signed_table`] (ported) |
 //! | `:128 TestPruneUseBinarySearchUnSigned` | [`prune_use_binary_search_unsigned_table`] (ported) |
-//! | `:243 TestPartitionRangeForExpr` | `tidb_executor::partition_pruning::tests::range_pruning_matches_go_partition_range_for_expr_matrix` |
+//! | `:243 TestPartitionRangeForExpr` | `tidb_planner_rule::tests::range_pruning_matches_go_partition_range_for_expr_matrix` |
 //! | `:275 TestPartitionRangeOperation` | [`partition_range_or_intersection_union_simplify_operations`] (ported) |
-//! | `:337–639` RANGE COLUMNS cases | executable `tidb_executor::partition_pruning::tests::range_columns_*` cases |
+//! | `:337–639` RANGE COLUMNS cases | executable `tidb_planner_rule::tests::range_columns_*` cases |
 //! | `:663/:667/:671/:675/:679 BenchmarkRangeColumnsPruner{2,10,100,1000,8000}` | `tidb-executor --bench partition_pruning` |
 
 /// GO PORT of `pkg/planner/core/rule/rule_partition_pruning_test.go:85

@@ -52,7 +52,7 @@ use super::from::FromScope;
 
 enum ListColumnsLocated {
     Full,
-    Location(crate::partition_pruning::ListPartitionLocation),
+    Location(tidb_planner_rule::ListPartitionLocation),
 }
 
 /// Go `TryFastPlan` runs before static partition processing, so a complete
@@ -283,9 +283,9 @@ fn unparen_expression(mut expression: &tidb_ast::Expr) -> &tidb_ast::Expr {
 
 fn remap_list_columns_location(
     partition: &tidb_table::partition_routing::PartitionSpec,
-    location: crate::partition_pruning::ListPartitionLocation,
-) -> crate::partition_pruning::ListPartitionLocation {
-    let mut remapped = crate::partition_pruning::ListPartitionLocation::new();
+    location: tidb_planner_rule::ListPartitionLocation,
+) -> tidb_planner_rule::ListPartitionLocation {
+    let mut remapped = tidb_planner_rule::ListPartitionLocation::new();
     for (index, mut groups) in location {
         let Some(replacement) = partition.overlapping_dropping_partition_index(index) else {
             continue;
@@ -378,7 +378,7 @@ fn locate_list_columns_condition(
                         high_exclusive: range.high_exclude,
                     })
                     .collect::<Vec<_>>();
-                let location = crate::partition_pruning::list_column_location_for_ranges(
+                let location = tidb_planner_rule::list_column_location_for_ranges(
                     &ranges,
                     values,
                     *default_partition,
@@ -411,7 +411,7 @@ fn locate_list_columns_cnf(
             ListColumnsLocated::Full => {}
             ListColumnsLocated::Location(found) => {
                 if let Some(current) = &mut location {
-                    crate::partition_pruning::intersect_list_partition_location(current, &found);
+                    tidb_planner_rule::intersect_list_partition_location(current, &found);
                 } else {
                     location = Some(found);
                 }
@@ -430,12 +430,12 @@ fn locate_list_columns_dnf(
     if conditions.is_empty() {
         return Ok(ListColumnsLocated::Full);
     }
-    let mut location = crate::partition_pruning::ListPartitionLocation::new();
+    let mut location = tidb_planner_rule::ListPartitionLocation::new();
     for condition in conditions {
         match locate_list_columns_condition(partition, condition, columns, context)? {
             ListColumnsLocated::Full => return Ok(ListColumnsLocated::Full),
             ListColumnsLocated::Location(found) => {
-                crate::partition_pruning::union_list_partition_location(&mut location, found);
+                tidb_planner_rule::union_list_partition_location(&mut location, found);
             }
         }
     }
@@ -534,7 +534,7 @@ fn partition_indices_for_spec(
     if let ([column], tidb_table::partition_routing::PartitionKind::RangeColumns { .. }) =
         (columns.as_slice(), &partition.kind)
     {
-        if let Some(ids) = crate::partition_pruning::single_range_columns_pruned_ids(
+        if let Some(ids) = tidb_planner_rule::single_range_columns_pruned_ids(
             partition,
             &conditions,
             column,
@@ -554,7 +554,7 @@ fn partition_indices_for_spec(
     if matches!(partition.kind, tidb_table::partition_routing::PartitionKind::Range { .. }) {
         if let [column] = columns.as_slice() {
             if let Some(ids) =
-                crate::partition_pruning::scalar_range_pruned_ids(partition, &conditions, column, context)
+                tidb_planner_rule::scalar_range_pruned_ids(partition, &conditions, column, context)
             {
                 surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
             }
@@ -581,7 +581,7 @@ fn partition_indices_for_spec(
         ));
     };
     let pruned =
-        crate::partition_pruning::pruned_ids_from_ranger(partition, &detached.ranges, context)
+        tidb_planner_rule::pruned_ids_from_ranger(partition, &detached.ranges, context)
             .map_err(|error| tidb_planner::plan_base::PlanError::internal(format!("{error:?}")))?;
     if let Some(ids) = pruned {
         surviving.retain(|index| ids.contains(&partition.definitions[*index].id));
@@ -714,13 +714,13 @@ mod list_columns_pruning_tests {
             "the explicit partition name is checked against Go's remapped definition"
         );
 
-        let location = crate::partition_pruning::ListPartitionLocation::from([
+        let location = tidb_planner_rule::ListPartitionLocation::from([
             (0, std::collections::BTreeSet::from([0, 1])),
             (1, std::collections::BTreeSet::from([2])),
         ]);
         assert_eq!(
             remap_list_columns_location(&spec, location),
-            crate::partition_pruning::ListPartitionLocation::from([(
+            tidb_planner_rule::ListPartitionLocation::from([(
                 2,
                 std::collections::BTreeSet::from([-1])
             ),]),
