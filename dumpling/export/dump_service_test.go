@@ -212,6 +212,91 @@ func TestDumpServiceLifecycle(t *testing.T) {
 	}
 }
 
+func TestDumpServiceColumnFilterValidation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database column_filter")
+	tk.MustExec("create table column_filter.z_parent (id int primary key clustered, keep int)")
+	tk.MustExec("create table column_filter.a_child (id int primary key, parent_id int, foreign key (parent_id) references z_parent(id))")
+	tk.MustExec("create table column_filter.partitioned (id int, keep int) partition by range (id) (partition p0 values less than maxvalue)")
+	tk.MustExec("insert into column_filter.z_parent values (1,7)")
+	tk.MustExec("insert into column_filter.a_child values (2,1)")
+
+	for _, testCase := range []struct {
+		name      string
+		tables    []string
+		columns   []string
+		noSchemas bool
+		noData    bool
+		err       string
+	}{
+		{name: "empty projection", tables: []string{"column_filter.z_parent"}, columns: []string{"missing"}, err: "selects no writable columns"},
+		{name: "empty data projection", tables: []string{"column_filter.z_parent"}, columns: []string{"missing"}, noSchemas: true, err: "selects no writable columns"},
+		{name: "partition dependency", tables: []string{"column_filter.partitioned"}, columns: []string{"keep"}, err: "partition definition references a removed column"},
+		{name: "foreign key parent", tables: []string{"column_filter.a_child", "column_filter.z_parent"}, columns: []string{"keep"}, err: "foreign key references removed column"},
+		{name: "data only", tables: []string{"column_filter.a_child", "column_filter.z_parent"}, columns: []string{"keep"}, noSchemas: true},
+		{name: "schema only", tables: []string{"column_filter.z_parent"}, columns: []string{"keep"}, noData: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			socket := startTestDumpService(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if testCase.noData {
+					start, _, err := decodeKVTestRange(request)
+					if err != nil {
+						http.Error(writer, err.Error(), http.StatusBadRequest)
+						return
+					}
+					if len(start) > 0 && start[0] == 't' {
+						t.Error("schema-only export requested table records")
+						http.Error(writer, "unexpected table request", http.StatusBadRequest)
+						return
+					}
+				}
+				serveKVTestRequest(store, writer, request)
+			}))
+			conf := DefaultConfig()
+			conf.DumpService = (&url.URL{Scheme: "unix", Path: socket}).String()
+			conf.OutputDirPath = t.TempDir()
+			conf.StatusAddr = ""
+			conf.FileType = FileFormatCSVString
+			conf.NoSchemas = testCase.noSchemas
+			conf.NoData = testCase.noData
+			var err error
+			conf.TableFilter, err = tf.Parse(testCase.tables)
+			require.NoError(t, err)
+			conf.columnFilter = newColumnFilterConfigForTest(t, columnFilterRule{
+				Matcher: []string{"column_filter.z_parent", "column_filter.partitioned"}, Columns: testCase.columns,
+			})
+			dumper, err := NewDumper(context.Background(), conf)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, dumper.Close()) })
+			err = dumper.Dump()
+			if testCase.err != "" {
+				require.ErrorContains(t, err, testCase.err)
+				entries, err := os.ReadDir(conf.OutputDirPath)
+				require.NoError(t, err)
+				require.Empty(t, entries, "invalid projection must fail before files are written")
+				return
+			}
+			require.NoError(t, err)
+			if testCase.noSchemas {
+				content, err := os.ReadFile(filepath.Join(conf.OutputDirPath, "column_filter.z_parent.000000000.csv"))
+				require.NoError(t, err)
+				require.Equal(t, "\"keep\"\r\n7\r\n", string(content))
+				_, err = os.Stat(filepath.Join(conf.OutputDirPath, "column_filter.z_parent-schema.sql"))
+				require.ErrorIs(t, err, os.ErrNotExist)
+				return
+			}
+			content, err := os.ReadFile(filepath.Join(conf.OutputDirPath, "column_filter.z_parent-schema.sql"))
+			require.NoError(t, err)
+			require.Contains(t, string(content), "`keep`")
+			require.NotContains(t, string(content), "`id`")
+			entries, err := os.ReadDir(conf.OutputDirPath)
+			require.NoError(t, err)
+			require.Len(t, entries, 3, "schema-only export writes database/table schemas and metadata")
+		})
+	}
+}
+
 func startTestDumpService(t *testing.T, handler http.Handler) string {
 	t.Helper()
 	socketPath := filepath.Join(t.TempDir(), "kv-store.sock")

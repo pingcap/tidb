@@ -114,8 +114,6 @@ var dumpServiceIncompatibleFlags = []string{
 	flagRows,
 	flagWhere,
 	flagSQL,
-	flagColumnFilter,
-	flagColumnFilterFile,
 	flagDumpEmptyDatabase,
 	flagTidbMemQuotaQuery,
 	flagCA,

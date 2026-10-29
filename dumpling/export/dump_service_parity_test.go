@@ -50,6 +50,72 @@ func TestDumpServiceMatchesSQLDump(t *testing.T) {
 	t.Run("types", func(t *testing.T) { testDumpServiceColumnTypes(t, server) })
 	t.Run("generated", func(t *testing.T) { testDumpServiceGeneratedColumns(t, server) })
 	t.Run("preamble", func(t *testing.T) { testDumpServiceSQLPreamble(t, server) })
+	t.Run("column_filter", func(t *testing.T) { testDumpServiceColumnFilter(t, server) })
+}
+
+func testDumpServiceColumnFilter(t *testing.T, server *servertestkit.TidbTestSuite) {
+	db, err := sql.Open("mysql", server.GetDSN())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	dbt := testkit.NewDBTestKit(t, db)
+	dbt.MustExec("create database parity")
+	t.Cleanup(func() { dbt.MustExec("drop database parity") })
+	dbt.MustExec(`create table parity.t (
+		tenant varchar(8), id bigint, secret varchar(16), payload varbinary(8),
+		virtual_keep bigint as (id + 1), amount decimal(10,2),
+		virtual_drop int as (length(secret)), stored_keep bigint as (id * 3) stored,
+		note varchar(16), primary key (tenant, id) clustered, key secret_idx(secret)
+	)`)
+	dbt.MustExec("set @@tidb_row_format_version=1")
+	dbt.MustExec("insert into parity.t(tenant,id,secret,payload,amount,note) values ('a',1,'hidden',x'00ff',12.30,null)")
+	dbt.MustExec("set @@tidb_row_format_version=2")
+	dbt.MustExec("insert into parity.t(tenant,id,secret,payload,amount,note) values ('b',2,'private',x'',-1.25,'')")
+	dbt.MustExec("alter table parity.t add column added int not null default 7")
+	dbt.MustExec("create table parity.untouched (id int primary key, secret varchar(16))")
+	dbt.MustExec("insert into parity.untouched values (1,'keep')")
+
+	for _, format := range dumpServiceParityFormats {
+		for _, noSchemas := range []bool{false, true} {
+			name := "schemas"
+			if noSchemas {
+				name = "data_only"
+			}
+			t.Run(format.name+"/"+name, func(t *testing.T) {
+				formatWithSchema := format
+				formatWithSchema.read = func(t *testing.T, dir string) []string {
+					rows := format.read(t, dir)
+					require.NotEmpty(t, rows)
+					path := filepath.Join(dir, "parity.t-schema.sql")
+					if noSchemas {
+						_, err := os.Stat(path)
+						require.ErrorIs(t, err, os.ErrNotExist)
+						return rows
+					}
+					content, err := os.ReadFile(path)
+					require.NoError(t, err)
+					start := strings.Index(string(content), "CREATE TABLE")
+					require.GreaterOrEqual(t, start, 0)
+					schemaSQL := string(content[start:])
+					schema := parseCreateTableForTest(t, schemaSQL)
+					require.Equal(t, []string{"id", "payload", "virtual_keep", "amount", "stored_keep", "note", "added"}, createTableColumnNames(schema))
+					require.NotContains(t, createTableConstraintNames(schema), "secret_idx")
+					untouched, err := os.ReadFile(filepath.Join(dir, "parity.untouched-schema.sql"))
+					require.NoError(t, err)
+					require.Contains(t, string(untouched), "`secret`")
+					return append(rows, schemaSQL, string(untouched))
+				}
+				editConfig := func(conf *Config) {
+					conf.NoSchemas = noSchemas
+					conf.FileSize = 1
+					conf.columnFilter = newColumnFilterConfigForTest(t,
+						columnFilterRule{Matcher: []string{"parity.t"}, Columns: []string{"*", "!secret", "!tenant"}},
+					)
+				}
+				sqlOutput, serviceOutput := dumpParityOutputs(t, server, formatWithSchema, editConfig, editConfig)
+				require.Equal(t, sqlOutput, serviceOutput)
+			})
+		}
+	}
 }
 
 // Compare import-session settings in every SQL data and schema file against a

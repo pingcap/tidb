@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/format/textrow"
 	tidbmeta "github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -52,8 +53,7 @@ type kvTableMeta struct {
 	create   string
 }
 
-func newKVTableMeta(database string, table *model.TableInfo, createSQL string, includeStoredGenerated bool) *kvTableMeta {
-	columns := kvVisibleColumns(table, includeStoredGenerated)
+func newKVTableMeta(database string, table *model.TableInfo, columns []*model.ColumnInfo) *kvTableMeta {
 	types := make([]string, 0, len(columns))
 	names := make([]string, 0, len(columns))
 	for _, column := range columns {
@@ -67,7 +67,6 @@ func newKVTableMeta(database string, table *model.TableInfo, createSQL string, i
 		types:    types,
 		names:    names,
 		selected: strings.Join(columnNamesToSelectFields(names), ","),
-		create:   createSQL,
 	}
 }
 
@@ -425,6 +424,78 @@ func kvCreateTableSQL(reader tidbmeta.Reader, database *model.DBInfo, table *mod
 	return output.String(), nil
 }
 
+func (d *Dumper) prepareKVTableMeta(reader tidbmeta.Reader, databases []kvDatabaseTables) (map[tableName]*kvTableMeta, error) {
+	metas := make(map[tableName]*kvTableMeta)
+	filteredTables := make(map[tableName]bool)
+	for _, entry := range databases {
+		for _, table := range entry.tables {
+			columns := kvVisibleColumns(table, d.conf.includeStoredGeneratedColumns())
+			names := make([]string, len(columns))
+			for i, column := range columns {
+				names[i] = column.Name.O
+			}
+			_, indexes, err := d.conf.columnFilter.applyToColumns(entry.database.Name.O, table.Name.O, names)
+			if err != nil {
+				return nil, err
+			}
+			key := tableName{db: entry.database.Name.O, table: table.Name.O}
+			if len(indexes) != len(columns) {
+				selected := make([]*model.ColumnInfo, len(indexes))
+				for i, index := range indexes {
+					selected[i] = columns[index]
+				}
+				columns = selected
+				filteredTables[key] = true
+			}
+			meta := newKVTableMeta(key.db, table, columns)
+			if !d.conf.NoSchemas {
+				meta.create, err = kvCreateTableSQL(reader, entry.database, table)
+				if err != nil {
+					return nil, err
+				}
+			}
+			metas[key] = meta
+		}
+	}
+	if d.conf.NoSchemas || len(filteredTables) == 0 {
+		return metas, nil
+	}
+
+	schemaParser := parser.New()
+	schemas := make(projectedTableSchemas, len(metas))
+	for _, entry := range databases {
+		for _, table := range entry.tables {
+			key := tableName{db: entry.database.Name.O, table: table.Name.O}
+			meta := metas[key]
+			var err error
+			if filteredTables[key] {
+				schemas[key], err = buildProjectedTableSchema(schemaParser, meta.create, meta.names)
+			} else {
+				schemas[key], err = parseTableSchema(schemaParser, meta.create)
+			}
+			if err != nil {
+				return nil, errors.Annotatef(err, "failed to analyze schema projection for table `%s`.`%s`", escapeString(key.db), escapeString(key.table))
+			}
+			if filteredTables[key] {
+				meta.create, err = restoreProjectedSchema(schemas[key].createTable)
+				if err != nil {
+					return nil, errors.Annotatef(err, "failed to restore schema projection for table `%s`.`%s`", escapeString(key.db), escapeString(key.table))
+				}
+			}
+		}
+	}
+	// Include every parent schema before checking references from child tables.
+	for _, entry := range databases {
+		for _, table := range entry.tables {
+			key := tableName{db: entry.database.Name.O, table: table.Name.O}
+			if err := validateForeignKeyParents(key.db, schemas[key], schemas); err != nil {
+				return nil, errors.Annotatef(err, "failed to validate schema projection for table `%s`.`%s`", escapeString(key.db), escapeString(key.table))
+			}
+		}
+	}
+	return metas, nil
+}
+
 func (d *Dumper) prepareKVDump() (_ *dumpSource, prepareErr error) {
 	client, err := dumpservice.NewClient(d.conf.DumpService)
 	if err != nil {
@@ -444,6 +515,10 @@ func (d *Dumper) prepareKVDump() (_ *dumpSource, prepareErr error) {
 	if err != nil {
 		return nil, err
 	}
+	metas, err := d.prepareKVTableMeta(reader, databases)
+	if err != nil {
+		return nil, err
+	}
 	tableCount := 0
 	for _, database := range databases {
 		tableCount += len(database.tables)
@@ -460,7 +535,7 @@ func (d *Dumper) prepareKVDump() (_ *dumpSource, prepareErr error) {
 			return writer, nil
 		},
 		produceTasks: func(tctx *tcontext.Context, taskChan chan<- Task) error {
-			return d.dumpKVTasks(tctx, client, reader, databases, policies, taskChan)
+			return d.dumpKVTasks(tctx, client, metas, databases, policies, taskChan)
 		},
 		close: client.Close,
 	}, nil
@@ -469,7 +544,7 @@ func (d *Dumper) prepareKVDump() (_ *dumpSource, prepareErr error) {
 func (d *Dumper) dumpKVTasks(
 	tctx *tcontext.Context,
 	scanner kvScanner,
-	reader tidbmeta.Reader,
+	metas map[tableName]*kvTableMeta,
 	databases []kvDatabaseTables,
 	policies []*model.PolicyInfo,
 	taskChan chan<- Task,
@@ -498,21 +573,15 @@ func (d *Dumper) dumpKVTasks(
 			}
 		}
 		for _, table := range entry.tables {
-			var createSQL string
+			meta := metas[tableName{db: database.Name.O, table: table.Name.O}]
 			if !d.conf.NoSchemas {
-				var err error
-				createSQL, err = kvCreateTableSQL(reader, database, table)
-				if err != nil {
-					return err
-				}
-				if err := send(NewTaskTableMeta(database.Name.O, table.Name.O, createSQL)); err != nil {
+				if err := send(NewTaskTableMeta(database.Name.O, table.Name.O, meta.ShowCreateTable())); err != nil {
 					return err
 				}
 			}
 			if d.conf.NoData {
 				continue
 			}
-			meta := newKVTableMeta(database.Name.O, table, createSQL, d.conf.includeStoredGeneratedColumns())
 			ranges, err := shardKVTableRanges(tctx, scanner, table)
 			if err != nil {
 				return err

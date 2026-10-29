@@ -89,6 +89,12 @@
 // times. The service owns the snapshot and the protocol supplies no source
 // position, so that file contains no SQL binlog position or snapshot TSO.
 //
+// --column-filter and --column-filter-file select data columns in their original
+// order and project schema files using the same rules as SQL exports. Dumpling
+// decodes the selected columns from complete table records; the service still
+// supplies complete schema metadata and KV pairs for every requested range.
+// Column filtering therefore leaves the service's scan traffic unchanged.
+//
 // # Range requests
 //
 // GET /shards and GET /data take the half-open range as hexadecimal query
