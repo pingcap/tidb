@@ -64,7 +64,7 @@ pub(crate) fn filter_selectivity(
 /// Ordinary paths and OR branch alternatives must use the same detacher.
 pub(crate) fn fill_index_path(
     source: &DataSource,
-    index: &crate::plan_builder::catalog::SourceIndex,
+    index: &tidb_infoschema::table_source::SourceIndex,
     conditions: &[Expression],
     context: &AccessPathDerivationContext<'_>,
     prefix_single_scan: bool,

@@ -241,7 +241,7 @@ impl DataSource {
         // A hypothetical index (negative id here, id 0 in Go) belongs to the
         // session, not to `TableInfo`, so Go's `PseudoTable` and the loaded
         // statistics never hold it: selectivity ignores its columns.
-        let index_in_collection = |index: &crate::plan_builder::catalog::SourceIndex| {
+        let index_in_collection = |index: &tidb_infoschema::table_source::SourceIndex| {
             index.id >= 0
                 && match statistics {
                     Some(statistics) if !pseudo_collection => {
@@ -563,7 +563,8 @@ mod tests {
     use crate::cardinality::selectivity::get_row_count_by_index_ranges;
     use crate::logical::data_source::DataSourceColumn;
     use crate::logical::DataSource;
-    use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+    use tidb_infoschema::table_source::SourceIndexColumn;
+    use tidb_infoschema::table_source::SourceIndex;
 
     #[derive(Default)]
     struct Snapshot {

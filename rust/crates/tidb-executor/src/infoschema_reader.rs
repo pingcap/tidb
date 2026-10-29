@@ -1108,7 +1108,7 @@ fn partitions_rows(
 /// Go `autoid.InformationSchemaDBID`.
 const INFORMATION_SCHEMA_DB_ID: i64 = (1 << 62) | 1;
 
-use crate::driver::infoschema_meta::INFORMATION_SCHEMA_TABLE_IDS;
+use tidb_infoschema::infoschema_meta::INFORMATION_SCHEMA_TABLE_IDS;
 use tidb_hack::{GoCaseCompare, GoToLower};
 
 /// The `information_schema.tables` rows for the schema's OWN tables: Go
@@ -2508,7 +2508,7 @@ fn view_tables_row(
 /// collation falls back to the server default.
 fn sequence_tables_row(
     schema: &str,
-    sequence: &crate::driver::SequenceDef,
+    sequence: &tidb_infoschema::SequenceDef,
     zone: &tidb_expr::SessionTimeZone,
 ) -> Vec<Datum> {
     vec![
@@ -3454,7 +3454,7 @@ fn collations_rows() -> Vec<Vec<Datum>> {
 
 /// Shared stable ID for outgoing memory-table scans and local catalog metadata.
 pub fn memory_table_id(name: &str) -> Option<i64> {
-    crate::driver::infoschema_meta::memory_table_id(name)
+    tidb_infoschema::infoschema_meta::memory_table_id(name)
 }
 
 /// A `DATETIME` cell for a unix timestamp, in the node's own clock -- Go's

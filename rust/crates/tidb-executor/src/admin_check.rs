@@ -44,14 +44,17 @@
 //! ROW -> INDEX; index-heavy mismatches and equal counts use INDEX -> ROW.
 //! `ADMIN CHECK INDEX` reports a count mismatch as 8003 before either scan.
 
-pub use crate::kv_table::index_key_bounds;
+pub use tidb_table::kv_table::index_key_bounds;
 use crate::KvTablePartitionMaintenance;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use tidb_datatype::Datum;
 
-use crate::kv_table::{KvIndex, KvTable, RowDecodeContext, TableHandle};
+use tidb_table::kv_table::TableHandle;
+use tidb_table::kv_table::RowDecodeContext;
+use tidb_table::kv_table::KvTable;
+use tidb_table::kv_table::KvIndex;
 use tidb_hack::GoCaseCompare;
 
 /// Why an `ADMIN CHECK` could not answer, or answered that the table is
@@ -200,7 +203,7 @@ fn render_handle(handle: &TableHandle) -> String {
 fn index_entries(
     table: &mut KvTable,
     index_id: i64,
-) -> Result<Vec<crate::kv_table::IndexEntryForCheck>, AdminCheckError> {
+) -> Result<Vec<tidb_table::kv_table::IndexEntryForCheck>, AdminCheckError> {
     table
         .index_entry_records_for_check(index_id)
         .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))
@@ -448,7 +451,7 @@ pub fn check_table(
 fn check_mv_index(
     table: &mut KvTable,
     index: &KvIndex,
-    stored: &[crate::kv_table::IndexEntryForCheck],
+    stored: &[tidb_table::kv_table::IndexEntryForCheck],
     matching_rows: Vec<(i64, &TableHandle, &Vec<Datum>)>,
     context: &RowDecodeContext,
 ) -> Result<(), AdminCheckError> {

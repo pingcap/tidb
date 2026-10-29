@@ -130,7 +130,9 @@ use crate::logical::selection::LogicalSelection;
 use crate::logical::LogicalPlan;
 use crate::plan_base::PlanError;
 
-use super::catalog::{SourceTable, SourceView, TableSource};
+use tidb_infoschema::table_source::TableSource;
+use tidb_infoschema::table_source::SourceView;
+use tidb_infoschema::table_source::SourceTable;
 use super::handle_col_helper::PlanHandleCols;
 use super::marker::MarkerKind;
 use super::{

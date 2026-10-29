@@ -57,7 +57,7 @@ fn test_extract_columns_from_condition() {
         condition_expr_string: "c3 > 50".to_owned(),
         ..Default::default()
     };
-    let columns = crate::kv_table::extract_columns_from_index_condition(&index, &table, true)
+    let columns = tidb_table::kv_table::extract_columns_from_index_condition(&index, &table, true)
         .expect("condition columns");
     let names = columns
         .iter()
@@ -86,7 +86,7 @@ fn test_dedup_index_columns4_test() {
         columns[1].clone(),
         columns[3].clone(),
     ];
-    let output = crate::kv_table::dedup_index_columns(input);
+    let output = tidb_table::kv_table::dedup_index_columns(input);
     assert_eq!(output.len(), 4);
     for (actual, expected) in output.iter().zip(columns) {
         assert!(actual.ptr_eq(&expected));

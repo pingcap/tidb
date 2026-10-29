@@ -87,9 +87,8 @@ pub use auth_plugin_registry::{
 };
 pub use cluster_privileges::{registry_from_cluster, LoadedRegistry, SkippedGrant};
 use cluster_boot::run_cluster_session_node_with_spill;
-pub use cluster_session_node::{
-    ClusterServerSession, Domain,
-};
+pub use cluster_session_node::ClusterServerSession;
+pub use tidb_domain_core::domain::Domain;
 pub use configured_user_store::{
     AuthenticatedIdentity, AuthenticationFailure, ConfiguredUserStore, ConfiguredUserStoreError,
 };
@@ -359,7 +358,7 @@ fn start_system_time_monitor() {
     let _ = std::thread::spawn(|| {
         tidb_util::systimemon::start_monitor(SystemTime::now, || {
             SYSTEM_TIME_JUMP_BACKWARD_COUNT.fetch_add(1, Ordering::Relaxed);
-            server_metrics::TIME_JUMP_BACK_TOTAL.inc();
+            tidb_metrics::server::TIME_JUMP_BACK_TOTAL.inc();
         });
     });
 }
@@ -376,23 +375,23 @@ fn install_server_boot_gauges() {
     let parallelism = std::thread::available_parallelism()
         .map(|count| count.get())
         .unwrap_or(1);
-    server_metrics::MAXPROCS.set(parallelism as i64);
+    tidb_metrics::server::MAXPROCS.set(parallelism as i64);
     let gogc = std::env::var("GOGC")
         .ok()
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or(100);
-    server_metrics::GOGC.set(gogc);
+    tidb_metrics::server::GOGC.set(gogc);
     let config = tidb_config::config_tree::config::get_global_config();
-    server_metrics::CONFIG_STATUS
+    tidb_metrics::server::CONFIG_STATUS
         .with_label_values(&["token-limit"])
         .set(config.token_limit as i64);
-    server_metrics::CONFIG_STATUS
+    tidb_metrics::server::CONFIG_STATUS
         .with_label_values(&["max_connections"])
         .set(i64::from(config.max_server_connections));
     let start_seconds = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |since| since.as_secs());
-    server_metrics::SERVER_INFO
+    tidb_metrics::server::SERVER_INFO
         .with_label_values(&[
             &tidb_mysql::runtime_versions().server_version,
             tidb_util::versioninfo::TIDB_GIT_HASH,

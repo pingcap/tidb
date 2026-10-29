@@ -24,6 +24,8 @@ use tidb_expr::rewriter::ColumnResolver;
 use tidb_hack::GoCaseCompare;
 #[allow(unused_imports)]
 use tidb_ddl_build::generated_column::*;
+#[allow(unused_imports)]
+use tidb_table::generated_column::*;
 use tidb_datatype::FieldTypeCode;
 
 fn materialize<S: GeneratedColumnSlot>(
@@ -33,7 +35,7 @@ fn materialize<S: GeneratedColumnSlot>(
 ) -> Result<(), crate::DriverError> {
     let ctx = crate::StmtContext::for_query();
     materialize_with(columns, row, only_virtual, &ctx, |column, value| {
-        crate::driver::cast_table_value(
+        tidb_table::column::cast_table_value(
             value,
             column.column_type(),
             column.column_name(),

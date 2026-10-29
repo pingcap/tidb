@@ -27,7 +27,7 @@ use tidb_expr::schema::Schema;
 use tidb_txnkv::transaction::LockWaitTime;
 
 use crate::{ExecError, Executor};
-pub use tidb_sessionctx::select_lock::*;
+use tidb_sessionctx::select_lock::*;
 
 /// A physical plan's record-key expression over a selected row. Each joined
 /// base table supplies one expression. `None` denotes a null-extended input
@@ -39,7 +39,7 @@ pub type SelectedRecordKey = Box<dyn Fn(Row<'_>) -> Result<Option<Vec<u8>>, Exec
 pub struct StatementLocker {
     /// Any one table of the statement: its storage is the statement's
     /// snapshot, which owns the transaction the keys lock in.
-    table: crate::kv_table::KvTable,
+    table: tidb_table::kv_table::KvTable,
     /// The logical table ids of Go's `tblID2Handle`, temporary tables removed.
     table_ids: Vec<i64>,
     ctx: crate::StmtContext,
@@ -49,7 +49,7 @@ pub struct StatementLocker {
 impl StatementLocker {
     /// A locker over `table`'s storage for the tables `table_ids`.
     pub(crate) fn new(
-        table: crate::kv_table::KvTable,
+        table: tidb_table::kv_table::KvTable,
         table_ids: Vec<i64>,
         ctx: crate::StmtContext,
         lock_state: Option<LockStateObserver>,

@@ -14,6 +14,7 @@ autotests = false
 test-util = []
 
 [dependencies]
+tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
 tidb-stats-handle-storage = { path = "../tidb-stats-handle-storage" }
 tidb-stats-handle-syncload = { path = "../tidb-stats-handle-syncload" }

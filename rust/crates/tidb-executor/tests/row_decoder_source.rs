@@ -63,7 +63,7 @@ fn generated_column(
     stored: bool,
     preceding: &[KvColumn],
     zone: &SessionTimeZone,
-) -> tidb_ddl_build::generated_column::GeneratedColumn {
+) -> tidb_table::generated_column::GeneratedColumn {
     let names = preceding
         .iter()
         .map(|column| column.name.clone())

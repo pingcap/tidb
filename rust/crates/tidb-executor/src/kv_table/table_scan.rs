@@ -32,11 +32,15 @@ use super::{
     RowDecodeContext, TableHandle,
 };
 use crate::executor::{ExecError, Executor, ExecutorMeta};
-use crate::remote_scan::{
-    PushdownAggregateKind, PushdownIndexScan, PushdownPartialAggregate, PushdownRowStream,
-    PushdownScanColumn, PushdownScanRequest, PushdownStatementContext, PushdownTopN,
-    EXTRA_HANDLE_COLUMN_ID,
-};
+use tidb_distsql::remote_scan::EXTRA_HANDLE_COLUMN_ID;
+use tidb_distsql::remote_scan::PushdownTopN;
+use tidb_distsql::remote_scan::PushdownStatementContext;
+use tidb_distsql::remote_scan::PushdownScanRequest;
+use tidb_distsql::remote_scan::PushdownScanColumn;
+use tidb_distsql::remote_scan::PushdownRowStream;
+use tidb_distsql::remote_scan::PushdownPartialAggregate;
+use tidb_distsql::remote_scan::PushdownIndexScan;
+use tidb_distsql::remote_scan::PushdownAggregateKind;
 use tidb_kv::storage::{StorageError, StorageIterator};
 use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 use tidb_chunk::chunk::Chunk;
@@ -250,7 +254,7 @@ pub trait KvTableReader {
         retain_identity: bool,
         context: &RowDecodeContext,
         statement: &PushdownStatementContext,
-        read_engine: crate::remote_scan::PushdownReadEngine,
+        read_engine: tidb_distsql::remote_scan::PushdownReadEngine,
         schema_version: u64,
     ) -> Result<Option<RemoteRowCursor>, KvTableError>;
 
@@ -274,7 +278,7 @@ pub trait KvTableReader {
         physical_id: bool,
         context: &RowDecodeContext,
         statement: &PushdownStatementContext,
-        read_engine: crate::remote_scan::PushdownReadEngine,
+        read_engine: tidb_distsql::remote_scan::PushdownReadEngine,
         schema_version: u64,
     ) -> Result<Option<RemoteRowCursor>, KvTableError>;
 
@@ -293,7 +297,7 @@ pub trait KvTableReader {
         physical_id: bool,
         context: &RowDecodeContext,
         statement: &PushdownStatementContext,
-        read_engine: crate::remote_scan::PushdownReadEngine,
+        read_engine: tidb_distsql::remote_scan::PushdownReadEngine,
         schema_version: u64,
         precomputed_ranges: Option<&[(Key, Key)]>,
     ) -> Result<Option<RemoteRowCursor>, KvTableError>;
@@ -429,7 +433,7 @@ pub trait KvTableReader {
         statement: &PushdownStatementContext,
         desc: bool,
         index_limit: Option<u64>,
-        prefix_limit: Option<&crate::remote_scan::PushdownPrefixLimit>,
+        prefix_limit: Option<&tidb_distsql::remote_scan::PushdownPrefixLimit>,
         paging_min_size: Option<u64>,
         unordered: bool,
         handle_only: bool,
@@ -1074,7 +1078,7 @@ impl KvTableReader for KvTable {
         retain_identity: bool,
         context: &RowDecodeContext,
         statement: &PushdownStatementContext,
-        read_engine: crate::remote_scan::PushdownReadEngine,
+        read_engine: tidb_distsql::remote_scan::PushdownReadEngine,
         schema_version: u64,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
         self.pushdown_row_cursor_with_physical_id(
@@ -1112,7 +1116,7 @@ impl KvTableReader for KvTable {
         physical_id: bool,
         context: &RowDecodeContext,
         statement: &PushdownStatementContext,
-        read_engine: crate::remote_scan::PushdownReadEngine,
+        read_engine: tidb_distsql::remote_scan::PushdownReadEngine,
         schema_version: u64,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
         self.pushdown_row_cursor_with_context_and_key_ranges(
@@ -1150,7 +1154,7 @@ impl KvTableReader for KvTable {
         physical_id: bool,
         context: &RowDecodeContext,
         statement: &PushdownStatementContext,
-        read_engine: crate::remote_scan::PushdownReadEngine,
+        read_engine: tidb_distsql::remote_scan::PushdownReadEngine,
         schema_version: u64,
         precomputed_ranges: Option<&[(Key, Key)]>,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
@@ -1394,7 +1398,7 @@ impl KvTableReader for KvTable {
         // stream does not need record-key reconstruction, but an ordered
         // partitioned read still has to merge the per-partition streams by
         // their decoded integer handles.
-        let mut partition_scans: Vec<(i64, Vec<crate::remote_scan::PushdownScan>)> = Vec::new();
+        let mut partition_scans: Vec<(i64, Vec<tidb_distsql::remote_scan::PushdownScan>)> = Vec::new();
         let request_groups: Vec<(i64, Vec<(Key, Key)>)> = if partitioned {
             let mut requests = Vec::new();
             // `groups` is in value order (and is reversed for DESC). Keep
@@ -1517,14 +1521,14 @@ impl KvTableReader for KvTable {
         let predicates_applied = partition_scans
             .iter()
             .all(|(_, parts)| parts.iter().all(|scan| scan.stream.predicates_applied()));
-        let stream: Box<dyn crate::remote_scan::PushdownRowStream> = if partitioned {
+        let stream: Box<dyn tidb_distsql::remote_scan::PushdownRowStream> = if partitioned {
             let mut per_partition = Vec::with_capacity(partition_scans.len());
             for (physical_id, mut parts) in partition_scans {
                 let streams = parts.drain(..).map(|scan| scan.stream).collect::<Vec<_>>();
                 let stream = if streams.len() == 1 {
                     streams.into_iter().next().expect("one partition stream")
                 } else {
-                    crate::remote_scan::ChainedPushdownStream::new(streams)
+                    tidb_distsql::remote_scan::ChainedPushdownStream::new(streams)
                 };
                 per_partition.push((physical_id, stream));
             }
@@ -1543,7 +1547,7 @@ impl KvTableReader for KvTable {
                     .expect("one partition stream")
                     .1
             } else {
-                crate::remote_scan::ChainedPushdownStream::new(
+                tidb_distsql::remote_scan::ChainedPushdownStream::new(
                     per_partition
                         .into_iter()
                         .map(|(_, stream)| stream)
@@ -1558,7 +1562,7 @@ impl KvTableReader for KvTable {
             if streams.len() == 1 {
                 streams.into_iter().next().expect("one scan stream")
             } else {
-                crate::remote_scan::ChainedPushdownStream::new(streams)
+                tidb_distsql::remote_scan::ChainedPushdownStream::new(streams)
             }
         };
         Ok(Some(RemoteRowCursor {
@@ -1694,7 +1698,7 @@ impl KvTableReader for KvTable {
         let keep = scan_keep;
         let materialization = if keep
             .iter()
-            .any(|offset| tidb_ddl_build::generated_column::is_virtual(&self.columns()[*offset]))
+            .any(|offset| tidb_table::generated_column::is_virtual(&self.columns()[*offset]))
         {
             Some(RemoteRowMaterialization::new(
                 self,
@@ -1724,7 +1728,7 @@ impl KvTableReader for KvTable {
             false,
             context,
             &statement,
-            crate::remote_scan::PushdownReadEngine::TiKv,
+            tidb_distsql::remote_scan::PushdownReadEngine::TiKv,
             0,
             Some(&key_ranges),
         )?
@@ -2109,7 +2113,7 @@ impl KvTableReader for KvTable {
                 // Order-free responses are opted into per call site below.
                 allow_unordered_response: false,
                 snapshot_ts: 0,
-                read_engine: crate::remote_scan::PushdownReadEngine::TiKv,
+                read_engine: tidb_distsql::remote_scan::PushdownReadEngine::TiKv,
                 schema_version: 0,
                 ranges,
                 range_hints: Vec::new(),
@@ -2143,7 +2147,7 @@ impl KvTableReader for KvTable {
         Ok(Some(if streams.len() == 1 {
             streams.pop().expect("one partial aggregate stream")
         } else {
-            crate::remote_scan::ChainedPushdownStream::new(streams)
+            tidb_distsql::remote_scan::ChainedPushdownStream::new(streams)
         }))
     }
 
@@ -2379,7 +2383,7 @@ impl KvTableReader for KvTable {
                 // Order-free responses are opted into per call site below.
                 allow_unordered_response: false,
                 snapshot_ts: 0,
-                read_engine: crate::remote_scan::PushdownReadEngine::TiKv,
+                read_engine: tidb_distsql::remote_scan::PushdownReadEngine::TiKv,
                 schema_version: 0,
                 ranges: key_ranges_of(physical_id)?,
                 range_hints: Vec::new(),
@@ -2409,7 +2413,7 @@ impl KvTableReader for KvTable {
         Ok(Some(if streams.len() == 1 {
             streams.pop().expect("one partial aggregate stream")
         } else {
-            crate::remote_scan::ChainedPushdownStream::new(streams)
+            tidb_distsql::remote_scan::ChainedPushdownStream::new(streams)
         }))
     }
 
@@ -2512,7 +2516,7 @@ impl KvTableReader for KvTable {
         statement: &PushdownStatementContext,
         desc: bool,
         index_limit: Option<u64>,
-        prefix_limit: Option<&crate::remote_scan::PushdownPrefixLimit>,
+        prefix_limit: Option<&tidb_distsql::remote_scan::PushdownPrefixLimit>,
         paging_min_size: Option<u64>,
         unordered: bool,
         handle_only: bool,
@@ -2670,7 +2674,7 @@ impl KvTableReader for KvTable {
                 .iter()
                 .map(|item| {
                     let column_offset = layout.iter().position(|offset| *offset == item.offset)?;
-                    Some(crate::remote_scan::PushdownTopNOrder {
+                    Some(tidb_distsql::remote_scan::PushdownTopNOrder {
                         offset: column_offset,
                         desc: item.desc,
                     })
@@ -2889,7 +2893,7 @@ impl KvTableReader for KvTable {
             keep_order,
             allow_unordered_response: unordered,
             snapshot_ts: 0,
-            read_engine: crate::remote_scan::PushdownReadEngine::TiKv,
+            read_engine: tidb_distsql::remote_scan::PushdownReadEngine::TiKv,
             schema_version: 0,
             ranges: key_ranges,
             range_hints: Vec::new(),
@@ -2983,7 +2987,7 @@ impl KvTableReader for KvTable {
             .iter()
             .enumerate()
             .filter_map(|(offset, column)| {
-                (!tidb_ddl_build::generated_column::is_virtual(column)).then_some(offset)
+                (!tidb_table::generated_column::is_virtual(column)).then_some(offset)
             })
             .collect();
         if let Some(mut cursor) = self.pushdown_row_cursor_with_context(
@@ -2999,7 +3003,7 @@ impl KvTableReader for KvTable {
             true,
             context,
             &crate::remote_scan::pushdown_statement_context(tidb_sessionctx::stmt_context_of(context.expression())),
-            crate::remote_scan::PushdownReadEngine::TiKv,
+            tidb_distsql::remote_scan::PushdownReadEngine::TiKv,
             0,
         )? {
             let decoder = self.row_decoder_projected(None, context)?;
@@ -4744,7 +4748,7 @@ pub struct TableScanExec {
     /// Go `PhysicalTableScan.StoreType`, projected onto the pushdown
     /// request. The default is row storage; the driver sets TiFlash for a
     /// scan the planner assigned to the columnar replica.
-    read_engine: crate::remote_scan::PushdownReadEngine,
+    read_engine: tidb_distsql::remote_scan::PushdownReadEngine,
     /// Go `is.SchemaMetaVersion()`: the schema generation this scan's table
     /// was resolved against, dispatched with the request so TiFlash resolves
     /// the table in a matching schema.
@@ -4904,7 +4908,7 @@ impl TableScanExec {
 
     /// Names the engine the planner assigned this scan to. Only the driver's
     /// physical builder calls this, once per built scan.
-    pub fn set_read_engine(&mut self, engine: crate::remote_scan::PushdownReadEngine) -> &mut Self {
+    pub fn set_read_engine(&mut self, engine: tidb_distsql::remote_scan::PushdownReadEngine) -> &mut Self {
         self.read_engine = engine;
         self
     }
@@ -4966,7 +4970,7 @@ impl TableScanExec {
             emitted: 0,
             handle_ranges: None,
             handle_range_rebuilder: None,
-            read_engine: crate::remote_scan::PushdownReadEngine::TiKv,
+            read_engine: tidb_distsql::remote_scan::PushdownReadEngine::TiKv,
             schema_version: 0,
             decode_context,
             statement,
@@ -5053,7 +5057,7 @@ impl TableScanExec {
     fn has_virtual_projection(&self) -> bool {
         self.keep
             .iter()
-            .any(|offset| tidb_ddl_build::generated_column::is_virtual(&self.table.columns()[*offset]))
+            .any(|offset| tidb_table::generated_column::is_virtual(&self.table.columns()[*offset]))
     }
     /// The next row of whichever cursor is open, remote or local.
     ///
@@ -5239,7 +5243,7 @@ impl TableScanExec {
                             .input
                             .as_ref()
                             .map(|expression| {
-                                tidb_ddl_build::generated_column::eval_over_row(
+                                tidb_table::generated_column::eval_over_row(
                                     expression,
                                     &input_types,
                                     &row,
@@ -5460,7 +5464,7 @@ impl TableScanExec {
                                 .input
                                 .as_ref()
                                 .map(|expression| {
-                                    tidb_ddl_build::generated_column::eval_over_row(
+                                    tidb_table::generated_column::eval_over_row(
                                         expression,
                                         &input_types,
                                         row,
@@ -6343,7 +6347,7 @@ impl crate::table_access::TableAccess for TableScanExec {
 
 /// Closes every partial stream opened before a refusal, so no request is
 /// left running for a pushdown the caller computes locally instead.
-fn close_streams(streams: &mut Vec<Box<dyn crate::remote_scan::PushdownRowStream>>) {
+fn close_streams(streams: &mut Vec<Box<dyn tidb_distsql::remote_scan::PushdownRowStream>>) {
     for mut stream in streams.drain(..) {
         stream.close();
     }
@@ -6717,7 +6721,7 @@ mod remote_cursor_tests {
                 slot,
                 table.columns()[[2, 1, 0][slot as usize]].field_type.clone(),
             );
-            let prefix_limit = (prefix == 2).then_some(crate::remote_scan::PushdownPrefixLimit {
+            let prefix_limit = (prefix == 2).then_some(tidb_distsql::remote_scan::PushdownPrefixLimit {
                 count: 1,
                 column_offset: 0,
             });
@@ -6804,7 +6808,7 @@ mod remote_cursor_tests {
                     ),
                 ];
                 let topn = PushdownTopN {
-                    order_by: vec![crate::remote_scan::PushdownTopNOrder {
+                    order_by: vec![tidb_distsql::remote_scan::PushdownTopNOrder {
                         offset: a_slot,
                         desc: true,
                     }],
@@ -7060,7 +7064,7 @@ mod remote_cursor_tests {
             "ordinary column pruning does not relax coverage"
         );
         let topn = PushdownTopN {
-            order_by: vec![crate::remote_scan::PushdownTopNOrder {
+            order_by: vec![tidb_distsql::remote_scan::PushdownTopNOrder {
                 offset: 1,
                 desc: false,
             }],
@@ -7124,7 +7128,7 @@ mod remote_cursor_tests {
                         retain_identity,
                         &RowDecodeContext::legacy_default(&SessionTimeZone::utc()),
                         &PushdownStatementContext::default(),
-                        crate::remote_scan::PushdownReadEngine::TiKv,
+                        tidb_distsql::remote_scan::PushdownReadEngine::TiKv,
                         0,
                     )
                     .expect("remote scan construction succeeds")
@@ -7255,7 +7259,7 @@ mod remote_cursor_tests {
                 true,
                 &RowDecodeContext::legacy_default(&SessionTimeZone::utc()),
                 &PushdownStatementContext::default(),
-                crate::remote_scan::PushdownReadEngine::TiKv,
+                tidb_distsql::remote_scan::PushdownReadEngine::TiKv,
                 0,
             )
             .expect("remote scan construction succeeds")
@@ -7452,10 +7456,10 @@ mod remote_cursor_tests {
             false,
         );
 
-        let aggregate = crate::remote_scan::PushdownPartialAggregate::Global {
+        let aggregate = tidb_distsql::remote_scan::PushdownPartialAggregate::Global {
             streamed: false,
-            functions: vec![crate::remote_scan::PushdownAggregateFunction {
-                kind: crate::remote_scan::PushdownAggregateKind::Count,
+            functions: vec![tidb_distsql::remote_scan::PushdownAggregateFunction {
+                kind: tidb_distsql::remote_scan::PushdownAggregateKind::Count,
                 input: None,
                 output_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
             }],
@@ -7576,11 +7580,11 @@ mod remote_cursor_tests {
             false,
         );
 
-        let aggregate = crate::remote_scan::PushdownPartialAggregate::Grouped {
+        let aggregate = tidb_distsql::remote_scan::PushdownPartialAggregate::Grouped {
             group_offsets: vec![2],
             group_types: vec![FieldType::new(tidb_datatype::FieldTypeCode::LongLong)],
-            functions: vec![crate::remote_scan::PushdownAggregateFunction {
-                kind: crate::remote_scan::PushdownAggregateKind::Count,
+            functions: vec![tidb_distsql::remote_scan::PushdownAggregateFunction {
+                kind: tidb_distsql::remote_scan::PushdownAggregateKind::Count,
                 input: None,
                 output_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
             }],

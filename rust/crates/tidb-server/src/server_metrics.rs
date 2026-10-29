@@ -36,7 +36,7 @@ use prometheus::{
 };
 use std::sync::LazyLock;
 
-pub use tidb_metrics::server::*;
+use tidb_metrics::server::*;
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
     collector: prometheus::Result<C>,

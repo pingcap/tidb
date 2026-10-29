@@ -698,7 +698,8 @@ mod tests {
     use crate::logical::selection::LogicalSelection;
     use crate::logical::union_all::LogicalUnionAll;
     use crate::logical::BaseLogicalPlan;
-    use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+    use tidb_infoschema::table_source::SourceIndexColumn;
+    use tidb_infoschema::table_source::SourceIndex;
 
     fn column(id: i64) -> Column {
         Column::new(id, FieldType::new(FieldTypeCode::LongLong))

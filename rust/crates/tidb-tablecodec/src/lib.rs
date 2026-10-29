@@ -25,7 +25,7 @@ mod table_row;
 /// Its `RecordHandle` is a wire-decoding value. Table row/index operations in
 /// this crate use the canonical `tidb_txnkv::Handle`.
 pub mod table_key {
-    pub use tidb_codec::table_key::*;
+    use tidb_codec::table_key::*;
 }
 
 pub use table_index::{

@@ -22,7 +22,8 @@ use std::time::Duration;
 use tidb_ast::Stmt;
 use tidb_executor::compiler::prepared::PreparedExec as _;
 use tidb_executor::ddl_exec::map_error;
-use tidb_session::domain::cluster_session_node::{Domain, DomainSessions};
+use tidb_session::domain::cluster_session_node::DomainSessions;
+use tidb_domain_core::domain::Domain;
 use tidb_session::domain::session_api::{
     ActiveQueryCancellation, GeneralExecuteOutcome, PreparedGeneral, QueryResult, SessionContext,
     SqlQueryError,

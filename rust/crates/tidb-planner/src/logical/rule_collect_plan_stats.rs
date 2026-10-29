@@ -713,7 +713,8 @@ mod tests {
     use crate::logical::selection::LogicalSelection;
     use crate::logical::BaseLogicalPlan;
     use crate::plan_base::PlanIdAllocator;
-    use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+    use tidb_infoschema::table_source::SourceIndexColumn;
+    use tidb_infoschema::table_source::SourceIndex;
     use crate::stats_info::{HistColl, StatsInfo};
 
     fn column(id: i64) -> Column {

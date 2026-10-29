@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use tidb_ast::{DeleteKind, DeleteStmt, Join, JoinNode, TableRef};
 use tidb_hack::go_to_lower;
 
-use super::catalog::TableSource;
+use tidb_infoschema::table_source::TableSource;
 use super::delete_pruning::DeleteTarget;
 use super::PlanBuilder;
 use crate::plan_base::PlanError;

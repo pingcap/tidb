@@ -15,7 +15,7 @@
 //! Schema projection for Go master buildAnalyzeSamplingPushdown.
 use tidb_datatype::CollationCollator;
 use super::{AnalyzeError, AnalyzeOptions, AnalyzePlan};
-use crate::remote_scan::PushdownScanColumn;
+use tidb_distsql::remote_scan::PushdownScanColumn;
 use tidb_model::table_info::TableInfo;
 use tidb_proto::tipb;
 

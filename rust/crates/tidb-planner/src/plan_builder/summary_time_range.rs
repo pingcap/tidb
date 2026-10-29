@@ -25,7 +25,7 @@ use chrono::{DateTime, Duration, Local, NaiveDate, NaiveDateTime, TimeZone, Time
 
 use tidb_expr::Columns;
 
-use super::catalog::TableSource;
+use tidb_infoschema::table_source::TableSource;
 use super::PlanBuilder;
 use crate::logical::mem_table::QueryTimeRange;
 

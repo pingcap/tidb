@@ -23,7 +23,9 @@ use tidb_planner::expression_rewriter::ColumnIdAllocator;
 use tidb_planner::logical::LogicalPlan;
 use tidb_planner::plan_base::PlanIdAllocator;
 use tidb_planner::plan_builder::PlanBuilder;
-use tidb_planner::plan_builder::catalog::{SourceColumn, SourceTable, TableSource};
+use tidb_infoschema::table_source::TableSource;
+use tidb_infoschema::table_source::SourceTable;
+use tidb_infoschema::table_source::SourceColumn;
 
 /// The catalog of `TestLogicalPlanTypeRegression`: t1/t2/t3 as created by the
 /// test's `CREATE TABLE`s (`logical_plan_builder_test.go:63-68`).

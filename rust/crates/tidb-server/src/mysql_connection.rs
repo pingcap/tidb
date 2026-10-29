@@ -755,10 +755,10 @@ impl CommandLimiter {
     fn acquire(&self) -> CommandToken<'_> {
         let started = Instant::now();
         self.available.recv().expect("server owns the token sender");
-        crate::server_metrics::TOKENS.inc();
+        tidb_metrics::server::TOKENS.inc();
         // Go records integer microseconds on acquisition, not command runtime
         // (despite the histogram's `_seconds` name).
-        crate::server_metrics::GET_TOKEN_DURATION_SECONDS
+        tidb_metrics::server::GET_TOKEN_DURATION_SECONDS
             .observe(started.elapsed().as_micros() as f64);
         CommandToken { limiter: self }
     }
@@ -776,7 +776,7 @@ impl Drop for CommandToken<'_> {
             .returned
             .send(())
             .expect("server owns the token receiver");
-        crate::server_metrics::TOKENS.dec();
+        tidb_metrics::server::TOKENS.dec();
     }
 }
 
@@ -789,10 +789,10 @@ mod command_token_tests {
     #[test]
     fn command_token_wait_is_observed_on_acquisition() {
         let _metrics = METRICS.lock().unwrap();
-        let before = crate::server_metrics::GET_TOKEN_DURATION_SECONDS.get_sample_count();
+        let before = tidb_metrics::server::GET_TOKEN_DURATION_SECONDS.get_sample_count();
         let limiter = CommandLimiter::new(1);
         let token = limiter.acquire();
-        let acquired = crate::server_metrics::GET_TOKEN_DURATION_SECONDS.get_sample_count();
+        let acquired = tidb_metrics::server::GET_TOKEN_DURATION_SECONDS.get_sample_count();
         drop(token);
         assert_eq!(
             acquired,
@@ -800,7 +800,7 @@ mod command_token_tests {
             "Go records token wait before executing the command"
         );
         assert_eq!(
-            crate::server_metrics::GET_TOKEN_DURATION_SECONDS.get_sample_count(),
+            tidb_metrics::server::GET_TOKEN_DURATION_SECONDS.get_sample_count(),
             acquired,
             "release must not record command execution time as token wait"
         );
@@ -977,7 +977,7 @@ pub fn serve_mysql_connection_with_tls<F: QuerySessionFactory>(
 /// (`server.go:824`) alone, and a per-connection panic is
 /// `PanicCounter{session}` (`conn.go:1168`).
 fn record_connection_exit_metrics(result: &Result<ConnectionReport, MysqlConnectionError>) {
-    let disconnection = &crate::server_metrics::DISCONNECTION_TOTAL;
+    let disconnection = &tidb_metrics::server::DISCONNECTION_TOTAL;
     match result {
         Ok(report) => match report.exit {
             ConnectionExit::Quit => {
@@ -991,7 +991,7 @@ fn record_connection_exit_metrics(result: &Result<ConnectionReport, MysqlConnect
                     .inc();
             }
             ConnectionExit::AuthenticationRejected => {
-                crate::server_metrics::HANDSHAKE_ERROR_TOTAL.inc();
+                tidb_metrics::server::HANDSHAKE_ERROR_TOTAL.inc();
             }
             ConnectionExit::SessionRejected => {}
         },
@@ -1001,7 +1001,7 @@ fn record_connection_exit_metrics(result: &Result<ConnectionReport, MysqlConnect
                 .inc();
         }
         Err(MysqlConnectionError::Panicked(_)) => {
-            crate::server_metrics::PANIC_TOTAL
+            tidb_metrics::server::PANIC_TOTAL
                 .with_label_values(&["session"])
                 .inc();
             disconnection
@@ -1645,10 +1645,10 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             // Go `server.go:1329`-adjacent TLS accounting: every TLS
             // handshake counts its negotiated version and cipher.
             if let Some((cipher, version)) = socket.negotiated_tls() {
-                crate::server_metrics::TLS_CIPHER
+                tidb_metrics::server::TLS_CIPHER
                     .with_label_values(&[&tidb_util::tls::cipher_suite_name(cipher)])
                     .inc();
-                crate::server_metrics::TLS_VERSION
+                tidb_metrics::server::TLS_VERSION
                     .with_label_values(&[&tidb_util::tls::version_name(version)])
                     .inc();
             }
@@ -2151,7 +2151,7 @@ fn run_connection_commands<S: QuerySession>(
             let idle = last_active.elapsed().as_secs_f64();
             let in_txn =
                 engine.wire_status().bits() & tidb_session::domain::wire_status::SERVER_STATUS_IN_TRANS != 0;
-            crate::server_metrics::CONN_IDLE_DURATION
+            tidb_metrics::server::CONN_IDLE_DURATION
                 .with_label_values(&[if in_txn { "1" } else { "0" }])
                 .observe(idle);
         }
@@ -2302,7 +2302,7 @@ fn run_connection_commands<S: QuerySession>(
                     }
                     // Go `conn.go:1915`: `NumOfMultiQueryHistogram` observes
                     // how many statements one multi-statement text carried.
-                    crate::server_metrics::MULTI_QUERY_NUM.observe(statements.len() as f64);
+                    tidb_metrics::server::MULTI_QUERY_NUM.observe(statements.len() as f64);
                     let last_index = statements.len().saturating_sub(1);
                     // One COM_QUERY, one packet numbering: the chained results
                     // CONTINUE the sequence rather than restarting at 1.
@@ -2515,10 +2515,10 @@ fn run_connection_commands<S: QuerySession>(
                             .slow_log_threshold()
                             .is_some_and(|threshold| elapsed >= threshold)
                         {
-                            crate::server_metrics::SLOW_QUERY_PROCESS_DURATION
+                            tidb_metrics::server::SLOW_QUERY_PROCESS_DURATION
                                 .with_label_values(&["general"])
                                 .observe(elapsed.as_secs_f64());
-                            crate::server_metrics::SLOW_QUERY_TOTAL
+                            tidb_metrics::server::SLOW_QUERY_TOTAL
                                 .with_label_values(&["general"])
                                 .inc();
                         }

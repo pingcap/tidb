@@ -690,7 +690,7 @@ impl Session {
         &mut self,
         schema: &str,
         name: &str,
-    ) -> Result<std::sync::Arc<tidb_executor::kv_table::KvTable>, DriverError> {
+    ) -> Result<std::sync::Arc<tidb_table::kv_table::KvTable>, DriverError> {
         self.with_catalog_mut(|catalog| match catalog.table_in(schema, name) {
             Some(TableEntry::Kv(kv)) => Ok(std::sync::Arc::clone(kv)),
             _ => Err(DriverError::from(
@@ -1012,7 +1012,7 @@ fn check_read_clauses(has_limit: bool, has_order: bool) -> Result<(), DriverErro
 /// Go `selectShardColumnByGivenName`.
 fn select_shard_column_by_given_name(
     shard_column_name: &str,
-    table: &tidb_executor::kv_table::KvTable,
+    table: &tidb_table::kv_table::KvTable,
 ) -> Result<(bool, Option<ShardColumnInfo>), DriverError> {
     let has_clustered_index =
         table.pk_handle_offset().is_some() || !table.common_handle_offsets().is_empty();
@@ -1050,7 +1050,7 @@ fn select_shard_column_by_given_name(
 /// (qualified by the table's alias, so an alias works).
 fn select_shard_column_automatically(
     stmt: &mut BatchDmlStmt,
-    table: &tidb_executor::kv_table::KvTable,
+    table: &tidb_table::kv_table::KvTable,
     table_name: &TableSource,
 ) -> Result<(bool, Option<ShardColumnInfo>), DriverError> {
     let column_info = |offset: usize| {

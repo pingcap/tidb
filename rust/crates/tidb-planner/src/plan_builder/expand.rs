@@ -72,7 +72,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
 
-use super::catalog::TableSource;
+use tidb_infoschema::table_source::TableSource;
 use super::{snapshot_schema_and_names, BlockExpand, PlanBuilder};
 use crate::logical::expand::{GroupingMode, LogicalExpand, RollupGroupingSet};
 use crate::logical::projection::LogicalProjection;

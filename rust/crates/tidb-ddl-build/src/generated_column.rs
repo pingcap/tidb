@@ -162,7 +162,7 @@ pub fn is_disallowed_generated_function(name: &str) -> bool {
 }
 
 
-pub use tidb_table::generated_column::*;
+use tidb_table::generated_column::*;
 
 /// Go `findDependedColumnNames` over `FindColumnNamesInExpr`: whether the
 /// column is generated, and the `Name.L` of every column its expression

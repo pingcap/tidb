@@ -4610,7 +4610,7 @@ fn partition_lock_batch_session(mode: &str) -> Session {
         .run("INSERT INTO lock_route VALUES (1,11,7),(11,111,8)")
         .unwrap();
     session.run("BEGIN PESSIMISTIC").unwrap();
-    session.set_selected_lock_keys(Some(tidb_executor::select_lock::SelectedLockKeys::default()));
+    session.set_selected_lock_keys(Some(tidb_sessionctx::select_lock::SelectedLockKeys::default()));
     session
 }
 

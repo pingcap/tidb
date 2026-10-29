@@ -14,7 +14,7 @@
 
 use tidb_codec::decode_bytes;
 use tidb_model::PlacementSettings;
-use tidb_tablecodec::table_key::gen_table_prefix;
+use tidb_codec::table_key::gen_table_prefix;
 
 use super::{
     encode_bytes_owned, get_range_start_and_end_key_hex, hex_encode, new_bundle,

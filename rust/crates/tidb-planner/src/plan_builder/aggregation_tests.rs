@@ -26,7 +26,11 @@ use tidb_expr::schema::Schema;
 use tidb_expr::ZonedNoColumns;
 use tidb_funcdep::ColSet;
 
-use super::catalog::{SourceColumn, SourceIndex, SourceIndexColumn, SourceTable, TableSource};
+use tidb_infoschema::table_source::SourceTable;
+use tidb_infoschema::table_source::SourceIndexColumn;
+use tidb_infoschema::table_source::TableSource;
+use tidb_infoschema::table_source::SourceIndex;
+use tidb_infoschema::table_source::SourceColumn;
 use super::marker::{MarkerKind, PlanMarker};
 use super::{PlanBuilder, ProjectionField};
 use crate::expression_rewriter::ColumnIdAllocator;

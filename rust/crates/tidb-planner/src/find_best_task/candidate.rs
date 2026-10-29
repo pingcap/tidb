@@ -125,7 +125,7 @@ pub(super) fn equality_facts(detached: &crate::ranger::detacher::DetachRangeResu
 /// the logically filled path. Missing facts must not eliminate a competitor.
 pub(crate) fn index_candidate_metrics(
     source: &crate::logical::DataSource,
-    index: &crate::plan_builder::catalog::SourceIndex,
+    index: &tidb_infoschema::table_source::SourceIndex,
     path: &crate::access_path::IndexPathState,
     single_scan: bool,
     matches_property: bool,
@@ -446,7 +446,8 @@ mod skyline_tests {
     #[test]
     fn index_facts_keep_full_key_filters_and_dnf_equality_counts() {
         use crate::access_path::{IndexPathState, ordinary::FilledIndexPath};
-        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+        use tidb_infoschema::table_source::SourceIndexColumn;
+        use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::{
             column::Column, constant::Constant, expression::Expression,

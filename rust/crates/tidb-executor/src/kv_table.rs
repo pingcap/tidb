@@ -16,7 +16,7 @@
 //! in-process DDL over a [`KvTable`], as extension traits; the table itself is
 //! `tidb_table::kv_table`.
 
-pub use tidb_table::kv_table::*;
+use tidb_table::kv_table::*;
 
 #[allow(unused_imports)]
 use tidb_hack::GoCaseCompare;

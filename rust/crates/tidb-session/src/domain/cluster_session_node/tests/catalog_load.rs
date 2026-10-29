@@ -155,7 +155,7 @@ fn result_rows(result: Result<StmtResult, tidb_executor::DriverError>) -> Vec<Ve
 fn kv_table<'a>(
     catalog: &'a tidb_executor::Catalog,
     name: &str,
-) -> &'a tidb_executor::kv_table::KvTable {
+) -> &'a tidb_table::kv_table::KvTable {
     let tidb_executor::driver::TableEntry::Kv(kv) = catalog
         .table_in("app", name)
         .expect("the table is in the catalog")
@@ -549,9 +549,9 @@ fn loaded_generated_columns_keep_virtual_and_stored_semantics() {
     assert!(skipped.is_empty());
     // A stored generated value is decoded, not recomputed by the reader.
     node.committed.lock().unwrap().insert(
-        tidb_tablecodec::table_key::encode_row_key_with_handle(
+        tidb_codec::table_key::encode_row_key_with_handle(
             101,
-            &tidb_tablecodec::table_key::RecordHandle::Int(9),
+            &tidb_codec::table_key::RecordHandle::Int(9),
         ),
         tidb_tablecodec::encode_table_row(None, &[Datum::Int(999)], &[3], true, None).unwrap(),
     );

@@ -177,11 +177,11 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &mut self.row_id_shards
     }
 
-    fn selected_lock_keys_ref(&self) -> &Option<tidb_executor::select_lock::SelectedLockKeys> {
+    fn selected_lock_keys_ref(&self) -> &Option<tidb_sessionctx::select_lock::SelectedLockKeys> {
         &self.selected_lock_keys
     }
 
-    fn selected_lock_keys_mut(&mut self) -> &mut Option<tidb_executor::select_lock::SelectedLockKeys> {
+    fn selected_lock_keys_mut(&mut self) -> &mut Option<tidb_sessionctx::select_lock::SelectedLockKeys> {
         &mut self.selected_lock_keys
     }
 
@@ -225,11 +225,11 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         &mut self.sql_cpu_usages
     }
 
-    fn staged_writes_ref(&self) -> &std::sync::Arc<tidb_executor::kv_table::StagedWrites> {
+    fn staged_writes_ref(&self) -> &std::sync::Arc<tidb_table::kv_table::StagedWrites> {
         &self.staged_writes
     }
 
-    fn staged_writes_mut(&mut self) -> &mut std::sync::Arc<tidb_executor::kv_table::StagedWrites> {
+    fn staged_writes_mut(&mut self) -> &mut std::sync::Arc<tidb_table::kv_table::StagedWrites> {
         &mut self.staged_writes
     }
 

@@ -73,10 +73,14 @@ use crate::dag_request::{
     construct_grouped_aggregate_read_only_dag_req_with_conditions, DagRequestContext, TiKvScanPlan,
 };
 use crate::predicate_pushdown::ScanPredicate;
-use crate::remote_scan::{
-    CopPlanKind, PushdownAggregateKind, PushdownPartialAggregate, PushdownRowStream,
-    PushdownScanColumn, PushdownScanRequest, PushdownScannerError, EXTRA_HANDLE_COLUMN_ID,
-};
+use tidb_distsql::remote_scan::EXTRA_HANDLE_COLUMN_ID;
+use tidb_distsql::remote_scan::PushdownScannerError;
+use tidb_distsql::remote_scan::PushdownScanRequest;
+use tidb_distsql::remote_scan::PushdownScanColumn;
+use tidb_distsql::remote_scan::PushdownRowStream;
+use tidb_distsql::remote_scan::PushdownPartialAggregate;
+use tidb_distsql::remote_scan::PushdownAggregateKind;
+use tidb_distsql::remote_scan::CopPlanKind;
 use tidb_kv::storage::StorageError;
 use crate::wide_scan_selection::{accepts_in, wide_scan_selection_conditions_in};
 
@@ -210,7 +214,7 @@ pub fn open_cop_scan(
         .statement
         .eval_context
         .as_ref()
-        .map(crate::remote_scan::StatementEval::context);
+        .map(tidb_distsql::remote_scan::StatementEval::context);
     let described: Option<Vec<ScanPredicate>> = request
         .conditions
         .iter()
@@ -742,7 +746,7 @@ struct RemoteScanPlan {
     replica_read: tidb_distsql::ReplicaReadType,
     read_replica_scope: String,
     is_staleness: bool,
-    read_policy: crate::remote_scan::CoprocessorReadPolicy,
+    read_policy: tidb_distsql::remote_scan::CoprocessorReadPolicy,
     estimated_net_bytes: f64,
     max_execution_time_ms: u64,
     /// Go `RequestBuilder.getKVPriority(StmtCtx.Priority)` for this request.
@@ -924,7 +928,7 @@ fn open_scan(
 /// records nothing.
 fn cop_plan_ids_for(
     dag: &tidb_proto::tipb::DagRequest,
-    statement: &crate::remote_scan::PushdownStatementContext,
+    statement: &tidb_distsql::remote_scan::PushdownStatementContext,
 ) -> (Vec<isize>, isize) {
     let mut ids = vec![0; dag.executors.len()];
     if statement.cop_plan_chain.is_empty() {
@@ -1189,7 +1193,7 @@ fn scan_column_descriptor(
 }
 
 fn lower_aggregate_functions(
-    functions: &[crate::remote_scan::PushdownAggregateFunction],
+    functions: &[tidb_distsql::remote_scan::PushdownAggregateFunction],
     columns: &[ScanColumnInfo],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Option<Vec<Expr>> {
@@ -1422,7 +1426,8 @@ mod tests {
 #[cfg(test)]
 mod cop_plan_ids_tests {
     use super::*;
-    use crate::remote_scan::{CopPlanId, PushdownStatementContext};
+    use tidb_distsql::remote_scan::PushdownStatementContext;
+    use tidb_distsql::remote_scan::CopPlanId;
     use tidb_proto::tipb::{DagRequest, Executor};
 
     fn dag(kinds: &[ExecType]) -> DagRequest {

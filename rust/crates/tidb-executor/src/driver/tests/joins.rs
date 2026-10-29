@@ -724,7 +724,7 @@ fn an_index_join_probe_displays_the_outer_probe_count() {
         };
         let table = std::sync::Arc::make_mut(table);
         table.add_index(
-            crate::kv_table::KvIndex {
+            tidb_table::kv_table::KvIndex {
                 id: 1,
                 name: "PRIMARY".to_owned(),
                 comment: String::new(),

@@ -121,7 +121,7 @@ pub struct StatementVarSnapshot {
     remove_orderby_in_subquery: bool,
     pub mem_quota: i64,
     replica_read: crate::ReplicaReadType,
-    coprocessor_read_policy: crate::remote_scan::CoprocessorReadPolicy,
+    coprocessor_read_policy: tidb_distsql::remote_scan::CoprocessorReadPolicy,
     isolation_read_engines: String,
     init_chunk_size: usize,
     max_chunk_size: usize,
@@ -171,7 +171,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
     /// a statement. Clearing it also drops keys from a failed attempt.
     fn set_selected_lock_keys(
         &mut self,
-        keys: Option<crate::select_lock::SelectedLockKeys>,
+        keys: Option<tidb_sessionctx::select_lock::SelectedLockKeys>,
     ) {
         *self.selected_lock_keys_mut() = keys;
     }
@@ -180,7 +180,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
     fn take_selected_lock_keys(&self) -> Vec<Vec<u8>> {
         self.selected_lock_keys_ref()
             .as_ref()
-            .map_or_else(Vec::new, crate::select_lock::SelectedLockKeys::take)
+            .map_or_else(Vec::new, tidb_sessionctx::select_lock::SelectedLockKeys::take)
     }
 
     /// Drains physical locking operators without discarding their wait modes.
@@ -189,17 +189,17 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
     ) -> Vec<(tidb_txnkv::transaction::LockWaitTime, Vec<Vec<u8>>)> {
         self.selected_lock_keys_ref().as_ref().map_or_else(
             Vec::new,
-            crate::select_lock::SelectedLockKeys::take_requests,
+            tidb_sessionctx::select_lock::SelectedLockKeys::take_requests,
         )
     }
 
     /// Drains the current attempt's published keys, the unchanged matched
     /// rows apart from the locking reads' (see
     /// [`crate::select_lock::TakenLocks`]).
-    fn take_selected_locks(&self) -> crate::select_lock::TakenLocks {
+    fn take_selected_locks(&self) -> tidb_sessionctx::select_lock::TakenLocks {
         self.selected_lock_keys_ref().as_ref().map_or_else(
-            crate::select_lock::TakenLocks::default,
-            crate::select_lock::SelectedLockKeys::take_all,
+            tidb_sessionctx::select_lock::TakenLocks::default,
+            tidb_sessionctx::select_lock::SelectedLockKeys::take_all,
         )
     }
 
@@ -395,8 +395,8 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
     /// clocks, globals, and expression state cannot affect the result.
     fn prepared_point_get_context(
         &self,
-    ) -> crate::kv_table::PreparedPointGetDecodeContext {
-        crate::kv_table::PreparedPointGetDecodeContext::for_query(
+    ) -> tidb_table::kv_table::PreparedPointGetDecodeContext {
+        tidb_table::kv_table::PreparedPointGetDecodeContext::for_query(
             self.session_vars().sql_mode().has_allow_invalid_dates_mode(),
             self.session_time_zone(),
         )
@@ -907,7 +907,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 table
                     .indexes()
                     .iter()
-                    .map(|index| tidb_planner::plan_builder::catalog::SourceIndex {
+                    .map(|index| tidb_infoschema::table_source::SourceIndex {
                         id: index.id,
                         is_public: true,
                         ..Default::default()
@@ -1217,7 +1217,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                         .unwrap_or_default()
                 }),
             replica_read: self.session_vars().replica_read(),
-            coprocessor_read_policy: crate::remote_scan::CoprocessorReadPolicy {
+            coprocessor_read_policy: tidb_distsql::remote_scan::CoprocessorReadPolicy {
                 closest_read_threshold: self
                     .session_vars()
                     .get_system("tidb_adaptive_closest_read_threshold")
@@ -2189,9 +2189,9 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// Go `SessionVars` / `StmtCtx` state `row_id_shards`, mutably.
     fn row_id_shards_mut(&mut self) -> &mut Arc<std::sync::Mutex<crate::RowIdShardGenerator>>;
     /// Go `SessionVars` / `StmtCtx` state `selected_lock_keys`, read.
-    fn selected_lock_keys_ref(&self) -> &Option<crate::select_lock::SelectedLockKeys>;
+    fn selected_lock_keys_ref(&self) -> &Option<tidb_sessionctx::select_lock::SelectedLockKeys>;
     /// Go `SessionVars` / `StmtCtx` state `selected_lock_keys`, mutably.
-    fn selected_lock_keys_mut(&mut self) -> &mut Option<crate::select_lock::SelectedLockKeys>;
+    fn selected_lock_keys_mut(&mut self) -> &mut Option<tidb_sessionctx::select_lock::SelectedLockKeys>;
     /// Go `SessionVars` / `StmtCtx` state `sequence_last_values`, read.
     fn sequence_last_values_ref(&self) -> &Arc<std::sync::Mutex<HashMap<i64, i64>>>;
     /// Go `SessionVars` / `StmtCtx` state `sequence_last_values`, mutably.
@@ -2213,9 +2213,9 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// Go `SessionVars` / `StmtCtx` state `sql_cpu_usages`, mutably.
     fn sql_cpu_usages_mut(&mut self) -> &mut Arc<tidb_util::ppcpuusage::SqlCpuUsages>;
     /// Go `SessionVars` / `StmtCtx` state `staged_writes`, read.
-    fn staged_writes_ref(&self) -> &std::sync::Arc<crate::kv_table::StagedWrites>;
+    fn staged_writes_ref(&self) -> &std::sync::Arc<tidb_table::kv_table::StagedWrites>;
     /// Go `SessionVars` / `StmtCtx` state `staged_writes`, mutably.
-    fn staged_writes_mut(&mut self) -> &mut std::sync::Arc<crate::kv_table::StagedWrites>;
+    fn staged_writes_mut(&mut self) -> &mut std::sync::Arc<tidb_table::kv_table::StagedWrites>;
     /// Go `SessionVars` / `StmtCtx` state `statement_affected_rows`, read.
     fn statement_affected_rows_ref(&self) -> &u64;
     /// Go `SessionVars` / `StmtCtx` state `statement_affected_rows`, mutably.

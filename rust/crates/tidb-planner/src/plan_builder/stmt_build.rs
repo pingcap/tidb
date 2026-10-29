@@ -28,7 +28,7 @@ use tidb_expr::Columns;
 use tidb_hack::go_to_lower;
 use tidb_mysql::PrivilegeType;
 
-use super::catalog::TableSource;
+use tidb_infoschema::table_source::TableSource;
 use super::visit_info::{VisitAuthError, VisitInfo};
 use super::PlanBuilder;
 use crate::common_plans::{Ddl, Plan, ShowNextRowID, Simple, SqlBindOp, SqlBindPlan};

@@ -283,8 +283,8 @@ pub(crate) fn write_query_error_at<O: ConnectionPacketOutput + ?Sized>(
     // "unknown"), the database, and the resource group; the db label matches
     // Go's disabled `RecordDBLabel` default (empty).
     record_query_failure(error);
-    let identity_label = crate::server_metrics::execute_error_to_label(error.identity);
-    crate::server_metrics::EXECUTE_ERROR_TOTAL
+    let identity_label = tidb_metrics::server::execute_error_to_label(error.identity);
+    tidb_metrics::server::EXECUTE_ERROR_TOTAL
         .with_label_values(&[
             &identity_label,
             "",

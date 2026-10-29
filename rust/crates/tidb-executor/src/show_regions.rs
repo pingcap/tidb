@@ -23,7 +23,7 @@
 
 use std::collections::HashSet;
 
-use crate::kv_table::KvTable;
+use tidb_table::kv_table::KvTable;
 use tidb_kv::region_map::{RegionMeta, RegionStore};
 use crate::{Catalog, DriverError, MysqlError, TableEntry};
 use tidb_codec::decode_int;

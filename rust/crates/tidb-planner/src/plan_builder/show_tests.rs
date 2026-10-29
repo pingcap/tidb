@@ -18,7 +18,8 @@ use tidb_ast::Stmt;
 use tidb_datatype::SessionTimeZone;
 use tidb_expr::ZonedNoColumns;
 
-use super::catalog::{SourceTable, TableSource};
+use tidb_infoschema::table_source::TableSource;
+use tidb_infoschema::table_source::SourceTable;
 use super::PlanBuilder;
 use crate::expression_rewriter::ColumnIdAllocator;
 use crate::common_plans::Plan;

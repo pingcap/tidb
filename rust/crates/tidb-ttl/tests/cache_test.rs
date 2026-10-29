@@ -48,7 +48,7 @@ use tidb_model::{ColumnInfo, GoShared, TableInfo};
 
 use tidb_ast::CiString;
 use tidb_codec::{decode_cmp_uint_to_int, encode_key};
-use tidb_tablecodec::table_key::{
+use tidb_codec::table_key::{
     encode_row_key, encode_row_key_with_handle, gen_table_prefix, gen_table_record_prefix,
     RecordHandle,
 };

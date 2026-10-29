@@ -126,7 +126,7 @@ use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::{extract_columns, extract_cor_columns};
 use tidb_expr::Columns;
 
-use super::catalog::TableSource;
+use tidb_infoschema::table_source::TableSource;
 use super::marker::{self, MarkerKind, PlanMarker};
 use super::{
     find_field_name, hide_rewrite_columns, snapshot_schema_and_names, PlanBuilder, ProjectionField,

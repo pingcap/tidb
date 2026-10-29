@@ -221,7 +221,8 @@ pub use tidb_ddl_build::column_types::is_int_column_type;
 
 pub use tidb_ddl_build::table_lifecycle::split_drop_table_targets;
 
-use crate::driver::{Catalog, DriverError};
+use crate::driver::DriverError;
+use tidb_infoschema::Catalog;
 use tidb_ast::{DdlStmt, Stmt};
 
 /// Go `CREATE TABLE` through its job, in one process: the table built from
@@ -237,7 +238,7 @@ pub fn create_table_in_catalog(
     ctx: &crate::StmtContext,
     reserved_table_id: Option<i64>,
 ) -> Result<bool, DriverError> {
-    let (database, name) = crate::driver::split_table_path_pub(&create.name, current_db)?;
+    let (database, name) = tidb_infoschema::split_table_path_pub(&create.name, current_db)?;
     let (database, name) = (database.to_owned(), name.to_owned());
     let Some(charset) = catalog.database_charset(&database) else {
         return Err(DriverError::from(
@@ -265,7 +266,7 @@ pub fn create_table_in_catalog(
         // the source, then `BuildTableInfoWithLike` over `referTbl.Meta()`.
         Some(source) => {
             let (source_database, source_name) =
-                crate::driver::split_table_path_pub(source, current_db)?;
+                tidb_infoschema::split_table_path_pub(source, current_db)?;
             let not_exists = || {
                 DriverError::from(
                     tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
@@ -455,7 +456,7 @@ impl Default for CreateTableSettings {
 
 /// The default schema an unqualified `CREATE TABLE` lands in.
 fn tidb_executor_default_database() -> &'static str {
-    crate::driver::DEFAULT_DATABASE
+    tidb_infoschema::DEFAULT_DATABASE
 }
 
 pub use tidb_infoschema::run_create_system_table_in;
@@ -472,7 +473,7 @@ mod tests {
     use crate::driver::{run_insert_on, run_select_on};
     use tidb_datatype::Datum;
     use tidb_datatype::{Charset, Collation};
-    use crate::kv_table::TableCharset;
+    use tidb_table::kv_table::TableCharset;
 
     /// CREATE TABLE -> INSERT -> SELECT, all from SQL strings, with rows as
     /// real TiKV-format bytes and metadata as tidb-model structs.

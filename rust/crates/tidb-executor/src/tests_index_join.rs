@@ -32,7 +32,9 @@ use tidb_expr::schema::Schema;
 use crate::access_path::{IndexJoinLookupExec, LookupObject, LookupProbePart};
 use crate::executor::{Executor, ExecutorMeta};
 use crate::join::{IndexLookupPlan, JoinExec, JoinKind};
-use crate::kv_table::{KvColumn, KvIndex, KvTable};
+use tidb_table::kv_table::KvTable;
+use tidb_table::kv_table::KvIndex;
+use tidb_table::kv_table::KvColumn;
 use crate::mem_table::MemTableSourceExec;
 
 const INIT_CAP: usize = 32;
@@ -161,7 +163,7 @@ fn scan_of(table: &KvTable, width: usize) -> Box<dyn Executor> {
         ExecutorMeta::new(schema_of(width), 0, INIT_CAP, CHUNK),
         table.clone(),
         crate::RowDecodeContext::for_test_query_utc(),
-        crate::remote_scan::PushdownStatementContext::default(),
+        tidb_distsql::remote_scan::PushdownStatementContext::default(),
     ))
 }
 

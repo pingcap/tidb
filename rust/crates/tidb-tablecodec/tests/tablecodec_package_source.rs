@@ -26,14 +26,32 @@ use tidb_datatype::{
     BinaryLiteral, BinaryLiteralWidth, Collation, CoreTime, Datum, Decimal, FieldType,
     FieldTypeCode, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType, UNSPECIFIED_LENGTH,
 };
-use tidb_tablecodec::table_key::{
-    cut_index_prefix, cut_row_key_prefix, decode_index_id, decode_index_key, decode_key_head,
-    decode_meta_key, decode_record_key, decode_row_key, encode_index_seek_key, encode_meta_key,
-    encode_meta_key_prefix, encode_record_key, encode_row_key, encode_row_key_with_handle,
-    encode_table_index_prefix, encode_table_prefix, gen_table_index_prefix, gen_table_prefix,
-    gen_table_record_prefix, get_table_handle_key_range, truncate_to_row_key_len, KeyHead,
-    RecordHandle, META_PREFIX, RECORD_ROW_KEY_LEN, TABLE_PREFIX,
-};
+use tidb_codec::table_key::TABLE_PREFIX;
+use tidb_codec::table_key::RECORD_ROW_KEY_LEN;
+use tidb_codec::table_key::META_PREFIX;
+use tidb_codec::table_key::RecordHandle;
+use tidb_codec::table_key::KeyHead;
+use tidb_codec::table_key::truncate_to_row_key_len;
+use tidb_codec::table_key::get_table_handle_key_range;
+use tidb_codec::table_key::gen_table_record_prefix;
+use tidb_codec::table_key::gen_table_prefix;
+use tidb_codec::table_key::gen_table_index_prefix;
+use tidb_codec::table_key::encode_table_prefix;
+use tidb_codec::table_key::encode_table_index_prefix;
+use tidb_codec::table_key::encode_row_key_with_handle;
+use tidb_codec::table_key::encode_record_key;
+use tidb_codec::table_key::encode_meta_key_prefix;
+use tidb_codec::table_key::encode_index_seek_key;
+use tidb_codec::table_key::encode_row_key;
+use tidb_codec::table_key::decode_row_key;
+use tidb_codec::table_key::decode_record_key;
+use tidb_codec::table_key::encode_meta_key;
+use tidb_codec::table_key::decode_key_head;
+use tidb_codec::table_key::decode_index_key;
+use tidb_codec::table_key::decode_meta_key;
+use tidb_codec::table_key::decode_index_id;
+use tidb_codec::table_key::cut_row_key_prefix;
+use tidb_codec::table_key::cut_index_prefix;
 use tidb_tablecodec::{
     cut_index_key, cut_index_key_by_ids, cut_table_row,
     decode_column_value,
@@ -543,7 +561,7 @@ fn test_decode_auto_id_meta() {
 /// Source: `tablecodec_test.go::TestError`.
 #[test]
 fn test_error() {
-    use tidb_tablecodec::table_key::TableKeyError;
+    use tidb_codec::table_key::TableKeyError;
 
     assert_eq!(TableKeyError::InvalidKey.mysql_error_code(), 8221);
     assert_eq!(TableKeyError::InvalidRecordKey.mysql_error_code(), 8045);
@@ -1347,7 +1365,9 @@ fn flatten_rejects_truncated_binary_literals() {
 
 #[test]
 fn non_unique_int_index_key_matches_go_gen_index_key() {
-    use tidb_tablecodec::table_key::{encode_non_unique_index_key, hex, non_unique_index_value};
+    use tidb_codec::table_key::non_unique_index_value;
+    use tidb_codec::table_key::hex;
+    use tidb_codec::table_key::encode_non_unique_index_key;
 
     // Byte fixtures from Go `tablecodec.GenIndexKey`'s non-unique int-handle
     // composition (`EncodeIndexSeekKey(tableID, idxID, EncodeKey(values...) +

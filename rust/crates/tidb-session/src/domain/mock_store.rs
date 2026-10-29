@@ -47,7 +47,7 @@ pub struct MockStoreDomain {
 impl MockStoreDomain {
     /// The domain booted over this store.
     #[cfg(test)]
-    pub(crate) fn domain(&self) -> &Arc<crate::domain::cluster_session_node::Domain> {
+    pub(crate) fn domain(&self) -> &Arc<tidb_domain_core::domain::Domain> {
         &self.stack.factory
     }
 }
@@ -95,7 +95,7 @@ impl MockStoreDomain {
     /// The session factory of this domain's node: Go's server, which opens
     /// each connection's session on the store.
     #[must_use]
-    pub fn factory(&self) -> &Arc<crate::domain::cluster_session_node::Domain> {
+    pub fn factory(&self) -> &Arc<tidb_domain_core::domain::Domain> {
         &self.stack.factory
     }
 

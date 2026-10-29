@@ -242,7 +242,7 @@ fn storage_failures_keep_sql_identity_through_read_and_write_adapters() {
 #[test]
 fn retryable_storage_errors_keep_their_transaction_identity() {
     let retryable = || {
-        crate::kv_table::KvTableError::from(tidb_kv::storage::StorageError::Retryable(
+        tidb_table::kv_table::KvTableError::from(tidb_kv::storage::StorageError::Retryable(
             "region response no longer matches observed route".to_owned(),
         ))
     };
@@ -259,7 +259,7 @@ fn retryable_storage_errors_keep_their_transaction_identity() {
 
     let ordinary = kv_read_error(
         "row read failed",
-        crate::kv_table::KvTableError::from(tidb_kv::storage::StorageError::Backend(
+        tidb_table::kv_table::KvTableError::from(tidb_kv::storage::StorageError::Backend(
             "disk error".to_owned(),
         )),
     );

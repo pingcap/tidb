@@ -42,18 +42,22 @@ use crate::index_merge_reader::{
 };
 use crate::join::{IndexLookupPlan, IndexLookupSource, IndexProbeKeyDomain, JoinExec, JoinKind};
 use crate::joiner::{new_joiner, JoinType as JoinerType, JoinerChunkSizes};
-use crate::kv_table::{IndexRange, RowDecodeContext, TableHandle, TableScanExec};
+use crate::kv_table::TableScanExec;
+use tidb_table::kv_table::TableHandle;
+use tidb_table::kv_table::RowDecodeContext;
+use tidb_table::kv_table::IndexRange;
 use crate::limit::LimitExec;
 use crate::mem_table::MemTableSourceExec;
 use crate::physical_cte::{
     CteExec, CteProducer, CteTableReaderExec, SharedCteProducer, SharedCteStorage,
 };
 use crate::projection::ProjectionExec;
-use crate::remote_scan::{
-    CopPlanId, CopPlanKind,
-    PushdownAggregateFunction, PushdownAggregateKind, PushdownPartialAggregate,
-    PushdownStatementContext,
-};
+use tidb_distsql::remote_scan::PushdownStatementContext;
+use tidb_distsql::remote_scan::PushdownPartialAggregate;
+use tidb_distsql::remote_scan::PushdownAggregateKind;
+use tidb_distsql::remote_scan::PushdownAggregateFunction;
+use tidb_distsql::remote_scan::CopPlanKind;
+use tidb_distsql::remote_scan::CopPlanId;
 use crate::select_lock::{SelectLockExec, SelectedRecordKey};
 use crate::selection::SelectionExec;
 use crate::sort::{SortByItem, SortExec};
@@ -130,8 +134,8 @@ impl ReaderStorage {
     /// for.
     fn statement(
         separated: bool,
-        statement: crate::remote_scan::PushdownStatementContext,
-    ) -> crate::remote_scan::PushdownStatementContext {
+        statement: tidb_distsql::remote_scan::PushdownStatementContext,
+    ) -> tidb_distsql::remote_scan::PushdownStatementContext {
         if separated {
             statement.without_staged_writes()
         } else {
@@ -1351,7 +1355,7 @@ fn build_table_scan(
     // columnar replica, so the pushdown request names TiFlash and the storage
     // seam lowers it through MPP dispatch instead of the TiKV cop path.
     if scan.store_type == tidb_planner::physical_table_reader::StoreType::TiFlash {
-        source.set_read_engine(crate::remote_scan::PushdownReadEngine::TiFlash);
+        source.set_read_engine(tidb_distsql::remote_scan::PushdownReadEngine::TiFlash);
         source.set_schema_version(catalog.metadata_version());
     }
     if let Some(rows) = scan.base.base.stats_info().map(|stats| stats.row_count()) {
@@ -4639,7 +4643,7 @@ fn point_handles(
     table: &crate::KvTable,
     ranges: &tidb_planner::ranger::types::Ranges,
     ctx: &crate::StmtContext,
-) -> Result<Vec<crate::kv_table::TableHandle>, DriverError> {
+) -> Result<Vec<tidb_table::kv_table::TableHandle>, DriverError> {
     ranges
         .iter()
         .map(|range| {
@@ -4661,14 +4665,14 @@ fn point_handles(
                 let handle = tidb_txnkv::CommonHandle::new(encoded).map_err(|_| {
                     DriverError::unsupported("a retained point-get common handle is invalid")
                 })?;
-                return Ok(crate::kv_table::TableHandle::Common(
+                return Ok(tidb_table::kv_table::TableHandle::Common(
                     handle.encoded().to_vec(),
                 ));
             }
             match values {
-                [tidb_datatype::Datum::Int(value)] => Ok(crate::kv_table::TableHandle::Int(*value)),
+                [tidb_datatype::Datum::Int(value)] => Ok(tidb_table::kv_table::TableHandle::Int(*value)),
                 [tidb_datatype::Datum::UInt(value)] => {
-                    Ok(crate::kv_table::TableHandle::Int(*value as i64))
+                    Ok(tidb_table::kv_table::TableHandle::Int(*value as i64))
                 }
                 _ => Err(DriverError::unsupported(
                     "a retained point-get range does not name one integer handle",
@@ -4867,7 +4871,7 @@ fn point_partition_id(
 
 /// Go `matchPartitionNames`' id set: the physical ids the PARTITION clause
 /// names, or `None` when it names none.
-fn partition_ids_named(table: &crate::kv_table::KvTable, names: &[String]) -> Option<Vec<i64>> {
+fn partition_ids_named(table: &tidb_table::kv_table::KvTable, names: &[String]) -> Option<Vec<i64>> {
     if names.is_empty() {
         return None;
     }
@@ -5112,7 +5116,7 @@ fn point_lock(
     lock: bool,
     select_lock: Option<(tidb_planner::logical::SelectLockType, u64)>,
     ctx: &crate::StmtContext,
-) -> Option<crate::select_lock::PointLock> {
+) -> Option<tidb_sessionctx::select_lock::PointLock> {
     use tidb_planner::logical::SelectLockType;
     use tidb_txnkv::transaction::LockWaitTime;
     if !lock {
@@ -5320,7 +5324,7 @@ fn build_batch_point_get(
 /// point reader's other snapshot options; the returned handle keeps the
 /// options to restore when the reader closes.
 fn configure_point_snapshot_read(
-    table: &crate::kv_table::KvTable,
+    table: &tidb_table::kv_table::KvTable,
     ctx: &crate::StmtContext,
     avg_row_bytes: f64,
     snapshot_stats: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
@@ -5343,7 +5347,7 @@ fn configure_point_snapshot_read(
 
 fn wrap_point_index_usage(
     child: Box<dyn Executor>,
-    table: crate::kv_table::KvTable,
+    table: tidb_table::kv_table::KvTable,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     index_id: Option<i64>,
@@ -5371,7 +5375,7 @@ fn wrap_point_index_usage(
 fn batch_point_usage_stats(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
-    table: &crate::kv_table::KvTable,
+    table: &tidb_table::kv_table::KvTable,
 ) -> Option<std::sync::Arc<crate::access_cost::TableStatistics>> {
     // Go `BatchPointGetPlan.LoadTableStats`: `GetStatsTable(TblInfo.ID)`.
     if crate::access_cost::table_statistics(ctx, catalog, table.table_id()).is_some() {
@@ -7281,9 +7285,9 @@ impl crate::union_scan::HandleColumns for UnionScanHandleCols {
     fn build_handle(
         &self,
         row: tidb_chunk::row::Row<'_>,
-    ) -> Result<crate::kv_table::TableHandle, crate::ExecError> {
+    ) -> Result<tidb_table::kv_table::TableHandle, crate::ExecError> {
         match &self.common {
-            None => Ok(crate::kv_table::TableHandle::Int(
+            None => Ok(tidb_table::kv_table::TableHandle::Int(
                 row.get_int64(self.offsets[0]),
             )),
             Some(table) => {
@@ -8585,8 +8589,8 @@ use super::*;
         ));
     }
 
-    fn long_column(name: &str, id: i64) -> crate::kv_table::KvColumn {
-        crate::kv_table::KvColumn {
+    fn long_column(name: &str, id: i64) -> tidb_table::kv_table::KvColumn {
+        tidb_table::kv_table::KvColumn {
             name: name.to_owned(),
             id,
             field_type: FieldType::new(FieldTypeCode::LongLong),
@@ -8844,7 +8848,7 @@ use super::*;
         table.set_common_handle_offsets(vec![0, 1]);
         table
             .create_index_with_context(
-                crate::kv_table::KvIndex {
+                tidb_table::kv_table::KvIndex {
                     id: 8,
                     name: "value_uidx".to_owned(),
                     comment: String::new(),
@@ -8963,7 +8967,7 @@ use super::*;
         table.set_pk_handle_offset(0);
         table
             .create_index_with_context(
-                crate::kv_table::KvIndex {
+                tidb_table::kv_table::KvIndex {
                     id: 8,
                     name: "value_uidx".to_owned(),
                     comment: String::new(),
@@ -9090,7 +9094,7 @@ use super::*;
         }
         table
             .create_index_with_context(
-                crate::kv_table::KvIndex {
+                tidb_table::kv_table::KvIndex {
                     id: 7,
                     name: "value_idx".to_owned(),
                     comment: String::new(),
@@ -9544,7 +9548,7 @@ use super::*;
                 }
                 table
                     .create_index_with_context(
-                        crate::kv_table::KvIndex {
+                        tidb_table::kv_table::KvIndex {
                             id: 7,
                             name: "value_idx".to_owned(),
                             comment: String::new(),

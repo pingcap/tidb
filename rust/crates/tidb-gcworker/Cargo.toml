@@ -11,6 +11,7 @@ description = "Go pkg/store/gcworker: the GC leader that advances safe points, r
 workspace = true
 
 [dependencies]
+tidb-domain-core = { path = "../tidb-domain-core" }
 tidb-store-driver = { path = "../tidb-store-driver" }
 tidb-metrics = { path = "../tidb-metrics" }
 tidb-mysql = { path = "../tidb-mysql" }
@@ -34,7 +35,6 @@ tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-util = { path = "../tidb-util" }
 
 [dev-dependencies]
-tidb-domain-core = { path = "../tidb-domain-core" }
 fail = { version = "0.4", features = ["failpoints"] }
 # Go's `tikvclient/...` failpoints, which the GC tests enable.
 tikv-client = { workspace = true, features = ["failpoints"] }

@@ -19,7 +19,7 @@ use tidb_ast::{Expr, UpdateKind, UpdateStmt};
 use tidb_datatype::{FieldName, FieldNameMetadata, IdentifierMetadata};
 use tidb_expr::Columns;
 
-use super::catalog::TableSource;
+use tidb_infoschema::table_source::TableSource;
 use super::update_build::WRITE_ROW_ID_REFUSED;
 use super::{find_field_name, PlanBuilder};
 use crate::plan_base::PlanError;
@@ -65,7 +65,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 column: IdentifierMetadata::new(column),
             })
         };
-        let columns: Vec<&super::catalog::SourceColumn> = table
+        let columns: Vec<&tidb_infoschema::table_source::SourceColumn> = table
             .columns
             .iter()
             .filter(|column| !column.is_hidden && column.is_public)

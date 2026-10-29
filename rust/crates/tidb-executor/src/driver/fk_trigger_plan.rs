@@ -16,7 +16,8 @@
 
 use tidb_infoschema::{Catalog, TableEntry};
 use crate::driver::DriverError;
-use crate::kv_table::{FkAction, KvForeignKey};
+use tidb_table::kv_table::KvForeignKey;
+use tidb_table::kv_table::FkAction;
 use crate::StmtContext;
 use tidb_planner::fk_plan::{FkColumn, FkMeta, FkPlanError, FkTable, ForeignKeyCatalog};
 use tidb_planner::physical::FkTriggerNode;

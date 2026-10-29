@@ -2656,7 +2656,7 @@ fn build_column(
                     GeneratedColumns::Deferred { schema, table, .. } => {
                         info.generated_expr_string = expression
                             .restore_with_flags_and_string_charset(
-                                crate::generated_column::generated_restore_flags(),
+                                tidb_table::generated_column::generated_restore_flags(),
                                 context.get_expr_ctx().get_charset_info().0,
                             );
                         info.generated_stored = *stored;
@@ -2796,9 +2796,9 @@ fn build_column(
 }
 
 fn generated_column_admission_error(
-    error: crate::generated_column::GeneratedDdlError,
+    error: tidb_table::generated_column::GeneratedDdlError,
 ) -> DdlAdmissionError {
-    use crate::generated_column::GeneratedDdlError;
+    use tidb_table::generated_column::GeneratedDdlError;
     match error {
         // Go `checkDependedColExist` reports a key of `findDependedColumnNames`'s
         // map, which is the name's lowercase form.
@@ -3295,7 +3295,7 @@ fn stage_column_default(
             // go resolves a DEFAULT expression against the table's own columns
             // (`getDefaultValue` runs the expression resolver over them), so an
             // unknown name fails with ErrBadField (1054) 'expression'.
-            let resolver = crate::generated_column::TableColumnResolver::with_like_default_escape(
+            let resolver = tidb_table::generated_column::TableColumnResolver::with_like_default_escape(
                 preceding_names,
                 preceding_types,
                 context.get_expr_ctx().get_eval_ctx().time_zone(),

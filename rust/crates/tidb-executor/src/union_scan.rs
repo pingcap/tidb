@@ -180,14 +180,14 @@ use tidb_datatype::{Collation, Datum, FieldType, FieldTypeFlags};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
-use tidb_tablecodec::table_key::encode_row_key_with_handle;
+use tidb_codec::table_key::encode_row_key_with_handle;
 use tidb_txnkv::Key;
 
 use crate::bad_null::zero_value;
-use crate::driver::write_cast::cast_table_value;
+use tidb_table::column::cast_table_value;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::joiner::eval_bool;
-use crate::kv_table::TableHandle;
+use tidb_table::kv_table::TableHandle;
 use crate::mem_reader::{MemReaderError, MemRowsIter, RowComparator};
 use crate::StmtContext;
 

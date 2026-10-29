@@ -235,7 +235,7 @@ pub fn all_schemas(catalog: &Catalog) -> Vec<HelperSchema> {
         is_common_handle: false,
     };
     let information_schema = catalog
-        .table_names(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
+        .table_names(tidb_infoschema::infoschema_meta::INFORMATION_SCHEMA)
         .unwrap_or_default()
         .into_iter()
         .filter_map(|name| {

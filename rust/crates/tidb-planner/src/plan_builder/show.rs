@@ -29,7 +29,7 @@ use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
 use tidb_model::TempTableType;
 
-use super::catalog::TableSource;
+use tidb_infoschema::table_source::TableSource;
 use super::visit_info::{VisitAuthError, VisitInfo};
 use super::PlanBuilder;
 use crate::logical::projection::LogicalProjection;

@@ -92,7 +92,7 @@ pub(crate) fn record_error() {
 /// the default group label before any session exists.
 pub(crate) fn note_connection_start() {
     CONNECTION_RESOURCE_GROUP.with(|group| *group.borrow_mut() = "default".to_owned());
-    crate::server_metrics::CONN_GAUGE
+    tidb_metrics::server::CONN_GAUGE
         .with_label_values(&["default"])
         .inc();
 }
@@ -102,7 +102,7 @@ pub(crate) fn note_connection_start() {
 /// session opened).
 pub(crate) fn note_connection_end() {
     let group = CONNECTION_RESOURCE_GROUP.with(|group| group.borrow().clone());
-    crate::server_metrics::CONN_GAUGE
+    tidb_metrics::server::CONN_GAUGE
         .with_label_values(&[&group])
         .dec();
 }
@@ -122,10 +122,10 @@ fn note_resource_group_move(previous: &str, current: &str) {
         previous
     };
     if previous != current {
-        crate::server_metrics::CONN_GAUGE
+        tidb_metrics::server::CONN_GAUGE
             .with_label_values(&[previous])
             .dec();
-        crate::server_metrics::CONN_GAUGE
+        tidb_metrics::server::CONN_GAUGE
             .with_label_values(&[current])
             .inc();
     }

@@ -142,7 +142,9 @@ use tidb_expr::schema::Schema;
 
 use crate::access_path::{HandleOutputColumn, HandleSourceExec};
 use crate::executor::{ExecError, Executor, ExecutorMeta};
-use crate::kv_table::{KvTable, RowDecodeContext, TableHandle};
+use tidb_table::kv_table::TableHandle;
+use tidb_table::kv_table::RowDecodeContext;
+use tidb_table::kv_table::KvTable;
 
 /// Rebuild the retained coprocessor tree around one task's handle scan.
 pub(crate) type TableTaskBuilder =
@@ -1263,7 +1265,7 @@ pub struct IndexMergeReaderExec {
     table_task_builder: Option<TableTaskBuilder>,
     /// Go len(tblPlans) == 1: no table-side operator can remove rows.
     table_plan_is_scan: bool,
-    table_statement: Option<crate::remote_scan::PushdownStatementContext>,
+    table_statement: Option<tidb_distsql::remote_scan::PushdownStatementContext>,
     /// Go `sessionVars.IndexLookupSize`: the handle count per table task.
     batch_size: usize,
     /// Go `workerStarted`.
@@ -1318,7 +1320,7 @@ impl IndexMergeReaderExec {
     /// The final table request retains statement settings and average row width.
     pub(crate) fn with_table_statement(
         mut self,
-        statement: crate::remote_scan::PushdownStatementContext,
+        statement: tidb_distsql::remote_scan::PushdownStatementContext,
     ) -> Self {
         self.table_statement = Some(statement);
         self

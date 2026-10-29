@@ -33,7 +33,7 @@ use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
 use tidb_hack::go_to_lower;
 
-use super::catalog::TableSource;
+use tidb_infoschema::table_source::TableSource;
 use super::insert_values::InsertTarget;
 use super::marker::MarkerKind;
 use super::{ClauseCode, PlanBuilder};

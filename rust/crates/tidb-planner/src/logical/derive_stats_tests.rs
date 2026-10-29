@@ -646,12 +646,12 @@ fn partial_dnf_index_range_preserves_logical_statistics_cover() {
             is_not_null: false,
         })
         .collect();
-    op.indexes = vec![crate::plan_builder::catalog::SourceIndex {
+    op.indexes = vec![tidb_infoschema::table_source::SourceIndex {
         id: 8,
         name: "ia".to_owned(),
         is_public: true,
         is_visible: true,
-        columns: vec![crate::plan_builder::catalog::SourceIndexColumn {
+        columns: vec![tidb_infoschema::table_source::SourceIndexColumn {
             name: "a".to_owned(),
             offset: 0,
             length: -1,
@@ -707,12 +707,12 @@ fn deriving_a_data_source_fills_each_index_path_row_count_from_its_collection() 
         is_primary_key: false,
         is_not_null: false,
     }];
-    op.indexes = vec![crate::plan_builder::catalog::SourceIndex {
+    op.indexes = vec![tidb_infoschema::table_source::SourceIndex {
         id: 8,
         name: "ia".to_owned(),
         is_public: true,
         is_visible: true,
-        columns: vec![crate::plan_builder::catalog::SourceIndexColumn {
+        columns: vec![tidb_infoschema::table_source::SourceIndexColumn {
             name: "a".to_owned(),
             offset: 0,
             length: -1,
@@ -770,12 +770,12 @@ fn deriving_an_index_path_records_the_index_in_the_used_stats_ledger() {
             is_primary_key: false,
             is_not_null: false,
         }];
-        op.indexes = vec![crate::plan_builder::catalog::SourceIndex {
+        op.indexes = vec![tidb_infoschema::table_source::SourceIndex {
             id: 8,
             name: "ia".to_owned(),
             is_public: true,
             is_visible: true,
-            columns: vec![crate::plan_builder::catalog::SourceIndexColumn {
+            columns: vec![tidb_infoschema::table_source::SourceIndexColumn {
                 name: "a".to_owned(),
                 offset: 0,
                 length: -1,

@@ -21,7 +21,7 @@
 use crate::RowDecodeContextExt;
 use std::sync::Arc;
 
-pub use tidb_distsql::remote_scan::*;
+use tidb_distsql::remote_scan::*;
 
 /// The coprocessor seam of one statement, taken from its context.
 #[must_use]
@@ -218,7 +218,10 @@ mod tests {
     };
     use crate::executor::{Executor, ExecutorMeta};
     use crate::join::{IndexLookupPlan, IndexLookupSource, JoinExec, JoinKind};
-    use crate::kv_table::{KvColumn, KvIndex, KvTable, TableHandle};
+    use tidb_table::kv_table::TableHandle;
+    use tidb_table::kv_table::KvTable;
+    use tidb_table::kv_table::KvIndex;
+    use tidb_table::kv_table::KvColumn;
     use crate::mem_table::MemTableSourceExec;
     use crate::run_prepared_select_for_test;
     use tidb_kv::storage::capture_storage_ops;
@@ -535,7 +538,7 @@ mod tests {
                 .table
                 .insert_row(&[Datum::Int(a), Datum::Int(a + 10)], &tidb_expr::NoColumns)
                 .unwrap();
-            let crate::kv_table::TableHandle::Int(handle) = handle else {
+            let tidb_table::kv_table::TableHandle::Int(handle) = handle else {
                 unreachable!()
             };
             handles.push(handle);
@@ -940,8 +943,8 @@ mod tests {
             assert_eq!(
                 lookup.0,
                 vec![
-                    (crate::kv_table::TableHandle::Int(3), vec![Datum::Int(13)]),
-                    (crate::kv_table::TableHandle::Int(1), vec![Datum::Int(11)]),
+                    (tidb_table::kv_table::TableHandle::Int(3), vec![Datum::Int(13)]),
+                    (tidb_table::kv_table::TableHandle::Int(1), vec![Datum::Int(11)]),
                 ]
             );
             let mut catalog = catalog_of(fixture.table);
@@ -1653,7 +1656,7 @@ mod tests {
                         desc,
                         true,
                         false,
-                        &crate::kv_table::RowDecodeContext::for_test_query_utc(),
+                        &tidb_table::kv_table::RowDecodeContext::for_test_query_utc(),
                         &PushdownStatementContext::default(),
                         PushdownReadEngine::TiKv,
                         0,

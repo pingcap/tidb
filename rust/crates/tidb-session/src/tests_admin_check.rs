@@ -409,7 +409,7 @@ fn an_orphaned_index_entry_is_caught() {
                 panic!("t is not stored as bytes");
             };
             std::sync::Arc::make_mut(table)
-                .delete_record_for_test(&tidb_executor::kv_table::TableHandle::Int(2))
+                .delete_record_for_test(&tidb_table::kv_table::TableHandle::Int(2))
                 .expect("delete the row");
             Ok(())
         })
@@ -497,14 +497,14 @@ fn an_index_value_mismatch_reports_the_column_and_both_values() {
             let entries = table.index_entries_for_check(index.id).expect("entries");
             let (old_key, _) = entries
                 .iter()
-                .find(|(_, handle)| *handle == tidb_executor::kv_table::TableHandle::Int(2))
+                .find(|(_, handle)| *handle == tidb_table::kv_table::TableHandle::Int(2))
                 .expect("row 2 index entry");
             let row = vec![tidb_datatype::Datum::Int(2), tidb_datatype::Datum::Int(100)];
             let (new_key, _) = table
                 .index_keys_for_check(
                     &index,
                     &row,
-                    &tidb_executor::kv_table::TableHandle::Int(2),
+                    &tidb_table::kv_table::TableHandle::Int(2),
                     table.table_id(),
                     &tidb_datatype::SessionTimeZone::utc(),
                 )

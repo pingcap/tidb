@@ -11,6 +11,7 @@ description = "Test support matching TiDB planner util coretestsdk."
 workspace = true
 
 [dependencies]
+tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-model = { path = "../tidb-model" }

@@ -179,9 +179,9 @@ mod transaction_buffer_tests {
         let buffer = MutationBuffer::new();
         transaction.bind_mutation_buffer(&buffer);
         let table_key = |id| {
-            tidb_tablecodec::table_key::encode_row_key_with_handle(
+            tidb_codec::table_key::encode_row_key_with_handle(
                 id,
-                &tidb_tablecodec::table_key::RecordHandle::Int(1),
+                &tidb_codec::table_key::RecordHandle::Int(1),
             )
         };
         buffer
@@ -236,7 +236,7 @@ mod transaction_buffer_tests {
 /// catalog, and coprocessor client the live `--store unistore
 /// --cluster-session` process serves.
 pub struct UnistoreClusterStack {
-    pub factory: Arc<crate::domain::cluster_session_node::Domain>,
+    pub factory: Arc<tidb_domain_core::domain::Domain>,
     pub schema_version: i64,
     pub stats: Arc<tidb_stats_handle_syncload::stats_watch::SharedStats>,
     pub _stats_maintenance:
@@ -483,7 +483,8 @@ pub fn unistore_cluster_session_stack_from(
     image: Option<&BootstrapImage>,
     mock_tiflash: usize,
 ) -> Result<UnistoreClusterStack, crate::domain::real_tikv_node::RunConfiguredNodeError> {
-    use crate::domain::cluster_session_node::{Domain, RealClusterDdl, RealClusterTransactions};
+    use crate::domain::cluster_session_node::{RealClusterDdl, RealClusterTransactions};
+    use tidb_domain_core::domain::Domain;
     use crate::domain::real_tikv_node::RunConfiguredNodeError;
 
     let engine = RunConfiguredNodeError::Engine;

@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use tidb_datatype::Datum;
 
-use crate::kv_table::KvTable;
+use tidb_table::kv_table::KvTable;
 use crate::{Catalog, DriverError, TableEntry};
 
 /// The other table of an ongoing EXCHANGE PARTITION, resolved from the

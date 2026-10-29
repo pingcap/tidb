@@ -49,7 +49,7 @@ pub fn execute_catalog_stats_lock(
     if only_partitions {
         let target = &statement.tables[0];
         let (database, table_name) =
-            crate::driver::split_table_path_pub(&target.name, current_database)?;
+            tidb_infoschema::split_table_path_pub(&target.name, current_database)?;
         let table = kv_table(catalog, database, table_name)?;
         let Some(partition) = table.partition() else {
             return Err(DriverError::unsupported(format!(
@@ -102,7 +102,7 @@ pub fn execute_catalog_stats_lock(
     let mut tables = BTreeMap::new();
     for target in &statement.tables {
         let (database, table_name) =
-            crate::driver::split_table_path_pub(&target.name, current_database)?;
+            tidb_infoschema::split_table_path_pub(&target.name, current_database)?;
         let table = kv_table(catalog, database, table_name)?;
         let partition_info = table.partition().map(|partition| {
             partition

@@ -489,7 +489,7 @@ fn partition_partial_filters(
 /// supply a missing leading key. Keep incomplete branches until that stage.
 fn collect_unfinished_filters(
     ds: &DataSource,
-    index: Option<&crate::plan_builder::catalog::SourceIndex>,
+    index: Option<&tidb_infoschema::table_source::SourceIndex>,
     expression: &Expression,
     ctx: &AccessPathDerivationContext<'_>,
 ) -> Option<(Vec<Expression>, bool)> {
@@ -639,7 +639,7 @@ pub(crate) fn compare_alternatives(
 /// `GetRowCountByIndexRanges`.
 pub(super) fn estimate_partial_index_ranges(
     ds: &DataSource,
-    source_index: &crate::plan_builder::catalog::SourceIndex,
+    source_index: &tidb_infoschema::table_source::SourceIndex,
     filled: &super::ordinary::FilledIndexPath,
     ctx: &AccessPathDerivationContext<'_>,
 ) -> Result<f64, PlanError> {
@@ -651,7 +651,7 @@ pub(super) fn estimate_partial_index_ranges(
 /// `ranges` of `source_index`, whose usable key columns are `columns`.
 pub(super) fn estimate_index_ranges(
     ds: &DataSource,
-    source_index: &crate::plan_builder::catalog::SourceIndex,
+    source_index: &tidb_infoschema::table_source::SourceIndex,
     ranges: &crate::ranger::types::Ranges,
     columns: &[(tidb_expr::column::Column, i64)],
     ctx: &AccessPathDerivationContext<'_>,

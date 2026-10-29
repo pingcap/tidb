@@ -23,7 +23,7 @@ use tidb_chunk::chunk::Chunk;
 use tidb_datatype::FieldType;
 use tidb_expr::schema::Schema;
 
-pub use crate::driver::error::ExecError;
+pub use tidb_driver_error::ExecError;
 
 /// Go `exec.Executor`: a pull-based operator in the execution tree.
 ///

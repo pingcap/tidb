@@ -34,7 +34,8 @@ use crate::tikv_store::TikvStoreClient;
 use crate::{GcWorker, GcWorkerDeps, GcWorkerHandle};
 use tidb_util::sqlescape::{escape_sql, SqlArg};
 
-use tidb_session::domain::cluster_session_node::{ClusterServerSession, Domain};
+use tidb_session::domain::cluster_session_node::ClusterServerSession;
+use tidb_domain_core::domain::Domain;
 use tidb_session::Session;
 use tidb_session::domain::session_api::SessionContext;
 use tidb_session::domain::session_api::SqlQueryError;

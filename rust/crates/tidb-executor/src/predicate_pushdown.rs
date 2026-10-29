@@ -967,7 +967,8 @@ mod tests {
         ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
     };
     use crate::driver::{run_select_on, Catalog};
-    use crate::kv_table::{KvColumn, KvTable};
+    use tidb_table::kv_table::KvTable;
+    use tidb_table::kv_table::KvColumn;
     use tidb_kv::storage::StorageError;
 
     /// A snapshot over a fixed map: the committed half of a cluster read.

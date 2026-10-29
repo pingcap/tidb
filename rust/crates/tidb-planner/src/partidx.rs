@@ -242,7 +242,7 @@ mod tests {
     use crate::logical::data_source::DataSourceColumn;
     use crate::logical::{BaseLogicalPlan, DataSource};
     use crate::plan_base::PlanIdAllocator;
-    use crate::plan_builder::catalog::SourceIndex;
+    use tidb_infoschema::table_source::SourceIndex;
 
     fn integer_column(id: i64) -> Expression {
         Expression::Column(Column::new(id, FieldType::new(FieldTypeCode::LongLong)))

@@ -22,7 +22,7 @@
 //! `quota * (1 - guard)`.
 
 use std::{borrow::Borrow, collections::HashMap, hash::Hash};
-use tidb_util::kvcache::SimpleLruCache;
+use tidb_kvcache::SimpleLruCache;
 
 /// Go `PlanCacheValue`: one cached plan plus the parameter-type signature the
 /// compatibility check compares.

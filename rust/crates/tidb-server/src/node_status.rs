@@ -19,7 +19,7 @@
 use tidb_session::domain::cluster_session_node::DomainSessionSettings as _;
 use std::sync::Arc;
 
-use tidb_session::domain::cluster_session_node::Domain;
+use tidb_domain_core::domain::Domain;
 
 /// The peer coprocessor service of this node (Go `tikvHandlerTool`'s
 /// coprocessor over the node's own sessions).

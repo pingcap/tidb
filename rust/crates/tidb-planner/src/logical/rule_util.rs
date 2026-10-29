@@ -21,7 +21,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
 use super::data_source::DataSourceColumn;
-use crate::plan_builder::catalog::SourceIndex;
+use tidb_infoschema::table_source::SourceIndex;
 
 /// Go `ResolveExprAndReplace` and `ResolveColumnAndReplace`.
 #[must_use]

@@ -45,7 +45,7 @@ fn insert(catalog: &mut Catalog, sql: &str) {
         .unwrap_or_else(|error| panic!("insert {sql:?} failed: {error:?}"));
 }
 
-fn kv_table_of(catalog: &Catalog, name: &str) -> crate::kv_table::KvTable {
+fn kv_table_of(catalog: &Catalog, name: &str) -> tidb_table::kv_table::KvTable {
     let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", name) else {
         panic!("table {name} is not stored as bytes");
     };
@@ -115,7 +115,7 @@ fn admin_check_detects_generated_column_index_value_corruption() {
         .expect("old entry dropped");
     let mut storage = table.swap_storage(Box::new(tidb_kv::storage::MemTableStorage::default()));
     let crafted_handle = tidb_txnkv::Handle::Int(tidb_txnkv::IntHandle::new(match handle {
-        crate::kv_table::TableHandle::Int(value) => *value,
+        tidb_table::kv_table::TableHandle::Int(value) => *value,
         other => panic!("unexpected handle {other:?}"),
     }));
     storage

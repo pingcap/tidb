@@ -35,7 +35,8 @@ use tidb_txnkv::transaction::StoreClient;
 use tidb_autoid::cluster_auto_id::ClusterAutoIdStore;
 use tidb_table::cluster_sequence::ClusterSequenceCounter;
 use tidb_executor::driver::SequenceDef;
-use tidb_executor::kv_table::{TableAutoId, DEFAULT_AUTO_ID_STEP};
+use tidb_table::kv_table::DEFAULT_AUTO_ID_STEP;
+use tidb_table::kv_table::TableAutoId;
 use tidb_table::sequence::{SequenceAllocator, SequenceInfo as SeqCounterInfo};
 use tidb_model::TableInfo;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
@@ -347,7 +348,7 @@ mod tests {
     }
     fn next(
         allocator: TableAutoId,
-    ) -> Result<Option<i64>, tidb_executor::kv_table::AutoIdStoreError> {
+    ) -> Result<Option<i64>, tidb_table::kv_table::AutoIdStoreError> {
         let mut table = KvTable::new(402, vec![]);
         table.set_auto_increment_offset(0);
         table.set_auto_id(allocator);

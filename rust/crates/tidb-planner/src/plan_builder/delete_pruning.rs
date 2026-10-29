@@ -28,7 +28,7 @@ use tidb_ast::SelectStmt;
 use tidb_expr::Columns;
 use tidb_hack::go_to_lower;
 
-use super::catalog::TableSource;
+use tidb_infoschema::table_source::TableSource;
 use super::PlanBuilder;
 use crate::physical::{DeleteColPos, DeleteHandle, DeleteTablePos};
 

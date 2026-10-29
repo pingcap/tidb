@@ -20,7 +20,7 @@ use tidb_ast::{
 #[allow(unused_imports)]
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 #[allow(unused_imports)]
-use tidb_ddl_build::generated_column::TableColumnResolver;
+use tidb_table::generated_column::TableColumnResolver;
 #[allow(unused_imports)]
 #[allow(unused_imports)]
 use tidb_table::partition_routing::{

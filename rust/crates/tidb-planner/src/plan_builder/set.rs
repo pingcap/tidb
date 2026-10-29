@@ -25,7 +25,7 @@ use tidb_hack::go_to_lower;
 
 use tidb_expr::Columns;
 
-use super::catalog::TableSource;
+use tidb_infoschema::table_source::TableSource;
 use super::visit_info::VisitAuthError;
 use super::{PlanBuilder, SubqueryKind};
 use crate::common_plans::{Plan, Set, VarAssignment};

@@ -38,7 +38,9 @@ use tidb_datatype::{EvalType, FieldType, FieldTypeCode, SessionTimeZone, UNSPECI
 use tidb_expr::column::Column;
 use tidb_expr::ZonedNoColumns;
 
-use super::catalog::{SourceColumn, SourceTable, TableSource};
+use tidb_infoschema::table_source::TableSource;
+use tidb_infoschema::table_source::SourceTable;
+use tidb_infoschema::table_source::SourceColumn;
 use super::window::{
     all_by_items, bound_type_of, cmp_func_token, cmp_type_for_same_field_type, compare_items,
     is_unbounded, merge_window_spec, spec_equal, window_name, NamedWindowSpec,

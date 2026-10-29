@@ -92,7 +92,7 @@ fn resolve_index_hints_for_partition(
                 .iter()
                 .any(|partition| partition == partition_name)
     });
-    let table = crate::plan_builder::catalog::SourceTable {
+    let table = tidb_infoschema::table_source::SourceTable {
         table_name: source.table_name.clone(),
         indexes: source.indexes.clone(),
         pk_is_handle: source.pk_is_handle,
@@ -404,7 +404,7 @@ mod tests {
     use super::*;
     use crate::access_path::PossiblePath;
     use crate::logical::data_source::{DataSourceIndexHint, DataSourceIndexMergeHint};
-    use crate::plan_builder::catalog::SourceIndex;
+    use tidb_infoschema::table_source::SourceIndex;
 
     #[test]
     fn index_merge_hints_are_resolved_per_static_partition() {

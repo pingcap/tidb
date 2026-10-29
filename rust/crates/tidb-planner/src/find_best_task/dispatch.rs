@@ -2003,7 +2003,7 @@ pub(super) fn table_path_matches_order(
 
 pub(super) fn index_path_matches_order(
     ds: &crate::logical::DataSource,
-    index: &crate::plan_builder::catalog::SourceIndex,
+    index: &tidb_infoschema::table_source::SourceIndex,
     prop: &PhysicalProperty,
     ranges: Option<&crate::ranger::types::Ranges>,
 ) -> OrderMatch {
@@ -2086,7 +2086,7 @@ fn has_v0_new_collation_string_handle(ds: &crate::logical::DataSource) -> bool {
 /// (no partition here is hidden by an in-flight DDL).
 pub(super) fn global_index_partition_filter(
     ds: &crate::logical::DataSource,
-    index: &crate::plan_builder::catalog::SourceIndex,
+    index: &tidb_infoschema::table_source::SourceIndex,
     scan_schema: Option<&tidb_expr::schema::Schema>,
 ) -> Option<tidb_expr::expression::Expression> {
     use tidb_expr::expression::Expression;
@@ -2140,7 +2140,7 @@ pub(super) fn global_index_partition_filter(
 /// a prefix column, and no earlier definition column is truncated.
 pub(super) fn match_partial_order_property(
     ds: &crate::logical::DataSource,
-    index: &crate::plan_builder::catalog::SourceIndex,
+    index: &tidb_infoschema::table_source::SourceIndex,
     partial: &crate::physical_property::PartialOrderInfo,
 ) -> Option<crate::physical_property::PartialOrderMatchResult> {
     if partial.sort_items.is_empty() || !partial.all_same_order().0 {
@@ -2388,7 +2388,7 @@ fn build_index_join_path_result(
 /// joins both coverage maps, and the equality count is that width.
 fn index_join_candidate(
     ds: &crate::logical::DataSource,
-    source_index: &crate::plan_builder::catalog::SourceIndex,
+    source_index: &tidb_infoschema::table_source::SourceIndex,
     idx_cols: &[tidb_expr::column::Column],
     idx_col_lens: &[i64],
     core: &super::index_join_path::IndexJoinPathCore,
@@ -5971,7 +5971,8 @@ mod tests {
         use crate::access_path::PossiblePath;
         use crate::logical::DataSource;
         use crate::logical::data_source::DataSourceColumn;
-        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+        use tidb_infoschema::table_source::SourceIndexColumn;
+        use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
         use tidb_expr::constant::Constant;
@@ -6183,8 +6184,8 @@ mod tests {
             common_handle_lens: vec![3],
             ..Default::default()
         };
-        let index = crate::plan_builder::catalog::SourceIndex {
-            columns: vec![crate::plan_builder::catalog::SourceIndexColumn {
+        let index = tidb_infoschema::table_source::SourceIndex {
+            columns: vec![tidb_infoschema::table_source::SourceIndexColumn {
                 name: "a".into(),
                 offset: 0,
                 length: -1,
@@ -6203,7 +6204,8 @@ mod tests {
         use crate::access_path::PossiblePath;
         use crate::logical::DataSource;
         use crate::logical::data_source::DataSourceColumn;
-        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+        use tidb_infoschema::table_source::SourceIndexColumn;
+        use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
         use tidb_expr::constant::Constant;
         use tidb_expr::expression::{Expression, ScalarFunction};
@@ -6308,7 +6310,8 @@ mod tests {
     #[test]
     fn prefix_single_scan_distinguishes_unpruned_full_values_and_null_arguments() {
         use crate::logical::data_source::{DataSource, DataSourceColumn};
-        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+        use tidb_infoschema::table_source::SourceIndexColumn;
+        use tidb_infoschema::table_source::SourceIndex;
         use tidb_expr::expression::{Expression, ScalarFunction};
         let allocator = PlanIdAllocator::new();
         let a = Column::new(11, FieldType::new(FieldTypeCode::Varchar).with_flen(20));
@@ -6481,7 +6484,8 @@ mod tests {
         use crate::access_path::PossiblePath;
         use crate::logical::DataSource;
         use crate::logical::data_source::DataSourceColumn;
-        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+        use tidb_infoschema::table_source::SourceIndexColumn;
+        use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
         use tidb_expr::schema::Schema;
@@ -6624,7 +6628,8 @@ mod tests {
         use crate::access_path::PossiblePath;
         use crate::logical::DataSource;
         use crate::logical::data_source::DataSourceColumn;
-        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+        use tidb_infoschema::table_source::SourceIndexColumn;
+        use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{FieldType, FieldTypeCode};
 
         let allocator = PlanIdAllocator::new();
@@ -6852,7 +6857,8 @@ mod tests {
     fn a_constant_index_prefix_is_skipped_when_matching_order() {
         use crate::logical::DataSource;
         use crate::logical::data_source::DataSourceColumn;
-        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+        use tidb_infoschema::table_source::SourceIndexColumn;
+        use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
         use tidb_expr::constant::Constant;

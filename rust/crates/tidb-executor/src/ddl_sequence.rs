@@ -14,7 +14,7 @@
 
 //! `SHOW CREATE SEQUENCE`; the sequence DDL is `tidb_ddl_build::sequence`.
 
-use crate::driver::SequenceDef;
+use tidb_infoschema::SequenceDef;
 
 /// The `SHOW CREATE SEQUENCE` / `SHOW CREATE TABLE` text for a sequence.
 ///

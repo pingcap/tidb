@@ -32,7 +32,9 @@ use tidb_datatype::{
 use tidb_expr::ZonedNoColumns;
 use tidb_funcdep::ColSet;
 
-use super::catalog::{SourceColumn, SourceTable, TableSource};
+use tidb_infoschema::table_source::TableSource;
+use tidb_infoschema::table_source::SourceTable;
+use tidb_infoschema::table_source::SourceColumn;
 use super::set_opr::union_join_field_type;
 use super::PlanBuilder;
 use crate::expression_rewriter::ColumnIdAllocator;

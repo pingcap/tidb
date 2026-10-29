@@ -952,7 +952,7 @@ fn table_scan_exec_emits_chunks() {
         ExecutorMeta::new(Schema::new(out_cols), 0, 4, 1024),
         t,
         RowDecodeContext::for_test_query_utc(),
-        crate::remote_scan::PushdownStatementContext::default(),
+        tidb_distsql::remote_scan::PushdownStatementContext::default(),
     );
     scan.open().unwrap();
     let mut req = scan.new_chunk();

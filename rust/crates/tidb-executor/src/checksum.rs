@@ -92,7 +92,7 @@ pub struct ChecksumTableExec {
 impl ChecksumContext {
     /// Go `newChecksumContext`, from the table's metadata.
     #[must_use]
-    pub fn new(db_name: &str, table: &crate::kv_table::KvTable) -> Self {
+    pub fn new(db_name: &str, table: &tidb_table::kv_table::KvTable) -> Self {
         Self {
             db_name: db_name.to_owned(),
             table_name: table.name().to_owned(),

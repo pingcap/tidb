@@ -18,7 +18,7 @@
     use tidb_infoschema::*;
     use tidb_infoschema::statistics_access::*;
     use tidb_infoschema::planner_view::*;
-    use tidb_planner::plan_builder::catalog::TableSource as _;
+    use tidb_infoschema::table_source::TableSource as _;
 
     #[test]
     fn schema_versions_distinguish_rebuilt_and_divergent_catalogs() {
@@ -92,7 +92,7 @@
             panic!("pv is not a KV table");
         };
         Arc::make_mut(table).add_index(
-            crate::kv_table::KvIndex {
+            tidb_table::kv_table::KvIndex {
                 id: 7,
                 name: "ib".to_owned(),
                 comment: String::new(),
@@ -263,7 +263,7 @@
             table.record_key_is_staged(
                 ctx.staged_writes(),
                 table.table_id(),
-                &crate::kv_table::TableHandle::Int(handle),
+                &tidb_table::kv_table::TableHandle::Int(handle),
             )
         };
         assert!(

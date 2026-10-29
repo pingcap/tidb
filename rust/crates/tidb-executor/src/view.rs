@@ -29,7 +29,9 @@
 //! outright, which is the only place the check would apply), and `ALGORITHM =
 //! MERGE`'s effect on planning.
 
-use crate::driver::{Catalog, DriverError, ViewDef};
+use crate::driver::DriverError;
+use tidb_infoschema::ViewDef;
+use tidb_infoschema::Catalog;
 use tidb_ast::{CreateViewStmt, QueryStmt, SetOprTermBody, Stmt};
 use tidb_datatype::FieldType;
 
@@ -47,7 +49,7 @@ pub fn resolve_view_definition(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<(String, String, ViewDef), DriverError> {
-    let (database, name) = crate::driver::split_table_path_pub(&create.name, current_db)?;
+    let (database, name) = tidb_infoschema::split_table_path_pub(&create.name, current_db)?;
     let (database, name) = (database.to_owned(), name.to_owned());
     let mut create = create.clone();
     // Go `preprocess`: `checkCreateViewWithSelect` turns the lock of each
@@ -88,10 +90,10 @@ pub fn resolve_view_definition(
     // Go installs the view's `TableInfo` as read back from meta JSON: each
     // byte of the stored body and column names that is not UTF-8 becomes
     // U+FFFD.
-    crate::kv_table::table_meta::go_json_text_round_trip(&mut select_sql);
+    tidb_table::kv_table::table_meta::go_json_text_round_trip(&mut select_sql);
     let mut columns: Vec<(String, tidb_datatype::FieldType)> = columns;
     for column in columns.iter_mut() {
-        crate::kv_table::table_meta::go_json_text_round_trip(&mut column.0);
+        tidb_table::kv_table::table_meta::go_json_text_round_trip(&mut column.0);
     }
     let view = ViewDef {
         name: name.clone(),

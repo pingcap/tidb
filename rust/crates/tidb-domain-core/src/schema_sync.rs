@@ -19,7 +19,7 @@
 
 use std::sync::Arc;
 
-pub use tidb_ddl::schema_sync::*;
+use tidb_ddl::schema_sync::*;
 
 /// The session-facing half of the registry: one connection's recorder,
 /// handed to the driver session as its [`MdlRelatedTableSink`].

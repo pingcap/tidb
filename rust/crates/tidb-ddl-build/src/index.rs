@@ -63,7 +63,7 @@ pub fn check_and_build_index_condition_string(
     // The condition's plain string literals carry the connection charset Go's
     // parser typed them with.
     Ok(condition.restore_with_flags_and_string_charset(
-        crate::generated_column::generated_restore_flags(),
+        tidb_table::generated_column::generated_restore_flags(),
         connection.0,
     ))
 }

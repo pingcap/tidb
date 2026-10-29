@@ -22,8 +22,10 @@ use tidb_kv::cluster_storage_test_util::*;
 use tidb_kv::storage::{StorageError, StorageIterator, TableStorage};
 use std::sync::{Arc, Mutex};
 use tidb_txnkv::Key;
-    fn mutation_batch_table(store: ClusterTableStorage) -> crate::kv_table::KvTable {
-        use crate::kv_table::{KvColumn, KvIndex, KvTable};
+    fn mutation_batch_table(store: ClusterTableStorage) -> tidb_table::kv_table::KvTable {
+        use tidb_table::kv_table::KvTable;
+        use tidb_table::kv_table::KvIndex;
+        use tidb_table::kv_table::KvColumn;
         use tidb_datatype::{FieldType, FieldTypeCode};
         let mut table = KvTable::with_storage(
             42,
@@ -65,7 +67,7 @@ use tidb_txnkv::Key;
 
     #[test]
     fn table_mutation_batch_pessimistic_update_defers_destination_check() {
-        use crate::kv_table::TableHandle;
+        use tidb_table::kv_table::TableHandle;
         use tidb_datatype::Datum;
         for (pessimistic, ignore, expected_reads) in
             [(true, false, 0), (false, false, 1), (true, true, 1)]
@@ -109,7 +111,7 @@ use tidb_txnkv::Key;
 
     #[test]
     fn table_mutation_batch_moved_primary_defers_check_with_duplicate_hint() {
-        use crate::kv_table::TableHandle;
+        use tidb_table::kv_table::TableHandle;
         use tidb_datatype::Datum;
         let (store, snapshot, buffer) = storage(&[]);
         let mut table = mutation_batch_table(store);
@@ -145,7 +147,9 @@ use tidb_txnkv::Key;
 
     #[test]
     fn table_mutation_batch_partition_move_preserves_repeated_hidden_handle() {
-        use crate::kv_table::{KvColumn, KvTable, TableHandle};
+        use tidb_table::kv_table::TableHandle;
+        use tidb_table::kv_table::KvTable;
+        use tidb_table::kv_table::KvColumn;
         use tidb_table::partition_routing::{PartitionDef, PartitionKind, PartitionSpec};
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::expression::{Column, Expression};
@@ -221,7 +225,10 @@ use tidb_txnkv::Key;
 
     #[test]
     fn table_writes_preserve_go_assertions_through_the_native_buffer() {
-        use crate::kv_table::{KvColumn, KvIndex, KvTable, TableHandle};
+        use tidb_table::kv_table::TableHandle;
+        use tidb_table::kv_table::KvTable;
+        use tidb_table::kv_table::KvIndex;
+        use tidb_table::kv_table::KvColumn;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
         fn flags(buffer: &MutationBuffer, key: &Key) -> tikv_client::kv::KeyFlags {
@@ -412,7 +419,9 @@ use tidb_txnkv::Key;
 
     #[test]
     fn insert_dup_check_is_in_place_eagerly_and_local_only_lazily() {
-        use crate::kv_table::{KvColumn, KvIndex, KvTable};
+        use tidb_table::kv_table::KvTable;
+        use tidb_table::kv_table::KvIndex;
+        use tidb_table::kv_table::KvColumn;
         use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
@@ -466,7 +475,7 @@ use tidb_txnkv::Key;
             .unwrap_err();
         assert!(matches!(
             error,
-            crate::kv_table::KvTableError::Mysql(ref error)
+            tidb_table::kv_table::KvTableError::Mysql(ref error)
                 if error.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS)
         ));
         assert!(buffer.take_presume_not_exists().is_empty());
@@ -495,7 +504,7 @@ use tidb_txnkv::Key;
         assert!(
             matches!(
                 table.insert_row_with_row_id_checked(&row, Some(2), 0, &ctx, true),
-                Err(crate::kv_table::KvTableError::Mysql(error))
+                Err(tidb_table::kv_table::KvTableError::Mysql(error))
                     if error.equal(&tidb_error::catalog::kv::ERR_KEY_EXISTS)
                         && error.message.starts_with("Duplicate entry '7' for key")
             ),
@@ -525,7 +534,7 @@ use tidb_txnkv::Key;
             )
             .expect_err("a failed eager index read is not an absent key");
         assert!(
-            matches!(error, crate::kv_table::KvTableError::Storage(StorageError::Backend(detail)) if detail.contains("index read failed"))
+            matches!(error, tidb_table::kv_table::KvTableError::Storage(StorageError::Backend(detail)) if detail.contains("index read failed"))
         );
         assert!(
             buffer.is_empty(),
@@ -535,7 +544,10 @@ use tidb_txnkv::Key;
 
     #[test]
     fn unique_index_read_failures_are_not_absence() {
-        use crate::kv_table::{KvColumn, KvIndex, KvTable, TableHandle};
+        use tidb_table::kv_table::TableHandle;
+        use tidb_table::kv_table::KvTable;
+        use tidb_table::kv_table::KvIndex;
+        use tidb_table::kv_table::KvColumn;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
         let mut failures = Vec::new();
@@ -638,7 +650,7 @@ use tidb_txnkv::Key;
                 match result {
                     Ok(()) => failures.push(format!("{operation}: swallowed {error:?}")),
                     Err(actual) => match (actual, &error) {
-                        (crate::kv_table::KvTableError::Storage(actual), expected)
+                        (tidb_table::kv_table::KvTableError::Storage(actual), expected)
                             if actual == *expected => {}
                         (actual, expected) => {
                             failures.push(format!("{operation}: {actual:?}, expected {expected:?}"))

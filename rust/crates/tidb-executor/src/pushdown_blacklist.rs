@@ -107,10 +107,11 @@ pub(crate) fn compiled_blacklist_admits(
 /// The store is `kv.TiKV`: this is the coprocessor stage, which is the only
 /// one this tier pushes an aggregate into.
 pub(crate) fn aggregate_admits(
-    aggregate: &crate::remote_scan::PushdownPartialAggregate,
+    aggregate: &tidb_distsql::remote_scan::PushdownPartialAggregate,
     ctx: &crate::StmtContext,
 ) -> bool {
-    use crate::remote_scan::{PushdownAggregateKind, PushdownPartialAggregate as Agg};
+    use tidb_distsql::remote_scan::PushdownPartialAggregate as Agg;
+    use tidb_distsql::remote_scan::PushdownAggregateKind;
     let blacklist = ctx.expr_pushdown_blacklist();
     if blacklist.is_empty() {
         return true;

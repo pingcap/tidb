@@ -61,7 +61,7 @@ impl GeneratedWrite {
 /// INSERT also handles each NULL here; UPDATE keeps its later row-wide NULL pass.
 /// Storage must not repeat these expressions or their warning side effects.
 pub(crate) fn materialize_generated_for_write(
-    table: &crate::kv_table::KvTable,
+    table: &tidb_table::kv_table::KvTable,
     row: &mut Vec<Datum>,
     ctx: &crate::StmtContext,
     policy: GeneratedWrite,
@@ -69,7 +69,7 @@ pub(crate) fn materialize_generated_for_write(
 ) -> Result<(), DriverError> {
     let columns = table.columns();
     row.resize(row.len().max(columns.len()), Datum::Null);
-    let convert = |column: &crate::kv_table::KvColumn, value| {
+    let convert = |column: &tidb_table::kv_table::KvColumn, value| {
         let mut value = match policy {
             GeneratedWrite::Insert { row_index, .. } => cast_value_for_column(
                 value,
@@ -112,10 +112,10 @@ pub(crate) fn materialize_generated_for_write(
     let result = match planned {
         // Go `Insert.GenCols`: the planner's own expressions.
         Some(planned) => {
-            tidb_ddl_build::generated_column::materialize_planned(columns, planned, row, ctx, convert)
+            tidb_table::generated_column::materialize_planned(columns, planned, row, ctx, convert)
         }
         None => {
-            tidb_ddl_build::generated_column::materialize_with(columns, row, false, ctx, convert)
+            tidb_table::generated_column::materialize_with(columns, row, false, ctx, convert)
         }
     };
     result.map_err(|failure| match failure {
@@ -134,7 +134,7 @@ pub(crate) fn materialize_generated_for_write(
                         table, offset, row_index, eval,
                     )))
                 }
-                (_, _, eval) => DriverError::from(tidb_ddl_build::generated_column::GenerationError {
+                (_, _, eval) => DriverError::from(tidb_table::generated_column::GenerationError {
                     eval,
                     ..error
                 }),
@@ -146,12 +146,12 @@ pub(crate) fn materialize_generated_for_write(
 /// [`materialize_generated_for_write`]'s two failure sources, kept apart so
 /// a generation failure can still be completed with its column's index.
 enum GeneratedWriteFailure {
-    Generation(tidb_ddl_build::generated_column::GenerationError),
+    Generation(tidb_table::generated_column::GenerationError),
     Driver(DriverError),
 }
 
-impl From<tidb_ddl_build::generated_column::GenerationError> for GeneratedWriteFailure {
-    fn from(error: tidb_ddl_build::generated_column::GenerationError) -> Self {
+impl From<tidb_table::generated_column::GenerationError> for GeneratedWriteFailure {
+    fn from(error: tidb_table::generated_column::GenerationError) -> Self {
         Self::Generation(error)
     }
 }
@@ -179,7 +179,7 @@ impl From<DriverError> for GeneratedWriteFailure {
 /// 3752 for an out-of-range number (with the 1-based row), 3907 for a string
 /// too long -- and leaves any other error as it was.
 fn complete_func_index_error(
-    table: &crate::kv_table::KvTable,
+    table: &tidb_table::kv_table::KvTable,
     offset: usize,
     row_index: usize,
     error: tidb_expr::EvalError,
@@ -224,7 +224,7 @@ fn complete_func_index_error(
 }
 
 
-pub use tidb_table::column::*;
+use tidb_table::column::*;
 
 // Go executor completion of `table.CastValue` (`pkg/executor/insert_common.go`
 // `completeInsertErr` / `completeLoadErr` / `handleErr`,

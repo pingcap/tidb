@@ -2366,7 +2366,7 @@ fn table_has_index_matching_ordering(
 }
 
 fn index_matches_ordering(
-    index: &crate::plan_builder::catalog::SourceIndex,
+    index: &tidb_infoschema::table_source::SourceIndex,
     data_source: &crate::logical::data_source::DataSource,
     ordering_column_ids: &[i64],
     equality_column_ids: &BTreeSet<i64>,
@@ -2473,7 +2473,8 @@ mod tests {
     use crate::logical::table_dual::LogicalTableDual;
     use crate::logical::BaseLogicalPlan;
     use crate::plan_base::PlanIdAllocator;
-    use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+    use tidb_infoschema::table_source::SourceIndexColumn;
+    use tidb_infoschema::table_source::SourceIndex;
     use crate::stats_info::StatsInfo;
     use tidb_ast::CiString;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};

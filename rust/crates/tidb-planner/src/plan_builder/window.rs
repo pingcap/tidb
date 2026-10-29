@@ -130,7 +130,7 @@ use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
 
 use super::aggregation::{has_window_flag, is_aggregate_call, visit_exprs, walk_exprs};
-use super::catalog::TableSource;
+use tidb_infoschema::table_source::TableSource;
 use super::marker::{self, MarkerKind, PlanMarker};
 use super::{snapshot_schema_and_names, ClauseCode, PlanBuilder, PlanError, ProjectionField};
 use crate::logical::projection::LogicalProjection;

@@ -34,7 +34,7 @@ use tidb_hack::GoCaseCompare;
 use tidb_mysql::to_lowercase as go_simple_lowercase;
 use tidb_planner::metrics::non_prep_plan_cache_unsupported_counter;
 use tidb_util::filter::is_system_schema;
-use tidb_util::kvcache::SimpleLruCache;
+use tidb_kvcache::SimpleLruCache;
 
 /// Go `getMaxParamLimit`'s default: `PlanCacheMaxParamNum` (200).
 const MAX_PARAM_NUM: usize = 200;

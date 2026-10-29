@@ -18,7 +18,7 @@ use std::sync::{Arc, OnceLock};
 
 use crate::memory::{Tracker, LABEL_FOR_GLOBAL_SIMPLE_LRU_CACHE};
 
-pub use tidb_kvcache::*;
+use tidb_kvcache::*;
 
 /// Returns the package-global tracker exported by the source package.
 pub fn global_lru_memory_tracker() -> &'static Arc<Tracker> {

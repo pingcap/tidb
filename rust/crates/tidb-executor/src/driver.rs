@@ -29,7 +29,8 @@
 //! tables.
 
 use crate::executor::{ExecError, Executor};
-use crate::kv_table::{KvTable, TableHandle};
+use tidb_table::kv_table::TableHandle;
+use tidb_table::kv_table::KvTable;
 use tidb_kv::mem_quota;
 use std::collections::HashMap;
 use std::sync::Arc;

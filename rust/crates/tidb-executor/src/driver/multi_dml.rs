@@ -95,7 +95,7 @@ use std::collections::BTreeMap;
 
 use super::dml::update_record::UpdateRecords;
 use super::*;
-use crate::kv_table::TableHandle;
+use tidb_table::kv_table::TableHandle;
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 

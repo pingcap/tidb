@@ -16,9 +16,9 @@
 //! one for one after the inventory's fuzzy matches were checked against code.
 
 use tidb_datatype::{Collation, Datum};
-use tidb_executor::kv_table::{
-    index_ranges_estimated_memory_usage, intersect_index_ranges, IndexRange,
-};
+use tidb_table::kv_table::IndexRange;
+use tidb_table::kv_table::intersect_index_ranges;
+use tidb_table::kv_table::index_ranges_estimated_memory_usage;
 
 fn datums(values: &[i64]) -> Vec<Datum> {
     values

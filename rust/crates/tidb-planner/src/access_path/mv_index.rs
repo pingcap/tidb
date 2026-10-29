@@ -62,7 +62,7 @@ pub(crate) enum AccessFilterType {
 /// index without exactly one ARRAY column.
 pub(crate) fn prepare_idx_cols_and_unwrap_array_type(
     ds: &DataSource,
-    index: &crate::plan_builder::catalog::SourceIndex,
+    index: &tidb_infoschema::table_source::SourceIndex,
     check_only_1_array: bool,
 ) -> Option<Vec<Column>> {
     let mut array_columns = 0;

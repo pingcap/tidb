@@ -43,7 +43,8 @@ use tidb_kv::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
 };
 use tidb_executor::driver::{run_select_on, Catalog};
-use tidb_executor::kv_table::{KvColumn, KvTable};
+use tidb_table::kv_table::KvTable;
+use tidb_table::kv_table::KvColumn;
 use tidb_kv::storage::StorageError;
 use tidb_executor::StmtContext;
 use tidb_proto::tipb::{

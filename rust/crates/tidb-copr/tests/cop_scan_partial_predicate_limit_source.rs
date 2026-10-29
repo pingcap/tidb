@@ -38,11 +38,14 @@ use tidb_kv::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
 };
 use tidb_executor::driver::{run_select_on, Catalog};
-use tidb_executor::kv_table::{KvColumn, KvTable};
-use tidb_executor::remote_scan::{
-    PushdownAggregateFunction, PushdownAggregateKind, PushdownPartialAggregate, PushdownScanColumn,
-    PushdownScanRequest, PushdownStatementContext,
-};
+use tidb_table::kv_table::KvTable;
+use tidb_table::kv_table::KvColumn;
+use tidb_distsql::remote_scan::PushdownStatementContext;
+use tidb_distsql::remote_scan::PushdownScanRequest;
+use tidb_distsql::remote_scan::PushdownScanColumn;
+use tidb_distsql::remote_scan::PushdownPartialAggregate;
+use tidb_distsql::remote_scan::PushdownAggregateKind;
+use tidb_distsql::remote_scan::PushdownAggregateFunction;
 use tidb_kv::storage::StorageError;
 use tidb_executor::StmtContext;
 use tidb_proto::tipb::{Chunk, DagRequest, ExecType, Expr, ExprType, SelectResponse};
@@ -608,7 +611,7 @@ fn count_star_lowers_to_count_with_one_constant_child() {
         let request = PushdownScanRequest {
             table_id: 91,
             index: None,
-            read_engine: tidb_executor::remote_scan::PushdownReadEngine::TiKv,
+            read_engine: tidb_distsql::remote_scan::PushdownReadEngine::TiKv,
             schema_version: 0,
             columns: vec![PushdownScanColumn {
                 id: 1,
@@ -701,7 +704,7 @@ fn a_descending_scan_marks_both_the_dag_and_dist_sql_request() {
     let request = PushdownScanRequest {
         table_id: 91,
         index: None,
-        read_engine: tidb_executor::remote_scan::PushdownReadEngine::TiKv,
+        read_engine: tidb_distsql::remote_scan::PushdownReadEngine::TiKv,
         schema_version: 0,
         columns: vec![PushdownScanColumn {
             id: 1,
@@ -778,7 +781,7 @@ fn adaptive_small_scan_falls_back_after_region_tasks_exist() {
 
 #[test]
 fn coprocessor_read_policy_preserves_large_reads_and_explicit_modes() {
-    use tidb_executor::remote_scan::CoprocessorReadPolicy;
+    use tidb_distsql::remote_scan::CoprocessorReadPolicy;
     for (mode, threshold, expected, labels, sql, row_count) in [
         (
             tidb_txnkv::ReplicaReadType::ClosestAdaptive,

@@ -22,7 +22,9 @@
 //! to the store's `SplitRegions`; the answer is how many regions they created
 //! and the fraction that finished scattering.
 
-use crate::kv_table::{KvIndex, KvTable, TableHandle};
+use tidb_table::kv_table::TableHandle;
+use tidb_table::kv_table::KvTable;
+use tidb_table::kv_table::KvIndex;
 use crate::{DriverError, ExecError, MysqlError, StmtContext};
 use tidb_codec::table_key::{encode_record_key, encode_table_index_prefix, RecordHandle};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags, SessionTimeZone};

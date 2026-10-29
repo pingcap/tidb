@@ -21,7 +21,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::plan_builder::catalog::SourceIndex;
+use tidb_infoschema::table_source::SourceIndex;
 
 pub use tidb_infoschema::table_source::LatestIndexSchema;
 

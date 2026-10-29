@@ -101,7 +101,7 @@ use crate::logical::union_all::LogicalUnionAll;
 use crate::logical::LogicalPlan;
 use crate::plan_base::PlanError;
 
-use super::catalog::TableSource;
+use tidb_infoschema::table_source::TableSource;
 use super::{snapshot_schema_and_names, PlanBuilder};
 
 /// Go `mysql.MaxIntWidth` (`parser/mysql/type.go`).

@@ -522,7 +522,8 @@ mod tests {
         };
         use crate::cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
         use crate::logical::data_source::DataSourceColumn;
-        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+        use tidb_infoschema::table_source::SourceIndexColumn;
+        use tidb_infoschema::table_source::SourceIndex;
         use crate::tikv_scan_spec::TiKvTableScanSpec;
         let allocator = PlanIdAllocator::new();
         let handle = column(1, false);

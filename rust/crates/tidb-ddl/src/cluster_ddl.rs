@@ -8828,7 +8828,7 @@ fn create_foreign_key(
         Some([ref_schema, _]) => ref_schema.clone(),
         _ => schema.to_owned(),
     };
-    let fk = crate::foreign_key_build::build_fk_info(
+    let fk = tidb_ddl_build::foreign_key::build_fk_info(
         name,
         &definition.parts,
         &definition.reference,

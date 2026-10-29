@@ -23,7 +23,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
 
-use super::catalog::TableSource;
+use tidb_infoschema::table_source::TableSource;
 use super::marker::MarkerKind;
 use super::PlanBuilder;
 use crate::plan_base::PlanError;

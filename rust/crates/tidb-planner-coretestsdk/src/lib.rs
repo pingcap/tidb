@@ -28,9 +28,12 @@ use tidb_model::{
     TableInfo,
 };
 use tidb_parser::auth::UserIdentity;
-use tidb_planner::plan_builder::catalog::{
-    SourceColumn, SourceIndex, SourceIndexColumn, SourceTable, SourceView, TableSource,
-};
+use tidb_infoschema::table_source::TableSource;
+use tidb_infoschema::table_source::SourceView;
+use tidb_infoschema::table_source::SourceTable;
+use tidb_infoschema::table_source::SourceIndexColumn;
+use tidb_infoschema::table_source::SourceIndex;
+use tidb_infoschema::table_source::SourceColumn;
 
 const DEFAULT_DIV_PRECISION_INCREMENT: u32 = 4;
 

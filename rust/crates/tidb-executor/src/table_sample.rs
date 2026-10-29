@@ -16,7 +16,9 @@
 
 use crate::KvTableReader;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
-use crate::kv_table::{KvTable, RowDecodeContext, TableHandle};
+use tidb_table::kv_table::TableHandle;
+use tidb_table::kv_table::RowDecodeContext;
+use tidb_table::kv_table::KvTable;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::schema::Schema;

@@ -31,7 +31,7 @@ pub use tidb_planner::table_statistics::TableStatistics;
 #[must_use]
 pub fn table_statistics(
     ctx: &crate::StmtContext,
-    catalog: &crate::driver::Catalog,
+    catalog: &tidb_infoschema::Catalog,
     table_id: i64,
 ) -> Option<std::sync::Arc<TableStatistics>> {
     ctx.stats_handle()
@@ -55,7 +55,7 @@ pub fn table_statistics(
 #[must_use]
 pub fn get_stats_table(
     ctx: &crate::StmtContext,
-    catalog: &crate::driver::Catalog,
+    catalog: &tidb_infoschema::Catalog,
     physical_table_id: i64,
 ) -> Option<std::sync::Arc<TableStatistics>> {
     let opt_objective_determinate = !ctx
@@ -116,7 +116,7 @@ fn stats_table_for_session(
 #[must_use]
 pub fn get_latest_version_from_stats_table(
     handle: &tidb_stats_handle::StatsHandle,
-    catalog: &crate::driver::Catalog,
+    catalog: &tidb_infoschema::Catalog,
     table_id: i64,
     opt_objective_determinate: bool,
 ) -> u64 {

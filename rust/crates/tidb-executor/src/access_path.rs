@@ -79,13 +79,14 @@ use tidb_hack::GoCaseCompare;
 /// overlap anything, and Go's goroutine handoff to its table worker costs
 /// nothing measurable where a native lane handoff costs two context switches.
 const INDEX_LOOKUP_INLINE_HANDLES: usize = 16;
-use crate::kv_table::{
-    IndexRange, IndexRangeCursor, KvTable, RemoteIndexHandleCursor, RemoteRowCursor, RowCursor,
-    TableHandle,
-};
-use crate::remote_scan::{
-    PushdownAggregateKind, PushdownPartialAggregate, PushdownRowStream, PushdownStatementContext,
-};
+use crate::kv_table::{IndexRangeCursor, RemoteIndexHandleCursor, RemoteRowCursor, RowCursor};
+use tidb_table::kv_table::TableHandle;
+use tidb_table::kv_table::KvTable;
+use tidb_table::kv_table::IndexRange;
+use tidb_distsql::remote_scan::PushdownStatementContext;
+use tidb_distsql::remote_scan::PushdownRowStream;
+use tidb_distsql::remote_scan::PushdownPartialAggregate;
+use tidb_distsql::remote_scan::PushdownAggregateKind;
 
 /// Probe values shared by a composite index-join inner subtree and its
 /// target table leaf. The outer join publishes one batch at a time; the leaf
@@ -184,7 +185,7 @@ pub enum StatementReadShape {
 #[must_use]
 pub fn statement_read_shape(
     stmt: &tidb_ast::Stmt,
-    catalog: &crate::driver::Catalog,
+    catalog: &tidb_infoschema::Catalog,
     current_db: &str,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> StatementReadShape {
@@ -237,7 +238,7 @@ pub fn statement_read_shape(
         [database, name] => (database.as_str(), name.as_str()),
         _ => return StatementReadShape::Unknown,
     };
-    let Some(crate::driver::TableEntry::Kv(table)) = catalog.get_in(database, table_name) else {
+    let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.get_in(database, table_name) else {
         return StatementReadShape::Unknown;
     };
     // A partitioned table's point get routes to a partition, which this
@@ -312,10 +313,10 @@ mod common_handle_shape_tests {
     #[test]
     fn common_handle_point_read_is_admitted() {
         let mut table = crate::driver::Catalog::mock();
-        let mut kv = crate::kv_table::KvTable::new(
+        let mut kv = tidb_table::kv_table::KvTable::new(
             1,
             vec![
-                crate::kv_table::KvColumn {
+                tidb_table::kv_table::KvColumn {
                     name: "k".to_owned(),
                     id: 1,
                     field_type: FieldType::new(tidb_datatype::FieldTypeCode::VarString),
@@ -325,7 +326,7 @@ mod common_handle_shape_tests {
                     origin_default: None,
                     generated: None,
                 },
-                crate::kv_table::KvColumn {
+                tidb_table::kv_table::KvColumn {
                     name: "v".to_owned(),
                     id: 2,
                     field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
@@ -355,10 +356,10 @@ mod common_handle_shape_tests {
     #[test]
     fn a_limit_bound_does_not_replace_the_complete_point_key_proof() {
         let mut table = crate::driver::Catalog::mock();
-        let mut kv = crate::kv_table::KvTable::new(
+        let mut kv = tidb_table::kv_table::KvTable::new(
             1,
             vec![
-                crate::kv_table::KvColumn {
+                tidb_table::kv_table::KvColumn {
                     name: "k".to_owned(),
                     id: 1,
                     field_type: FieldType::new(tidb_datatype::FieldTypeCode::VarString),
@@ -368,7 +369,7 @@ mod common_handle_shape_tests {
                     origin_default: None,
                     generated: None,
                 },
-                crate::kv_table::KvColumn {
+                tidb_table::kv_table::KvColumn {
                     name: "v".to_owned(),
                     id: 2,
                     field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
@@ -548,17 +549,17 @@ pub struct HandleSourceExec {
     /// The statement-class flags for an origin default plus the session zone
     /// a stored `TIMESTAMP` is read back into, captured where the statement's
     /// context is (`Executor` has none).
-    decode_context: crate::kv_table::RowDecodeContext,
+    decode_context: tidb_table::kv_table::RowDecodeContext,
     /// Source-row offsets this complete point plan emits, in result order.
     /// `None` keeps the ordinary visible-row schema for residual root work.
     output_columns: Option<Vec<HandleOutputColumn>>,
     /// Encoded values fetched once by the first Next, then decoded only to
     /// fill the requested chunk, like Go's BatchPointGetExec.values.
-    preloaded: Option<crate::kv_table::PointReadValues>,
+    preloaded: Option<tidb_table::kv_table::PointReadValues>,
     /// Set only for a table task; PointGet/BatchPointGet retain native gets.
     table_statement: Option<PushdownStatementContext>,
     remote_rows: Option<std::collections::VecDeque<(usize, TableHandle, Vec<Datum>)>>,
-    decoder: Option<crate::kv_table::PointRowDecoder>,
+    decoder: Option<tidb_table::kv_table::PointRowDecoder>,
     initialized: bool,
     /// Go's `PointGetExecutor` performs one direct record-key `Get`; the
     /// batch executor uses `BatchGet` even when its retained list happens to
@@ -575,7 +576,7 @@ pub struct HandleSourceExec {
     /// Go `PointGetExecutor.lock` / `BatchPointGetExec.lock` in a
     /// repeatable-read pessimistic transaction: the record keys are locked
     /// with this wait before the first read, inside `Next`.
-    lock: Option<crate::select_lock::PointLock>,
+    lock: Option<tidb_sessionctx::select_lock::PointLock>,
     /// The unique-index key each handle was found under, aligned with
     /// `handles`, which a batch read locks together with its record keys
     /// (Go `BatchPointGetExec.initialize`'s `indexKeys`).
@@ -593,7 +594,7 @@ impl HandleSourceExec {
         meta: ExecutorMeta,
         table: KvTable,
         handles: Vec<TableHandle>,
-        decode_context: crate::kv_table::RowDecodeContext,
+        decode_context: tidb_table::kv_table::RowDecodeContext,
     ) -> Self {
         HandleSourceExec {
             meta,
@@ -621,7 +622,7 @@ impl HandleSourceExec {
     /// [`HandleSourceExec::lock`]).
     pub(crate) fn with_lock_before_read(
         mut self,
-        lock: Option<crate::select_lock::PointLock>,
+        lock: Option<tidb_sessionctx::select_lock::PointLock>,
     ) -> Self {
         self.lock = lock;
         self
@@ -665,7 +666,7 @@ impl HandleSourceExec {
         table: KvTable,
         handles: Vec<TableHandle>,
         output_columns: Vec<HandleOutputColumn>,
-        decode_context: crate::kv_table::RowDecodeContext,
+        decode_context: tidb_table::kv_table::RowDecodeContext,
     ) -> Self {
         Self {
             output_columns: Some(output_columns),
@@ -681,7 +682,7 @@ impl HandleSourceExec {
         table: KvTable,
         handle: TableHandle,
         output_columns: Vec<HandleOutputColumn>,
-        decode_context: crate::kv_table::RowDecodeContext,
+        decode_context: tidb_table::kv_table::RowDecodeContext,
     ) -> Self {
         Self {
             single_point_get: true,
@@ -781,7 +782,7 @@ impl HandleSourceExec {
                 .handles
                 .first()
                 .ok_or_else(|| ExecError::unsupported("a point get lost its retained handle"))?;
-            crate::kv_table::PointReadValues::Single(
+            tidb_table::kv_table::PointReadValues::Single(
                 self.table
                     .stored_record(handle)
                     .map_err(ExecError::from)?
@@ -804,8 +805,8 @@ impl HandleSourceExec {
         // Counted only on an IndexMerge reader's table side, whose copy
         // carries the statement budget; a point get's copy does not.
         let found = match &rows {
-            crate::kv_table::PointReadValues::Single(row) => usize::from(row.is_some()),
-            crate::kv_table::PointReadValues::Batch { values, .. } => values.len(),
+            tidb_table::kv_table::PointReadValues::Single(row) => usize::from(row.is_some()),
+            tidb_table::kv_table::PointReadValues::Batch { values, .. } => values.len(),
         };
         self.table
             .note_keys_read(found as u64)
@@ -816,14 +817,14 @@ impl HandleSourceExec {
         // could name no key before reading and locks what it found.
         if let Some(lock) = self.lock.clone().filter(|_| !locked_before_read) {
             let (record_keys, positions): (Vec<tidb_txnkv::Key>, Vec<usize>) = match &rows {
-                crate::kv_table::PointReadValues::Single(Some(_)) => {
+                tidb_table::kv_table::PointReadValues::Single(Some(_)) => {
                     match record_keys.as_ref().and_then(|keys| keys.first()) {
                         Some(key) => (vec![key.clone()], vec![0]),
                         None => (Vec::new(), Vec::new()),
                     }
                 }
-                crate::kv_table::PointReadValues::Single(None) => (Vec::new(), Vec::new()),
-                crate::kv_table::PointReadValues::Batch { keys, .. } => {
+                tidb_table::kv_table::PointReadValues::Single(None) => (Vec::new(), Vec::new()),
+                tidb_table::kv_table::PointReadValues::Batch { keys, .. } => {
                     let mut found_keys = vec![tidb_txnkv::Key::default(); keys.len()];
                     let mut positions = Vec::new();
                     for (position, key) in keys.iter().enumerate() {
@@ -839,7 +840,7 @@ impl HandleSourceExec {
             lock.lock(&mut self.table, &keys, false)?;
         }
         self.preloaded = Some(rows);
-        self.decoder = Some(crate::kv_table::PointRowDecoder::new(&self.table));
+        self.decoder = Some(tidb_table::kv_table::PointRowDecoder::new(&self.table));
         Ok(())
     }
 }
@@ -909,7 +910,7 @@ impl HandleSourceExec {
                                 "a row checksum needs the encoded row value of a point get",
                             )
                         })?;
-                        let checksum = crate::kv_table::row_checksum(
+                        let checksum = tidb_table::kv_table::row_checksum(
                             &self.table,
                             handle,
                             stored_value,
@@ -1061,13 +1062,13 @@ pub(crate) struct UniqueIndexPointSourceExec {
     index_id: i64,
     index_values: Vec<Vec<Datum>>,
     output_columns: Vec<HandleOutputColumn>,
-    decode_context: crate::kv_table::RowDecodeContext,
+    decode_context: tidb_table::kv_table::RowDecodeContext,
     single_point: bool,
     /// Go `PartitionNames` resolved to physical ids: a global index entry
     /// whose row lives elsewhere answers nothing. `None` restricts nothing.
     allowed_partitions: Option<Vec<i64>>,
     /// Go `PointGetExecutor.lock` / `BatchPointGetExec.lock`.
-    lock: Option<crate::select_lock::PointLock>,
+    lock: Option<tidb_sessionctx::select_lock::PointLock>,
     source: Option<HandleSourceExec>,
     initialized: bool,
 }
@@ -1082,7 +1083,7 @@ impl UniqueIndexPointSourceExec {
 
     /// Locks the index and record keys this read names inside `Next`.
     #[must_use]
-    pub(crate) fn with_lock(mut self, lock: Option<crate::select_lock::PointLock>) -> Self {
+    pub(crate) fn with_lock(mut self, lock: Option<tidb_sessionctx::select_lock::PointLock>) -> Self {
         self.lock = lock;
         self
     }
@@ -1094,7 +1095,7 @@ impl UniqueIndexPointSourceExec {
         index_id: i64,
         index_values: Vec<Vec<Datum>>,
         output_columns: Vec<HandleOutputColumn>,
-        decode_context: crate::kv_table::RowDecodeContext,
+        decode_context: tidb_table::kv_table::RowDecodeContext,
         single_point: bool,
     ) -> Self {
         Self {
@@ -1306,7 +1307,7 @@ impl Executor for UniqueIndexPointSourceExec {
 }
 
 struct IndexPrefixLimit {
-    descriptor: crate::remote_scan::PushdownPrefixLimit,
+    descriptor: tidb_distsql::remote_scan::PushdownPrefixLimit,
     seen: u64,
     boundary: Option<Vec<u8>>,
     exhausted: bool,
@@ -1569,7 +1570,7 @@ pub struct IndexRangeSourceExec {
     /// Selection retained inside the physical index subtree, before lookup.
     index_probe: Option<crate::predicate_pushdown::ScanFilterProbe>,
     /// A bounded TopN that can run on the index stream before table lookup.
-    top_n: Option<crate::remote_scan::PushdownTopN>,
+    top_n: Option<tidb_distsql::remote_scan::PushdownTopN>,
     /// A pushed row cap (`offset + count`); see [`Executor::accept_scan_limit`].
     limit: Option<u64>,
     /// Go's special index Limit, evaluated after index predicates and before lookup.
@@ -1690,7 +1691,7 @@ pub struct IndexRangeSourceExec {
     remote_covering_selected: bool,
     /// The statement-class flags and session zone the row is decoded under;
     /// the zone also encodes the index probe. See [`HandleSourceExec`].
-    decode_context: crate::kv_table::RowDecodeContext,
+    decode_context: tidb_table::kv_table::RowDecodeContext,
     /// Statement flags and warning sink carried into a remote DAG request.
     statement: PushdownStatementContext,
     /// Planner row estimate for this source. Go's aggregate push-down decision
@@ -1854,7 +1855,7 @@ impl IndexRangeSourceExec {
         table: KvTable,
         index_id: i64,
         ranges: Vec<IndexRange>,
-        decode_context: crate::kv_table::RowDecodeContext,
+        decode_context: tidb_table::kv_table::RowDecodeContext,
     ) -> Self {
         Self::new_with_statement(
             meta,
@@ -1916,7 +1917,7 @@ impl IndexRangeSourceExec {
     /// Installs Go's special Limit from the selected physical index subtree.
     pub(crate) fn set_prefix_limit(&mut self, count: u64, column_offset: usize) {
         self.prefix_limit = Some(IndexPrefixLimit {
-            descriptor: crate::remote_scan::PushdownPrefixLimit {
+            descriptor: tidb_distsql::remote_scan::PushdownPrefixLimit {
                 count,
                 column_offset,
             },
@@ -1945,7 +1946,7 @@ impl IndexRangeSourceExec {
         mut table: KvTable,
         index_id: i64,
         ranges: Vec<IndexRange>,
-        decode_context: crate::kv_table::RowDecodeContext,
+        decode_context: tidb_table::kv_table::RowDecodeContext,
         statement: PushdownStatementContext,
     ) -> Self {
         // Go's IndexReader/IndexLookUp read both the index and the table
@@ -2989,7 +2990,7 @@ impl IndexRangeSourceExec {
                     ready: Some(Ok(LookupFetch::LocalFallback(handles))),
                 });
             };
-            let outcome = match crate::kv_table::KvTable::finish_lookup_by_handles(
+            let outcome = match tidb_table::kv_table::KvTable::finish_lookup_by_handles(
                 &handles,
                 staged,
                 allow_lookup_chunks,
@@ -3042,7 +3043,7 @@ impl IndexRangeSourceExec {
             let Some(staged) = staged else {
                 return Ok(LookupFetch::LocalFallback(worker_handles));
             };
-            match crate::kv_table::KvTable::finish_lookup_by_handles(
+            match tidb_table::kv_table::KvTable::finish_lookup_by_handles(
                 &worker_handles,
                 staged,
                 worker_allow_chunks,
@@ -3384,7 +3385,7 @@ impl IndexRangeSourceExec {
                             .input
                             .as_ref()
                             .map(|expression| {
-                                tidb_ddl_build::generated_column::eval_over_row(
+                                tidb_table::generated_column::eval_over_row(
                                     expression,
                                     &input_types,
                                     &row,
@@ -3615,7 +3616,7 @@ impl IndexRangeSourceExec {
                                 .input
                                 .as_ref()
                                 .map(|expression| {
-                                    tidb_ddl_build::generated_column::eval_over_row(
+                                    tidb_table::generated_column::eval_over_row(
                                         expression,
                                         &input_types,
                                         row,
@@ -4512,7 +4513,7 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
             .indexes()
             .iter()
             .find(|index| index.id == self.index_id)
-            .is_some_and(crate::kv_table::KvIndex::has_prefix);
+            .is_some_and(tidb_table::kv_table::KvIndex::has_prefix);
         if (self.filter.is_some() || self.index_probe.is_some()) && index_is_prefix {
             return false;
         }
@@ -4778,10 +4779,10 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         }) {
             return false;
         }
-        self.top_n = Some(crate::remote_scan::PushdownTopN {
+        self.top_n = Some(tidb_distsql::remote_scan::PushdownTopN {
             order_by: order_by
                 .iter()
-                .map(|(offset, desc)| crate::remote_scan::PushdownTopNOrder {
+                .map(|(offset, desc)| tidb_distsql::remote_scan::PushdownTopNOrder {
                     offset: *offset,
                     desc: *desc,
                 })
@@ -4791,7 +4792,7 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         true
     }
 
-    fn accept_remote_topn(&mut self, topn: &crate::remote_scan::PushdownTopN) -> bool {
+    fn accept_remote_topn(&mut self, topn: &tidb_distsql::remote_scan::PushdownTopN) -> bool {
         // A covering index is Go's PhysicalIndexReader: its index entries are
         // already the output rows, so the same cop TopN request used by an
         // IndexLookUp can run before any table lookup.  Mark the filter as
@@ -4939,7 +4940,7 @@ pub(crate) struct LookupForkTemplate {
     /// The lookup key's column types, computed once here and shared by every
     /// task this template opens (Go's `innerCtx.keyColTypes`, fixed at build).
     probe_key_types: Option<Arc<[FieldType]>>,
-    decode_context: crate::kv_table::RowDecodeContext,
+    decode_context: tidb_table::kv_table::RowDecodeContext,
     statement: PushdownStatementContext,
     /// Selection on the index side of a double read, before handle lookup.
     index_filters: Vec<Expression>,
@@ -5104,7 +5105,7 @@ pub struct IndexJoinLookupExec {
     /// Rows produced since `open`, which the trace reads as `actRows`.
     produced: crate::executor::RowCount,
     /// See [`HandleSourceExec`].
-    decode_context: crate::kv_table::RowDecodeContext,
+    decode_context: tidb_table::kv_table::RowDecodeContext,
     /// Statement flags, warning sink, and time zone carried by a batched
     /// common-handle coprocessor request.
     statement: PushdownStatementContext,
@@ -5152,7 +5153,7 @@ impl IndexJoinLookupExec {
         meta: ExecutorMeta,
         table: KvTable,
         object: LookupObject,
-        decode_context: crate::kv_table::RowDecodeContext,
+        decode_context: tidb_table::kv_table::RowDecodeContext,
     ) -> Self {
         let statement = crate::remote_scan::pushdown_statement_context(tidb_sessionctx::stmt_context_of(decode_context.expression()));
         Self::new_with_statement(meta, table, object, decode_context, statement)
@@ -5164,7 +5165,7 @@ impl IndexJoinLookupExec {
         meta: ExecutorMeta,
         mut table: KvTable,
         object: LookupObject,
-        decode_context: crate::kv_table::RowDecodeContext,
+        decode_context: tidb_table::kv_table::RowDecodeContext,
         statement: PushdownStatementContext,
     ) -> Self {
         // Go's index-join inner reader is a coprocessor read too.
@@ -5920,7 +5921,7 @@ impl IndexJoinLookupExec {
                 true,
                 &self.decode_context,
                 &self.statement,
-                crate::remote_scan::PushdownReadEngine::TiKv,
+                tidb_distsql::remote_scan::PushdownReadEngine::TiKv,
                 0,
             )
             .map_err(ExecError::from)?;
@@ -6091,7 +6092,7 @@ impl IndexJoinLookupExec {
                 true,
                 &self.decode_context,
                 &self.statement,
-                crate::remote_scan::PushdownReadEngine::TiKv,
+                tidb_distsql::remote_scan::PushdownReadEngine::TiKv,
                 0,
             )
             .map_err(ExecError::from)?;
@@ -6537,7 +6538,8 @@ use std::collections::HashMap;
     use super::*;
     use crate::driver::{run_select_on, Catalog};
     use crate::explain::ExplainFormat;
-    use crate::kv_table::{KvColumn, KvTable};
+    use tidb_table::kv_table::KvTable;
+    use tidb_table::kv_table::KvColumn;
     use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
 
     /// A backend that counts the work a scan actually does: every entry an
@@ -6651,7 +6653,7 @@ use std::collections::HashMap;
                         .map(|id| match *id {
                             1 => Datum::Int(42),
                             2 => Datum::Int(7),
-                            crate::remote_scan::EXTRA_HANDLE_COLUMN_ID => Datum::Int(101),
+                            tidb_distsql::remote_scan::EXTRA_HANDLE_COLUMN_ID => Datum::Int(101),
                             id => panic!("unexpected fixture column {id}"),
                         })
                         .collect();
@@ -6923,7 +6925,7 @@ use std::collections::HashMap;
             });
             table
                 .create_index_with_context(
-                    crate::kv_table::KvIndex {
+                    tidb_table::kv_table::KvIndex {
                         id: 1,
                         name: "idx".to_owned(),
                         comment: String::new(),
@@ -7127,7 +7129,7 @@ use std::collections::HashMap;
             table,
             vec![TableHandle::Int(7)],
             vec![HandleOutputColumn::Stored(1), HandleOutputColumn::Stored(0)],
-            crate::kv_table::RowDecodeContext::for_test_query_utc(),
+            tidb_table::kv_table::RowDecodeContext::for_test_query_utc(),
         );
         // The row decoder supplies the full table layout, including the
         // expression-index column needed by an UPDATE's physical plan.
@@ -7155,7 +7157,7 @@ use std::collections::HashMap;
         if indexed {
             table
                 .create_index_with_context(
-                    crate::kv_table::KvIndex {
+                    tidb_table::kv_table::KvIndex {
                         id: 1,
                         name: "ib".to_owned(),
                         comment: String::new(),
@@ -7369,7 +7371,7 @@ use std::collections::HashMap;
             }),
         );
         table.add_index(
-            crate::kv_table::KvIndex {
+            tidb_table::kv_table::KvIndex {
                 id: 1,
                 name: "ib".to_owned(),
                 comment: String::new(),
@@ -7537,7 +7539,7 @@ use std::collections::HashMap;
                             table.set_common_handle_offsets(vec![0, 1]);
                         }
                         table.add_index(
-                            crate::kv_table::KvIndex {
+                            tidb_table::kv_table::KvIndex {
                                 id: 1,
                                 name: "ib".to_owned(),
                                 comment: String::new(),
@@ -7774,7 +7776,7 @@ use std::collections::HashMap;
             }),
         );
         table.add_index(
-            crate::kv_table::KvIndex {
+            tidb_table::kv_table::KvIndex {
                 id: 1,
                 name: "ib".to_owned(),
                 comment: String::new(),
@@ -7898,7 +7900,7 @@ use std::collections::HashMap;
     fn index_join_compare_filters_intersect_on_one_target_column() {
         let mut table = KvTable::new(91, vec![column("a", 1), column("b", 2)]);
         table.add_index(
-            crate::kv_table::KvIndex {
+            tidb_table::kv_table::KvIndex {
                 id: 1,
                 name: "ab".to_owned(),
                 comment: String::new(),
@@ -8079,7 +8081,7 @@ use std::collections::HashMap;
             meta,
             table,
             crate::RowDecodeContext::for_test_query_utc(),
-            crate::remote_scan::PushdownStatementContext::default(),
+            tidb_distsql::remote_scan::PushdownStatementContext::default(),
         );
         scan.open().unwrap();
         let mut req = scan.new_chunk();
@@ -8259,7 +8261,7 @@ use std::collections::HashMap;
         table.set_common_handle_offsets(vec![0, 1, 2]);
         table
             .create_index_with_context(
-                crate::kv_table::KvIndex {
+                tidb_table::kv_table::KvIndex {
                     id: 1,
                     name: "PRIMARY".to_owned(),
                     comment: String::new(),
@@ -8324,7 +8326,7 @@ use std::collections::HashMap;
         table.set_common_handle_offsets(vec![0, 1, 2, 3]);
         table
             .create_index_with_context(
-                crate::kv_table::KvIndex {
+                tidb_table::kv_table::KvIndex {
                     id: 1,
                     name: "PRIMARY".to_owned(),
                     comment: String::new(),
@@ -8455,7 +8457,7 @@ use std::collections::HashMap;
         table.set_common_handle_offsets(vec![0, 1, 2]);
         table
             .create_index_with_context(
-                crate::kv_table::KvIndex {
+                tidb_table::kv_table::KvIndex {
                     id: 1,
                     name: "k4".to_owned(),
                     comment: String::new(),
@@ -8485,7 +8487,7 @@ use std::collections::HashMap;
             table.clone(),
             1,
             vec![IndexRange::full()],
-            crate::kv_table::RowDecodeContext::for_test_query_utc(),
+            tidb_table::kv_table::RowDecodeContext::for_test_query_utc(),
             crate::remote_scan::pushdown_statement_context(
                 &crate::StmtContext::for_query(),
             ),
@@ -8514,7 +8516,7 @@ use std::collections::HashMap;
             table,
             1,
             vec![IndexRange::full()],
-            crate::kv_table::RowDecodeContext::for_test_query_utc(),
+            tidb_table::kv_table::RowDecodeContext::for_test_query_utc(),
             crate::remote_scan::pushdown_statement_context(
                 &crate::StmtContext::for_query(),
             ),
@@ -8649,7 +8651,7 @@ use std::collections::HashMap;
         );
         table
             .create_index_with_context(
-                crate::kv_table::KvIndex {
+                tidb_table::kv_table::KvIndex {
                     id: 1,
                     name: "ibc".to_owned(),
                     comment: String::new(),
@@ -8828,7 +8830,7 @@ use std::collections::HashMap;
         );
         table
             .create_index_with_context(
-                crate::kv_table::KvIndex {
+                tidb_table::kv_table::KvIndex {
                     id: 1,
                     name: "ibc".to_owned(),
                     comment: String::new(),

@@ -42,7 +42,7 @@ use tidb_stats_handle_syncload::stats_watch::{StatsSnapshot, TableStatsState};
 use tidb_executor::access_cost::TableStatistics;
 use tidb_kv::cluster_storage::ClusterTableStorage;
 use tidb_executor::driver::{Catalog, ViewDef};
-use tidb_executor::kv_table::KvTable;
+use tidb_table::kv_table::KvTable;
 use tidb_kv::storage::TableStorage;
 #[cfg(test)]
 use tidb_model::GoShared;

@@ -231,7 +231,8 @@ fn range_quota_uses_session_snapshot_and_refreshes_after_set() {
 
 #[test]
 fn selected_record_keys_reach_the_owner_from_query_and_dml_contexts() {
-    use tidb_executor::select_lock::{SelectLockExec, SelectedLockKeys};
+    use tidb_executor::select_lock::SelectLockExec;
+    use tidb_sessionctx::select_lock::SelectedLockKeys;
     use tidb_executor::{Executor, ExecutorMeta, TableDualExec};
 
     let mut session = Session::new();

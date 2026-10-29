@@ -230,7 +230,7 @@ impl StatementLifecycle<'_> {
         // them as Go's optimistic `LockKeys` does.
         self.session
             .set_selected_lock_keys(self.txn.explicit.as_ref().map(|transaction| {
-                tidb_executor::select_lock::SelectedLockKeys::new(
+                tidb_sessionctx::select_lock::SelectedLockKeys::new(
                     tidb_txnkv::transaction::LockWaitTime::Timeout(
                         self.session.lock_wait_timeout(),
                     ),
@@ -715,7 +715,7 @@ impl StatementLifecycle<'_> {
         self.session
             .set_autocommit_pessimistic_statement(pessimistic);
         let selected = pessimistic.then(|| {
-            tidb_executor::select_lock::SelectedLockKeys::new(
+            tidb_sessionctx::select_lock::SelectedLockKeys::new(
                 tidb_txnkv::transaction::LockWaitTime::Timeout(self.session.lock_wait_timeout()),
                 self.session.vars().shared_lock_promotion_enabled(),
             )
@@ -1036,7 +1036,7 @@ impl StatementLifecycle<'_> {
                 .is_some_and(|transaction| !transaction.is_pessimistic())
         {
             self.session.set_selected_lock_keys(Some(
-                tidb_executor::select_lock::SelectedLockKeys::new(
+                tidb_sessionctx::select_lock::SelectedLockKeys::new(
                     tidb_txnkv::transaction::LockWaitTime::Timeout(
                         self.session.lock_wait_timeout(),
                     ),

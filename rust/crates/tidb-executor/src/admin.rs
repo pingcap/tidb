@@ -1267,7 +1267,7 @@ pub(crate) fn admin_check_table_mut<'a>(
     // The statement name Go's 8006 carries: `admin check table` or
     // `admin check index`, spelled as Go spells it.
     statement: &'static str,
-) -> Result<&'a mut crate::kv_table::KvTable, DriverError> {
+) -> Result<&'a mut tidb_table::kv_table::KvTable, DriverError> {
     let Some(entry) = catalog.table_mut_in(database, name) else {
         return Err(DriverError::from(
             tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
@@ -1301,7 +1301,7 @@ pub(crate) fn admin_index_table_mut<'a>(
     catalog: &'a mut crate::Catalog,
     database: &str,
     name: &str,
-) -> Result<&'a mut crate::kv_table::KvTable, DriverError> {
+) -> Result<&'a mut tidb_table::kv_table::KvTable, DriverError> {
     match catalog.table_mut_in(database, name) {
         Some(crate::TableEntry::Kv(table)) => Ok(std::sync::Arc::make_mut(table)),
         Some(_) => Err(DriverError::unsupported(

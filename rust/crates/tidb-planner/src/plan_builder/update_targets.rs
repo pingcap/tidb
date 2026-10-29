@@ -21,7 +21,7 @@ use tidb_datatype::{FieldNameMetadata, QualifiedColumnName};
 use tidb_hack::go_to_lower;
 
 use super::PlanBuilder;
-use super::catalog::TableSource;
+use tidb_infoschema::table_source::TableSource;
 use super::dml_source::{dml_source_select, single_table_join};
 use crate::plan_base::PlanError;
 

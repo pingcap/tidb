@@ -60,7 +60,7 @@ use tidb_hack::GoToLower;
 use super::aggregation::{
     has_window_flag, is_aggregate_call, resolve_from_select_fields, visit_exprs,
 };
-use super::catalog::TableSource;
+use tidb_infoschema::table_source::TableSource;
 use super::marker::{MarkerKind, PlanMarker};
 use super::{
     find_field_name, lower_name_matches, snapshot_schema_and_names, PlanBuilder, ProjectionField,

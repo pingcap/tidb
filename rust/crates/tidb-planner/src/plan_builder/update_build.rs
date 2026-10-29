@@ -24,7 +24,7 @@ use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
 use tidb_hack::go_to_lower;
 
-use super::catalog::TableSource;
+use tidb_infoschema::table_source::TableSource;
 use super::marker::MarkerKind;
 use super::update_targets::{assignment_column, collect_tables, path_column, UpdateTarget};
 use super::{

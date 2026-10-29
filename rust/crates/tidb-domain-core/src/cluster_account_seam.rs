@@ -52,7 +52,7 @@ use tidb_infoschema::cluster_catalog::load_cluster_catalog;
 use tidb_privilege::cluster_privilege_load::{load_cluster_privileges, read_bootstrap_state};
 use tidb_datatype::current_time::utc_now_timestamp;
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
-use tidb_executor::kv_table::AutoIdStore;
+use tidb_table::kv_table::AutoIdStore;
 use tidb_pd_client::EtcdClient;
 use tidb_privilege::PrivilegeRegistry;
 use tidb_txnkv::rpc::UnaryCallContext;
@@ -92,7 +92,7 @@ where
     S: StoreClient,
 {
     let store = ClusterAutoIdStore::new(opener.clone(), db, table, timeout);
-    let failure = |error: tidb_executor::kv_table::AutoIdStoreError| {
+    let failure = |error: tidb_table::kv_table::AutoIdStoreError| {
         AccountWriteError::Unsupported(format!("account row-ID reservation: {error}"))
     };
     // Preserve bootstrap rows that predate a persisted allocator watermark.

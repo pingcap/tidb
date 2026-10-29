@@ -130,7 +130,7 @@ use crate::logical::LogicalPlan;
 use crate::plan_base::PlanError;
 use crate::stats_info::StatsInfo;
 
-use super::catalog::TableSource;
+use tidb_infoschema::table_source::TableSource;
 use super::PlanBuilder;
 use tidb_hack::go_to_lower;
 

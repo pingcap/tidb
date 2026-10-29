@@ -40,7 +40,7 @@
 //! that could be in the lowest partition, a bound this tier cannot compare.
 //! Reading a superset costs time; reading a subset costs correctness.
 //!
-use crate::kv_table::IndexRange;
+use tidb_table::kv_table::IndexRange;
 use tidb_table::partition_routing::{PartitionKind, PartitionSpec, RangeBound};
 use std::collections::{BTreeMap, BTreeSet};
 use tidb_datatype::Datum;

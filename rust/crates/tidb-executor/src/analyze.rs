@@ -118,8 +118,8 @@ impl From<crate::DriverError> for AnalyzeError {
     }
 }
 
-impl From<crate::kv_table::KvTableError> for AnalyzeError {
-    fn from(error: crate::kv_table::KvTableError) -> Self {
+impl From<tidb_table::kv_table::KvTableError> for AnalyzeError {
+    fn from(error: tidb_table::kv_table::KvTableError) -> Self {
         crate::DriverError::from(crate::ExecError::from(error)).into()
     }
 }
@@ -1251,8 +1251,8 @@ mod tests {
         )
             .from_evaluation();
         for error in [
-            crate::kv_table::KvTableError::Mysql(original.clone()),
-            crate::kv_table::KvTableError::Storage(tidb_kv::storage::StorageError::Sql(
+            tidb_table::kv_table::KvTableError::Mysql(original.clone()),
+            tidb_table::kv_table::KvTableError::Storage(tidb_kv::storage::StorageError::Sql(
                 original.clone(),
             )),
         ] {

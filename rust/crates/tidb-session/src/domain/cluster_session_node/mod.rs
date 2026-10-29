@@ -323,7 +323,7 @@ fn trace_of(stmt: &Stmt) -> &tidb_ast::TraceStmt {
 }
 
 pub(crate) use tidb_domain_core::cluster_session::detached_storage;
-pub use tidb_domain_core::domain::*;
+use tidb_domain_core::domain::*;
 pub(crate) use tidb_domain_core::sys_session::stats_session_error;
 pub(crate) use tidb_domain_core::util::is_analyze_table_sql;
 mod sessions;
@@ -531,7 +531,7 @@ impl SimpleExecRegions {
 }
 
 /// The node's [`crate::txn_manager::SchemaPins`]: its MDL registry.
-struct NodeSchemaPins(Arc<schema_sync::SchemaPinRegistry>);
+struct NodeSchemaPins(Arc<tidb_ddl::schema_sync::SchemaPinRegistry>);
 
 impl crate::txn_manager::SchemaPins for NodeSchemaPins {
     fn hold(&self, connection_id: u64, version: i64) -> Box<dyn Send> {

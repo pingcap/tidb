@@ -24,7 +24,7 @@
 //! in its size cache as a [`TableRowStatsSnapshot`]. Either way the tables
 //! walked are the statement's own schema.
 
-use crate::kv_table::KvTable;
+use tidb_table::kv_table::KvTable;
 use crate::Catalog;
 use tidb_datatype::{UNSPECIFIED_LENGTH, VAR_STORAGE_LEN};
 

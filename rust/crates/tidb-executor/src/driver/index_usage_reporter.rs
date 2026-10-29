@@ -23,7 +23,7 @@ use tidb_stats_handle_usage_indexusage::{new_sample, StmtIndexUsageCollector};
 
 use crate::access_cost::TableStatistics;
 use crate::executor::{ExecError, Executor};
-use crate::kv_table::KvTable;
+use tidb_table::kv_table::KvTable;
 
 /// Go `IndexUsageReporter`: common reporting rules for coprocessor and point
 /// readers. Request and row counters are supplied by their authoritative
@@ -584,7 +584,7 @@ mod tests {
         let mut common_handle = KvTable::new(2, vec![]);
         common_handle.set_common_handle_offsets(vec![0]);
         common_handle.add_index(
-            crate::kv_table::KvIndex {
+            tidb_table::kv_table::KvIndex {
                 id: 7,
                 name: "PRIMARY".to_owned(),
                 comment: String::new(),
@@ -603,7 +603,7 @@ mod tests {
 
         let mut nonclustered_handle = KvTable::new(3, vec![]);
         nonclustered_handle.add_index(
-            crate::kv_table::KvIndex {
+            tidb_table::kv_table::KvIndex {
                 id: 8,
                 name: "PRIMARY".to_owned(),
                 comment: String::new(),

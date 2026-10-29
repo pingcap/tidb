@@ -57,7 +57,7 @@
 //! synchronization Go gets from `syncutil.Mutex`.
 
 use std::sync::{Arc, Mutex, MutexGuard};
-use tidb_util::kvcache::SimpleLruCache;
+use tidb_kvcache::SimpleLruCache;
 
 /// Computes the source apply-cache memory charge for one key/value pair.
 #[must_use]

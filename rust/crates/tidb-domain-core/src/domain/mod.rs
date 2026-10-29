@@ -429,7 +429,7 @@ pub(crate) fn exact_physical_row_count(
     physical_id: i64,
 ) -> Result<i64, String> {
     const PAGE_SIZE: usize = 1_024;
-    let prefix = tidb_txnkv::Key::from_bytes(tidb_tablecodec::table_key::gen_table_record_prefix(
+    let prefix = tidb_txnkv::Key::from_bytes(tidb_codec::table_key::gen_table_record_prefix(
         physical_id,
     ));
     let end = prefix.prefix_next();
@@ -696,8 +696,8 @@ pub struct Domain {
     /// The catalog versions live statements and transactions still read at
     /// -- the MDL gate the schema-sync acknowledger consults before telling
     /// a Go DDL owner this node has the new schema. See
-    /// [`schema_sync::SchemaPinRegistry`].
-    pub schema_pins: Arc<schema_sync::SchemaPinRegistry>,
+    /// [`tidb_ddl::schema_sync::SchemaPinRegistry`].
+    pub schema_pins: Arc<tidb_ddl::schema_sync::SchemaPinRegistry>,
     /// The node's schema validator (Go `Domain.SchemaValidator`), which
     /// every commit asks whether its schema version is still in force. `None`
     /// is a tier with no cluster schema to follow, which commits unchecked.
@@ -946,7 +946,7 @@ impl Domain {
             stats,
             spill_storage: None,
             mem_arbitrator: None,
-            schema_pins: Arc::new(schema_sync::SchemaPinRegistry::default()),
+            schema_pins: Arc::new(tidb_ddl::schema_sync::SchemaPinRegistry::default()),
             schema_validator: None,
             stats_load_workers: std::sync::OnceLock::new(),
             session_kv_cache: Arc::new(Mutex::new(KvTableTemplates::default())),
@@ -1731,7 +1731,7 @@ impl Domain {
     /// Replaces the factory's pin registry with the node-owned one the
     /// schema-sync acknowledger reads.
     #[must_use]
-    pub fn with_schema_pins(mut self, pins: Arc<schema_sync::SchemaPinRegistry>) -> Self {
+    pub fn with_schema_pins(mut self, pins: Arc<tidb_ddl::schema_sync::SchemaPinRegistry>) -> Self {
         self.schema_pins = pins;
         self
     }

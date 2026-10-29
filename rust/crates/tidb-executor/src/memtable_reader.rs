@@ -284,7 +284,7 @@ impl MemTableRetriever for InstanceStateRetriever {
         if read.is_cluster_scan
             || !read
                 .db_name
-                .go_lower_eq(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
+                .go_lower_eq(tidb_infoschema::infoschema_meta::INFORMATION_SCHEMA)
         {
             return false;
         }

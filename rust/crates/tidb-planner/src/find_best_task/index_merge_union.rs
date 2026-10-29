@@ -956,7 +956,7 @@ fn push_index_partial(
 /// immutable table metadata and retain the handle suffix's exact order.
 pub(super) fn partial_index_schema(
     ds: &DataSource,
-    index: &crate::plan_builder::catalog::SourceIndex,
+    index: &tidb_infoschema::table_source::SourceIndex,
     ctx: &DispatchContext<'_>,
 ) -> Result<Vec<tidb_expr::column::Column>, PlanError> {
     index_scan_schema(ds, index, ctx, true)
@@ -965,7 +965,7 @@ pub(super) fn partial_index_schema(
 /// Construct the physical index row, including handles required by lookup.
 pub(super) fn index_scan_schema(
     ds: &DataSource,
-    index: &crate::plan_builder::catalog::SourceIndex,
+    index: &tidb_infoschema::table_source::SourceIndex,
     ctx: &DispatchContext<'_>,
     double_read: bool,
 ) -> Result<Vec<tidb_expr::column::Column>, PlanError> {
@@ -1148,7 +1148,8 @@ mod tests {
     #[test]
     fn index_merge_restores_index_columns_and_handle_suffix() {
         use crate::logical::{data_source::DataSourceColumn, BaseLogicalPlan};
-        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+        use tidb_infoschema::table_source::SourceIndexColumn;
+        use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::{
             column::Column, constant::Constant, scalar_function::ScalarFunction, schema::Schema,

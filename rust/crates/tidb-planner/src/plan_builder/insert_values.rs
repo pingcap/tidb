@@ -24,7 +24,7 @@ use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
 use tidb_hack::go_to_lower;
 
-use super::catalog::TableSource;
+use tidb_infoschema::table_source::TableSource;
 use super::marker::MarkerKind;
 use super::{ClauseCode, PlanBuilder};
 use crate::logical::{LogicalPlan, LogicalTableDual};
@@ -327,7 +327,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     fn get_insert_col_expr(
         &mut self,
         target: &InsertTarget,
-        table: &super::catalog::SourceTable,
+        table: &tidb_infoschema::table_source::SourceTable,
         offset: usize,
         value: &Expr,
         schema: &Schema,

@@ -130,7 +130,8 @@ use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_txnkv::{Handle as KvHandle, Key, KvIterator, UnionIter};
 
 use crate::executor::ExecError;
-use crate::kv_table::{RowDecoder, TableHandle};
+use tidb_table::kv_table::TableHandle;
+use tidb_table::kv_table::RowDecoder;
 use crate::predicate_pushdown::ScanFilterProbe;
 
 /// A half-open `[start, end)` key interval, the crate's spelling of Go

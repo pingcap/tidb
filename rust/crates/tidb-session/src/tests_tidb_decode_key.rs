@@ -13,7 +13,8 @@
 // limitations under the License.
 
 use tidb_executor::TableEntry;
-use tidb_tablecodec::table_key::{decode_record_key, encode_table_prefix};
+use tidb_codec::table_key::encode_table_prefix;
+use tidb_codec::table_key::decode_record_key;
 
 use crate::tests_support::{row_text, warnings_of};
 use crate::Session;

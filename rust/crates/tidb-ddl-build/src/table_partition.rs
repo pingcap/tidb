@@ -64,7 +64,7 @@ use tidb_ast::{
 };
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
-use crate::generated_column::TableColumnResolver;
+use tidb_table::generated_column::TableColumnResolver;
 use tidb_model::index::IndexInfo;
 use tidb_table::partition_routing::{
     PartitionDef, PartitionKind, PartitionSpec, RangeBound, RangeColumnBound,

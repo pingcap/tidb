@@ -205,7 +205,7 @@ pub fn build_constraint_infos(
         }
         validate_expression_ast(&name, &check.definition.expression)?;
 
-        let resolver = crate::generated_column::TableColumnResolver::with_like_default_escape(
+        let resolver = tidb_table::generated_column::TableColumnResolver::with_like_default_escape(
             &column_names,
             &column_types,
             context.get_expr_ctx().get_eval_ctx().time_zone(),

@@ -23,7 +23,9 @@ use tidb_planner::expression_rewriter::ColumnIdAllocator;
 use tidb_planner::logical::LogicalPlan;
 use tidb_planner::plan_base::PlanIdAllocator;
 use tidb_planner::plan_builder::PlanBuilder;
-use tidb_planner::plan_builder::catalog::{SourceColumn, SourceTable, TableSource};
+use tidb_infoschema::table_source::TableSource;
+use tidb_infoschema::table_source::SourceTable;
+use tidb_infoschema::table_source::SourceColumn;
 
 /// Go `point_get_plan_test.go:274`: `create table t (c1 int primary key, c2 int)`.
 struct PointGetCatalog {

@@ -28,6 +28,7 @@ tonic.workspace = true
 tokio-stream = { workspace = true, features = ["net"] }
 
 [dev-dependencies]
+tidb-table = { path = "../tidb-table" }
 chrono-tz.workspace = true
 tidb-ast = { path = "../tidb-ast" }
 tidb-codec = { path = "../tidb-codec" }

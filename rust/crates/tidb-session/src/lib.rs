@@ -316,7 +316,7 @@ impl SharedCatalog {
 /// not opened one yet.
 #[derive(Default)]
 pub struct DomainMap {
-    domains: Mutex<HashMap<String, Arc<crate::domain::cluster_session_node::Domain>>>,
+    domains: Mutex<HashMap<String, Arc<tidb_domain_core::domain::Domain>>>,
 }
 
 /// A nil-store lookup found no domain that could be reused.
@@ -340,8 +340,8 @@ impl DomainMap {
     pub fn get(
         &self,
         store_uuid: Option<&str>,
-        open: impl FnOnce() -> Arc<crate::domain::cluster_session_node::Domain>,
-    ) -> Result<Arc<crate::domain::cluster_session_node::Domain>, NoAvailableDomain> {
+        open: impl FnOnce() -> Arc<tidb_domain_core::domain::Domain>,
+    ) -> Result<Arc<tidb_domain_core::domain::Domain>, NoAvailableDomain> {
         let mut domains = self
             .domains
             .lock()
@@ -514,7 +514,7 @@ pub struct Session {
     /// Go `session.lockedTables`: the tables this session holds a
     /// `LOCK TABLES` lock on, by table ID ([`crate::table_lock`]).
     locked_tables: std::collections::BTreeMap<i64, tidb_model::TableLockTpInfo>,
-    selected_lock_keys: Option<tidb_executor::select_lock::SelectedLockKeys>,
+    selected_lock_keys: Option<tidb_sessionctx::select_lock::SelectedLockKeys>,
     /// Go `TxnCtx.IsPessimistic` for an autocommit statement whose implicit
     /// transaction `decideTxnMode` made pessimistic, set by the storage owner
     /// for the statement attempt it runs.
@@ -586,7 +586,7 @@ pub struct Session {
     /// transaction is the one case that must NOT reset it: read-your-own-
     /// writes has to see every earlier statement's staged rows until COMMIT
     /// or ROLLBACK ends the transaction.
-    staged_writes: std::sync::Arc<tidb_executor::kv_table::StagedWrites>,
+    staged_writes: std::sync::Arc<tidb_table::kv_table::StagedWrites>,
     /// The node's server-info syncer, when the deployment has one.
     ///
     /// Go reads `information_schema.TIDB_SERVERS_INFO` through
@@ -1256,11 +1256,11 @@ impl Session {
     /// executors can hold (Go `LazyTxn.LockKeys`'s state updates).
     pub fn transaction_lock_state_observer(
         &self,
-    ) -> Option<tidb_executor::select_lock::LockStateObserver> {
+    ) -> Option<tidb_sessionctx::select_lock::LockStateObserver> {
         let process = self.process.as_ref()?;
         let registry = process.registry().clone();
         let id = process.id();
-        Some(tidb_executor::select_lock::LockStateObserver::new(
+        Some(tidb_sessionctx::select_lock::LockStateObserver::new(
             move |waiting| {
                 registry.transaction_state(id, if waiting { "LockWaiting" } else { "Running" });
             },
@@ -2815,7 +2815,7 @@ mod session_source_tests {
         use std::sync::Arc;
         let store = crate::domain::mock_store::MockStoreDomain::create().unwrap();
         let domains = DomainMap::default();
-        let unused = || -> Arc<crate::domain::cluster_session_node::Domain> {
+        let unused = || -> Arc<tidb_domain_core::domain::Domain> {
             unreachable!("a nil store opens no domain")
         };
         assert!(matches!(domains.get(None, unused), Err(NoAvailableDomain)));

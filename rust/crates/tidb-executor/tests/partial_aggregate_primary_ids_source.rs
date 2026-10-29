@@ -31,7 +31,8 @@ use std::sync::{Arc, Mutex};
 use tidb_datatype::{FieldType, FieldTypeCode, SessionTimeZone};
 use tidb_datatype::UNSPECIFIED_LENGTH;
 use prost::Message;
-use tidb_executor::remote_scan::{PushdownPartialAggregate, PushdownStatementContext};
+use tidb_distsql::remote_scan::PushdownStatementContext;
+use tidb_distsql::remote_scan::PushdownPartialAggregate;
 use tidb_proto::tipb::DagRequest;
 use tidb_kv::storage::{StorageError, StorageIterator, TableStorage};
 use tidb_executor::{IndexRange, KvColumn, KvIndex, KvTable};
@@ -185,8 +186,8 @@ fn count_over_primary() -> PushdownPartialAggregate {
     let mut input = tidb_expr::column::Column::new(1, binary_pk_column().field_type);
     input.index = 0;
     PushdownPartialAggregate::Global {
-        functions: vec![tidb_executor::remote_scan::PushdownAggregateFunction {
-            kind: tidb_executor::remote_scan::PushdownAggregateKind::Count,
+        functions: vec![tidb_distsql::remote_scan::PushdownAggregateFunction {
+            kind: tidb_distsql::remote_scan::PushdownAggregateKind::Count,
             input: Some(tidb_expr::expression::Expression::Column(input)),
             output_type,
         }],

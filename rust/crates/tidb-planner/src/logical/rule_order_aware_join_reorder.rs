@@ -329,7 +329,8 @@ mod tests {
     use crate::logical::topn::LogicalTopN;
     use crate::logical::BaseLogicalPlan;
     use crate::plan_base::PlanIdAllocator;
-    use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+    use tidb_infoschema::table_source::SourceIndexColumn;
+    use tidb_infoschema::table_source::SourceIndex;
     use tidb_datatype::{
         FieldName, FieldNameMetadata, FieldType, FieldTypeCode, IdentifierMetadata,
     };

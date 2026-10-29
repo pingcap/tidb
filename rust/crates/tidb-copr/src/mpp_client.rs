@@ -1048,7 +1048,7 @@ mod dispatch_context_tests {
 
     #[test]
     fn mpp_metadata_carries_the_domain_server_id() {
-        let statement = tidb_executor::remote_scan::PushdownStatementContext {
+        let statement = tidb_distsql::remote_scan::PushdownStatementContext {
             mpp_server_id: 42,
             ..Default::default()
         };

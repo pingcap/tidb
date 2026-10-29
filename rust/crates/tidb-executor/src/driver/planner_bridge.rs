@@ -41,7 +41,7 @@ use tidb_planner::logical::{
 use tidb_planner::physical::PhysicalPlan;
 use tidb_planner::plan_base::PlanIdAllocator;
 use tidb_planner::plan_builder::PlanBuilder;
-use tidb_planner::plan_builder::catalog::TableSource;
+use tidb_infoschema::table_source::TableSource;
 use super::{CatalogStatisticsLoad, PlannerCatalogContext};
 use tidb_planner::stats_info::StatsInfo;
 
@@ -3421,7 +3421,9 @@ mod predicate_column_tests {
 #[cfg(test)]
 mod statistics_initialization_tests {
     use super::*;
-    use crate::kv_table::{KvColumn, KvIndex, KvTable};
+    use tidb_table::kv_table::KvTable;
+    use tidb_table::kv_table::KvIndex;
+    use tidb_table::kv_table::KvColumn;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_expr::column::Column;
     use tidb_expr::constant::{Constant, ParamMarker};
@@ -3431,7 +3433,8 @@ mod statistics_initialization_tests {
     use tidb_expr::schema::Schema;
     use tidb_planner::logical::DataSource;
     use tidb_planner::logical::data_source::DataSourceColumn;
-    use tidb_planner::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
+    use tidb_infoschema::table_source::SourceIndexColumn;
+    use tidb_infoschema::table_source::SourceIndex;
 
     #[test]
     fn unfiltered_table_path_count_uses_realtime_row_count() {

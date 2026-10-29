@@ -7,7 +7,9 @@ use std::sync::{Arc, Mutex};
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_executor::driver::{run_select_on, Catalog};
-use tidb_executor::kv_table::{KvColumn, KvIndex, KvTable};
+use tidb_table::kv_table::KvTable;
+use tidb_table::kv_table::KvIndex;
+use tidb_table::kv_table::KvColumn;
 use prost::Message;
 use tidb_proto::tipb::DagRequest;
 use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};

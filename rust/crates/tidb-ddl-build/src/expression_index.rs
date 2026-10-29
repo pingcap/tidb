@@ -170,9 +170,9 @@ use tidb_datatype::FieldType;
 
 use tidb_error::mysql::MysqlError;
 
-use crate::generated_column::{
-    is_disallowed_generated_function, GeneratedColumn, TableColumnResolver,
-};
+use crate::generated_column::is_disallowed_generated_function;
+use tidb_table::generated_column::TableColumnResolver;
+use tidb_table::generated_column::GeneratedColumn;
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 

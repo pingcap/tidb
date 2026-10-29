@@ -41,7 +41,7 @@ pub(crate) mod ordinary;
 #[must_use]
 pub fn prepare_cols_for_mv_index(
     ds: &crate::logical::DataSource,
-    index: &crate::plan_builder::catalog::SourceIndex,
+    index: &tidb_infoschema::table_source::SourceIndex,
 ) -> Option<Vec<tidb_expr::column::Column>> {
     mv_index::prepare_idx_cols_and_unwrap_array_type(ds, index, true)
 }
@@ -1191,7 +1191,7 @@ pub enum IndexLookupPushDownBy {
 /// query-block hint owner; they are not approximated here.
 #[must_use]
 pub fn get_possible_access_paths(
-    table: &crate::plan_builder::catalog::SourceTable,
+    table: &tidb_infoschema::table_source::SourceTable,
     optimizer_use_invisible_indexes: bool,
     latest_index_schema: Option<&crate::domain_misc::LatestIndexSchema>,
     connection_id: Option<u64>,
@@ -1288,7 +1288,7 @@ pub struct ResolvedIndexPaths {
 /// Applies Go `getPossibleAccessPaths`' table-syntax and already-matched
 /// comment-style index-hint tail to an enumerated public-path list.
 pub fn apply_table_index_hints(
-    table: &crate::plan_builder::catalog::SourceTable,
+    table: &tidb_infoschema::table_source::SourceTable,
     public_paths: &[PossiblePath],
     hints: &[tidb_ast::IndexHint],
     comment_hints: &[crate::logical::data_source::DataSourceIndexHint],
@@ -1311,7 +1311,7 @@ pub fn apply_table_index_hints(
     let mut ignored = std::collections::BTreeSet::new();
     let mut result = ResolvedIndexPaths::default();
 
-    let unsupported_reason = |metadata: &crate::plan_builder::catalog::SourceIndex| {
+    let unsupported_reason = |metadata: &tidb_infoschema::table_source::SourceIndex| {
         if table.is_common_handle && table.common_handle_version < 1 {
             Some("common handle table with old encoding version is not supported")
         } else if metadata.global {
@@ -1649,7 +1649,8 @@ mod enumeration_tests {
 
     use super::{get_possible_access_paths as enumerate_possible_access_paths, PossiblePath};
     use crate::domain_misc::LatestIndexSchema;
-    use crate::plan_builder::catalog::{SourceIndex, SourceTable};
+    use tidb_infoschema::table_source::SourceTable;
+    use tidb_infoschema::table_source::SourceIndex;
 
     // All WRITTEN: Go's coverage of getPossibleAccessPaths is
     // planner-integration bound. Each expectation cites the Go line it

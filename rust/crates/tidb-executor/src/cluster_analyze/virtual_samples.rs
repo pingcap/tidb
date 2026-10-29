@@ -15,7 +15,9 @@
 //! Virtual values belong to the sample schema, but not to stored histograms.
 use super::{AnalyzeError, AnalyzePlan};
 use tidb_datatype::{Datum, FieldType};
-use tidb_ddl_build::generated_column::{self, GeneratedColumn, GeneratedColumnSlot};
+use tidb_ddl_build::generated_column;
+use tidb_table::generated_column::GeneratedColumnSlot;
+use tidb_table::generated_column::GeneratedColumn;
 use tidb_expr::Columns;
 use tidb_model::TableInfo;
 
@@ -127,7 +129,7 @@ impl VirtualSamples {
         }
         // Extra handle slots follow the selected sample columns. Expressions
         // resolve against the physical sample schema, never the handle suffix.
-        generated_column::fill_virtual_column_values(
+        tidb_table::generated_column::fill_virtual_column_values(
             &self.columns,
             &mut row[..self.columns.len()],
             context,

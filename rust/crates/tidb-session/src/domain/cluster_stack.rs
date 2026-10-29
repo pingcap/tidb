@@ -49,9 +49,8 @@ use crate::domain::real_tikv_node::{
 const TRANSACTION_RPC_TIMEOUT: Duration = Duration::from_secs(60);
 use crate::domain::session_api::SqlQueryError;
 
-use crate::domain::cluster_session_node::{
-    Domain, RealClusterDdl, RealClusterTransactions, CONTROL_PLANE_TIMEOUT,
-};
+use crate::domain::cluster_session_node::{RealClusterDdl, RealClusterTransactions, CONTROL_PLANE_TIMEOUT};
+use tidb_domain_core::domain::Domain;
 
 /// The coprocessor read deadline is a statement-runtime budget, not the
 /// five-second boot/catalog control-plane deadline. TPC-H partial aggregates
@@ -434,11 +433,11 @@ pub fn cluster_session_stack(
     // entry, so this acknowledger is spawned exactly when the registration
     // above is -- a node with no reachable etcd registers nowhere, is waited
     // on by nobody, and correctly spawns no acknowledger either.
-    let schema_pins = Arc::new(tidb_domain_core::schema_sync::SchemaPinRegistry::default());
+    let schema_pins = Arc::new(tidb_ddl::schema_sync::SchemaPinRegistry::default());
     let min_job_id_refresher = Arc::new(MinJobIdRefresher::new());
     let schema_sync_ack = match etcd.clone() {
         Some(etcd) => Some(
-            tidb_domain_core::schema_sync::SchemaSyncAck::spawn(
+            tidb_ddl::schema_sync::SchemaSyncAck::spawn(
                 Arc::clone(&catalog),
                 authority.transaction_opener(),
                 Arc::clone(&schema_pins),
@@ -449,7 +448,7 @@ pub fn cluster_session_stack(
                 Arc::clone(&schema_validator),
                 reloader.waker(),
                 reloader.stats_source(),
-                tidb_domain_core::schema_sync::MDL_CHECK_LOOK_DURATION,
+                tidb_ddl::schema_sync::MDL_CHECK_LOOK_DURATION,
                 CONTROL_PLANE_TIMEOUT,
             )
             .map_err(|error| {
@@ -462,7 +461,7 @@ pub fn cluster_session_stack(
     };
     let schema_version_syncer = schema_sync_ack
         .as_ref()
-        .map(tidb_domain_core::schema_sync::SchemaSyncAck::syncer);
+        .map(tidb_ddl::schema_sync::SchemaSyncAck::syncer);
     let cluster_ddl = Arc::new(
         RealClusterDdl::new_with_min_job_id_refresher(
             authority.transaction_opener(),

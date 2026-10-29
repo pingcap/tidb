@@ -41,10 +41,11 @@ use tidb_proto::tipb::{
 
 use crate::cop_reader::scan_column;
 use crate::dag_request::{column_to_pb, DagRequestContext, DEFAULT_DIV_PRECISION_INCREMENT};
-use crate::remote_scan::{
-    PushdownReadEngine, PushdownRowStream, PushdownScanRequest, PushdownScannerError,
-    PushdownStatementContext,
-};
+use tidb_distsql::remote_scan::PushdownStatementContext;
+use tidb_distsql::remote_scan::PushdownScannerError;
+use tidb_distsql::remote_scan::PushdownScanRequest;
+use tidb_distsql::remote_scan::PushdownRowStream;
+use tidb_distsql::remote_scan::PushdownReadEngine;
 use tidb_kv::storage::StorageError;
 use crate::StatementMemory;
 

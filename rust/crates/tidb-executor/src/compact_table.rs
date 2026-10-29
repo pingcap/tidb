@@ -35,7 +35,7 @@ pub fn execute_compact_table(
     current_db: &str,
     ctx: &StmtContext,
 ) -> Result<(), DriverError> {
-    let (database, name) = crate::driver::split_table_path_pub(&compact.table, current_db)?;
+    let (database, name) = tidb_infoschema::split_table_path_pub(&compact.table, current_db)?;
     let Some(entry) = catalog.table_in(database, name) else {
         return Err(DriverError::from(
             tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS

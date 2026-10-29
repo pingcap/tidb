@@ -78,7 +78,7 @@ use tidb_ast::{
 };
 use tidb_datatype::{FieldName, FieldTypeFlags};
 
-use super::catalog::TableSource;
+use tidb_infoschema::table_source::TableSource;
 use super::{find_field_name, PlanBuilder, ProjectionField};
 use crate::plan_base::PlanError;
 use tidb_expr::Columns;
@@ -469,7 +469,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         &self,
         from: Option<&Join>,
         name: &FieldName,
-    ) -> Option<Option<&super::catalog::SourceTable>> {
+    ) -> Option<Option<&tidb_infoschema::table_source::SourceTable>> {
         // "when the Select is inside a view, it's not pre-processed, tnW is
         // nil. if b.isCreateView { // Ignore during create; return nil }":
         // a CREATE VIEW body's ungrouped columns are never reported.
@@ -508,7 +508,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         &self,
         offset: usize,
         names: &[FieldName],
-        table: Option<&super::catalog::SourceTable>,
+        table: Option<&tidb_infoschema::table_source::SourceTable>,
         pinned: &HashSet<usize>,
         where_depend: &HashMap<usize, usize>,
         join_depend: &HashMap<usize, usize>,

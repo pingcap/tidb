@@ -27,9 +27,9 @@ use tidb_distsql::{QueryDispatch, QueryTransport, TransportRequest};
 use tidb_copr::cop_client::CopClient;
 use tidb_executor::cop_reader::open_cop_scan;
 use tidb_store_driver::real_tikv_read::RealTiKvSessionTransportFactory;
-use tidb_executor::remote_scan::{
-    PushdownScanColumn, PushdownScanRequest, PushdownStatementContext,
-};
+use tidb_distsql::remote_scan::PushdownStatementContext;
+use tidb_distsql::remote_scan::PushdownScanRequest;
+use tidb_distsql::remote_scan::PushdownScanColumn;
 use tidb_expr::expression::{Expression, ScalarFunction};
 use tidb_proto::tipb::{Chunk, DagRequest, ExecType, Expr, SelectResponse};
 use tidb_txnkv::Key;
@@ -273,7 +273,7 @@ fn request_over(
     PushdownScanRequest {
         table_id: 91,
         index: None,
-        read_engine: tidb_executor::remote_scan::PushdownReadEngine::TiKv,
+        read_engine: tidb_distsql::remote_scan::PushdownReadEngine::TiKv,
         schema_version: 0,
         columns,
         handle_index: None,
@@ -340,7 +340,8 @@ fn a_fully_lowered_projected_scan_sends_its_output_offsets_and_reads_narrow_rows
 
 #[test]
 fn prefix_limit_wire_key_uses_the_input_schema_before_output_projection() {
-    use tidb_executor::remote_scan::{PushdownIndexScan, PushdownPrefixLimit};
+    use tidb_distsql::remote_scan::PushdownPrefixLimit;
+    use tidb_distsql::remote_scan::PushdownIndexScan;
     let region = Arc::new(FakeRegion::default());
     let mut scan = request(Vec::new(), Some(vec![0]));
     scan.index = Some(PushdownIndexScan {
@@ -397,7 +398,9 @@ fn prefix_limit_wire_key_uses_the_input_schema_before_output_projection() {
 
 #[test]
 fn index_topn_filters_and_orders_input_columns_before_returning_only_handles() {
-    use tidb_executor::remote_scan::{PushdownIndexScan, PushdownTopN, PushdownTopNOrder};
+    use tidb_distsql::remote_scan::PushdownTopNOrder;
+    use tidb_distsql::remote_scan::PushdownTopN;
+    use tidb_distsql::remote_scan::PushdownIndexScan;
     let region = Arc::new(FakeRegion::default());
     let mut scan = request(vec![greater_than(3)], Some(vec![1]));
     scan.index = Some(PushdownIndexScan {

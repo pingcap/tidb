@@ -1310,7 +1310,7 @@ impl InformationSchemaRetriever {
 impl crate::mem_table_retrieval::MemTableRetriever for InformationSchemaRetriever {
     fn serves(&self, read: &crate::mem_table_retrieval::MemTableRead) -> bool {
         read.db_name
-            .go_lower_eq(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
+            .go_lower_eq(tidb_infoschema::infoschema_meta::INFORMATION_SCHEMA)
             && crate::infoschema_reader::serves_table(&read.table_name)
     }
 
@@ -1365,7 +1365,7 @@ impl crate::mem_table_retrieval::MemTableRetriever for CatalogTablesRetriever {
         !read.is_cluster_scan
             && read
                 .db_name
-                .go_lower_eq(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
+                .go_lower_eq(tidb_infoschema::infoschema_meta::INFORMATION_SCHEMA)
             && [
                 "TIKV_STORE_STATUS",
                 "TIKV_REGION_STATUS",

@@ -237,7 +237,7 @@ use crate::logical::table_dual::LogicalTableDual;
 use crate::logical::{BaseLogicalPlan, LogicalPlan};
 use crate::plan_base::{PlanError, PlanIdAllocator};
 
-use catalog::TableSource;
+use tidb_infoschema::table_source::TableSource;
 use handle_col_helper::{HandleColHelper, HandleColMap, PlanHandleCols};
 use marker::{MarkerKind, PlanMarker};
 use only_full_group_by::inner_from_parentheses_and_unary_plus;
@@ -2941,8 +2941,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     fn with_hypo_access_paths(
         &self,
         db_name: &str,
-        table: &catalog::SourceTable,
-    ) -> Option<catalog::SourceTable> {
+        table: &tidb_infoschema::table_source::SourceTable,
+    ) -> Option<tidb_infoschema::table_source::SourceTable> {
         let indexes = self.source.hypo_indexes(db_name, &table.table_name);
         let tiflash = !table.has_tiflash_replica()
             && self

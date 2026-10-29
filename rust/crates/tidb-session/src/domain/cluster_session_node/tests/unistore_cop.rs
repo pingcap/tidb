@@ -11285,7 +11285,7 @@ fn a_pessimistic_batch_point_write_folds_its_read_into_one_lock() {
     // Only this table's row reads and locks count: the session's own system
     // reads (statistics, catalog) share the store.
     fn is_row_of(table_id: i64, key: &[u8]) -> bool {
-        tidb_tablecodec::table_key::decode_record_key(key).is_ok_and(|(table, _)| table == table_id)
+        tidb_codec::table_key::decode_record_key(key).is_ok_and(|(table, _)| table == table_id)
     }
     let sent: Arc<std::sync::Mutex<Vec<&'static str>>> = Arc::default();
     let recorded = Arc::clone(&sent);

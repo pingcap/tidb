@@ -35,10 +35,8 @@ use tidb_proto::tipb::{ExplainData, ExplainOperator as PbExplainOperator, Operat
 
 use tidb_planner::find_best_task::coster::Ver2Coster;
 
-use crate::driver::{
-    run_delete_stmt_with_physical_and_stats, run_insert_stmt_with_physical_and_stats,
-    run_update_stmt_with_physical_and_stats, Catalog, DriverError, SelectMeta,
-};
+use crate::driver::{run_delete_stmt_with_physical_and_stats, run_insert_stmt_with_physical_and_stats, run_update_stmt_with_physical_and_stats, DriverError, SelectMeta};
+use tidb_infoschema::Catalog;
 pub use tidb_sessionctx::explain_format::ExplainFormat;
 
 /// The plan a finished trace recorded, or the refusal a build site left in it.
@@ -3319,7 +3317,7 @@ fn plan_encodings(
 pub fn publish_physical_process_info(
     ctx: &crate::StmtContext,
     physical: &tidb_planner::physical::PhysicalPlan,
-    catalog: &crate::driver::Catalog,
+    catalog: &tidb_infoschema::Catalog,
 ) {
     let Some(execution_started) = ctx.begin_physical_process_info() else {
         return;

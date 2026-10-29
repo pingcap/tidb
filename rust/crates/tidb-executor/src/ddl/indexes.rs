@@ -18,17 +18,17 @@
 use super::DriverError;
 
 /// Preserve the source SQL diagnostic for local and cluster index backfill.
-pub fn index_backfill_error(error: crate::kv_table::KvTableError) -> DriverError {
+pub fn index_backfill_error(error: tidb_table::kv_table::KvTableError) -> DriverError {
     match error {
-        crate::kv_table::KvTableError::Storage(error) => error.into(),
-        crate::kv_table::KvTableError::Mysql(error) => {
+        tidb_table::kv_table::KvTableError::Storage(error) => error.into(),
+        tidb_table::kv_table::KvTableError::Mysql(error) => {
             DriverError::Exec(crate::ExecError::Mysql(error))
         }
         // The backfill computes each entry's value from the row, so a
         // generated column that cannot be evaluated fails the DDL with
         // its own code -- Go answers 1365 for
         // `ALTER TABLE t ADD INDEX ((100/a))` over a row with `a = 0`.
-        crate::kv_table::KvTableError::Generation {
+        tidb_table::kv_table::KvTableError::Generation {
             eval: Some(eval), ..
         } => DriverError::Exec(crate::ExecError::Eval(eval)),
         // Every other row-write failure keeps the code a DML write gives it

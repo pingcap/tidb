@@ -357,7 +357,7 @@ impl ViewerState {
         required: Option<&std::collections::HashSet<String>>,
         digests: Option<&std::collections::HashSet<String>>,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
-        let source = crate::driver::infoschema_meta::cluster_table_source(table_name)
+        let source = tidb_infoschema::infoschema_meta::cluster_table_source(table_name)
             .ok_or_else(|| DriverError::unsupported("unsupported TiDB cluster table"))?;
         let mut rows = match source {
             "PROCESSLIST" => {
@@ -965,11 +965,11 @@ impl crate::mem_table_retrieval::MemTableRetriever for ClusterTablesRetriever {
         use tidb_hack::GoCaseCompare;
         if !read
             .db_name
-            .go_lower_eq(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
+            .go_lower_eq(tidb_infoschema::infoschema_meta::INFORMATION_SCHEMA)
         {
             return false;
         }
-        crate::driver::infoschema_meta::cluster_table_source(&read.table_name).is_some()
+        tidb_infoschema::infoschema_meta::cluster_table_source(&read.table_name).is_some()
             || (!read.is_cluster_scan
                 && [
                     "TIDB_TRX",
@@ -1003,7 +1003,7 @@ impl crate::mem_table_retrieval::MemTableRetriever for ClusterTablesRetriever {
         let required = columns
             .as_deref()
             .map(|columns| required_columns(read, columns));
-        if crate::driver::infoschema_meta::cluster_table_source(table).is_some() {
+        if tidb_infoschema::infoschema_meta::cluster_table_source(table).is_some() {
             let columns = columns.ok_or_else(|| {
                 DriverError::unsupported("a cluster table has no declared schema")
             })?;

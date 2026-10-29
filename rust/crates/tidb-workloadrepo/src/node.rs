@@ -19,7 +19,8 @@
 
 use std::sync::Arc;
 
-use tidb_session::domain::cluster_session_node::{Domain, DomainSessions as _};
+use tidb_session::domain::cluster_session_node::DomainSessions as _;
+use tidb_domain_core::domain::Domain;
 use tidb_session::domain::session_api::SessionContext;
 use tidb_session::GlobalSysvars;
 use tidb_session::Session;

@@ -78,7 +78,8 @@
 //! metering must not change what runs.
 
 use crate::predicate_pushdown::PushedScanFilter;
-use crate::remote_scan::{PushdownPartialAggregate, PushdownTopN};
+use tidb_distsql::remote_scan::PushdownTopN;
+use tidb_distsql::remote_scan::PushdownPartialAggregate;
 use crate::StmtContext;
 
 /// A base-table source that can take over work from the operators above it.
@@ -265,7 +266,7 @@ pub trait TableAccess {
     /// when a non-unique index names the same handle more than once. An EMPTY
     /// slice is the contradictory `WHERE` no handle satisfies, and reads
     /// nothing.
-    fn accept_handle_ranges(&mut self, ranges: &[crate::kv_table::IndexRange]) -> bool {
+    fn accept_handle_ranges(&mut self, ranges: &[tidb_table::kv_table::IndexRange]) -> bool {
         let _ = ranges;
         false
     }

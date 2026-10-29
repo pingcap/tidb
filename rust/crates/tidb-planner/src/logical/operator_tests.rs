@@ -1194,8 +1194,8 @@ fn data_source_build_key_info_adds_the_int_primary_key() {
     source.base.base.set_schema(Some(output.clone()));
     source.handle_is_int = true;
     source.handle_cols = vec![column(2)];
-    let index = crate::plan_builder::catalog::SourceIndex {
-        columns: vec![crate::plan_builder::catalog::SourceIndexColumn {
+    let index = tidb_infoschema::table_source::SourceIndex {
+        columns: vec![tidb_infoschema::table_source::SourceIndexColumn {
             name: "a".into(),
             offset: 0,
             length: -1,
@@ -1248,13 +1248,13 @@ fn data_source_unique_index_keys_keep_nullability_and_pruning_semantics() {
             is_not_null: true,
         },
     ];
-    source.indexes = vec![crate::plan_builder::catalog::SourceIndex {
+    source.indexes = vec![tidb_infoschema::table_source::SourceIndex {
         columns: vec![
-            crate::plan_builder::catalog::SourceIndexColumn {
+            tidb_infoschema::table_source::SourceIndexColumn {
                 name: "a".to_owned(),
                 ..Default::default()
             },
-            crate::plan_builder::catalog::SourceIndexColumn {
+            tidb_infoschema::table_source::SourceIndexColumn {
                 name: "b".to_owned(),
                 ..Default::default()
             },

@@ -7,7 +7,7 @@
 //! `pkg/util/ranger` feeding `pkg/executor`'s index reader.
 
 use super::*;
-use crate::kv_table::IndexRange;
+use tidb_table::kv_table::IndexRange;
 
 fn planner_index_path(
     sql: &str,

@@ -15,4 +15,4 @@
 //! Go `infoschema.InfoSchema` as the planner reads it: the interface and its
 //! table views live with the catalog (`tidb_infoschema::table_source`).
 
-pub use tidb_infoschema::table_source::*;
+use tidb_infoschema::table_source::*;
