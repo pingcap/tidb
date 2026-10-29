@@ -41,10 +41,15 @@ use std::time::Duration;
 use tidb_proto::{CoprocessorKeyRange, CoprocessorResponse};
 use tidb_txnkv::{Key, KeyRange, KeyRanges};
 
-use crate::{
-    grow_paging_size, CoprCache, KvRequestMetadata, ReadBytesEma, RegionTaskEnvelope,
-    RegionTaskTopology, ResponseChannel, ResponseChannelError, ResponseChannelEvent,
-};
+use tidb_paging::grow_paging_size;
+use crate::copr_cache::CoprCache;
+use tidb_txnkv::KvRequestMetadata;
+use crate::read_bytes_ema::ReadBytesEma;
+use crate::region_task::RegionTaskEnvelope;
+use crate::region_task::RegionTaskTopology;
+use crate::response_channel::ResponseChannel;
+use crate::response_channel::ResponseChannelError;
+use crate::response_channel::ResponseChannelEvent;
 
 /// Storage-engine generation controlling the billed MVCC-byte basis.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -154,7 +159,7 @@ pub fn calculate_paging_remain(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CopPagingOutcome {
     /// Ranges still requiring a request.
-    pub remaining_ranges: Vec<crate::RequestKeyRange>,
+    pub remaining_ranges: Vec<tidb_txnkv::KeyRange>,
     /// Page size for the next request, or zero when paging is complete.
     pub next_paging_size: u64,
     /// MVCC bytes contributed to the EMA by this response.
@@ -295,7 +300,7 @@ impl CopPagingState {
 
     pub(super) fn replace_ranges_for_region_retry(
         &mut self,
-        ranges: Vec<crate::RequestKeyRange>,
+        ranges: Vec<tidb_txnkv::KeyRange>,
         paging_size: u64,
     ) {
         self.ranges = KeyRanges::new(
@@ -344,7 +349,7 @@ impl CopPagingState {
     pub fn accept_response_with_runtime(
         &mut self,
         response: &CoprocessorResponse,
-        runtime: Option<crate::ResponseRuntimeStats>,
+        runtime: Option<tidb_txnkv::ResponseRuntimeStats>,
         now: Duration,
     ) -> Result<CopPagingOutcome, CopPagingError> {
         if self.complete {
@@ -382,7 +387,7 @@ impl CopPagingState {
                 .ranges
                 .to_ranges()
                 .into_iter()
-                .map(|range| crate::RequestKeyRange {
+                .map(|range| tidb_txnkv::KeyRange {
                     start_key: range.start_key,
                     end_key: range.end_key,
                 })
@@ -398,7 +403,7 @@ impl CopPagingState {
     pub(super) fn accept_batched_child(
         &mut self,
         data: prost::bytes::Bytes,
-        runtime: Option<crate::ResponseRuntimeStats>,
+        runtime: Option<tidb_txnkv::ResponseRuntimeStats>,
     ) -> Result<(), CopPagingError> {
         if self.queued_responses >= self.response_capacity {
             return Err(CopPagingError::Backpressure {
@@ -425,7 +430,7 @@ impl CopPagingState {
             remaining_ranges: retry
                 .to_ranges()
                 .into_iter()
-                .map(|range| crate::RequestKeyRange {
+                .map(|range| tidb_txnkv::KeyRange {
                     start_key: range.start_key,
                     end_key: range.end_key,
                 })

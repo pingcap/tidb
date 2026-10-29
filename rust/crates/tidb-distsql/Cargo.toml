@@ -12,9 +12,8 @@ autotests = false
 # and RPC remain separate capabilities with their own future crates.
 
 [dependencies]
+tidb-copr = { path = "../tidb-copr" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
-tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
-tidb-errno = { path = "../tidb-errno" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-tiflash = { path = "../tidb-tiflash" }
 tidb-trxevents = { path = "../tidb-trxevents" }
@@ -24,11 +23,9 @@ tidb-memory = { path = "../tidb-memory" }
 tidb-paging = { path = "../tidb-paging" }
 tidb-topsql-stmtstats = { path = "../tidb-topsql-stmtstats" }
 tidb-tracing = { path = "../tidb-tracing" }
-tidb-metrics = { path = "../tidb-metrics" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-vardef = { path = "../tidb-vardef" }
-tidb-ristretto = { path = "../tidb-ristretto" }
 prost.workspace = true
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }

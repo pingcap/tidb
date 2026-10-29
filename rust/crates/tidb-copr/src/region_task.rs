@@ -31,7 +31,8 @@ use tidb_proto::{
     StoreBatchTask,
 };
 
-use crate::{KvRequestMetadata, ReadBytesEma, RequestKeyRange};
+use tidb_txnkv::KvRequestMetadata;
+use crate::read_bytes_ema::ReadBytesEma;
 use tidb_txnkv::{Key, KeyRange, KeyRanges};
 
 /// Region epoch metadata copied from `metapb.RegionEpoch`.
@@ -109,7 +110,7 @@ impl Default for RegionTaskTopology {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct VersionedRegionKeyRange {
     /// Point range carried by the task.
-    pub range: RequestKeyRange,
+    pub range: KeyRange,
     /// Read timestamp attached to the point lookup.
     pub read_ts: u64,
 }
@@ -129,7 +130,7 @@ pub struct RegionTaskEnvelope {
     /// Optional target peer from the region cache.
     pub peer: Option<RegionTaskPeer>,
     /// Ordered key ranges belonging to this child task.
-    pub ranges: Vec<RequestKeyRange>,
+    pub ranges: Vec<KeyRange>,
     /// Coprocessor task identifier used to match responses.
     pub task_id: u64,
     /// Optional TiCI versioned point ranges.
@@ -269,7 +270,7 @@ impl RegionTaskEnvelope {
 /// bucket split keys. Returned envelopes contain only request fragments.
 /// Region lookup, cache refresh, retry, store selection, and RPC remain owned
 /// by the caller that supplies the topology.
-pub(crate) fn build_region_tasks(
+pub fn build_region_tasks(
     metadata: &KvRequestMetadata,
     topology: &[RegionTaskTopology],
 ) -> Option<Vec<RegionTaskEnvelope>> {
@@ -396,7 +397,7 @@ fn topology_is_valid(topology: &[RegionTaskTopology]) -> bool {
     true
 }
 
-fn normalized_bucket_ranges(region: &RegionTaskTopology) -> Option<Vec<RequestKeyRange>> {
+fn normalized_bucket_ranges(region: &RegionTaskTopology) -> Option<Vec<KeyRange>> {
     let mut interior: Vec<Vec<u8>> = region
         .bucket_keys
         .iter()
@@ -418,7 +419,7 @@ fn normalized_bucket_ranges(region: &RegionTaskTopology) -> Option<Vec<RequestKe
     }
     Some(
         keys.windows(2)
-            .map(|pair| RequestKeyRange {
+            .map(|pair| KeyRange {
                 start_key: pair[0].clone().into(),
                 end_key: pair[1].clone().into(),
             })
@@ -426,7 +427,7 @@ fn normalized_bucket_ranges(region: &RegionTaskTopology) -> Option<Vec<RequestKe
     )
 }
 
-fn intersect_range(range: &KeyRange, bucket: &RequestKeyRange) -> Option<KeyRange> {
+fn intersect_range(range: &KeyRange, bucket: &KeyRange) -> Option<KeyRange> {
     let start = range.start_key.as_bytes();
     let end = range.end_key.as_bytes();
     if start == end {
@@ -452,7 +453,7 @@ fn intersect_range(range: &KeyRange, bucket: &RequestKeyRange) -> Option<KeyRang
 /// only in the bucket that contains that point.
 fn intersect_sorted_ranges(
     ranges: &KeyRanges,
-    bucket: &RequestKeyRange,
+    bucket: &KeyRange,
     cursor: &mut usize,
 ) -> Vec<KeyRange> {
     while *cursor < ranges.len() && ends_before_bucket(ranges.ref_at(*cursor), bucket) {
@@ -472,7 +473,7 @@ fn intersect_sorted_ranges(
     fragments
 }
 
-fn ends_before_bucket(range: &KeyRange, bucket: &RequestKeyRange) -> bool {
+fn ends_before_bucket(range: &KeyRange, bucket: &KeyRange) -> bool {
     let start = range.start_key.as_bytes();
     let end = range.end_key.as_bytes();
     if start == end {
@@ -481,7 +482,7 @@ fn ends_before_bucket(range: &KeyRange, bucket: &RequestKeyRange) -> bool {
     !end.is_empty() && end <= bucket.start_key.as_slice()
 }
 
-fn starts_at_or_after_bucket_end(range: &KeyRange, bucket: &RequestKeyRange) -> bool {
+fn starts_at_or_after_bucket_end(range: &KeyRange, bucket: &KeyRange) -> bool {
     !bucket.end_key.is_empty() && range.start_key.as_bytes() >= bucket.end_key.as_slice()
 }
 
@@ -495,13 +496,13 @@ fn min_end<'a>(left: &'a [u8], right: &'a [u8]) -> &'a [u8] {
     }
 }
 
-fn contains_key(range: &RequestKeyRange, key: &[u8]) -> bool {
+fn contains_key(range: &KeyRange, key: &[u8]) -> bool {
     key >= range.start_key.as_slice()
         && (range.end_key.is_empty() || key < range.end_key.as_slice())
 }
 
 fn row_count_hint_for_bucket(
-    bucket: &RequestKeyRange,
+    bucket: &KeyRange,
     originals: &KeyRanges,
     hints: &[usize],
     cursor: &mut usize,
@@ -578,7 +579,7 @@ mod tests {
         let mut fragments = Vec::new();
         for value in 0_u32..4_097 {
             let key = value.to_be_bytes().to_vec();
-            let range = RequestKeyRange {
+            let range = KeyRange {
                 start_key: key.clone().into(),
                 end_key: key.into(),
             };

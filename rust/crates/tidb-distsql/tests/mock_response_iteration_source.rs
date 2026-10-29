@@ -28,7 +28,16 @@ use tidb_codec::{encode_value, encode_value_in_timezone};
 use tidb_datatype::{parse_datetime, Datum, FieldType, FieldTypeCode, SessionTimeZone, TimeType};
 use tidb_txnkv::QueryResponseError;
 use tidb_txnkv::QueryResultSubset;
-use tidb_distsql::{InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryOperation, QueryResultContext, QueryTransport, ResponseChannel, SelectInput, DAG_RESULT_LABEL, GENERAL_SQL_TYPE};
+use tidb_distsql::select_response::IntoSelectIter;
+use tidb_distsql::InjectedQueryRuntime;
+use tidb_distsql::KvRequestBuilder;
+use tidb_copr::query_transport::QueryOperation;
+use tidb_distsql::QueryResultContext;
+use tidb_copr::query_transport::QueryTransport;
+use tidb_copr::response_channel::ResponseChannel;
+use tidb_distsql::SelectInput;
+use tidb_distsql::DAG_RESULT_LABEL;
+use tidb_distsql::GENERAL_SQL_TYPE;
 use tidb_txnkv::TransportRequest;
 use tidb_context::WarningCollector;
 use tidb_txnkv::StoreType;
@@ -138,13 +147,9 @@ impl QueryTransport for MockSelectTransport {
     fn send(
         &mut self,
         _request: &TransportRequest,
-        dispatch: &QueryDispatch,
+        operation: QueryOperation,
     ) -> Result<Option<Self::Response>, String> {
-        // createSelectNormal pins label/sqlType/rowLen on the built result.
-        assert_eq!(dispatch.operation, QueryOperation::Select);
-        assert_eq!(dispatch.result.label, DAG_RESULT_LABEL);
-        assert_eq!(dispatch.result.sql_type, Some(GENERAL_SQL_TYPE));
-        assert_eq!(dispatch.result.row_len, 4);
+        assert_eq!(operation, QueryOperation::Select);
         Ok(self
             .0
             .take()
@@ -191,6 +196,11 @@ fn select_normal_reads_the_mock_response_rows_before_close() {
             QueryResultContext::new(four_longlong_columns(), WarningCollector::new()),
         )
         .expect("select result");
+    // createSelectNormal pins label/sqlType/rowLen on the built result.
+    let metadata = result.result_metadata();
+    assert_eq!(metadata.label, DAG_RESULT_LABEL);
+    assert_eq!(metadata.sql_type, Some(GENERAL_SQL_TYPE));
+    assert_eq!(metadata.row_len, 4);
     let mut iter = result.into_select_iter(Vec::new());
 
     let mut num_all_rows = 0;
@@ -230,6 +240,11 @@ fn select_mem_tracker_fills_a_smaller_required_chunk_across_responses() {
             QueryResultContext::new(four_longlong_columns(), WarningCollector::new()),
         )
         .expect("select result");
+    // createSelectNormal pins label/sqlType/rowLen on the built result.
+    let metadata = result.result_metadata();
+    assert_eq!(metadata.label, DAG_RESULT_LABEL);
+    assert_eq!(metadata.sql_type, Some(GENERAL_SQL_TYPE));
+    assert_eq!(metadata.row_len, 4);
     let mut iter = result.into_select_iter(Vec::new());
 
     // Go asserts only that this first budgeted read fills the caller's
@@ -267,6 +282,11 @@ fn select_normal_chunk_size_honors_the_go_required_rows_ladder() {
             QueryResultContext::new(four_longlong_columns(), WarningCollector::new()),
         )
         .expect("select result");
+    // createSelectNormal pins label/sqlType/rowLen on the built result.
+    let metadata = result.result_metadata();
+    assert_eq!(metadata.label, DAG_RESULT_LABEL);
+    assert_eq!(metadata.sql_type, Some(GENERAL_SQL_TYPE));
+    assert_eq!(metadata.row_len, 4);
     let mut iter = result.into_select_iter(Vec::new());
 
     // Next() x2 at full capacity, then requiredRows 1 / 2 / 17 / 170(clamped)

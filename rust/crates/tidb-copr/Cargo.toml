@@ -9,6 +9,16 @@ description = "TiDB coprocessor and MPP clients: Go pkg/store/copr (Rust rewrite
 autotests = false
 
 [dependencies]
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-context = { path = "../tidb-context" }
+tidb-errno = { path = "../tidb-errno" }
+tidb-metrics = { path = "../tidb-metrics" }
+tidb-paging = { path = "../tidb-paging" }
+tidb-ristretto = { path = "../tidb-ristretto" }
+tidb-tracing = { path = "../tidb-tracing" }
+tidb-trxevents = { path = "../tidb-trxevents" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-tiflash = { path = "../tidb-tiflash" }
@@ -19,9 +29,7 @@ tidb-tiflashcompute = { path = "../tidb-tiflashcompute" }
 tidb-topsql-state = { path = "../tidb-topsql-state" }
 tidb-topsql-stmtstats = { path = "../tidb-topsql-stmtstats" }
 tidb-vardef = { path = "../tidb-vardef" }
-tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-config = { path = "../tidb-config" }
-tidb-distsql = { path = "../tidb-distsql" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-log = { path = "../tidb-log" }
 tidb-pd-client = { path = "../tidb-pd-client" }
@@ -36,6 +44,8 @@ tonic.workspace = true
 tokio-stream = { workspace = true, features = ["net"] }
 
 [dev-dependencies]
+tidb-sessionctx = { path = "../tidb-sessionctx" }
+tidb-distsql = { path = "../tidb-distsql" }
 tidb-infoschema-perfschema = { path = "../tidb-infoschema-perfschema" }
 tidb-table = { path = "../tidb-table" }
 chrono-tz.workspace = true

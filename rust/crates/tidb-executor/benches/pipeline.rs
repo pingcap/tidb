@@ -911,10 +911,12 @@ fn main() {
 /// Go `buildCopTasks`: prepare one lookup batch, including region/bucket
 /// splitting and paging attempts, without timing TiKV or the network.
 fn bench_read_task_setup() {
-    use tidb_distsql::{
-        CopPagingState, ReadEngineGeneration, RegionTaskTopology, RegionTaskRequest,
-        RequestKeyRange, RequestKeyRanges,
-    };
+    use tidb_copr::cop_paging::CopPagingState;
+    use tidb_copr::cop_paging::ReadEngineGeneration;
+    use tidb_copr::region_task::RegionTaskTopology;
+    use tidb_distsql::RegionTaskRequest;
+    use tidb_distsql::RequestKeyRange;
+    use tidb_distsql::RequestKeyRanges;
     use tidb_txnkv::{CancelHandle, KvRequestMetadata, TransportRequest};
     use tidb_txnkv::RequestType;
 

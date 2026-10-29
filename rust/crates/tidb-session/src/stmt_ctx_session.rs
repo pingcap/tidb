@@ -370,7 +370,7 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::statement_kv_context_cell(self)
     }
 
-    fn statement_cop_response_sink(&self) -> Option<Arc<dyn tidb_distsql::CopResponseSink>> {
+    fn statement_cop_response_sink(&self) -> Option<Arc<dyn tidb_distsql::select_response::CopResponseSink>> {
         Session::statement_cop_response_sink(self)
     }
 

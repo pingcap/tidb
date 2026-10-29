@@ -32,25 +32,14 @@ use tidb_txnkv::CopInfo;
 use tidb_datatype::{FieldType, SessionTimeZone};
 use tidb_trxevents::EventCallback;
 
+use tidb_copr::query_transport::{send_request, QueryOperation, QueryRuntimeError, QueryTransport};
+
 use crate::{
     analyze_request_source, analyze_result_metadata, checksum_result_metadata,
     select_result_metadata, select_with_runtime_stats, RequestSource, RequestType, SelectInput,
     SelectResultMetadata, TransportBinding, TransportRequest, TransportRequestError,
     WarningCollector,
 };
-
-/// Source operation sent through [`QueryTransport`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum QueryOperation {
-    /// `Select` without runtime-plan binding.
-    Select,
-    /// `SelectWithRuntimeStats`.
-    SelectWithRuntimeStats,
-    /// Statistics analyze request.
-    Analyze,
-    /// Checksum request.
-    Checksum,
-}
 
 /// Immutable metadata presented to the injected transport for one send.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -115,72 +104,6 @@ impl std::fmt::Debug for QueryResultContext {
             .finish()
     }
 }
-
-/// Caller-supplied owner of the `kv.Client.Send` capability.
-pub trait QueryTransport {
-    /// Raw response owner returned by this transport.
-    type Response: QueryResponse;
-
-    /// Installs the callback from this send's client options.
-    ///
-    /// Transports without transaction events keep the default no-op. A
-    /// concrete transport must copy the callback into its response owner
-    /// during `send`; the runtime clears this transient slot immediately
-    /// afterward.
-    fn set_event_callback(&mut self, _callback: Option<EventCallback>) {}
-
-    /// Sends one already-built request and returns its raw response owner.
-    ///
-    /// `Ok(None)` is kept distinct because Go treats a nil response as an
-    /// explicit error rather than an empty result.
-    fn send(
-        &mut self,
-        request: &TransportRequest,
-        dispatch: &QueryDispatch,
-    ) -> Result<Option<Self::Response>, String>;
-}
-
-impl<T: QueryTransport + ?Sized> QueryTransport for &mut T {
-    type Response = T::Response;
-
-    fn set_event_callback(&mut self, callback: Option<EventCallback>) {
-        (**self).set_event_callback(callback);
-    }
-
-    fn send(
-        &mut self,
-        request: &TransportRequest,
-        dispatch: &QueryDispatch,
-    ) -> Result<Option<Self::Response>, String> {
-        (**self).send(request, dispatch)
-    }
-}
-
-/// Errors returned by the injected query runtime.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum QueryRuntimeError {
-    /// The immutable request could not be exclusively bound to this transport.
-    Request(TransportRequestError),
-    /// The injected transport returned Go's nil-response case.
-    NilResponse,
-    /// The injected transport failed before yielding a response iterator.
-    Transport(String),
-    /// The canonical query cancellation won before a response was returned.
-    Cancelled,
-}
-
-impl std::fmt::Display for QueryRuntimeError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Request(error) => write!(formatter, "DistSQL request is not sendable: {error:?}"),
-            Self::NilResponse => formatter.write_str("client returns nil response"),
-            Self::Transport(message) => formatter.write_str(message),
-            Self::Cancelled => formatter.write_str("query cancelled by caller"),
-        }
-    }
-}
-
-impl std::error::Error for QueryRuntimeError {}
 
 /// Live DistSQL send boundary backed by one injected transport.
 pub struct InjectedQueryRuntime<T> {
@@ -297,7 +220,8 @@ impl<T: QueryTransport> InjectedQueryRuntime<T> {
         let response = send_request(
             &mut self.transport,
             request,
-            &dispatch,
+            dispatch.operation,
+            dispatch.request_source_override.clone(),
             result_context.event_callback.clone(),
         )?;
         Ok(QuerySelectResult::new(
@@ -342,46 +266,6 @@ pub fn select_with_runtime_stats_over_client(
     ))
 }
 
-/// The `kv.Client.Send` boundary over one injected transport: claims the
-/// built request for this send (minting its request-local cancellation),
-/// sends it, and returns the raw response owner.
-pub fn send_request<T: QueryTransport>(
-    transport: &mut T,
-    request: &TransportRequest,
-    dispatch: &QueryDispatch,
-    event_callback: Option<EventCallback>,
-) -> Result<T::Response, QueryRuntimeError> {
-    let bound = match dispatch.request_source_override.clone() {
-        Some(request_source) => request
-            .bind_with_request_source(TransportBinding::new(), request_source)
-            .map_err(QueryRuntimeError::Request)?,
-        None => request
-            .bind(TransportBinding::new())
-            .map_err(QueryRuntimeError::Request)?,
-    };
-    if bound
-        .request_cancellation()
-        .map_err(QueryRuntimeError::Request)?
-        .is_cancelled()
-    {
-        return Err(QueryRuntimeError::Cancelled);
-    }
-    transport.set_event_callback(event_callback);
-    let response = transport.send(&bound, dispatch);
-    transport.set_event_callback(None);
-    // The canonical carrier has Go's post-Send ctx.Err precedence over a
-    // simultaneous transport failure or response.
-    if bound
-        .request_cancellation()
-        .map_err(QueryRuntimeError::Request)?
-        .is_cancelled()
-    {
-        return Err(QueryRuntimeError::Cancelled);
-    }
-    response
-        .map_err(QueryRuntimeError::Transport)?
-        .ok_or(QueryRuntimeError::NilResponse)
-}
 
 impl QueryDispatch {
     /// The dispatch a `kv.Client.Send` presents to its transport for a

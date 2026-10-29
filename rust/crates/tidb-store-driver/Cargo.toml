@@ -12,7 +12,6 @@ tidb-copr = { path = "../tidb-copr" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-config = { path = "../tidb-config" }
 tikv-client.workspace = true
-tidb-distsql = { path = "../tidb-distsql" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 

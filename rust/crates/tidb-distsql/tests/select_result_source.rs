@@ -14,6 +14,7 @@
 
 //! Connected source-derived tests for DistSQL select-response consumption.
 
+use tidb_distsql::select_response::IntoSelectIter;
 use std::collections::BTreeMap;
 
 use prost::Message;
@@ -21,7 +22,10 @@ use tidb_chunk::chunk::Chunk as DecodedChunk;
 use tidb_chunk::codec::Codec as ChunkCodec;
 use tidb_codec::{VALUE_COMPACT_BYTES_FLAG, VALUE_VARINT_FLAG};
 use tidb_datatype::{BinaryJSON, Datum, FieldType, FieldTypeCode, VectorFloat32};
-use tidb_distsql::{select_with_runtime_stats, ResponseChannel, ResponseChannelError, SelectInput};
+use tidb_distsql::select_with_runtime_stats;
+use tidb_copr::response_channel::ResponseChannel;
+use tidb_copr::response_channel::ResponseChannelError;
+use tidb_distsql::SelectInput;
 use tidb_txnkv::ResponseRuntimeStats;
 use tidb_context::WarningCollector;
 use tidb_context::WarningClass;

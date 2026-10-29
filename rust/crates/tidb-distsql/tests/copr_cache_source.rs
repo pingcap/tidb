@@ -15,11 +15,18 @@
 //! Direct coprocessor cache key and admission obligations from TiDB's Go tests.
 
 use prost::Message;
-use tidb_distsql::{
-    build_copr_cache_key, copr_cache_metric_snapshot, CoprCache, CoprCacheAdmission,
-    CoprCacheConfig, CoprCacheError, CoprCacheRequestContext, CoprCacheResponseContext,
-    CoprCacheResponseOutcome, CoprCacheValue, CoprocessorRequestEnvelope, RequestKeyRange,
-};
+use tidb_copr::copr_cache::build_copr_cache_key;
+use tidb_copr::copr_cache_metrics::copr_cache_metric_snapshot;
+use tidb_copr::copr_cache::CoprCache;
+use tidb_copr::copr_cache::CoprCacheAdmission;
+use tidb_copr::copr_cache::CoprCacheConfig;
+use tidb_copr::copr_cache::CoprCacheError;
+use tidb_copr::copr_cache::CoprCacheRequestContext;
+use tidb_copr::copr_cache::CoprCacheResponseContext;
+use tidb_copr::copr_cache::CoprCacheResponseOutcome;
+use tidb_copr::copr_cache::CoprCacheValue;
+use tidb_copr::coprocessor_request::CoprocessorRequestEnvelope;
+use tidb_distsql::RequestKeyRange;
 use tidb_proto::{CoprocessorKeyRange, CoprocessorResponse};
 
 const MILLISECOND: i64 = 1_000_000;
@@ -238,7 +245,7 @@ fn test_cache_value_len() {
     // On the source's 64-bit target this is four 24-byte slice headers and
     // three 8-byte integers, the Go unsafe.Sizeof value the accounting keeps
     // whatever the Rust value's own layout is.
-    assert_eq!(tidb_distsql::GO_COPR_CACHE_VALUE_SIZE, 120);
+    assert_eq!(tidb_copr::copr_cache::GO_COPR_CACHE_VALUE_SIZE, 120);
 
     let value = CoprCacheValue {
         timestamp: 0x123,

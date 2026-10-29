@@ -482,7 +482,7 @@ pub struct PushdownStatementContext {
     /// Go `selectResult`'s `ctx.ExecDetails`/`RuntimeStatsColl`: where each
     /// response's `CopRuntimeStats` goes; `None` when the statement does not
     /// collect execution info.
-    pub cop_response_sink: Option<Arc<dyn crate::CopResponseSink>>,
+    pub cop_response_sink: Option<Arc<dyn crate::select_response::CopResponseSink>>,
 }
 
 impl Default for PushdownStatementContext {

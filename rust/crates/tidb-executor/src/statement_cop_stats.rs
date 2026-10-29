@@ -20,7 +20,8 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use tidb_distsql::{CopResponseSink, SelectResultMetadata};
+use tidb_distsql::select_response::CopResponseSink;
+use tidb_distsql::SelectResultMetadata;
 use tidb_txnkv::ResponseRuntimeStats;
 use tidb_proto::ExecutorExecutionSummary;
 
@@ -261,7 +262,7 @@ impl CopResponseSink for RuntimeStatsCollSink {
         &self,
         stream: u64,
         metadata: &SelectResultMetadata,
-        close: &tidb_distsql::SelectResultClose,
+        close: &tidb_distsql::select_response::SelectResultClose,
     ) {
         let stats = self
             .streams
@@ -408,14 +409,14 @@ mod runtime_stats_coll_sink_tests {
         sink.close_select_result(
             3,
             &metadata,
-            &tidb_distsql::SelectResultClose {
+            &tidb_distsql::select_response::SelectResultClose {
                 fetch_duration: Duration::from_micros(756),
                 cop_info: Some(tidb_txnkv::CopInfo {
                     concurrency: 1,
                     extra_concurrency: 0,
                     build_task_elapsed: Duration::from_nanos(3_540),
                 }),
-                ..tidb_distsql::SelectResultClose::default()
+                ..tidb_distsql::select_response::SelectResultClose::default()
             },
         );
         let text = coll.root_group_runtime_info(7).unwrap();
@@ -431,7 +432,7 @@ mod runtime_stats_coll_sink_tests {
             "{text}"
         );
         // A second close registers nothing more.
-        sink.close_select_result(3, &metadata, &tidb_distsql::SelectResultClose::default());
+        sink.close_select_result(3, &metadata, &tidb_distsql::select_response::SelectResultClose::default());
         assert_eq!(coll.root_group_runtime_info(7).unwrap(), text);
     }
 }

@@ -20,7 +20,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use tidb_distsql::{QueryDispatch, QueryTransport};
+use crate::query_transport::{send_request, QueryOperation, QueryTransport};
 use tidb_txnkv::TransportRequest;
 use tidb_txnkv::RequestTypeSupportedChecker;
 
@@ -38,7 +38,7 @@ use tidb_txnkv::RequestTypeSupportedChecker;
 /// (`NativeCopTransport` over `TikvStore`).
 pub trait RealTiKvSessionTransportFactory: Send + Sync {
     /// Worker-local transport type created for one admitted connection.
-    type Transport: tidb_distsql::QueryTransport;
+    type Transport: QueryTransport;
 
     /// Creates query-local state over the already-running process authority.
     fn open_session_transport(&self) -> Result<Self::Transport, String>;
@@ -72,14 +72,14 @@ where
         &self,
         request: &TransportRequest,
     ) -> Result<Box<dyn tidb_txnkv::Response + Send>, String> {
-        let dispatch = QueryDispatch::for_request(request).ok_or_else(|| {
+        let operation = QueryOperation::for_request_type(request.metadata().request_type).ok_or_else(|| {
             format!(
                 "unsupported coprocessor request type {:?}",
                 request.metadata().request_type
             )
         })?;
         let mut transport = self.factory.open_session_transport()?;
-        let response = tidb_distsql::send_request(&mut transport, request, &dispatch, None)
+        let response = send_request(&mut transport, request, operation, None, None)
             .map_err(|error| error.to_string())?;
         Ok(Box::new(response))
     }

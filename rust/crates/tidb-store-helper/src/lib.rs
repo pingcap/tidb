@@ -20,7 +20,7 @@
 //! `FetchRegionTableIndex`) with its region frames (`RegionFrameRange`,
 //! `NewFrameItemFromRegionKey`, `GetRecordFrame`, `GetIndexFrame`).
 //!
-//! Go walks an `infoschema.SchemaAndTable`; here that is [`all_schemas`],
+//! Go walks an `infoschema.SchemaAndTable`; here that is the caller's `all_schemas`,
 //! built from the session's catalog in Go's infoschema v2 order.
 
 use std::collections::{BTreeMap, HashMap};
@@ -30,8 +30,6 @@ use tidb_tablecodec::table_key::{
     get_table_handle_key_range, KeyHead, RecordHandle, TABLE_PREFIX, TABLE_SPLIT_KEY_LEN,
 };
 use tidb_kv::region_map::RegionStore;
-use tidb_infoschema::Catalog;
-use tidb_infoschema::TableEntry;
 use tidb_hack::GoToLower;
 use tikv_client::pd_http;
 
@@ -149,116 +147,6 @@ impl HelperSchema {
     pub fn is_mem_db(&self) -> bool {
         tidb_metadef::db::is_mem_db(&self.name.go_to_lower())
     }
-}
-
-/// Go infoschema v2's `AllSchemas` with each schema's `SchemaTableInfos`:
-/// the stored schemas in descending lower-case name order, each listing its
-/// tables, views and sequences in the meta KV's key order (`Table:<id>`
-/// sorts by the ID's decimal text), then the memory schemas.
-///
-/// Go keeps the memory schemas in a `sync.Map` and their tables in a map, so
-/// both orders are unspecified there; this lists `INFORMATION_SCHEMA` then
-/// `METRICS_SCHEMA`, tables by name. `PERFORMANCE_SCHEMA` is left out: its
-/// Go table IDs (`perfschema.tableIDMap`) have no port here. Its IDs lie
-/// between the other two memory schemas' and hold no keys, so no region
-/// boundary falls among them.
-pub fn all_schemas(catalog: &Catalog) -> Vec<HelperSchema> {
-    let mut stored = catalog
-        .database_names()
-        .into_iter()
-        .filter(|name| !tidb_metadef::db::is_mem_db(&name.go_to_lower()))
-        .collect::<Vec<_>>();
-    stored.sort_by_key(|name| std::cmp::Reverse(name.go_to_lower()));
-    let mut schemas = Vec::with_capacity(stored.len() + 2);
-    for schema in stored {
-        let mut tables = Vec::new();
-        for table_name in catalog.table_names(&schema).unwrap_or_default() {
-            let Some(entry) = catalog.table_in(&schema, &table_name) else {
-                continue;
-            };
-            let table = match entry {
-                TableEntry::Kv(table) => HelperTable {
-                    id: table.table_id(),
-                    name: table.name(),
-                    partitions: table
-                        .partition()
-                        .map(|partition| {
-                            partition
-                                .definitions
-                                .iter()
-                                .map(|definition| HelperPartition {
-                                    id: definition.id,
-                                    name: definition.name.clone(),
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    indices: table
-                        .indexes()
-                        .iter()
-                        .map(|index| HelperIndex {
-                            id: index.id,
-                            name: index.name.clone(),
-                            global: index.global,
-                        })
-                        .collect(),
-                    is_common_handle: !table.common_handle_offsets().is_empty(),
-                },
-                TableEntry::View(view) => HelperTable {
-                    id: view.id,
-                    name: view.name.clone(),
-                    partitions: Vec::new(),
-                    indices: Vec::new(),
-                    is_common_handle: false,
-                },
-                TableEntry::Sequence(sequence) => HelperTable {
-                    id: sequence.id,
-                    name: sequence.name.clone(),
-                    partitions: Vec::new(),
-                    indices: Vec::new(),
-                    is_common_handle: false,
-                },
-                TableEntry::Mem(_) => continue,
-            };
-            tables.push(table);
-        }
-        tables.sort_by_key(|table| table.id.to_string());
-        schemas.push(HelperSchema {
-            name: schema,
-            tables,
-        });
-    }
-    let memory_table = |id: i64, name: &str| HelperTable {
-        id,
-        name: name.to_owned(),
-        partitions: Vec::new(),
-        indices: Vec::new(),
-        is_common_handle: false,
-    };
-    let information_schema = catalog
-        .table_names(tidb_infoschema::infoschema_meta::INFORMATION_SCHEMA)
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|name| {
-            tidb_infoschema::infoschema_meta::memory_table_id(&name).map(|id| memory_table(id, &name))
-        })
-        .collect::<Vec<_>>();
-    if !information_schema.is_empty() {
-        schemas.push(HelperSchema {
-            name: "INFORMATION_SCHEMA".to_owned(),
-            tables: information_schema,
-        });
-    }
-    if catalog.has_database("metrics_schema") {
-        schemas.push(HelperSchema {
-            name: "METRICS_SCHEMA".to_owned(),
-            tables: tidb_infoschema::metricsschema::table_ids()
-                .iter()
-                .map(|(name, id)| memory_table(*id, name))
-                .collect(),
-        });
-    }
-    schemas
 }
 
 /// Go `helper.TableInfo`: the table, partition or index a key range belongs

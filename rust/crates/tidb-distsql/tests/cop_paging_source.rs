@@ -17,13 +17,20 @@
 use std::time::Duration;
 
 use prost::Message;
-use tidb_distsql::cop_paging::decode_tikv_unary_response;
-use tidb_distsql::{
-    calculate_paging_remain, calculate_paging_retry, coprocessor_response_process_time_nanos,
-    paging_response_read_bytes, BatchBucketVersionUpdate, CopPagingError, CopPagingState,
-    CopRuntimeConfig, ReadEngineGeneration, RegionTaskEnvelope, RegionTaskTopology,
-    RequestKeyRange, ResponseChannelEvent,
-};
+use tidb_copr::cop_paging::decode_tikv_unary_response;
+use tidb_copr::cop_paging::calculate_paging_remain;
+use tidb_copr::cop_paging::calculate_paging_retry;
+use tidb_copr::cop_paging::coprocessor_response_process_time_nanos;
+use tidb_copr::cop_paging::paging_response_read_bytes;
+use tidb_copr::cop_paging::BatchBucketVersionUpdate;
+use tidb_copr::cop_paging::CopPagingError;
+use tidb_copr::cop_paging::CopPagingState;
+use tidb_copr::cop_paging::CopRuntimeConfig;
+use tidb_copr::cop_paging::ReadEngineGeneration;
+use tidb_copr::region_task::RegionTaskEnvelope;
+use tidb_copr::region_task::RegionTaskTopology;
+use tidb_distsql::RequestKeyRange;
+use tidb_copr::response_channel::ResponseChannelEvent;
 use tidb_proto::{
     CoprocessorExecDetails, CoprocessorExecDetailsV2, CoprocessorKeyRange, CoprocessorResponse,
     CoprocessorScanDetailV2, CoprocessorTimeDetail, CoprocessorTimeDetailV2, KvrpcLockInfo,

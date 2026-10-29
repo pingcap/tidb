@@ -24,11 +24,11 @@ use tidb_txnkv::rpc::{
     go_max_procs, query_worker_runtime, wait_with_call, CompletionError, UnaryCallContext,
 };
 
-use crate::query_runtime::QueryResponse;
+use tidb_txnkv::Response;
 use tidb_txnkv::QueryResponseError;
 use tidb_txnkv::QueryResultSubset;
 
-pub(crate) trait CopTaskSource: QueryResponse {
+pub(crate) trait CopTaskSource: tidb_txnkv::Response {
     fn try_next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError>;
     fn task_count(&self) -> usize;
     fn has_remaining_work(&self) -> bool;
@@ -41,30 +41,30 @@ pub(crate) trait CopWorkerSource: CopTaskSource + Sized {
     fn keep_order(&self) -> bool;
     fn concurrency(&self) -> usize;
     fn into_tasks(self) -> Vec<Self>;
-    fn task(&self) -> &crate::RegionTaskEnvelope;
+    fn task(&self) -> &crate::region_task::RegionTaskEnvelope;
     fn use_row_hints(&self) -> bool;
     fn start_worker(&mut self);
 }
 
-pub(crate) type ConcurrentStart<R> = fn(R, bool) -> Box<dyn QueryResponse + Send>;
+pub(crate) type ConcurrentStart<R> = fn(R, bool) -> Box<dyn tidb_txnkv::Response + Send>;
 
 enum Driver<R> {
     Inline(R),
-    Concurrent(Box<dyn QueryResponse + Send>),
+    Concurrent(Box<dyn tidb_txnkv::Response + Send>),
     Closed,
 }
 
 /// Raw coprocessor iterator. A single-task read may borrow its statement's
 /// lite slot; continuations and other readers run independently of consumption.
-pub struct CopIterator<R: QueryResponse> {
+pub struct CopIterator<R: tidb_txnkv::Response> {
     driver: Driver<R>,
     start: Option<ConcurrentStart<R>>,
     lite: Option<Arc<AtomicBool>>,
-    limiter_wait: crate::LimiterWaitStats,
+    limiter_wait: tidb_txnkv::LimiterWaitStats,
     info: Option<tidb_txnkv::CopInfo>,
 }
 
-impl<R: QueryResponse> CopIterator<R> {
+impl<R: tidb_txnkv::Response> CopIterator<R> {
     pub(crate) fn new(
         mut source: R,
         start: Option<ConcurrentStart<R>>,
@@ -96,13 +96,13 @@ impl<R: QueryResponse> CopIterator<R> {
             driver,
             start,
             lite,
-            limiter_wait: crate::LimiterWaitStats::default(),
+            limiter_wait: tidb_txnkv::LimiterWaitStats::default(),
             info,
         }
     }
 }
 
-impl<R: QueryResponse> CopIterator<R> {
+impl<R: tidb_txnkv::Response> CopIterator<R> {
     fn release_lite(&mut self) {
         if let Some(token) = self.lite.take() {
             token.store(false, Ordering::Release);
@@ -160,7 +160,7 @@ impl<R: CopTaskSource> tidb_txnkv::Response for CopIterator<R> {
         self.info
     }
 
-    fn limiter_wait_stats(&self) -> crate::LimiterWaitStats {
+    fn limiter_wait_stats(&self) -> tidb_txnkv::LimiterWaitStats {
         let mut stats = self.limiter_wait;
         match &self.driver {
             Driver::Inline(source) => stats.merge(source.limiter_wait_stats()),
@@ -172,7 +172,7 @@ impl<R: CopTaskSource> tidb_txnkv::Response for CopIterator<R> {
 }
 
 
-impl<R: QueryResponse> Drop for CopIterator<R> {
+impl<R: tidb_txnkv::Response> Drop for CopIterator<R> {
     fn drop(&mut self) {
         self.close_inner();
     }
@@ -207,7 +207,7 @@ struct State<R> {
     current: usize,
     retired: usize,
     live_workers: usize,
-    limiter_wait: crate::LimiterWaitStats,
+    limiter_wait: tidb_txnkv::LimiterWaitStats,
 }
 
 /// Go's task sender, per-task ordered channels and unordered rendezvous.
@@ -545,7 +545,7 @@ impl<R: CopTaskSource + Send + 'static> tidb_txnkv::Response for ConcurrentRespo
         self.group.close();
     }
 
-    fn limiter_wait_stats(&self) -> crate::LimiterWaitStats {
+    fn limiter_wait_stats(&self) -> tidb_txnkv::LimiterWaitStats {
         self.group
             .state
             .lock()
@@ -564,7 +564,7 @@ impl<R: CopTaskSource + Send + 'static> Drop for ConcurrentResponse<R> {
 pub(crate) fn start_concurrent<R: CopWorkerSource + Send + 'static>(
     source: R,
     lite_fallback: bool,
-) -> Box<dyn QueryResponse + Send> {
+) -> Box<dyn tidb_txnkv::Response + Send> {
     let call = source.call();
     let limiter_wait = source.limiter_wait_stats();
     let ordered = source.keep_order();
@@ -586,7 +586,7 @@ pub(crate) fn start_concurrent<R: CopWorkerSource + Send + 'static>(
     // Go `smallTaskConcurrency(tasks, c.store.numcpu)` with `numcpu =
     // runtime.GOMAXPROCS(0)` (`pkg/store/copr/store.go:109`).
     let mut small_workers =
-        crate::RegionTaskEnvelope::small_concurrency(small_count, go_max_procs());
+        crate::region_task::RegionTaskEnvelope::small_concurrency(small_count, go_max_procs());
     if ordered {
         small_workers = small_workers.min(20);
     }

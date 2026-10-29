@@ -18,7 +18,14 @@
 use std::collections::BTreeMap;
 
 use prost::Message;
-use tidb_distsql::{KvRequestBuilder, ReadBytesEma, RegionTaskEnvelope, RegionTaskRequest, RegionTaskPeer, RegionTaskTopology, RequestKeyRange, RequestKeyRanges};
+use tidb_distsql::KvRequestBuilder;
+use tidb_copr::read_bytes_ema::ReadBytesEma;
+use tidb_copr::region_task::RegionTaskEnvelope;
+use tidb_distsql::RegionTaskRequest;
+use tidb_copr::region_task::RegionTaskPeer;
+use tidb_copr::region_task::RegionTaskTopology;
+use tidb_distsql::RequestKeyRange;
+use tidb_distsql::RequestKeyRanges;
 use tidb_txnkv::KvRequestMetadata;
 use tidb_txnkv::TransportRequest;
 use tidb_txnkv::StoreType;

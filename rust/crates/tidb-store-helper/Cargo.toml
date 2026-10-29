@@ -14,7 +14,6 @@ workspace = true
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-logutil = { path = "../tidb-logutil" }
 tidb-kv = { path = "../tidb-kv" }
-tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-log = { path = "../tidb-log" }
 tikv-client = { workspace = true }
 tidb-hack = { path = "../tidb-hack" }

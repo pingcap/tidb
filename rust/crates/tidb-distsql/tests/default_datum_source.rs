@@ -14,12 +14,14 @@
 
 //! Source checks for typed scalar materialization from a `TypeDefault` chunk.
 
+use tidb_distsql::select_response::IntoSelectIter;
 use prost::Message;
 use tidb_codec::{encode_value, encode_value_in_timezone};
 use tidb_datatype::{
     parse_datetime, Datum, FieldType, FieldTypeCode, MySqlDuration, SessionTimeZone, TimeType,
 };
-use tidb_distsql::{decode_chunk, ResponseChannel};
+use tidb_distsql::decode_chunk;
+use tidb_copr::response_channel::ResponseChannel;
 use tidb_context::WarningCollector;
 use tidb_proto::tipb::SelectResponse;
 use tidb_proto::{Chunk, EncodeType};

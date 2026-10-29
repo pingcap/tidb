@@ -16,8 +16,16 @@
 
 use std::time::Duration;
 
-use tidb_distsql::cop_paging::{CopReadTaskError, CopReadTaskResponse, CopReadTaskRuntime};
-use tidb_distsql::{CopPagingState, CoprCache, CoprCacheConfig, CoprCacheResponseOutcome, ReadEngineGeneration, RegionTaskTopology, RequestKeyRange, RequestKeyRanges, ResponseChannelEvent};
+use tidb_copr::cop_paging::{CopReadTaskError, CopReadTaskResponse, CopReadTaskRuntime};
+use tidb_copr::cop_paging::CopPagingState;
+use tidb_copr::copr_cache::CoprCache;
+use tidb_copr::copr_cache::CoprCacheConfig;
+use tidb_copr::copr_cache::CoprCacheResponseOutcome;
+use tidb_copr::cop_paging::ReadEngineGeneration;
+use tidb_copr::region_task::RegionTaskTopology;
+use tidb_distsql::RequestKeyRange;
+use tidb_distsql::RequestKeyRanges;
+use tidb_copr::response_channel::ResponseChannelEvent;
 use tidb_txnkv::KvRequestMetadata;
 use tidb_txnkv::StoreType;
 use tidb_txnkv::RequestType;
@@ -679,7 +687,7 @@ fn backpressure_rejects_before_cache_or_paging_mutation() {
             Duration::from_secs(100),
         ),
         Err(CopReadTaskError::Paging(
-            tidb_distsql::CopPagingError::Backpressure { capacity: 18 }
+            tidb_copr::cop_paging::CopPagingError::Backpressure { capacity: 18 }
         ))
     );
     assert!(runtime.cache().unwrap().get(&failed_key).is_none());

@@ -15,7 +15,12 @@
 #![allow(missing_docs)]
 
 use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_distsql::{InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryResultContext, QueryTransport, ResponseChannel, SelectInput};
+use tidb_distsql::InjectedQueryRuntime;
+use tidb_distsql::KvRequestBuilder;
+use tidb_distsql::QueryResultContext;
+use tidb_copr::query_transport::{QueryOperation, QueryTransport};
+use tidb_copr::response_channel::ResponseChannel;
+use tidb_distsql::SelectInput;
 use tidb_txnkv::TransportRequest;
 use tidb_context::WarningCollector;
 use tidb_txnkv::StoreType;
@@ -28,7 +33,7 @@ impl QueryTransport for OneResponse {
     fn send(
         &mut self,
         _request: &TransportRequest,
-        _dispatch: &QueryDispatch,
+        _operation: QueryOperation,
     ) -> Result<Option<Self::Response>, String> {
         Ok(self.0.take())
     }

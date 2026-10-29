@@ -27,13 +27,23 @@ use std::time::Duration;
 use tidb_proto::CoprocessorResponse;
 
 use super::{CopPagingError, CopPagingOutcome, CopPagingState, ReadEngineGeneration};
-use crate::{
-    region_task::build_region_tasks, CoprCache, CoprCacheError, CoprCacheLookup,
-    CoprCacheRequestContext, CoprCacheResponseContext, CoprCacheResponseOutcome,
-    CoprocessorRequestEnvelope, KvRequestMetadata, ReadBytesEma, RegionTaskEnvelope,
-    RegionTaskTopology, RequestKeyRange, RequestKeyRanges, RequestType, ResponseChannelEvent,
-    StoreType,
-};
+use crate::region_task::build_region_tasks;
+use crate::copr_cache::CoprCache;
+use crate::copr_cache::CoprCacheError;
+use crate::copr_cache::CoprCacheLookup;
+use crate::copr_cache::CoprCacheRequestContext;
+use crate::copr_cache::CoprCacheResponseContext;
+use crate::copr_cache::CoprCacheResponseOutcome;
+use crate::coprocessor_request::CoprocessorRequestEnvelope;
+use tidb_txnkv::KvRequestMetadata;
+use crate::read_bytes_ema::ReadBytesEma;
+use crate::region_task::RegionTaskEnvelope;
+use crate::region_task::RegionTaskTopology;
+use tidb_txnkv::KeyRange;
+use tidb_txnkv::PartitionedKeyRanges;
+use tidb_txnkv::RequestType;
+use crate::response_channel::ResponseChannelEvent;
+use tidb_txnkv::StoreType;
 
 const MAX_RANGES_PER_TASK_BUILD: usize = 25_000;
 
@@ -223,7 +233,7 @@ impl CopReadTaskResponse {
     /// deprecated `ExecDetails` contributes its time detail and the write
     /// column family's scan counts.
     #[must_use]
-    pub fn runtime_sample(&self, callee_address: &str) -> crate::ResponseRuntimeStats {
+    pub fn runtime_sample(&self, callee_address: &str) -> tidb_txnkv::ResponseRuntimeStats {
         let mut scan = tikv_client::util::ScanDetail::default();
         let mut time = tikv_client::util::TimeDetail::default();
         if let Some(details) = &self.response.exec_details_v2 {
@@ -241,11 +251,11 @@ impl CopReadTaskResponse {
                 scan.total_keys = write.total;
             }
         }
-        crate::ResponseRuntimeStats {
+        tidb_txnkv::ResponseRuntimeStats {
             callee_address: callee_address.to_owned(),
             scan_detail: Some(scan),
             time_detail: time,
-            ..crate::ResponseRuntimeStats::default()
+            ..tidb_txnkv::ResponseRuntimeStats::default()
         }
     }
 }
@@ -321,7 +331,7 @@ pub struct FailedCopReadAttempt {
     attempt_id: u64,
     logical_task_id: u64,
     logical_task_index: usize,
-    ranges: Vec<RequestKeyRange>,
+    ranges: Vec<KeyRange>,
     paging_size: u64,
 }
 
@@ -340,7 +350,7 @@ impl FailedCopReadAttempt {
 
     /// Exact ranges which the failed request had not consumed.
     #[must_use]
-    pub fn ranges(&self) -> &[RequestKeyRange] {
+    pub fn ranges(&self) -> &[KeyRange] {
         &self.ranges
     }
 
@@ -775,7 +785,7 @@ impl CopReadTaskRuntime {
         attempt_id: u64,
         response: impl Into<CopReadTaskResponse>,
         process_time_nanos: Option<i64>,
-        runtime: Option<crate::ResponseRuntimeStats>,
+        runtime: Option<tidb_txnkv::ResponseRuntimeStats>,
         now: Duration,
     ) -> Result<CopReadAcceptedResponse, CopReadTaskError> {
         let (prepared, lookup, logical_task_index) = {
@@ -938,7 +948,7 @@ impl CopReadTaskRuntime {
     pub fn retry_ranges_from(
         &self,
         failed: &FailedCopReadAttempt,
-    ) -> Result<Vec<RequestKeyRange>, CopReadTaskError> {
+    ) -> Result<Vec<KeyRange>, CopReadTaskError> {
         let current = self
             .tasks
             .get(failed.logical_task_index)
@@ -1267,7 +1277,7 @@ impl CopReadTaskRuntime {
     fn prepare_attempt(
         &mut self,
         logical_task_index: usize,
-        ranges: Vec<RequestKeyRange>,
+        ranges: Vec<KeyRange>,
         paging_size: u64,
     ) -> Result<u64, CopReadTaskError> {
         let attempt_id = self.next_attempt_id;
@@ -1278,7 +1288,7 @@ impl CopReadTaskRuntime {
     fn prepare_attempt_with_id(
         &mut self,
         logical_task_index: usize,
-        ranges: Vec<RequestKeyRange>,
+        ranges: Vec<KeyRange>,
         paging_size: u64,
         attempt_id: u64,
     ) -> Result<u64, CopReadTaskError> {
@@ -1352,11 +1362,11 @@ impl CopReadTaskRuntime {
 
     fn build_retry_tasks(
         &self,
-        ranges: Vec<RequestKeyRange>,
+        ranges: Vec<KeyRange>,
         topology: &[RegionTaskTopology],
     ) -> Result<Vec<RegionTaskEnvelope>, CopReadTaskError> {
         let mut metadata = self.metadata.as_ref().clone();
-        metadata.key_ranges = Some(Arc::new(RequestKeyRanges::new_non_partitioned(ranges)));
+        metadata.key_ranges = Some(Arc::new(PartitionedKeyRanges::new_non_partitioned(ranges)));
         build_region_tasks(&metadata, topology).ok_or(CopReadTaskError::InvalidTopology)
     }
 }
@@ -1377,7 +1387,7 @@ fn check_store_batch_copr(metadata: &KvRequestMetadata) -> bool {
     {
         return false;
     }
-    if metadata.replica_read != crate::ReplicaReadType::Leader || metadata.keep_order {
+    if metadata.replica_read != tidb_txnkv::ReplicaReadType::Leader || metadata.keep_order {
         return false;
     }
     if metadata.paging.enabled || metadata.paging.size_bytes > 0 {
@@ -1431,7 +1441,7 @@ pub(super) fn validate_request(metadata: &KvRequestMetadata) -> Result<(), CopRe
     Ok(())
 }
 
-fn ranges_are_strictly_monotonic(ranges: &[RequestKeyRange]) -> bool {
+fn ranges_are_strictly_monotonic(ranges: &[KeyRange]) -> bool {
     ranges.iter().enumerate().all(|(index, range)| {
         if range.end_key.is_empty() {
             return index + 1 == ranges.len();
@@ -1508,7 +1518,7 @@ mod tests {
         metadata.keep_order = true;
         metadata.start_ts = 100;
         metadata.key_ranges = Some(
-            RequestKeyRanges::new_non_partitioned(vec![RequestKeyRange {
+            PartitionedKeyRanges::new_non_partitioned(vec![KeyRange {
                 start_key: key(0).into(),
                 end_key: key(64).into(),
             }])
@@ -1579,7 +1589,7 @@ mod tests {
         metadata.keep_order = true;
         metadata.start_ts = 100;
         metadata.key_ranges = Some(
-            RequestKeyRanges::new_non_partitioned(vec![RequestKeyRange {
+            PartitionedKeyRanges::new_non_partitioned(vec![KeyRange {
                 start_key: key(0).into(),
                 end_key: key(64).into(),
             }])
@@ -1640,7 +1650,7 @@ mod tests {
             metadata.keep_order = true;
             metadata.start_ts = 100;
             metadata.key_ranges = Some(
-                RequestKeyRanges::new_non_partitioned(vec![RequestKeyRange {
+                PartitionedKeyRanges::new_non_partitioned(vec![KeyRange {
                     start_key: key(0).into(),
                     end_key: key(count).into(),
                 }])

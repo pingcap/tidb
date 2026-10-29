@@ -22,12 +22,15 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidb_distsql::{CopRuntimeConfig, CoprCache, CoprCacheConfig, QueryTransport};
+use tidb_copr::cop_paging::CopRuntimeConfig;
+use tidb_copr::copr_cache::CoprCache;
+use tidb_copr::copr_cache::CoprCacheConfig;
+use tidb_copr::query_transport::QueryTransport;
 use tidb_txnkv::driver::tikv_store::TikvStore;
 
 /// The production node's coprocessor transport: Go's `pkg/store/copr` over
 /// the node's client-rust store.
-pub type ProductionReadTransport = tidb_distsql::cop_paging::NativeCopTransport<TikvStore>;
+pub type ProductionReadTransport = tidb_copr::cop_paging::NativeCopTransport<TikvStore>;
 
 /// Opens worker-local coprocessor transports over process-owned capabilities.
 ///
@@ -58,7 +61,7 @@ impl RealTiKvSessionTransportFactory for ProductionReadSessionFactory {
     type Transport = ProductionReadTransport;
 
     fn open_session_transport(&self) -> Result<Self::Transport, String> {
-        Ok(tidb_distsql::cop_paging::NativeCopTransport::new(
+        Ok(tidb_copr::cop_paging::NativeCopTransport::new(
             Arc::clone(&self.tikv_store),
             CopRuntimeConfig {
                 default_timeout: self.default_timeout,

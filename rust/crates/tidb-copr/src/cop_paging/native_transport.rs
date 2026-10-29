@@ -44,13 +44,16 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use prost::Message as _;
 
-use crate::query_runtime::{QueryDispatch, QueryOperation, QueryTransport};
+use crate::query_transport::{QueryOperation, QueryTransport};
 use tidb_txnkv::QueryResponseError;
 use tidb_txnkv::QueryResultSubset;
-use crate::{
-    CancelHandle, CoprCache, RegionTaskEpoch, RegionTaskPeer, RegionTaskTopology,
-    ResponseChannelEvent, TransportRequest,
-};
+use tidb_txnkv::CancelHandle;
+use crate::copr_cache::CoprCache;
+use crate::region_task::RegionTaskEpoch;
+use crate::region_task::RegionTaskPeer;
+use crate::region_task::RegionTaskTopology;
+use crate::response_channel::ResponseChannelEvent;
+use tidb_txnkv::TransportRequest;
 use tidb_store_driver_txn::driver::cop_store::{CopBackoffer, NativeCopSend, NativeCopStore};
 use tidb_txnkv::lock::SnapshotLockSet;
 use tidb_txnkv::UnaryCallContext;
@@ -240,7 +243,7 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
     fn send(
         &mut self,
         request: &TransportRequest,
-        dispatch: &QueryDispatch,
+        operation: QueryOperation,
     ) -> Result<Option<Self::Response>, String> {
         let cancellation = Arc::clone(
             request
@@ -251,17 +254,17 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
             return Err("query cancelled by caller".to_owned());
         }
         let metadata = request.metadata_for_send().map_err(|e| format!("{e:?}"))?;
-        let supported = match dispatch.operation {
+        let supported = match operation {
             QueryOperation::Select | QueryOperation::SelectWithRuntimeStats => {
-                metadata.request_type == crate::RequestType::Dag
+                metadata.request_type == tidb_txnkv::RequestType::Dag
             }
-            QueryOperation::Analyze => metadata.request_type == crate::RequestType::Analyze,
-            QueryOperation::Checksum => metadata.request_type == crate::RequestType::Checksum,
+            QueryOperation::Analyze => metadata.request_type == tidb_txnkv::RequestType::Analyze,
+            QueryOperation::Checksum => metadata.request_type == tidb_txnkv::RequestType::Checksum,
         };
         if !supported {
             return Err(format!(
                 "unsupported coprocessor operation {:?}",
-                dispatch.operation
+                operation
             ));
         }
         // Each task source answers its own tasks in order; the worker pool
@@ -356,7 +359,7 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
 
 /// The request's key ranges, one partition (Go's coprocessor does not
 /// accept partitioned ranges on this path either).
-fn request_ranges(metadata: &crate::KvRequestMetadata) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
+fn request_ranges(metadata: &tidb_txnkv::KvRequestMetadata) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
     let ranges = metadata
         .key_ranges
         .as_ref()
@@ -397,7 +400,7 @@ pub struct NativeCopResponse<S: ?Sized> {
     /// `ExecDetails` charged for every send and lock resolution of the read.
     kv_context: tidb_txnkv::StatementKvContext,
     timeout: Duration,
-    metadata: Arc<crate::KvRequestMetadata>,
+    metadata: Arc<tidb_txnkv::KvRequestMetadata>,
     runtime: CopReadTaskRuntime,
     logical_order: Vec<u64>,
     active_attempts: BTreeMap<u64, u64>,
@@ -618,7 +621,7 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
         let mut runtime_sample = response.runtime_sample(&address);
         runtime_sample.resp_time = cost_time;
         runtime_sample.request_rpc_stats_present = req_stats.rpc_type_count() > 0;
-        runtime_sample.req_stats = Some(crate::RequestStatsSample(req_stats));
+        runtime_sample.req_stats = Some(tidb_txnkv::RequestStatsSample(req_stats));
         let accepted = self.runtime.accept_response_with_runtime(
             attempt_id,
             response,
@@ -966,7 +969,7 @@ impl<S: NativeCopStore + ?Sized> tidb_txnkv::Response for NativeCopResponse<S> {
         } else {
             0
         };
-        let mut extra = crate::RegionTaskEnvelope::small_concurrency(
+        let mut extra = crate::region_task::RegionTaskEnvelope::small_concurrency(
             small,
             tidb_txnkv::rpc::go_max_procs(),
         );
@@ -1022,7 +1025,7 @@ impl<S: NativeCopStore + ?Sized> super::cop_iterator::CopWorkerSource for Native
             .max(1)
     }
 
-    fn task(&self) -> &crate::RegionTaskEnvelope {
+    fn task(&self) -> &crate::region_task::RegionTaskEnvelope {
         self.runtime.first_task()
     }
 

@@ -23,7 +23,20 @@ use tidb_codec::encode_value_in_timezone;
 use tidb_datatype::{parse_datetime, Datum, FieldType, FieldTypeCode, SessionTimeZone, TimeType};
 use tidb_txnkv::QueryResponseError;
 use tidb_txnkv::QueryResultSubset;
-use tidb_distsql::{InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryOperation, QueryResultContext, QueryRuntimeError, QueryTransport, ResponseChannel, SelectInput, ANALYZE_RESULT_LABEL, CHECKSUM_RESULT_LABEL, DAG_RESULT_LABEL, GENERAL_SQL_TYPE, INTERNAL_SQL_TYPE, INTERNAL_TXN_STATS_SOURCE};
+use tidb_distsql::InjectedQueryRuntime;
+use tidb_distsql::KvRequestBuilder;
+use tidb_copr::query_transport::QueryOperation;
+use tidb_distsql::QueryResultContext;
+use tidb_copr::query_transport::QueryRuntimeError;
+use tidb_copr::query_transport::QueryTransport;
+use tidb_copr::response_channel::ResponseChannel;
+use tidb_distsql::SelectInput;
+use tidb_distsql::ANALYZE_RESULT_LABEL;
+use tidb_distsql::CHECKSUM_RESULT_LABEL;
+use tidb_distsql::DAG_RESULT_LABEL;
+use tidb_distsql::GENERAL_SQL_TYPE;
+use tidb_distsql::INTERNAL_SQL_TYPE;
+use tidb_distsql::INTERNAL_TXN_STATS_SOURCE;
 use tidb_txnkv::ResponseRuntimeStats;
 use tidb_txnkv::TransportBinding;
 use tidb_txnkv::TransportRequest;
@@ -45,7 +58,7 @@ fn transport_request(metadata: tidb_txnkv::KvRequestMetadata) -> TransportReques
 #[derive(Default)]
 struct ScriptedTransport {
     responses: VecDeque<Result<Option<ResponseChannel<prost::bytes::Bytes>>, String>>,
-    dispatches: Vec<QueryDispatch>,
+    operations: Vec<QueryOperation>,
     request_was_bound: bool,
     request_sources: Vec<tidb_txnkv::RequestSource>,
 }
@@ -54,7 +67,7 @@ impl ScriptedTransport {
     fn returning(response: ResponseChannel<prost::bytes::Bytes>) -> Self {
         Self {
             responses: VecDeque::from([Ok(Some(response))]),
-            dispatches: Vec::new(),
+            operations: Vec::new(),
             request_was_bound: false,
             request_sources: Vec::new(),
         }
@@ -67,9 +80,9 @@ impl QueryTransport for ScriptedTransport {
     fn send(
         &mut self,
         request: &TransportRequest,
-        dispatch: &QueryDispatch,
+        operation: QueryOperation,
     ) -> Result<Option<Self::Response>, String> {
-        self.dispatches.push(dispatch.clone());
+        self.operations.push(operation);
         self.request_was_bound = request.is_bound();
         self.request_sources
             .push(request.metadata().request_source.clone());
@@ -109,7 +122,7 @@ impl QueryTransport for TrackingTransport {
     fn send(
         &mut self,
         _request: &TransportRequest,
-        _dispatch: &QueryDispatch,
+        _operation: QueryOperation,
     ) -> Result<Option<Self::Response>, String> {
         Ok(self.0.take())
     }
@@ -175,16 +188,15 @@ fn select_sends_the_built_request_and_returns_the_transport_iterator() {
     assert!(iter.next_row().unwrap().is_none());
     let transport = runtime.into_transport();
     assert!(transport.request_was_bound);
-    let dispatch = &transport.dispatches[0];
-    assert_eq!(dispatch.operation, QueryOperation::Select);
-    assert_eq!(dispatch.result.label, DAG_RESULT_LABEL);
-    assert_eq!(dispatch.result.sql_type, Some(GENERAL_SQL_TYPE));
-    assert_eq!(dispatch.result.store_type, StoreType::TiFlash);
-    assert_eq!(dispatch.result.row_len, 2);
-    assert!(dispatch.result.mem_tracker_bound);
-    assert!(dispatch.result.paging);
-    assert_eq!(dispatch.result.dist_sql_concurrency, 7);
-    assert_eq!(iter.result_metadata(), Some(&dispatch.result));
+    assert_eq!(transport.operations[0], QueryOperation::Select);
+    let metadata = iter.result_metadata().expect("select metadata");
+    assert_eq!(metadata.label, DAG_RESULT_LABEL);
+    assert_eq!(metadata.sql_type, Some(GENERAL_SQL_TYPE));
+    assert_eq!(metadata.store_type, StoreType::TiFlash);
+    assert_eq!(metadata.row_len, 2);
+    assert!(metadata.mem_tracker_bound);
+    assert!(metadata.paging);
+    assert_eq!(metadata.dist_sql_concurrency, 7);
 }
 
 #[test]
@@ -265,11 +277,10 @@ fn select_with_runtime_stats_keeps_plan_identity_on_the_live_iterator() {
     let mut iter = result.into_select_iter(Vec::new());
     assert!(iter.next_row().unwrap().is_none());
     let transport = runtime.into_transport();
-    let dispatch = &transport.dispatches[0];
-    assert_eq!(dispatch.operation, QueryOperation::SelectWithRuntimeStats);
-    assert_eq!(dispatch.result.cop_plan_ids, vec![1, 2, beyond_i32]);
-    assert_eq!(dispatch.result.root_plan_id, Some(beyond_i32));
-    assert_eq!(iter.result_metadata(), Some(&dispatch.result));
+    assert_eq!(transport.operations[0], QueryOperation::SelectWithRuntimeStats);
+    let metadata = iter.result_metadata().expect("runtime-stats metadata");
+    assert_eq!(metadata.cop_plan_ids, vec![1, 2, beyond_i32]);
+    assert_eq!(metadata.root_plan_id, Some(beyond_i32));
     assert_eq!(iter.runtime_stats().backoff_sleep_ns("regionMiss"), 9);
 }
 
@@ -284,20 +295,20 @@ fn analyze_overrides_request_source_at_the_send_boundary() {
         second.clone(),
     ])));
     let mut result = runtime.analyze(&request, true).expect("analyze response");
+    let metadata = result.result_metadata().clone();
     assert_eq!(result.next_raw().unwrap(), Some(first));
     assert_eq!(result.next_raw().unwrap(), Some(second));
     assert_eq!(result.next_raw().unwrap(), None);
     assert!(result.is_closed());
     result.close();
     let transport = runtime.into_transport();
-    let dispatch = &transport.dispatches[0];
-    assert_eq!(dispatch.operation, QueryOperation::Analyze);
-    assert_eq!(dispatch.result.label, ANALYZE_RESULT_LABEL);
-    assert_eq!(dispatch.result.sql_type, Some(INTERNAL_SQL_TYPE));
-    let source = dispatch.request_source_override.as_ref().unwrap();
+    assert_eq!(transport.operations[0], QueryOperation::Analyze);
+    assert_eq!(metadata.label, ANALYZE_RESULT_LABEL);
+    assert_eq!(metadata.sql_type, Some(INTERNAL_SQL_TYPE));
+    // The analyze request source overrides the request's own on the wire.
+    let source = &transport.request_sources[0];
     assert!(source.internal);
     assert_eq!(source.source_type, INTERNAL_TXN_STATS_SOURCE);
-    assert_eq!(transport.request_sources[0], *source);
 }
 
 #[test]
@@ -308,15 +319,16 @@ fn checksum_preserves_general_result_metadata() {
     let mut runtime =
         InjectedQueryRuntime::new(ScriptedTransport::returning(response_with([raw.clone()])));
     let mut result = runtime.checksum(&request).expect("checksum response");
+    let metadata = result.result_metadata().clone();
     assert_eq!(result.next_raw().unwrap(), Some(raw));
     assert_eq!(result.next_raw().unwrap(), None);
     let transport = runtime.into_transport();
-    let dispatch = &transport.dispatches[0];
-    assert_eq!(dispatch.operation, QueryOperation::Checksum);
-    assert_eq!(dispatch.result.label, CHECKSUM_RESULT_LABEL);
-    assert_eq!(dispatch.result.sql_type, Some(GENERAL_SQL_TYPE));
-    assert_eq!(dispatch.result.store_type, StoreType::TiFlash);
-    assert!(dispatch.request_source_override.is_none());
+    assert_eq!(transport.operations[0], QueryOperation::Checksum);
+    assert_eq!(metadata.label, CHECKSUM_RESULT_LABEL);
+    assert_eq!(metadata.sql_type, Some(GENERAL_SQL_TYPE));
+    assert_eq!(metadata.store_type, StoreType::TiFlash);
+    // No override: the request goes out under its own source.
+    assert_eq!(transport.request_sources[0], request.metadata().request_source);
 }
 
 #[test]
@@ -359,7 +371,7 @@ fn select_client_options_deliver_typed_transaction_events() {
         fn send(
             &mut self,
             _request: &TransportRequest,
-            _dispatch: &QueryDispatch,
+            _operation: QueryOperation,
         ) -> Result<Option<Self::Response>, String> {
             self.callback.as_ref().expect("send event callback")(wrap_cop_meet_lock(Some(
                 Arc::new(CopMeetLock {
@@ -479,7 +491,7 @@ fn nil_transport_response_is_not_reinterpreted_as_empty_results() {
     let request = request(StoreType::TiKv);
     let transport = ScriptedTransport {
         responses: VecDeque::from([Ok(None)]),
-        dispatches: Vec::new(),
+        operations: Vec::new(),
         request_was_bound: false,
         request_sources: Vec::new(),
     };
@@ -509,7 +521,7 @@ fn already_bound_request_never_reaches_a_second_transport() {
         ),
         Err(QueryRuntimeError::Request(_))
     ));
-    assert!(runtime.into_transport().dispatches.is_empty());
+    assert!(runtime.into_transport().operations.is_empty());
 }
 
 #[test]
@@ -517,7 +529,7 @@ fn transport_error_remains_the_first_error() {
     let request = request(StoreType::TiKv);
     let transport = ScriptedTransport {
         responses: VecDeque::from([Err("region request failed".to_owned())]),
-        dispatches: Vec::new(),
+        operations: Vec::new(),
         request_was_bound: false,
         request_sources: Vec::new(),
     };
@@ -550,7 +562,7 @@ fn registered_storage_error_survives_row_and_chunk_decoding() {
 
     for chunk in [false, true] {
         let closed = Arc::new(AtomicBool::new(false));
-        let mut iter = tidb_distsql::SelectResponseIter::from_query_response(
+        let mut iter = tidb_distsql::select_response::SelectResponseIter::from_query_response(
             Box::new(Failure(Arc::clone(&closed))),
             field_types(1),
             Vec::new(),
@@ -566,7 +578,7 @@ fn registered_storage_error_survives_row_and_chunk_decoding() {
         };
         assert_eq!(
             error,
-            tidb_distsql::ResponseChannelError::SelectResponse {
+            tidb_copr::response_channel::ResponseChannelError::SelectResponse {
                 code: 9004,
                 message: "[tikv:9004]Resolve lock timeout".to_owned(),
             }

@@ -19,7 +19,7 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Duration;
 
-use tidb_distsql::ReadBytesEma;
+use tidb_copr::read_bytes_ema::ReadBytesEma;
 
 const BASE: Duration = Duration::from_secs(1_000);
 

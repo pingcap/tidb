@@ -475,7 +475,7 @@ pub fn tikv_region_status_rows(
     store: &dyn RegionStore,
     visibility: &SchemaVisibility,
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
-    let schemas = store_helper::all_schemas(catalog);
+    let schemas = all_schemas(catalog);
     let extractor_table_ids = extractor.map_or(&[][..], |extractor| extractor.tables_id.as_slice());
     let all_regions_info = if extractor_table_ids.is_empty() {
         let client = store_helper::try_get_pd_http_client(store)
@@ -582,7 +582,7 @@ pub fn tidb_hot_regions_rows(
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
     let client = store_helper::try_get_pd_http_client(store)
         .ok_or_else(|| plain_error(PD_HTTP_CLIENT_UNAVAILABLE))?;
-    let schemas = store_helper::all_schemas(catalog);
+    let schemas = all_schemas(catalog);
     let mut rows = Vec::new();
     for (hot_type, tp) in [
         (store_helper::HotType::Read, "read"),
@@ -708,7 +708,7 @@ pub fn tidb_hot_regions_history_rows(
             }
         }
     }
-    let schemas = store_helper::all_schemas(catalog);
+    let schemas = all_schemas(catalog);
     let tables = store_helper::get_tables_info_with_key_range(&schemas, true);
     let mut final_rows = Vec::new();
     loop {
@@ -811,7 +811,7 @@ pub fn table_storage_stats_rows(
              For example, where TABLE_SCHEMA = 'xxx' or where TABLE_SCHEMA in ('xxx', 'yyy')",
         ));
     }
-    let schemas = store_helper::all_schemas(catalog);
+    let schemas = all_schemas(catalog);
     let mut initial_tables = Vec::new();
     // Filter the memory schemas.
     for db in extractor
@@ -1427,4 +1427,114 @@ impl crate::mem_table_retrieval::MemTableRetriever for CatalogTablesRetriever {
         };
         tikv_region_status_rows(extractor, catalog, store.as_ref(), &self.visibility)
     }
+}
+
+/// Go infoschema v2's `AllSchemas` with each schema's `SchemaTableInfos`:
+/// the stored schemas in descending lower-case name order, each listing its
+/// tables, views and sequences in the meta KV's key order (`Table:<id>`
+/// sorts by the ID's decimal text), then the memory schemas.
+///
+/// Go keeps the memory schemas in a `sync.Map` and their tables in a map, so
+/// both orders are unspecified there; this lists `INFORMATION_SCHEMA` then
+/// `METRICS_SCHEMA`, tables by name. `PERFORMANCE_SCHEMA` is left out: its
+/// Go table IDs (`perfschema.tableIDMap`) have no port here. Its IDs lie
+/// between the other two memory schemas' and hold no keys, so no region
+/// boundary falls among them.
+fn all_schemas(catalog: &tidb_infoschema::Catalog) -> Vec<store_helper::HelperSchema> {
+    let mut stored = catalog
+        .database_names()
+        .into_iter()
+        .filter(|name| !tidb_metadef::db::is_mem_db(&name.go_to_lower()))
+        .collect::<Vec<_>>();
+    stored.sort_by_key(|name| std::cmp::Reverse(name.go_to_lower()));
+    let mut schemas = Vec::with_capacity(stored.len() + 2);
+    for schema in stored {
+        let mut tables = Vec::new();
+        for table_name in catalog.table_names(&schema).unwrap_or_default() {
+            let Some(entry) = catalog.table_in(&schema, &table_name) else {
+                continue;
+            };
+            let table = match entry {
+                tidb_infoschema::TableEntry::Kv(table) => store_helper::HelperTable {
+                    id: table.table_id(),
+                    name: table.name(),
+                    partitions: table
+                        .partition()
+                        .map(|partition| {
+                            partition
+                                .definitions
+                                .iter()
+                                .map(|definition| store_helper::HelperPartition {
+                                    id: definition.id,
+                                    name: definition.name.clone(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    indices: table
+                        .indexes()
+                        .iter()
+                        .map(|index| store_helper::HelperIndex {
+                            id: index.id,
+                            name: index.name.clone(),
+                            global: index.global,
+                        })
+                        .collect(),
+                    is_common_handle: !table.common_handle_offsets().is_empty(),
+                },
+                tidb_infoschema::TableEntry::View(view) => store_helper::HelperTable {
+                    id: view.id,
+                    name: view.name.clone(),
+                    partitions: Vec::new(),
+                    indices: Vec::new(),
+                    is_common_handle: false,
+                },
+                tidb_infoschema::TableEntry::Sequence(sequence) => store_helper::HelperTable {
+                    id: sequence.id,
+                    name: sequence.name.clone(),
+                    partitions: Vec::new(),
+                    indices: Vec::new(),
+                    is_common_handle: false,
+                },
+                tidb_infoschema::TableEntry::Mem(_) => continue,
+            };
+            tables.push(table);
+        }
+        tables.sort_by_key(|table| table.id.to_string());
+        schemas.push(store_helper::HelperSchema {
+            name: schema,
+            tables,
+        });
+    }
+    let memory_table = |id: i64, name: &str| store_helper::HelperTable {
+        id,
+        name: name.to_owned(),
+        partitions: Vec::new(),
+        indices: Vec::new(),
+        is_common_handle: false,
+    };
+    let information_schema = catalog
+        .table_names(tidb_infoschema::infoschema_meta::INFORMATION_SCHEMA)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|name| {
+            tidb_infoschema::infoschema_meta::memory_table_id(&name).map(|id| memory_table(id, &name))
+        })
+        .collect::<Vec<_>>();
+    if !information_schema.is_empty() {
+        schemas.push(store_helper::HelperSchema {
+            name: "INFORMATION_SCHEMA".to_owned(),
+            tables: information_schema,
+        });
+    }
+    if catalog.has_database("metrics_schema") {
+        schemas.push(store_helper::HelperSchema {
+            name: "METRICS_SCHEMA".to_owned(),
+            tables: tidb_infoschema::metricsschema::table_ids()
+                .iter()
+                .map(|(name, id)| memory_table(*id, name))
+                .collect(),
+        });
+    }
+    schemas
 }

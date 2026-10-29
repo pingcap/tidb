@@ -23,7 +23,8 @@
 use prost::encoding::{self, WireType};
 use tidb_proto::KvrpcContext;
 
-use crate::{KvRequestMetadata, RequestKeyRange};
+use tidb_txnkv::KvRequestMetadata;
+use tidb_txnkv::KeyRange;
 
 /// A dependency-closed coprocessor request envelope.
 ///
@@ -39,7 +40,7 @@ pub struct CoprocessorRequestEnvelope {
     /// Exact source `kv.Request.Data` bytes (field 3).
     pub data: prost::bytes::Bytes,
     /// Ordered half-open ranges for this coprocessor task (field 4).
-    pub ranges: Vec<RequestKeyRange>,
+    pub ranges: Vec<KeyRange>,
     /// Optional cache flag supplied by a future cache owner (field 5).
     pub is_cache_enabled: bool,
     /// Optional cache-version predicate supplied by a future cache owner (field 6).
@@ -77,7 +78,7 @@ impl CoprocessorRequestEnvelope {
     /// Keeping this argument explicit avoids silently flattening partition
     /// boundaries or pretending that a region router already exists.
     #[must_use]
-    pub fn from_metadata(metadata: &KvRequestMetadata, ranges: Vec<RequestKeyRange>) -> Self {
+    pub fn from_metadata(metadata: &KvRequestMetadata, ranges: Vec<KeyRange>) -> Self {
         Self::from_metadata_with_data(
             metadata,
             ranges,
@@ -87,7 +88,7 @@ impl CoprocessorRequestEnvelope {
 
     pub(crate) fn from_metadata_with_data(
         metadata: &KvRequestMetadata,
-        ranges: Vec<RequestKeyRange>,
+        ranges: Vec<KeyRange>,
         data: prost::bytes::Bytes,
     ) -> Self {
         Self {
@@ -278,7 +279,7 @@ impl CoprocessorRequestEnvelope {
 
 /// The body length of one `coprocessor.KeyRange` (`start` 1, `end` 2, an
 /// empty boundary omitted as `prost` omits a default `bytes` field).
-fn key_range_encoded_len(range: &RequestKeyRange) -> usize {
+fn key_range_encoded_len(range: &KeyRange) -> usize {
     let (start, end) = (range.start_key.as_slice(), range.end_key.as_slice());
     let mut len = 0;
     if !start.is_empty() {

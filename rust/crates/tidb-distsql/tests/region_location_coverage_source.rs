@@ -15,7 +15,9 @@
 //! Exact generated cases from
 //! `pkg/store/copr/region_cache_test.go::TestValidateLocationCoverage`.
 
-use tidb_distsql::{RegionTaskEnvelope, RegionTaskLocation, RequestKeyRange};
+use tidb_copr::region_task::RegionTaskEnvelope;
+use tidb_copr::region_location::RegionTaskLocation;
+use tidb_distsql::RequestKeyRange;
 
 fn kr(start: &str, end: &str) -> RequestKeyRange {
     RequestKeyRange {

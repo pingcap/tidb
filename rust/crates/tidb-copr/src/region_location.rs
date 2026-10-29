@@ -14,7 +14,8 @@
 
 //! Callable region-location coverage validation used by child-task construction.
 
-use crate::{RegionTaskEnvelope, RequestKeyRange};
+use crate::region_task::RegionTaskEnvelope;
+use tidb_txnkv::KeyRange;
 
 /// Region-cache location boundaries needed before constructing child tasks.
 ///
@@ -102,7 +103,7 @@ fn locations_are_ordered(locations: &[Option<RegionTaskLocation>]) -> bool {
 }
 
 fn validate_location_coverage(
-    ranges: &[RequestKeyRange],
+    ranges: &[KeyRange],
     locations: &[Option<RegionTaskLocation>],
 ) -> bool {
     if ranges.is_empty() {

@@ -14,7 +14,10 @@
 
 //! Source-derived response-channel ordering, error, and close lifecycle tests.
 
-use tidb_distsql::{ResponseChannel, ResponseChannelError, ResponseChannelEvent, ResponseChannelState};
+use tidb_copr::response_channel::ResponseChannel;
+use tidb_copr::response_channel::ResponseChannelError;
+use tidb_copr::response_channel::ResponseChannelEvent;
+use tidb_copr::response_channel::ResponseChannelState;
 use tidb_context::WarningLevel;
 use tidb_context::WarningClass;
 use tidb_context::Warning;

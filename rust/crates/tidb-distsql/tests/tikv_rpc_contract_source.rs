@@ -17,10 +17,17 @@
 use std::time::Duration;
 
 use prost::Message;
-use tidb_distsql::cop_paging::{
+use tidb_copr::cop_paging::{
     build_tikv_unary_request, decode_tikv_unary_response, CopReadTaskRuntime,
 };
-use tidb_distsql::{CopPagingState, KvPriority, ReadEngineGeneration, RegionTaskEpoch, RegionTaskPeer, RegionTaskTopology, RequestKeyRange, RequestKeyRanges};
+use tidb_copr::cop_paging::CopPagingState;
+use tidb_distsql::KvPriority;
+use tidb_copr::cop_paging::ReadEngineGeneration;
+use tidb_copr::region_task::RegionTaskEpoch;
+use tidb_copr::region_task::RegionTaskPeer;
+use tidb_copr::region_task::RegionTaskTopology;
+use tidb_distsql::RequestKeyRange;
+use tidb_distsql::RequestKeyRanges;
 use tidb_txnkv::KvRequestMetadata;
 use tidb_txnkv::StoreType;
 use tidb_txnkv::RequestType;

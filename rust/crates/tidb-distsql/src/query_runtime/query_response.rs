@@ -18,7 +18,7 @@
 use tidb_datatype::{FieldType, SessionTimeZone};
 
 use crate::distsql_runtime::SelectResultMetadata;
-use crate::response_channel::SelectResponseIter;
+use crate::select_response::SelectResponseIter;
 use tidb_txnkv::QueryResponseError;
 use crate::WarningCollector;
 

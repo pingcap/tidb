@@ -18,9 +18,10 @@
 //! `tidb_txnkv`; splitting one into region tasks is the coprocessor client's
 //! `buildCopTasks`, which stays with the region-task builder here.
 
-use crate::{
-    region_task::build_region_tasks, RegionTaskEnvelope, RegionTaskTopology, RequestKeyRange,
-};
+use tidb_copr::region_task::build_region_tasks;
+use tidb_copr::region_task::RegionTaskEnvelope;
+use tidb_copr::region_task::RegionTaskTopology;
+use crate::RequestKeyRange;
 use tidb_txnkv::{TransportRequest, TransportRequestError};
 
 /// Go `copr.buildCopTasks` / `SplitKeyRangesByLocations` over a built

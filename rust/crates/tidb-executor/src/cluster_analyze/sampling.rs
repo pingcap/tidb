@@ -942,15 +942,15 @@ fn native_transport<S: tidb_store_driver_txn::transaction::StoreClient>(
     opener: &tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
     timeout: std::time::Duration,
 ) -> Result<
-    tidb_distsql::cop_paging::NativeCopTransport<dyn tidb_store_driver_txn::driver::cop_store::NativeCopStore>,
+    tidb_copr::cop_paging::NativeCopTransport<dyn tidb_store_driver_txn::driver::cop_store::NativeCopStore>,
     String,
 > {
     let store = opener
         .cop_store()
         .ok_or_else(|| "ANALYZE needs the node's store".to_owned())?;
-    Ok(tidb_distsql::cop_paging::NativeCopTransport::new(
+    Ok(tidb_copr::cop_paging::NativeCopTransport::new(
         std::sync::Arc::clone(store),
-        tidb_distsql::CopRuntimeConfig {
+        tidb_copr::cop_paging::CopRuntimeConfig {
             default_timeout: timeout,
             ..Default::default()
         },

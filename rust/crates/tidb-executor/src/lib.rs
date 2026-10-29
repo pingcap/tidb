@@ -137,7 +137,7 @@ pub mod executor;
 pub mod explain;
 mod farmhash;
 pub(crate) mod foreign_key;
-use tidb_distsql::CopResponseSink;
+use tidb_distsql::select_response::CopResponseSink;
 pub use foreign_key::check_foreign_key_constrain;
 #[cfg(test)]
 mod tests_generated_column_ddl;

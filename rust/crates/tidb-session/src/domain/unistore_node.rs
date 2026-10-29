@@ -26,7 +26,7 @@
 use crate::domain::cluster_session_node::DomainLoginPolicy as _;
 use std::sync::Arc;
 
-use tidb_distsql::cop_paging::CopRuntimeConfig;
+use tidb_copr::cop_paging::CopRuntimeConfig;
 use tidb_copr::cop_client::RealTiKvSessionTransportFactory;
 use tidb_txnkv::driver::tikv_store::TikvStore;
 #[cfg(test)]
@@ -51,7 +51,7 @@ use tidb_store_driver_error::sql_query_error::SqlQueryError;
 /// the node's client-rust store, whose region cache and sender reach the
 /// embedded store through unistore's PD and RPC clients.
 pub type InProcessReadTransport =
-    tidb_distsql::cop_paging::NativeCopTransport<TikvStore<tidb_unistore::mock::StorePdClient>>;
+    tidb_copr::cop_paging::NativeCopTransport<TikvStore<tidb_unistore::mock::StorePdClient>>;
 
 /// The read-session factory over the embedded store, mirror of
 /// `ProductionReadSessionFactory`: cloneable handles only, no lifecycle
@@ -64,7 +64,7 @@ impl RealTiKvSessionTransportFactory for InProcessReadSessionFactory {
     type Transport = InProcessReadTransport;
 
     fn open_session_transport(&self) -> Result<Self::Transport, String> {
-        Ok(tidb_distsql::cop_paging::NativeCopTransport::new(
+        Ok(tidb_copr::cop_paging::NativeCopTransport::new(
             Arc::clone(&self.tikv_store),
             CopRuntimeConfig {
                 default_timeout: IN_PROCESS_TIMEOUT,

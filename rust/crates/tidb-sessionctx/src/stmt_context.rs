@@ -1082,7 +1082,7 @@ pub struct StmtContextData {
     /// Go `StmtCtx.ExecDetails`/`RuntimeStatsColl` as the consumer of every
     /// coprocessor response this statement reads; `None` unless the
     /// statement collects execution info.
-    cop_response_sink: Option<Arc<dyn tidb_distsql::CopResponseSink>>,
+    cop_response_sink: Option<Arc<dyn tidb_distsql::select_response::CopResponseSink>>,
     /// Go `SessionVars.AllowWriteRowID` (`tidb_opt_write_row_id`): whether an
     /// `INSERT`/`REPLACE`/`UPDATE` may name `_tidb_rowid` and write it.
     allow_write_row_id: bool,
@@ -2001,7 +2001,7 @@ context_configuration! {
     #[must_use]
     pub fn with_cop_response_sink(
         mut self,
-        sink: Option<Arc<dyn tidb_distsql::CopResponseSink>>,
+        sink: Option<Arc<dyn tidb_distsql::select_response::CopResponseSink>>,
     ) -> Self {
         self.cop_response_sink = sink;
         self
@@ -4723,7 +4723,7 @@ impl StmtContext {
 
     /// The statement's consumer of coprocessor response details.
     #[must_use]
-    pub fn cop_response_sink(&self) -> Option<Arc<dyn tidb_distsql::CopResponseSink>> {
+    pub fn cop_response_sink(&self) -> Option<Arc<dyn tidb_distsql::select_response::CopResponseSink>> {
         self.cop_response_sink.clone()
     }
 

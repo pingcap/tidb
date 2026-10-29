@@ -53,7 +53,15 @@ use std::sync::{Arc, Mutex};
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_distsql::{DistSqlContext, EncodeType, ExecutorKind, ExecutorShape, QueryResultContext, RequestBuilder, RequestEnvelope, SelectInput, SelectResponseIter};
+use tidb_distsql::DistSqlContext;
+use tidb_distsql::EncodeType;
+use tidb_distsql::ExecutorKind;
+use tidb_distsql::ExecutorShape;
+use tidb_distsql::QueryResultContext;
+use tidb_distsql::RequestBuilder;
+use tidb_distsql::RequestEnvelope;
+use tidb_distsql::SelectInput;
+use tidb_distsql::select_response::SelectResponseIter;
 use tidb_txnkv::CancelHandle;
 use tidb_context::WarningCollector;
 use tidb_planner::cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
@@ -772,7 +780,7 @@ struct RemoteScanPlan {
     /// The statement's `tidb_max_keys_read` budget and keys-examined counter.
     keys_read: crate::KeysReadBudget,
     /// The statement's consumer of per-response execution details.
-    cop_response_sink: Option<Arc<dyn tidb_distsql::CopResponseSink>>,
+    cop_response_sink: Option<Arc<dyn tidb_distsql::select_response::CopResponseSink>>,
 }
 
 /// Go copIteratorWorker/liteCopIteratorWorker turns task panics into errors.
@@ -988,7 +996,7 @@ impl CopRowStream {
             let batch = iter
                 .next_chunk_with_required_rows(required_rows.max(1))
                 .map_err(|error| match error {
-                    tidb_distsql::ResponseChannelError::SelectResponse { code, message } => {
+                    tidb_copr::response_channel::ResponseChannelError::SelectResponse { code, message } => {
                         StorageError::Sql(crate::MysqlError::from_select_response(
                             code as u16,
                             message,

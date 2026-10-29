@@ -15,9 +15,11 @@
 //! Source-contract checks for the pre-RPC region child-task envelope.
 
 use prost::Message;
-use tidb_distsql::{
-    RegionTaskEnvelope, RegionTaskEpoch, RegionTaskPeer, RequestKeyRange, VersionedRegionKeyRange,
-};
+use tidb_copr::region_task::RegionTaskEnvelope;
+use tidb_copr::region_task::RegionTaskEpoch;
+use tidb_copr::region_task::RegionTaskPeer;
+use tidb_distsql::RequestKeyRange;
+use tidb_copr::region_task::VersionedRegionKeyRange;
 use tidb_proto::StoreBatchTask;
 
 #[test]

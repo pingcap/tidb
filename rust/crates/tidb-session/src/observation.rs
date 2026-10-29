@@ -226,7 +226,7 @@ impl Session {
     /// (Go's `copIteratorWorker.stats` is only created when it is ON).
     pub(crate) fn statement_cop_response_sink(
         &self,
-    ) -> Option<Arc<dyn tidb_distsql::CopResponseSink>> {
+    ) -> Option<Arc<dyn tidb_distsql::select_response::CopResponseSink>> {
         let collect = self
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_COLLECT_EXECUTION_INFO)

@@ -25,7 +25,8 @@ use tidb_txnkv::{
 };
 
 use super::{CopReadTaskResponse, PreparedCopReadTask};
-use crate::{KvRequestMetadata, RequestSource};
+use tidb_txnkv::KvRequestMetadata;
+use tidb_txnkv::RequestSource;
 
 /// Fully encoded unary coprocessor request plus wrapper-owned send metadata.
 #[derive(Clone, Debug, PartialEq)]

@@ -37,7 +37,8 @@ use prost::Message;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_txnkv::QueryResponseError;
 use tidb_txnkv::QueryResultSubset;
-use tidb_distsql::{QueryDispatch, QueryTransport};
+use tidb_copr::query_transport::QueryOperation;
+use tidb_copr::query_transport::QueryTransport;
 use tidb_txnkv::TransportRequest;
 use tidb_copr::cop_client::CopClient;
 use tidb_copr::cop_client::RealTiKvSessionTransportFactory;
@@ -195,7 +196,7 @@ impl QueryTransport for FakeTransport {
     fn send(
         &mut self,
         request: &TransportRequest,
-        _dispatch: &QueryDispatch,
+        _operation: QueryOperation,
     ) -> Result<Option<Self::Response>, String> {
         let bytes = request.metadata().data.clone().expect("a DAG request");
         let dag = DagRequest::decode(bytes.as_slice()).expect("the request is a TiDB DAG");

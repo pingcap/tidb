@@ -28,7 +28,9 @@ use std::sync::Arc;
 use prost::Message;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
-use tidb_distsql::{mpp_result_metadata, ResponseChannelError, SelectResponseIter};
+use tidb_distsql::mpp_result_metadata;
+use tidb_copr::response_channel::ResponseChannelError;
+use tidb_distsql::select_response::SelectResponseIter;
 use tidb_txnkv::{
     MppBuildTasksRequest, MppClient, MppContext, MppError, MppStreamResponse, QueryResponseError,
     QueryResultSubset,

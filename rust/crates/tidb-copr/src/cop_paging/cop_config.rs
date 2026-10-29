@@ -20,7 +20,8 @@ use std::time::Duration;
 use tidb_txnkv::TraceInfo;
 
 use super::ReadEngineGeneration;
-use crate::{CoprCache, CoprCacheConfig};
+use crate::copr_cache::CoprCache;
+use crate::copr_cache::CoprCacheConfig;
 
 /// The coprocessor read's per-node policy.
 #[derive(Clone, Debug)]
