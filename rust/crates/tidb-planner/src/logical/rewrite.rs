@@ -253,7 +253,7 @@ pub fn filter_selectivity(
     let hist_coll = table_stats.hist_coll()?;
     Some(
         crate::cardinality::selectivity::selectivity(ctx, hist_coll, conditions, filled_paths)
-            .unwrap_or(crate::cost_factors::SELECTION_FACTOR),
+            .unwrap_or(tidb_planner_core_cost::SELECTION_FACTOR),
     )
 }
 
@@ -2321,7 +2321,7 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                                     &op.pushed_down_conds,
                                     &resolve,
                                     &[],
-                                    crate::cost_factors::SELECTION_FACTOR,
+                                    tidb_planner_core_cost::SELECTION_FACTOR,
                                     self.scale_ndv_skew_ratio,
                                 )
                             },
@@ -2758,7 +2758,7 @@ pub fn recursive_derive_stats(
         tidb_vardef::defaults::DEF_TIDB_ENABLE_INDEX_MERGE,
         false,
         64 * 1024 * 1024,
-        crate::cost_factors::SELECTION_FACTOR,
+        tidb_planner_core_cost::SELECTION_FACTOR,
         None,
         &tidb_expr::expr_util::RealFunctionBuilder::new(&tidb_exprctx::NoColumns),
         &tidb_exprctx::NoColumns,
@@ -3440,7 +3440,7 @@ mod analyzed_filter_selectivity_tests {
         let selectivity =
             analyzed_filter_selectivity(&table_stats, &[dnf]).expect("an analyzed profile");
         assert!(
-            (selectivity - crate::cost_factors::SELECTION_FACTOR).abs() > 1e-9,
+            (selectivity - tidb_planner_core_cost::SELECTION_FACTOR).abs() > 1e-9,
             "a single-column OR must not take the default: {selectivity}"
         );
         // Both values are bucket bounds, so the estimate is their repeats:

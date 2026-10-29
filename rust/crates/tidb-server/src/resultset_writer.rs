@@ -17,7 +17,7 @@
 use tidb_chunk::row::Row;
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_protocol::resultset_stream::{ResultSetStream, ResultSetStreamError, TextRowWriter};
-use tidb_protocol::TextScalar;
+use tidb_format_textrow::TextScalar;
 use tidb_protocol::{PacketWriter, ResultSetOptions};
 
 use tidb_session::domain::resultset_source::ResultSetSource;

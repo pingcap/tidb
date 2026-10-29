@@ -14,9 +14,10 @@
 
 #![allow(missing_docs)]
 
-use tidb_protocol::result_encoder::ResultEncoder;use tidb_protocol::{
+use tidb_format_textrow::result_encoder::{is_string_column_type, ResultEncoder};
+use tidb_protocol::{
     append_length_encoded_bytes, append_length_encoded_int, dump_column, dump_column_with_default,
-    dump_flag, dump_type, encode_text_row, is_string_column_type, ColumnDefault, ColumnInfo,
+    dump_flag, dump_type, encode_text_row, ColumnDefault, ColumnInfo,
     PacketError, TYPE_ENUM, TYPE_NEW_DATE, TYPE_SET, TYPE_STRING,
 };
 

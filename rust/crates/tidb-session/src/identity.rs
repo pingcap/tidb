@@ -1331,7 +1331,7 @@ impl Session {
             Stmt::Session(session) if matches!(*session, SessionStmt::SetPassword(_)) => Ok(()),
             Stmt::Admin(admin) if matches!(*admin, tidb_ast::AdminStmt::AlterUser(_)) => Ok(()),
             _ => Err(DriverError::from(
-                tidb_dbterror::exeerrors::ERR_MUST_CHANGE_PASSWORD
+                tidb_exeerrors::ERR_MUST_CHANGE_PASSWORD
                     .generate_with_stack_by_args(&[]),
             )),
         }

@@ -237,7 +237,7 @@ use tidb_domain_core::domain::GlobalIdGenerator;
 
 use tidb_meta::BdrRoleStore;
 
-use tidb_stats_handle::table_size_stats::TableStorageStatsProvider;
+use tidb_stats_handle_cache::table_size_stats::TableStorageStatsProvider;
 use tidb_executor::stmt_ctx_build::ResultMaterializationAuthority;
 
 
@@ -1108,7 +1108,6 @@ use tidb_executor::blacklist;
 mod bootstrap;
 mod classify;
 pub mod session_errors;
-pub mod cursor;
 mod ddl_exec;
 mod ddl_jobs;
 pub mod ddl_service;

@@ -27,7 +27,6 @@ mod datum_map_cache_source;
 mod estimate_source;
 mod existence_map_source;
 mod fmsketch_source;
-mod global_stats_source;
 mod histogram_source;
 mod index_query_source;
 mod index_source;

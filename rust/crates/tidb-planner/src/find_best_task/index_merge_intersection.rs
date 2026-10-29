@@ -103,7 +103,7 @@ pub(super) fn build_prepared_index_merge_task(
                 .set_stats(Some(crate::stats_info::StatsInfo::new(
                     filled
                         .count_after_index
-                        .unwrap_or(rows * crate::cost_factors::SELECTION_FACTOR),
+                        .unwrap_or(rows * tidb_planner_core_cost::SELECTION_FACTOR),
                     [],
                 )));
             selection.set_children(vec![partial_plan]);

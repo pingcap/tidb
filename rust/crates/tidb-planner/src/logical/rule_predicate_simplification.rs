@@ -60,7 +60,7 @@ fn logical_constant(ctx: &RuleContext<'_>, constant: &Constant) -> PredicateType
     if matches!(constant.value, Datum::Null) {
         return PredicateType::False;
     }
-    crate::constraint::constant_to_bool(ctx.eval_context, &constant.value).map_or(
+    tidb_planner_core_constraint::constant_to_bool(ctx.eval_context, &constant.value).map_or(
         PredicateType::Other,
         |value| {
             if value == 0 {
@@ -327,7 +327,7 @@ fn is_unsatisfiable_expression(ctx: &RuleContext<'_>, expression: &Expression) -
         expression,
         Expression::Constant(constant)
             if matches!(constant.value, Datum::Null)
-                || crate::constraint::constant_to_bool(ctx.eval_context, &constant.value) == Some(0)
+                || tidb_planner_core_constraint::constant_to_bool(ctx.eval_context, &constant.value) == Some(0)
     )
 }
 
@@ -597,7 +597,7 @@ pub fn apply_predicate_simplification(
         .map(|predicate| remove_redundant_or(ctx, predicate))
         .collect();
     predicates = prune_empty_or_branches(ctx, predicates);
-    crate::constraint::delete_true_exprs(ctx.use_plan_cache, ctx.eval_context, predicates)
+    tidb_planner_core_constraint::delete_true_exprs(ctx.use_plan_cache, ctx.eval_context, predicates)
 }
 
 /// Go `applyPredicateSimplificationForJoin`.

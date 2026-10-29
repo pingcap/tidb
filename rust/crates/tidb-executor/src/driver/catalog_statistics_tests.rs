@@ -149,13 +149,13 @@
     }
 
     fn clear_async_statistics_items() {
-        for item in tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.all_items() {
-            tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.delete(item.table_item_id);
+        for item in tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.all_items() {
+            tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.delete(item.table_item_id);
         }
     }
 
     fn requested_index_ids(table_id: i64) -> std::collections::HashSet<i64> {
-        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+        tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
             .all_items()
             .into_iter()
             .filter_map(|item| {
@@ -269,11 +269,11 @@
             }
             let mut failed = requested.table_item_id;
             failed.is_sync_load_failed = true;
-            assert!(tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+            assert!(tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
                 .all_items()
                 .iter()
                 .any(|item| item.table_item_id == failed));
-            tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.delete(failed);
+            tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.delete(failed);
             assert!(context.take_pending_statistics_load().is_none());
         }
     }
@@ -316,7 +316,7 @@
         assert!(!context.sync_stats_failed());
         let mut failed = requested.table_item_id;
         failed.is_sync_load_failed = true;
-        assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+        assert!(!tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
             .all_items()
             .iter()
             .any(|item| item.table_item_id == failed));
@@ -372,7 +372,7 @@
             }
             let mut failed = requested.table_item_id;
             failed.is_sync_load_failed = true;
-            tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.delete(failed);
+            tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.delete(failed);
             drop(sender);
         }
     }
@@ -427,7 +427,7 @@
             is_index: false,
             is_sync_load_failed: false,
         };
-        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(requested, false);
+        tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(requested, false);
 
         catalog
             .load_needed_histograms(&handle, "")
@@ -473,7 +473,7 @@
             is_index: true,
             is_sync_load_failed: false,
         };
-        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(requested, false);
+        tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(requested, false);
 
         catalog
             .load_needed_histograms(&handle, "")
@@ -516,7 +516,7 @@
             .request_statistics_load(&usage, &context)
             .expect("start asynchronous load");
         assert!(catalog.load_needed_histograms(&handle, "").is_err());
-        assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+        assert!(!tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
             .all_items()
             .iter()
             .any(|item| item.table_item_id == requested));
@@ -545,7 +545,7 @@
             is_index: false,
             is_sync_load_failed: false,
         };
-        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
+        tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
         // The table is dropped after queueing the column: the next schema
         // image no longer has it.
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -555,7 +555,7 @@
         catalog
             .load_needed_histograms(&handle, "")
             .expect("a dropped table is a successful skip");
-        assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+        assert!(!tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
             .all_items()
             .iter()
             .any(|item| item.table_item_id == dropped));
@@ -581,11 +581,11 @@
             is_index: false,
             is_sync_load_failed: false,
         };
-        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
+        tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
         catalog
             .load_needed_histograms(&handle, "")
             .expect("a dropped column is a successful skip");
-        assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+        assert!(!tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
             .all_items()
             .iter()
             .any(|item| item.table_item_id == dropped));
@@ -607,7 +607,7 @@
             is_index: true,
             is_sync_load_failed: false,
         };
-        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
+        tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
         // The table is dropped after queueing the index: the next schema
         // image no longer has it.
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -617,7 +617,7 @@
         catalog
             .load_needed_histograms(&handle, "")
             .expect("a dropped table is a successful skip");
-        assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+        assert!(!tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
             .all_items()
             .iter()
             .any(|item| item.table_item_id == dropped));
@@ -643,11 +643,11 @@
             is_index: true,
             is_sync_load_failed: false,
         };
-        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
+        tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(dropped, true);
         catalog
             .load_needed_histograms(&handle, "")
             .expect("a dropped index is a successful skip");
-        assert!(!tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
+        assert!(!tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
             .all_items()
             .iter()
             .any(|item| item.table_item_id == dropped));

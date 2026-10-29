@@ -182,7 +182,7 @@ pub fn load_needed_histograms_from_cluster<S: StoreClient>(
     shared: &SharedStats,
     loader: &ClusterStatsLoader,
 ) -> Result<(), SystemTableError> {
-    let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
+    let needed = &tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
     for requested in needed.all_items() {
         let item = requested.table_item_id;
         let result: Result<(), SystemTableError> = (|| {

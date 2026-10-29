@@ -34,6 +34,7 @@ tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-vardef = { path = "../tidb-vardef" }
 
 [dev-dependencies]
+tidb-stats-handle-globalstats = { path = "../tidb-stats-handle-globalstats" }
 serde_json.workspace = true
 sha2 = { workspace = true }
 
@@ -41,6 +42,3 @@ sha2 = { workspace = true }
 name = "all"
 path = "tests/all.rs"
 
-[[bench]]
-name = "global_stats"
-harness = false

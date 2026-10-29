@@ -27,7 +27,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
 
-use crate::cost_factors::SELECTION_FACTOR;
+use tidb_planner_core_cost::SELECTION_FACTOR;
 use crate::find_best_task::LogicalJoinType;
 use crate::plan_base::PlanIdAllocator;
 use crate::stats_info::StatsInfo;

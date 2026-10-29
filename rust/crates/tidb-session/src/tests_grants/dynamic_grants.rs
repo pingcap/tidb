@@ -28,25 +28,25 @@ fn dynamic_privileges_grant_revoke_and_show_grants() {
     for level in ["db1.*", "db1.t"] {
         crate::tests_support::assert_go_error(
             session.run(&format!("GRANT BACKUP_ADMIN ON {level} TO 'u1'@'%'")),
-            &tidb_dbterror::exeerrors::ERR_ILLEGAL_PRIVILEGE_LEVEL,
+            &tidb_exeerrors::ERR_ILLEGAL_PRIVILEGE_LEVEL,
             &["BACKUP_ADMIN".into()],
         );
     }
     crate::tests_support::assert_go_error(
         session.run("REVOKE BACKUP_ADMIN ON db1.* FROM 'u1'@'%'"),
-        &tidb_dbterror::exeerrors::ERR_ILLEGAL_PRIVILEGE_LEVEL,
+        &tidb_exeerrors::ERR_ILLEGAL_PRIVILEGE_LEVEL,
         &["BACKUP_ADMIN".into()],
     );
     // An UNREGISTERED name is 3929 at `*.*` -- and 3619 elsewhere, since
     // the level check runs first.
     crate::tests_support::assert_go_error(
         session.run("GRANT NOT_A_REAL_PRIV ON *.* TO 'u1'@'%'"),
-        &tidb_dbterror::exeerrors::ERR_DYNAMIC_PRIVILEGE_NOT_REGISTERED,
+        &tidb_exeerrors::ERR_DYNAMIC_PRIVILEGE_NOT_REGISTERED,
         &["NOT_A_REAL_PRIV".into()],
     );
     crate::tests_support::assert_go_error(
         session.run("GRANT NOT_A_REAL_PRIV ON db1.* TO 'u1'@'%'"),
-        &tidb_dbterror::exeerrors::ERR_ILLEGAL_PRIVILEGE_LEVEL,
+        &tidb_exeerrors::ERR_ILLEGAL_PRIVILEGE_LEVEL,
         &["NOT_A_REAL_PRIV".into()],
     );
 

@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Go pkg/privilege/privileges (the privilege cache and account policy) for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-exeerrors = { path = "../tidb-exeerrors" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-errno = { path = "../tidb-errno" }
 tidb-terror = { path = "../tidb-terror" }

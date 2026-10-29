@@ -202,7 +202,7 @@ fn merge_partitioned_global_statistics(
         }
         let partition_items = items
             .iter()
-            .map(|(stats, fm_sketch)| tidb_stats::PartitionStatsItem {
+            .map(|(stats, fm_sketch)| tidb_stats_handle_globalstats::PartitionStatsItem {
                 histogram: stats.histogram.clone(),
                 cmsketch: stats.cms.clone(),
                 topn: stats.topn.clone(),
@@ -210,7 +210,7 @@ fn merge_partitioned_global_statistics(
             })
             .collect();
         let source = items[0].0;
-        let merged = tidb_stats::merge_partition_stats_item(
+        let merged = tidb_stats_handle_globalstats::merge_partition_stats_item(
             Some(time_zone),
             source.stats_ver,
             topn_count,
@@ -218,7 +218,7 @@ fn merge_partitioned_global_statistics(
             row_count,
             &column.field_type,
             false,
-            tidb_stats::GlobalStatsMergeMode::Blocking,
+            tidb_stats_handle_globalstats::GlobalStatsMergeMode::Blocking,
             1,
             partition_items,
             &killer,
@@ -226,7 +226,7 @@ fn merge_partitioned_global_statistics(
         .map_err(|error| DriverError::unsupported(error.to_string()))?;
         if let Some(mut histogram) = merged.histogram {
             if crate::analyze::kv::is_local_unique(table, false, column.id) {
-                histogram.ndv = tidb_stats::global_stats::unique_global_ndv(
+                histogram.ndv = tidb_stats_handle_globalstats::unique_global_ndv(
                     items.iter().map(|(stats, _)| &stats.histogram),
                     row_count,
                 );
@@ -269,7 +269,7 @@ fn merge_partitioned_global_statistics(
         }
         let partition_items = items
             .iter()
-            .map(|(stats, fm_sketch)| tidb_stats::PartitionStatsItem {
+            .map(|(stats, fm_sketch)| tidb_stats_handle_globalstats::PartitionStatsItem {
                 histogram: stats.histogram.clone(),
                 cmsketch: stats.cms.clone(),
                 topn: stats.topn.clone(),
@@ -283,7 +283,7 @@ fn merge_partitioned_global_statistics(
             .and_then(|offset| table.columns().get(*offset))
             .map(|column| &column.field_type)
             .ok_or_else(|| DriverError::unsupported("global index has no leading column"))?;
-        let merged = tidb_stats::merge_partition_stats_item(
+        let merged = tidb_stats_handle_globalstats::merge_partition_stats_item(
             Some(time_zone),
             source.stats_ver,
             topn_count,
@@ -291,7 +291,7 @@ fn merge_partitioned_global_statistics(
             row_count,
             field_type,
             true,
-            tidb_stats::GlobalStatsMergeMode::Blocking,
+            tidb_stats_handle_globalstats::GlobalStatsMergeMode::Blocking,
             1,
             partition_items,
             &killer,
@@ -299,7 +299,7 @@ fn merge_partitioned_global_statistics(
         .map_err(|error| DriverError::unsupported(error.to_string()))?;
         if let Some(mut histogram) = merged.histogram {
             if crate::analyze::kv::is_local_unique(table, true, index.id) {
-                histogram.ndv = tidb_stats::global_stats::unique_global_ndv(
+                histogram.ndv = tidb_stats_handle_globalstats::unique_global_ndv(
                     items.iter().map(|(stats, _)| &stats.histogram),
                     row_count,
                 );

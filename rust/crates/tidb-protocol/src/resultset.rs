@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{append_length_encoded_int, encode_text_row, ColumnInfo};
+use crate::append_length_encoded_int;
+use crate::encode_text_row;
+use crate::ColumnInfo;
 
 /// MySQL's OK packet header.
 pub const OK_HEADER: u8 = 0x00;
@@ -111,7 +113,7 @@ pub struct ResultSetOptions {
     ///
     /// The default is Go's `isNull` state -- the variable unset -- which
     /// leaves metadata and data in their column charset.
-    pub result_encoder: crate::result_encoder::ResultEncoder,
+    pub result_encoder: tidb_format_textrow::result_encoder::ResultEncoder,
 }
 
 impl Default for ResultSetOptions {
@@ -124,7 +126,7 @@ impl Default for ResultSetOptions {
             warnings: 0,
             deprecate_eof: false,
             protocol_41: true,
-            result_encoder: crate::result_encoder::ResultEncoder::null(),
+            result_encoder: tidb_format_textrow::result_encoder::ResultEncoder::null(),
         }
     }
 }

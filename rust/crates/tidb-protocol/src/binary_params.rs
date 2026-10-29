@@ -29,12 +29,21 @@ use tidb_charset::find_encoding_take_utf8_as_noop;
 use tidb_charset::TransformOp;
 use tidb_errno::errcode;
 
-use crate::{
-    TYPE_BIT, TYPE_BLOB, TYPE_DATE, TYPE_DATETIME, TYPE_DOUBLE, TYPE_DURATION, TYPE_ENUM,
-    TYPE_FLOAT, TYPE_GEOMETRY, TYPE_INT24, TYPE_LONG, TYPE_LONGLONG, TYPE_LONG_BLOB,
-    TYPE_MEDIUM_BLOB, TYPE_NEW_DECIMAL, TYPE_SET, TYPE_SHORT, TYPE_STRING, TYPE_TIMESTAMP,
-    TYPE_TINY, TYPE_TINY_BLOB, TYPE_VARCHAR, TYPE_VAR_STRING, TYPE_YEAR,
-};
+use crate::{TYPE_BIT, TYPE_BLOB, TYPE_ENUM, TYPE_LONG_BLOB, TYPE_MEDIUM_BLOB, TYPE_SET, TYPE_STRING, TYPE_TINY_BLOB, TYPE_VARCHAR, TYPE_VAR_STRING};
+use tidb_format_textrow::TYPE_DATE;
+use tidb_format_textrow::TYPE_DATETIME;
+use tidb_format_textrow::TYPE_DOUBLE;
+use tidb_format_textrow::TYPE_DURATION;
+use tidb_format_textrow::TYPE_FLOAT;
+use tidb_format_textrow::TYPE_GEOMETRY;
+use tidb_format_textrow::TYPE_INT24;
+use tidb_format_textrow::TYPE_LONG;
+use tidb_format_textrow::TYPE_LONGLONG;
+use tidb_format_textrow::TYPE_NEW_DECIMAL;
+use tidb_format_textrow::TYPE_SHORT;
+use tidb_format_textrow::TYPE_TIMESTAMP;
+use tidb_format_textrow::TYPE_TINY;
+use tidb_format_textrow::TYPE_YEAR;
 
 /// MySQL `TypeNull` — a NULL parameter that carries no value bytes.
 pub const TYPE_NULL: u8 = 6;

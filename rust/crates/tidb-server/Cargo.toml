@@ -12,6 +12,8 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-format-textrow = { path = "../tidb-format-textrow" }
+tidb-planner-core-metrics = { path = "../tidb-planner-core-metrics" }
 tidb-expression-aggregation = { path = "../tidb-expression-aggregation" }
 tidb-sys-linux = { path = "../tidb-sys-linux" }
 tidb-exprctx = { path = "../tidb-exprctx" }

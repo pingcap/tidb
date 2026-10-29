@@ -18,9 +18,10 @@ use tidb_datatype::{Datum, Decimal};
 use tidb_protocol::resultset_stream::{
     ResultSetStream, ResultSetStreamError, ResultSetStreamState,
 };
-use tidb_protocol::{
-    ColumnInfo, ResultSetOptions, TextScalar, TYPE_LONG, TYPE_NEW_DECIMAL, TYPE_VAR_STRING,
-};
+use tidb_protocol::{ColumnInfo, ResultSetOptions, TYPE_VAR_STRING};
+use tidb_format_textrow::TextScalar;
+use tidb_format_textrow::TYPE_LONG;
+use tidb_format_textrow::TYPE_NEW_DECIMAL;
 
 fn column() -> ColumnInfo {
     ColumnInfo {
@@ -65,7 +66,7 @@ fn incremental_sequence_matches_write_chunks_without_row_buffering() {
 #[test]
 fn owned_text_row_matches_borrowed_go_framing_and_encoding() {
     let options = ResultSetOptions {
-        result_encoder: tidb_protocol::ResultEncoder::new("utf8mb4").unwrap(),
+        result_encoder: tidb_format_textrow::result_encoder::ResultEncoder::new("utf8mb4").unwrap(),
         ..ResultSetOptions::default()
     };
     let mut borrowed = ResultSetStream::new(vec![column()], options.clone());

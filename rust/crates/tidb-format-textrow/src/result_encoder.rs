@@ -28,7 +28,6 @@ use tidb_charset::get_charset_info_by_id;
 use tidb_charset::Charset;
 use tidb_charset::TransformOp;
 
-use crate::result::is_string_column_type as source_is_string_column_type;
 
 /// MySQL's default collation IDs used by TiDB's result metadata path.
 ///
@@ -117,11 +116,29 @@ impl fmt::Display for ResultEncoderError {
 
 impl std::error::Error for ResultEncoderError {}
 
-/// Returns whether a MySQL field type participates in result charset
-/// rewriting.  The type partition is shared with the text-row metadata
-/// primitive so BIT/blob/enum/set/JSON/vector columns follow source behavior.
+/// Go `IsStringColumnType`: whether a MySQL field type is a non-binary
+/// string-like type for text-protocol metadata charset rewriting. A vector
+/// column pretends to be a non-binary string to the client.
 pub fn is_string_column_type(type_code: u8) -> bool {
-    source_is_string_column_type(type_code)
+    use tidb_mysql::{
+        TypeBit, TypeBlob, TypeEnum, TypeJSON, TypeLongBlob, TypeMediumBlob, TypeSet, TypeString,
+        TypeTiDBVectorFloat32, TypeTinyBlob, TypeVarString, TypeVarchar,
+    };
+    matches!(
+        type_code,
+        TypeString
+            | TypeVarString
+            | TypeVarchar
+            | TypeBit
+            | TypeTinyBlob
+            | TypeMediumBlob
+            | TypeLongBlob
+            | TypeBlob
+            | TypeEnum
+            | TypeSet
+            | TypeJSON
+            | TypeTiDBVectorFloat32
+    )
 }
 
 /// Encodes text-protocol metadata and row bytes using TiDB's result charset

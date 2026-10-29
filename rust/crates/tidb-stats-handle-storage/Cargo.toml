@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB statistics storage: Go pkg/statistics/handle/storage (Rust rewrite)."
 
 [dependencies]
+tidb-stats-util = { path = "../tidb-stats-util" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-store-driver-error = { path = "../tidb-store-driver-error" }
 tidb-compress = { path = "../tidb-compress" }

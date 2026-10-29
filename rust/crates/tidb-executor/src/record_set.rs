@@ -174,7 +174,7 @@ impl StatementRecordSet {
         let retained = self.retained.is_some();
         let result = if self.finished {
             Err(DriverError::Mysql(crate::MysqlError::from_terror(
-                &tidb_dbterror::exeerrors::ERR_QUERY_INTERRUPTED
+                &tidb_exeerrors::ERR_QUERY_INTERRUPTED
                     .generate_with_stack_by_args(&[]),
             )))
         } else if let Some(chunks) = &mut self.retained {

@@ -35,7 +35,7 @@ use crossbeam_channel::{bounded, Receiver, Sender};
 use tidb_mysql::errors::FormatArg;
 use tidb_terror::TerrorError;
 
-use tidb_dbterror::exeerrors;
+use tidb_exeerrors as exeerrors;
 use tidb_intest as intest;
 
 fn lock_unpoison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

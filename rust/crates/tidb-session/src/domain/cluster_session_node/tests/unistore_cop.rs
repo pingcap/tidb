@@ -6759,7 +6759,7 @@ fn historical_stats_reader_falls_back_to_latest_stats_like_go() {
             .is_historical_stats
     );
     assert!(
-        !partitions[tidb_stats::TIDB_GLOBAL_STATS]
+        !partitions[tidb_stats_util::TIDB_GLOBAL_STATS]
             .as_ref()
             .expect("global fallback exists")
             .is_historical_stats
@@ -6888,7 +6888,7 @@ fn partition_analyze_queues_the_same_historical_stats_ids_as_go() {
         .partitions
         .expect("partition map exists");
     assert!(partitions["p0"].is_some());
-    assert!(partitions[tidb_stats::TIDB_GLOBAL_STATS].is_some());
+    assert!(partitions[tidb_stats_util::TIDB_GLOBAL_STATS].is_some());
 }
 
 /// The probe-33 regression: a derived table whose inner SELECT plans as a
@@ -13036,7 +13036,7 @@ fn deferred_uniqueness_batch_terminal_dml_error_aborts_prior_writes() {
     );
     assert_eq!(
         error.identity,
-        Some(tidb_dbterror::exeerrors::ERR_LAZY_UNIQUENESS_CHECK_FAILURE.identity())
+        Some(tidb_exeerrors::ERR_LAZY_UNIQUENESS_CHECK_FAILURE.identity())
     );
     assert!(!session.in_transaction());
     assert!(session.node().txn.explicit.is_none());

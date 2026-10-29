@@ -407,7 +407,7 @@ pub(super) fn build_converged_union_index_merge_task(
     let (advisory, desc, mut total_rows) = (*advisory, *desc, *total_rows);
     let datasource_rows = ds.base.base.stats_info().map(|stats| stats.row_count());
     if let Some(rows) = datasource_rows {
-        if expected_cnt + crate::cost_factors::TOLERANCE_FACTOR < rows {
+        if expected_cnt + tidb_planner_core_cost::TOLERANCE_FACTOR < rows {
             total_rows *= expected_cnt / rows;
         }
     }
@@ -1222,7 +1222,7 @@ mod tests {
         let derivation = crate::access_path::AccessPathDerivationContext {
             opt_prefix_index_single_scan: true,
             expr_pushdown_blacklist: &Default::default(),
-            selectivity_factor: crate::cost_factors::SELECTION_FACTOR,
+            selectivity_factor: tidb_planner_core_cost::SELECTION_FACTOR,
             estimator_options: Default::default(),
             range_max_size: 64 * 1024 * 1024,
             range_fallback_handler: None,

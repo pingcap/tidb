@@ -1,0 +1,17 @@
+[package]
+name = "tidb-cdcutil"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/util/cdcutil (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }
+serde.workspace = true
+serde_json.workspace = true
+tracing = "0.1"

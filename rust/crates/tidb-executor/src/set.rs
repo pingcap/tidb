@@ -122,7 +122,7 @@ fn set_sys_variable(
         // something that's not going to happen (Go `ErrSettingNoopVariable`).
         ctx.append_sql_warning(tidb_context::SqlWarn::raised(
             tidb_context::WarningLevel::Warning,
-            tidb_dbterror::exeerrors::ERR_SETTING_NOOP_VARIABLE
+            tidb_exeerrors::ERR_SETTING_NOOP_VARIABLE
                 .generate_with_stack_by_args(&[sys_var.name.into()]),
         ));
     }
@@ -134,7 +134,7 @@ fn set_sys_variable(
         is_instance = true;
         ctx.append_sql_warning(tidb_context::SqlWarn::raised(
             tidb_context::WarningLevel::Warning,
-            tidb_dbterror::exeerrors::ERR_INSTANCE_SCOPE
+            tidb_exeerrors::ERR_INSTANCE_SCOPE
                 .generate_with_stack_by_args(&[sys_var.name.into()]),
         ));
     }
@@ -165,7 +165,7 @@ fn set_sys_variable(
             || (is_snapshot && ctx.txn_is_staleness()))
     {
         return Err(DriverError::Mysql(MysqlError::from_terror(
-            &tidb_dbterror::exeerrors::ERR_CANT_CHANGE_TX_CHARACTERISTICS
+            &tidb_exeerrors::ERR_CANT_CHANGE_TX_CHARACTERISTICS
                 .generate_with_stack_by_args(&[]),
         )));
     }

@@ -28,6 +28,7 @@ tidb-memory = { path = "../../crates/tidb-memory" }
 tidb-util = { path = "../../crates/tidb-util" }
 tidb-sqlkiller = { path = "../../crates/tidb-sqlkiller" }
 tidb-protocol = { path = "../../crates/tidb-protocol" }
+tidb-format-textrow = { path = "../../crates/tidb-format-textrow" }
 tidb-config = { path = "../../crates/tidb-config" }
 
 [[test]]

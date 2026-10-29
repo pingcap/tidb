@@ -1257,7 +1257,7 @@ pub struct PhysicalTableScan {
     /// Go `TableAsName`: the query-visible alias, when one was written.
     pub table_as_name: Option<String>,
     /// Dynamic partition access selected for the reader above this scan.
-    pub dynamic_partition_access: Option<crate::access::DynamicPartitionAccessObject>,
+    pub dynamic_partition_access: Option<tidb_planner_core_access::DynamicPartitionAccessObject>,
     /// Go `TblCols`: all original table columns used by scan costing.
     pub cost_columns: Vec<Column>,
     /// Go `StoreType`: which engine serves this scan. `CopTask.GetStoreType`
@@ -2507,7 +2507,7 @@ pub struct PhysicalIndexScan {
     /// Go `TableAsName`: the query-visible alias, when one was written.
     pub table_as_name: Option<String>,
     /// Dynamic partition access selected for the reader above this scan.
-    pub dynamic_partition_access: Option<crate::access::DynamicPartitionAccessObject>,
+    pub dynamic_partition_access: Option<tidb_planner_core_access::DynamicPartitionAccessObject>,
     /// Go's physical index-scan schema used by scan costing: all index
     /// columns plus the encoded handle when it is not already present.
     pub cost_columns: Vec<Column>,

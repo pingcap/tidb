@@ -88,7 +88,7 @@ impl crate::Session {
         if !load.local {
             // Go `InitDataFiles`: only a remote URL is read; a server path is
             // refused once the executor is built.
-            return Err(DriverError::from((&tidb_dbterror::exeerrors::ERR_LOAD_DATA_FROM_SERVER_DISK).generate_with_stack(format!(
+            return Err(DriverError::from((&tidb_exeerrors::ERR_LOAD_DATA_FROM_SERVER_DISK).generate_with_stack(format!(
                     "Don't support load data from tidb-server's disk. Or if you want to load local data via client, the path of INFILE '{}' needs to specify the clause of LOCAL first",
                     load.path
                 ))));

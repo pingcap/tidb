@@ -20,11 +20,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub mod table_size_stats;
 pub mod bootstrap;
 pub mod catalog_statistics;
 pub mod source;
 pub mod sync_load;
+pub mod table_size_stats;
 
 pub use source::{StatisticsSource, StatisticsView};
 pub use sync_load::StatisticsLoadWorkers;
@@ -85,7 +85,7 @@ pub fn enqueue_sync_load_failures(
         }
         let mut item = requested.table_item_id;
         item.is_sync_load_failed = true;
-        tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(item, requested.full_load);
+        tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(item, requested.full_load);
     }
 }
 

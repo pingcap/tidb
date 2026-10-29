@@ -24,18 +24,18 @@
 //! [`Optimizer`] (Go's `Optimizer` interface); the executor implements both.
 
 mod algorithm;
-mod keyset;
 mod model;
 mod options;
 mod query;
 
 use std::collections::BTreeMap;
 
+use tidb_set::keyset::{KeySet, Keyed};
+
 use tidb_datatype::{Datum, FieldType};
 use tidb_driver_error::DriverError;
 use tidb_hack::GoToLower;
 
-pub use keyset::{KeySet, Keyed};
 pub use model::{Column, ImpactedQuery, Index, Query, Recommendation};
 pub use options::{description, ALL_OPTIONS};
 pub use query::parse_one_sql;

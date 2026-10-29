@@ -108,7 +108,7 @@ pub fn normalize_split_policy(
     };
     if column_count != upper.len() || column_count != lower.len() {
         return Err(MysqlError::from_terror(
-            &tidb_dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
+            &tidb_exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
                 .generate_with_stack_by_args(&[
                     "length of index columns and split values differ".into()
                 ]),

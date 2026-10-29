@@ -400,7 +400,7 @@ impl CteProducer {
         if self.current_iteration > self.context.cte_max_recursion_depth() as usize {
             return Err(ExecError::Mysql(
                 tidb_terror::MysqlError::from_terror(
-                    &tidb_dbterror::exeerrors::ERR_CTE_MAX_RECURSION_DEPTH
+                    &tidb_exeerrors::ERR_CTE_MAX_RECURSION_DEPTH
                         .generate_with_stack_by_args(&[(self.current_iteration as u64).into()]),
                 ),
             ));
@@ -441,7 +441,7 @@ impl CteProducer {
             if self.current_iteration > self.context.cte_max_recursion_depth() as usize {
                 return Err(ExecError::Mysql(
                     tidb_terror::MysqlError::from_terror(
-                        &tidb_dbterror::exeerrors::ERR_CTE_MAX_RECURSION_DEPTH
+                        &tidb_exeerrors::ERR_CTE_MAX_RECURSION_DEPTH
                             .generate_with_stack_by_args(&[(self.current_iteration as u64).into()]),
                     ),
                 ));

@@ -374,7 +374,7 @@ fn attach_dynamic_partition_access(
                     .filter_map(|index| source.partition_definition_names.get(index).cloned())
                     .collect()
             };
-            source.dynamic_partition_access = Some(crate::access::DynamicPartitionAccessObject {
+            source.dynamic_partition_access = Some(tidb_planner_core_access::DynamicPartitionAccessObject {
                 database: source.db_name.clone(),
                 table: source
                     .table_as_name

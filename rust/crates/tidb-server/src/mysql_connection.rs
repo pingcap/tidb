@@ -22,14 +22,22 @@ use tidb_session::domain::peer_address::PeerAddress;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use tidb_protocol::result_encoder::ResultEncoder;
-use tidb_protocol::{
-    decode_command, decode_prepared_statement_close, decode_prepared_statement_fetch,
-    decode_prepared_statement_send_long_data, encode_prepared_statement_prepare_response,
-    split_prepared_statement_execute, Command, CompressionAlgorithm, PacketError, PacketIoReader,
-    PacketIoWriter, PacketReader, PreparedParameterType, PreparedParameterTypes,
-    DEFAULT_MAX_ALLOWED_PACKET,
-};
+use tidb_format_textrow::result_encoder::ResultEncoder;
+use tidb_protocol::decode_command;
+use tidb_protocol::decode_prepared_statement_close;
+use tidb_protocol::decode_prepared_statement_fetch;
+use tidb_protocol::decode_prepared_statement_send_long_data;
+use tidb_protocol::encode_prepared_statement_prepare_response;
+use tidb_protocol::split_prepared_statement_execute;
+use tidb_protocol::Command;
+use tidb_protocol::CompressionAlgorithm;
+use tidb_protocol::PacketError;
+use tidb_protocol::PacketIoReader;
+use tidb_protocol::PacketIoWriter;
+use tidb_protocol::PacketReader;
+use tidb_protocol::PreparedParameterType;
+use tidb_protocol::PreparedParameterTypes;
+use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 
 use crate::auth_exchange::AuthSwitchRequest;
 use crate::configured_user_store::{AuthenticationFailure, ConfiguredUserStore};

@@ -29,7 +29,7 @@ use tidb_expr::simple_expr::{extract_columns_from_expressions, extract_cor_colum
 use crate::logical::BaseLogicalPlan;
 use crate::stats_info::StatsInfo;
 
-pub use crate::cost_factors::SELECTION_FACTOR;
+pub use tidb_planner_core_cost::SELECTION_FACTOR;
 
 /// Go `logicalop.LogicalSelection` (`logical_selection.go:38`).
 #[derive(Clone, Debug, Default)]

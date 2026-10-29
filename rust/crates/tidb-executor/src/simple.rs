@@ -131,7 +131,7 @@ pub fn execute_set_role(
                     Ok(role)
                 } else {
                     Err(DriverError::from(
-                        tidb_dbterror::exeerrors::ERR_ROLE_NOT_GRANTED
+                        tidb_exeerrors::ERR_ROLE_NOT_GRANTED
                             .generate_with_stack_by_args(&[
                                 format!("`{}`@`{}`", role.0, role.1).into(),
                                 format!("{}@{}", account.0.clone(), account.1.clone()).into(),

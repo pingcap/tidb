@@ -61,7 +61,7 @@ impl From<ExecError> for DriverError {
             // Go's error, raised by the executor, reported unchanged.
             ExecError::Mysql(error) => DriverError::Mysql(error),
             ExecError::MemoryExceedForQuery { conn_id } => DriverError::from(
-                tidb_dbterror::exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY
+                tidb_exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY
                     .generate_with_stack_by_args(&[conn_id.into()]),
             ),
             ExecError::Retrieval(error) => *error,

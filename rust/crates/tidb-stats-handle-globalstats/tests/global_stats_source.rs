@@ -18,11 +18,8 @@ use chrono::Utc;
 use tidb_codec::encode_key;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_stats::histogram::{Bucket, Histogram};
-use tidb_stats::{
-    merge_partition_stats_item, merge_partition_topn, merge_partition_topn_concurrently,
-    CmsSketch, FmSketch, GlobalStatsMergeError, GlobalStatsMergeMode, PartitionStatsItem, TopN,
-    MAX_PARTITION_MERGE_BATCH_SIZE, MAX_SKETCH_SIZE,
-};
+use tidb_stats::{CmsSketch, FmSketch, TopN, MAX_SKETCH_SIZE};
+use tidb_stats_handle_globalstats::{merge_partition_stats_item, merge_partition_topn, merge_partition_topn_concurrently, GlobalStatsMergeError, GlobalStatsMergeMode, PartitionStatsItem, MAX_PARTITION_MERGE_BATCH_SIZE};
 use tidb_sqlkiller::{KillSignal, SqlKiller};
 
 fn encoded(value: i64) -> Vec<u8> {

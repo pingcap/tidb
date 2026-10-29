@@ -924,9 +924,9 @@ impl LogicalJoin {
         result.left_cond = remove_dup_exprs(result.left_cond);
         result.right_cond = remove_dup_exprs(result.right_cond);
         result.left_cond =
-            crate::constraint::delete_true_exprs_by_schema(left_schema, result.left_cond);
+            tidb_planner_core_constraint::delete_true_exprs_by_schema(left_schema, result.left_cond);
         result.right_cond =
-            crate::constraint::delete_true_exprs_by_schema(right_schema, result.right_cond);
+            tidb_planner_core_constraint::delete_true_exprs_by_schema(right_schema, result.right_cond);
         result
     }
 

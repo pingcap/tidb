@@ -38,12 +38,12 @@ impl<T: Keyed + Clone> Default for KeySet<T> {
 }
 
 impl<T: Keyed + Clone> KeySet<T> {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
     /// Go `ListToSet`.
-    pub(crate) fn from_items(items: impl IntoIterator<Item = T>) -> Self {
+    pub fn from_items(items: impl IntoIterator<Item = T>) -> Self {
         let mut set = Self::new();
         for item in items {
             set.add(item);
@@ -52,29 +52,29 @@ impl<T: Keyed + Clone> KeySet<T> {
     }
 
     /// Go `Add`: an item with the same key replaces the stored one.
-    pub(crate) fn add(&mut self, item: T) {
+    pub fn add(&mut self, item: T) {
         self.items.insert(item.key(), item);
     }
 
-    pub(crate) fn contains(&self, item: &T) -> bool {
+    pub fn contains(&self, item: &T) -> bool {
         self.items.contains_key(&item.key())
     }
 
-    pub(crate) fn remove(&mut self, item: &T) {
+    pub fn remove(&mut self, item: &T) {
         self.items.remove(&item.key());
     }
 
     /// Go `ToList`: sorted by key.
-    pub(crate) fn to_list(&self) -> Vec<T> {
+    pub fn to_list(&self) -> Vec<T> {
         self.items.values().cloned().collect()
     }
 
-    pub(crate) fn size(&self) -> usize {
+    pub fn size(&self) -> usize {
         self.items.len()
     }
 
     /// Go `UnionSet`.
-    pub(crate) fn union(sets: &[&Self]) -> Self {
+    pub fn union(sets: &[&Self]) -> Self {
         let mut union = Self::new();
         for set in sets {
             for item in set.items.values() {
@@ -85,7 +85,7 @@ impl<T: Keyed + Clone> KeySet<T> {
     }
 
     /// Go `AndSet` of two sets.
-    pub(crate) fn intersection(left: &Self, right: &Self) -> Self {
+    pub fn intersection(left: &Self, right: &Self) -> Self {
         let mut set = Self::new();
         for item in left.items.values() {
             if right.contains(item) {
@@ -96,7 +96,7 @@ impl<T: Keyed + Clone> KeySet<T> {
     }
 
     /// Go `DiffSet`: the items of `left` that `right` lacks.
-    pub(crate) fn difference(left: &Self, right: &Self) -> Self {
+    pub fn difference(left: &Self, right: &Self) -> Self {
         let mut set = Self::new();
         for item in left.items.values() {
             if !right.contains(item) {
@@ -108,7 +108,7 @@ impl<T: Keyed + Clone> KeySet<T> {
 
     /// Go `CombSet`: every combination of `number_of_items` items, in the
     /// order the include-then-exclude recursion yields them.
-    pub(crate) fn combinations(&self, number_of_items: usize) -> Vec<Self> {
+    pub fn combinations(&self, number_of_items: usize) -> Vec<Self> {
         let list = self.to_list();
         let mut current = Self::new();
         comb_iterate(&list, &mut current, 0, number_of_items)

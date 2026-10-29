@@ -15,17 +15,31 @@
 #![allow(missing_docs)]
 
 use tidb_datatype::{Decimal, PackedTime};
-use tidb_protocol::{
-    decode_prepared_statement_close, decode_prepared_statement_execute,
-    decode_prepared_statement_execute_with_bound_params, decode_prepared_statement_fetch,
-    decode_prepared_statement_send_long_data, encode_binary_datetime, encode_binary_result_row,
-    encode_binary_signed_longlong_row, encode_binary_time,
-    encode_prepared_statement_prepare_response, split_prepared_statement_execute,
-    BinaryDateTimeType, BinaryResultCell, BinaryResultSetStream, ColumnInfo, PreparedParameterType,
-    PreparedParameterTypes, PreparedStatementError, PreparedStatementSendLongData, PreparedValue,
-    ResultSetOptions, BINARY_DEFAULT_COLLATION_ID, TYPE_JSON, TYPE_LONGLONG,
-};
-use tidb_protocol::result_encoder::ResultEncoder;
+use tidb_protocol::decode_prepared_statement_close;
+use tidb_protocol::decode_prepared_statement_execute;
+use tidb_protocol::decode_prepared_statement_execute_with_bound_params;
+use tidb_protocol::decode_prepared_statement_fetch;
+use tidb_protocol::decode_prepared_statement_send_long_data;
+use tidb_protocol::encode_binary_datetime;
+use tidb_protocol::encode_binary_result_row;
+use tidb_protocol::encode_binary_signed_longlong_row;
+use tidb_protocol::encode_binary_time;
+use tidb_protocol::encode_prepared_statement_prepare_response;
+use tidb_protocol::split_prepared_statement_execute;
+use tidb_protocol::BinaryDateTimeType;
+use tidb_protocol::BinaryResultCell;
+use tidb_protocol::BinaryResultSetStream;
+use tidb_protocol::ColumnInfo;
+use tidb_protocol::PreparedParameterType;
+use tidb_protocol::PreparedParameterTypes;
+use tidb_protocol::PreparedStatementError;
+use tidb_protocol::PreparedStatementSendLongData;
+use tidb_protocol::PreparedValue;
+use tidb_protocol::ResultSetOptions;
+use tidb_protocol::BINARY_DEFAULT_COLLATION_ID;
+use tidb_protocol::TYPE_JSON;
+use tidb_format_textrow::TYPE_LONGLONG;
+use tidb_format_textrow::result_encoder::ResultEncoder;
 
 /// pkg/server/internal/parse/parse.go:35-48 `StmtFetchCmd`.
 ///
@@ -629,7 +643,7 @@ fn reused_binary_row_buffer_matches_borrowed_encoding_and_retains_errors() {
         let mut stream = BinaryResultSetStream::new(
             vec![longlong_column("k"), varstring_column("c")],
             ResultSetOptions {
-                result_encoder: tidb_protocol::ResultEncoder::new(charset).unwrap(),
+                result_encoder: tidb_format_textrow::result_encoder::ResultEncoder::new(charset).unwrap(),
                 ..ResultSetOptions::default()
             },
         ).unwrap();

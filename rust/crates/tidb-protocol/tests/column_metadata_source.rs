@@ -14,7 +14,8 @@
 
 #![allow(missing_docs)]
 
-use tidb_protocol::result_encoder::ResultEncoder;use tidb_protocol::{
+use tidb_format_textrow::result_encoder::ResultEncoder;
+use tidb_protocol::{
     dump_column, dump_column_with_default, ColumnDefault, ColumnInfo, BINARY_DEFAULT_COLLATION_ID,
     BINARY_FLAG, DEFAULT_COLLATION_ID, ENUM_FLAG, MAX_LONG_BLOB_WIDTH, SET_FLAG, TYPE_LONG_BLOB,
     TYPE_NEW_DATE, TYPE_TIDB_VECTOR_FLOAT32,

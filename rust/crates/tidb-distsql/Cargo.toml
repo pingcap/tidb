@@ -46,3 +46,4 @@ path = "tests/all.rs"
 workspace = true
 
 [dev-dependencies]
+tidb-copr-metrics = { path = "../tidb-copr-metrics" }

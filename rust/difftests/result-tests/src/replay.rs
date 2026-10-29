@@ -238,7 +238,7 @@ fn cell(value: &Datum) -> String {
 ///
 /// A recording is what mysql-tester read off the wire, so the comparison has
 /// to render the same way the wire does --
-/// [`tidb_protocol::format_datum_text`], which the server's own row writer
+/// [`tidb_format_textrow::format_datum_text`], which the server's own row writer
 /// uses. Rendering the `Datum` alone agrees for most types and then quietly
 /// disagrees for the ones whose text depends on the COLUMN: a `FLOAT` prints
 /// `2.77311e38` where the value alone prints every digit, and only the
@@ -255,8 +255,8 @@ fn cell_bytes(
     }
     // `table_is_empty` is Go's `ColumnInfo.Table == ""`, which decides
     // whether a DOUBLE/FLOAT's FIXED decimal precision is honoured.
-    let column = tidb_protocol::TextColumn::from_field_type(field_type, table_is_empty);
-    match tidb_protocol::format_datum_text(column, value) {
+    let column = tidb_format_textrow::TextColumn::from_field_type(field_type, table_is_empty);
+    match tidb_format_textrow::format_datum_text(column, value) {
         Ok(Some(bytes)) => bytes,
         Ok(None) => b"NULL".to_vec(),
         // A value the protocol cannot render is not something to paper over

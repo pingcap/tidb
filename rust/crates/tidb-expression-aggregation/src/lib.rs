@@ -142,14 +142,8 @@
 //!    covers fewer kinds (no window functions, no `approx_percentile`, no
 //!    `json_*`) and does not implement `WrapCastForAggArgs`.
 //!
-//! 3. **`tidb-planner::aggregation_descriptor::AggFuncDesc<A, R, O>`** -- a
-//!    GENERIC identity shell (name/args/ret/mode/distinct/order-by) whose type
-//!    parameters exist because the planner had no concrete `Expression`-typed
-//!    descriptor to point at. This module supplies exactly that type. The
-//!    intended end state is `LogicalAggregation` holding
-//!    `Vec<AggFuncDesc>` from here, with the planner's generic shell reduced
-//!    to the hashing/identity adapter it is used for. That crate is NOT
-//!    touched by this batch.
+//! 3. The planner's generic `AggFuncDesc<A, R, O>` identity shell is gone:
+//!    it was unused, and this module's [`AggFuncDesc`] is the descriptor.
 //!
 //! # Narrowings, each named
 //!

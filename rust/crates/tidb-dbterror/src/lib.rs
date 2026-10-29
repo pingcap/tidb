@@ -31,7 +31,6 @@
 //! byte-for-byte rather than re-derived by hand.
 
 mod ddl_errors;
-pub mod exeerrors;
 
 pub use ddl_errors::*;
 
@@ -110,7 +109,7 @@ impl ErrClass {
     /// `NewStdErr` with a plain composed message (Go's
     /// `parser_mysql.Message(text, nil)`, carrying no redaction positions).
     #[must_use]
-    pub(crate) fn new_plain_err(&self, code: u16, message: &'static str) -> TerrorError {
+    pub fn new_plain_err(&self, code: u16, message: &'static str) -> TerrorError {
         TerrorError::registered(self.0, TerrorCode::new(code as isize), message)
     }
 }

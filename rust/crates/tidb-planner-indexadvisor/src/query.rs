@@ -31,7 +31,7 @@ use tidb_datatype::FieldType;
 use tidb_hack::GoToLower;
 use tidb_hack::go_to_lower;
 
-use crate::keyset::KeySet;
+use tidb_set::keyset::KeySet;
 use crate::model::{Column, Query};
 use crate::{advisor_error, Optimizer, Result};
 

@@ -101,7 +101,7 @@ impl QueryRecordSet {
         self.memory.check()?;
         let executor = self.executor.as_mut().ok_or_else(|| {
             DriverError::Mysql(crate::MysqlError::from_terror(
-                &tidb_dbterror::exeerrors::ERR_QUERY_INTERRUPTED
+                &tidb_exeerrors::ERR_QUERY_INTERRUPTED
                     .generate_with_stack_by_args(&[]),
             ))
         })?;

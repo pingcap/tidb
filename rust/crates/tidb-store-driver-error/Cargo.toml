@@ -11,6 +11,7 @@ description = "Go `pkg/store/driver/error` (`ToTiDBErr`) and the client-visible 
 workspace = true
 
 [dependencies]
+tidb-exeerrors = { path = "../tidb-exeerrors" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-errno = { path = "../tidb-errno" }
 tidb-terror = { path = "../tidb-terror" }

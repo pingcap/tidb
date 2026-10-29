@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::result::append_length_encoded_bytes;
-use crate::result_encoder::ResultEncoder;
+use tidb_format_textrow::result_encoder::ResultEncoder;
 /// Maximum byte length advertised for a column name by TiDB's server.
 pub const MAX_COLUMN_NAME_SIZE: usize = 256;
 
@@ -147,7 +147,7 @@ impl ColumnInfo {
         buffer.push(0x0c);
         let charset_id = encoder.column_charset_id(
             self.dump_charset(),
-            crate::result_encoder::is_string_column_type(self.type_code),
+            tidb_format_textrow::result_encoder::is_string_column_type(self.type_code),
         );
         buffer.extend_from_slice(&charset_id.to_le_bytes());
         buffer.extend_from_slice(&self.dump_length().to_le_bytes());

@@ -18,7 +18,7 @@
 
 use std::time::Instant;
 
-use crate::keyset::{KeySet, Keyed};
+use tidb_set::keyset::{KeySet, Keyed};
 use crate::model::{Column, Index, IndexSetCost, Query};
 use crate::options::AdvisorOption;
 use crate::query as qry;

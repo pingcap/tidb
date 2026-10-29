@@ -9,6 +9,7 @@ description = "TiDB coprocessor and MPP clients: Go pkg/store/copr (Rust rewrite
 autotests = false
 
 [dependencies]
+tidb-copr-metrics = { path = "../tidb-copr-metrics" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-context = { path = "../tidb-context" }

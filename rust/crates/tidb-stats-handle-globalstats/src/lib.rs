@@ -26,12 +26,15 @@ use tidb_charset::Collation;
 use tidb_mysql::errors::SqlError;
 use tidb_sqlkiller::SqlKiller;
 
-use crate::cmsketch::{get_merged_topn_from_sorted_slice, CmsSketch, MergeError, TopN, TopNEntry};
-use crate::histogram::{
+use tidb_stats::cmsketch::{get_merged_topn_from_sorted_slice, CmsSketch, MergeError, TopN, TopNEntry};
+use tidb_stats::histogram::{
     merge_partition_histograms, Histogram, HistogramMergeError, PartitionMergeOptions,
     TopNMergeEntry,
 };
-use crate::{fm_sketch_ndv, merge_fm_sketch, DatumMapCache, FmSketch};
+use tidb_stats::fm_sketch_ndv;
+use tidb_stats::merge_fm_sketch;
+use tidb_stats::DatumMapCache;
+use tidb_stats::FmSketch;
 
 /// Go `MaxPartitionMergeBatchSize`, the largest partition batch assigned to
 /// one concurrent TopN merge task.
@@ -488,7 +491,7 @@ pub fn merge_partition_histogram_topn<TZ: TimeZone + Sync>(
         });
     }
     let topns = topns.iter().map(Option::as_ref).collect::<Vec<_>>();
-    let (topn, remainder, histograms) = if crate::cmsketch::check_empty_topns(&topns) {
+    let (topn, remainder, histograms) = if tidb_stats::cmsketch::check_empty_topns(&topns) {
         (None, Vec::new(), histograms)
     } else if merge_concurrency < 2 {
         merge_partition_topn(
@@ -567,7 +570,7 @@ pub fn is_local_unique(table: &tidb_model::TableInfo, is_index: bool, id: i64) -
     table.indices.iter_deref().any(|index| {
         let index = index.read();
         !index.global
-            && crate::index::is_single_col_non_prefix_unique_index(&index)
+            && tidb_stats::index::is_single_col_non_prefix_unique_index(&index)
             && if is_index {
                 index.id == id
             } else {

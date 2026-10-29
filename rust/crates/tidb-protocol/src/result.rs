@@ -65,38 +65,3 @@ pub fn encode_text_row(values: &[Option<&[u8]>]) -> Vec<u8> {
     }
     encoded
 }
-
-/// Returns whether a MySQL field type is serialized as a string-like value in
-/// text-protocol metadata.
-pub fn is_string_column_type(type_code: u8) -> bool {
-    matches!(
-        type_code,
-        TYPE_STRING
-            | TYPE_VAR_STRING
-            | TYPE_VARCHAR
-            | TYPE_BIT
-            | TYPE_TINY_BLOB
-            | TYPE_MEDIUM_BLOB
-            | TYPE_LONG_BLOB
-            | TYPE_BLOB
-            | TYPE_ENUM
-            | TYPE_SET
-            | TYPE_JSON
-            | TYPE_TIDB_VECTOR_FLOAT32
-    )
-}
-
-// Keep these constants local to avoid making the result leaf depend on parser
-// metadata before the protocol steward integrates the shared type registry.
-const TYPE_BIT: u8 = 16;
-const TYPE_VARCHAR: u8 = 15;
-const TYPE_VAR_STRING: u8 = 0xfd;
-const TYPE_STRING: u8 = 0xfe;
-const TYPE_JSON: u8 = 0xf5;
-const TYPE_ENUM: u8 = 0xf7;
-const TYPE_SET: u8 = 0xf8;
-const TYPE_TINY_BLOB: u8 = 0xf9;
-const TYPE_MEDIUM_BLOB: u8 = 0xfa;
-const TYPE_LONG_BLOB: u8 = 0xfb;
-const TYPE_BLOB: u8 = 0xfc;
-const TYPE_TIDB_VECTOR_FLOAT32: u8 = 0xe1;

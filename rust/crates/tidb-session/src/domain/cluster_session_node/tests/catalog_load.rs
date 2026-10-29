@@ -222,7 +222,7 @@ fn loaded_column_ndv_reaches_grouped_cluster_plans() {
         calls: Arc<std::sync::atomic::AtomicUsize>,
         column_length_requests: Arc<std::sync::Mutex<Vec<bool>>>,
         fail: Arc<std::sync::atomic::AtomicBool>,
-        values: tidb_stats_handle::table_size_stats::TableRowStatsSnapshot,
+        values: tidb_stats_handle_cache::table_size_stats::TableRowStatsSnapshot,
     }
 
     impl crate::TableStorageStatsProvider for FixedStorageStatistics {
@@ -231,7 +231,7 @@ fn loaded_column_ndv_reaches_grouped_cluster_plans() {
             _resource_group: &str,
             need_column_lengths: bool,
             _physical_ids: &[i64],
-        ) -> Result<tidb_stats_handle::table_size_stats::TableRowStatsSnapshot, String> {
+        ) -> Result<tidb_stats_handle_cache::table_size_stats::TableRowStatsSnapshot, String> {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
             self.column_length_requests
                 .lock()
@@ -309,7 +309,7 @@ fn loaded_column_ndv_reaches_grouped_cluster_plans() {
         fail: Arc::clone(&fail_storage_stats),
         // Three fixed-width BIGINT columns: 3,000,065 rows of 24 bytes
         // estimate a DATA_LENGTH of 72,001,560.
-        values: tidb_stats_handle::table_size_stats::TableRowStatsSnapshot {
+        values: tidb_stats_handle_cache::table_size_stats::TableRowStatsSnapshot {
             table_rows: [(table_id, 3_000_065)].into_iter().collect(),
             column_lengths: Default::default(),
         },

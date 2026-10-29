@@ -614,7 +614,7 @@ impl CopTask {
                     evaluate,
                 )
             })
-            .unwrap_or(crate::cost_factors::SELECTION_FACTOR);
+            .unwrap_or(tidb_planner_core_cost::SELECTION_FACTOR);
         let mut base = crate::physical::BasePhysicalPlan::new(
             allocator,
             "Selection",
@@ -2227,7 +2227,7 @@ mod tests {
             for task in tasks {
                 let root = task.into_root_task(&PlanIdAllocator::new()).unwrap();
                 let actual = root.plan().unwrap().stats_info().unwrap();
-                let expected = stats.scale(crate::cost_factors::SELECTION_FACTOR, ratio);
+                let expected = stats.scale(tidb_planner_core_cost::SELECTION_FACTOR, ratio);
                 assert_eq!(actual.row_count(), expected.row_count());
                 assert_eq!(actual.col_ndv(1), expected.col_ndv(1), "ratio {ratio}");
             }

@@ -44,7 +44,7 @@ pub fn delete_true_exprs(
 
 /// Shared planner equivalent of Datum.ToBool with the statement TypeContext.
 /// A rejected conversion must not become proof that a predicate is true/false.
-pub(crate) fn constant_to_bool(context: &dyn Columns, value: &Datum) -> Option<i64> {
+pub fn constant_to_bool(context: &dyn Columns, value: &Datum) -> Option<i64> {
     let converted = value.to_bool().ok()?;
     if converted.event.is_some() {
         let message = match value {

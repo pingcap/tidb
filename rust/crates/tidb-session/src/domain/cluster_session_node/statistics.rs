@@ -566,7 +566,7 @@ impl tidb_executor::stats_exec::StatsStatementService for ClusterStatsStatementS
 
     fn load_stats(
         &self,
-        json: &tidb_stats::JsonTable,
+        json: &tidb_stats_util::JsonTable,
         historical_stats_enabled: bool,
     ) -> Result<(), tidb_driver_error::DriverError> {
         // Go's LOAD STATS path logs nothing on success.

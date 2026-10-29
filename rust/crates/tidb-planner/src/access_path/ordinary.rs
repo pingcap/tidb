@@ -12,7 +12,8 @@
 //! Range/filter derivation shared by ordinary and index-merge alternatives.
 
 use super::{AccessPathDerivationContext, PossiblePath};
-use crate::{logical::DataSource, plan_base::PlanError};
+use crate::logical::DataSource;
+use crate::plan_base::PlanError;
 use tidb_expr::{column::Column, expression::Expression};
 
 /// Go's detached ranges and the subsequent index/table filter partition.
@@ -45,7 +46,7 @@ pub(crate) fn filter_selectivity(
         return 1.0;
     }
     let Some(stats) = &source.table_stats else {
-        return crate::cost_factors::SELECTION_FACTOR;
+        return tidb_planner_core_cost::SELECTION_FACTOR;
     };
     let record_used_item = |item_id, is_index| {
         source.record_used_item(context.used_stats_recorder, item_id, is_index);
@@ -57,7 +58,7 @@ pub(crate) fn filter_selectivity(
         None,
         Some(&record_used_item),
     )
-        .unwrap_or(crate::cost_factors::SELECTION_FACTOR)
+        .unwrap_or(tidb_planner_core_cost::SELECTION_FACTOR)
 }
 
 /// Derive the range, physical key layout and filter partition together.
@@ -246,14 +247,14 @@ pub(crate) fn fill_ordinary_index_paths(
                 if let (Some(filtered), Some(table)) =
                     (source.base.base.stats_info(), source.table_stats.as_ref())
                 {
-                    if estimate.est + crate::cost_factors::TOLERANCE_FACTOR < filtered.row_count() {
+                    if estimate.est + tidb_planner_core_cost::TOLERANCE_FACTOR < filtered.row_count() {
                         estimate.min_est = if estimate.min_est > 0.0 {
                             estimate.min_est.min(estimate.est)
                         } else {
                             estimate.est
                         };
                         estimate.est = (filtered.row_count()
-                            / crate::cost_factors::SELECTION_FACTOR)
+                            / tidb_planner_core_cost::SELECTION_FACTOR)
                             .min(table.row_count());
                         estimate.max_est = estimate.max_est.max(estimate.est);
                     }
@@ -524,13 +525,13 @@ pub(crate) fn fill_table_path(
         source.base.base.stats_info(),
         stats,
     ) {
-        if *count + crate::cost_factors::TOLERANCE_FACTOR < filtered.row_count() {
+        if *count + tidb_planner_core_cost::TOLERANCE_FACTOR < filtered.row_count() {
             min_count_after_access = if min_count_after_access > 0.0 {
                 min_count_after_access.min(*count)
             } else {
                 *count
             };
-            *count = (filtered.row_count() / crate::cost_factors::SELECTION_FACTOR)
+            *count = (filtered.row_count() / tidb_planner_core_cost::SELECTION_FACTOR)
                 .min(table.row_count());
             max_count_after_access = max_count_after_access.max(*count);
         }

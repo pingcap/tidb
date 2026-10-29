@@ -55,7 +55,7 @@ use super::pseudo::{
 use super::row_count_column::RowEstimate;
 use super::uniform::{estimate_uniform_equality, UniformEqualityStats};
 use super::{apply_exponential_backoff, go_max, go_min, MAX_EXPONENTIAL_BACKOFF_COLS};
-use crate::cost_factors::TOLERANCE_FACTOR;
+use tidb_planner_core_cost::TOLERANCE_FACTOR;
 
 /// Go `statistics.Version1`.
 pub const VERSION1: i64 = 1;

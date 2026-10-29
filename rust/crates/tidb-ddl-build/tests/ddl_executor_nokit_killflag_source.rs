@@ -61,7 +61,7 @@ fn is_session_done_maps_a_killed_session_to_done_and_one() {
 fn convert_kill_flag_maps_one_to_query_interrupted() {
     assert!(convert_kill_flag(0).is_ok());
     let error = convert_kill_flag(1).unwrap_err();
-    assert!(dbterror::exeerrors::ERR_QUERY_INTERRUPTED.equal(Some(&error)));
+    assert!(tidb_exeerrors::ERR_QUERY_INTERRUPTED.equal(Some(&error)));
 }
 
 // --- TestIsRetryableDDLCancelErr (pkg/ddl/executor_nokit_test.go:62) ---

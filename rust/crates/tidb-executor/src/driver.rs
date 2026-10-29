@@ -942,7 +942,7 @@ mod dml_batch_tests {
             accountant.account_row(&row).map_err(DriverError::from)
         });
         assert!((result).is_err_and(
-            |error| error.equal(&tidb_dbterror::exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY)
+            |error| error.equal(&tidb_exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY)
         ));
         assert_eq!(
             nexts.load(SeqCst),

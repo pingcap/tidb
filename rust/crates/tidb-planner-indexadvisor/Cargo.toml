@@ -11,6 +11,7 @@ description = "TiDB pkg/planner/indexadvisor: the index advisor behind RECOMMEND
 workspace = true
 
 [dependencies]
+tidb-set = { path = "../tidb-set" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-config-configtypes = { path = "../tidb-config-configtypes" }
 tidb-ast = { path = "../tidb-ast" }

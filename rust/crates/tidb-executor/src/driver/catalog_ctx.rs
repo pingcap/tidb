@@ -54,7 +54,7 @@ impl CatalogStatisticsLoad for Catalog {
             // needed item as it is; only `SendLoadRequests` (the sync path)
             // drops the ones the cache already holds.
             for (item, full_load) in self.statistics_demand(context.stats_handle(), usage) {
-                tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(item, full_load);
+                tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(item, full_load);
             }
             return Ok(());
         }

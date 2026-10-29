@@ -563,7 +563,7 @@ impl Session {
                 0 => Ok(Datum::Null),
                 1 => Ok(rows[0].first().cloned().unwrap_or(Datum::Null)),
                 _ => Err(DriverError::from(
-                    tidb_dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
+                    tidb_exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
                         .generate_with_stack_by_args(&[]),
                 )),
             };

@@ -14,6 +14,7 @@
 
 //! Go `pkg/statistics/handle/cache` full-table cache core.
 
+pub mod table_size_stats;
 mod stats_table_row_cache;
 
 pub use stats_table_row_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId};

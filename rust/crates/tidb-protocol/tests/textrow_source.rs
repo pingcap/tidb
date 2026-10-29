@@ -14,12 +14,24 @@
 
 #![allow(missing_docs)]
 
-use tidb_protocol::{
-    append_format_float, format_text_value, TextColumn, TextFormatError, TextScalar, TYPE_DATE,
-    TYPE_DATETIME, TYPE_DOUBLE, TYPE_DURATION, TYPE_ENUM, TYPE_FLOAT, TYPE_GEOMETRY, TYPE_JSON,
-    TYPE_LONGLONG, TYPE_NEW_DECIMAL, TYPE_SET, TYPE_TIDB_VECTOR_FLOAT32, TYPE_TIMESTAMP, TYPE_YEAR,
-    ResultEncoder, UNSIGNED_FLAG,
-};
+use tidb_protocol::{TYPE_ENUM, TYPE_JSON, TYPE_SET, TYPE_TIDB_VECTOR_FLOAT32};
+use tidb_format_textrow::append_format_float;
+use tidb_format_textrow::format_text_value;
+use tidb_format_textrow::TextColumn;
+use tidb_format_textrow::TextFormatError;
+use tidb_format_textrow::TextScalar;
+use tidb_format_textrow::TYPE_DATE;
+use tidb_format_textrow::TYPE_DATETIME;
+use tidb_format_textrow::TYPE_DOUBLE;
+use tidb_format_textrow::TYPE_DURATION;
+use tidb_format_textrow::TYPE_FLOAT;
+use tidb_format_textrow::TYPE_GEOMETRY;
+use tidb_format_textrow::TYPE_LONGLONG;
+use tidb_format_textrow::TYPE_NEW_DECIMAL;
+use tidb_format_textrow::TYPE_TIMESTAMP;
+use tidb_format_textrow::TYPE_YEAR;
+use tidb_format_textrow::result_encoder::ResultEncoder;
+use tidb_format_textrow::UNSIGNED_FLAG;
 
 #[test]
 fn test_append_format_float() {
@@ -225,11 +237,11 @@ fn an_unsigned_bigint_column_reads_a_signed_datum_as_unsigned() {
         ..TextColumn::new(TYPE_LONGLONG)
     };
     assert_eq!(
-        tidb_protocol::format_datum_text(column, &tidb_datatype::Datum::Int(4)).unwrap(),
+        tidb_format_textrow::format_datum_text(column, &tidb_datatype::Datum::Int(4)).unwrap(),
         Some(b"4".to_vec())
     );
     assert_eq!(
-        tidb_protocol::format_datum_text(column, &tidb_datatype::Datum::Int(-1)).unwrap(),
+        tidb_format_textrow::format_datum_text(column, &tidb_datatype::Datum::Int(-1)).unwrap(),
         Some(b"18446744073709551615".to_vec())
     );
 }

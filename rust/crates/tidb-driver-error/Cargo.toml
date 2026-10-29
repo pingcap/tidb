@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB SQL-layer errors: DriverError / ExecError and their MySQL wire rendering (Rust rewrite)."
 
 [dependencies]
+tidb-exeerrors = { path = "../tidb-exeerrors" }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-errno = { path = "../tidb-errno" }

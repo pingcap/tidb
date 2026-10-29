@@ -27,7 +27,6 @@
 
 mod charset;
 mod collation;
-mod features;
 mod keyword_catalog;
 mod keywords;
 mod reader;
@@ -38,12 +37,6 @@ mod token;
 pub use charset::canonical_charset;
 pub use collation::canonical_collation;
 use tidb_parser_util::unescape_char;
-pub use features::{
-    can_parse_feature, FEATURE_ID_AFFINITY, FEATURE_ID_AUTO_ID_CACHE, FEATURE_ID_AUTO_PRE_SPLIT,
-    FEATURE_ID_AUTO_RANDOM, FEATURE_ID_AUTO_RANDOM_BASE, FEATURE_ID_CLUSTERED_INDEX,
-    FEATURE_ID_FORCE_AUTO_INC, FEATURE_ID_GLOBAL_INDEX, FEATURE_ID_PLACEMENT, FEATURE_ID_PRESPLIT,
-    FEATURE_ID_RESOURCE_GROUP, FEATURE_ID_SPLIT_REGION, FEATURE_ID_TIDB, FEATURE_ID_TTL,
-};
 pub use keyword_catalog::{Keyword, KEYWORDS};
 
 /// Canonicalizes the legacy charset-introducer subset accepted by Go's
@@ -1127,7 +1120,7 @@ fn is_single_operator(ch: u8) -> bool {
 
 /// Feature ids accepted by `pkg/parser/tidb/features.go`'s `featureIDs` map.
 fn supported_feature(id: &str) -> bool {
-    can_parse_feature(&[id])
+    tidb_parser_tidb::can_parse_feature(&[id])
 }
 
 /// Longest keyword in the generated tables is 30 bytes, so any token past

@@ -19,12 +19,17 @@ use std::collections::VecDeque;
 
 use tidb_datatype::{BinaryJSON, BinaryLiteral, CoreTime, Datum, Decimal, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType, VectorFloat32};
 use tidb_charset::Collation;
-use tidb_protocol::{
-    append_length_encoded_bytes, ResultSetOptions, TYPE_BIT, TYPE_DATETIME,
-    TYPE_DOUBLE, TYPE_DURATION, TYPE_ENUM, TYPE_FLOAT, TYPE_GEOMETRY, TYPE_JSON, TYPE_LONG,
-    TYPE_LONGLONG, TYPE_NEW_DECIMAL, TYPE_SET, TYPE_TIDB_VECTOR_FLOAT32, TYPE_VAR_STRING,
-    TYPE_YEAR, UNSIGNED_FLAG,
-};
+use tidb_protocol::{append_length_encoded_bytes, ResultSetOptions, TYPE_BIT, TYPE_ENUM, TYPE_JSON, TYPE_SET, TYPE_TIDB_VECTOR_FLOAT32, TYPE_VAR_STRING};
+use tidb_format_textrow::TYPE_DATETIME;
+use tidb_format_textrow::TYPE_DOUBLE;
+use tidb_format_textrow::TYPE_DURATION;
+use tidb_format_textrow::TYPE_FLOAT;
+use tidb_format_textrow::TYPE_GEOMETRY;
+use tidb_format_textrow::TYPE_LONG;
+use tidb_format_textrow::TYPE_LONGLONG;
+use tidb_format_textrow::TYPE_NEW_DECIMAL;
+use tidb_format_textrow::TYPE_YEAR;
+use tidb_format_textrow::UNSIGNED_FLAG;
 use tidb_server::connection_resultset::write_connection_result_set_to_sink;
 use tidb_session::domain::resultset_source::ResultSetSource;
 use tidb_server::resultset_writer::{write_result_set, ResultSetSink, SinkWriteError};

@@ -26,7 +26,7 @@ use tidb_ristretto::{Cache, Callback, Config, Item};
 
 use tidb_proto::{CoprocessorKeyRange, CoprocessorResponse};
 
-use crate::copr_cache_metrics::{record_evict, record_hit, record_miss};
+use tidb_copr_metrics::{record_evict, record_hit, record_miss};
 use crate::coprocessor_request::CoprocessorRequestEnvelope;
 
 const MEBIBYTE: f64 = 1024.0 * 1024.0;

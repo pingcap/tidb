@@ -43,14 +43,14 @@ pub fn copr_cache_metric_snapshot() -> CoprCacheMetricSnapshot {
     }
 }
 
-pub(crate) fn record_evict() {
+pub fn record_evict() {
     EVICT.fetch_add(1, Relaxed);
 }
 
-pub(crate) fn record_hit() {
+pub fn record_hit() {
     HIT.fetch_add(1, Relaxed);
 }
 
-pub(crate) fn record_miss() {
+pub fn record_miss() {
     MISS.fetch_add(1, Relaxed);
 }

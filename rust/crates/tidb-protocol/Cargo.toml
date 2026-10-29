@@ -9,6 +9,7 @@ description = "Source-backed MySQL packet framing for the TiDB Rust rewrite."
 autotests = false
 
 [dependencies]
+tidb-format-textrow = { path = "../tidb-format-textrow" }
 tidb-charset = { path = "../tidb-charset" }
 tidb-errno = { path = "../tidb-errno" }
 tidb-mysql = { path = "../tidb-mysql" }

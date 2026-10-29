@@ -16,7 +16,7 @@ use std::fmt;
 use tidb_ast::{LoadDataFields, LoadDataLines};
 use tidb_texttree::{indent_4_child, pretty_identifier};
 
-use crate::access::AccessObject;
+use tidb_planner_core_access::AccessObject;
 
 /// `LineFieldsInfo` defaults and overrides shared by LOAD DATA/SELECT INTO.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -155,7 +155,7 @@ fn grant_revoke_and_show_grants_round_trip() {
     session.run("DROP USER 'u1'@'%'").unwrap();
     crate::tests_support::assert_go_error(
         session.run("DROP USER 'nosuchuser'@'%'"),
-        &tidb_dbterror::exeerrors::ERR_CANNOT_USER,
+        &tidb_exeerrors::ERR_CANNOT_USER,
         &["DROP USER".into(), "nosuchuser@%".into()],
     );
 }
@@ -181,7 +181,7 @@ fn create_user_rejects_a_duplicate_account() {
     session.run("CREATE USER 'dup1'@'%'").unwrap();
     crate::tests_support::assert_go_error(
         session.run("CREATE USER 'dup1'@'%'"),
-        &tidb_dbterror::exeerrors::ERR_CANNOT_USER,
+        &tidb_exeerrors::ERR_CANNOT_USER,
         &["CREATE USER".into(), "'dup1'@'%'".into()],
     );
 }
@@ -209,7 +209,7 @@ fn granting_an_unregistered_privilege_name_is_refused() {
     session.run("CREATE USER 'dup1'@'%'").unwrap();
     crate::tests_support::assert_go_error(
         session.run("GRANT FOOBAR ON *.* TO 'dup1'@'%'"),
-        &tidb_dbterror::exeerrors::ERR_DYNAMIC_PRIVILEGE_NOT_REGISTERED,
+        &tidb_exeerrors::ERR_DYNAMIC_PRIVILEGE_NOT_REGISTERED,
         &["FOOBAR".into()],
     );
 }
@@ -570,7 +570,7 @@ fn create_and_drop_role_lists_are_atomic() {
     );
     crate::tests_support::assert_go_error(
         session.run("DROP ROLE r1, r2, r3"),
-        &tidb_dbterror::exeerrors::ERR_CANNOT_USER,
+        &tidb_exeerrors::ERR_CANNOT_USER,
         &["DROP ROLE".into(), "r1@%".into()],
     );
     session.run("DROP ROLE r2").unwrap();

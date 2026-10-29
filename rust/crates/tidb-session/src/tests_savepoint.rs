@@ -123,7 +123,7 @@ fn release_drops_the_named_savepoint_and_its_successors_but_no_data() {
     for name in ["s1", "s2"] {
         crate::tests_support::assert_go_error(
             session.run(&format!("ROLLBACK TO {name}")),
-            &tidb_dbterror::exeerrors::ERR_SAVEPOINT_NOT_EXISTS,
+            &tidb_exeerrors::ERR_SAVEPOINT_NOT_EXISTS,
             &["SAVEPOINT".into(), name.into()],
         );
     }
@@ -301,7 +301,7 @@ fn ending_the_transaction_clears_the_savepoint_stack() {
         session.run("BEGIN").unwrap();
         assert!(
             session.run("ROLLBACK TO s1").is_err_and(
-                |error| error.equal(&tidb_dbterror::exeerrors::ERR_SAVEPOINT_NOT_EXISTS)
+                |error| error.equal(&tidb_exeerrors::ERR_SAVEPOINT_NOT_EXISTS)
             ),
             "{ending} left a savepoint behind"
         );

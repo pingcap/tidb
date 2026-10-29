@@ -49,7 +49,7 @@ fn is_memory_exceeded(error: &DriverError) -> bool {
     // renders as 8175 on the wire (`DriverError`'s `From<ExecError>` lifts
     // it, and a write path that wrapped it in the generic `Exec` arm reached
     // the client as 1105).
-    error.equal(&tidb_dbterror::exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY)
+    error.equal(&tidb_exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY)
 }
 
 #[test]

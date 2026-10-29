@@ -497,7 +497,7 @@ fn cascade_at_depth(
 ) -> Result<(), DriverError> {
     if depth > MAX_CASCADE_DEPTH {
         return Err(DriverError::from(
-            tidb_dbterror::exeerrors::ERR_FOREIGN_KEY_CASCADE_DEPTH_EXCEEDED
+            tidb_exeerrors::ERR_FOREIGN_KEY_CASCADE_DEPTH_EXCEEDED
                 .generate_with_stack_by_args(&[crate::foreign_key::MAX_CASCADE_DEPTH.into()]),
         ));
     }

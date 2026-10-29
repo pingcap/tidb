@@ -53,7 +53,7 @@ impl CatalogStatistics for Catalog {
     /// whose cache state no longer requires a load and return the number that
     /// remain genuinely needed.
     fn clean_needed_statistics_items(&self, handle: &StatsHandle) -> i64 {
-        let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
+        let needed = &tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
         let mut really_needed = 0_i64;
         for requested in needed.all_items() {
             let item = requested.table_item_id;
@@ -88,7 +88,7 @@ impl CatalogStatistics for Catalog {
         let Some(loader) = loader else {
             return Ok(());
         };
-        let needed = &tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
+        let needed = &tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
         for requested in needed.all_items() {
             let item = requested.table_item_id;
             let valid_metadata = if item.is_index {

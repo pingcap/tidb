@@ -17,15 +17,20 @@
 //! This module owns the scalar formatting rules from
 //! `pkg/format/textrow/textrow.go`. Charset conversion and TiDB `Datum`
 //! projection stay at their existing owners: callers pass rendered bytes and
-//! [`crate::resultset_stream::ResultSetStream`] applies the column/session
+//! `tidb_protocol::resultset_stream::ResultSetStream` applies the column/session
 //! charset policy exactly once.
+
+pub mod result_encoder;
 
 use std::fmt;
 use std::fmt::Write as _;
 
-use crate::column::{
-    TYPE_BIT, TYPE_BLOB, TYPE_ENUM, TYPE_JSON, TYPE_LONG_BLOB, TYPE_MEDIUM_BLOB, TYPE_SET,
-    TYPE_STRING, TYPE_TIDB_VECTOR_FLOAT32, TYPE_TINY_BLOB, TYPE_VARCHAR, TYPE_VAR_STRING,
+use tidb_mysql::{
+    TypeBit as TYPE_BIT, TypeBlob as TYPE_BLOB, TypeEnum as TYPE_ENUM, TypeJSON as TYPE_JSON,
+    TypeLongBlob as TYPE_LONG_BLOB, TypeMediumBlob as TYPE_MEDIUM_BLOB, TypeSet as TYPE_SET,
+    TypeString as TYPE_STRING, TypeTiDBVectorFloat32 as TYPE_TIDB_VECTOR_FLOAT32,
+    TypeTinyBlob as TYPE_TINY_BLOB, TypeVarString as TYPE_VAR_STRING,
+    TypeVarchar as TYPE_VARCHAR,
 };
 
 // MySQL field-type codes consumed by the source `FormatValueText` switch.
@@ -223,7 +228,7 @@ pub fn append_format_float(buffer: &mut Vec<u8>, value: f64, precision: i32, bit
 /// appends formatted scalars to its packet buffer and passes string bytes to
 /// `ResultEncoder.EncodeData` only when the column requires it.
 #[derive(Debug)]
-pub(crate) enum OwnedDatumText {
+pub enum OwnedDatumText {
     /// SQL NULL; no value bytes were appended.
     Null,
     /// The value bytes were appended directly to the caller's buffer.
@@ -273,7 +278,7 @@ fn append_signed(buffer: &mut Vec<u8>, value: i64) {
 /// This is the non-allocating counterpart of [`format_text_value`]. It keeps
 /// the same type validation and error partition, while allowing the server
 /// result writer to length-frame the value in its final row packet.
-pub(crate) fn append_text_value(
+pub fn append_text_value(
     buffer: &mut Vec<u8>,
     column: TextColumn,
     value: TextScalar<'_>,
@@ -342,7 +347,7 @@ pub(crate) fn append_text_value(
 
 /// Formats an owned datum while retaining byte ownership for the result
 /// encoder and appending scalar text directly to `buffer`.
-pub(crate) fn append_datum_text_owned(
+pub fn append_datum_text_owned(
     buffer: &mut Vec<u8>,
     column: TextColumn,
     datum: tidb_datatype::Datum,
@@ -457,7 +462,7 @@ pub(crate) fn append_datum_text_owned(
 }
 
 /// Formats one source-shaped scalar without claiming charset or Datum
-/// semantics. The result is suitable for [`crate::encode_text_row`].
+/// semantics. The result is suitable for `tidb_protocol::encode_text_row`.
 pub fn format_text_value(
     column: TextColumn,
     value: TextScalar<'_>,

@@ -18,12 +18,16 @@
 //! rows. Metadata, each row, and the terminal EOF are emitted independently so
 //! a server can preserve `clientConn.writeChunks`' lazy pull/write ordering.
 
-use crate::result_encoder::is_string_column_type;
-use crate::textrow::{append_datum_text_owned, OwnedDatumText, TextColumn, TextFormatError};
-use crate::{
-    append_length_encoded_bytes, append_length_encoded_int, encode_eof_packet, encode_text_row,
-    ColumnInfo, EofPacket, ResultSetOptions, NULL_MARKER,
-};
+use tidb_format_textrow::result_encoder::is_string_column_type;
+use tidb_format_textrow::{append_datum_text_owned, OwnedDatumText, TextColumn, TextFormatError};
+use crate::append_length_encoded_bytes;
+use crate::append_length_encoded_int;
+use crate::encode_eof_packet;
+use crate::encode_text_row;
+use crate::ColumnInfo;
+use crate::EofPacket;
+use crate::ResultSetOptions;
+use crate::NULL_MARKER;
 use tidb_datatype::{Datum, MyDecimal};
 
 /// Lifecycle of an incremental result-set payload stream.
@@ -367,7 +371,7 @@ impl ResultSetStream {
             .zip(&self.columns)
             .map(|(value, column)| {
                 let value = value.as_ref()?;
-                if !crate::result_encoder::is_string_column_type(column.type_code) {
+                if !tidb_format_textrow::result_encoder::is_string_column_type(column.type_code) {
                     return Some(value.clone());
                 }
                 let mut encoder = encoder;
@@ -375,7 +379,7 @@ impl ResultSetStream {
                 // column's own (binary) collation.
                 let collation = match column.type_code {
                     crate::column::TYPE_JSON | crate::column::TYPE_TIDB_VECTOR_FLOAT32 => {
-                        crate::result_encoder::UTF8MB4_DEFAULT_COLLATION_ID
+                        tidb_format_textrow::result_encoder::UTF8MB4_DEFAULT_COLLATION_ID
                     }
                     _ => column.charset,
                 };
@@ -409,7 +413,7 @@ impl ResultSetStream {
                 append_length_encoded_bytes(payload, None);
                 continue;
             };
-            if !crate::result_encoder::is_string_column_type(column.type_code) {
+            if !tidb_format_textrow::result_encoder::is_string_column_type(column.type_code) {
                 append_length_encoded_bytes(payload, Some(&value));
                 continue;
             }
@@ -418,7 +422,7 @@ impl ResultSetStream {
             // column's own (binary) collation.
             let collation = match column.type_code {
                 crate::column::TYPE_JSON | crate::column::TYPE_TIDB_VECTOR_FLOAT32 => {
-                    crate::result_encoder::UTF8MB4_DEFAULT_COLLATION_ID
+                    tidb_format_textrow::result_encoder::UTF8MB4_DEFAULT_COLLATION_ID
                 }
                 _ => column.charset,
             };
@@ -474,7 +478,7 @@ const fn length_encoded_int_size(value: usize) -> usize {
 fn encode_owned_cell(
     column: &ColumnInfo,
     value: Vec<u8>,
-    mut encoder: crate::ResultEncoder,
+    mut encoder: tidb_format_textrow::result_encoder::ResultEncoder,
 ) -> Vec<u8> {
     if encoder.result_charset().is_none() || !is_string_column_type(column.type_code) {
         return value;
@@ -482,7 +486,7 @@ fn encode_owned_cell(
     // Go treats JSON and VECTOR as utf8mb4 regardless of their binary column
     // collation; all other string columns use their declared charset.
     let collation = match column.type_code {
-        crate::TYPE_JSON | crate::TYPE_TIDB_VECTOR_FLOAT32 => crate::UTF8MB4_DEFAULT_COLLATION_ID,
+        crate::TYPE_JSON | crate::TYPE_TIDB_VECTOR_FLOAT32 => tidb_format_textrow::result_encoder::UTF8MB4_DEFAULT_COLLATION_ID,
         _ => column.charset,
     };
     if encoder.update_data_encoding(collation).is_err() {
@@ -581,7 +585,7 @@ impl TextRowWriter<'_> {
                 actual: self.next_column + 1,
             });
         };
-        if column.type_code != crate::TYPE_NEW_DECIMAL {
+        if column.type_code != tidb_format_textrow::TYPE_NEW_DECIMAL {
             return Err(ResultSetStreamError::TextFormat {
                 row: self.row_index,
                 column: self.next_column,
@@ -598,7 +602,7 @@ impl TextRowWriter<'_> {
     }
 
     /// Appends one source-shaped scalar in the advertised column order.
-    pub fn append(&mut self, value: crate::TextScalar<'_>) -> Result<(), ResultSetStreamError> {
+    pub fn append(&mut self, value: tidb_format_textrow::TextScalar<'_>) -> Result<(), ResultSetStreamError> {
         let Some(column) = self.stream.columns.get(self.next_column) else {
             return Err(ResultSetStreamError::RowColumnCount {
                 row: self.row_index,
@@ -617,7 +621,7 @@ impl TextRowWriter<'_> {
         // When no conversion is configured, append the known-length bytes
         // directly with their final prefix; this is Go's
         // `DumpTextRow`/`LengthEncodedString` fast path.
-        if let crate::TextScalar::Bytes(bytes) = value {
+        if let tidb_format_textrow::TextScalar::Bytes(bytes) = value {
             // Go's `FormatValueText` enters this branch only for its complete
             // string-like type family. Keep unsupported/typed columns on the
             // checked scalar matrix so a raw byte cannot hide `invalid type`.
@@ -644,7 +648,7 @@ impl TextRowWriter<'_> {
         let prefix_start = self.payload.len();
         self.payload.push(0);
         let value_start = self.payload.len();
-        let rendered = crate::textrow::append_text_value(&mut self.payload, text_column, value)
+        let rendered = tidb_format_textrow::append_text_value(&mut self.payload, text_column, value)
             .map_err(|error| ResultSetStreamError::TextFormat {
                 row: self.row_index,
                 column: self.next_column,

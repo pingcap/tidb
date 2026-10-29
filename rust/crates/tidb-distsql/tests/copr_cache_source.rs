@@ -16,7 +16,7 @@
 
 use prost::Message;
 use tidb_copr::copr_cache::build_copr_cache_key;
-use tidb_copr::copr_cache_metrics::copr_cache_metric_snapshot;
+use tidb_copr_metrics::copr_cache_metric_snapshot;
 use tidb_copr::copr_cache::CoprCache;
 use tidb_copr::copr_cache::CoprCacheAdmission;
 use tidb_copr::copr_cache::CoprCacheConfig;

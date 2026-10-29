@@ -22,5 +22,6 @@ workspace = true
 [dependencies]
 tidb-parser-util = { path = "../tidb-parser-util" }
 tidb-charset = { path = "../tidb-charset" }
+tidb-parser-tidb = { path = "../tidb-parser-tidb" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-mysql = { path = "../tidb-mysql" }

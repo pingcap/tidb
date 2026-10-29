@@ -137,7 +137,7 @@ pub struct DataSource {
     /// Go `PhysPlanPartInfo` after dynamic partition pruning, retained so
     /// reader access objects report the partitions selected by the same
     /// predicates used for execution.
-    pub dynamic_partition_access: Option<crate::access::DynamicPartitionAccessObject>,
+    pub dynamic_partition_access: Option<tidb_planner_core_access::DynamicPartitionAccessObject>,
     /// Go `Columns`, in schema order.
     pub columns: Vec<DataSourceColumn>,
     /// Go `TblCols`: the original table columns before logical pruning.

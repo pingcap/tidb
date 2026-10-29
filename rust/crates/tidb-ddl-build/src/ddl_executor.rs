@@ -16,7 +16,8 @@
 //! helpers, and its TiFlash replica admission.
 
 use tidb_terror::TerrorError;
-use tidb_dbterror::{self as dbterror, exeerrors};
+use tidb_dbterror as dbterror;
+use tidb_exeerrors as exeerrors;
 use tidb_sqlkiller::{KillSignal, SqlKiller};
 
 /// Reports whether a DDL statement's session has been interrupted, together

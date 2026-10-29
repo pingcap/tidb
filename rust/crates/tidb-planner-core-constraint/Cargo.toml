@@ -1,0 +1,17 @@
+[package]
+name = "tidb-planner-core-constraint"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/planner/core/constraint (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-exprctx = { path = "../tidb-exprctx" }
+tidb-ast = { path = "../tidb-ast" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-expr = { path = "../tidb-expr" }

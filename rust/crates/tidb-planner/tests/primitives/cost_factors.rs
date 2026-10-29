@@ -14,7 +14,7 @@
 
 //! Direct source-contract tests for `factors_thresholds.go`.
 
-use tidb_planner::cost_factors::{
+use tidb_planner_core_cost::{
     aggregation_factor, aggregation_factor_or_default, DEFAULT_AGGREGATION_FACTOR, DISTINCT_FACTOR,
     SELECTION_FACTOR, SMALL_SCAN_THRESHOLD, TOLERANCE_FACTOR,
 };

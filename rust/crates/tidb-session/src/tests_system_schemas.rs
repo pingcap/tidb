@@ -2138,9 +2138,9 @@ fn table_sizes_are_estimated_over_the_statements_pinned_schema() {
             _resource_group: &str,
             _need_column_lengths: bool,
             physical_ids: &[i64],
-        ) -> Result<tidb_stats_handle::table_size_stats::TableRowStatsSnapshot, String> {
+        ) -> Result<tidb_stats_handle_cache::table_size_stats::TableRowStatsSnapshot, String> {
             self.requested.lock().unwrap().push(physical_ids.to_vec());
-            Ok(tidb_stats_handle::table_size_stats::TableRowStatsSnapshot {
+            Ok(tidb_stats_handle_cache::table_size_stats::TableRowStatsSnapshot {
                 table_rows: self.rows.clone(),
                 column_lengths: Default::default(),
             })

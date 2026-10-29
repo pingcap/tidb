@@ -25,7 +25,7 @@ use tidb_planner::stmt_ctx::PlannerStmtCtx as _;
 use prost::Message;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_hack::GoToLower;
-use tidb_planner::access::{AccessObject, IndexAccess, OtherAccessObject, ScanAccessObject};
+use tidb_planner_core_access::{AccessObject, IndexAccess, OtherAccessObject, ScanAccessObject};
 use tidb_planner::explain::{
     Explain as PlannerExplain, ExplainContext as PlannerExplainContext,
     ExplainFormat as PlannerExplainFormat, ExplainOperator, ExplainTask,
@@ -1161,7 +1161,7 @@ fn dynamic_partition_access(plan: &PhysicalPlan) -> Option<AccessObject> {
     };
     access
         .map(|object| {
-            AccessObject::DynamicPartitions(tidb_planner::access::DynamicPartitionAccessObjects(
+            AccessObject::DynamicPartitions(tidb_planner_core_access::DynamicPartitionAccessObjects(
                 vec![object],
             ))
         })
@@ -4245,7 +4245,7 @@ mod tests {
                 "partition:p0,p2",
             ),
         ] {
-            let access = tidb_planner::access::DynamicPartitionAccessObject {
+            let access = tidb_planner_core_access::DynamicPartitionAccessObject {
                 database: "test".to_owned(),
                 table: "t".to_owned(),
                 all_partitions,

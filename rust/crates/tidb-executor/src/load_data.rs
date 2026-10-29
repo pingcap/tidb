@@ -88,14 +88,14 @@ fn wrong_format_config_by_args(detail: &str) -> DriverError {
     // `ErrLoadDataWrongFormatConfig`'s message is empty, so Go's
     // `GenWithStackByArgs` renders its argument as an extra.
     DriverError::from(
-        (&tidb_dbterror::exeerrors::ERR_LOAD_DATA_WRONG_FORMAT_CONFIG)
+        (&tidb_exeerrors::ERR_LOAD_DATA_WRONG_FORMAT_CONFIG)
             .generate_with_stack(format!("%!(EXTRA string={detail})")),
     )
 }
 
 fn wrong_format_config(detail: String) -> DriverError {
     DriverError::from(
-        (&tidb_dbterror::exeerrors::ERR_LOAD_DATA_WRONG_FORMAT_CONFIG)
+        (&tidb_exeerrors::ERR_LOAD_DATA_WRONG_FORMAT_CONFIG)
             .generate_with_stack(detail),
     )
 }
@@ -178,7 +178,7 @@ pub fn prepare_load_data(
     // Go `LoadDataController.checkFieldParams`.
     if load.path.is_empty() {
         return Err(DriverError::from(
-            (&tidb_dbterror::exeerrors::ERR_LOAD_DATA_EMPTY_PATH).generate_with_stack(
+            (&tidb_exeerrors::ERR_LOAD_DATA_EMPTY_PATH).generate_with_stack(
                 "The value of INFILE must not be empty when LOAD DATA from LOCAL".to_owned(),
             ),
         ));
@@ -375,7 +375,7 @@ fn decompress(path: &str, data: &[u8]) -> Result<Vec<u8>, DriverError> {
 }
 
 fn read_failure(error: &CsvError) -> DriverError {
-    DriverError::from((&tidb_dbterror::exeerrors::ERR_LOAD_DATA_CANT_READ).generate_with_stack(format!(
+    DriverError::from((&tidb_exeerrors::ERR_LOAD_DATA_CANT_READ).generate_with_stack(format!(
             "Failed to read source files. Reason: {error}. Only the following formats delimited text file (csv, tsv), parquet, sql are supported. Please provide the valid source file(s)"
         )))
 }
@@ -488,12 +488,12 @@ pub fn run_load_data(
         let row_number = *row_count;
         let mismatch = if parsed.len() < field_count {
             Some((
-                &tidb_dbterror::exeerrors::ERR_WARN_TOO_FEW_RECORDS,
+                &tidb_exeerrors::ERR_WARN_TOO_FEW_RECORDS,
                 format!("Row {row_number} doesn't contain data for all columns"),
             ))
         } else if parsed.len() > field_count {
             Some((
-                &tidb_dbterror::exeerrors::ERR_WARN_TOO_MANY_RECORDS,
+                &tidb_exeerrors::ERR_WARN_TOO_MANY_RECORDS,
                 format!(
                     "Row {row_number} was truncated; it contained more data than there were input columns"
                 ),

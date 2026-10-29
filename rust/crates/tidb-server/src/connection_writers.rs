@@ -19,12 +19,18 @@
 //! facts (see [`WireStatus`]) — live in exactly one place.
 
 use std::io::Write;
-use tidb_protocol::result_encoder::ResultEncoder;
+use tidb_format_textrow::result_encoder::ResultEncoder;
 
-use tidb_protocol::{
-    encode_error_packet, encode_ok_packet, ColumnInfo, ErrorPacket, OkPacket, PacketIoWriter,
-    PacketWriter, ResultSetOptions, BINARY_DEFAULT_COLLATION_ID, MYSQL_TYPE_LONGLONG,
-};
+use tidb_protocol::encode_error_packet;
+use tidb_protocol::encode_ok_packet;
+use tidb_protocol::ColumnInfo;
+use tidb_protocol::ErrorPacket;
+use tidb_protocol::OkPacket;
+use tidb_protocol::PacketIoWriter;
+use tidb_protocol::PacketWriter;
+use tidb_protocol::ResultSetOptions;
+use tidb_protocol::BINARY_DEFAULT_COLLATION_ID;
+use tidb_protocol::MYSQL_TYPE_LONGLONG;
 
 use crate::mysql_connection::MysqlConnectionError;
 use crate::mysql_connection::ER_UNKNOWN_STMT_HANDLER;
@@ -523,7 +529,9 @@ mod tests {
         use super::{TcpResultSetSink, SINK_COALESCE_FLUSH_BYTES};
         use crate::resultset_writer::ResultSetSink;
         use std::io::Cursor;
-        use tidb_protocol::{CompressionAlgorithm, PacketIoReader, PacketIoWriter};
+        use tidb_protocol::CompressionAlgorithm;
+        use tidb_protocol::PacketIoReader;
+        use tidb_protocol::PacketIoWriter;
 
         let large = vec![b'x'; SINK_COALESCE_FLUSH_BYTES];
         for algorithm in [

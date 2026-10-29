@@ -30,7 +30,6 @@ pub mod statistics_errors;
 pub mod analysis_policy;
 pub mod analyze_jobs;
 pub mod analyze_version_policy;
-pub mod async_load;
 pub mod builder;
 pub mod cmsketch;
 pub mod column;
@@ -41,7 +40,6 @@ pub mod estimate;
 pub mod existence_map;
 pub mod fmsketch;
 pub mod fmsketch_codec;
-pub mod global_stats;
 mod go_pdqsort;
 pub use go_pdqsort::go_sort_func_by;
 mod go_stable_sort;
@@ -50,7 +48,6 @@ pub mod histogram_allocation;
 pub mod independent_index_analyze;
 pub mod index;
 pub mod index_query;
-pub mod json_metadata;
 pub mod memory_usage;
 pub mod overlap_geometry;
 pub mod row_estimate;
@@ -73,7 +70,6 @@ pub use analyze_jobs::{
     ANALYZE_FINISHED, ANALYZE_PENDING, ANALYZE_RUNNING, DUMP_TIME_INTERVAL, MAX_DELTA,
 };
 pub use analyze_version_policy::analyze_version_matches;
-pub use async_load::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS;
 pub use builder::{
     build_column, build_column_histogram, build_hist_and_topn, try_build_column_histogram,
     try_build_column_histogram_in_place, try_build_hist_and_topn, try_build_hist_and_topn_in_place,
@@ -107,12 +103,6 @@ pub use fmsketch_codec::{
     insert_encoded_value, insert_row_value, insert_row_value_with_error_policy, insert_value,
     insert_value_with_error_policy, FmSketchCodecError, FmSketchProto,
 };
-pub use global_stats::{
-    merge_partition_cmsketches, merge_partition_fm_sketches, merge_partition_histogram_topn,
-    merge_partition_stats_item, merge_partition_topn, merge_partition_topn_concurrently,
-    GlobalStatsItem, GlobalStatsMergeError, GlobalStatsMergeMode, PartitionStatsItem,
-    MAX_PARTITION_MERGE_BATCH_SIZE,
-};
 pub use histogram::{Bucket, Histogram, HistogramAllocation};
 pub use independent_index_analyze::{
     merge_independent_index_fragments, IndependentIndexAnalyze, IndependentIndexFragment,
@@ -121,10 +111,6 @@ pub use independent_index_analyze::{
 };
 pub use index::{copy_index, index_is_all_evicted, Index, IndexInfo};
 pub use index_query::query_index_bytes;
-pub use json_metadata::{
-    JsonBucket, JsonCmSketch, JsonCmSketchRow, JsonCmSketchTopN, JsonColumn, JsonFmSketch,
-    JsonHistogram, JsonPredicateColumn, JsonTable, TIDB_GLOBAL_STATS,
-};
 pub use memory_usage::{ColumnMemUsage, IndexMemUsage};
 pub use overlap_geometry::{left_overlap_percent, right_overlap_percent};
 pub use row_estimate::{calculate_skew_ratio_counts, default_row_est, RowEstimate};

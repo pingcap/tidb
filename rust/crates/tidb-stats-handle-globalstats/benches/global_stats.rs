@@ -21,9 +21,8 @@ use chrono::Utc;
 use tidb_codec::encode_key;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_stats::histogram::{Bucket, Histogram};
-use tidb_stats::{
-    merge_partition_topn, merge_partition_topn_concurrently, TopN, MAX_PARTITION_MERGE_BATCH_SIZE,
-};
+use tidb_stats::TopN;
+use tidb_stats_handle_globalstats::{merge_partition_topn, merge_partition_topn_concurrently, MAX_PARTITION_MERGE_BATCH_SIZE};
 use tidb_sqlkiller::SqlKiller;
 
 const BENCHMARK_SIZES: [usize; 5] = [100, 1_000, 2_000, 5_000, 10_000];

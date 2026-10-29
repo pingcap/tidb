@@ -14,6 +14,13 @@ autotests = false
 test-util = ["tidb-sessmgr/test-util"]
 
 [dependencies]
+tidb-planner-core-access = { path = "../tidb-planner-core-access" }
+tidb-planner-core-cost = { path = "../tidb-planner-core-cost" }
+tidb-planner-core-metrics = { path = "../tidb-planner-core-metrics" }
+tidb-exeerrors = { path = "../tidb-exeerrors" }
+tidb-stats-asyncload = { path = "../tidb-stats-asyncload" }
+tidb-stats-util = { path = "../tidb-stats-util" }
+tidb-stats-handle-globalstats = { path = "../tidb-stats-handle-globalstats" }
 tidb-expression-aggregation = { path = "../tidb-expression-aggregation" }
 tidb-sessionexpr = { path = "../tidb-sessionexpr" }
 tidb-executor-aggfuncs = { path = "../tidb-executor-aggfuncs" }
@@ -109,6 +116,7 @@ tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-driver-error = { path = "../tidb-driver-error" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-stats-handle = { path = "../tidb-stats-handle" }
+tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
 tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-ddl = { path = "../tidb-ddl" }
 tidb-ddl-label = { path = "../tidb-ddl-label" }
@@ -171,7 +179,6 @@ tracing = "0.1"
 [dev-dependencies]
 tidb-metabuild = { path = "../tidb-metabuild" }
 tidb-session = { path = "../tidb-session" }
-tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
 tidb-sessionctx = { path = "../tidb-sessionctx", features = ["test-util"] }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn", features = ["test-util"] }
 tidb-table = { path = "../tidb-table", features = ["test-util"] }

@@ -1,0 +1,13 @@
+[package]
+name = "tidb-parser-tidb"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/parser/tidb (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]

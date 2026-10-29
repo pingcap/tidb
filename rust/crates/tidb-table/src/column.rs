@@ -581,7 +581,7 @@ fn wrong_value(field_type: &FieldType, text: &str) -> tidb_terror::TerrorError {
 /// `exeerrors.ErrTruncateWrongInsertValue.GenWithStackByArgs(...)`.
 fn dst_transition_error(source: &Datum, column: &str, row: usize) -> MysqlError {
     MysqlError::from_terror(
-        &tidb_dbterror::exeerrors::ERR_TRUNCATE_WRONG_INSERT_VALUE
+        &tidb_exeerrors::ERR_TRUNCATE_WRONG_INSERT_VALUE
             .generate_with_stack_by_args(&[
                 "timestamp".into(),
                 datum_error_text(source).into(),

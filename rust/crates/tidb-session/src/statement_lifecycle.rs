@@ -340,7 +340,7 @@ impl StatementLifecycle<'_> {
             // the inner error's text keeps its `[class:code]` prefix.
             return outcome.map_err(|error| {
                 SqlQueryError::from(tidb_terror::MysqlError::from_terror(
-                    &tidb_dbterror::exeerrors::ERR_LAZY_UNIQUENESS_CHECK_FAILURE
+                    &tidb_exeerrors::ERR_LAZY_UNIQUENESS_CHECK_FAILURE
                         .generate_with_stack_by_args(&[error.error_string().into()]),
                 ))
             });

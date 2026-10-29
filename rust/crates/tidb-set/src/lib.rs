@@ -19,6 +19,8 @@
 //! memory-aware types report the same checkpoint deltas and expose trackers
 //! only on the three source types that support one.
 
+pub mod keyset;
+
 use tidb_memory::Tracker;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;

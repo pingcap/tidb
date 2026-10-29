@@ -60,7 +60,7 @@ use tidb_datatype::{
 use tidb_model::table_info::TableInfo;
 use tidb_model::TableItemID;
 use tidb_stats::{encode_cmsketch_without_topn, encode_fm_sketch};
-use tidb_stats::JsonPredicateColumn;
+use tidb_stats_util::JsonPredicateColumn;
 use tidb_sqlescape::{must_escape_sql, must_escape_sql_text, SqlArg};
 
 use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};

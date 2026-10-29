@@ -16,6 +16,7 @@ failpoints = ["dep:fail", "fail/failpoints"]
 intest = ["tidb-intest/intest"]
 
 [dependencies]
+tidb-exeerrors = { path = "../tidb-exeerrors" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-dbterror = { path = "../tidb-dbterror" }

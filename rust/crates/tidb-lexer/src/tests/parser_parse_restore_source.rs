@@ -30,6 +30,7 @@
 //! deliberately not represented here.
 
 use super::*;
+use tidb_parser_tidb::{can_parse_feature, FEATURE_ID_RESOURCE_GROUP, FEATURE_ID_TTL};
 
 fn tokens(sql: &str) -> Vec<Token> {
     Lexer::new(sql)

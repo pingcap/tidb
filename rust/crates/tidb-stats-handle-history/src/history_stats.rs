@@ -19,7 +19,7 @@
 use tidb_datatype::{
     Datum, Time,
 };
-use tidb_stats::JsonTable;
+use tidb_stats_util::JsonTable;
 use tidb_txnkv::transaction::BufferMutation;
 
 use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};

@@ -265,7 +265,7 @@ fn evaluated_scalar_predicate_is_pushed_below_a_sibling_anti_semi_join() {
          {plan:#?}",
     );
     assert!(
-        (anti_join_rows - filtered_left_rows * tidb_planner::cost_factors::SELECTION_FACTOR).abs()
+        (anti_join_rows - filtered_left_rows * tidb_planner_core_cost::SELECTION_FACTOR).abs()
             < 0.02,
         "Go LogicalJoin derives an anti-semi join from its filtered left child: {plan:#?}",
     );
@@ -1134,12 +1134,12 @@ fn correlated_sum_predicate_pulls_above_unique_outer_join() {
         .parse::<f64>()
         .unwrap();
     assert!(
-        (selection_rows - aggregate_rows * tidb_planner::cost_factors::SELECTION_FACTOR).abs()
+        (selection_rows - aggregate_rows * tidb_planner_core_cost::SELECTION_FACTOR).abs()
             < 0.02,
         "LogicalSelection.DeriveStats scales its aggregate child by SelectivityFactor: \
          selection={selection_rows}, aggregate={aggregate_rows}, expected={}; \
          {nested_plan:#?}",
-        aggregate_rows * tidb_planner::cost_factors::SELECTION_FACTOR
+        aggregate_rows * tidb_planner_core_cost::SELECTION_FACTOR
     );
     let selection_info = text(&nested_plan[scalar_selection], 4);
     assert!(
@@ -1312,7 +1312,7 @@ fn correlated_subqueries() {
         &catalog,
         &crate::StmtContext::for_query()
     ))
-    .is_err_and(|error| error.equal(&tidb_dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW)));
+    .is_err_and(|error| error.equal(&tidb_exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW)));
 
     // Correlated IN / NOT IN and ANY / ALL: the same Apply, folding this
     // outer row's inner result into the three-valued answer. id 3's inner

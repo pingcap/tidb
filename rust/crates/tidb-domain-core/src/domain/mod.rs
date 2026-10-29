@@ -44,7 +44,7 @@ use tidb_domain::historical_stats::{
 use tidb_stats_handle_storage::cluster_stats_load::ClusterStatsLoader;
 use tidb_stats_handle_syncload::stats_watch::SharedStats;
 use tidb_sessmgr::ProcessRegistry;
-use tidb_stats_handle::table_size_stats::TableStorageStatsProvider;
+use tidb_stats_handle_cache::table_size_stats::TableStorageStatsProvider;
 use tidb_store_driver_txn::cluster_storage::MutationBuffer;
 use tidb_privilege::PrivilegeRegistry;
 use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId};
@@ -232,7 +232,7 @@ impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
         resource_group: &str,
         need_column_lengths: bool,
         physical_ids: &[i64],
-    ) -> Result<tidb_stats_handle::table_size_stats::TableRowStatsSnapshot, String> {
+    ) -> Result<tidb_stats_handle_cache::table_size_stats::TableRowStatsSnapshot, String> {
         // The latest catalog only locates `mysql.stats_meta` and
         // `mysql.stats_histograms`, as Go's restricted SQL resolves them; the
         // tables sized are the statement's own (`physical_ids`).
@@ -262,7 +262,7 @@ impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
         // refresh attempt, so the returned values are the cache's, whatever
         // the fresh reads did.
         let (rows, lengths) = self.row_stats_cache.snapshot();
-        Ok(tidb_stats_handle::table_size_stats::TableRowStatsSnapshot {
+        Ok(tidb_stats_handle_cache::table_size_stats::TableRowStatsSnapshot {
             table_rows: rows.into_iter().collect(),
             column_lengths: lengths.into_iter().collect(),
         })
@@ -1053,7 +1053,7 @@ impl Domain {
         database_name: &str,
         table: &tidb_model::table_info::TableInfo,
         snapshot_ts: u64,
-    ) -> Result<(Option<tidb_stats::JsonTable>, Vec<String>), String> {
+    ) -> Result<(Option<tidb_stats_util::JsonTable>, Vec<String>), String> {
         ClusterHistoricalStatsHandle {
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
@@ -2592,7 +2592,7 @@ impl ClusterHistoricalStatsHandle {
         catalog: &ClusterCatalog,
         physical_id: i64,
         snapshot_ts: u64,
-    ) -> Result<Option<tidb_stats::JsonTable>, String> {
+    ) -> Result<Option<tidb_stats_util::JsonTable>, String> {
         let snapshot = self.transactions.open_snapshot("default")?;
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
         tidb_stats_handle_storage::cluster_stats_dump::table_historical_stats_to_json(
@@ -2610,7 +2610,7 @@ impl ClusterHistoricalStatsHandle {
         database_name: &str,
         table: &tidb_model::table_info::TableInfo,
         physical_id: i64,
-    ) -> Result<Option<tidb_stats::JsonTable>, String> {
+    ) -> Result<Option<tidb_stats_util::JsonTable>, String> {
         let table_stats = {
             let snapshot = self.transactions.open_snapshot("default")?;
             let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
@@ -2645,7 +2645,7 @@ impl ClusterHistoricalStatsHandle {
         table: &tidb_model::table_info::TableInfo,
         physical_id: i64,
         is_partition: bool,
-    ) -> Result<Option<tidb_stats::JsonTable>, String> {
+    ) -> Result<Option<tidb_stats_util::JsonTable>, String> {
         if is_partition || table.get_partition_info().is_none() {
             return self.table_json(catalog, database_name, table, physical_id);
         }
@@ -2657,13 +2657,13 @@ impl ClusterHistoricalStatsHandle {
             }
         }
         if let Some(global) = self.table_json(catalog, database_name, table, table.id)? {
-            partitions.insert(tidb_stats::TIDB_GLOBAL_STATS.to_owned(), Some(global));
+            partitions.insert(tidb_stats_util::TIDB_GLOBAL_STATS.to_owned(), Some(global));
         }
-        Ok(Some(tidb_stats::JsonTable {
+        Ok(Some(tidb_stats_util::JsonTable {
             database_name: database_name.to_owned(),
             table_name: table.name.lowercase().to_owned(),
             partitions: Some(partitions),
-            ..tidb_stats::JsonTable::default()
+            ..tidb_stats_util::JsonTable::default()
         }))
     }
 
@@ -2674,7 +2674,7 @@ impl ClusterHistoricalStatsHandle {
         table: &tidb_model::table_info::TableInfo,
         physical_id: i64,
         snapshot_ts: u64,
-    ) -> Result<(Option<tidb_stats::JsonTable>, bool), String> {
+    ) -> Result<(Option<tidb_stats_util::JsonTable>, bool), String> {
         if let Some(historical) = self.table_historical_json(catalog, physical_id, snapshot_ts)? {
             return Ok((Some(historical), false));
         }
@@ -2691,7 +2691,7 @@ impl ClusterHistoricalStatsHandle {
         database_name: &str,
         table: &tidb_model::table_info::TableInfo,
         snapshot_ts: u64,
-    ) -> Result<(Option<tidb_stats::JsonTable>, Vec<String>), String> {
+    ) -> Result<(Option<tidb_stats_util::JsonTable>, Vec<String>), String> {
         let enabled = self
             .global_vars
             .get(tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS)
@@ -2714,7 +2714,7 @@ impl ClusterHistoricalStatsHandle {
         database_name: &str,
         table: &tidb_model::table_info::TableInfo,
         snapshot_ts: u64,
-    ) -> Result<(Option<tidb_stats::JsonTable>, Vec<String>), String> {
+    ) -> Result<(Option<tidb_stats_util::JsonTable>, Vec<String>), String> {
         let catalog = self.catalog.load();
         let Some(partition) = table.get_partition_info() else {
             let (json, fallback) = self.historical_or_latest_json(
@@ -2758,14 +2758,14 @@ impl ClusterHistoricalStatsHandle {
             fallbacks.push(format!("{database_name}.{} global", table.name.original()));
         }
         if global.is_some() {
-            partitions.insert(tidb_stats::TIDB_GLOBAL_STATS.to_owned(), global);
+            partitions.insert(tidb_stats_util::TIDB_GLOBAL_STATS.to_owned(), global);
         }
         Ok((
-            Some(tidb_stats::JsonTable {
+            Some(tidb_stats_util::JsonTable {
                 database_name: database_name.to_owned(),
                 table_name: table.name.lowercase().to_owned(),
                 partitions: Some(partitions),
-                ..tidb_stats::JsonTable::default()
+                ..tidb_stats_util::JsonTable::default()
             }),
             fallbacks,
         ))

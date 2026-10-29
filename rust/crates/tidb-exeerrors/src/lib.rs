@@ -27,7 +27,10 @@ use std::sync::LazyLock;
 use tidb_terror::TerrorError;
 use tidb_errno::errcode;
 
-use super::{CLASS_DDL, CLASS_EXECUTOR, CLASS_PRIVILEGE, CLASS_TABLE};
+use tidb_dbterror::CLASS_DDL;
+use tidb_dbterror::CLASS_EXECUTOR;
+use tidb_dbterror::CLASS_PRIVILEGE;
+use tidb_dbterror::CLASS_TABLE;
 
 /// Source `exeerrors.ErrGetStartTS`.
 pub static ERR_GET_START_TS: LazyLock<TerrorError> =

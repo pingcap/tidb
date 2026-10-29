@@ -28,10 +28,8 @@ mod error_packet;
 mod packet;
 mod prepared_statement;
 mod result;
-pub mod result_encoder;
 mod resultset;
 pub mod resultset_stream;
-mod textrow;
 
 pub use binary_params::{
     parse_binary_params, parse_length_encoded_bytes, parse_length_encoded_int,
@@ -73,23 +71,9 @@ pub use prepared_statement::{
     CURSOR_TYPE_READ_ONLY, MAX_STMT_FETCH_SIZE, MYSQL_TYPE_LONGLONG, MYSQL_UNSIGNED_FLAG,
 };
 pub use result::{
-    append_length_encoded_bytes, append_length_encoded_int, encode_text_row, is_string_column_type,
-    NULL_MARKER,
-};
-pub use result_encoder::{
-    is_string_column_type as is_string_result_column_type, ResultCharset, ResultEncoder,
-    ResultEncoderError, ASCII_DEFAULT_COLLATION_ID, GBK_DEFAULT_COLLATION_ID,
-    LATIN1_DEFAULT_COLLATION_ID, UTF8MB4_DEFAULT_COLLATION_ID, UTF8MB4_GENERAL_CI_COLLATION_ID,
-    UTF8MB4_UNICODE_CI_COLLATION_ID, UTF8_DEFAULT_COLLATION_ID, UTF8_GENERAL_CI_COLLATION_ID,
-    UTF8_UNICODE_CI_COLLATION_ID,
+    append_length_encoded_bytes, append_length_encoded_int, encode_text_row, NULL_MARKER,
 };
 pub use resultset::{
     encode_eof_packet, encode_ok_packet, encode_text_result_set, EofPacket, OkPacket,
     ResultSetError, ResultSetOptions, EOF_HEADER, OK_HEADER,
-};
-pub use textrow::{
-    append_format_float, format_datum_text, format_text_value, TextColumn, TextFormatError,
-    TextScalar, NOT_FIXED_DECIMAL, TYPE_DATE, TYPE_DATETIME, TYPE_DOUBLE, TYPE_DURATION,
-    TYPE_FLOAT, TYPE_GEOMETRY, TYPE_INT24, TYPE_LONG, TYPE_LONGLONG, TYPE_NEW_DECIMAL, TYPE_SHORT,
-    TYPE_TIMESTAMP, TYPE_TINY, TYPE_YEAR, UNSIGNED_FLAG,
 };

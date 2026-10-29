@@ -61,8 +61,7 @@ impl ByItems {
 /// Go `AggFuncDesc` (`descriptor.go:33`): an aggregation function signature.
 ///
 /// This is the CANONICAL descriptor for the workspace; see [`super`] for how
-/// `tidb-executor`'s `AggFunc`/`AggKind` and `tidb-planner`'s generic
-/// `AggFuncDesc<A, R, O>` relate to it.
+/// `tidb-executor`'s `AggFunc`/`AggKind` relate to it.
 #[derive(Clone, Debug)]
 pub struct AggFuncDesc {
     /// Go's embedded `baseFuncDesc`.

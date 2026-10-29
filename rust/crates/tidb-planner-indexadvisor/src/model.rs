@@ -14,7 +14,7 @@
 
 //! Go `pkg/planner/indexadvisor/model.go`.
 
-use crate::keyset::Keyed;
+use tidb_set::keyset::Keyed;
 
 use tidb_hack::GoToLower;
 

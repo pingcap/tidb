@@ -97,11 +97,11 @@ struct CacheState {
 impl CacheState {
     fn account(&self, previous_size: usize, previous_memory: i64) {
         if self.plans.size() != previous_size {
-            tidb_planner::metrics::plan_cache_instance_num_counter(false)
+            tidb_planner_core_metrics::plan_cache_instance_num_counter(false)
                 .add(self.plans.size() as f64 - previous_size as f64);
         }
         if self.monitor_memory && self.plans.memory_usage() != previous_memory {
-            tidb_planner::metrics::plan_cache_instance_memory_usage(false)
+            tidb_planner_core_metrics::plan_cache_instance_memory_usage(false)
                 .add((self.plans.memory_usage() - previous_memory) as f64);
         }
     }
@@ -205,16 +205,16 @@ impl PlanCacheInvalidation {
                         }
                         let (soft, hard) = instance_limits();
                         cache.set_limits(soft, hard);
-                        tidb_planner::metrics::plan_cache_instance_num_counter(true)
+                        tidb_planner_core_metrics::plan_cache_instance_num_counter(true)
                             .set(cache.size() as f64);
-                        tidb_planner::metrics::plan_cache_instance_memory_usage(true)
+                        tidb_planner_core_metrics::plan_cache_instance_memory_usage(true)
                             .set(cache.memory_usage() as f64);
                         eviction_tick = !eviction_tick;
                         if !eviction_tick {
                             let disabled = !tidb_vardef::ENABLE_INSTANCE_PLAN_CACHE
                                 .load(std::sync::atomic::Ordering::Acquire);
                             let removed = cache.evict(disabled);
-                            tidb_planner::metrics::plan_cache_instance_evict().set(removed as f64);
+                            tidb_planner_core_metrics::plan_cache_instance_evict().set(removed as f64);
                         }
                     }
                 })
@@ -333,7 +333,7 @@ impl SessionPlanCache {
         // Go captures capacity when GetSessionPlanCache first constructs the LRU.
         state.account(size, memory);
         if state.monitor_memory != monitor_memory {
-            tidb_planner::metrics::plan_cache_instance_memory_usage(false)
+            tidb_planner_core_metrics::plan_cache_instance_memory_usage(false)
                 .add(state.plans.memory_usage() as f64 * if monitor_memory { 1.0 } else { -1.0 });
             state.monitor_memory = monitor_memory;
         }
@@ -401,7 +401,7 @@ impl SessionPlanCache {
             let value = instance.get(&self.instance_key(key), parameter_types)?;
             let begin = std::time::Instant::now();
             let plan = value.plan.clone_for_execution();
-            tidb_planner::metrics::plan_cache_clone_duration()
+            tidb_planner_core_metrics::plan_cache_clone_duration()
                 .observe(begin.elapsed().as_secs_f64());
             return Some(plan);
         }

@@ -74,12 +74,9 @@ use tidb_stats::cmsketch::{
     cmsketch_and_topn_from_proto, CmsSketchProto, CmsSketchProtoRow, CmsSketchProtoTopN,
 };
 use tidb_stats::histogram::Histogram;
-use tidb_stats::{
-    fm_sketch_from_proto, ColAndIdxExistenceMap, Column, ColumnInfo, FmSketchProto, HistColl,
-    Index, IndexInfo, JsonBucket, JsonCmSketch, JsonCmSketchRow, JsonCmSketchTopN, JsonColumn,
-    JsonFmSketch, JsonHistogram, JsonPredicateColumn, StatsLoadedStatus, Table,
-};
-use tidb_stats::JsonTable;
+use tidb_stats::{fm_sketch_from_proto, ColAndIdxExistenceMap, Column, ColumnInfo, FmSketchProto, HistColl, Index, IndexInfo, StatsLoadedStatus, Table};
+use tidb_stats_util::{JsonBucket, JsonCmSketch, JsonCmSketchRow, JsonCmSketchTopN, JsonColumn, JsonFmSketch, JsonHistogram, JsonPredicateColumn};
+use tidb_stats_util::JsonTable;
 use tidb_compress::{GzipReaderPool, GzipWriterPool};
 
 use tidb_stats::table_statistics::TableStatistics;

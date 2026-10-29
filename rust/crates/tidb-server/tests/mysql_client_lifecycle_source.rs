@@ -17,11 +17,8 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_executor::StatementMemory;
 use tidb_vardef::OomAction;
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
-use tidb_protocol::{
-    PacketReader, PacketWriter, COM_INIT_DB, COM_PING, COM_QUERY, COM_QUIT,
-    COM_STMT_CLOSE, COM_STMT_EXECUTE, COM_STMT_FETCH, COM_STMT_PREPARE, COM_STMT_RESET,
-    COM_STMT_SEND_LONG_DATA, DEFAULT_MAX_ALLOWED_PACKET, TYPE_BLOB, TYPE_LONGLONG,
-};
+use tidb_protocol::{PacketReader, PacketWriter, COM_INIT_DB, COM_PING, COM_QUERY, COM_QUIT, COM_STMT_CLOSE, COM_STMT_EXECUTE, COM_STMT_FETCH, COM_STMT_PREPARE, COM_STMT_RESET, COM_STMT_SEND_LONG_DATA, DEFAULT_MAX_ALLOWED_PACKET, TYPE_BLOB};
+use tidb_format_textrow::TYPE_LONGLONG;
 use tidb_server::{serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit, ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral, QueryResult, QuerySession, QuerySessionFactory, ResultSetSource, SessionContext, WireStatus, SERVER_STATUS_IN_TRANS};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_executor::ddl_exec::WriteOutcome;

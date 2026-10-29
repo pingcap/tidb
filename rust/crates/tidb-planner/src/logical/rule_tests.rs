@@ -82,7 +82,7 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         no_index_merge_hint: false,
         in_explain_stmt: false,
         range_max_size: 0,
-        selectivity_factor: crate::cost_factors::SELECTION_FACTOR,
+        selectivity_factor: tidb_planner_core_cost::SELECTION_FACTOR,
         range_fallback_handler: None,
         always_keep_join_key: true,
         enable_unsafe_substitute: false,

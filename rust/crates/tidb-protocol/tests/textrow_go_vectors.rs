@@ -29,7 +29,9 @@
 //! `default: return nil, ErrInvalidType` arm, and this crate must refuse
 //! exactly the same shapes rather than inventing a rendering for them.
 
-use tidb_protocol::{format_text_value, TextColumn, TextScalar};
+use tidb_format_textrow::format_text_value;
+use tidb_format_textrow::TextColumn;
+use tidb_format_textrow::TextScalar;
 
 const FIXTURE: &str =
     include_str!("../../../difftests/transaction-tests/fixtures/textrow_vectors.tsv");

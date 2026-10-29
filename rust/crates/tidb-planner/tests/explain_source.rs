@@ -11,7 +11,7 @@
 //! the real PlanBuilder, physical optimizer, and FlattenPhysicalPlan bridge.
 
 use tidb_ast::{DmlStmt, Stmt};
-use tidb_planner::access::{AccessObject, IndexAccess, ScanAccessObject};
+use tidb_planner_core_access::{AccessObject, IndexAccess, ScanAccessObject};
 use tidb_planner::explain::{
     new_line_fields_info, Explain, ExplainContext, ExplainFormat, ExplainOperator, ExplainTask,
 };

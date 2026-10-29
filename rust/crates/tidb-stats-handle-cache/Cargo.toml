@@ -14,6 +14,9 @@ workspace = true
 failpoints = ["dep:fail", "fail/failpoints"]
 
 [dependencies]
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-table = { path = "../tidb-table" }
 fail = { version = "0.4", optional = true }
 tidb-config = { path = "../tidb-config" }
 tidb-stats = { path = "../tidb-stats" }

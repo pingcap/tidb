@@ -18,14 +18,40 @@
 //! authority. Typed values are derived only after that split, matching Go's
 //! `parseBinaryParams` -> `expression.ExecBinaryParam` boundary.
 
-use crate::{
-    append_length_encoded_bytes, append_length_encoded_int, encode_eof_packet, ColumnInfo,
-    EofPacket, ResultSetOptions, DEFAULT_COLLATION_ID, TYPE_BIT, TYPE_BLOB, TYPE_DATE,
-    TYPE_DATETIME, TYPE_DOUBLE, TYPE_DURATION, TYPE_ENUM, TYPE_FLOAT, TYPE_GEOMETRY, TYPE_INT24,
-    TYPE_JSON, TYPE_LONG, TYPE_LONGLONG, TYPE_LONG_BLOB, TYPE_MEDIUM_BLOB, TYPE_NEW_DECIMAL,
-    TYPE_SET, TYPE_SHORT, TYPE_STRING, TYPE_TIDB_VECTOR_FLOAT32, TYPE_TIMESTAMP, TYPE_TINY,
-    TYPE_TINY_BLOB, TYPE_UNSPECIFIED, TYPE_VARCHAR, TYPE_VAR_STRING, TYPE_YEAR,
-};
+use crate::append_length_encoded_bytes;
+use crate::append_length_encoded_int;
+use crate::encode_eof_packet;
+use crate::ColumnInfo;
+use crate::EofPacket;
+use crate::ResultSetOptions;
+use crate::DEFAULT_COLLATION_ID;
+use crate::TYPE_BIT;
+use crate::TYPE_BLOB;
+use tidb_format_textrow::TYPE_DATE;
+use tidb_format_textrow::TYPE_DATETIME;
+use tidb_format_textrow::TYPE_DOUBLE;
+use tidb_format_textrow::TYPE_DURATION;
+use crate::TYPE_ENUM;
+use tidb_format_textrow::TYPE_FLOAT;
+use tidb_format_textrow::TYPE_GEOMETRY;
+use tidb_format_textrow::TYPE_INT24;
+use crate::TYPE_JSON;
+use tidb_format_textrow::TYPE_LONG;
+use tidb_format_textrow::TYPE_LONGLONG;
+use crate::TYPE_LONG_BLOB;
+use crate::TYPE_MEDIUM_BLOB;
+use tidb_format_textrow::TYPE_NEW_DECIMAL;
+use crate::TYPE_SET;
+use tidb_format_textrow::TYPE_SHORT;
+use crate::TYPE_STRING;
+use crate::TYPE_TIDB_VECTOR_FLOAT32;
+use tidb_format_textrow::TYPE_TIMESTAMP;
+use tidb_format_textrow::TYPE_TINY;
+use crate::TYPE_TINY_BLOB;
+use crate::TYPE_UNSPECIFIED;
+use crate::TYPE_VARCHAR;
+use crate::TYPE_VAR_STRING;
+use tidb_format_textrow::TYPE_YEAR;
 use tidb_datatype::{Decimal, PackedTime};
 
 /// MySQL binary-protocol type tag for a signed or unsigned 64-bit integer.
@@ -847,7 +873,7 @@ pub fn encode_binary_result_row(cells: &[BinaryResultCell]) -> Vec<u8> {
 
 fn encode_binary_result_row_inner(
     cells: &[BinaryResultCell],
-    mut column_encoding: Option<(&[ColumnInfo], crate::result_encoder::ResultEncoder)>,
+    mut column_encoding: Option<(&[ColumnInfo], tidb_format_textrow::result_encoder::ResultEncoder)>,
 ) -> Vec<u8> {
     let null_bitmap_len = (cells.len() + 7 + 2) / 8;
     let mut encoded = Vec::with_capacity(1 + null_bitmap_len + cells.len() * 8);
@@ -920,7 +946,7 @@ fn encode_binary_result_row_inner(
 
 fn encode_binary_result_row_owned_inner(
     cells: Vec<BinaryResultCell>,
-    encodings: &[Option<crate::result_encoder::ResultEncoder>],
+    encodings: &[Option<tidb_format_textrow::result_encoder::ResultEncoder>],
     encoded: &mut Vec<u8>,
 ) {
     let null_bitmap_len = (cells.len() + 7 + 2) / 8;
@@ -1071,7 +1097,7 @@ pub struct BinaryResultSetStream {
     /// Per-column result encoders resolved once when the stream is created.
     /// Prepared executions reuse the same column metadata shape, so looking up
     /// a collation for every row would only repeat immutable work.
-    data_encodings: Vec<Option<crate::result_encoder::ResultEncoder>>,
+    data_encodings: Vec<Option<tidb_format_textrow::result_encoder::ResultEncoder>>,
     state: BinaryResultSetState,
 }
 

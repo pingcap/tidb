@@ -13,10 +13,17 @@
 // limitations under the License.
 
 use tidb_datatype::Datum;
-use tidb_stats::{
-    copy_index, index_is_all_evicted, Bucket, CmsSketch, FmSketch, Histogram, Index, IndexInfo,
-    StatsLoadedStatus, TopN, ALL_EVICTED,
-};
+use tidb_stats::copy_index;
+use tidb_stats::index_is_all_evicted;
+use tidb_stats::Bucket;
+use tidb_stats::CmsSketch;
+use tidb_stats::FmSketch;
+use tidb_stats::Histogram;
+use tidb_stats::Index;
+use tidb_stats::IndexInfo;
+use tidb_stats::StatsLoadedStatus;
+use tidb_stats::TopN;
+use tidb_stats::ALL_EVICTED;
 
 fn populated_index(version: i64) -> Index {
     let mut top_n = TopN::new(1);
@@ -137,7 +144,7 @@ fn source_memory_excludes_fm_sketch() {
 #[test]
 fn stats_ndv_batch_schema_unique_admission_and_local_partition_bounds() {
     use tidb_model::{ColumnInfo, IndexColumn, IndexInfo, SchemaState, TableInfo};
-    use tidb_stats::global_stats::{is_local_unique, unique_global_ndv};
+    use tidb_stats_handle_globalstats::{is_local_unique, unique_global_ndv};
     use tidb_stats::index::{is_single_col_non_prefix_unique_index, unique_by_schema};
     let mut index = IndexInfo {
         id: 9,

@@ -33,7 +33,7 @@ use tidb_charset::Collation;
 use crate::{Catalog, PreparedDmlPlan, PreparedSelectPlan};
 use tidb_hack::GoCaseCompare;
 use tidb_mysql::to_lowercase as go_simple_lowercase;
-use tidb_planner::metrics::non_prep_plan_cache_unsupported_counter;
+use tidb_planner_core_metrics::non_prep_plan_cache_unsupported_counter;
 use tidb_filter::is_system_schema;
 use tidb_kvcache::SimpleLruCache;
 
@@ -1123,8 +1123,8 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
             ) {
                 // Go `GetPlanFromPlanCache`'s hit arm; `lookupPlanCache`'s
                 // defer observes the lookup duration on hits only.
-                tidb_planner::metrics::plan_cache_hit_counter(true).inc();
-                tidb_planner::metrics::plan_cache_lookup_duration(
+                tidb_planner_core_metrics::plan_cache_hit_counter(true).inc();
+                tidb_planner_core_metrics::plan_cache_lookup_duration(
                     self.physical_plan_cache().uses_instance(),
                 )
                 .observe(lookup_start.elapsed().as_secs_f64());
@@ -1132,7 +1132,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
             }
         }
         // Go's miss arm re-plans; its miss counter records the replan.
-        tidb_planner::metrics::plan_cache_miss_counter(true).inc();
+        tidb_planner_core_metrics::plan_cache_miss_counter(true).inc();
         let ctx = self.statement_context(false).with_non_prepared_plan_cache();
         let catalog = self.lock_catalog().ok()?;
         plan.bind_for_statement(
@@ -1204,7 +1204,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
         };
         self.configure_session_plan_cache();
         let observe = |start: std::time::Instant| {
-            tidb_planner::metrics::plan_cache_lookup_duration(
+            tidb_planner_core_metrics::plan_cache_lookup_duration(
                 self.physical_plan_cache().uses_instance(),
             )
             .observe(start.elapsed().as_secs_f64());
@@ -1223,13 +1223,13 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
                 // Go `GetPlanFromPlanCache`'s hit arm. Go's `lookupPlanCache`
                 // defer observes the lookup duration ONLY when it hit; a
                 // miss/re-plan records the miss counter and nothing else.
-                tidb_planner::metrics::plan_cache_hit_counter(true).inc();
+                tidb_planner_core_metrics::plan_cache_hit_counter(true).inc();
                 observe(lookup_start);
                 return Some(execution);
             }
         }
         // Go's miss arm re-plans; its miss counter records the replan.
-        tidb_planner::metrics::plan_cache_miss_counter(true).inc();
+        tidb_planner_core_metrics::plan_cache_miss_counter(true).inc();
         let mut ctx = self.statement_context(false).with_non_prepared_plan_cache();
         if always_warn {
             ctx = ctx.with_always_warn_skip_plan_cache();

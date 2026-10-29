@@ -309,7 +309,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     Ok(expr) => (expr, None),
                     // Go: only ErrSubqueryMoreThan1Row is kept for the row
                     // that meets a duplicate (issue 29260).
-                    Err(error) if error.equal(&tidb_dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW) => (
+                    Err(error) if error.equal(&tidb_exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW) => (
                         Expression::Constant(tidb_expr::constant::Constant::new(
                             Datum::Null,
                             FieldType::new(FieldTypeCode::Null),

@@ -15,12 +15,15 @@
 //! Connection routing for incremental result-set responses.
 
 use tidb_datatype::{Datum, PackedTime, TimeType};
-use tidb_protocol::{
-    is_binary_datetime_result_type, is_binary_decimal_result_type, is_binary_duration_result_type,
-    is_binary_string_result_type, BinaryDateTimeType, BinaryResultCell, BinaryResultSetStream,
-    ResultSetOptions, TYPE_DOUBLE, TYPE_FLOAT, TYPE_INT24, TYPE_LONG, TYPE_LONGLONG, TYPE_SHORT,
-    TYPE_TINY, TYPE_YEAR,
-};
+use tidb_protocol::{is_binary_datetime_result_type, is_binary_decimal_result_type, is_binary_duration_result_type, is_binary_string_result_type, BinaryDateTimeType, BinaryResultCell, BinaryResultSetStream, ResultSetOptions};
+use tidb_format_textrow::TYPE_DOUBLE;
+use tidb_format_textrow::TYPE_FLOAT;
+use tidb_format_textrow::TYPE_INT24;
+use tidb_format_textrow::TYPE_LONG;
+use tidb_format_textrow::TYPE_LONGLONG;
+use tidb_format_textrow::TYPE_SHORT;
+use tidb_format_textrow::TYPE_TINY;
+use tidb_format_textrow::TYPE_YEAR;
 
 /// Maps one decoded `Datum` to the binary cell its column type dumps, following
 /// TiDB's `DumpBinaryRow` switch on `columns[i].Type`. Returns `None` when the
@@ -469,7 +472,7 @@ mod tests {
                     TimeType::DateTime,
                     6
                 ),
-                tidb_protocol::TYPE_DATETIME
+                tidb_format_textrow::TYPE_DATETIME
             ),
             go_row("datetime_micros")
         );
@@ -480,14 +483,14 @@ mod tests {
                     TimeType::DateTime,
                     0
                 ),
-                tidb_protocol::TYPE_DATETIME
+                tidb_format_textrow::TYPE_DATETIME
             ),
             go_row("datetime_seconds")
         );
         assert_eq!(
             row(
                 datetime(CoreTime::default(), TimeType::DateTime, 0),
-                tidb_protocol::TYPE_DATETIME
+                tidb_format_textrow::TYPE_DATETIME
             ),
             go_row("datetime_zero")
         );
@@ -498,7 +501,7 @@ mod tests {
                     TimeType::Timestamp,
                     6
                 ),
-                tidb_protocol::TYPE_TIMESTAMP
+                tidb_format_textrow::TYPE_TIMESTAMP
             ),
             go_row("timestamp_micros")
         );
@@ -509,7 +512,7 @@ mod tests {
                     TimeType::Date,
                     0
                 ),
-                tidb_protocol::TYPE_DATE
+                tidb_format_textrow::TYPE_DATE
             ),
             go_row("date_plain")
         );
@@ -521,27 +524,27 @@ mod tests {
             Datum::Duration(MySqlDuration::from_nanoseconds(nanoseconds, 6).expect("duration"))
         };
         assert_eq!(
-            row(duration(0), tidb_protocol::TYPE_DURATION),
+            row(duration(0), tidb_format_textrow::TYPE_DURATION),
             go_row("duration_zero")
         );
         assert_eq!(
             row(
                 duration((26 * 3600 + 3 * 60 + 4) * 1_000_000_000),
-                tidb_protocol::TYPE_DURATION
+                tidb_format_textrow::TYPE_DURATION
             ),
             go_row("duration_1d2h3m4s")
         );
         assert_eq!(
             row(
                 duration((3600 + 2 * 60 + 3) * 1_000_000_000 + 456_789_000),
-                tidb_protocol::TYPE_DURATION
+                tidb_format_textrow::TYPE_DURATION
             ),
             go_row("duration_micros")
         );
         assert_eq!(
             row(
                 duration(-((10 * 3600 + 20 * 60 + 30) * 1_000_000_000)),
-                tidb_protocol::TYPE_DURATION
+                tidb_format_textrow::TYPE_DURATION
             ),
             go_row("duration_negative")
         );
@@ -607,7 +610,7 @@ mod tests {
         assert_eq!(
             row(
                 Datum::new_float32_from_f64(f64::from(float)),
-                tidb_protocol::TYPE_FLOAT
+                tidb_format_textrow::TYPE_FLOAT
             ),
             expected_float
         );

@@ -244,7 +244,7 @@ impl<'a> DispatchContext<'a> {
             skew_ratio,
             range_max_size: 64 * 1024 * 1024,
             // Go `vardef.DefOptSelectivityFactor`.
-            selectivity_factor: crate::cost_factors::SELECTION_FACTOR,
+            selectivity_factor: tidb_planner_core_cost::SELECTION_FACTOR,
             range_fallback_handler: None,
             expression_evaluator: &tidb_ranger::points::evaluate_static,
             ordering_index_selectivity_ratio: 0.01,
@@ -3284,8 +3284,8 @@ fn find_best_task_4_logical_data_source_paths(
                     table_stats.as_ref(),
                     correlated_int_handle,
                 ) {
-                    if *count + crate::cost_factors::TOLERANCE_FACTOR < ds_stats.row_count() {
-                        *count = (ds_stats.row_count() / crate::cost_factors::SELECTION_FACTOR)
+                    if *count + tidb_planner_core_cost::TOLERANCE_FACTOR < ds_stats.row_count() {
+                        *count = (ds_stats.row_count() / tidb_planner_core_cost::SELECTION_FACTOR)
                             .min(base_stats.row_count());
                     }
                 }
@@ -3316,7 +3316,7 @@ fn find_best_task_4_logical_data_source_paths(
                     ) {
                         let count_after_access = path_stats.row_count();
                         let original_row_count = ds_stats.row_count();
-                        if prop.expected_cnt + crate::cost_factors::TOLERANCE_FACTOR
+                        if prop.expected_cnt + tidb_planner_core_cost::TOLERANCE_FACTOR
                             < original_row_count
                             || (keep_order
                                 && original_row_count.min(prop.expected_cnt) < count_after_access
@@ -3415,7 +3415,7 @@ fn find_best_task_4_logical_data_source_paths(
                             )
                         })
                         .filter(|value| *value > 0.0)
-                        .unwrap_or(crate::cost_factors::SELECTION_FACTOR)
+                        .unwrap_or(tidb_planner_core_cost::SELECTION_FACTOR)
                     };
                 if let Some(runtime) = &prop.index_join_prop {
                     // Go `constructDS2TableScanTask`: the runtime row count is
@@ -4299,7 +4299,7 @@ fn find_best_task_4_logical_data_source_paths(
                             .get(&source_index.id)
                             .is_some_and(|path| path.row_estimate.is_some());
                     if !logically_adjusted
-                        && *count + crate::cost_factors::TOLERANCE_FACTOR < ds_stats.row_count()
+                        && *count + tidb_planner_core_cost::TOLERANCE_FACTOR < ds_stats.row_count()
                     {
                         if ranges_include_appended_handle {
                             // Go's `adjustCountAfterAccess` aligns estimates that
@@ -4309,7 +4309,7 @@ fn find_best_task_4_logical_data_source_paths(
                             *count = ds_stats.row_count();
                         } else {
                             *count = (ds_stats.row_count()
-                                / crate::cost_factors::SELECTION_FACTOR)
+                                / tidb_planner_core_cost::SELECTION_FACTOR)
                                 .min(base_stats.row_count());
                         }
                     }
@@ -4407,7 +4407,7 @@ fn find_best_task_4_logical_data_source_paths(
                                 stats, filters, &ctx.access_path_derivation_context(), None, None,
                             )
                         }).filter(|ratio| *ratio > 0.0)
-                            .unwrap_or(crate::cost_factors::SELECTION_FACTOR)
+                            .unwrap_or(tidb_planner_core_cost::SELECTION_FACTOR)
                     };
                     let final_rows = cap(runtime.avg_inner_row_count);
                     let index_rows = cap(final_rows / selectivity(&table_filters));

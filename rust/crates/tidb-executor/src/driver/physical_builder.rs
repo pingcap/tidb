@@ -895,12 +895,12 @@ impl Executor for MaxOneRowExec {
                 if extra.num_rows() == 0 {
                     Ok(())
                 } else {
-                    Err(tidb_dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
+                    Err(tidb_exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
                         .generate_with_stack_by_args(&[])
                         .into())
                 }
             }
-            _ => Err(tidb_dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
+            _ => Err(tidb_exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
                 .generate_with_stack_by_args(&[])
                 .into()),
         }
@@ -8576,7 +8576,7 @@ use super::*;
         assert!(matches!(
             error,
             crate::ExecError::Mysql(ref error)
-                if error.equal(&tidb_dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW)
+                if error.equal(&tidb_exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW)
         ));
     }
 
@@ -9664,7 +9664,7 @@ use super::*;
                             if let PhysicalPlan::IndexMergeReader(reader) = &mut plan {
                                 for partial in &mut reader.partial_plans_raw {
                                     let access = selection.map(|name| {
-                                        tidb_planner::access::DynamicPartitionAccessObject {
+                                        tidb_planner_core_access::DynamicPartitionAccessObject {
                                             partitions: vec![name.into()],
                                             ..Default::default()
                                         }

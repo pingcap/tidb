@@ -375,14 +375,14 @@ pub trait PreparedExec: super::CompilerSession {
         })?;
         if statements.len() != 1 {
             return Err(DriverError::from(
-                tidb_dbterror::exeerrors::ERR_PREPARE_MULTI.generate_with_stack_by_args(&[]),
+                tidb_exeerrors::ERR_PREPARE_MULTI.generate_with_stack_by_args(&[]),
             ));
         }
         let mut statement = statements.remove(0);
         // Go `GeneratePlanCacheStmtWithAST`'s own switch, before any planning.
         if is_unpreparable(&statement) {
             return Err(DriverError::from(
-                tidb_dbterror::exeerrors::ERR_UNSUPPORTED_PS.generate_with_stack_by_args(&[]),
+                tidb_exeerrors::ERR_UNSUPPORTED_PS.generate_with_stack_by_args(&[]),
             ));
         }
         // Go `Preprocess` at PREPARE (`handleTableName`): the retained

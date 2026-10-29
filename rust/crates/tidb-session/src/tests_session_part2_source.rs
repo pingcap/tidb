@@ -18,7 +18,7 @@
 
 #![cfg(test)]
 
-use crate::cursor::{CursorTracker, State};
+use tidb_session_cursor::{CursorTracker, State};
 
 /// `pkg/session/cursor/tracker_test.go:26::TestNewCursor`.
 #[test]

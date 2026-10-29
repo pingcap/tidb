@@ -26,9 +26,7 @@
 
 pub mod domain_errors;
 pub mod cluster_discovery;
-pub mod cdcutil;
 pub mod cluster_topology;
-pub mod disttask;
 pub mod historical_stats;
 pub mod plan_replayer;
 pub mod ru_stats;

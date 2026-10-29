@@ -237,7 +237,7 @@ fn run_node_with_log(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
     // Go's per-package metric inits run from pkg/metrics' RegisterMetrics and
     // each subsystem's startup; the dashboard surface they produce is one
     // boot-time call per Rust crate that owns the families.
-    tidb_planner::metrics::init_dashboard_series();
+    tidb_planner_core_metrics::init_dashboard_series();
     tidb_metrics::executor::init_dashboard_series();
     tidb_metrics::session::init_dashboard_series();
     tidb_metrics::distsql::init_dashboard_series();

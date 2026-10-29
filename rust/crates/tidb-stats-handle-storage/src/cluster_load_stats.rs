@@ -22,10 +22,11 @@
 
 use tidb_datatype::FieldTypeFlags;
 use crate::json::{statistics_table_from_json_schema, LoadStatsColumnSchema, LoadStatsError, LoadStatsIndexSchema, LoadStatsTableSchema};
-use tidb_stats::JsonTable;
-use tidb_stats::TIDB_GLOBAL_STATS;
+use tidb_stats_util::JsonTable;
+use tidb_stats_util::TIDB_GLOBAL_STATS;
 use tidb_model::table_info::TableInfo;
-use tidb_stats::{JsonPredicateColumn, Table};
+use tidb_stats_util::JsonPredicateColumn;
+use tidb_stats::Table;
 
 use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use crate::cluster_stats_load::ClusterStatsItem;
@@ -333,7 +334,7 @@ mod tests {
     use tidb_model::go_runtime::GoShared;
     use tidb_model::partition::{PartitionDefinition, PartitionInfo};
     use tidb_model::schema_state::SchemaState;
-    use tidb_stats::{JsonColumn, JsonHistogram};
+    use tidb_stats_util::{JsonColumn, JsonHistogram};
 
     use super::*;
     use tidb_infoschema::cluster_catalog::LoadedDatabase;
@@ -429,7 +430,7 @@ mod tests {
             .unwrap()
             .as_mut()
             .unwrap()
-            .fm_sketch = Some(tidb_stats::JsonFmSketch {
+            .fm_sketch = Some(tidb_stats_util::JsonFmSketch {
             mask: 3,
             hashset: Some(vec![4, 8, 12]),
         });

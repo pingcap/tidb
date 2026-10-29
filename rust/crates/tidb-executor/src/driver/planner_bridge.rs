@@ -3876,10 +3876,10 @@ mod subquery_error_identity_tests {
     /// that never stops -- reaches the client with its own code, not 1105.
     #[test]
     fn a_planning_time_subquery_keeps_the_go_error_it_raised() {
-        let raised = tidb_dbterror::exeerrors::ERR_CTE_MAX_RECURSION_DEPTH
+        let raised = tidb_exeerrors::ERR_CTE_MAX_RECURSION_DEPTH
             .generate_with_stack_by_args(&[1000_i64.into()]);
         let planned = driver_error_to_plan(crate::DriverError::from(raised.clone()));
-        assert!(planned.equal(&tidb_dbterror::exeerrors::ERR_CTE_MAX_RECURSION_DEPTH));
+        assert!(planned.equal(&tidb_exeerrors::ERR_CTE_MAX_RECURSION_DEPTH));
         let crate::DriverError::Mysql(back) = crate::driver::planner_error_to_driver(planned)
         else {
             panic!("the Go error was flattened");

@@ -34,11 +34,18 @@ use tidb_mysql::errors::SqlError;
 use tidb_store_driver_txn::cluster_storage::MutationBuffer;
 use tidb_stats::histogram::Histogram;
 use tidb_stats::row_sample_collector::adjusted_sample_rate;
-use tidb_stats::{
-    fm_sketch_ndv, merge_fm_sketch, merge_partition_histogram_topn, merge_partition_stats_item,
-    CmsSketch, FmSketch, GlobalStatsItem, GlobalStatsMergeError, GlobalStatsMergeMode,
-    PartitionStatsItem, StatsLoadedStatus, TopN,
-};
+use tidb_stats::fm_sketch_ndv;
+use tidb_stats::merge_fm_sketch;
+use tidb_stats_handle_globalstats::merge_partition_histogram_topn;
+use tidb_stats_handle_globalstats::merge_partition_stats_item;
+use tidb_stats::CmsSketch;
+use tidb_stats::FmSketch;
+use tidb_stats_handle_globalstats::GlobalStatsItem;
+use tidb_stats_handle_globalstats::GlobalStatsMergeError;
+use tidb_stats_handle_globalstats::GlobalStatsMergeMode;
+use tidb_stats_handle_globalstats::PartitionStatsItem;
+use tidb_stats::StatsLoadedStatus;
+use tidb_stats::TopN;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_store_driver_txn::transaction::StoreClient;
 use tidb_txnkv::transaction::OptimisticCommitOutcome;
@@ -1850,9 +1857,9 @@ where
                 while let Ok((index, histograms, topns)) = histogram_receiver.recv() {
                     let item = &worker_items[index];
                     let ndv =
-                        if tidb_stats::global_stats::is_local_unique(table, item.is_index, item.id)
+                        if tidb_stats_handle_globalstats::is_local_unique(table, item.is_index, item.id)
                         {
-                            tidb_stats::global_stats::unique_global_ndv(&histograms, total_count)
+                            tidb_stats_handle_globalstats::unique_global_ndv(&histograms, total_count)
                         } else {
                             global_ndvs[index]
                         };
@@ -2137,8 +2144,8 @@ fn merge_global_items<TZ: TimeZone + Sync>(
                 })?
             };
             let unique_ndv =
-                tidb_stats::global_stats::is_local_unique(table, is_index, id).then(|| {
-                    tidb_stats::global_stats::unique_global_ndv(
+                tidb_stats_handle_globalstats::is_local_unique(table, is_index, id).then(|| {
+                    tidb_stats_handle_globalstats::unique_global_ndv(
                         inputs.iter().map(|item| &item.histogram),
                         total_count,
                     )
@@ -3181,7 +3188,10 @@ mod tests {
     use tidb_model::SchemaState;
     use tidb_stats::histogram::{Bucket, Histogram};
     use tidb_stats::row_sample_collector::adjusted_sample_rate;
-    use tidb_stats::{FmSketch, GlobalStatsMergeMode, StatsLoadedStatus, MAX_SKETCH_SIZE};
+    use tidb_stats::FmSketch;
+    use tidb_stats_handle_globalstats::GlobalStatsMergeMode;
+    use tidb_stats::StatsLoadedStatus;
+    use tidb_stats::MAX_SKETCH_SIZE;
     use tidb_txnkv::retry::RegionBackoffKind;
     use tidb_txnkv::rpc::UnaryCallContext;
     use tidb_txnkv::transaction::{OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause};

@@ -1,0 +1,25 @@
+[package]
+name = "tidb-stats-handle-globalstats"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/statistics/handle/globalstats (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-stats = { path = "../tidb-stats" }
+tidb-charset = { path = "../tidb-charset" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-sqlkiller = { path = "../tidb-sqlkiller" }
+chrono.workspace = true
+tidb-codec = { path = "../tidb-codec" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-model = { path = "../tidb-model" }
+
+[[bench]]
+name = "global_stats"
+harness = false
