@@ -41,7 +41,7 @@ use tidb_ast::{Expr, PartitionDefinition, PartitionDefinitionClause, PartitionVa
 use tidb_datatype::FieldType;
 
 use tidb_table::partition_routing::{RangeBound, RangeColumnBound};
-use tidb_error::mysql::MysqlError;
+use tidb_error::MysqlError;
 
 use tidb_table::partition_fold::partition_expression_is_unsigned;
 use tidb_hack::GoCaseCompare;
@@ -72,7 +72,7 @@ pub fn build_range_bounds(
     // Go `buildPartitionDefinitionsInfo`: a RANGE table with no definitions
     // is 1492, checked before any bound is read.
     if definitions.is_empty() {
-        return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED.generate_with_stack_by_args(&["RANGE".into()])));
+        return Err(tidb_error::MysqlError::from_terror(&tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED.generate_with_stack_by_args(&["RANGE".into()])));
     }
     let unsigned = partition_expression_is_unsigned(built);
     let bounds =
@@ -91,7 +91,7 @@ pub fn build_range_bounds_with_unsigned(
     definition_tail: &mut dyn FnMut(usize) -> Result<(), MysqlError>,
 ) -> Result<Vec<RangeBound>, MysqlError> {
     if definitions.is_empty() {
-        return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED.generate_with_stack_by_args(&["RANGE".into()])));
+        return Err(tidb_error::MysqlError::from_terror(&tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED.generate_with_stack_by_args(&["RANGE".into()])));
     }
 
     let mut bounds = Vec::with_capacity(definitions.len());
@@ -102,21 +102,21 @@ pub fn build_range_bounds_with_unsigned(
             // `VALUES LESS THAN`, and only LIST takes `VALUES IN`, so the
             // wrong clause under RANGE names LIST as the owner.
             PartitionDefinitionClause::In(_) => {
-                return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_error::catalog::ast::ERR_PARTITION_WRONG_VALUES.generate_with_stack_by_args(&["LIST".into(), "IN".into()])))
+                return Err(tidb_error::MysqlError::from_terror(&tidb_error::catalog::ast::ERR_PARTITION_WRONG_VALUES.generate_with_stack_by_args(&["LIST".into(), "IN".into()])))
             }
-            _ => return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED.generate_with_stack_by_args(&["RANGE".into()]))),
+            _ => return Err(tidb_error::MysqlError::from_terror(&tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED.generate_with_stack_by_args(&["RANGE".into()]))),
         };
         // RANGE COLUMNS is the only form with more than one bound per
         // partition, and it is refused before this point.
         let [value] = values.as_slice() else {
-            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED.generate_with_stack_by_args(&["RANGE".into()])));
+            return Err(tidb_error::MysqlError::from_terror(&tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED.generate_with_stack_by_args(&["RANGE".into()])));
         };
         let bound = match value {
             PartitionValue::MaxValue => {
                 // Go `checkRangePartitionValue` strips a TRAILING `MAXVALUE`
                 // and then reports 1481 for any other one it meets.
                 if index + 1 != definitions.len() {
-                    return Err(tidb_error::mysql::MysqlError::from_terror(
+                    return Err(tidb_error::MysqlError::from_terror(
                         &tidb_dbterror::ERR_PARTITION_MAXVALUE
                             .generate_with_stack_by_args(&[]),
                     ));
@@ -127,7 +127,7 @@ pub fn build_range_bounds_with_unsigned(
                 RangeBound::Value(fold_range_bound(expr, &definition.name, unsigned, ctx)?)
             }
             PartitionValue::Default | PartitionValue::Tuple(_) => {
-                return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_VALUES_IS_NOT_INT_TYPE.generate_with_stack_by_args(&[(definition.name.clone()).to_string().into()])))
+                return Err(tidb_error::MysqlError::from_terror(&tidb_dbterror::ERR_VALUES_IS_NOT_INT_TYPE.generate_with_stack_by_args(&[(definition.name.clone()).to_string().into()])))
             }
         };
         bounds.push(bound);
@@ -157,7 +157,7 @@ pub fn build_range_columns_bounds(
     definition_tail: &mut dyn FnMut(usize) -> Result<(), MysqlError>,
 ) -> Result<RangeColumnsMetadata, MysqlError> {
     if columns.is_empty() || definitions.is_empty() {
-        return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED.generate_with_stack_by_args(&["RANGE".into()])));
+        return Err(tidb_error::MysqlError::from_terror(&tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED.generate_with_stack_by_args(&["RANGE".into()])));
     }
     // Go checks the bound tuple arity before resolving the named partition
     // columns.  That ordering is observable for a missing column paired with
@@ -169,20 +169,20 @@ pub fn build_range_columns_bounds(
             PartitionDefinitionClause::LessThan(values) if values.len() != columns.len()
         )
     }) {
-        return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_error::catalog::ast::ERR_PARTITION_COLUMN_LIST.generate_with_stack_by_args(&[])));
+        return Err(tidb_error::MysqlError::from_terror(&tidb_error::catalog::ast::ERR_PARTITION_COLUMN_LIST.generate_with_stack_by_args(&[])));
     }
     let mut dependency_names = Vec::with_capacity(columns.len());
     let mut field_types = Vec::with_capacity(columns.len());
     for path in columns {
         let name = path
             .last()
-            .ok_or_else(|| tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[])))?;
+            .ok_or_else(|| tidb_error::MysqlError::from_terror(&tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[])))?;
         // Go `checkPartitionColumnsUnique` (`ddl/partition.go:4664`).
         if dependency_names
             .iter()
             .any(|candidate: &String| candidate.go_lower_eq(name))
         {
-            return Err(tidb_error::mysql::MysqlError::from_terror(
+            return Err(tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_SAME_NAME_PARTITION_FIELD
                     .generate_with_stack_by_args(&[(name.clone()).to_string().into()]),
             ));
@@ -193,11 +193,11 @@ pub fn build_range_columns_bounds(
             // Go `checkColumnsPartitionType` (`partition.go:787`) reports a
             // column list's missing name as `ErrFieldNotFoundPart` (1488),
             // not the 1054 the expression path raises.
-            .ok_or_else(|| tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_FIELD_NOT_FOUND_PART.generate_with_stack_by_args(&[])))?;
+            .ok_or_else(|| tidb_error::MysqlError::from_terror(&tidb_dbterror::ERR_FIELD_NOT_FOUND_PART.generate_with_stack_by_args(&[])))?;
         let field_type = types[offset].clone();
         // Go `checkColumnsPartitionType` (`ddl/partition.go:785`).
         if !super::table_partition_list::list_columns_type_allowed(&field_type) {
-            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION.generate_with_stack_by_args(&[(name.clone()).to_string().into()])));
+            return Err(tidb_error::MysqlError::from_terror(&tidb_dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION.generate_with_stack_by_args(&[(name.clone()).to_string().into()])));
         }
         dependency_names.push(name.clone());
         field_types.push(field_type);
@@ -208,9 +208,9 @@ pub fn build_range_columns_bounds(
         let PartitionDefinitionClause::LessThan(values) = &definition.clause else {
             return match &definition.clause {
                 PartitionDefinitionClause::In(_) => {
-                    Err(tidb_error::mysql::MysqlError::from_terror(&tidb_error::catalog::ast::ERR_PARTITION_WRONG_VALUES.generate_with_stack_by_args(&["LIST".into(), "IN".into()])))
+                    Err(tidb_error::MysqlError::from_terror(&tidb_error::catalog::ast::ERR_PARTITION_WRONG_VALUES.generate_with_stack_by_args(&["LIST".into(), "IN".into()])))
                 }
-                _ => Err(tidb_error::mysql::MysqlError::from_terror(&tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED.generate_with_stack_by_args(&["RANGE".into()]))),
+                _ => Err(tidb_error::MysqlError::from_terror(&tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED.generate_with_stack_by_args(&["RANGE".into()]))),
             };
         };
         let bound = values
@@ -223,7 +223,7 @@ pub fn build_range_columns_bounds(
                         tidb_table::partition_fold::fold_range_column_value(expr, field_type, ctx)?;
                     // Go `ErrNullInValuesLessThan` (`ddl/partition.go:1691`).
                     if value.is_null() {
-                        return Err(tidb_error::mysql::MysqlError::from_terror(
+                        return Err(tidb_error::MysqlError::from_terror(
                             &tidb_dbterror::ERR_NULL_IN_VALUES_LESS_THAN
                                 .generate_with_stack_by_args(&[]),
                         ));
@@ -231,7 +231,7 @@ pub fn build_range_columns_bounds(
                     Ok(RangeColumnBound::Value(value))
                 }
                 PartitionValue::Default | PartitionValue::Tuple(_) => {
-                    Err(tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[])))
+                    Err(tidb_error::MysqlError::from_terror(&tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[])))
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -255,7 +255,7 @@ pub fn check_range_columns_strictly_increasing(
 ) -> Result<(), MysqlError> {
     for pair in less_than.windows(2) {
         if !range_columns_bound_increases(&pair[0], &pair[1], field_types)? {
-            return Err(tidb_error::mysql::MysqlError::from_terror(
+            return Err(tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_RANGE_NOT_INCREASING.generate_with_stack_by_args(&[]),
             ));
         }
@@ -278,7 +278,7 @@ pub fn range_columns_bound_increases(
                     previous,
                     field_type.collation(),
                 )
-                .map_err(|_| tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[])))?;
+                .map_err(|_| tidb_error::MysqlError::from_terror(&tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[])))?;
                 match order {
                     Ordering::Greater => return Ok(true),
                     Ordering::Less => return Ok(false),
@@ -303,7 +303,7 @@ pub fn fold_range_bound(
 ) -> Result<i64, MysqlError> {
     match tidb_table::partition_fold::fold_range_bound(expr, partition, ctx)? {
         tidb_table::partition_fold::FoldedRangeBound::Signed(value) if unsigned && value < 0 => {
-            Err(tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_PARTITION_CONST_DOMAIN.generate_with_stack_by_args(&[])))
+            Err(tidb_error::MysqlError::from_terror(&tidb_dbterror::ERR_PARTITION_CONST_DOMAIN.generate_with_stack_by_args(&[])))
         }
         folded => Ok(folded.stored()),
     }
@@ -327,7 +327,7 @@ pub fn check_strictly_increasing(
                 value > previous
             };
             if !increasing {
-                return Err(tidb_error::mysql::MysqlError::from_terror(
+                return Err(tidb_error::MysqlError::from_terror(
                     &tidb_dbterror::ERR_RANGE_NOT_INCREASING.generate_with_stack_by_args(&[]),
                 ));
             }

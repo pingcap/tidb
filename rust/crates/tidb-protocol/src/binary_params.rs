@@ -94,7 +94,7 @@ impl BinaryParamError {
 impl std::fmt::Display for BinaryParamError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::MalformedPacket => formatter.write_str(tidb_error::mysql::ERR_MALFORM_PACKET),
+            Self::MalformedPacket => formatter.write_str(tidb_mysql::errors::ERR_MALFORM_PACKET),
             Self::UnknownFieldType { type_code } => {
                 write!(formatter, "stmt unknown field type {type_code}")
             }

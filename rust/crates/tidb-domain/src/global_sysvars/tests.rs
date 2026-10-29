@@ -625,7 +625,7 @@ mod session_vars {
         // Go returns `time.Parse`'s range error verbatim.
         assert_eq!(
             error,
-            tidb_error::mysql::MysqlError::unknown(
+            tidb_error::MysqlError::unknown(
                 r#"parsing time "25:00": hour out of range"#.to_owned()
             )
         );
@@ -682,14 +682,14 @@ mod session_vars {
         let mut vars = session_vars();
         assert_eq!(
             vars.get_system("nope"),
-            Err(tidb_error::mysql::MysqlError::from_terror(
+            Err(tidb_error::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[("nope".to_owned()).into()])
             ))
         );
         assert_eq!(
             vars.set_system("nope", "1".to_owned()),
-            Err(tidb_error::mysql::MysqlError::from_terror(
+            Err(tidb_error::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[("nope".to_owned()).into()])
             ))
@@ -726,7 +726,7 @@ mod session_vars {
         ]);
         assert_eq!(
             globals.get("not_a_real_variable"),
-            Err(tidb_error::mysql::MysqlError::from_terror(
+            Err(tidb_error::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
                     .generate_with_stack_by_args(&[("not_a_real_variable".to_owned()).into()])
             ))
@@ -740,7 +740,7 @@ mod session_vars {
         assert!(vars.get_system("version").unwrap().starts_with("8.0.11-"));
         assert_eq!(
             vars.set_system("version", "9".to_owned()),
-            Err(tidb_error::mysql::MysqlError::from_terror(
+            Err(tidb_error::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
                     ("version".to_owned()).into(),
                     "read only".into()
@@ -839,7 +839,7 @@ mod session_vars {
         assert_eq!(vars.get_system("tidb_enforce_mpp").unwrap(), "OFF");
         assert_eq!(
             vars.set_system("tidb_enforce_mpp", "ON".to_owned()),
-            Err(tidb_error::mysql::MysqlError::from_terror(
+            Err(tidb_error::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_WRONG_VALUE_FOR_VAR
                     .generate_with_stack_by_args(&[
                         ("tidb_enforce_mpp".to_owned()).into(),
@@ -1018,7 +1018,7 @@ mod session_vars {
         // `error_count` is SESSION-only (scope 2): Go's `ErrLocalVariable`.
         assert_eq!(
             vars.set_global("debug_sync", "x".to_owned()),
-            Err(tidb_error::mysql::MysqlError::from_terror(
+            Err(tidb_error::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_LOCAL_VARIABLE
                     .generate_with_stack_by_args(&[("debug_sync".to_owned()).into()])
             ))
@@ -1056,7 +1056,7 @@ mod session_vars {
         // `ErrGlobalVariable`.
         assert_eq!(
             vars.set_system("default_password_lifetime", "5".to_owned()),
-            Err(tidb_error::mysql::MysqlError::from_terror(
+            Err(tidb_error::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_GLOBAL_VARIABLE.generate_with_stack_by_args(&[
                     ("default_password_lifetime".to_owned()).into()
                 ])
@@ -1069,7 +1069,7 @@ mod session_vars {
         let vars = session_vars();
         assert_eq!(
             vars.get_global("debug_sync"),
-            Err(tidb_error::mysql::MysqlError::from_terror(
+            Err(tidb_error::MysqlError::from_terror(
                 &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
                     ("debug_sync".to_owned()).into(),
                     "SESSION".into()

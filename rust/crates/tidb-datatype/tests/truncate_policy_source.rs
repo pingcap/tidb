@@ -15,7 +15,7 @@
 //! Direct truncation policy and `BinaryLiteral.ToInt` source obligations.
 
 use tidb_datatype::{parse_hex_str, TruncationPolicy};
-use tidb_error::mysql::{errcode as mysql, FormatArg, SqlError};
+use tidb_mysql::errors::{errcode as mysql, FormatArg, SqlError};
 use tidb_error::tidb::errcode as tidb;
 
 #[test]

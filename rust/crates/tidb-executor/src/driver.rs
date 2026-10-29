@@ -382,12 +382,12 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
             use tidb_expr::aggregation::AggDescError;
             match aggregate {
                 AggDescError::ApproxPercentileOutOfRange(value) => {
-                    DriverError::from(tidb_error::mysql::MysqlError::unknown(format!("Percentage value {} is out of range [1, 100]", *value)))
+                    DriverError::from(tidb_error::MysqlError::unknown(format!("Percentage value {} is out of range [1, 100]", *value)))
                 }
-                AggDescError::ApproxPercentileArgCount => DriverError::from(tidb_error::mysql::MysqlError::unknown("APPROX_PERCENTILE should take 2 arguments")),
-                AggDescError::ApproxPercentileNotConstant => DriverError::from(tidb_error::mysql::MysqlError::unknown("APPROX_PERCENTILE should take a constant expression as percentage argument")),
+                AggDescError::ApproxPercentileArgCount => DriverError::from(tidb_error::MysqlError::unknown("APPROX_PERCENTILE should take 2 arguments")),
+                AggDescError::ApproxPercentileNotConstant => DriverError::from(tidb_error::MysqlError::unknown("APPROX_PERCENTILE should take a constant expression as percentage argument")),
                 AggDescError::ApproxPercentileNullPercentage => {
-                    DriverError::from(tidb_error::mysql::MysqlError::unknown("APPROX_PERCENTILE: Percentage value cannot be NULL"))
+                    DriverError::from(tidb_error::MysqlError::unknown("APPROX_PERCENTILE: Percentage value cannot be NULL"))
                 }
                 AggDescError::Expr(eval) => DriverError::Exec(ExecError::Eval(eval.clone())),
                 other => DriverError::unsupported(other.to_string()),

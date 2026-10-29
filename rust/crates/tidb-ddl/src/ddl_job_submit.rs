@@ -450,7 +450,7 @@ impl JobSubmitError {
     #[must_use]
     pub fn code(&self) -> u16 {
         self.to_terror()
-            .map_or(tidb_error::mysql::errcode::ErrUnknown, |error| {
+            .map_or(tidb_mysql::errors::errcode::ErrUnknown, |error| {
                 error.to_sql_error().code
             })
     }

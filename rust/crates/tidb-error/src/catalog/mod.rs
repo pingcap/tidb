@@ -25,7 +25,7 @@
 //! SCREAMING_SNAKE.
 
 use crate::terror::{TerrorClass, TerrorCode, TerrorError};
-use crate::ErrMessage;
+use tidb_mysql::errors::ErrMessage;
 
 /// Alias keeping the generated tables short.
 pub(crate) type Class = TerrorClass;
@@ -56,7 +56,7 @@ pub(crate) fn std_err_msg(
     suffix: &'static str,
 ) -> TerrorError {
     let catalog = crate::tidb::message_by_code(message_code)
-        .or_else(|| crate::mysql::message_by_code(message_code))
+        .or_else(|| tidb_mysql::errors::message_by_code(message_code))
         .copied()
         .expect("NewStdErr message code must exist in the MySQL or TiDB catalog");
     let raw: &'static str = if suffix.is_empty() {

@@ -509,7 +509,7 @@ pub fn show_create_table_text(
     // inserts print nothing).
     if let Some(next) = table
         .next_auto_increment_for_show()
-        .map_err(|e| DriverError::from(tidb_error::mysql::MysqlError::unknown(e.0)))?
+        .map_err(|e| DriverError::from(tidb_error::MysqlError::unknown(e.0)))?
         .filter(|next| *next > 1)
     {
         out.push_str(&format!(" AUTO_INCREMENT={next}"));
@@ -523,7 +523,7 @@ pub fn show_create_table_text(
     }
     if let Some(base) = table
         .next_auto_random_for_show()
-        .map_err(|e| DriverError::from(tidb_error::mysql::MysqlError::unknown(e.0)))?
+        .map_err(|e| DriverError::from(tidb_error::MysqlError::unknown(e.0)))?
         .filter(|base| *base > 1)
     {
         out.push_str(&format!(" /*T![auto_rand_base] AUTO_RANDOM_BASE={base} */"));

@@ -23,7 +23,9 @@
 use std::borrow::Cow;
 use std::error::Error;
 use std::fmt;
-use tidb_error::{mysql, tidb, ErrMessage};
+use tidb_mysql::errors as mysql;
+use tidb_error::tidb;
+use tidb_mysql::errors::ErrMessage;
 
 /// Backward-compatible marker appended to retryable transaction errors.
 ///

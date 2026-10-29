@@ -897,7 +897,7 @@ pub trait Columns {
     /// Go `StmtCtx.AppendWarning(err)` of the Go error `error` itself, which
     /// a context that keeps warnings keeps with it; one that keeps only
     /// codes records [`Self::append_warning`].
-    fn append_error_warning(&self, error: &tidb_error::mysql::SqlError) {
+    fn append_error_warning(&self, error: &tidb_mysql::errors::SqlError) {
         self.append_warning(error.code, &error.message);
     }
 
@@ -909,7 +909,7 @@ pub trait Columns {
 
     /// Go `StmtCtx.AppendNote(err)` of the Go error `error` itself (see
     /// [`Self::append_error_warning`]).
-    fn append_error_note(&self, error: &tidb_error::mysql::SqlError) {
+    fn append_error_note(&self, error: &tidb_mysql::errors::SqlError) {
         self.append_note(error.code, &error.message);
     }
 

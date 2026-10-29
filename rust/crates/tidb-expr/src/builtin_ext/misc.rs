@@ -80,7 +80,7 @@ fn tidb_decode_key(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, Eva
 pub(crate) fn process_privilege_denied() -> EvalError {
     EvalError::Conversion(
         tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED
-            .generate_with_stack_by_args(&[tidb_error::mysql::FormatArg::from("PROCESS")]),
+            .generate_with_stack_by_args(&[tidb_mysql::errors::FormatArg::from("PROCESS")]),
     )
 }
 

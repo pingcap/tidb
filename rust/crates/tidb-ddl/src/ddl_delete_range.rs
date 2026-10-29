@@ -89,7 +89,7 @@ pub fn job_need_gc(job: &Job) -> bool {
     if let Some(warning) = &job.warning {
         // A field or key that did not exist left nothing behind.
         if warning.read().code().value()
-            == tidb_error::mysql::errcode::ErrCantDropFieldOrKey as isize
+            == tidb_mysql::errors::errcode::ErrCantDropFieldOrKey as isize
         {
             return false;
         }

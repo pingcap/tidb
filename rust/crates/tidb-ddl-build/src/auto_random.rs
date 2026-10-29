@@ -14,7 +14,7 @@
 
 use tidb_table::kv_table::{AutoRandomError, AutoRandomSpec};
 use tidb_autoid::AutoIdError;
-use tidb_error::mysql::MysqlError;
+use tidb_error::MysqlError;
 
 use tidb_datatype::{FieldType, FieldTypeCode};
 
@@ -35,7 +35,7 @@ pub fn validate(
             continue;
         };
         if fields[offset].code() != FieldTypeCode::LongLong {
-            return Err(tidb_error::mysql::MysqlError::from_terror(
+            return Err(tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
                     (format!(
                 "auto_random option must be defined on `bigint` column, but not on `{}` column",
@@ -47,7 +47,7 @@ pub fn validate(
             ));
         }
         if handle_offsets.first().copied() != Some(offset) {
-            return Err(tidb_error::mysql::MysqlError::from_terror(
+            return Err(tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
                     (if handle_offsets.is_empty() {
                         "auto_random is only supported on the tables with clustered primary key"
@@ -68,7 +68,7 @@ pub fn validate(
             .iter()
             .any(|option| matches!(option, tidb_ast::ColumnOption::AutoIncrement))
         {
-            return Err(tidb_error::mysql::MysqlError::from_terror(
+            return Err(tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
                     ("auto_random is incompatible with auto_increment".to_owned())
                         .to_string()
@@ -81,7 +81,7 @@ pub fn validate(
             .iter()
             .any(|option| matches!(option, tidb_ast::ColumnOption::Default(_)))
         {
-            return Err(tidb_error::mysql::MysqlError::from_terror(
+            return Err(tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
                     ("auto_random is incompatible with default".to_owned())
                         .to_string()
@@ -92,7 +92,7 @@ pub fn validate(
 
         let shard_bits = option.shard_bits.unwrap_or(5);
         if shard_bits == 0 {
-            return Err(tidb_error::mysql::MysqlError::from_terror(
+            return Err(tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
                     ("the value of auto_random should be positive".to_owned())
                         .to_string()
@@ -101,7 +101,7 @@ pub fn validate(
             ));
         }
         if shard_bits > 15 {
-            return Err(tidb_error::mysql::MysqlError::from_terror(
+            return Err(tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
                     (format!(
                 "max allowed auto_random shard bits is 15, but got {shard_bits} on column `{}`",
@@ -114,7 +114,7 @@ pub fn validate(
         }
         let range_bits = option.range_bits.unwrap_or(64);
         if !(32..=64).contains(&range_bits) {
-            return Err(tidb_error::mysql::MysqlError::from_terror(
+            return Err(tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[
                     (format!(
                         "auto_random range bits must be between 32 and 64, but got {range_bits}"
@@ -126,7 +126,7 @@ pub fn validate(
         }
         let unsigned = fields[offset].is_unsigned();
         if range_bits - shard_bits - u64::from(!unsigned) < 27 {
-            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[("auto_random ID space is too small, please decrease the shard bits or increase the range bits"
+            return Err(tidb_error::MysqlError::from_terror(&tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[("auto_random ID space is too small, please decrease the shard bits or increase the range bits"
                     .to_owned()).to_string().into()])));
         }
         found = Some(AutoRandomSpec {
@@ -142,17 +142,17 @@ pub fn validate(
 /// Maps the allocator-layer AUTO_RANDOM failure to TiDB's client error.
 pub fn rebase_error(error: AutoRandomError) -> MysqlError {
     match error {
-        AutoRandomError::NotApplicable => tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[("alter auto_random_base of a non auto_random table".to_owned()).to_string().into()])),
-        AutoRandomError::RebaseOverflow { base, maximum } => tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[(format!(
+        AutoRandomError::NotApplicable => tidb_error::MysqlError::from_terror(&tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[("alter auto_random_base of a non auto_random table".to_owned()).to_string().into()])),
+        AutoRandomError::RebaseOverflow { base, maximum } => tidb_error::MysqlError::from_terror(&tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[(format!(
                 "alter auto_random_base to {base} overflows the incremental bits, max allowed base is {maximum}"
             )).to_string().into()])),
-        AutoRandomError::InvalidDefinition(reason) => tidb_error::mysql::MysqlError::from_terror(&tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[reason.to_string().into()])),
-        AutoRandomError::AutoId(AutoIdError::Exhausted) => tidb_error::mysql::MysqlError::from_terror(&tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED.generate_with_stack_by_args(&[])),
+        AutoRandomError::InvalidDefinition(reason) => tidb_error::MysqlError::from_terror(&tidb_dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[reason.to_string().into()])),
+        AutoRandomError::AutoId(AutoIdError::Exhausted) => tidb_error::MysqlError::from_terror(&tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED.generate_with_stack_by_args(&[])),
         AutoRandomError::AutoId(AutoIdError::OutOfRange { value, type_name }) => {
-            tidb_error::mysql::MysqlError::from_terror(&tidb_error::catalog::types::ERR_OVERFLOW.generate_with_stack(format!("constant {} overflows {}", (value), (type_name))))
+            tidb_error::MysqlError::from_terror(&tidb_error::catalog::types::ERR_OVERFLOW.generate_with_stack(format!("constant {} overflows {}", (value), (type_name))))
         }
         AutoRandomError::AutoId(AutoIdError::Store(detail)) => {
-            tidb_error::mysql::MysqlError::unknown(detail.0)
+            tidb_error::MysqlError::unknown(detail.0)
         }
         AutoRandomError::ExplicitInsertDisabled => {
             unreachable!("a rebase does not inspect row values")

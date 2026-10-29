@@ -20,7 +20,7 @@
 //! constants and `NewStd`, which resolves the standard message for an error
 //! code from `pkg/errno`'s catalog — in this workspace that superset catalog
 //! (standard MySQL codes plus TiDB's 8xxx range) is `tidb_error::tidb`, not
-//! the `parser/mysql`-only `tidb_error::mysql` one.
+//! the `parser/mysql`-only `tidb_mysql::errors` one.
 //!
 //! `ddl_terror.go` is a 228-entry table of DDL error prototypes. The Rust
 //! table in [`ddl_errors`] was generated mechanically from the Go source and
@@ -36,7 +36,7 @@ pub mod exeerrors;
 pub use ddl_errors::*;
 
 use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
-use tidb_error::ErrMessage;
+use tidb_mysql::errors::ErrMessage;
 
 /// A class of errors (Go `dbterror.ErrClass`, wrapping `terror.ErrClass`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -118,7 +118,7 @@ impl ErrClass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_error::mysql::{set_redaction_mode, FormatArg, RedactionMode};
+    use tidb_mysql::errors::{set_redaction_mode, FormatArg, RedactionMode};
     use tidb_error::tidb::errcode;
 
     /// Every generated DDL error must match the identity and message dumped

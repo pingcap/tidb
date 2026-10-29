@@ -6,7 +6,8 @@
 #![allow(non_upper_case_globals)]
 
 use super::errcode;
-use crate::{CatalogEntry, ErrMessage};
+use tidb_mysql::errors::CatalogEntry;
+use tidb_mysql::errors::ErrMessage;
 
 mod catalog_1;
 mod catalog_2;

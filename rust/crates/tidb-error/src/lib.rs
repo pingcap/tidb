@@ -15,37 +15,19 @@
 //! Shared error-number, message, redaction, SQLSTATE, `SQLError`, and TiDB
 //! class/code/RFC identity authority.
 //!
-//! The two catalogs are direct checked-in translations of
-//! `pkg/parser/mysql/{errcode,errname,state,error}.go` and
-//! `pkg/errno/{errcode,errname}.go`. Protocol, execution, and transactional
+//! `pkg/errno/{errcode,errname}.go`, Go's `parser/terror`, `errctx`,
+//! `plannererrors`, `server/err` and every package's error prototypes
+//! (`catalog`); `pkg/parser/mysql`'s errors are tidb-mysql's (`errors`). Protocol, execution, and transactional
 //! crates depend on this leaf instead of copying numeric registries or local
 //! terror-class markers.
 
 pub mod catalog;
 pub mod errctx;
-mod go_error_codes;
-pub mod mysql;
+mod mysql_error;
 pub mod plannererrors;
 pub mod server_errors;
 pub mod terror;
 pub mod tidb;
 
-/// A source error message template and its zero-based sensitive arguments.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ErrMessage {
-    /// Go `fmt` template stored by the source catalog.
-    pub raw: &'static str,
-    /// Argument positions passed to `errors.RedactErrorArg`.
-    pub redact_arg_pos: &'static [usize],
-}
+pub use mysql_error::MysqlError;
 
-/// One named entry in a checked-in source error catalog.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CatalogEntry {
-    /// Source Go identifier.
-    pub name: &'static str,
-    /// MySQL protocol error number.
-    pub code: u16,
-    /// Default message template and redaction metadata.
-    pub message: ErrMessage,
-}

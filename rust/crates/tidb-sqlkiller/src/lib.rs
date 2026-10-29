@@ -32,7 +32,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{bounded, Receiver, Sender};
-use tidb_error::mysql::FormatArg;
+use tidb_mysql::errors::FormatArg;
 use tidb_error::terror::TerrorError;
 
 use tidb_dbterror::exeerrors;
@@ -420,7 +420,7 @@ impl SqlKiller {
 /// Going through the killer rather than formatting the message here keeps one
 /// source for the text, the errno and the SQL state.
 #[must_use]
-pub fn memory_exceed_for_query(conn_id: u64) -> tidb_error::mysql::SqlError {
+pub fn memory_exceed_for_query(conn_id: u64) -> tidb_mysql::errors::SqlError {
     let killer = SqlKiller::default();
     killer.conn_id.store(conn_id, SeqCst);
     killer.send_kill_signal(KillSignal::QueryMemoryExceeded);

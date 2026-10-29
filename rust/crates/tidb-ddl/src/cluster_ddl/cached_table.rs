@@ -15,7 +15,7 @@
 //! Go's `ErrOptOnCacheTable` (8242) refusals that the DDL executor's entry
 //! points raise against the latest infoschema before any job is built.
 
-use tidb_error::mysql::MysqlError;
+use tidb_error::MysqlError;
 
 use tidb_infoschema::cluster_catalog::ClusterCatalog;
 
@@ -44,7 +44,7 @@ pub fn check_cached_table_ddl(
         })
     };
     let refused = |operation: &str| {
-        Err(tidb_error::mysql::MysqlError::from_terror(
+        Err(tidb_error::MysqlError::from_terror(
             &tidb_dbterror::ERR_OPT_ON_CACHE_TABLE
                 .generate_with_stack_by_args(&[(operation).into()]),
         ))

@@ -8,7 +8,7 @@ repository.workspace = true
 description = "TiDB optimizer fix control: Go pkg/planner/util/fixcontrol (Rust rewrite)."
 
 [dependencies]
-tidb-error = { path = "../tidb-error" }
+tidb-mysql = { path = "../tidb-mysql" }
 
 [lints]
 workspace = true

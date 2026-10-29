@@ -57,13 +57,13 @@ fn extract_tbl_infos(
         is_alter,
     })
     .map_err(|error| match error.code {
-        tidb_error::mysql::errcode::ErrNoSuchTable => DdlPlanError::from(
+        tidb_mysql::errors::errcode::ErrNoSuchTable => DdlPlanError::from(
             tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(&[
                 (pair.from_schema.clone()).into(),
                 (pair.from_table.clone()).into(),
             ]),
         ),
-        tidb_error::mysql::errcode::ErrTableExists => DdlPlanError::from(
+        tidb_mysql::errors::errcode::ErrTableExists => DdlPlanError::from(
             tidb_error::catalog::infoschema::ERR_TABLE_EXISTS.generate_with_stack_by_args(&[
                 format!("{}.{}", (pair.to_schema.clone()), (pair.to_table.clone())).into(),
             ]),

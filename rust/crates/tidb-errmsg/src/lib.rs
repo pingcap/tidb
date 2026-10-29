@@ -14,7 +14,7 @@
 
 //! Configured SQL-error suffixes from Go `pkg/util/errmsg`.
 
-use tidb_error::mysql::SqlError;
+use tidb_mysql::errors::SqlError;
 
 /// Go `Extend`: append the first matching configured suffix to an SQL error.
 /// `None` is the safe Rust representation of Go's nil `*mysql.SQLError`.

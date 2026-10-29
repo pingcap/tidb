@@ -36,7 +36,7 @@
 
 use tidb_ast::{ColumnDef, ColumnOption, TableOption};
 use tidb_datatype::{CharsetInfo, CollationInfo, FieldTypeCode};
-use tidb_error::mysql::MysqlError;
+use tidb_error::MysqlError;
 
 /// Go `charset.GetCharsetInfo` as a DDL statement reaches it: a name Go's
 /// parser would have refused is `ErrUnknownCharacterSet` (1115).

@@ -1072,7 +1072,7 @@ impl Columns for FoldWarningContext {
         record_fold_warning(code, message);
     }
 
-    fn append_error_warning(&self, error: &tidb_error::mysql::SqlError) {
+    fn append_error_warning(&self, error: &tidb_mysql::errors::SqlError) {
         record_fold_sql_warn(tidb_context::SqlWarn::from_error(
             tidb_context::WarningLevel::Warning,
             error.code,

@@ -17,7 +17,7 @@
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 
-use tidb_error::mysql::FormatArg;
+use tidb_mysql::errors::FormatArg;
 use tidb_error::terror::TerrorError;
 use tidb_error::tidb::errcode;
 

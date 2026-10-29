@@ -575,7 +575,7 @@ pub fn new_frame_item_from_region_key(key: &[u8]) -> Result<FrameItem, String> {
         }
         return Err(format!(
             "invalid key - {}",
-            tidb_error::mysql::go_quote_bytes(key)
+            tidb_mysql::errors::go_quote_bytes(key)
         ));
     }
     // A key before the table prefix is before every table; one after it is

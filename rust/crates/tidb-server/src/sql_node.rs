@@ -384,7 +384,7 @@ fn refuse_over_capacity(stream: &ClientSocket) {
     let _ = crate::connection_writers::write_error(
         &mut output,
         0,
-        tidb_error::mysql::errcode::ErrConCount,
+        tidb_mysql::errors::errcode::ErrConCount,
         *b"08004",
         "Too many connections",
         false,

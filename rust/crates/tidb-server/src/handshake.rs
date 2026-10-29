@@ -573,7 +573,7 @@ impl HandshakeError {
     #[must_use]
     pub(crate) fn client_error_message(&self) -> Cow<'_, str> {
         match self {
-            Self::Malformed(_) => Cow::Borrowed(tidb_error::mysql::ERR_MALFORM_PACKET),
+            Self::Malformed(_) => Cow::Borrowed(tidb_mysql::errors::ERR_MALFORM_PACKET),
             _ => Cow::Owned(self.to_string()),
         }
     }

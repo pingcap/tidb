@@ -227,7 +227,7 @@ struct ModifiableColumn {
 }
 
 /// A refusal raised as one of the driver's Go errors.
-fn driver_refusal(error: impl Into<tidb_error::mysql::MysqlError>) -> DdlPlanError {
+fn driver_refusal(error: impl Into<tidb_error::MysqlError>) -> DdlPlanError {
     DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error.into()))
 }
 
@@ -363,7 +363,7 @@ fn get_modifiable_column_job(
         return Err(unsupported_modify_column("can't set auto_increment"));
     }
     if is_auto_increment && !new_col.default_value.is_nil() {
-        return Err(driver_refusal(tidb_error::mysql::MysqlError::from_terror(
+        return Err(driver_refusal(tidb_error::MysqlError::from_terror(
             &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE.generate_with_stack_by_args(&[
                 (new_col.name.original().to_owned()).to_string().into(),
             ]),
@@ -422,7 +422,7 @@ fn get_modifiable_column_job(
         if ttl.read().column_name.lowercase() == original_l
             && !new_col.field_type.code().is_type_time()
         {
-            return Err(driver_refusal(tidb_error::mysql::MysqlError::from_terror(
+            return Err(driver_refusal(tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_UNSUPPORTED_COLUMN_IN_TTL_CONFIG
                     .generate_with_stack_by_args(&[(new_col.name.original().to_owned())
                         .to_string()

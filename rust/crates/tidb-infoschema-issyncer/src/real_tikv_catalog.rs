@@ -39,7 +39,7 @@ fn coordinator_catalog_error(error: OptimisticCoordinatorError) -> ClusterCatalo
         | OptimisticCoordinatorError::Visibility(_) => {
             let sql = tidb_store_driver_error::coordinator::coordinator_sql_error(error);
             ClusterCatalogError::Sql(
-                tidb_error::mysql::MysqlError::from_parts(sql.code, sql.state, sql.message)
+                tidb_error::MysqlError::from_parts(sql.code, sql.state, sql.message)
                     .with_identity_opt(sql.identity),
             )
         }
@@ -407,7 +407,7 @@ mod tests {
         );
         assert_eq!(error.state, *b"HY000");
 
-        let statement_error = tidb_error::mysql::MysqlError::sql_error(9006, expected);
+        let statement_error = tidb_error::MysqlError::sql_error(9006, expected);
         assert_eq!(
             storage_catalog_error(StorageError::Sql(statement_error.clone())),
             ClusterCatalogError::Sql(statement_error)

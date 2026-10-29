@@ -650,12 +650,12 @@ fn resolve_insert_target(
         )
     })?;
     if table.is_view() {
-        return Err(DriverError::from(tidb_error::mysql::MysqlError::unknown(
+        return Err(DriverError::from(tidb_error::MysqlError::unknown(
             format!("insert into view {} is not supported now", table_name),
         )));
     }
     if table.is_sequence() {
-        return Err(DriverError::from(tidb_error::mysql::MysqlError::unknown(
+        return Err(DriverError::from(tidb_error::MysqlError::unknown(
             format!("insert into sequence {} is not supported now", table_name),
         )));
     }
@@ -1496,7 +1496,7 @@ fn run_insert_rows(
                             type_name,
                         }) => DriverError::from(tidb_error::catalog::types::ERR_OVERFLOW.generate_with_stack(format!("constant {} overflows {}", value, type_name))),
                         AutoRandomError::AutoId(AutoIdError::Store(detail)) => {
-                            DriverError::from(tidb_error::mysql::MysqlError::unknown(detail.0))
+                            DriverError::from(tidb_error::MysqlError::unknown(detail.0))
                         }
                         AutoRandomError::NotApplicable
                         | AutoRandomError::RebaseOverflow { .. }
@@ -1607,7 +1607,7 @@ fn run_insert_rows(
                             }
                             AutoIdError::Store(detail) => {
                                 return Err(DriverError::from(
-                                    tidb_error::mysql::MysqlError::unknown(detail.0),
+                                    tidb_error::MysqlError::unknown(detail.0),
                                 ));
                             }
                         }
@@ -3749,12 +3749,12 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
         let (database, name) = single_table_name(table_ref, current_db)?;
         match catalog.get_in(&database, &name) {
             Some(TableEntry::View(_)) => {
-                return Err(DriverError::from(tidb_error::mysql::MysqlError::unknown(
+                return Err(DriverError::from(tidb_error::MysqlError::unknown(
                     format!("delete view {} is not supported now", name),
                 )));
             }
             Some(TableEntry::Sequence(_)) => {
-                return Err(DriverError::from(tidb_error::mysql::MysqlError::unknown(
+                return Err(DriverError::from(tidb_error::MysqlError::unknown(
                     format!("delete sequence {} is not supported now", name),
                 )));
             }

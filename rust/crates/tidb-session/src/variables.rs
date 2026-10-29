@@ -642,7 +642,7 @@ impl Session {
                     Some(def) => def,
                     None => {
                         if let Some(reason) = sysvar::removed_sys_var_reason(name) {
-                            return Err(var_error(tidb_error::mysql::MysqlError::from_terror(
+                            return Err(var_error(tidb_error::MysqlError::from_terror(
                                 &tidb_error::catalog::variable::ERR_VARIABLE_NO_LONGER_SUPPORTED
                                     .generate_with_stack_by_args(&[
                                         (name.to_ascii_lowercase()).into(),
@@ -650,7 +650,7 @@ impl Session {
                                     ]),
                             )));
                         }
-                        return Err(var_error(tidb_error::mysql::MysqlError::from_terror(
+                        return Err(var_error(tidb_error::MysqlError::from_terror(
                             &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
                                 .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
                         )));
@@ -672,7 +672,7 @@ impl Session {
                         _ => None,
                     };
                     if let Some(allowed) = incorrect_scope {
-                        return Err(var_error(tidb_error::mysql::MysqlError::from_terror(
+                        return Err(var_error(tidb_error::MysqlError::from_terror(
                             &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE
                                 .generate_with_stack_by_args(&[
                                     (name.to_ascii_lowercase()).into(),
@@ -683,7 +683,7 @@ impl Session {
                     if *scope == Some(tidb_ast::SysVarScope::Session)
                         && def.is_internal_session_variable()
                     {
-                        return Err(var_error(tidb_error::mysql::MysqlError::from_terror(
+                        return Err(var_error(tidb_error::MysqlError::from_terror(
                             &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
                                 .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
                         )));

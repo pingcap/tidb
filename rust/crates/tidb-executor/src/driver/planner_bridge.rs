@@ -3897,7 +3897,7 @@ mod subquery_error_identity_tests {
         assert_eq!(back.code, 3636);
         assert_eq!(
             back.message,
-            tidb_error::mysql::MysqlError::from_terror(&raised).message
+            tidb_error::MysqlError::from_terror(&raised).message
         );
     }
 }

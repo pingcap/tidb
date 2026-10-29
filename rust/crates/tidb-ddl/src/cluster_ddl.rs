@@ -50,7 +50,7 @@ use tidb_ast::{
 };
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_ddl_notifier::SchemaChangeEvent;
-use tidb_error::mysql::FormatArg;
+use tidb_mysql::errors::FormatArg;
 use tidb_error::terror::TerrorError;
 use tidb_hack::GoCaseCompare;
 use tidb_meta::{key, value};
@@ -2084,7 +2084,7 @@ fn lower_alter_table_catalog(
         let mut actions = Vec::with_capacity(alter.actions.len());
         // Go `CheckStorageClassConflictInAlterTableSpecs`, before any
         // specification runs.
-        fn admission(error: impl Into<tidb_error::mysql::MysqlError>) -> DdlAdmissionError {
+        fn admission(error: impl Into<tidb_error::MysqlError>) -> DdlAdmissionError {
             DdlAdmissionError::from_mysql_error(error.into())
         }
         tidb_ddl_build::storage_class::check_storage_class_conflict_in_alter_specs(
@@ -3502,7 +3502,7 @@ fn check_modify_generated_column(
     }
 
     if new.is_generated() {
-        fn admission(error: impl Into<tidb_error::mysql::MysqlError>) -> DdlPlanError {
+        fn admission(error: impl Into<tidb_error::MysqlError>) -> DdlPlanError {
             DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error.into()))
         }
         // Rule 3: Go `checkIllegalFn4Generated(newCol.Name.L, typeColumn, ...)`.
@@ -4188,7 +4188,7 @@ pub(crate) fn checked_refusal(code: u16, message: impl Into<String>) -> DdlPlanE
     };
     match proto {
         Some(proto) => coded_refusal(proto, message),
-        None => DdlPlanError::from_mysql_error(tidb_error::mysql::MysqlError::sql_error(code, message)),
+        None => DdlPlanError::from_mysql_error(tidb_error::MysqlError::sql_error(code, message)),
     }
 }
 
@@ -4769,7 +4769,7 @@ impl fmt::Display for DdlPlanError {
 
 impl DdlPlanError {
     /// A refusal carrying an already classified driver-tier failure.
-    pub fn from_mysql_error(error: tidb_error::mysql::MysqlError) -> Self {
+    pub fn from_mysql_error(error: tidb_error::MysqlError) -> Self {
         Self::Admission(DdlAdmissionError::from_mysql_error(error))
     }
 
@@ -4834,7 +4834,7 @@ impl DdlPlanError {
     }
 
     /// Converts a direct refusal through the same contract as durable history.
-    pub fn to_sql_error(&self) -> tidb_error::mysql::SqlError {
+    pub fn to_sql_error(&self) -> tidb_mysql::errors::SqlError {
         ddl_job_error_to_sql_error(&self.to_job_error())
     }
 
@@ -4858,11 +4858,11 @@ fn unknown_ddl_job_error(message: impl Into<String>) -> tidb_error::terror::Terr
 /// SQLSTATE comes from the shared Go MySQL catalog, never a transport-local map.
 pub fn ddl_job_error_to_sql_error(
     error: &tidb_error::terror::TerrorError,
-) -> tidb_error::mysql::SqlError {
+) -> tidb_mysql::errors::SqlError {
     let code = u16::try_from(error.code().value()).unwrap_or(tidb_error::tidb::errcode::ErrUnknown);
-    tidb_error::mysql::SqlError {
+    tidb_mysql::errors::SqlError {
         code,
-        state: tidb_error::mysql::mysql_state(code),
+        state: tidb_mysql::errors::mysql_state(code),
         message: error.message().to_owned(),
         identity: Some(error.identity()),
     }
@@ -8281,7 +8281,7 @@ fn build_create_table_info<S: MetaSnapshot>(
         && !crate::foreign_key_build::get_table_referred_foreign_keys(catalog, schema, table)
             .is_empty()
     {
-        let error = tidb_error::mysql::MysqlError::from_terror(
+        let error = tidb_error::MysqlError::from_terror(
             &tidb_dbterror::ERR_UNSUPPORTED_TTL_REFERENCED_BY_FK
                 .generate_with_stack_by_args(&[]),
         );
@@ -8617,7 +8617,7 @@ fn is_column_with_index(name: &str, table: &TableInfo) -> bool {
 }
 
 /// A lock job's refusal as the planner reports it.
-fn lock_plan_error(error: tidb_error::mysql::MysqlError) -> DdlPlanError {
+fn lock_plan_error(error: tidb_error::MysqlError) -> DdlPlanError {
     DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error))
 }
 

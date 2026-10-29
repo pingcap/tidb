@@ -4,8 +4,8 @@
 //! Exact translation of `pkg/parser/mysql/error_test.go` plus catalog/state
 //! invariants required by the complete package claim.
 
-use tidb_error::mysql::errcode::{ErrNoDB, ErrWrongValueForVar};
-use tidb_error::mysql::{mysql_state, FormatArg, SqlError, CATALOG, DEFAULT_MYSQL_STATE};
+use tidb_mysql::errors::errcode::{ErrNoDB, ErrWrongValueForVar};
+use tidb_mysql::errors::{mysql_state, FormatArg, SqlError, CATALOG, DEFAULT_MYSQL_STATE};
 
 #[test]
 fn test_sql_error() {

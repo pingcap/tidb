@@ -18,7 +18,7 @@ use std::sync::Mutex;
 
 use tidb_config::config_tree::config::{get_global_config, store_global_config};
 use tidb_config::config_tree::ErrorMessageExtension;
-use tidb_error::mysql::SqlError;
+use tidb_mysql::errors::SqlError;
 
 static CONFIG_LOCK: Mutex<()> = Mutex::new(());
 

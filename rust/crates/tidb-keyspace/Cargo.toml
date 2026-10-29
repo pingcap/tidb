@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB keyspace: Go pkg/keyspace (Rust rewrite)."
 
 [dependencies]
+tidb-mysql = { path = "../tidb-mysql" }
 tidb-config-deploymode = { path = "../tidb-config-deploymode" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-dbterror = { path = "../tidb-dbterror" }

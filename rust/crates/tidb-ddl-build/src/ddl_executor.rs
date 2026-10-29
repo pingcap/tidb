@@ -70,8 +70,8 @@ pub fn is_retryable_ddl_cancel_err(error: &(dyn std::error::Error + 'static)) ->
 pub fn is_table_tiflash_supported(
     db_name: &str,
     table: &tidb_model::table_info::TableInfo,
-) -> Result<(), tidb_error::mysql::MysqlError> {
-    use tidb_error::mysql::MysqlError;
+) -> Result<(), tidb_error::MysqlError> {
+    use tidb_error::MysqlError;
     use tidb_hack::GoToLower;
     if tidb_metadef::db::is_mem_or_sys_db(&db_name.go_to_lower()) {
         return Err(MysqlError::from_terror(

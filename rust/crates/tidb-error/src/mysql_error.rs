@@ -14,7 +14,7 @@
 
 //! Go `terror.Error` as one wire value: the code / SQLSTATE / message triple
 //! plus the Go class identity, which every reporting surface (the protocol,
-//! `SHOW WARNINGS`, the log) reads. Lives beside [`super::SqlError`], the
+//! `SHOW WARNINGS`, the log) reads. Lives beside [`tidb_mysql::errors::SqlError`], the
 //! `mysql.SQLError` view it is converted from.
 
 use crate::terror::{TerrorClass, TerrorCode, TerrorError, TerrorIdentity};
@@ -103,14 +103,14 @@ impl MysqlError {
     /// [`Self::terror`] instead.
     pub fn sql_error(code: u16, message: impl Into<String>) -> Self {
         let mut state = [0u8; 5];
-        state.copy_from_slice(super::mysql_state(code).as_bytes());
+        state.copy_from_slice(tidb_mysql::errors::mysql_state(code).as_bytes());
         Self::with_state(code, state, message)
     }
 
     /// A wire triple that remembers its Go identity: the form
     /// `ExecError::Killed`, statistics, transaction and variable failures
     /// carry between layers where Go passes the `error` value itself.
-    pub fn from_sql_error(error: super::SqlError) -> Self {
+    pub fn from_sql_error(error: tidb_mysql::errors::SqlError) -> Self {
         let mut state = [0u8; 5];
         state.copy_from_slice(error.state.as_bytes());
         Self {

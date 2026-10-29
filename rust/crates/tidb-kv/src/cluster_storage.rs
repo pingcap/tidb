@@ -263,7 +263,7 @@ impl Default for NativeMemBuffer {
 fn buffer_error(error: Box<dyn std::error::Error + Send + Sync>) -> StorageError {
     match tidb_txnkv::TikvMemBufferError::from_native_write(error) {
         tidb_txnkv::TikvMemBufferError::Kv(error) => StorageError::Sql(
-            tidb_error::mysql::MysqlError::sql_error(error.mysql_code().as_u16(), error.to_string())
+            tidb_error::MysqlError::sql_error(error.mysql_code().as_u16(), error.to_string())
                 .with_identity(tidb_error::terror::TerrorIdentity::new(
                     tidb_error::terror::TerrorClass::from_value(error.class().as_u8() as isize),
                     tidb_error::terror::TerrorCode::new(error.mysql_code().as_u16() as isize),

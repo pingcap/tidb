@@ -104,7 +104,7 @@ impl SqlWarn {
     #[must_use]
     pub fn with_code(level: super::WarningLevel, code: u16, message: impl Into<String>) -> Self {
         let message = message.into();
-        let err = if code == tidb_error::mysql::errcode::ErrUnknown {
+        let err = if code == tidb_mysql::errors::errcode::ErrUnknown {
             WarnErr::Message(message)
         } else {
             WarnErr::Terror(TerrorError::compatible(
@@ -154,10 +154,10 @@ impl SqlWarn {
     pub fn code(&self) -> u16 {
         match &self.err {
             WarnErr::Terror(error) if error.rfc_code().is_empty() => {
-                u16::try_from(error.code().value()).unwrap_or(tidb_error::mysql::errcode::ErrUnknown)
+                u16::try_from(error.code().value()).unwrap_or(tidb_mysql::errors::errcode::ErrUnknown)
             }
             WarnErr::Terror(error) => error.to_sql_error().code,
-            WarnErr::Message(_) => tidb_error::mysql::errcode::ErrUnknown,
+            WarnErr::Message(_) => tidb_mysql::errors::errcode::ErrUnknown,
         }
     }
 
@@ -421,7 +421,7 @@ impl<F: Fn(&str, WarnErr)> WarnAppender for FuncWarnAppender<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_error::mysql::FormatArg;
+    use tidb_mysql::errors::FormatArg;
     use tidb_error::terror::ERR_RESULT_UNDETERMINED;
 
     fn warn(level: &str, err: WarnErr) -> SqlWarn {

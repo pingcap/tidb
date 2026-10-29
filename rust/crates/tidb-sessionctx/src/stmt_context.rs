@@ -3248,7 +3248,7 @@ impl StmtContext {
         schema: &str,
         table: &str,
         index: tidb_model::index::IndexInfo,
-    ) -> Result<(), tidb_error::mysql::MysqlError> {
+    ) -> Result<(), tidb_error::MysqlError> {
         self.with_hypo_index_writes(|indexes| indexes.add(schema, table, index))
     }
 
@@ -3259,7 +3259,7 @@ impl StmtContext {
         table: &str,
         index: &str,
         if_exists: bool,
-    ) -> Result<(), tidb_error::mysql::MysqlError> {
+    ) -> Result<(), tidb_error::MysqlError> {
         self.with_hypo_index_writes(|indexes| indexes.remove(schema, table, index, if_exists))
     }
 
@@ -5562,7 +5562,7 @@ impl StmtContext {
 
     /// Go `StmtCtx.AppendWarning` / `AppendNote` / `AppendError` of the error
     /// `error`, which keeps its identity.
-    pub fn append_mysql_error(&self, level: WarningLevel, error: &tidb_error::mysql::MysqlError) {
+    pub fn append_mysql_error(&self, level: WarningLevel, error: &tidb_error::MysqlError) {
         self.push_warning(sql_warn_of(level, error));
     }
 
@@ -5832,7 +5832,7 @@ impl tidb_expr::metabuild::EvalContext for StmtContext {
 
 /// The `(code, message)` pair `SHOW WARNINGS` reports for one warning.
 /// The warning Go's `StmtCtx` keeps for `error`.
-pub fn sql_warn_of(level: WarningLevel, error: &tidb_error::mysql::MysqlError) -> SqlWarn {
+pub fn sql_warn_of(level: WarningLevel, error: &tidb_error::MysqlError) -> SqlWarn {
     SqlWarn::from_error(level, error.code, error.message.clone(), error.identity)
 }
 
@@ -6213,7 +6213,7 @@ impl Columns for StmtContext {
         self.append_leveled(WarningLevel::Warning, code, message);
     }
 
-    fn append_error_warning(&self, error: &tidb_error::mysql::SqlError) {
+    fn append_error_warning(&self, error: &tidb_mysql::errors::SqlError) {
         self.push_warning(SqlWarn::from_error(
             WarningLevel::Warning,
             error.code,
@@ -6230,7 +6230,7 @@ impl Columns for StmtContext {
         self.push_warning(warning);
     }
 
-    fn append_error_note(&self, error: &tidb_error::mysql::SqlError) {
+    fn append_error_note(&self, error: &tidb_mysql::errors::SqlError) {
         self.push_warning(SqlWarn::from_error(
             WarningLevel::Note,
             error.code,

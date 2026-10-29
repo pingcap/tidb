@@ -14,12 +14,12 @@
 
 //! Complete Rust transcreation of `pkg/parser/mysql` value contracts.
 //!
-//! Generated error codes, messages, SQLSTATEs, and formatting live in the
-//! dependency-leaf `tidb-error` crate; all remaining package contracts live
-//! here so the original Go package remains one complete transcreation unit.
+//! The error codes, messages, SQLSTATEs and `SQLError` formatting
+//! (`errcode.go`, `errname.go`, `state.go`, `error.go`) are [`errors`].
 
 pub mod charset;
 pub mod consts;
+pub mod errors;
 pub mod locale;
 pub mod privilege;
 mod simple_case;

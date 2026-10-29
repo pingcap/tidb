@@ -339,7 +339,7 @@ pub(crate) fn write_error<O: ConnectionPacketOutput + ?Sized>(
     output.record_client_error(code);
     let message = message.as_ref();
     let extended = std::str::from_utf8(message).ok().map(|message| {
-        let mut error = tidb_error::mysql::SqlError {
+        let mut error = tidb_mysql::errors::SqlError {
             code,
             message: message.to_owned(),
             state: "HY000",

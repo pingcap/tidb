@@ -19,7 +19,7 @@
 //! existing table name is 1050 and `SHOW TABLES` lists it -- both captured.
 
 use tidb_table::sequence::SequenceInfo;
-use tidb_error::mysql::MysqlError;
+use tidb_error::MysqlError;
 
 use tidb_ast::SequenceOption;
 
@@ -148,7 +148,7 @@ fn build_sequence_info(
     };
     let info = apply_sequence_options(base, options, true);
     if !sequence_options_are_valid(&info) {
-        return Err(tidb_error::mysql::MysqlError::from_terror(
+        return Err(tidb_error::MysqlError::from_terror(
             &tidb_dbterror::ERR_SEQUENCE_INVALID_DATA.generate_with_stack_by_args(&[
                 tidb_hack::go_to_lower(database).into(),
                 tidb_hack::go_to_lower(name).into(),
@@ -238,7 +238,7 @@ pub fn build_create_sequence(
     // before DDL execution: empty identifiers and names whose final byte is a
     // space are rejected with ErrWrongTableName (1103).
     if name.is_empty() || name.as_bytes().last() == Some(&b' ') {
-        return Err(tidb_error::mysql::MysqlError::from_terror(
+        return Err(tidb_error::MysqlError::from_terror(
             &tidb_dbterror::ERR_WRONG_TABLE_NAME
                 .generate_with_stack_by_args(&[name.to_string().into()]),
         ));
@@ -249,7 +249,7 @@ pub fn build_create_sequence(
             tidb_ast::TableOption::Comment(value) => comment = value.clone(),
             tidb_ast::TableOption::Engine(_) => {}
             _ => {
-                return Err(tidb_error::mysql::MysqlError::from_terror(
+                return Err(tidb_error::MysqlError::from_terror(
                     &tidb_dbterror::ERR_SEQUENCE_UNSUPPORTED_TABLE_OPTION
                         .generate_with_stack_by_args(&[(sequence_table_option_string_value(
                             option,
@@ -278,7 +278,7 @@ pub fn alter_sequence_options(
 ) -> Result<(SequenceInfo, Option<i64>), MysqlError> {
     let info = apply_sequence_options(existing, options, false);
     if !sequence_options_are_valid(&info) {
-        return Err(tidb_error::mysql::MysqlError::from_terror(
+        return Err(tidb_error::MysqlError::from_terror(
             &tidb_dbterror::ERR_SEQUENCE_INVALID_DATA.generate_with_stack_by_args(&[
                 tidb_hack::go_to_lower(database).into(),
                 tidb_hack::go_to_lower(name).into(),

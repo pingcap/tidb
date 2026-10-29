@@ -180,6 +180,6 @@ mod tests {
         rs.finish().unwrap();
         let mut req = rs.new_chunk();
         let error = rs.next(&mut req).unwrap_err().to_mysql_error();
-        assert_eq!(error.code, tidb_error::mysql::errcode::ErrQueryInterrupted);
+        assert_eq!(error.code, tidb_mysql::errors::errcode::ErrQueryInterrupted);
     }
 }

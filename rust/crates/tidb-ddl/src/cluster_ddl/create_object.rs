@@ -67,7 +67,7 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
                 find_table(database, name).map(|table| table.view.is_some()),
             )
             .map_err(|error| match error.code {
-                tidb_error::mysql::errcode::ErrTableExists => DdlPlanError::from(
+                tidb_mysql::errors::errcode::ErrTableExists => DdlPlanError::from(
                     tidb_error::catalog::infoschema::ERR_TABLE_EXISTS.generate_with_stack_by_args(
                         &[format!("{}.{}", (schema.clone()), (name.clone())).into()],
                     ),

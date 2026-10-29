@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 
 use chrono::TimeZone;
 use tidb_datatype::{FieldType, FieldTypeCode, SessionTimeZone, UNSPECIFIED_LENGTH};
-use tidb_error::mysql::SqlError;
+use tidb_mysql::errors::SqlError;
 use tidb_kv::cluster_storage::MutationBuffer;
 use tidb_stats::histogram::Histogram;
 use tidb_stats::row_sample_collector::adjusted_sample_rate;
@@ -945,7 +945,7 @@ pub enum ClusterAnalyzeError {
     /// `ErrAnalyzeMissIndex`, `ErrPartitionMgmtOnNonpartitioned`, and the
     /// global-stats `ErrPartitionStatsMissing` /
     /// `ErrPartitionColumnStatsMissing` that ANALYZE demotes to a warning.
-    Mysql(tidb_error::mysql::MysqlError),
+    Mysql(tidb_error::MysqlError),
 }
 
 impl fmt::Display for ClusterAnalyzeError {
@@ -968,7 +968,7 @@ impl std::error::Error for ClusterAnalyzeError {}
 /// A Go error raised as ANALYZE's failure.
 impl From<tidb_error::terror::TerrorError> for ClusterAnalyzeError {
     fn from(error: tidb_error::terror::TerrorError) -> Self {
-        Self::Mysql(tidb_error::mysql::MysqlError::from_terror(&error))
+        Self::Mysql(tidb_error::MysqlError::from_terror(&error))
     }
 }
 
@@ -3017,7 +3017,7 @@ pub fn cluster_analyze_error(error: ClusterAnalyzeError) -> tidb_store_driver_er
         ClusterAnalyzeError::Undetermined(_) => tidb_store_driver_error::sql_query_error::SqlQueryError::result_undetermined(),
         ClusterAnalyzeError::Commit(error) => tidb_store_driver_error::sql_query_error::lock_sql_error(&error),
         ClusterAnalyzeError::Killed(error) => {
-            tidb_store_driver_error::sql_query_error::SqlQueryError::from(tidb_error::mysql::MysqlError::from_sql_error(error))
+            tidb_store_driver_error::sql_query_error::SqlQueryError::from(tidb_error::MysqlError::from_sql_error(error))
         }
         ClusterAnalyzeError::Other(detail) => tidb_store_driver_error::sql_query_error::SqlQueryError::unknown(detail),
         ClusterAnalyzeError::Mysql(error) => tidb_store_driver_error::sql_query_error::SqlQueryError::from(error),

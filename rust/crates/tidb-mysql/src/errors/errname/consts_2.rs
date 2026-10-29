@@ -3,7 +3,7 @@
 
 //! Message catalog constants, part 2 of 3 (see `errname/mod.rs`).
 
-use crate::ErrMessage;
+use crate::errors::ErrMessage;
 
 /// Message metadata for `ErrQueryInterrupted`.
 pub const ErrQueryInterrupted: ErrMessage = ErrMessage {

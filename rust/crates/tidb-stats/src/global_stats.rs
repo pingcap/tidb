@@ -22,7 +22,7 @@ use std::sync::Mutex;
 
 use chrono::TimeZone;
 use tidb_datatype::{Collation, DatumValueError, FieldType};
-use tidb_error::mysql::SqlError;
+use tidb_mysql::errors::SqlError;
 use tidb_sqlkiller::SqlKiller;
 
 use crate::cmsketch::{get_merged_topn_from_sorted_slice, CmsSketch, MergeError, TopN, TopNEntry};

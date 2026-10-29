@@ -31,10 +31,10 @@ use std::sync::OnceLock;
 use tidb_config::config_tree::config::get_global_keyspace_name;
 use tidb_config_deploymode as deploymode;
 use tidb_config_kerneltype as kerneltype;
-use tidb_error::mysql::FormatArg;
+use tidb_mysql::errors::FormatArg;
 use tidb_error::terror::TerrorError;
 use tidb_error::tidb::errcode;
-use tidb_error::ErrMessage;
+use tidb_mysql::errors::ErrMessage;
 use tidb_log::{Field, Value};
 
 use tidb_dbterror::CLASS_DDL;

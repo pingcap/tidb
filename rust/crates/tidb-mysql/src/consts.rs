@@ -10,7 +10,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::{OnceLock, RwLock};
 
-use tidb_error::mysql::{errcode::ErrWrongValueForVar, FormatArg, SqlError};
+use crate::errors::{errcode::ErrWrongValueForVar, FormatArg, SqlError};
 
 const MYSQL_COMPATIBILITY_VERSION: &str = "8.0.11";
 /// Fixed separator embedded in TiDB's MySQL-compatible server version.

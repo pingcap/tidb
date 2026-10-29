@@ -1829,7 +1829,7 @@ impl crate::Columns for EvalContext {
         EvalContext::append_warning(self, columns_warning(code, message));
     }
 
-    fn append_error_warning(&self, error: &tidb_error::mysql::SqlError) {
+    fn append_error_warning(&self, error: &tidb_mysql::errors::SqlError) {
         let warning = SqlWarn::from_error(
             tidb_context::WarningLevel::Warning,
             error.code,

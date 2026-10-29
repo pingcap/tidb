@@ -44,7 +44,7 @@ pub(crate) fn cell_text(value: &Datum) -> String {
 pub(crate) fn assert_go_error<T: std::fmt::Debug>(
     result: Result<T, DriverError>,
     proto: &tidb_error::terror::TerrorError,
-    args: &[tidb_error::mysql::FormatArg],
+    args: &[tidb_mysql::errors::FormatArg],
 ) {
     let error = result.expect_err("the statement must fail");
     assert!(error.equal(proto), "{error:?}");

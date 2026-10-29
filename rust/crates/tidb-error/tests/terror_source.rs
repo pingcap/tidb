@@ -19,7 +19,7 @@ use std::error::Error;
 use std::fmt;
 use std::process::Command;
 
-use tidb_error::mysql::{errcode, errname, FormatArg};
+use tidb_mysql::errors::{errcode, errname, FormatArg};
 use tidb_error::terror::{
     call, get_error_class, log, must_nil, register_error_class, register_finish,
     registration_frozen, terror_error_equal, TerrorClass, TerrorCode, TerrorError,
@@ -210,11 +210,11 @@ fn test_terror_identity_generation_class_and_sql_conversion() {
         message: "trace",
         source: Box::new(parser.clone()),
     };
-    assert!(TerrorClass::Parser.equal_class(Some(&wrapped)));
-    assert!(!TerrorClass::Parser.not_equal_class(Some(&wrapped)));
-    assert!(!TerrorClass::Optimizer.equal_class(Some(&wrapped)));
-    assert!(!TerrorClass::Optimizer.equal_class(Some(&MessageError("abc"))));
-    assert!(!TerrorClass::Optimizer.equal_class(None));
+    assert!(tidb_error::terror::equal_class(TerrorClass::Parser, Some(&wrapped)));
+    assert!(!tidb_error::terror::not_equal_class(TerrorClass::Parser, Some(&wrapped)));
+    assert!(!tidb_error::terror::equal_class(TerrorClass::Optimizer, Some(&wrapped)));
+    assert!(!tidb_error::terror::equal_class(TerrorClass::Optimizer, Some(&MessageError("abc"))));
+    assert!(!tidb_error::terror::equal_class(TerrorClass::Optimizer, None));
 
     let optimizer = TerrorError::registered(TerrorClass::Optimizer, TerrorCode::new(2), "abc");
     assert!(optimizer.equal(Some(&optimizer.generate("def"))));

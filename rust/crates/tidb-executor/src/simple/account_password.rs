@@ -279,7 +279,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
             if spec_retain {
                 let resolved = effective(&current_plugin);
                 if !tidb_mysql::is_auth_plugin_clear_text(&resolved) {
-                    return Err(DriverError::from(tidb_error::mysql::MysqlError::unknown(format!("Dual password is not supported for users authenticating with plugin '{}'", resolved))));
+                    return Err(DriverError::from(tidb_error::MysqlError::unknown(format!("Dual password is not supported for users authenticating with plugin '{}'", resolved))));
                 }
                 match &spec.auth {
                     None => {
@@ -773,7 +773,7 @@ pub trait AccountPasswordExec: super::account::AccountExec {
         // resolution has nothing to resolve here.
         if set_password.retain_current_password {
             if !tidb_mysql::is_auth_plugin_clear_text(&plugin) {
-                return Err(DriverError::from(tidb_error::mysql::MysqlError::unknown(format!("Dual password is not supported for users authenticating with plugin '{}'", plugin))));
+                return Err(DriverError::from(tidb_error::MysqlError::unknown(format!("Dual password is not supported for users authenticating with plugin '{}'", plugin))));
             }
             if set_password.password.is_empty() {
                 return Err(DriverError::from(tidb_dbterror::exeerrors::ERR_CURRENT_PASSWORD_CANNOT_BE_RETAINED.generate_with_stack_by_args(&[user.into(), host.into()])));

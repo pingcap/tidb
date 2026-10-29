@@ -23,7 +23,7 @@ use tidb_ast::{
 };
 use tidb_datatype::{Datum, EvalType, FieldType};
 
-use tidb_error::mysql::MysqlError;
+use tidb_error::MysqlError;
 
 /// `mysql.PartitionCountLimit`.
 const PARTITION_COUNT_LIMIT: usize = 8192;
@@ -31,7 +31,7 @@ const PARTITION_COUNT_LIMIT: usize = 8192;
 
 fn parse(text: &str) -> Result<Expr, MysqlError> {
     tidb_model::generated_expr::parse_expression(text).map_err(|error| {
-        tidb_error::mysql::MysqlError::from_terror(&tidb_util::misc::syntax_error(error.message))
+        tidb_error::MysqlError::from_terror(&tidb_util::misc::syntax_error(error.message))
     })
 }
 
@@ -60,7 +60,7 @@ fn convert(
         )
         .map(|converted| converted.value)
         .map_err(|error| {
-            tidb_error::mysql::MysqlError::from_terror(&tidb_util::misc::syntax_error(
+            tidb_error::MysqlError::from_terror(&tidb_util::misc::syntax_error(
                 error.to_string(),
             ))
         })
@@ -69,7 +69,7 @@ fn convert(
 fn compare(left: &Datum, right: &Datum) -> Result<std::cmp::Ordering, MysqlError> {
     tidb_expr::compare_datums_with_collation(left, right, tidb_datatype::Collation::Binary).map_err(
         |error| {
-            tidb_error::mysql::MysqlError::from_terror(&tidb_util::misc::syntax_error(format!(
+            tidb_error::MysqlError::from_terror(&tidb_util::misc::syntax_error(format!(
                 "{error:?}"
             )))
         },
@@ -78,7 +78,7 @@ fn compare(left: &Datum, right: &Datum) -> Result<std::cmp::Ordering, MysqlError
 
 fn value_string(value: &Datum) -> Result<String, MysqlError> {
     value.sql_string().map_err(|error| {
-        tidb_error::mysql::MysqlError::from_terror(&tidb_util::misc::syntax_error(format!(
+        tidb_error::MysqlError::from_terror(&tidb_util::misc::syntax_error(format!(
             "{error:?}"
         )))
     })
@@ -213,13 +213,13 @@ pub fn generate_from_interval(
             break;
         }
         if ordinal == PARTITION_COUNT_LIMIT - 1 {
-            return Err(tidb_error::mysql::MysqlError::from_terror(
+            return Err(tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_TOO_MANY_PARTITIONS.generate_with_stack_by_args(&[]),
             ));
         }
     }
     if existing + definitions.len() > PARTITION_COUNT_LIMIT {
-        return Err(tidb_error::mysql::MysqlError::from_terror(
+        return Err(tidb_error::MysqlError::from_terror(
             &tidb_dbterror::ERR_TOO_MANY_PARTITIONS.generate_with_stack_by_args(&[]),
         ));
     }

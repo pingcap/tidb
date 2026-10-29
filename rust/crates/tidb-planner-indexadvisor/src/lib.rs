@@ -47,7 +47,7 @@ pub type Result<T> = std::result::Result<T, DriverError>;
 
 /// A plain Go `error`: 1105 on the wire.
 pub fn advisor_error(message: impl Into<String>) -> DriverError {
-    DriverError::Mysql(tidb_error::mysql::MysqlError::unknown(message))
+    DriverError::Mysql(tidb_error::MysqlError::unknown(message))
 }
 
 /// Go `Optimizer`: everything the advisor asks of the optimizer.

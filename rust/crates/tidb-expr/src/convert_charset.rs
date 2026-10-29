@@ -193,13 +193,13 @@ pub fn from_binary(
     .fast_generate(
         tidb_error::tidb::errname::ErrCannotConvertString.raw,
         &[
-            tidb_error::mysql::FormatArg::from(fmt_non_ascii_printable_char_to_hex(
+            tidb_mysql::errors::FormatArg::from(fmt_non_ascii_printable_char_to_hex(
                 &bytes,
                 MAX_BYTES_TO_SHOW,
                 false,
             )),
-            tidb_error::mysql::FormatArg::from("binary"),
-            tidb_error::mysql::FormatArg::from(target_charset),
+            tidb_mysql::errors::FormatArg::from("binary"),
+            tidb_mysql::errors::FormatArg::from(target_charset),
         ],
     );
     if !cannot_convert_string_as_warning {

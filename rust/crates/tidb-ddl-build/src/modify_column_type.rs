@@ -21,7 +21,7 @@
 //! this one function.
 
 use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_error::mysql::MysqlError;
+use tidb_error::MysqlError;
 
 use tidb_hack::GoToLower;
 
@@ -324,7 +324,7 @@ pub fn check_modify_types(
     check_type_change_supported(origin, to)?;
     let can_reorganize = modify_type_needs_reorganization(origin, to);
     if can_reorganize && origin.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY) {
-        return Err(tidb_error::mysql::MysqlError::from_terror(
+        return Err(tidb_error::MysqlError::from_terror(
             &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN
                 .generate_with_stack_by_args(&["this column has primary key flag".into()]),
         ));
@@ -504,7 +504,7 @@ fn check_type_change_supported(origin: &FieldType, to: &FieldType) -> Result<(),
         ) && to_code == FieldTypeCode::Duration);
 
     if refused {
-        return Err(tidb_error::mysql::MysqlError::from_terror(
+        return Err(tidb_error::MysqlError::from_terror(
             &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN.generate_with_stack_by_args(&[
                 format!(
                     "change from original type {} to {} is currently unsupported yet",
@@ -604,7 +604,7 @@ mod type_change_gate_tests {
 
         assert_eq!(
             check_type_change_supported(&vector, &int),
-            Err(tidb_error::mysql::MysqlError::from_terror(
+            Err(tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN.generate_with_stack_by_args(&[
                     format!(
                         "change from original type {} to {} is currently unsupported yet",
@@ -617,7 +617,7 @@ mod type_change_gate_tests {
         );
         assert_eq!(
             check_type_change_supported(&int, &vector),
-            Err(tidb_error::mysql::MysqlError::from_terror(
+            Err(tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN.generate_with_stack_by_args(&[
                     format!(
                         "change from original type {} to {} is currently unsupported yet",

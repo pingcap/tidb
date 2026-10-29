@@ -99,7 +99,7 @@ pub enum ClusterStatsLockError {
     /// The error value Go's `LOCK STATS` / `UNLOCK STATS` planning raises as
     /// it is: `ErrNoDB` for a bare table name with no selected schema,
     /// `ErrTableNotExists`, `ErrUnknownPartition`.
-    Mysql(tidb_error::mysql::MysqlError),
+    Mysql(tidb_error::MysqlError),
     /// Missing table or invalid target.
     Invalid(String),
     /// System-row read failure.
@@ -124,7 +124,7 @@ impl std::error::Error for ClusterStatsLockError {}
 /// A Go error raised as the statement's failure.
 impl From<tidb_error::terror::TerrorError> for ClusterStatsLockError {
     fn from(error: tidb_error::terror::TerrorError) -> Self {
-        Self::Mysql(tidb_error::mysql::MysqlError::from_terror(&error))
+        Self::Mysql(tidb_error::MysqlError::from_terror(&error))
     }
 }
 

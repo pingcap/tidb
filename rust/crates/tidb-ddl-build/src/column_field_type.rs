@@ -758,7 +758,7 @@ impl ColumnAttributeError {
     /// definition with the column name where the `%-.192s` verbs put it, or
     /// `types.CheckVectorDimValid`'s plain HY000 error.
     #[must_use]
-    pub fn refusal(&self, column: &str) -> tidb_error::mysql::MysqlError {
+    pub fn refusal(&self, column: &str) -> tidb_error::MysqlError {
         use tidb_error::catalog::types;
         let error = match self {
             Self::MBiggerThanD => {
@@ -780,10 +780,10 @@ impl ColumnAttributeError {
             Self::TooLongEnumSetValue => tidb_dbterror::ERR_TOO_LONG_VALUE_FOR_TYPE
                 .generate_with_stack_by_args(&[column.into()]),
             Self::InvalidVectorDimension(message) => {
-                return tidb_error::mysql::MysqlError::unknown(message.as_str())
+                return tidb_error::MysqlError::unknown(message.as_str())
             }
         };
-        tidb_error::mysql::MysqlError::from_terror(&error)
+        tidb_error::MysqlError::from_terror(&error)
     }
 }
 

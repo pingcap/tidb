@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Go pkg/kv for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-mysql = { path = "../tidb-mysql" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-memory = { path = "../tidb-memory" }

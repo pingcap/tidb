@@ -694,7 +694,7 @@ use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
 
 use chrono::{Offset, TimeZone};
-use tidb_error::mysql::{FormatArg, SqlError};
+use tidb_mysql::errors::{FormatArg, SqlError};
 
 mod catalog;
 
@@ -978,7 +978,7 @@ pub enum ValidationError {
     /// Go `ErrWrongValueForVar` (1231).
     WrongValue,
     /// A catalogued MySQL error returned directly by a `Validation` closure.
-    SqlError(tidb_error::mysql::SqlError),
+    SqlError(tidb_mysql::errors::SqlError),
     /// A `Validation` closure that refuses the value with a bare
     /// `errors.Errorf`, whose wording IS the error (Go gives it no code, so it
     /// reports as 1105).
@@ -1112,7 +1112,7 @@ impl SysVarDef {
             let zone = tidb_datatype::SessionTimeZone::utc();
             if tidb_datatype::parse_datetime(value, &zone, false, false).is_err() {
                 return Err(ValidationError::SqlError(SqlError::new_f(
-                    tidb_error::mysql::errcode::ErrTruncatedWrongValue,
+                    tidb_mysql::errors::errcode::ErrTruncatedWrongValue,
                     "Incorrect datetime value: '%s'",
                     &[],
                     &[FormatArg::from(value)],
@@ -1214,7 +1214,7 @@ impl SysVarDef {
             };
             if let Some(message) = conflict {
                 return Err(ValidationError::SqlError(SqlError::new_f(
-                    tidb_error::mysql::errcode::ErrUnknown,
+                    tidb_mysql::errors::errcode::ErrUnknown,
                     "%s",
                     &[],
                     &[FormatArg::from(message)],
@@ -1344,7 +1344,7 @@ impl SysVarDef {
                     .is_some_and(|value| value.eq_ignore_ascii_case("ON") || value == "1")
                 {
                     return Err(ValidationError::SqlError(SqlError::new_f(
-                        tidb_error::mysql::errcode::ErrNotSupportedYet,
+                        tidb_mysql::errors::errcode::ErrNotSupportedYet,
                         "%s = OFF is not supported when %s = ON",
                         &[],
                         &[FormatArg::from(self.name), FormatArg::from(incompatible)],
@@ -1361,7 +1361,7 @@ impl SysVarDef {
             && validated.value == "ON"
         {
             return Err(ValidationError::SqlError(SqlError::new_f(
-                tidb_error::mysql::errcode::ErrNotSupportedYet,
+                tidb_mysql::errors::errcode::ErrNotSupportedYet,
                 "%s is not supported in the next generation of TiDB",
                 &[],
                 &[FormatArg::from(self.name)],
@@ -1374,7 +1374,7 @@ impl SysVarDef {
             && validated.value.eq_ignore_ascii_case("bulk")
         {
             return Err(ValidationError::SqlError(SqlError::new_f(
-                tidb_error::mysql::errcode::ErrNotSupportedYet,
+                tidb_mysql::errors::errcode::ErrNotSupportedYet,
                 "%s is not supported in the next generation of TiDB",
                 &[],
                 &[FormatArg::from(self.name)],
@@ -1388,7 +1388,7 @@ impl SysVarDef {
             && !validated.value.is_empty()
         {
             return Err(ValidationError::SqlError(SqlError::new_f(
-                tidb_error::mysql::errcode::ErrNotSupportedYet,
+                tidb_mysql::errors::errcode::ErrNotSupportedYet,
                 "%s is not supported in the next generation of TiDB",
                 &[],
                 &[FormatArg::from(self.name)],
@@ -1418,7 +1418,7 @@ impl SysVarDef {
             let parsed = crate::varsutil::parse_memory_limit(total, &validated.value, original)
                 .map_err(|_| {
                     ValidationError::SqlError(SqlError::new(
-                        tidb_error::mysql::errcode::ErrTruncatedWrongValue,
+                        tidb_mysql::errors::errcode::ErrTruncatedWrongValue,
                         &[FormatArg::from(self.name), FormatArg::from(original)],
                     ))
                 })?;
@@ -1815,7 +1815,7 @@ impl SysVarDef {
             }
             if validated.value.is_empty() {
                 return Err(ValidationError::SqlError(SqlError::new(
-                    tidb_error::mysql::errcode::ErrWrongValueForVar,
+                    tidb_mysql::errors::errcode::ErrWrongValueForVar,
                     &[FormatArg::from(self.name), FormatArg::from("NULL")],
                 )));
             }
@@ -2046,7 +2046,7 @@ impl SysVarDef {
                 return Ok(validated);
             }
             return Err(ValidationError::SqlError(SqlError::new(
-                tidb_error::mysql::errcode::ErrTruncatedWrongValue,
+                tidb_mysql::errors::errcode::ErrTruncatedWrongValue,
                 &[
                     FormatArg::from("tidb_schema_cache_size"),
                     FormatArg::from(original),
@@ -2527,13 +2527,13 @@ pub fn supported_collation(
 ) -> Result<tidb_datatype::CollationInfo, SqlError> {
     tidb_datatype::get_supported_collation_by_name(value).map_err(|error| match error {
         tidb_datatype::CollationError::UnsupportedCollation(_) => SqlError::new_f(
-            tidb_error::mysql::errcode::ErrUnknownCollation,
+            tidb_mysql::errors::errcode::ErrUnknownCollation,
             "Unsupported collation when new collation is enabled: '%-.64s'",
             &[],
             &[FormatArg::from(original)],
         ),
         tidb_datatype::CollationError::Registry(_) => SqlError::new(
-            tidb_error::mysql::errcode::ErrUnknownCollation,
+            tidb_mysql::errors::errcode::ErrUnknownCollation,
             &[FormatArg::from(original)],
         ),
     })
@@ -3075,7 +3075,7 @@ mod tests {
             Err(ValidationError::SqlError(error)) => {
                 assert_eq!(
                     error.code,
-                    tidb_error::mysql::errcode::ErrTruncatedWrongValue
+                    tidb_mysql::errors::errcode::ErrTruncatedWrongValue
                 );
                 assert_eq!(
                     error.message,

@@ -66,8 +66,8 @@ impl Eq for ErrorCause {}
 
 /// A Go error raised as the statement's failure: its code, SQLSTATE,
 /// message and identity.
-impl From<tidb_error::mysql::MysqlError> for SqlQueryError {
-    fn from(error: tidb_error::mysql::MysqlError) -> Self {
+impl From<tidb_error::MysqlError> for SqlQueryError {
+    fn from(error: tidb_error::MysqlError) -> Self {
         Self {
             identity: error.identity,
             ..Self::new(error.code, error.state, error.message)
@@ -76,9 +76,9 @@ impl From<tidb_error::mysql::MysqlError> for SqlQueryError {
 }
 
 /// A Go error that reached the wire layer as its SQL triple and identity.
-impl From<tidb_error::mysql::SqlError> for SqlQueryError {
-    fn from(error: tidb_error::mysql::SqlError) -> Self {
-        Self::from(tidb_error::mysql::MysqlError::from_sql_error(error))
+impl From<tidb_mysql::errors::SqlError> for SqlQueryError {
+    fn from(error: tidb_mysql::errors::SqlError) -> Self {
+        Self::from(tidb_error::MysqlError::from_sql_error(error))
     }
 }
 
@@ -147,7 +147,7 @@ impl SqlQueryError {
     /// the connection rather than reporting either outcome.
     #[must_use]
     pub fn result_undetermined() -> Self {
-        let error = tidb_error::mysql::MysqlError::from_terror(&ERR_RESULT_UNDETERMINED);
+        let error = tidb_error::MysqlError::from_terror(&ERR_RESULT_UNDETERMINED);
         Self {
             identity: error.identity,
             ..Self::new(error.code, error.state, error.message)

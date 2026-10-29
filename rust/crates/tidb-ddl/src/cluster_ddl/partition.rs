@@ -32,7 +32,7 @@ use super::*;
 const PARTITION_COUNT_LIMIT: usize = 8192;
 
 /// A refusal the shared partition implementation raised.
-fn admission(error: tidb_error::mysql::MysqlError) -> DdlPlanError {
+fn admission(error: tidb_error::MysqlError) -> DdlPlanError {
     DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error))
 }
 
@@ -109,7 +109,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
         } => {
             let (database_id, stored) = locate_table(&catalog, schema, table)?;
             let Some(partitioning) = stored.get_partition_info() else {
-                return Err(admission(tidb_error::mysql::MysqlError::from_terror(
+                return Err(admission(tidb_error::MysqlError::from_terror(
                     &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
                         .generate_with_stack_by_args(&[]),
                 )));
@@ -255,7 +255,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
         } => {
             let (database_id, stored) = locate_table(&catalog, schema, table)?;
             let Some(partitioning) = stored.get_partition_info() else {
-                return Err(admission(tidb_error::mysql::MysqlError::from_terror(
+                return Err(admission(tidb_error::MysqlError::from_terror(
                     &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
                         .generate_with_stack_by_args(&[]),
                 )));
@@ -276,7 +276,7 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
                             .iter()
                             .position(|definition| definition.name.lowercase() == lower)
                         else {
-                            return Err(admission(tidb_error::mysql::MysqlError::from_terror(
+                            return Err(admission(tidb_error::MysqlError::from_terror(
                                 &tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
                                     .generate_with_stack_by_args(&[
                                         (lower).to_string().into(),
@@ -352,7 +352,7 @@ fn job_partition(
     info.partition.clone().ok_or_else(|| {
         cancel_ddl_job(
             active,
-            admission(tidb_error::mysql::MysqlError::from_terror(
+            admission(tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
                     .generate_with_stack_by_args(&[]),
             )),
@@ -943,7 +943,7 @@ pub(super) fn rollback_like_drop_partition<S: MetaSnapshot>(
 /// Go `CheckDropTablePartition`, against the table the job steps.
 fn check_drop_table_partition(info: &TableInfo, names: &[String]) -> Result<(), DdlPlanError> {
     let Some(partition) = info.get_partition_info() else {
-        return Err(admission(tidb_error::mysql::MysqlError::from_terror(
+        return Err(admission(tidb_error::MysqlError::from_terror(
             &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
                 .generate_with_stack_by_args(&[]),
         )));
@@ -953,7 +953,7 @@ fn check_drop_table_partition(info: &TableInfo, names: &[String]) -> Result<(), 
         partition.partition_type,
         tidb_ast::PartitionType::RANGE | tidb_ast::PartitionType::LIST
     ) {
-        return Err(admission(tidb_error::mysql::MysqlError::from_terror(
+        return Err(admission(tidb_error::MysqlError::from_terror(
             &tidb_dbterror::ERR_ONLY_ON_RANGE_LIST_PARTITION
                 .generate_with_stack_by_args(&[("DROP").into()]),
         )));
@@ -966,7 +966,7 @@ fn check_drop_table_partition(info: &TableInfo, names: &[String]) -> Result<(), 
     }
     let definitions = partition.definitions.snapshot();
     if definitions.len() <= names.len() {
-        return Err(admission(tidb_error::mysql::MysqlError::from_terror(
+        return Err(admission(tidb_error::MysqlError::from_terror(
             &tidb_dbterror::ERR_DROP_LAST_PARTITION.generate_with_stack_by_args(&[]),
         )));
     }
@@ -976,7 +976,7 @@ fn check_drop_table_partition(info: &TableInfo, names: &[String]) -> Result<(), 
             .iter()
             .any(|definition| definition.name.lowercase() == name);
         if !found || !seen.insert(name.clone()) {
-            return Err(admission(tidb_error::mysql::MysqlError::from_terror(
+            return Err(admission(tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_DROP_PARTITION_NON_EXISTENT
                     .generate_with_stack_by_args(&["DROP".into()]),
             )));
@@ -1193,7 +1193,7 @@ pub(super) fn plan_persisted_truncate_table_partition_job_step<S: MetaSnapshot>(
     let Some(partition) = info.partition.clone() else {
         return Err(fault(
             active,
-            admission(tidb_error::mysql::MysqlError::from_terror(
+            admission(tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
                     .generate_with_stack_by_args(&[]),
             )),

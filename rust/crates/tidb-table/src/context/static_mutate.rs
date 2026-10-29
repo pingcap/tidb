@@ -255,7 +255,7 @@ impl Columns for StaticMutateContext {
         self.warnings().push(warning);
     }
 
-    fn append_error_warning(&self, error: &tidb_error::mysql::SqlError) {
+    fn append_error_warning(&self, error: &tidb_mysql::errors::SqlError) {
         self.append_sql_warn(tidb_context::SqlWarn::from_error(
             WarningLevel::Warning,
             error.code,

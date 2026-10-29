@@ -14,7 +14,7 @@
 
 #![allow(missing_docs)]
 
-use tidb_error::mysql::FormatArg;
+use tidb_mysql::errors::FormatArg;
 use tidb_error::terror::ERR_RESULT_UNDETERMINED;
 use tidb_context::warning_publication::{
     warnings_from_json, warnings_to_json, IgnoreWarnings, StatementWarning, StaticWarningHandler,

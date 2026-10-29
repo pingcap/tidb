@@ -214,7 +214,7 @@ pub struct CancelMppTasksParam {
 pub trait MppContext: Send + Sync {
     /// Go `ctx.Err()` under the SQL killer: the statement's kill or
     /// memory-quota stop, with its SQL identity, once raised.
-    fn check(&self) -> Result<(), tidb_error::mysql::MysqlError>;
+    fn check(&self) -> Result<(), tidb_error::MysqlError>;
 
     /// Charges `bytes` (or, negative, releases them) to the statement.
     fn consume(&self, bytes: i64);
@@ -225,7 +225,7 @@ pub trait MppContext: Send + Sync {
 pub enum MppError {
     /// An error with its SQL identity: the statement's own stop, or a store
     /// answer that carries a MySQL code.
-    Sql(tidb_error::mysql::MysqlError),
+    Sql(tidb_error::MysqlError),
     /// Any other failure, rendered.
     Other(String),
 }

@@ -89,7 +89,7 @@ pub(crate) fn compile_regexp(pattern: &str, match_type: &str) -> Result<Regex, E
 /// Go `ErrRegexp` (`ClassExpression.NewStd(mysql.ErrRegexp)`, 1139):
 /// `Got error '%-.64s' from regexp`.
 pub(crate) fn err_regexp(message: &str) -> EvalError {
-    use tidb_error::mysql::FormatArg;
+    use tidb_mysql::errors::FormatArg;
     use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
     static ERR_REGEXP: std::sync::LazyLock<TerrorError> = std::sync::LazyLock::new(|| {
         TerrorError::registered_std(TerrorClass::Expression, TerrorCode::new(1139))
@@ -102,7 +102,7 @@ pub(crate) fn err_regexp(message: &str) -> EvalError {
 /// implements `fmt.Formatter` and ignores the template's `%-.64s` precision,
 /// so the wrapped text is never cut.
 pub(crate) fn err_regexp_wrapping_error(message: &str) -> EvalError {
-    use tidb_error::mysql::FormatArg;
+    use tidb_mysql::errors::FormatArg;
     use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
     static ERR_REGEXP: std::sync::LazyLock<TerrorError> = std::sync::LazyLock::new(|| {
         TerrorError::registered_std(TerrorClass::Expression, TerrorCode::new(1139))

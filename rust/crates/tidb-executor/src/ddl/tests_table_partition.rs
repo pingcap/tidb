@@ -24,7 +24,7 @@ use tidb_table::partition_routing::{
     PartitionDef, PartitionKind, PartitionSpec, RangeBound, RangeColumnBound,
 };
 #[allow(unused_imports)]
-use tidb_error::mysql::MysqlError;
+use tidb_error::MysqlError;
 #[allow(unused_imports)]
 use tidb_hack::GoCaseCompare;
 #[allow(unused_imports)]

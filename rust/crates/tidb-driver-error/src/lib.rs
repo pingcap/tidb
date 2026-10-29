@@ -38,7 +38,7 @@ pub use var::VarError;
 mod exec_error;
 
 pub use exec_error::ExecError;
-pub use tidb_error::mysql::MysqlError;
+pub use tidb_error::MysqlError;
 
 /// An error raised with its Go identity already rendered (Go returns it as a
 /// plain `error`): the statement reports it unchanged.

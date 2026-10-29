@@ -564,7 +564,7 @@ impl PreparedStatementRegistry {
         }
         if statement.bound_params_too_large {
             return Some(SqlQueryError::from(
-                tidb_error::mysql::MysqlError::from_terror(
+                tidb_error::MysqlError::from_terror(
                     &tidb_error::catalog::servererr::ERR_NET_PACKET_TOO_LARGE
                         .generate_with_stack_by_args(&[]),
                 ),
@@ -1254,9 +1254,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             return rejected_login(
                 &mut output,
                 2,
-                tidb_error::mysql::errcode::ErrNotSupportedAuthMode,
+                tidb_mysql::errors::errcode::ErrNotSupportedAuthMode,
                 *b"08004",
-                tidb_error::mysql::errname::ErrNotSupportedAuthMode.raw,
+                tidb_mysql::errors::errname::ErrNotSupportedAuthMode.raw,
                 false,
                 connection_id,
                 *commands,
@@ -1425,9 +1425,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             return rejected_login(
                 &mut output,
                 response_sequence,
-                tidb_error::mysql::errcode::ErrNotSupportedAuthMode,
+                tidb_mysql::errors::errcode::ErrNotSupportedAuthMode,
                 *b"08004",
-                tidb_error::mysql::errname::ErrNotSupportedAuthMode
+                tidb_mysql::errors::errname::ErrNotSupportedAuthMode
                     .raw
                     .to_owned(),
                 protocol_41,
@@ -1495,8 +1495,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     if !peer_addr.is_unix_socket() && client_plugin == tidb_mysql::consts::AuthSocket {
         let error = tidb_error::server_errors::ERR_ACCESS_DENIED_NO_PASSWORD
             .generate_with_stack_by_args(&[
-                tidb_error::mysql::FormatArg::from(response_user.as_str()),
-                tidb_error::mysql::FormatArg::from(peer_addr.host()),
+                tidb_mysql::errors::FormatArg::from(response_user.as_str()),
+                tidb_mysql::errors::FormatArg::from(peer_addr.host()),
             ]);
         return rejected_login(
             &mut output,
@@ -2377,7 +2377,7 @@ fn run_connection_commands<S: QuerySession>(
                                     if let Some(path) = engine.take_local_infile_request() {
                                         if capabilities & CLIENT_LOCAL_FILES == 0 {
                                             let error = SqlQueryError::from(
-                                                tidb_error::mysql::MysqlError::from_terror(
+                                                tidb_error::MysqlError::from_terror(
                                                     &tidb_error::catalog::servererr::ERR_NOT_ALLOWED_COMMAND
                                                         .generate_with_stack_by_args(&[]),
                                                 ),
@@ -2968,7 +2968,7 @@ fn run_connection_commands<S: QuerySession>(
                                 1,
                                 ER_UNKNOWN_ERROR,
                                 *b"HY000",
-                                tidb_error::mysql::ERR_MALFORM_PACKET,
+                                tidb_mysql::errors::ERR_MALFORM_PACKET,
                                 protocol_41,
                             )?;
                             return Ok(None);

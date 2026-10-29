@@ -3,7 +3,7 @@
 
 //! Message catalog constants, part 3 of 4 (see `errname/mod.rs`).
 
-use crate::ErrMessage;
+use tidb_mysql::errors::ErrMessage;
 
 /// Message metadata for `ErrBinlogRowInjectionAndStmtMode`.
 pub const ErrBinlogRowInjectionAndStmtMode: ErrMessage = ErrMessage {

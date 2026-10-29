@@ -79,7 +79,7 @@ pub enum KillStop {
         conn_id: u64,
     },
     /// Any other pending kill signal, as the error the killer yields.
-    Killed(tidb_error::mysql::SqlError),
+    Killed(tidb_mysql::errors::SqlError),
 }
 
 impl KillStop {
@@ -87,14 +87,14 @@ impl KillStop {
     /// error, `exeerrors.ErrMemoryExceedForQuery` rendered from the ported
     /// catalog for a memory kill.
     #[must_use]
-    pub fn to_mysql_error(self) -> tidb_error::mysql::MysqlError {
+    pub fn to_mysql_error(self) -> tidb_error::MysqlError {
         match self {
             // Go `sqlkiller`: `exeerrors.ErrMemoryExceedForQuery.GenWithStackByArgs(connID)`.
-            KillStop::MemoryExceedForQuery { conn_id } => tidb_error::mysql::MysqlError::from_terror(
+            KillStop::MemoryExceedForQuery { conn_id } => tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY
                     .generate_with_stack_by_args(&[conn_id.into()]),
             ),
-            KillStop::Killed(error) => tidb_error::mysql::MysqlError::from_sql_error(error),
+            KillStop::Killed(error) => tidb_error::MysqlError::from_sql_error(error),
         }
     }
 }
@@ -567,7 +567,7 @@ impl std::fmt::Debug for StatementMemory {
 /// The statement an MPP call runs for: its killer is the call's `ctx`, and
 /// its tracker holds the packets the call buffers.
 impl tidb_txnkv::MppContext for StatementMemory {
-    fn check(&self) -> Result<(), tidb_error::mysql::MysqlError> {
+    fn check(&self) -> Result<(), tidb_error::MysqlError> {
         StatementMemory::check(self).map_err(KillStop::to_mysql_error)
     }
 

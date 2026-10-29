@@ -1753,7 +1753,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
         let all_revokees_exist = |users: &[tidb_ast::CreateUserSpec]| -> Result<(), DriverError> {
             for spec in users {
                 if !registry.user_exists(&spec.user.user, &spec.user.host) {
-                    return Err(DriverError::from(tidb_error::mysql::MysqlError::unknown(
+                    return Err(DriverError::from(tidb_error::MysqlError::unknown(
                         format!(
                             "Unknown user: {}@{}",
                             spec.user.user.clone(),
@@ -1781,7 +1781,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
                     if !registry.user_exists(user, host) {
-                        return Err(DriverError::from(tidb_error::mysql::MysqlError::unknown(
+                        return Err(DriverError::from(tidb_error::MysqlError::unknown(
                             format!("Unknown user: {}@{}", user.to_owned(), host.to_owned()),
                         )));
                     }
@@ -1824,12 +1824,12 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
                     if !registry.user_exists(user, host) {
-                        return Err(DriverError::from(tidb_error::mysql::MysqlError::unknown(
+                        return Err(DriverError::from(tidb_error::MysqlError::unknown(
                             format!("Unknown user: {}@{}", user.to_owned(), host.to_owned()),
                         )));
                     }
                     if !registry.db_grant_row_exists(user, host, &database) {
-                        return Err(DriverError::from(tidb_error::mysql::MysqlError::unknown(format!("There is no such grant defined for user '{}' on host '{}' on database {}", user.to_owned(), host.to_owned(), database.clone()))));
+                        return Err(DriverError::from(tidb_error::MysqlError::unknown(format!("There is no such grant defined for user '{}' on host '{}' on database {}", user.to_owned(), host.to_owned(), database.clone()))));
                     }
                     registry.revoke_db(user, host, &database, mask);
                     let (user, host) = (user.to_owned(), host.to_owned());
@@ -1848,7 +1848,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     let user = spec.user.user.as_str();
                     let host = spec.user.host.as_str();
                     if !registry.user_exists(user, host) {
-                        return Err(DriverError::from(tidb_error::mysql::MysqlError::unknown(
+                        return Err(DriverError::from(tidb_error::MysqlError::unknown(
                             format!("Unknown user: {}@{}", user.to_owned(), host.to_owned()),
                         )));
                     }
@@ -1858,7 +1858,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     // with no grant on the table reports this and not
                     // `Unknown column` (captured).
                     if !registry.table_grant_row_exists(user, host, &database, table) {
-                        return Err(DriverError::from(tidb_error::mysql::MysqlError::unknown(format!("There is no such grant defined for user '{}' on host '{}' on table {}.{}", user.to_owned(), host.to_owned(), database.clone(), table.clone()))));
+                        return Err(DriverError::from(tidb_error::MysqlError::unknown(format!("There is no such grant defined for user '{}' on host '{}' on table {}.{}", user.to_owned(), host.to_owned(), database.clone(), table.clone()))));
                     }
                 }
                 // `REVOKE` resolves columns through `table.FindCol` too, but
@@ -1980,7 +1980,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     .find(|name| name.go_equal_fold(column))
                     .map(|name| (name.clone(), *mask))
                     .ok_or_else(|| {
-                        DriverError::from(tidb_error::mysql::MysqlError::unknown(format!(
+                        DriverError::from(tidb_error::MysqlError::unknown(format!(
                             "Unknown column: {}",
                             column.clone()
                         )))

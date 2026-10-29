@@ -131,7 +131,7 @@ pub enum ProbeError {
     /// Physical spill IO failure, preserved by the worker result channel.
     Spill(String),
     /// Canonical SQL cancellation from inside a probe or scan loop.
-    Killed(tidb_error::mysql::SqlError),
+    Killed(tidb_mysql::errors::SqlError),
     /// Typed expression failure; preserve it for SQL error conversion.
     Expression(tidb_expr::EvalError),
     /// Go: `errors.New("Previous chunk is not probed yet")`.

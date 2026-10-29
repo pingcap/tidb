@@ -3,7 +3,8 @@
 
 //! Exact source obligations for the shared MySQL/TiDB error authority.
 
-use tidb_error::{mysql, tidb};
+use tidb_mysql::errors as mysql;
+use tidb_error::tidb;
 
 #[test]
 fn parser_mysql_catalog_translates_all_source_entries() {

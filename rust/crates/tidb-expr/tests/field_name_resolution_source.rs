@@ -205,6 +205,6 @@ fn field_name_source_helpers_and_unusable_filter_are_shared() {
         field("db", "tbl", "col", false),
     ];
     let error = find_field_name(&ambiguous, &column).unwrap_err();
-    assert_eq!(error.sql_error.code, tidb_error::mysql::errcode::ErrNonUniq);
+    assert_eq!(error.sql_error.code, tidb_mysql::errors::errcode::ErrNonUniq);
     assert_eq!(error.sql_error.state, "23000");
 }

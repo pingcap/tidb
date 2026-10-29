@@ -184,7 +184,7 @@ fn complete_func_index_error(
     row_index: usize,
     error: tidb_expr::EvalError,
 ) -> tidb_expr::EvalError {
-    use tidb_error::mysql::FormatArg;
+    use tidb_mysql::errors::FormatArg;
     use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
     let tidb_expr::EvalError::Conversion(cause) = &error else {
         return error;
@@ -373,7 +373,7 @@ impl CastShape {
 impl CastCompletion for CastShape {
     fn complete_error(
         &self,
-        error: tidb_error::mysql::SqlError,
+        error: tidb_mysql::errors::SqlError,
         source: &Datum,
         field_type: &FieldType,
         column: &str,
@@ -384,7 +384,7 @@ impl CastCompletion for CastShape {
 
     fn complete_warning(
         &self,
-        error: tidb_error::mysql::SqlError,
+        error: tidb_mysql::errors::SqlError,
         source: &Datum,
         field_type: &FieldType,
         column: &str,
@@ -408,7 +408,7 @@ impl CastCompletion for CastShape {
 /// `completeLoadErr` (`:327`) and `handleUpdateError`'s re-titles
 /// (`pkg/executor/update.go:494`), chosen by `shape`.
 fn complete_typed_cast(
-    error: tidb_error::mysql::SqlError,
+    error: tidb_mysql::errors::SqlError,
     source: &Datum,
     field: &FieldType,
     column: &str,

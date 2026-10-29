@@ -150,7 +150,7 @@ impl fmt::Display for IntParseError {
         write!(
             formatter,
             "strconv.ParseInt: parsing {}: {}",
-            tidb_error::mysql::go_quote_string(&self.input),
+            tidb_mysql::errors::go_quote_string(&self.input),
             if self.out_of_range {
                 "value out of range"
             } else {
@@ -252,7 +252,7 @@ impl fmt::Display for FloatParseError {
         write!(
             formatter,
             "strconv.ParseFloat: parsing {}: {}",
-            tidb_error::mysql::go_quote_string(&self.input),
+            tidb_mysql::errors::go_quote_string(&self.input),
             if self.out_of_range {
                 "value out of range"
             } else {
@@ -547,7 +547,7 @@ impl fmt::Display for ParseError {
                 return write!(
                     formatter,
                     "strconv.ParseUint: parsing {}: {}",
-                    tidb_error::mysql::go_quote_string(input),
+                    tidb_mysql::errors::go_quote_string(input),
                     if *out_of_range {
                         "value out of range"
                     } else {
@@ -612,8 +612,8 @@ pub fn parse_to_map(input: &str) -> Result<ParsedFixControls, ParseError> {
             if previous != value {
                 warnings.push(format!(
                     "repeated assignment for fix control: {key}. existing value: {}. new value: {}.",
-                    tidb_error::mysql::go_quote_string(&previous),
-                    tidb_error::mysql::go_quote_string(&value),
+                    tidb_mysql::errors::go_quote_string(&previous),
+                    tidb_mysql::errors::go_quote_string(&value),
                 ));
             }
         }

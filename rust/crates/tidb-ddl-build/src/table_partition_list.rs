@@ -23,7 +23,7 @@ use tidb_ast::{Expr, PartitionDefinition, PartitionDefinitionClause, PartitionVa
 use tidb_datatype::FieldType;
 
 use tidb_table::partition_routing::PartitionKind;
-use tidb_error::mysql::MysqlError;
+use tidb_error::MysqlError;
 
 use tidb_table::partition_fold::fold_column_value;
 
@@ -39,7 +39,7 @@ pub fn build_list_columns_values(
     definition_tail: &mut dyn FnMut(usize) -> Result<(), MysqlError>,
 ) -> Result<(Vec<String>, PartitionKind), MysqlError> {
     if columns.is_empty() || definitions.is_empty() {
-        return Err(tidb_error::mysql::MysqlError::from_terror(
+        return Err(tidb_error::MysqlError::from_terror(
             &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
                 .generate_with_stack_by_args(&["LIST".into()]),
         ));
@@ -48,7 +48,7 @@ pub fn build_list_columns_values(
     let mut field_types = Vec::with_capacity(columns.len());
     for path in columns {
         let name = path.last().ok_or_else(|| {
-            tidb_error::mysql::MysqlError::from_terror(
+            tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
             )
         })?;
@@ -58,7 +58,7 @@ pub fn build_list_columns_values(
                 .iter()
                 .any(|candidate: &String| candidate.go_lower_eq(name))
         {
-            return Err(tidb_error::mysql::MysqlError::from_terror(
+            return Err(tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_SAME_NAME_PARTITION_FIELD
                     .generate_with_stack_by_args(&[(name.clone()).to_string().into()]),
             ));
@@ -70,14 +70,14 @@ pub fn build_list_columns_values(
             // column list's missing name as `ErrFieldNotFoundPart` (1488),
             // not the 1054 the expression path raises.
             .ok_or_else(|| {
-                tidb_error::mysql::MysqlError::from_terror(
+                tidb_error::MysqlError::from_terror(
                     &tidb_dbterror::ERR_FIELD_NOT_FOUND_PART.generate_with_stack_by_args(&[]),
                 )
             })?;
         let field_type = types[offset].clone();
         // Go `checkColumnsPartitionType` (`partition.go:642`).
         if !list_columns_type_allowed(&field_type) {
-            return Err(tidb_error::mysql::MysqlError::from_terror(
+            return Err(tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION
                     .generate_with_stack_by_args(&[(name.clone()).to_string().into()]),
             ));
@@ -110,7 +110,7 @@ pub fn build_list_columns_values(
                         // the scalar value supplied for a multi-column LIST
                         // COLUMNS key.
                         _ => {
-                            return Err(tidb_error::mysql::MysqlError::from_terror(
+                            return Err(tidb_error::MysqlError::from_terror(
                                 &tidb_error::catalog::ast::ERR_PARTITION_COLUMN_LIST
                                     .generate_with_stack_by_args(&[]),
                             ))
@@ -126,14 +126,14 @@ pub fn build_list_columns_values(
                         &tuple,
                     )
                     .map_err(|_| {
-                        tidb_error::mysql::MysqlError::from_terror(
+                        tidb_error::MysqlError::from_terror(
                             &tidb_dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
                                 .generate_with_stack_by_args(&[]),
                         )
                     })?;
                     // Go `checkListPartitionValue`.
                     if keys.insert(key, ordinal).is_some() {
-                        return Err(tidb_error::mysql::MysqlError::from_terror(
+                        return Err(tidb_error::MysqlError::from_terror(
                             &tidb_dbterror::ERR_MULTIPLE_DEF_CONST_IN_LIST_PART
                                 .generate_with_stack_by_args(&[]),
                         ));
@@ -142,13 +142,13 @@ pub fn build_list_columns_values(
                 }
             }
             PartitionDefinitionClause::LessThan(_) => {
-                return Err(tidb_error::mysql::MysqlError::from_terror(
+                return Err(tidb_error::MysqlError::from_terror(
                     &tidb_error::catalog::ast::ERR_PARTITION_WRONG_VALUES
                         .generate_with_stack_by_args(&["RANGE".into(), "LESS THAN".into()]),
                 ));
             }
             _ => {
-                return Err(tidb_error::mysql::MysqlError::from_terror(
+                return Err(tidb_error::MysqlError::from_terror(
                     &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
                         .generate_with_stack_by_args(&["LIST".into()]),
                 ))
@@ -175,7 +175,7 @@ fn set_default_partition(
     // `formatListPartitionValue` (`ddl/partition.go:2010`), which
     // `checkListPartitionValue` reaches.
     if slot.replace(ordinal).is_some() {
-        return Err(tidb_error::mysql::MysqlError::from_terror(
+        return Err(tidb_error::MysqlError::from_terror(
             &tidb_dbterror::ERR_MULTIPLE_DEF_CONST_IN_LIST_PART
                 .generate_with_stack_by_args(&[]),
         ));

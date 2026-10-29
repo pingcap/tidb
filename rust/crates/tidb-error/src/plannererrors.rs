@@ -417,7 +417,7 @@ pub static ERR_SP_DOES_NOT_EXIST: LazyLock<TerrorError> =
 /// Go `plannererrors.ErrAccessDenied` (`ClassOptimizer.NewStdErr(errno.ErrAccessDenied,
 /// errno.MySQLErrName[errno.ErrAccessDeniedNoPassword])`).
 pub static ERR_ACCESS_DENIED: LazyLock<TerrorError> = LazyLock::new(|| {
-    let message = crate::mysql::message_by_code(1698)
+    let message = tidb_mysql::errors::message_by_code(1698)
         .copied()
         .expect("catalog message");
     TerrorError::registered_standard(TerrorClass::Optimizer, TerrorCode::new(1045), message)
@@ -609,7 +609,7 @@ mod tests {
             let code = err.to_sql_error().code;
             assert_ne!(
                 code,
-                crate::mysql::errcode::ErrUnknown,
+                tidb_mysql::errors::errcode::ErrUnknown,
                 "{}",
                 err.rfc_code()
             );

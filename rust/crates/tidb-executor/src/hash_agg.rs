@@ -1916,7 +1916,7 @@ impl Partial {
                 // Evaluation-origin: Go's warning buffer stays EMPTY beside
                 // the fatal 3158 (oracle g-group: `JSON_OBJECTAGG(NULL, 1)`).
                 return Err(ExecError::Mysql(
-                    tidb_error::mysql::MysqlError::from_terror(
+                    tidb_error::MysqlError::from_terror(
                         &tidb_error::catalog::types::ERR_JSON_DOCUMENT_NULL_KEY
                             .generate_with_stack_by_args(&[]),
                     )
@@ -1932,7 +1932,7 @@ impl Partial {
             // ordinary string literal).
             (Partial::JsonObjectAgg(_, _, true), Some(_)) => {
                 return Err(ExecError::Mysql(
-                    tidb_error::mysql::MysqlError::from_terror(
+                    tidb_error::MysqlError::from_terror(
                         &tidb_error::catalog::types::ERR_INVALID_JSON_CHARSET
                             .generate_with_stack_by_args(&[("binary".to_owned()).into()]),
                     ),

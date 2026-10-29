@@ -333,7 +333,7 @@ pub struct PlanError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PlanErrorKind {
     /// The error value Go's planner returns, raised as Go raises it.
-    Mysql(tidb_error::mysql::MysqlError),
+    Mysql(tidb_error::MysqlError),
     /// Aggregate descriptor validation before executor construction.
     Aggregation(tidb_expr::aggregation::AggDescError),
     /// An expression error whose MySQL identity must survive the planner
@@ -407,8 +407,8 @@ impl PlanError {
     }
 }
 
-impl From<tidb_error::mysql::MysqlError> for PlanError {
-    fn from(error: tidb_error::mysql::MysqlError) -> Self {
+impl From<tidb_error::MysqlError> for PlanError {
+    fn from(error: tidb_error::MysqlError) -> Self {
         Self {
             message: error.message.clone(),
             kind: PlanErrorKind::Mysql(error),
@@ -418,7 +418,7 @@ impl From<tidb_error::mysql::MysqlError> for PlanError {
 
 impl From<tidb_error::terror::TerrorError> for PlanError {
     fn from(error: tidb_error::terror::TerrorError) -> Self {
-        tidb_error::mysql::MysqlError::from_terror(&error).into()
+        tidb_error::MysqlError::from_terror(&error).into()
     }
 }
 

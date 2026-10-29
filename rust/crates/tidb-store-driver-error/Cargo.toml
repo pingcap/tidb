@@ -11,6 +11,7 @@ description = "Go `pkg/store/driver/error` (`ToTiDBErr`) and the client-visible 
 workspace = true
 
 [dependencies]
+tidb-mysql = { path = "../tidb-mysql" }
 tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-error = { path = "../tidb-error" }

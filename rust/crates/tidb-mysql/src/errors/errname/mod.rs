@@ -6,7 +6,7 @@
 #![allow(non_upper_case_globals)]
 
 use super::errcode;
-use crate::{CatalogEntry, ErrMessage};
+use crate::errors::{CatalogEntry, ErrMessage};
 
 mod catalog_1;
 mod catalog_2;

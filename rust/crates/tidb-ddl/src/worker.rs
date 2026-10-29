@@ -1002,7 +1002,7 @@ mod schema_sync_tests {
     #[test]
     fn check_validation_source_message() {
         let error = check_constraint_validation_table_error(
-            tidb_table::kv_table::KvTableError::Mysql(tidb_error::mysql::MysqlError::from_terror(
+            tidb_table::kv_table::KvTableError::Mysql(tidb_error::MysqlError::from_terror(
                 &tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED
                     .fast_generate_by_args(&["MixedCheck".into()]),
             )),
@@ -2611,7 +2611,7 @@ where
                     Err(error)
                         if object == DropObject::Sequence
                             && if_exists
-                            && error.code == tidb_error::mysql::errcode::ErrWrongObject =>
+                            && error.code == tidb_mysql::errors::errcode::ErrWrongObject =>
                     {
                         notes.push(tidb_context::SqlWarn::from_error(
                             crate::real_tikv_ddl::DdlWarningLevel::Note,
@@ -2627,7 +2627,7 @@ where
             .map_err(|error| match error {
                 DropObjectsError::Target(error) => error,
                 DropObjectsError::Missing(names) => SqlQueryError::from(
-                    tidb_error::mysql::MysqlError::from_terror(&missing_raised(&names.join(","))),
+                    tidb_error::MysqlError::from_terror(&missing_raised(&names.join(","))),
                 ),
             })?;
             let (ClusterDdlReport::Applied { warnings, .. }
@@ -3295,7 +3295,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
         probe.enable_cache().map_err(|error| {
             let error = match error {
                 tidb_table::kv_table::KvTableError::Mysql(error) => error,
-                other => tidb_error::mysql::MysqlError::unknown(format!(
+                other => tidb_error::MysqlError::unknown(format!(
                     "cache table size check failed: {other:?}"
                 )),
             };
@@ -3324,7 +3324,7 @@ impl KvTableIndexBackfiller {
             })
         {
             return Err(LockSqlError::from(
-                tidb_error::mysql::MysqlError::from_terror(
+                tidb_error::MysqlError::from_terror(
                     &tidb_dbterror::ERR_UNSUPPORTED_PARTITION_TYPE
                         .generate_with_stack_by_args(&[plan.partitioned.name.original().into()]),
                 ),
@@ -3392,7 +3392,7 @@ fn check_constraint_validation_table_error(
         {
             use tidb_hack::GoToLower;
             tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED
-                .generate_with_stack_by_args(&[tidb_error::mysql::FormatArg::from(
+                .generate_with_stack_by_args(&[tidb_mysql::errors::FormatArg::from(
                     constraint_name.go_to_lower(),
                 )])
                 .into()
@@ -3404,7 +3404,7 @@ fn check_constraint_validation_table_error(
 }
 
 fn exchange_validation_internal(message: String) -> LockSqlError {
-    LockSqlError::from(tidb_error::mysql::MysqlError::unknown(message))
+    LockSqlError::from(tidb_error::MysqlError::unknown(message))
 }
 
 fn exchange_validation_table_error(error: tidb_table::kv_table::KvTableError) -> LockSqlError {
@@ -3415,7 +3415,7 @@ fn exchange_validation_table_error(error: tidb_table::kv_table::KvTableError) ->
                 || error.equal(&tidb_error::catalog::table::ERR_NO_PARTITION_FOR_GIVEN_VALUE)
                 || error.equal(&tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED) =>
         {
-            LockSqlError::from(tidb_error::mysql::MysqlError::from_terror(
+            LockSqlError::from(tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_ROW_DOES_NOT_MATCH_PARTITION
                     .generate_with_stack_by_args(&[]),
             ))

@@ -21,7 +21,7 @@
 //! [`CastCompletion`]. `RawCast` is the caller that completes nothing.
 
 use tidb_datatype::{Datum, FieldType};
-use tidb_error::mysql::MysqlError;
+use tidb_error::MysqlError;
 
 /// Go `table.CastValue`'s returned `error`: a cast-family `terror` already
 /// rendered with its identity, or the evaluation error Go returns unchanged
@@ -188,9 +188,9 @@ fn handle_raw_cast_error(
         flags.truncate_as_warning(),
     )
     .handle(
-        Some(tidb_error::mysql::SqlError {
+        Some(tidb_mysql::errors::SqlError {
             code: reported.code,
-            state: tidb_error::mysql::mysql_state(reported.code),
+            state: tidb_mysql::errors::mysql_state(reported.code),
             message: reported.message.clone(),
             identity: reported.identity,
         }),
@@ -219,7 +219,7 @@ pub trait CastCompletion {
     /// Completes the error a conversion stage returned.
     fn complete_error(
         &self,
-        error: tidb_error::mysql::SqlError,
+        error: tidb_mysql::errors::SqlError,
         source: &Datum,
         field_type: &FieldType,
         column: &str,
@@ -228,7 +228,7 @@ pub trait CastCompletion {
     /// Completes a warning a conversion stage raised.
     fn complete_warning(
         &self,
-        error: tidb_error::mysql::SqlError,
+        error: tidb_mysql::errors::SqlError,
         source: &Datum,
         field_type: &FieldType,
         column: &str,
@@ -254,7 +254,7 @@ pub(crate) struct RawCast;
 impl CastCompletion for RawCast {
     fn complete_error(
         &self,
-        error: tidb_error::mysql::SqlError,
+        error: tidb_mysql::errors::SqlError,
         _: &Datum,
         _: &FieldType,
         _: &str,
@@ -265,7 +265,7 @@ impl CastCompletion for RawCast {
 
     fn complete_warning(
         &self,
-        error: tidb_error::mysql::SqlError,
+        error: tidb_mysql::errors::SqlError,
         _: &Datum,
         _: &FieldType,
         _: &str,

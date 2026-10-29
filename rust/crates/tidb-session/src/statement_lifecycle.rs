@@ -338,7 +338,7 @@ impl StatementLifecycle<'_> {
             // `exeerrors.ErrLazyUniquenessCheckFailure.GenWithStackByArgs(err.Error())`:
             // the inner error's text keeps its `[class:code]` prefix.
             return outcome.map_err(|error| {
-                SqlQueryError::from(tidb_error::mysql::MysqlError::from_terror(
+                SqlQueryError::from(tidb_error::MysqlError::from_terror(
                     &tidb_dbterror::exeerrors::ERR_LAZY_UNIQUENESS_CHECK_FAILURE
                         .generate_with_stack_by_args(&[error.error_string().into()]),
                 ))

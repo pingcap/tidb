@@ -10,6 +10,8 @@ description = "Single source-backed MySQL and TiDB error catalog for the TiDB Ru
 autotests = false
 
 [dependencies]
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-terror-identity = { path = "../tidb-terror-identity" }
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
 tracing = "0.1"

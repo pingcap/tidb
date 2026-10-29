@@ -691,7 +691,7 @@ pub fn client_errors_summary_rows(
     }
 
     fn message(code: u16) -> &'static str {
-        tidb_error::mysql::message_by_code(code)
+        tidb_mysql::errors::message_by_code(code)
             .or_else(|| tidb_error::tidb::message_by_code(code))
             .map_or("", |message| message.raw)
     }

@@ -306,7 +306,7 @@ pub trait QuerySession {
     /// nothing is worse than one that refuses.
     fn select_database(&mut self, name: &str) -> Result<(), SqlQueryError> {
         Err(SqlQueryError::from(
-            tidb_error::mysql::MysqlError::from_terror(
+            tidb_error::MysqlError::from_terror(
                 &tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
                     .generate_with_stack_by_args(&[name.into()]),
             ),

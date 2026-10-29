@@ -3686,6 +3686,7 @@ dependencies = [
  "serde_json",
  "tidb-datatype",
  "tidb-error",
+ "tidb-mysql",
 ]
 
 [[package]]
@@ -3771,6 +3772,7 @@ dependencies = [
  "tidb-goruntime",
  "tidb-hack",
  "tidb-kvcache",
+ "tidb-mysql",
  "tidb-parser-format",
  "tidb-parser-types",
  "unicode-general-category",
@@ -3781,6 +3783,7 @@ name = "tidb-dbterror"
 version = "0.0.0"
 dependencies = [
  "tidb-error",
+ "tidb-mysql",
 ]
 
 [[package]]
@@ -4242,6 +4245,7 @@ dependencies = [
  "tidb-error",
  "tidb-expr",
  "tidb-kv",
+ "tidb-mysql",
  "tidb-spill-storage",
  "tidb-sqlkiller",
  "tidb-table",
@@ -4282,7 +4286,7 @@ name = "tidb-errmsg"
 version = "0.0.0"
 dependencies = [
  "tidb-config",
- "tidb-error",
+ "tidb-mysql",
 ]
 
 [[package]]
@@ -4291,6 +4295,8 @@ version = "0.0.0"
 dependencies = [
  "serde",
  "serde_json",
+ "tidb-mysql",
+ "tidb-terror-identity",
  "tracing",
 ]
 
@@ -4553,7 +4559,7 @@ dependencies = [
 name = "tidb-fixcontrol"
 version = "0.0.0"
 dependencies = [
- "tidb-error",
+ "tidb-mysql",
 ]
 
 [[package]]
@@ -4776,6 +4782,7 @@ dependencies = [
  "tidb-dbterror",
  "tidb-error",
  "tidb-log",
+ "tidb-mysql",
 ]
 
 [[package]]
@@ -4789,6 +4796,7 @@ dependencies = [
  "tidb-dbterror",
  "tidb-error",
  "tidb-memory",
+ "tidb-mysql",
  "tidb-spill-storage",
  "tidb-sqlkiller",
  "tidb-tablecodec",
@@ -4928,6 +4936,7 @@ dependencies = [
  "tidb-error",
  "tidb-fastrand",
  "tidb-intest",
+ "tidb-mysql",
  "tidb-sqlkiller",
  "tidb-sysutil",
  "tracing",
@@ -5032,7 +5041,7 @@ version = "0.0.0"
 name = "tidb-mysql"
 version = "0.0.0"
 dependencies = [
- "tidb-error",
+ "tidb-terror-identity",
 ]
 
 [[package]]
@@ -5096,6 +5105,7 @@ dependencies = [
  "tidb-charset",
  "tidb-error",
  "tidb-goruntime",
+ "tidb-mysql",
  "tidb-parser-format",
 ]
 
@@ -5376,6 +5386,7 @@ dependencies = [
  "tidb-error",
  "tidb-goruntime",
  "tidb-hack",
+ "tidb-mysql",
  "zstd",
 ]
 
@@ -5413,8 +5424,8 @@ dependencies = [
 name = "tidb-redact"
 version = "0.0.0"
 dependencies = [
- "tidb-error",
  "tidb-intest",
+ "tidb-mysql",
  "tidb-proto",
 ]
 
@@ -5496,7 +5507,6 @@ dependencies = [
  "tidb-ast",
  "tidb-datatype",
  "tidb-ddl-build",
- "tidb-error",
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
@@ -6019,6 +6029,7 @@ dependencies = [
  "tidb-error",
  "tidb-fastrand",
  "tidb-intest",
+ "tidb-mysql",
  "tracing",
 ]
 
@@ -6034,13 +6045,13 @@ dependencies = [
  "tidb-chunk",
  "tidb-codec",
  "tidb-datatype",
- "tidb-error",
  "tidb-fastrand",
  "tidb-generic",
  "tidb-goruntime",
  "tidb-mathutil",
  "tidb-memory",
  "tidb-model",
+ "tidb-mysql",
  "tidb-sqlkiller",
  "tidb-tablecodec",
  "tidb-txnkv",
@@ -6437,6 +6448,7 @@ dependencies = [
  "tidb-dbterror",
  "tidb-error",
  "tidb-kv",
+ "tidb-mysql",
  "tidb-proto",
  "tidb-txnkv",
 ]
@@ -6611,6 +6623,10 @@ dependencies = [
  "tidb-rowcodec",
  "tidb-txnkv",
 ]
+
+[[package]]
+name = "tidb-terror-identity"
+version = "0.0.0"
 
 [[package]]
 name = "tidb-test-isolation"
@@ -6835,6 +6851,7 @@ dependencies = [
  "tidb-log",
  "tidb-logutil",
  "tidb-metrics",
+ "tidb-mysql",
  "tidb-paging",
  "tidb-pd-client",
  "tidb-proto",

@@ -46,7 +46,7 @@ pub enum ExecError {
     },
     /// A canonical SQL-killer failure transported through Rust's typed
     /// executor boundary instead of Go's panic/recover mechanism.
-    Killed(tidb_error::mysql::SqlError),
+    Killed(tidb_mysql::errors::SqlError),
     /// A memory-table retriever's failure when its scan is first read (Go
     /// `MemTableReaderExec.Next`), carried whole so the statement reports the
     /// driver error the retriever raised (a missing privilege, an

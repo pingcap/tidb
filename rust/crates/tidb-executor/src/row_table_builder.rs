@@ -197,7 +197,7 @@ pub enum RowTableBuildError {
     /// Original expression error from the build-side filter.
     Expression(tidb_expr::EvalError),
     /// Canonical SQL cancellation, including quota exhaustion before allocation.
-    Killed(tidb_error::mysql::SqlError),
+    Killed(tidb_mysql::errors::SqlError),
     /// Codec failure while constructing the chunk's join keys.
     KeyEncoding(String),
     /// A stored column holds an element wider than a `u32` size prefix.

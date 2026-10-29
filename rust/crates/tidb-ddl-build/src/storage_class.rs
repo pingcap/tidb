@@ -27,7 +27,7 @@ use tidb_model::serde_helpers::go_json_field_matches;
 use tidb_model::StorageClassTransitRule;
 
 use tidb_table::partition_routing::{PartitionDef, PartitionKind};
-use tidb_error::mysql::MysqlError;
+use tidb_error::MysqlError;
 
 use tidb_table::partition_routing::StorageClass;
 

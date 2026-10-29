@@ -80,7 +80,7 @@ fn set_sys_variable(
             // Removed vars permit parse-but-ignore.
             return Ok(());
         }
-        return Err(tidb_error::mysql::MysqlError::from_terror(
+        return Err(tidb_error::MysqlError::from_terror(
             &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
                 .generate_with_stack_by_args(&[(name.to_owned()).into()]),
         )

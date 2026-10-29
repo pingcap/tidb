@@ -67,7 +67,7 @@
 use std::fmt;
 use std::sync::atomic::Ordering;
 
-use tidb_error::mysql::MysqlError;
+use tidb_error::MysqlError;
 
 use tidb_ast::IndexType;
 use tidb_ast::{CiString, IndexOptions};
@@ -181,7 +181,7 @@ impl DdlAdmissionError {
     /// refusal back to `HY000`.
     #[must_use]
     pub fn sql_state(&self) -> [u8; 5] {
-        tidb_error::mysql::mysql_state(self.code)
+        tidb_mysql::errors::mysql_state(self.code)
             .as_bytes()
             .try_into()
             .expect("the MySQL error catalog stores five-byte SQLSTATEs")
@@ -622,7 +622,7 @@ pub fn build_table_info_in_schema(
         // key is refused; otherwise it is clamped, never refused.
         if bits > 0 && clustered {
             return Err(default_admission_error(
-                tidb_error::mysql::MysqlError::from_terror(
+                tidb_error::MysqlError::from_terror(
                     &tidb_dbterror::ERR_UNSUPPORTED_SHARD_ROW_ID_BITS
                         .generate_with_stack_by_args(&[]),
                 ),
@@ -676,7 +676,7 @@ pub fn build_table_info_in_schema(
     if create.partitioning.is_some() {
         if temporary != tidb_model::TempTableType::NONE {
             return Err(default_admission_error(
-                tidb_error::mysql::MysqlError::from_terror(
+                tidb_error::MysqlError::from_terror(
                     &tidb_dbterror::ERR_PARTITION_NO_TEMPORARY
                         .generate_with_stack_by_args(&[]),
                 ),
@@ -1111,7 +1111,7 @@ pub fn check_ttl_info_valid(
         return Ok(());
     };
     if table.temp_table_type != tidb_model::TempTableType::NONE {
-        return Err(tidb_error::mysql::MysqlError::from_terror(
+        return Err(tidb_error::MysqlError::from_terror(
             &tidb_dbterror::ERR_TEMP_TABLE_NOT_ALLOWED_WITH_TTL
                 .generate_with_stack_by_args(&[]),
         ));
@@ -1121,7 +1121,7 @@ pub fn check_ttl_info_valid(
         &ttl.interval_expr_str,
         tidb_ttl::TimeUnitType::from_i64(ttl.interval_time_unit),
     )
-    .map_err(|error| tidb_error::mysql::MysqlError::unknown(error.to_string()))?;
+    .map_err(|error| tidb_error::MysqlError::unknown(error.to_string()))?;
     if table.is_common_handle {
         if let Some(primary) = table
             .indices
@@ -1138,7 +1138,7 @@ pub fn check_ttl_info_valid(
                     })
             });
             if float_key {
-                return Err(tidb_error::mysql::MysqlError::from_terror(
+                return Err(tidb_error::MysqlError::from_terror(
                     &tidb_dbterror::ERR_UNSUPPORTED_PRIMARY_KEY_TYPE_WITH_TTL
                         .generate_with_stack_by_args(&[]),
                 ));
@@ -1146,19 +1146,19 @@ pub fn check_ttl_info_valid(
         }
     }
     if referred_by_foreign_key {
-        return Err(tidb_error::mysql::MysqlError::from_terror(
+        return Err(tidb_error::MysqlError::from_terror(
             &tidb_dbterror::ERR_UNSUPPORTED_TTL_REFERENCED_BY_FK
                 .generate_with_stack_by_args(&[]),
         ));
     }
     let named = ttl.column_name.original();
     match tidb_model::column::find_column_info(&table.columns, named) {
-        None => Err(tidb_error::mysql::MysqlError::from_terror(
+        None => Err(tidb_error::MysqlError::from_terror(
             &tidb_dbterror::ERR_BAD_FIELD
                 .generate_with_stack_by_args(&[named.to_owned().into(), "TTL config".into()]),
         )),
         Some(column) if !column.read().field_type.code().is_type_time() => {
-            Err(tidb_error::mysql::MysqlError::from_terror(
+            Err(tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_UNSUPPORTED_COLUMN_IN_TTL_CONFIG
                     .generate_with_stack_by_args(&[named.to_owned().into()]),
             ))
@@ -1778,7 +1778,7 @@ pub fn build_added_column(
         match name.to_ascii_lowercase().as_str() {
             "nextval" => {
                 return Err(default_admission_error(
-                    tidb_error::mysql::MysqlError::from_terror(
+                    tidb_error::MysqlError::from_terror(
                         &tidb_dbterror::ERR_ADD_COLUMN_WITH_SEQUENCE_AS_DEFAULT
                             .generate_with_stack_by_args(&[(column.name.clone())
                                 .to_string()
@@ -1788,7 +1788,7 @@ pub fn build_added_column(
             }
             "rand" | "uuid" | "uuid_to_bin" | "replace" | "upper" => {
                 return Err(default_admission_error(
-                    tidb_error::mysql::MysqlError::from_terror(
+                    tidb_error::MysqlError::from_terror(
                         &tidb_dbterror::ERR_BINLOG_UNSAFE_SYSTEM_FUNCTION
                             .generate_with_stack_by_args(&[]),
                     ),
@@ -2022,7 +2022,7 @@ pub fn process_modify_column_options(
             .is_some_and(StagedColumnDefault::has_null_default)
     {
         return Err(default_admission_error(
-            tidb_error::mysql::MysqlError::from_terror(
+            tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
                     .generate_with_stack_by_args(&[name.to_string().into()]),
             ),
@@ -2030,7 +2030,7 @@ pub fn process_modify_column_options(
     }
     if field_type.has_flag(FieldTypeFlags::PRI_KEY) && has_null_flag {
         return Err(default_admission_error(
-            tidb_error::mysql::MysqlError::from_terror(
+            tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_PRIMARY_CANT_HAVE_NULL.generate_with_stack_by_args(&[]),
             ),
         ));
@@ -2111,7 +2111,7 @@ fn expression_default_origin(
     if check_unsafe_func && !lower.contains("date_format(now(),") && !lower.contains("str_to_date")
     {
         return Err(default_admission_error(
-            tidb_error::mysql::MysqlError::from_terror(
+            tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_BINLOG_UNSAFE_SYSTEM_FUNCTION
                     .generate_with_stack_by_args(&[]),
             ),
@@ -2139,7 +2139,7 @@ fn expression_default_origin(
             &context.get_expr_ctx().get_eval_ctx().time_zone(),
         )
         .map_err(|_| {
-            default_admission_error(tidb_error::mysql::MysqlError::from_terror(
+            default_admission_error(tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
                     .generate_with_stack_by_args(&[name.to_owned().into()]),
             ))
@@ -2758,7 +2758,7 @@ fn build_column(
             .is_some_and(StagedColumnDefault::has_null_default)
     {
         return Err(default_admission_error(
-            tidb_error::mysql::MysqlError::from_terror(
+            tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
                     .generate_with_stack_by_args(&[name.to_owned().into()]),
             ),
@@ -2780,7 +2780,7 @@ fn build_column(
     }
     if field_type.has_flag(FieldTypeFlags::PRI_KEY) && has_null_flag {
         return Err(default_admission_error(
-            tidb_error::mysql::MysqlError::from_terror(
+            tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_PRIMARY_CANT_HAVE_NULL.generate_with_stack_by_args(&[]),
             ),
         ));
@@ -2859,7 +2859,7 @@ pub fn set_column_default(
     // the same spelling is accepted when the column is first defined.
     if !staged.has_default() {
         return Err(default_admission_error(
-            tidb_error::mysql::MysqlError::from_terror(
+            tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
                     .generate_with_stack_by_args(&[name.to_owned().into()]),
             ),
@@ -2910,7 +2910,7 @@ pub fn recheck_column_default_in_reorg_context(info: &ColumnInfo) -> Refusal<()>
     .map_err(default_admission_error)?;
     if !has_default {
         return Err(default_admission_error(
-            tidb_error::mysql::MysqlError::from_terror(
+            tidb_error::MysqlError::from_terror(
                 &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
                     .generate_with_stack_by_args(&[name.to_owned().into()]),
             ),
@@ -3375,7 +3375,7 @@ fn persist_column_default(
             // expression default.
             if info.field_type.has_flag(FieldTypeFlags::AUTO_INCREMENT) {
                 return Err(default_admission_error(
-                    tidb_error::mysql::MysqlError::from_terror(
+                    tidb_error::MysqlError::from_terror(
                         &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE
                             .generate_with_stack_by_args(&[name.to_owned().into()]),
                     ),
@@ -3397,7 +3397,7 @@ fn persist_column_default(
                 && info.field_type.has_flag(FieldTypeFlags::PRI_KEY)
             {
                 return Err(default_admission_error(
-                    tidb_error::mysql::MysqlError::from_terror(
+                    tidb_error::MysqlError::from_terror(
                         &tidb_dbterror::ERR_PRIMARY_CANT_HAVE_NULL
                             .generate_with_stack_by_args(&[]),
                     ),

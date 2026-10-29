@@ -219,7 +219,7 @@ use tidb_ast::{
 };
 use tidb_datatype::FieldTypeCode;
 
-use tidb_error::mysql::MysqlError;
+use tidb_error::MysqlError;
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 

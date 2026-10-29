@@ -354,7 +354,7 @@ impl KvTableBackfill for KvTable {
                     match existing {
                         Some(owner) if entry.distinct && owner != *handle => {
                             return Err(KvTableError::Mysql(
-                                tidb_error::mysql::MysqlError::from_terror(
+                                tidb_error::MysqlError::from_terror(
                                     &tidb_error::catalog::kv::ERR_KEY_EXISTS.fast_generate_by_args(
                                         &[
                                             (duplicate_value_text(&self.index_values(&index, row)))
@@ -508,7 +508,7 @@ impl KvTableBackfill for KvTable {
                         if !record.delete {
                             if record.distinct && original != record.value {
                                 return Err(KvTableError::Mysql(
-                                    tidb_error::mysql::MysqlError::from_terror(
+                                    tidb_error::MysqlError::from_terror(
                                         &tidb_error::catalog::kv::ERR_KEY_EXISTS
                                             .fast_generate_by_args(&[
                                                 (self.duplicate_text_of_key(
@@ -715,7 +715,7 @@ impl KvTableBackfill for KvTable {
             };
             if let Some(warning) = cast_context.take_warnings().into_iter().next() {
                 let warning = crate::reorg_errors::reformat_reorg_error(
-                    tidb_error::mysql::MysqlError::sql_error(warning.code(), warning.message()),
+                    tidb_error::MysqlError::sql_error(warning.code(), warning.message()),
                     &old_name,
                     &old_value,
                 );
@@ -761,6 +761,6 @@ impl KvTableBackfill for KvTable {
 /// duplicate index name as `ErrDupKeyName`, every other row-write failure as
 /// the table layer raises it.
 #[must_use]
-pub fn index_backfill_error(error: KvTableError) -> tidb_error::mysql::MysqlError {
+pub fn index_backfill_error(error: KvTableError) -> tidb_error::MysqlError {
     error.into_mysql_error()
 }

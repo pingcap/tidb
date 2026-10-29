@@ -116,7 +116,7 @@ pub(crate) fn wrap_tuple_index_error(index: usize, inner: &IncompatibleError) ->
 pub(crate) fn wrap_map_key_error(key: &str, inner: &IncompatibleError) -> IncompatibleError {
     IncompatibleError::raw(format!(
         "at map key {}: {}",
-        tidb_error::mysql::go_quote_string(key),
+        tidb_mysql::errors::go_quote_string(key),
         inner
     ))
 }
@@ -866,8 +866,8 @@ impl Lattice for StringList {
                 return Err(IncompatibleError::raw(format!(
                     "at string list index {}: distinct values ({} vs {})",
                     index,
-                    tidb_error::mysql::go_quote_bytes(self.0[index].as_bytes()),
-                    tidb_error::mysql::go_quote_bytes(b.0[index].as_bytes()),
+                    tidb_mysql::errors::go_quote_bytes(self.0[index].as_bytes()),
+                    tidb_mysql::errors::go_quote_bytes(b.0[index].as_bytes()),
                 )));
             }
         }

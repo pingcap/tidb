@@ -566,7 +566,7 @@ pub fn check_origin_matches_hinted(
     if origin_normalized == hinted_normalized {
         return Ok(());
     }
-    Err(DriverError::from(tidb_error::mysql::MysqlError::unknown(format!("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:{}, hintedSQL:{}", origin_normalized.to_owned(), hinted_normalized.to_owned()))))
+    Err(DriverError::from(tidb_error::MysqlError::unknown(format!("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:{}, hintedSQL:{}", origin_normalized.to_owned(), hinted_normalized.to_owned()))))
 }
 
 /// Persisted binding projection. Cluster sessions match against a node-owned

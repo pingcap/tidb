@@ -19,7 +19,8 @@
 //! executor and the coprocessor (`toPBError`) both answer through it.
 
 use tidb_error::catalog::{charset, collate, expression, types};
-use tidb_error::mysql::{MysqlError, SqlError};
+use tidb_error::MysqlError;
+use tidb_mysql::errors::SqlError;
 use tidb_error::terror::TerrorError;
 use tidb_hack::GoToLower;
 
@@ -212,14 +213,14 @@ fn sql_error(code: u16, message: impl Into<String>) -> SqlError {
     SqlError {
         code,
         message: message.into(),
-        state: tidb_error::mysql::mysql_state(code),
+        state: tidb_mysql::errors::mysql_state(code),
         identity: None,
     }
 }
 
 /// Go `proto.GenWithStackByArgs(args...)`: the prototype's template formatted
 /// with Go's arguments.
-fn go(proto: &TerrorError, args: &[tidb_error::mysql::FormatArg]) -> SqlError {
+fn go(proto: &TerrorError, args: &[tidb_mysql::errors::FormatArg]) -> SqlError {
     proto.generate_with_stack_by_args(args).to_sql_error()
 }
 

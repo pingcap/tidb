@@ -11,4 +11,5 @@ description = "TiDB util/dbterror: Go pkg/util/dbterror (Rust rewrite)."
 workspace = true
 
 [dependencies]
+tidb-mysql = { path = "../tidb-mysql" }
 tidb-error = { path = "../tidb-error" }

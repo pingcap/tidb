@@ -15,7 +15,7 @@
 
 use std::sync::LazyLock;
 
-use tidb_error::mysql::errcode;
+use tidb_mysql::errors::errcode;
 use tidb_error::terror::{TerrorClass, TerrorCode, TerrorError};
 use tidb_error::tidb::errcode as tidb_errcode;
 

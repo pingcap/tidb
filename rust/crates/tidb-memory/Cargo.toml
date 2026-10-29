@@ -17,6 +17,7 @@ intest = ["tidb-sqlkiller/intest"]
 jemalloc = ["tidb-allocator-stats/jemalloc"]
 
 [dependencies]
+tidb-mysql = { path = "../tidb-mysql" }
 tidb-cgroup = { path = "../tidb-cgroup" }
 tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-sqlkiller = { path = "../tidb-sqlkiller" }

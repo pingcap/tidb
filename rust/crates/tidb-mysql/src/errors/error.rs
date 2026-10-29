@@ -395,7 +395,7 @@ pub struct SqlError {
     /// `@@tidb_last_query_info`, persisted job errors and every embedded
     /// `err.Error()` read it. Rust passes this view between layers where Go
     /// passes the `error` value, so the view keeps the identity.
-    pub identity: Option<crate::terror::TerrorIdentity>,
+    pub identity: Option<tidb_terror_identity::TerrorIdentity>,
 }
 
 impl SqlError {
@@ -1450,7 +1450,7 @@ fn format_template(template: &str, redact_positions: &[usize], args: &[FormatArg
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mysql::errcode::{ErrDupEntry, ErrNoDB};
+    use crate::errors::errcode::{ErrDupEntry, ErrNoDB};
 
     #[test]
     fn go_quote_accepts_arbitrary_string_bytes() {

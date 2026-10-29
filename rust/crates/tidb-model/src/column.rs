@@ -45,7 +45,7 @@ use tidb_datatype::FieldTypeFlags;
 use tidb_datatype::GoString;
 use tidb_parser_types::parser_types_errors::ERR_INVALID_DEFAULT;
 use tidb_datatype::STRICT_INTEGER_DISPLAY_WIDTH;
-use tidb_error::mysql::{errname, FormatArg};
+use tidb_mysql::errors::{errname, FormatArg};
 use tidb_error::terror::TerrorError;
 
 pub use crate::go_any::{ColumnDefaultValue, GoAny};

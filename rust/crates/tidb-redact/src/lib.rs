@@ -250,17 +250,17 @@ pub fn de_redact_file(remove: bool, input: &str, output: &str) -> std::io::Resul
 /// Go `redact.InitRedact`: sets the process-wide flag to `ON`/`OFF`.
 pub fn init_redact(redact_log: bool) {
     let mode = if redact_log {
-        tidb_error::mysql::RedactionMode::Enabled
+        tidb_mysql::errors::RedactionMode::Enabled
     } else {
-        tidb_error::mysql::RedactionMode::Disabled
+        tidb_mysql::errors::RedactionMode::Disabled
     };
-    tidb_error::mysql::set_redaction_mode(mode);
+    tidb_mysql::errors::set_redaction_mode(mode);
 }
 
 /// Go `redact.NeedRedact`: whether redaction is currently enabled (the flag
 /// is neither `OFF` nor its uninitialized empty value).
 pub fn need_redact() -> bool {
-    tidb_error::mysql::redaction_mode() != tidb_error::mysql::RedactionMode::Disabled
+    tidb_mysql::errors::redaction_mode() != tidb_mysql::errors::RedactionMode::Disabled
 }
 
 /// Go `redact.Value`: `?` when redaction is enabled, else `arg` unchanged.

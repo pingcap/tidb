@@ -24,7 +24,7 @@
 
 use tidb_ddl_build::session_pool::{DdlSessionPool, ForeignKeyCheck, ReorgSessionVars};
 use tidb_table::table_from_meta::{cluster_table, AutoIdSource};
-use tidb_error::mysql::MysqlError;
+use tidb_error::MysqlError;
 use tidb_ddl_build::partition_reorg::KvTablePartitionReorg;
 use tidb_executor::{KvTableDdl, KvTableReader};
 use tidb_sessionctx::StmtContext;
@@ -123,7 +123,7 @@ impl DdlSessionPool for ExecutorDdlSessionPool {
             // not the row's route.
             if partitioned.exchange_row_mismatches(ordinal, &row, &context)? {
                 return Err(KvTableError::Mysql(
-                    tidb_error::mysql::MysqlError::from_terror(
+                    tidb_error::MysqlError::from_terror(
                         &tidb_error::catalog::table::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET
                             .generate_with_stack_by_args(&[]),
                     ),

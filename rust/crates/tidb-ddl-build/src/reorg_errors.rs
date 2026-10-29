@@ -22,10 +22,10 @@ use tidb_datatype::Datum;
 /// names the OLD column and the old value, as does an out-of-range one; other
 /// errors keep their own text.
 pub fn reformat_reorg_error(
-    error: tidb_error::mysql::MysqlError,
+    error: tidb_error::MysqlError,
     old_column: &str,
     old_value: &Datum,
-) -> tidb_error::mysql::MysqlError {
+) -> tidb_error::MysqlError {
     let value = || {
         old_value
             .sql_string()
@@ -33,14 +33,14 @@ pub fn reformat_reorg_error(
     };
     match error.code {
         tidb_error::tidb::errcode::WarnDataTruncated
-        | tidb_error::tidb::errcode::ErrDataTooLong => tidb_error::mysql::MysqlError::from_terror(
+        | tidb_error::tidb::errcode::ErrDataTooLong => tidb_error::MysqlError::from_terror(
             &tidb_error::catalog::types::ERR_TRUNCATED.generate_with_stack(format!(
                 "Data truncated for column '{old_column}', value is '{}'",
                 value()
             )),
         ),
         tidb_error::tidb::errcode::ErrWarnDataOutOfRange => {
-            tidb_error::mysql::MysqlError::from_terror(
+            tidb_error::MysqlError::from_terror(
                 &tidb_error::catalog::types::ERR_WARN_DATA_OUT_OF_RANGE.generate_with_stack(
                     format!(
                         "Out of range value for column '{old_column}', the value is '{}'",

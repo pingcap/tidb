@@ -1,0 +1,13 @@
+[package]
+name = "tidb-terror-identity"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The class/code identity of a TiDB terror error and Go's class registry (not a Go package; see the crate doc)."
+
+[lints]
+workspace = true
+
+[dependencies]

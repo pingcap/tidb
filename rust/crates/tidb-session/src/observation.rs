@@ -976,7 +976,7 @@ impl Session {
         if *origin != *observation.text.as_bytes() {
             fields.push(tidb_log::Field::new(
                 "originText",
-                tidb_log::Value::Str(tidb_error::mysql::go_quote_bytes(&origin)),
+                tidb_log::Value::Str(tidb_mysql::errors::go_quote_bytes(&origin)),
             ));
         }
         tidb_logutil::general_logger().info("GENERAL_LOG", &fields);

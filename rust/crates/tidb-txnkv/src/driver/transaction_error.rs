@@ -319,7 +319,7 @@ impl Redaction {
     /// The process redaction mode (Go `errors.RedactLogEnabled`).
     #[must_use]
     pub fn current() -> Self {
-        use tidb_error::mysql::{redaction_mode, RedactionMode};
+        use tidb_mysql::errors::{redaction_mode, RedactionMode};
         match redaction_mode() {
             RedactionMode::Disabled => Self::Disabled,
             RedactionMode::Enabled => Self::Enabled,

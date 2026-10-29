@@ -3,7 +3,7 @@
 
 //! Message catalog constants, part 1 of 3 (see `errname/mod.rs`).
 
-use crate::ErrMessage;
+use crate::errors::ErrMessage;
 
 /// Message metadata for `ErrHashchk`.
 pub const ErrHashchk: ErrMessage = ErrMessage {
