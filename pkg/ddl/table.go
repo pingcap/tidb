@@ -1436,6 +1436,16 @@ func (w *worker) onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx *jobC
 				return ver, errors.Trace(err)
 			}
 		}
+		// Publish the inherited placement policy for the replacement log's new key range.
+		bundles, err := placement.NewFullTableBundles(jobCtx.metaMut, newMLog)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		if err := infosync.PutRuleBundlesWithDefaultRetry(jobCtx.stepCtx, bundles); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrap(err, "failed to notify PD the placement rules")
+		}
 	}
 	failpoint.Inject("mockMViewRefreshOutOfPlaceCutoverAfterMigrateRefreshInfoError", func() {
 		failpoint.Return(ver, errors.New("mock refresh materialized view complete OUT OF PLACE cutover error after migrating refresh info"))

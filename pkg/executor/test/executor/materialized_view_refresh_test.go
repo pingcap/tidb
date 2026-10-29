@@ -3308,6 +3308,8 @@ func TestMaterializedViewRefreshCompleteInPlaceRejectsMLog(t *testing.T) {
 func TestMaterializedViewRefreshCompleteOutOfPlaceReplacesMLog(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create placement policy mv_oop_policy followers=2")
+	tk.MustExec("alter database test placement policy=mv_oop_policy")
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int not null, b int not null)")
 	tk.MustExec("insert into t values (1, 10), (2, 20)")
@@ -3320,6 +3322,16 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceReplacesMLog(t *testing.T) {
 		return tbl.Meta()
 	}
 	oldMV, oldLog := getInfo("mv"), getInfo("$mlog$mv")
+	checkLogPlacement := func(logInfo *model.TableInfo) {
+		require.NotNil(t, logInfo.PlacementPolicyRef)
+		require.Equal(t, "mv_oop_policy", logInfo.PlacementPolicyRef.Name.L)
+		bundle, ok := dom.InfoSchema().PlacementBundleByPhysicalTableID(logInfo.ID)
+		require.True(t, ok)
+		pdBundle, err := infosync.GetRuleBundle(context.Background(), bundle.ID)
+		require.NoError(t, err)
+		require.Equal(t, bundle, pdBundle)
+	}
+	checkLogPlacement(oldLog)
 	tk.MustExec(fmt.Sprintf("update mysql.tidb_mlog_purge_info set LAST_PURGED_TSO = 1 where MLOG_ID = %d", oldLog.ID))
 	for range 2 {
 		tk.MustExec("refresh materialized view mv complete out of place")
@@ -3332,6 +3344,7 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceReplacesMLog(t *testing.T) {
 		require.Equal(t, expectedLog, newLog.MaterializedViewLog)
 		require.Equal(t, oldLog.Columns, newLog.Columns)
 		require.ElementsMatch(t, oldLog.Indices, newLog.Indices)
+		checkLogPlacement(newLog)
 		tk.MustQuery("select count(*) from `$mlog$mv`").Check(testkit.Rows("0"))
 		tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_info where MLOG_ID = %d", oldLog.ID)).Check(testkit.Rows("0"))
 		tk.MustQuery(fmt.Sprintf("select NEXT_PURGE_UNIX_SECONDS is not null, LAST_PURGED_TSO is null from mysql.tidb_mlog_purge_info where MLOG_ID = %d", newLog.ID)).Check(testkit.Rows("1 1"))

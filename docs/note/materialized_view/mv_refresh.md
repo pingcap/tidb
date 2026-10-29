@@ -361,6 +361,8 @@ Current execution model:
      initialization, and deletes the old log's purge-info and metadata in the same transaction;
    - preserves the output log's TiFlash replica configuration, resets its availability for the new
      physical ID, and configures that ID's PD placement rule before publishing the schema change;
+   - preserves its ordinary placement policy, including an inherited database default, and publishes
+     the replacement physical ID's placement bundle to PD before committing cutover;
    - migrates `mysql.tidb_mview_refresh_info` and the target's confirmed input log registrations to
      the shadow ID, preserving each child's registrations and watermark;
    - sets `LAST_SUCCESS_READ_TSO = build_read_tso` and preserves `NEXT_REFRESH_UNIX_SECONDS`;
