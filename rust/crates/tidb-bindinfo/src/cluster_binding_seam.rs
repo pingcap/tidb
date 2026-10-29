@@ -24,7 +24,7 @@ use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemT
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_kv::cluster_storage::MutationBuffer;
 use crate::binding_cache::SharedBindingCache;
-use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
+use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 /// Go pkg/bindinfo.Lease, independent of the schema lease.
 const BINDING_LEASE: Duration = Duration::from_secs(3);

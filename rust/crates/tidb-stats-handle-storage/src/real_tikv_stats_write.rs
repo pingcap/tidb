@@ -18,7 +18,7 @@
 
 use std::time::Duration;
 
-use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
+use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 use tidb_infoschema::cluster_catalog::load_cluster_catalog;
 use crate::cluster_stats_write::{plan_change_global_stats_id, plan_stats_meta_version_refresh, plan_update_stats_version};

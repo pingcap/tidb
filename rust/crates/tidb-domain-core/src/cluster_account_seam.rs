@@ -44,7 +44,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use tidb_txnkv::transaction::StoreClient;
+use tidb_store_driver_txn::transaction::StoreClient;
 
 use tidb_privilege::cluster_account_write::{plan_account_write, AccountWriteError};
 use tidb_autoid::cluster_auto_id::ClusterAutoIdStore;
@@ -56,7 +56,7 @@ use tidb_autoid::AutoIdStore;
 use tidb_pd_client::EtcdClient;
 use tidb_privilege::PrivilegeRegistry;
 use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
+use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 
 use tidb_privilege::load::cluster_image_from_registry;
 use tidb_privilege::load::registry_from_cluster;

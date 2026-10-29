@@ -14,7 +14,8 @@
 
 // Global size settings must be isolated from parallel transaction fixtures.
 use std::sync::Arc;
-use tidb_txnkv::{Key, TikvMemBufferError, TikvTransactionDriver, TikvTransactionError};
+use tidb_store_driver_txn::{TikvTransactionDriver, TikvTransactionError};
+use tidb_txnkv::{Key, TikvMemBufferError};
 use tikv_client::{PdClient, Transaction, TransactionOptions};
 
 #[test]

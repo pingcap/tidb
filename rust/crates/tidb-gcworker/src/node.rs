@@ -53,7 +53,7 @@ pub struct NodeGcWorker {
 pub fn start_gc_worker(
     factory: &Arc<Domain>,
     store: &tidb_txnkv::driver::tikv_store::TikvStore,
-    opener: Arc<tidb_txnkv::transaction::RealOptimisticTransactionOpener>,
+    opener: Arc<tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener>,
 ) -> Result<NodeGcWorker, String> {
     // The node serves the null keyspace.
     let client = Arc::new(TikvStoreClient::new(

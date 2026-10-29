@@ -25,15 +25,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_txnkv::transaction::{
-    BufferMutation, CommitProtocol, CommittedProtocol, OptimisticCommitOutcome,
-    RealOptimisticTransactionOpener,
-};
+use tidb_txnkv::transaction::{BufferMutation, CommittedProtocol, OptimisticCommitOutcome};
+use tidb_store_driver_txn::transaction::{CommitProtocol, RealOptimisticTransactionOpener};
 
 /// Records the label of every RPC the transaction sends (client-go's
 /// `kv.RPCInterceptor`), retries included.
 fn record_rpc_labels(
-    transaction: &mut tidb_txnkv::transaction::RealTransaction<tikv_client::PdRpcClient>,
+    transaction: &mut tidb_store_driver_txn::transaction::RealTransaction<tikv_client::PdRpcClient>,
 ) -> Arc<Mutex<Vec<&'static str>>> {
     let labels = Arc::new(Mutex::new(Vec::new()));
     let seen = Arc::clone(&labels);

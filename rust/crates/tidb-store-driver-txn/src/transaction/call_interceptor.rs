@@ -33,7 +33,7 @@ use tikv_client::proto::kvrpcpb;
 use tikv_client::tikv::Request;
 use tikv_client::{RpcDispatchResult, RpcInterceptor, RpcNext};
 
-use crate::rpc::UnaryCallContext;
+use tidb_txnkv::rpc::UnaryCallContext;
 
 /// One page a scan's region answered.
 #[derive(Clone, Debug)]

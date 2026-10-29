@@ -948,7 +948,7 @@ mod tests {
         assert!(plan.indexes().is_empty());
     }
 
-    struct RegionSnapshot(Vec<tidb_txnkv::transaction::SnapshotScanRegion>);
+    struct RegionSnapshot(Vec<tidb_store_driver_txn::transaction::SnapshotScanRegion>);
 
     impl MetaSnapshot for RegionSnapshot {
         fn get(&mut self, _key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
@@ -976,7 +976,7 @@ mod tests {
             &mut self,
             _start: &[u8],
             _end: &[u8],
-        ) -> Result<Vec<tidb_txnkv::transaction::SnapshotScanRegion>, ClusterCatalogError> {
+        ) -> Result<Vec<tidb_store_driver_txn::transaction::SnapshotScanRegion>, ClusterCatalogError> {
             Ok(self.0.clone())
         }
     }
@@ -1011,12 +1011,12 @@ mod tests {
             encode_index_seek_key(table.id, index.id, &encoded)
         };
         let mut snapshot = RegionSnapshot(vec![
-            tidb_txnkv::transaction::SnapshotScanRegion {
+            tidb_store_driver_txn::transaction::SnapshotScanRegion {
                 region: tikv_client::tikv::new_region_ver_id(1, 1, 1),
                 end_key: key(&two, 1),
                 pairs: vec![(key(&one, 1), Vec::new()), (key(&two, 1), Vec::new())],
             },
-            tidb_txnkv::transaction::SnapshotScanRegion {
+            tidb_store_driver_txn::transaction::SnapshotScanRegion {
                 region: tikv_client::tikv::new_region_ver_id(2, 1, 1),
                 end_key: Vec::new(),
                 pairs: vec![(key(&two, 2), Vec::new()), (key(&two, 3), Vec::new())],

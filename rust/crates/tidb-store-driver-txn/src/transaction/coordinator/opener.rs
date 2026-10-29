@@ -23,9 +23,10 @@ use std::time::Duration;
 
 use tikv_client::PdRpcClient;
 
-use crate::driver::tikv_store::TikvStore;
+use tidb_txnkv::driver::tikv_store::TikvStore;
 
-use super::{CommitProtocol, OptimisticCoordinatorError, RealTransaction};
+use super::{CommitProtocol, RealTransaction};
+use tidb_txnkv::transaction::OptimisticCoordinatorError;
 
 /// Process-level opener for TiDB transactions: Go `tikvStore.Begin`.
 ///
@@ -210,7 +211,7 @@ where
     /// it without activating a transaction.
     pub fn prepare_read_only_start_ts(
         &self,
-    ) -> Result<crate::driver::tikv_store::StoreTimestampFuture, OptimisticCoordinatorError> {
+    ) -> Result<tidb_txnkv::driver::tikv_store::StoreTimestampFuture, OptimisticCoordinatorError> {
         Ok(self.store.get_timestamp_async())
     }
 
@@ -233,8 +234,8 @@ where
     pub fn snapshot_get_at_max_ts(
         &self,
         key: &[u8],
-        call: &crate::rpc::UnaryCallContext,
-        options: &crate::SnapshotReadOptions,
+        call: &tidb_txnkv::rpc::UnaryCallContext,
+        options: &tidb_txnkv::SnapshotReadOptions,
     ) -> Result<(Option<Vec<u8>>, u64), OptimisticCoordinatorError> {
         let mut snapshot = self.max_ts_snapshot(options)?;
         let result = snapshot
@@ -253,8 +254,8 @@ where
         start_key: &[u8],
         end_key: &[u8],
         limit: Option<usize>,
-        call: &crate::rpc::UnaryCallContext,
-        options: &crate::SnapshotReadOptions,
+        call: &tidb_txnkv::rpc::UnaryCallContext,
+        options: &tidb_txnkv::SnapshotReadOptions,
     ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, OptimisticCoordinatorError> {
         let mut snapshot = self.max_ts_snapshot(options)?;
         let result = snapshot.snapshot_scan(start_key, end_key, limit, call);
@@ -264,13 +265,13 @@ where
 
     fn max_ts_snapshot(
         &self,
-        options: &crate::SnapshotReadOptions,
+        options: &tidb_txnkv::SnapshotReadOptions,
     ) -> Result<RealTransaction<S>, OptimisticCoordinatorError> {
         let mut snapshot =
             RealTransaction::new_opened(&self.store, u64::MAX, true, self.authority_id())?;
         snapshot.set_snapshot_read_options(options);
         if let Some(name) = self.resource_group_name.as_deref() {
-            crate::new_txn::TxnResourceGroup::set_resource_group_name(&mut snapshot, name);
+            tidb_txnkv::new_txn::TxnResourceGroup::set_resource_group_name(&mut snapshot, name);
         }
         Ok(snapshot)
     }
@@ -304,7 +305,7 @@ where
             RealTransaction::new_opened(&self.store, start_ts, read_only, self.authority_id())?;
         transaction.set_commit_protocol(self.protocol);
         if let Some(resource_group_name) = self.resource_group_name.as_deref() {
-            crate::new_txn::TxnResourceGroup::set_resource_group_name(
+            tidb_txnkv::new_txn::TxnResourceGroup::set_resource_group_name(
                 &mut transaction,
                 resource_group_name,
             );

@@ -435,11 +435,7 @@ mod tests {
     use tikv_client::proto::{deadlock::WaitForEntry, kvrpcpb};
     use tikv_client::DeadlockError;
     use tidb_txnkv::retry::RegionBackoffKind;
-    use tidb_txnkv::transaction::{
-        CommittedTransaction, OptimisticCommitOutcome,
-        OptimisticTransactionReceipt, PessimisticLockFailure, RolledBackTransaction,
-        TransactionCause, UndeterminedTransaction,
-    };
+    use tidb_txnkv::transaction::{CommittedTransaction, OptimisticCommitOutcome, OptimisticTransactionReceipt, PessimisticLockFailure, RolledBackTransaction, TransactionCause, UndeterminedTransaction};
 
     fn receipt() -> OptimisticTransactionReceipt {
         OptimisticTransactionReceipt::new(1, 2, b"k".to_vec(), 1)

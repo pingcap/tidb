@@ -64,10 +64,9 @@ use crate::AutoIdCall as UnaryCallContext;
 use crate::{advance, calc_needed_batch_size, AutoIdStore, AutoIdStoreError};
 use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
-use tidb_txnkv::transaction::StoreClient;
-use tidb_txnkv::transaction::{
-    BufferMutation, OptimisticCommitOutcome, RealOptimisticTransactionOpener,
-};
+use tidb_store_driver_txn::transaction::StoreClient;
+use tidb_txnkv::transaction::{BufferMutation, OptimisticCommitOutcome};
+use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 
 
 /// How many times a reservation re-reads after losing a prewrite race.

@@ -24,9 +24,7 @@ use std::sync::Arc;
 use tidb_datatype::Datum;
 use crate::GlobalSysvars;
 use tidb_txnkv::retry::RegionBackoffKind;
-use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause,
-};
+use tidb_txnkv::transaction::{OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause};
 
 struct UndeterminedSysvarWriter(GlobalSysvars);
 

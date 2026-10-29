@@ -11,6 +11,7 @@ description = "Go pkg/store/gcworker: the GC leader that advances safe points, r
 workspace = true
 
 [dependencies]
+tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-unistore-tikv = { path = "../tidb-unistore-tikv" }
 tidb-config-configtypes = { path = "../tidb-config-configtypes" }
 tidb-config-deploymode = { path = "../tidb-config-deploymode" }

@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB statistics handle: Go pkg/statistics/handle as the planner reads it (Rust rewrite)."
 
 [dependencies]
+tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-table = { path = "../tidb-table" }
 tidb-config-configtypes = { path = "../tidb-config-configtypes" }

@@ -47,7 +47,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use tidb_txnkv::transaction::StoreClient;
+use tidb_store_driver_txn::transaction::StoreClient;
 
 use crate::cluster_analyze::AnalyzeStatement;
 use tidb_infoschema::cluster_catalog::load_cluster_catalog;
@@ -63,7 +63,7 @@ use tidb_stats_handle_storage::real_tikv_load_stats::{
 };
 use tidb_stats_handle_syncload::real_tikv_stats::{update_stats_cache_from_cluster, StatsTarget};
 use tidb_stats_handle_syncload::stats_watch::SharedStats;
-use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
+use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 use tidb_sqlkiller::SqlKiller;
 
 use crate::real_tikv_analyze::cluster_analyze_error;

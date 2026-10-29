@@ -20,7 +20,8 @@ use std::sync::{
 };
 use std::time::Duration;
 use tidb_txnkv::driver::tikv_store::TikvStore;
-use tidb_txnkv::{Key, TikvTransactionDriver, UnaryCallContext};
+use tidb_store_driver_txn::TikvTransactionDriver;
+use tidb_txnkv::{Key, UnaryCallContext};
 use tidb_unistore::mock::StorePdClient;
 use tikv_client::proto::kvrpcpb;
 use tikv_client::TimestampExt;
@@ -66,8 +67,8 @@ impl Store {
             .unwrap();
         TikvTransactionDriver::new(transaction, self.runtime.clone())
     }
-    fn facade(&self) -> tidb_txnkv::transaction::client::ClientTransaction<StorePdClient> {
-        tidb_txnkv::transaction::client::ClientTransaction::new_opened(
+    fn facade(&self) -> tidb_store_driver_txn::transaction::client::ClientTransaction<StorePdClient> {
+        tidb_store_driver_txn::transaction::client::ClientTransaction::new_opened(
             &self.tikv_store,
             self.timestamp(),
             false,
@@ -354,10 +355,7 @@ fn store_facade_preserves_snapshot_and_commit_timestamps() {
 
 #[test]
 fn store_facade_preserves_schema_error_and_never_publishes_invalid_schema() {
-    use tidb_txnkv::transaction::{
-        BufferMutation, OptimisticCommitOutcome, SchemaLease, SchemaLeaseChecker, SchemaLeaseError,
-        TransactionCause,
-    };
+    use tidb_txnkv::transaction::{BufferMutation, OptimisticCommitOutcome, SchemaLease, SchemaLeaseChecker, SchemaLeaseError, TransactionCause};
     struct Changed;
     impl SchemaLeaseChecker for Changed {
         fn check_by_schema_ver(
@@ -622,7 +620,7 @@ fn resource_group(context: Option<&kvrpcpb::Context>) -> Option<String> {
 }
 
 /// Go `onTxnActiveFunc`: the session's transaction in pessimistic mode.
-fn pessimistic(store: &Store) -> tidb_txnkv::transaction::client::ClientTransaction<StorePdClient> {
+fn pessimistic(store: &Store) -> tidb_store_driver_txn::transaction::client::ClientTransaction<StorePdClient> {
     let mut transaction = store.facade();
     transaction.set_pessimistic(true);
     transaction

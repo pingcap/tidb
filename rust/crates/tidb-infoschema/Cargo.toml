@@ -9,6 +9,7 @@ description = "TiDB infoschema: the schema image (Go pkg/infoschema) (Rust rewri
 
 
 [dependencies]
+tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-infoschema-context = { path = "../tidb-infoschema-context" }
 tidb-errno = { path = "../tidb-errno" }
 tidb-plannererrors = { path = "../tidb-plannererrors" }

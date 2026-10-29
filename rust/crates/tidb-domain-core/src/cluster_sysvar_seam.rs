@@ -44,7 +44,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
-use tidb_txnkv::transaction::StoreClient;
+use tidb_store_driver_txn::transaction::StoreClient;
 
 use tidb_infoschema::cluster_catalog::{load_cluster_catalog, ClusterCatalog};
 use tidb_syssession::cluster_sysvar_load::load_cluster_sysvars;
@@ -54,7 +54,7 @@ use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_pd_client::EtcdClient;
 use tidb_domain::global_sysvars::GlobalSysvars;
 use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, RealTransaction};
+use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, RealTransaction};
 
 use tidb_store_driver_error::pessimistic_lock_error::cluster_commit_error;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;

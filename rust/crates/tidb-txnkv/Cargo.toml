@@ -63,7 +63,3 @@ path = "tests/all.rs"
 [[bench]]
 name = "kv"
 harness = false
-
-[[test]]
-name = "transaction_size_limits_source"
-path = "tests/transaction_size_limits_source.rs"

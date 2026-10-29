@@ -25,10 +25,7 @@ use tidb_model::column::ColumnInfo as ModelColumnInfo;
 use tidb_model::db::DBInfo;
 use tidb_model::index::{IndexColumn, IndexInfo};
 use tidb_model::{SchemaState, TableInfo};
-use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, OptimisticTransactionReceipt, TransactionCause,
-    UndeterminedTransaction,
-};
+use tidb_txnkv::transaction::{OptimisticCommitOutcome, OptimisticTransactionReceipt, TransactionCause, UndeterminedTransaction};
 
 pub(super) const ABC_HASH: &str = "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E";
 pub(super) const SALT: [u8; 20] = [7; 20];

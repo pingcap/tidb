@@ -38,11 +38,11 @@ use tikv_client::transaction::{MutationAssertion, MutationOptions, SyncTransacti
 use tikv_client::PdClient;
 use tikv_client::TimestampExt;
 
-use crate::batch_getter::GetOptions;
-use crate::driver::mem_buffer::{MemBufferDriver, StagingHandle};
-use crate::driver::tikv_mem_buffer::{TikvMemBufferBackend, TikvMemBufferError};
-use crate::key_flags::AssertionState;
-use crate::{AssertionOp, FlagsOp, Key, KeyFlags, MemBufferBackend};
+use tidb_txnkv::batch_getter::GetOptions;
+use tidb_txnkv::driver::mem_buffer::{MemBufferDriver, StagingHandle};
+use tidb_txnkv::driver::tikv_mem_buffer::{TikvMemBufferBackend, TikvMemBufferError};
+use tidb_txnkv::key_flags::AssertionState;
+use tidb_txnkv::{AssertionOp, FlagsOp, Key, KeyFlags, MemBufferBackend};
 
 /// Error surface of the transaction driver: a buffer-level failure or a
 /// client-engine failure, kept distinct so callers can classify retries the
@@ -145,7 +145,7 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
             pipelined_dml,
             read_only,
         };
-        driver.set_size_limits(crate::txn_entry_size_limit(), crate::txn_total_size_limit());
+        driver.set_size_limits(tidb_txnkv::txn_entry_size_limit(), tidb_txnkv::txn_total_size_limit());
         driver
     }
 
@@ -171,7 +171,7 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
     /// Runs one client transaction call to completion with Go's `ctx`: the
     /// calling thread's span, under which a traced statement's client spans
     /// (`tikvSnapshot.get`, `tikvTxn.Commit`, ...) report
-    /// ([`crate::rpc::trace::with_span_ctx`]).
+    /// ([`tidb_txnkv::rpc::trace::with_span_ctx`]).
     pub fn run<'a, F, T>(
         &'a mut self,
         operation: impl FnOnce(&'a mut Transaction<PdC>) -> F,
@@ -181,7 +181,7 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
     {
         let span = tidb_tracing::current_span();
         self.transaction.block_on(move |transaction| {
-            crate::rpc::trace::with_span_ctx(span, operation(transaction))
+            tidb_txnkv::rpc::trace::with_span_ctx(span, operation(transaction))
         })
     }
 
@@ -373,8 +373,8 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
     /// mutation an `Op_Insert`, and the assertion rides along per key.
     pub fn commit_mutations(
         &mut self,
-        mutations: Vec<crate::transaction::BufferMutation>,
-    ) -> Result<crate::transaction::OptimisticCommitOutcome, TikvTransactionError> {
+        mutations: Vec<tidb_txnkv::transaction::BufferMutation>,
+    ) -> Result<tidb_txnkv::transaction::OptimisticCommitOutcome, TikvTransactionError> {
         let mutation_count = mutations.len();
         let primary_key = mutations
             .iter()
@@ -393,9 +393,9 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
     /// `initKeysAndMutations` reads them back off the memdb at commit.
     pub fn stage_mutation(
         &mut self,
-        mutation: &crate::transaction::BufferMutation,
+        mutation: &tidb_txnkv::transaction::BufferMutation,
     ) -> Result<(), TikvTransactionError> {
-        use crate::transaction::BufferMutationOp;
+        use tidb_txnkv::transaction::BufferMutationOp;
         let key = Key::from(mutation.key().to_vec());
         match mutation.kind() {
             BufferMutationOp::Set => {
@@ -430,7 +430,7 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
     /// primary the engine pins.
     pub fn commit_staged(
         &mut self,
-    ) -> Result<crate::transaction::OptimisticCommitOutcome, TikvTransactionError> {
+    ) -> Result<tidb_txnkv::transaction::OptimisticCommitOutcome, TikvTransactionError> {
         let (mutation_count, primary_key) = self.staged_stats_with_primary();
         Ok(self.finish_commit(primary_key, mutation_count))
     }
@@ -439,8 +439,8 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
         &mut self,
         primary_key: Vec<u8>,
         mutation_count: usize,
-    ) -> crate::transaction::OptimisticCommitOutcome {
-        use crate::transaction::{
+    ) -> tidb_txnkv::transaction::OptimisticCommitOutcome {
+        use tidb_txnkv::transaction::{
             CommittedTransaction, OptimisticCommitOutcome, OptimisticTransactionReceipt,
             RolledBackTransaction, TransactionCause, UndeterminedTransaction,
         };
@@ -492,8 +492,8 @@ fn is_undetermined(error: &TikvTransactionError) -> bool {
 }
 
 /// Maps one engine failure onto the facade's cause vocabulary.
-pub(crate) fn classify_cause(error: &TikvTransactionError) -> crate::transaction::TransactionCause {
-    use crate::transaction::TransactionCause;
+pub(crate) fn classify_cause(error: &TikvTransactionError) -> tidb_txnkv::transaction::TransactionCause {
+    use tidb_txnkv::transaction::TransactionCause;
 
     let TikvTransactionError::Client(client_error) = error else {
         return TransactionCause::Transport {
@@ -506,8 +506,8 @@ pub(crate) fn classify_cause(error: &TikvTransactionError) -> crate::transaction
 /// Go `newWriteConflictError`'s arguments for TiKV's `WriteConflict`.
 fn write_conflict_args(
     conflict: &tikv_client::proto::kvrpcpb::WriteConflict,
-) -> crate::driver::transaction_error::WriteConflictArgs {
-    use crate::driver::transaction_error::{Redaction, WriteConflict, WriteConflictArgs};
+) -> tidb_txnkv::driver::transaction_error::WriteConflictArgs {
+    use tidb_txnkv::driver::transaction_error::{Redaction, WriteConflict, WriteConflictArgs};
     let reason = tikv_client::proto::kvrpcpb::write_conflict::Reason::try_from(conflict.reason)
         .map_or_else(|_| conflict.reason.to_string(), |reason| reason.as_str_name().to_owned());
     WriteConflictArgs::new(
@@ -525,8 +525,8 @@ fn write_conflict_args(
 
 pub(crate) fn classify_client_cause(
     client_error: &tikv_client::Error,
-) -> crate::transaction::TransactionCause {
-    use crate::transaction::TransactionCause;
+) -> tidb_txnkv::transaction::TransactionCause {
+    use tidb_txnkv::transaction::TransactionCause;
     use tikv_client::Error as ClientError;
     if let Some(kind) = client_backoff_kind(client_error) {
         return TransactionCause::BackoffExhausted {
@@ -603,7 +603,7 @@ pub(crate) fn classify_client_cause(
                 terminal: Some(tikv_client::retry::RetryTerminal::PdServerTimeout),
                 ..
             } => TransactionCause::BackoffExhausted {
-                kind: crate::retry::RegionBackoffKind::PdRpc,
+                kind: tidb_txnkv::retry::RegionBackoffKind::PdRpc,
                 detail: retry_error.to_string(),
             },
             _ => TransactionCause::Region {
@@ -625,8 +625,8 @@ pub(crate) fn classify_client_cause(
 /// Go `ToTiDBErr`'s backoff arm: the backoff class whose sentinel client-go
 /// returns when that class's budget ran out (`tikverr.ErrRegionUnavailable`
 /// for `BoRegionMiss`, and so on), from client-rust's sentinel.
-pub fn client_backoff_kind(error: &tikv_client::Error) -> Option<crate::retry::RegionBackoffKind> {
-    use crate::retry::RegionBackoffKind as Kind;
+pub fn client_backoff_kind(error: &tikv_client::Error) -> Option<tidb_txnkv::retry::RegionBackoffKind> {
+    use tidb_txnkv::retry::RegionBackoffKind as Kind;
     use tikv_client::error::StaticError;
     let terminal = match error {
         tikv_client::Error::Static(error) => *error,
@@ -897,7 +897,7 @@ mod tests {
     use tikv_client::proto::kvrpcpb::{KeyError, SharedLockLost};
 
     use super::{classify_cause, TikvTransactionError};
-    use crate::transaction::TransactionCause;
+    use tidb_txnkv::transaction::TransactionCause;
 
     // Go: `pkg/store/driver/txn/driver_test.go`'s
     // `TestSharedLockLostErrorMapping` proves the same classification for
@@ -963,7 +963,7 @@ mod tests {
         let args = args.expect("TiKV supplied the conflict fields");
         assert_eq!(
             args.key_table_id,
-            crate::driver::transaction_error::RedactArg::Str("{tableID=28".to_owned())
+            tidb_txnkv::driver::transaction_error::RedactArg::Str("{tableID=28".to_owned())
         );
         assert_eq!(args.primary_table_id, args.key_table_id);
         assert_eq!(args.detail(), detail);
@@ -1027,7 +1027,7 @@ mod tests {
         assert!(matches!(
             cause,
             TransactionCause::BackoffExhausted {
-                kind: crate::retry::RegionBackoffKind::PdRpc,
+                kind: tidb_txnkv::retry::RegionBackoffKind::PdRpc,
                 ..
             }
         ));

@@ -1266,10 +1266,10 @@ impl Domain {
     pub fn start_ru_stats_writer<S>(
         self: &Arc<Self>,
         pd: tidb_txnkv::driver::tikv_store::TikvStore,
-        opener: Arc<tidb_txnkv::transaction::RealOptimisticTransactionOpener<S>>,
+        opener: Arc<tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>>,
         timeout: Duration,
     ) where
-        S: tidb_txnkv::transaction::StoreClient + 'static,
+        S: tidb_store_driver_txn::transaction::StoreClient + 'static,
     {
         if self.ru_stats_writer.get().is_some() {
             return;
@@ -1290,10 +1290,10 @@ impl Domain {
     /// from it.
     pub fn install_bdr_role_store<S>(
         &self,
-        opener: Arc<tidb_txnkv::transaction::RealOptimisticTransactionOpener<S>>,
+        opener: Arc<tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>>,
         timeout: Duration,
     ) where
-        S: tidb_txnkv::transaction::StoreClient + 'static,
+        S: tidb_store_driver_txn::transaction::StoreClient + 'static,
     {
         let _ = self
             .bdr_role_store

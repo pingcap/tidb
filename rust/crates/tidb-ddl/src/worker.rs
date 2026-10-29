@@ -26,7 +26,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
-use tidb_txnkv::transaction::StoreClient;
+use tidb_store_driver_txn::transaction::StoreClient;
 
 use tidb_ddl_serverstate::{Context as ServerStateContext, EtcdSyncer, MemSyncer, Syncer};
 use tidb_infoschema_issyncer::catalog_watch::{CatalogReloadPass, SharedCatalog as SharedClusterCatalog};
@@ -45,7 +45,7 @@ use crate::real_tikv_ddl::{
     DdlSchemaSync, IndexBackfiller, PersistedDdlJobOutcome, SchemaVersionNotifier,
 };
 
-use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
+use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 use tidb_infoschema_isvalidator::SchemaValidator;
 use tidb_kv::cluster_storage::{ClusterSnapshot, ClusterTableStorage, MutationBuffer};
 use tidb_table::kv_table::RowDecodeContext;
@@ -2337,7 +2337,7 @@ mod schema_sync_tests {
             ));
         }
         let reorg_rows = move |opener: &Arc<
-            tidb_txnkv::transaction::RealOptimisticTransactionOpener<
+            tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<
                 tidb_unistore::mock::StorePdClient,
             >,
         >| {

@@ -46,7 +46,7 @@ use tidb_log::{Field, Value};
 use tidb_pd_client::{PdStore, PdStoreState};
 use tikv_client::pd_http;
 
-use tidb_txnkv::cluster_http::block_on_pd_http;
+use tidb_store_driver_txn::cluster_http::block_on_pd_http;
 
 /// Go `NullspaceID` (`tikv/keyspace`): the keyspace id a classic API-V1
 /// cluster dispatches and reports under.
@@ -239,7 +239,7 @@ impl TiFlashReplicaManager {
         } else {
             "http"
         };
-        let client = tidb_txnkv::cluster_http::internal_http_client(security)?;
+        let client = tidb_store_driver_txn::cluster_http::internal_http_client(security)?;
         let stores_client = tidb_domain_infosync::pd_http::info_syncer_pd_http_client(&pd_http_client);
         let mut manager = Self::new(
             catalog,

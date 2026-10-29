@@ -21,10 +21,7 @@ use tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions;
 use tidb_kv::cluster_storage::{DuplicateKeyHint, SnapshotPairs};
 use tidb_kv::storage::StorageError;
 use tidb_txnkv::retry::RegionBackoffKind;
-use tidb_txnkv::transaction::{
-    CommittedTransaction, OptimisticCommitOutcome, OptimisticTransactionReceipt,
-    RolledBackTransaction, TransactionCause, UndeterminedTransaction,
-};
+use tidb_txnkv::transaction::{CommittedTransaction, OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause, UndeterminedTransaction};
 use tidb_txnkv::Key;
 
 /// The committed cluster: what a statement's snapshot reads and what a

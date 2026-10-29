@@ -29,7 +29,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tidb_kv::cluster_storage::MutationBuffer;
-use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
+use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 use tidb_infoschema::cluster_catalog::load_cluster_catalog;
 use tidb_store_driver_txn::cluster_table_storage::{

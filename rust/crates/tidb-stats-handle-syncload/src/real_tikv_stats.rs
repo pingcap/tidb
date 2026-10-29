@@ -29,7 +29,7 @@ use std::time::Duration;
 use tidb_datatype::FieldType;
 use tidb_model::table_info::TableInfo;
 use tidb_stats_handle_cache::{StatsMetaRow, StatsRefreshSource, UpdateError};
-use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
+use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 use tidb_infoschema::cluster_catalog::MetaSnapshot;
 use tidb_stats_handle_storage::cluster_stats_load::{ClusterStatsItem, ClusterStatsLoader};

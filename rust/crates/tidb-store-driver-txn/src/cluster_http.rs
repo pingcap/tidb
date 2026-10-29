@@ -82,6 +82,6 @@ where
     F: std::future::Future<Output = tikv_client::Result<T>> + Send,
     T: Send,
 {
-    crate::driver::tikv_store::block_on_store_runtime(request)?
+    tidb_txnkv::driver::tikv_store::block_on_store_runtime(request)?
         .map_err(|error| error.to_string())
 }

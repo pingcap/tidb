@@ -905,7 +905,7 @@ impl StatementLifecycle<'_> {
     /// really did take locks -- and against a lock that clears in time it
     /// succeeds. This node cannot wait: it spends its budget of re-reads and
     /// reports 9007. Closing that needs the pessimistic path (a
-    /// `tidb_txnkv::transaction::RealTransaction` in pessimistic mode exists;
+    /// `tidb_store_driver_txn::transaction::RealTransaction` in pessimistic mode exists;
     /// nothing at this tier drives it), NOT a mode flag: locks have to
     /// be taken while the statement reads, and taking them after it has
     /// computed from a stale read would introduce exactly the lost update this

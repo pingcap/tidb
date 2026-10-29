@@ -45,10 +45,9 @@ use crate::sequence::{
 use tidb_meta::structure::encode_hash_data_key;
 use tidb_meta::{key, value};
 use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_txnkv::transaction::StoreClient;
-use tidb_txnkv::transaction::{
-    BufferMutation, OptimisticCommitOutcome, RealOptimisticTransactionOpener, RealTransaction,
-};
+use tidb_store_driver_txn::transaction::StoreClient;
+use tidb_txnkv::transaction::{BufferMutation, OptimisticCommitOutcome};
+use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, RealTransaction};
 
 use crate::cluster_auto_id::MAX_RESERVE_RETRIES;
 

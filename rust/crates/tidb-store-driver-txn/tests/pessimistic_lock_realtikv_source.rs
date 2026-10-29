@@ -23,10 +23,8 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_txnkv::transaction::{
-    BufferMutation, LockWaitTime, OptimisticTransactionState, PessimisticLockFailure,
-    RealOptimisticTransactionOpener,
-};
+use tidb_txnkv::transaction::{BufferMutation, LockWaitTime, OptimisticTransactionState, PessimisticLockFailure};
+use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(20);
 /// Distinct per-run prefix so a reused cluster cannot leak state between runs.
@@ -42,8 +40,8 @@ fn call() -> UnaryCallContext {
 /// Go `onTxnActiveFunc`: a pessimistic session's transaction is set to
 /// pessimistic mode as it activates.
 fn pessimistic<S: tikv_client::PdClient>(
-    mut transaction: tidb_txnkv::transaction::RealTransaction<S>,
-) -> tidb_txnkv::transaction::RealTransaction<S> {
+    mut transaction: tidb_store_driver_txn::transaction::RealTransaction<S>,
+) -> tidb_store_driver_txn::transaction::RealTransaction<S> {
     transaction.set_pessimistic(true);
     transaction
 }

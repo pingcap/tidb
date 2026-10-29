@@ -45,10 +45,8 @@ use std::time::Duration;
 use tidb_meta::transaction::{RawRangeVisitor, RawTransaction};
 use tidb_meta::MetaError;
 use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_txnkv::transaction::{
-    BufferMutation, OptimisticCommitOutcome, RealOptimisticTransactionOpener, RealTransaction,
-    StoreClient,
-};
+use tidb_txnkv::transaction::{BufferMutation, OptimisticCommitOutcome};
+use crate::transaction::{RealOptimisticTransactionOpener, RealTransaction, StoreClient};
 use tidb_txnkv::{NewTxnError, NewTxnStorage, NewTxnTransaction, OptionKey, TxnOptionValue};
 
 use tidb_kv::key::prefix_scan_end;

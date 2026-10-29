@@ -14,10 +14,7 @@ use super::node_fixture::*;
 use std::sync::atomic::Ordering;
 use tidb_datatype::Datum;
 use tidb_store_driver_error::pessimistic_lock_error::{commit_outcome_to_sql_error, ERR_WRITE_CONFLICT};
-use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, OptimisticTransactionReceipt, TransactionCause,
-    UndeterminedTransaction,
-};
+use tidb_txnkv::transaction::{OptimisticCommitOutcome, OptimisticTransactionReceipt, TransactionCause, UndeterminedTransaction};
 
 #[test]
 fn pessimistic_statement_retries_obey_config_and_preserve_prior_writes() {

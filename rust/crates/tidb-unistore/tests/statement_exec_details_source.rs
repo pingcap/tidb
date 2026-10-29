@@ -26,9 +26,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidb_txnkv::driver::cop_store::NativeCopStore;
+use tidb_store_driver_txn::driver::cop_store::NativeCopStore;
 use tidb_txnkv::driver::tikv_store::TikvStore;
-use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
+use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 use tidb_txnkv::{StatementKvContext, StatementKvContextCell, UnaryCallContext, UnaryCancellation};
 
 fn unistore_store() -> TikvStore<tidb_unistore::mock::StorePdClient> {

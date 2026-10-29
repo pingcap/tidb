@@ -70,11 +70,8 @@ use tidb_kv::cluster_storage::{
 use tidb_kv::storage::StorageError;
 use tidb_hack::GoToLower;
 use tidb_txnkv::rpc::{UnaryCallContext, UnaryCancellation};
-use tidb_txnkv::transaction::{
-    BufferMutation, LockWaitTime, OptimisticCommitOutcome, OptimisticCoordinatorError,
-    PessimisticLockFailure, RealOptimisticTransactionOpener, RealTransaction, SchemaLease,
-    SchemaLeaseChecker, StoreClient, TransactionCause,
-};
+use tidb_txnkv::transaction::{BufferMutation, LockWaitTime, OptimisticCommitOutcome, OptimisticCoordinatorError, PessimisticLockFailure, SchemaLease, SchemaLeaseChecker, TransactionCause};
+use crate::transaction::{RealOptimisticTransactionOpener, RealTransaction, StoreClient};
 use tidb_txnkv::Key;
 
 use tidb_store_driver_error::pessimistic_lock_error::{

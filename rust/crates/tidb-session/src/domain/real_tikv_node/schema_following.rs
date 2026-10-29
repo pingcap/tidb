@@ -148,7 +148,7 @@ fn async_stats_load_interval(stats_lease: tidb_domain_core::node_config::StatsLe
 /// too.
 pub fn spawn_node_stats<S>(
     catalog: Arc<SharedCatalog>,
-    opener: tidb_txnkv::transaction::RealOptimisticTransactionOpener<S>,
+    opener: tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
     stats_lease: tidb_domain_core::node_config::StatsLease,
     timeout: Duration,
 ) -> Result<(Arc<SharedStats>, StatsReloader, AsyncStatsLoader), StatsReloadError>

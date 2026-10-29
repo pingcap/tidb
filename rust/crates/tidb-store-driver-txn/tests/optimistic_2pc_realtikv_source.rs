@@ -26,10 +26,8 @@ use tidb_proto::{
 };
 use tidb_txnkv::driver::tikv_store::TikvStore;
 use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_txnkv::transaction::{
-    BufferMutation, OptimisticCommitOutcome, OptimisticTransactionState,
-    RealOptimisticTransactionOpener, TransactionCause,
-};
+use tidb_txnkv::transaction::{BufferMutation, OptimisticCommitOutcome, OptimisticTransactionState, TransactionCause};
+use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 
 use crate::realtikv_fixture::{connect, route, send, timestamp};
 

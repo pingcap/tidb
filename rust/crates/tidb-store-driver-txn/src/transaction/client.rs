@@ -14,12 +14,13 @@
 
 //! TiDB store facade. The transaction protocol and lock lifecycle belong to client-rust.
 use super::call_interceptor::CallSlot;
-use super::state::*;
-use super::{CommitProtocol, OptimisticCoordinatorError, SchemaLease};
-use crate::driver::tikv_store::TikvStore;
-use crate::gc_state::VisibilityError;
-use crate::rpc::UnaryCallContext;
-use crate::{MemBufferBackend, TikvTransactionDriver};
+use super::CommitProtocol;
+use tidb_txnkv::transaction::*;
+use tidb_txnkv::driver::tikv_store::TikvStore;
+use tidb_txnkv::gc_state::VisibilityError;
+use tidb_txnkv::rpc::UnaryCallContext;
+use crate::TikvTransactionDriver;
+use tidb_txnkv::MemBufferBackend;
 use std::sync::Arc;
 use std::time::Duration;
 use tikv_client::{PdClient, Timestamp, TimestampExt, TransactionOptions};
@@ -38,17 +39,17 @@ pub struct ClientTransaction<S: PdClient> {
     sql_staging: bool,
     check_existence: bool,
     start_ts: u64,
-    _start_ts_guard: crate::inner_txn::StartTsGuard,
+    _start_ts_guard: tidb_txnkv::inner_txn::StartTsGuard,
     authority_id: u64,
     snapshot_stats: Arc<tikv_client::SnapshotRuntimeStats>,
     /// Go `kv.CollectRuntimeStats`: a point reader's own stats, collecting
     /// the snapshot's RPCs instead of [`Self::snapshot_stats`] while set.
     reader_snapshot_stats: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
     read_ts: u64,
-    snapshot_read_options: Option<crate::SnapshotReadOptions>,
+    snapshot_read_options: Option<tidb_txnkv::SnapshotReadOptions>,
     collect_snapshot_stats: bool,
     commit_mode: Arc<std::sync::Mutex<Option<CommittedProtocol>>>,
-    schema_error: Arc<std::sync::Mutex<Option<super::SchemaLeaseError>>>,
+    schema_error: Arc<std::sync::Mutex<Option<tidb_txnkv::transaction::SchemaLeaseError>>>,
     /// Go `KVTxn.isPessimistic`.
     pessimistic: bool,
     /// The statement timestamp locking reads and locks use (Go
@@ -58,13 +59,13 @@ pub struct ClientTransaction<S: PdClient> {
     fair_locking: bool,
     max_conflict_ts: u64,
     lock_expired: Arc<std::sync::atomic::AtomicU32>,
-    statement_stage: Option<crate::StagingHandle>,
+    statement_stage: Option<tidb_txnkv::StagingHandle>,
     /// Go's statement ctx on this transaction's calls: the session's current
     /// statement `RUDetails` and resource-group taggers, read when a call is
     /// made. `None` for a transaction no SQL statement owns.
-    kv_context: Option<crate::StatementKvContextCell>,
+    kv_context: Option<tidb_txnkv::StatementKvContextCell>,
     /// The statement values last installed on the client transaction.
-    applied_kv_context: crate::StatementKvContext,
+    applied_kv_context: tidb_txnkv::StatementKvContext,
 }
 
 /// One point-read result. Physical diagnostics are supplied by the client engine.
@@ -88,7 +89,7 @@ pub struct SnapshotScanRegion {
     pub pairs: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
-impl<S: PdClient> crate::new_txn::TxnResourceGroup for ClientTransaction<S> {
+impl<S: PdClient> tidb_txnkv::new_txn::TxnResourceGroup for ClientTransaction<S> {
     fn set_resource_group_name(&mut self, name: &str) {
         self.engine.transaction_mut().set_resource_group_name(name);
         self.snapshot_read_options = None;
@@ -137,7 +138,7 @@ impl<S: PdClient> ClientTransaction<S> {
             sql_staging: false,
             check_existence: false,
             start_ts,
-            _start_ts_guard: crate::inner_txn::ACTIVE_START_TS.hold(start_ts),
+            _start_ts_guard: tidb_txnkv::inner_txn::ACTIVE_START_TS.hold(start_ts),
             authority_id,
             snapshot_stats,
             reader_snapshot_stats: None,
@@ -228,7 +229,7 @@ impl<S: PdClient> ClientTransaction<S> {
     /// and sets `kv.ResourceGroupTagger` from `StmtCtx.GetResourceGroupTagger`
     /// (`SetOptionsOnTxnActive`, `SetOptionsBeforeCommit`, the executors'
     /// `setOptionForTopSQL`).
-    pub fn set_statement_kv_context(&mut self, context: crate::StatementKvContextCell) {
+    pub fn set_statement_kv_context(&mut self, context: tidb_txnkv::StatementKvContextCell) {
         self.kv_context = Some(context);
     }
     /// Installs the statement values in force on the client transaction
@@ -280,7 +281,7 @@ impl<S: PdClient> ClientTransaction<S> {
                     .inner_mut()
                     .set_resource_group_tagger(Some(Arc::new(
                         move |request: &mut dyn tikv_client::tikv::Request| {
-                            tagger().build(Some(&mut crate::ClientRequest(request)));
+                            tagger().build(Some(&mut tidb_txnkv::ClientRequest(request)));
                         },
                     )));
             }
@@ -370,7 +371,7 @@ impl<S: PdClient> ClientTransaction<S> {
     }
     fn transaction_error(error: crate::TikvTransactionError) -> OptimisticCoordinatorError {
         match error {
-            crate::TikvTransactionError::Buffer(crate::TikvMemBufferError::Kv(error)) => {
+            crate::TikvTransactionError::Buffer(tidb_txnkv::TikvMemBufferError::Kv(error)) => {
                 OptimisticCoordinatorError::Storage(error)
             }
             crate::TikvTransactionError::Client(
@@ -395,7 +396,7 @@ impl<S: PdClient> ClientTransaction<S> {
         }
     }
     /// Replace the statement's snapshot settings without changing transaction state.
-    pub fn set_snapshot_read_options(&mut self, options: &crate::SnapshotReadOptions) {
+    pub fn set_snapshot_read_options(&mut self, options: &tidb_txnkv::SnapshotReadOptions) {
         if self.snapshot_read_options.as_ref() == Some(options) {
             return;
         }
@@ -414,7 +415,7 @@ impl<S: PdClient> ClientTransaction<S> {
 
     fn apply_snapshot_read_options(
         transaction: &mut tikv_client::Transaction<S>,
-        options: &crate::SnapshotReadOptions,
+        options: &tidb_txnkv::SnapshotReadOptions,
     ) {
         use tikv_client::{ReplicaReadAdjustment, ReplicaReadSelectorOption, ReplicaReadType};
         let mode = match options.replica_read.raw() {
@@ -629,7 +630,7 @@ impl<S: PdClient> ClientTransaction<S> {
             let tagger = Arc::clone(tagger);
             transaction.set_resource_group_tagger(Some(Arc::new(
                 move |request: &mut dyn tikv_client::tikv::Request| {
-                    tagger().build(Some(&mut crate::ClientRequest(request)));
+                    tagger().build(Some(&mut tidb_txnkv::ClientRequest(request)));
                 },
             )));
         }
@@ -723,17 +724,17 @@ impl<S: PdClient> ClientTransaction<S> {
         self.engine.transaction_mut().get_mem_buffer()
     }
     /// Copies staged values and tombstones for SQL planning and diagnostics.
-    pub fn staged_entries(&self) -> Vec<(crate::Key, Vec<u8>)> {
+    pub fn staged_entries(&self) -> Vec<(tidb_txnkv::Key, Vec<u8>)> {
         self.engine.staged_entries()
     }
     /// Returns a staged value, including an empty deletion tombstone.
     pub fn staged_value(&self, key: &[u8]) -> Option<Vec<u8>> {
-        self.engine.staged_value(&crate::Key::from(key.to_vec()))
+        self.engine.staged_value(&tidb_txnkv::Key::from(key.to_vec()))
     }
     /// Applies a statement plan atomically to the native staging buffer.
     pub fn stage_mutations(
         &mut self,
-        mutations: Vec<super::BufferMutation>,
+        mutations: Vec<tidb_txnkv::transaction::BufferMutation>,
     ) -> Result<(), OptimisticCoordinatorError> {
         let stage = self.engine.staging();
         for mutation in mutations {
@@ -748,7 +749,7 @@ impl<S: PdClient> ClientTransaction<S> {
     /// Commits the authoritative buffer through the client protocol engine.
     pub fn commit(
         mut self,
-        mutations: Vec<super::BufferMutation>,
+        mutations: Vec<tidb_txnkv::transaction::BufferMutation>,
         call: &UnaryCallContext,
     ) -> Result<OptimisticCommitOutcome, OptimisticCoordinatorError> {
         self.finish_statement(true).map_err(Self::read_error)?;
@@ -845,7 +846,7 @@ impl tikv_client::transaction::SchemaVersion for DriverSchemaVersion {
 }
 struct DriverSchemaChecker {
     lease: SchemaLease,
-    error: Arc<std::sync::Mutex<Option<super::SchemaLeaseError>>>,
+    error: Arc<std::sync::Mutex<Option<tidb_txnkv::transaction::SchemaLeaseError>>>,
 }
 impl tikv_client::transaction::SchemaLeaseChecker for DriverSchemaChecker {
     fn check_by_schema_version(
@@ -930,7 +931,7 @@ impl<S: PdClient> ClientTransaction<S> {
     pub fn finish_statement(
         &mut self,
         successful: bool,
-    ) -> Result<(), super::PessimisticLockFailure> {
+    ) -> Result<(), tidb_txnkv::transaction::PessimisticLockFailure> {
         if self.engine.is_statement_locking() {
             if successful {
                 self.engine.done_statement_locking()
@@ -949,18 +950,18 @@ impl<S: PdClient> ClientTransaction<S> {
         Ok(())
     }
     /// Allocates a fresh statement timestamp and forwards the native fair retry hook.
-    pub fn advance_for_update_ts(&mut self) -> Result<u64, super::PessimisticLockFailure> {
+    pub fn advance_for_update_ts(&mut self) -> Result<u64, tidb_txnkv::transaction::PessimisticLockFailure> {
         let store = &self.store;
         let timestamp = store
             .block_on(store.store().current_timestamp())
             .map_err(|error| {
-                super::PessimisticLockFailure::Transaction(TransactionCause::Timestamp {
+                tidb_txnkv::transaction::PessimisticLockFailure::Transaction(TransactionCause::Timestamp {
                     detail: error.to_string(),
                 })
             })?
             .version();
         if timestamp <= self.for_update_ts {
-            return Err(super::PessimisticLockFailure::Transaction(
+            return Err(tidb_txnkv::transaction::PessimisticLockFailure::Transaction(
                 TransactionCause::Timestamp {
                     detail: "for_update_ts did not advance".to_owned(),
                 },
@@ -981,9 +982,9 @@ impl<S: PdClient> ClientTransaction<S> {
         &mut self,
         keys: &[Vec<u8>],
         presume_not_exists: &std::collections::BTreeSet<Vec<u8>>,
-        wait: super::LockWaitTime,
+        wait: tidb_txnkv::transaction::LockWaitTime,
         call: &UnaryCallContext,
-    ) -> Result<super::AcquiredLocks, super::PessimisticLockFailure> {
+    ) -> Result<tidb_txnkv::transaction::AcquiredLocks, tidb_txnkv::transaction::PessimisticLockFailure> {
         self.acquire(keys, presume_not_exists, wait, call, false, false)
     }
     /// Locks keys and returns values from the statement lock context.
@@ -991,9 +992,9 @@ impl<S: PdClient> ClientTransaction<S> {
         &mut self,
         keys: &[Vec<u8>],
         presume_not_exists: &std::collections::BTreeSet<Vec<u8>>,
-        wait: super::LockWaitTime,
+        wait: tidb_txnkv::transaction::LockWaitTime,
         call: &UnaryCallContext,
-    ) -> Result<super::AcquiredLocks, super::PessimisticLockFailure> {
+    ) -> Result<tidb_txnkv::transaction::AcquiredLocks, tidb_txnkv::transaction::PessimisticLockFailure> {
         self.acquire(keys, presume_not_exists, wait, call, true, false)
     }
     /// Go `LockCtx.LockOnlyIfExists` with `InitReturnValues`: locks only the
@@ -1002,9 +1003,9 @@ impl<S: PdClient> ClientTransaction<S> {
     pub fn acquire_locks_returning_values_if_exist(
         &mut self,
         keys: &[Vec<u8>],
-        wait: super::LockWaitTime,
+        wait: tidb_txnkv::transaction::LockWaitTime,
         call: &UnaryCallContext,
-    ) -> Result<super::AcquiredLocks, super::PessimisticLockFailure> {
+    ) -> Result<tidb_txnkv::transaction::AcquiredLocks, tidb_txnkv::transaction::PessimisticLockFailure> {
         self.acquire(
             keys,
             &std::collections::BTreeSet::new(),
@@ -1018,25 +1019,25 @@ impl<S: PdClient> ClientTransaction<S> {
         &mut self,
         keys: &[Vec<u8>],
         presume_not_exists: &std::collections::BTreeSet<Vec<u8>>,
-        wait: super::LockWaitTime,
+        wait: tidb_txnkv::transaction::LockWaitTime,
         call: &UnaryCallContext,
         return_values: bool,
         lock_only_if_exists: bool,
-    ) -> Result<super::AcquiredLocks, super::PessimisticLockFailure> {
+    ) -> Result<tidb_txnkv::transaction::AcquiredLocks, tidb_txnkv::transaction::PessimisticLockFailure> {
         self.calls.set(call);
         self.apply_statement_kv_context();
         self.start_statement();
         let before: std::collections::BTreeSet<_> = self.locked_keys().into_iter().collect();
         for key in presume_not_exists {
             self.engine.mem_buffer().backend_mut().update_flags(
-                &crate::Key::from(key.clone()),
-                &[crate::FlagsOp::SetPresumeKeyNotExists],
+                &tidb_txnkv::Key::from(key.clone()),
+                &[tidb_txnkv::FlagsOp::SetPresumeKeyNotExists],
             );
         }
         let wait_ms = match wait {
-            super::LockWaitTime::NoWait => -1,
-            super::LockWaitTime::AlwaysWait => i64::MAX,
-            super::LockWaitTime::Timeout(timeout) => {
+            tidb_txnkv::transaction::LockWaitTime::NoWait => -1,
+            tidb_txnkv::transaction::LockWaitTime::AlwaysWait => i64::MAX,
+            tidb_txnkv::transaction::LockWaitTime::Timeout(timeout) => {
                 i64::try_from(timeout.as_millis()).unwrap_or(i64::MAX)
             }
         };
@@ -1094,8 +1095,8 @@ impl<S: PdClient> ClientTransaction<S> {
                 let mut failure = lock_error(crate::TikvTransactionError::Client(error));
                 if let [requested] = keys {
                     match &mut failure {
-                        super::PessimisticLockFailure::LockAcquireFailAndNoWaitSet { key }
-                        | super::PessimisticLockFailure::LockWaitTimeout { key } => {
+                        tidb_txnkv::transaction::PessimisticLockFailure::LockAcquireFailAndNoWaitSet { key }
+                        | tidb_txnkv::transaction::PessimisticLockFailure::LockWaitTimeout { key } => {
                             key.clone_from(requested)
                         }
                         _ => {}
@@ -1118,7 +1119,7 @@ impl<S: PdClient> ClientTransaction<S> {
                 }
             }
         }
-        Ok(super::AcquiredLocks {
+        Ok(tidb_txnkv::transaction::AcquiredLocks {
             for_update_ts: self.for_update_ts,
             keys: newly_locked,
             locked_with_conflict,
@@ -1136,13 +1137,13 @@ impl<S: PdClient> ClientTransaction<S> {
         self.finish_without_writes()
     }
 }
-fn lock_error(error: crate::TikvTransactionError) -> super::PessimisticLockFailure {
+fn lock_error(error: crate::TikvTransactionError) -> tidb_txnkv::transaction::PessimisticLockFailure {
     if let crate::TikvTransactionError::Client(error) = &error {
         if tikv_client::error::is_lock_acquire_fail_and_no_wait_set(error) {
-            return super::PessimisticLockFailure::LockAcquireFailAndNoWaitSet { key: Vec::new() };
+            return tidb_txnkv::transaction::PessimisticLockFailure::LockAcquireFailAndNoWaitSet { key: Vec::new() };
         }
         if tikv_client::error::is_lock_wait_timeout(error) {
-            return super::PessimisticLockFailure::LockWaitTimeout { key: Vec::new() };
+            return tidb_txnkv::transaction::PessimisticLockFailure::LockWaitTimeout { key: Vec::new() };
         }
         fn unwrapped(error: &tikv_client::Error) -> &tikv_client::Error {
             match error {
@@ -1157,14 +1158,14 @@ fn lock_error(error: crate::TikvTransactionError) -> super::PessimisticLockFailu
             }
         }
         if let tikv_client::Error::Deadlock(deadlock) = unwrapped(error) {
-            return super::PessimisticLockFailure::Deadlock(deadlock.clone());
+            return tidb_txnkv::transaction::PessimisticLockFailure::Deadlock(deadlock.clone());
         }
     }
     match crate::driver::tikv_transaction::classify_cause(&error) {
         TransactionCause::WriteConflict { detail, .. } => {
-            super::PessimisticLockFailure::WriteConflict { detail }
+            tidb_txnkv::transaction::PessimisticLockFailure::WriteConflict { detail }
         }
-        cause => super::PessimisticLockFailure::Transaction(cause),
+        cause => tidb_txnkv::transaction::PessimisticLockFailure::Transaction(cause),
     }
 }
 
@@ -1195,10 +1196,10 @@ mod tests {
             let OptimisticCoordinatorError::SnapshotBackoff { kind, detail } = error else {
                 panic!("native backoff was flattened: {error:?}");
             };
-            let sql = crate::to_tidb_driver_error(&crate::StorageDriverError::from_backoff(
+            let sql = tidb_txnkv::to_tidb_driver_error(&tidb_txnkv::StorageDriverError::from_backoff(
                 kind, &detail,
             ));
-            let crate::ConvertedDriverError::Terror(sql) = sql else {
+            let tidb_txnkv::ConvertedDriverError::Terror(sql) = sql else {
                 panic!("expected a TiDB error, got {sql:?}");
             };
             assert_eq!(sql.code().value(), expected_code);

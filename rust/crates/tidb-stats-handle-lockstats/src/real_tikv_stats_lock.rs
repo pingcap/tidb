@@ -22,7 +22,8 @@ use std::time::Duration;
 use tidb_datatype::Time;
 use tidb_kv::cluster_storage::MutationBuffer;
 use crate::lock_stats::StatsLockTransaction;
-use tidb_txnkv::transaction::{BufferMutation, RealOptimisticTransactionOpener, StoreClient};
+use tidb_txnkv::transaction::BufferMutation;
+use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 use tidb_infoschema::cluster_catalog::load_cluster_catalog;
 use crate::cluster_stats_lock::{

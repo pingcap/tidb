@@ -39,7 +39,7 @@ use tidb_privilege::cluster_privilege_load::{
     LoadedRoleEdge, LoadedTableGrant, LoadedUser,
 };
 use crate::real_tikv_privileges::{load_accounts_from_cluster, ClusterAccounts};
-use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
+use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 
 use tidb_privilege::PrivilegeRegistry;
 

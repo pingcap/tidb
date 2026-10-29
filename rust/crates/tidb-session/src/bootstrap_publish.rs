@@ -31,9 +31,8 @@ use tidb_store_driver_error::pessimistic_lock_error::commit_outcome_to_sql_error
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_ddl::real_tikv_ddl::{notify_schema_version, SchemaVersionNotifier};
 use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, RealOptimisticTransactionOpener, StoreClient,
-};
+use tidb_txnkv::transaction::OptimisticCommitOutcome;
+use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 use tidb_timeutil::infer_system_tz;
 
 thread_local! {
@@ -186,10 +185,7 @@ mod tests {
     use super::{notify_committed_bootstrap, SchemaVersionNotifier};
     use std::cell::Cell;
     use tidb_txnkv::retry::RegionBackoffKind;
-    use tidb_txnkv::transaction::{
-        CommittedTransaction, OptimisticCommitOutcome, OptimisticTransactionReceipt,
-        RolledBackTransaction, TransactionCause, UndeterminedTransaction,
-    };
+    use tidb_txnkv::transaction::{CommittedTransaction, OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause, UndeterminedTransaction};
 
     struct RecordingNotifier(Cell<usize>);
 

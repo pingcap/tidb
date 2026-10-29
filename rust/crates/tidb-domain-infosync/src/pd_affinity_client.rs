@@ -45,7 +45,7 @@ impl PdHttpAffinityClient {
     fn request<T: Send>(
         request: impl std::future::Future<Output = tikv_client::Result<T>> + Send,
     ) -> Result<T, PdHttpError> {
-        tidb_txnkv::cluster_http::block_on_pd_http(request).map_err(|message| {
+        tidb_store_driver_txn::cluster_http::block_on_pd_http(request).map_err(|message| {
             if crate::pd_http::is_http_service_error(&message) {
                 PdHttpError::Coded {
                     code: tidb_errno::errcode::ErrHTTPServiceError,

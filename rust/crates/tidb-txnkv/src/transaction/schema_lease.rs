@@ -65,7 +65,7 @@ pub struct SchemaLease {
 
 impl SchemaLease {
     /// Go `checkSchemaValid` for a transaction that carries a checker.
-    pub(super) fn check(&self, check_ts: u64) -> Result<(), SchemaLeaseError> {
+    pub fn check(&self, check_ts: u64) -> Result<(), SchemaLeaseError> {
         self.checker
             .check_by_schema_ver(check_ts, &self.related_physical_table_ids)
     }

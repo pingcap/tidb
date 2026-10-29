@@ -156,7 +156,7 @@ impl<S: tikv_client::PdClient> TiFlashMppClient<S> {
     ) -> Result<Vec<MppStoreTask>, String> {
         let (tasks, warnings) =
             self.store
-                .block_on(tidb_txnkv::driver::cop_store::with_statement_kv_context(
+                .block_on(tidb_store_driver_txn::driver::cop_store::with_statement_kv_context(
                     kv_context,
                     crate::batch_cop_tasks::build_batch_cop_tasks_core(
                         &self.store,
@@ -375,7 +375,7 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for TiFlashMppCli
         // Go dispatches under the statement ctx, whose `RUDetails`
         // client-go's resource-control interceptor charges.
         self.store
-            .block_on(tidb_txnkv::driver::cop_store::with_statement_kv_context(
+            .block_on(tidb_store_driver_txn::driver::cop_store::with_statement_kv_context(
                 kv_context,
                 async {
                     target.kv_exec_counter.mark(&target.address);
@@ -425,7 +425,7 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for TiFlashMppCli
     ) -> Result<Box<dyn MppStreamResponse>, MppError> {
         let target = self.target(address, kv_exec_counter);
         self.store
-            .block_on(tidb_txnkv::driver::cop_store::with_statement_kv_context(
+            .block_on(tidb_store_driver_txn::driver::cop_store::with_statement_kv_context(
                 kv_context,
                 establish_mpp_response(&target, sender, receiver, Arc::clone(&ctx)),
             ))
@@ -523,7 +523,7 @@ fn locate_mpp_region_infos<S: tikv_client::PdClient>(
     memory: &dyn MppContext,
     kv_context: &tidb_txnkv::StatementKvContext,
 ) -> Result<Vec<tidb_proto::coprocessor::RegionInfo>, String> {
-    use tidb_txnkv::driver::cop_store::NativeCopStore;
+    use tidb_store_driver_txn::driver::cop_store::NativeCopStore;
     if ranges.is_empty() {
         return Err("the scan carries no key ranges".to_owned());
     }
@@ -547,7 +547,7 @@ pub(crate) fn locate_mpp_regions<S: tikv_client::PdClient>(
     memory: &dyn MppContext,
     kv_context: &tidb_txnkv::StatementKvContext,
 ) -> Result<Vec<crate::batch_cop_tasks::LocatedRegion>, String> {
-    use tidb_txnkv::driver::cop_store::NativeCopStore;
+    use tidb_store_driver_txn::driver::cop_store::NativeCopStore;
     if ranges.is_empty() {
         return Err("the scan carries no key ranges".to_owned());
     }

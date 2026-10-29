@@ -22,8 +22,8 @@ use std::time::Duration;
 
 use prost::Message as _;
 
-use crate::driver::tikv_store::TikvStore;
-use crate::lock::LockRecoveryResult;
+use tidb_txnkv::driver::tikv_store::TikvStore;
+use tidb_txnkv::lock::LockRecoveryResult;
 
 /// One task's `Backoffer` (Go `bo`), shared with the store's sender and lock
 /// resolver.
@@ -51,7 +51,7 @@ pub trait NativeCopStore: Send + Sync + 'static {
     fn locate(
         &self,
         ranges: &[(Vec<u8>, Vec<u8>)],
-        kv_context: &crate::StatementKvContext,
+        kv_context: &tidb_txnkv::StatementKvContext,
     ) -> Result<Vec<tikv_client::RegionWithLeader>, tikv_client::Error>;
 
     /// Go `KVStore.SendReq(bo, req, region, timeout)`, `request` encoded.
@@ -64,7 +64,7 @@ pub trait NativeCopStore: Send + Sync + 'static {
         request: &[u8],
         region: (u64, u64, u64),
         timeout: Duration,
-        kv_context: &crate::StatementKvContext,
+        kv_context: &tidb_txnkv::StatementKvContext,
         stats: Option<Arc<tikv_client::RegionRequestRuntimeStats>>,
     ) -> Result<NativeCopSend, tikv_client::Error>;
 
@@ -76,7 +76,7 @@ pub trait NativeCopStore: Send + Sync + 'static {
         context: &tidb_proto::KvrpcContext,
         lock: &tidb_proto::KvrpcLockInfo,
         caller_start_ts: u64,
-        kv_context: &crate::StatementKvContext,
+        kv_context: &tidb_txnkv::StatementKvContext,
     ) -> Result<LockRecoveryResult, tikv_client::Error>;
 
     /// Go `bo.Backoff(BoRegionMiss, err)`.
@@ -129,13 +129,13 @@ pub async fn with_ru_details<F: std::future::Future>(
     }
 }
 
-/// Runs `future` under Go's statement ctx ([`crate::StatementKvContext::trace_context`]):
+/// Runs `future` under Go's statement ctx ([`tidb_txnkv::StatementKvContext::trace_context`]):
 /// client-rust charges the trace context's `RuDetails` (Go
 /// `util.RUDetailsCtxKey`) on every RPC, and its `ExecDetails` (Go
 /// `util.ExecDetailsKey`) where client-go does -- KV waits and traffic per
 /// send, PD waits, backoff sleeps of the Backoffers made under it.
 pub async fn with_statement_kv_context<'a, F>(
-    kv_context: &crate::StatementKvContext,
+    kv_context: &tidb_txnkv::StatementKvContext,
     future: F,
 ) -> F::Output
 where
@@ -159,7 +159,7 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
     fn locate(
         &self,
         ranges: &[(Vec<u8>, Vec<u8>)],
-        kv_context: &crate::StatementKvContext,
+        kv_context: &tidb_txnkv::StatementKvContext,
     ) -> Result<Vec<tikv_client::RegionWithLeader>, tikv_client::Error> {
         self.block_on(with_statement_kv_context(kv_context, async {
             let pd = self.store().pd_client();
@@ -191,7 +191,7 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
         request: &[u8],
         region: (u64, u64, u64),
         timeout: Duration,
-        kv_context: &crate::StatementKvContext,
+        kv_context: &tidb_txnkv::StatementKvContext,
         stats: Option<Arc<tikv_client::RegionRequestRuntimeStats>>,
     ) -> Result<NativeCopSend, tikv_client::Error> {
         let request = tikv_client::proto::coprocessor::Request::decode(request)
@@ -222,7 +222,7 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
         context: &tidb_proto::KvrpcContext,
         lock: &tidb_proto::KvrpcLockInfo,
         caller_start_ts: u64,
-        kv_context: &crate::StatementKvContext,
+        kv_context: &tidb_txnkv::StatementKvContext,
     ) -> Result<LockRecoveryResult, tikv_client::Error> {
         use tikv_client::txnkv::txnlock::{LockHintsInRequest, ResolveLocksOptions};
         let lock = tikv_client::proto::kvrpcpb::LockInfo::decode(lock.encode_to_vec().as_slice())

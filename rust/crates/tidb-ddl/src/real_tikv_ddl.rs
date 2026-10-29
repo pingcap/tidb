@@ -35,8 +35,9 @@ use std::time::Duration;
 
 use tidb_kv::cluster_storage::{ClusterSnapshot, MutationBuffer, SwappableSnapshot};
 use tidb_model::{ActionType, Job};
-use tidb_txnkv::transaction::StoreClient;
-use tidb_txnkv::transaction::{OptimisticCoordinatorError, RealOptimisticTransactionOpener};
+use tidb_store_driver_txn::transaction::StoreClient;
+use tidb_txnkv::transaction::OptimisticCoordinatorError;
+use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 
 use tidb_infoschema::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use crate::cluster_ddl::{lower_ddl_with_context, plan_persisted_ddl_job_failure, plan_persisted_ddl_job_step, prepare_check_constraint_job_submission, recover_ddl_action, CheckConstraintValidation, DdlPlan, DdlPlanError, DdlStatement, DdlWrite, ExchangePartitionValidation, MdlInfoUpdate, PersistedDdlJobFailure, PersistedDdlJobPlan};
@@ -2149,10 +2150,7 @@ fn zap_error(error: impl fmt::Display) -> tidb_log::Field {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_txnkv::transaction::{
-        OptimisticCommitOutcome, OptimisticTransactionReceipt, TransactionCause,
-        UndeterminedTransaction,
-    };
+    use tidb_txnkv::transaction::{OptimisticCommitOutcome, OptimisticTransactionReceipt, TransactionCause, UndeterminedTransaction};
 
     #[test]
     fn committed_action_retry_matches_go_classification_and_budget() {

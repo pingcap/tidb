@@ -51,7 +51,7 @@ use crate::{
     CancelHandle, CoprCache, RegionTaskEpoch, RegionTaskPeer, RegionTaskTopology,
     ResponseChannelEvent, TransportRequest,
 };
-use tidb_txnkv::driver::cop_store::{CopBackoffer, NativeCopSend, NativeCopStore};
+use tidb_store_driver_txn::driver::cop_store::{CopBackoffer, NativeCopSend, NativeCopStore};
 use tidb_txnkv::lock::SnapshotLockSet;
 use tidb_txnkv::UnaryCallContext;
 
@@ -99,7 +99,7 @@ impl From<NativeCopError> for QueryResponseError {
             NativeCopError::Task(error) => Self::Source(format!("cop read task failed: {error}")),
             // Go `ToTiDBErr`: an exhausted backoff is its class's storage error.
             NativeCopError::Client(error) => {
-                match tidb_txnkv::driver::tikv_transaction::client_backoff_kind(&error) {
+                match tidb_store_driver_txn::driver::tikv_transaction::client_backoff_kind(&error) {
                     Some(kind) => {
                         let source =
                             tidb_txnkv::StorageDriverError::from_backoff(kind, &error.to_string());

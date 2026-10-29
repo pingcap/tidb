@@ -34,7 +34,7 @@ use std::time::Duration;
 use tidb_syssession::mysql_system_tables::{scan_system_table, SystemRow, SystemTableError, SystemTableView};
 use crate::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_datatype::Datum;
-use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
+use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaPairs, MetaSnapshot};
 

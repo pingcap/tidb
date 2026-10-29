@@ -14,7 +14,7 @@
 
 //! Transaction activation options and the separate bootstrap storage defaults.
 
-use tidb_txnkv::transaction::CommitProtocol;
+use crate::transaction::CommitProtocol;
 
 use tidb_vardef::global_sysvar_initial::{
     global_system_variable_initial_value, GlobalSysvarEnvironment, ENABLE_1PC, ENABLE_ASYNC_COMMIT,
@@ -38,9 +38,9 @@ pub struct SessionTransactionOptions {
 
 impl SessionTransactionOptions {
     /// Applies the activation snapshot before the transaction is exposed.
-    pub fn apply<S: tidb_txnkv::transaction::StoreClient>(
+    pub fn apply<S: crate::transaction::StoreClient>(
         self,
-        transaction: &mut tidb_txnkv::transaction::RealTransaction<S>,
+        transaction: &mut crate::transaction::RealTransaction<S>,
     ) {
         // Go `NewTiKVTxn`'s `txn.SetKVFilter(TiDBKVFilter{})`.
         transaction.set_kv_filter(std::sync::Arc::new(TiDBKVFilter));

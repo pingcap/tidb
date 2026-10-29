@@ -23,7 +23,7 @@ use std::time::Duration;
 use tidb_store_driver_txn::meta_txn::MetaTxnStorage;
 use tidb_meta::transaction::Mutator;
 use tidb_model::Job;
-use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
+use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 use tidb_txnkv::{NewTxnStorage, NewTxnTransaction};
 
 /// Go `ddl.batchNumHistoryJobs`, the history read's page size.

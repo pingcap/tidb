@@ -18,9 +18,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Condvar;
 use tidb_datatype::Datum;
 use tidb_txnkv::retry::RegionBackoffKind;
-use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause,
-};
+use tidb_txnkv::transaction::{OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause};
 
 struct UndeterminedAnalyze;
 

@@ -22,7 +22,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
+use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_pd_client::ClusterSecurity;
 use tidb_txnkv::driver::tikv_store::TikvStore;

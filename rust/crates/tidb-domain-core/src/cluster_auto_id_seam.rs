@@ -30,7 +30,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tidb_txnkv::transaction::StoreClient;
+use tidb_store_driver_txn::transaction::StoreClient;
 
 use tidb_autoid::cluster_auto_id::ClusterAutoIdStore;
 use tidb_autoid::cluster_sequence::ClusterSequenceCounter;
@@ -39,7 +39,7 @@ use tidb_autoid::DEFAULT_AUTO_ID_STEP;
 use tidb_table::kv_table::TableAutoId;
 use tidb_table::sequence::SequenceAllocator;
 use tidb_model::TableInfo;
-use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
+use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 
 use tidb_table::table_from_meta::{AutoIdKind, TableAutoIds};
 

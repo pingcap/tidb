@@ -23,8 +23,8 @@
 
 use std::time::Duration;
 
-use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
-use tidb_txnkv::transaction::StoreClient;
+use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
+use tidb_store_driver_txn::transaction::StoreClient;
 
 use tidb_infoschema::cluster_catalog::{load_cluster_catalog, ClusterCatalog, MetaSnapshot};
 use tidb_privilege::cluster_privilege_load::{

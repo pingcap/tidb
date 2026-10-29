@@ -36,5 +36,5 @@ fn assert_send<T: Send>() {}
 
 #[test]
 fn a_production_transaction_can_be_owned_by_the_connection_worker() {
-    assert_send::<tidb_txnkv::transaction::ProductionTransaction>();
+    assert_send::<tidb_store_driver_txn::transaction::ProductionTransaction>();
 }

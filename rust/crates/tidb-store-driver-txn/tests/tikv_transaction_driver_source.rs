@@ -31,7 +31,8 @@ use tikv_client::transaction::Transaction;
 use tikv_client::PdClient;
 use tikv_client::TransactionOptions;
 
-use tidb_txnkv::{FlagsOp, Key, TikvTransactionDriver};
+use tidb_store_driver_txn::TikvTransactionDriver;
+use tidb_txnkv::{FlagsOp, Key};
 
 fn runtime() -> Arc<tokio::runtime::Runtime> {
     Arc::new(

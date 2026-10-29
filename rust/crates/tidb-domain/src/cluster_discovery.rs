@@ -38,7 +38,7 @@ impl PdClusterDiscovery {
         timeout: std::time::Duration,
     ) -> Result<Self, String> {
         Ok(Self {
-            http: tidb_txnkv::cluster_http::internal_http_client(security)?,
+            http: tidb_store_driver_txn::cluster_http::internal_http_client(security)?,
             store,
             timeout,
             scheme: if security.is_tls_enabled() {

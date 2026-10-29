@@ -14,19 +14,14 @@
 
 //! TiDB transaction adapters over the native client transaction engine.
 
-mod call_interceptor;
-mod coordinator;
+mod coordinator_error;
 mod mutation;
 mod mutation_plan;
 mod pessimistic;
 mod schema_lease;
 mod state;
 
-pub use coordinator::{
-    CommitProtocol, OptimisticCoordinatorError, ProductionTransaction,
-    RealOptimisticTransactionOpener, RealTransaction, SnapshotGetResult, SnapshotScanRegion,
-    StoreClient,
-};
+pub use coordinator_error::OptimisticCoordinatorError;
 pub use mutation::{BufferMutation, BufferMutationOp, MutationSetError};
 pub use mutation_plan::MutationPlan;
 pub use pessimistic::{
@@ -40,5 +35,3 @@ pub use state::{
     UndeterminedTransaction,
 };
 
-/// TiDB facade over the native optimistic and pessimistic transaction owner.
-pub mod client;

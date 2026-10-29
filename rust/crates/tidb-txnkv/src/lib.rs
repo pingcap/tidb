@@ -19,13 +19,12 @@
 //! the Rust client-go.
 
 mod assertion;
-mod batch_getter;
+pub mod batch_getter;
 mod cache_db;
 mod checker;
 mod client;
 pub mod tikv_errors;
 pub mod client_go_metrics;
-pub mod cluster_http;
 mod counter;
 pub mod driver;
 mod driver_error;
@@ -34,10 +33,10 @@ mod farmhash;
 mod fault_injection;
 pub mod gc_state;
 mod handle;
-mod inner_txn;
+pub mod inner_txn;
 mod iteration;
 mod key;
-mod key_flags;
+pub mod key_flags;
 mod key_ranges;
 mod keyspace;
 mod kv_api;
@@ -49,7 +48,7 @@ mod mem_storage;
 mod mpp;
 mod mpp_probe;
 mod mvcc_metadata;
-mod new_txn;
+pub mod new_txn;
 mod option;
 mod prefix_ops;
 mod range_diagnostics;
@@ -89,8 +88,6 @@ pub use driver::mem_buffer::{
 pub use driver::tikv_mem_buffer::{
     TikvMemBufferBackend, TikvMemBufferError, TikvMemBufferIterator, TikvMemBufferSnapshotGetter,
 };
-pub use driver::tikv_transaction::{TikvTransactionDriver, TikvTransactionError};
-pub use driver_error::{to_tidb_driver_error, ConvertedDriverError, StorageDriverError};
 pub use error::{
     gen_entry_too_large_err, gen_key_exists_err, gen_key_too_large_err, gen_shared_lock_lost_err,
     gen_txn_too_large_err, gen_write_conflict_in_tidb_err, is_err_not_found,
@@ -173,6 +170,7 @@ pub use option::{
     INTERNAL_TXN_SYS_VAR, INTERNAL_TXN_TELEMETRY, INTERNAL_TXN_TOOLS, INTERNAL_TXN_TRACE,
     INTERNAL_TXN_TTL, INTERNAL_TXN_WORKLOAD_LEARNING,
 };
+pub use driver_error::{to_tidb_driver_error, ConvertedDriverError, StorageDriverError};
 pub use prefix_ops::{del_key_with_prefix, scan_meta_with_prefix};
 pub use range_diagnostics::{
     ensure_monotonic_key_ranges, first_out_of_bound_key_range, min_start_and_max_end_key,

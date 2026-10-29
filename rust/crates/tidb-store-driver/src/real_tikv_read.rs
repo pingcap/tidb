@@ -71,7 +71,7 @@ impl RealTiKvSessionTransportFactory for ProductionReadSessionFactory {
 
 /// Write capability re-exported so the server never depends on `tidb-txnkv`
 /// directly; the dependency direction stays server -> exec -> txnkv.
-use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
+use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 
 /// Why the process authority could not be built.
 #[derive(Clone, Debug, Eq, PartialEq)]

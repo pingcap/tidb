@@ -5,12 +5,23 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+autotests = false
 description = "Go `pkg/store/driver/txn`: the TiKV transaction (`tikvTxn`) a session statement locks, stages and commits through."
 
 [lints]
 workspace = true
 
 [dependencies]
+futures.workspace = true
+reqwest = { workspace = true, features = ["blocking"] }
+serde_json.workspace = true
+tokio.workspace = true
+prost.workspace = true
+tidb-config = { path = "../tidb-config" }
+tidb-errno = { path = "../tidb-errno" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-pd-client = { path = "../tidb-pd-client" }
+tidb-tracing = { path = "../tidb-tracing" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-store-driver-error = { path = "../tidb-store-driver-error" }
 tidb-meta = { path = "../tidb-meta" }
@@ -22,3 +33,11 @@ tikv-client.workspace = true
 tidb-proto = { path = "../tidb-proto" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-vardef = { path = "../tidb-vardef" }
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+[[test]]
+name = "transaction_size_limits_source"
+path = "tests/transaction_size_limits_source.rs"

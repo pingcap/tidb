@@ -22,14 +22,14 @@ use crate::GlobalSysvars;
 use tidb_infoschema_issyncer::catalog_watch::{CatalogReloadError, CatalogReloader, SharedCatalog};
 use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_infoschema_issyncer::real_tikv_catalog::reload_catalog_from_cluster;
-use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
+use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 use tidb_stats_handle_syncload::real_tikv_stats::{update_stats_cache_from_cluster};
 use tidb_stats_handle::bootstrap::{load_stats_snapshot_and_loader, InitialStatsLoad};
 use tidb_stats_handle_syncload::stats_watch::{
     AsyncStatsLoader, SharedStats, StatsReloadError, StatsReloadReadResult, StatsReloader,
 };
 use tidb_pd_client::{EtcdClient, EtcdWatcher, PRIVILEGE_UPDATE_KEY, SYSVAR_UPDATE_KEY};
-use tidb_txnkv::transaction::StoreClient;
+use tidb_store_driver_txn::transaction::StoreClient;
 
 use tidb_domain_core::cluster_privileges::PrivilegeReloader;
 use crate::domain::configured_user_store::{ConfiguredUserStore, ConfiguredUserStoreError};
@@ -103,7 +103,7 @@ pub fn configured_account_store(
 /// one-shot startup snapshot.
 pub fn node_accounts(
     config: &NodeConfig,
-    opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener,
+    opener: &tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener,
     global_vars: GlobalSysvars,
 ) -> Result<(Arc<ConfiguredUserStore>, Option<PrivilegeReloader>), RunConfiguredNodeError> {
     if config.skip_grant_table || !config.load_privileges {

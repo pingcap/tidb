@@ -40,8 +40,9 @@ use tidb_stats::{
     PartitionStatsItem, StatsLoadedStatus, TopN,
 };
 use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_txnkv::transaction::StoreClient;
-use tidb_txnkv::transaction::{OptimisticCommitOutcome, RealOptimisticTransactionOpener};
+use tidb_store_driver_txn::transaction::StoreClient;
+use tidb_txnkv::transaction::OptimisticCommitOutcome;
+use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 use tidb_sqlkiller::SqlKiller;
 
 use crate::cluster_analyze::{
@@ -3183,10 +3184,7 @@ mod tests {
     use tidb_stats::{FmSketch, GlobalStatsMergeMode, StatsLoadedStatus, MAX_SKETCH_SIZE};
     use tidb_txnkv::retry::RegionBackoffKind;
     use tidb_txnkv::rpc::UnaryCallContext;
-    use tidb_txnkv::transaction::{
-        OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction,
-        TransactionCause,
-    };
+    use tidb_txnkv::transaction::{OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause};
     use tidb_sqlkiller::SqlKiller;
 
     fn global_partition_item(id: i64, count: i64) -> super::ClusterStatsItem {

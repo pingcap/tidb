@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use crate::lock_target::ClusterStatsLockStatement;
 use crate::real_tikv_stats_lock::{commit_cluster_stats_lock, ClusterStatsLockReport};
-use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
+use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 use crate::real_tikv_stats_lock::cluster_stats_lock_error;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;

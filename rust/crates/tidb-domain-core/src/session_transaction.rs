@@ -83,7 +83,7 @@ pub fn options_from_values(
     assertion_level: tidb_proto::KvrpcAssertionLevel,
 ) -> SessionTransactionOptions {
     SessionTransactionOptions {
-        commit_protocol: tidb_txnkv::transaction::CommitProtocol {
+        commit_protocol: tidb_store_driver_txn::transaction::CommitProtocol {
             async_commit: tidb_vardef::option_values::tidb_opt_on(async_commit),
             one_pc: tidb_vardef::option_values::tidb_opt_on(one_pc),
         },

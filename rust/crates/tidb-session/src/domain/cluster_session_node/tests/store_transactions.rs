@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
+use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
 use tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_sessionctx::advisory_lock_state::{AdvisoryLockError, AdvisoryLockLease};
@@ -234,7 +234,7 @@ fn session_activation_retains_options_after_timestamp_future_failure() {
     for pessimistic in [false, true] {
         fail.store(true, Ordering::Release);
         let options = SessionTransactionOptions {
-            commit_protocol: tidb_txnkv::transaction::CommitProtocol::two_phase_only(),
+            commit_protocol: tidb_store_driver_txn::transaction::CommitProtocol::two_phase_only(),
             assertion_level: tidb_proto::KvrpcAssertionLevel::Strict,
             kv_context: None,
         };

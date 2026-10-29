@@ -48,7 +48,7 @@ use tidb_infoschema_isvalidator::{SchemaValidator, Validator as _};
 use tidb_pd_client::EtcdClient;
 use tidb_schemaver::etcd_syncer::new_etcd_syncer;
 use tidb_schemaver::{Context as SchemaVersionContext, Recv, Syncer as SchemaVersionSyncer};
-use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
+use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 /// The tables live local work still reads at older schema versions.
 ///

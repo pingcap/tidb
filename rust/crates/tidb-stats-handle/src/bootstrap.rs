@@ -20,7 +20,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use tidb_stats_handle_cache::StatsRefreshSource;
-use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
+use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 use tidb_infoschema::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use tidb_stats_handle_storage::cluster_stats_load::{ClusterStatsLoader, ClusterTableStats};

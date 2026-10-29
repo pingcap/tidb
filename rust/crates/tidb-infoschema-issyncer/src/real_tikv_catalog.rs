@@ -20,8 +20,9 @@ use std::time::Duration;
 use tidb_kv::cluster_storage::ClusterSnapshot;
 use tidb_kv::storage::StorageError;
 use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_txnkv::transaction::{OptimisticCoordinatorError, StoreClient};
-use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, RealTransaction};
+use tidb_txnkv::transaction::OptimisticCoordinatorError;
+use tidb_store_driver_txn::transaction::StoreClient;
+use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, RealTransaction};
 use tidb_txnkv::Key;
 
 use crate::catalog_reload::{reload_cluster_catalog, ReloadedCatalog};
@@ -60,7 +61,7 @@ fn storage_catalog_error(error: StorageError) -> ClusterCatalogError {
 ///
 /// Holding the transaction for the whole load is the point: every key the
 /// loader reads is served at the same `start_ts`.
-pub struct TransactionMetaSnapshot<'transaction, S: tidb_txnkv::transaction::StoreClient> {
+pub struct TransactionMetaSnapshot<'transaction, S: tidb_store_driver_txn::transaction::StoreClient> {
     transaction: &'transaction mut RealTransaction<S>,
     /// One read request's deadline. Go bounds each storage request, not the
     /// statement issuing them: every cop task takes
@@ -75,7 +76,7 @@ pub struct TransactionMetaSnapshot<'transaction, S: tidb_txnkv::transaction::Sto
     timeout: Duration,
 }
 
-impl<'transaction, S: tidb_txnkv::transaction::StoreClient>
+impl<'transaction, S: tidb_store_driver_txn::transaction::StoreClient>
     TransactionMetaSnapshot<'transaction, S>
 {
     /// Binds one transaction and the per-request deadline every read stamps.
@@ -89,7 +90,7 @@ impl<'transaction, S: tidb_txnkv::transaction::StoreClient>
 
 impl<S> MetaSnapshot for TransactionMetaSnapshot<'_, S>
 where
-    S: tidb_txnkv::transaction::StoreClient,
+    S: tidb_store_driver_txn::transaction::StoreClient,
 {
     fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
         let call = UnaryCallContext::with_timeout(self.timeout);
@@ -121,7 +122,7 @@ where
 
 impl<S> PagedMetaSnapshot for TransactionMetaSnapshot<'_, S>
 where
-    S: tidb_txnkv::transaction::StoreClient,
+    S: tidb_store_driver_txn::transaction::StoreClient,
 {
     fn scan_page(
         &mut self,
@@ -138,13 +139,13 @@ where
 
 impl<S> tidb_infoschema::cluster_catalog::RegionPagedMetaSnapshot for TransactionMetaSnapshot<'_, S>
 where
-    S: tidb_txnkv::transaction::StoreClient,
+    S: tidb_store_driver_txn::transaction::StoreClient,
 {
     fn scan_regions(
         &mut self,
         start: &[u8],
         end: &[u8],
-    ) -> Result<Vec<tidb_txnkv::transaction::SnapshotScanRegion>, ClusterCatalogError> {
+    ) -> Result<Vec<tidb_store_driver_txn::transaction::SnapshotScanRegion>, ClusterCatalogError> {
         let call = UnaryCallContext::with_timeout(self.timeout);
         self.transaction
             .snapshot_scan_regions(start, end, &call)
