@@ -225,19 +225,21 @@ func CaptureQuerySource(sctx sessionctx.Context, sql string) (*QuerySource, erro
 // PlanImportQueryForTest plans the SELECT of the IMPORT INTO statement sql in
 // sctx like the statement does, so that CaptureQuerySource can capture it.
 func PlanImportQueryForTest(sctx sessionctx.Context, sql string) error {
-	_, node, err := ParseImportQuery(sctx, sql)
+	stmt, node, err := ParseImportQuery(sctx, sql)
 	if err != nil {
 		return err
 	}
 	// Each statement starts with no related tables.
 	clear(sctx.GetSessionVars().StmtCtx.RelatedTableIDs)
-	nodeW := resolve.NewNodeW(node)
+	// Preprocess the IMPORT INTO statement as it is, then plan its SELECT.
+	stmtW := resolve.NewNodeW(stmt)
 	ret := &plannercore.PreprocessorReturn{}
-	if err := plannercore.Preprocess(context.Background(), sctx, nodeW,
-		plannercore.WithPreprocessorReturn(ret), plannercore.InImportInto); err != nil {
+	if err := plannercore.Preprocess(context.Background(), sctx, stmtW,
+		plannercore.WithPreprocessorReturn(ret)); err != nil {
 		return err
 	}
-	_, err = plannercore.BuildLogicalPlanForTest(context.Background(), sctx, nodeW, ret.InfoSchema)
+	_, err = plannercore.BuildLogicalPlanForTest(context.Background(), sctx,
+		resolve.NewNodeWWithCtx(node, stmtW.GetResolveContext()), ret.InfoSchema)
 	return err
 }
 

@@ -33,6 +33,7 @@ func TestCaptureQuerySource(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table query_src(i bigint)")
+	tk.MustExec("create table unused_target(i bigint)")
 	capture := func(se sessionctx.Context, sel string) (*importer.QuerySource, error) {
 		sql := "import into unused_target from " + sel
 		if err := importer.PlanImportQueryForTest(se, sql); err != nil {
