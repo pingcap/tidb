@@ -22,7 +22,7 @@ use tidb_protocol::{
     COM_PING, COM_QUERY, COM_QUIT, COM_STMT_PREPARE, DEFAULT_MAX_ALLOWED_PACKET,
 };
 use tidb_server::{ConcurrentSqlNode, ConfiguredUserStore, NodeConfig, PreparedGeneral, QueryResult, QuerySession, QuerySessionFactory, ResultSetSource, SessionContext};
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
 const CLIENT_SECURE_CONNECTION: u32 = 1 << 15;

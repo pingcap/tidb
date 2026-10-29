@@ -45,7 +45,7 @@ use tidb_ddl_build::table_info_build::DdlAdmissionError;
 use tidb_store_driver::cluster_table_storage::{LockKeysOutcome, SessionTransaction};
 use crate::ddl_job_submit::{finish_insert_attempt, plan_insert_attempt};
 use crate::ddl_job_table::DdlJobTable;
-use tidb_store_driver::pessimistic_lock_error::LockSqlError;
+use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use tidb_infoschema_issyncer::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 
 mod add_index_reorg;
@@ -53,7 +53,7 @@ pub mod delete_range;
 
 /// What undoes a delivered label step: the rules its IDs held before it.
 struct LabelDeliveryReceipt {
-    manager: std::sync::Arc<dyn tidb_domain::label_manager::LabelRuleManager>,
+    manager: std::sync::Arc<dyn tidb_domain_infosync::label_manager::LabelRuleManager>,
     original: Vec<tidb_ddl_label::Rule>,
     rule_ids: Vec<String>,
 }
@@ -102,7 +102,7 @@ fn deliver_label_rules(write: &DdlWrite) -> Result<Option<LabelDeliveryReceipt>,
     if write.label_rules.is_empty() {
         return Ok(None);
     }
-    let manager = tidb_domain::label_manager::label_rule_manager();
+    let manager = tidb_domain_infosync::label_manager::label_rule_manager();
     let mut rule_ids = write
         .label_rules
         .iter()
@@ -891,11 +891,11 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
     wait_retry: &dyn Fn(Duration) -> Result<(), String>,
 ) -> Result<PersistedDdlJobOutcome, ClusterDdlError> {
     let mut schema_state = crate::cluster_ddl::DdlJobSchemaState::new(tidb_vardef::is_mdl_enabled(
-        tidb_config::kerneltype::is_next_gen(),
+        tidb_config_kerneltype::is_next_gen(),
     ));
     loop {
         schema_state.mdl_enabled =
-            tidb_vardef::is_mdl_enabled(tidb_config::kerneltype::is_next_gen());
+            tidb_vardef::is_mdl_enabled(tidb_config_kerneltype::is_next_gen());
         let outcome = commit_cluster_ddl_phase_with_retry(
             Arc::clone(&opener),
             DdlPhase {
@@ -2205,7 +2205,7 @@ mod tests {
                 detail: "commit response lost".to_owned(),
             },
         });
-        let error = tidb_store_driver::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome)
+        let error = tidb_store_driver_error::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome)
             .expect_err("an unknown commit verdict must not answer success");
         assert!(matches!(
             classify_session_ddl_commit_error(61, error),
@@ -2273,17 +2273,17 @@ mod tests {
 
 /// Preserves the one DDL outcome that is not a failure verdict while mapping
 /// every determinate catalog error to its ordinary client diagnostic.
-pub fn cluster_ddl_error(error: ClusterDdlError) -> tidb_store_driver::sql_query_error::SqlQueryError {
+pub fn cluster_ddl_error(error: ClusterDdlError) -> tidb_store_driver_error::sql_query_error::SqlQueryError {
     match error {
-        ClusterDdlError::Undetermined(_) => tidb_store_driver::sql_query_error::SqlQueryError::result_undetermined(),
-        ClusterDdlError::Commit(error) => tidb_store_driver::sql_query_error::lock_sql_error(&error),
-        ClusterDdlError::IndexBackfill(error) => tidb_store_driver::sql_query_error::lock_sql_error(&error),
+        ClusterDdlError::Undetermined(_) => tidb_store_driver_error::sql_query_error::SqlQueryError::result_undetermined(),
+        ClusterDdlError::Commit(error) => tidb_store_driver_error::sql_query_error::lock_sql_error(&error),
+        ClusterDdlError::IndexBackfill(error) => tidb_store_driver_error::sql_query_error::lock_sql_error(&error),
         // The wire triple of the persisted job error, labelled with the Go
         // identity only when the refusal was a Go error (a plain one has none).
-        ClusterDdlError::Plan(error) => tidb_store_driver::sql_query_error::SqlQueryError::from(
+        ClusterDdlError::Plan(error) => tidb_store_driver_error::sql_query_error::SqlQueryError::from(
             tidb_error::mysql::MysqlError::from_sql_error(error.to_sql_error()),
         )
         .with_identity(error.identity()),
-        other => tidb_store_driver::sql_query_error::SqlQueryError::unknown(other.to_string()),
+        other => tidb_store_driver_error::sql_query_error::SqlQueryError::unknown(other.to_string()),
     }
 }

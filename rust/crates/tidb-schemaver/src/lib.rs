@@ -67,7 +67,7 @@ pub mod mem_syncer;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tidb_domain::serverinfo::ServerInfo;
+use tidb_domain_serverinfo::serverinfo::ServerInfo;
 
 /// Go `util.DDLAllSchemaVersions`.
 pub const DDL_ALL_SCHEMA_VERSIONS: &str = "/tidb/ddl/all_schema_versions";
@@ -393,7 +393,7 @@ pub trait Syncer: Send + Sync {
 /// Go `vardef.IsMDLEnabled()`, including next-generation TiDB's always-on
 /// MDL rule.
 pub(crate) fn mdl_enabled() -> bool {
-    tidb_vardef::is_mdl_enabled(tidb_config::kerneltype::is_next_gen())
+    tidb_vardef::is_mdl_enabled(tidb_config_kerneltype::is_next_gen())
 }
 
 #[cfg(test)]

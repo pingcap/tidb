@@ -14,21 +14,13 @@ workspace = true
 
 [dependencies]
 tidb-logutil = { path = "../tidb-logutil" }
-tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-timeutil = { path = "../tidb-timeutil" }
 chrono.workspace = true
 chrono-tz.workspace = true
 getrandom.workspace = true
-tidb-ast = { path = "../tidb-ast" }
-tidb-datatype = { path = "../tidb-datatype" }
 tidb-log = { path = "../tidb-log" }
-tidb-model = { path = "../tidb-model" }
-tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-parser = { path = "../tidb-parser" }
-tidb-resolve = { path = "../tidb-resolve" }
-tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-syssession = { path = "../tidb-syssession" }
-tidb-util = { path = "../tidb-util" }
 
 [[test]]
 name = "all"

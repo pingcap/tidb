@@ -18,7 +18,6 @@
 //! writes through it, and the DDL package, which builds it from a
 //! `TableInfo` (`TableFromMeta`).
 pub mod table_write_policy;
-pub mod handle_range;
 pub mod hypo_index;
 pub mod zero_date;
 pub mod column_default;

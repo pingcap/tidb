@@ -12,6 +12,10 @@ description = "TiDB domain: Go pkg/domain's Domain and the cluster services it o
 test-util = []
 
 [dependencies]
+tidb-config-configtypes = { path = "../tidb-config-configtypes" }
+tidb-domain-globalconfigsync = { path = "../tidb-domain-globalconfigsync" }
+tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }
+tidb-store-driver-error = { path = "../tidb-store-driver-error" }
 tidb-sessmgr = { path = "../tidb-sessmgr" }
 tidb-fastrand = { path = "../tidb-fastrand" }
 tidb-globalconn = { path = "../tidb-globalconn" }
@@ -22,7 +26,6 @@ tidb-spill-storage = { path = "../tidb-spill-storage" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-test-isolation = { path = "../tidb-test-isolation" }
 tidb-worker-stack = { path = "../tidb-worker-stack" }
-tidb-planner = { path = "../tidb-planner" }
 tidb-stats-handle-history = { path = "../tidb-stats-handle-history" }
 tidb-stats-handle-autoanalyze = { path = "../tidb-stats-handle-autoanalyze" }
 tidb-stats-handle-usage-predicatecolumn = { path = "../tidb-stats-handle-usage-predicatecolumn" }
@@ -72,9 +75,7 @@ tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
 tidb-stats-handle-logutil = { path = "../tidb-stats-handle-logutil" }
 tidb-stats-handle-metrics = { path = "../tidb-stats-handle-metrics" }
 tidb-stats-handle-usage = { path = "../tidb-stats-handle-usage" }
-tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-txnkv = { path = "../tidb-txnkv" }
-tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
 tidb-variable = { path = "../tidb-variable" }
 tikv-client.workspace = true

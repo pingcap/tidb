@@ -156,7 +156,7 @@ pub fn enabled_categories() -> TraceCategory {
 /// Go `IsEnabled`. Trace events only work for the next-generation kernel, so
 /// a classic build outside tests is always disabled.
 pub fn is_enabled(category: TraceCategory) -> bool {
-    if tidb_config::kerneltype::is_classic() && !IN_TEST {
+    if tidb_config_kerneltype::is_classic() && !IN_TEST {
         return false;
     }
     enabled_categories().0 & category.0 != 0

@@ -1,0 +1,20 @@
+[package]
+name = "tidb-domain-serverinfo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go `pkg/domain/serverinfo`: this server's info, its etcd syncer and the status endpoint claim."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-config = { path = "../tidb-config" }
+getrandom.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing = "0.1"
+base64.workspace = true

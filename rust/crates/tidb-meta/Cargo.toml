@@ -17,6 +17,7 @@ nextgen = ["tidb-config/nextgen"]
 workspace = true
 
 [dependencies]
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-partialjson = { path = "../tidb-partialjson" }
 serde.workspace = true
 serde_json.workspace = true
@@ -30,7 +31,6 @@ tidb-error = { path = "../tidb-error" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
-tidb-util = { path = "../tidb-util" }
 
 [dev-dependencies]
 sha2.workspace = true

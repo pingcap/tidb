@@ -16,7 +16,7 @@
 //! Go `domain.go`: acquireServerID, proposeServerID, refreshServerIDTTL,
 //! serverIDKeeper and releaseServerID. Connection IDs consume this live owner.
 
-use crate::serverinfo_syncer::{EtcdOps, Syncer};
+use tidb_domain_serverinfo::serverinfo_syncer::{EtcdOps, Syncer};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -338,7 +338,7 @@ impl Drop for ServerIdKeeper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::serverinfo::ServerInfo;
+    use tidb_domain_serverinfo::serverinfo::ServerInfo;
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicI64, AtomicUsize};
 

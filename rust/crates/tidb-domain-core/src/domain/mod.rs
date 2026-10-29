@@ -33,7 +33,7 @@ use tidb_infoschema_issyncer::catalog_watch::SharedCatalog as SharedClusterCatal
 use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_infoschema_issyncer::real_tikv_catalog::SnapshotMetaSnapshot;
 use tidb_infoschema_isvalidator::SchemaValidator;
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_table::table_from_meta::TableAutoIds;
 use tidb_ddl::worker::ClusterDdl;
 use tidb_domain::global_sysvars::GlobalSysvars;
@@ -618,7 +618,7 @@ pub type SysSessionOpener =
 pub struct Domain {
     /// The session package's opener of this domain's internal sessions.
     pub(crate) sys_session_opener: SysSessionOpener,
-    pub global_config_syncer: Option<Arc<tidb_domain::globalconfigsync::GlobalConfigSyncer>>,
+    pub global_config_syncer: Option<Arc<tidb_domain_globalconfigsync::GlobalConfigSyncer>>,
     pub bindings: Option<Arc<dyn tidb_bindinfo::cluster_binding_seam::ClusterBindings>>,
     pub binding_session_factory: Weak<Domain>,
     /// The `SHOW STATUS` providers this domain registered as it started its
@@ -665,7 +665,7 @@ pub struct Domain {
     /// `information_schema.TIDB_SERVERS_INFO` reads. `None` leaves that
     /// table empty, which is the honest answer for a node that never
     /// established an identity.
-    pub server_info: Option<Arc<tidb_domain::serverinfo_syncer::Syncer>>,
+    pub server_info: Option<Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>>,
     server_identity: Option<Arc<tidb_domain::server_id::ServerIdAuthority>>,
     /// Go `Domain.connIDAllocator`: the node's one connection-ID allocator,
     /// shared with the SQL listener and drawn from by internal processes
@@ -783,7 +783,7 @@ impl Domain {
     }
 
     /// The node's server-info syncer.
-    pub fn server_info(&self) -> Option<Arc<tidb_domain::serverinfo_syncer::Syncer>> {
+    pub fn server_info(&self) -> Option<Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>> {
         self.server_info.clone()
     }
 
@@ -816,7 +816,7 @@ impl Domain {
     /// Install the one domain notification queue shared by every session.
     pub fn with_global_config_syncer(
         mut self,
-        syncer: Arc<tidb_domain::globalconfigsync::GlobalConfigSyncer>,
+        syncer: Arc<tidb_domain_globalconfigsync::GlobalConfigSyncer>,
     ) -> Self {
         self.global_config_syncer = Some(syncer);
         self
@@ -1125,7 +1125,7 @@ impl Domain {
             .as_ref()
             .ok_or_else(|| "server info is not initialized".to_owned())?;
         let local = syncer.local_server_info();
-        let instance = tidb_domain::serverinfo_syncer::join_host_port(
+        let instance = tidb_domain_serverinfo::serverinfo_syncer::join_host_port(
             &local.static_info.ip,
             local.static_info.port,
         );
@@ -1174,7 +1174,7 @@ impl Domain {
             .all_server_info()?
             .into_values()
             .map(|info| {
-                tidb_domain::serverinfo_syncer::join_host_port(
+                tidb_domain_serverinfo::serverinfo_syncer::join_host_port(
                     &info.static_info.ip,
                     info.static_info.port,
                 )
@@ -1832,7 +1832,7 @@ impl Domain {
 
     /// Binds server information for publication and cluster discovery.
     #[must_use]
-    pub fn with_server_info(mut self, syncer: Arc<tidb_domain::serverinfo_syncer::Syncer>) -> Self {
+    pub fn with_server_info(mut self, syncer: Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>) -> Self {
         self.cluster_topology = Some(Arc::new(
             tidb_domain::cluster_topology::ClusterTopology::new(Arc::clone(&syncer), None),
         ));
@@ -2404,7 +2404,7 @@ impl ClusterHistoricalStatsHandle {
             .global_vars
             .get(tidb_vardef::tidb_vars::TIDB_HISTORICAL_STATS_DURATION)
             .map_err(|error| format!("read tidb_historical_stats_duration failed: {error:?}"))?;
-        let retention_nanos = serde_json::from_value::<tidb_config::configtypes::Duration>(
+        let retention_nanos = serde_json::from_value::<tidb_config_configtypes::Duration>(
             serde_json::Value::String(configured),
         )
         .map(|duration| duration.0)
@@ -2612,7 +2612,7 @@ impl ClusterHistoricalStatsHandle {
                 .get(tidb_vardef::tidb_vars::TIDB_HISTORICAL_STATS_DURATION)
                 .ok()
                 .and_then(|configured| {
-                    serde_json::from_value::<tidb_config::configtypes::Duration>(
+                    serde_json::from_value::<tidb_config_configtypes::Duration>(
                         serde_json::Value::String(configured),
                     )
                     .ok()

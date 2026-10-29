@@ -82,7 +82,7 @@ pub struct ViewerState {
     pub cluster_diagnostics:
         Option<Arc<crate::cluster_diagnostics::ClusterDiagnosticsClient>>,
     pub cluster_peer: Option<Arc<crate::cluster_peer::ClusterPeerClient>>,
-    pub server_info_syncer: Option<Arc<tidb_domain::serverinfo_syncer::Syncer>>,
+    pub server_info_syncer: Option<Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>>,
     /// Go `RequestVerification("", "", "", mysql.ConfigPriv)`.
     pub config_scoped: bool,
     /// Whether SEM hides the cluster metadata from the viewer.
@@ -758,7 +758,7 @@ pub fn client_errors_summary_rows(
 pub struct SqlDigestTextRetriever {
     pub zone: tidb_datatype::SessionTimeZone,
     pub scan_concurrency: usize,
-    pub server_info_syncer: Option<std::sync::Arc<tidb_domain::serverinfo_syncer::Syncer>>,
+    pub server_info_syncer: Option<std::sync::Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>>,
     pub cluster_peer: Option<std::sync::Arc<crate::cluster_peer::ClusterPeerClient>>,
 }
 
@@ -947,7 +947,7 @@ pub fn format_process_rows(
 /// The second value is the warnings the peers reported.
 #[allow(clippy::too_many_arguments)]
 pub fn peer_cluster_table_rows(
-    syncer: Option<&tidb_domain::serverinfo_syncer::Syncer>,
+    syncer: Option<&tidb_domain_serverinfo::serverinfo_syncer::Syncer>,
     peer: Option<&crate::cluster_peer::ClusterPeerClient>,
     ctx: &crate::StmtContext,
     user: Option<(&str, &str)>,

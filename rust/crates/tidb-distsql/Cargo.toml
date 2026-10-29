@@ -12,6 +12,7 @@ autotests = false
 # and RPC remain separate capabilities with their own future crates.
 
 [dependencies]
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-tiflash = { path = "../tidb-tiflash" }
 tidb-trxevents = { path = "../tidb-trxevents" }
 tidb-execdetails = { path = "../tidb-execdetails" }
@@ -34,7 +35,6 @@ tidb-proto = { path = "../tidb-proto" }
 tidb-error = { path = "../tidb-error" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-txnkv = { path = "../tidb-txnkv" }
-tidb-util = { path = "../tidb-util" }
 tikv-client.workspace = true
 tokio.workspace = true
 

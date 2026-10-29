@@ -227,7 +227,7 @@ impl BootstrapLayout {
     /// The layout of this binary's kernel type.
     #[must_use]
     pub const fn of_kernel() -> Self {
-        if tidb_config::kerneltype::is_next_gen() {
+        if tidb_config_kerneltype::is_next_gen() {
             Self::NextGen
         } else {
             Self::Classic

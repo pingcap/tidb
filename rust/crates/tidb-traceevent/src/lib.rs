@@ -107,7 +107,7 @@ pub fn enable(categories: TraceCategory) {
 
 /// Go `IsEnabled`: whether the category is enabled on the active recorder.
 pub fn is_enabled(category: TraceCategory) -> bool {
-    if tidb_config::kerneltype::is_classic() && !tidb_intest::IN_TEST {
+    if tidb_config_kerneltype::is_classic() && !tidb_intest::IN_TEST {
         return false;
     }
     match get_flight_recorder() {

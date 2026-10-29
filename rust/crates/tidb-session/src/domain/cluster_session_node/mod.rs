@@ -213,7 +213,7 @@ use tidb_table::table_from_meta::TableAutoIds;
 use tidb_domain_core::cluster_sysvar_seam::ClusterSysvarWriter;
 use crate::domain::pipeline_session::MaterializedResultSetSource;
 use crate::domain::session_api::{ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral, QueryResult, SessionContext};
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_executor::ddl_exec::WriteOutcome;
 use crate::domain::wire_status::WireStatus;
 use tidb_executor::ddl_exec::map_error;

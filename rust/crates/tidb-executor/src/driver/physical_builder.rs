@@ -202,7 +202,7 @@ pub(crate) struct PhysicalRuntimeCounter {
     /// Go `RURuntimeStats`, which `ExplainExec.executeAnalyzeExec` registers
     /// on the target plan after the analyzed statement ran and before its
     /// executors' `Close` register theirs.
-    ru: Option<Arc<tidb_ruv2_metrics::RuRuntimeStats>>,
+    ru: Option<Arc<tidb_execdetails::ruv2_metrics::RuRuntimeStats>>,
     /// Go `runtimeStatsWithSnapshot`, which a PointGet/BatchPointGet
     /// registers from its `Close`: its snapshot's RPC, time and scan details.
     snapshot: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
@@ -228,7 +228,7 @@ impl PhysicalRuntimeCounter {
     /// Go `RuntimeStatsColl.RegisterStats(targetPlanID, &RURuntimeStats{..})`.
     pub(crate) fn register_ru_runtime_stats(
         &mut self,
-        stats: tidb_ruv2_metrics::RuRuntimeStats,
+        stats: tidb_execdetails::ruv2_metrics::RuRuntimeStats,
     ) {
         self.ru = Some(Arc::new(stats));
     }
@@ -8046,7 +8046,7 @@ use super::*;
                 accesses: 0,
             },
         ))));
-        counter.register_ru_runtime_stats(tidb_ruv2_metrics::RuRuntimeStats {
+        counter.register_ru_runtime_stats(tidb_execdetails::ruv2_metrics::RuRuntimeStats {
             ru_details: Some(tikv_client::RuDetails::new_with(
                 1.5,
                 1.33,
@@ -8060,7 +8060,7 @@ use super::*;
         );
         // No RU details registers nothing visible.
         let mut empty = PhysicalRuntimeCounter::from(crate::executor::RowCount::default());
-        empty.register_ru_runtime_stats(tidb_ruv2_metrics::RuRuntimeStats::default());
+        empty.register_ru_runtime_stats(tidb_execdetails::ruv2_metrics::RuRuntimeStats::default());
         assert_eq!(empty.execution_info(), None);
     }
 

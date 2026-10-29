@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! Port of `pkg/domain/infosync/info_test.go::TestInfoSyncerMarshal`
-//! (origin/master, :216) against `tidb_domain::serverinfo` — the
+//! (origin/master, :216) against `tidb_domain_serverinfo::serverinfo` — the
 //! transcreation of `pkg/domain/serverinfo/info.go`.
 //!
 //! The Go test pins the exact JSON wire format of `serverinfo.ServerInfo`:
@@ -34,7 +34,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tidb_domain::serverinfo::{DynamicInfo, ServerInfo, StaticInfo, VersionInfo};
+use tidb_domain_serverinfo::serverinfo::{DynamicInfo, ServerInfo, StaticInfo, VersionInfo};
 
 /// Go `pkg/domain/infosync/info_test.go:216::TestInfoSyncerMarshal`.
 #[test]

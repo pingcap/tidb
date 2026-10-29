@@ -366,7 +366,7 @@ impl DomainMap {
 use tidb_domain_core::schema_sync::MdlRelatedTableSink;
 
 pub struct Session {
-    global_config_syncer: Option<Arc<tidb_domain::globalconfigsync::GlobalConfigSyncer>>,
+    global_config_syncer: Option<Arc<tidb_domain_globalconfigsync::GlobalConfigSyncer>>,
     catalog: SharedCatalog,
     /// The system session an account statement's executor runs its
     /// `mysql.*` SQL on while the statement runs (Go `GetSysSession`).
@@ -595,7 +595,7 @@ pub struct Session {
     /// etcd client is present and THIS node alone when it is not. `None`
     /// here is the tier that has no node identity at all -- an embedded
     /// session -- and reads back as an empty table.
-    server_info_syncer: Option<std::sync::Arc<tidb_domain::serverinfo_syncer::Syncer>>,
+    server_info_syncer: Option<std::sync::Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>>,
     cluster_topology: Option<Arc<tidb_domain::cluster_topology::ClusterTopology>>,
     cluster_config: Option<Arc<tidb_executor::cluster_config::ClusterConfigClient>>,
     cluster_diagnostics: Option<Arc<tidb_executor::cluster_diagnostics::ClusterDiagnosticsClient>>,
@@ -1284,7 +1284,7 @@ impl Session {
     /// `information_schema.TIDB_SERVERS_INFO` reads.
     pub fn set_server_info_syncer(
         &mut self,
-        syncer: std::sync::Arc<tidb_domain::serverinfo_syncer::Syncer>,
+        syncer: std::sync::Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>,
     ) {
         let info = syncer.local_server_info();
         self.server_id_getter = info.static_info.server_id_getter.unwrap_or_else(|| {
@@ -1359,7 +1359,7 @@ impl Session {
             || "unknown".to_owned(),
             |syncer| {
                 let info = syncer.local_server_info();
-                tidb_domain::serverinfo_syncer::join_host_port(
+                tidb_domain_serverinfo::serverinfo_syncer::join_host_port(
                     &info.static_info.ip,
                     info.static_info.port,
                 )
@@ -1680,7 +1680,7 @@ impl Session {
                 let info = syncer.local_server_info();
                 (
                     info.static_info.id.clone(),
-                    tidb_domain::serverinfo_syncer::join_host_port(
+                    tidb_domain_serverinfo::serverinfo_syncer::join_host_port(
                         &info.static_info.ip,
                         info.static_info.port,
                     ),
@@ -1926,7 +1926,7 @@ impl Session {
     /// Install the domain notification owner; it survives scratch globals used by SET.
     pub fn set_global_config_syncer(
         &mut self,
-        syncer: Arc<tidb_domain::globalconfigsync::GlobalConfigSyncer>,
+        syncer: Arc<tidb_domain_globalconfigsync::GlobalConfigSyncer>,
     ) {
         self.global_config_syncer = Some(syncer);
     }

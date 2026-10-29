@@ -101,7 +101,7 @@ use super::node_fixture::*;
 use crate::domain::resultset_source::ResultSetSource;
 use std::sync::atomic::Ordering;
 use tidb_datatype::Datum;
-use tidb_store_driver::pessimistic_lock_error::{ERR_REGION_UNAVAILABLE, ERR_WRITE_CONFLICT};
+use tidb_store_driver_error::pessimistic_lock_error::{ERR_REGION_UNAVAILABLE, ERR_WRITE_CONFLICT};
 
 /// The replay budget these tests run under: the default `@@tidb_retry_limit`
 /// (`DefTiDBRetryLimit = 10`), which `autocommit_retry_budget` reads.

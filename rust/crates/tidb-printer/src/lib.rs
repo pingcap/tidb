@@ -20,7 +20,7 @@ const RUST_VERSION: &str = tidb_versioninfo::TIDB_RUST_VERSION;
 
 fn release_versions_for_display() -> (String, Option<String>) {
     let versions = tidb_mysql::runtime_versions();
-    if !tidb_config::kerneltype::is_next_gen() {
+    if !tidb_config_kerneltype::is_next_gen() {
         return (versions.tidb_release_version, None);
     }
     let component =
@@ -59,7 +59,7 @@ pub fn get_tidb_info() -> String {
         rendered.push_str(tidb_versioninfo::TIDB_ENTERPRISE_EXTENSION_GIT_HASH);
     }
     rendered.push_str("\nKernel Type: ");
-    rendered.push_str(tidb_config::kerneltype::name());
+    rendered.push_str(tidb_config_kerneltype::name());
     rendered
 }
 
@@ -105,15 +105,15 @@ fn tidb_info_fields() -> Vec<Field> {
             Value::Str(component_version),
         ));
     }
-    if tidb_config::kerneltype::is_next_gen() {
+    if tidb_config_kerneltype::is_next_gen() {
         fields.push(Field::new(
             "Deploy Mode",
-            Value::Str(tidb_config::deploymode::get().to_string()),
+            Value::Str(tidb_config_deploymode::get().to_string()),
         ));
     }
     fields.push(Field::new(
         "Kernel Type",
-        Value::Str(tidb_config::kerneltype::name().to_owned()),
+        Value::Str(tidb_config_kerneltype::name().to_owned()),
     ));
     if !tidb_versioninfo::TIDB_ENTERPRISE_EXTENSION_GIT_HASH.is_empty() {
         fields.push(Field::new(

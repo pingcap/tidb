@@ -157,9 +157,9 @@ fn paging_generation_defaults_to_the_source_kernel_type() {
     // Go `pagingResponseReadBytes` reads the compile-time
     // `clientgoconfig.NextGen` const (`config/nextgen_on.go` /
     // `nextgen_off.go`). The production transport default must follow
-    // `tidb_config::kerneltype::is_next_gen()` rather than hardcoding the
+    // `tidb_config_kerneltype::is_next_gen()` rather than hardcoding the
     // classic basis.
-    let expected = if tidb_config::kerneltype::is_next_gen() {
+    let expected = if tidb_config_kerneltype::is_next_gen() {
         ReadEngineGeneration::NextGeneration
     } else {
         ReadEngineGeneration::Classic

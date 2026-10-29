@@ -103,7 +103,7 @@ impl tidb_bindinfo::cluster_binding_seam::BindingSessionPool for BindingSessions
 struct BindingRunner {
     session: Session,
 }
-fn driver_error(error: tidb_store_driver::sql_query_error::SqlQueryError) -> DriverError {
+fn driver_error(error: tidb_store_driver_error::sql_query_error::SqlQueryError) -> DriverError {
     DriverError::Mysql(
         tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
             .with_identity_opt(error.identity),

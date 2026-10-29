@@ -16,7 +16,7 @@
 
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use tidb_domain::globalconfigsync::{GlobalConfigStore, GlobalConfigSyncer};
+use tidb_domain_globalconfigsync::{GlobalConfigStore, GlobalConfigSyncer};
 use tidb_proto::pdpb::GlobalConfigItem;
 
 /// Go's `GlobalConfigSyncer` over `store.GetPDClient()`.

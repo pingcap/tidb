@@ -210,7 +210,7 @@ fn is_index_prefix_covered_prefix_matrix_and_fk_partial_conditions() {
 /// Go `pkg/meta/model/index_test.go :: TestGlobalIndexV1SupportedForNextGen`.
 #[test]
 fn global_index_v1_supported_for_next_gen() {
-    if tidb_config::kerneltype::is_next_gen() {
+    if tidb_config_kerneltype::is_next_gen() {
         assert!(tidb_model::index::get_global_index_v1_supported());
     }
 }
@@ -218,7 +218,7 @@ fn global_index_v1_supported_for_next_gen() {
 /// Go `pkg/meta/model/job_test.go :: TestJobVerInUse`.
 #[test]
 fn job_ver_in_use_matches_kernel_type() {
-    if tidb_config::kerneltype::is_classic() {
+    if tidb_config_kerneltype::is_classic() {
         assert_eq!(get_job_ver_in_use(), tidb_model::JobVersion::V1);
     } else {
         assert_eq!(get_job_ver_in_use(), tidb_model::JobVersion::V2);

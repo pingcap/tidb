@@ -1520,7 +1520,7 @@ mod tests {
     use std::io::Read;
     use std::net::{IpAddr, Ipv4Addr};
     use std::path::PathBuf;
-    use tidb_store_driver::sql_query_error::SqlQueryError;
+    use tidb_store_driver_error::sql_query_error::SqlQueryError;
     use std::sync::atomic::AtomicUsize;
 
     #[test]

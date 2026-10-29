@@ -344,7 +344,7 @@ impl Session {
         // Go `executeStmtImpl`: `sessVars.RUV2Metrics` is the statement ctx's,
         // its bypass decided (`shouldBypass`: no internal source type here),
         // and the parses counted since the last statement move into it.
-        let ruv2_metrics = Arc::new(tidb_ruv2_metrics::RuV2Metrics::new());
+        let ruv2_metrics = Arc::new(tidb_execdetails::ruv2_metrics::RuV2Metrics::new());
         ruv2_metrics.set_bypass(false);
         let pending_parses = std::mem::take(&mut self.ruv2_pending_session_parser_total);
         if pending_parses > 0 {
@@ -753,7 +753,7 @@ impl Session {
         // Go `finalizeStatementRUV2Metrics`, before the slow log and the
         // summary read the metrics: the raw TiKV RU v2 counters the
         // statement's RPCs left in its `RUDetails`.
-        tidb_ruv2_metrics::sync_ruv2_metrics_from_ru_details(
+        tidb_execdetails::ruv2_metrics::sync_ruv2_metrics_from_ru_details(
             Some(&observation.ruv2_metrics),
             Some(&observation.ru_details),
         );

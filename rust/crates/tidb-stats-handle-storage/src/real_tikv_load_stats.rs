@@ -44,7 +44,7 @@ use tidb_store_driver::cluster_table_storage::{
     SessionTransaction,
 };
 use tidb_datatype::current_time::utc_now_timestamp;
-use tidb_store_driver::pessimistic_lock_error::LockSqlError;
+use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use tidb_infoschema_issyncer::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use tidb_kv::cluster_storage::MutationBuffer;
 

@@ -41,7 +41,7 @@
 //!   sampling is v1-only, matching `currentRUTotal` in Go.
 //! - **client-go/v2 `tikvrpc` + `tikvrpc/interceptor`** → [`KvExecCounterHandle`],
 //!   shared from statement admission to the physical request dispatch owners.
-//! - **`rmclient.RUVersion`** (PD client) → [`RuVersion`], the same integer
+//! - **`rmclient.RUVersion`** (PD client) → [`tidb_pd_client::rm_client::RuVersion`], the same integer
 //!   enum with the same zero-is-unspecified normalization.
 //! - **`topsql/reporter/metrics`** → the matching process-wide Prometheus
 //!   counter handles, owned by [`tidb_topsql_reporter_metrics`].
@@ -90,7 +90,7 @@ pub use aggregator::{
 pub use kv_exec_count::{KvExecCounter, KvExecCounterHandle};
 pub use rustats::{
     default_ru_version, normalize_ru_version, ExecutionContext, RuIncrement, RuIncrementMap, RuKey,
-    RuVersion, RuVersionProvider,
+    RuVersionProvider,
 };
 pub use stmtstats::{
     create_statement_stats, new_sql_plan_digest, BinaryDigest, ExecBeginInfo, ExecFinishInfo,

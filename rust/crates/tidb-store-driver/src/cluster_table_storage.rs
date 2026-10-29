@@ -58,6 +58,7 @@
 //! [`ClusterSnapshot`]: tidb_kv::cluster_storage::ClusterSnapshot
 //! [`MutationBuffer`]: tidb_kv::cluster_storage::MutationBuffer
 
+use tidb_store_driver_error::coordinator::{coordinator_sql_error, engine_sql_error};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -76,7 +77,7 @@ use tidb_txnkv::transaction::{
 };
 use tidb_txnkv::Key;
 
-use crate::pessimistic_lock_error::{
+use tidb_store_driver_error::pessimistic_lock_error::{
     commit_outcome_to_sql_error_with_hint, duplicate_cause, duplicate_key_sql_error,
     is_retryable_statement_failure, lock_failure_to_sql_error, transaction_cause_to_sql_error,
     LockSqlError, PessimisticStatementRetry,
@@ -2343,45 +2344,11 @@ fn schema_lease_for_keys<'a>(
     })
 }
 
-/// Preserve registered snapshot failures; other failures before a commit
-/// verdict retain the existing generic transaction diagnostic.
-pub fn coordinator_sql_error(error: OptimisticCoordinatorError) -> LockSqlError {
-    match error {
-        OptimisticCoordinatorError::Storage(error) => LockSqlError {
-            code: error.mysql_code().as_u16(),
-            state: *b"HY000",
-            message: error.to_string(),
-            write_conflict: None,
-            identity: None,
-        },
-        OptimisticCoordinatorError::SnapshotBackoff { kind, detail } => {
-            transaction_cause_to_sql_error(&TransactionCause::BackoffExhausted { kind, detail })
-        }
-        // Go `ToTiDBErr`: client-go's `ErrTxnAbortedByGC` becomes TiDB's
-        // `ErrTxnAbortedByGC` (9006) and `ErrPDServerTimeout` keeps its own.
-        OptimisticCoordinatorError::Visibility(error) => {
-            match tidb_txnkv::to_tidb_driver_error(&error.into_storage_driver_error()) {
-                tidb_txnkv::ConvertedDriverError::Terror(converted) => {
-                    LockSqlError::from(tidb_error::mysql::MysqlError::from_terror(&converted))
-                }
-                other => engine_sql_error(other.to_string()),
-            }
-        }
-        other => engine_sql_error(other.to_string()),
-    }
-}
-
 fn storage_sql_error(error: StorageError) -> LockSqlError {
     match error {
         StorageError::Sql(error) => LockSqlError::from(error),
         other => engine_sql_error(other.to_string()),
     }
-}
-
-fn engine_sql_error(detail: impl fmt::Display) -> LockSqlError {
-    LockSqlError::from(tidb_error::mysql::MysqlError::unknown(format!(
-        "transaction failed: {detail}"
-    )))
 }
 
 #[cfg(test)]

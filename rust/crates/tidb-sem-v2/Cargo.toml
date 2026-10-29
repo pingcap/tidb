@@ -15,6 +15,7 @@ enableassert = ["tidb-intest/enableassert", "tidb-logutil/enableassert"]
 intest = ["tidb-intest/intest", "tidb-logutil/intest"]
 
 [dependencies]
+tidb-variable = { path = "../tidb-variable" }
 tidb-sem = { path = "../tidb-sem" }
 tidb-intest = { path = "../tidb-intest" }
 tidb-logutil = { path = "../tidb-logutil" }

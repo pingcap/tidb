@@ -106,7 +106,7 @@ impl Session {
         let server_id = match &self.server_info_syncer {
             Some(syncer) => syncer.local_server_info().static_info.id,
             None => DDL_UUID
-                .get_or_init(tidb_domain::serverinfo_syncer::new_node_id)
+                .get_or_init(tidb_domain_serverinfo::serverinfo_syncer::new_node_id)
                 .clone(),
         };
         SessionInfo {

@@ -589,10 +589,10 @@ fn mpp_context_uses_the_live_server_info_identity() {
     );
     let id = Arc::new(AtomicU64::new(42));
     let getter_id = id.clone();
-    let mut info = tidb_domain::serverinfo::ServerInfo::default();
+    let mut info = tidb_domain_serverinfo::serverinfo::ServerInfo::default();
     info.static_info.json_server_id = 7; // Getter wins over the serialized copy.
     info.static_info.server_id_getter = Some(Arc::new(move || getter_id.load(Ordering::SeqCst)));
-    session.set_server_info_syncer(Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(
+    session.set_server_info_syncer(Arc::new(tidb_domain_serverinfo::serverinfo_syncer::Syncer::new(
         info, None,
     )));
     let context = session.statement_context(false);

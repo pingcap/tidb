@@ -373,7 +373,7 @@ impl TiKVClient {
                 self.store_liveness_timeout
             )
         };
-        let nanos = crate::configtypes::parse_go_duration(&self.store_liveness_timeout)
+        let nanos = tidb_config_configtypes::parse_go_duration(&self.store_liveness_timeout)
             .map_err(|_| invalid())?;
         let nanos = u64::try_from(nanos).map_err(|_| invalid())?;
         Ok(std::time::Duration::from_nanos(nanos))

@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 use tidb_server::{serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionTracker, MysqlConnectionError, QueryResult, QuerySession, QuerySessionFactory, SessionContext};
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 struct UnusedSession;
 

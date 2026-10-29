@@ -41,7 +41,7 @@ fn configured_sem_v2_policy_reaches_statement_hint_and_privilege_gates() {
 fn configured_sem_v2_policy_child() {
     tidb_sem::disable();
     tidb_sem_v2::disable();
-    tidb_variable::sysvar::install_sem_v2_sysvar_registry();
+    tidb_sem_v2::install_variable_registry();
 
     let config = tidb_sem_v2::Config {
         version: "1.0".to_owned(),

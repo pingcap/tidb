@@ -19,7 +19,7 @@
 use std::sync::Arc;
 
 use tidb_session::domain::real_tikv_node::{configured_account_store, RunConfiguredNodeError};
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_session::domain::unistore_node::*;
 
 use crate::sql_node::ConcurrentSqlNode;

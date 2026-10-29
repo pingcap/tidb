@@ -622,7 +622,7 @@ impl GlobalSysvars {
         if self.publishes_runtime_settings
             && def.name == tidb_vardef::tidb_vars::REQUIRE_SECURE_TRANSPORT
         {
-            if tidb_config::deploymode::is_starter() {
+            if tidb_config_deploymode::is_starter() {
                 return Ok("ON".to_owned());
             }
             return Ok(if tidb_tls::REQUIRE_SECURE_TRANSPORT
@@ -1090,7 +1090,7 @@ impl GlobalSysvars {
         let on = value.eq_ignore_ascii_case("ON") || value == "1";
         match name {
             REQUIRE_SECURE_TRANSPORT => tidb_tls::REQUIRE_SECURE_TRANSPORT
-                .store(!tidb_config::deploymode::is_starter() && on, SeqCst),
+                .store(!tidb_config_deploymode::is_starter() && on, SeqCst),
             PERFORMANCE_SCHEMA_SESSION_CONNECT_ATTRS_SIZE => tidb_vardef::CONNECT_ATTRS_SIZE.store(
                 tidb_variable::varsutil::tidb_opt_int64(
                     value,
@@ -1837,7 +1837,7 @@ impl crate::sysvar_cache::SysVarCacheDeps for SysVarCacheRebuild<'_> {
     }
 
     fn is_starter(&self) -> bool {
-        tidb_config::deploymode::is_starter()
+        tidb_config_deploymode::is_starter()
     }
 
     fn max_allowed_packet(&self) -> u64 {

@@ -14,7 +14,6 @@
 
 //! Go `pkg/util`'s root package (`misc`).
 //! Every `pkg/util/*` subpackage is its own crate (`tidb-memory`,
-//! `tidb-logutil`, ...); this crate's features forward to theirs, so a
-//! dependent enabling `tidb-util/failpoints` reaches every one of them.
+//! `tidb-logutil`, ...); Go's build tags are `tidb-build-tags`' features.
 
 pub mod misc;

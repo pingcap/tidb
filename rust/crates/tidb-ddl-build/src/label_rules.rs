@@ -34,7 +34,7 @@ use std::collections::BTreeMap;
 use tidb_hack::GoToLower;
 
 use tidb_ddl_label::{self as ddl_label, CodecV1, LabelCodec, LabelRulePatch, Rule};
-use tidb_domain::label_manager::LabelRuleManager;
+use tidb_domain_infosync::label_manager::LabelRuleManager;
 use tidb_table::kv_table::KvTable;
 
 /// What Go's label-rule helpers read of a `TableInfo`: its lower-case name,

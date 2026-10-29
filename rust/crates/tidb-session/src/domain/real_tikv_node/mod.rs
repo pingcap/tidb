@@ -35,7 +35,7 @@ use tidb_txnkv::transaction::StoreClient;
 use tidb_domain_core::cluster_privileges::PrivilegeReloader;
 use crate::domain::configured_user_store::{ConfiguredUserStore, ConfiguredUserStoreError};
 use tidb_domain_core::node_config::NodeConfig;
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 mod schema_following;
 

@@ -43,7 +43,7 @@ impl PendingSysvarChange for UndeterminedSysvarChange {
         self.0.clone()
     }
 
-    fn commit(self: Box<Self>) -> Result<Vec<String>, tidb_store_driver::sql_query_error::SqlQueryError> {
+    fn commit(self: Box<Self>) -> Result<Vec<String>, tidb_store_driver_error::sql_query_error::SqlQueryError> {
         Err(undetermined_cluster_commit_error("sysvar change"))
     }
 }
@@ -65,7 +65,7 @@ impl PendingSysvarChange for BackoffSysvarChange {
         self.0.clone()
     }
 
-    fn commit(self: Box<Self>) -> Result<Vec<String>, tidb_store_driver::sql_query_error::SqlQueryError> {
+    fn commit(self: Box<Self>) -> Result<Vec<String>, tidb_store_driver_error::sql_query_error::SqlQueryError> {
         let outcome = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
             receipt: OptimisticTransactionReceipt::new(1, 2, b"key".to_vec(), 1),
             cause: TransactionCause::BackoffExhausted {
@@ -74,7 +74,7 @@ impl PendingSysvarChange for BackoffSysvarChange {
             },
         });
         Err(
-            tidb_store_driver::pessimistic_lock_error::cluster_commit_error(&outcome, "sysvar change")
+            tidb_store_driver_error::pessimistic_lock_error::cluster_commit_error(&outcome, "sysvar change")
                 .expect("an exhausted max-ts backoff cannot answer success"),
         )
     }
@@ -259,7 +259,7 @@ fn session_plan_cache_instance_flush_uses_factory_lifetime() {
 
 #[test]
 fn global_config_factory_shares_the_owner_across_scratch_sysvar_statements() {
-    use tidb_domain::globalconfigsync::GlobalConfigSyncer;
+    use tidb_domain_globalconfigsync::GlobalConfigSyncer;
     use tidb_proto::pdpb::GlobalConfigItem;
     let node = MockNode::start();
     let (syncer, notifications) = GlobalConfigSyncer::new(None);

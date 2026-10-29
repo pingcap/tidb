@@ -86,7 +86,7 @@ impl StatisticsLoadWorkers {
             0 => concurrency_by_cpu(),
             configured => usize::try_from(configured).unwrap_or(usize::MAX),
         };
-        let lease = serde_json::from_value::<tidb_config::configtypes::Duration>(
+        let lease = serde_json::from_value::<tidb_config_configtypes::Duration>(
             serde_json::Value::String(performance.stats_lease.clone()),
         )
         .ok()

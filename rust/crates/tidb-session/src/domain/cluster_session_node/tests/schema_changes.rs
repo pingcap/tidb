@@ -9,10 +9,10 @@ use super::super::*;
 use super::node_fixture::*;
 use crate::domain::configured_user_store::ConfiguredUserStore;
 use tidb_ddl::real_tikv_ddl::cluster_ddl_error;
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use std::sync::atomic::Ordering;
 use tidb_datatype::Datum;
-use tidb_store_driver::pessimistic_lock_error::commit_outcome_to_sql_error;
+use tidb_store_driver_error::pessimistic_lock_error::commit_outcome_to_sql_error;
 use tidb_ddl::real_tikv_ddl::classify_session_ddl_commit_error;
 use tidb_txnkv::retry::RegionBackoffKind;
 use tidb_txnkv::transaction::{

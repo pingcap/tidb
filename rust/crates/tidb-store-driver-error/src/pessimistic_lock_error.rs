@@ -147,7 +147,8 @@ impl PessimisticStatementRetry {
         Ok(())
     }
 
-    pub(crate) fn count(&self) -> usize {
+    /// How many retries were taken.
+    pub fn count(&self) -> usize {
         self.count
     }
 }
@@ -246,7 +247,8 @@ pub fn commit_outcome_to_sql_error_with_hint(
     }
 }
 
-pub(crate) fn duplicate_key_sql_error(hint: &DuplicateKeyHint) -> LockSqlError {
+/// Go `ErrKeyExists` rendered with the table's duplicate-entry hint.
+pub fn duplicate_key_sql_error(hint: &DuplicateKeyHint) -> LockSqlError {
     LockSqlError::from(tidb_error::mysql::MysqlError::from_terror(
         &tidb_error::catalog::kv::ERR_KEY_EXISTS
             .generate_with_stack_by_args(&[hint.value.as_str().into(), hint.key.as_str().into()]),
@@ -344,7 +346,7 @@ fn txnkv_identity(error: &tidb_txnkv::KvError) -> tidb_error::terror::TerrorIden
 
 /// Only client-go ErrKeyExist consumes the table's duplicate-entry hint.
 /// ErrAssertionFailed is an independent consistency error in either direction.
-pub(crate) fn duplicate_cause(cause: &TransactionCause) -> bool {
+pub fn duplicate_cause(cause: &TransactionCause) -> bool {
     matches!(cause, TransactionCause::AlreadyExists { .. })
 }
 

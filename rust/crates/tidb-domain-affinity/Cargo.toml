@@ -1,0 +1,17 @@
+[package]
+name = "tidb-domain-affinity"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/domain/affinity: the table affinity manager (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-error = { path = "../tidb-error" }
+serde.workspace = true
+tracing = "0.1"
+base64.workspace = true

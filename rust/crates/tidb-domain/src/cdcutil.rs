@@ -19,7 +19,7 @@ use std::fmt::Write as _;
 
 use serde::Deserialize;
 
-use crate::serverinfo_syncer::EtcdOps;
+use tidb_domain_serverinfo::serverinfo_syncer::EtcdOps;
 
 /// Prefix of TiCDC information in etcd.
 pub const CDC_PREFIX: &str = "/tidb/cdc/";

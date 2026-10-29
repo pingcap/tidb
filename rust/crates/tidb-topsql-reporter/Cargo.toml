@@ -11,6 +11,7 @@ description = "TiDB util/topsql/reporter: Go pkg/util/topsql/reporter (Rust rewr
 workspace = true
 
 [dependencies]
+tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-topsql-reporter-metrics = { path = "../tidb-topsql-reporter-metrics" }
 tidb-topsql-state = { path = "../tidb-topsql-state" }
 tidb-topsql-stmtstats = { path = "../tidb-topsql-stmtstats" }

@@ -22,7 +22,6 @@ tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-stats-handle-logutil = { path = "../tidb-stats-handle-logutil" }
 tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
 tidb-syssession = { path = "../tidb-syssession" }
-tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
 
 [dev-dependencies]

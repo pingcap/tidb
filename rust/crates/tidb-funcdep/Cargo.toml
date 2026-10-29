@@ -12,7 +12,6 @@ workspace = true
 
 [dependencies]
 tidb-intset = { path = "../tidb-intset" }
-tidb-util = { path = "../tidb-util" }
 
 [dev-dependencies]
 tidb-ast = { path = "../tidb-ast" }

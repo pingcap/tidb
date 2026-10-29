@@ -187,7 +187,7 @@ fn show_comments_from_job(job: &Job) -> String {
     }
     let is_adding_index = job.type_ == ActionType::ACTION_ADD_INDEX
         || job.type_ == ActionType::ACTION_ADD_PRIMARY_KEY;
-    if is_adding_index && tidb_config::kerneltype::is_next_gen() {
+    if is_adding_index && tidb_config_kerneltype::is_next_gen() {
         // The parameters are determined automatically in next-gen.
         return labels.join(", ");
     }
@@ -244,7 +244,7 @@ fn show_comments_from_subjob(
     use_dxf: bool,
     use_cloud: bool,
 ) -> String {
-    if tidb_config::kerneltype::is_next_gen() || reorg_type == tidb_model::ReorgType::NONE {
+    if tidb_config_kerneltype::is_next_gen() || reorg_type == tidb_model::ReorgType::NONE {
         return String::new();
     }
     let mut labels = vec![reorg_type.to_string()];

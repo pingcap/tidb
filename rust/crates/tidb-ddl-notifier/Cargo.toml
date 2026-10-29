@@ -19,4 +19,3 @@ tidb-ast = { path = "../tidb-ast" }
 tidb-model = { path = "../tidb-model" }
 tidb-owner = { path = "../tidb-owner" }
 tidb-log = { path = "../tidb-log" }
-tidb-util = { path = "../tidb-util" }

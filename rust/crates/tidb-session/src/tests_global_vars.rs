@@ -2658,7 +2658,7 @@ fn super_read_only_cannot_be_turned_off_under_restricted_read_only() {
 /// validated PD name/value. Cache/startup writes never use this path.
 #[test]
 fn global_config_explicit_sql_notifies_the_domain_owner() {
-    use tidb_domain::globalconfigsync::GlobalConfigSyncer;
+    use tidb_domain_globalconfigsync::GlobalConfigSyncer;
     use tidb_proto::pdpb::GlobalConfigItem;
     let (syncer, notifications) = GlobalConfigSyncer::new(None);
     let mut session = Session::new();
@@ -2688,7 +2688,7 @@ fn global_config_explicit_sql_notifies_the_domain_owner() {
 
 #[test]
 fn global_config_notifies_default_and_scratch_writes_but_not_cache_reloads() {
-    use tidb_domain::globalconfigsync::GlobalConfigSyncer;
+    use tidb_domain_globalconfigsync::GlobalConfigSyncer;
     use tidb_proto::pdpb::GlobalConfigItem;
     let (syncer, notifications) = GlobalConfigSyncer::new(None);
     let mut session = Session::new();

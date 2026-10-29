@@ -20,7 +20,6 @@ tidb-txninfo = { path = "../tidb-txninfo" }
 tidb-memory = { path = "../tidb-memory" }
 tidb-memoryusagealarm = { path = "../tidb-memoryusagealarm" }
 tidb-sqlkiller = { path = "../tidb-sqlkiller" }
-tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
 chrono = { workspace = true }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-parser = { path = "../tidb-parser" }

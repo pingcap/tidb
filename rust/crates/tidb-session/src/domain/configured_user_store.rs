@@ -122,7 +122,7 @@ pub enum AuthenticationFailure {
     /// on who the client claims to be. Errno 3159.
     SecureTransportRequired,
     /// Authoritative login tracking could not complete its storage transaction.
-    Storage(tidb_store_driver::sql_query_error::SqlQueryError),
+    Storage(tidb_store_driver_error::sql_query_error::SqlQueryError),
 }
 
 impl AuthenticatedIdentity {

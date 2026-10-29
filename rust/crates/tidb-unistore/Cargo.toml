@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Go pkg/store/mockstore/unistore/lockstore: the arena-backed skiplist that unistore stores locks in."
+description = "TiDB pkg/store/mockstore/unistore: the in-process TiKV and PD (Rust)."
 
 [lints]
 workspace = true
@@ -18,7 +18,6 @@ regex = { workspace = true }
 chrono.workspace = true
 chrono-tz.workspace = true
 # `tikv.go`'s value encodings are built from `pkg/util/codec`'s primitives.
-tidb-hack = { path = "../tidb-hack" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-log = { path = "../tidb-log" }
 tidb-chunk = { path = "../tidb-chunk" }
@@ -29,7 +28,6 @@ prost.workspace = true
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-txnkv = { path = "../tidb-txnkv" }
-tidb-distsql = { path = "../tidb-distsql" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-model = { path = "../tidb-model" }
 # Go's unistore implements client-go's `tikv.Client` and `pd.Client`; this

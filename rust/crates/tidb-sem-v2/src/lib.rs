@@ -510,5 +510,38 @@ pub fn disable() {
     set_sys_var(TIDB_ENABLE_ENHANCED_SECURITY, OFF);
 }
 
+
+/// Go `variable.GetSysVar` / `variable.SetSysVar`, which sem/v2 calls
+/// directly: the session variable registry as this package's
+/// [`SysVarRegistry`].
+struct VariableRegistry;
+
+impl SysVarRegistry for VariableRegistry {
+    fn get_sys_var(&self, name: &str) -> Option<SysVar> {
+        use tidb_variable::sysvar::{SCOPE_GLOBAL, SCOPE_INSTANCE, SCOPE_NONE, SCOPE_SESSION};
+        let definition = tidb_variable::sysvar::get_sys_var(name)?;
+        let scope = match definition.scope {
+            SCOPE_NONE => SysVarScope::None,
+            SCOPE_GLOBAL => SysVarScope::Global,
+            SCOPE_SESSION => SysVarScope::Session,
+            SCOPE_INSTANCE => SysVarScope::Instance,
+            _ => SysVarScope::Other,
+        };
+        Some(SysVar {
+            scope,
+            value: tidb_variable::sysvar::effective_default(definition),
+        })
+    }
+
+    fn set_sys_var(&self, name: &str, value: &str) {
+        tidb_variable::sysvar::set_sys_var(name, value);
+    }
+}
+
+/// Points this package at the session variable registry.
+pub fn install_variable_registry() {
+    set_sys_var_registry(Some(Arc::new(VariableRegistry)));
+}
+
 #[cfg(test)]
 mod tests;

@@ -2729,7 +2729,7 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnaly
         killer: &tidb_sqlkiller::SqlKiller,
         historical_stats_enabled: &dyn Fn() -> bool,
         jobs: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
-    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver::sql_query_error::SqlQueryError>
+    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
     {
         let process = self
             .processes
@@ -2765,7 +2765,7 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnaly
     fn update_stats_cache(
         &self,
         physical_ids: Vec<i64>,
-    ) -> Result<(), tidb_store_driver::sql_query_error::SqlQueryError> {
+    ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError> {
         self.inner.update_stats_cache(physical_ids)
     }
 }
@@ -2788,7 +2788,7 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for KillingSystemAnalyz
         killer: &tidb_sqlkiller::SqlKiller,
         historical_stats_enabled: &dyn Fn() -> bool,
         jobs: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
-    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver::sql_query_error::SqlQueryError>
+    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
     {
         let process_id = self
             .processes
@@ -2818,7 +2818,7 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for KillingSystemAnalyz
     fn update_stats_cache(
         &self,
         physical_ids: Vec<i64>,
-    ) -> Result<(), tidb_store_driver::sql_query_error::SqlQueryError> {
+    ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError> {
         self.inner.update_stats_cache(physical_ids)
     }
 }
@@ -5392,7 +5392,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
         .as_ref()
         .expect("server info")
         .local_server_info();
-    let local_instance = tidb_domain::serverinfo_syncer::join_host_port(
+    let local_instance = tidb_domain_serverinfo::serverinfo_syncer::join_host_port(
         &local.static_info.ip,
         local.static_info.port,
     );
@@ -13256,7 +13256,7 @@ fn cluster_bdr_role_lives_in_meta_and_refuses_denied_ddl() {
     fn run(
         session: &mut Session,
         sql: &str,
-    ) -> Result<(), tidb_store_driver::sql_query_error::SqlQueryError> {
+    ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError> {
         if session.node_conn().execute_write(sql)?.is_some() {
             return Ok(());
         }
@@ -14813,7 +14813,7 @@ fn table_affinity_and_its_groups_as_go_does() {
         .clone();
     let group = format!("_tidb_t_{table_id}");
     let held = |group: &str| {
-        tidb_domain::affinity::get_groups(&[group.to_owned()])
+        tidb_domain_affinity::get_groups(&[group.to_owned()])
             .unwrap()
             .contains_key(group)
     };
@@ -15198,7 +15198,7 @@ fn label_rule_ddl_writes_the_nodes_label_manager() {
         .execute_write("DROP DATABASE d2")
         .unwrap();
     assert_eq!(
-        tidb_domain::label_manager::label_rule_manager()
+        tidb_domain_infosync::label_manager::label_rule_manager()
             .get_label_rules(&["schema/d2/x".to_owned()])
             .unwrap()
             .len(),
@@ -17559,7 +17559,7 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for FailingStatsCacheUp
         killer: &tidb_sqlkiller::SqlKiller,
         historical_stats_enabled: &dyn Fn() -> bool,
         jobs: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
-    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver::sql_query_error::SqlQueryError>
+    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
     {
         self.inner.execute(
             statement,
@@ -17574,9 +17574,9 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for FailingStatsCacheUp
     fn update_stats_cache(
         &self,
         physical_ids: Vec<i64>,
-    ) -> Result<(), tidb_store_driver::sql_query_error::SqlQueryError> {
+    ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError> {
         self.updated.lock().unwrap().extend(physical_ids);
-        Err(tidb_store_driver::sql_query_error::SqlQueryError::unknown(
+        Err(tidb_store_driver_error::sql_query_error::SqlQueryError::unknown(
             "statistics cache update failed",
         ))
     }
@@ -21032,7 +21032,7 @@ fn run_load_data_cases(cases: &[(&str, &str, &[u8], &str, &str)], connection_id:
         }
     };
     let error_text =
-        |error: tidb_store_driver::sql_query_error::SqlQueryError| format!("ERR [{}]{}", error.code, error.message);
+        |error: tidb_store_driver_error::sql_query_error::SqlQueryError| format!("ERR [{}]{}", error.code, error.message);
     rows(&mut session, "CREATE DATABASE IF NOT EXISTS test");
     rows(&mut session, "USE test");
     let mut failures = Vec::new();
@@ -21343,7 +21343,7 @@ fn regions_split_and_show_like_go() {
         .chain(
             tidb_metadef::BOOTSTRAP_TABLES
                 .iter()
-                .filter(|_| tidb_config::kerneltype::is_next_gen()),
+                .filter(|_| tidb_config_kerneltype::is_next_gen()),
         )
         .map(|table| table.id)
         .min()

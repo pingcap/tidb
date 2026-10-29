@@ -465,7 +465,7 @@ impl GcWorker {
         // first completion flips hasFinishedFirstGCJob, so later ticks still
         // honor the normal cooldown. Tests keep the historical behavior
         // unless one opts into the production-only path.
-        if tidb_config::deploymode::is_starter() && !self.in_test {
+        if tidb_config_deploymode::is_starter() && !self.in_test {
             return self.last_finish.elapsed() < GC_WAIT_TIME && self.has_finished_first_gc_job;
         }
         self.last_finish.elapsed() < GC_WAIT_TIME
@@ -1809,7 +1809,7 @@ impl GcJobContext {
 
     /// Go `saveDuration`.
     pub(crate) fn save_duration(&self, key: &str, nanos: i64) -> GcResult<()> {
-        self.save_value_to_sys_table(key, &tidb_config::configtypes::format_go_duration(nanos))
+        self.save_value_to_sys_table(key, &tidb_config_configtypes::format_go_duration(nanos))
     }
 
     /// Go `loadDuration`.
@@ -1818,7 +1818,7 @@ impl GcJobContext {
         if value.is_empty() {
             return Ok(None);
         }
-        tidb_config::configtypes::parse_go_duration(&value)
+        tidb_config_configtypes::parse_go_duration(&value)
             .map(Some)
             .map_err(GcError::new)
     }

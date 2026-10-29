@@ -621,7 +621,7 @@ fn system_database_creation_and_iteration_cover_classic_and_nextgen_rules() {
 
     let fresh = Mutator::new(MemoryTransaction::default());
     let id = fresh.create_mysql_database_if_not_exists().unwrap();
-    if tidb_config::kerneltype::is_next_gen() {
+    if tidb_config_kerneltype::is_next_gen() {
         assert_eq!(id, tidb_metadef::system::SYSTEM_DATABASE_ID);
         assert_eq!(fresh.global_id().unwrap(), 0);
     } else {

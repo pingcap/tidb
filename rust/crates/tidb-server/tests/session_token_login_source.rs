@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use tidb_protocol::{PacketReader, PacketWriter, DEFAULT_MAX_ALLOWED_PACKET};
 use tidb_server::{serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit, ConnectionTracker, QueryResult, QuerySession, QuerySessionFactory, SessionContext};
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_privilege::{PasswordExpireSetting, PrivilegeRegistry};
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;

@@ -20,7 +20,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::aggregator::global_aggregator;
-use super::rustats::{normalize_ru_version, ExecutionContext, RuIncrementMap, RuKey, RuVersion};
+use super::rustats::{normalize_ru_version, ExecutionContext, RuIncrementMap, RuKey};
+use tidb_pd_client::rm_client::RuVersion;
 use tikv_client::RuDetails;
 
 /// Go `BinaryDigest`, converted from `parser.Digest.Bytes()` so that it can be

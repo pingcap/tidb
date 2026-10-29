@@ -20,7 +20,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::marshal::AtomicBool;
-use crate::configtypes::ByteSize;
+use tidb_config_configtypes::ByteSize;
 
 /// RU v2 weight calculation config (Go `RUV2Config`).
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
@@ -116,7 +116,7 @@ impl PessimisticTxn {
             max_retry_count: 256,
             deadlock_history_capacity: 10,
             deadlock_history_collect_retryable: false,
-            pessimistic_auto_commit: AtomicBool::new(crate::kerneltype::is_next_gen()),
+            pessimistic_auto_commit: AtomicBool::new(tidb_config_kerneltype::is_next_gen()),
             constraint_check_in_place_pessimistic: true,
         }
     }
@@ -429,7 +429,7 @@ mod tests {
         // Classic kernel: auto-commit defaults off.
         assert_eq!(
             pt.pessimistic_auto_commit.load(),
-            crate::kerneltype::is_next_gen()
+            tidb_config_kerneltype::is_next_gen()
         );
     }
 

@@ -15,6 +15,7 @@ enableassert = ["tidb-intest/enableassert", "tidb-logutil/enableassert", "tidb-t
 intest = ["tidb-intest/intest", "tidb-logutil/intest", "tidb-tracing/intest"]
 
 [dependencies]
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-fastrand = { path = "../tidb-fastrand" }
 tidb-intest = { path = "../tidb-intest" }
 tidb-logutil = { path = "../tidb-logutil" }
@@ -22,7 +23,6 @@ tidb-tracing = { path = "../tidb-tracing" }
 base64.workspace = true
 crossbeam-channel = "0.5"
 tidb-log = { path = "../tidb-log" }
-tidb-config = { path = "../tidb-config" }
 tikv-client.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }

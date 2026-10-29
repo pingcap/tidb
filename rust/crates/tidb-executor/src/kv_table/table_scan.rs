@@ -987,7 +987,7 @@ impl KvTableReader for KvTable {
         }];
         let handle_ranges = if handle_ranges.is_some() {
             handle_ranges
-        } else if crate::handle_range::common_handle_primary(self).is_some() {
+        } else if tidb_table::kv_table::common_handle_primary(self).is_some() {
             Some(full_common_handle.as_slice())
         } else if self.unsigned_pk_handle() {
             Some(full_unsigned_handle.as_slice())
@@ -1026,7 +1026,7 @@ impl KvTableReader for KvTable {
         }];
         let handle_ranges = if handle_ranges.is_some() {
             handle_ranges
-        } else if crate::handle_range::common_handle_primary(self).is_some() {
+        } else if tidb_table::kv_table::common_handle_primary(self).is_some() {
             Some(full_common_handle.as_slice())
         } else if self.unsigned_pk_handle() {
             Some(full_unsigned_handle.as_slice())
@@ -1160,7 +1160,7 @@ impl KvTableReader for KvTable {
         precomputed_ranges: Option<&[(Key, Key)]>,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
         let common_handle = !self.common_handle_offsets().is_empty();
-        let common_primary = crate::handle_range::clustered_primary_metadata(self);
+        let common_primary = tidb_table::kv_table::clustered_primary_metadata(self);
         if common_handle && common_primary.is_none() {
             return Ok(None);
         }
@@ -2064,9 +2064,9 @@ impl KvTableReader for KvTable {
         // exactly the tables TiKV then cannot decode: the PK columns live in
         // the record KEY, and with no primary_column_ids TiKV leaves their
         // slots unfilled and rejects the NOT NULL row as corrupted. The
-        // synthesized metadata (see handle_range::clustered_primary_metadata)
+        // synthesized metadata (see tidb_table::kv_table::clustered_primary_metadata)
         // is the same reconstruction the row-cursor builder above sends.
-        let common_primary = crate::handle_range::clustered_primary_metadata(self);
+        let common_primary = tidb_table::kv_table::clustered_primary_metadata(self);
         let primary_column_ids: Vec<i64> = common_primary
             .as_ref()
             .into_iter()
@@ -2580,7 +2580,7 @@ impl KvTableReader for KvTable {
         if self.pk_handle_offset().is_none() && self.common_handle_offsets().is_empty() {
             table_offsets.push(None);
         }
-        let common_primary = crate::handle_range::clustered_primary_metadata(self);
+        let common_primary = tidb_table::kv_table::clustered_primary_metadata(self);
         let column_covered = |position: usize, offset: &Option<usize>, ignore_len: bool| {
             let Some(offset) = offset else {
                 return true;

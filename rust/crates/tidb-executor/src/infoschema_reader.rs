@@ -1998,7 +1998,7 @@ pub fn attributes_rows(
 ) -> Result<Vec<Vec<Datum>>, crate::DriverError> {
     use tidb_ddl_label as ddl_label;
     // Go `infosync.GetAllLabelRules`: the node's label-rule manager.
-    let rules = tidb_domain::label_manager::label_rule_manager()
+    let rules = tidb_domain_infosync::label_manager::label_rule_manager()
         .get_all_label_rules(&ddl_label::CodecV1)
         .map_err(|error| {
             crate::DriverError::unsupported(format!("get the label rules failed: {error}"))
@@ -2104,7 +2104,7 @@ fn check_label_rule(
         return Err("the label rule has no data".to_owned());
     }
     let mut id_offset = 0;
-    if tidb_config::kerneltype::is_next_gen() && parts[0] == KEYSPACE_PREFIX {
+    if tidb_config_kerneltype::is_next_gen() && parts[0] == KEYSPACE_PREFIX {
         if parts.len() < 5 {
             return Err(format!("invalid keyspace label rule ID: {}", rule.id));
         }
@@ -2179,7 +2179,7 @@ fn table_or_partition_not_exist(
 /// reading of the store: a node over a store the other kernel bootstrapped
 /// still says its own kernel's id here.
 pub fn sys_tables() -> [(&'static str, i64); 1] {
-    let id = if tidb_config::kerneltype::is_next_gen() {
+    let id = if tidb_config_kerneltype::is_next_gen() {
         3
     } else {
         112
@@ -3341,7 +3341,7 @@ fn resource_group_row(group: &tidb_model::ResourceGroupInfo) -> Vec<Datum> {
             Datum::Null,
         ];
     };
-    let duration = |ms: i64| tidb_config::configtypes::format_go_duration(ms * 1_000_000);
+    let duration = |ms: i64| tidb_config_configtypes::format_go_duration(ms * 1_000_000);
     let mut query_limit = String::new();
     if let Some(runaway) = &settings.runaway {
         let runaway = runaway.read();

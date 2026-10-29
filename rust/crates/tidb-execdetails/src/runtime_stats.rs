@@ -46,7 +46,7 @@
 //! module and drive these production types.
 //!
 //! The detached execution-context wrapper is retired; Go `RURuntimeStats`
-//! lives in `tidb_ruv2_metrics` and is registered here as a
+//! lives in `crate::ruv2_metrics` and is registered here as a
 //! [`RuntimeStats`]. Percentile aggregation uses
 //! the algorithm and defaults of the pinned `github.com/influxdata/tdigest`
 //! dependency. Shared runtime-statistics

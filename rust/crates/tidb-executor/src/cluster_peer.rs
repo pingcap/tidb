@@ -17,7 +17,7 @@
 use prost::Message;
 use std::{sync::Arc, time::Duration};
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
-use tidb_domain::serverinfo::ServerInfo;
+use tidb_domain_serverinfo::serverinfo::ServerInfo;
 use crate::{DriverError, MysqlError, StmtContext};
 use tidb_distsql::remote_scan::PushdownScanColumn;
 use tidb_proto::{coprocessor, tipb};
@@ -106,7 +106,7 @@ pub fn peer_addresses(servers: &[ServerInfo], server_id: Option<u64>) -> Vec<Str
                 })
         })
         .map(|server| {
-            tidb_domain::serverinfo_syncer::join_host_port(
+            tidb_domain_serverinfo::serverinfo_syncer::join_host_port(
                 &server.static_info.ip,
                 server.static_info.status_port,
             )

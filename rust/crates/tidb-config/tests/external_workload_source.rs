@@ -15,7 +15,7 @@
 //! Source tests for Go `pkg/config/config_test.go::TestExternalWorkloadValid`.
 
 use tidb_config::config_tree::new_config;
-use tidb_config::deploymode::Mode;
+use tidb_config_deploymode::Mode;
 use tidb_config::external_workload::ROLE_GCV2_WORKER;
 
 #[test]
@@ -36,7 +36,7 @@ fn external_workload_valid_matches_source() {
         .to_string()
         .contains("external-workload can only be configured when deploy-mode is starter"));
 
-    if !tidb_config::kerneltype::is_next_gen() {
+    if !tidb_config_kerneltype::is_next_gen() {
         return;
     }
 

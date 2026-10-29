@@ -24,7 +24,7 @@ use tidb_domain_core::node_config::NodeConfig;
 use tidb_session::domain::real_tikv_node::{run_with_process_shutdown, RunConfiguredNodeError};
 
 use crate::sql_node::ConcurrentSqlNode;
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 /// Starts the convergence node: wide SQL over cluster storage and cluster
 /// accounts, served on the MySQL port.

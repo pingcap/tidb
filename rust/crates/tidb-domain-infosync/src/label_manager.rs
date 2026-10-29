@@ -17,7 +17,7 @@
 //! without PD gets), and the package-level `PutLabelRule`, `UpdateLabelRules`,
 //! `GetAllLabelRules` and `GetLabelRules` over the node's manager, which
 //! `InfoSyncer.initLabelRuleManager` installs. `PDLabelManager` lives with the
-//! node's PD HTTP client (`tidb_domain::label_delivery`).
+//! node's PD HTTP client (`crate::label_delivery`).
 //!
 //! The in-process catalog owns a mock of its own, shared by every snapshot of
 //! it, as Go's `InfoSyncer` owns one per domain; a production node's catalog
@@ -282,7 +282,7 @@ mod tests {
             rule("keyspace/43/schema/test/t3"),
         ];
         assert_eq!(filter_rules_by_keyspace(rules.clone(), &CodecV1), rules);
-        if !tidb_config::kerneltype::is_next_gen() {
+        if !tidb_config_kerneltype::is_next_gen() {
             assert_eq!(
                 filter_rules_by_keyspace(rules.clone(), &KeyspaceCodec),
                 rules

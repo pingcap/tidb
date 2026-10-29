@@ -841,7 +841,7 @@ pub fn snapshot_read_error(error: tidb_txnkv::transaction::OptimisticCoordinator
         OptimisticCoordinatorError::SnapshotBackoff { .. }
         | OptimisticCoordinatorError::Storage(_)
         | OptimisticCoordinatorError::Visibility(_) => {
-            tidb_store_driver::cluster_table_storage::coordinator_sql_error(error).message
+            tidb_store_driver_error::coordinator::coordinator_sql_error(error).message
         }
         other => format!("catalog snapshot read failed: {other}"),
     }

@@ -11,7 +11,9 @@ description = "TiDB util/execdetails: Go pkg/util/execdetails (Rust rewrite)."
 workspace = true
 
 [dependencies]
-tidb-ruv2-metrics = { path = "../tidb-ruv2-metrics" }
+prometheus = { version = "0.14", default-features = false }
+tidb-config = { path = "../tidb-config" }
+tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 prost.workspace = true
 tidb-log = { path = "../tidb-log" }

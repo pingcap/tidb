@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use tidb_config::config_tree::Config as SourceConfig;
-use tidb_config::kerneltype;
+use tidb_config_kerneltype as kerneltype;
 use tidb_domain_core::node_config::{invalid, NodeConfig, NodeConfigError, NodeOptions};
 
 /// Parses the source-shaped command line, including the executable name.
@@ -338,7 +338,7 @@ fn validate_version_config(config: &SourceConfig) -> Result<(), NodeConfigError>
 
 fn install_global_config(config: SourceConfig) {
     if kerneltype::is_next_gen() {
-        tidb_config::deploymode::set(config.deploy_mode)
+        tidb_config_deploymode::set(config.deploy_mode)
             .expect("validated next-generation deploy mode");
     }
     let configured_edition = config.tidb_edition.clone();

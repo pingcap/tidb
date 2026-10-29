@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use self::node_config::NodeConfig;
 use self::real_tikv_node::RunConfiguredNodeError;
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 pub mod peer_address;
 pub mod session_api;
@@ -98,7 +98,7 @@ pub fn open_spill_storage(
         config.deadlock_history_capacity,
         config.deadlock_history_collect_retryable,
     );
-    tidb_variable::sysvar::install_sem_v2_sysvar_registry();
+    tidb_sem_v2::install_variable_registry();
     if config.sem_enabled && !config.sem_config.is_empty() {
         tidb_sem::disable();
         tidb_sem_v2::enable(&config.sem_config)

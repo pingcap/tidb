@@ -21,7 +21,7 @@
 
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use super::{map_error, ClusterServerSession, MaterializedResultSetSource, QueryResult};
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_datatype::Datum;
 use tidb_executor::DriverError;
 use crate::{NonTransactionalInput, NonTransactionalStep, StmtOutput};

@@ -45,7 +45,8 @@ use super::ru_datamodel::{
     RuCollecting, TopRuRecord, MAX_PRE_TOP_N_SQLS_PER_USER, MAX_PRE_TOP_N_USERS,
     MAX_TOP_SQLS_PER_USER, MAX_TOP_USERS,
 };
-use tidb_topsql_stmtstats::{normalize_ru_version, RuIncrementMap, RuVersion};
+use tidb_topsql_stmtstats::{normalize_ru_version, RuIncrementMap};
+use tidb_pd_client::rm_client::RuVersion;
 
 /// Go `ruBaseBucketSeconds`.
 pub const RU_BASE_BUCKET_SECONDS: u64 = 15;

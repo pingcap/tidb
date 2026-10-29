@@ -169,7 +169,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                 .cmp(&left.db_lower)
                 .then(right.table_id.cmp(&left.table_id))
         });
-        let states = tidb_domain::affinity::get_all_group_states().map_err(|error| {
+        let states = tidb_domain_affinity::get_all_group_states().map_err(|error| {
             DriverError::Mysql(crate::MysqlError::unknown(error.to_string()))
         })?;
         let rows = infos

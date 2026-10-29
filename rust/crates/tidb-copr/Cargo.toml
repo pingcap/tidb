@@ -28,7 +28,6 @@ tidb-placement = { path = "../tidb-placement" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-store-driver = { path = "../tidb-store-driver" }
 tidb-txnkv = { path = "../tidb-txnkv" }
-tidb-util = { path = "../tidb-util" }
 tikv-client.workspace = true
 tidb-murmur3 = { path = "../tidb-murmur3" }
 prost.workspace = true

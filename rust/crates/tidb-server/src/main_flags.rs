@@ -360,7 +360,7 @@ pub fn override_config(cfg: &mut Config, flags: &MainFlags) -> Result<(), String
     // Bootstrap and security
     // Go's SQL/cluster TLS flags apply only to Starter deployments. Classic
     // deployments obtain these fields from TOML (or native CLI aliases).
-    if cfg.deploy_mode == tidb_config::deploymode::Mode::Starter {
+    if cfg.deploy_mode == tidb_config_deploymode::Mode::Starter {
         if let Some(ca) = &flags.cluster_ca {
             cfg.security.cluster_ssl_ca.clone_from(ca);
         }
@@ -465,7 +465,7 @@ mod tests {
         override_config(&mut classic, &flags).unwrap();
         assert!(classic.security.ssl_ca.is_empty());
         let mut starter = Config::default();
-        starter.deploy_mode = tidb_config::deploymode::Mode::Starter;
+        starter.deploy_mode = tidb_config_deploymode::Mode::Starter;
         assert_eq!(
             override_config(&mut starter, &flags).unwrap_err(),
             "sql-ca requires both sql-cert and sql-key"

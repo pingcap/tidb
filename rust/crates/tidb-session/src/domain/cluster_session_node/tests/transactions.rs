@@ -13,7 +13,7 @@ use super::super::*;
 use super::node_fixture::*;
 use std::sync::atomic::Ordering;
 use tidb_datatype::Datum;
-use tidb_store_driver::pessimistic_lock_error::{commit_outcome_to_sql_error, ERR_WRITE_CONFLICT};
+use tidb_store_driver_error::pessimistic_lock_error::{commit_outcome_to_sql_error, ERR_WRITE_CONFLICT};
 use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, OptimisticTransactionReceipt, TransactionCause,
     UndeterminedTransaction,

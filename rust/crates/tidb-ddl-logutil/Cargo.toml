@@ -13,4 +13,3 @@ workspace = true
 [dependencies]
 tidb-logutil = { path = "../tidb-logutil" }
 tidb-log = { path = "../tidb-log" }
-tidb-util = { path = "../tidb-util" }

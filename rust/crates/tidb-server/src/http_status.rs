@@ -300,8 +300,8 @@ mod tests {
             "test".into(),
         )
         .unwrap();
-        let info = tidb_domain::serverinfo::ServerInfo {
-            static_info: tidb_domain::serverinfo::StaticInfo {
+        let info = tidb_domain_serverinfo::serverinfo::ServerInfo {
+            static_info: tidb_domain_serverinfo::serverinfo::StaticInfo {
                 id: "diagnostics".to_owned(),
                 ip: "127.0.0.1".to_owned(),
                 port: 4000,
@@ -311,7 +311,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let syncer = Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(info, None));
+        let syncer = Arc::new(tidb_domain_serverinfo::serverinfo_syncer::Syncer::new(info, None));
         let mut session = tidb_session::Session::new();
         session.set_server_info_syncer(syncer);
         session.set_cluster_diagnostics_client(Arc::new(

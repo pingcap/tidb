@@ -19,7 +19,7 @@ use std::net::ToSocketAddrs;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use crate::serverinfo_syncer::{join_host_port, Syncer};
+use tidb_domain_serverinfo::serverinfo_syncer::{join_host_port, Syncer};
 use serde::Deserialize;
 
 /// Go infoschema.ServerInfo, before SQL datum conversion.

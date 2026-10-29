@@ -1,0 +1,48 @@
+[package]
+name = "tidb-build-tags"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go's build tags (failpoint, intest, enableassert, race, jemalloc) as features reaching every package crate that reads them."
+
+[lints]
+workspace = true
+
+[features]
+default = []
+enableassert = ["tidb-cpu/enableassert", "tidb-disk/enableassert", "tidb-intest/enableassert", "tidb-logutil/enableassert", "tidb-mathutil/enableassert", "tidb-memory/enableassert", "tidb-memoryusagealarm/enableassert", "tidb-plancodec/enableassert", "tidb-printer/enableassert", "tidb-redact/enableassert", "tidb-sem/enableassert", "tidb-sem-compat/enableassert", "tidb-sem-v2/enableassert", "tidb-servermemorylimit/enableassert", "tidb-set/enableassert", "tidb-spill-storage/enableassert", "tidb-sqlkiller/enableassert", "tidb-systimemon/enableassert", "tidb-traceevent/enableassert", "tidb-tracing/enableassert"]
+failpoints = ["tidb-breakpoint/failpoints", "tidb-cgroup/failpoints", "tidb-cpu/failpoints", "tidb-disk/failpoints", "tidb-memory/failpoints", "tidb-memoryusagealarm/failpoints", "tidb-plancodec/failpoints", "tidb-servermemorylimit/failpoints", "tidb-set/failpoints", "tidb-sli/failpoints", "tidb-spill-storage/failpoints", "tidb-sqlkiller/failpoints"]
+intest = ["tidb-cpu/intest", "tidb-disk/intest", "tidb-intest/intest", "tidb-logutil/intest", "tidb-mathutil/intest", "tidb-memory/intest", "tidb-memoryusagealarm/intest", "tidb-plancodec/intest", "tidb-printer/intest", "tidb-redact/intest", "tidb-sem/intest", "tidb-sem-compat/intest", "tidb-sem-v2/intest", "tidb-servermemorylimit/intest", "tidb-set/intest", "tidb-spill-storage/intest", "tidb-sqlkiller/intest", "tidb-systimemon/intest", "tidb-traceevent/intest", "tidb-tracing/intest"]
+jemalloc = ["tidb-disk/jemalloc", "tidb-memory/jemalloc", "tidb-memoryusagealarm/jemalloc", "tidb-plancodec/jemalloc", "tidb-servermemorylimit/jemalloc", "tidb-set/jemalloc", "tidb-spill-storage/jemalloc"]
+race = ["tidb-israce/race", "tidb-printer/race"]
+testexport = ["tidb-encrypt/testexport", "tidb-memoryusagealarm/testexport", "tidb-selection/testexport", "tidb-servermemorylimit/testexport"]
+
+[dependencies]
+tidb-breakpoint = { path = "../tidb-breakpoint" }
+tidb-cgroup = { path = "../tidb-cgroup" }
+tidb-cpu = { path = "../tidb-cpu" }
+tidb-disk = { path = "../tidb-disk" }
+tidb-encrypt = { path = "../tidb-encrypt" }
+tidb-intest = { path = "../tidb-intest" }
+tidb-israce = { path = "../tidb-israce" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-mathutil = { path = "../tidb-mathutil" }
+tidb-memory = { path = "../tidb-memory" }
+tidb-memoryusagealarm = { path = "../tidb-memoryusagealarm" }
+tidb-plancodec = { path = "../tidb-plancodec" }
+tidb-printer = { path = "../tidb-printer" }
+tidb-redact = { path = "../tidb-redact" }
+tidb-selection = { path = "../tidb-selection" }
+tidb-sem = { path = "../tidb-sem" }
+tidb-sem-compat = { path = "../tidb-sem-compat" }
+tidb-sem-v2 = { path = "../tidb-sem-v2" }
+tidb-servermemorylimit = { path = "../tidb-servermemorylimit" }
+tidb-set = { path = "../tidb-set" }
+tidb-sli = { path = "../tidb-sli" }
+tidb-spill-storage = { path = "../tidb-spill-storage" }
+tidb-sqlkiller = { path = "../tidb-sqlkiller" }
+tidb-systimemon = { path = "../tidb-systimemon" }
+tidb-traceevent = { path = "../tidb-traceevent" }
+tidb-tracing = { path = "../tidb-tracing" }

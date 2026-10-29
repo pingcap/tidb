@@ -44,7 +44,7 @@ use tidb_protocol::{
     PacketReader, PacketWriter, COM_INIT_DB, COM_QUERY, COM_QUIT,
     DEFAULT_MAX_ALLOWED_PACKET, };
 use tidb_server::{serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionTracker, QueryResult, QuerySession, QuerySessionFactory, ResultSetSource, SessionContext};
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 const CLIENT_CONNECT_WITH_DB: u32 = 1 << 3;
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;

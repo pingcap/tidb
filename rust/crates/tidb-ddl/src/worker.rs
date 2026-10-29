@@ -36,7 +36,7 @@ use crate::cluster_ddl::{
 use crate::ddl_job_scheduler::{must_reload_schemas, SchemaLoader};
 use crate::ddl_job_table::DdlJobTable;
 use crate::ddl_systable::MinJobIdRefresher;
-use tidb_store_driver::pessimistic_lock_error::LockSqlError;
+use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use tidb_infoschema_issyncer::real_tikv_catalog::reload_catalog_from_cluster;
 use crate::real_tikv_ddl::{
     answer_ddl_without_job, load_active_persisted_ddl_jobs_cached, load_history_persisted_ddl_job,
@@ -52,7 +52,7 @@ use tidb_table::kv_table::RowDecodeContext;
 use tidb_pd_client::EtcdClient;
 
 use crate::real_tikv_ddl::cluster_ddl_error;
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_table::table_from_meta::{cluster_table, AutoIdSource};
 
 /// This node's one route to the cluster's stored schema.
@@ -141,7 +141,7 @@ fn job_version_settled() -> bool {
 /// the cluster is at least 8.4.0, global index V1 once every one is at least
 /// 8.5.6, read from the servers' registered versions.
 fn detect_and_update_job_version_once(
-    server_info: &tidb_domain::serverinfo_syncer::Syncer,
+    server_info: &tidb_domain_serverinfo::serverinfo_syncer::Syncer,
 ) -> Result<(), String> {
     let infos = server_info.all_server_info()?;
     let mut all_support_v2 = true;
@@ -189,7 +189,7 @@ fn detect_and_update_job_version_once(
 /// a peer is older, re-detect every `detectJobVerInterval` until both hold.
 fn detect_and_update_job_version(
     has_etcd: bool,
-    server_info: &Arc<tidb_domain::serverinfo_syncer::Syncer>,
+    server_info: &Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>,
 ) -> Option<(Sender<()>, JoinHandle<()>)> {
     if !has_etcd {
         tidb_model::set_job_ver_in_use(tidb_model::JobVersion::V2);
@@ -652,7 +652,7 @@ where
         catalog: Arc<SharedClusterCatalog>,
         timeout: Duration,
         notifier: Option<Arc<EtcdClient>>,
-        server_info: Arc<tidb_domain::serverinfo_syncer::Syncer>,
+        server_info: Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>,
         schema_version_syncer: Option<Arc<dyn tidb_schemaver::Syncer>>,
         schema_validator: Arc<SchemaValidator>,
         campaign_owner: bool,
@@ -682,7 +682,7 @@ where
         catalog: Arc<SharedClusterCatalog>,
         timeout: Duration,
         notifier: Option<Arc<EtcdClient>>,
-        server_info: Arc<tidb_domain::serverinfo_syncer::Syncer>,
+        server_info: Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>,
         schema_version_syncer: Option<Arc<dyn tidb_schemaver::Syncer>>,
         schema_validator: Arc<SchemaValidator>,
         campaign_owner: bool,
@@ -693,7 +693,7 @@ where
         let owner_id = server_info.local_server_info().static_info.id;
         // Go `ddl.Start`: on the classic kernel, settle the job version and
         // the global index V1 key format before any job is submitted.
-        let job_version_detector = if tidb_config::kerneltype::is_classic() {
+        let job_version_detector = if tidb_config_kerneltype::is_classic() {
             detect_and_update_job_version(notifier.is_some(), &server_info)
         } else {
             None

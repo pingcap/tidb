@@ -1228,7 +1228,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .session_vars()
                     .get_system("tidb_load_based_replica_read_threshold")
                     .ok()
-                    .and_then(|value| tidb_config::configtypes::parse_go_duration(&value).ok())
+                    .and_then(|value| tidb_config_configtypes::parse_go_duration(&value).ok())
                     .unwrap_or(1_000_000_000),
                 read_timeout_ms: self
                     .session_vars()

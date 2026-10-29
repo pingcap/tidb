@@ -62,7 +62,7 @@ pub struct StatementObservation {
     pub exec_details: Arc<tikv_client::util::ExecDetails>,
     /// Go `SessionVars.RUV2Metrics`: the statement's TiDB-side RU v2
     /// counters (`RUV2MetricsFromContext`), created with its ctx.
-    pub ruv2_metrics: Arc<tidb_ruv2_metrics::RuV2Metrics>,
+    pub ruv2_metrics: Arc<tidb_execdetails::ruv2_metrics::RuV2Metrics>,
     /// Go `recordLastQueryInfo`'s statement test: a `SHOW` other than
     /// `SHOW SESSION_STATES`, an `EXECUTE`, or a DML node.
     pub record_last_query: bool,
@@ -735,7 +735,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
             resource_group_name: self.observed_resource_group(),
             ru_detail: Some(Arc::clone(&observation.ru_details)),
             // Go `calculateStatementTotalRUV2`.
-            total_ru_v2: tidb_ruv2_metrics::total_ru(
+            total_ru_v2: tidb_execdetails::ruv2_metrics::total_ru(
                 Some(&observation.ruv2_metrics),
                 ruv2_weights,
                 observation.ru_details.tikv_ru_v2(),

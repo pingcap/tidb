@@ -14,10 +14,11 @@ workspace = true
 nextgen = ["tidb-config/nextgen"]
 
 [dependencies]
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }
 tidb-logutil = { path = "../tidb-logutil" }
 # `EtcdOps` is this tier's etcd seam; `ServerInfo`/`join_host_port` stand in
 # for Go's `infosync`/`disttaskutil` imports of the MDL wait path.
-tidb-domain = { path = "../tidb-domain" }
 tidb-config = { path = "../tidb-config" }
 # Go `variable.EnableMDL`.
 tidb-vardef = { path = "../tidb-vardef" }
@@ -25,4 +26,3 @@ tidb-vardef = { path = "../tidb-vardef" }
 tidb-ddl-logutil = { path = "../tidb-ddl-logutil" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-log = { path = "../tidb-log" }
-tidb-util = { path = "../tidb-util" }

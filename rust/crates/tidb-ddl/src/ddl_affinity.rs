@@ -14,9 +14,9 @@
 
 //! Go `pkg/ddl/affinity.go`: the PD affinity groups a table's `AFFINITY`
 //! option stands for, which the DDL job workers create and delete through
-//! [`tidb_domain::affinity`].
+//! [`tidb_domain_affinity`].
 
-use tidb_domain::affinity::{AffinityGroupKeyRange, AffinityGroups};
+use tidb_domain_affinity::{AffinityGroupKeyRange, AffinityGroups};
 use tidb_model::{PartitionDefinition, TableInfo};
 
 /// Go `GetTableAffinityGroupID`: `_tidb_t_{tableID}`.
@@ -156,7 +156,7 @@ impl AffinityGroupUpdate {
         if self.create.is_empty() {
             return Ok(());
         }
-        tidb_domain::affinity::create_groups_if_not_exists(&self.create).map_err(|error| match self
+        tidb_domain_affinity::create_groups_if_not_exists(&self.create).map_err(|error| match self
             .create_error_context
         {
             Some(context) => format!("{context}: {error}"),
@@ -170,7 +170,7 @@ impl AffinityGroupUpdate {
         if self.delete.is_empty() {
             return;
         }
-        if let Err(error) = tidb_domain::affinity::delete_groups_with_retry(&self.delete) {
+        if let Err(error) = tidb_domain_affinity::delete_groups_with_retry(&self.delete) {
             tidb_ddl_logutil::ddl_logger().error(
                 "failed to delete affinity groups from PD",
                 &[tidb_log::Field::new(

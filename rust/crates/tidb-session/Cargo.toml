@@ -10,6 +10,13 @@ description = "Session lifecycle and state authority for the TiDB Rust rewrite."
 autotests = false
 
 [dependencies]
+tidb-config-configtypes = { path = "../tidb-config-configtypes" }
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-domain-affinity = { path = "../tidb-domain-affinity" }
+tidb-domain-globalconfigsync = { path = "../tidb-domain-globalconfigsync" }
+tidb-domain-infosync = { path = "../tidb-domain-infosync" }
+tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }
+tidb-store-driver-error = { path = "../tidb-store-driver-error" }
 tidb-domainutil = { path = "../tidb-domainutil" }
 tidb-replayer = { path = "../tidb-replayer" }
 tidb-lock = { path = "../tidb-lock" }
@@ -29,7 +36,6 @@ tidb-memoryusagealarm = { path = "../tidb-memoryusagealarm" }
 tidb-plancodec = { path = "../tidb-plancodec" }
 tidb-ppcpuusage = { path = "../tidb-ppcpuusage" }
 tidb-redact = { path = "../tidb-redact" }
-tidb-ruv2-metrics = { path = "../tidb-ruv2-metrics" }
 tidb-sem = { path = "../tidb-sem" }
 tidb-sem-compat = { path = "../tidb-sem-compat" }
 tidb-sem-v2 = { path = "../tidb-sem-v2" }
@@ -69,8 +75,6 @@ tidb-keyspace = { path = "../tidb-keyspace" }
 tidb-bindinfo = { path = "../tidb-bindinfo" }
 tidb-stats-handle = { path = "../tidb-stats-handle" }
 tidb-privilege = { path = "../tidb-privilege" }
-tidb-ddl-label = { path = "../tidb-ddl-label" }
-tidb-ristretto = { path = "../tidb-ristretto" }
 prometheus = { version = "0.14", default-features = false }
 tidb-config = { path = "../tidb-config" }
 # `information_schema.TIDB_SERVERS_INFO` reads the server-info syncer, the
@@ -94,14 +98,12 @@ tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-mysql = { path = "../tidb-mysql" }
-tidb-naming = { path = "../tidb-naming" }
 tidb-lexer = { path = "../tidb-lexer" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-planner = { path = "../tidb-planner" }
 # The diagnostics service contract and `sysutil.ParseLogLevel`, which Go's
 # cluster server-info and log retrievers use.
 tidb-proto = { path = "../tidb-proto" }
-tidb-sysutil = { path = "../tidb-sysutil" }
 # Go `asyncDelayShutdown` raises SIGTERM to this process for `SHUTDOWN`.
 signal-hook = { workspace = true }
 tidb-stats = { path = "../tidb-stats" }
@@ -139,26 +141,17 @@ sha1.workspace = true
 sha2.workspace = true
 subtle.workspace = true
 tidb-ddl = { path = "../tidb-ddl" }
-tidb-ddl-logutil = { path = "../tidb-ddl-logutil" }
 tidb-ddl-notifier = { path = "../tidb-ddl-notifier" }
-tidb-ddl-serverstate = { path = "../tidb-ddl-serverstate" }
-tidb-ddl-session = { path = "../tidb-ddl-session" }
 tidb-distsql = { path = "../tidb-distsql" }
-tidb-dxf = { path = "../tidb-dxf" }
 tidb-unistore = { path = "../tidb-unistore" }
 tidb-meta = { path = "../tidb-meta" }
-tidb-errmsg = { path = "../tidb-errmsg" }
 tidb-pd-client = { path = "../tidb-pd-client" }
-tidb-placement = { path = "../tidb-placement" }
 tidb-owner = { path = "../tidb-owner" }
 tidb-stats-handle-metrics = { path = "../tidb-stats-handle-metrics" }
 tidb-protocol = { path = "../tidb-protocol" }
-tidb-schemaver = { path = "../tidb-schemaver" }
 tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
 tidb-stats-handle-autoanalyze-exec = { path = "../tidb-stats-handle-autoanalyze-exec" }
 tidb-stats-handle-autoanalyze-priorityqueue = { path = "../tidb-stats-handle-autoanalyze-priorityqueue" }
-tidb-stats-handle-autoanalyze-refresher = { path = "../tidb-stats-handle-autoanalyze-refresher" }
-tidb-stats-handle-initstats = { path = "../tidb-stats-handle-initstats" }
 tidb-stats-handle-logutil = { path = "../tidb-stats-handle-logutil" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 async-trait.workspace = true
@@ -166,14 +159,13 @@ ctrlc.workspace = true
 tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-syssession = { path = "../tidb-syssession" }
 tidb-resolve = { path = "../tidb-resolve" }
-tidb-resourcemanager = { path = "../tidb-resourcemanager" }
 
 [dev-dependencies]
 tidb-ddl = { path = "../tidb-ddl", features = ["failpoints"] }
 tidb-expensivequery = { path = "../tidb-expensivequery" }
 tidb-executor = { path = "../tidb-executor", features = ["test-util"] }
 tidb-domain-core = { path = "../tidb-domain-core", features = ["test-util"] }
-tidb-util = { path = "../tidb-util", features = ["failpoints"] }
+tidb-build-tags = { path = "../tidb-build-tags", features = ["failpoints"] }
 fail = { version = "0.4", features = ["failpoints"] }
 # `tests_dml_lock_keys` classifies the raw keys a DML statement leaves behind
 # as record or index keys, which is `tablecodec`'s judgement to make.

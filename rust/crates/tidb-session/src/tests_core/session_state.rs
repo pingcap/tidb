@@ -171,7 +171,7 @@ fn statement_hints_use_the_canonical_parse_result() {
 #[test]
 fn replica_read_sysvar_reaches_statement_snapshot() {
     let mut session = Session::new();
-    if tidb_config::kerneltype::is_next_gen() {
+    if tidb_config_kerneltype::is_next_gen() {
         assert!(session.run("SET tidb_replica_read = 'follower'").is_err());
         return;
     }

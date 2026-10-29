@@ -67,7 +67,7 @@ use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 use tidb_sqlkiller::SqlKiller;
 
 use crate::real_tikv_analyze::cluster_analyze_error;
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 /// This node's one route to the cluster's stored statistics.
 ///
@@ -327,7 +327,7 @@ where
 fn cluster_load_stats_error(error: ClusterLoadStatsCommitError) -> SqlQueryError {
     match error {
         ClusterLoadStatsCommitError::Undetermined(_) => SqlQueryError::result_undetermined(),
-        ClusterLoadStatsCommitError::Commit(error) => tidb_store_driver::sql_query_error::lock_sql_error(&error),
+        ClusterLoadStatsCommitError::Commit(error) => tidb_store_driver_error::sql_query_error::lock_sql_error(&error),
         ClusterLoadStatsCommitError::Other(detail) => SqlQueryError::unknown(detail),
     }
 }

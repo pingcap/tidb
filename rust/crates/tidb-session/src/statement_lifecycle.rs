@@ -30,7 +30,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tidb_store_driver::cluster_table_storage::{LockKeysOutcome, StatementLockFailure};
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_executor::access_path::StatementReadShape;
 use tidb_kv::cluster_storage::{BufferCheckpoint, ClusterSnapshot, SwappableSnapshot};
 
@@ -39,7 +39,7 @@ use crate::txn_manager::{CommitHooks, TxnManager};
 use crate::Session;
 
 /// Go `kv.ErrWriteConflict`'s MySQL code.
-const ERR_WRITE_CONFLICT: u16 = tidb_store_driver::pessimistic_lock_error::ERR_WRITE_CONFLICT;
+const ERR_WRITE_CONFLICT: u16 = tidb_store_driver_error::pessimistic_lock_error::ERR_WRITE_CONFLICT;
 
 /// The catalog a connection follows, as a statement lifecycle needs it: the
 /// version its tables were built from, and the rebuild a retried statement
@@ -407,7 +407,7 @@ impl StatementLifecycle<'_> {
         // it reading at the advanced `for_update_ts`. `None` is the first
         // attempt, reading at the transaction's own snapshot.
         let mut retry_read_ts: Option<u64> = None;
-        let mut retries = tidb_store_driver::pessimistic_lock_error::PessimisticStatementRetry::default();
+        let mut retries = tidb_store_driver_error::pessimistic_lock_error::PessimisticStatementRetry::default();
         // An autocommit pessimistic statement's lock conflict (see
         // [`transactions::LockRetrySlot`]).
         let lock_retry: transactions::LockRetrySlot = Arc::default();

@@ -33,7 +33,7 @@ use std::sync::{Arc, Mutex};
 use tidb_protocol::{PacketReader, PacketWriter, COM_QUIT, DEFAULT_MAX_ALLOWED_PACKET};
 use tidb_parser::auth::hash_password_with_salt_bytes;
 use tidb_server::{serve_mysql_connection, AuthSwitchRequest, ConfiguredUserStore, ConnectionCancellation, ConnectionExit, ConnectionTracker, QueryResult, QuerySession, QuerySessionFactory, SessionContext};
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_privilege::{encode_password_for_plugin, PluginCredential, PrivilegeRegistry};
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;

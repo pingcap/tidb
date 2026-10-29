@@ -24,10 +24,10 @@ serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 tidb-codec = { path = "../tidb-codec" }
 tidb-log = { path = "../tidb-log" }
-tidb-util = { path = "../tidb-util" }
 tikv-client.workspace = true
 
 [dev-dependencies]
+regex.workspace = true
 standard-fastrand = { package = "fastrand", version = "2" }
 tempfile.workspace = true
 
@@ -37,3 +37,7 @@ harness = false
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "lightning_log"
+harness = false

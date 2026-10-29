@@ -19,7 +19,6 @@ sha2.workspace = true
 tidb-hack = { path = "../tidb-hack" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-model = { path = "../tidb-model" }
-tidb-tablecodec = { path = "../tidb-tablecodec" }
 
 [dev-dependencies]
 tidb-ast = { path = "../tidb-ast" }

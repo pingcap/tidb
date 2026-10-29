@@ -97,7 +97,7 @@ impl ResourceGroupProvider for EmbeddedResourceGroupProvider {
         resource_group_name: &str,
         _opts: &[GetResourceGroupOption],
     ) -> tikv_client::Result<Option<ResourceGroup>> {
-        tidb_domain::resource_manager_client::get_resource_group(resource_group_name)
+        tidb_domain_infosync::resource_manager_client::get_resource_group(resource_group_name)
             .map(|group| Some(to_client_group(&group)))
             .map_err(mock_error)
     }
@@ -106,13 +106,13 @@ impl ResourceGroupProvider for EmbeddedResourceGroupProvider {
         &self,
         _opts: &[GetResourceGroupOption],
     ) -> tikv_client::Result<Vec<ResourceGroup>> {
-        tidb_domain::resource_manager_client::list_resource_groups()
+        tidb_domain_infosync::resource_manager_client::list_resource_groups()
             .map(|groups| groups.iter().map(to_client_group).collect())
             .map_err(mock_error)
     }
 
     async fn add_resource_group(&self, meta_group: ResourceGroup) -> tikv_client::Result<String> {
-        tidb_domain::resource_manager_client::add_resource_group(to_mock_group(&meta_group))
+        tidb_domain_infosync::resource_manager_client::add_resource_group(to_mock_group(&meta_group))
             .map(|()| "Success!".to_owned())
             .map_err(mock_error)
     }
@@ -121,7 +121,7 @@ impl ResourceGroupProvider for EmbeddedResourceGroupProvider {
         &self,
         meta_group: ResourceGroup,
     ) -> tikv_client::Result<String> {
-        tidb_domain::resource_manager_client::modify_resource_group(to_mock_group(&meta_group))
+        tidb_domain_infosync::resource_manager_client::modify_resource_group(to_mock_group(&meta_group))
             .map(|()| "Success!".to_owned())
             .map_err(mock_error)
     }
@@ -130,7 +130,7 @@ impl ResourceGroupProvider for EmbeddedResourceGroupProvider {
         &self,
         resource_group_name: &str,
     ) -> tikv_client::Result<String> {
-        tidb_domain::resource_manager_client::delete_resource_group(resource_group_name)
+        tidb_domain_infosync::resource_manager_client::delete_resource_group(resource_group_name)
             .map(|()| "Success!".to_owned())
             .map_err(mock_error)
     }

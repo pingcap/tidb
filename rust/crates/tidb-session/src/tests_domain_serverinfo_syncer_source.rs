@@ -15,7 +15,7 @@
 //! Port of `pkg/domain/serverinfo/syncer_test.go` (origin/master):
 //! `TestTopology`, `TestCleanupStaleServerAndOwnerInfo`, and
 //! `TestAssumedServerInfoSyncer`, against
-//! `tidb_domain::serverinfo` + `tidb_domain::serverinfo_syncer` — the
+//! `tidb_domain_serverinfo::serverinfo` + `tidb_domain_serverinfo::serverinfo_syncer` — the
 //! transcreations of `pkg/domain/serverinfo/info.go` and `syncer.go`.
 //!
 //! Go's tests run an EMBEDDED etcd cluster (`integration.NewClusterV3`),
@@ -35,8 +35,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use tidb_domain::serverinfo::{DynamicInfo, ServerInfo, StaticInfo, TopologyInfo};
-use tidb_domain::serverinfo_syncer::{server_info_key_path, EtcdOps, Syncer};
+use tidb_domain_serverinfo::serverinfo::{DynamicInfo, ServerInfo, StaticInfo, TopologyInfo};
+use tidb_domain_serverinfo::serverinfo_syncer::{server_info_key_path, EtcdOps, Syncer};
 
 /// The DDL-owner key path prefix, `pkg/ddl/util/util.go:58`.
 const DDL_OWNER_KEY: &str = "/tidb/ddl/fg/owner";

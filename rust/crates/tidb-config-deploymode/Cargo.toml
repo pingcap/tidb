@@ -1,0 +1,18 @@
+[package]
+name = "tidb-config-deploymode"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/config/deploymode: the deployment mode (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+serde = { workspace = true }
+tidb-hack = { path = "../tidb-hack" }
+serde_json = { workspace = true }
+toml = "0.8"

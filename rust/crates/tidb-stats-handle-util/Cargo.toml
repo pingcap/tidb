@@ -11,10 +11,11 @@ description = "TiDB statistics handle utility package."
 workspace = true
 
 [features]
-failpoints = ["dep:fail", "fail/failpoints", "tidb-util/failpoints"]
-intest = ["tidb-util/intest"]
+failpoints = ["dep:fail", "fail/failpoints", "tidb-build-tags/failpoints"]
+intest = ["tidb-build-tags/intest"]
 
 [dependencies]
+tidb-build-tags = { path = "../tidb-build-tags" }
 tidb-intest = { path = "../tidb-intest" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-goruntime = { path = "../tidb-goruntime" }
@@ -27,6 +28,5 @@ tidb-resolve = { path = "../tidb-resolve" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-sqlexec-mock = { path = "../tidb-sqlexec-mock" }
 tidb-syssession = { path = "../tidb-syssession" }
-tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
 tikv-client.workspace = true

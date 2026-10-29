@@ -23,7 +23,7 @@ use tidb_protocol::{
     COM_STMT_SEND_LONG_DATA, DEFAULT_MAX_ALLOWED_PACKET, TYPE_BLOB, TYPE_LONGLONG,
 };
 use tidb_server::{serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit, ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral, QueryResult, QuerySession, QuerySessionFactory, ResultSetSource, SessionContext, WireStatus, SERVER_STATUS_IN_TRANS};
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_executor::ddl_exec::WriteOutcome;
 use tidb_executor::stmt_ctx_build::ResultMaterializationAuthority;
 use tidb_spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};

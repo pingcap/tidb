@@ -61,7 +61,7 @@ use tidb_store_driver::cluster_table_storage::{
     SessionTransaction,
 };
 use tidb_datatype::current_time::{local_now_datetime6, utc_now_timestamp};
-use tidb_store_driver::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
+use tidb_store_driver_error::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
 use tidb_infoschema_issyncer::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use tidb_hack::GoToLower;
 use tidb_datatype::{Datum, Time};
@@ -3008,19 +3008,19 @@ pub fn plan_analyze_options_write<S: MetaSnapshot>(
 }
 
 /// The session-visible error of a cluster ANALYZE.
-pub fn cluster_analyze_error(error: ClusterAnalyzeError) -> tidb_store_driver::sql_query_error::SqlQueryError {
+pub fn cluster_analyze_error(error: ClusterAnalyzeError) -> tidb_store_driver_error::sql_query_error::SqlQueryError {
     match error {
         ClusterAnalyzeError::Analyze(error) => {
             let error = crate::DriverError::from(error).to_mysql_error();
-            tidb_store_driver::sql_query_error::SqlQueryError::from(error)
+            tidb_store_driver_error::sql_query_error::SqlQueryError::from(error)
         }
-        ClusterAnalyzeError::Undetermined(_) => tidb_store_driver::sql_query_error::SqlQueryError::result_undetermined(),
-        ClusterAnalyzeError::Commit(error) => tidb_store_driver::sql_query_error::lock_sql_error(&error),
+        ClusterAnalyzeError::Undetermined(_) => tidb_store_driver_error::sql_query_error::SqlQueryError::result_undetermined(),
+        ClusterAnalyzeError::Commit(error) => tidb_store_driver_error::sql_query_error::lock_sql_error(&error),
         ClusterAnalyzeError::Killed(error) => {
-            tidb_store_driver::sql_query_error::SqlQueryError::from(tidb_error::mysql::MysqlError::from_sql_error(error))
+            tidb_store_driver_error::sql_query_error::SqlQueryError::from(tidb_error::mysql::MysqlError::from_sql_error(error))
         }
-        ClusterAnalyzeError::Other(detail) => tidb_store_driver::sql_query_error::SqlQueryError::unknown(detail),
-        ClusterAnalyzeError::Mysql(error) => tidb_store_driver::sql_query_error::SqlQueryError::from(error),
+        ClusterAnalyzeError::Other(detail) => tidb_store_driver_error::sql_query_error::SqlQueryError::unknown(detail),
+        ClusterAnalyzeError::Mysql(error) => tidb_store_driver_error::sql_query_error::SqlQueryError::from(error),
     }
 }
 

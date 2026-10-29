@@ -37,7 +37,7 @@ use tidb_session::domain::cluster_session_node::ClusterServerSession;
 use tidb_domain_core::domain::Domain;
 use tidb_session::Session;
 use tidb_session::domain::session_api::SessionContext;
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 /// How long one internal request to PD or TiKV may take before the worker
 /// gives up on it.
@@ -358,14 +358,14 @@ impl GcRuleClient for NodeGcRules {
         &self,
         rule_ids: &[String],
     ) -> GcResult<HashMap<String, tidb_ddl_label::Rule>> {
-        tidb_domain::label_manager::label_rule_manager()
+        tidb_domain_infosync::label_manager::label_rule_manager()
             .get_label_rules(rule_ids)
             .map(|rules| rules.into_iter().collect())
             .map_err(GcError::new)
     }
 
     fn delete_label_rules(&self, rule_ids: Vec<String>) -> GcResult<()> {
-        tidb_domain::label_manager::label_rule_manager()
+        tidb_domain_infosync::label_manager::label_rule_manager()
             .update_label_rules(&tidb_ddl_label::new_rule_patch(
                 Vec::new(),
                 rule_ids,

@@ -339,7 +339,7 @@ pub struct SlowQueryLogItems {
     /// Go `RUDetails`.
     pub ru_details: Option<Arc<tikv_client::RuDetails>>,
     /// Go `RUV2Metrics`.
-    pub ruv2_metrics: Option<tidb_ruv2_metrics::RuV2Metrics>,
+    pub ruv2_metrics: Option<tidb_execdetails::ruv2_metrics::RuV2Metrics>,
     /// Go `MemMax`.
     pub mem_max: i64,
     /// Go `DiskMax`.
@@ -385,15 +385,15 @@ pub struct SlowLogSessionVars {
     /// `SlowLogFormat` does.
     pub current_db_changed: bool,
     /// Go `RUV2Weights()`.
-    pub ruv2_weights: tidb_ruv2_metrics::RuV2Weights,
+    pub ruv2_weights: tidb_execdetails::ruv2_metrics::RuV2Weights,
 }
 
 /// Go `SessionVars.RUV2Weights()`: the TiDB-side RU v2 weights of the
 /// global config (`ruv2WeightsFromConfig`).
 #[must_use]
-pub fn ruv2_weights() -> tidb_ruv2_metrics::RuV2Weights {
+pub fn ruv2_weights() -> tidb_execdetails::ruv2_metrics::RuV2Weights {
     let config = tidb_config::config_tree::config::get_global_config().ru_v2;
-    tidb_ruv2_metrics::RuV2Weights {
+    tidb_execdetails::ruv2_metrics::RuV2Weights {
         ru_scale: config.ru_scale,
         result_chunk_cells: config.result_chunk_cells,
         executor_l1: config.executor_l1,
@@ -918,7 +918,7 @@ pub fn slow_log_format(vars: &SlowLogSessionVars, items: &SlowQueryLogItems) -> 
     let (tikv_ru, tiflash_ru) = ru_details.map_or((0.0, 0.0), |details| {
         (details.tikv_ru_v2(), details.tiflash_ru())
     });
-    let (total, formatted) = tidb_ruv2_metrics::format_ruv2_summary(
+    let (total, formatted) = tidb_execdetails::ruv2_metrics::format_ruv2_summary(
         items.ruv2_metrics.as_ref(),
         vars.ruv2_weights,
         tikv_ru,

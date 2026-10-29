@@ -3437,10 +3437,10 @@ fn register_ru_runtime_stats(
         runtime
             .entry(crate::driver::physical_builder::runtime_plan_key(physical))
             .or_insert_with(|| crate::executor::RowCount::default().into())
-            .register_ru_runtime_stats(tidb_ruv2_metrics::RuRuntimeStats {
+            .register_ru_runtime_stats(tidb_execdetails::ruv2_metrics::RuRuntimeStats {
                 ru_details: Some(ru_details.cloned()),
                 metrics: None,
-                weights: tidb_ruv2_metrics::RuV2Weights::default(),
+                weights: tidb_execdetails::ruv2_metrics::RuV2Weights::default(),
                 // Go `do.GetRUVersion()`.
                 ru_version: tidb_topsql_stmtstats::bound_ru_version(),
             });

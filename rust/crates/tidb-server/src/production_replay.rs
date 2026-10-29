@@ -40,7 +40,7 @@ use crate::domain_test_support::{
     scramble, session_context, session_context_with_identity, ABC_HASH, SALT,
 };
 use tidb_session::domain::configured_user_store::ConfiguredUserStore;
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 use crate::driver::QuerySession;
 use tidb_session::domain::unistore_node::{unistore_cluster_session_stack, UnistoreClusterStack};

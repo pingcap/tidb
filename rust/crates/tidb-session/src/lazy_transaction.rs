@@ -46,7 +46,7 @@ use tidb_txnkv::transaction::{LockWaitTime, SchemaLeaseChecker};
 use tidb_txnkv::Key;
 
 use tidb_domain_core::cluster_transactions::{CommittedTxnInfo, OpenClusterTransaction};
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 /// Opens the store transaction from the options in force at the activation
 /// (Go `SetOptionsOnTxnActive`), and publishes its start timestamp.

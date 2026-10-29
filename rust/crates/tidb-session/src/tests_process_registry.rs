@@ -46,7 +46,7 @@ fn internal_process_batch_shares_entries_without_exposing_idle_pool_sessions() {
     let observer = guard.transaction_observer();
     observer.activated(123);
     session.attach_process(71, guard);
-    assert_eq!(registry.internal_session_start_ts(), vec![123]);
+    assert_eq!(registry.internal_session_start_ts(|id| tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(id)), vec![123]);
     assert!(registry.snapshot().is_empty());
     assert!(registry.transaction_snapshot().is_empty());
     let process = session.system_process().unwrap();
@@ -62,14 +62,14 @@ fn internal_process_batch_shares_entries_without_exposing_idle_pool_sessions() {
     assert_eq!(registry.show_process_list().len(), 1);
     assert!(registry.transaction_snapshot().is_empty());
     tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.tracker(901);
-    let excluded = registry.internal_session_start_ts();
+    let excluded = registry.internal_session_start_ts(|id| tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(id));
     tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.untracker(901);
     assert!(excluded.is_empty());
     registry.untrack_system_process(901);
     assert!(registry.snapshot().is_empty());
-    assert_eq!(registry.internal_session_start_ts(), vec![123]);
+    assert_eq!(registry.internal_session_start_ts(|id| tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(id)), vec![123]);
     drop(session);
-    assert!(registry.internal_session_start_ts().is_empty());
+    assert!(registry.internal_session_start_ts(|id| tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(id)).is_empty());
 }
 
 #[test]
@@ -114,13 +114,13 @@ fn internal_process_batch_rejects_conflicting_ids_and_retires_dropped_sessions()
     );
     drop(first);
     assert!(registry.snapshot().is_empty());
-    assert_eq!(registry.internal_session_start_ts(), vec![20]);
+    assert_eq!(registry.internal_session_start_ts(|id| tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(id)), vec![20]);
     registry
         .track_system_process(903, second.system_process().unwrap())
         .unwrap();
     drop(second);
     assert!(registry.snapshot().is_empty());
-    assert!(registry.internal_session_start_ts().is_empty());
+    assert!(registry.internal_session_start_ts(|id| tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(id)).is_empty());
 }
 
 #[test]

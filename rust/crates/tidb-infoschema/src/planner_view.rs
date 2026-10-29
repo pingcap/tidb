@@ -667,7 +667,7 @@ fn kv_source_table(
         .collect::<Vec<_>>();
     // Go keeps clustered PRIMARY in TableInfo.Indices even
     // though no separate index records are maintained.
-    let primary = tidb_table::handle_range::clustered_primary_metadata(table);
+    let primary = tidb_table::kv_table::clustered_primary_metadata(table);
     let missing_primary = primary.as_deref().filter(|primary| {
         !table.indexes().iter().any(|index| index.id == primary.id)
     });

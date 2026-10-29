@@ -7,11 +7,11 @@ license = "Apache-2.0"
 description = "Transcreation of the pinned pingcap/log module (unified log format)"
 
 [dependencies]
+tidb-config-configtypes = { path = "../tidb-config-configtypes" }
 chrono = { workspace = true }
 flate2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tidb-config = { path = "../tidb-config" }
 
 [[bench]]
 name = "zap_benchmark"

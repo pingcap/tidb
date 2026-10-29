@@ -21,7 +21,7 @@ use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
 use tidb_executor::stats_exec::StatsExec as _;
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_executor::ddl_exec::WriteOutcome;
 
 use super::{ClusterServerSession, ClusterTransactions, SharedClusterCatalog};

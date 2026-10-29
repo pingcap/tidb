@@ -30,7 +30,7 @@ use crate::mysql_connection::MysqlConnectionError;
 use crate::mysql_connection::ER_UNKNOWN_STMT_HANDLER;
 use crate::mysql_tls::ClientStream;
 use crate::resultset_writer::{ResultSetSink, SinkWriteError};
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_session::domain::wire_status::WireStatus;
 
 /// Writes the OK packet that answers a successful prepared write.

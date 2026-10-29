@@ -7423,7 +7423,7 @@ impl ResourceGroupUpdate {
     pub fn apply(&self) -> Result<(), String> {
         match self {
             Self::Add(group) => {
-                match tidb_domain::resource_manager_client::add_resource_group((**group).clone()) {
+                match tidb_domain_infosync::resource_manager_client::add_resource_group((**group).clone()) {
                     Ok(()) => Ok(()),
                     // Go: TiDB adds the default group when it bootstraps, so a
                     // keyspace-mode TiDB skips that one's "already exists".
@@ -7437,9 +7437,9 @@ impl ResourceGroupUpdate {
                 }
             }
             Self::Modify(group) => {
-                tidb_domain::resource_manager_client::modify_resource_group((**group).clone())
+                tidb_domain_infosync::resource_manager_client::modify_resource_group((**group).clone())
             }
-            Self::Delete(name) => tidb_domain::resource_manager_client::delete_resource_group(name),
+            Self::Delete(name) => tidb_domain_infosync::resource_manager_client::delete_resource_group(name),
         }
     }
 }
@@ -7589,22 +7589,22 @@ pub struct LabelRuleStep {
 /// the step's later reads see its earlier writes, as Go's step, which writes
 /// PD call by call, does.
 pub(crate) struct LabelRuleSteps {
-    staged: tidb_domain::label_manager::StagedLabelRules,
+    staged: tidb_domain_infosync::label_manager::StagedLabelRules,
     steps: Vec<LabelRuleStep>,
 }
 
 impl LabelRuleSteps {
     fn new() -> Self {
         Self {
-            staged: tidb_domain::label_manager::StagedLabelRules::new(
-                tidb_domain::label_manager::label_rule_manager(),
+            staged: tidb_domain_infosync::label_manager::StagedLabelRules::new(
+                tidb_domain_infosync::label_manager::label_rule_manager(),
             ),
             steps: Vec::new(),
         }
     }
 
     /// The rules as the step sees them.
-    fn manager(&self) -> &dyn tidb_domain::label_manager::LabelRuleManager {
+    fn manager(&self) -> &dyn tidb_domain_infosync::label_manager::LabelRuleManager {
         &self.staged
     }
 

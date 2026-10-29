@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The production binding of [`tidb_domain::serverinfo_syncer::EtcdOps`]
+//! The production binding of [`tidb_domain_serverinfo::serverinfo_syncer::EtcdOps`]
 //! onto the real etcd client.
 //!
 //! The syncer states its etcd needs as a trait so `tidb-domain` stays free
@@ -25,9 +25,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
-use tidb_domain::serverinfo::{KEY_OP_DEFAULT_RETRY_CNT, KEY_OP_DEFAULT_TIMEOUT};
-use tidb_domain::serverinfo_syncer::EtcdOps;
-use tidb_domain::status_endpoint_claim::{ObservedStatusEndpointClaim, StatusEndpointClaimCreate};
+use tidb_domain_serverinfo::serverinfo::{KEY_OP_DEFAULT_RETRY_CNT, KEY_OP_DEFAULT_TIMEOUT};
+use tidb_domain_serverinfo::serverinfo_syncer::EtcdOps;
+use tidb_domain_serverinfo::status_endpoint_claim::{ObservedStatusEndpointClaim, StatusEndpointClaimCreate};
 use tidb_pd_client::EtcdClient;
 use tidb_schemaver::etcd_syncer::{EtcdWatchOps, WatchStream};
 use tidb_schemaver::{SharedRecv, WatchEvent};

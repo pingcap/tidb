@@ -27,7 +27,7 @@ use std::sync::MutexGuard;
 
 use tidb_ast::{SessionStmt, Stmt};
 use tidb_datatype::Datum;
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_kv::cluster_storage::BufferCheckpoint;
 use tidb_executor::{Catalog, DriverError};
 

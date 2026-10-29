@@ -65,7 +65,7 @@ impl ReadEngineGeneration {
     /// the classic basis.
     #[must_use]
     pub fn from_kernel_type() -> Self {
-        if tidb_config::kerneltype::is_next_gen() {
+        if tidb_config_kerneltype::is_next_gen() {
             Self::NextGeneration
         } else {
             Self::Classic

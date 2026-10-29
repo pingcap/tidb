@@ -43,6 +43,7 @@
 //! Ordinary executor timing and row counts use the statement's Go-compatible
 //! `RuntimeStatsColl` when execution-info collection is enabled.
 
+pub mod handle_range;
 pub mod exec_stmt_observation;
 pub mod adapter;
 pub mod base_join_probe;
@@ -140,8 +141,7 @@ use tidb_distsql::CopResponseSink;
 pub use foreign_key::check_foreign_key_constrain;
 #[cfg(test)]
 mod tests_generated_column_ddl;
-pub(crate) use tidb_table::handle_range;
-use tidb_table::handle_range::split_ranges_across_int64_boundary;
+use crate::handle_range::split_ranges_across_int64_boundary;
 pub mod hash_agg;
 #[cfg(test)]
 mod hash_agg_spill_tests;

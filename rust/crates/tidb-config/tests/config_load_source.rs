@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use tidb_config::config_tree::{is_all_removed_config_items, new_config, AtomicBool, LoadError};
 
 fn example_config_text() -> &'static str {
-    if tidb_config::kerneltype::is_next_gen() {
+    if tidb_config_kerneltype::is_next_gen() {
         include_str!("../../../../pkg/config/config.toml.nextgen.example")
     } else {
         include_str!("../../../../pkg/config/config.toml.example")

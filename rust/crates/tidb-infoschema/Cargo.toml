@@ -33,7 +33,6 @@ tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-stats = { path = "../tidb-stats" }
-tidb-stats-handle-metrics = { path = "../tidb-stats-handle-metrics" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-util = { path = "../tidb-util" }
 

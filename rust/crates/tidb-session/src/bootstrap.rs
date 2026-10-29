@@ -25,7 +25,7 @@ mod tests {
     /// (jobs 3 .. 116) and its next user table is 117 with job 118.
     #[test]
     fn a_classic_store_has_the_bootstrap_jobs_in_its_history() {
-        if tidb_config::kerneltype::is_next_gen() {
+        if tidb_config_kerneltype::is_next_gen() {
             return;
         }
         let mut session = Session::new();

@@ -95,9 +95,9 @@ mod tests {
     }
     #[test]
     fn domain_checker_reads_live_global_setting_and_joins() {
-        let mut info = tidb_domain::serverinfo::ServerInfo::default();
+        let mut info = tidb_domain_serverinfo::serverinfo::ServerInfo::default();
         info.dynamic_info.labels.insert("zone".into(), "z1".into());
-        let syncer = Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(info, None));
+        let syncer = Arc::new(tidb_domain_serverinfo::serverinfo_syncer::Syncer::new(info, None));
         let (called, calls) = mpsc::channel();
         let topology = Arc::new(ClusterTopology::new(
             syncer,

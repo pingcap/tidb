@@ -33,7 +33,7 @@
 //!
 //! # The etcd seam
 //!
-//! [`EtcdOps`](tidb_domain::serverinfo_syncer::EtcdOps) already covers
+//! [`EtcdOps`](tidb_domain_serverinfo::serverinfo_syncer::EtcdOps) already covers
 //! lease/put/get_prefix/delete primitives;
 //! [`EtcdWatchOps`] adds only what this package needs beyond it: prefix reads
 //! WITH the header revision, the two compare-based writes Init and
@@ -54,8 +54,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tidb_ddl_logutil::ddl_logger;
-use tidb_domain::serverinfo::ServerInfo;
-use tidb_domain::serverinfo_syncer::{join_host_port, EtcdOps};
+use tidb_domain_serverinfo::serverinfo::ServerInfo;
+use tidb_domain_serverinfo::serverinfo_syncer::{join_host_port, EtcdOps};
 use tidb_log::{Field, Value};
 use tidb_logutil::bg_logger;
 
@@ -72,7 +72,7 @@ use crate::{
 pub type PrefixRead = (Vec<(String, Vec<u8>)>, i64);
 
 /// The extra etcd surface this package needs beyond
-/// [`EtcdOps`](tidb_domain::serverinfo_syncer::EtcdOps).
+/// [`EtcdOps`](tidb_domain_serverinfo::serverinfo_syncer::EtcdOps).
 pub trait EtcdWatchOps: EtcdOps {
     /// `KV.Get` with `WithPrefix()`, answering the entries plus the store
     /// revision the read saw (`resp.Header.Revision`).
@@ -937,7 +937,7 @@ impl EtcdSyncer {
             .clone()
             .expect("server info syncer is required by WaitVersionSynced");
         let mut servers = read()?;
-        if tidb_config::kerneltype::is_next_gen() && !check_assumed_server {
+        if tidb_config_kerneltype::is_next_gen() && !check_assumed_server {
             servers.retain(|server| !server.static_info.is_assumed());
         }
         Ok(servers)
@@ -1207,7 +1207,7 @@ mod tests {
     use std::sync::{Arc, Condvar, Mutex};
     use std::time::Duration;
 
-    use tidb_domain::serverinfo::{DynamicInfo, ServerInfo, StaticInfo};
+    use tidb_domain_serverinfo::serverinfo::{DynamicInfo, ServerInfo, StaticInfo};
 
     use super::*;
     use crate::{
@@ -1328,7 +1328,7 @@ mod tests {
         }
     }
 
-    impl tidb_domain::serverinfo_syncer::EtcdOps for FakeEtcd {
+    impl tidb_domain_serverinfo::serverinfo_syncer::EtcdOps for FakeEtcd {
         fn lease_grant(&self, _ttl_seconds: i64) -> Result<i64, String> {
             Ok(self.state.leases.fetch_add(1, AtomicOrdering::SeqCst) + 1000)
         }
@@ -1997,7 +1997,7 @@ mod tests {
         let syncer = new_syncer(&etcd);
 
         let servers = syncer.get_servers_for_is_sync(false).unwrap();
-        if tidb_config::kerneltype::is_classic() {
+        if tidb_config_kerneltype::is_classic() {
             assert_eq!(servers.len(), 3);
         } else {
             assert_eq!(servers.len(), 2);
@@ -2013,7 +2013,7 @@ mod tests {
 
     #[test]
     fn test_syncer_simple() {
-        if tidb_config::kerneltype::is_next_gen() {
+        if tidb_config_kerneltype::is_next_gen() {
             // Go skips this MDL-off test because MDL is always enabled in
             // next-generation TiDB.
             return;

@@ -21,9 +21,8 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use super::rustats::{
-    default_ru_version, normalize_ru_version, RuIncrementMap, RuVersion, RuVersionProvider,
-};
+use super::rustats::{default_ru_version, normalize_ru_version, RuIncrementMap, RuVersionProvider};
+use tidb_pd_client::rm_client::RuVersion;
 use super::stmtstats::{StatementStats, StatementStatsMap};
 use tidb_topsql_reporter_metrics::{
     IGNORE_EXCEED_RU_KEYS_COUNTER, IGNORE_EXCEED_RU_TOTAL_COUNTER,

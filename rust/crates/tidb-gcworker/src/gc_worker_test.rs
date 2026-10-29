@@ -1176,7 +1176,7 @@ fn test_leader_tick() {
 /// the mock PD ignores it).
 #[test]
 fn test_gc_with_pending_txn() {
-    if tidb_config::kerneltype::is_next_gen() {
+    if tidb_config_kerneltype::is_next_gen() {
         return;
     }
     let mut s = create_gc_worker_suite();
@@ -1475,7 +1475,7 @@ fn test_resolve_lock_range_meet_region_cache_miss() {
 /// locks resolve, and the rescan of the merged region resolves all four.
 #[test]
 fn test_resolve_lock_range_meet_region_enlarge_caused_by_region_merge() {
-    if tidb_config::kerneltype::is_next_gen() {
+    if tidb_config_kerneltype::is_next_gen() {
         return;
     }
     use tikv_client::mock::mocktikv::{
@@ -1675,27 +1675,27 @@ fn test_resolve_locks_near_txn_safe_point() {
 
 #[test]
 fn test_unified_gc_needs_to_wait() {
-    if tidb_config::kerneltype::is_classic() {
+    if tidb_config_kerneltype::is_classic() {
         // The starter deploy mode exists only in the nextgen kernel.
         return;
     }
-    let original = tidb_config::deploymode::get();
+    let original = tidb_config_deploymode::get();
     let cases = [
         // (deploy mode, in test, finished first job, expected)
-        (tidb_config::deploymode::Mode::Starter, true, false, true),
-        (tidb_config::deploymode::Mode::Starter, false, false, false),
-        (tidb_config::deploymode::Mode::Starter, false, true, true),
-        (tidb_config::deploymode::Mode::Premium, false, false, true),
+        (tidb_config_deploymode::Mode::Starter, true, false, true),
+        (tidb_config_deploymode::Mode::Starter, false, false, false),
+        (tidb_config_deploymode::Mode::Starter, false, true, true),
+        (tidb_config_deploymode::Mode::Premium, false, false, true),
     ];
     for (mode, in_test, finished, expected) in cases {
-        tidb_config::deploymode::set(mode).unwrap();
+        tidb_config_deploymode::set(mode).unwrap();
         let mut s = create_gc_worker_suite();
         s.worker.in_test = in_test;
         s.worker.last_finish = Instant::now();
         s.worker.has_finished_first_gc_job = finished;
         assert_eq!(expected, s.worker.needs_to_wait(), "{mode:?}");
     }
-    tidb_config::deploymode::set(original).unwrap();
+    tidb_config_deploymode::set(original).unwrap();
 }
 
 fn make_keyspace(id: u32, name: &str, keyspace_level_gc: bool) -> KeyspaceMeta {
@@ -1809,7 +1809,7 @@ fn req(start: &[u8], end: &[u8]) -> (Vec<u8>, Vec<u8>, u64) {
 
 #[test]
 fn test_resolve_locks_with_keyspaces_null_keyspace_only() {
-    if tidb_config::kerneltype::is_next_gen() {
+    if tidb_config_kerneltype::is_next_gen() {
         return;
     }
     let s = create_gc_worker_suite_with(None, Vec::new());
@@ -1821,7 +1821,7 @@ fn test_resolve_locks_with_keyspaces_null_keyspace_only() {
 
 #[test]
 fn test_resolve_locks_with_keyspaces_null_keyspace_only_multi_region() {
-    if tidb_config::kerneltype::is_next_gen() {
+    if tidb_config_kerneltype::is_next_gen() {
         return;
     }
     let s = create_gc_worker_suite_with(None, Vec::new());
@@ -1833,7 +1833,7 @@ fn test_resolve_locks_with_keyspaces_null_keyspace_only_multi_region() {
 
 #[test]
 fn test_resolve_locks_with_keyspaces_null_keyspace_in_multi_keyspace_environment() {
-    if tidb_config::kerneltype::is_next_gen() {
+    if tidb_config_kerneltype::is_next_gen() {
         return;
     }
     let s = create_gc_worker_suite_with(
@@ -1858,7 +1858,7 @@ fn test_resolve_locks_with_keyspaces_null_keyspace_in_multi_keyspace_environment
 
 #[test]
 fn test_resolve_locks_with_keyspaces_non_null_keyspace_in_multi_keyspace_environment() {
-    if !tidb_config::kerneltype::is_next_gen() {
+    if !tidb_config_kerneltype::is_next_gen() {
         return;
     }
     let system = make_keyspace(MAX_KEYSPACE_ID_FOR_TEST - 1, "SYSTEM", true);
@@ -1881,7 +1881,7 @@ const MAX_KEYSPACE_ID_FOR_TEST: u32 = 0x00ff_ffff;
 
 #[test]
 fn test_resolve_locks_with_keyspaces_unified_gc_in_mixed_usage() {
-    if tidb_config::kerneltype::is_next_gen() {
+    if tidb_config_kerneltype::is_next_gen() {
         return;
     }
     let s = create_gc_worker_suite_with(
@@ -1918,7 +1918,7 @@ fn test_resolve_locks_with_keyspaces_unified_gc_in_mixed_usage() {
 
 #[test]
 fn test_resolve_locks_with_keyspaces_unified_gc_with_max_keyspace_id() {
-    if tidb_config::kerneltype::is_next_gen() {
+    if tidb_config_kerneltype::is_next_gen() {
         return;
     }
     let s = create_gc_worker_suite_with(
@@ -1950,7 +1950,7 @@ fn test_unified_gc_in_multi_batches_of_keyspaces(
     load_batch_size: u32,
     expected_batch_count: usize,
 ) {
-    if tidb_config::kerneltype::is_next_gen() {
+    if tidb_config_kerneltype::is_next_gen() {
         return;
     }
     let mut keyspaces = Vec::new();
@@ -2116,7 +2116,7 @@ fn test_do_gc_for_one_region() {
 /// resolver stands in for Go's lock-free mock.
 #[test]
 fn test_run_gc_job_api() {
-    if tidb_config::kerneltype::is_next_gen() {
+    if tidb_config_kerneltype::is_next_gen() {
         return;
     }
     let s = create_gc_worker_suite();
@@ -2132,7 +2132,7 @@ fn test_run_gc_job_api() {
 /// Go `TestRunDistGCJobAPI`.
 #[test]
 fn test_run_dist_gc_job_api() {
-    if tidb_config::kerneltype::is_next_gen() {
+    if tidb_config_kerneltype::is_next_gen() {
         return;
     }
     let s = create_gc_worker_suite();

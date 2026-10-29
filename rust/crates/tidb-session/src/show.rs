@@ -395,7 +395,7 @@ impl tidb_executor::admin::AdminExec for Session {
 
     fn server_info_syncer(
         &self,
-    ) -> Option<&std::sync::Arc<tidb_domain::serverinfo_syncer::Syncer>> {
+    ) -> Option<&std::sync::Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>> {
         self.server_info_syncer.as_ref()
     }
 }

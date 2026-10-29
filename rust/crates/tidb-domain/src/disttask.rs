@@ -21,8 +21,8 @@
 
 use std::collections::HashMap;
 
-use crate::serverinfo::ServerInfo;
-use crate::serverinfo_syncer::Syncer;
+use tidb_domain_serverinfo::serverinfo::ServerInfo;
+use tidb_domain_serverinfo::serverinfo_syncer::Syncer;
 
 /// Go `GenerateExecID`: formats the advertised IP and SQL port with
 /// `net.JoinHostPort` semantics.
@@ -72,7 +72,7 @@ pub fn generate_subtask_exec_id_for_test(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::serverinfo::StaticInfo;
+    use tidb_domain_serverinfo::serverinfo::StaticInfo;
 
     #[test]
     fn generate_exec_id_matches_every_go_test_vector() {

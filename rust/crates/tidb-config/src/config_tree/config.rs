@@ -42,7 +42,7 @@ use super::sections::{
     Experimental, IsolationRead, OpenTracing, PessimisticTxn, Plugin, PreparedPlanCache,
     ProxyProtocol, RuV2Config, Standby, StarterParams, TopSql,
 };
-use crate::deploymode::Mode;
+use tidb_config_deploymode::Mode;
 use crate::external_workload::ExternalWorkload;
 use crate::keyspace_observability::{
     KeyspaceObservability, KeyspaceObservabilityLogField, KeyspaceObservabilityValues,
@@ -514,7 +514,7 @@ pub fn table_lock_delay_clean() -> u64 {
 
 /// Go `GetMaxAllowedPacket`.
 pub fn get_max_allowed_packet() -> u64 {
-    if crate::deploymode::is_starter() {
+    if tidb_config_deploymode::is_starter() {
         let value = get_global_config().max_allowed_packet;
         if valid_max_allowed_packet(value) {
             return value;
@@ -730,7 +730,7 @@ impl Config {
         if !self.deploy_mode.valid() {
             return Err(format!("invalid deploy-mode={}", self.deploy_mode));
         }
-        if !crate::kerneltype::is_next_gen() && self.deploy_mode != Mode::Premium {
+        if !tidb_config_kerneltype::is_next_gen() && self.deploy_mode != Mode::Premium {
             return Err("deploy-mode can only be configured for nextgen TiDB".into());
         }
         if self.standby.standby_mode && self.keyspace_activate_mode {
@@ -1158,7 +1158,7 @@ metric-label = "keyspace_meta_label_a"
             .to_string()
             .contains("external-workload can only be configured when deploy-mode is starter"));
 
-        if !crate::kerneltype::is_next_gen() {
+        if !tidb_config_kerneltype::is_next_gen() {
             return;
         }
 
@@ -1641,13 +1641,13 @@ metric-label = "keyspace_meta_label_a"
 
         #[cfg(feature = "nextgen")]
         {
-            let original_mode = crate::deploymode::get();
-            crate::deploymode::set(Mode::Starter).unwrap();
+            let original_mode = tidb_config_deploymode::get();
+            tidb_config_deploymode::set(Mode::Starter).unwrap();
             update_global(|config| config.max_allowed_packet = 1024);
             assert_eq!(get_max_allowed_packet(), 1024);
             update_global(|config| config.max_allowed_packet = 0);
             assert_eq!(get_max_allowed_packet(), DEF_MAX_ALLOWED_PACKET);
-            crate::deploymode::set(original_mode).unwrap();
+            tidb_config_deploymode::set(original_mode).unwrap();
         }
 
         restore();

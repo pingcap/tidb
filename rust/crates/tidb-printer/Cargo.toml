@@ -16,6 +16,8 @@ intest = ["tidb-logutil/intest"]
 race = ["tidb-israce/race"]
 
 [dependencies]
+tidb-config-deploymode = { path = "../tidb-config-deploymode" }
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-israce = { path = "../tidb-israce" }
 tidb-logutil = { path = "../tidb-logutil" }
 tidb-versioninfo = { path = "../tidb-versioninfo" }

@@ -21,7 +21,8 @@ use std::sync::{Mutex, MutexGuard};
 use tidb_topsql_state::GLOBAL_TEST_LOCK;
 
 use super::aggregator::{Collector, RuCollector};
-use super::rustats::{RuIncrementMap, RuKey, RuVersion, RuVersionProvider};
+use super::rustats::{RuIncrementMap, RuKey, RuVersionProvider};
+use tidb_pd_client::rm_client::RuVersion;
 use super::stmtstats::{
     BinaryDigest, ExecBeginInfo, ExecFinishInfo, SqlPlanDigest, StatementStatsMap,
 };

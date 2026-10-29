@@ -8,11 +8,11 @@ repository.workspace = true
 description = "TiDB schema loader and syncer: Go pkg/infoschema/issyncer (Rust rewrite)."
 
 [dependencies]
+tidb-store-driver-error = { path = "../tidb-store-driver-error" }
 tidb-logutil = { path = "../tidb-logutil" }
 tidb-table = { path = "../tidb-table" }
 tidb-autoid = { path = "../tidb-autoid" }
 tidb-datatype = { path = "../tidb-datatype" }
-tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-error = { path = "../tidb-error" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-infoschema-isvalidator = { path = "../tidb-infoschema-isvalidator" }
@@ -20,10 +20,8 @@ tidb-kv = { path = "../tidb-kv" }
 tidb-log = { path = "../tidb-log" }
 tidb-meta = { path = "../tidb-meta" }
 tidb-model = { path = "../tidb-model" }
-tidb-store-driver = { path = "../tidb-store-driver" }
 tidb-syssession = { path = "../tidb-syssession" }
 tidb-txnkv = { path = "../tidb-txnkv" }
-tidb-util = { path = "../tidb-util" }
 serde_json = { workspace = true }
 
 [lints]

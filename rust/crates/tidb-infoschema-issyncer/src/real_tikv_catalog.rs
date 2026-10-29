@@ -37,7 +37,7 @@ fn coordinator_catalog_error(error: OptimisticCoordinatorError) -> ClusterCatalo
         OptimisticCoordinatorError::SnapshotBackoff { .. }
         | OptimisticCoordinatorError::Storage(_)
         | OptimisticCoordinatorError::Visibility(_) => {
-            let sql = tidb_store_driver::cluster_table_storage::coordinator_sql_error(error);
+            let sql = tidb_store_driver_error::coordinator::coordinator_sql_error(error);
             ClusterCatalogError::Sql(
                 tidb_error::mysql::MysqlError::from_parts(sql.code, sql.state, sql.message)
                     .with_identity_opt(sql.identity),

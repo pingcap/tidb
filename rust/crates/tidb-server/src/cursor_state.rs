@@ -29,7 +29,7 @@ use crate::connection_writers::{write_eof_or_ok, write_packet_to, ConnectionPack
 use crate::mysql_connection::MysqlConnectionError;
 use tidb_session::domain::resultset_source::ResultSetSource;
 use crate::sql_node::{CursorMaterializationAuthority, QueryResult};
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 pub(crate) struct CursorState {
     current_tso: Option<tidb_expr::CurrentTso>,

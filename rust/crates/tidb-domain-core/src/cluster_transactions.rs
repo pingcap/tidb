@@ -67,7 +67,7 @@ use tidb_store_driver::cluster_table_storage::{
     overlay_staged_mutations, stage_mutations, LockKeysOutcome, MaxTsSnapshot,
     PreparedStatementSnapshot, SessionTransaction, StatementSnapshot,
 };
-use tidb_store_driver::pessimistic_lock_error::LockSqlError;
+use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 use tidb_store_driver::session_commit_protocol::SessionTransactionOptions;
 use tidb_sessionctx::advisory_lock_state::{
@@ -83,12 +83,12 @@ use tidb_txnkv::transaction::SchemaLeaseChecker;
 use tidb_txnkv::transaction::{LockWaitTime, PessimisticLockFailure, RealTransaction};
 use tidb_txnkv::Key;
 
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 /// Carries a commit's own client-visible triple onto the wire, so a 9007 stays
 /// a 9007 instead of collapsing into the generic 1105.
 pub fn sql_error(error: LockSqlError) -> SqlQueryError {
-    tidb_store_driver::sql_query_error::lock_sql_error(&error)
+    tidb_store_driver_error::sql_query_error::lock_sql_error(&error)
 }
 
 /// Go `session.tryReplaceWriteConflictError` (`pkg/session/session.go:913`):
@@ -974,7 +974,7 @@ impl DeferredSnapshot {
 
 /// A pessimistic lock's SQL error as the storage seam reports it, keeping
 /// Go's code and SQLSTATE (1205, 1213, 3572, ...).
-fn lock_storage_error(error: tidb_store_driver::pessimistic_lock_error::LockSqlError) -> StorageError {
+fn lock_storage_error(error: tidb_store_driver_error::pessimistic_lock_error::LockSqlError) -> StorageError {
     StorageError::Sql(
         tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
             .with_identity_opt(error.identity),
@@ -1876,7 +1876,7 @@ mod write_conflict_rewrite_tests {
     };
 
     use super::try_replace_write_conflict_error;
-    use tidb_store_driver::sql_query_error::SqlQueryError;
+    use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
     /// The commit error `sql_error` hands the session for one conflict.
     fn commit_error(key: &[u8], primary: &[u8], redaction: Redaction) -> SqlQueryError {

@@ -60,8 +60,8 @@ use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 
 use tidb_privilege::load::cluster_image_from_registry;
 use tidb_privilege::load::registry_from_cluster;
-use tidb_store_driver::pessimistic_lock_error::cluster_commit_error;
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::pessimistic_lock_error::cluster_commit_error;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 /// Reserves `count` `_tidb_rowid`s of a `mysql.*` table in their own
 /// transaction (Go's autoid allocator, `RunInNewTxn`), never below

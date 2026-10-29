@@ -18,11 +18,10 @@ tidb-spill-storage = { path = "../tidb-spill-storage" }
 tidb-sqlkiller = { path = "../tidb-sqlkiller" }
 bytes.workspace = true
 tidb-datatype = { path = "../tidb-datatype" }
-tidb-util = { path = "../tidb-util" }
 tracing = "0.1"
 
 [dev-dependencies]
-tidb-util = { path = "../tidb-util", features = ["testexport"] }
+tidb-build-tags = { path = "../tidb-build-tags", features = ["testexport"] }
 
 [lints]
 workspace = true

@@ -27,7 +27,7 @@ use std::time::Duration;
 use crate::mysql_bootstrap::{plan_mysql_bootstrap_with_layout, read_ddl_table_version, BootstrapEnvironment, BootstrapLayout};
 use tidb_ddl::pre_split::BootstrapSplits;
 use tidb_datatype::current_time::utc_now_timestamp;
-use tidb_store_driver::pessimistic_lock_error::commit_outcome_to_sql_error;
+use tidb_store_driver_error::pessimistic_lock_error::commit_outcome_to_sql_error;
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
 use tidb_ddl::real_tikv_ddl::{notify_schema_version, SchemaVersionNotifier};
 use tidb_txnkv::rpc::UnaryCallContext;

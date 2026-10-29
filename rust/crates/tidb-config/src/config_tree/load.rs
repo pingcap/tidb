@@ -33,7 +33,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::config::Config;
-use crate::deploymode::Mode;
+use tidb_config_deploymode::Mode;
 use tidb_hack::go_to_lower;
 
 /// A config-load error (Go's `ErrConfigValidationFailed` and plain errors).
@@ -389,7 +389,7 @@ impl Config {
         parsed.keyspace_observability_values = keyspace_observability_values;
         *self = parsed;
 
-        if !crate::kerneltype::is_next_gen() && is_defined(&table, &["deploy-mode"]) {
+        if !tidb_config_kerneltype::is_next_gen() && is_defined(&table, &["deploy-mode"]) {
             return Err(LoadError::Other(
                 "deploy-mode can only be configured for nextgen TiDB".into(),
             ));
@@ -587,7 +587,7 @@ pub fn prepare_config(
         ));
     }
     config
-        .adjust_starter_config(config.deploy_mode == crate::deploymode::Mode::Starter)
+        .adjust_starter_config(config.deploy_mode == tidb_config_deploymode::Mode::Starter)
         .map_err(|error| format!("invalid security env vars {error}"))?;
 
     Ok((config, warnings))
@@ -665,7 +665,7 @@ mod tests {
     // is the Classic kernel).
     #[test]
     fn deploy_mode_classic() {
-        if crate::kerneltype::is_next_gen() {
+        if tidb_config_kerneltype::is_next_gen() {
             return;
         }
         // dxf-resource-limit with default (premium) deploy-mode -> error.

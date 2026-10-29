@@ -1,0 +1,15 @@
+[package]
+name = "tidb-domain-globalconfigsync"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/domain/globalconfigsync: the global config syncer (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-proto = { path = "../tidb-proto" }
+tracing = "0.1"

@@ -48,7 +48,7 @@ use crate::domain::real_tikv_node::{
 /// deadlines (tens of seconds), and a request queued past ITS deadline failed
 /// with `timeout_ms: 0` -- the admission-time zero the old constant produced.
 const TRANSACTION_RPC_TIMEOUT: Duration = Duration::from_secs(60);
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 use crate::domain::cluster_session_node::{RealClusterDdl, RealClusterTransactions, CONTROL_PLANE_TIMEOUT};
 use tidb_domain_core::domain::Domain;
@@ -117,12 +117,12 @@ pub fn cluster_session_stack(
     // `domain.Init` runs before `BootstrapSession` reaches `bootstrap`: the
     // resource-group jobs -- the bootstrap's own `ALTER RESOURCE GROUP
     // default` among them -- write PD's resource manager through it.
-    tidb_domain::resource_manager_client::init_resource_manager_client(Some(Arc::new(
+    tidb_domain_infosync::resource_manager_client::init_resource_manager_client(Some(Arc::new(
         PdResourceManagerClient {
             store: tikv_store.clone(),
         },
     )
-        as Arc<dyn tidb_domain::resource_manager_client::ResourceManagerClient>));
+        as Arc<dyn tidb_domain_infosync::resource_manager_client::ResourceManagerClient>));
     // Go `initDomainSysVars` registering `setGlobalResourceControl` over the
     // driver's `EnableGlobalResourceControlFunc = tikv.EnableResourceControl`,
     // before any global variable loads: the sysvar turns client-rust's
@@ -309,7 +309,7 @@ pub fn cluster_session_stack(
     // which is Go's `etcdCli == nil` answer.
     let server_etcd = etcd.clone().map(|client| {
         Arc::new(tidb_ddl::etcd_ops::EtcdClientOps::new(client))
-            as Arc<dyn tidb_domain::serverinfo_syncer::EtcdOps>
+            as Arc<dyn tidb_domain_serverinfo::serverinfo_syncer::EtcdOps>
     });
     // A failed cluster connection is not a standalone deployment.
     if config.global_config.enable_global_kill && server_etcd.is_none() {
@@ -329,15 +329,15 @@ pub fn cluster_session_stack(
         info.static_info.server_id_getter = Some(Arc::new(move || identity.id()));
     }
     let server_info = Arc::new(
-        tidb_domain::serverinfo_syncer::Syncer::new_with_status_endpoint_claim(
+        tidb_domain_serverinfo::serverinfo_syncer::Syncer::new_with_status_endpoint_claim(
             info,
             server_etcd,
             config.report_status,
         ),
     );
-    let mut server_info_runner = match tidb_domain::serverinfo_syncer::SyncerRunner::start(
+    let mut server_info_runner = match tidb_domain_serverinfo::serverinfo_syncer::SyncerRunner::start(
         Arc::clone(&server_info),
-        tidb_domain::serverinfo_syncer::SyncIntervals::default(),
+        tidb_domain_serverinfo::serverinfo_syncer::SyncIntervals::default(),
     ) {
         Ok(runner) => Some(runner),
         Err(error) => {
@@ -489,16 +489,16 @@ pub fn cluster_session_stack(
     let pd_http_client = authority.tikv_store().pd_http_client();
     // Go `InfoSyncer` init's `affinity.InitManager(is.pdHTTPCli)`: the DDL
     // job workers create and delete PD affinity groups through it.
-    tidb_domain::affinity::init_manager(pd_http_client.as_ref().map(|client| {
-        Arc::new(tidb_domain::pd_affinity_client::PdHttpAffinityClient::new(
+    tidb_domain_affinity::init_manager(pd_http_client.as_ref().map(|client| {
+        Arc::new(tidb_domain_infosync::pd_affinity_client::PdHttpAffinityClient::new(
             client,
-        )) as Arc<dyn tidb_domain::affinity::PdAffinityClient>
+        )) as Arc<dyn tidb_domain_affinity::PdAffinityClient>
     }));
     // Go `InfoSyncer.initLabelRuleManager`: PD's region-label rules, which
     // the DDL job workers write and `information_schema.attributes` reads.
-    tidb_domain::label_manager::init_label_rule_manager(pd_http_client.as_ref().map(|client| {
-        Arc::new(tidb_domain::label_delivery::PdLabelManager::new(client))
-            as Arc<dyn tidb_domain::label_manager::LabelRuleManager>
+    tidb_domain_infosync::label_manager::init_label_rule_manager(pd_http_client.as_ref().map(|client| {
+        Arc::new(tidb_domain_infosync::label_delivery::PdLabelManager::new(client))
+            as Arc<dyn tidb_domain_infosync::label_manager::LabelRuleManager>
     }));
     // One DDL-gated worker. Its guard joins before the node releases DDL/PD.
     let replica_poll = crate::domain::cluster_session_node::build_tiflash_replica_poll(
@@ -611,7 +611,7 @@ pub fn cluster_session_stack(
                         .into_iter()
                         .map(|process| process.cur_txn_start_ts),
                 );
-                let internal = processes.internal_session_start_ts();
+                let internal = processes.internal_session_start_ts(|id| tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(id));
                 // Go `ReportMinStartTS`: `store.CurrentVersion(kv.GlobalTxnScope)`.
                 let version = opener.store().get_timestamp_async().wait()?;
                 let now = std::time::UNIX_EPOCH + Duration::from_millis(version >> 18);
@@ -776,8 +776,8 @@ pub fn start_resource_groups_controller_over<PdC: tikv_client::PdClient>(
 struct DomainRuVersion(Arc<tikv_client::pd_resource_group::controller::ResourceGroupsController>);
 
 impl tidb_topsql_stmtstats::RuVersionProvider for DomainRuVersion {
-    fn get_ru_version(&self) -> tidb_topsql_stmtstats::RuVersion {
-        tidb_topsql_stmtstats::RuVersion(self.0.get_ru_version())
+    fn get_ru_version(&self) -> tidb_pd_client::rm_client::RuVersion {
+        tidb_pd_client::rm_client::RuVersion(self.0.get_ru_version())
     }
 }
 
@@ -839,7 +839,7 @@ struct PdResourceManagerClient {
     store: tidb_txnkv::driver::tikv_store::TikvStore,
 }
 
-impl tidb_domain::resource_manager_client::ResourceManagerClient for PdResourceManagerClient {
+impl tidb_domain_infosync::resource_manager_client::ResourceManagerClient for PdResourceManagerClient {
     fn add_resource_group(
         &self,
         group: tidb_proto::resource_manager::ResourceGroup,

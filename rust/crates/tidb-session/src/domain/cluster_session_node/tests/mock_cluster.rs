@@ -16,7 +16,7 @@ use super::super::transactions::{
 use super::super::*;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use tidb_store_driver::pessimistic_lock_error::commit_outcome_to_sql_error;
+use tidb_store_driver_error::pessimistic_lock_error::commit_outcome_to_sql_error;
 use tidb_store_driver::session_commit_protocol::SessionTransactionOptions;
 use tidb_kv::cluster_storage::{DuplicateKeyHint, SnapshotPairs};
 use tidb_kv::storage::StorageError;
@@ -299,7 +299,7 @@ impl ClusterSnapshot for MockSnapshot {
         self.cluster.lock_waits.lock().unwrap().push(wait);
         let failure = if let Some(failure) = self.cluster.fail_next_lock.lock().unwrap().take() {
             StatementLockFailure::Statement(
-                tidb_store_driver::pessimistic_lock_error::lock_failure_to_sql_error(&failure),
+                tidb_store_driver_error::pessimistic_lock_error::lock_failure_to_sql_error(&failure),
             )
         } else if self
             .cluster
@@ -735,7 +735,7 @@ impl OpenClusterTransaction for MockSessionTransaction {
         }
         if let Some(failure) = self.cluster.fail_next_lock.lock().unwrap().take() {
             return Ok(LockKeysOutcome::StatementError(
-                tidb_store_driver::pessimistic_lock_error::lock_failure_to_sql_error(&failure),
+                tidb_store_driver_error::pessimistic_lock_error::lock_failure_to_sql_error(&failure),
             ));
         }
         if self

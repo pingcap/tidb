@@ -25,9 +25,9 @@ use std::sync::Arc;
 /// advertised address, lease text and labels, instead of a second projection.
 pub fn node_server_info(
     config: &tidb_domain_core::node_config::NodeConfig,
-) -> tidb_domain::serverinfo::ServerInfo {
-    tidb_domain::serverinfo_syncer::server_info_from_config(
-        &tidb_domain::serverinfo_syncer::new_node_id(),
+) -> tidb_domain_serverinfo::serverinfo::ServerInfo {
+    tidb_domain_serverinfo::serverinfo_syncer::server_info_from_config(
+        &tidb_domain_serverinfo::serverinfo_syncer::new_node_id(),
         &config.global_config,
         tidb_versioninfo::TIDB_GIT_HASH,
         config
@@ -46,7 +46,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tidb_domain::server_id::{ServerIdAuthority, ServerIdIntervals, ServerIdKeeper};
     use tidb_ddl::etcd_ops::EtcdClientOps;
-    use tidb_domain::serverinfo_syncer::{EtcdOps, Syncer};
+    use tidb_domain_serverinfo::serverinfo_syncer::{EtcdOps, Syncer};
 
     // Go domain/serverinfo tests embed etcd. The Rust integration uses the
     // official executable, explicitly selected so ordinary unit runs need no service.
@@ -106,7 +106,7 @@ mod tests {
         let create = |name: &str| {
             let identity = ServerIdAuthority::new(Some(etcd.clone()), true);
             let get = identity.clone();
-            let mut info = tidb_domain::serverinfo::ServerInfo::default();
+            let mut info = tidb_domain_serverinfo::serverinfo::ServerInfo::default();
             info.static_info.id = name.into();
             info.static_info.server_id_getter = Some(Arc::new(move || get.id()));
             let syncer = Arc::new(Syncer::new_with_status_endpoint_claim(

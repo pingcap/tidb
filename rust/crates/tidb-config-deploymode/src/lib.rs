@@ -33,7 +33,7 @@ use std::sync::atomic::{AtomicI32, Ordering::SeqCst};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::kerneltype;
+use tidb_config_kerneltype as kerneltype;
 use tidb_hack::go_to_lower;
 
 const PREMIUM_NAME: &str = "premium";
@@ -216,7 +216,7 @@ mod tests {
     fn current_mode() {
         let original = get();
 
-        if !crate::kerneltype::is_next_gen() {
+        if !tidb_config_kerneltype::is_next_gen() {
             assert_eq!(get(), Mode::Premium);
             store_for_test(Mode::PremiumReserved);
             assert!(!is_premium_reserved());

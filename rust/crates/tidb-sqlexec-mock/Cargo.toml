@@ -16,4 +16,3 @@ tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-resolve = { path = "../tidb-resolve" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
-tidb-util = { path = "../tidb-util" }

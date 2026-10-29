@@ -11,6 +11,7 @@ description = "TiDB util/topsql/stmtstats: Go pkg/util/topsql/stmtstats (Rust re
 workspace = true
 
 [dependencies]
+tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-topsql-reporter-metrics = { path = "../tidb-topsql-reporter-metrics" }
 tidb-topsql-state = { path = "../tidb-topsql-state" }
 crossbeam-channel = "0.5"

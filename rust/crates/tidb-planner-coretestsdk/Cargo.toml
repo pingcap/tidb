@@ -17,4 +17,3 @@ tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-model = { path = "../tidb-model" }
 tidb-parser = { path = "../tidb-parser" }
-tidb-planner = { path = "../tidb-planner" }

@@ -11,8 +11,8 @@ description = "TiDB pkg/planner/indexadvisor: the index advisor behind RECOMMEND
 workspace = true
 
 [dependencies]
+tidb-config-configtypes = { path = "../tidb-config-configtypes" }
 tidb-ast = { path = "../tidb-ast" }
-tidb-config = { path = "../tidb-config" }
 tidb-context = { path = "../tidb-context" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-driver-error = { path = "../tidb-driver-error" }

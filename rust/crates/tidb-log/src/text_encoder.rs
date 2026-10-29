@@ -342,7 +342,7 @@ fn append_value(out: &mut String, v: &Value) {
             add_element_separator(out);
             append_string_with_quote(
                 out,
-                tidb_config::configtypes::Duration(*ns)
+                tidb_config_configtypes::Duration(*ns)
                     .to_string()
                     .as_bytes(),
             );
@@ -673,7 +673,7 @@ fn append_json_value(out: &mut String, value: &Value) {
         }
         Value::Duration(value) => append_json_string(
             out,
-            tidb_config::configtypes::Duration(*value)
+            tidb_config_configtypes::Duration(*value)
                 .to_string()
                 .as_bytes(),
         ),

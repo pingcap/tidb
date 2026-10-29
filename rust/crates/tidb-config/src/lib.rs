@@ -17,10 +17,7 @@
 #![warn(missing_docs)]
 
 pub mod config_tree;
-pub mod configtypes;
-pub mod deploymode;
 pub mod external_workload;
-pub mod kerneltype;
 pub mod keyspace_observability;
 pub mod store;
 pub mod tiflash;

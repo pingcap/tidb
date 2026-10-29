@@ -47,7 +47,7 @@ const OLD_CERT_VALID_TIME: Duration = Duration::from_secs(15 * 60);
 const STARTER_OLD_CERT_VALID_TIME: Duration = Duration::from_secs(36 * 60 * 60);
 
 fn current_token_lifetime() -> Duration {
-    if tidb_config::deploymode::is_starter() {
+    if tidb_config_deploymode::is_starter() {
         STARTER_TOKEN_LIFETIME
     } else {
         TOKEN_LIFETIME
@@ -57,7 +57,7 @@ fn current_token_lifetime() -> Duration {
 /// Go `GetLoadCertInterval`.
 #[must_use]
 pub fn get_load_cert_interval() -> Duration {
-    if tidb_config::deploymode::is_starter() {
+    if tidb_config_deploymode::is_starter() {
         STARTER_LOAD_CERT_INTERVAL
     } else {
         LOAD_CERT_INTERVAL
@@ -65,7 +65,7 @@ pub fn get_load_cert_interval() -> Duration {
 }
 
 fn current_old_cert_valid_time() -> Duration {
-    if tidb_config::deploymode::is_starter() {
+    if tidb_config_deploymode::is_starter() {
         STARTER_OLD_CERT_VALID_TIME
     } else {
         OLD_CERT_VALID_TIME

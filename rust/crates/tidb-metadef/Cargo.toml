@@ -15,6 +15,7 @@ tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
 
 [dev-dependencies]
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-config = { path = "../tidb-config" }
 serde_json = { workspace = true }

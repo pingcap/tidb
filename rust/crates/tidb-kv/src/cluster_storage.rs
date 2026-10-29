@@ -497,7 +497,7 @@ pub fn key_needs_pessimistic_lock(
         return true;
     }
     if is_temp_index_key(key) {
-        if tidb_config::kerneltype::is_next_gen() {
+        if tidb_config_kerneltype::is_next_gen() {
             return true;
         }
         return match tidb_tablecodec::decode_temp_index_value(value) {

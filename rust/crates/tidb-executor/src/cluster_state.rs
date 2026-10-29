@@ -291,7 +291,7 @@ impl ViewerState {
         if self.hides_cluster_metadata {
             info.static_info.id.clone()
         } else {
-            tidb_domain::serverinfo_syncer::join_host_port(
+            tidb_domain_serverinfo::serverinfo_syncer::join_host_port(
                 &info.static_info.ip,
                 info.static_info.status_port,
             )
@@ -337,7 +337,7 @@ impl ViewerState {
                     text(&info.static_info.lease),
                     text(&info.static_info.version_info.version),
                     text(&info.static_info.version_info.git_hash),
-                    text(&tidb_domain::serverinfo_syncer::build_string_from_labels(
+                    text(&tidb_domain_serverinfo::serverinfo_syncer::build_string_from_labels(
                         &info.dynamic_info.labels,
                     )),
                 ]

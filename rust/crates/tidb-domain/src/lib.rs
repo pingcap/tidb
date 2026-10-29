@@ -25,24 +25,14 @@
 //! Preserve the original Go cases alongside these retained algorithms.
 
 pub mod cluster_discovery;
-pub mod pd_affinity_client;
-pub mod label_delivery;
-pub mod affinity;
 pub mod cdcutil;
 pub mod cluster_topology;
 pub mod disttask;
-/// Complete Go `pkg/domain/globalconfigsync` queue/store contract.
-pub mod globalconfigsync;
 pub mod historical_stats;
-pub mod label_manager;
 pub mod plan_replayer;
-pub mod resource_manager_client;
 pub mod ru_stats;
 pub mod schema_checker;
 pub mod server_id;
-pub mod serverinfo;
-pub mod serverinfo_syncer;
-pub mod status_endpoint_claim;
 pub mod sysvar_cache;
 pub mod global_sysvars;
 pub mod topn_slow_query;

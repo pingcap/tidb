@@ -33,7 +33,7 @@ impl ClusterAnalyze for UndeterminedAnalyze {
         _: &tidb_sqlkiller::SqlKiller,
         _: &dyn Fn() -> bool,
         _: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
-    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver::sql_query_error::SqlQueryError>
+    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
     {
         Err(tidb_executor::real_tikv_analyze::cluster_analyze_error(
             tidb_executor::real_tikv_analyze::ClusterAnalyzeError::Undetermined(
@@ -54,7 +54,7 @@ impl ClusterAnalyze for PanickingAnalyze {
         _: &tidb_sqlkiller::SqlKiller,
         _: &dyn Fn() -> bool,
         _: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
-    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver::sql_query_error::SqlQueryError>
+    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
     {
         panic!("{}", self.0)
     }
@@ -154,7 +154,7 @@ impl tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock for 
         statement: &tidb_stats_handle_lockstats::lock_target::ClusterStatsLockStatement,
     ) -> Result<
         tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockReport,
-        tidb_store_driver::sql_query_error::SqlQueryError,
+        tidb_store_driver_error::sql_query_error::SqlQueryError,
     > {
         assert!(statement.lock);
         assert_eq!(statement.targets.len(), 1);
@@ -320,7 +320,7 @@ fn analyze_commit_keeps_a_backoff_driver_error_coded_on_the_wire() {
             detail: "staleCommand backoffer exhausted".to_owned(),
         },
     });
-    let lock_error = tidb_store_driver::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome)
+    let lock_error = tidb_store_driver_error::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome)
         .expect_err("an exhausted busy backoff cannot answer success");
     let query_error = tidb_executor::real_tikv_analyze::cluster_analyze_error(
         tidb_executor::real_tikv_analyze::ClusterAnalyzeError::Commit(lock_error),

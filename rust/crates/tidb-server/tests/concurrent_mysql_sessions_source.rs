@@ -18,7 +18,7 @@ use tidb_protocol::{
     COM_QUIT, DEFAULT_MAX_ALLOWED_PACKET,
 };
 use tidb_server::{ActiveQueryCancellation, ConcurrentSqlNode, ConfiguredUserStore, ConnectionCancellation, NodeConfig, QueryCancellationLease, QueryResult, QuerySession, QuerySessionFactory, ResultSetSource, SessionContext};
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_globalconn::{parse_conn_id, Gcid};
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;

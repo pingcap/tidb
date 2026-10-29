@@ -1,0 +1,20 @@
+[package]
+name = "tidb-store-driver-error"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go `pkg/store/driver/error` (`ToTiDBErr`) and the client-visible statement error built on it."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-dbterror = { path = "../tidb-dbterror" }
+tidb-codec = { path = "../tidb-codec" }
+tidb-error = { path = "../tidb-error" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-config = { path = "../tidb-config" }
+tidb-proto = { path = "../tidb-proto" }
+tidb-txnkv = { path = "../tidb-txnkv" }

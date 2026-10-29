@@ -19,7 +19,6 @@ tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
-tidb-util = { path = "../tidb-util" }
 
 [lints]
 workspace = true

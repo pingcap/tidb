@@ -18,6 +18,7 @@
 //! ([`crate::executor::ExecutorRuntimeStatsSource::register_stats`]). The
 //! collection itself and the cop-side stats live in `tidb_util::execdetails::runtime_stats`.
 
+pub mod ruv2_metrics;
 pub mod exec_details;
 pub mod runtime_stats;
 pub mod tiflash_stats;
@@ -111,18 +112,18 @@ pub trait RuntimeStats: Any + Send {
 }
 
 /// Go `RURuntimeStats`'s `RuntimeStats` methods; the type and its formatting
-/// live with the RU v2 metrics in [`tidb_ruv2_metrics`].
-impl RuntimeStats for tidb_ruv2_metrics::RuRuntimeStats {
+/// live with the RU v2 metrics in [`crate::ruv2_metrics`].
+impl RuntimeStats for crate::ruv2_metrics::RuRuntimeStats {
     fn string(&self) -> String {
-        tidb_ruv2_metrics::RuRuntimeStats::string(self)
+        crate::ruv2_metrics::RuRuntimeStats::string(self)
     }
 
     fn merge(&mut self, other: &dyn RuntimeStats) {
         if let Some(tmp) = other
             .as_any()
-            .downcast_ref::<tidb_ruv2_metrics::RuRuntimeStats>()
+            .downcast_ref::<crate::ruv2_metrics::RuRuntimeStats>()
         {
-            tidb_ruv2_metrics::RuRuntimeStats::merge(self, tmp);
+            crate::ruv2_metrics::RuRuntimeStats::merge(self, tmp);
         }
     }
 

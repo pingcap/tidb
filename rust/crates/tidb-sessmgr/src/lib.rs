@@ -455,15 +455,16 @@ impl ProcessRegistry {
     }
 
     /// Go GetInternalSessionStartTSList, separate from visible clients/system tasks.
-    pub fn internal_session_start_ts(&self) -> Vec<u64> {
+    /// `is_auto_analyze` is Go's `GlobalAutoAnalyzeProcessList.Contains`,
+    /// which the server consults: an auto-analyze session's start TS is not
+    /// an internal session's.
+    pub fn internal_session_start_ts(&self, is_auto_analyze: impl Fn(u64) -> bool) -> Vec<u64> {
         let excluded = self
             .systems
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
-            .filter(|(id, _)| {
-                tidb_stats_handle_util::GLOBAL_AUTO_ANALYZE_PROCESS_LIST.contains(**id)
-            })
+            .filter(|(id, _)| is_auto_analyze(**id))
             .map(|(_, process)| Arc::as_ptr(&process.entry) as usize)
             .collect::<std::collections::HashSet<_>>();
         let entries = self

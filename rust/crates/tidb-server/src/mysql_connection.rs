@@ -58,7 +58,7 @@ use tidb_ast::Stmt;
 
 use crate::driver::{QuerySession, QuerySessionFactory};
 use crate::sql_node::{ConnectionCancellation, ConnectionClose, ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral, QueryResult, SessionContext};
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_session::domain::wire_status::{WireStatus, SERVER_STATUS_CURSOR_EXISTS, SERVER_STATUS_LAST_ROW_SEND};
 
 /// Carries one client SQL payload's bytes for `@@character_set_client`.
@@ -3190,7 +3190,7 @@ mod client_error_recording_output_tests {
 
 #[cfg(test)]
 mod undetermined_tests {
-    use tidb_store_driver::sql_query_error::SqlQueryError;
+    use tidb_store_driver_error::sql_query_error::SqlQueryError;
     use tidb_error::terror::ERR_RESULT_UNDETERMINED;
 
     /// Go `pkg/server/conn.go:1288-1291` returns from the command loop for an

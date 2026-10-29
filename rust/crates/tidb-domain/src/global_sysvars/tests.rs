@@ -152,7 +152,7 @@ mod session_vars {
         .unwrap();
         assert!(!vars.pessimistic_transaction_fair_locking_enabled());
 
-        if tidb_config::kerneltype::is_next_gen() {
+        if tidb_config_kerneltype::is_next_gen() {
             let error = vars
                 .set_system(
                     tidb_vardef::tidb_vars::TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING,
@@ -181,7 +181,7 @@ mod session_vars {
             .unwrap();
         assert!(!vars.bulk_dml_enabled());
 
-        if tidb_config::kerneltype::is_next_gen() {
+        if tidb_config_kerneltype::is_next_gen() {
             let error = vars
                 .set_system(tidb_vardef::tidb_vars::TIDB_DML_TYPE, "bulk".to_owned())
                 .expect_err("nextgen rejects bulk DML");
@@ -208,7 +208,7 @@ mod session_vars {
             ),
         ];
         for (name, expected) in modes {
-            if tidb_config::kerneltype::is_next_gen() {
+            if tidb_config_kerneltype::is_next_gen() {
                 let error = vars
                     .set_system(tidb_vardef::tidb_vars::TIDB_REPLICA_READ, name.to_owned())
                     .expect_err("nextgen rejects non-leader replica reads");

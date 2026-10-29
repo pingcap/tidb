@@ -526,7 +526,7 @@ impl AutoAdmin<'_> {
         if self.start_at.elapsed() > self.option.timeout {
             return Err(advisor_error(format!(
                 "index advisor timeout after {}",
-                tidb_config::configtypes::format_go_duration(
+                tidb_config_configtypes::format_go_duration(
                     i64::try_from(self.option.timeout.as_nanos()).unwrap_or(i64::MAX)
                 )
             )));

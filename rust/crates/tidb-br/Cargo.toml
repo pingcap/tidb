@@ -13,12 +13,10 @@ workspace = true
 [dependencies]
 tidb-redact = { path = "../tidb-redact" }
 tidb-goruntime = { path = "../tidb-goruntime" }
-tidb-datatype = { path = "../tidb-datatype" }
 tidb-log = { path = "../tidb-log" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-model = { path = "../tidb-model" }
 tidb-proto = { path = "../tidb-proto" }
-tidb-util = { path = "../tidb-util" }
 
 [dev-dependencies]
 tidb-ast = { path = "../tidb-ast" }

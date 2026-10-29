@@ -10,9 +10,12 @@ autotests = false
 
 [features]
 # Go build tag `nextgen`: selects the Next Generation kernel type.
-nextgen = []
+nextgen = ["tidb-config-kerneltype/nextgen"]
 
 [dependencies]
+tidb-config-configtypes = { path = "../tidb-config-configtypes" }
+tidb-config-deploymode = { path = "../tidb-config-deploymode" }
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 base64 = { workspace = true }
 serde = { workspace = true }
 regex = { workspace = true }

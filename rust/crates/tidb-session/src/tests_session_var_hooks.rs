@@ -758,7 +758,7 @@ fn mpp_exchange_compression_warns_only_for_v0_session_like_go() {
 fn foreign_key_check_in_shared_lock_obeys_kernel_gate_like_go() {
     let mut session = Session::new();
 
-    if tidb_config::kerneltype::is_next_gen()
+    if tidb_config_kerneltype::is_next_gen()
         && !tidb_config::config_tree::config::get_global_config()
             .experimental
             .allow_enable_foreign_key_check_in_shared_lock

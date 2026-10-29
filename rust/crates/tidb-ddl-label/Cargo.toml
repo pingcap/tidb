@@ -8,14 +8,13 @@ repository.workspace = true
 description = "Go pkg/ddl/label (placement label rules) for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 tidb-ast = { path = "../tidb-ast" }
 tidb-codec = { path = "../tidb-codec" }
-tidb-config = { path = "../tidb-config" }
-tidb-datatype = { path = "../tidb-datatype" }
 tidb-model = { path = "../tidb-model" }
 tikv-client = { workspace = true }
 

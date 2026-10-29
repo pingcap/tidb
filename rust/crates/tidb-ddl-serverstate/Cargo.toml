@@ -24,4 +24,3 @@ tidb-log = { path = "../tidb-log" }
 tidb-ddl-logutil = { path = "../tidb-ddl-logutil" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-model = { path = "../tidb-model" }
-tidb-util = { path = "../tidb-util" }

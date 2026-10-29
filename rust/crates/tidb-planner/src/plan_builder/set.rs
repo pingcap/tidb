@@ -63,7 +63,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     },
                 );
             }
-            if tidb_config::kerneltype::is_next_gen()
+            if tidb_config_kerneltype::is_next_gen()
                 && tidb_vardef::is_read_only_var_in_next_gen(&var_name)
             {
                 return Err(PlanError::eval(tidb_expr::EvalError::Conversion(

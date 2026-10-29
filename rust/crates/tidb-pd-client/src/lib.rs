@@ -5,6 +5,7 @@
 
 mod etcd;
 mod model;
+pub mod rm_client;
 mod security;
 
 pub use etcd::{

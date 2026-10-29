@@ -19,22 +19,8 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 use super::stmtstats::BinaryDigest;
+use tidb_pd_client::rm_client::RuVersion;
 use tikv_client::RuDetails;
-
-/// boundary: Go `rmclient.RUVersion` from the PD client's
-/// `resource_group/controller`, an integer enum whose zero value means
-/// "unspecified".
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct RuVersion(pub i32);
-
-impl RuVersion {
-    /// The Go zero value, which [`normalize_ru_version`] maps to the default.
-    pub const UNSPECIFIED: Self = Self(0);
-    /// Go `rmclient.RUVersionV1`.
-    pub const V1: Self = Self(1);
-    /// Go `rmclient.RUVersionV2`.
-    pub const V2: Self = Self(2);
-}
 
 /// Go `RUVersionProvider`: returns the current RU version used by Top-RU
 /// accounting.

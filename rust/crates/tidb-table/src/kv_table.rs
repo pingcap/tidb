@@ -4554,3 +4554,53 @@ pub fn null_timestamp_substitute(
     )
     .ok()
 }
+
+/// The PRIMARY index whose columns are the common row handle.
+///
+/// TiDB exposes this metadata as an index for range building and statistics,
+/// but physically reads its ranges from the table's `_r<common_handle>`
+/// record keys. It is therefore a table path, not a secondary-index path.
+pub fn common_handle_primary(table: &KvTable) -> Option<&KvIndex> {
+    table
+        .plan_indexes()
+        .find(|index| index.primary && index.column_offsets == table.common_handle_offsets())
+}
+
+/// The clustered PRIMARY's index METADATA, whether or not the catalog stores
+/// it as a [`KvIndex`].
+///
+/// Go's `TableInfo.Indices` always carries the clustered primary `IndexInfo`
+/// (`Primary: true`), and `deriveCommonHandleTablePathStats` builds the table
+/// path's ranges from it. This tier's `CREATE TABLE` stores no `KvIndex` for
+/// a clustered key -- the record key itself enforces it, and a stored index
+/// would be physically maintained as a duplicate -- so the same metadata is
+/// synthesized here from the handle offsets. Prefix lengths are carried
+/// alongside those offsets in the table metadata. Id `0` collides with
+/// no stored index (the DDL allocates from 1), so a statistics lookup under
+/// it misses and the estimate is the pseudo one -- exactly what Go computes
+/// for an unanalyzed primary.
+///
+/// The tables that DO store a PRIMARY `KvIndex` (test scaffolding injects one
+/// for statistics) keep using it, its id and its declared parts.
+pub fn clustered_primary_metadata(table: &KvTable) -> Option<std::borrow::Cow<'_, KvIndex>> {
+    if table.common_handle_offsets().is_empty() {
+        return None;
+    }
+    if let Some(index) = common_handle_primary(table) {
+        return Some(std::borrow::Cow::Borrowed(index));
+    }
+    Some(std::borrow::Cow::Owned(KvIndex {
+        id: 0,
+        name: "PRIMARY".to_owned(),
+        comment: String::new(),
+        unique: true,
+        column_offsets: table.common_handle_offsets().to_vec(),
+        prefix_lengths: table.common_handle_prefix_lengths().to_vec(),
+        visible: true,
+        global: false,
+        global_index_version: 0,
+        clustered_primary: false,
+        primary: true,
+    }))
+}
+

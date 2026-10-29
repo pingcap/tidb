@@ -44,7 +44,7 @@ use tidb_ddl::embedded_store::{
 #[cfg(test)]
 use tidb_pd_client::ClusterSecurity;
 
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 
 /// The transport an in-process session reads through: Go's coprocessor over
@@ -326,7 +326,7 @@ impl BootstrapImage {
         let stack = in_process_stack(security).map_err(|error| error.message)?;
         // The bootstrap's resource group write lands in the mock resource
         // manager, as the stack's own boot initializes it.
-        tidb_domain::resource_manager_client::init_resource_manager_client(None);
+        tidb_domain_infosync::resource_manager_client::init_resource_manager_client(None);
         let published = crate::bootstrap_publish::publish_bootstrap_with_effects(
             &stack.opener,
             IN_PROCESS_TIMEOUT,
@@ -509,11 +509,11 @@ pub fn unistore_cluster_session_stack_from(
     );
     // Go `affinity.InitManager(nil)`: unistore has no PD HTTP client, so the
     // affinity groups live in the mock manager.
-    tidb_domain::affinity::init_manager(None);
+    tidb_domain_affinity::init_manager(None);
     // Go `initLabelRuleManager` without PD: a fresh `mockLabelManager`.
-    tidb_domain::label_manager::init_label_rule_manager(None);
+    tidb_domain_infosync::label_manager::init_label_rule_manager(None);
     // Go `initResourceManagerClient(nil)`: the mock resource manager.
-    tidb_domain::resource_manager_client::init_resource_manager_client(None);
+    tidb_domain_infosync::resource_manager_client::init_resource_manager_client(None);
     // Go `initDomainSysVars` registering `setGlobalResourceControl` for every
     // store, before any global variable loads: `tidb_enable_resource_control`
     // turns client-rust's resource-control dispatch on and off.
@@ -638,7 +638,7 @@ pub fn unistore_cluster_session_stack_from(
     // with this node alone -- Go's `etcdCli == nil` path, and exactly what
     // `information_schema.TIDB_SERVERS_INFO` shows on a single node.
     let server_info = Arc::new(
-        tidb_domain::serverinfo_syncer::Syncer::new_with_status_endpoint_claim(
+        tidb_domain_serverinfo::serverinfo_syncer::Syncer::new_with_status_endpoint_claim(
             crate::domain::serverinfo_etcd::node_server_info(config),
             None,
             config.report_status,

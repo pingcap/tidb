@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB statistics handle: Go pkg/statistics/handle as the planner reads it (Rust rewrite)."
 
 [dependencies]
+tidb-config-configtypes = { path = "../tidb-config-configtypes" }
 tidb-memory = { path = "../tidb-memory" }
 tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
 tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
@@ -15,7 +16,6 @@ tidb-stats-handle-storage = { path = "../tidb-stats-handle-storage" }
 tidb-stats-handle-syncload = { path = "../tidb-stats-handle-syncload" }
 tidb-syssession = { path = "../tidb-syssession" }
 tidb-txnkv = { path = "../tidb-txnkv" }
-tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-hack = { path = "../tidb-hack" }

@@ -24,13 +24,12 @@
 //! ([`crate::driver::run_load_data_insert`]), in Go's batches of 1000, inside
 //! the statement's own transaction.
 
-pub mod csv_parser;
 
 use tidb_ast::{ColumnOrUserVar, LoadDataOnDuplicate, LoadDataStmt};
 use tidb_datatype::{Collation, Datum, FieldTypeCode};
 
 use crate::{Catalog, DriverError, TableEntry};
-use csv_parser::{CharsetConvertor, CsvConfig, CsvError, CsvParser};
+use tidb_lightning_mydump::{CharsetConvertor, CsvConfig, CsvError, CsvParser};
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 use tidb_privilege::PrivilegeTypeExt;

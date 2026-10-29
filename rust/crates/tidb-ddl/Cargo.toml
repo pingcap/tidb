@@ -12,6 +12,11 @@ description = "Go pkg/ddl's worker side: the owner-stepped DDL job scheduler, th
 workspace = true
 
 [dependencies]
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-domain-affinity = { path = "../tidb-domain-affinity" }
+tidb-domain-infosync = { path = "../tidb-domain-infosync" }
+tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }
+tidb-store-driver-error = { path = "../tidb-store-driver-error" }
 tidb-context = { path = "../tidb-context" }
 tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-filter = { path = "../tidb-filter" }
@@ -32,7 +37,6 @@ tidb-config = { path = "../tidb-config" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-ddl-logutil = { path = "../tidb-ddl-logutil" }
 tidb-ddl-serverstate = { path = "../tidb-ddl-serverstate" }
-tidb-domain = { path = "../tidb-domain" }
 tidb-error = { path = "../tidb-error" }
 tidb-table = { path = "../tidb-table" }
 tidb-kv = { path = "../tidb-kv" }
@@ -49,17 +53,12 @@ tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-schemaver = { path = "../tidb-schemaver" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-unistore = { path = "../tidb-unistore" }
-tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
 
-tidb-privilege = { path = "../tidb-privilege" }
-tidb-keydecoder = { path = "../tidb-keydecoder" }
-tidb-deadlockhistory = { path = "../tidb-deadlockhistory" }
 tidb-ddl-label = { path = "../tidb-ddl-label" }
 tidb-ddl-resourcegroup = { path = "../tidb-ddl-resourcegroup" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-ddl-notifier = { path = "../tidb-ddl-notifier" }
-tidb-distsql = { path = "../tidb-distsql" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-proto = { path = "../tidb-proto" }
@@ -77,7 +76,7 @@ chrono-tz.workspace = true
 fail = { version = "0.4", features = ["failpoints"] }
 # The tests build sessions and data checks over the executor, as the node does.
 tidb-executor = { path = "../tidb-executor" }
-tidb-util = { path = "../tidb-util", features = ["failpoints"] }
+tidb-build-tags = { path = "../tidb-build-tags", features = ["failpoints"] }
 
 [[test]]
 name = "all"
@@ -89,5 +88,5 @@ failpoints = [
     "fail/failpoints",
     "tidb-ddl-serverstate/failpoints",
     "tidb-txnkv/failpoints",
-    "tidb-util/failpoints",
+    "tidb-build-tags/failpoints",
 ]

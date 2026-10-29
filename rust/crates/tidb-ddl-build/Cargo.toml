@@ -8,6 +8,7 @@ repository.workspace = true
 description = "The metadata-building half of Go pkg/ddl for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-domain-infosync = { path = "../tidb-domain-infosync" }
 tidb-parser-format = { path = "../tidb-parser-format" }
 tidb-context = { path = "../tidb-context" }
 tidb-dbterror = { path = "../tidb-dbterror" }
@@ -22,7 +23,6 @@ tidb-kv = { path = "../tidb-kv" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-table = { path = "../tidb-table" }
 tidb-ddl-label = { path = "../tidb-ddl-label" }
-tidb-domain = { path = "../tidb-domain" }
 chrono = { workspace = true }
 serde_json = { workspace = true }
 tidb-hack = { path = "../tidb-hack" }

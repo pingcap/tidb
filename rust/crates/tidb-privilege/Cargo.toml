@@ -27,7 +27,6 @@ tidb-error = { path = "../tidb-error" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
-tidb-util = { path = "../tidb-util" }
 
 [lints]
 workspace = true

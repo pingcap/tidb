@@ -1,0 +1,17 @@
+[package]
+name = "tidb-config-kerneltype"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/config/kerneltype: the classic / next-gen kernel switch (Rust)."
+
+[lints]
+workspace = true
+
+[features]
+# Go build tag `nextgen`: selects the Next Generation kernel type.
+nextgen = []
+
+[dependencies]

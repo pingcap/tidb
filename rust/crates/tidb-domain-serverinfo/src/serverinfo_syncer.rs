@@ -405,7 +405,7 @@ impl Syncer {
     }
 
     /// Live topology records used by Go infosync's component retrievers.
-    pub(crate) fn topology_entries(&self, prefix: &str) -> Result<Vec<(String, Vec<u8>)>, String> {
+    pub fn topology_entries(&self, prefix: &str) -> Result<Vec<(String, Vec<u8>)>, String> {
         let Some(etcd) = &self.etcd else {
             return Ok(Vec::new());
         };

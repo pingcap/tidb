@@ -33,7 +33,7 @@ pub struct PeerService {
     processes: ProcessRegistry,
     privileges: PrivilegeRegistry,
     cluster_peer: Option<Arc<tidb_executor::cluster_peer::ClusterPeerClient>>,
-    server_info: Option<Arc<tidb_domain::serverinfo_syncer::Syncer>>,
+    server_info: Option<Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>>,
     broadcast_query: Option<BroadcastQueryRunner>,
 }
 
@@ -44,7 +44,7 @@ impl PeerService {
         session_factory: Arc<dyn Fn() -> Result<Session, String> + Send + Sync>,
         processes: ProcessRegistry,
         privileges: PrivilegeRegistry,
-        server_info: Option<Arc<tidb_domain::serverinfo_syncer::Syncer>>,
+        server_info: Option<Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>>,
     ) -> Self {
         Self {
             session_factory,
@@ -906,7 +906,7 @@ mod tests {
     }
 
     struct Discovery(Vec<(String, Vec<u8>)>);
-    impl tidb_domain::serverinfo_syncer::EtcdOps for Discovery {
+    impl tidb_domain_serverinfo::serverinfo_syncer::EtcdOps for Discovery {
         fn lease_grant(&self, _: i64) -> Result<i64, String> {
             Err("read-only discovery".into())
         }
@@ -1398,21 +1398,21 @@ mod tests {
         }
         let _peer = StopPeer(Some(stop), Some(worker));
         let addr = receive.recv().unwrap();
-        let mut remote = tidb_domain::serverinfo::ServerInfo::default();
+        let mut remote = tidb_domain_serverinfo::serverinfo::ServerInfo::default();
         remote.static_info.id = "digest-remote".into();
         remote.static_info.ip = addr.ip().to_string();
         remote.static_info.status_port = addr.port() as usize;
         let discovery = Arc::new(Discovery(vec![(
-            tidb_domain::serverinfo_syncer::server_info_key_path("digest-remote"),
+            tidb_domain_serverinfo::serverinfo_syncer::server_info_key_path("digest-remote"),
             remote.marshal().unwrap(),
         )]));
-        let mut local = tidb_domain::serverinfo::ServerInfo::default();
+        let mut local = tidb_domain_serverinfo::serverinfo::ServerInfo::default();
         local.static_info.id = "digest-local".into();
         local.static_info.ip = "127.0.0.1".into();
         let mut session = Session::new();
         session.set_user("digest_reader@%".into(), "digest_reader@localhost".into());
         session.set_process_privilege(true);
-        let syncer = Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(
+        let syncer = Arc::new(tidb_domain_serverinfo::serverinfo_syncer::Syncer::new(
             local,
             Some(discovery),
         ));
@@ -1858,7 +1858,7 @@ mod tests {
             },
         )
         .unwrap();
-        let mut info = tidb_domain::serverinfo::ServerInfo::default();
+        let mut info = tidb_domain_serverinfo::serverinfo::ServerInfo::default();
         info.static_info.ip = server.local_addr().ip().to_string();
         info.static_info.status_port = server.local_addr().port() as usize;
         let outbound = peer_client();
@@ -2042,11 +2042,11 @@ mod tests {
         producer.run("SELECT 73 + 8").unwrap();
         producer.set_user("summary_bob@%".into(), "summary_bob@localhost".into());
         producer.run("SELECT 73 * 8").unwrap();
-        let mut identity = tidb_domain::serverinfo::ServerInfo::default();
+        let mut identity = tidb_domain_serverinfo::serverinfo::ServerInfo::default();
         identity.static_info.id = "summary-node".into();
         identity.static_info.ip = "192.0.2.7".into();
         identity.static_info.status_port = 10080;
-        let syncer = Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(identity, None));
+        let syncer = Arc::new(tidb_domain_serverinfo::serverinfo_syncer::Syncer::new(identity, None));
         let service = PeerService::new(
             store_sessions(&admin),
             ProcessRegistry::default(),
@@ -2065,7 +2065,7 @@ mod tests {
             },
         )
         .unwrap();
-        let mut address = tidb_domain::serverinfo::ServerInfo::default();
+        let mut address = tidb_domain_serverinfo::serverinfo::ServerInfo::default();
         address.static_info.ip = server.local_addr().ip().to_string();
         address.static_info.status_port = server.local_addr().port() as usize;
         let outbound = Arc::new(peer_client());
@@ -2229,16 +2229,16 @@ mod tests {
         // local identity. This is a discovery fixture, not another RPC harness.
         address.static_info.id = "remote-summary".into();
         let discovery = Arc::new(Discovery(vec![(
-            tidb_domain::serverinfo_syncer::server_info_key_path("remote-summary"),
+            tidb_domain_serverinfo::serverinfo_syncer::server_info_key_path("remote-summary"),
             address.marshal().unwrap(),
         )]));
-        let mut local = tidb_domain::serverinfo::ServerInfo::default();
+        let mut local = tidb_domain_serverinfo::serverinfo::ServerInfo::default();
         local.static_info.id = "unpublished-local".into();
         local.static_info.ip = "127.0.0.1".into();
         let mut origin = Session::with_catalog(admin.shared_catalog());
         origin.set_user("summary_alice@%".into(), "summary_alice@127.0.0.1".into());
         origin.attach_privileges(privileges.clone());
-        origin.set_server_info_syncer(Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(
+        origin.set_server_info_syncer(Arc::new(tidb_domain_serverinfo::serverinfo_syncer::Syncer::new(
             local,
             Some(discovery),
         )));
@@ -2549,7 +2549,7 @@ mod tests {
         });
         // Exercise the maintained synchronous client against this actual host.
         // These requests cross the status socket and share the outgoing fleet.
-        let mut info = tidb_domain::serverinfo::ServerInfo::default();
+        let mut info = tidb_domain_serverinfo::serverinfo::ServerInfo::default();
         info.static_info.ip = server.local_addr().ip().to_string();
         info.static_info.status_port = server.local_addr().port() as usize;
         info.static_info.json_server_id = 17;

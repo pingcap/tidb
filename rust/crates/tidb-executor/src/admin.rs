@@ -701,7 +701,7 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
     fn cluster_peer(&self) -> Option<&std::sync::Arc<crate::cluster_peer::ClusterPeerClient>>;
     /// Go `infosync`'s server discovery.
     fn server_info_syncer(&self)
-        -> Option<&std::sync::Arc<tidb_domain::serverinfo_syncer::Syncer>>;
+        -> Option<&std::sync::Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>>;
 
     /// The `AdminStmt` dispatch for the whole admin/inspection surface: the `SHOW` family here, plus
     /// `EXPLAIN`, `GRANT`/`REVOKE`/`SHOW GRANTS`, and `KILL` delegated to

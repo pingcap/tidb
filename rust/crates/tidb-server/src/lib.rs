@@ -28,7 +28,7 @@
 mod auth_exchange;
 pub(crate) use tidb_session::domain::auth_identity;
 mod auth_plugin_registry;
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_session::domain::cluster_session_node;
 pub(crate) use tidb_session::domain::configured_user_store;
 mod client_socket;

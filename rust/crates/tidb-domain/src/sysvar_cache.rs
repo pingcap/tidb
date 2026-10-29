@@ -81,7 +81,7 @@
 //! - `// boundary:` Go `pkg/config/deploymode.IsStarter()` and
 //!   `pkg/config.GetMaxAllowedPacket()` — [`SysVarCacheDeps::is_starter`]
 //!   and [`SysVarCacheDeps::max_allowed_packet`]. `deploymode::is_starter`
-//!   exists in Rust as `tidb_config::deploymode::is_starter`, and is left to
+//!   exists in Rust as `tidb_config_deploymode::is_starter`, and is left to
 //!   the implementor rather than called here so that `tidb-domain` keeps no
 //!   dependency on the config tree for one boolean.
 //! - `// boundary:` Go `Domain.infoCache.ReSize(vardef.SchemaVersionCacheLimit)`

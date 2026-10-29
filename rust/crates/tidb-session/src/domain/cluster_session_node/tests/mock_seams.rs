@@ -11,7 +11,7 @@
 
 use super::super::*;
 use super::node_fixture::*;
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use tidb_ast::CiString;
 use tidb_datatype::FieldTypeFlags;

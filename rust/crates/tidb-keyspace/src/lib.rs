@@ -29,7 +29,8 @@
 use std::sync::OnceLock;
 
 use tidb_config::config_tree::config::get_global_keyspace_name;
-use tidb_config::{deploymode, kerneltype};
+use tidb_config_deploymode as deploymode;
+use tidb_config_kerneltype as kerneltype;
 use tidb_error::mysql::FormatArg;
 use tidb_error::terror::TerrorError;
 use tidb_error::tidb::errcode;

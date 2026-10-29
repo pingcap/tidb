@@ -21,7 +21,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::configtypes::Duration;
+use tidb_config_configtypes::Duration;
 
 use super::config::Config;
 

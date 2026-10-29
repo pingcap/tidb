@@ -23,7 +23,6 @@ tidb-topsql-stmtstats = { path = "../tidb-topsql-stmtstats" }
 tidb-tracing = { path = "../tidb-tracing" }
 tidb-metrics = { path = "../tidb-metrics" }
 reqwest = { workspace = true, features = ["blocking"] }
-tidb-util = { path = "../tidb-util" }
 async-trait.workspace = true
 bytes.workspace = true
 chrono.workspace = true

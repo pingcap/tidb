@@ -25,7 +25,7 @@ use tidb_ast::{
     ResourceGroupPriority, ResourceGroupRate, ResourceGroupRunawayAction as AstRunawayAction,
     ResourceGroupRunawayOption, ResourceGroupRunawayRule,
 };
-use tidb_config::configtypes::parse_go_duration;
+use tidb_config_configtypes::parse_go_duration;
 use tidb_executor::{DriverError, MysqlError};
 use tidb_hack::GoToLower;
 use tidb_model::{

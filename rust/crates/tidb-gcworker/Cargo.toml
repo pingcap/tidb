@@ -11,6 +11,11 @@ description = "Go pkg/store/gcworker: the GC leader that advances safe points, r
 workspace = true
 
 [dependencies]
+tidb-config-configtypes = { path = "../tidb-config-configtypes" }
+tidb-config-deploymode = { path = "../tidb-config-deploymode" }
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-domain-infosync = { path = "../tidb-domain-infosync" }
+tidb-store-driver-error = { path = "../tidb-store-driver-error" }
 tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-go-time-layout = { path = "../tidb-go-time-layout" }
 tidb-intest = { path = "../tidb-intest" }
@@ -19,10 +24,8 @@ tidb-monotime = { path = "../tidb-monotime" }
 tidb-sem = { path = "../tidb-sem" }
 tidb-sqlescape = { path = "../tidb-sqlescape" }
 tidb-domain-core = { path = "../tidb-domain-core" }
-tidb-store-driver = { path = "../tidb-store-driver" }
 tidb-metrics = { path = "../tidb-metrics" }
 tidb-mysql = { path = "../tidb-mysql" }
-tidb-domain = { path = "../tidb-domain" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-session = { path = "../tidb-session" }
 tidb-ddl = { path = "../tidb-ddl" }
@@ -39,7 +42,6 @@ tidb-model = { path = "../tidb-model" }
 tidb-placement = { path = "../tidb-placement" }
 tidb-variable = { path = "../tidb-variable" }
 tidb-txnkv = { path = "../tidb-txnkv" }
-tidb-util = { path = "../tidb-util" }
 
 [dev-dependencies]
 fail = { version = "0.4", features = ["failpoints"] }

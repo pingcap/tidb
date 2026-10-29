@@ -11,6 +11,9 @@ description = "Go pkg/domain (seed): sysvar cache, schema checker, domain contex
 workspace = true
 
 [dependencies]
+tidb-config-deploymode = { path = "../tidb-config-deploymode" }
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }
 tidb-replayer = { path = "../tidb-replayer" }
 tidb-globalconn = { path = "../tidb-globalconn" }
 tidb-logutil = { path = "../tidb-logutil" }
@@ -27,7 +30,6 @@ tidb-fixcontrol = { path = "../tidb-fixcontrol" }
 prometheus = { version = "0.14", default-features = false }
 toml.workspace = true
 tidb-error = { path = "../tidb-error" }
-tidb-model = { path = "../tidb-model" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-mysql = { path = "../tidb-mysql" }
@@ -35,7 +37,6 @@ tidb-mysql = { path = "../tidb-mysql" }
 # `pkg/domain/serverinfo` imports `pkg/config`.
 tidb-config = { path = "../tidb-config" }
 tidb-log = { path = "../tidb-log" }
-tidb-util = { path = "../tidb-util" }
 # The node id Go mints with `uuid.New()` for its DDL owner and publishes as
 # `TIDB_SERVERS_INFO.DDL_ID`.
 getrandom.workspace = true
@@ -46,7 +47,6 @@ tidb-vardef = { path = "../tidb-vardef" }
 # Go `pkg/domain` imports `pkg/sessionctx/variable`: the GLOBAL accessor the
 # session installs answers from the domain's sysvar cache over its registry.
 tidb-variable = { path = "../tidb-variable" }
-tidb-ddl-label = { path = "../tidb-ddl-label" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-stmtsummary = { path = "../tidb-stmtsummary" }
 tidb-tikvutil = { path = "../tidb-tikvutil" }

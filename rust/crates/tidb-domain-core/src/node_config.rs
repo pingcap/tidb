@@ -282,7 +282,7 @@ impl std::error::Error for NodeConfigError {}
 
 fn parse_file_schema_lease(value: &str) -> Result<Duration, NodeConfigError> {
     let parse = |value: &str| {
-        serde_json::from_value::<tidb_config::configtypes::Duration>(serde_json::Value::String(
+        serde_json::from_value::<tidb_config_configtypes::Duration>(serde_json::Value::String(
             value.to_owned(),
         ))
         .map(|duration| duration.0)
@@ -303,7 +303,7 @@ fn parse_file_schema_lease(value: &str) -> Result<Duration, NodeConfigError> {
 }
 
 fn parse_stats_lease(value: &str) -> Result<StatsLease, NodeConfigError> {
-    let nanos = serde_json::from_value::<tidb_config::configtypes::Duration>(
+    let nanos = serde_json::from_value::<tidb_config_configtypes::Duration>(
         serde_json::Value::String(value.to_owned()),
     )
     .map(|duration| duration.0)

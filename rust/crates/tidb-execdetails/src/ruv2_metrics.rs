@@ -1482,7 +1482,7 @@ pub struct RuRuntimeStats {
     /// Go `RURuntimeStats.Weights`.
     pub weights: RuV2Weights,
     /// Go `RURuntimeStats.RUVersion`.
-    pub ru_version: tidb_topsql_stmtstats::RuVersion,
+    pub ru_version: tidb_pd_client::rm_client::RuVersion,
 }
 
 impl RuRuntimeStats {
@@ -1490,7 +1490,7 @@ impl RuRuntimeStats {
     #[must_use]
     pub fn string(&self) -> String {
         let format = |value: f64| tidb_goruntime::go_strconv::format_float(value, b'f', 2, 64);
-        if self.ru_version == tidb_topsql_stmtstats::RuVersion::V2 {
+        if self.ru_version == tidb_pd_client::rm_client::RuVersion::V2 {
             let (tikv_ru, tiflash_ru) = self.ru_details.as_ref().map_or((0.0, 0.0), |details| {
                 (details.tikv_ru_v2(), details.tiflash_ru())
             });
@@ -1535,7 +1535,7 @@ impl RuRuntimeStats {
         if self.weights == RuV2Weights::default() {
             self.weights = other.weights;
         }
-        if self.ru_version == tidb_topsql_stmtstats::RuVersion::UNSPECIFIED {
+        if self.ru_version == tidb_pd_client::rm_client::RuVersion::UNSPECIFIED {
             self.ru_version = other.ru_version;
         }
     }
@@ -1547,7 +1547,7 @@ mod tests {
 
     fn ru_runtime_stats(
         ru_details: Option<RuDetails>,
-        ru_version: tidb_topsql_stmtstats::RuVersion,
+        ru_version: tidb_pd_client::rm_client::RuVersion,
     ) -> RuRuntimeStats {
         RuRuntimeStats {
             ru_details,
@@ -1572,7 +1572,7 @@ mod tests {
     fn ru_runtime_stats_string_v2() {
         let stats = ru_runtime_stats(
             Some(RuDetails::new()),
-            tidb_topsql_stmtstats::RuVersion::V2,
+            tidb_pd_client::rm_client::RuVersion::V2,
         );
         tiflash_and_tikv_ru(stats.ru_details.as_ref().unwrap());
         assert_eq!(stats.string(), "RU:500.00");
@@ -1581,7 +1581,7 @@ mod tests {
     /// Port of Go `TestRURuntimeStatsStringV2ZeroRU`.
     #[test]
     fn ru_runtime_stats_string_v2_zero_ru() {
-        let stats = ru_runtime_stats(None, tidb_topsql_stmtstats::RuVersion::V2);
+        let stats = ru_runtime_stats(None, tidb_pd_client::rm_client::RuVersion::V2);
         assert_eq!(stats.string(), "");
     }
 
@@ -1590,11 +1590,11 @@ mod tests {
     #[test]
     fn ru_runtime_stats_string_v1() {
         let details = || Some(RuDetails::new_with(10.5, 20.3, std::time::Duration::ZERO));
-        let v1 = ru_runtime_stats(details(), tidb_topsql_stmtstats::RuVersion::V1);
+        let v1 = ru_runtime_stats(details(), tidb_pd_client::rm_client::RuVersion::V1);
         assert_eq!(v1.string(), "RU:30.80");
-        let nil = ru_runtime_stats(None, tidb_topsql_stmtstats::RuVersion::V1);
+        let nil = ru_runtime_stats(None, tidb_pd_client::rm_client::RuVersion::V1);
         assert_eq!(nil.string(), "");
-        let default = ru_runtime_stats(details(), tidb_topsql_stmtstats::RuVersion::UNSPECIFIED);
+        let default = ru_runtime_stats(details(), tidb_pd_client::rm_client::RuVersion::UNSPECIFIED);
         assert_eq!(default.string(), "RU:30.80");
     }
 
@@ -1604,14 +1604,14 @@ mod tests {
     fn ru_runtime_stats_clone_preserves_ru_version() {
         let stats = ru_runtime_stats(
             Some(RuDetails::new_with(10.0, 20.0, std::time::Duration::ZERO)),
-            tidb_topsql_stmtstats::RuVersion::V1,
+            tidb_pd_client::rm_client::RuVersion::V1,
         );
         let cloned = stats.clone_stats();
-        assert_eq!(cloned.ru_version, tidb_topsql_stmtstats::RuVersion::V1);
+        assert_eq!(cloned.ru_version, tidb_pd_client::rm_client::RuVersion::V1);
         assert_eq!(cloned.string(), stats.string());
         assert_eq!(
             RuRuntimeStats::default().clone_stats().ru_version,
-            tidb_topsql_stmtstats::RuVersion::UNSPECIFIED
+            tidb_pd_client::rm_client::RuVersion::UNSPECIFIED
         );
     }
 
@@ -1619,20 +1619,20 @@ mod tests {
     /// `TestRURuntimeStatsMergeKeepsExistingRUVersion`, plus the details merge.
     #[test]
     fn ru_runtime_stats_merge() {
-        let mut dst = ru_runtime_stats(None, tidb_topsql_stmtstats::RuVersion::UNSPECIFIED);
+        let mut dst = ru_runtime_stats(None, tidb_pd_client::rm_client::RuVersion::UNSPECIFIED);
         let src = ru_runtime_stats(
             Some(RuDetails::new_with(1.0, 2.0, std::time::Duration::ZERO)),
-            tidb_topsql_stmtstats::RuVersion::V2,
+            tidb_pd_client::rm_client::RuVersion::V2,
         );
         dst.merge(&src);
-        assert_eq!(dst.ru_version, tidb_topsql_stmtstats::RuVersion::V2);
+        assert_eq!(dst.ru_version, tidb_pd_client::rm_client::RuVersion::V2);
         assert_eq!(dst.ru_details.as_ref().unwrap().read_ru(), 1.0);
         dst.merge(&src);
         assert_eq!(dst.ru_details.as_ref().unwrap().write_ru(), 4.0);
 
-        let mut keep = ru_runtime_stats(None, tidb_topsql_stmtstats::RuVersion::V1);
+        let mut keep = ru_runtime_stats(None, tidb_pd_client::rm_client::RuVersion::V1);
         keep.merge(&src);
-        assert_eq!(keep.ru_version, tidb_topsql_stmtstats::RuVersion::V1);
+        assert_eq!(keep.ru_version, tidb_pd_client::rm_client::RuVersion::V1);
     }
 
     /// Go `defaultRUV2WeightsForTest`, sourced from

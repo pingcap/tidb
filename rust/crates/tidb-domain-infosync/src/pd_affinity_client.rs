@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The PD HTTP calls behind [`crate::affinity::PdAffinityClient`]:
+//! The PD HTTP calls behind [`tidb_domain_affinity::PdAffinityClient`]:
 //! `CreateAffinityGroups`, `GetAffinityGroups`, `GetAllAffinityGroups` and
 //! `BatchDeleteAffinityGroups` on the info syncer's derivation of the store's
 //! PD HTTP client, which Go hands to `affinity.InitManager(is.pdHTTPCli)`.
 
 use std::collections::HashMap;
 
-use crate::affinity::{
+use tidb_domain_affinity::{
     AffinityGroup, AffinityGroupState, AffinityGroupStates, AffinityGroups, PdAffinityClient,
     PdHttpError,
 };

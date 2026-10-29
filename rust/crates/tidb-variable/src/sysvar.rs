@@ -691,7 +691,7 @@ pub type RequireDynamicPrivilegesFn = fn(is_global: bool, sem: bool) -> Vec<&'st
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{OnceLock, RwLock};
 
 use chrono::{Offset, TimeZone};
 use tidb_error::mysql::{FormatArg, SqlError};
@@ -732,38 +732,16 @@ fn sem_v2_defaults() -> &'static RwLock<HashMap<String, String>> {
     DEFAULTS.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-struct SemV2SysVarRegistry;
-
-impl tidb_sem_v2::SysVarRegistry for SemV2SysVarRegistry {
-    fn get_sys_var(&self, name: &str) -> Option<tidb_sem_v2::SysVar> {
-        let definition = get_sys_var(name)?;
-        let scope = match definition.scope {
-            SCOPE_NONE => tidb_sem_v2::SysVarScope::None,
-            SCOPE_GLOBAL => tidb_sem_v2::SysVarScope::Global,
-            SCOPE_SESSION => tidb_sem_v2::SysVarScope::Session,
-            SCOPE_INSTANCE => tidb_sem_v2::SysVarScope::Instance,
-            _ => tidb_sem_v2::SysVarScope::Other,
-        };
-        Some(tidb_sem_v2::SysVar {
-            scope,
-            value: effective_default(definition),
-        })
-    }
-
-    fn set_sys_var(&self, name: &str, value: &str) {
-        let Some(definition) = get_sys_var(name) else {
-            return;
-        };
-        sem_v2_defaults()
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(definition.name.to_owned(), value.to_owned());
-    }
-}
-
-/// Installs Go `variable.GetSysVar` / `SetSysVar` as SEM v2's registry.
-pub fn install_sem_v2_sysvar_registry() {
-    tidb_sem_v2::set_sys_var_registry(Some(Arc::new(SemV2SysVarRegistry)));
+/// Go `variable.SetSysVar`: replaces the default value a variable without a
+/// stored global reads (as SEM v2's `SetSysVar` hook writes it).
+pub fn set_sys_var(name: &str, value: &str) {
+    let Some(definition) = get_sys_var(name) else {
+        return;
+    };
+    sem_v2_defaults()
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(definition.name.to_owned(), value.to_owned());
 }
 
 /// The registry position of the entry `name` addresses (case-insensitively),
@@ -1338,7 +1316,7 @@ impl SysVarDef {
         // on Classic, while NextGen requires the experimental configuration
         // gate `allow-enable-foreign-key-check-in-shared-lock`.
         if self.name == tidb_vardef::tidb_vars::TIDB_FOREIGN_KEY_CHECK_IN_SHARED_LOCK
-            && tidb_config::kerneltype::is_next_gen()
+            && tidb_config_kerneltype::is_next_gen()
             && validated.value == "ON"
             && !tidb_config::config_tree::config::get_global_config()
                 .experimental
@@ -1380,7 +1358,7 @@ impl SysVarDef {
         // with ErrNotSupportedInNextGen (1235) and the normalized fallback is
         // OFF. Classic builds retain the ordinary boolean behavior.
         if self.name == tidb_vardef::tidb_vars::TIDB_PESSIMISTIC_TRANSACTION_FAIR_LOCKING
-            && tidb_config::kerneltype::is_next_gen()
+            && tidb_config_kerneltype::is_next_gen()
             && validated.value == "ON"
         {
             return Err(ValidationError::SqlError(SqlError::new_f(
@@ -1393,7 +1371,7 @@ impl SysVarDef {
         // Go's nextgen-only `TestTiDBDMLTypeInNextGen` keeps STANDARD
         // available but rejects BULK with the same 1235 compatibility error.
         if self.name == tidb_vardef::tidb_vars::TIDB_DML_TYPE
-            && tidb_config::kerneltype::is_next_gen()
+            && tidb_config_kerneltype::is_next_gen()
             && validated.value.eq_ignore_ascii_case("bulk")
         {
             return Err(ValidationError::SqlError(SqlError::new_f(
@@ -1406,7 +1384,7 @@ impl SysVarDef {
         // Go's nextgen-only replica-read validation retains LEADER and maps
         // every other non-empty mode back to LEADER after returning 1235.
         if self.name == tidb_vardef::tidb_vars::TIDB_REPLICA_READ
-            && tidb_config::kerneltype::is_next_gen()
+            && tidb_config_kerneltype::is_next_gen()
             && !validated.value.eq_ignore_ascii_case("leader")
             && !validated.value.is_empty()
         {
@@ -2380,7 +2358,7 @@ impl SysVarDef {
     /// Go `checkDurationSystemVar`: parse `time.Duration`, clamp to the
     /// configured nanosecond range, and render through `Duration.String()`.
     fn check_duration(&self, value: &str) -> Result<Validated, ValidationError> {
-        let parsed = tidb_config::configtypes::parse_go_duration(value)
+        let parsed = tidb_config_configtypes::parse_go_duration(value)
             .map_err(|_| ValidationError::WrongType)?;
         if parsed < self.min_value {
             return Ok(Validated {

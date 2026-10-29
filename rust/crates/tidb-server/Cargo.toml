@@ -12,6 +12,10 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-config-deploymode = { path = "../tidb-config-deploymode" }
+tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-domain-serverinfo = { path = "../tidb-domain-serverinfo" }
+tidb-store-driver-error = { path = "../tidb-store-driver-error" }
 tidb-domainutil = { path = "../tidb-domainutil" }
 tidb-sessmgr = { path = "../tidb-sessmgr" }
 tidb-txninfo = { path = "../tidb-txninfo" }
@@ -34,7 +38,6 @@ tidb-systimemon = { path = "../tidb-systimemon" }
 tidb-tiflashcompute = { path = "../tidb-tiflashcompute" }
 tidb-timeutil = { path = "../tidb-timeutil" }
 tidb-tls = { path = "../tidb-tls" }
-tidb-topsql-reporter = { path = "../tidb-topsql-reporter" }
 tidb-topsql-stmtstats = { path = "../tidb-topsql-stmtstats" }
 tidb-traceevent = { path = "../tidb-traceevent" }
 tidb-versioninfo = { path = "../tidb-versioninfo" }
@@ -89,12 +92,7 @@ tidb-chunk = { path = "../tidb-chunk" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-ddl = { path = "../tidb-ddl" }
-tidb-ddl-logutil = { path = "../tidb-ddl-logutil" }
-tidb-ddl-notifier = { path = "../tidb-ddl-notifier" }
 tidb-ddl-serverstate = { path = "../tidb-ddl-serverstate" }
-tidb-ddl-session = { path = "../tidb-ddl-session" }
-tidb-distsql = { path = "../tidb-distsql" }
-tidb-dxf = { path = "../tidb-dxf" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-planner = { path = "../tidb-planner" }
 tidb-unistore = { path = "../tidb-unistore" }
@@ -104,13 +102,10 @@ tidb-stmtsummary = { path = "../tidb-stmtsummary" }
 tidb-error = { path = "../tidb-error" }
 tidb-log = { path = "../tidb-log" }
 tidb-errmsg = { path = "../tidb-errmsg" }
-tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-gcworker = { path = "../tidb-gcworker" }
-tidb-placement = { path = "../tidb-placement" }
-tidb-owner = { path = "../tidb-owner" }
 tidb-workloadrepo = { path = "../tidb-workloadrepo" }
 # `pkg/domain/serverinfo`'s syncer: this node's /tidb/server/info entry.
 tidb-domain = { path = "../tidb-domain" }
@@ -120,26 +115,13 @@ tidb-protocol = { path = "../tidb-protocol" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-session = { path = "../tidb-session" }
 tidb-sysutil = { path = "../tidb-sysutil" }
-tidb-schemaver = { path = "../tidb-schemaver" }
-tidb-stats = { path = "../tidb-stats" }
 tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
-tidb-stats-handle-autoanalyze-exec = { path = "../tidb-stats-handle-autoanalyze-exec" }
-tidb-stats-handle-autoanalyze-priorityqueue = { path = "../tidb-stats-handle-autoanalyze-priorityqueue" }
-tidb-stats-handle-autoanalyze-refresher = { path = "../tidb-stats-handle-autoanalyze-refresher" }
 tidb-stats-handle-initstats = { path = "../tidb-stats-handle-initstats" }
-tidb-stats-handle-logutil = { path = "../tidb-stats-handle-logutil" }
-tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
-tidb-stats-handle-usage = { path = "../tidb-stats-handle-usage" }
 tidb-stats-handle-usage-indexusage = { path = "../tidb-stats-handle-usage-indexusage" }
-tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tikv-client.workspace = true
 async-trait.workspace = true
-tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
-tidb-sqlexec = { path = "../tidb-sqlexec" }
-tidb-syssession = { path = "../tidb-syssession" }
-tidb-resolve = { path = "../tidb-resolve" }
 tidb-resourcemanager = { path = "../tidb-resourcemanager" }
 serde_json = { workspace = true }
 tidb-config = { path = "../tidb-config" }
@@ -149,7 +131,7 @@ toml.workspace = true
 tidb-sem-v2 = { path = "../tidb-sem-v2" }
 tidb-stringutil = { path = "../tidb-stringutil" }
 tidb-ddl = { path = "../tidb-ddl", features = ["failpoints"] }
-tidb-util = { path = "../tidb-util", features = ["failpoints"] }
+tidb-build-tags = { path = "../tidb-build-tags", features = ["failpoints"] }
 fail = { version = "0.4", features = ["failpoints"] }
 prost.workspace = true
 # The TLS tests act as a real client against this node's own material.
@@ -191,11 +173,11 @@ failpoints = [
     "tidb-ddl-serverstate/failpoints",
     "tidb-resourcemanager/failpoints",
     "tidb-stats-handle-cache/failpoints",
-    "tidb-util/failpoints",
+    "tidb-build-tags/failpoints",
 ]
 jemalloc = [
     "dep:tikv-jemallocator",
     "dep:tikv-jemalloc-sys",
-    "tidb-util/jemalloc",
+    "tidb-build-tags/jemalloc",
     "tikv-jemallocator/profiling",
 ]

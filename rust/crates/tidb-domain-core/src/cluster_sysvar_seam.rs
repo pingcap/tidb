@@ -56,8 +56,8 @@ use tidb_domain::global_sysvars::GlobalSysvars;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, RealTransaction};
 
-use tidb_store_driver::pessimistic_lock_error::cluster_commit_error;
-use tidb_store_driver::sql_query_error::SqlQueryError;
+use tidb_store_driver_error::pessimistic_lock_error::cluster_commit_error;
+use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 /// This node's one route to the cluster's stored `SET GLOBAL` overrides.
 ///

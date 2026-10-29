@@ -176,7 +176,7 @@ pub fn restore_region_labels(labels: &[RegionLabel]) -> String {
     for label in labels {
         match label.key.as_str() {
             DB_KEY | TABLE_KEY | PARTITION_KEY => continue,
-            KEYSPACE_KEY if tidb_config::kerneltype::is_next_gen() => continue,
+            KEYSPACE_KEY if tidb_config_kerneltype::is_next_gen() => continue,
             _ => {}
         }
         if written > 0 {
@@ -270,7 +270,7 @@ fn mem_comparable(key: &[u8]) -> Vec<u8> {
 /// Go `UseKeyspaceAwareRules`.
 #[must_use]
 pub fn use_keyspace_aware_rules(codec: &dyn LabelCodec) -> bool {
-    tidb_config::kerneltype::is_next_gen() && codec.has_keyspace_meta()
+    tidb_config_kerneltype::is_next_gen() && codec.has_keyspace_meta()
 }
 
 /// Go `NewRuleID`.
@@ -295,7 +295,7 @@ pub fn new_rule_id(
 /// Go `RestoreRuleID`: strips the keyspace prefix on next-generation kernels.
 #[must_use]
 pub fn restore_rule_id(rule_id: &str) -> String {
-    if !tidb_config::kerneltype::is_next_gen() {
+    if !tidb_config_kerneltype::is_next_gen() {
         return rule_id.to_owned();
     }
     let parts: Vec<&str> = rule_id.split('/').collect();
@@ -653,7 +653,7 @@ mod tests {
             restore_region_labels(&[merge.clone(), plain, db]),
             r#""merge_option=allow","key=value""#
         );
-        if tidb_config::kerneltype::is_next_gen() {
+        if tidb_config_kerneltype::is_next_gen() {
             assert_eq!(
                 restore_region_labels(&[merge.clone(), keyspace.clone()]),
                 r#""merge_option=allow""#
@@ -789,7 +789,7 @@ mod tests {
         let mut rule = Rule::new();
         rule.apply_attributes_spec(&spec("key=value")).unwrap();
         rule.reset(&codec, "db1", "t1", "", &[1]);
-        if tidb_config::kerneltype::is_next_gen() {
+        if tidb_config_kerneltype::is_next_gen() {
             assert_eq!(rule.id, "keyspace/42/schema/db1/t1");
             assert!(labels(&rule).contains(&RegionLabel {
                 key: KEYSPACE_KEY.to_owned(),

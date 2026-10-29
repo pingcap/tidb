@@ -15,4 +15,3 @@ tidb-logutil = { path = "../tidb-logutil" }
 crossbeam-channel = "0.5"
 tidb-config = { path = "../tidb-config" }
 tidb-log = { path = "../tidb-log" }
-tidb-util = { path = "../tidb-util" }

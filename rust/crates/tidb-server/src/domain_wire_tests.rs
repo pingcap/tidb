@@ -21,7 +21,7 @@ mod tests {
     use crate::mysql_connection::MysqlConnectionError;
     use tidb_ddl::real_tikv_ddl::ClusterDdlError;
     use tidb_ddl::real_tikv_ddl::cluster_ddl_error;
-    use tidb_store_driver::sql_query_error::lock_sql_error;
+    use tidb_store_driver_error::sql_query_error::lock_sql_error;
     use tidb_txnkv::retry::RegionBackoffKind;
     use tidb_txnkv::transaction::TransactionCause;
 
@@ -60,7 +60,7 @@ mod tests {
 
     #[test]
     fn commit_backoff_error_is_coded_on_the_wire() {
-        let driver_error = tidb_store_driver::pessimistic_lock_error::transaction_cause_to_sql_error(
+        let driver_error = tidb_store_driver_error::pessimistic_lock_error::transaction_cause_to_sql_error(
             &TransactionCause::BackoffExhausted {
                 kind: RegionBackoffKind::StaleCommand,
                 detail: "staleCommand backoffer exhausted".to_owned(),

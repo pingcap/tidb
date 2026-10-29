@@ -987,7 +987,7 @@ impl<T: RawTransaction> Mutator<T> {
 
     /// Go `Mutator.CreateMySQLDatabaseIfNotExists`.
     pub fn create_mysql_database_if_not_exists(&self) -> Result<i64> {
-        if tidb_config::kerneltype::is_next_gen() {
+        if tidb_config_kerneltype::is_next_gen() {
             let id = tidb_metadef::system::SYSTEM_DATABASE_ID;
             self.create_sys_database_by_id_if_not_exists("mysql", id)?;
             return Ok(id);

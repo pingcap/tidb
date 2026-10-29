@@ -224,7 +224,7 @@ impl SchemaSyncAck {
         min_job_id_refresher: Arc<MinJobIdRefresher>,
         etcd: Arc<EtcdClient>,
         ddl_id: String,
-        server_info: Arc<tidb_domain::serverinfo_syncer::Syncer>,
+        server_info: Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>,
         schema_validator: Arc<SchemaValidator>,
         reload_waker: CatalogReloadWaker,
         reload_stats: CatalogReloadStatsSource,
@@ -444,7 +444,7 @@ fn run_ack_loop<S>(
         }
         let loaded = catalog.load().schema_version;
         let reload_pass = reload_stats().passes;
-        let mdl_enabled = tidb_vardef::is_mdl_enabled(tidb_config::kerneltype::is_next_gen());
+        let mdl_enabled = tidb_vardef::is_mdl_enabled(tidb_config_kerneltype::is_next_gen());
 
         // Go's domain reload path reports every newly loaded version with
         // job id zero. The etcd syncer turns this into the leased self-key

@@ -57,11 +57,11 @@ fn print_tidb_info_source() {
     let output = std::fs::read_to_string(filename).expect("read startup logs");
     assert!(output.contains("Welcome to TiDB."), "{output}");
     assert!(output.contains("loaded config"), "{output}");
-    if tidb_config::kerneltype::is_next_gen() {
+    if tidb_config_kerneltype::is_next_gen() {
         assert!(output.contains("TiDB Component Version"), "{output}");
         assert!(output.contains("Deploy Mode"), "{output}");
         assert!(
-            output.contains(&tidb_config::deploymode::get().to_string()),
+            output.contains(&tidb_config_deploymode::get().to_string()),
             "{output}"
         );
     } else {
