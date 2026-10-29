@@ -213,7 +213,8 @@
 //!   `calculateSum` is shared by the distributed SUM/AVG evaluator.
 
 use tidb_expr::expression::Expression;
-use tidb_expr::infer_pushdown::{is_push_down_enabled, PushDownStore};
+use tidb_expr::infer_pushdown::{is_push_down_enabled};
+use tidb_kv::store_type::StoreType;
 use std::collections::HashMap;
 use tidb_datatype::FieldTypeCode;
 
@@ -399,14 +400,14 @@ pub fn check_agg_push_flash(agg_func: &AggFuncDesc) -> bool {
 #[must_use]
 pub fn check_agg_push_down(
     agg_func: &AggFuncDesc,
-    store: PushDownStore,
+    store: StoreType,
     blacklist: &HashMap<String, u32>,
 ) -> bool {
     if !agg_func.order_by_items.is_empty() && agg_func.name() != names::GROUP_CONCAT {
         return false;
     }
     if matches!(agg_func.name(), names::MAX_COUNT | names::MIN_COUNT)
-        && (store != PushDownStore::TiFlash
+        && (store != StoreType::TiFlash
             || agg_func.args().len() != 1
             || agg_func.mode == AggFunctionMode::Dedup)
     {
@@ -417,7 +418,7 @@ pub fn check_agg_push_down(
     if agg_func.name() == names::APPROX_PERCENTILE {
         return false;
     }
-    if store != PushDownStore::TiFlash && agg_func.name() == names::APPROX_COUNT_DISTINCT {
+    if store != StoreType::TiFlash && agg_func.name() == names::APPROX_COUNT_DISTINCT {
         // approx_count_distinct is only pushable to TiFlash today.
         return false;
     }
@@ -425,9 +426,9 @@ pub fn check_agg_push_down(
         return false;
     }
     let ret = match store {
-        PushDownStore::TiFlash => check_agg_push_flash(agg_func),
+        StoreType::TiFlash => check_agg_push_flash(agg_func),
         // TiKV does not support group_concat.
-        PushDownStore::TiKv => agg_func.name() != names::GROUP_CONCAT,
+        StoreType::TiKv => agg_func.name() != names::GROUP_CONCAT,
         _ => true,
     };
     // No `strings.ToLower` here: `BaseFuncDesc::new` already lower-cased it.

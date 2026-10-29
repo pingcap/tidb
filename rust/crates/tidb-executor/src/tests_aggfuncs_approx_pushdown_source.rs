@@ -25,7 +25,7 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_expression_aggregation::{check_agg_push_down, names, AggFuncDesc};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
-use tidb_expr::infer_pushdown::PushDownStore;
+use tidb_kv::store_type::StoreType;
 use tidb_exprctx::NoColumns;
 
 /// Go `pkg/executor/aggfuncs/aggfunc_test.go:1331::TestAggApproxCountDistinctPushDown`:
@@ -42,14 +42,14 @@ fn agg_approx_count_distinct_push_down_is_tiflash_only() {
     let blacklist: HashMap<String, u32> = HashMap::new();
     assert!(check_agg_push_down(
         &agg,
-        PushDownStore::TiFlash,
+        StoreType::TiFlash,
         &blacklist
     ));
-    assert!(!check_agg_push_down(&agg, PushDownStore::TiKv, &blacklist));
-    assert!(!check_agg_push_down(&agg, PushDownStore::TiDb, &blacklist));
+    assert!(!check_agg_push_down(&agg, StoreType::TiKv, &blacklist));
+    assert!(!check_agg_push_down(&agg, StoreType::TiDb, &blacklist));
     assert!(!check_agg_push_down(
         &agg,
-        PushDownStore::Unspecified,
+        StoreType::Unspecified,
         &blacklist
     ));
 }

@@ -217,9 +217,9 @@ pub(crate) fn derive_access_paths(
                         });
             }
             if need_consider_index_merge
-                && !crate::pushdown::can_exprs_push_down(
+                && !tidb_expr::infer_pushdown::can_exprs_push_down(
                     &source.all_conds,
-                    tidb_expr::infer_pushdown::PushDownStore::Unspecified,
+                    tidb_kv::store_type::StoreType::Unspecified,
                     context.expr_pushdown_blacklist,
                 )
             {

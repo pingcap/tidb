@@ -728,9 +728,9 @@ impl DataSource {
         };
         let (pushable, not_pushable): (Vec<_>, Vec<_>) =
             self.all_conds.iter().cloned().partition(|predicate| {
-                crate::pushdown::can_exprs_push_down_reporting(
+                tidb_expr::infer_pushdown::can_exprs_push_down_reporting(
                     std::slice::from_ref(predicate),
-                    tidb_expr::infer_pushdown::PushDownStore::Unspecified,
+                    tidb_kv::store_type::StoreType::Unspecified,
                     blacklist,
                     &report,
                 )

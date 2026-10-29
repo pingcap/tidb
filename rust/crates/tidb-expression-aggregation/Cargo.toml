@@ -11,6 +11,7 @@ description = "TiDB pkg/expression/aggregation (Rust)."
 workspace = true
 
 [dependencies]
+tidb-kv = { path = "../tidb-kv" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-charset = { path = "../tidb-charset" }

@@ -192,9 +192,9 @@ fn prepare_union_index_merge_path_for_or(
                         let keep_source_filter = keep_branch_filter
                             || !rejected.is_empty()
                             || !result.remained_conds.is_empty();
-                        if !crate::pushdown::can_exprs_push_down(
+                        if !tidb_expr::infer_pushdown::can_exprs_push_down(
                             &result.remained_conds,
-                            tidb_expr::infer_pushdown::PushDownStore::TiKv,
+                            tidb_kv::store_type::StoreType::TiKv,
                             ctx.expr_pushdown_blacklist,
                         ) {
                             result.remained_conds.clear();
@@ -293,9 +293,9 @@ fn prepare_union_index_merge_path_for_or(
             let mut keep_source_filter =
                 keep_branch_filter || !rejected.is_empty() || !filled.table_filters.is_empty();
             filled.table_filters.clear();
-            if !crate::pushdown::can_exprs_push_down(
+            if !tidb_expr::infer_pushdown::can_exprs_push_down(
                 &filled.index_filters,
-                tidb_expr::infer_pushdown::PushDownStore::TiKv,
+                tidb_kv::store_type::StoreType::TiKv,
                 ctx.expr_pushdown_blacklist,
             ) {
                 keep_source_filter = true;
@@ -427,9 +427,9 @@ fn partition_partial_filters(
         .iter()
         .flat_map(tidb_expr::expr_util::normal_form::split_cnf_items)
         .partition(|condition| {
-            crate::pushdown::can_exprs_push_down(
+            tidb_expr::infer_pushdown::can_exprs_push_down(
                 std::slice::from_ref(condition),
-                tidb_expr::infer_pushdown::PushDownStore::TiKv,
+                tidb_kv::store_type::StoreType::TiKv,
                 ctx.expr_pushdown_blacklist,
             )
         })
@@ -735,9 +735,9 @@ fn generate_and_index_merge_for_normal_index(
         let mut not_covered = filled.table_filters.clone();
         filled.index_filters.retain(|condition| {
             let pushable =
-                crate::pushdown::can_exprs_push_down(
+                tidb_expr::infer_pushdown::can_exprs_push_down(
                     std::slice::from_ref(condition),
-                    tidb_expr::infer_pushdown::PushDownStore::TiKv,
+                    tidb_kv::store_type::StoreType::TiKv,
                     ctx.expr_pushdown_blacklist,
                 );
             if !pushable {

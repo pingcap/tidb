@@ -8900,9 +8900,9 @@ pub(crate) fn aggregate_admits(
         PushdownAggregateKind::MinCount => "min_count",
         PushdownAggregateKind::MaxCount => "max_count",
     };
-    let admits_name = |name: &str| tidb_expr::infer_pushdown::is_push_down_enabled(blacklist, name, tidb_expr::infer_pushdown::PushDownStore::TiKv);
+    let admits_name = |name: &str| tidb_expr::infer_pushdown::is_push_down_enabled(blacklist, name, tidb_kv::store_type::StoreType::TiKv);
     let admits_arg = |input: Option<&tidb_expr::expression::Expression>| {
-        input.is_none_or(|expr| tidb_expr::pushdown_blacklist::admits(expr, blacklist, tidb_expr::infer_pushdown::PushDownStore::TiKv))
+        input.is_none_or(|expr| tidb_expr::pushdown_blacklist::admits(expr, blacklist, tidb_kv::store_type::StoreType::TiKv))
     };
     match aggregate {
         Agg::Grouped { functions, .. } => functions.iter().all(|function| {

@@ -79,7 +79,8 @@
 //! RELOAD` takes exactly the path it took before.
 
 use crate::expression::Expression;
-use crate::infer_pushdown::{is_push_down_enabled, ExprPushDownBlacklist, PushDownStore};
+use crate::infer_pushdown::{is_push_down_enabled, ExprPushDownBlacklist};
+use tidb_kv::store_type::StoreType;
 
 /// Go `ast.TypeStr(mysql.TypeBit)`, the name `columnToPBExpr` looks a BIT
 /// column up under.
@@ -94,7 +95,7 @@ const ENUM_TYPE_NAME: &str = "enum";
 pub fn compiled_blacklist_admits(
     condition: &Expression,
     ctx: &dyn crate::pushdown_catalog::PbConverterContext,
-    store: PushDownStore,
+    store: StoreType,
 ) -> bool {
     let blacklist = ctx.expr_pushdown_blacklist();
     blacklist.is_empty() || admits(condition, blacklist, store)
@@ -102,7 +103,7 @@ pub fn compiled_blacklist_admits(
 
 /// The walk itself, over the typed tree Go walks.
 /// Go `PushDownExprs`' blacklist walk over one expression for `store`.
-pub fn admits(expr: &Expression, blacklist: &ExprPushDownBlacklist, store: PushDownStore) -> bool {
+pub fn admits(expr: &Expression, blacklist: &ExprPushDownBlacklist, store: StoreType) -> bool {
     match expr {
         // Go `columnToPBExpr`, whose two blacklist-driven refusals are by
         // COLUMN TYPE rather than by any function name. `enum` is asked under
@@ -114,10 +115,10 @@ pub fn admits(expr: &Expression, blacklist: &ExprPushDownBlacklist, store: PushD
             };
             match field_type.code() {
                 tidb_datatype::FieldTypeCode::Enum => {
-                    is_push_down_enabled(blacklist, ENUM_TYPE_NAME, PushDownStore::Unspecified)
+                    is_push_down_enabled(blacklist, ENUM_TYPE_NAME, StoreType::Unspecified)
                 }
                 tidb_datatype::FieldTypeCode::Bit => {
-                    is_push_down_enabled(blacklist, BIT_TYPE_NAME, PushDownStore::TiKv)
+                    is_push_down_enabled(blacklist, BIT_TYPE_NAME, StoreType::TiKv)
                 }
                 _ => true,
             }

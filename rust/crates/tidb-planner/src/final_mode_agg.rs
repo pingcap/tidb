@@ -1424,7 +1424,7 @@ pub fn check_agg_can_push_cop_tikv(
     check_agg_can_push_cop(
         agg_funcs,
         group_by_items,
-        tidb_expr::infer_pushdown::PushDownStore::TiKv,
+        tidb_kv::store_type::StoreType::TiKv,
         blacklist,
     )
 }
@@ -1435,7 +1435,7 @@ pub fn check_agg_can_push_cop_tikv(
 pub fn check_agg_can_push_cop(
     agg_funcs: &[AggFuncDesc],
     group_by_items: &[Expression],
-    store: tidb_expr::infer_pushdown::PushDownStore,
+    store: tidb_kv::store_type::StoreType,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> bool {
     for agg_func in agg_funcs {
@@ -1454,7 +1454,7 @@ pub fn check_agg_can_push_cop(
         // Go passes `aggFunc.Name == ast.AggFuncSum` as `canEnumPush`, a
         // TiFlash-only enum carve-out (`canExprPushDown`); for TiKV the
         // plain check is the same function.
-        if !crate::pushdown::can_exprs_push_down(
+        if !tidb_expr::infer_pushdown::can_exprs_push_down(
             &agg_func.base.args,
             store,
             blacklist,
@@ -1467,7 +1467,7 @@ pub fn check_agg_can_push_cop(
                 .iter()
                 .map(|item| item.expr.clone())
                 .collect();
-            if !crate::pushdown::can_exprs_push_down(
+            if !tidb_expr::infer_pushdown::can_exprs_push_down(
                 &exprs,
                 store,
                 blacklist,
@@ -1500,7 +1500,7 @@ pub fn check_agg_can_push_cop(
     if contain_virtual_column(group_by_items) {
         return false;
     }
-    crate::pushdown::can_exprs_push_down(
+    tidb_expr::infer_pushdown::can_exprs_push_down(
         group_by_items,
         store,
         blacklist,
@@ -1531,12 +1531,12 @@ pub fn check_agg_can_push_mpp(
         if agg_func.name() == names::APPROX_COUNT_DISTINCT
             || !tidb_expression_aggregation::check_agg_push_down(
                 agg_func,
-                tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+                tidb_kv::store_type::StoreType::TiFlash,
                 blacklist,
             )
-            || !crate::pushdown::can_exprs_push_down(
+            || !tidb_expr::infer_pushdown::can_exprs_push_down(
                 &agg_func.base.args,
-                tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+                tidb_kv::store_type::StoreType::TiFlash,
                 blacklist,
             )
         {
@@ -1547,18 +1547,18 @@ pub fn check_agg_can_push_mpp(
             .iter()
             .map(|item| item.expr.clone())
             .collect();
-        if !crate::pushdown::can_exprs_push_down(
+        if !tidb_expr::infer_pushdown::can_exprs_push_down(
             &order_by_exprs,
-            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+            tidb_kv::store_type::StoreType::TiFlash,
             blacklist,
         ) {
             return false;
         }
     }
     !contain_virtual_column(group_by_items)
-        && crate::pushdown::can_exprs_push_down(
+        && tidb_expr::infer_pushdown::can_exprs_push_down(
             group_by_items,
-            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+            tidb_kv::store_type::StoreType::TiFlash,
             blacklist,
         )
 }
@@ -1606,7 +1606,7 @@ pub fn new_partial_aggregate_mpp(
     ),
     tidb_planner_core_base::PlanError,
 > {
-    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_expr::infer_pushdown::PushDownStore::TiFlash, true, blacklist)
+    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_kv::store_type::StoreType::TiFlash, true, blacklist)
 }
 
 /// Go `BasePhysicalAgg.NewPartialAggregate(kv.TiDB, false)` for a cop task
@@ -1624,7 +1624,7 @@ pub fn new_partial_aggregate_tidb(
     ),
     tidb_planner_core_base::PlanError,
 > {
-    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_expr::infer_pushdown::PushDownStore::TiDb, false, blacklist)
+    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_kv::store_type::StoreType::TiDb, false, blacklist)
 }
 
 /// Go `NewPartialAggregate(kv.TiFlash, false)` for the MPP-TiDB mode: the
@@ -1643,7 +1643,7 @@ pub fn new_partial_aggregate_mpp_tidb(
     ),
     tidb_planner_core_base::PlanError,
 > {
-    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_expr::infer_pushdown::PushDownStore::TiFlash, false, blacklist)
+    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_kv::store_type::StoreType::TiFlash, false, blacklist)
 }
 
 fn new_partial_aggregate_with_mode(
@@ -1660,7 +1660,7 @@ fn new_partial_aggregate_with_mode(
     ),
     tidb_planner_core_base::PlanError,
 > {
-    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_expr::infer_pushdown::PushDownStore::TiKv, is_mpp, blacklist)
+    new_partial_aggregate_for_store(ctx, alloc, plan, plan_ids, tidb_kv::store_type::StoreType::TiKv, is_mpp, blacklist)
 }
 
 fn new_partial_aggregate_for_store(
@@ -1668,7 +1668,7 @@ fn new_partial_aggregate_for_store(
     alloc: &ColumnIdAllocator,
     plan: crate::physical::PhysicalPlan,
     plan_ids: &tidb_planner_core_base::PlanIdAllocator,
-    store: tidb_expr::infer_pushdown::PushDownStore,
+    store: tidb_kv::store_type::StoreType,
     is_mpp: bool,
     blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist,
 ) -> Result<
@@ -1693,7 +1693,7 @@ fn new_partial_aggregate_for_store(
             ))
         }
     };
-    let is_tiflash = store == tidb_expr::infer_pushdown::PushDownStore::TiFlash;
+    let is_tiflash = store == tidb_kv::store_type::StoreType::TiFlash;
     let can_push = if is_tiflash {
         check_agg_can_push_mpp(agg_funcs, group_by_items, blacklist)
     } else {
@@ -1734,7 +1734,7 @@ fn new_partial_aggregate_for_store(
         &mut split.partial.schema,
         &split.first_row_func_map,
     );
-    if store == tidb_expr::infer_pushdown::PushDownStore::TiDb {
+    if store == tidb_kv::store_type::StoreType::TiDb {
         // Go: "since TiDB coprocessor reuse the TiDB executor, and TiDB
         // aggregation executor won't output the group by value, so we need
         // add `firstrow` aggregation function to output the group by value."

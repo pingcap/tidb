@@ -293,12 +293,12 @@ fn sum_int_is_pushable_to_both_stores() {
     let blacklist = std::collections::HashMap::new();
     assert!(check_agg_push_down(
         &d,
-        tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+        tidb_kv::store_type::StoreType::TiFlash,
         &blacklist
     ));
     assert!(check_agg_push_down(
         &d,
-        tidb_expr::infer_pushdown::PushDownStore::TiKv,
+        tidb_kv::store_type::StoreType::TiKv,
         &blacklist
     ));
 }
@@ -312,12 +312,12 @@ fn group_concat_is_not_pushable_to_tikv_but_is_to_tiflash() {
     let blacklist = std::collections::HashMap::new();
     assert!(!check_agg_push_down(
         &d,
-        tidb_expr::infer_pushdown::PushDownStore::TiKv,
+        tidb_kv::store_type::StoreType::TiKv,
         &blacklist
     ));
     assert!(check_agg_push_down(
         &d,
-        tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+        tidb_kv::store_type::StoreType::TiFlash,
         &blacklist
     ));
 }
@@ -331,12 +331,12 @@ fn approx_count_distinct_only_pushes_to_tiflash() {
     let blacklist = std::collections::HashMap::new();
     assert!(check_agg_push_down(
         &d,
-        tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+        tidb_kv::store_type::StoreType::TiFlash,
         &blacklist
     ));
     assert!(!check_agg_push_down(
         &d,
-        tidb_expr::infer_pushdown::PushDownStore::TiKv,
+        tidb_kv::store_type::StoreType::TiKv,
         &blacklist
     ));
 }
@@ -350,7 +350,7 @@ fn approx_percentile_and_an_ordered_non_group_concat_never_push() {
     );
     assert!(!check_agg_push_down(
         &percentile,
-        tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+        tidb_kv::store_type::StoreType::TiFlash,
         &blacklist
     ));
 
@@ -358,7 +358,7 @@ fn approx_percentile_and_an_ordered_non_group_concat_never_push() {
     ordered_sum.order_by_items = vec![ByItems::new(col(0, FieldTypeCode::Long), false)];
     assert!(!check_agg_push_down(
         &ordered_sum,
-        tidb_expr::infer_pushdown::PushDownStore::TiKv,
+        tidb_kv::store_type::StoreType::TiKv,
         &blacklist
     ));
 }
@@ -369,13 +369,13 @@ fn a_vector_argument_blocks_all_but_the_value_agnostic_kinds() {
     let sum = desc(names::SUM, vec![col(0, FieldTypeCode::VectorFloat32)]);
     assert!(!check_agg_push_down(
         &sum,
-        tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+        tidb_kv::store_type::StoreType::TiFlash,
         &blacklist
     ));
     let count = desc(names::COUNT, vec![col(0, FieldTypeCode::VectorFloat32)]);
     assert!(check_agg_push_down(
         &count,
-        tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+        tidb_kv::store_type::StoreType::TiFlash,
         &blacklist
     ));
 }
@@ -453,31 +453,31 @@ fn max_min_count_pushdown_is_tiflash_only_and_one_stage() {
         let mut d = desc(name, vec![col(0, FieldTypeCode::LongLong)]);
         assert!(check_agg_push_down(
             &d,
-            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+            tidb_kv::store_type::StoreType::TiFlash,
             &blacklist
         ));
         assert!(!check_agg_push_down(
             &d,
-            tidb_expr::infer_pushdown::PushDownStore::TiKv,
+            tidb_kv::store_type::StoreType::TiKv,
             &blacklist
         ));
 
         d.mode = AggFunctionMode::Partial1;
         assert!(check_agg_push_down(
             &d,
-            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+            tidb_kv::store_type::StoreType::TiFlash,
             &blacklist
         ));
         d.mode = AggFunctionMode::Final;
         assert!(check_agg_push_down(
             &d,
-            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+            tidb_kv::store_type::StoreType::TiFlash,
             &blacklist
         ));
         d.mode = AggFunctionMode::Dedup;
         assert!(!check_agg_push_down(
             &d,
-            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+            tidb_kv::store_type::StoreType::TiFlash,
             &blacklist
         ));
 
@@ -491,7 +491,7 @@ fn max_min_count_pushdown_is_tiflash_only_and_one_stage() {
         two_stage.mode = AggFunctionMode::Final;
         assert!(!check_agg_push_down(
             &two_stage,
-            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+            tidb_kv::store_type::StoreType::TiFlash,
             &blacklist
         ));
     }
@@ -1233,18 +1233,18 @@ fn test_check_agg_push_down_max_min_count() {
         .unwrap();
         assert!(super::check_agg_push_down(
             &desc,
-            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+            tidb_kv::store_type::StoreType::TiFlash,
             &blacklist
         ));
         assert!(!super::check_agg_push_down(
             &desc,
-            tidb_expr::infer_pushdown::PushDownStore::TiKv,
+            tidb_kv::store_type::StoreType::TiKv,
             &blacklist
         ));
         desc.mode = AggFunctionMode::Dedup;
         assert!(!super::check_agg_push_down(
             &desc,
-            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+            tidb_kv::store_type::StoreType::TiFlash,
             &blacklist
         ));
     }

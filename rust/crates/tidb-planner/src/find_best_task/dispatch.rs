@@ -3620,7 +3620,7 @@ fn find_best_task_4_logical_data_source_paths(
                 }
                 base.base.set_id(ctx.allocator.alloc());
                 let (table_filters, root_task_conds) = crate::pushdown::split_scan_filters(
-                    table_filters, tidb_expr::infer_pushdown::PushDownStore::TiKv,
+                    table_filters, tidb_kv::store_type::StoreType::TiKv,
                     &ctx.expr_pushdown_blacklist,
                 );
                 // Go `PhysicalTableScan.IsFullScan`: `len(p.RangeInfo) > 0 ||
@@ -3829,7 +3829,7 @@ fn find_best_task_4_logical_data_source_paths(
                     )),
                 });
                 let (table_filters, root_task_conds) = crate::pushdown::split_scan_filters(
-                    ds.pushed_down_conds.clone(), tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+                    ds.pushed_down_conds.clone(), tidb_kv::store_type::StoreType::TiFlash,
                     &ctx.expr_pushdown_blacklist,
                 );
                 let table_plan = if table_filters.is_empty() {
@@ -4496,15 +4496,15 @@ fn find_best_task_4_logical_data_source_paths(
                 // Go `addPushedDownSelection4PhysicalIndexScan` splits only the
                 // TABLE filters by virtual column; the index filters go
                 // through `PushDownExprs` alone.
-                let (index_filters, mut rejected_index_filters) = crate::pushdown::push_down_exprs(
-                    index_filters, tidb_expr::infer_pushdown::PushDownStore::TiKv,
+                let (index_filters, mut rejected_index_filters) = tidb_expr::infer_pushdown::push_down_exprs(
+                    index_filters, tidb_kv::store_type::StoreType::TiKv,
                     &ctx.expr_pushdown_blacklist,
                 );
                 let (table_filters, rejected_table_filters) = if single_scan {
                     (Vec::new(), table_filters)
                 } else {
                     crate::pushdown::split_scan_filters(table_filters,
-                        tidb_expr::infer_pushdown::PushDownStore::TiKv, &ctx.expr_pushdown_blacklist)
+                        tidb_kv::store_type::StoreType::TiKv, &ctx.expr_pushdown_blacklist)
                 };
                 let has_root_filters = !virtual_table_filters.is_empty()
                     || !rejected_index_filters.is_empty() || !rejected_table_filters.is_empty();

@@ -658,7 +658,7 @@ mod tests {
                 continue;
             };
             tidb_expr::scalar_function::into_coprocessor_form(&mut condition);
-            if !tidb_planner::pushdown::can_exprs_push_down_tikv(std::slice::from_ref(&condition)) {
+            if !tidb_expr::infer_pushdown::can_exprs_push_down_tikv(std::slice::from_ref(&condition)) {
                 continue;
             }
             if tidb_executor_internal_exec::predicate_pushdown::describe_request_condition(&condition, Some(&context)).is_err() {

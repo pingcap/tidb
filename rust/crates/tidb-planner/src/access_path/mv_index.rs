@@ -894,9 +894,9 @@ pub(crate) fn init_unfinished_mv_path(
     let idx_cols = prepare_idx_cols_and_unwrap_array_type(ds, &ds.indexes[index_pos], false)?;
     let cnf_items = tidb_expr::expr_util::normal_form::split_cnf_items(expr);
     let unpushable = cnf_items.iter().any(|item| {
-        !crate::pushdown::can_exprs_push_down(
+        !tidb_expr::infer_pushdown::can_exprs_push_down(
             std::slice::from_ref(item),
-            tidb_expr::infer_pushdown::PushDownStore::TiKv,
+            tidb_kv::store_type::StoreType::TiKv,
             ctx.expr_pushdown_blacklist,
         )
     });

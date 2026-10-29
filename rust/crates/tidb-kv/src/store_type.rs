@@ -17,16 +17,17 @@
 /// Go `kv.StoreType` (`pkg/kv/kv.go`): the type of storage engine, with
 /// Go's zero value (`TiKV`) as the default.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
 pub enum StoreType {
     /// Go `kv.TiKV`.
     #[default]
-    TiKv,
+    TiKv = 0,
     /// Go `kv.TiFlash`.
-    TiFlash,
+    TiFlash = 1,
     /// Go `kv.TiDB`.
-    TiDb,
+    TiDb = 2,
     /// Go `kv.UnSpecified`.
-    Unspecified,
+    Unspecified = 255,
 }
 
 impl StoreType {

@@ -451,7 +451,7 @@ pub fn describe_execution_condition(
     if !tidb_expr::pushdown_blacklist::compiled_blacklist_admits(
         expression,
         context,
-        tidb_expr::infer_pushdown::PushDownStore::TiKv,
+        tidb_kv::store_type::StoreType::TiKv,
     ) {
         return Err(ExecError::unsupported("cop predicate is disabled for TiKV"));
     }

@@ -256,9 +256,9 @@ pub fn exhaust_physical_plans_4_logical_selection_with_mpp(
         && mpp_allowed
         && p.base.has_tiflash()
         && !contains_virtual_column
-        && crate::pushdown::can_exprs_push_down(
+        && tidb_expr::infer_pushdown::can_exprs_push_down(
             &p.conditions,
-            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+            tidb_kv::store_type::StoreType::TiFlash,
             blacklist,
         )
     {
@@ -475,9 +475,9 @@ pub fn exhaust_physical_plans_4_logical_projection_with_mpp(
     if child_prop.task_tp != TaskType::Mpp
         && mpp_allowed
         && p.base.has_tiflash()
-        && crate::pushdown::can_exprs_push_down(
+        && tidb_expr::infer_pushdown::can_exprs_push_down(
             &p.exprs,
-            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+            tidb_kv::store_type::StoreType::TiFlash,
             blacklist,
         )
     {
@@ -499,9 +499,9 @@ pub fn exhaust_physical_plans_4_logical_projection_with_mpp(
     });
     if child_prop.task_tp != TaskType::CopSingleRead
         && allow_projection_push_down
-        && crate::pushdown::can_exprs_push_down(
+        && tidb_expr::infer_pushdown::can_exprs_push_down(
             &p.exprs,
-            tidb_expr::infer_pushdown::PushDownStore::TiKv,
+            tidb_kv::store_type::StoreType::TiKv,
             blacklist,
         )
         && !contains_virtual_column
