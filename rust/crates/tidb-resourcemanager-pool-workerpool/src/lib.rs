@@ -25,8 +25,8 @@ use std::sync::OnceLock;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, SystemTime};
 
-use crate::poolmanager::Channel;
-use crate::util::Component;
+use tidb_resourcemanager_poolmanager::Channel;
+use tidb_resourcemanager_util::Component;
 
 /// Shared cancellable pipeline context.
 pub struct Context<E> {

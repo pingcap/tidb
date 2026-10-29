@@ -4327,6 +4327,9 @@ dependencies = [
  "crossbeam-channel",
  "regex",
  "tidb-resourcemanager",
+ "tidb-resourcemanager-pool-workerpool",
+ "tidb-resourcemanager-poolmanager",
+ "tidb-resourcemanager-util",
 ]
 
 [[package]]
@@ -5726,7 +5729,61 @@ dependencies = [
  "tidb-cgroup",
  "tidb-cpu",
  "tidb-intest",
+ "tidb-resourcemanager-scheduler",
+ "tidb-resourcemanager-util",
  "tracing",
+]
+
+[[package]]
+name = "tidb-resourcemanager-pool"
+version = "0.0.0"
+
+[[package]]
+name = "tidb-resourcemanager-pool-spool"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "prometheus 0.14.0",
+ "tidb-resourcemanager",
+ "tidb-resourcemanager-pool",
+ "tidb-resourcemanager-poolmanager",
+ "tidb-resourcemanager-util",
+ "tracing",
+]
+
+[[package]]
+name = "tidb-resourcemanager-pool-workerpool"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+ "fail",
+ "rand 0.8.7",
+ "tidb-build-tags",
+ "tidb-resourcemanager-poolmanager",
+ "tidb-resourcemanager-util",
+ "tracing",
+]
+
+[[package]]
+name = "tidb-resourcemanager-poolmanager"
+version = "0.0.0"
+dependencies = [
+ "crossbeam-channel",
+]
+
+[[package]]
+name = "tidb-resourcemanager-scheduler"
+version = "0.0.0"
+dependencies = [
+ "tidb-cpu",
+ "tidb-resourcemanager-util",
+]
+
+[[package]]
+name = "tidb-resourcemanager-util"
+version = "0.0.0"
+dependencies = [
+ "tidb-intest",
 ]
 
 [[package]]
@@ -5917,6 +5974,7 @@ dependencies = [
  "tidb-proto",
  "tidb-protocol",
  "tidb-resourcemanager",
+ "tidb-resourcemanager-pool-workerpool",
  "tidb-sem",
  "tidb-sem-v2",
  "tidb-server-err",

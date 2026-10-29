@@ -1,0 +1,25 @@
+[package]
+name = "tidb-resourcemanager-pool-workerpool"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB resourcemanager/pool/workerpool: Go pkg/resourcemanager/pool/workerpool (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[features]
+failpoints = ["dep:fail", "fail/failpoints", "tidb-build-tags/failpoints"]
+
+[dependencies]
+fail = { version = "0.4", optional = true }
+tidb-build-tags = { path = "../tidb-build-tags" }
+tidb-resourcemanager-poolmanager = { path = "../tidb-resourcemanager-poolmanager" }
+tidb-resourcemanager-util = { path = "../tidb-resourcemanager-util" }
+crossbeam-channel = "0.5"
+tracing = "0.1"
+
+[dev-dependencies]
+rand = "0.8.7"

@@ -17,7 +17,7 @@
 use std::sync::atomic::Ordering;
 use std::time::SystemTime;
 
-use crate::util::{Component, GoroutinePool, MIN_SCHEDULER_INTERVAL_NANOS};
+use tidb_resourcemanager_util::{Component, GoroutinePool, MIN_SCHEDULER_INTERVAL_NANOS};
 
 /// Pool tuning command.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

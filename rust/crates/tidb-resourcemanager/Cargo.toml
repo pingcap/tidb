@@ -16,6 +16,8 @@ failpoints = ["dep:fail", "fail/failpoints", "tidb-build-tags/failpoints"]
 intest = ["tidb-build-tags/intest"]
 
 [dependencies]
+tidb-resourcemanager-scheduler = { path = "../tidb-resourcemanager-scheduler" }
+tidb-resourcemanager-util = { path = "../tidb-resourcemanager-util" }
 tidb-cpu = { path = "../tidb-cpu" }
 tidb-intest = { path = "../tidb-intest" }
 crossbeam-channel = "0.5"

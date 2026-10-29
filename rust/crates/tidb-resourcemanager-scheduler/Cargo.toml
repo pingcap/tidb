@@ -1,0 +1,15 @@
+[package]
+name = "tidb-resourcemanager-scheduler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB resourcemanager/scheduler: Go pkg/resourcemanager/scheduler (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-resourcemanager-util = { path = "../tidb-resourcemanager-util" }
+tidb-cpu = { path = "../tidb-cpu" }

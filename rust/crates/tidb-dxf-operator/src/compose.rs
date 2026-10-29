@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crossbeam_channel::{Receiver, RecvError, SendError, Sender};
-use tidb_resourcemanager::poolmanager::Channel;
+use tidb_resourcemanager_poolmanager::Channel;
 
 /// Go `WithSource`.
 pub trait WithSource<T> {

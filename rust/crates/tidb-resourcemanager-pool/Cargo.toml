@@ -1,0 +1,13 @@
+[package]
+name = "tidb-resourcemanager-pool"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB resourcemanager/pool: Go pkg/resourcemanager/pool (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]

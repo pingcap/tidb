@@ -122,7 +122,9 @@ impl<T> Channel<T> {
         self.inner.receiver.clone()
     }
 
-    pub(crate) fn sender(&self) -> Option<crossbeam_channel::Sender<T>> {
+    /// The channel's sender while it is open (workerpool sends on it).
+    #[must_use]
+    pub fn sender(&self) -> Option<crossbeam_channel::Sender<T>> {
         self.inner
             .sender
             .lock()

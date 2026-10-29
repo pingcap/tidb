@@ -8,6 +8,9 @@ publish = false
 name = "operator"
 
 [dependencies]
+tidb-resourcemanager-pool-workerpool = { path = "../tidb-resourcemanager-pool-workerpool" }
+tidb-resourcemanager-poolmanager = { path = "../tidb-resourcemanager-poolmanager" }
+tidb-resourcemanager-util = { path = "../tidb-resourcemanager-util" }
 crossbeam-channel = "0.5"
 tidb-resourcemanager = { path = "../tidb-resourcemanager" }
 

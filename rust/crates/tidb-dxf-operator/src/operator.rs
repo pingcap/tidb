@@ -15,8 +15,8 @@
 use std::fmt;
 use std::sync::Arc;
 
-use tidb_resourcemanager::workerpool::{Context as WorkerContext, PanicError, WorkerPool};
-use tidb_resourcemanager::workerpool::{TaskMayPanic, Worker};
+use tidb_resourcemanager_pool_workerpool::{Context as WorkerContext, PanicError, WorkerPool};
+use tidb_resourcemanager_pool_workerpool::{TaskMayPanic, Worker};
 
 use crate::{SimpleDataChannel, WithSink, WithSource};
 
@@ -128,7 +128,7 @@ where
         let transform: Arc<dyn Fn(T) -> R + Send + Sync> = Arc::new(transform);
         let pool = WorkerPool::new(
             name.into(),
-            tidb_resourcemanager::util::Component::DistTask,
+            tidb_resourcemanager_util::Component::DistTask,
             worker_num as isize,
             move || {
                 Some(Box::new(TransformWorker {

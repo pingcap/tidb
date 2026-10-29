@@ -20,8 +20,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidb_resourcemanager::scheduler::{Command, CpuScheduler, Scheduler};
-use tidb_resourcemanager::util::{Component, MockGPool};
+use tidb_resourcemanager_scheduler::{Command, CpuScheduler, Scheduler};
+use tidb_resourcemanager_util::{Component, MockGPool};
 
 #[test]
 fn test_failpoint_cpu_value() {

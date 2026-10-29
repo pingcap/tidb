@@ -22,9 +22,9 @@ use std::time::{Duration, SystemTime};
 
 use prometheus::{Gauge, GaugeVec, Opts};
 
-use crate::pool::{BasePool, PoolError};
-use crate::poolmanager::{ExitChannel, Meta, Task, TaskChannel, TaskManager};
-use crate::util::{Component, GoroutinePool};
+use tidb_resourcemanager_pool::{BasePool, PoolError};
+use tidb_resourcemanager_poolmanager::{ExitChannel, Meta, Task, TaskChannel, TaskManager};
+use tidb_resourcemanager_util::{Component, GoroutinePool};
 
 const WAIT_INTERVAL: Duration = Duration::from_millis(5);
 
@@ -127,7 +127,7 @@ impl Pool {
         });
         pool.concurrency_metric.set(size as f64);
         let registered: Arc<dyn GoroutinePool> = pool.clone();
-        crate::instance_resource_manager()
+        tidb_resourcemanager::instance_resource_manager()
             .register(registered, name, component)
             .map_err(NewPoolError::Register)?;
         Ok(pool)
@@ -247,7 +247,7 @@ impl Pool {
                 .wait(workers)
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
         }
-        crate::instance_resource_manager().unregister(&self.base.name());
+        tidb_resourcemanager::instance_resource_manager().unregister(&self.base.name());
     }
 
     fn check_and_add_running(&self, concurrency: u32) -> (i32, bool) {

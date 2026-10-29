@@ -138,6 +138,7 @@ tikv-client.workspace = true
 async-trait.workspace = true
 tidb-vardef = { path = "../tidb-vardef" }
 tidb-resourcemanager = { path = "../tidb-resourcemanager" }
+tidb-resourcemanager-pool-workerpool = { path = "../tidb-resourcemanager-pool-workerpool" }
 serde_json = { workspace = true }
 tidb-config = { path = "../tidb-config" }
 toml.workspace = true
@@ -187,6 +188,7 @@ failpoints = [
     "tidb-ddl/failpoints",
     "tidb-ddl-serverstate/failpoints",
     "tidb-resourcemanager/failpoints",
+    "tidb-resourcemanager-pool-workerpool/failpoints",
     "tidb-stats-handle-cache/failpoints",
     "tidb-build-tags/failpoints",
 ]

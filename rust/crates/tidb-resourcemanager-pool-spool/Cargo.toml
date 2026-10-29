@@ -1,0 +1,20 @@
+[package]
+name = "tidb-resourcemanager-pool-spool"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB resourcemanager/pool/spool: Go pkg/resourcemanager/pool/spool (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-resourcemanager-pool = { path = "../tidb-resourcemanager-pool" }
+tidb-resourcemanager-poolmanager = { path = "../tidb-resourcemanager-poolmanager" }
+tidb-resourcemanager-util = { path = "../tidb-resourcemanager-util" }
+tidb-resourcemanager = { path = "../tidb-resourcemanager" }
+crossbeam-channel = "0.5"
+prometheus = { version = "0.14", default-features = false }
+tracing = "0.1"

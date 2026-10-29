@@ -18,19 +18,13 @@
 //! Go gets from `pkg/util/cpu` (usage EMA observer, GOMAXPROCS install),
 //! which lives in `tidb_cpu` here.
 
-pub mod pool;
-pub mod poolmanager;
-pub mod scheduler;
-pub mod spool;
-pub mod util;
-pub mod workerpool;
 
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime};
 
-use scheduler::{Command, CpuScheduler, Scheduler};
-use util::{
+use tidb_resourcemanager_scheduler::{Command, CpuScheduler, Scheduler};
+use tidb_resourcemanager_util::{
     Component, GoroutinePool, PoolContainer, ShardPoolMap, MAX_OVERCLOCK_COUNT,
     MIN_SCHEDULER_INTERVAL_NANOS,
 };
@@ -268,7 +262,7 @@ pub fn instance_resource_manager() -> &'static ResourceManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::MockGPool;
+    use tidb_resourcemanager_util::MockGPool;
 
     #[test]
     fn test_scheduler_overload_too_much() {
