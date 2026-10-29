@@ -449,3 +449,63 @@ func TestFullTextIndexMatchAgainstClusteredHandle(t *testing.T) {
 	require.Contains(t, plan, "eq(test.tnc.tenant, 3)", plan)
 	tk.MustQuery(sql).Check(tk.MustQuery(strings.Replace(sql, "from tnc use index (idx) where", "from tnc ignore index (idx) where", 1)).Rows())
 }
+
+// TestFullTextIndexMatchAgainstSeeks covers intersections over a rare and a
+// common term: the common term's postings are read only around the rows the
+// rare one proposes, reopening the scan to skip the rest, and every result
+// equals the scan's, for an integer handle, a clustered common handle with
+// and without a handle range, and a partitioned table.
+func TestFullTextIndexMatchAgainstSeeks(t *testing.T) {
+	if !kerneltype.IsClassic() {
+		t.Skip("FULLTEXT indexes are held by the columnar engine on the next-gen kernel")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ti (id int primary key, tenant varchar(8), body text, fulltext index idx (body))")
+	const rows = 12000
+	for start := 1; start <= rows; start += 2000 {
+		values := make([]string, 0, 2000)
+		for i := start; i < start+2000; i++ {
+			body := "common filler"
+			if i%3000 == 11 {
+				body = "rareword common filler"
+			}
+			values = append(values, fmt.Sprintf("(%d, '%s', '%s')", i, []string{"acme", "globex"}[i%2], body))
+		}
+		tk.MustExec("insert into ti values " + strings.Join(values, ","))
+	}
+	tk.MustExec("create table tc (id int, tenant varchar(8), body text, primary key (tenant, id) clustered, fulltext index idx (body))")
+	tk.MustExec("insert into tc select id, tenant, body from ti")
+	tk.MustExec("create table tp (id int primary key, tenant varchar(8), body text, fulltext index idx (body)) partition by hash(id) partitions 3")
+	tk.MustExec("insert into tp select id, tenant, body from ti")
+
+	postingReads := func(sql string) (entries, scans int) {
+		for _, row := range tk.MustQuery("explain analyze " + sql).Rows() {
+			if strings.Contains(fmt.Sprint(row[0]), "FullTextIndexScan") {
+				m := regexp.MustCompile(`fulltext:\{posting_entries:(\d+), posting_scans:(\d+)\}`).FindStringSubmatch(fmt.Sprint(row[5]))
+				require.Len(t, m, 3, row[5])
+				return atoi(t, m[1]), atoi(t, m[2])
+			}
+		}
+		require.FailNow(t, "no FullTextIndexScan in the plan", sql)
+		return 0, 0
+	}
+	for _, table := range []string{"ti", "tc", "tp"} {
+		for _, cond := range []string{"", "tenant = 'globex' and "} {
+			for _, search := range []string{"+rareword +common", "+common +rareword", "+rareword +common +filler", `+"rareword common"`, "+rareword -common", "+rareword -filler", "+rareword common"} {
+				sql := fmt.Sprintf("select id from %s use index (idx) where %smatch(body) against('%s' in boolean mode) order by id", table, cond, search)
+				mustUseFullTextIndex(t, tk, sql, "idx(body)", search)
+				tk.MustQuery(sql).Check(tk.MustQuery(strings.Replace(sql, "use index (idx)", "ignore index (idx)", 1)).Rows())
+			}
+		}
+	}
+	// Four rows hold the rare term; each costs at most a seek's forward read
+	// and a reopened scan of the common term, not the thousands of postings
+	// between them.
+	entries, scans := postingReads("select id from ti use index (idx) where match(body) against('+rareword +common' in boolean mode)")
+	require.Less(t, entries, 2000)
+	require.Greater(t, scans, 2)
+	entries, _ = postingReads("select id from ti use index (idx) where match(body) against('+rareword -common' in boolean mode)")
+	require.Less(t, entries, 2000)
+}

@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -236,4 +237,39 @@ func TestFullTextIndexPathPlanning(t *testing.T) {
 	tk.MustQuery("execute stmt")
 	tk.MustQuery("execute stmt")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	// A search string given as a parameter, as drivers send it by default,
+	// is searched through the index with its value in each execution. Such a
+	// plan is kept out of the plan cache, so a later value is never searched
+	// with the plan built for an earlier one.
+	lastPlan := func() string {
+		tkProcess := tk.Session().ShowProcess()
+		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: []*sessmgr.ProcessInfo{tkProcess}})
+		var sb strings.Builder
+		for _, row := range tk.MustQuery(fmt.Sprintf("explain format = 'brief' for connection %d", tkProcess.ID)).Rows() {
+			sb.WriteString(fmt.Sprintln(row...))
+		}
+		return sb.String()
+	}
+	tk.MustExec("prepare pstmt from 'select count(*) from tw where match(body) against(? in boolean mode)'")
+	for _, c := range []struct{ search, rows string }{
+		{"+zebra", "1"},
+		{"+zebra", "1"},
+		{"+hello", "60"},
+	} {
+		tk.MustExec(fmt.Sprintf("set @search = '%s'", c.search))
+		tk.MustQuery("execute pstmt using @search").Check(testkit.Rows(c.rows))
+		plan := lastPlan()
+		require.Contains(t, plan, "FullTextIndexScan", plan)
+		require.Contains(t, plan, fmt.Sprintf("fulltext:%q", c.search), plan)
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
+	// The same holds for a literal under the non-prepared plan cache, which
+	// turns it into a parameter.
+	tk.MustExec("set @@tidb_enable_non_prepared_plan_cache = 1")
+	for range 2 {
+		tk.MustQuery("select id from tw where match(body) against('+zebra' in boolean mode)").Check(testkit.Rows("1234"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
+	tk.MustExec("set @@tidb_enable_non_prepared_plan_cache = default")
 }

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math/rand"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -35,6 +36,10 @@ type memIndex struct {
 	docs     map[int64]string
 	opened   int
 	closed   int
+	// seekable makes the cursors PostingSeekers; read counts the postings
+	// the cursors hand out or step over, a seek counting as one.
+	seekable bool
+	read     int
 }
 
 func newMemIndex(t *testing.T, config AnalyzerConfig) *memIndex {
@@ -69,7 +74,19 @@ func (c *memCursor) Next() (Posting, bool, error) {
 	}
 	p := c.postings[c.i]
 	c.i++
+	c.index.read++
 	return p, true, nil
+}
+
+// seekingMemCursor is a memCursor that jumps to a handle at the cost of one
+// read.
+type seekingMemCursor struct {
+	*memCursor
+}
+
+func (c seekingMemCursor) Seek(target kv.Handle) (Posting, bool, error) {
+	c.i += sort.Search(len(c.postings)-c.i, func(j int) bool { return c.postings[c.i+j].Handle.Compare(target) >= 0 })
+	return c.Next()
 }
 
 func (c *memCursor) Close() error {
@@ -79,7 +96,11 @@ func (c *memCursor) Close() error {
 
 func (m *memIndex) Term(term string) (PostingCursor, error) {
 	m.opened++
-	return &memCursor{index: m, postings: m.postings[term]}, nil
+	cursor := &memCursor{index: m, postings: m.postings[term]}
+	if m.seekable {
+		return seekingMemCursor{cursor}, nil
+	}
+	return cursor, nil
 }
 
 func (m *memIndex) Prefix(prefix string) (PostingCursor, error) {
@@ -237,6 +258,7 @@ func TestOpenPostingsAgreesWithScan(t *testing.T) {
 	for _, config := range []AnalyzerConfig{standardConfig(), ngramConfig()} {
 		for round := range 40 {
 			index := newMemIndex(t, config)
+			index.seekable = round%2 == 1
 			docCount := 1 + rng.Intn(40)
 			for h := range docCount {
 				n := rng.Intn(12)
@@ -436,4 +458,113 @@ func compareBool(a, b bool) int {
 	default:
 		return -1
 	}
+}
+
+// TestOpenPostingsSeeksPastCommonTerms covers the intersections letting the
+// rarest list drive: a common term's list, and the list a prohibited term
+// subtracts, are only read around the rows the rare term proposes.
+func TestOpenPostingsSeeksPastCommonTerms(t *testing.T) {
+	index := newMemIndex(t, standardConfig())
+	const rows = 5000
+	for h := range rows {
+		doc := "common words here"
+		if h%1000 == 7 {
+			doc = "rare common words here"
+		}
+		index.add(t, int64(h), doc)
+	}
+	cases := []struct {
+		search string
+		want   []int64
+	}{
+		{"+rare +common", []int64{7, 1007, 2007, 3007, 4007}},
+		{"+common +rare", []int64{7, 1007, 2007, 3007, 4007}},
+		{`+"rare common"`, []int64{7, 1007, 2007, 3007, 4007}},
+		{"+rare -common", []int64{}},
+		{"+rare -words +here", []int64{}},
+	}
+	for _, seekable := range []bool{false, true} {
+		for _, c := range cases {
+			index.seekable, index.read = seekable, 0
+			query, err := CompileBooleanQuery(c.search, standardConfig())
+			require.NoError(t, err)
+			iter, err := query.OpenPostings(index)
+			require.NoError(t, err)
+			require.Equal(t, c.want, drain(t, iter), c.search)
+			if seekable {
+				require.Less(t, index.read, 50, "%q read %d postings", c.search, index.read)
+			} else {
+				require.Greater(t, index.read, rows/2, "%q read %d postings", c.search, index.read)
+			}
+		}
+	}
+}
+
+// memoryRecordingSource records what a search charges for the postings it
+// holds in memory.
+type memoryRecordingSource struct {
+	*memIndex
+	charged, peak int64
+}
+
+func (m *memoryRecordingSource) ConsumeMemory(bytes int64) {
+	m.charged += bytes
+	m.peak = max(m.peak, m.charged)
+}
+
+// TestOpenPostingsChargesPrefixMemory covers a prefix charging the rows it
+// collects while it is open, and releasing them when it is closed, also when
+// the search ends early or fails.
+func TestOpenPostingsChargesPrefixMemory(t *testing.T) {
+	index := newMemIndex(t, standardConfig())
+	for h := range 1000 {
+		index.add(t, int64(h), fmt.Sprintf("prefix%d shared", h%37))
+	}
+	src := &memoryRecordingSource{memIndex: index}
+	query, err := CompileBooleanQuery("+prefix* +shared", standardConfig())
+	require.NoError(t, err)
+	iter, err := query.OpenPostings(src)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, src.charged, int64(1000*8))
+	_, ok, err := iter.Next()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NoError(t, iter.Close())
+	require.Zero(t, src.charged)
+	require.GreaterOrEqual(t, src.peak, int64(1000*8))
+
+	// A cursor failing part way through releases what was collected.
+	failing := &memoryRecordingSource{memIndex: index}
+	failingQuery, err := CompileBooleanQuery("+prefix*", standardConfig())
+	require.NoError(t, err)
+	_, err = failingQuery.OpenPostings(&failingPrefixSource{memoryRecordingSource: failing, after: 500})
+	require.Error(t, err)
+	require.Zero(t, failing.charged)
+	require.Positive(t, failing.peak)
+}
+
+type failingPrefixSource struct {
+	*memoryRecordingSource
+	after int
+}
+
+func (f *failingPrefixSource) Prefix(prefix string) (PostingCursor, error) {
+	cursor, err := f.memIndex.Prefix(prefix)
+	if err != nil {
+		return nil, err
+	}
+	return &failAfterCursor{PostingCursor: cursor, after: f.after}, nil
+}
+
+type failAfterCursor struct {
+	PostingCursor
+	after int
+}
+
+func (c *failAfterCursor) Next() (Posting, bool, error) {
+	if c.after == 0 {
+		return Posting{}, false, errors.New("posting read failed")
+	}
+	c.after--
+	return c.PostingCursor.Next()
 }

@@ -143,6 +143,8 @@ type IndexMergeReaderExecutor struct {
 	// startPartialFullTextWorker.
 	fullTextScans    []*fullTextScan
 	fullTextSnapshot kv.Snapshot
+	// fullTextReads accounts the posting reads to the statement.
+	fullTextReads *fullTextReadAccount
 
 	partialPlans        [][]base.PhysicalPlan
 	tblPlans            []base.PhysicalPlan
