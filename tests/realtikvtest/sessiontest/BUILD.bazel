@@ -11,9 +11,15 @@ go_test(
     ],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
+=======
+    shard_count = 17,
+>>>>>>> d2228f612f5 (infoschema: fix `information_schema.tikv_region_status` for nextgen (#67444))
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/infoschema",
+        "//pkg/keyspace",
         "//pkg/meta",
         "//pkg/parser/model",
         "//pkg/session",
