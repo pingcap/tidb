@@ -313,3 +313,43 @@ where
         Ok(transaction)
     }
 }
+
+/// Go `tikvStore` as `kv.Storage`.
+impl<S> tidb_txnkv::kv_storage::Storage for RealOptimisticTransactionOpener<S>
+where
+    S: StoreClient + 'static,
+{
+    fn begin(
+        &self,
+    ) -> Result<Box<dyn tidb_txnkv::kv_storage::Transaction>, OptimisticCoordinatorError> {
+        Ok(Box::new(RealOptimisticTransactionOpener::begin(self)?))
+    }
+}
+
+/// Go `tikvTxn` as `kv.Transaction`.
+impl<S> tidb_txnkv::kv_storage::Transaction for RealTransaction<S>
+where
+    S: StoreClient + 'static,
+{
+    fn get(
+        &mut self,
+        key: &[u8],
+        call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<Option<Vec<u8>>, OptimisticCoordinatorError> {
+        self.snapshot_get(key, call).map(|result| result.value)
+    }
+
+    fn commit(
+        self: Box<Self>,
+        mutations: Vec<tidb_txnkv::transaction::BufferMutation>,
+        call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<tidb_txnkv::transaction::OptimisticCommitOutcome, OptimisticCoordinatorError> {
+        RealTransaction::commit(*self, mutations, call)
+    }
+
+    fn finish_without_writes(
+        self: Box<Self>,
+    ) -> Result<tidb_txnkv::transaction::ReadOnlyTransaction, OptimisticCoordinatorError> {
+        RealTransaction::finish_without_writes(*self)
+    }
+}

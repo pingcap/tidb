@@ -45,18 +45,14 @@ use crate::sequence::{
 use tidb_meta::structure::encode_hash_data_key;
 use tidb_meta::{key, value};
 use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_store_driver_txn::transaction::StoreClient;
 use tidb_txnkv::transaction::{BufferMutation, OptimisticCommitOutcome};
-use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, RealTransaction};
+use tidb_txnkv::kv_storage::{Storage, Transaction};
 
 use crate::cluster_auto_id::MAX_RESERVE_RETRIES;
 
 /// One sequence's shared counter over the cluster meta keys.
-pub struct ClusterSequenceCounter<S = tikv_client::PdRpcClient>
-where
-    S: StoreClient,
-{
-    opener: RealOptimisticTransactionOpener<S>,
+pub struct ClusterSequenceCounter {
+    opener: Arc<dyn Storage>,
     /// Go's `SEV:<tableID>` field under the database hash key: the batch end.
     value_key: Vec<u8>,
     /// Go's `SEC:<tableID>` field under the same hash key; written only when
@@ -67,12 +63,9 @@ where
 
 /// The concrete transaction type [`RealOptimisticTransactionOpener::begin`]
 /// hands back.
-type CounterTransaction<S> = RealTransaction<S>;
+type CounterTransaction = Box<dyn Transaction>;
 
-impl<S> std::fmt::Debug for ClusterSequenceCounter<S>
-where
-    S: StoreClient,
-{
+impl std::fmt::Debug for ClusterSequenceCounter {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ClusterSequenceCounter")
@@ -81,14 +74,11 @@ where
     }
 }
 
-impl<S> ClusterSequenceCounter<S>
-where
-    S: StoreClient,
-{
+impl ClusterSequenceCounter {
     /// The counter for sequence `table_id` stored in database `db_id`.
     #[must_use]
     pub fn new(
-        opener: RealOptimisticTransactionOpener<S>,
+        opener: Arc<dyn Storage>,
         db_id: i64,
         table_id: i64,
         timeout: Duration,
@@ -112,11 +102,10 @@ where
 
     /// Reads both fields at one snapshot. Go `HGetInt64`: a missing field is
     /// zero.
-    fn read(&self, transaction: &mut CounterTransaction<S>) -> Result<(i64, i64), String> {
+    fn read(&self, transaction: &mut CounterTransaction) -> Result<(i64, i64), String> {
         let mut get = |key: &[u8]| {
             transaction
-                .snapshot_get(key, &UnaryCallContext::with_timeout(self.timeout))
-                .map(|result| result.value)
+                .get(key, &UnaryCallContext::with_timeout(self.timeout))
                 .map_err(crate::cluster_auto_id::snapshot_read_error)
         };
         let stored = get(&self.value_key)?;
@@ -133,7 +122,7 @@ where
     fn commit_end_and_round(
         &self,
         call: UnaryCallContext,
-        transaction: CounterTransaction<S>,
+        transaction: CounterTransaction,
         new_end: i64,
         round: i64,
         round_changed: bool,
@@ -173,10 +162,7 @@ enum CommitFailure {
     Failed(String),
 }
 
-impl<S> SequenceCounter for ClusterSequenceCounter<S>
-where
-    S: StoreClient,
-{
+impl SequenceCounter for ClusterSequenceCounter {
     fn alloc_seq_cache(&self, info: &SequenceInfo) -> Result<(i64, i64, i64), SequenceError> {
         let size = if info.cache { info.cache_value } else { 1 };
         let mut conflicts = 0usize;

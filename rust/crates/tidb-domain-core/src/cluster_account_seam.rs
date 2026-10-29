@@ -92,7 +92,7 @@ fn reserve_account_ids<S>(
 where
     S: StoreClient,
 {
-    let store = ClusterAutoIdStore::new(opener.clone(), db, table, timeout);
+    let store = ClusterAutoIdStore::new(std::sync::Arc::new(opener.clone()), db, table, timeout);
     let failure = |error: tidb_autoid::AutoIdStoreError| {
         AccountWriteError::Unsupported(format!("account row-ID reservation: {error}"))
     };

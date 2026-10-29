@@ -10,7 +10,6 @@ autotests = false
 
 [dependencies]
 tidb-datatype = { path = "../tidb-datatype" }
-tidb-chunk = { path = "../tidb-chunk" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-context = { path = "../tidb-context" }
 tidb-errno = { path = "../tidb-errno" }

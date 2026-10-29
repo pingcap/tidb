@@ -37,6 +37,7 @@ pub mod inner_txn;
 mod iteration;
 mod key;
 pub mod key_flags;
+pub mod kv_storage;
 mod key_ranges;
 mod keyspace;
 mod kv_api;

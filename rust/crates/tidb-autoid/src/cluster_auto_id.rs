@@ -64,9 +64,8 @@ use crate::AutoIdCall as UnaryCallContext;
 use crate::{advance, calc_needed_batch_size, AutoIdStore, AutoIdStoreError};
 use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
-use tidb_store_driver_txn::transaction::StoreClient;
 use tidb_txnkv::transaction::{BufferMutation, OptimisticCommitOutcome};
-use tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener;
+use tidb_txnkv::kv_storage::Storage;
 
 
 /// How many times a reservation re-reads after losing a prewrite race.
@@ -547,21 +546,15 @@ fn auto_id_schema(db_id: i64, table: &TableInfo) -> i64 {
 /// table read this key as rarely as one connection does. A per-session store
 /// would be correct and would burn a whole step per connection.
 #[derive(Clone)]
-pub struct ClusterAutoIdStore<S = tikv_client::PdRpcClient>
-where
-    S: StoreClient,
-{
-    opener: RealOptimisticTransactionOpener<S>,
+pub struct ClusterAutoIdStore {
+    opener: Arc<dyn Storage>,
     /// Go's `mDBs` hash key the counter field hangs off.
     counter_key: Vec<u8>,
     /// How long each meta read and the commit may take.
     timeout: Duration,
 }
 
-impl<S> std::fmt::Debug for ClusterAutoIdStore<S>
-where
-    S: StoreClient,
-{
+impl std::fmt::Debug for ClusterAutoIdStore {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ClusterAutoIdStore")
@@ -570,14 +563,11 @@ where
     }
 }
 
-impl<S> ClusterAutoIdStore<S>
-where
-    S: StoreClient,
-{
+impl ClusterAutoIdStore {
     /// The counter for `table` in database `db_id`.
     #[must_use]
     pub fn new(
-        opener: RealOptimisticTransactionOpener<S>,
+        opener: Arc<dyn Storage>,
         db_id: i64,
         table: &TableInfo,
         timeout: Duration,
@@ -588,7 +578,7 @@ where
     /// The distinct AUTO_RANDOM counter for `table`.
     #[must_use]
     pub fn new_random(
-        opener: RealOptimisticTransactionOpener<S>,
+        opener: Arc<dyn Storage>,
         db_id: i64,
         table: &TableInfo,
         timeout: Duration,
@@ -597,7 +587,7 @@ where
     }
 
     pub fn over_key(
-        opener: RealOptimisticTransactionOpener<S>,
+        opener: Arc<dyn Storage>,
         counter_key: Vec<u8>,
         timeout: Duration,
     ) -> Self {
@@ -648,11 +638,10 @@ where
             let stored = {
                 let _untraced = tidb_tracing::with_thread_span(None);
                 transaction
-                    .snapshot_get(
+                    .get(
                         &self.counter_key,
                         &tidb_txnkv::rpc::UnaryCallContext::with_timeout(self.timeout),
                     )
-                    .map(|result| result.value)
                     .map_err(|error| store_error("read", &snapshot_read_error(error)))?
             };
             // Go `TxStructure.HGetInt64`: a missing field is zero, and a
@@ -699,10 +688,7 @@ where
     }
 }
 
-impl<S> AutoIdStore for ClusterAutoIdStore<S>
-where
-    S: StoreClient,
-{
+impl AutoIdStore for ClusterAutoIdStore {
     fn reserve(&self, step: u64, unsigned: bool) -> Result<(u64, u64), AutoIdStoreError> {
         self.transact_in(Some(alloc_region(unsigned)), |current| {
             let end = advance(current, step, unsigned);

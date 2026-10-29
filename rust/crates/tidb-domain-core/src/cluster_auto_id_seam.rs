@@ -127,7 +127,7 @@ where
             .unwrap_or_default();
         let info = stored_sequence.clone();
         let counter =
-            ClusterSequenceCounter::new(self.opener.clone(), db_id, table.id, self.timeout);
+            ClusterSequenceCounter::new(Arc::new(self.opener.clone()), db_id, table.id, self.timeout);
         let def = SequenceDef {
             id: table.id,
             name: table.name.original().to_owned(),
@@ -257,15 +257,15 @@ where
         }
         let store = if kind == AutoIdKind::RowId {
             ClusterAutoIdStore::over_key(
-                self.opener.clone(),
+                Arc::new(self.opener.clone()),
                 tidb_meta::key::auto_table_id_kv_key(db_id, table.id),
                 self.timeout,
             )
             .shared()
         } else if kind == AutoIdKind::AutoRandom {
-            ClusterAutoIdStore::new_random(self.opener.clone(), db_id, table, self.timeout).shared()
+            ClusterAutoIdStore::new_random(Arc::new(self.opener.clone()), db_id, table, self.timeout).shared()
         } else {
-            ClusterAutoIdStore::new(self.opener.clone(), db_id, table, self.timeout).shared()
+            ClusterAutoIdStore::new(Arc::new(self.opener.clone()), db_id, table, self.timeout).shared()
         };
         let allocator = TableAutoId::over(store, step);
         allocators.insert((table.id, kind), (mark, allocator.clone()));
