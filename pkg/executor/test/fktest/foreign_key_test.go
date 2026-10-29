@@ -2714,3 +2714,23 @@ func TestForeignKeyCascadeStmtAtomicityInPessimisticTxn(t *testing.T) {
 	tk.MustQuery("select * from child").Check(testkit.Rows("100 12"))
 	tk.MustQuery("select * from guard").Check(testkit.Rows("1 2"))
 }
+
+func TestForeignKeyCascadeErrorRollsBackStmtInOptimisticTxn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table parent (id int primary key)")
+	tk.MustExec("create table child (id int primary key, pid int, foreign key (pid) references parent(id) on delete cascade)")
+	tk.MustExec("create table grandchild (id int primary key, cid int, foreign key (cid) references child(id))")
+	tk.MustExec("insert into parent values (1)")
+	tk.MustExec("insert into child values (10, 1)")
+	tk.MustExec("insert into grandchild values (100, 10)")
+
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into parent values (2)")
+	tk.MustGetErrCode("delete from parent where id = 1", mysql.ErrRowIsReferenced2)
+	tk.MustExec("commit")
+	tk.MustQuery("select * from parent order by id").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select * from child").Check(testkit.Rows("10 1"))
+	tk.MustQuery("select * from grandchild").Check(testkit.Rows("100 10"))
+}
