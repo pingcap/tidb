@@ -20,6 +20,7 @@ use tidb_datatype::{
     new_collation_enabled, parse_enum, parse_set_name, Datum, FieldType, FieldTypeCode, GoString,
     SessionTimeZone, Time,
 };
+use tidb_datatype::RuntimeCollator;
 use tidb_model::{GoAny, GoAnyView};
 use tidb_model::column::ColumnInfo;
 

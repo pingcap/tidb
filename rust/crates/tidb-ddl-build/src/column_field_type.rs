@@ -59,6 +59,7 @@
 //! `char(5) BINARY` under a `utf8mb4` table stays `char(5)` in
 //! `utf8mb4`/`utf8mb4_bin`. The resolved pair itself is the caller's input.
 
+use tidb_datatype::RuntimeCollator;
 use tidb_ast::{ColumnType, ColumnTypeArg};
 use tidb_datatype::go_runtime::GoSharedSlice;
 use tidb_datatype::{

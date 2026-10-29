@@ -21,6 +21,7 @@
 //! order. Rust evaluates rows directly; Go's vectorized temporary-column pool
 //! is an implementation detail rather than part of that contract.
 
+use tidb_datatype::RuntimeCollator;
 use tidb_datatype::CollationCollator;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Collation, Datum, StringDatum};

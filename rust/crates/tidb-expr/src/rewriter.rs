@@ -2022,7 +2022,7 @@ fn rewrite_leaf_literal(
             // construction; runtime Constant evaluation reads this execution's
             // parameter context. Standalone resolvers can supply an uninstalled
             // marker directly without changing its absolute order.
-            let datum = match (in_execute, value) {
+            let datum = match (in_execute, value.as_ref().and_then(|value| value.downcast_ref::<Datum>())) {
                 (true, Some(value)) => value.clone(),
                 _ => resolver.param_value(*order)?,
             };

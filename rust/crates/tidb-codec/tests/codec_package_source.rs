@@ -14,6 +14,7 @@
 
 //! Exact named obligations from every `pkg/util/codec/*_test.go` file.
 
+use tidb_datatype::RuntimeCollator;
 use std::cmp::Ordering;
 
 use chrono::{FixedOffset, Utc};

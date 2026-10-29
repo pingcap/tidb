@@ -21,7 +21,6 @@ mod datum_sentinel_order_source;
 mod field_type_source;
 mod json_binary_go_vectors;
 mod json_ops_go_source;
-mod parser_format_package_source;
 mod truncate_policy_source;
 mod value_context_format_source;
 mod value_expr_source;

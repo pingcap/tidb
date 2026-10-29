@@ -18,6 +18,7 @@
 //! through the caller's warning sink. The legacy value/event interface shares
 //! the value engine, but cannot represent multiple diagnostics for one value.
 
+use crate::RuntimeCollator;
 use chrono::Utc;
 
 use crate::encoding_base::TransformResult;

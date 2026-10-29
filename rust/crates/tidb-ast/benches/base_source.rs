@@ -17,7 +17,7 @@
 use std::hint::black_box;
 
 use tidb_ast::NodeText;
-use tidb_datatype::Encoding;
+use tidb_charset::Encoding;
 
 fn query(clause: &str, count: usize) -> Vec<u8> {
     format!(

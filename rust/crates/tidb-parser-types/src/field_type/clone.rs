@@ -15,7 +15,7 @@
 //! Source-named pointer clone operations for [`FieldType`].
 
 use super::FieldType;
-use crate::go_runtime::GoSharedSlice;
+use tidb_goruntime::go_runtime::GoSharedSlice;
 
 impl FieldType {
     /// Nil-safe Go `CleanElemIsBinaryLit` pointer boundary.

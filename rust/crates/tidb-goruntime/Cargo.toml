@@ -1,0 +1,17 @@
+[package]
+name = "tidb-goruntime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The Go runtime and standard-library semantics the TiDB Rust rewrite reproduces."
+
+[dependencies]
+ryu.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+tidb-hack = { path = "../tidb-hack" }
+
+[lints]
+workspace = true

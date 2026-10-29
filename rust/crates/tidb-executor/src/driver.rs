@@ -1002,7 +1002,7 @@ mod limit_bound_tests {
             offset: 0,
             order: 0,
             in_execute: true,
-            value: Some(Datum::Int(7)),
+            value: Some(tidb_ast::ParamValue::new(Datum::Int(7))),
             projection_offset: 0,
         };
         assert_eq!(eval_limit_bound(&marker).unwrap(), 7);
@@ -1022,7 +1022,7 @@ mod limit_bound_tests {
             offset: 0,
             order: 0,
             in_execute: true,
-            value: Some(Datum::Int(-1)),
+            value: Some(tidb_ast::ParamValue::new(Datum::Int(-1))),
             projection_offset: 0,
         };
         assert!(eval_limit_bound(&negative).is_err());

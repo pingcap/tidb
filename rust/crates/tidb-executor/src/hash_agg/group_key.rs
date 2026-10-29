@@ -14,6 +14,7 @@
 
 //! Go aggregate.GetGroupKey: evaluate and encode a whole column at a time.
 
+use tidb_datatype::RuntimeCollator;
 use super::*;
 
 /// Walk logical rows in the same order as Go's `Chunk.GetRow`, resolving the

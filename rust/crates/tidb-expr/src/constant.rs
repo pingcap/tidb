@@ -20,6 +20,7 @@
 //! conversion flags and warnings. Typed evaluation, contextual type inference,
 //! comparison, display and memory accounting remain incomplete.
 
+use tidb_datatype::RuntimeCollator;
 use std::hash::{Hash, Hasher};
 
 use crate::context::EvalError;

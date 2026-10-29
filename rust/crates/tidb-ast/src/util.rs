@@ -236,7 +236,7 @@ fn clamp_decimal_magnitude(text: &str) -> String {
 /// Go `strconv.FormatFloat(f, 'e', -1, 64)`: shortest scientific notation, a
 /// signed exponent zero-padded to two digits (`1000.0` -> `1e+03`).
 pub(crate) fn format_go_float(f: f64) -> String {
-    tidb_datatype::go_strconv::format_float(f, b'e', -1, 64)
+    tidb_goruntime::go_strconv::format_float(f, b'e', -1, 64)
 }
 
 /// Restores a dotted, back-quoted name path (`db`.`t`).

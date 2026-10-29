@@ -912,3 +912,36 @@ mod tests {
         assert_eq!(Charset::from_name(&"y".repeat(65)), None);
     }
 }
+
+
+/// Go `collate`'s exact name lookup under new collations: the collation a
+/// spelling names, if it names one exactly.
+pub fn exact_new_collation(name: &str) -> Option<Collation> {
+    Some(match name {
+        "binary" => Collation::Binary,
+        "ascii_bin" => Collation::AsciiBin,
+        "latin1_bin" => Collation::Latin1Bin,
+        "utf8_bin" => Collation::Utf8Bin,
+        "utf8_general_ci" => Collation::Utf8GeneralCi,
+        "utf8_unicode_ci" => Collation::Utf8UnicodeCi,
+        "utf8mb4_bin" => Collation::Utf8Mb4Bin,
+        "utf8mb4_general_ci" => Collation::Utf8Mb4GeneralCi,
+        "utf8mb4_unicode_ci" => Collation::Utf8Mb4UnicodeCi,
+        "utf8mb4_0900_ai_ci" => Collation::Utf8Mb40900AiCi,
+        "utf8mb4_0900_bin" => Collation::Utf8Mb40900Bin,
+        "utf8mb4_zh_pinyin_tidb_as_cs" => Collation::Utf8Mb4ZhPinyinTiDbAsCs,
+        "gbk_bin" => Collation::GbkBin,
+        "gbk_chinese_ci" => Collation::GbkChineseCi,
+        "gb18030_bin" => Collation::Gb18030Bin,
+        "gb18030_chinese_ci" => Collation::Gb18030ChineseCi,
+        _ => return None,
+    })
+}
+
+/// Whether a storage sort key is byte-identical to its raw input.
+pub fn is_bin_collation(name: &str) -> bool {
+    matches!(
+        name,
+        "ascii_bin" | "latin1_bin" | "utf8_bin" | "utf8mb4_bin" | "binary" | "utf8mb4_0900_bin"
+    )
+}

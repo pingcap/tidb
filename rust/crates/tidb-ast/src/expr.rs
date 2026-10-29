@@ -166,6 +166,55 @@ impl BitLiteralValue {
     }
 }
 
+/// Go `ParamMarkerExpr`'s embedded value (`types/parser_driver`'s
+/// `ValueExpr`, a `types.Datum`): the execute-time value of a `?`, which the
+/// AST carries without knowing its type; the planner and executor read it
+/// back as their datum.
+#[derive(Clone)]
+pub struct ParamValue(std::sync::Arc<dyn ParamValueData>);
+
+/// What a [`ParamValue`] holds: any comparable, printable value.
+pub trait ParamValueData: std::any::Any + std::fmt::Debug + Send + Sync {
+    /// The value, for a typed read.
+    fn as_any(&self) -> &dyn std::any::Any;
+    /// Whether `other` holds an equal value of the same type.
+    fn eq_value(&self, other: &dyn ParamValueData) -> bool;
+}
+
+impl<T: std::any::Any + std::fmt::Debug + PartialEq + Send + Sync> ParamValueData for T {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn eq_value(&self, other: &dyn ParamValueData) -> bool {
+        other.as_any().downcast_ref::<T>() == Some(self)
+    }
+}
+
+impl ParamValue {
+    /// Wraps an execute-time value.
+    pub fn new(value: impl ParamValueData) -> Self {
+        Self(std::sync::Arc::new(value))
+    }
+
+    /// The value as `T`, when it is one.
+    pub fn downcast_ref<T: std::any::Any>(&self) -> Option<&T> {
+        self.0.as_any().downcast_ref()
+    }
+}
+
+impl PartialEq for ParamValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.eq_value(&*other.0)
+    }
+}
+
+impl std::fmt::Debug for ParamValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// A scalar expression.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
@@ -187,7 +236,7 @@ pub enum Expr {
         /// The current execution's value. Go keeps this on the marker's
         /// embedded `ValueExpr`; retaining it lets physical planning build a
         /// `Constant` that still remembers which parameter it came from.
-        value: Option<tidb_datatype::Datum>,
+        value: Option<ParamValue>,
         /// Projection offset used by positional-expression lowering.
         /// The Go driver's embedded zero-value `ValueExpr` initializes this to 0.
         projection_offset: isize,

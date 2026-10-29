@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{FieldType, FieldTypeCode};
-use crate::GoString;
+use tidb_goruntime::GoString;
 
 /// Fluent constructor corresponding to Go `FieldTypeBuilder`.
 #[derive(Clone, Debug)]

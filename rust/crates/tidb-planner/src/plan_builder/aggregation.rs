@@ -1355,19 +1355,18 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         digits.clone(),
                     )),
                     Expr::ParamMarker {
-                        value: Some(tidb_datatype::Datum::Int(value)),
-                        ..
-                    } if *value >= 0 => Some((
-                        usize::try_from(*value).unwrap_or(usize::MAX),
-                        "?".to_owned(),
-                    )),
-                    Expr::ParamMarker {
-                        value: Some(tidb_datatype::Datum::UInt(value)),
-                        ..
-                    } => Some((
-                        usize::try_from(*value).unwrap_or(usize::MAX),
-                        "?".to_owned(),
-                    )),
+                        value: Some(value), ..
+                    } => match value.downcast_ref::<tidb_datatype::Datum>() {
+                        Some(tidb_datatype::Datum::Int(value)) if *value >= 0 => Some((
+                            usize::try_from(*value).unwrap_or(usize::MAX),
+                            "?".to_owned(),
+                        )),
+                        Some(tidb_datatype::Datum::UInt(value)) => Some((
+                            usize::try_from(*value).unwrap_or(usize::MAX),
+                            "?".to_owned(),
+                        )),
+                        _ => None,
+                    },
                     _ => None,
                 };
                 let resolved = match position {

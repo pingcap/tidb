@@ -26,7 +26,9 @@ use crate::charset::{
     get_collation_by_name as charset_collation_by_name,
     get_supported_collations as charset_supported_collations,
 };
-pub use tidb_charset::charset::{new_collation_enabled, set_new_collation_enabled};
+pub use tidb_charset::charset::{
+    exact_new_collation, is_bin_collation, new_collation_enabled, set_new_collation_enabled,
+};
 use crate::{CharsetError, Collation, CollationInfo, Encoding, TransformOp};
 
 /// Source `DefaultLen`, used when a string datum has no known length.
@@ -190,27 +192,6 @@ pub fn get_collator_with_mode(use_new_collation: bool, name: &str) -> Collator {
     Collator::New(exact_new_collation(name).unwrap_or(Collation::Utf8Mb4Bin))
 }
 
-fn exact_new_collation(name: &str) -> Option<Collation> {
-    Some(match name {
-        "binary" => Collation::Binary,
-        "ascii_bin" => Collation::AsciiBin,
-        "latin1_bin" => Collation::Latin1Bin,
-        "utf8_bin" => Collation::Utf8Bin,
-        "utf8_general_ci" => Collation::Utf8GeneralCi,
-        "utf8_unicode_ci" => Collation::Utf8UnicodeCi,
-        "utf8mb4_bin" => Collation::Utf8Mb4Bin,
-        "utf8mb4_general_ci" => Collation::Utf8Mb4GeneralCi,
-        "utf8mb4_unicode_ci" => Collation::Utf8Mb4UnicodeCi,
-        "utf8mb4_0900_ai_ci" => Collation::Utf8Mb40900AiCi,
-        "utf8mb4_0900_bin" => Collation::Utf8Mb40900Bin,
-        "utf8mb4_zh_pinyin_tidb_as_cs" => Collation::Utf8Mb4ZhPinyinTiDbAsCs,
-        "gbk_bin" => Collation::GbkBin,
-        "gbk_chinese_ci" => Collation::GbkChineseCi,
-        "gb18030_bin" => Collation::Gb18030Bin,
-        "gb18030_chinese_ci" => Collation::Gb18030ChineseCi,
-        _ => return None,
-    })
-}
 
 /// Returns the legacy binary collator.
 pub const fn get_binary_collator() -> Collator {
@@ -334,13 +315,6 @@ pub fn binary_collator(name: &str) -> Collator {
     get_collator(binary_collation_name(name))
 }
 
-/// Whether a storage sort key is byte-identical to its raw input.
-pub fn is_bin_collation(name: &str) -> bool {
-    matches!(
-        name,
-        "ascii_bin" | "latin1_bin" | "utf8_bin" | "utf8mb4_bin" | "binary" | "utf8mb4_0900_bin"
-    )
-}
 
 /// Whether the collation uses PAD SPACE semantics.
 pub fn is_pad_space_collation(name: &str) -> bool {

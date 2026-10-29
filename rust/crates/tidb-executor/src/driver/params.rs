@@ -93,7 +93,10 @@ pub fn bound_parameter_values(
         if values.len() <= *order {
             values.resize_with(*order + 1, || None);
         }
-        values[*order] = value.clone();
+        values[*order] = value
+            .as_ref()
+            .and_then(|value| value.downcast_ref::<Datum>())
+            .cloned();
     });
     if values.is_empty() {
         return Ok(None);
@@ -155,7 +158,7 @@ fn install_marker_values<T: tidb_ast::Visitable>(
         };
         match values.get(*order) {
             Some(parameter) => {
-                *value = Some(parameter.clone());
+                *value = Some(tidb_ast::ParamValue::new(parameter.clone()));
                 *in_execute = true;
                 *bound += 1;
             }

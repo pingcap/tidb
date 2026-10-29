@@ -1980,19 +1980,18 @@ fn window_item_position(expr: &Expr) -> Option<(usize, String)> {
             ))
         }
         Expr::ParamMarker {
-            value: Some(tidb_datatype::Datum::Int(value)),
-            ..
-        } => Some((
-            usize::try_from(*value).unwrap_or(usize::MAX),
-            "?".to_owned(),
-        )),
-        Expr::ParamMarker {
-            value: Some(tidb_datatype::Datum::UInt(value)),
-            ..
-        } => Some((
-            usize::try_from(*value).unwrap_or(usize::MAX),
-            "?".to_owned(),
-        )),
+            value: Some(value), ..
+        } => match value.downcast_ref::<tidb_datatype::Datum>() {
+            Some(tidb_datatype::Datum::Int(value)) => Some((
+                usize::try_from(*value).unwrap_or(usize::MAX),
+                "?".to_owned(),
+            )),
+            Some(tidb_datatype::Datum::UInt(value)) => Some((
+                usize::try_from(*value).unwrap_or(usize::MAX),
+                "?".to_owned(),
+            )),
+            _ => None,
+        },
         _ => None,
     }
 }

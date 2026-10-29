@@ -24,7 +24,7 @@
 use std::ops::{Deref, DerefMut};
 use std::sync::OnceLock;
 
-use tidb_datatype::{Encoding, TransformOp};
+use tidb_charset::{Encoding, TransformOp};
 use tidb_lexer::unescape_char;
 
 const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";

@@ -20,6 +20,9 @@ serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 smallvec.workspace = true
 tidb-charset = { path = "../tidb-charset" }
+tidb-goruntime = { path = "../tidb-goruntime" }
+tidb-parser-format = { path = "../tidb-parser-format" }
+tidb-parser-types = { path = "../tidb-parser-types" }
 tidb-error = { path = "../tidb-error" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-kvcache = { path = "../tidb-kvcache" }

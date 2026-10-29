@@ -5152,14 +5152,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 .map_err(|_| PlanError::internal("Incorrect arguments to LIMIT")),
             Expr::ParamMarker {
                 in_execute: true,
-                value: Some(Datum::Int(value)),
+                value: Some(value),
                 ..
-            } if *value >= 0 => Ok(*value as u64),
-            Expr::ParamMarker {
-                in_execute: true,
-                value: Some(Datum::UInt(value)),
-                ..
-            } => Ok(*value),
+            } => match value.downcast_ref::<Datum>() {
+                Some(Datum::Int(value)) if *value >= 0 => Ok(*value as u64),
+                Some(Datum::UInt(value)) => Ok(*value),
+                _ => Err(PlanError::internal("Incorrect arguments to LIMIT")),
+            },
             _ => Err(PlanError::internal("Incorrect arguments to LIMIT")),
         }
     }

@@ -265,7 +265,7 @@ impl Stmt {
     /// Replaces the statement's original source text.
     pub fn set_text(
         &mut self,
-        encoding: Option<tidb_datatype::Encoding>,
+        encoding: Option<tidb_charset::Encoding>,
         text: impl Into<Vec<u8>>,
     ) {
         self.node_text_mut().set_text(encoding, text);

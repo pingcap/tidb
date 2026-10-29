@@ -23,6 +23,7 @@
 //! Correlated columns share an execution-owned datum cell, matching Go's
 //! pointer-sharing Clone contract.
 
+use tidb_datatype::RuntimeCollator;
 use std::hash::{Hash, Hasher};
 
 use crate::context::EvalError;

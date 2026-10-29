@@ -15,7 +15,7 @@
 //! Go `pkg/parser/ddl_fieldtype_parser.go` AST payload and restore boundary.
 
 use crate::util::escape_string_literal;
-use tidb_datatype::{
+use tidb_parser_types::{
     enum_set_display_length_from_lengths, field_type_has_charset, FieldTypeCode, FieldTypeFlags,
 };
 

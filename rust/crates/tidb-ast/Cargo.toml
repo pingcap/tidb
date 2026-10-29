@@ -18,7 +18,9 @@ workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-tidb-datatype = { path = "../tidb-datatype" }
+tidb-charset = { path = "../tidb-charset" }
+tidb-goruntime = { path = "../tidb-goruntime" }
+tidb-parser-types = { path = "../tidb-parser-types" }
 tidb-lexer = { path = "../tidb-lexer" }
 tidb-mysql = { path = "../tidb-mysql" }
 

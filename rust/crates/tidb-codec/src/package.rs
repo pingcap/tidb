@@ -18,6 +18,7 @@
 //! This keeps the wire and equality behavior in the codec package without
 //! importing an executor-owned column container into the dependency leaf.
 
+use tidb_datatype::RuntimeCollator;
 use std::any::Any;
 
 use chrono::{TimeZone, Utc};

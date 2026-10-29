@@ -3407,10 +3407,12 @@ version = "0.0.0"
 dependencies = [
  "serde",
  "serde_json",
- "tidb-datatype",
+ "tidb-charset",
+ "tidb-goruntime",
  "tidb-lexer",
  "tidb-mysql",
  "tidb-parser",
+ "tidb-parser-types",
 ]
 
 [[package]]
@@ -3557,9 +3559,12 @@ dependencies = [
  "smallvec",
  "tidb-charset",
  "tidb-error",
+ "tidb-goruntime",
  "tidb-hack",
  "tidb-kvcache",
  "tidb-mysql",
+ "tidb-parser-format",
+ "tidb-parser-types",
  "unicode-general-category",
 ]
 
@@ -4179,6 +4184,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-goruntime"
+version = "0.0.0"
+dependencies = [
+ "ryu",
+ "serde",
+ "serde_json",
+ "tidb-hack",
+]
+
+[[package]]
 name = "tidb-hack"
 version = "0.0.0"
 dependencies = [
@@ -4409,6 +4424,21 @@ dependencies = [
  "tidb-hack",
  "tidb-lexer",
  "tidb-mysql",
+]
+
+[[package]]
+name = "tidb-parser-format"
+version = "0.0.0"
+
+[[package]]
+name = "tidb-parser-types"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tidb-charset",
+ "tidb-goruntime",
+ "tidb-parser-format",
 ]
 
 [[package]]

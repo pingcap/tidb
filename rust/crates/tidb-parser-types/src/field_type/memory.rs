@@ -15,7 +15,7 @@
 //! Source storage-width and allocation accounting for [`FieldType`].
 
 use super::{FieldType, FieldTypeCode, VAR_STORAGE_LEN};
-use crate::GoString;
+use tidb_goruntime::GoString;
 
 impl FieldType {
     /// Returns the source storage-width estimate.

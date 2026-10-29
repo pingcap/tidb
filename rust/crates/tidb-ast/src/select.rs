@@ -29,7 +29,7 @@ use crate::util::{back_quote, escape_string_literal};
 use crate::{
     Expr, LoadDataFields, LoadDataLines, NodeText, QueryStmt, RestoreContext, StatementPriority,
 };
-use tidb_datatype::Encoding;
+use tidb_charset::Encoding;
 
 /// The source spelling of a [`SelectStmt`].
 ///

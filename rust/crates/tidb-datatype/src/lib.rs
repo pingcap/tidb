@@ -38,15 +38,11 @@ mod decimal;
 mod duration;
 mod enum_set;
 mod etc;
-mod eval_type;
 mod explain_format;
 mod field_name;
 mod field_type;
-mod format;
 mod fsp;
-pub mod go_runtime;
-pub mod go_strconv;
-mod go_string;
+pub use tidb_goruntime::{go_runtime, go_strconv};
 mod json_path;
 pub mod json_scanner;
 mod mydecimal;
@@ -71,8 +67,6 @@ mod duration_tests;
 #[cfg(test)]
 mod collation_tests;
 
-#[cfg(test)]
-mod eval_type_tests;
 
 #[cfg(test)]
 mod enum_set_tests;
@@ -184,7 +178,7 @@ pub use enum_set::{
     EnumParseError, MysqlEnum, MysqlSet, SetParseError,
 };
 pub use etc::eof_as_nil;
-pub use eval_type::{
+pub use tidb_parser_types::{
     EvalType, InvalidEvalType, ET_DATETIME, ET_DECIMAL, ET_DURATION, ET_INT, ET_JSON, ET_REAL,
     ET_STRING, ET_TIMESTAMP, ET_VECTOR_FLOAT32,
 };
@@ -202,15 +196,15 @@ pub use field_type::{
     agg_field_type, aggregate_eval_type, default_field_type_for_value, enum_set_display_length,
     enum_set_display_length_from_lengths, field_type_has_charset, infer_param_type_from_datum,
     merge_field_type, parser_default_field_type_for_value, set_type_flag, str_to_type, type_str,
-    type_to_str, FieldType, FieldTypeBuilder, FieldTypeCode, FieldTypeFlags, FieldTypeValue,
+    type_to_str, RuntimeCollator, FieldType, FieldTypeBuilder, FieldTypeCode, FieldTypeFlags, FieldTypeValue,
     MAX_DECIMAL_SCALE, MAX_DECIMAL_WIDTH, STRICT_INTEGER_DISPLAY_WIDTH, UNSPECIFIED_LENGTH,
     VAR_STORAGE_LEN,
 };
-pub use format::{output_format, FlatFormatter, FormatFragment, Formatter, IndentFormatter};
+pub use tidb_parser_format::{output_format, FlatFormatter, FormatFragment, Formatter, IndentFormatter};
 pub use fsp::{
     align_frac, check_fsp, parse_frac, FspError, DEFAULT_FSP, MAX_FSP, MIN_FSP, UNSPECIFIED_FSP,
 };
-pub use go_string::{decode_go_utf8_lossy, go_chars, GoChars, GoString, GoStringSource};
+pub use tidb_goruntime::{decode_go_utf8_lossy, go_chars, GoChars, GoString, GoStringSource};
 pub use json_path::{
     parse_json_path_expr, JSONPathArraySelection, JSONPathError, JSONPathExpression, JSONPathLeg,
 };

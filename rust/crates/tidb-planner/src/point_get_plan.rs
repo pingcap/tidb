@@ -1430,6 +1430,7 @@ fn point_equal_pairs_visiting(
                 ..
             } = unparenthesized(value_expr)
             {
+                let value = value.as_ref().and_then(|value| value.downcast_ref::<Datum>());
                 let datum = match (params.get(*order), in_execute, value) {
                     (Some(datum), _, _) => datum.clone(),
                     (None, true, Some(datum)) => datum.clone(),
@@ -1852,13 +1853,14 @@ pub fn eval_limit_bound(expr: &tidb_ast::Expr) -> Result<u64, DriverError> {
             .parse::<u64>()
             .map_err(|_| DriverError::unsupported("LIMIT bound must be a non-negative integer")),
         tidb_ast::Expr::ParamMarker {
-            value: Some(Datum::Int(value)),
-            ..
-        } if *value >= 0 => Ok(*value as u64),
-        tidb_ast::Expr::ParamMarker {
-            value: Some(Datum::UInt(value)),
-            ..
-        } => Ok(*value),
+            value: Some(value), ..
+        } => match value.downcast_ref::<Datum>() {
+            Some(Datum::Int(value)) if *value >= 0 => Ok(*value as u64),
+            Some(Datum::UInt(value)) => Ok(*value),
+            _ => Err(DriverError::unsupported(
+                "LIMIT bound must be an integer literal",
+            )),
+        },
         _ => Err(DriverError::unsupported(
             "LIMIT bound must be an integer literal",
         )),

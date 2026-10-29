@@ -15,6 +15,7 @@
 //! Go `pkg/ddl`'s column DEFAULT checks and the stored form a DEFAULT
 //! settles into (`checkColumnDefaultValue`, `setDefaultValue`).
 
+use tidb_datatype::RuntimeCollator;
 use tidb_datatype::{Datum, FieldType};
 use tidb_error::mysql::MysqlError;
 

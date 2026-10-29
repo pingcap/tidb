@@ -15,6 +15,7 @@
 //! Go `NewDistAggFunc` and its per-group update/partial-result lifecycle.
 //! This is the mock coprocessor evaluator, distinct from executor/aggfuncs.
 
+use tidb_datatype::RuntimeCollator;
 use super::{names, AggFuncDesc, AggFunctionMode, BaseFuncDesc};
 use crate::{Columns, EvalError};
 use tidb_chunk::row::Row;

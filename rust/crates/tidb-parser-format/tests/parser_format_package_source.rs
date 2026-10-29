@@ -16,7 +16,7 @@
 
 use std::io::{self, Write};
 
-use tidb_datatype::{
+use tidb_parser_format::{
     output_format, FlatFormatter, FormatFragment as F, Formatter, IndentFormatter,
 };
 

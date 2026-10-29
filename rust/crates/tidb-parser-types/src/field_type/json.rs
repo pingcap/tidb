@@ -20,8 +20,8 @@ use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use super::{FieldType, FieldTypeCode};
-use crate::go_runtime::{go_64_slice_decode_capacity, GoSharedSlice, GoSliceElementLayout};
-use crate::GoString;
+use tidb_goruntime::go_runtime::{go_64_slice_decode_capacity, GoSharedSlice, GoSliceElementLayout};
+use tidb_goruntime::GoString;
 
 impl FieldType {
     /// Serializes the source JSON field names and values.
@@ -239,9 +239,7 @@ impl From<JsonFieldType> for FieldType {
         result.decimal = field.Decimal;
         result.charset_name = field.Charset.to_utf8_lossy_go().into();
         result.collation_name = field.Collate.to_utf8_lossy_go().into();
-        result.collation = crate::get_collator_with_mode(true, &result.collation_name)
-            .new_collation()
-            .expect("new-collation lookup always returns a concrete collation");
+        result.collation = tidb_charset::charset::exact_new_collation(&result.collation_name).unwrap_or(tidb_charset::Collation::Utf8Mb4Bin);
         result.elems = field.Elems;
         result.elems_is_binary_literal = field.ElemsIsBinaryLit;
         result.array = field.Array;
@@ -494,8 +492,8 @@ mod tests {
         assert!(!field_type.is_binary_string());
         assert!(field_type.is_character_string());
         assert_eq!(
-            field_type.runtime_collator_with_mode(true),
-            crate::Collator::New(crate::Collation::Utf8Mb4Bin)
+            field_type.collation(),
+            tidb_charset::Collation::Utf8Mb4Bin
         );
 
         let decoded = FieldType::from_json(br#"{"Tp":253,"Collate":"BINARY"}"#).unwrap();
@@ -503,8 +501,8 @@ mod tests {
         assert!(!decoded.is_binary_string());
         assert!(decoded.need_restored_data());
         assert_eq!(
-            decoded.runtime_collator_with_mode(true),
-            crate::Collator::New(crate::Collation::Utf8Mb4Bin)
+            decoded.collation(),
+            tidb_charset::Collation::Utf8Mb4Bin
         );
     }
 

@@ -14,6 +14,7 @@
 
 //! Native column access for Go's two-pass, column-wide join key construction.
 
+use tidb_datatype::RuntimeCollator;
 use crate::{encode_hash_datum, CodecError, SerializeMode, INT_FLAG, UINT_FLAG};
 use std::ops::{Index, Range};
 use tidb_chunk::chunk::Chunk;

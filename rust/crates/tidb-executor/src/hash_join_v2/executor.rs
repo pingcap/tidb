@@ -15,6 +15,7 @@
 //! Owning Open/Next/Close lifecycle for native V2 build, probe and recursive
 //! spill restore. SQL builder selection remains separate integration work.
 
+use tidb_datatype::RuntimeCollator;
 use std::sync::{Arc, Mutex};
 
 use tidb_chunk::{chunk::Chunk, column::get_fixed_len};
