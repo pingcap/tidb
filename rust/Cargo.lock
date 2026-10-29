@@ -3435,7 +3435,6 @@ name = "tidb-autoid"
 version = "0.0.0"
 dependencies = [
  "tidb-errno",
- "tidb-kv",
  "tidb-meta",
  "tidb-model",
  "tidb-pd-client",
@@ -3444,6 +3443,7 @@ dependencies = [
  "tidb-terror",
  "tidb-tracing",
  "tidb-txnkv",
+ "tidb-variable",
  "tikv-client",
  "tokio",
  "tokio-stream",
@@ -3760,6 +3760,7 @@ dependencies = [
  "tidb-txnkv",
  "tidb-unistore",
  "tidb-vardef",
+ "tidb-variable",
  "tikv-client",
  "tokio",
  "tokio-stream",
@@ -3793,8 +3794,8 @@ dependencies = [
  "tidb-chunk",
  "tidb-datatype",
  "tidb-driver-error",
- "tidb-kv",
  "tidb-memory",
+ "tidb-variable",
 ]
 
 [[package]]
@@ -4167,6 +4168,7 @@ dependencies = [
  "tidb-trxevents",
  "tidb-txnkv",
  "tidb-vardef",
+ "tidb-variable",
  "tikv-client",
  "tokio",
 ]
@@ -4377,6 +4379,7 @@ dependencies = [
  "tidb-traceevent",
  "tidb-txnkv",
  "tidb-util",
+ "tidb-variable",
 ]
 
 [[package]]
@@ -4674,7 +4677,6 @@ dependencies = [
  "tidb-exprctx",
  "tidb-expression-aggregation",
  "tidb-goruntime",
- "tidb-kv",
  "tidb-memory",
  "tidb-model",
  "tidb-murmur3",
@@ -4685,6 +4687,7 @@ dependencies = [
  "tidb-spill-storage",
  "tidb-sqlkiller",
  "tidb-vardef",
+ "tidb-variable",
  "tracing",
 ]
 
@@ -4750,7 +4753,6 @@ dependencies = [
  "tidb-expr",
  "tidb-exprctx",
  "tidb-goruntime",
- "tidb-kv",
  "tidb-memory",
  "tidb-mysql",
  "tidb-planner",
@@ -4759,6 +4761,7 @@ dependencies = [
  "tidb-sqlkiller",
  "tidb-tablecodec",
  "tidb-vardef",
+ "tidb-variable",
  "tracing",
 ]
 
@@ -4785,13 +4788,13 @@ dependencies = [
  "tidb-expr",
  "tidb-exprctx",
  "tidb-goruntime",
- "tidb-kv",
  "tidb-memory",
  "tidb-spill-storage",
  "tidb-sqlkiller",
  "tidb-stats",
  "tidb-tablecodec",
  "tidb-vardef",
+ "tidb-variable",
  "tracing",
 ]
 
@@ -5264,19 +5267,11 @@ name = "tidb-kv"
 version = "0.0.0"
 dependencies = [
  "smallvec",
- "tidb-datatype",
- "tidb-dbterror",
  "tidb-errno",
  "tidb-exeerrors",
- "tidb-memory",
- "tidb-mysql",
- "tidb-spill-storage",
- "tidb-sqlkiller",
  "tidb-terror",
  "tidb-txnkv",
- "tidb-vardef",
  "tikv-client",
- "tracing",
 ]
 
 [[package]]
@@ -5794,6 +5789,8 @@ dependencies = [
  "tidb-planner-core-base",
  "tidb-planner-core-constraint",
  "tidb-planner-core-cost",
+ "tidb-planner-core-partidx",
+ "tidb-planner-core-rule-util",
  "tidb-planner-coreusage",
  "tidb-planner-costusage",
  "tidb-planner-property",
@@ -5894,6 +5891,24 @@ version = "0.0.0"
 dependencies = [
  "prometheus 0.14.0",
  "tidb-metrics",
+]
+
+[[package]]
+name = "tidb-planner-core-partidx"
+version = "0.0.0"
+dependencies = [
+ "tidb-datatype",
+ "tidb-expr",
+ "tidb-ranger",
+]
+
+[[package]]
+name = "tidb-planner-core-rule-util"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-expr",
+ "tidb-infoschema",
 ]
 
 [[package]]
@@ -6804,12 +6819,12 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "tidb-datatype",
- "tidb-kv",
  "tidb-memory",
  "tidb-parser",
  "tidb-sqlkiller",
  "tidb-stmtctx",
  "tidb-txninfo",
+ "tidb-variable",
 ]
 
 [[package]]
@@ -7615,6 +7630,7 @@ dependencies = [
  "tidb-mysql",
  "tidb-txnkv",
  "tidb-util",
+ "tidb-variable",
 ]
 
 [[package]]
@@ -8045,6 +8061,7 @@ dependencies = [
  "tidb-dbterror",
  "tidb-errno",
  "tidb-execdetails",
+ "tidb-exeerrors",
  "tidb-fixcontrol",
  "tidb-go-time-layout",
  "tidb-goruntime",
@@ -8055,6 +8072,8 @@ dependencies = [
  "tidb-naming",
  "tidb-parser",
  "tidb-sessionstates",
+ "tidb-spill-storage",
+ "tidb-sqlkiller",
  "tidb-stmtctx",
  "tidb-stringutil",
  "tidb-terror",
@@ -8064,6 +8083,7 @@ dependencies = [
  "tidb-txnkv",
  "tidb-vardef",
  "tikv-client",
+ "tracing",
 ]
 
 [[package]]

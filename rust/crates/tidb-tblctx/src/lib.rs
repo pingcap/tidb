@@ -67,7 +67,7 @@ pub trait MutateContext: tidb_exprctx::Columns + Send + Sync {
     fn tmp_table_max_size(&self) -> i64;
 
     /// The statement's memory and disk quota.
-    fn statement_memory(&self) -> tidb_kv::mem_quota::StatementMemory;
+    fn statement_memory(&self) -> tidb_variable::mem_quota::StatementMemory;
 
     /// The snapshot read options a read of `avg_row_bytes`-byte rows takes.
     fn snapshot_read_options(&self, avg_row_bytes: f64) -> tidb_txnkv::SnapshotReadOptions;

@@ -15,7 +15,7 @@
 use super::tests::{eq_on, join_of, join_with_memory, run};
 use super::{ExecError, JoinKind};
 use tidb_executor_internal_exec::Executor;
-use tidb_kv::mem_quota::StatementMemory;
+use tidb_variable::mem_quota::StatementMemory;
 use tidb_vardef::OomAction;
 use crate::merge_join_plan::{MergeJoinKey, MergeJoinPlan};
 use std::sync::Arc;

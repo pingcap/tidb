@@ -83,7 +83,7 @@ use tidb_expr::schema::Schema;
 use tidb_exprctx::Columns;
 use tidb_memory::{ArcAction, Tracker};
 
-use tidb_kv::mem_quota::StatementMemory;
+use tidb_variable::mem_quota::StatementMemory;
 use crate::{eval_sort_key, less_by_items, validate_by_items, SortByItem};
 use tidb_driver_error::panic_recovery::recover_worker_panic;
 use crate::topn_chunk_heap::TopNChunkHeap;

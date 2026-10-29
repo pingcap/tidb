@@ -131,7 +131,7 @@ mod source_tests {
 
 // The lower layers' errors, lifted into the executor's.
 
-use tidb_kv::mem_quota::KillStop;
+use tidb_variable::mem_quota::KillStop;
 use tidb_kv::storage::StorageError;
 use tidb_table::column::{CastError, ColumnError};
 use tidb_table::generated_column::GenerationError;

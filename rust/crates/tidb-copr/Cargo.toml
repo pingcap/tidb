@@ -44,6 +44,7 @@ tonic.workspace = true
 tokio-stream = { workspace = true, features = ["net"] }
 
 [dev-dependencies]
+tidb-variable = { path = "../tidb-variable" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-topsql-stmtstats = { path = "../tidb-topsql-stmtstats" }
 tidb-charset = { path = "../tidb-charset" }

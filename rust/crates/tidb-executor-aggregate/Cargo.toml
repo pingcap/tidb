@@ -11,6 +11,7 @@ description = "TiDB pkg/executor/aggregate (Rust)."
 workspace = true
 
 [dependencies]
+tidb-variable = { path = "../tidb-variable" }
 hashbrown = { workspace = true }
 smallvec = { workspace = true }
 tracing = "0.1"
@@ -31,7 +32,6 @@ tidb-expr = { path = "../tidb-expr" }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-expression-aggregation = { path = "../tidb-expression-aggregation" }
 tidb-goruntime = { path = "../tidb-goruntime" }
-tidb-kv = { path = "../tidb-kv" }
 tidb-memory = { path = "../tidb-memory" }
 tidb-model = { path = "../tidb-model" }
 tidb-murmur3 = { path = "../tidb-murmur3" }

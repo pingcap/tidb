@@ -39,7 +39,7 @@ use tidb_driver_error::panic_recovery::recover_worker_panic;
 use tidb_driver_error::ExecError;
 use tidb_executor_internal_exec::Executor;
 use tidb_executor_internal_exec::ExecutorMeta;
-use tidb_kv::mem_quota::StatementMemory;
+use tidb_variable::mem_quota::StatementMemory;
 
 /// Go builder's resolved child indices, comparison types, projection and ON
 /// conditions. Key types include the equality expression's collation and flags;

@@ -925,7 +925,7 @@ impl OwnedRewrite for PredicatePushDown<'_, '_> {
                             predicates
                                 .into_iter()
                                 .map(|predicate| {
-                                    super::rule_util::resolve_expr_and_replace(
+                                    tidb_planner_core_rule_util::resolve_expr_and_replace(
                                         &predicate,
                                         &class.column_map,
                                     )

@@ -53,7 +53,7 @@ pub mod native;
 pub(crate) mod parallel;
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
-use tidb_kv::mem_quota::StatementMemory;
+use tidb_variable::mem_quota::StatementMemory;
 pub use native::NestedLoopApplyExec;
 use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;

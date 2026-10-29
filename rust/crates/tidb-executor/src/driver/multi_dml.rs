@@ -255,7 +255,7 @@ pub(crate) fn run_multi_update(
         catalog,
         ctx,
         runtime,
-        tidb_kv::mem_quota::label::UPDATE,
+        tidb_variable::mem_quota::label::UPDATE,
         true,
     )?;
 
@@ -287,7 +287,7 @@ pub(crate) fn run_multi_update(
     let mut merged: BTreeMap<((String, String), TableHandle), Vec<Datum>> = BTreeMap::new();
     let accountant = ctx
         .statement_memory()
-        .write_accountant(tidb_kv::mem_quota::label::UPDATE);
+        .write_accountant(tidb_variable::mem_quota::label::UPDATE);
     let mut records = UpdateRecords::new(fk_triggers);
     let mut once: UpdateOnce = BTreeMap::new();
     let mut matched_rows = 0u64;
@@ -530,7 +530,7 @@ pub(crate) fn run_multi_delete(
             catalog,
             ctx,
             runtime,
-            tidb_kv::mem_quota::label::DELETE,
+            tidb_variable::mem_quota::label::DELETE,
             false,
         )?
     };

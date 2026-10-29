@@ -23,7 +23,7 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
-use tidb_planner::logical::rule_util::{replace_column_of_expr, resolve_expr_and_replace};
+use tidb_planner_core_rule_util::{replace_column_of_expr, resolve_expr_and_replace};
 
 fn column(unique_id: i64) -> Column {
     let mut column = Column::new(unique_id, FieldType::new(FieldTypeCode::LongLong));

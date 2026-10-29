@@ -14,11 +14,11 @@
 
 use tidb_sqlkiller::memory_exceed_for_query;
 use tidb_vardef::OomAction;
-use tidb_kv::mem_quota::*;
+use tidb_variable::mem_quota::*;
 use std::sync::Arc;
 use tidb_memory::Tracker;
 use tidb_spill_storage::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
-use tidb_kv::mem_quota::KillStop;
+use tidb_variable::mem_quota::KillStop;
 
 #[derive(Default)]
 struct NoopMemStateRecorder;

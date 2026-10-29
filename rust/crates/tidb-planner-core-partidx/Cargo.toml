@@ -1,0 +1,16 @@
+[package]
+name = "tidb-planner-core-partidx"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/planner/core/partidx (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-ranger = { path = "../tidb-ranger" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-expr = { path = "../tidb-expr" }

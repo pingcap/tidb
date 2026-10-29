@@ -99,7 +99,8 @@ pub mod logical_data_source_task;
 pub mod memtable_infoschema_extractor;
 pub mod memtable_predicate_extractor;
 pub mod optimize;
-pub mod partidx;
+#[cfg(test)]
+mod partidx_tests;
 pub mod physical;
 pub mod physical_plan_cache;
 pub mod physical_table_reader;

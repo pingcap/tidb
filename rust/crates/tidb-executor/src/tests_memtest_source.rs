@@ -16,7 +16,7 @@
 //! 1043–1045): the statement memory tracker's release-on-cleanup contract
 //! and the global memory arbitrator's variable surface.
 
-use tidb_kv::mem_quota::SessionMemory;
+use tidb_variable::mem_quota::SessionMemory;
 use tidb_vardef::OomAction;
 use crate::{
     run_create_table_on, run_insert_on, run_select_on, run_update_on, Catalog, StatementMemory,

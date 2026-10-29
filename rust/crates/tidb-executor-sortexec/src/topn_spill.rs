@@ -64,7 +64,7 @@ use tidb_memory::{
 use tidb_spill_storage::SpillStorage;
 
 use tidb_driver_error::ExecError;
-use tidb_kv::mem_quota::StatementMemory;
+use tidb_variable::mem_quota::StatementMemory;
 use crate::{eval_sort_key, SortByItem};
 
 /// Go `spillChunkSize` for the TopN's `tmpSpillChunk`: rows per chunk written

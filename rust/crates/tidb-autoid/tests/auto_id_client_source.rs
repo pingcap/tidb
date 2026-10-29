@@ -240,7 +240,7 @@ fn auto_id_owner_discovery_deadline_and_cancellation_join() {
 fn auto_id_owner_sql_kill_interrupts_service_discovery() {
     let (client, leader) = client(vec![]);
     let alloc = Arc::new(AutoIdServiceAllocator::new(client, 1, 2, false, u32::MAX));
-    let memory = tidb_kv::mem_quota::StatementMemory::default();
+    let memory = tidb_variable::mem_quota::StatementMemory::default();
     let call = UnaryCallContext::statement(&memory);
     let worker = std::thread::spawn(move || alloc.alloc(&call, 1, 1, 1));
     let deadline = std::time::Instant::now() + Duration::from_secs(2);

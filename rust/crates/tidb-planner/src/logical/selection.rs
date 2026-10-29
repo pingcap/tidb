@@ -149,7 +149,7 @@ impl LogicalSelection {
             .map(|column| column.unique_id)
             .collect::<std::collections::BTreeSet<_>>();
         self.base
-            .set_max_one_row(super::rule_util::check_max_one_row_cond(&eq_col_ids, child));
+            .set_max_one_row(tidb_planner_core_rule_util::check_max_one_row_cond(&eq_col_ids, child));
     }
 
     /// The columns this filter equates to a constant or a correlated column,

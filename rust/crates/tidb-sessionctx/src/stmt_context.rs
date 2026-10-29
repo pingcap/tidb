@@ -37,7 +37,7 @@ const MAX_WARNING_COUNT: usize = u16::MAX as usize;
 const DEFAULT_DIST_SQL_SCAN_CONCURRENCY: u64 =
     tidb_vardef::defaults::DEF_DIST_SQL_SCAN_CONCURRENCY as u64;
 
-use tidb_kv::mem_quota::StatementMemory;
+use tidb_variable::mem_quota::StatementMemory;
 use tidb_vardef::OomAction;
 use crate::statement_pushdown::{push_down_flags, PushDownFlagsInput, StatementKind};
 use tidb_errctx::{ErrGroup, Level, LevelMap};
@@ -5658,7 +5658,7 @@ impl tidb_tblctx::MutateContext for StmtContext {
         StmtContext::tmp_table_max_size(self)
     }
 
-    fn statement_memory(&self) -> tidb_kv::mem_quota::StatementMemory {
+    fn statement_memory(&self) -> tidb_variable::mem_quota::StatementMemory {
         StmtContext::statement_memory(self)
     }
 
@@ -6301,7 +6301,7 @@ mod tests {
 
     #[test]
     fn sleep_keeps_a_kill_installed_after_a_physical_table_reader_is_built() {
-        let session = tidb_kv::mem_quota::SessionMemory::new(-1, tidb_vardef::OomAction::Cancel, 7);
+        let session = tidb_variable::mem_quota::SessionMemory::new(-1, tidb_vardef::OomAction::Cancel, 7);
         let cancellation = session.begin_query_cancellation();
         cancellation.cancel();
         let ctx = StmtContext::for_query_with_memory(session.statement());

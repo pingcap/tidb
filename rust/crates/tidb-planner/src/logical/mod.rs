@@ -377,7 +377,6 @@ pub mod rule_push_down_sequence;
 pub mod rule_resolve_expand;
 pub mod rule_result_reorder;
 pub mod rule_semi_join_rewrite;
-pub mod rule_util;
 pub mod schema_producer;
 pub mod selection;
 pub mod sequence;
@@ -947,7 +946,7 @@ impl LogicalPlan {
                         let mut columns = tidb_expr::simple_expr::extract_columns(predicate);
                         columns.len() == 1 && replace.contains_key(columns[0].hash_code())
                     })
-                    .map(|predicate| rule_util::resolve_expr_and_replace(&predicate, &replace))
+                    .map(|predicate| tidb_planner_core_rule_util::resolve_expr_and_replace(&predicate, &replace))
                     .collect()
             }
             Self::Join(_)

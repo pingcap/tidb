@@ -280,6 +280,11 @@ impl DataSource {
     pub fn index_keys(&self, self_schema: &Schema) -> (Vec<Vec<Column>>, Vec<Vec<Column>>) {
         let mut strong = Vec::new();
         let mut nullable = Vec::new();
+        let source_columns: Vec<(&str, bool)> = self
+            .columns
+            .iter()
+            .map(|column| (column.name.as_str(), column.is_not_null))
+            .collect();
         for index in &self.indexes {
             if !index.unique || !index.is_public {
                 continue;
@@ -291,8 +296,11 @@ impl DataSource {
             {
                 continue;
             }
-            let (nullable_key, strong_key) =
-                super::rule_util::check_index_can_be_key(index, &self.columns, self_schema);
+            let (nullable_key, strong_key) = tidb_planner_core_rule_util::check_index_can_be_key(
+                index,
+                &source_columns,
+                self_schema,
+            );
             if let Some(key) = strong_key {
                 strong.push(key);
             } else if let Some(key) = nullable_key {
@@ -751,7 +759,7 @@ impl DataSource {
                 removed_ids.insert(metadata.id);
                 continue;
             };
-            if !crate::partidx::check_constraints(
+            if !tidb_planner_core_partidx::check_constraints(
                 opt_prefix_index_single_scan,
                 &predicates,
                 &self.pushed_down_conds,
@@ -763,7 +771,7 @@ impl DataSource {
                 partial_index_used_hint = true;
             }
             if use_plan_cache
-                && !crate::partidx::always_meet_constraints(&predicates, &self.pushed_down_conds)
+                && !tidb_planner_core_partidx::always_meet_constraints(&predicates, &self.pushed_down_conds)
             {
                 self.partial_index_noncacheable_ids.insert(metadata.id);
             }

@@ -15,7 +15,7 @@
 use super::merge_path_tests::as_multiset;
 use super::tests::{eq_on, join_with_memory, run, NoColumns};
 use super::*;
-use tidb_kv::mem_quota::StatementMemory;
+use tidb_variable::mem_quota::StatementMemory;
 use tidb_vardef::OomAction;
 
 /// A build side big enough that its chunks outweigh any quota worth

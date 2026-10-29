@@ -29,7 +29,7 @@ use crate::joiner::JoinType;
 use tidb_driver_error::ExecError;
 use tidb_executor_internal_exec::Executor;
 use tidb_executor_internal_exec::ExecutorMeta;
-use tidb_kv::mem_quota::StatementMemory;
+use tidb_variable::mem_quota::StatementMemory;
 
 struct FetchRequest {
     worker_id: usize,

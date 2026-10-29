@@ -11,6 +11,7 @@ description = "TiDB pkg/table/tblctx: the context the table layer reads from the
 workspace = true
 
 [dependencies]
+tidb-variable = { path = "../tidb-variable" }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-context = { path = "../tidb-context" }
 tidb-fastrand = { path = "../tidb-fastrand" }

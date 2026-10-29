@@ -45,7 +45,7 @@ use tidb_expr::schema::Schema;
 use tidb_exprctx::Columns;
 use tidb_memory::{ArcAction, Tracker};
 
-use tidb_kv::mem_quota::StatementMemory;
+use tidb_variable::mem_quota::StatementMemory;
 use crate::sort_partition::{spill_action, SortPartition, SPILL_CHUNK_SIZE};
 
 /// Go `planner/util.ByItems`: one `ORDER BY` item -- the key expression and

@@ -83,7 +83,7 @@ use group_key::GroupKeyBuffer;
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use tidb_executor_join::hash_join::FastBytesMap;
-use tidb_kv::mem_quota::StatementMemory;
+use tidb_variable::mem_quota::StatementMemory;
 use spill::new_group_bytes;
 
 #[doc(inline)]

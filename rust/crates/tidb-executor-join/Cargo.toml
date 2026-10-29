@@ -11,6 +11,7 @@ description = "TiDB pkg/executor/join (Rust)."
 workspace = true
 
 [dependencies]
+tidb-variable = { path = "../tidb-variable" }
 tidb-executor-internal-vecgroupchecker = { path = "../tidb-executor-internal-vecgroupchecker" }
 tidb-planner = { path = "../tidb-planner" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
@@ -24,7 +25,6 @@ tidb-serialization = { path = "../tidb-serialization" }
 tidb-spill-storage = { path = "../tidb-spill-storage" }
 tidb-sqlkiller = { path = "../tidb-sqlkiller" }
 tidb-goruntime = { path = "../tidb-goruntime" }
-tidb-kv = { path = "../tidb-kv" }
 tidb-driver-error = { path = "../tidb-driver-error" }
 crossbeam-channel = "0.5"
 tidb-chunk = { path = "../tidb-chunk" }

@@ -67,7 +67,7 @@ use tidb_executor_aggfuncs::aggfuncs::AggFunc;
 use tidb_executor_aggfuncs::aggfuncs::AggKind;
 use tidb_executor_aggregate::parallel::HashAggContext;
 use tidb_executor_aggregate::HashAggExec;
-use tidb_kv::mem_quota::StatementMemory;
+use tidb_variable::mem_quota::StatementMemory;
 use tidb_vardef::OomAction;
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;

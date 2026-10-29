@@ -12,6 +12,8 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-planner-core-partidx = { path = "../tidb-planner-core-partidx" }
+tidb-planner-core-rule-util = { path = "../tidb-planner-core-rule-util" }
 tidb-planner-cardinality = { path = "../tidb-planner-cardinality" }
 tidb-planner-core-base = { path = "../tidb-planner-core-base" }
 tidb-planner-util-domainmisc = { path = "../tidb-planner-util-domainmisc" }

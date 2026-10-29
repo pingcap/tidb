@@ -22,7 +22,6 @@ pub mod kv_errors;
 pub mod key;
 pub mod region_map;
 pub mod storage;
-pub mod mem_quota;
 pub mod mpp_query;
 pub mod staged_writes;
 pub mod keys_read;

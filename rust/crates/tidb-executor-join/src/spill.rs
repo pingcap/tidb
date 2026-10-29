@@ -26,7 +26,7 @@ use tidb_memory::{ActionOnExceed, ArcAction, BaseOomAction, Tracker, DEF_SPILL_P
 use crate::join_row_table::{RowTable, RowTableSegment};
 use tidb_driver_error::panic_recovery::recover_worker_panic;
 use tidb_driver_error::ExecError;
-use tidb_kv::mem_quota::StatementMemory;
+use tidb_variable::mem_quota::StatementMemory;
 
 /// Go spillChunkSize; both disk sides use native columnar batches.
 pub const SPILL_CHUNK_SIZE: usize = 1024;

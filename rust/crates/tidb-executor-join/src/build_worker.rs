@@ -34,7 +34,7 @@ use crate::row_table_builder::{BuildContext, PartitionInfo, RowTableBuildError};
 use tidb_driver_error::panic_recovery::recover_worker_panic;
 use tidb_driver_error::ExecError;
 use tidb_executor_internal_exec::Executor;
-use tidb_kv::mem_quota::StatementMemory;
+use tidb_variable::mem_quota::StatementMemory;
 use std::sync::{Arc, Mutex};
 
 /// The immutable part of a build call that a persistent worker can own.

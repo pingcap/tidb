@@ -1,0 +1,16 @@
+[package]
+name = "tidb-planner-core-rule-util"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/planner/core/rule/util (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-infoschema = { path = "../tidb-infoschema" }

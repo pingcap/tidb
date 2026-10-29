@@ -20,7 +20,6 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
-use super::data_source::DataSourceColumn;
 use tidb_infoschema::table_source::SourceIndex;
 
 /// Go `ResolveExprAndReplace` and `ResolveColumnAndReplace`.
@@ -150,14 +149,15 @@ pub fn check_max_one_row_cond(equal_column_ids: &BTreeSet<i64>, child: &Schema) 
         })
 }
 
-/// Go `CheckIndexCanBeKey` for the planner's source metadata.
+/// Go `CheckIndexCanBeKey` over the source columns' names and NOT NULL flags
+/// (Go's `[]*model.ColumnInfo`), positionally aligned with `schema`.
 ///
 /// The first result is Go's nullable `uniqueKey`; the second is its strong
 /// all-NOT-NULL `newKey`.
 #[must_use]
 pub fn check_index_can_be_key(
     index: &SourceIndex,
-    columns: &[DataSourceColumn],
+    columns: &[(&str, bool)],
     schema: &Schema,
 ) -> (Option<Vec<Column>>, Option<Vec<Column>>) {
     if !index.unique {
@@ -169,8 +169,8 @@ pub fn check_index_can_be_key(
     for index_column in &index.columns {
         let index_column_name = tidb_ast::CiString::new(&index_column.name);
         let mut found = false;
-        for (position, source_column) in columns.iter().enumerate() {
-            if tidb_ast::CiString::new(&source_column.name) != index_column_name {
+        for (position, &(source_name, source_not_null)) in columns.iter().enumerate() {
+            if tidb_ast::CiString::new(source_name) != index_column_name {
                 continue;
             }
             // The schema may be pruned relative to the source column list
@@ -185,7 +185,7 @@ pub fn check_index_can_be_key(
             unique_key.push(column.clone());
             found = true;
             if strong {
-                if !source_column.is_not_null {
+                if !source_not_null {
                     strong = false;
                     break;
                 }
@@ -203,42 +203,3 @@ pub fn check_index_can_be_key(
         (Some(unique_key), None)
     }
 }
-
-/// Rust's direct-function form of Go's import-cycle hook.
-#[must_use]
-pub const fn set_predicate_push_down_flag(flag: u64) -> u64 {
-    super::rule::set_predicate_push_down_flag(flag)
-}
-
-/// Rust's direct-function form of Go's ordinary simplification hook.
-#[must_use]
-pub fn apply_predicate_simplification(
-    context: &super::rule::RuleContext<'_>,
-    predicates: Vec<Expression>,
-    propagate_constant: bool,
-    valid: Option<&dyn Fn(&Expression) -> bool>,
-) -> Vec<Expression> {
-    super::rule::apply_predicate_simplification(context, predicates, propagate_constant, valid)
-}
-
-/// Rust's direct-function form of Go's join simplification hook.
-#[must_use]
-pub fn apply_predicate_simplification_for_join(
-    context: &super::rule::RuleContext<'_>,
-    predicates: Vec<Expression>,
-    left_schema: &tidb_expr::schema::Schema,
-    right_schema: &tidb_expr::schema::Schema,
-    propagate_constant: bool,
-) -> Vec<Expression> {
-    super::rule::apply_predicate_simplification_for_join(
-        context,
-        predicates,
-        left_schema,
-        right_schema,
-        propagate_constant,
-        None,
-    )
-}
-
-/// Go `BuildKeyInfoPortal`; the implementation is iterative in Rust.
-pub use super::rewrite::build_key_info_portal;

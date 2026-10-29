@@ -15,7 +15,10 @@
 //! `tidb_mem_quota_query` enforcement: the session and per-statement memory
 //! trackers, and the OOM action `tidb_mem_oom_action` selects.
 //!
-//! This is the executor side of Go's `ResetContextOfStmt`
+//! The trackers and the killer are Go `SessionVars.MemTracker`,
+//! `DiskTracker` and `SQLKiller` with the statement's `StmtCtx.MemTracker`
+//! hung beneath (`pkg/sessionctx/variable`, which imports `stmtctx`); what
+//! installs them is the executor side of Go's `ResetContextOfStmt`
 //! (`pkg/executor/select.go`), which builds exactly this shape per statement:
 //!
 //! ```text
@@ -46,7 +49,7 @@
 //! query. Please try narrowing your query scope or increase the
 //! tidb_mem_quota_query limit and try again.[conn=1]`).
 //!
-//! WHICH OPERATORS ACCOUNT: the sort (`crate::sort`), and the WRITE path --
+//! WHICH OPERATORS ACCOUNT: the sort (`tidb_kv::sort`), and the WRITE path --
 //! `UPDATE`, `DELETE`, `INSERT`/`REPLACE`, and the rows a foreign-key cascade
 //! reads and rewrites -- through [`WriteMemory`], whose doc states what is
 //! counted and how it differs from Go's chunk arithmetic. A read path other
@@ -536,7 +539,7 @@ impl SessionMemory {
 ///
 /// Cloning shares the same trackers, so the handle can be copied to each
 /// operator that accounts; it is created ONCE per statement, by
-/// [`crate::StmtContext`]'s single constructor.
+/// [`tidb_kv::StmtContext`]'s single constructor.
 #[derive(Clone)]
 pub struct StatementMemory {
     /// Shared final-clone cleanup for this statement's tracker children.

@@ -388,7 +388,7 @@ pub struct PushdownStatementContext {
     /// `StmtCtx.GetResourceGroupTagger`.
     pub kv_context: Option<tidb_txnkv::StatementKvContextCell>,
     /// Shared statement quota and SQL killer for remote response ownership.
-    pub memory: tidb_kv::mem_quota::StatementMemory,
+    pub memory: tidb_variable::mem_quota::StatementMemory,
     /// One query identity and allocation state for every MPP gather in this statement.
     pub mpp_query_info: Arc<tidb_kv::mpp_query::MppQueryInfo>,
     /// Domain/server-info ID, never the operating system process ID.
@@ -489,7 +489,7 @@ pub struct PushdownStatementContext {
 impl Default for PushdownStatementContext {
     fn default() -> Self {
         Self {
-            memory: tidb_kv::mem_quota::StatementMemory::default(),
+            memory: tidb_variable::mem_quota::StatementMemory::default(),
             rpc_interceptor: Default::default(),
             kv_context: None,
             mpp_query_info: Arc::default(),

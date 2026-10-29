@@ -25,7 +25,7 @@ use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
 use super::ProbeV2;
 use crate::base_join_probe::ProbeError;
 use tidb_driver_error::ExecError;
-use tidb_kv::mem_quota::StatementMemory;
+use tidb_variable::mem_quota::StatementMemory;
 
 /// One worker's fetcher and result-chunk resource queues, each of capacity one.
 pub struct ProbeWorkerPorts {
@@ -85,8 +85,8 @@ impl From<ExecError> for Stop {
     }
 }
 
-impl From<tidb_kv::mem_quota::KillStop> for Stop {
-    fn from(stop: tidb_kv::mem_quota::KillStop) -> Self {
+impl From<tidb_variable::mem_quota::KillStop> for Stop {
+    fn from(stop: tidb_variable::mem_quota::KillStop) -> Self {
         Self::Error(stop.into())
     }
 }

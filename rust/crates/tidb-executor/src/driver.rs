@@ -31,7 +31,7 @@
 use tidb_executor_internal_exec::Executor;
 use tidb_driver_error::ExecError;
 use tidb_table::kv_table::TableHandle;
-use tidb_kv::mem_quota;
+use tidb_variable::mem_quota;
 use std::sync::Arc;
 use tidb_ast::{QueryStmt, Stmt, Visitable, Visitor};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -936,7 +936,7 @@ mod dml_batch_tests {
     fn quota_failure_stops_reading_and_closes_source() {
         let (exec, nexts, closes, types) = source(false);
         let memory = crate::StatementMemory::new(1024, tidb_vardef::OomAction::Cancel, 7);
-        let accountant = memory.write_accountant(tidb_kv::mem_quota::label::UPDATE);
+        let accountant = memory.write_accountant(tidb_variable::mem_quota::label::UPDATE);
         let result = visit_executor_rows(exec, &types, &memory, |row| {
             accountant.account_row(&row).map_err(DriverError::from)
         });

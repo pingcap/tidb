@@ -306,7 +306,7 @@ fn merge_adjacent_projections(
     let options = SubstituteOptions::new(builder);
     for expression in &mut projection.exprs {
         let replaced =
-            super::rule_util::replace_column_of_expr(expression, &child.exprs, &child_schema);
+            tidb_planner_core_rule_util::replace_column_of_expr(expression, &child.exprs, &child_schema);
         // go folds the merged expression with the LIVE statement context
         // (`FoldConstant` over `BuildContext`); the diagnostics belong to the
         // statement. The planner boundary resets the live list between

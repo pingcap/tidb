@@ -31,7 +31,7 @@
 use tidb_datatype::Datum;
 use tidb_memory::DEF_LOG_PRIORITY;
 
-use tidb_kv::mem_quota::SessionMemory;
+use tidb_variable::mem_quota::SessionMemory;
 use tidb_vardef::OomAction;
 use crate::{
     run_create_table_on, run_delete_on, run_insert_on, run_select_on, run_update_on, Catalog,

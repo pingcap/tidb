@@ -220,6 +220,18 @@ pub trait MppContext: Send + Sync {
     fn consume(&self, bytes: i64);
 }
 
+/// Go `context.Background()` for an MPP call no statement owns (the store
+/// health probe): nothing cancels it and nothing is charged.
+pub struct BackgroundMppContext;
+
+impl MppContext for BackgroundMppContext {
+    fn check(&self) -> Result<(), tidb_terror::MysqlError> {
+        Ok(())
+    }
+
+    fn consume(&self, _bytes: i64) {}
+}
+
 /// An MPP call's failure as the reader reports it.
 #[derive(Clone, Debug)]
 pub enum MppError {

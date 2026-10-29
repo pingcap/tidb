@@ -41,7 +41,7 @@ use tidb_exprctx::NoColumns;
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 use crate::limit::LimitExec;
-use tidb_kv::mem_quota::StatementMemory;
+use tidb_variable::mem_quota::StatementMemory;
 use crate::projection::ProjectionExec;
 use crate::selection::SelectionExec;
 use tidb_executor_sortexec::SortByItem;

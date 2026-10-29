@@ -125,7 +125,7 @@ pub mod kv_table;
 pub mod limit;
 pub mod load_data;
 pub mod max_one_row;
-use tidb_kv::mem_quota;
+use tidb_variable::mem_quota;
 #[cfg(test)]
 mod tests_mem_quota;
 pub mod mem_reader;

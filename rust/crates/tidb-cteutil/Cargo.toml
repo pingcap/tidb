@@ -11,7 +11,7 @@ description = "TiDB pkg/util/cteutil: the CTE storage (Rust)."
 workspace = true
 
 [dependencies]
-tidb-kv = { path = "../tidb-kv" }
+tidb-variable = { path = "../tidb-variable" }
 tidb-memory = { path = "../tidb-memory" }
 tidb-driver-error = { path = "../tidb-driver-error" }
 tidb-chunk = { path = "../tidb-chunk" }

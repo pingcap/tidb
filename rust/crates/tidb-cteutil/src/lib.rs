@@ -28,7 +28,7 @@ use tidb_datatype::{Datum, FieldType};
 use tidb_memory::{ArcAction, Tracker, LABEL_FOR_CTE_STORAGE};
 
 use tidb_driver_error::ExecError;
-use tidb_kv::mem_quota::StatementMemory;
+use tidb_variable::mem_quota::StatementMemory;
 
 /// One open row-container and the accounting authority that owns it.
 struct CteData {

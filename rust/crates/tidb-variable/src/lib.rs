@@ -18,6 +18,7 @@
 //! package does.
 
 mod error;
+pub mod mem_quota;
 pub mod wire_status;
 pub mod savepoints;
 pub mod user_vars;

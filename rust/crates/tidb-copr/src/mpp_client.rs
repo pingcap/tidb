@@ -50,9 +50,12 @@ struct MppHealthClient<S: tikv_client::PdClient>(TikvStore<S>);
 impl<S: tikv_client::PdClient> crate::mpp_probe::MppAliveClient for MppHealthClient<S> {
     fn is_alive(&self, address: &str, timeout: std::time::Duration) -> Result<bool, String> {
         // Go's background ctx: no statement can stop a health probe.
-        let ctx = tidb_kv::mem_quota::StatementMemory::default();
-        self.0
-            .block_on(probe_mpp_store(address, &ctx, &self.0, timeout))
+        self.0.block_on(probe_mpp_store(
+            address,
+            &tidb_txnkv::BackgroundMppContext,
+            &self.0,
+            timeout,
+        ))
     }
 }
 async fn probe_mpp_store<S: tikv_client::PdClient>(
@@ -1433,18 +1436,18 @@ mod mpp_read_batch_tests {
             }
         }
         fn open(&self) -> Result<MppQueryResponse<TestPd>, String> {
-            self.open_with_memory(tidb_kv::mem_quota::StatementMemory::default())
+            self.open_with_memory(tidb_variable::mem_quota::StatementMemory::default())
         }
         fn open_with_memory(
             &self,
-            memory: tidb_kv::mem_quota::StatementMemory,
+            memory: tidb_variable::mem_quota::StatementMemory,
         ) -> Result<MppQueryResponse<TestPd>, String> {
             self.open_target(&self.target(false), memory)
         }
         fn open_target(
             &self,
             target: &MppTarget<TestPd>,
-            memory: tidb_kv::mem_quota::StatementMemory,
+            memory: tidb_variable::mem_quota::StatementMemory,
         ) -> Result<MppQueryResponse<TestPd>, String> {
             self.store.block_on(async {
                 let response = tokio::time::timeout(
@@ -1530,7 +1533,7 @@ mod mpp_read_batch_tests {
         let mut target = fixture.target(false);
         target.rpc_interceptor = tidb_txnkv::RpcInterceptorOption::new(counter.rpc_interceptor());
         let mut response = fixture
-            .open_target(&target, tidb_kv::mem_quota::StatementMemory::default())
+            .open_target(&target, tidb_variable::mem_quota::StatementMemory::default())
             .unwrap();
         assert!(response.next().unwrap().is_some());
         response.close();
@@ -1563,7 +1566,7 @@ mod mpp_read_batch_tests {
             fixture.warm_compute_cache();
             let result = fixture.open_target(
                 &fixture.target(true),
-                tidb_kv::mem_quota::StatementMemory::default(),
+                tidb_variable::mem_quota::StatementMemory::default(),
             );
             match result {
                 Ok(mut response) => {
@@ -1630,7 +1633,7 @@ mod mpp_read_batch_tests {
                 fixture.warm_compute_cache();
                 let client = TiFlashMppClient::new(fixture.store.clone(), || 1);
                 let ctx: Arc<dyn MppContext> =
-                    Arc::new(tidb_kv::mem_quota::StatementMemory::default());
+                    Arc::new(tidb_variable::mem_quota::StatementMemory::default());
                 let result = tidb_txnkv::MppClient::dispatch_mpp_task(
                     &client,
                     &ctx,
@@ -1686,7 +1689,7 @@ mod mpp_read_batch_tests {
             b"new".to_vec(),
             Opening::MemoryLimit,
         ));
-        let memory = tidb_kv::mem_quota::StatementMemory::default();
+        let memory = tidb_variable::mem_quota::StatementMemory::default();
         let initial = fixture.open_with_memory(memory.clone()).unwrap();
         let connections = fixture.connections.load(Ordering::SeqCst);
         let next_fixture = fixture.clone();
@@ -1728,7 +1731,7 @@ mod mpp_read_batch_tests {
     fn mpp_failure_batch_socket_holder_transfers_packet_memory_once() {
         let fixture =
             Fixture::with_opening(false, false, false, b"raw".to_vec(), Opening::TwoPackets);
-        let memory = tidb_kv::mem_quota::StatementMemory::default();
+        let memory = tidb_variable::mem_quota::StatementMemory::default();
         let raw = fixture.open_with_memory(memory.clone()).unwrap();
         let mut response = MppRecoveryResponse::new(
             MppTaskResponses {
@@ -1836,7 +1839,7 @@ mod mpp_read_batch_tests {
         for opening in [Opening::StallFirstPacket, Opening::Unavailable] {
             let fixture = Fixture::with_opening(false, false, false, Vec::new(), opening);
             fixture.warm_compute_cache();
-            let memory = tidb_kv::mem_quota::StatementMemory::default();
+            let memory = tidb_variable::mem_quota::StatementMemory::default();
             let killer = memory.sql_killer().clone();
             let attempts = fixture.attempts.clone();
             let thread = std::thread::spawn(move || {
@@ -1926,7 +1929,7 @@ mod mpp_read_batch_tests {
             let result = tokio::time::timeout(
                 Duration::from_millis(250),
                 mpp_setup(
-                    Some(&tidb_kv::mem_quota::StatementMemory::default()),
+                    Some(&tidb_variable::mem_quota::StatementMemory::default()),
                     Some(Duration::from_millis(20)),
                     "dispatch",
                     operation,
@@ -1948,7 +1951,7 @@ mod mpp_read_batch_tests {
     #[test]
     fn mpp_kill_interrupts_establishment_and_cancels_registered_gather() {
         let fixture = Fixture::with_transport(false, false, true);
-        let memory = tidb_kv::mem_quota::StatementMemory::default();
+        let memory = tidb_variable::mem_quota::StatementMemory::default();
         let killer = Arc::clone(memory.sql_killer());
         let thread = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(25));
@@ -1997,7 +2000,7 @@ mod mpp_read_batch_tests {
     #[test]
     fn natural_completion_releases_memory_without_cancel() {
         let fixture = Fixture::with_tail(false);
-        let memory = tidb_kv::mem_quota::StatementMemory::default();
+        let memory = tidb_variable::mem_quota::StatementMemory::default();
         let mut response = fixture.open_with_memory(memory.clone()).unwrap();
         assert!(
             memory.bytes_consumed() > 0,
@@ -2015,7 +2018,7 @@ mod mpp_read_batch_tests {
     #[test]
     fn quota_exceeded_is_a_typed_sql_failure_and_cleans_up() {
         let fixture = Fixture::new();
-        let memory = tidb_kv::mem_quota::StatementMemory::new(2, tidb_vardef::OomAction::Cancel, 42);
+        let memory = tidb_variable::mem_quota::StatementMemory::new(2, tidb_vardef::OomAction::Cancel, 42);
         let error = match fixture.open_with_memory(memory.clone()) {
             Err(error) => error,
             Ok(_) => panic!("the first packet must be accounted before setup returns"),
@@ -2029,7 +2032,7 @@ mod mpp_read_batch_tests {
     #[test]
     fn canonical_kill_interrupts_a_stalled_receive() {
         let fixture = Fixture::new();
-        let memory = tidb_kv::mem_quota::StatementMemory::default();
+        let memory = tidb_variable::mem_quota::StatementMemory::default();
         let mut response = fixture.open_with_memory(memory.clone()).unwrap();
         response.next().unwrap().unwrap();
         let killer = Arc::clone(memory.sql_killer());
@@ -2086,7 +2089,7 @@ mod mpp_read_batch_tests {
             (b"b".to_vec().into(), b"c".to_vec().into()),
             (b"p".to_vec().into(), b"x".to_vec().into()),
         ];
-        let memory = tidb_kv::mem_quota::StatementMemory::default();
+        let memory = tidb_variable::mem_quota::StatementMemory::default();
         let kv_context = tidb_txnkv::StatementKvContext::default();
         let infos = locate_mpp_region_infos(&store, &ranges, &memory, &kv_context).unwrap();
         assert_eq!(
@@ -2114,7 +2117,7 @@ mod mpp_read_batch_tests {
 
     #[test]
     fn remote_projection_uses_the_same_statement_memory_and_killer() {
-        let memory = tidb_kv::mem_quota::StatementMemory::default();
+        let memory = tidb_variable::mem_quota::StatementMemory::default();
         let context = tidb_sessionctx::StmtContext::for_query_with_memory(memory.clone());
         let remote = tidb_executor::remote_scan::pushdown_statement_context(&context);
         assert!(Arc::ptr_eq(remote.memory.sql_killer(), memory.sql_killer()));

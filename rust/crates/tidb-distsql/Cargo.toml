@@ -12,6 +12,7 @@ autotests = false
 # and RPC remain separate capabilities with their own future crates.
 
 [dependencies]
+tidb-variable = { path = "../tidb-variable" }
 tidb-charset = { path = "../tidb-charset" }
 tidb-copr = { path = "../tidb-copr" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }

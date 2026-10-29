@@ -487,7 +487,7 @@ impl AutoIdCall {
         }
     }
     /// SQL allocation follows the statement killer; DML has no SELECT deadline.
-    pub fn statement(memory: &tidb_kv::mem_quota::StatementMemory) -> Self {
+    pub fn statement(memory: &tidb_variable::mem_quota::StatementMemory) -> Self {
         Self {
             rpc: tidb_txnkv::rpc::UnaryCallContext::with_optional_deadline(
                 None,

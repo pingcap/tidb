@@ -27,7 +27,7 @@ use tidb_datatype::{ConversionFlags, DateModes, Datum, SessionTimeZone};
 use tidb_exprctx::Columns;
 use tidb_exprctx::ErrorLevel;
 use tidb_kv::keys_read::KeysReadBudget;
-use tidb_kv::mem_quota::StatementMemory;
+use tidb_variable::mem_quota::StatementMemory;
 use tidb_kv::staged_writes::StagedWrites;
 use tidb_context::WarningLevel;
 

@@ -48,7 +48,7 @@ use tidb_memory::{
 use tidb_spill_storage::SpillStorage;
 
 use tidb_driver_error::ExecError;
-use tidb_kv::mem_quota::StatementMemory;
+use tidb_variable::mem_quota::StatementMemory;
 use crate::{compare_rows, eval_sort_key, SortByItem};
 use tidb_chunk::compare::ColumnCompareFunc;
 use tidb_chunk::ColumnRead;

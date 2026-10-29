@@ -11,6 +11,7 @@ description = "TiDB pkg/executor/sortexec (Rust)."
 workspace = true
 
 [dependencies]
+tidb-variable = { path = "../tidb-variable" }
 tidb-executor-internal-exec = { path = "../tidb-executor-internal-exec" }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-charset = { path = "../tidb-charset" }
@@ -19,7 +20,6 @@ tidb-memory = { path = "../tidb-memory" }
 tidb-spill-storage = { path = "../tidb-spill-storage" }
 tidb-sqlkiller = { path = "../tidb-sqlkiller" }
 tidb-goruntime = { path = "../tidb-goruntime" }
-tidb-kv = { path = "../tidb-kv" }
 tidb-driver-error = { path = "../tidb-driver-error" }
 crossbeam-channel = "0.5"
 tidb-ast = { path = "../tidb-ast" }
