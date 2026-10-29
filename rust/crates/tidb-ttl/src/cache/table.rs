@@ -59,7 +59,7 @@ use tidb_ast::CiString;
 use tidb_codec::{decode_cmp_uint_to_int, decode_one, BYTES_FLAG, INT_FLAG, UINT_FLAG};
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_charset::Collation;
-use tidb_expr::exprstatic::ExprContext;
+use tidb_exprstatic::ExprContext;
 use tidb_expr::rewriter::ZonedNoResolver;
 use tidb_expr::simple_expr::{parse_simple_expr, BuildOptions};
 use tidb_expr::eval_expression_once;
@@ -1030,7 +1030,7 @@ fn truncate_to_second<Tz: chrono::TimeZone>(value: DateTime<Tz>) -> DateTime<Tz>
 /// `exprstatic.NewExprContext()`, reads the result back with `EvalTime`, and
 /// shifts `now` by the difference. Both halves of the evaluator are
 /// transcreated: [`tidb_expr::simple_expr::parse_simple_expr`] and
-/// [`tidb_expr::exprstatic`].
+/// [`tidb_exprstatic`].
 ///
 /// # The zone parameter is Go's `*time.Location`
 ///

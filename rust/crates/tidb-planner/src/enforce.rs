@@ -212,7 +212,7 @@ pub(crate) fn enforce_property_in(
                 .and_then(|schema| schema.retrieve_column(&item.col))
                 .cloned()
                 .unwrap_or_else(|| item.col.clone());
-            tidb_expr::aggregation::ByItems::new(
+            tidb_expression_aggregation::ByItems::new(
                 tidb_expr::expression::Expression::Column(column),
                 item.desc,
             )

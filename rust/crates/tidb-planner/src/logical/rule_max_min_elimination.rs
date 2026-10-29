@@ -15,7 +15,7 @@
 //! Go `pkg/planner/core/rule/rule_max_min_eliminate.go`.
 
 use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
-use tidb_expr::aggregation::ByItems;
+use tidb_expression_aggregation::ByItems;
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::substitute::{build_not_null_expr, SubstituteOptions};
 use tidb_expr::expression::Expression;
@@ -464,7 +464,7 @@ impl LogicalOptRule for MaxMinEliminator {
 #[cfg(test)]
 mod tests {
     use tidb_datatype::{FieldType, FieldTypeCode};
-    use tidb_expr::aggregation::{AggFuncDesc, AggFunctionMode, BaseFuncDesc};
+    use tidb_expression_aggregation::{AggFuncDesc, AggFunctionMode, BaseFuncDesc};
     use tidb_expr::column::Column;
     use tidb_expr::expression::Expression;
     use tidb_expr::schema::Schema;

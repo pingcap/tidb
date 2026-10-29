@@ -19,7 +19,7 @@ use std::sync::Arc;
 use tidb_parser::auth::{RoleIdentity, UserIdentity};
 
 use super::{get_prop_provider, EvalPropContext, ExprOptError, RequireOptionalEvalProps};
-use crate::exprctx::{OptionalEvalPropDesc, OptionalEvalPropKey, OptionalEvalPropProvider};
+use tidb_exprctx::{OptionalEvalPropDesc, OptionalEvalPropKey, OptionalEvalPropProvider};
 
 /// The identity pair Go's `CurrentUserPropProvider` returns:
 /// `(*auth.UserIdentity, []*auth.RoleIdentity)`. Go's pointers become `Arc`s so
@@ -57,7 +57,7 @@ impl OptionalEvalPropProvider for CurrentUserPropProvider {
 pub struct CurrentUserPropReader;
 
 impl RequireOptionalEvalProps for CurrentUserPropReader {
-    fn required_optional_eval_props(&self) -> crate::exprctx::OptionalEvalPropKeySet {
+    fn required_optional_eval_props(&self) -> tidb_exprctx::OptionalEvalPropKeySet {
         OptionalEvalPropKey::CurrentUser.as_prop_key_set()
     }
 }

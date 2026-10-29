@@ -119,7 +119,7 @@ use std::collections::BTreeMap;
 
 use tidb_ast::{Expr, GroupByItem, OrderItem, SelectStmt};
 use tidb_datatype::{FieldName, FieldType, FieldTypeCode};
-use tidb_expr::aggregation::{names as agg_names, AggFuncDesc, ByItems};
+use tidb_expression_aggregation::{names as agg_names, AggFuncDesc, ByItems};
 use tidb_expr::column::Column;
 use tidb_expr::expression::{CorrelatedColumn, Expression};
 use tidb_expr::schema::Schema;

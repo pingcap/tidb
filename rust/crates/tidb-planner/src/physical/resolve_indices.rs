@@ -17,7 +17,7 @@
 
 use std::collections::BTreeMap;
 
-use tidb_expr::aggregation::{AggFuncDesc, ByItems};
+use tidb_expression_aggregation::{AggFuncDesc, ByItems};
 use tidb_expr::column::Column;
 use tidb_expr::expression::{Expression, ScalarFunction};
 use tidb_expr::schema::{merge_schema, Schema};

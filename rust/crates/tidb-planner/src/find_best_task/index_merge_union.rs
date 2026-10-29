@@ -344,7 +344,7 @@ pub(super) fn converge_union_index_merge_path<'a>(
                     .iter()
                     .find(|column| column.unique_id == item.col.unique_id)
                     .unwrap_or(&item.col);
-                tidb_expr::aggregation::ByItems {
+                tidb_expression_aggregation::ByItems {
                     expr: Expression::Column(column.clone()),
                     desc: item.desc,
                 }
@@ -371,7 +371,7 @@ pub(super) struct ConvergedUnionPath<'a> {
     total_rows: f64,
     table_filters: Vec<Expression>,
     expected_cnt: f64,
-    by_items: Vec<tidb_expr::aggregation::ByItems>,
+    by_items: Vec<tidb_expression_aggregation::ByItems>,
 }
 
 // Go's partial scans and merge table probe scale the original table profile,
@@ -1151,9 +1151,10 @@ mod tests {
         use tidb_infoschema::table_source::SourceIndexColumn;
         use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-        use tidb_expr::{
-            column::Column, constant::Constant, scalar_function::ScalarFunction, schema::Schema,
-        };
+        use tidb_expr::column::Column;
+        use tidb_expr::constant::Constant;
+        use tidb_expr::scalar_function::ScalarFunction;
+        use tidb_expr::schema::Schema;
 
         let ty = FieldType::new(FieldTypeCode::LongLong);
         let column = |id| {

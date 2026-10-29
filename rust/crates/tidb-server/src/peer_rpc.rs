@@ -645,7 +645,7 @@ fn peer_aggregate(
     let mut output = Vec::new();
     for func in &aggregation.agg_func {
         validate_peer_expr(func, fields.len())?;
-        functions.push(tidb_expr::aggregation::DistAggregate::from_pb(
+        functions.push(tidb_expression_aggregation::DistAggregate::from_pb(
             func, fields, zone,
         )?);
         let ret = pb_field_type(func);
@@ -660,7 +660,7 @@ fn peer_aggregate(
     let ctx = peer_context(zone);
     let mut row = tidb_chunk::mutrow::MutRow::from_types(fields);
     let mut index: std::collections::HashMap<Vec<u8>, usize> = std::collections::HashMap::new();
-    let mut groups: Vec<(Vec<u8>, Vec<tidb_expr::aggregation::DistAggregateState>)> = Vec::new();
+    let mut groups: Vec<(Vec<u8>, Vec<tidb_expression_aggregation::DistAggregateState>)> = Vec::new();
     let new_states = || -> Vec<_> { functions.iter().map(|f| f.create_state()).collect() };
     for values in &rows {
         if values.len() != fields.len() {

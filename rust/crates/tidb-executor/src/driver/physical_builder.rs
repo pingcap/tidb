@@ -66,7 +66,7 @@ use crate::table_sample::{SampleOutputColumn, TableSampleExec};
 use crate::topn::TopNExec;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_expr::aggregation::{AggFuncDesc, AggFunctionMode};
+use tidb_expression_aggregation::{AggFuncDesc, AggFunctionMode};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
@@ -5453,7 +5453,7 @@ fn partial_handle_columns(
 
 fn partial_sort_key_columns(
     schema: &Schema,
-    by_items: &[tidb_expr::aggregation::ByItems],
+    by_items: &[tidb_expression_aggregation::ByItems],
 ) -> Result<Vec<usize>, DriverError> {
     by_items
         .iter()
@@ -7178,7 +7178,7 @@ struct UnionScanReader {
 /// (`unique_id`) of each item. A
 /// non-column item is Go's "Not support non-column in orderBy pushed down".
 fn by_item_column_ids(
-    items: &[tidb_expr::aggregation::ByItems],
+    items: &[tidb_expression_aggregation::ByItems],
 ) -> Result<Vec<i64>, DriverError> {
     items
         .iter()
@@ -9287,7 +9287,7 @@ use super::*;
                 table_plan: Some(Box::new(table_scan(20, 42, 1, 19))),
                 is_intersection_type: intersection,
                 by_items: if ordered {
-                    vec![tidb_expr::aggregation::ByItems::new(
+                    vec![tidb_expression_aggregation::ByItems::new(
                         Expression::Column(two_long_schema().columns[1].clone()),
                         false,
                     )]
@@ -9438,7 +9438,7 @@ use super::*;
                             base,
                             offset: 1,
                             count: 2,
-                            by_items: vec![tidb_expr::aggregation::ByItems::new(
+                            by_items: vec![tidb_expression_aggregation::ByItems::new(
                                 Expression::Column(value),
                                 true,
                             )],
@@ -9625,7 +9625,7 @@ use super::*;
                         }
                         if let PhysicalPlan::IndexMergeReader(reader) = &mut plan {
                             reader.by_items = if ordered {
-                                vec![tidb_expr::aggregation::ByItems::new(
+                                vec![tidb_expression_aggregation::ByItems::new(
                                     Expression::Column(two_long_schema().columns[1].clone()),
                                     order.unwrap(),
                                 )]

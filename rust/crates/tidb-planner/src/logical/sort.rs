@@ -39,7 +39,7 @@
 use std::collections::BTreeSet;
 
 use tidb_datatype::FieldTypeCode;
-use tidb_expr::aggregation::ByItems;
+use tidb_expression_aggregation::ByItems;
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::predicates::is_runtime_const_expr;
 use tidb_expr::expression::CorrelatedColumn;

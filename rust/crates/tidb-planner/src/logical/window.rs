@@ -48,7 +48,7 @@
 use crate::physical_property::ColumnSortItem;
 
 use tidb_datatype::EvalType;
-use tidb_expr::aggregation::WindowFuncDesc;
+use tidb_expression_aggregation::WindowFuncDesc;
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::normal_form::expr_from_schema;
 use tidb_expr::expression::{CorrelatedColumn, Expression};
@@ -142,7 +142,7 @@ impl FrameBound {
         if let (Some(calc_type), Some(column_type)) = (calc.static_type(), first.get_static_type())
         {
             if calc_type.eval_type() != column_type.eval_type() {
-                self.compare_cols[0] = tidb_expr::aggregation::wrap_cast::build_cast_to(
+                self.compare_cols[0] = tidb_expr::wrap_cast::build_cast_to(
                     Expression::Column(first.clone()),
                     calc_type.clone(),
                 )?;

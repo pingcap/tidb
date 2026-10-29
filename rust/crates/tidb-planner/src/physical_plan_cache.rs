@@ -653,7 +653,7 @@ fn bind_description(
 }
 
 fn bind_aggregate_expressions(
-    functions: &mut [tidb_expr::aggregation::AggFuncDesc],
+    functions: &mut [tidb_expression_aggregation::AggFuncDesc],
     group_by: &mut [Expression],
     context: &CachedPlanRebuildContext<'_>,
 ) -> Result<(), PlanCacheRebuildError> {

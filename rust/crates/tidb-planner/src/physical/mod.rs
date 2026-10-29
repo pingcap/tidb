@@ -993,7 +993,7 @@ pub struct PhysicalSort {
     /// Go `ByItems` (`util.ByItems{Expr, Desc}`). PhysicalSort retains the
     /// complete expressions; only NominalSort narrows them to a physical
     /// column-order property.
-    pub by_items: Vec<tidb_expr::aggregation::ByItems>,
+    pub by_items: Vec<tidb_expression_aggregation::ByItems>,
     /// Go `IsPartialSort`: sort within one partition's data rather than
     /// globally; `EnforceProperty` sets it from
     /// `prop.IsSortItemAllForPartition()`.
@@ -1279,7 +1279,7 @@ pub struct PhysicalTableScan {
     pub group_by_col_idxs: Vec<usize>,
     /// Go `ByItems`: the sort items a keep-order read merge-sorts its range
     /// groups (and, for a local index, its partitions) by.
-    pub by_items: Vec<tidb_expr::aggregation::ByItems>,
+    pub by_items: Vec<tidb_expression_aggregation::ByItems>,
     /// Access conditions and handle metadata retained for execute-time plan
     /// cache range rebuild.
     pub range_rebuild: Option<crate::physical_plan_cache::TableRangeRebuild>,
@@ -2525,7 +2525,7 @@ pub struct PhysicalIndexScan {
     pub group_by_col_idxs: Vec<usize>,
     /// Go `ByItems`: the sort items a keep-order read merge-sorts its range
     /// groups (and, for a local index, its partitions) by.
-    pub by_items: Vec<tidb_expr::aggregation::ByItems>,
+    pub by_items: Vec<tidb_expression_aggregation::ByItems>,
     /// Access conditions and index metadata retained for execute-time plan
     /// cache range rebuild.
     pub range_rebuild: Option<crate::physical_plan_cache::IndexRangeRebuild>,
@@ -2860,7 +2860,7 @@ pub struct PhysicalIndexMergeReader {
     /// Go `PushedLimit`.
     pub pushed_limit: Option<PushedDownLimit>,
     /// Go `ByItems`.
-    pub by_items: Vec<tidb_expr::aggregation::ByItems>,
+    pub by_items: Vec<tidb_expression_aggregation::ByItems>,
     /// Go `KeepOrder`.
     pub keep_order: bool,
     /// Go `PlanPartInfo`.
@@ -3058,7 +3058,7 @@ pub struct PushedDownLimit {
 /// columns"), else no property can be derived.
 #[must_use]
 pub fn get_prop_by_order_by_items(
-    items: &[tidb_expr::aggregation::ByItems],
+    items: &[tidb_expression_aggregation::ByItems],
 ) -> Option<Vec<crate::physical_property::SortItem>> {
     let mut prop_items = Vec::with_capacity(items.len());
     for item in items {
@@ -3077,7 +3077,7 @@ pub fn get_prop_by_order_by_items(
 /// PREFIX of the by-item list — same column (`EqualColumn` is unique-id
 /// equality), same direction, non-columns never match.
 #[must_use]
-pub fn match_items(prop: &PhysicalProperty, items: &[tidb_expr::aggregation::ByItems]) -> bool {
+pub fn match_items(prop: &PhysicalProperty, items: &[tidb_expression_aggregation::ByItems]) -> bool {
     if items.len() < prop.sort_items.len() {
         return false;
     }
@@ -3147,7 +3147,7 @@ pub struct PhysicalTopN {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
     /// Go `ByItems`.
-    pub by_items: Vec<tidb_expr::aggregation::ByItems>,
+    pub by_items: Vec<tidb_expression_aggregation::ByItems>,
     /// Go `PartitionBy`.
     pub partition_by: Vec<crate::physical_property::SortItem>,
     /// Go `Offset`.
@@ -3373,7 +3373,7 @@ pub struct PhysicalHashAgg {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
     /// Go `AggFuncs`.
-    pub agg_funcs: Vec<tidb_expr::aggregation::AggFuncDesc>,
+    pub agg_funcs: Vec<tidb_expression_aggregation::AggFuncDesc>,
     /// Go `GroupByItems`.
     pub group_by_items: Vec<tidb_expr::expression::Expression>,
     /// Go `BasePhysicalAgg.MppRunMode`.
@@ -3561,7 +3561,7 @@ fn get_mpp_hash_aggs(
     let has_final_agg = agg
         .agg_funcs
         .first()
-        .is_some_and(|function| function.mode == tidb_expr::aggregation::AggFunctionMode::Final);
+        .is_some_and(|function| function.mode == tidb_expression_aggregation::AggFunctionMode::Final);
     let stats = agg
         .base
         .base
@@ -3712,13 +3712,13 @@ fn get_mpp_hash_aggs(
 /// Go `finalAggAdjust` (`physical_hash_agg.go:133`): MPP one-phase final
 /// COUNT descriptors are represented as SUM because TiFlash's final mode
 /// consumes the partial count contract.
-fn adjust_final_count_for_mpp(agg_funcs: &mut [tidb_expr::aggregation::AggFuncDesc]) {
+fn adjust_final_count_for_mpp(agg_funcs: &mut [tidb_expression_aggregation::AggFuncDesc]) {
     for function in agg_funcs {
-        if function.mode == tidb_expr::aggregation::AggFunctionMode::Final
-            && function.name() == tidb_expr::aggregation::names::COUNT
+        if function.mode == tidb_expression_aggregation::AggFunctionMode::Final
+            && function.name() == tidb_expression_aggregation::names::COUNT
         {
             let return_type = function.base.ret_type.clone();
-            function.base.name = tidb_expr::aggregation::names::SUM.to_owned();
+            function.base.name = tidb_expression_aggregation::names::SUM.to_owned();
             function.has_distinct = false;
             function.order_by_items.clear();
             function.base.type_infer_4_final_count(&return_type);
@@ -3729,20 +3729,20 @@ fn adjust_final_count_for_mpp(agg_funcs: &mut [tidb_expr::aggregation::AggFuncDe
 /// Go `validMppAgg` (`physical_hash_agg.go:157`): TiFlash requires all
 /// aggregate descriptors in one physical operator to use either final/complete
 /// mode or a non-final mode, never a mixture.
-fn valid_mpp_agg(agg_funcs: &[tidb_expr::aggregation::AggFuncDesc]) -> bool {
+fn valid_mpp_agg(agg_funcs: &[tidb_expression_aggregation::AggFuncDesc]) -> bool {
     let Some(first) = agg_funcs.first() else {
         return false;
     };
     let first_is_final = matches!(
         first.mode,
-        tidb_expr::aggregation::AggFunctionMode::Final
-            | tidb_expr::aggregation::AggFunctionMode::Complete
+        tidb_expression_aggregation::AggFunctionMode::Final
+            | tidb_expression_aggregation::AggFunctionMode::Complete
     );
     agg_funcs.iter().skip(1).all(|function| {
         matches!(
             function.mode,
-            tidb_expr::aggregation::AggFunctionMode::Final
-                | tidb_expr::aggregation::AggFunctionMode::Complete
+            tidb_expression_aggregation::AggFunctionMode::Final
+                | tidb_expression_aggregation::AggFunctionMode::Complete
         ) == first_is_final
     })
 }
@@ -3754,7 +3754,7 @@ pub struct PhysicalStreamAgg {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
     /// Go `AggFuncs`.
-    pub agg_funcs: Vec<tidb_expr::aggregation::AggFuncDesc>,
+    pub agg_funcs: Vec<tidb_expression_aggregation::AggFuncDesc>,
     /// Go `GroupByItems`.
     pub group_by_items: Vec<tidb_expr::expression::Expression>,
 }
@@ -3786,7 +3786,7 @@ pub fn get_stream_aggs(
     if agg
         .agg_funcs
         .iter()
-        .any(|func| func.mode == tidb_expr::aggregation::AggFunctionMode::Final)
+        .any(|func| func.mode == tidb_expression_aggregation::AggFunctionMode::Final)
     {
         return Vec::new();
     }
@@ -3952,7 +3952,7 @@ pub struct PhysicalWindow {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
     /// Go `WindowFuncDescs`, one per trailing schema column.
-    pub window_func_descs: Vec<tidb_expr::aggregation::WindowFuncDesc>,
+    pub window_func_descs: Vec<tidb_expression_aggregation::WindowFuncDesc>,
     /// Go `PartitionBy`.
     pub partition_by: Vec<ColumnSortItem>,
     /// Go `OrderBy`.
@@ -4484,7 +4484,7 @@ impl PhysicalPlan {
         }
 
         fn aggregation_conditions(
-            functions: &[tidb_expr::aggregation::AggFuncDesc],
+            functions: &[tidb_expression_aggregation::AggFuncDesc],
             group_by: &[tidb_expr::expression::Expression],
             result: &mut Vec<CorrelatedColumn>,
         ) {
@@ -5250,7 +5250,7 @@ fn visit_physical_correlated_columns_mut(
     }
 
     fn aggregation(
-        functions: &mut [tidb_expr::aggregation::AggFuncDesc],
+        functions: &mut [tidb_expression_aggregation::AggFuncDesc],
         group_by: &mut [tidb_expr::expression::Expression],
         visitor: &mut impl FnMut(&mut CorrelatedColumn),
     ) {

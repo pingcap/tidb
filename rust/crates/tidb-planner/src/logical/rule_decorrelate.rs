@@ -34,8 +34,8 @@
 
 use std::collections::BTreeSet;
 
-use tidb_expr::aggregation::names as agg_names;
-use tidb_expr::aggregation::AggFuncDesc;
+use tidb_expression_aggregation::names as agg_names;
+use tidb_expression_aggregation::AggFuncDesc;
 use tidb_expr::expr_util::substitute::{column_substitute_all, SubstituteOptions};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::{merge_schema, Schema};

@@ -31,7 +31,7 @@
 //!   evaluator reads that through [`tidb_exprctx::Columns`], so [`EvalContext`]
 //!   extends it rather than repeating `Location`, `CurrentDB`,
 //!   `CurrentTime` and the error-level reads here.
-//!   Both are implemented for the real [`tidb_expr::exprstatic`] contexts, which
+//!   Both are implemented for the real [`tidb_exprstatic`] contexts, which
 //!   is what Go's `NewContext`/`NewNonStrictContext` default to.
 //! - `// boundary:` Go `pkg/infoschema/context.MetaOnlyInfoSchema` — modeled
 //!   as the local [`MetaOnlyInfoSchema`] trait; metabuild only stores and
@@ -89,35 +89,35 @@ pub trait ExprContext {
     fn get_charset_info(&self) -> (&str, &str);
 }
 
-impl EvalContext for tidb_expr::exprstatic::EvalContext {
+impl EvalContext for tidb_exprstatic::EvalContext {
     fn sql_mode(&self) -> SqlMode {
-        tidb_expr::exprstatic::EvalContext::sql_mode(self)
+        tidb_exprstatic::EvalContext::sql_mode(self)
     }
 
     fn type_ctx_flags(&self) -> ConversionFlags {
-        tidb_expr::exprstatic::EvalContext::type_flags(self)
+        tidb_exprstatic::EvalContext::type_flags(self)
     }
 
     fn append_warning(&self, err: WarnErr) {
-        tidb_expr::exprstatic::EvalContext::append_warning(self, err);
+        tidb_exprstatic::EvalContext::append_warning(self, err);
     }
 
     fn append_note(&self, note: WarnErr) {
-        tidb_expr::exprstatic::EvalContext::append_note(self, note);
+        tidb_exprstatic::EvalContext::append_note(self, note);
     }
 }
 
-impl ExprContext for tidb_expr::exprstatic::ExprContext {
+impl ExprContext for tidb_exprstatic::ExprContext {
     fn get_eval_ctx(&self) -> &dyn EvalContext {
-        tidb_expr::exprstatic::ExprContext::get_eval_ctx(self).as_ref()
+        tidb_exprstatic::ExprContext::get_eval_ctx(self).as_ref()
     }
 
     fn get_default_collation_for_utf8mb4(&self) -> &str {
-        tidb_expr::exprstatic::ExprContext::get_default_collation_for_utf8mb4(self)
+        tidb_exprstatic::ExprContext::get_default_collation_for_utf8mb4(self)
     }
 
     fn get_charset_info(&self) -> (&str, &str) {
-        tidb_expr::exprstatic::ExprContext::get_charset_info(self)
+        tidb_exprstatic::ExprContext::get_charset_info(self)
     }
 }
 
@@ -224,7 +224,7 @@ impl Context {
         }
 
         if ctx.expr_ctx.is_none() {
-            ctx.expr_ctx = Some(Arc::new(tidb_expr::exprstatic::ExprContext::new([])));
+            ctx.expr_ctx = Some(Arc::new(tidb_exprstatic::ExprContext::new([])));
         }
 
         ctx
@@ -237,11 +237,11 @@ impl Context {
     pub fn new_non_strict() -> Context {
         // Go `exprstatic.NewExprContext(WithEvalCtx(
         // exprstatic.NewEvalContext(WithSQLMode(mysql.ModeNone))))`.
-        let eval_ctx = tidb_expr::exprstatic::EvalContext::new([tidb_expr::exprstatic::with_sql_mode(
+        let eval_ctx = tidb_exprstatic::EvalContext::new([tidb_exprstatic::with_sql_mode(
             tidb_mysql::consts::ModeNone,
         )]);
         Context::new([with_expr_ctx(Arc::new(
-            tidb_expr::exprstatic::ExprContext::new([tidb_expr::exprstatic::with_eval_ctx(Arc::new(
+            tidb_exprstatic::ExprContext::new([tidb_exprstatic::with_eval_ctx(Arc::new(
                 eval_ctx,
             ))]),
         ))])
@@ -401,7 +401,7 @@ mod tests {
 
     #[test]
     fn option_of_expr_ctx() {
-        let expr_ctx: Arc<dyn ExprContext> = Arc::new(tidb_expr::exprstatic::ExprContext::new([]));
+        let expr_ctx: Arc<dyn ExprContext> = Arc::new(tidb_exprstatic::ExprContext::new([]));
         let ctx = Context::new([with_expr_ctx(Arc::clone(&expr_ctx))]);
         assert!(Arc::ptr_eq(ctx.get_expr_ctx(), &expr_ctx));
     }

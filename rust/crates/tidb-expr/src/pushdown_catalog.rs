@@ -4266,7 +4266,7 @@ fn coerced_to_pb(
         EvalType::Decimal => {
             let (mut flen, decimal) = if argument.eval_type() == EvalType::Int {
                 let width = source_code.map_or(i64::from(MAX_INT_WIDTH), |code| {
-                    crate::aggregation::wrap_cast::minimal_decimal_len_for_holding_integer(code)
+                    crate::wrap_cast::minimal_decimal_len_for_holding_integer(code)
                 });
                 (i32::try_from(width).unwrap_or(MAX_INT_WIDTH), 0)
             } else {

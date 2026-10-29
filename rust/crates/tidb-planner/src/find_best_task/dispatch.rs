@@ -1823,10 +1823,10 @@ fn empty_range_dual_task(ds: &crate::logical::DataSource, ctx: &DispatchContext<
 }
 
 /// Go's `[]*util.ByItems` built from a property's sort items.
-fn sort_items_to_by_items(items: &[crate::physical_property::SortItem]) -> Vec<tidb_expr::aggregation::ByItems> {
+fn sort_items_to_by_items(items: &[crate::physical_property::SortItem]) -> Vec<tidb_expression_aggregation::ByItems> {
     items
         .iter()
-        .map(|item| tidb_expr::aggregation::ByItems {
+        .map(|item| tidb_expression_aggregation::ByItems {
             expr: tidb_expr::expression::Expression::Column(item.col.clone()),
             desc: item.desc,
         })
@@ -7032,7 +7032,7 @@ mod tests {
         use crate::access_path::PossiblePath;
         use crate::logical::{DataSource, LogicalTopN};
         use tidb_datatype::{FieldType, FieldTypeCode};
-        use tidb_expr::aggregation::ByItems;
+        use tidb_expression_aggregation::ByItems;
         use tidb_expr::column::Column;
         use tidb_expr::expression::Expression;
 
@@ -7101,7 +7101,7 @@ mod tests {
         use crate::access_path::PossiblePath;
         use crate::logical::{DataSource, LogicalTopN};
         use tidb_datatype::{FieldType, FieldTypeCode};
-        use tidb_expr::aggregation::ByItems;
+        use tidb_expression_aggregation::ByItems;
         use tidb_expr::column::Column;
         use tidb_expr::expression::Expression;
 

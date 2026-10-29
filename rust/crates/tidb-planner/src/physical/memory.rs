@@ -27,7 +27,7 @@
 //! Go charges slice CAPACITIES; every list in this port is built exact-sized,
 //! so lengths stand in for them.
 
-use tidb_expr::aggregation::{AggFuncDesc, BaseFuncDesc, ByItems};
+use tidb_expression_aggregation::{AggFuncDesc, BaseFuncDesc, ByItems};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_size::{

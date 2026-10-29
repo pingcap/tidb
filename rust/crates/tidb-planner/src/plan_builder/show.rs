@@ -23,7 +23,7 @@
 use std::collections::BTreeMap;
 
 use tidb_ast::{Expr, ShowStmt, ShowStmtType};
-use tidb_expr::aggregation::ByItems;
+use tidb_expression_aggregation::ByItems;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_exprctx::Columns;

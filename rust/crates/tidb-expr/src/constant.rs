@@ -465,7 +465,7 @@ fn constant_decimal_error(error: tidb_datatype::DecimalError) -> EvalError {
 }
 
 /// Borrow the active evaluator's warning sink; no per-conversion warning store.
-pub(crate) struct ConversionWarnings<'a, C: ?Sized>(pub(crate) &'a C);
+pub struct ConversionWarnings<'a, C: ?Sized>(pub &'a C);
 
 impl<C: crate::Columns + ?Sized> tidb_context::ConversionWarningAppender
     for ConversionWarnings<'_, C>

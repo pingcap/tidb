@@ -16,7 +16,7 @@
 //! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
 
 use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_expr::aggregation::{AggFuncDesc, AggFunctionMode, BaseFuncDesc};
+use tidb_expression_aggregation::{AggFuncDesc, AggFunctionMode, BaseFuncDesc};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;

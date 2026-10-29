@@ -32,7 +32,7 @@
 use std::collections::{HashMap, HashSet};
 
 use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
-use tidb_expr::aggregation::{
+use tidb_expression_aggregation::{
     names, need_count, need_value, AggFuncDesc, AggFunctionMode, ByItems,
 };
 use tidb_expr::column::Column;
@@ -815,7 +815,7 @@ pub fn convert_avg_for_mpp(
     plan_ids: &crate::plan_base::PlanIdAllocator,
 ) -> Result<Option<crate::physical::PhysicalProjection>, crate::plan_base::PlanError> {
     use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalProjection};
-    use tidb_expr::aggregation::names;
+    use tidb_expression_aggregation::names;
     use tidb_expr::expr_util::{FunctionBuilder, RealFunctionBuilder};
 
     let PhysicalPlan::HashAgg(agg) = plan else {
@@ -938,7 +938,7 @@ pub fn convert_avg_for_mpp(
 pub fn gen_first_row_agg_for_group_by(
     ctx: &impl Columns,
     group_by_items: &[Expression],
-) -> Result<Vec<AggFuncDesc>, tidb_expr::aggregation::AggDescError> {
+) -> Result<Vec<AggFuncDesc>, tidb_expression_aggregation::AggDescError> {
     let mut agg_funcs = Vec::with_capacity(group_by_items.len());
     for group_by in group_by_items {
         agg_funcs.push(AggFuncDesc::new(
@@ -1357,7 +1357,7 @@ pub fn build_final_mode_aggregation(
         }
 
         final_agg.agg_funcs.push(AggFuncDesc {
-            base: tidb_expr::aggregation::BaseFuncDesc {
+            base: tidb_expression_aggregation::BaseFuncDesc {
                 name: final_name,
                 args,
                 ret_type: agg_func.base.ret_type.clone(),
@@ -1443,7 +1443,7 @@ pub fn check_agg_can_push_cop(
         {
             return false;
         }
-        if !tidb_expr::aggregation::check_agg_push_down(
+        if !tidb_expression_aggregation::check_agg_push_down(
             agg_func,
             store,
             blacklist,
@@ -1528,7 +1528,7 @@ pub fn check_agg_can_push_mpp(
             return false;
         }
         if agg_func.name() == names::APPROX_COUNT_DISTINCT
-            || !tidb_expr::aggregation::check_agg_push_down(
+            || !tidb_expression_aggregation::check_agg_push_down(
                 agg_func,
                 tidb_expr::infer_pushdown::PushDownStore::TiFlash,
                 blacklist,

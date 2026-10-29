@@ -20,7 +20,8 @@
 //!   `pkg/planner/core/operator/physicalop/physical_topn.go`
 
 use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_expr::{aggregation::ByItems, column::Column, expression::Expression};
+use tidb_expr::{column::Column, expression::Expression};
+use tidb_expression_aggregation::ByItems;
 use tidb_planner::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalTopN};
 use tidb_planner::physical_property::SortItem;
 

@@ -859,7 +859,7 @@ pub fn format_process_rows(
             let txn_start = if row.cur_txn_start_ts == 0 {
                 String::new()
             } else {
-                let time = tidb_expr::sessionexpr::get_time_from_ts(row.cur_txn_start_ts)
+                let time = tidb_sessionexpr::get_time_from_ts(row.cur_txn_start_ts)
                     .with_timezone(zone);
                 format!(
                     "{}({})",

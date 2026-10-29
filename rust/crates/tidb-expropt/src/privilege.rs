@@ -21,7 +21,7 @@ use std::sync::Arc;
 use tidb_mysql::privilege::PrivilegeType;
 
 use super::{get_prop_provider, EvalPropContext, ExprOptError, RequireOptionalEvalProps};
-use crate::exprctx::{
+use tidb_exprctx::{
     OptionalEvalPropDesc, OptionalEvalPropKey, OptionalEvalPropKeySet, OptionalEvalPropProvider,
 };
 

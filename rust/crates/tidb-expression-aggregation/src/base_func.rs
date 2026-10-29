@@ -20,12 +20,12 @@
 //! narrowing.
 
 use super::names;
-use super::wrap_cast::{
+use tidb_expr::wrap_cast::{
     self, set_bin_chs_cln_flag, type_of, MAX_BLOB_WIDTH, MAX_FIELD_CHAR_LENGTH, MAX_REAL_WIDTH,
     NOT_FIXED_DEC,
 };
 use tidb_exprctx::context::{Columns, EvalError};
-use crate::expression::{ConstLevel, Expression};
+use tidb_expr::expression::{ConstLevel, Expression};
 use tidb_datatype::{
     Datum, EvalType, FieldType, FieldTypeCode, FieldTypeFlags, MAX_DECIMAL_SCALE,
     MAX_DECIMAL_WIDTH, UNSPECIFIED_LENGTH,
@@ -253,7 +253,7 @@ impl BaseFuncDesc {
         if self.args[1].const_level() == ConstLevel::NONE {
             return Err(AggDescError::ApproxPercentileNotConstant);
         }
-        let percentage = crate::eval_expression_once(&self.args[1], ctx)
+        let percentage = tidb_expr::eval_expression_once(&self.args[1], ctx)
             .map_err(|_| AggDescError::ApproxPercentileInvalidArgument)?;
         let (percent, is_null) = match &percentage {
             Datum::Null => (0, true),
@@ -262,7 +262,7 @@ impl BaseFuncDesc {
             Datum::Real(v) | Datum::Float32(v) => (v.to_bits() as i64, false),
             Datum::Decimal(_) => (0, false),
             Datum::String(_) | Datum::Bytes(_) => {
-                crate::cast::report_int_truncation(&percentage, ctx)
+                tidb_expr::cast::report_int_truncation(&percentage, ctx)
                     .map_err(|_| AggDescError::ApproxPercentileInvalidArgument)?;
                 let converted = percentage
                     .to_i64_in(&ctx.time_zone())
@@ -456,7 +456,7 @@ impl BaseFuncDesc {
     /// filled from `charset.GetDefaultCharsetAndCollate()`.
     fn type_infer_4_group_concat(&mut self, ctx: &impl Columns) -> Result<(), AggDescError> {
         let mut ret = FieldType::new(FieldTypeCode::VarString);
-        let mut ec = crate::collation_derive::check_and_derive_collation_from_exprs(
+        let mut ec = tidb_expr::collation_derive::check_and_derive_collation_from_exprs(
             names::GROUP_CONCAT,
             EvalType::String,
             &self.args,
@@ -490,7 +490,7 @@ impl BaseFuncDesc {
             if tp.code() == FieldTypeCode::NewDecimal {
                 let arg = std::mem::replace(
                     &mut self.args[i],
-                    Expression::Constant(crate::constant::Constant::default()),
+                    Expression::Constant(tidb_expr::constant::Constant::default()),
                 );
                 self.args[i] = wrap_cast::build_cast_to(arg, tp)?;
             }
@@ -515,7 +515,7 @@ impl BaseFuncDesc {
             set_bin_chs_cln_flag(&mut tp);
             let old = std::mem::replace(
                 &mut self.args[0],
-                Expression::Constant(crate::constant::Constant::default()),
+                Expression::Constant(tidb_expr::constant::Constant::default()),
             );
             self.args[0] = wrap_cast::build_cast_to(old, tp)?;
         }
@@ -555,7 +555,7 @@ impl BaseFuncDesc {
         }
         let old = std::mem::replace(
             &mut self.args[0],
-            Expression::Constant(crate::constant::Constant::default()),
+            Expression::Constant(tidb_expr::constant::Constant::default()),
         );
         self.args[0] = wrap_cast::wrap_with_cast_as_int(old, None)?;
         Ok(())
@@ -579,7 +579,7 @@ impl BaseFuncDesc {
         let connection = wrap_cast::connection_charset(ctx);
         let old = std::mem::replace(
             &mut self.args[0],
-            Expression::Constant(crate::constant::Constant::default()),
+            Expression::Constant(tidb_expr::constant::Constant::default()),
         );
         self.args[0] = wrap_cast::wrap_with_cast_as_string(old, (&connection.0, &connection.1))?;
         Ok(())
@@ -635,7 +635,7 @@ impl BaseFuncDesc {
             return self.type_infer_4_max_min();
         }
         // Merge the type of the first and third argument.
-        let merged = crate::rewriter::infer_type4_control_funcs(
+        let merged = tidb_expr::rewriter::infer_type4_control_funcs(
             &self.name,
             &[self.args[0].clone(), self.args[2].clone()],
         );
@@ -713,7 +713,7 @@ impl BaseFuncDesc {
             }
             let old = std::mem::replace(
                 &mut self.args[i],
-                Expression::Constant(crate::constant::Constant::default()),
+                Expression::Constant(tidb_expr::constant::Constant::default()),
             );
             self.args[i] = match ret_tp.eval_type() {
                 EvalType::Int => wrap_cast::wrap_with_cast_as_int(old, Some(&ret_tp))?,
@@ -743,10 +743,10 @@ impl BaseFuncDesc {
             // Go BuildCastFunction folds non-JSON casts with the live build
             // context. Preserve constants for buildLeadLag's default conversion.
             if type_of(&self.args[i]).eval_type() != EvalType::Json {
-                crate::fold_constant_in_mode(
+                tidb_expr::fold_constant_in_mode(
                     &mut self.args[i],
                     ctx,
-                    crate::ConstantFoldMode::Normal,
+                    tidb_expr::ConstantFoldMode::Normal,
                 );
             }
         }

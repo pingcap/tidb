@@ -143,8 +143,8 @@ impl ApproxCountDistinctSig {
     /// Go's choice by the descriptor's mode and result type: a BIGINT result
     /// selects by mode alone; a string result (a partial state column) is
     /// Partial1 for Complete/Partial1 and Partial2 for Partial2/Final.
-    pub fn of(mode: tidb_expr::aggregation::AggFunctionMode, string_result: bool) -> Option<Self> {
-        use tidb_expr::aggregation::AggFunctionMode as Mode;
+    pub fn of(mode: tidb_expression_aggregation::AggFunctionMode, string_result: bool) -> Option<Self> {
+        use tidb_expression_aggregation::AggFunctionMode as Mode;
         let (merge_input, sketch_output) = match (mode, string_result) {
             (Mode::Complete, false) => (false, false),
             (Mode::Partial1, false) | (Mode::Complete | Mode::Partial1, true) => (false, true),
@@ -5423,7 +5423,7 @@ mod tests {
         // Go buildApproxPercentile ignores HasDistinct, including when the
         // caller constructs the typed descriptor directly instead of SQL.
         for distinct in [false, true] {
-            let descriptor = tidb_expr::aggregation::AggFuncDesc::new(
+            let descriptor = tidb_expression_aggregation::AggFuncDesc::new(
                 &NoColumns,
                 "approx_percentile",
                 vec![

@@ -416,7 +416,7 @@ pub struct IndexMergeOrder {
     pub partial_matches: Vec<crate::physical_property::PhysicalPropMatchResult>,
     /// Required merge order. Advisory order does not order the final reader.
     /// Go carries these ByItems on the partial scans before reader conversion.
-    pub by_items: Vec<tidb_expr::aggregation::ByItems>,
+    pub by_items: Vec<tidb_expression_aggregation::ByItems>,
 }
 
 /// Go `physicalop.CopTask` (`task_base.go:367-430`): a task running in the
@@ -1780,7 +1780,7 @@ mod tests {
             let base = crate::physical::BasePhysicalPlan::with_id(9, "Limit", 0);
             let plan = if is_topn {
                 PhysicalPlan::TopN(crate::physical::PhysicalTopN {
-                    by_items: vec![tidb_expr::aggregation::ByItems::new(
+                    by_items: vec![tidb_expression_aggregation::ByItems::new(
                         Expression::Column(column_with_id(1)),
                         false,
                     )],
@@ -1844,7 +1844,7 @@ mod tests {
             topn_base.base.set_stats(Some(StatsInfo::new(5.0, [])));
             let topn = PhysicalPlan::TopN(crate::physical::PhysicalTopN {
                 base: topn_base,
-                by_items: vec![tidb_expr::aggregation::ByItems::new(
+                by_items: vec![tidb_expression_aggregation::ByItems::new(
                     Expression::Column(column_with_id(1)),
                     false,
                 )],
@@ -4817,7 +4817,7 @@ mod attach_tests {
         assert_eq!(pushed_limit.offset, 0);
         assert_eq!(pushed_limit.count, 5);
 
-        let by_item = tidb_expr::aggregation::ByItems::new(
+        let by_item = tidb_expression_aggregation::ByItems::new(
             tidb_expr::expression::Expression::Column(tidb_expr::column::Column::new(
                 1,
                 tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
@@ -4892,8 +4892,8 @@ mod attach_tests {
         let topn = PhysicalPlan::TopN(crate::physical::PhysicalTopN {
             base: topn_base,
             by_items: vec![
-                tidb_expr::aggregation::ByItems::new(Expression::Column(score), false),
-                tidb_expr::aggregation::ByItems::new(heavy, false),
+                tidb_expression_aggregation::ByItems::new(Expression::Column(score), false),
+                tidb_expression_aggregation::ByItems::new(heavy, false),
             ],
             offset: 4,
             count: 6,
@@ -5004,7 +5004,7 @@ mod attach_tests {
         use crate::expression_rewriter::ColumnIdAllocator;
         use crate::physical::{AggMppRunMode, PhysicalHashAgg};
         use crate::physical_property::MppPartitionColumn;
-        use tidb_expr::aggregation::{names, AggFuncDesc};
+        use tidb_expression_aggregation::{names, AggFuncDesc};
         use tidb_exprctx::ZonedNoColumns;
         use tidb_datatype::SessionTimeZone;
 
@@ -5079,7 +5079,7 @@ mod attach_tests {
         assert!(matches!(
             sender.base.children().first(),
             Some(PhysicalPlan::HashAgg(partial))
-                if partial.agg_funcs[0].mode == tidb_expr::aggregation::AggFunctionMode::Partial1
+                if partial.agg_funcs[0].mode == tidb_expression_aggregation::AggFunctionMode::Partial1
         ));
     }
 
@@ -5087,7 +5087,7 @@ mod attach_tests {
     fn mpp_scalar_single_distinct_builds_three_aggregation_stages() {
         use crate::expression_rewriter::ColumnIdAllocator;
         use crate::physical::{AggMppRunMode, PhysicalHashAgg};
-        use tidb_expr::aggregation::{names, AggFuncDesc};
+        use tidb_expression_aggregation::{names, AggFuncDesc};
         use tidb_exprctx::ZonedNoColumns;
         use tidb_datatype::SessionTimeZone;
 
@@ -5173,7 +5173,7 @@ mod attach_tests {
         };
         assert_eq!(
             middle.agg_funcs[0].mode,
-            tidb_expr::aggregation::AggFunctionMode::Partial1
+            tidb_expression_aggregation::AggFunctionMode::Partial1
         );
         let Some(PhysicalPlan::ExchangeReceiver(hash_receiver)) = middle.base.children().first()
         else {
@@ -5197,7 +5197,7 @@ mod attach_tests {
     fn mpp_scalar_multi_distinct_builds_expand_and_three_aggregation_stages() {
         use crate::expression_rewriter::ColumnIdAllocator;
         use crate::physical::{AggMppRunMode, PhysicalHashAgg};
-        use tidb_expr::aggregation::{names, AggFuncDesc};
+        use tidb_expression_aggregation::{names, AggFuncDesc};
         use tidb_exprctx::ZonedNoColumns;
         use tidb_datatype::SessionTimeZone;
 
@@ -5973,7 +5973,8 @@ mod attach_tests {
     #[test]
     fn merge_limit_keeps_root_filters_and_restores_column_order() {
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-        use tidb_expr::{column::Column, constant::Constant};
+        use tidb_expr::column::Column;
+        use tidb_expr::constant::Constant;
         let allocator = PlanIdAllocator::new();
         let ty = FieldType::new(FieldTypeCode::LongLong);
         let columns = vec![Column::new(1, ty.clone()), Column::new(2, ty.clone())];

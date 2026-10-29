@@ -46,7 +46,7 @@
 //! `TurnNominalSortIntoProj` has nothing to add; the conversion still builds
 //! the two pass-through projections for the non-column shape.
 
-use tidb_expr::aggregation::ByItems;
+use tidb_expression_aggregation::ByItems;
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
@@ -609,7 +609,7 @@ mod tests {
     use crate::plan_base::PlanIdAllocator;
     use tidb_ast::CiString;
     use tidb_datatype::{FieldType, FieldTypeCode};
-    use tidb_expr::aggregation::{AggFuncDesc, AggFunctionMode};
+    use tidb_expression_aggregation::{AggFuncDesc, AggFunctionMode};
     use tidb_expr::expression::ScalarFunction;
 
     fn column(id: i64) -> Column {
@@ -659,7 +659,7 @@ mod tests {
 
     fn sum(arg: Expression) -> AggFuncDesc {
         AggFuncDesc {
-            base: tidb_expr::aggregation::BaseFuncDesc {
+            base: tidb_expression_aggregation::BaseFuncDesc {
                 name: "sum".to_owned(),
                 args: vec![arg],
                 ret_type: FieldType::new(FieldTypeCode::LongLong),
@@ -673,7 +673,7 @@ mod tests {
 
     fn sort_node(
         allocator: &PlanIdAllocator,
-        by_items: Vec<tidb_expr::aggregation::ByItems>,
+        by_items: Vec<tidb_expression_aggregation::ByItems>,
         child: PhysicalPlan,
     ) -> PhysicalPlan {
         let schema = child.schema().cloned().unwrap_or_default();
@@ -690,8 +690,8 @@ mod tests {
         })
     }
 
-    fn by_item(expr: Expression) -> tidb_expr::aggregation::ByItems {
-        tidb_expr::aggregation::ByItems::new(expr, false)
+    fn by_item(expr: Expression) -> tidb_expression_aggregation::ByItems {
+        tidb_expression_aggregation::ByItems::new(expr, false)
     }
 
     fn shape(plan: &PhysicalPlan) -> String {

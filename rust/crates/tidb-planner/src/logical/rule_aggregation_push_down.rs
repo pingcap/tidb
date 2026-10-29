@@ -24,7 +24,7 @@
 //! descriptors exactly as Go leaves them.
 
 use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode, FieldTypeFlags};
-use tidb_expr::aggregation::{names, AggFuncDesc, AggFunctionMode, ByItems};
+use tidb_expression_aggregation::{names, AggFuncDesc, AggFunctionMode, ByItems};
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
 use tidb_expr::expr_util::exprs_has_side_effects;
@@ -1128,7 +1128,7 @@ mod tests {
     use crate::stats_info::StatsInfo;
     use tidb_ast::CiString;
     use tidb_datatype::{FieldName, FieldNameMetadata, IdentifierMetadata};
-    use tidb_expr::aggregation::BaseFuncDesc;
+    use tidb_expression_aggregation::BaseFuncDesc;
     use tidb_expr::expression::ScalarFunction;
 
     fn column(id: i64) -> Column {

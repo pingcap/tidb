@@ -87,8 +87,8 @@ fn partition_metadata_context() -> tidb_metabuild::Context {
     // `NewContext` default.
     let eval = crate::partition_routing::partition_expr_build_ctx();
     tidb_metabuild::Context::new([tidb_metabuild::with_expr_ctx(
-        std::sync::Arc::new(tidb_expr::exprstatic::ExprContext::new([
-            tidb_expr::exprstatic::with_eval_ctx(std::sync::Arc::new(eval)),
+        std::sync::Arc::new(tidb_exprstatic::ExprContext::new([
+            tidb_exprstatic::with_eval_ctx(std::sync::Arc::new(eval)),
         ])),
     )])
 }

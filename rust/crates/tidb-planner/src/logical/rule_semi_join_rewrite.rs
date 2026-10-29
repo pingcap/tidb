@@ -15,7 +15,7 @@
 //! Go `pkg/planner/core/rule_semi_join_rewrite.go` and
 //! `logicalop.LogicalJoin.SemiJoinRewrite`.
 
-use tidb_expr::aggregation::{AggFuncDesc, AggFunctionMode, BaseFuncDesc};
+use tidb_expression_aggregation::{AggFuncDesc, AggFunctionMode, BaseFuncDesc};
 use tidb_expr::expr_util::substitute::SubstituteOptions;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::{merge_schema, Schema};

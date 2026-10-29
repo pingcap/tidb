@@ -171,17 +171,17 @@
 //!   `Expression.MemoryUsage`, which this crate does not implement.
 //! - **`StringWithCtx` is not ported** (`descriptor.go:98`,
 //!   `base_func.go:110`). It needs `Expression.StringWithCtx` and the redact
-//!   modes -- the same boundary [`crate::expr_util`] already names for
+//!   modes -- the same boundary [`tidb_expr::expr_util`] already names for
 //!   `ExprsToStringsForDisplay`.
 //! - **`ExplainAggFunc`'s context-dependent half is not ported.** Only the
 //!   `normalized == true` branch has a Rust counterpart
-//!   ([`crate::expr_util::explain_normalized_info`]); the `ExplainInfo(ctx)`
+//!   ([`tidb_expr::expr_util::explain_normalized_info`]); the `ExplainInfo(ctx)`
 //!   branch shares the `StringWithCtx` boundary above. Its `show-agg-mode`
 //!   failpoint becomes an explicit `show_mode` parameter, since the workspace
 //!   has no failpoint injection.
 //! - **`AggFuncDesc.Equal(ctx, other)` compares arguments context-free.**
 //!   Go's `Expression.Equal(ctx, e)` evaluates constants through a collator;
-//!   [`Expression::equal`](crate::expression::Expression::equal) is the
+//!   [`Expression::equal`](tidb_expr::expression::Expression::equal) is the
 //!   context-free part of it and answers `false` for constants and scalar
 //!   functions. [`AggFuncDesc::equal`] inherits exactly that narrowing and no
 //!   other. [`AggFuncDesc::equals`] (structural, Go's `base.Equals`) has no
@@ -218,8 +218,8 @@
 //! - **`util.go`'s `distinctChecker`** and `bench_test.go` remain unported.
 //!   `calculateSum` is shared by the distributed SUM/AVG evaluator.
 
-use crate::expression::Expression;
-use crate::infer_pushdown::{is_push_down_enabled, PushDownStore};
+use tidb_expr::expression::Expression;
+use tidb_expr::infer_pushdown::{is_push_down_enabled, PushDownStore};
 use std::collections::HashMap;
 use tidb_datatype::FieldTypeCode;
 
@@ -229,7 +229,6 @@ mod dist;
 mod explain;
 pub mod names;
 mod window_func;
-pub mod wrap_cast;
 
 #[cfg(test)]
 mod tests;
@@ -402,7 +401,7 @@ pub fn check_agg_push_flash(agg_func: &AggFuncDesc) -> bool {
 /// `blacklist` is the atomically published `expr_pushdown_blacklist` map that
 /// [`is_push_down_enabled`] reads; Go reaches it through a package-level
 /// variable, which this crate makes an explicit parameter (the same shape
-/// [`crate::infer_pushdown`] already uses).
+/// [`tidb_expr::infer_pushdown`] already uses).
 #[must_use]
 pub fn check_agg_push_down(
     agg_func: &AggFuncDesc,

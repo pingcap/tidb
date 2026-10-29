@@ -27,7 +27,7 @@ use crate::logical::rule::{LogicalOptRule, RuleContext};
 use crate::logical::{BaseLogicalPlan, LogicalPlan, LogicalSelection};
 use crate::plan_base::PlanError;
 use tidb_datatype::{EvalType, FieldTypeCode, FieldTypeFlags};
-use tidb_expr::aggregation::wrap_cast::{wrap_with_cast_as_int, wrap_with_cast_as_real};
+use tidb_expr::wrap_cast::{wrap_with_cast_as_int, wrap_with_cast_as_real};
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::builder::tiny_int_type;
 use tidb_expr::expression::Expression;

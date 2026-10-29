@@ -890,7 +890,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 // `BuildCastFunction4Union` path, including its `inUnion`
                 // evaluation marker.
                 exprs.push(
-                    tidb_expr::aggregation::wrap_cast::build_cast_to_in_union(
+                    tidb_expr::wrap_cast::build_cast_to_in_union(
                         tidb_expr::expression::Expression::Column(column.clone()),
                         target,
                     )

@@ -20,7 +20,8 @@
 //! - `TestDeepClone` at `pkg/planner/core/planbuilder_test.go:277`
 
 use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_expr::{aggregation::ByItems, column::Column, expression::Expression};
+use tidb_expr::{column::Column, expression::Expression};
+use tidb_expression_aggregation::ByItems;
 use tidb_planner::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
 use tidb_planner::physical_property::SortItem;
 

@@ -14,7 +14,7 @@
 
 //! SEED of `pkg/expression/builtin_cast.go`'s `WrapWithCastAs*` family
 //! (`:2666`-`:2886`), the one piece of that file
-//! [`super::BaseFuncDesc::wrap_cast_for_agg_args`], `typeInfer4BitFuncs` and
+//! [`tidb_expression_aggregation::BaseFuncDesc::wrap_cast_for_agg_args`], `typeInfer4BitFuncs` and
 //! `typeInfer4JsonObjectAgg` cannot be written without.
 //!
 //! | Go symbol | line | Rust |
@@ -72,7 +72,7 @@ use tidb_datatype::{
 /// `mysql.MaxIntWidth`.
 pub(super) const MAX_INT_WIDTH: i64 = 20;
 /// `mysql.MaxRealWidth`.
-pub(super) const MAX_REAL_WIDTH: i64 = 23;
+pub const MAX_REAL_WIDTH: i64 = 23;
 /// `mysql.MaxDateWidth` (`YYYY-MM-DD`).
 const MAX_DATE_WIDTH: i64 = 10;
 /// `mysql.MaxDatetimeWidthNoFsp` (`YYYY-MM-DD HH:MM:SS`).
@@ -80,11 +80,11 @@ const MAX_DATETIME_WIDTH_NO_FSP: i64 = 19;
 /// `mysql.MaxDurationWidthNoFsp` (`HH:MM:SS`).
 const MAX_DURATION_WIDTH_NO_FSP: i64 = 10;
 /// `mysql.MaxBlobWidth`.
-pub(super) const MAX_BLOB_WIDTH: i64 = 16_777_216;
+pub const MAX_BLOB_WIDTH: i64 = 16_777_216;
 /// `mysql.MaxFieldCharLength`.
-pub(super) const MAX_FIELD_CHAR_LENGTH: i64 = 255;
+pub const MAX_FIELD_CHAR_LENGTH: i64 = 255;
 /// `mysql.NotFixedDec`.
-pub(super) const NOT_FIXED_DEC: i64 = 31;
+pub const NOT_FIXED_DEC: i64 = 31;
 /// `types.MinFsp`.
 const MIN_FSP: i64 = 0;
 /// `types.MaxFsp`.
@@ -97,7 +97,7 @@ const JSON_CAST_FLEN: i64 = 12_582_912;
 
 /// Go `types.SetBinChsClnFlag`: the `binary` pseudo-charset/collation plus the
 /// binary flag, which every numeric aggregate result carries.
-pub(super) fn set_bin_chs_cln_flag(field_type: &mut FieldType) {
+pub fn set_bin_chs_cln_flag(field_type: &mut FieldType) {
     field_type.set_charset_name("binary");
     field_type.set_collation_name("binary");
     field_type.add_flags(FieldTypeFlags::BINARY);
@@ -105,7 +105,7 @@ pub(super) fn set_bin_chs_cln_flag(field_type: &mut FieldType) {
 
 /// The argument's static type, defaulting to the `NULL` type when the node
 /// carries none (Go's nil `RetType`, which is unreachable for a built node).
-pub(super) fn type_of(expr: &Expression) -> FieldType {
+pub fn type_of(expr: &Expression) -> FieldType {
     expr.static_type()
         .cloned()
         .unwrap_or_else(|| FieldType::new(FieldTypeCode::Null))
@@ -376,7 +376,7 @@ pub fn build_cast_to_in_union(
 /// The connection charset/collation pair a `BuildContext` supplies, defaulted
 /// through `charset.GetDefaultCharsetAndCollate()` exactly as
 /// `typeInfer4GroupConcat` does when the session reports empty strings.
-pub(super) fn connection_charset(ctx: &impl Columns) -> (String, String) {
+pub fn connection_charset(ctx: &impl Columns) -> (String, String) {
     let (chs, coll) = ctx.connection_charset_info();
     if chs.is_empty() || coll.is_empty() {
         return ("utf8mb4".to_owned(), "utf8mb4_bin".to_owned());

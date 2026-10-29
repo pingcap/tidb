@@ -69,7 +69,7 @@
 //! # Narrowings, by exact Go symbol
 //!
 //! * `expression.BuildCastFunction4Union(ctx, srcCol, dstType)`. The cast
-//!   itself is [`tidb_expr::aggregation::wrap_cast::build_cast_to_in_union`],
+//!   itself is [`tidb_expr::wrap_cast::build_cast_to_in_union`],
 //!   which carries Go's `inUnion = true` bit in the internal function name.
 //!   For a signed ETInt value and an unsigned target, the evaluator clamps a
 //!   negative value to zero exactly as `builtinCastIntAsIntSig` does.
@@ -347,7 +347,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     // `BuildCastFunction4Union` carries Go's `inUnion` flag
                     // through the internal cast name.
                     exprs.push(
-                        tidb_expr::aggregation::wrap_cast::build_cast_to_in_union(
+                        tidb_expr::wrap_cast::build_cast_to_in_union(
                             Expression::Column(src_col.clone()),
                             dst_type,
                         )

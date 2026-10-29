@@ -62,7 +62,7 @@
 //!   `DefXxx` default.
 //! - `// boundary:` Go `exprctx.StaticConvertibleEvalContext` /
 //!   `StaticConvertibleExprContext`. Both embed the `exprctx.EvalContext` /
-//!   `ExprContext` umbrella interfaces, which [`crate::exprctx`] does not yet
+//!   `ExprContext` umbrella interfaces, which [`tidb_exprctx`] does not yet
 //!   carry; they are declared here narrowed to the methods
 //!   `MakeEvalContextStatic` / `MakeExprContextStatic` actually call.
 //!

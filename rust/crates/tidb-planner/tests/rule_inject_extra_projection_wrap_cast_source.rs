@@ -18,14 +18,14 @@
 //!
 //! The Go test is a pure UNIT test: it builds SUM descriptors directly with
 //! `aggregation.NewAggFuncDesc` (`pkg/expression/aggregation/descriptor.go:47`,
-//! ported as [`tidb_expr::aggregation::AggFuncDesc::new`] whose inference
+//! ported as [`tidb_expression_aggregation::AggFuncDesc::new`] whose inference
 //! mirrors `typeInfer4Sum`, `base_func.go:215-237`), then drives the
 //! planner-side helper `coreusage.WrapCastForAggFuncs`
 //! (`pkg/planner/util/coreusage/cast_misc.go:25`) which wraps each
 //! descriptor's arguments in casts ONLY when `Mode != FinalMode &&
 //! Mode != Partial2Mode`. No session, catalog, or SQL pipeline is involved,
 //! so both halves of the exercised surface exist on the Rust side: the
-//! descriptors come from `tidb_expr::aggregation`, and the mode gate is
+//! descriptors come from `tidb_expression_aggregation`, and the mode gate is
 //! implemented by [`tidb_planner_coreusage::wrap_cast_for_agg_funcs`].
 //!
 //! Per-case expectations re-derived from Go source:
@@ -43,7 +43,7 @@
 //!   int-family arguments would not — they would flip to NewDecimal and fail).
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_expr::aggregation::{names, AggFuncDesc, AggFunctionMode};
+use tidb_expression_aggregation::{names, AggFuncDesc, AggFunctionMode};
 use tidb_expr::constant::Constant;
 use tidb_expr::expression::Expression;
 use tidb_exprctx::NoColumns;

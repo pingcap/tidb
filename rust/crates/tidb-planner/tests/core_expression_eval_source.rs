@@ -18,7 +18,7 @@
 
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, DatumKind, FieldType, FieldTypeCode, FieldTypeFlags};
-use tidb_expr::exprctx::{PlanColumnIdAllocator, SimplePlanColumnIdAllocator};
+use tidb_exprctx::{PlanColumnIdAllocator, SimplePlanColumnIdAllocator};
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::NoResolver;
 use tidb_expr::simple_expr::{build_simple_expr, parse_simple_expr, BuildOptions, ColumnInfoSource};

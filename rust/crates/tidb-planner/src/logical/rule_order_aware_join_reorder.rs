@@ -16,7 +16,7 @@
 
 use std::collections::BTreeSet;
 
-use tidb_expr::aggregation::ByItems;
+use tidb_expression_aggregation::ByItems;
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::predicates::is_mutable_effects_expr;
 use tidb_expr::expression::Expression;

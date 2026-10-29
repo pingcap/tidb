@@ -16,7 +16,7 @@
 
 use std::collections::HashSet;
 
-use tidb_expr::aggregation::{names, AggFuncDesc, AggFunctionMode};
+use tidb_expression_aggregation::{names, AggFuncDesc, AggFunctionMode};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;

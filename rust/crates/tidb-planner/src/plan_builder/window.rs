@@ -121,7 +121,7 @@ use tidb_ast::{
     WindowFrame as AstWindowFrame, WindowOver, WindowSpec,
 };
 use tidb_datatype::{EvalType, FieldName, FieldType, FieldTypeCode};
-use tidb_expr::aggregation::{need_frame, use_default_frame, WindowFuncDesc};
+use tidb_expression_aggregation::{need_frame, use_default_frame, WindowFuncDesc};
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::get_uint64_from_constant;
 use tidb_expr::expression::Expression;

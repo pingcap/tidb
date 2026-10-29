@@ -14,7 +14,7 @@
 
 //! Go `executor/aggfuncs.Build`: choose an executor implementation from the
 //! planner-owned aggregate descriptor. Type inference belongs exclusively to
-//! `tidb_expr::aggregation::AggFuncDesc`, as it does before Go reaches the
+//! `tidb_expression_aggregation::AggFuncDesc`, as it does before Go reaches the
 //! executor builder.
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};

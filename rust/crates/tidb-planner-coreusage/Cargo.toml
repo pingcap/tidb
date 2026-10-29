@@ -11,5 +11,6 @@ description = "TiDB pkg/planner/util/coreusage: shared planner helpers (Rust)."
 workspace = true
 
 [dependencies]
+tidb-expression-aggregation = { path = "../tidb-expression-aggregation" }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-expr = { path = "../tidb-expr" }

@@ -1286,7 +1286,7 @@ fn mpp_hash_agg_enumeration_matches_go_run_modes() {
     use crate::logical::{BaseLogicalPlan, LogicalAggregation};
     use crate::physical::{get_hash_aggs_with_mpp, AggMppRunMode, PhysicalPlan};
     use crate::stats_info::StatsInfo;
-    use tidb_expr::aggregation::{names, AggFuncDesc};
+    use tidb_expression_aggregation::{names, AggFuncDesc};
     use tidb_exprctx::ZonedNoColumns;
     use tidb_datatype::SessionTimeZone;
 
@@ -1777,7 +1777,7 @@ fn a_physical_sort_retains_scalar_by_items_like_go() {
     // Go `getPhysicalSort` copies `LogicalSort.ByItems` verbatim. Only the
     // separate NominalSort candidate requires column-only items.
     use crate::logical::{BaseLogicalPlan, LogicalSort};
-    use tidb_expr::aggregation::ByItems;
+    use tidb_expression_aggregation::ByItems;
 
     let allocator = PlanIdAllocator::new();
     let field_type = FieldType::new(FieldTypeCode::LongLong);
@@ -2424,8 +2424,8 @@ fn apply_window_arguments_and_frame_bounds_rebind_to_worker_owned_cells() {
         tidb_expr::column::CorrelatedColumn::with_value(column.clone(), Datum::Int(7));
     let expression = Expression::CorrelatedColumn(correlation.clone());
     let source = PhysicalPlan::Window(PhysicalWindow {
-        window_func_descs: vec![tidb_expr::aggregation::WindowFuncDesc {
-            base: tidb_expr::aggregation::BaseFuncDesc {
+        window_func_descs: vec![tidb_expression_aggregation::WindowFuncDesc {
+            base: tidb_expression_aggregation::BaseFuncDesc {
                 name: "sum".to_owned(),
                 args: vec![expression.clone()],
                 ret_type: column.ret_type.clone().unwrap(),

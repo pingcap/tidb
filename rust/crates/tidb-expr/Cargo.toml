@@ -63,6 +63,7 @@ reqwest = { workspace = true }
 fluent-uri = { workspace = true }
 
 [dev-dependencies]
+tidb-exprstatic = { path = "../tidb-exprstatic" }
 prost = { workspace = true }
 tempfile = { workspace = true }
 

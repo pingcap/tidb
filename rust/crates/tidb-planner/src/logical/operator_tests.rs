@@ -23,7 +23,7 @@
 use crate::physical_property::ColumnSortItem;
 
 use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode};
-use tidb_expr::aggregation::{AggFuncDesc, AggFunctionMode, BaseFuncDesc, ByItems};
+use tidb_expression_aggregation::{AggFuncDesc, AggFunctionMode, BaseFuncDesc, ByItems};
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
 use tidb_expr::expression::Expression;
@@ -2232,8 +2232,8 @@ fn apply_widens_the_outer_used_set_by_its_correlated_cols() {
 
 // ***** LogicalWindow *****
 
-fn window_desc(args: Vec<Expression>) -> tidb_expr::aggregation::WindowFuncDesc {
-    tidb_expr::aggregation::WindowFuncDesc {
+fn window_desc(args: Vec<Expression>) -> tidb_expression_aggregation::WindowFuncDesc {
+    tidb_expression_aggregation::WindowFuncDesc {
         base: BaseFuncDesc {
             name: "row_number".to_owned(),
             args,

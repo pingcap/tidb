@@ -22,8 +22,8 @@
 
 use tidb_datatype::FieldType;
 use tidb_datatype::FieldTypeCode;
-use tidb_expr::aggregation::names;
-use tidb_expr::aggregation::{AggFuncDesc, AggFunctionMode, ByItems};
+use tidb_expression_aggregation::names;
+use tidb_expression_aggregation::{AggFuncDesc, AggFunctionMode, ByItems};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;

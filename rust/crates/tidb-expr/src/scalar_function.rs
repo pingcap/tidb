@@ -3933,7 +3933,7 @@ impl DecimalValue {
 }
 
 /// Evaluates the Go numeric typed entrypoint without changing generic Eval.
-pub(crate) fn eval_numeric_row(
+pub fn eval_numeric_row(
     expression: &Expression,
     ctx: &dyn Columns,
     row: Row<'_>,

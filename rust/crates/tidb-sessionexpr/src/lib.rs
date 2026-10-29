@@ -14,7 +14,7 @@
 
 //! Go `pkg/expression/sessionexpr` lands as a complete package: the
 //! *live-session* expression and evaluation contexts — the same two interfaces
-//! [`crate::exprstatic`] implements over a frozen snapshot, implemented here
+//! [`tidb_exprstatic`] implements over a frozen snapshot, implemented here
 //! over a running session, so every read goes back to the session on each call.
 //!
 //! Every production symbol of the package's single file `sessionctx.go` is
@@ -50,7 +50,7 @@
 //! - `// boundary:` Go `sessionctx/variable.SessionVars` *and* the
 //!   `stmtctx.StatementContext` reached through it —
 //!   [`SessionVarsAccessor`]. It **extends
-//!   [`crate::exprstatic::SessionVarsSnapshot`]** rather than declaring a
+//!   [`tidb_exprstatic::SessionVarsSnapshot`]** rather than declaring a
 //!   second session view: that trait already names the twelve system-variable
 //!   backed fields both packages read (`Location`, `SQLMode`,
 //!   `MaxAllowedPacket`, `EnableRedactLog`, `DivPrecisionIncrement`,
@@ -78,11 +78,11 @@
 //!   pull in the storage client.
 //!
 //! Reused from the sibling packages instead of re-modeled:
-//! [`crate::expropt`]'s ten providers and its `KvStorage` / `SqlExecutor` /
+//! [`tidb_expropt`]'s ten providers and its `KvStorage` / `SqlExecutor` /
 //! `SessionVars` / `AdvisoryLockContext` / `PrivilegeChecker` boundary traits,
-//! [`crate::exprctx`]'s optional-property keys,
+//! [`tidb_exprctx`]'s optional-property keys,
 //! [`tidb_infoschema_context::MetaOnlyInfoSchema`], [`tidb_variable::user_vars::UserVarsReader`],
-//! and [`crate::exprstatic`]'s `EvalCtxError` as this file's error type —
+//! and [`tidb_exprstatic`]'s `EvalCtxError` as this file's error type —
 //! `IntoStatic` requires the two to agree anyway.
 //!
 //! # Adaptations
@@ -98,7 +98,7 @@
 //!   [`ExprContext::eval_context`] (Go's `ctx.EvalContext` field) and
 //!   [`ExprContext::get_eval_ctx`] return the shared `Arc<EvalContext>` and
 //!   callers go through it.
-//! - `CurrentTime` returns the instant only, as in [`crate::exprstatic`]: Go
+//! - `CurrentTime` returns the instant only, as in [`tidb_exprstatic`]: Go
 //!   returns a `time.Time` whose location is the context's, and the conversion
 //!   moves no instant.
 //! - `getStmtTimestamp`'s two `ctx == nil` branches are dropped —
@@ -125,10 +125,10 @@ use tidb_mathutil::MysqlRng;
 use tidb_timeutil::{zone_name, TimeZone};
 use tidb_vardef::defaults::DEF_BLOCK_ENCRYPTION_MODE;
 
-use crate::exprctx::{
+use tidb_exprctx::{
     OptionalEvalPropKey, OptionalEvalPropKeySet, ERR_PARAM_INDEX_EXCEED_PARAM_COUNTS,
 };
-use crate::expropt::{
+use tidb_expropt::{
     new_session_vars_provider, AdvisoryLockContext, AdvisoryLockPropProvider,
     CurrentUserPropProvider, DdlOwnerInfoProvider, DynOptionalEvalPropProvider, EvalPropContext,
     ExprOptError, InfoSchemaPropProvider, KvStorage, KvStorePropProvider,
@@ -136,12 +136,12 @@ use crate::expropt::{
     SequenceOperatorProvider, SessionContext as ExproptSessionContext, SessionContextPropProvider,
     SessionVars as ExproptSessionVars, SessionVarsProvider, SqlExecutor, SqlExecutorPropProvider,
 };
-use crate::exprstatic::evalctx::{
+use tidb_exprstatic::evalctx::{
     make_eval_context_static, StaticConvertibleEvalContext, BLOCK_ENCRYPTION_MODE,
     DEFAULT_WEEK_FORMAT, TIMESTAMP,
 };
-use crate::exprstatic::exprctx::{make_expr_context_static, StaticConvertibleExprContext};
-use crate::exprstatic::{EvalCtxError, SessionVarsSnapshot};
+use tidb_exprstatic::exprctx::{make_expr_context_static, StaticConvertibleExprContext};
+use tidb_exprstatic::{EvalCtxError, SessionVarsSnapshot};
 use tidb_infoschema_context::MetaOnlyInfoSchema;
 use tidb_variable::user_vars::UserVarsReader;
 
@@ -149,7 +149,7 @@ use tidb_variable::user_vars::UserVarsReader;
 /// `stmtctx.StatementContext` this package reaches through it
 /// (`vars.StmtCtx.*`).
 ///
-/// It extends [`SessionVarsSnapshot`], the view [`crate::exprstatic`] already
+/// It extends [`SessionVarsSnapshot`], the view [`tidb_exprstatic`] already
 /// declared for the same Go type, with the accessors that only a *live*
 /// session has. See the module header for why the two are one trait family
 /// rather than two parallel ones.
@@ -294,7 +294,7 @@ impl ConversionWarningAppender for SessionWarnBridge {
 impl ErrCtxWarnAppender for SessionWarnBridge {
     /// `errctx` hands over an opaque `SharedError`, so a typed terror that
     /// arrived that way is flattened to its message, exactly as
-    /// [`crate::exprstatic`] does. Only the `SQLWarn.Err` identity differs,
+    /// [`tidb_exprstatic`] does. Only the `SQLWarn.Err` identity differs,
     /// never the text.
     fn append_warning(&self, err: SharedError) {
         self.handler()
@@ -610,12 +610,12 @@ impl EvalContext {
 
     /// Go `IntoStatic`: turns this session context into a static snapshot.
     #[must_use]
-    pub fn into_static(&self) -> crate::exprstatic::EvalContext {
+    pub fn into_static(&self) -> tidb_exprstatic::EvalContext {
         make_eval_context_static(self)
     }
 }
 
-impl crate::exprctx::ParamValues for EvalContext {
+impl tidb_exprctx::ParamValues for EvalContext {
     type Error = EvalCtxError;
 
     fn get_param_value(&self, idx: usize) -> Result<Datum, Self::Error> {
@@ -862,7 +862,7 @@ impl ExprContext {
 
     /// Go `IntoStatic`.
     #[must_use]
-    pub fn into_static(&self) -> crate::exprstatic::ExprContext {
+    pub fn into_static(&self) -> tidb_exprstatic::ExprContext {
         make_expr_context_static(self)
     }
 }
@@ -1071,12 +1071,12 @@ mod tests {
     };
     use tidb_vardef::defaults::DEF_TIMESTAMP;
 
-    use crate::expropt::{
+    use tidb_expropt::{
         AdvisoryLockPropReader, CurrentUserPropReader, DdlOwnerPropReader, InfoSchemaPropReader,
         KvStorePropReader, PrivilegeCheckerPropReader, SequenceOperatorPropReader,
         SessionContextPropReader, SessionVarsPropReader, SqlExecutorPropReader,
     };
-    use crate::exprstatic::StaticSessionVars;
+    use tidb_exprstatic::StaticSessionVars;
     use tidb_variable::user_vars::UserVars;
 
     /// Go `require.Same` on two interface values: the same allocation, even

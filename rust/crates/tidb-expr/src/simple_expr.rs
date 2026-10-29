@@ -112,7 +112,7 @@ use tidb_datatype::{
 
 use crate::column::{Column, CorrelatedColumn};
 use crate::constant_fold::ConstantFoldMode;
-use crate::exprctx::PlanColumnIdAllocator;
+use tidb_exprctx::PlanColumnIdAllocator;
 use crate::expression::{Expression, ScalarFunction};
 use crate::field_name::{find_field_name, NonUniqueFieldName};
 use crate::rewriter::{rewrite_expr_resolved, ColumnResolver};
@@ -805,7 +805,7 @@ pub fn try_push_cast_into_control_function_for_hybrid_type(
         }
         "elt" => {
             for arg in &mut args[1..] {
-                let Ok(wrapped) = crate::aggregation::wrap_cast::wrap_with_cast_as_string(
+                let Ok(wrapped) = crate::wrap_cast::wrap_with_cast_as_string(
                     arg.clone(),
                     connection,
                 ) else {
@@ -1116,7 +1116,7 @@ pub fn column_infos_to_columns_and_names_with_collate<C: ColumnInfoSource>(
 mod tests {
     use super::*;
     use tidb_exprctx::context::NoColumns;
-    use crate::exprctx::SimplePlanColumnIdAllocator;
+    use tidb_exprctx::SimplePlanColumnIdAllocator;
     use crate::expression::Constant;
     use crate::rewriter::NoResolver;
     use tidb_chunk::chunk::Chunk;

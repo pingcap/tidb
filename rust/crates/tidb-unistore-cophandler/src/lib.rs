@@ -1333,7 +1333,7 @@ fn exec_table_scan(
 /// `Aggregation.streamed` field does not select another grouping lifecycle.
 struct RegionAggregator {
     group_by: Vec<tidb_expr::expression::Expression>,
-    functions: Vec<tidb_expr::aggregation::DistAggregate>,
+    functions: Vec<tidb_expression_aggregation::DistAggregate>,
     context: Arc<RequestEvalContext>,
     row: tidb_chunk::mutrow::MutRow,
     group_indices: std::collections::HashMap<Vec<u8>, usize>,
@@ -1342,7 +1342,7 @@ struct RegionAggregator {
 
 struct RegionAggregateGroup {
     keys: Vec<tidb_datatype::Datum>,
-    values: Vec<tidb_expr::aggregation::DistAggregateState>,
+    values: Vec<tidb_expression_aggregation::DistAggregateState>,
 }
 
 impl RegionAggregator {
@@ -1365,7 +1365,7 @@ impl RegionAggregator {
             .agg_func
             .iter()
             .map(|func| {
-                tidb_expr::aggregation::DistAggregate::from_pb(
+                tidb_expression_aggregation::DistAggregate::from_pb(
                     func,
                     &context.column_types,
                     &context.zone,
@@ -1396,7 +1396,7 @@ impl RegionAggregator {
             .map(|expr| {
                 expr.eval(self.context.as_ref(), self.row.to_row())
                     .map_err(|error| {
-                        tidb_expr::aggregation::DistAggregateError::from(error).to_string()
+                        tidb_expression_aggregation::DistAggregateError::from(error).to_string()
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -1426,8 +1426,8 @@ impl RegionAggregator {
     }
 
     fn accumulate(
-        functions: &[tidb_expr::aggregation::DistAggregate],
-        values: &mut [tidb_expr::aggregation::DistAggregateState],
+        functions: &[tidb_expression_aggregation::DistAggregate],
+        values: &mut [tidb_expression_aggregation::DistAggregateState],
         context: &RequestEvalContext,
         row: tidb_chunk::row::Row<'_>,
     ) -> Result<(), String> {
@@ -1440,9 +1440,9 @@ impl RegionAggregator {
     }
 
     fn finish_group(
-        functions: &[tidb_expr::aggregation::DistAggregate],
+        functions: &[tidb_expression_aggregation::DistAggregate],
         groups: Vec<tidb_datatype::Datum>,
-        values: Vec<tidb_expr::aggregation::DistAggregateState>,
+        values: Vec<tidb_expression_aggregation::DistAggregateState>,
     ) -> Vec<tidb_datatype::Datum> {
         functions
             .iter()
@@ -1866,7 +1866,8 @@ fn convert_expr_with_context(
     }
     if tp != tipb::ExprType::ScalarFunc && tp != tipb::ExprType::ColumnRef {
         use tidb_datatype::Datum;
-        use tidb_expr::{constant::Constant, expression::Expression};
+        use tidb_expr::constant::Constant;
+        use tidb_expr::expression::Expression;
         // All wire literals use Go's shared decoding contract, including
         // UTC TIMESTAMP conversion. Keep cheap legacy leaves where their
         // representation preserves the datum, without materializing a row.

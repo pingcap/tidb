@@ -28,7 +28,7 @@
 //! * `ReplaceExprColumns` needs `ruleutil.ResolveExprAndReplace`, which is not
 //!   transcreated.
 
-use tidb_expr::aggregation::ByItems;
+use tidb_expression_aggregation::ByItems;
 use tidb_expr::column::Column;
 use tidb_expr::expression::CorrelatedColumn;
 use tidb_expr::schema::Schema;

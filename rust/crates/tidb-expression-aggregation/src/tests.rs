@@ -25,13 +25,13 @@
 //! coverage is the two `aggregation_test.go` cases above.
 
 use super::names;
-use super::wrap_cast::type_of;
+use tidb_expr::wrap_cast::type_of;
 use super::*;
-use crate::column::Column;
-use crate::constant::Constant;
+use tidb_expr::column::Column;
+use tidb_expr::constant::Constant;
 use tidb_exprctx::context::NoColumns;
-use crate::expression::Expression;
-use crate::scalar_function::ScalarFunction;
+use tidb_expr::expression::Expression;
+use tidb_expr::scalar_function::ScalarFunction;
 use tidb_ast::CiString;
 use tidb_datatype::{
     Datum, FieldType, FieldTypeCode, FieldTypeFlags, MAX_DECIMAL_WIDTH, UNSPECIFIED_LENGTH,
@@ -140,7 +140,7 @@ fn group_concat_falls_back_to_the_connection_collation() {
     .unwrap();
     assert_eq!(d.ret_type.charset_name(), "utf8mb4");
     assert_eq!(d.ret_type.code(), FieldTypeCode::VarString);
-    assert_eq!(d.ret_type.flen(), super::wrap_cast::MAX_BLOB_WIDTH);
+    assert_eq!(d.ret_type.flen(), tidb_expr::wrap_cast::MAX_BLOB_WIDTH);
     assert_eq!(d.ret_type.decimal(), 0);
 }
 
@@ -191,13 +191,13 @@ fn type_infer_4_avg_sum_follows_a_division_argument_through() {
         col_typed(0, ft)
     };
     let div_ret =
-        crate::builtin_arithmetic::infer_arithmetic_type("div", &div_arg(20), &div_arg(5))
+        tidb_expr::builtin_arithmetic::infer_arithmetic_type("div", &div_arg(20), &div_arg(5))
             .expect("div infers");
     assert_eq!(div_ret.flen(), 25);
     assert_eq!(div_ret.decimal(), 4);
 
     // AVG over exactly that argument adds one more increment: 29 / 8.
-    let div_node = Expression::ScalarFunction(crate::scalar_function::ScalarFunction::new(
+    let div_node = Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
         tidb_ast::CiString::new("/"),
         div_ret.clone(),
         vec![div_arg(20), div_arg(5)],
@@ -293,12 +293,12 @@ fn sum_int_is_pushable_to_both_stores() {
     let blacklist = std::collections::HashMap::new();
     assert!(check_agg_push_down(
         &d,
-        crate::infer_pushdown::PushDownStore::TiFlash,
+        tidb_expr::infer_pushdown::PushDownStore::TiFlash,
         &blacklist
     ));
     assert!(check_agg_push_down(
         &d,
-        crate::infer_pushdown::PushDownStore::TiKv,
+        tidb_expr::infer_pushdown::PushDownStore::TiKv,
         &blacklist
     ));
 }
@@ -312,12 +312,12 @@ fn group_concat_is_not_pushable_to_tikv_but_is_to_tiflash() {
     let blacklist = std::collections::HashMap::new();
     assert!(!check_agg_push_down(
         &d,
-        crate::infer_pushdown::PushDownStore::TiKv,
+        tidb_expr::infer_pushdown::PushDownStore::TiKv,
         &blacklist
     ));
     assert!(check_agg_push_down(
         &d,
-        crate::infer_pushdown::PushDownStore::TiFlash,
+        tidb_expr::infer_pushdown::PushDownStore::TiFlash,
         &blacklist
     ));
 }
@@ -331,12 +331,12 @@ fn approx_count_distinct_only_pushes_to_tiflash() {
     let blacklist = std::collections::HashMap::new();
     assert!(check_agg_push_down(
         &d,
-        crate::infer_pushdown::PushDownStore::TiFlash,
+        tidb_expr::infer_pushdown::PushDownStore::TiFlash,
         &blacklist
     ));
     assert!(!check_agg_push_down(
         &d,
-        crate::infer_pushdown::PushDownStore::TiKv,
+        tidb_expr::infer_pushdown::PushDownStore::TiKv,
         &blacklist
     ));
 }
@@ -350,7 +350,7 @@ fn approx_percentile_and_an_ordered_non_group_concat_never_push() {
     );
     assert!(!check_agg_push_down(
         &percentile,
-        crate::infer_pushdown::PushDownStore::TiFlash,
+        tidb_expr::infer_pushdown::PushDownStore::TiFlash,
         &blacklist
     ));
 
@@ -358,7 +358,7 @@ fn approx_percentile_and_an_ordered_non_group_concat_never_push() {
     ordered_sum.order_by_items = vec![ByItems::new(col(0, FieldTypeCode::Long), false)];
     assert!(!check_agg_push_down(
         &ordered_sum,
-        crate::infer_pushdown::PushDownStore::TiKv,
+        tidb_expr::infer_pushdown::PushDownStore::TiKv,
         &blacklist
     ));
 }
@@ -369,13 +369,13 @@ fn a_vector_argument_blocks_all_but_the_value_agnostic_kinds() {
     let sum = desc(names::SUM, vec![col(0, FieldTypeCode::VectorFloat32)]);
     assert!(!check_agg_push_down(
         &sum,
-        crate::infer_pushdown::PushDownStore::TiFlash,
+        tidb_expr::infer_pushdown::PushDownStore::TiFlash,
         &blacklist
     ));
     let count = desc(names::COUNT, vec![col(0, FieldTypeCode::VectorFloat32)]);
     assert!(check_agg_push_down(
         &count,
-        crate::infer_pushdown::PushDownStore::TiFlash,
+        tidb_expr::infer_pushdown::PushDownStore::TiFlash,
         &blacklist
     ));
 }
@@ -453,31 +453,31 @@ fn max_min_count_pushdown_is_tiflash_only_and_one_stage() {
         let mut d = desc(name, vec![col(0, FieldTypeCode::LongLong)]);
         assert!(check_agg_push_down(
             &d,
-            crate::infer_pushdown::PushDownStore::TiFlash,
+            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
             &blacklist
         ));
         assert!(!check_agg_push_down(
             &d,
-            crate::infer_pushdown::PushDownStore::TiKv,
+            tidb_expr::infer_pushdown::PushDownStore::TiKv,
             &blacklist
         ));
 
         d.mode = AggFunctionMode::Partial1;
         assert!(check_agg_push_down(
             &d,
-            crate::infer_pushdown::PushDownStore::TiFlash,
+            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
             &blacklist
         ));
         d.mode = AggFunctionMode::Final;
         assert!(check_agg_push_down(
             &d,
-            crate::infer_pushdown::PushDownStore::TiFlash,
+            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
             &blacklist
         ));
         d.mode = AggFunctionMode::Dedup;
         assert!(!check_agg_push_down(
             &d,
-            crate::infer_pushdown::PushDownStore::TiFlash,
+            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
             &blacklist
         ));
 
@@ -491,7 +491,7 @@ fn max_min_count_pushdown_is_tiflash_only_and_one_stage() {
         two_stage.mode = AggFunctionMode::Final;
         assert!(!check_agg_push_down(
             &two_stage,
-            crate::infer_pushdown::PushDownStore::TiFlash,
+            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
             &blacklist
         ));
     }
@@ -515,7 +515,7 @@ fn max_min_count_split_keeps_the_original_extreme_value_type() {
 
 #[test]
 fn max_min_count_outer_join_null_input_uses_count_default() {
-    let schema = crate::schema::Schema::new(Vec::new());
+    let schema = tidb_expr::schema::Schema::new(Vec::new());
     for name in [names::MAX_COUNT, names::MIN_COUNT] {
         let d = desc(name, vec![int_const(95)]);
         let (value, can_be_null) = d
@@ -834,17 +834,17 @@ fn approx_percentile_reads_constants_like_go_eval_int() {
 #[test]
 fn approx_percentile_rechecks_contextual_constants() {
     struct Percentage(i64);
-    impl crate::Columns for Percentage {
+    impl tidb_exprctx::Columns for Percentage {
         fn get(&self, _: &[String]) -> Option<Datum> {
             None
         }
-        fn param_value(&self, order: usize) -> Result<Datum, crate::EvalError> {
+        fn param_value(&self, order: usize) -> Result<Datum, tidb_exprctx::EvalError> {
             assert_eq!(order, 0);
             Ok(Datum::Int(self.0))
         }
     }
     let mut percentage = Constant::new(Datum::Int(1), FieldType::new(FieldTypeCode::LongLong));
-    percentage.param_marker = Some(crate::constant::ParamMarker { order: 0 });
+    percentage.param_marker = Some(tidb_expr::constant::ParamMarker { order: 0 });
     let args = vec![
         col(0, FieldTypeCode::Long),
         Expression::Constant(percentage),
@@ -1214,4 +1214,62 @@ fn explain_renders_distinct_order_by_and_the_separator() {
     let count = desc(names::COUNT, vec![col(0, FieldTypeCode::Long)]);
     assert!(explain_agg_func_normalized(&count, false).starts_with("count("));
     assert!(explain_agg_func_normalized(&count, true).starts_with("count(complete,"));
+}
+
+// ---------------------------------------------------------------------
+// Go aggregation/aggregation_test.go::TestCheckAggPushDownMaxMinCount
+// ---------------------------------------------------------------------
+
+#[test]
+fn test_check_agg_push_down_max_min_count() {
+    let blacklist = std::collections::HashMap::new();
+    for name in [names::MAX_COUNT, names::MIN_COUNT] {
+        let mut desc = AggFuncDesc::new(
+            &NoColumns,
+            name,
+            vec![Expression::Column(Column::new(0, FieldType::new(tidb_datatype::FieldTypeCode::LongLong)))],
+            false,
+        )
+        .unwrap();
+        assert!(super::check_agg_push_down(
+            &desc,
+            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+            &blacklist
+        ));
+        assert!(!super::check_agg_push_down(
+            &desc,
+            tidb_expr::infer_pushdown::PushDownStore::TiKv,
+            &blacklist
+        ));
+        desc.mode = AggFunctionMode::Dedup;
+        assert!(!super::check_agg_push_down(
+            &desc,
+            tidb_expr::infer_pushdown::PushDownStore::TiFlash,
+            &blacklist
+        ));
+    }
+}
+
+// ---------------------------------------------------------------------
+// Go aggregation/base_func_test.go::TestBaseFunc_InferMaxMinCountRetType
+// ---------------------------------------------------------------------
+
+#[test]
+fn test_base_func_infer_max_min_count_ret_type() {
+    for input in [tidb_datatype::FieldTypeCode::Double, tidb_datatype::FieldTypeCode::Bit] {
+        for name in [names::MAX_COUNT, names::MIN_COUNT] {
+            let desc = AggFuncDesc::new(
+                &NoColumns,
+                name,
+                vec![Expression::Column(Column::new(0, FieldType::new(input)))],
+                false,
+            )
+            .unwrap();
+            assert_eq!(desc.ret_type().code(), tidb_datatype::FieldTypeCode::LongLong);
+            assert_eq!(desc.ret_type().flen(), 21);
+            assert_eq!(desc.ret_type().decimal(), 0);
+            assert_ne!(desc.ret_type().flags() & FieldTypeFlags::NOT_NULL, 0);
+            assert_eq!(desc.base.get_default_value(), Datum::new_int(0));
+        }
+    }
 }

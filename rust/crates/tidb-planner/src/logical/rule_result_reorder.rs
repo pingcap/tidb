@@ -51,7 +51,7 @@
 //! level's schema to still CONTAIN the column, because an inlined projection
 //! may have dropped it.
 
-use tidb_expr::aggregation::ByItems;
+use tidb_expression_aggregation::ByItems;
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 

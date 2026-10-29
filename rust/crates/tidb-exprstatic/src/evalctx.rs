@@ -42,10 +42,10 @@ use tidb_vardef::tidb_vars::{
     DIV_PRECISION_INCREMENT, ON, TIDB_ENABLE_NOOP_FUNCS, TIDB_REDACT_LOG, TIDB_SYSDATE_IS_NOW, WARN,
 };
 
-use crate::exprctx::{
+use tidb_exprctx::{
     OptionalEvalPropKey, OptionalEvalPropKeySet, ERR_PARAM_INDEX_EXCEED_PARAM_COUNTS,
 };
-use crate::expropt::{DynOptionalEvalPropProvider, EvalPropContext, OptionalEvalPropProviders};
+use tidb_expropt::{DynOptionalEvalPropProvider, EvalPropContext, OptionalEvalPropProviders};
 use tidb_variable::user_vars::{UserVars, UserVarsReader};
 use tidb_hack::go_to_lower;
 
@@ -612,7 +612,7 @@ impl EvalContext {
     }
 }
 
-impl crate::exprctx::ParamValues for EvalContext {
+impl tidb_exprctx::ParamValues for EvalContext {
     type Error = EvalCtxError;
 
     fn get_param_value(&self, idx: usize) -> Result<Datum, Self::Error> {
@@ -928,7 +928,7 @@ pub fn new_session_vars_with_system_variables(
 
 /// boundary: Go `exprctx.StaticConvertibleEvalContext`, narrowed to the
 /// methods [`make_eval_context_static`] calls. Go's version embeds the
-/// `exprctx.EvalContext` umbrella interface, which [`crate::exprctx`] does not
+/// `exprctx.EvalContext` umbrella interface, which [`tidb_exprctx`] does not
 /// carry yet; the accessors below stand for the `TypeCtx()`/`ErrCtx()` parts
 /// of it that survive into a static snapshot.
 pub trait StaticConvertibleEvalContext {
@@ -1047,7 +1047,7 @@ pub fn make_eval_context_static(ctx: &dyn StaticConvertibleEvalContext) -> EvalC
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::expropt::{
+    use tidb_expropt::{
         CurrentUserPropProvider, CurrentUserPropReader, DdlOwnerInfoProvider, DdlOwnerPropReader,
         InfoSchemaPropProvider,
     };
@@ -1780,9 +1780,9 @@ mod tests {
 /// Go's `EvalContext` interface over a static context: what the evaluator
 /// reads from it. Go's `exprstatic.EvalContext` implements
 /// `exprctx.EvalContext`, which this crate's evaluator reads as
-/// [`crate::Columns`]; a static context is what Go's
+/// [`tidb_exprctx::Columns`]; a static context is what Go's
 /// `metabuild.NewNonStrictContext` evaluates DDL defaults in.
-impl crate::Columns for EvalContext {
+impl tidb_exprctx::Columns for EvalContext {
     fn get(&self, _path: &[String]) -> Option<Datum> {
         None
     }
@@ -1815,11 +1815,11 @@ impl crate::Columns for EvalContext {
         }
     }
 
-    fn truncate_level(&self) -> crate::ErrorLevel {
+    fn truncate_level(&self) -> tidb_exprctx::ErrorLevel {
         eval_error_level(self.err_level_map().get(tidb_errctx::ErrGroup::Truncate))
     }
 
-    fn division_by_zero_level(&self) -> crate::ErrorLevel {
+    fn division_by_zero_level(&self) -> tidb_exprctx::ErrorLevel {
         eval_error_level(self.err_level_map().get(tidb_errctx::ErrGroup::DividedByZero))
     }
 
@@ -1870,15 +1870,15 @@ impl crate::Columns for EvalContext {
     }
 }
 
-fn eval_error_level(level: tidb_errctx::Level) -> crate::ErrorLevel {
+fn eval_error_level(level: tidb_errctx::Level) -> tidb_exprctx::ErrorLevel {
     match level {
-        tidb_errctx::Level::Error => crate::ErrorLevel::Error,
-        tidb_errctx::Level::Warn => crate::ErrorLevel::Warn,
-        tidb_errctx::Level::Ignore => crate::ErrorLevel::Ignore,
+        tidb_errctx::Level::Error => tidb_exprctx::ErrorLevel::Error,
+        tidb_errctx::Level::Warn => tidb_exprctx::ErrorLevel::Warn,
+        tidb_errctx::Level::Ignore => tidb_exprctx::ErrorLevel::Ignore,
     }
 }
 
-/// A warning the evaluator raised through [`crate::Columns`], which carries
+/// A warning the evaluator raised through [`tidb_exprctx::Columns`], which carries
 /// only its code and text: the `pingcap/errors` compatibility form keeps both
 /// without claiming an error class the evaluator never named. A warning with
 /// its own identity reaches this context through `AppendWarning` directly

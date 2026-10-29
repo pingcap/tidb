@@ -26,7 +26,7 @@ use std::cell::RefCell;
 
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_expr::aggregation::ByItems;
+use tidb_expression_aggregation::ByItems;
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
 use tidb_expr::expr_util::builder::PreservingFunctionBuilder;
@@ -449,13 +449,13 @@ fn aggregation_elimination_requires_the_complete_strong_unique_key() {
         1,
         "t",
     ));
-    let count = tidb_expr::aggregation::AggFuncDesc {
-        base: tidb_expr::aggregation::BaseFuncDesc {
+    let count = tidb_expression_aggregation::AggFuncDesc {
+        base: tidb_expression_aggregation::BaseFuncDesc {
             name: AGG_FUNC_COUNT.to_owned(),
             args: vec![col_expr(3)],
             ret_type: int_type(),
         },
-        mode: tidb_expr::aggregation::AggFunctionMode::Complete,
+        mode: tidb_expression_aggregation::AggFunctionMode::Complete,
         has_distinct: false,
         order_by_items: Vec::new(),
         grouping_id: 0,
@@ -479,13 +479,13 @@ fn aggregation_elimination_requires_the_complete_strong_unique_key() {
         1,
         "t",
     ));
-    let count = tidb_expr::aggregation::AggFuncDesc {
-        base: tidb_expr::aggregation::BaseFuncDesc {
+    let count = tidb_expression_aggregation::AggFuncDesc {
+        base: tidb_expression_aggregation::BaseFuncDesc {
             name: AGG_FUNC_COUNT.to_owned(),
             args: vec![col_expr(3)],
             ret_type: int_type(),
         },
-        mode: tidb_expr::aggregation::AggFunctionMode::Complete,
+        mode: tidb_expression_aggregation::AggFunctionMode::Complete,
         has_distinct: false,
         order_by_items: Vec::new(),
         grouping_id: 0,
@@ -1338,13 +1338,13 @@ fn predicate_push_down_keeps_an_aggregate_filter_above_a_non_group_by_column() {
     let source = data_source(&allocator, &[1, 2]);
     // One aggregate function per output column, as Go's builder produces:
     // `first_row(a)` for the group-by column and `count(b)` for column 9.
-    let desc = |name: &str, arg: i64| tidb_expr::aggregation::AggFuncDesc {
-        base: tidb_expr::aggregation::BaseFuncDesc {
+    let desc = |name: &str, arg: i64| tidb_expression_aggregation::AggFuncDesc {
+        base: tidb_expression_aggregation::BaseFuncDesc {
             name: name.to_owned(),
             args: vec![col_expr(arg)],
             ret_type: int_type(),
         },
-        mode: tidb_expr::aggregation::AggFunctionMode::Complete,
+        mode: tidb_expression_aggregation::AggFunctionMode::Complete,
         has_distinct: false,
         order_by_items: Vec::new(),
         grouping_id: 0,
@@ -1385,13 +1385,13 @@ fn logical_fn(name: &str, args: Vec<Expression>) -> Expression {
 /// An aggregation over a two-column source whose outputs are `first_row(a)`
 /// (column 1, also the group-by column) and `count(b)` (column 9).
 fn grouped_count_over_source(allocator: &PlanIdAllocator) -> LogicalPlan {
-    let desc = |name: &str, arg: i64| tidb_expr::aggregation::AggFuncDesc {
-        base: tidb_expr::aggregation::BaseFuncDesc {
+    let desc = |name: &str, arg: i64| tidb_expression_aggregation::AggFuncDesc {
+        base: tidb_expression_aggregation::BaseFuncDesc {
             name: name.to_owned(),
             args: vec![col_expr(arg)],
             ret_type: int_type(),
         },
-        mode: tidb_expr::aggregation::AggFunctionMode::Complete,
+        mode: tidb_expression_aggregation::AggFunctionMode::Complete,
         has_distinct: false,
         order_by_items: Vec::new(),
         grouping_id: 0,
@@ -1757,13 +1757,13 @@ fn column_pruning_repairs_an_aggregate_that_lost_every_function() {
     let allocator = PlanIdAllocator::new();
     let ctx = test_context(&allocator);
     let source = data_source(&allocator, &[1, 2]);
-    let count_desc = tidb_expr::aggregation::AggFuncDesc {
-        base: tidb_expr::aggregation::BaseFuncDesc {
+    let count_desc = tidb_expression_aggregation::AggFuncDesc {
+        base: tidb_expression_aggregation::BaseFuncDesc {
             name: AGG_FUNC_COUNT.to_owned(),
             args: vec![col_expr(2)],
             ret_type: int_type(),
         },
-        mode: tidb_expr::aggregation::AggFunctionMode::Complete,
+        mode: tidb_expression_aggregation::AggFunctionMode::Complete,
         has_distinct: false,
         order_by_items: Vec::new(),
         grouping_id: 0,

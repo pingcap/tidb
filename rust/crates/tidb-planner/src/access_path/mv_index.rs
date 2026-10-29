@@ -135,7 +135,7 @@ fn json_array_expr_to_exprs(
     target_type: &FieldType,
 ) -> Option<Vec<Expression>> {
     // The argument as Go's tree holds it: wrapped in its implicit JSON cast.
-    let wrapped = tidb_expr::aggregation::wrap_cast::wrap_with_cast_as_json(expr.clone()).ok()?;
+    let wrapped = tidb_expr::wrap_cast::wrap_with_cast_as_json(expr.clone()).ok()?;
     if !tidb_expr::expr_util::predicates::is_immutable_func(&wrapped)
         || wrapped.static_type()?.eval_type() != EvalType::Json
     {

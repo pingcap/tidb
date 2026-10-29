@@ -31,7 +31,7 @@ use std::rc::Rc;
 
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_expr::aggregation::{BaseFuncDesc, ByItems, WindowFuncDesc};
+use tidb_expression_aggregation::{BaseFuncDesc, ByItems, WindowFuncDesc};
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
 use tidb_expr::expression::Expression;
@@ -940,13 +940,13 @@ fn a_window_without_children_panics_at_the_grandchild_probe_like_go() {
 fn a_max_min_aggregation_without_a_child_panics_like_gos_direct_index() {
     let allocator = PlanIdAllocator::default();
     let ctx = test_context(&allocator);
-    let max = tidb_expr::aggregation::AggFuncDesc {
+    let max = tidb_expression_aggregation::AggFuncDesc {
         base: BaseFuncDesc {
             name: AGG_FUNC_MAX.to_owned(),
             args: vec![Expression::Column(column(1))],
             ret_type: int_type(),
         },
-        mode: tidb_expr::aggregation::AggFunctionMode::Complete,
+        mode: tidb_expression_aggregation::AggFunctionMode::Complete,
         has_distinct: false,
         order_by_items: Vec::new(),
         grouping_id: 0,
@@ -1110,14 +1110,14 @@ fn a_topn_over_a_schemaless_projection_panics_when_pushing_down_like_go() {
 // Aggregation-elimination child/argument boundaries.
 // ***************************************************************************
 
-fn distinct_count_column(id: i64) -> tidb_expr::aggregation::AggFuncDesc {
-    tidb_expr::aggregation::AggFuncDesc {
-        base: tidb_expr::aggregation::BaseFuncDesc {
+fn distinct_count_column(id: i64) -> tidb_expression_aggregation::AggFuncDesc {
+    tidb_expression_aggregation::AggFuncDesc {
+        base: tidb_expression_aggregation::BaseFuncDesc {
             name: "count".to_owned(),
             args: vec![Expression::Column(column(id))],
             ret_type: int_type(),
         },
-        mode: tidb_expr::aggregation::AggFunctionMode::Complete,
+        mode: tidb_expression_aggregation::AggFunctionMode::Complete,
         has_distinct: true,
         order_by_items: Vec::new(),
         grouping_id: 0,
@@ -1148,13 +1148,13 @@ fn a_childless_grouped_aggregation_panics_at_the_covered_check_like_go() {
     let ctx = test_context(&allocator);
     let plan = LogicalPlan::Aggregation(LogicalAggregation::new(
         base(&allocator, "Aggregation", Some(schema_of(&[9]))),
-        vec![tidb_expr::aggregation::AggFuncDesc {
-            base: tidb_expr::aggregation::BaseFuncDesc {
+        vec![tidb_expression_aggregation::AggFuncDesc {
+            base: tidb_expression_aggregation::BaseFuncDesc {
                 name: "count".to_owned(),
                 args: vec![Expression::Column(column(1))],
                 ret_type: int_type(),
             },
-            mode: tidb_expr::aggregation::AggFunctionMode::Complete,
+            mode: tidb_expression_aggregation::AggFunctionMode::Complete,
             has_distinct: false,
             order_by_items: Vec::new(),
             grouping_id: 0,

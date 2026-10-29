@@ -17,7 +17,8 @@
 
 use tidb_datatype::RuntimeCollator;
 use super::{names, AggFuncDesc, AggFunctionMode, BaseFuncDesc};
-use crate::{Columns, EvalError};
+use tidb_exprctx::Columns;
+use tidb_exprctx::EvalError;
 use tidb_chunk::row::Row;
 use tidb_datatype::{ConversionContext, ConversionLocation, Datum, Decimal, DecimalCodecWarning, EvalType, FieldType, FieldTypeCode, SessionTimeZone};
 use tidb_charset::Collation;
@@ -53,7 +54,7 @@ impl DistAggregate {
         let args = expr
             .children
             .iter()
-            .map(|arg| crate::distsql_builtin::pb_to_expr_in(arg, columns, zone))
+            .map(|arg| tidb_expr::distsql_builtin::pb_to_expr_in(arg, columns, zone))
             .collect::<Result<Vec<_>, _>>()?;
         let kind = tipb::ExprType::try_from(expr.tp.unwrap_or_default())
             .map_err(|_| "unknown aggregate function type".to_owned())?;
@@ -165,7 +166,7 @@ impl DistAggregate {
         if self.kind == First && state.got_first_row {
             return Ok(());
         }
-        let warnings = crate::constant::ConversionWarnings(ctx);
+        let warnings = tidb_expr::constant::ConversionWarnings(ctx);
         let zone = ctx.time_zone();
         let context = ConversionContext::new(
             ctx.type_flags(),
@@ -173,7 +174,7 @@ impl DistAggregate {
             &warnings,
         );
         let input = if self.kind == SumInt {
-            crate::scalar_function::eval_numeric_row(&args[0], ctx, row, EvalType::Int)?
+            tidb_expr::scalar_function::eval_numeric_row(&args[0], ctx, row, EvalType::Int)?
         } else {
             args[usize::from(self.kind == Avg && partial_input)].eval(ctx, row)?
         };

@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! SEED of Go `pkg/expression/exprctx`, covering `optional.go` in full plus
-//! `context.go`'s plan-column-ID allocator and `param.go`'s
-//! `ParamValues`/`EmptyParamValues` contract.
+//! Go `pkg/expression/exprctx`'s `optional.go` in full, plus `context.go`'s
+//! plan-column-ID allocator and `param.go`'s `ParamValues`/`EmptyParamValues`
+//! contract.
 //!
 //! This is a seed, not a completed package. `context.go`'s `EvalContext` and
 //! `BuildContext` umbrella interfaces remain outside this crate because
@@ -27,7 +27,7 @@
 //! optional providers it carries: each property has a key, the keys index a
 //! descriptor table, and a `u64` bitset says which are present. The providers
 //! those keys stand for — Go's `pkg/expression/expropt` — live in
-//! [`crate::expropt`], which is complete; the only piece of `EvalContext` it
+//! [`tidb_expropt`], which is complete; the only piece of `EvalContext` it
 //! needs, `GetOptionalPropProvider`, it declares there as a boundary trait
 //! until the umbrella interfaces above land here.
 

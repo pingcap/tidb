@@ -21,8 +21,8 @@
 use super::names;
 use super::{AggDescError, BaseFuncDesc};
 use tidb_exprctx::context::Columns;
-use crate::expr_util::get_uint64_from_constant;
-use crate::expression::Expression;
+use tidb_expr::expr_util::get_uint64_from_constant;
+use tidb_expr::expression::Expression;
 use tidb_datatype::FieldTypeFlags;
 
 /// Go `WindowFuncDesc` (`window_func.go:27`).

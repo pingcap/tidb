@@ -14,7 +14,7 @@
 
 //! Go `pkg/expression/expropt` lands as a complete package: the provider half
 //! of the optional-evaluation-property machinery whose key/descriptor half
-//! lives in [`crate::exprctx`].
+//! lives in [`tidb_exprctx`].
 //!
 //! An `EvalContext` carries at most one provider per optional property. This
 //! package is the storage for those providers ([`OptionalEvalPropProviders`],
@@ -71,7 +71,7 @@ use std::any::Any;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::exprctx::{
+use tidb_exprctx::{
     OptionalEvalPropKey, OptionalEvalPropKeySet, OptionalEvalPropProvider, OPT_PROPS_CNT,
 };
 

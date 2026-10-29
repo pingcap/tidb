@@ -22,7 +22,7 @@
 use std::collections::HashMap;
 
 use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_expr::aggregation::{check_agg_push_down, names, AggFuncDesc};
+use tidb_expression_aggregation::{check_agg_push_down, names, AggFuncDesc};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::infer_pushdown::PushDownStore;

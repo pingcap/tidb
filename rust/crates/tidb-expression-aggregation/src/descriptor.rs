@@ -21,12 +21,12 @@
 use super::names;
 use super::window_func::WindowFuncDesc;
 use super::{AggDescError, AggFunctionMode, BaseFuncDesc};
-use crate::column::Column;
-use crate::constant::Constant;
+use tidb_expr::column::Column;
+use tidb_expr::constant::Constant;
 use tidb_exprctx::context::Columns;
-use crate::expr_util::{evaluate_expr_with_null, RealFunctionBuilder, SubstituteOptions};
-use crate::expression::Expression;
-use crate::schema::Schema;
+use tidb_expr::expr_util::{evaluate_expr_with_null, RealFunctionBuilder, SubstituteOptions};
+use tidb_expr::expression::Expression;
+use tidb_expr::schema::Schema;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 
 /// Go `pkg/planner/util.ByItems`: one aggregate-local `ORDER BY` term.
@@ -238,7 +238,7 @@ impl AggFuncDesc {
                         self.base
                             .args
                             .first()
-                            .map(super::wrap_cast::type_of)
+                            .map(tidb_expr::wrap_cast::type_of)
                             .unwrap_or_else(|| self.base.ret_type.clone())
                     } else {
                         self.base.ret_type.clone()

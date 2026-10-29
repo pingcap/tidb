@@ -209,7 +209,7 @@ use tidb_datatype::{
     Datum, FieldName, FieldNameMetadata, FieldType, FieldTypeCode, FieldTypeFlags,
     IdentifierMetadata, SessionTimeZone,
 };
-use tidb_expr::aggregation::ByItems;
+use tidb_expression_aggregation::ByItems;
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
 

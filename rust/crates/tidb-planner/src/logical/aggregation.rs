@@ -16,7 +16,7 @@
 //! `LogicalAggregation`, a `GROUP BY` over aggregate functions.
 //!
 //! SEED of `pkg/planner/core`. The aggregate descriptors are
-//! [`tidb_expr::aggregation::AggFuncDesc`] — the workspace's canonical
+//! [`tidb_expression_aggregation::AggFuncDesc`] — the workspace's canonical
 //! `aggregation.AggFuncDesc`, reused here rather than restated.
 //!
 //! This file MERGES the crate's former `logical_aggregation` identity leaf:
@@ -24,8 +24,8 @@
 //! descriptors and expressions, as [`LogicalAggregation::hash64`] /
 //! [`LogicalAggregation::equals`], and the adapter module is gone.
 
-use tidb_expr::aggregation::AggFuncDesc;
-use tidb_expr::aggregation::AggFunctionMode;
+use tidb_expression_aggregation::AggFuncDesc;
+use tidb_expression_aggregation::AggFunctionMode;
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::substitute::{evaluate_expr_with_null, SubstituteOptions};
 use tidb_expr::expr_util::RealFunctionBuilder;
@@ -421,7 +421,7 @@ impl LogicalAggregation {
                 return self_used_cols;
             };
             self.agg_funcs.push(AggFuncDesc {
-                base: tidb_expr::aggregation::BaseFuncDesc {
+                base: tidb_expression_aggregation::BaseFuncDesc {
                     name: name.to_owned(),
                     args: vec![Expression::Constant(one)],
                     ret_type: ret_type.clone(),

@@ -18,7 +18,7 @@
 use super::{AggFunc, AggKind, BitOp};
 use crate::ExecError;
 use tidb_datatype::{Datum, EvalType, FieldTypeCode};
-use tidb_expr::aggregation::{AggFuncDesc, AggFunctionMode};
+use tidb_expression_aggregation::{AggFuncDesc, AggFunctionMode};
 use tidb_expr::expression::Expression;
 use tidb_expr::eval_expression_once;
 use tidb_exprctx::Columns;

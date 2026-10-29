@@ -15,7 +15,7 @@
 //! Go `pkg/expression/expropt/ddlowner.go`.
 
 use super::{get_prop_provider, EvalPropContext, ExprOptError, RequireOptionalEvalProps};
-use crate::exprctx::{
+use tidb_exprctx::{
     OptionalEvalPropDesc, OptionalEvalPropKey, OptionalEvalPropKeySet, OptionalEvalPropProvider,
 };
 

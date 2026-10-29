@@ -36,7 +36,7 @@ use super::evalctx::{
     COLLATION_CONNECTION, DEFAULT_COLLATION_FOR_UTF8MB4, GROUP_CONCAT_MAX_LEN, OFF_INT, ON_INT,
     WARN_INT, WINDOWING_USE_HIGH_PRECISION,
 };
-use crate::exprctx::{PlanColumnIdAllocator, SimplePlanColumnIdAllocator};
+use tidb_exprctx::{PlanColumnIdAllocator, SimplePlanColumnIdAllocator};
 use tidb_hack::go_to_lower;
 
 /// Go `exprCtxState`: the internal state of an [`ExprContext`], kept separate
@@ -462,7 +462,7 @@ impl tidb_context::WarnAppender for EvalCtxWarnSink {
 
 /// boundary: Go `exprctx.StaticConvertibleExprContext`, narrowed to the
 /// methods [`make_expr_context_static`] calls. Go's version embeds the
-/// `exprctx.ExprContext` umbrella interface, which [`crate::exprctx`] does not
+/// `exprctx.ExprContext` umbrella interface, which [`tidb_exprctx`] does not
 /// carry yet.
 pub trait StaticConvertibleExprContext {
     /// Go `GetStaticConvertibleEvalContext`.
@@ -576,7 +576,7 @@ pub fn make_expr_context_static(ctx: &dyn StaticConvertibleExprContext) -> ExprC
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::exprstatic::evalctx::with_location;
+    use crate::evalctx::with_location;
     use tidb_context::{gen_context_id, StaticWarnHandler};
     use tidb_timeutil::TimeZone;
 

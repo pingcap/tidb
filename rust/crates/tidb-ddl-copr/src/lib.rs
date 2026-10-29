@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 use tidb_ast::CiString;
 use tidb_datatype::{FieldName, FieldNameMetadata, FieldType, IdentifierMetadata};
 use tidb_expr::column::Column;
-use tidb_expr::exprctx::PlanColumnIdAllocator;
+use tidb_exprctx::PlanColumnIdAllocator;
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::ColumnResolver;
 use tidb_expr::schema::Schema;
@@ -677,7 +677,7 @@ impl ColumnInfoSource for ColumnView {
 mod tests {
     use super::*;
     use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
-    use tidb_expr::exprctx::SimplePlanColumnIdAllocator;
+    use tidb_exprctx::SimplePlanColumnIdAllocator;
     use tidb_expr::rewriter::NoResolver;
     use tidb_model::SchemaState;
 

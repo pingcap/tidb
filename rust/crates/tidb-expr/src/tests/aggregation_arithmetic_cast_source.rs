@@ -18,7 +18,6 @@
 use std::cell::RefCell;
 
 use super::*;
-use crate::aggregation::{names, AggFuncDesc, AggFunctionMode};
 use crate::column::Column;
 use tidb_exprctx::context::NoColumns;
 use crate::expression::Expression;
@@ -507,64 +506,6 @@ fn test_vectorized_builtin_arithmetic_func() {
         eval("mod", Datum::Int(13), Datum::UInt(0)).unwrap(),
         Datum::Null
     );
-}
-
-// ---------------------------------------------------------------------
-// Go aggregation/aggregation_test.go::TestCheckAggPushDownMaxMinCount
-// ---------------------------------------------------------------------
-
-#[test]
-fn test_check_agg_push_down_max_min_count() {
-    let blacklist = std::collections::HashMap::new();
-    for name in [names::MAX_COUNT, names::MIN_COUNT] {
-        let mut desc = AggFuncDesc::new(
-            &NoColumns,
-            name,
-            vec![Expression::Column(Column::new(0, int_ft()))],
-            false,
-        )
-        .unwrap();
-        assert!(crate::aggregation::check_agg_push_down(
-            &desc,
-            crate::infer_pushdown::PushDownStore::TiFlash,
-            &blacklist
-        ));
-        assert!(!crate::aggregation::check_agg_push_down(
-            &desc,
-            crate::infer_pushdown::PushDownStore::TiKv,
-            &blacklist
-        ));
-        desc.mode = AggFunctionMode::Dedup;
-        assert!(!crate::aggregation::check_agg_push_down(
-            &desc,
-            crate::infer_pushdown::PushDownStore::TiFlash,
-            &blacklist
-        ));
-    }
-}
-
-// ---------------------------------------------------------------------
-// Go aggregation/base_func_test.go::TestBaseFunc_InferMaxMinCountRetType
-// ---------------------------------------------------------------------
-
-#[test]
-fn test_base_func_infer_max_min_count_ret_type() {
-    for input in [C::Double, C::Bit] {
-        for name in [names::MAX_COUNT, names::MIN_COUNT] {
-            let desc = AggFuncDesc::new(
-                &NoColumns,
-                name,
-                vec![Expression::Column(Column::new(0, FieldType::new(input)))],
-                false,
-            )
-            .unwrap();
-            assert_eq!(desc.ret_type().code(), C::LongLong);
-            assert_eq!(desc.ret_type().flen(), 21);
-            assert_eq!(desc.ret_type().decimal(), 0);
-            assert_ne!(desc.ret_type().flags() & FieldTypeFlags::NOT_NULL, 0);
-            assert_eq!(desc.base.get_default_value(), Datum::new_int(0));
-        }
-    }
 }
 
 // ---------------------------------------------------------------------
@@ -1167,7 +1108,7 @@ fn cast_decimal_as_real_propagates_child_metadata() {
     source_type.set_flen(5);
     source_type.set_decimal(2);
     let source = const_typed(Datum::Decimal(Decimal::from_literal("0.99")), source_type);
-    let wrapped = crate::aggregation::wrap_cast::wrap_with_cast_as_real(source).unwrap();
+    let wrapped = crate::wrap_cast::wrap_with_cast_as_real(source).unwrap();
     let Expression::ScalarFunction(function) = wrapped else {
         panic!("expected a cast scalar function")
     };
@@ -1558,7 +1499,7 @@ fn test_cast_json_as_decimal_sig() {
 // documented inline.
 
 fn wrap_and_eval(expr: Expression, ctx: &WarningCtx) -> (i64, f64, Decimal, String) {
-    use crate::aggregation::wrap_cast::{
+    use crate::wrap_cast::{
         wrap_with_cast_as_decimal, wrap_with_cast_as_int, wrap_with_cast_as_real,
         wrap_with_cast_as_string,
     };
@@ -1633,7 +1574,7 @@ fn test_wrap_with_cast_as_types_classes_numeric_rows() {
 #[test]
 fn test_wrap_with_cast_as_types_classes_real_to_decimal_keeps_fraction() {
     let expr = const_typed(Datum::Real(123.555), real_ft());
-    let wrapped = crate::aggregation::wrap_cast::wrap_with_cast_as_decimal(expr).unwrap();
+    let wrapped = crate::wrap_cast::wrap_with_cast_as_decimal(expr).unwrap();
     let value = wrapped
         .eval(&WarningCtx::default(), tidb_chunk::row::Row::empty())
         .unwrap();
@@ -1651,7 +1592,7 @@ fn test_wrap_with_cast_as_types_classes_real_to_decimal_keeps_fraction() {
 
 #[test]
 fn test_wrap_with_cast_as_types_classes_enum_row() {
-    use crate::aggregation::wrap_cast::wrap_with_cast_as_int;
+    use crate::wrap_cast::wrap_with_cast_as_int;
 
     let enum_type = FieldType::new(C::Enum);
     let enum_value = const_typed(
@@ -1743,7 +1684,7 @@ fn test_wrap_with_cast_as_types_classes_temporal_rows() {
 #[test]
 fn test_wrap_with_cast_as_types_classes_unsigned_extras() {
     let ctx = WarningCtx::default();
-    use crate::aggregation::wrap_cast::{wrap_with_cast_as_decimal, wrap_with_cast_as_string};
+    use crate::wrap_cast::{wrap_with_cast_as_decimal, wrap_with_cast_as_string};
     let connection = tidb_exprctx::context::NoColumns.connection_charset_info();
     let mut unsigned_col_ft = int_ft();
     unsigned_col_ft.add_flags(FieldTypeFlags::UNSIGNED);
@@ -1778,7 +1719,7 @@ fn test_wrap_with_cast_as_types_classes_unsigned_extras() {
 
 #[test]
 fn test_wrap_with_cast_as_types_classes_uint_as_time() {
-    use crate::aggregation::wrap_cast::wrap_with_cast_as_time;
+    use crate::wrap_cast::wrap_with_cast_as_time;
     let ctx = ClockCtx::default();
     // cast(a bigint unsigned as datetime): the packed clock renders whole.
     let mut unsigned_col_ft = int_ft();
@@ -1801,7 +1742,7 @@ fn test_wrap_with_cast_as_types_classes_uint_as_time() {
 
 #[test]
 fn test_wrap_with_cast_as_time() {
-    use crate::aggregation::wrap_cast::wrap_with_cast_as_time;
+    use crate::wrap_cast::wrap_with_cast_as_time;
     let ctx = ClockCtx::default();
     let date_ft = || FieldType::new(C::Date);
     let tm_ft = || FieldType::new(C::Datetime);
@@ -1872,7 +1813,7 @@ fn test_wrap_with_cast_as_time() {
 
 #[test]
 fn test_wrap_with_cast_as_duration() {
-    use crate::aggregation::wrap_cast::wrap_with_cast_as_duration;
+    use crate::wrap_cast::wrap_with_cast_as_duration;
     let ctx = ClockCtx::default();
     let dur = fixed_duration();
     let want = fixed_duration();
@@ -1948,7 +1889,7 @@ fn test_cast_duration_as_year_honors_concat_mode() {
 
 #[test]
 fn test_wrap_with_cast_as_string() {
-    use crate::aggregation::wrap_cast::wrap_with_cast_as_string;
+    use crate::wrap_cast::wrap_with_cast_as_string;
     let connection = tidb_exprctx::context::NoColumns.connection_charset_info();
     let int_ft_collation_bin = |code: C| {
         let mut ft = FieldType::new(code);
@@ -1994,7 +1935,7 @@ fn test_wrap_with_cast_as_string() {
 
 #[test]
 fn test_wrap_with_cast_as_json_passes_json_columns_through() {
-    use crate::aggregation::wrap_cast::wrap_with_cast_as_json;
+    use crate::wrap_cast::wrap_with_cast_as_json;
     let mut json_col = crate::column::Column::new(1, FieldType::new(C::Json));
     json_col
         .ret_type
@@ -2182,7 +2123,7 @@ fn test_cast_const_as_decimal_field_type() {
         "complete Go TestCastConstAsDecimalFieldType table"
     );
     for (index, (input, want_flen, want_decimal)) in cases.into_iter().enumerate() {
-        let wrapped = crate::aggregation::wrap_cast::wrap_with_cast_as_decimal(input)
+        let wrapped = crate::wrap_cast::wrap_with_cast_as_decimal(input)
             .expect("constant decimal wrapper builds");
         let result_type = wrapped.static_type().expect("wrapper result type");
         assert_eq!(result_type.flen(), want_flen, "case {index} flen");
@@ -2351,7 +2292,7 @@ fn test_cast_string_as_decimal_sig_with_unsigned_flag_in_union() {
     target.add_flags(FieldTypeFlags::UNSIGNED);
     for (text, want) in [("1", "1"), ("-1", "0")] {
         let source = const_typed(Datum::new_string(text.to_owned()), source_type.clone());
-        let wrapped = crate::aggregation::wrap_cast::build_cast_to_in_union(source, target.clone())
+        let wrapped = crate::wrap_cast::build_cast_to_in_union(source, target.clone())
             .expect("string UNION decimal cast builds");
         let ctx = WarningCtx::default();
         assert_eq!(

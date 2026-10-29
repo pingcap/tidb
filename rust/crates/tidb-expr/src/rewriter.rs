@@ -14,7 +14,7 @@
 
 //! Go-shaped AST-to-planner expression rewriting and constant-fold ordering.
 
-use crate::aggregation::wrap_cast::{
+use crate::wrap_cast::{
     wrap_with_cast_as_decimal, wrap_with_cast_as_duration, wrap_with_cast_as_int,
     wrap_with_cast_as_json, wrap_with_cast_as_real, wrap_with_cast_as_string,
     wrap_with_cast_as_time,
@@ -942,7 +942,7 @@ fn wrap_with_is_true_with_null(
         // a constant argument eagerly), so `istrue_with_null(cast(', ',
         // double))` collapses to `0`. Fold the cast first: the wrapper fold
         // requires all-constant arguments.
-        let mut cast = crate::aggregation::wrap_cast::wrap_with_cast_as_real(argument)?;
+        let mut cast = crate::wrap_cast::wrap_with_cast_as_real(argument)?;
         resolver.fold_constant(&mut cast, ConstantFoldMode::Normal);
         cast
     } else {
@@ -1077,7 +1077,7 @@ fn binary_expression(
                                     != Some(EvalType::Decimal)
                             {
                                 *argument =
-                                    crate::aggregation::wrap_cast::wrap_with_cast_as_decimal(
+                                    crate::wrap_cast::wrap_with_cast_as_decimal(
                                         std::mem::replace(
                                             argument,
                                             Expression::Constant(Constant::new_null()),
@@ -1108,7 +1108,7 @@ fn binary_expression(
                             }
                             // The placeholder is replaced by the wrap result
                             // before it can ever be read.
-                            *argument = crate::aggregation::wrap_cast::wrap_with_cast_as_real(
+                            *argument = crate::wrap_cast::wrap_with_cast_as_real(
                                 std::mem::replace(
                                     argument,
                                     Expression::Constant(Constant::new_null()),
@@ -1128,7 +1128,7 @@ fn binary_expression(
                             if is_hybrid_argument(argument) {
                                 continue;
                             }
-                            *argument = crate::aggregation::wrap_cast::wrap_with_cast_as_decimal(
+                            *argument = crate::wrap_cast::wrap_with_cast_as_decimal(
                                 std::mem::replace(
                                     argument,
                                     Expression::Constant(Constant::new_null()),
@@ -1144,7 +1144,7 @@ fn binary_expression(
                             if is_hybrid_argument(argument) {
                                 continue;
                             }
-                            *argument = crate::aggregation::wrap_cast::wrap_with_cast_as_int(
+                            *argument = crate::wrap_cast::wrap_with_cast_as_int(
                                 std::mem::replace(
                                     argument,
                                     Expression::Constant(Constant::new_null()),
@@ -1312,7 +1312,7 @@ fn wrap_case_branch(
             crate::simple_expr::build_cast_function(branch, target.clone(), false)?
         }
         EvalType::String => wrap_with_cast_as_string(branch, connection)?,
-        EvalType::Json => crate::aggregation::wrap_cast::wrap_with_cast_as_json(branch)?,
+        EvalType::Json => crate::wrap_cast::wrap_with_cast_as_json(branch)?,
         EvalType::VectorFloat32 => return Ok((branch, false)),
     };
     let built = is_newly_built_cast(&wrapped) && !was_cast;
@@ -3087,13 +3087,13 @@ fn finish_function_call(
                     EvalType::Decimal => wrap_with_cast_as_decimal(arg)?,
                     EvalType::String => wrap_with_cast_as_string(arg, connection)?,
                     EvalType::Datetime => {
-                        crate::aggregation::wrap_cast::wrap_with_cast_as_time(
+                        crate::wrap_cast::wrap_with_cast_as_time(
                             arg,
                             FieldType::new(tidb_datatype::FieldTypeCode::Datetime),
                         )?
                     }
                     EvalType::Timestamp => {
-                        crate::aggregation::wrap_cast::wrap_with_cast_as_time(
+                        crate::wrap_cast::wrap_with_cast_as_time(
                             arg,
                             FieldType::new(tidb_datatype::FieldTypeCode::Timestamp),
                         )?

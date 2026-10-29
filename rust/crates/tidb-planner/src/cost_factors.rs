@@ -20,7 +20,7 @@
 //! map's case-sensitive lookup without introducing a second AST aggregate
 //! catalog or a cost-model/session owner.
 
-use tidb_expr::aggregation::names;
+use tidb_expression_aggregation::names;
 
 /// Default selectivity used when no more specific estimate is available.
 pub const SELECTION_FACTOR: f64 = 0.8;

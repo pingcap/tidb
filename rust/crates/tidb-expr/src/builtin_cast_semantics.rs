@@ -51,7 +51,7 @@ mod tests {
         let target =
             FieldType::new(FieldTypeCode::LongLong).with_added_flags(FieldTypeFlags::UNSIGNED);
 
-        let ordinary = crate::aggregation::wrap_cast::build_cast_to(source.clone(), target.clone())
+        let ordinary = crate::wrap_cast::build_cast_to(source.clone(), target.clone())
             .expect("ordinary cast builds");
         let crate::expression::Expression::ScalarFunction(ordinary) = ordinary else {
             panic!("ordinary cast should be a scalar function");
@@ -64,7 +64,7 @@ mod tests {
             Datum::UInt(u64::MAX)
         );
 
-        let in_union = crate::aggregation::wrap_cast::build_cast_to_in_union(source, target)
+        let in_union = crate::wrap_cast::build_cast_to_in_union(source, target)
             .expect("UNION cast builds");
         let crate::expression::Expression::ScalarFunction(in_union) = in_union else {
             panic!("UNION cast should be a scalar function");
@@ -85,7 +85,7 @@ mod tests {
                 Datum::new_string("-1"),
                 FieldType::new(FieldTypeCode::VarString),
             ));
-        let string_cast = crate::aggregation::wrap_cast::build_cast_to_in_union(
+        let string_cast = crate::wrap_cast::build_cast_to_in_union(
             string_source,
             FieldType::new(FieldTypeCode::LongLong).with_added_flags(FieldTypeFlags::UNSIGNED),
         )
@@ -116,7 +116,7 @@ mod tests {
         target.add_flags(FieldTypeFlags::UNSIGNED);
 
         let negative =
-            crate::aggregation::wrap_cast::build_cast_to_in_union(source("-1.25"), target.clone())
+            crate::wrap_cast::build_cast_to_in_union(source("-1.25"), target.clone())
                 .expect("string UNION decimal cast builds");
         let crate::expression::Expression::ScalarFunction(negative_fn) = &negative else {
             panic!("UNION decimal cast should be a scalar function");
@@ -135,7 +135,7 @@ mod tests {
         assert!(warnings.0.borrow().is_empty());
 
         let positive =
-            crate::aggregation::wrap_cast::build_cast_to_in_union(source("1.256"), target)
+            crate::wrap_cast::build_cast_to_in_union(source("1.256"), target)
                 .expect("positive string UNION decimal cast builds");
         assert_eq!(
             positive
@@ -156,7 +156,7 @@ mod tests {
         target.set_flen(10);
         target.set_decimal(2);
 
-        let wrapped = crate::aggregation::wrap_cast::build_cast_to_in_union(source, target)
+        let wrapped = crate::wrap_cast::build_cast_to_in_union(source, target)
             .expect("signed integer UNION decimal cast builds");
         let crate::expression::Expression::ScalarFunction(function) = &wrapped else {
             panic!("UNION decimal cast should be a scalar function");

@@ -26,7 +26,7 @@ use crate::base_arms;
 use crate::find_best_task::LogicalJoinType;
 use crate::plan_base::PlanError;
 use tidb_datatype::{Datum, FieldType, FieldTypeFlags};
-use tidb_expr::aggregation::{names, AggFuncDesc, AggFunctionMode};
+use tidb_expression_aggregation::{names, AggFuncDesc, AggFunctionMode};
 use tidb_expr::constant::Constant;
 use tidb_expr::expr_util::builder::tiny_int_type;
 use tidb_expr::expression::Expression;
@@ -135,7 +135,7 @@ fn rewrite_bit_function(
     argument: Expression,
     target: &FieldType,
 ) -> Result<Expression, PlanError> {
-    let signed = tidb_expr::aggregation::wrap_cast::wrap_with_cast_as_int(argument, None)
+    let signed = tidb_expr::wrap_cast::wrap_with_cast_as_int(argument, None)
         .map_err(|error| PlanError::internal(format!("cannot build integer cast: {error:?}")))?;
     let cast = wrap_cast(ctx, signed, target)?;
     let fallback = if function_name == names::BIT_AND {

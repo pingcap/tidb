@@ -1351,7 +1351,7 @@ fn report_positive_string_signed_complement(text: &str, ctx: &dyn crate::Columns
 /// Only a string-valued operand reaches Go's `builtinCastStringAsIntSig`;
 /// the numeric signatures have their own, overflow-shaped diagnostic, in
 /// [`report_signed_overflow`].
-pub(crate) fn report_int_truncation(v: &Datum, ctx: &dyn crate::Columns) -> Result<(), EvalError> {
+pub fn report_int_truncation(v: &Datum, ctx: &dyn crate::Columns) -> Result<(), EvalError> {
     // go re-reads a JSON document's MarshalJSON text through the same
     // string-integer scanner (`builtinCastJSONAsIntSig`'s StrToInt), so a
     // document without an integer prefix warns exactly like a string one

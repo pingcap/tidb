@@ -16,12 +16,12 @@
 //! `EXPLAIN` output.
 //!
 //! Only the `normalized == true` half is ported; the `ExplainInfo(ctx)` half
-//! needs `Expression.StringWithCtx`, the boundary [`crate::expr_util`]
+//! needs `Expression.StringWithCtx`, the boundary [`tidb_expr::expr_util`]
 //! already names. See [`super`].
 
 use super::names;
 use super::AggFuncDesc;
-use crate::expr_util::explain_normalized_info;
+use tidb_expr::expr_util::explain_normalized_info;
 use std::fmt::Write as _;
 
 /// Go `ExplainAggFunc(ctx, agg, normalized = true)` (`explain.go:26`).

@@ -1091,8 +1091,8 @@ mod tests {
 /// stored bound -- validated when its DDL ran -- would otherwise refuse
 /// (Go issue 54271).
 #[must_use]
-pub fn partition_expr_build_ctx() -> tidb_expr::exprstatic::EvalContext {
-    use tidb_expr::exprstatic::{with_err_level_map, with_sql_mode, with_type_flags, EvalContext};
+pub fn partition_expr_build_ctx() -> tidb_exprstatic::EvalContext {
+    use tidb_exprstatic::{with_err_level_map, with_sql_mode, with_type_flags, EvalContext};
     EvalContext::new([
         with_sql_mode(tidb_mysql::consts::ModeAllowInvalidDates),
         with_type_flags(

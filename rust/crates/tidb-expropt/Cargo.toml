@@ -1,0 +1,22 @@
+[package]
+name = "tidb-expropt"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/expression/expropt (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-exprctx = { path = "../tidb-exprctx" }
+tidb-infoschema-context = { path = "../tidb-infoschema-context" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-ast = { path = "../tidb-ast" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-resolve = { path = "../tidb-resolve" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }

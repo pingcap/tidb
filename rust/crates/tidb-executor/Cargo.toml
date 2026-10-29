@@ -14,6 +14,8 @@ autotests = false
 test-util = ["tidb-sessmgr/test-util"]
 
 [dependencies]
+tidb-expression-aggregation = { path = "../tidb-expression-aggregation" }
+tidb-sessionexpr = { path = "../tidb-sessionexpr" }
 tidb-executor-aggfuncs = { path = "../tidb-executor-aggfuncs" }
 tidb-executor-internal-applycache = { path = "../tidb-executor-internal-applycache" }
 tidb-executor-internal-vecgroupchecker = { path = "../tidb-executor-internal-vecgroupchecker" }

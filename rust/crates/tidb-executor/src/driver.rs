@@ -379,7 +379,7 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
     match error.kind() {
         tidb_planner::plan_base::PlanErrorKind::Mysql(error) => DriverError::Mysql(error.clone()),
         tidb_planner::plan_base::PlanErrorKind::Aggregation(aggregate) => {
-            use tidb_expr::aggregation::AggDescError;
+            use tidb_expression_aggregation::AggDescError;
             match aggregate {
                 AggDescError::ApproxPercentileOutOfRange(value) => {
                     DriverError::from(tidb_terror::MysqlError::unknown(format!("Percentage value {} is out of range [1, 100]", *value)))

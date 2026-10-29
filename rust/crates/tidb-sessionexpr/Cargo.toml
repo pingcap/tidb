@@ -1,0 +1,34 @@
+[package]
+name = "tidb-sessionexpr"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/expression/sessionexpr (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-expropt = { path = "../tidb-expropt" }
+tidb-exprstatic = { path = "../tidb-exprstatic" }
+tidb-exprctx = { path = "../tidb-exprctx" }
+tidb-infoschema-context = { path = "../tidb-infoschema-context" }
+tidb-variable = { path = "../tidb-variable" }
+tidb-errctx = { path = "../tidb-errctx" }
+tidb-terror = { path = "../tidb-terror" }
+tidb-parser-types = { path = "../tidb-parser-types" }
+tidb-context = { path = "../tidb-context" }
+tidb-mathutil = { path = "../tidb-mathutil" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-timeutil = { path = "../tidb-timeutil" }
+tidb-util = { path = "../tidb-util" }
+tidb-ast = { path = "../tidb-ast" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-resolve = { path = "../tidb-resolve" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-vardef = { path = "../tidb-vardef" }
+chrono = { workspace = true }

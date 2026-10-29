@@ -1,0 +1,30 @@
+[package]
+name = "tidb-exprstatic"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/expression/exprstatic (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-expropt = { path = "../tidb-expropt" }
+tidb-exprctx = { path = "../tidb-exprctx" }
+tidb-infoschema-context = { path = "../tidb-infoschema-context" }
+tidb-variable = { path = "../tidb-variable" }
+tidb-charset = { path = "../tidb-charset" }
+tidb-errctx = { path = "../tidb-errctx" }
+tidb-terror = { path = "../tidb-terror" }
+tidb-context = { path = "../tidb-context" }
+tidb-mathutil = { path = "../tidb-mathutil" }
+tidb-timeutil = { path = "../tidb-timeutil" }
+tidb-hack = { path = "../tidb-hack" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-vardef = { path = "../tidb-vardef" }
+chrono = { workspace = true }
+chrono-tz = { workspace = true }

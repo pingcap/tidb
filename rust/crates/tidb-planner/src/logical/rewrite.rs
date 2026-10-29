@@ -30,7 +30,7 @@
 //! post-order, which is exactly a stack discipline. Each rewriter keeps its
 //! own `Vec` and pushes in `descend`, pops in `ascend`.
 
-use tidb_expr::aggregation::ByItems;
+use tidb_expression_aggregation::ByItems;
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
 use tidb_expr::expr_util::normal_form::{expr_from_schema, split_cnf_items};

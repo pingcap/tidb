@@ -685,7 +685,7 @@ impl LogicalPlan {
 mod tests {
     use tidb_ast::CiString;
     use tidb_datatype::{FieldType, FieldTypeCode};
-    use tidb_expr::aggregation::{AggFuncDesc, AggFunctionMode, BaseFuncDesc};
+    use tidb_expression_aggregation::{AggFuncDesc, AggFunctionMode, BaseFuncDesc};
     use tidb_expr::column::{Column, CorrelatedColumn};
     use tidb_expr::constant::Constant;
     use tidb_expr::scalar_function::ScalarFunction;

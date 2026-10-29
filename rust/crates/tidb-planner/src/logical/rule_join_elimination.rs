@@ -17,7 +17,7 @@
 use std::collections::HashSet;
 
 use tidb_datatype::{Datum, FieldTypeFlags};
-use tidb_expr::aggregation::names;
+use tidb_expression_aggregation::names;
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
 use tidb_expr::expr_util::extract::find_upper_bound;

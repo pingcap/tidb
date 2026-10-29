@@ -65,7 +65,7 @@
 //! * `expression.Column.Equal(evalCtx, other)` compares by `UniqueID` for
 //!   columns, which is what [`tidb_expr::column::Column::equal_column`] does.
 
-use tidb_expr::aggregation::ByItems;
+use tidb_expression_aggregation::ByItems;
 use tidb_expr::expr_util::extract::find_upper_bound;
 use tidb_expr::expression::Expression;
 

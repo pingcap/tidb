@@ -15,5 +15,12 @@
 //! Go `pkg/expression/exprctx`: the evaluation and build context an expression runs in (`EvalContext` / `BuildContext`, Rust `Columns`), and the error an evaluation returns.
 
 pub mod context;
+pub mod optional;
 
 pub use context::{BlockEncryptionMode, Columns, CurrentTso, DecodeKeyFromString, ErrorLevel, EvalError, JsonError, NoColumns, SequenceEvalError, ZonedNoColumns};
+pub use optional::{
+    optional_property_desc_list, EmptyParamValues, OptionalEvalPropDesc, OptionalEvalPropKey,
+    OptionalEvalPropKeySet, OptionalEvalPropProvider, ParamIndexExceedParamCounts, ParamValues,
+    PlanColumnIdAllocator, SimplePlanColumnIdAllocator, EMPTY_PARAM_VALUES,
+    ERR_PARAM_INDEX_EXCEED_PARAM_COUNTS, OPT_PROPS_CNT,
+};

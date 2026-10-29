@@ -32,7 +32,7 @@
 //! JSON comparisons also clear `ParseToJSONFlag` on every non-column operand,
 //! matching `generateCmpSigs`.
 
-use crate::aggregation::wrap_cast::{
+use crate::wrap_cast::{
     wrap_with_cast_as_decimal, wrap_with_cast_as_duration, wrap_with_cast_as_int,
     wrap_with_cast_as_json, wrap_with_cast_as_real, wrap_with_cast_as_string,
     wrap_with_cast_as_time, wrap_with_cast_as_vector_float32,

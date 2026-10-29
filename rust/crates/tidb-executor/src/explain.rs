@@ -205,7 +205,7 @@ fn projection_text(
 
 fn by_items_text(
     eval_ctx: &dyn tidb_exprctx::Columns,
-    items: &[tidb_expr::aggregation::ByItems],
+    items: &[tidb_expression_aggregation::ByItems],
 ) -> String {
     items
         .iter()
@@ -439,7 +439,7 @@ fn join_info(
 
 fn aggregate_info(
     eval_ctx: &dyn tidb_exprctx::Columns,
-    functions: &[tidb_expr::aggregation::AggFuncDesc],
+    functions: &[tidb_expression_aggregation::AggFuncDesc],
     group_by: &[tidb_expr::expression::Expression],
     schema: Option<&tidb_expr::schema::Schema>,
 ) -> String {
@@ -481,7 +481,7 @@ fn aggregate_info(
 /// aggregate's own ORDER BY.
 fn agg_func_text(
     eval_ctx: &dyn tidb_exprctx::Columns,
-    function: &tidb_expr::aggregation::AggFuncDesc,
+    function: &tidb_expression_aggregation::AggFuncDesc,
 ) -> String {
     let mut text = format!("{}(", function.base.name);
     if function.has_distinct {
@@ -489,7 +489,7 @@ fn agg_func_text(
     }
     let count = function.base.args.len();
     for (index, argument) in function.base.args.iter().enumerate() {
-        if function.base.name == tidb_expr::aggregation::names::GROUP_CONCAT && index + 1 == count {
+        if function.base.name == tidb_expression_aggregation::names::GROUP_CONCAT && index + 1 == count {
             if !function.order_by_items.is_empty() {
                 text.push_str(" order by ");
                 let items = function
@@ -2938,7 +2938,7 @@ fn index_join_normalized_info(
 
 /// Go `BasePhysicalAgg.explainInfo(true)` (`base_physical_agg.go:869`).
 fn aggregate_normalized_info(
-    functions: &[tidb_expr::aggregation::AggFuncDesc],
+    functions: &[tidb_expression_aggregation::AggFuncDesc],
     group_by: &[tidb_expr::expression::Expression],
     schema: Option<&tidb_expr::schema::Schema>,
 ) -> String {
@@ -2953,7 +2953,7 @@ fn aggregate_normalized_info(
             .and_then(|schema| schema.columns.get(index))
             .map_or_else(String::new, normalized_column_text);
         text.push_str("funcs:");
-        text.push_str(&tidb_expr::aggregation::explain_agg_func_normalized(
+        text.push_str(&tidb_expression_aggregation::explain_agg_func_normalized(
             function, false,
         ));
         text.push_str("->");

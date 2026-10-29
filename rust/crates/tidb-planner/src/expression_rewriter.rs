@@ -124,7 +124,7 @@
 //! and `popExistsSubPlan`.
 
 use tidb_datatype::{FieldName, FieldType, FieldTypeCode, FieldTypeFlags, QualifiedColumnName};
-use tidb_expr::aggregation::AggFuncDesc;
+use tidb_expression_aggregation::AggFuncDesc;
 use tidb_expr::column::{Column, CorrelatedColumn};
 use tidb_expr::constant::Constant;
 use tidb_expr::expr_util::builder::{FunctionBuilder, RealFunctionBuilder};

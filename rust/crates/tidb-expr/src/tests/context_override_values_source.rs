@@ -38,7 +38,7 @@
 fn test_ctx_with_handle_truncate_err_level() {
     use std::sync::Arc;
 
-    use crate::exprstatic::{
+    use tidb_exprstatic::{
         ctx_with_handle_truncate_err_level, with_connection_id, with_err_level_map, with_eval_ctx,
         with_location, with_type_flags, EvalContext, ExprContext,
     };

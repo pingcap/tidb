@@ -37,7 +37,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use tidb_expr::aggregation::ByItems;
+use tidb_expression_aggregation::ByItems;
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::builder::PreservingFunctionBuilder;
 use tidb_expr::expression::Expression;
