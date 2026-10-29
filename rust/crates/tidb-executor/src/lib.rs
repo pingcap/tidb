@@ -334,7 +334,6 @@ mod tests_jointest_join_b135_source;
 #[cfg(test)]
 mod tests_set_show_stats_slow_query_source;
 pub mod cluster_analyze_seam;
-pub mod cluster_account_seam;
 #[cfg(test)]
 pub(crate) mod test_temp_storage {
     use std::path::Path;

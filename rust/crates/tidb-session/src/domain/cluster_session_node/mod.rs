@@ -141,7 +141,7 @@
 //! is not re-derived from the AST at all; the session driver runs it against a
 //! scratch account table read from the cluster inside the change's own
 //! transaction, and the seam writes back whatever that table now says.
-//! [`tidb_executor::cluster_account_seam`] states why, and what a failure leaves
+//! [`tidb_domain_core::cluster_account_seam`] states why, and what a failure leaves
 //! behind.
 //!
 //! # What this mode refuses, and why
@@ -205,7 +205,7 @@ use tidb_txnkv::transaction::SchemaLeaseChecker;
 
 use tidb_stats_handle_cache::StatsTableRowCache;
 
-use tidb_executor::cluster_account_seam::ClusterAccountWriter;
+use tidb_domain_core::cluster_account_seam::ClusterAccountWriter;
 #[cfg(test)]
 use tidb_executor::cluster_analyze_seam::ClusterAnalyze;
 use tidb_domain_core::cluster_session::{cluster_session_catalog_with_templates, SkippedTable};

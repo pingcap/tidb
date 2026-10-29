@@ -15,7 +15,7 @@
 //! The route a `SET GLOBAL` statement takes when the cluster's stored
 //! sysvars live in `mysql.global_variables`, not just in this process.
 //!
-//! This is the executor's `cluster_account_seam`'s twin for the same reason: a
+//! This is [`crate::cluster_account_seam`]'s twin for the same reason: a
 //! `SET GLOBAL` run only against this node's in-memory
 //! [`tidb_domain::global_sysvars::GlobalSysvars`] would answer `OK` to a client while
 //! every other node in the cluster -- and this node itself, after a restart

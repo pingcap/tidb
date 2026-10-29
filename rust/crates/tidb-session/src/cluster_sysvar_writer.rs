@@ -151,7 +151,7 @@ where
                 &desired,
                 utc_now_timestamp(),
                 &mut |db, table, minimum, count| {
-                    tidb_executor::cluster_account_seam::reserve_system_row_ids(
+                    tidb_domain_core::cluster_account_seam::reserve_system_row_ids(
                         &self.reload_opener,
                         self.timeout,
                         db,

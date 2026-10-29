@@ -19,7 +19,7 @@
 //! (`tidb_session::user_table`). This planner makes the rows match a whole
 //! image, which only the node's boot needs: provisioning the startup
 //! identities of `--auth-file` into a fresh store
-//! (`tidb_executor::cluster_account_seam::seed_cluster_accounts`).
+//! (`tidb_domain_core::cluster_account_seam::seed_cluster_accounts`).
 //! After applying a plan,
 //! [`crate::cluster_privilege_load::load_cluster_privileges`] reads back the
 //! image that was planned.

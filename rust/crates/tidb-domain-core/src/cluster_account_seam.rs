@@ -15,7 +15,7 @@
 //! The route an account statement takes when the accounts live in the
 //! cluster, not in this process.
 //!
-//! This is `crate::domain::cluster_session_node`'s `ClusterDdl` seam's twin, and
+//! This is tidb-session's `domain::cluster_session_node` `ClusterDdl` seam's twin, and
 //! it exists for the same reason: a `CREATE USER` run against the node's own
 //! in-memory account table would change a *read* of somebody else's state and
 //! answer `OK` to a client whose account does not exist anywhere.
@@ -32,7 +32,7 @@
 //!    applies its meaning to (the registry knows what `GRANT SELECT ON *.*`
 //!    and `CREATE USER IF NOT EXISTS` mean);
 //! 2. the executor writes the statement's own rows on a system session
-//!    (`crate::user_table`, the SQL Go's executors issue);
+//!    (`tidb_executor::user_table`, the SQL Go's executors issue);
 //! 3. after the commit, [`ClusterAccountWriter::notify_update_privilege`]
 //!    reloads the node's live table from the tables and announces the change
 //!    on etcd.

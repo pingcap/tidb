@@ -29,7 +29,7 @@ use tidb_ddl::ddl_systable::MinJobIdRefresher;
 use tidb_infoschema_issyncer::real_tikv_catalog::load_catalog_from_cluster_at;
 use tidb_store_driver::real_tikv_read::ProductionReadProcessAuthority;
 
-use tidb_executor::cluster_account_seam::RealClusterAccountWriter;
+use tidb_domain_core::cluster_account_seam::RealClusterAccountWriter;
 use tidb_executor::cluster_analyze_seam::RealClusterAnalyze;
 use tidb_domain_core::cluster_session::SkippedTable;
 use tidb_stats_handle_lockstats::cluster_stats_lock_seam::RealClusterStatsLock;

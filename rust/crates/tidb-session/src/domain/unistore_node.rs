@@ -581,7 +581,7 @@ pub fn unistore_cluster_session_stack_from(
     // `cluster_account_seam::seed_cluster_accounts` for what happened when it
     // did not.
     // Go's root INSERT in `doDMLWorks` logs nothing.
-    tidb_executor::cluster_account_seam::seed_cluster_accounts(
+    tidb_domain_core::cluster_account_seam::seed_cluster_accounts(
         &opener,
         &users.accounts(),
         IN_PROCESS_TIMEOUT,
@@ -702,7 +702,7 @@ pub fn unistore_cluster_session_stack_from(
             IN_PROCESS_TIMEOUT,
         )),
         cluster_ddl,
-        Arc::new(tidb_executor::cluster_account_seam::RealClusterAccountWriter::new(
+        Arc::new(tidb_domain_core::cluster_account_seam::RealClusterAccountWriter::new(
             Arc::new(opener.clone()),
             users.accounts(),
             IN_PROCESS_TIMEOUT,

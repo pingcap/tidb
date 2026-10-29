@@ -50,7 +50,7 @@ use tidb_privilege::PrivilegeRegistry;
 use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId};
 
 use crate::bdr_role_store;
-use tidb_executor::cluster_account_seam::ClusterAccountWriter;
+use crate::cluster_account_seam::ClusterAccountWriter;
 use tidb_executor::cluster_analyze_seam::ClusterAnalyze;
 use crate::cluster_session::{
     cluster_session_catalog, detached_storage, KvTableTemplates, SkippedTable,
@@ -632,7 +632,7 @@ pub struct Domain {
     /// The route a stored-schema change this node can express takes.
     pub ddl: Arc<dyn ClusterDdl>,
     /// The route a stored-account change takes; see
-    /// the executor's `cluster_account_seam`.
+    /// [`crate::cluster_account_seam`].
     pub accounts: Arc<dyn ClusterAccountWriter>,
     /// The route a `SET GLOBAL` change takes; see
     /// [`crate::cluster_sysvar_seam`].
