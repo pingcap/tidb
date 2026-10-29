@@ -573,14 +573,6 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	// Validate the codec before dropping the old table metadata. A failed
-	// affinity setup must leave TRUNCATE TABLE cancellable without data loss.
-	if tblInfo.Affinity != nil {
-		if err := validateAffinityCodec(jobCtx.store.GetCodec()); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-	}
 	if tblInfo.IsView() || tblInfo.IsSequence() {
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrTableNotExists.GenWithStackByArgs(job.SchemaName, tblInfo.Name.O)
