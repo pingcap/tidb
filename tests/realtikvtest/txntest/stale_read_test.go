@@ -919,7 +919,10 @@ func TestAsOfTimestampCompatibility(t *testing.T) {
 	tk.MustExec("create table t5(id int);")
 	defer tk.MustExec("drop table if exists t5;")
 	time.Sleep(time.Second)
-	time1 := time.Now().Add(-500 * time.Millisecond)
+	// Use the same clock as the schema timestamps, since the local clock may differ from PD's.
+	ts, err := store.CurrentVersion(oracle.GlobalTxnScope)
+	require.NoError(t, err)
+	time1 := oracle.GetTimeFromTS(ts.Ver)
 	testcases := []struct {
 		beginSQL string
 		sql      string
@@ -958,7 +961,9 @@ func TestAsOfTimestampCompatibility(t *testing.T) {
 	tk.MustExec(`create table test.table1 (id int primary key, a int);`)
 	defer tk.MustExec("drop table if exists test.table1;")
 	time.Sleep(time.Second)
-	time1 = time.Now().Add(-500 * time.Millisecond)
+	ts, err = store.CurrentVersion(oracle.GlobalTxnScope)
+	require.NoError(t, err)
+	time1 = oracle.GetTimeFromTS(ts.Ver)
 	tk.MustExec(fmt.Sprintf("explain analyze select * from test.table1 as of timestamp '%s' where id = 1;", time1.Format("2006-1-2 15:04:05.000")))
 }
 
