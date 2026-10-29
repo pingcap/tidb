@@ -583,3 +583,145 @@ pub struct ColumnStatsUsage {
     /// Number of logical operators visited.
     pub operator_count: u64,
 }
+
+/// The common planner view when the caller owns Go `TableInfo` rather than
+/// an executor `KvTable`. Tuple fields are column `(id, unsigned)` and index
+/// `(id, column_count, unique)` metadata.
+pub fn table_statistics_from_table_schema(
+    stats: &crate::Table,
+    schema_columns: &[(i64, bool)],
+    schema_indexes: &[(i64, usize, bool)],
+) -> TableStatistics {
+    let existence = stats.existence_map.as_ref().map(|map| {
+        map.read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    });
+    // Go keeps ColAndIdxExistenceMap independently of resident histograms.
+    // Unloaded analyzed items must remain discoverable by the load collector.
+    let mut column_stats_existence = schema_columns
+        .iter()
+        .filter(|(id, _)| existence.as_ref().is_some_and(|map| map.has(*id, false)))
+        .map(|(id, _)| {
+            (
+                *id,
+                existence
+                    .as_ref()
+                    .is_some_and(|map| map.has_analyzed(*id, false)),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut index_stats_existence = schema_indexes
+        .iter()
+        .filter(|(id, _, _)| existence.as_ref().is_some_and(|map| map.has(*id, true)))
+        .map(|(id, _, _)| {
+            (
+                *id,
+                existence
+                    .as_ref()
+                    .is_some_and(|map| map.has_analyzed(*id, true)),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut columns = BTreeMap::new();
+    let mut indexes = BTreeMap::new();
+    let mut column_fm_sketches = BTreeMap::new();
+    let mut index_fm_sketches = BTreeMap::new();
+    let mut column_load_status = BTreeMap::new();
+    let mut index_load_status = BTreeMap::new();
+    let mut mv_index_ids = std::collections::BTreeSet::new();
+    for column in stats.hist_coll.stable_columns() {
+        let column = column
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let id = column.item_id();
+        column_stats_existence.insert(
+            id,
+            existence
+                .as_ref()
+                .is_some_and(|map| map.has_analyzed(id, false)),
+        );
+        // Go keeps EmptyColumn objects: presence selects the ordinary
+        // Selectivity path even when the histogram is not initialized.
+        let unsigned = schema_columns
+            .iter()
+            .find(|schema| schema.0 == id)
+            .is_some_and(|schema| schema.1);
+        columns.insert(
+            id,
+            ColumnStats {
+                histogram: column.histogram.clone(),
+                topn: column.top_n.clone(),
+                cms: column.cmsketch.clone(),
+                stats_ver: column.stats_version,
+                unsigned,
+            },
+        );
+        if let Some(sketch) = column.fm_sketch.clone() {
+            column_fm_sketches.insert(id, sketch);
+        }
+        column_load_status.insert(id, column.stats_loaded_status);
+    }
+    for index in stats.hist_coll.stable_indices() {
+        let index = index
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let id = index.item_id();
+        index_stats_existence.insert(
+            id,
+            existence
+                .as_ref()
+                .is_some_and(|map| map.has_analyzed(id, true)),
+        );
+        // Preserve unloaded index placeholders and their original load state.
+        let Some(schema) = schema_indexes.iter().find(|schema| schema.0 == id) else {
+            continue;
+        };
+        indexes.insert(
+            id,
+            IndexStats {
+                histogram: index.histogram.clone(),
+                topn: index.top_n.clone(),
+                cms: index.cmsketch.clone(),
+                stats_ver: index.stats_version,
+                num_columns: schema.1,
+                unique: schema.2,
+            },
+        );
+        if let Some(sketch) = index.fm_sketch.clone() {
+            index_fm_sketches.insert(id, sketch);
+        }
+        index_load_status.insert(id, index.stats_loaded_status);
+        if index.info.as_ref().is_some_and(|info| info.mv_index) {
+            mv_index_ids.insert(id);
+        }
+    }
+    let mut statistics = TableStatistics::new(
+        stats.hist_coll.realtime_count,
+        stats.hist_coll.modify_count,
+        columns,
+        indexes,
+    )
+    .with_stat_versions(stats.version, stats.last_analyze_version)
+    // Go `StatsInfo.StatsVersion` is `HistColl.StatsVer`, the per-object
+    // stats version, NOT `Table.Version` (the stats_meta TSO). A loaded dump
+    // whose columns carry `stats_ver = 2` therefore has a real distribution
+    // even when its meta version is unset.
+    .with_stats_ver(i64::from(stats.hist_coll.stats_version))
+    .with_load_statuses(column_load_status, index_load_status)
+    .with_stats_existence(column_stats_existence, index_stats_existence)
+    .with_fm_sketches(column_fm_sketches, index_fm_sketches);
+    // Go `GetStatsTable` marks the planner copy pseudo when the canonical
+    // table has no initialized column or index statistics. Do not infer this
+    // from the reduced maps above: unloaded placeholder items can still have
+    // histogram metadata and therefore survive that conversion.
+    // Pinned `GetStatsTable` rule 2 returns a query-time pseudo table whenever
+    // the canonical cache object's realtime count is zero, including an
+    // initialized, explicitly analyzed empty table. Keep the cache identity
+    // (`cache_pseudo`) separate from that planner decision.
+    statistics.pseudo =
+        stats.hist_coll.pseudo || stats.hist_coll.realtime_count == 0 || !stats.is_initialized();
+    statistics.cache_pseudo = stats.hist_coll.pseudo;
+    statistics.mv_index_ids = mv_index_ids;
+    statistics
+}
+

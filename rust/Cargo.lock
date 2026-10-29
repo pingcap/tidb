@@ -4956,18 +4956,12 @@ dependencies = [
 name = "tidb-stats-handle"
 version = "0.0.0"
 dependencies = [
- "base64 0.22.1",
  "crossbeam-channel",
  "serde_json",
  "tidb-config",
- "tidb-datatype",
- "tidb-hack",
  "tidb-model",
  "tidb-stats",
  "tidb-stats-handle-metrics",
- "tidb-table",
- "tidb-util",
- "tracing",
 ]
 
 [[package]]
@@ -5163,7 +5157,9 @@ dependencies = [
 name = "tidb-stats-handle-storage"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
+ "serde_json",
  "tidb-ast",
  "tidb-config",
  "tidb-datatype",

@@ -143,7 +143,7 @@ pub fn historical_stats_data_blocks(
             .unwrap_or(0),
         _ => json.version,
     };
-    let blocks = tidb_stats_handle::load_stats::json_table_to_blocks(json, MAX_COLUMN_SIZE)
+    let blocks = tidb_stats_handle_storage::json::json_table_to_blocks(json, MAX_COLUMN_SIZE)
         .map_err(|error| StatsWriteError::HistoricalData(error.to_string()))?;
     Ok((version, blocks))
 }

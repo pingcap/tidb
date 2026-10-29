@@ -21,7 +21,7 @@
 use std::sync::Arc;
 
 use crate::analyze::exec::AnalyzeExec;
-use tidb_stats_handle::load_stats::{parse_stats_json, JsonTable};
+use tidb_stats_handle_storage::json::{parse_stats_json, JsonTable};
 use crate::{DriverError, KvTable, TableEntry};
 use tidb_util::stringutil::go_to_lower;
 

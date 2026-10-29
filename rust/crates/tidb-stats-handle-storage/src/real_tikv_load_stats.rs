@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use tidb_stats_handle::load_stats::JsonTable;
+use crate::json::JsonTable;
 use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
 use tidb_infoschema::cluster_catalog::{load_cluster_catalog, ClusterCatalog};

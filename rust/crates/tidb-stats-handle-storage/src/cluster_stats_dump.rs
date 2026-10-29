@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use tidb_datatype::{Datum, SessionTimeZone};
-use tidb_stats_handle::load_stats::{blocks_to_json_table, gen_json_table_from_stats, LoadStatsError};
+use crate::json::{blocks_to_json_table, gen_json_table_from_stats, LoadStatsError};
 use tidb_model::table_info::TableInfo;
 use tidb_stats::{JsonPredicateColumn, JsonTable, Table, TIDB_GLOBAL_STATS};
 

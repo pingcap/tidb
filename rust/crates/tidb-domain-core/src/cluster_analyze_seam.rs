@@ -97,7 +97,7 @@ pub trait ClusterAnalyze: Send + Sync {
     /// Loads one client-transferred JSON statistics dump into cluster storage.
     fn load_stats(
         &self,
-        _json: &tidb_stats_handle::load_stats::JsonTable,
+        _json: &tidb_stats_handle_storage::json::JsonTable,
         _historical_stats_enabled: bool,
     ) -> Result<ClusterLoadStatsReport, SqlQueryError> {
         Err(SqlQueryError::unknown(
@@ -270,7 +270,7 @@ where
 
     fn load_stats(
         &self,
-        json: &tidb_stats_handle::load_stats::JsonTable,
+        json: &tidb_stats_handle_storage::json::JsonTable,
         historical_stats_enabled: bool,
     ) -> Result<ClusterLoadStatsReport, SqlQueryError> {
         let current = self.stats.load();

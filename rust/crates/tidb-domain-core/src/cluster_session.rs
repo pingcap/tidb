@@ -379,7 +379,7 @@ pub fn planner_statistics(stats: &tidb_stats::Table, table: &TableInfo) -> Table
             (index.id, index.columns.len(), index.unique)
         })
         .collect::<Vec<_>>();
-    tidb_stats_handle::load_stats::table_statistics_from_table_schema(stats, &columns, &indexes)
+    tidb_stats::table_statistics::table_statistics_from_table_schema(stats, &columns, &indexes)
 }
 
 #[cfg(test)]

@@ -20,7 +20,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub mod load_stats;
 pub mod source;
 pub mod sync_load;
 

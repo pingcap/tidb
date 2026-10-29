@@ -949,7 +949,7 @@ fn stats_ndv_batch_load_stats_replaces_and_clears_fm_sketches() {
                 .unwrap();
             let table = stored.to_statistics_table(&table_info);
             let dumped =
-                tidb_stats_handle::load_stats::gen_json_table_from_stats("test", "t", &table, None)
+                tidb_stats_handle_storage::json::gen_json_table_from_stats("test", "t", &table, None)
                     .unwrap();
             let map = if is_index {
                 dumped.indices.unwrap()
@@ -3617,7 +3617,7 @@ fn historical_stats_data_round_trips_through_stats_history() {
         })
         .collect::<Vec<_>>();
     blocks.sort_by_key(|(sequence, _)| *sequence);
-    let restored = tidb_stats_handle::load_stats::blocks_to_json_table(
+    let restored = tidb_stats_handle_storage::json::blocks_to_json_table(
         &blocks
             .into_iter()
             .map(|(_, block)| block)
@@ -3645,7 +3645,7 @@ fn historical_stats_data_plans_one_statement_per_block() {
         ..JsonTable::default()
     };
     let blocks =
-        tidb_stats_handle::load_stats::json_table_to_blocks(&json, 30).expect("small blocks compress");
+        tidb_stats_handle_storage::json::json_table_to_blocks(&json, 30).expect("small blocks compress");
     assert!(blocks.len() > 1);
 
     let history = catalog

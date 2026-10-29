@@ -22,5 +22,6 @@ pub mod cluster_stats_load;
 pub mod cluster_stats_write;
 pub mod cluster_stats_dump;
 pub mod cluster_load_stats;
+pub mod json;
 pub mod real_tikv_load_stats;
 pub mod real_tikv_stats_write;

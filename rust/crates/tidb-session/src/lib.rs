@@ -2432,7 +2432,7 @@ impl Session {
             panic!("{schema}.{name} is not a stored table");
         };
         self.update_stats_cache_with(vec![Arc::new(
-            tidb_stats_handle::load_stats::statistics_table_from_planner_statistics(
+            tidb_stats_handle_storage::json::statistics_table_from_planner_statistics(
                 table,
                 physical_id,
                 statistics,

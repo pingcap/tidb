@@ -21,7 +21,7 @@
 //! transactions the Go statistics handle uses.
 
 use tidb_datatype::FieldTypeFlags;
-use tidb_stats_handle::load_stats::{
+use crate::json::{
     statistics_table_from_json_schema, JsonTable, LoadStatsColumnSchema, LoadStatsError,
     LoadStatsIndexSchema, LoadStatsTableSchema, TIDB_GLOBAL_STATS,
 };
