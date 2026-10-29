@@ -52,13 +52,9 @@ use tidb_infoschema::cluster_catalog::load_cluster_catalog;
 use tidb_stats_handle_storage::cluster_stats_load::{
     column_types_of, ClusterStatsItem, ClusterStatsLoader, ClusterTableStats,
 };
-use tidb_stats_handle_storage::cluster_stats_write::{
-    locate, plan_analyze_stats_write, set, StatsRows, StatsWriteError,
-    plan_get_predicate_columns, plan_historical_stats_meta_lock,
-    plan_historical_stats_meta_replace, plan_independent_index_stats_write,
-    plan_partial_stats_write, plan_stats_meta_version_refresh, AnalyzeStatsMeta,
-    AnalyzeStatsWriteScope, StatsWritePlan,
-};
+use tidb_stats_handle_storage::cluster_stats_write::{plan_analyze_stats_write, plan_historical_stats_meta_lock, plan_historical_stats_meta_replace, plan_independent_index_stats_write, plan_partial_stats_write, plan_stats_meta_version_refresh, AnalyzeStatsMeta, AnalyzeStatsWriteScope};
+use tidb_syssession::stats_table_rows::{locate, set, StatsRows, StatsWriteError, StatsWritePlan};
+use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::plan_get_predicate_columns;
 use tidb_store_driver::cluster_table_storage::{
     commit_pessimistic_statement, lock_pessimistic_statement, PessimisticStatementTransactionError,
     SessionTransaction,
@@ -2618,7 +2614,7 @@ fn selected_columns<S: tidb_infoschema::cluster_catalog::MetaSnapshot>(
     catalog: &tidb_infoschema::cluster_catalog::ClusterCatalog,
     table: &tidb_model::table_info::TableInfo,
     statement: &AnalyzeStatement,
-) -> Result<(Option<HashSet<i64>>, StatsWritePlan, bool), tidb_stats_handle_storage::cluster_stats_write::StatsWriteError>
+) -> Result<(Option<HashSet<i64>>, StatsWritePlan, bool), tidb_syssession::stats_table_rows::StatsWriteError>
 {
     match &statement.columns {
         AnalyzeColumnChoice::All => Ok((None, StatsWritePlan::default(), false)),
@@ -2644,7 +2640,7 @@ fn selected_columns<S: tidb_infoschema::cluster_catalog::MetaSnapshot>(
                     .iter_deref()
                     .find(|column| column.read().name.lowercase() == name.go_to_lower())
                     .ok_or_else(|| {
-                        tidb_stats_handle_storage::cluster_stats_write::StatsWriteError::MissingTable(format!(
+                        tidb_syssession::stats_table_rows::StatsWriteError::MissingTable(format!(
                             "column `{name}` does not exist in `{}`",
                             table.name.original()
                         ))
@@ -2661,7 +2657,7 @@ fn selected_columns_for_choice<S: tidb_infoschema::cluster_catalog::MetaSnapshot
     catalog: &tidb_infoschema::cluster_catalog::ClusterCatalog,
     table: &tidb_model::table_info::TableInfo,
     choice: &AnalyzeColumnChoice,
-) -> Result<(Option<HashSet<i64>>, StatsWritePlan, bool), tidb_stats_handle_storage::cluster_stats_write::StatsWriteError>
+) -> Result<(Option<HashSet<i64>>, StatsWritePlan, bool), tidb_syssession::stats_table_rows::StatsWriteError>
 {
     let statement = AnalyzeStatement {
         schema: String::new(),

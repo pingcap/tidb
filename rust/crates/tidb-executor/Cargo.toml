@@ -14,6 +14,7 @@ autotests = false
 test-util = []
 
 [dependencies]
+tidb-stats-handle-usage-predicatecolumn = { path = "../tidb-stats-handle-usage-predicatecolumn" }
 tidb-stats-handle-types = { path = "../tidb-stats-handle-types" }
 tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
@@ -103,6 +104,7 @@ tidb-vardef = { path = "../tidb-vardef" }
 tracing = "0.1"
 
 [dev-dependencies]
+tidb-stats-handle-autoanalyze = { path = "../tidb-stats-handle-autoanalyze" }
 tidb-session = { path = "../tidb-session" }
 tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
 tidb-sessionctx = { path = "../tidb-sessionctx", features = ["test-util"] }

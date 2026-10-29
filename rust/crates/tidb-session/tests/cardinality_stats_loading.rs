@@ -180,10 +180,9 @@ impl tidb_executor::driver::StatisticsSource for CanonicalStatistics {
 /// InitStatsLite / InitStats / existence-map lifecycle.
 #[test]
 fn builtin_in_estimate_survives_statistics_initialization() {
-    use tidb_stats_handle_storage::cluster_stats_write::{
-        insert_table_stats_statements, plan_insert_table_stats_statement,
-        plan_stats_delta_statement, stats_delta_statements,
-    };
+    use tidb_stats_handle_storage::cluster_stats_write::{insert_table_stats_statements, plan_insert_table_stats_statement};
+    use tidb_stats_handle_usage::session_stats_collect::plan_stats_delta_statement;
+    use tidb_stats_handle_usage::session_stats_collect::stats_delta_statements;
     use tidb_stats_handle_syncload::real_tikv_stats::{
         load_initial_stats_snapshot_with_memory_limits, InitialStatsLoad, StatsTarget,
     };

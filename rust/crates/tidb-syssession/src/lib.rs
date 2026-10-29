@@ -1344,5 +1344,6 @@ mod tests {
 pub mod advisory_locks;
 pub mod mysql_system_tables;
 pub mod system_row_write;
+pub mod stats_table_rows;
 pub mod cluster_sysvar_load;
 pub mod cluster_sysvar_write;

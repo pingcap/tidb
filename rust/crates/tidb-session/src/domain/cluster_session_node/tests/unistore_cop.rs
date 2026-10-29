@@ -5209,7 +5209,7 @@ fn show_analyze_status_reads_persisted_jobs_like_go() {
     let mut job_id = 0;
     handle
         .commit_stats_plan(|snapshot, _| {
-            let (created_job_id, plan) = tidb_stats_handle_storage::cluster_stats_write::plan_insert_analyze_job(
+            let (created_job_id, plan) = tidb_stats_handle_autoanalyze::analyze_jobs::plan_insert_analyze_job(
                 snapshot,
                 &stack.factory.catalog.load(),
                 "test",
@@ -5228,7 +5228,7 @@ fn show_analyze_status_reads_persisted_jobs_like_go() {
         .expect("pending job commits");
     handle
         .commit_stats_plan(|snapshot, _| {
-            tidb_stats_handle_storage::cluster_stats_write::plan_start_analyze_job(
+            tidb_stats_handle_autoanalyze::analyze_jobs::plan_start_analyze_job(
                 snapshot,
                 &stack.factory.catalog.load(),
                 job_id,
@@ -5240,7 +5240,7 @@ fn show_analyze_status_reads_persisted_jobs_like_go() {
         .expect("running job commits");
     handle
         .commit_stats_plan(|snapshot, _| {
-            tidb_stats_handle_storage::cluster_stats_write::plan_update_analyze_job_progress(
+            tidb_stats_handle_autoanalyze::analyze_jobs::plan_update_analyze_job_progress(
                 snapshot,
                 &stack.factory.catalog.load(),
                 job_id,
@@ -5305,7 +5305,7 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
     let mut job_id = 0;
     handle
         .commit_stats_plan(|snapshot, _| {
-            let (created_job_id, plan) = tidb_stats_handle_storage::cluster_stats_write::plan_insert_analyze_job(
+            let (created_job_id, plan) = tidb_stats_handle_autoanalyze::analyze_jobs::plan_insert_analyze_job(
                 snapshot,
                 &factory.catalog.load(),
                 "test",
@@ -5324,7 +5324,7 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
         .expect("pending job commits");
     handle
         .commit_stats_plan(|snapshot, _| {
-            tidb_stats_handle_storage::cluster_stats_write::plan_start_analyze_job(
+            tidb_stats_handle_autoanalyze::analyze_jobs::plan_start_analyze_job(
                 snapshot,
                 &factory.catalog.load(),
                 job_id,
@@ -5336,7 +5336,7 @@ fn failed_analysis_duration_resets_the_pooled_session_timezone() {
         .expect("running job commits");
     handle
         .commit_stats_plan(|snapshot, _| {
-            tidb_stats_handle_storage::cluster_stats_write::plan_finish_analyze_job(
+            tidb_stats_handle_autoanalyze::analyze_jobs::plan_finish_analyze_job(
                 snapshot,
                 &factory.catalog.load(),
                 job_id,
@@ -5417,7 +5417,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
     ] {
         handle
             .commit_stats_plan(|snapshot, _| {
-                let (_, plan) = tidb_stats_handle_storage::cluster_stats_write::plan_insert_analyze_job(
+                let (_, plan) = tidb_stats_handle_autoanalyze::analyze_jobs::plan_insert_analyze_job(
                     snapshot,
                     &stack.factory.catalog.load(),
                     "test",
@@ -5437,7 +5437,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
     for id in [2, 3, 4] {
         handle
             .commit_stats_plan(|snapshot, _| {
-                tidb_stats_handle_storage::cluster_stats_write::plan_start_analyze_job(
+                tidb_stats_handle_autoanalyze::analyze_jobs::plan_start_analyze_job(
                     snapshot,
                     &stack.factory.catalog.load(),
                     id,
@@ -5450,7 +5450,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
     }
     handle
         .commit_stats_plan(|snapshot, _| {
-            tidb_stats_handle_storage::cluster_stats_write::plan_finish_analyze_job(
+            tidb_stats_handle_autoanalyze::analyze_jobs::plan_finish_analyze_job(
                 snapshot,
                 &stack.factory.catalog.load(),
                 2,
@@ -5464,7 +5464,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
         .expect("temporary finish commits");
     handle
         .commit_stats_plan(|snapshot, _| {
-            tidb_stats_handle_storage::cluster_stats_write::plan_start_analyze_job(
+            tidb_stats_handle_autoanalyze::analyze_jobs::plan_start_analyze_job(
                 snapshot,
                 &stack.factory.catalog.load(),
                 2,
@@ -5476,7 +5476,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
         .expect("NULL-process running job commits");
     handle
         .commit_stats_plan(|snapshot, _| {
-            tidb_stats_handle_storage::cluster_stats_write::plan_finish_analyze_job(
+            tidb_stats_handle_autoanalyze::analyze_jobs::plan_finish_analyze_job(
                 snapshot,
                 &stack.factory.catalog.load(),
                 5,
@@ -5555,7 +5555,7 @@ fn corrupted_analyze_job_cleanup_matches_go() {
         [[
             "failed",
             "1",
-            tidb_stats_handle_storage::cluster_stats_write::CORRUPTED_ANALYZE_JOB_FAILURE,
+            tidb_stats_handle_autoanalyze::analyze_jobs::CORRUPTED_ANALYZE_JOB_FAILURE,
         ]]
     );
 }

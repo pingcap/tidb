@@ -778,4 +778,4 @@ mod tests {
     }
 }
 
-pub mod cluster_predicate_column;
+pub mod session_stats_collect;

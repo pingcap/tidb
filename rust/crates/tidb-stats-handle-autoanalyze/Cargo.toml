@@ -1,0 +1,19 @@
+[package]
+name = "tidb-stats-handle-autoanalyze"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB auto-analyze job records: Go pkg/statistics/handle/autoanalyze (Rust rewrite)."
+
+[dependencies]
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-model = { path = "../tidb-model" }
+tidb-stats = { path = "../tidb-stats" }
+tidb-syssession = { path = "../tidb-syssession" }
+tidb-table = { path = "../tidb-table" }
+
+[lints]
+workspace = true

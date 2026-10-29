@@ -13,7 +13,7 @@
 use std::sync::Arc;
 use tidb_executor::cluster_analyze::AnalyzeStatement;
 use tidb_stats_handle_lockstats::lock_target::ClusterStatsLockStatement;
-use tidb_stats_handle_storage::cluster_stats_write::StatsWritePlan;
+use tidb_syssession::stats_table_rows::StatsWritePlan;
 use tidb_datatype::current_time::utc_now_timestamp;
 use tidb_executor::real_tikv_analyze::{AnalyzeJobKind, AnalyzeJobLifecycle, AnalyzeJobSpec};
 use tidb_executor::analyze::exec::AnalyzeExec as _;
@@ -83,7 +83,7 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
             let snapshot = self.transactions.open_snapshot("default")?;
             let read_ts = snapshot.start_ts();
             let mut snapshot = super::SnapshotMetaSnapshot::new(snapshot);
-            let (job_id, plan) = tidb_stats_handle_storage::cluster_stats_write::plan_insert_analyze_job(
+            let (job_id, plan) = tidb_stats_handle_autoanalyze::analyze_jobs::plan_insert_analyze_job(
                 &mut snapshot,
                 &catalog,
                 &spec.schema,
@@ -119,7 +119,7 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
 
     fn start(&self, job_id: u64) {
         if let Err(error) = self.commit_analyze_job_plan(|snapshot, catalog| {
-            tidb_stats_handle_storage::cluster_stats_write::plan_start_analyze_job(
+            tidb_stats_handle_autoanalyze::analyze_jobs::plan_start_analyze_job(
                 snapshot,
                 catalog,
                 job_id,
@@ -139,7 +139,7 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
 
     fn update_progress(&self, job_id: u64, processed_rows: i64) {
         if let Err(error) = self.commit_analyze_job_plan(|snapshot, catalog| {
-            tidb_stats_handle_storage::cluster_stats_write::plan_update_analyze_job_progress(
+            tidb_stats_handle_autoanalyze::analyze_jobs::plan_update_analyze_job_progress(
                 snapshot,
                 catalog,
                 job_id,
@@ -170,7 +170,7 @@ impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
             AnalyzeJobKind::GlobalStatsMerge => 0,
         };
         if let Err(error) = self.commit_analyze_job_plan(|snapshot, catalog| {
-            tidb_stats_handle_storage::cluster_stats_write::plan_finish_analyze_job(
+            tidb_stats_handle_autoanalyze::analyze_jobs::plan_finish_analyze_job(
                 snapshot,
                 catalog,
                 job_id,

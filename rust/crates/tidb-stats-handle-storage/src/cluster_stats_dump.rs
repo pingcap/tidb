@@ -24,7 +24,7 @@ use tidb_model::table_info::TableInfo;
 use tidb_stats::{JsonPredicateColumn, JsonTable, Table, TIDB_GLOBAL_STATS};
 
 use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
-use tidb_stats_handle_usage::cluster_predicate_column::load_column_stats_usage_for_table;
+use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::load_column_stats_usage_for_table;
 use crate::cluster_stats_load::{column_types_of, ClusterStatsLoader};
 use tidb_syssession::mysql_system_tables::{
     scan_system_table_prefixed, SystemRow, SystemTableError, SystemTableView,

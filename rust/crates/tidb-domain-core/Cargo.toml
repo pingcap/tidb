@@ -12,6 +12,8 @@ description = "TiDB domain: Go pkg/domain's Domain and the cluster services it o
 test-util = []
 
 [dependencies]
+tidb-stats-handle-autoanalyze = { path = "../tidb-stats-handle-autoanalyze" }
+tidb-stats-handle-usage-predicatecolumn = { path = "../tidb-stats-handle-usage-predicatecolumn" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-stats-handle-lockstats = { path = "../tidb-stats-handle-lockstats" }
 tidb-stats-handle-storage = { path = "../tidb-stats-handle-storage" }

@@ -11,6 +11,10 @@ description = "TiDB session statistics and column-usage collection."
 workspace = true
 
 [dependencies]
+chrono.workspace = true
+tidb-stats-handle-storage = { path = "../tidb-stats-handle-storage" }
+tidb-table = { path = "../tidb-table" }
+tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-syssession = { path = "../tidb-syssession" }

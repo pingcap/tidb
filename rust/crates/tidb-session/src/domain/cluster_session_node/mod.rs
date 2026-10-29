@@ -1477,7 +1477,7 @@ impl<'s> ClusterServerSession<'s> {
                 },
                 is_locked: locked.contains(&logical_table_id),
             };
-            for statement in tidb_stats_handle_storage::cluster_stats_write::stats_delta_statements(&[update]) {
+            for statement in tidb_stats_handle_usage::session_stats_collect::stats_delta_statements(&[update]) {
                 let now =
                     system_time_timestamp(SystemTime::now()).map_err(SqlQueryError::unknown)?;
                 transactions::stage_pessimistic_statement(
@@ -1486,7 +1486,7 @@ impl<'s> ClusterServerSession<'s> {
                     self.session.lock_wait_timeout(),
                     |snapshot, _| {
                         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                        let plan = tidb_stats_handle_storage::cluster_stats_write::plan_stats_delta_statement(
+                        let plan = tidb_stats_handle_usage::session_stats_collect::plan_stats_delta_statement(
                             &mut snapshot,
                             &catalog,
                             &statement,

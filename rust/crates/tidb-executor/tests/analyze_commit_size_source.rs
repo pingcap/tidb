@@ -32,8 +32,8 @@ use tidb_datatype::{Datum, Time, TimeType};
 use tidb_infoschema::cluster_catalog::{
     load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
-use tidb_stats_handle_usage::cluster_predicate_column::ColumnStatsTimeInfo;
-use tidb_stats_handle_usage::cluster_predicate_column::{
+use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::ColumnStatsTimeInfo;
+use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::{
     load_column_stats_usage, load_column_stats_usage_for_table,
 };
 use tidb_stats_handle_storage::cluster_stats_dump::{
@@ -44,26 +44,18 @@ use tidb_stats_handle_storage::cluster_stats_load::{
     TableSizeStats,
 };
 use tidb_executor::real_tikv_analyze::{load_analyze_options, plan_analyze_options_write};
-use tidb_stats_handle_storage::cluster_stats_write::{
-    count_outdated_historical_stats, historical_stats_data_blocks, insert_table_stats_statements,
-    load_stats_gc_candidates, load_stats_gc_timestamp,
-    load_stats_locked_table_ids, loaded_stats_item_statements,
-    plan_analyze_stats_write, plan_change_global_stats_id, plan_column_stats_usage_dump,
-    plan_column_stats_usage_write, plan_delete_analyze_jobs, plan_delete_table_stats,
-    plan_exchange_partition_stats_update, plan_finish_analyze_job, plan_get_predicate_columns,
-    plan_historical_stats_data_block, plan_historical_stats_data_delete_for_table,
-    plan_historical_stats_meta_delete_for_table, plan_historical_stats_meta_lock,
-    plan_historical_stats_meta_replace, plan_independent_index_stats_write,
-    plan_insert_analyze_job, plan_insert_column_default_bucket, plan_insert_column_stats,
-    plan_insert_table_stats_statement, plan_loaded_stats_item_statement,
-    plan_loaded_stats_meta_write, plan_loaded_stats_usage_write,
-    plan_outdated_historical_data_delete, plan_outdated_historical_meta_delete,
-    plan_partial_stats_write, plan_partition_stats_write, plan_start_analyze_job,
-    plan_stats_delta_statement, plan_stats_gc_timestamp_write, plan_stats_item_delete,
-    plan_stats_meta_version_refresh, plan_stats_write, plan_update_analyze_job_progress,
-    plan_update_stats_version, stats_delta_statements, AnalyzeStatsMeta, AnalyzeStatsWriteScope,
-    InsertTableStatsStatement, LoadedStatsItemStatement, StatsDeltaStatement, StatsWriteError,
-};
+use tidb_stats_handle_storage::cluster_stats_write::{count_outdated_historical_stats, historical_stats_data_blocks, insert_table_stats_statements, load_stats_gc_candidates, load_stats_gc_timestamp, load_stats_locked_table_ids, loaded_stats_item_statements, plan_analyze_stats_write, plan_change_global_stats_id, plan_column_stats_usage_write, plan_delete_table_stats, plan_exchange_partition_stats_update, plan_historical_stats_data_block, plan_historical_stats_data_delete_for_table, plan_historical_stats_meta_delete_for_table, plan_historical_stats_meta_lock, plan_historical_stats_meta_replace, plan_independent_index_stats_write, plan_insert_column_default_bucket, plan_insert_column_stats, plan_insert_table_stats_statement, plan_loaded_stats_item_statement, plan_loaded_stats_meta_write, plan_loaded_stats_usage_write, plan_outdated_historical_data_delete, plan_outdated_historical_meta_delete, plan_partial_stats_write, plan_partition_stats_write, plan_stats_gc_timestamp_write, plan_stats_item_delete, plan_stats_meta_version_refresh, plan_stats_write, plan_update_stats_version, AnalyzeStatsMeta, AnalyzeStatsWriteScope, InsertTableStatsStatement, LoadedStatsItemStatement};
+use tidb_syssession::stats_table_rows::{StatsWriteError};
+use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::plan_get_predicate_columns;
+use tidb_stats_handle_usage::session_stats_collect::plan_stats_delta_statement;
+use tidb_stats_handle_usage::session_stats_collect::stats_delta_statements;
+use tidb_stats_handle_usage::session_stats_collect::StatsDeltaStatement;
+use tidb_stats_handle_usage::session_stats_collect::plan_column_stats_usage_dump;
+use tidb_stats_handle_autoanalyze::analyze_jobs::plan_delete_analyze_jobs;
+use tidb_stats_handle_autoanalyze::analyze_jobs::plan_finish_analyze_job;
+use tidb_stats_handle_autoanalyze::analyze_jobs::plan_update_analyze_job_progress;
+use tidb_stats_handle_autoanalyze::analyze_jobs::plan_start_analyze_job;
+use tidb_stats_handle_autoanalyze::analyze_jobs::plan_insert_analyze_job;
 use tidb_session::mysql_bootstrap::{plan_mysql_bootstrap, BootstrapEnvironment, BootstrapWrite};
 use tidb_syssession::mysql_system_tables::{
     scan_system_table, SystemRow, SystemTableError, SystemTableView,

@@ -3864,6 +3864,7 @@ dependencies = [
  "tidb-sqlexec",
  "tidb-stats",
  "tidb-stats-handle",
+ "tidb-stats-handle-autoanalyze",
  "tidb-stats-handle-autoanalyze-exec",
  "tidb-stats-handle-autoanalyze-priorityqueue",
  "tidb-stats-handle-autoanalyze-refresher",
@@ -3874,6 +3875,7 @@ dependencies = [
  "tidb-stats-handle-storage",
  "tidb-stats-handle-syncload",
  "tidb-stats-handle-usage",
+ "tidb-stats-handle-usage-predicatecolumn",
  "tidb-stats-handle-util",
  "tidb-store-driver",
  "tidb-syssession",
@@ -4005,6 +4007,7 @@ dependencies = [
  "tidb-sqlexec",
  "tidb-stats",
  "tidb-stats-handle",
+ "tidb-stats-handle-autoanalyze",
  "tidb-stats-handle-cache",
  "tidb-stats-handle-lockstats",
  "tidb-stats-handle-metrics",
@@ -4013,6 +4016,7 @@ dependencies = [
  "tidb-stats-handle-types",
  "tidb-stats-handle-usage",
  "tidb-stats-handle-usage-indexusage",
+ "tidb-stats-handle-usage-predicatecolumn",
  "tidb-stats-handle-util",
  "tidb-stmtsummary",
  "tidb-store-driver",
@@ -4818,6 +4822,7 @@ dependencies = [
  "tidb-sqlexec",
  "tidb-stats",
  "tidb-stats-handle",
+ "tidb-stats-handle-autoanalyze",
  "tidb-stats-handle-autoanalyze-exec",
  "tidb-stats-handle-autoanalyze-priorityqueue",
  "tidb-stats-handle-autoanalyze-refresher",
@@ -4960,6 +4965,18 @@ dependencies = [
  "tidb-table",
  "tidb-util",
  "tracing",
+]
+
+[[package]]
+name = "tidb-stats-handle-autoanalyze"
+version = "0.0.0"
+dependencies = [
+ "tidb-datatype",
+ "tidb-infoschema",
+ "tidb-model",
+ "tidb-stats",
+ "tidb-syssession",
+ "tidb-table",
 ]
 
 [[package]]
@@ -5130,7 +5147,6 @@ dependencies = [
  "tidb-ast",
  "tidb-config",
  "tidb-datatype",
- "tidb-ddl-build",
  "tidb-hack",
  "tidb-infoschema",
  "tidb-infoschema-issyncer",
@@ -5140,7 +5156,7 @@ dependencies = [
  "tidb-stats",
  "tidb-stats-handle",
  "tidb-stats-handle-cache",
- "tidb-stats-handle-usage",
+ "tidb-stats-handle-usage-predicatecolumn",
  "tidb-store-driver",
  "tidb-syssession",
  "tidb-table",
@@ -5177,11 +5193,15 @@ version = "0.0.0"
 name = "tidb-stats-handle-usage"
 version = "0.0.0"
 dependencies = [
+ "chrono",
  "tidb-datatype",
  "tidb-infoschema",
  "tidb-model",
+ "tidb-stats-handle-storage",
  "tidb-stats-handle-usage-indexusage",
  "tidb-syssession",
+ "tidb-table",
+ "tidb-txnkv",
  "tidb-variable",
 ]
 
@@ -5199,6 +5219,16 @@ dependencies = [
  "chrono",
  "tidb-model",
  "tidb-stats-handle-usage-collector",
+]
+
+[[package]]
+name = "tidb-stats-handle-usage-predicatecolumn"
+version = "0.0.0"
+dependencies = [
+ "tidb-datatype",
+ "tidb-infoschema",
+ "tidb-model",
+ "tidb-syssession",
 ]
 
 [[package]]

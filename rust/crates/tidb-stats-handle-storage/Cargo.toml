@@ -8,10 +8,10 @@ repository.workspace = true
 description = "TiDB statistics storage: Go pkg/statistics/handle/storage (Rust rewrite)."
 
 [dependencies]
+tidb-stats-handle-usage-predicatecolumn = { path = "../tidb-stats-handle-usage-predicatecolumn" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-config = { path = "../tidb-config" }
 tidb-datatype = { path = "../tidb-datatype" }
-tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
@@ -21,7 +21,6 @@ tidb-parser = { path = "../tidb-parser" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-stats-handle = { path = "../tidb-stats-handle" }
 tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
-tidb-stats-handle-usage = { path = "../tidb-stats-handle-usage" }
 tidb-store-driver = { path = "../tidb-store-driver" }
 tidb-syssession = { path = "../tidb-syssession" }
 tidb-table = { path = "../tidb-table" }

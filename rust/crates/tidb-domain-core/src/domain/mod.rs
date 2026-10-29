@@ -396,7 +396,7 @@ impl tidb_executor::show::stats::AnalyzeStatusProvider for ClusterAnalyzeStatusP
         resource_group: &str,
     ) -> Result<Vec<tidb_stats::AnalyzeStatusJob>, String> {
         let snapshot = self.transactions.open_snapshot(resource_group)?;
-        tidb_stats_handle_storage::cluster_stats_write::load_analyze_status_jobs(
+        tidb_stats_handle_autoanalyze::analyze_jobs::load_analyze_status_jobs(
             &mut SnapshotMetaSnapshot::new(snapshot),
             &self.catalog.load(),
         )
@@ -463,7 +463,7 @@ impl tidb_executor::show::stats::ColumnStatsUsageProvider for ClusterColumnStats
     > {
         let snapshot = self.transactions.open_snapshot(resource_group)?;
         let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-        tidb_stats_handle_usage::cluster_predicate_column::load_column_stats_usage(
+        tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::load_column_stats_usage(
             &mut snapshot,
             &self.catalog.load(),
             location,
@@ -1106,7 +1106,7 @@ impl Domain {
             auto_ids: Arc::clone(&self.auto_ids),
         }
         .commit_stats_plan(|snapshot, _| {
-            tidb_stats_handle_storage::cluster_stats_write::plan_delete_analyze_jobs(
+            tidb_stats_handle_autoanalyze::analyze_jobs::plan_delete_analyze_jobs(
                 snapshot,
                 &self.catalog.load(),
                 &cutoff,
@@ -1149,7 +1149,7 @@ impl Domain {
             auto_ids: Arc::clone(&self.auto_ids),
         }
         .commit_stats_plan(|snapshot, _| {
-            tidb_stats_handle_storage::cluster_stats_write::plan_cleanup_corrupted_analyze_jobs_on_current_instance(
+            tidb_stats_handle_autoanalyze::analyze_jobs::plan_cleanup_corrupted_analyze_jobs_on_current_instance(
                 snapshot,
                 &self.catalog.load(),
                 &instance,
@@ -1188,7 +1188,7 @@ impl Domain {
             auto_ids: Arc::clone(&self.auto_ids),
         }
         .commit_stats_plan(|snapshot, _| {
-            tidb_stats_handle_storage::cluster_stats_write::plan_cleanup_corrupted_analyze_jobs_on_dead_instances(
+            tidb_stats_handle_autoanalyze::analyze_jobs::plan_cleanup_corrupted_analyze_jobs_on_dead_instances(
                 snapshot,
                 &self.catalog.load(),
                 &alive_instances,
@@ -1389,7 +1389,7 @@ impl Domain {
                 .collect::<Result<Vec<_>, _>>()?;
             let plan = {
                 let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
-                tidb_stats_handle_storage::cluster_stats_write::plan_column_stats_usage_dump(
+                tidb_stats_handle_usage::session_stats_collect::plan_column_stats_usage_dump(
                     &mut snapshot,
                     &self.catalog.load(),
                     &converted,
@@ -1519,7 +1519,7 @@ impl Domain {
                     |table_id| parents.get(&table_id).copied(),
                     &locked,
                 );
-                for statement in tidb_stats_handle_storage::cluster_stats_write::stats_delta_statements(&updates) {
+                for statement in tidb_stats_handle_usage::session_stats_collect::stats_delta_statements(&updates) {
                     let ((), mutations) =
                         tidb_store_driver::cluster_table_storage::lock_pessimistic_statement_with(
                             transaction.start_ts(),
@@ -1546,7 +1546,7 @@ impl Domain {
                             |snapshot, _start_ts| {
                                 let mut snapshot = SnapshotMetaSnapshot::new(snapshot);
                                 let plan =
-                                    tidb_stats_handle_storage::cluster_stats_write::plan_stats_delta_statement(
+                                    tidb_stats_handle_usage::session_stats_collect::plan_stats_delta_statement(
                                         &mut snapshot,
                                         &catalog,
                                         &statement,
@@ -2340,7 +2340,7 @@ impl ClusterHistoricalStatsHandle {
         build: impl FnOnce(
             &mut SnapshotMetaSnapshot,
             u64,
-        ) -> Result<tidb_stats_handle_storage::cluster_stats_write::StatsWritePlan, String>,
+        ) -> Result<tidb_syssession::stats_table_rows::StatsWritePlan, String>,
     ) -> Result<(), String> {
         let snapshot = self.transactions.open_snapshot("default")?;
         let read_ts = snapshot.start_ts();
