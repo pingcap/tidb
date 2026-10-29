@@ -20,12 +20,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/server/internal/util"
-	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -82,9 +80,7 @@ func TestStatusServerClose(t *testing.T) {
 			reading := make(chan struct{}, 1)
 			s.statusListener = &statusReadListener{Listener: s.statusListener, reading: reading}
 			servingDone := make(chan struct{})
-			s.statusWG.Add(1)
 			go func() {
-				defer s.statusWG.Done()
 				s.startStatusServerAndRPCServer(http.NewServeMux())
 				close(servingDone)
 			}()
@@ -127,80 +123,6 @@ func TestStatusServerClose(t *testing.T) {
 			}
 		})
 	}
-}
-
-type statusCloseListener struct {
-	net.Listener
-	closed chan struct{}
-}
-
-func (l *statusCloseListener) Close() error {
-	err := l.Listener.Close()
-	select {
-	case l.closed <- struct{}{}:
-	default:
-	}
-	return err
-}
-
-type delayedStatusController struct {
-	testStandbyController
-	entered chan struct{}
-	release chan struct{}
-}
-
-func (c *delayedStatusController) Handler(*Server) (string, *http.ServeMux) {
-	close(c.entered)
-	<-c.release
-	return "/test-standby/", http.NewServeMux()
-}
-
-func TestStatusServerCloseDuringStartup(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
-	cfg := util.NewTestConfig()
-	cfg.Status.StatusPort = 0
-	s := NewTestServer(cfg)
-	s.driver = NewTiDBDriver(store)
-	s.SetDomain(dom)
-	controller := &delayedStatusController{entered: make(chan struct{}), release: make(chan struct{})}
-	s.StandbyController = controller
-	var releaseOnce sync.Once
-	defer func() {
-		releaseOnce.Do(func() { close(controller.release) })
-		s.Close()
-	}()
-	require.NoError(t, s.startStatusHTTP())
-	select {
-	case <-controller.entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("status setup did not reach the startup barrier")
-	}
-	listenerClosed := make(chan struct{}, 1)
-	s.statusListener = &statusCloseListener{Listener: s.statusListener, closed: listenerClosed}
-	shutdownDone := make(chan struct{})
-	go func() {
-		s.Close()
-		close(shutdownDone)
-	}()
-	select {
-	case <-listenerClosed:
-	case <-time.After(5 * time.Second):
-		t.Fatal("shutdown did not close the status listener before waiting for startup")
-	}
-	select {
-	case <-shutdownDone:
-		t.Fatal("shutdown did not wait for status setup")
-	default:
-	}
-	releaseOnce.Do(func() { close(controller.release) })
-	select {
-	case <-shutdownDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("status shutdown did not finish after startup resumed")
-	}
-	require.Nil(t, s.statusServer.Load())
-	require.Nil(t, s.grpcServer)
 }
 
 type delayedStatusListener struct {

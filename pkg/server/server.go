@@ -149,7 +149,6 @@ type Server struct {
 
 	statusAddr     string
 	statusListener net.Listener
-	statusWG       sync.WaitGroup
 	statusServer   atomic.Pointer[http.Server]
 	grpcServer     *grpc.Server
 	inShutdownMode *uatomic.Bool
@@ -698,11 +697,6 @@ func (s *Server) closeListener() {
 			terror.Log(errors.Trace(err))
 		}
 	}
-	// Closing the listener also interrupts cmux's pending protocol reads. Join
-	// startup and serving before reading the final HTTP/gRPC/AutoID pointers.
-	// TODO: Make AutoID startup cancelable before this wait. Its initial etcd
-	// lease request has no deadline and can block shutdown during an outage.
-	s.statusWG.Wait()
 	if statusServer := s.statusServer.Load(); statusServer != nil {
 		err := statusServer.Close()
 		terror.Log(errors.Trace(err))

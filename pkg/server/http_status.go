@@ -21,7 +21,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	stderrors "errors"
 	"fmt"
 	"io"
 	"net"
@@ -93,11 +92,7 @@ func (s *Server) startStatusHTTP() error {
 	if err != nil {
 		return err
 	}
-	s.statusWG.Add(1)
-	go func() {
-		defer s.statusWG.Done()
-		s.startHTTPServer()
-	}()
+	go s.startHTTPServer()
 	return nil
 }
 
@@ -121,10 +116,8 @@ func (s *Server) startDiagnosticHTTP() error {
 	// Publish before Serve starts so closeListener also handles early shutdown.
 	s.statusServer.Store(statusServer)
 	listener := s.statusListener
-	s.statusWG.Add(1)
 	go util.WithRecovery(func() {
-		defer s.statusWG.Done()
-		if err := statusServer.Serve(listener); err != nil && err != http.ErrServerClosed && !stderrors.Is(err, net.ErrClosed) {
+		if err := statusServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 			logutil.BgLogger().Warn("diagnostic http server error", zap.Error(err))
 		}
 	}, nil)
@@ -714,17 +707,12 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	s.statusServer.Store(statusServer)
 	s.grpcServer = grpcServer
 
-	var servingWG sync.WaitGroup
-	servingWG.Add(2)
-	defer servingWG.Wait()
 	go util.WithRecovery(func() {
-		defer servingWG.Done()
 		err := grpcServer.Serve(grpcL)
 		logutil.BgLogger().Warn("grpc server error", zap.Error(err))
 	}, nil)
 
 	go util.WithRecovery(func() {
-		defer servingWG.Done()
 		err := statusServer.Serve(httpL)
 		logutil.BgLogger().Warn("http server error", zap.Error(err))
 	}, nil)
