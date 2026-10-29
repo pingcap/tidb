@@ -11,6 +11,7 @@ description = "TiDB util/execdetails: Go pkg/util/execdetails (Rust rewrite)."
 workspace = true
 
 [dependencies]
+tidb-kv = { path = "../tidb-kv" }
 prometheus = { version = "0.14", default-features = false }
 tidb-config = { path = "../tidb-config" }
 tidb-pd-client = { path = "../tidb-pd-client" }

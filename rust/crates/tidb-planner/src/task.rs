@@ -41,7 +41,8 @@
 
 use crate::physical::PhysicalPlan;
 use tidb_planner_property::MppPartitionType;
-use crate::physical_table_reader::{ReadReqType, StoreType};
+use crate::physical_table_reader::ReadReqType;
+use tidb_kv::store_type::StoreType;
 use tidb_planner_core_base::PlanError;
 use std::sync::Arc;
 use tidb_expr::expression::Expression;
@@ -1045,7 +1046,7 @@ impl CopTask {
         // shape for the single-fragment table scan; multi-fragment MPP
         // planning stays a documented gap.
         let (table_plan, read_req_type) =
-            if store_type == crate::physical_table_reader::StoreType::TiFlash {
+            if store_type == tidb_kv::store_type::StoreType::TiFlash {
                 let mut sender_base = crate::physical::BasePhysicalPlan::new(
                     allocator,
                     "ExchangeSender",
@@ -1417,7 +1418,7 @@ mod tests {
             table_as_name: None,
             dynamic_partition_access: None,
             cost_columns: Vec::new(),
-            store_type: crate::physical_table_reader::StoreType::TiKv,
+            store_type: tidb_kv::store_type::StoreType::TiKv,
             keep_order: false,
             desc: false,
             ranges: tidb_ranger::types::Ranges::new(),
@@ -1503,7 +1504,7 @@ mod tests {
             "TableScan" => PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
                 base,
                 table_id: 1,
-                store_type: crate::physical_table_reader::StoreType::TiKv,
+                store_type: tidb_kv::store_type::StoreType::TiKv,
                 ..crate::physical::PhysicalTableScan::default()
             }),
             "IndexScan" => PhysicalPlan::IndexScan(crate::physical::PhysicalIndexScan {
@@ -1721,7 +1722,7 @@ mod tests {
             table_as_name: None,
             dynamic_partition_access: None,
             cost_columns: Vec::new(),
-            store_type: crate::physical_table_reader::StoreType::TiKv,
+            store_type: tidb_kv::store_type::StoreType::TiKv,
             keep_order: false,
             desc: false,
             ranges: tidb_ranger::types::Ranges::new(),
@@ -1745,7 +1746,7 @@ mod tests {
         };
         assert_eq!(
             reader.store_type,
-            crate::physical_table_reader::StoreType::TiKv
+            tidb_kv::store_type::StoreType::TiKv
         );
         assert!(
             matches!(
@@ -5875,7 +5876,7 @@ mod attach_tests {
                 table_as_name: None,
                 dynamic_partition_access: None,
                 cost_columns: Vec::new(),
-                store_type: crate::physical_table_reader::StoreType::TiKv,
+                store_type: tidb_kv::store_type::StoreType::TiKv,
                 keep_order: false,
                 desc: false,
                 ranges: tidb_ranger::types::Ranges::new(),

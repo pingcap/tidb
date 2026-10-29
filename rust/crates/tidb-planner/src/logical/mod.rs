@@ -139,7 +139,7 @@ use tidb_expr::schema::Schema;
 
 use crate::physical::PhysicalPlan;
 use tidb_planner_property::PhysicalProperty;
-use crate::physical_table_reader::StoreType;
+use tidb_kv::store_type::StoreType;
 use tidb_planner_core_base::{BasePlan, PlanError, PlanIdAllocator, PossiblePropertiesInfo};
 use tidb_planner_property::stats_info::StatsInfo;
 

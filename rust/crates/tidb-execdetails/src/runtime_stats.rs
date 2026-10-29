@@ -52,6 +52,7 @@
 //! dependency. Shared runtime-statistics
 //! state retains Go's mutex/atomic synchronization.
 
+use tidb_kv::store_type::StoreType;
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
@@ -85,34 +86,6 @@ pub use crate::{
 /// number of details kept exactly before [`Percentile`] switches to the
 /// digest.
 pub const MAX_DETAILS_NUMS_FOR_ONE_QUERY: usize = 1000;
-
-/// Go `kv.StoreType` (`pkg/kv/kv.go`): the type of storage engine, with
-/// Go's zero value (`TiKV`) as the default.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum StoreType {
-    /// Go `kv.TiKV`.
-    #[default]
-    TiKv,
-    /// Go `kv.TiFlash`.
-    TiFlash,
-    /// Go `kv.TiDB`.
-    TiDb,
-    /// Go `kv.UnSpecified`.
-    Unspecified,
-}
-
-impl StoreType {
-    /// Go `StoreType.Name`: the name of the store type.
-    #[must_use]
-    pub fn name(self) -> &'static str {
-        match self {
-            StoreType::TiFlash => "tiflash",
-            StoreType::TiDb => "tidb",
-            StoreType::TiKv => "tikv",
-            StoreType::Unspecified => "unspecified",
-        }
-    }
-}
 
 /// Go `util.go`'s `canGetFloat64`: a value that can be read as `float64`.
 pub trait CanGetFloat64 {

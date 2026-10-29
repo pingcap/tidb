@@ -135,7 +135,7 @@ pub(super) fn build_prepared_index_merge_task(
         table_as_name: ds.table_as_name.clone(),
         dynamic_partition_access: ds.dynamic_partition_access.clone(),
         cost_columns: ds.table_columns.clone(),
-        store_type: crate::physical_table_reader::StoreType::TiKv,
+        store_type: tidb_kv::store_type::StoreType::TiKv,
         keep_order: false,
         desc: false,
         ranges: tidb_ranger::types::Ranges::new(),

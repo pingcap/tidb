@@ -1345,7 +1345,7 @@ fn build_table_scan(
     // Go `PhysicalTableScan.StoreType`: the planner assigned this scan to the
     // columnar replica, so the pushdown request names TiFlash and the storage
     // seam lowers it through MPP dispatch instead of the TiKV cop path.
-    if scan.store_type == tidb_planner::physical_table_reader::StoreType::TiFlash {
+    if scan.store_type == tidb_kv::store_type::StoreType::TiFlash {
         source.set_read_engine(tidb_distsql::remote_scan::PushdownReadEngine::TiFlash);
         source.set_schema_version(catalog.metadata_version());
     }
@@ -6000,7 +6000,7 @@ fn mem_table_read_of(plan: &PhysicalPlan) -> Option<crate::mem_table_retrieval::
                 false,
             ),
             PhysicalPlan::TableScan(scan)
-                if scan.store_type == tidb_planner::physical_table_reader::StoreType::TiDb =>
+                if scan.store_type == tidb_kv::store_type::StoreType::TiDb =>
             {
                 (
                     &scan.db_name,
@@ -6687,14 +6687,14 @@ fn build_with_state(
         )),
         PhysicalPlan::MemTable(scan) => build_mem_table(plan, scan, catalog, ctx),
         PhysicalPlan::TableScan(scan)
-            if scan.store_type == tidb_planner::physical_table_reader::StoreType::TiDb =>
+            if scan.store_type == tidb_kv::store_type::StoreType::TiDb =>
         {
             build_cluster_table_scan(plan, scan, catalog, ctx)
         }
         // A reader on the TiDB store has no coprocessor to push to: its pushed
         // operators are the executors themselves.
         PhysicalPlan::TableReader(reader)
-            if reader.store_type == tidb_planner::physical_table_reader::StoreType::TiDb =>
+            if reader.store_type == tidb_kv::store_type::StoreType::TiDb =>
         {
             let child = reader.table_plan.as_deref().ok_or_else(|| {
                 DriverError::unsupported("a TiDB-store reader has no pushed plan")
@@ -7198,7 +7198,7 @@ fn by_item_column_ids(
 fn union_scan_reader(plan: &PhysicalPlan) -> Result<Option<UnionScanReader>, DriverError> {
     Ok(match plan {
         PhysicalPlan::TableReader(reader)
-            if reader.store_type != tidb_planner::physical_table_reader::StoreType::TiDb =>
+            if reader.store_type != tidb_kv::store_type::StoreType::TiDb =>
         {
             let Some(scan) = reader.table_plan.as_deref().and_then(embedded_table_scan) else {
                 return Ok(None);
@@ -8721,7 +8721,7 @@ use super::*;
         let plan = PhysicalPlan::TableReader(PhysicalTableReader {
             base,
             table_plan: Some(Box::new(scan)),
-            store_type: tidb_planner::physical_table_reader::StoreType::TiKv,
+            store_type: tidb_kv::store_type::StoreType::TiKv,
             is_common_handle: false,
             read_req_type: tidb_planner::physical_table_reader::ReadReqType::Cop,
             plan_part_info: None,

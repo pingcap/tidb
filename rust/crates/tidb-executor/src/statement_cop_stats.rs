@@ -145,15 +145,15 @@ impl RuntimeStatsCollSink {
 }
 
 /// Go `kv.StoreType` of the select result, as the runtime-stats kind.
-fn runtime_store_type(store_type: tidb_txnkv::StoreType) -> tidb_execdetails::runtime_stats::StoreType {
+fn runtime_store_type(store_type: tidb_txnkv::StoreType) -> tidb_kv::store_type::StoreType {
     if store_type == tidb_txnkv::StoreType::TiFlash {
-        tidb_execdetails::runtime_stats::StoreType::TiFlash
+        tidb_kv::store_type::StoreType::TiFlash
     } else if store_type == tidb_txnkv::StoreType::TiDb {
-        tidb_execdetails::runtime_stats::StoreType::TiDb
+        tidb_kv::store_type::StoreType::TiDb
     } else if store_type == tidb_txnkv::StoreType::TiKv {
-        tidb_execdetails::runtime_stats::StoreType::TiKv
+        tidb_kv::store_type::StoreType::TiKv
     } else {
-        tidb_execdetails::runtime_stats::StoreType::Unspecified
+        tidb_kv::store_type::StoreType::Unspecified
     }
 }
 

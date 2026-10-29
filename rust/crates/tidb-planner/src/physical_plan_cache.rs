@@ -97,7 +97,7 @@ fn physical_plan_cacheable(
             return Err("PhysicalMemTable plan is un-cacheable".to_owned());
         }
         PhysicalPlan::TableReader(reader)
-            if reader.store_type == crate::physical_table_reader::StoreType::TiFlash =>
+            if reader.store_type == tidb_kv::store_type::StoreType::TiFlash =>
         {
             return Err("TiFlash plan is un-cacheable".to_owned());
         }

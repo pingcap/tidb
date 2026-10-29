@@ -1087,9 +1087,8 @@ pub fn merge_tiflash_ru_consumption(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime_stats::{
-        CopScanDetail, CopTimeDetail, RuntimeStats as _, RuntimeStatsColl, StoreType,
-    };
+    use crate::runtime_stats::{CopScanDetail, CopTimeDetail, RuntimeStats as _, RuntimeStatsColl};
+    use tidb_kv::store_type::StoreType;
     use tidb_proto::tipb::executor_execution_summary::DetailInfo as ExecutionSummaryDetailInfo;
 
     /// Go `mockExecutorExecutionSummaryForTiFlash` (execdetails_test.go).

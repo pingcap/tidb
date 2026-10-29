@@ -994,7 +994,7 @@ fn physical_operator_name(
         // Go `PhysicalTableScan.TP`: a cluster table's scan is a memory
         // table scan whatever its ranges.
         PhysicalPlan::TableScan(scan)
-            if scan.store_type == tidb_planner::physical_table_reader::StoreType::TiDb =>
+            if scan.store_type == tidb_kv::store_type::StoreType::TiDb =>
         {
             "MemTableScan".to_owned()
         }
@@ -1070,7 +1070,7 @@ fn physical_access(
         // Go `PhysicalTableScan.AccessObject` names the scan's own `Table.Name.O`
         // (or its alias); a cluster table has no stored table to look up.
         PhysicalPlan::TableScan(scan)
-            if scan.store_type == tidb_planner::physical_table_reader::StoreType::TiDb =>
+            if scan.store_type == tidb_kv::store_type::StoreType::TiDb =>
         {
             Some(AccessObject::Scan(ScanAccessObject {
                 database: scan.db_name.clone(),
@@ -1424,7 +1424,7 @@ fn physical_operator_info(
         PhysicalPlan::Limit(limit) => limit.explain_info(RedactMode::Disable),
         // Go `PhysicalTableScan.OperatorInfo`: nothing for a cluster table.
         PhysicalPlan::TableScan(scan)
-            if scan.store_type == tidb_planner::physical_table_reader::StoreType::TiDb =>
+            if scan.store_type == tidb_kv::store_type::StoreType::TiDb =>
         {
             String::new()
         }
@@ -1760,14 +1760,14 @@ fn physical_explain_operator(
                         ExplainTask::Cop {
                             request: "cop".to_owned(),
                             store: match reader.store_type {
-                                tidb_planner::physical_table_reader::StoreType::TiFlash => {
+                                tidb_kv::store_type::StoreType::TiFlash => {
                                     "tiflash".to_owned()
                                 }
-                                tidb_planner::physical_table_reader::StoreType::TiDb => {
+                                tidb_kv::store_type::StoreType::TiDb => {
                                     "tidb".to_owned()
                                 }
-                                tidb_planner::physical_table_reader::StoreType::TiKv
-                                | tidb_planner::physical_table_reader::StoreType::Unknown(_) => {
+                                tidb_kv::store_type::StoreType::TiKv
+                                | tidb_kv::store_type::StoreType::Unspecified => {
                                     "tikv".to_owned()
                                 }
                             },
@@ -2726,13 +2726,13 @@ fn encode_observed_operator(operator: &ExplainOperator, depth: isize, output: &m
 }
 
 /// Go `normalizeStore`: the store a pushed-down plan runs on, as
-/// `kv.StoreType` numbers it (TiKV 0, TiFlash 1, TiDB 2).
-fn reader_store_code(store: tidb_planner::physical_table_reader::StoreType) -> u8 {
+/// `kv.StoreType` numbers it (TiKV 0, TiFlash 1, TiDB 2, UnSpecified 255).
+fn reader_store_code(store: tidb_kv::store_type::StoreType) -> u8 {
     match store {
-        tidb_planner::physical_table_reader::StoreType::TiFlash => 1,
-        tidb_planner::physical_table_reader::StoreType::TiDb => 2,
-        tidb_planner::physical_table_reader::StoreType::TiKv
-        | tidb_planner::physical_table_reader::StoreType::Unknown(_) => 0,
+        tidb_kv::store_type::StoreType::TiFlash => 1,
+        tidb_kv::store_type::StoreType::TiDb => 2,
+        tidb_kv::store_type::StoreType::TiKv => 0,
+        tidb_kv::store_type::StoreType::Unspecified => 255,
     }
 }
 

@@ -819,7 +819,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
 /// reader reads TiFlash.
 fn plan_storage_flags(plan: &tidb_planner::physical::PhysicalPlan) -> (bool, bool) {
     use tidb_planner::physical::PhysicalPlan;
-    use tidb_planner::physical_table_reader::StoreType;
+    use tidb_kv::store_type::StoreType;
     let (mut tikv, mut tiflash) = (false, false);
     let mut stack = vec![plan];
     while let Some(node) = stack.pop() {

@@ -18,20 +18,6 @@
 //! second metadata-only `PhysicalTableReaderPlan` here caused bounded scans to
 //! bypass the real physical tree, so that facade has been removed.
 
-/// Opaque storage kind copied by the source Clone implementation.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum StoreType {
-    /// TiKV storage.
-    #[default]
-    TiKv,
-    /// TiFlash storage.
-    TiFlash,
-    /// Go `kv.TiDB`: the scan of a cluster (memory) table, served by TiDB.
-    TiDb,
-    /// Unknown storage values remain opaque.
-    Unknown(u8),
-}
-
 /// Go `physicalop.ReadReqType`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ReadReqType {

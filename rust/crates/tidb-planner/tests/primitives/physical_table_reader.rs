@@ -19,12 +19,13 @@
 //! - `TestTablePlansAndTablePlanInPhysicalTableReaderClone` at
 //!   `pkg/planner/core/planbuilder_test.go:312`
 
+use tidb_kv::store_type::StoreType;
 use tidb_planner::{
     access_path::{ResolvedTableDescriptor, ResolvedTableScanKind, TableScanExplainIdSuffix},
     physical::{
         BasePhysicalPlan, PhysicalHashJoin, PhysicalPlan, PhysicalTableReader, PhysicalTableScan,
     },
-    physical_table_reader::{ReadReqType, StoreType},
+    physical_table_reader::ReadReqType,
     tikv_scan_spec::TiKvTableScanSpec,
 };
 

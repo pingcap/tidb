@@ -3661,9 +3661,9 @@ fn find_best_task_4_logical_data_source_paths(
                     // Go `getPossibleAccessPaths`: a cluster table's table
                     // path is served by TiDB.
                     store_type: if ds.is_cluster_table {
-                        crate::physical_table_reader::StoreType::TiDb
+                        tidb_kv::store_type::StoreType::TiDb
                     } else {
-                        crate::physical_table_reader::StoreType::TiKv
+                        tidb_kv::store_type::StoreType::TiKv
                     },
                     keep_order,
                     desc,
@@ -3807,7 +3807,7 @@ fn find_best_task_4_logical_data_source_paths(
                     table_as_name: ds.table_as_name.clone(),
                     dynamic_partition_access: ds.dynamic_partition_access.clone(),
                     cost_columns: ds.table_columns.clone(),
-                    store_type: crate::physical_table_reader::StoreType::TiFlash,
+                    store_type: tidb_kv::store_type::StoreType::TiFlash,
                     keep_order,
                     desc,
                     ranges,
@@ -4572,7 +4572,7 @@ fn find_best_task_4_logical_data_source_paths(
                         table_as_name: ds.table_as_name.clone(),
                         dynamic_partition_access: ds.dynamic_partition_access.clone(),
                         cost_columns: ds.table_columns.clone(),
-                        store_type: crate::physical_table_reader::StoreType::TiKv,
+                        store_type: tidb_kv::store_type::StoreType::TiKv,
                         keep_order: false,
                         desc: false,
                         // The lookup's table side reads BY HANDLE from
@@ -5937,7 +5937,7 @@ mod tests {
         };
         assert_eq!(
             reader.store_type,
-            crate::physical_table_reader::StoreType::TiFlash
+            tidb_kv::store_type::StoreType::TiFlash
         );
         // Go `adjustReadReqType` (`physical_table_reader.go:299`): a TiFlash
         // reader whose table plan is an ExchangeSender reads through MPP, and
@@ -5960,7 +5960,7 @@ mod tests {
         };
         assert_eq!(
             scan.store_type,
-            crate::physical_table_reader::StoreType::TiFlash
+            tidb_kv::store_type::StoreType::TiFlash
         );
     }
 

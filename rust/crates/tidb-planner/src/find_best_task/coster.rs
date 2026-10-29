@@ -413,7 +413,7 @@ impl Ver2Coster {
                             .and_then(tidb_planner_property::stats_info::StatsInfo::hist_coll),
                     )
                 };
-                if scan.store_type == crate::physical_table_reader::StoreType::TiFlash {
+                if scan.store_type == tidb_kv::store_type::StoreType::TiFlash {
                     crate::plan_cost_ver2::tiflash_table_scan_cost(
                         self.cost_option(),
                         rows,
@@ -464,7 +464,7 @@ impl Ver2Coster {
                 },
                 self.factors.task_scan(
                     scan.is_temporary,
-                    crate::physical_table_reader::StoreType::TiKv,
+                    tidb_kv::store_type::StoreType::TiKv,
                     task_type,
                     scan.desc,
                 ),
@@ -482,7 +482,7 @@ impl Ver2Coster {
                     .as_deref()
                     .map_or(rows, |plan| Self::rows(plan));
                 let child_task_type =
-                    if reader.store_type == crate::physical_table_reader::StoreType::TiFlash {
+                    if reader.store_type == tidb_kv::store_type::StoreType::TiFlash {
                         TaskType::Mpp
                     } else {
                         TaskType::CopSingleRead
@@ -512,7 +512,7 @@ impl Ver2Coster {
                     ]),
                     self.session.distsql_scan_concurrency,
                 );
-                if reader.store_type == crate::physical_table_reader::StoreType::TiFlash
+                if reader.store_type == tidb_kv::store_type::StoreType::TiFlash
                     && self.session.mpp_enforced
                     && !self.cost_option().is_some_and(|option| {
                         option.cost_flag() & tidb_planner_costusage::COST_FLAG_RECALCULATE != 0

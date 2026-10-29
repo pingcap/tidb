@@ -42,6 +42,7 @@
 mod memory;
 pub mod part_info;
 pub use part_info::PhysPlanPartInfo;
+use tidb_kv::store_type::StoreType;
 use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 mod resolve_indices;
 pub mod shuffle;
@@ -59,7 +60,7 @@ use tidb_planner_property::{
     TaskType,
 };
 use crate::physical_table_reader::{
-    MissingTableDescriptorError, ReadReqType, StoreType, TableScanCountError,
+    MissingTableDescriptorError, ReadReqType, TableScanCountError,
 };
 use tidb_planner_core_base::{BasePlan, PlanError, PlanIdAllocator};
 use tidb_planner_property::stats_info::StatsInfo;
@@ -1263,7 +1264,7 @@ pub struct PhysicalTableScan {
     pub cost_columns: Vec<Column>,
     /// Go `StoreType`: which engine serves this scan. `CopTask.GetStoreType`
     /// reads it at the leaf.
-    pub store_type: crate::physical_table_reader::StoreType,
+    pub store_type: tidb_kv::store_type::StoreType,
     /// Go `KeepOrder`: the scan delivers handle order.
     pub keep_order: bool,
     /// Go `Desc`: the scan runs backward.
@@ -2349,7 +2350,7 @@ pub struct PhysicalTableReader {
     /// Go `TablePlan`: the pushed-down side.
     pub table_plan: Option<Box<PhysicalPlan>>,
     /// Go `StoreType`, read off the bottom `PhysicalTableScan`.
-    pub store_type: crate::physical_table_reader::StoreType,
+    pub store_type: tidb_kv::store_type::StoreType,
     /// Go `IsCommonHandle`, read off the scan's table.
     pub is_common_handle: bool,
     /// Go `ReadReqType`.
@@ -5427,7 +5428,7 @@ pub fn merge_continuous_selections(plan: &mut PhysicalPlan) {
     }
     plan.base_mut().set_children(children);
     if let PhysicalPlan::TableReader(reader) = plan {
-        if reader.store_type == crate::physical_table_reader::StoreType::TiFlash {
+        if reader.store_type == tidb_kv::store_type::StoreType::TiFlash {
             if let Some(table_plan) = reader.table_plan.as_deref_mut() {
                 merge_continuous_selections(table_plan);
             }
@@ -5479,7 +5480,7 @@ fn eliminate_projection_preserving_shuffle(
     );
 
     if let PhysicalPlan::TableReader(reader) = &mut plan {
-        if reader.store_type == crate::physical_table_reader::StoreType::TiFlash {
+        if reader.store_type == tidb_kv::store_type::StoreType::TiFlash {
             if let Some(table_plan) = reader.table_plan.take() {
                 reader.table_plan = Some(Box::new(eliminate_projection_preserving_shuffle(
                     *table_plan,

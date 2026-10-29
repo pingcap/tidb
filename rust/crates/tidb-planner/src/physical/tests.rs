@@ -257,7 +257,7 @@ fn physical_plan_cache_admission_matches_go_refusals() {
 
     let tiflash = PhysicalPlan::TableReader(PhysicalTableReader {
         base: BasePhysicalPlan::with_id(911, "TableReader", 0),
-        store_type: crate::physical_table_reader::StoreType::TiFlash,
+        store_type: tidb_kv::store_type::StoreType::TiFlash,
         ..PhysicalTableReader::default()
     });
     assert_eq!(
