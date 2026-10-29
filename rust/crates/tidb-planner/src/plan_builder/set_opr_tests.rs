@@ -30,7 +30,7 @@ use tidb_datatype::{
     FieldType, FieldTypeCode, FieldTypeFlags, SessionTimeZone, UNSPECIFIED_LENGTH,
 };
 use tidb_expr::ZonedNoColumns;
-use tidb_funcdep::ColSet;
+use tidb_intset::FastIntSet;
 
 use tidb_infoschema::table_source::TableSource;
 use tidb_infoschema::table_source::SourceTable;
@@ -242,7 +242,7 @@ fn extract_fd_source_union_all_common_equivalence() {
     let schema = selected.schema().expect("union schema");
     let fd = selected.extract_fd();
     assert!(fd
-        .closure_of_equivalence(&ColSet::new([schema.columns[0].unique_id]))
+        .closure_of_equivalence(&FastIntSet::new([schema.columns[0].unique_id]))
         .has(schema.columns[1].unique_id));
 }
 

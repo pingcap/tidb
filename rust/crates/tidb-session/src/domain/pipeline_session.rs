@@ -198,7 +198,7 @@ impl ResultSetSource for PreparedRecordSet<'_> {
         &self.field_types
     }
 
-    fn next_chunk(&mut self, chunk: &mut Chunk) -> Result<(), tidb_executor::MysqlError> {
+    fn next_chunk(&mut self, chunk: &mut Chunk) -> Result<(), tidb_terror::MysqlError> {
         self.state
             .next(chunk)
             .map_err(|error| error.to_mysql_error())
@@ -207,7 +207,7 @@ impl ResultSetSource for PreparedRecordSet<'_> {
     fn next_batch(
         &mut self,
         max_rows: usize,
-    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
+    ) -> Result<Vec<Vec<Datum>>, tidb_terror::MysqlError> {
         let mut chunk = self.state.new_chunk();
         chunk.set_required_rows(max_rows as isize, max_rows);
         self.next_chunk(&mut chunk)?;
@@ -216,18 +216,18 @@ impl ResultSetSource for PreparedRecordSet<'_> {
             .collect())
     }
 
-    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_terror::MysqlError> {
         Ok(result_set_fields(
             self.state.columns(),
             self.state.output_names(),
         ))
     }
 
-    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn finish(&mut self) -> Result<(), tidb_terror::MysqlError> {
         self.state.finish().map_err(|error| error.to_mysql_error())
     }
 
-    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn close(&mut self) -> Result<(), tidb_terror::MysqlError> {
         self.state.close().map_err(|error| error.to_mysql_error())
     }
 
@@ -262,19 +262,19 @@ impl ResultSetSource for MaterializedResultSetSource {
     fn next_batch(
         &mut self,
         max_rows: usize,
-    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
+    ) -> Result<Vec<Vec<Datum>>, tidb_terror::MysqlError> {
         Ok(self.rows.by_ref().take(max_rows.max(1)).collect())
     }
 
-    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_terror::MysqlError> {
         Ok(self.fields.clone())
     }
 
-    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn finish(&mut self) -> Result<(), tidb_terror::MysqlError> {
         Ok(())
     }
 
-    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn close(&mut self) -> Result<(), tidb_terror::MysqlError> {
         Ok(())
     }
 }

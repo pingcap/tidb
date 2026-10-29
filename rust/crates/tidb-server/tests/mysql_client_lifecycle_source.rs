@@ -53,11 +53,11 @@ impl ResultSetSource for Rows {
     fn next_batch(
         &mut self,
         max_rows: usize,
-    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
+    ) -> Result<Vec<Vec<Datum>>, tidb_terror::MysqlError> {
         Ok((0..max_rows).map_while(|_| self.rows.pop_front()).collect())
     }
 
-    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_terror::MysqlError> {
         Ok(vec![
             ResultFieldMetadata {
                 schema: "campaign20".to_owned(),
@@ -94,12 +94,12 @@ impl ResultSetSource for Rows {
         ])
     }
 
-    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn finish(&mut self) -> Result<(), tidb_terror::MysqlError> {
         self.lifecycle.lock().unwrap().finished += 1;
         Ok(())
     }
 
-    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn close(&mut self) -> Result<(), tidb_terror::MysqlError> {
         self.lifecycle.lock().unwrap().closed += 1;
         Ok(())
     }
@@ -477,7 +477,7 @@ impl ResultSetSource for PreparedRows {
     fn next_batch(
         &mut self,
         _max_rows: usize,
-    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
+    ) -> Result<Vec<Vec<Datum>>, tidb_terror::MysqlError> {
         self.lifecycle.lock().unwrap().next_batches += 1;
         Ok(self
             .value
@@ -486,16 +486,16 @@ impl ResultSetSource for PreparedRows {
             .unwrap_or_default())
     }
 
-    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_terror::MysqlError> {
         Ok(vec![prepared_balance_column()])
     }
 
-    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn finish(&mut self) -> Result<(), tidb_terror::MysqlError> {
         self.lifecycle.lock().unwrap().finished += 1;
         Ok(())
     }
 
-    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn close(&mut self) -> Result<(), tidb_terror::MysqlError> {
         self.lifecycle.lock().unwrap().closed += 1;
         Ok(())
     }
@@ -616,26 +616,26 @@ impl ResultSetSource for CursorEncodingRows {
     fn next_batch(
         &mut self,
         _max_rows: usize,
-    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
+    ) -> Result<Vec<Vec<Datum>>, tidb_terror::MysqlError> {
         if std::mem::replace(&mut self.emitted, true) {
             return Ok(Vec::new());
         }
         Ok(vec![vec![Datum::Bytes(b"not-an-integer".to_vec())]])
     }
 
-    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_terror::MysqlError> {
         // Deliberately inconsistent with the exact Varchar FieldType below:
         // materialization remains valid, while binary FETCH must reject this
         // datum/metadata pair before advancing the cursor.
         Ok(vec![prepared_balance_column()])
     }
 
-    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn finish(&mut self) -> Result<(), tidb_terror::MysqlError> {
         self.lifecycle.lock().unwrap().finished += 1;
         Ok(())
     }
 
-    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn close(&mut self) -> Result<(), tidb_terror::MysqlError> {
         self.lifecycle.lock().unwrap().closed += 1;
         Ok(())
     }
@@ -786,13 +786,13 @@ impl ResultSetSource for CursorReaderFailureRows {
     fn next_batch(
         &mut self,
         max_rows: usize,
-    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
+    ) -> Result<Vec<Vec<Datum>>, tidb_terror::MysqlError> {
         Ok((0..max_rows.max(1))
             .map_while(|_| self.rows.pop_front())
             .collect())
     }
 
-    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_terror::MysqlError> {
         Ok(vec![ResultFieldMetadata {
             schema: "test".to_owned(),
             table: "reader_failure".to_owned(),
@@ -811,12 +811,12 @@ impl ResultSetSource for CursorReaderFailureRows {
         }])
     }
 
-    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn finish(&mut self) -> Result<(), tidb_terror::MysqlError> {
         self.lifecycle.lock().unwrap().finished += 1;
         Ok(())
     }
 
-    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn close(&mut self) -> Result<(), tidb_terror::MysqlError> {
         self.lifecycle.lock().unwrap().closed += 1;
         let data_path = fs::read_dir(&self.spill_path)
             .map_err(|error| error.to_string())?
@@ -834,7 +834,7 @@ impl ResultSetSource for CursorReaderFailureRows {
             .map_err(|error| format!("open {}: {error}", data_path.display()))?
             .set_len(1024)
             .map_err(|error| {
-                tidb_executor::MysqlError::unknown(format!(
+                tidb_terror::MysqlError::unknown(format!(
                     "truncate {}: {error}",
                     data_path.display()
                 ))

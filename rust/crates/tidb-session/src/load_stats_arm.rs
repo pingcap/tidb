@@ -25,7 +25,7 @@
 
 use std::sync::Arc;
 
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 
 use crate::Session;
 

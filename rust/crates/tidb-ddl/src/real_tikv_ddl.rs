@@ -335,14 +335,14 @@ impl From<OptimisticCoordinatorError> for ClusterDdlError {
 /// warnings are `StmtCtx.AppendWarning` (Warning); `IF [NOT] EXISTS`
 /// suppressions are `AppendNote` (Note) — `DROP TABLE IF EXISTS nosuch`
 /// leaves `Note | 1051 | Unknown table 'x.nosuch'`.
-pub use tidb_context::WarningLevel as DdlWarningLevel;
+use tidb_context::WarningLevel;
 
 /// Go `StmtCtx.AppendNote(proto.GenWithStackByArgs(...))`: the note an
 /// `IF [NOT] EXISTS` files, carrying the Go error `proto` it suppressed.
 #[must_use]
 pub fn ddl_note(error: tidb_terror::TerrorError) -> tidb_context::SqlWarn {
     tidb_context::SqlWarn::new(
-        DdlWarningLevel::Note,
+        WarningLevel::Note,
         tidb_context::WarnErr::Terror(error),
     )
 }

@@ -23,12 +23,12 @@ use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use super::{map_error, ClusterServerSession, MaterializedResultSetSource, QueryResult};
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_datatype::Datum;
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 use crate::{NonTransactionalInput, NonTransactionalStep, StmtOutput};
 
 fn driver_error(error: SqlQueryError) -> DriverError {
     DriverError::Mysql(
-        tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
+        tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
             .with_identity_opt(error.identity),
     )
 }

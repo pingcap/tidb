@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 
 use tidb_executor::memtable_reader::RestrictedSqlExecutor;
 

@@ -29,7 +29,7 @@ use tidb_ast::TableLockType;
 use tidb_config::config_tree::config::table_lock_enabled;
 use tidb_ddl_build::table_lock;
 use tidb_infoschema::Catalog;
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 use tidb_infoschema::TableEntry;
 use tidb_table::kv_table::KvTable;
 use tidb_model::{SessionInfo, TableLockTpInfo};
@@ -521,7 +521,7 @@ fn throw_err_if_in_mem_or_sys_db(
     }
     let (user, host) = login.map_or(("", ""), |(user, host)| (user.as_str(), host.as_str()));
     // Go passes two of the message's three verbs.
-    Err(DriverError::Mysql(tidb_executor::MysqlError::from_terror(
+    Err(DriverError::Mysql(tidb_terror::MysqlError::from_terror(
         &tidb_privilege::privileges_errors::ERR_ACCESS_DENIED.generate_with_stack(format!(
             "Access denied for user '{user}'@'{host}' (using password: %!s(MISSING))"
         )),

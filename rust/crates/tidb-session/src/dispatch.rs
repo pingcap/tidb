@@ -28,7 +28,7 @@ use tidb_executor::compiler::NonPreparedPlanCacheCompile;
 use tidb_executor::compiler::PlanCacheableChecker;
 use tidb_ast::{DmlStmt, SessionStmt, Stmt};
 use tidb_infoschema::Catalog;
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 
 pub(crate) use tidb_executor::compiler::explain::variant_name;
 use crate::record_set::{PendingExecution, PendingQuery, QueryTransactionEnd};
@@ -1460,7 +1460,7 @@ impl Session {
         // Go `preprocessor.Enter`'s `*ast.ColumnName` arm: the commit-TS
         // pseudo column is not yet usable by SELECT, UPDATE or DELETE.
         if scan.names_commit_ts {
-            return Err(DriverError::Mysql(tidb_executor::MysqlError::from_terror(
+            return Err(DriverError::Mysql(tidb_terror::MysqlError::from_terror(
                 &tidb_plannererrors::ERR_INTERNAL.generate_with_stack(format!(
                     "Usage of column name '{}' is not supported for now",
                     tidb_planner::plan_builder::EXTRA_COMMIT_TS_NAME
@@ -1468,7 +1468,7 @@ impl Session {
             )));
         }
         if let Some(function) = &scan.qualified_function {
-            return Err(DriverError::Mysql(tidb_executor::MysqlError::from_terror(
+            return Err(DriverError::Mysql(tidb_terror::MysqlError::from_terror(
                 &tidb_expr::expression_errors::ERR_FUNCTION_NOT_EXISTS
                     .generate_with_stack(format!("FUNCTION {function} does not exist")),
             )));

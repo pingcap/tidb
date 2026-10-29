@@ -266,9 +266,11 @@ pub use driver::{
     run_query_meta_stmt_with_physical, run_select, run_select_meta_in, run_select_meta_on,
     run_select_meta_stmt, run_select_meta_stmt_with_physical, run_select_on, run_set_opr_stmt,
     run_update_in, run_update_on, run_update_stmt, run_update_stmt_with_physical,
-    DriverError, MysqlError, PreparedDmlExecution, PreparedDmlPlan, SelectMeta, VarError,
+    PreparedDmlExecution, PreparedDmlPlan, SelectMeta,
 };
 use tidb_infoschema::{Catalog, MemTable, TableEntry, ViewDef, DEFAULT_DATABASE};
+use tidb_driver_error::DriverError;
+use tidb_terror::MysqlError;
 pub use executor::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 pub use explain::{brief_binary_plan, explain_analyze_delete_stmt, explain_analyze_insert_stmt, explain_connection_plan, query_plan_cost, explain_analyze_physical_plan, explain_analyze_select_stmt, explain_analyze_set_opr_stmt, explain_analyze_update_stmt, explain_delete_stmt, explain_insert_stmt, explain_physical_plan, explain_select_stmt, explain_set_opr_stmt, explain_update_stmt, process_plan_info};
@@ -298,7 +300,6 @@ use tidb_txnkv::ReplicaReadType;
 /// The level a statement warning carries -- Go's three `contextutil` levels,
 /// re-exported so the session can read the one a `StmtContext` recorded
 /// without depending on `tidb-distsql` directly.
-pub use tidb_context::WarningLevel as WarnLevel;
 use tidb_expr::builtin_registry::builtin_list;
 use tidb_expr::infer_pushdown::{blacklist_name, blacklist_store_mask, ExprPushDownBlacklist};
 use tidb_expr::CurrentTso;

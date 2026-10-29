@@ -675,7 +675,7 @@ fn changing_column_cast_uses_the_statement_error_level() {
     .decode_and_eval(&TableHandle::Int(1), &bytes)
     .unwrap_err();
     let error =
-        tidb_executor::DriverError::from(tidb_driver_error::ExecError::from(error)).to_mysql_error();
+        tidb_driver_error::DriverError::from(tidb_driver_error::ExecError::from(error)).to_mysql_error();
     // Go `GetChangingColVal` casts with `CastColumnValue(..., false, false)`:
     // the strict statement's `HandleTruncate` returns `ConvertTo`'s overflow
     // as is. Only an INSERT's own column cast rewrites it to 1264.
@@ -912,7 +912,7 @@ fn generated_read_policy_zero_date_errors_survive_decoder_transport() {
         .decode_and_eval(&TableHandle::Int(1), &bytes)
         .expect_err("forceIgnoreTruncate cannot suppress handleZeroDatetime");
     let error =
-        tidb_executor::DriverError::from(tidb_driver_error::ExecError::from(error)).to_mysql_error();
+        tidb_driver_error::DriverError::from(tidb_driver_error::ExecError::from(error)).to_mysql_error();
     assert_eq!(error.code, 1292);
     assert_eq!(error.message, "Incorrect date value: '0000-00-00'");
 }

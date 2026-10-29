@@ -16,7 +16,8 @@
 //! Removed empty entries and their original contracts are indexed in
 //! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
-use tidb_executor::{run_create_table_on, DriverError};
+use tidb_executor::run_create_table_on;
+use tidb_driver_error::DriverError;
 use tidb_infoschema::Catalog;
 
 /// The column set Go `serial_test.go:970` builds:

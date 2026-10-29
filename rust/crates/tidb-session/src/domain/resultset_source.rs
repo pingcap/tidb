@@ -61,7 +61,7 @@ pub trait ResultSetSource {
     fn next_chunk(
         &mut self,
         _chunk: &mut tidb_chunk::chunk::Chunk,
-    ) -> Result<(), tidb_executor::MysqlError> {
+    ) -> Result<(), tidb_terror::MysqlError> {
         Err("result source does not produce chunks".into())
     }
 
@@ -72,17 +72,17 @@ pub trait ResultSetSource {
 
     /// Pulls a bounded row batch.
     fn next_batch(&mut self, max_rows: usize)
-        -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError>;
+        -> Result<Vec<Vec<Datum>>, tidb_terror::MysqlError>;
 
     /// Go `RecordSet.Fields()`: the result fields, read after the first pull
     /// has established a dynamic schema.
-    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError>;
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_terror::MysqlError>;
 
     /// Finishes statement execution once rows are drained.
-    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError>;
+    fn finish(&mut self) -> Result<(), tidb_terror::MysqlError>;
 
     /// Releases the record-set resource, finishing it first when needed.
-    fn close(&mut self) -> Result<(), tidb_executor::MysqlError>;
+    fn close(&mut self) -> Result<(), tidb_terror::MysqlError>;
 
     /// Go `StmtExecDetails.WriteSQLRespDuration += ...`: hands the
     /// statement the time the connection spent writing its result. Sources
@@ -144,7 +144,7 @@ impl<S: ResultSetSource + ?Sized> ResultSetSource for PullTimedResultSetSource<'
     fn next_chunk(
         &mut self,
         chunk: &mut tidb_chunk::chunk::Chunk,
-    ) -> Result<(), tidb_executor::MysqlError> {
+    ) -> Result<(), tidb_terror::MysqlError> {
         self.timed(|inner| inner.next_chunk(chunk))
     }
 
@@ -155,11 +155,11 @@ impl<S: ResultSetSource + ?Sized> ResultSetSource for PullTimedResultSetSource<'
     fn next_batch(
         &mut self,
         max_rows: usize,
-    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
+    ) -> Result<Vec<Vec<Datum>>, tidb_terror::MysqlError> {
         self.timed(|inner| inner.next_batch(max_rows))
     }
 
-    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_terror::MysqlError> {
         let fields = self.timed(|inner| inner.fields());
         if let Ok(fields) = &fields {
             self.column_count = fields.len();
@@ -167,11 +167,11 @@ impl<S: ResultSetSource + ?Sized> ResultSetSource for PullTimedResultSetSource<'
         fields
     }
 
-    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn finish(&mut self) -> Result<(), tidb_terror::MysqlError> {
         self.timed(|inner| inner.finish())
     }
 
-    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn close(&mut self) -> Result<(), tidb_terror::MysqlError> {
         self.timed(|inner| inner.close())
     }
 

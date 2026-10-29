@@ -98,8 +98,8 @@ impl<'s> ClusterServerSession<'s> {
                 // `TiDBContext.ExecuteStmt` appends it.
                 Err(error) if buffers_rows => {
                     if let Some(mut state) = drained.take() {
-                        state.record_error(tidb_executor::DriverError::Mysql(
-                            tidb_executor::MysqlError::from_parts(
+                        state.record_error(tidb_driver_error::DriverError::Mysql(
+                            tidb_terror::MysqlError::from_parts(
                                 error.code,
                                 error.state,
                                 error.message.clone(),
@@ -190,7 +190,7 @@ impl ResultSetSource for ClusterRecordSet<'_> {
     fn field_types(&self) -> &[FieldType] {
         &self.field_types
     }
-    fn next_chunk(&mut self, chunk: &mut Chunk) -> Result<(), tidb_executor::MysqlError> {
+    fn next_chunk(&mut self, chunk: &mut Chunk) -> Result<(), tidb_terror::MysqlError> {
         let result = self.state.next(&mut *self.owner.session, chunk);
         self.failed |= result.is_err();
         result.map_err(|error| error.to_mysql_error())
@@ -198,7 +198,7 @@ impl ResultSetSource for ClusterRecordSet<'_> {
     fn next_batch(
         &mut self,
         max_rows: usize,
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_executor::MysqlError> {
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
         let mut chunk = self.state.new_chunk();
         chunk.set_required_rows(max_rows as isize, max_rows);
         self.next_chunk(&mut chunk)?;
@@ -206,13 +206,13 @@ impl ResultSetSource for ClusterRecordSet<'_> {
             .map(|index| chunk.get_row(index).get_datum_row(&self.field_types))
             .collect())
     }
-    fn fields(&mut self) -> Result<Vec<tidb_executor::adapter::ResultFieldMetadata>, tidb_executor::MysqlError> {
+    fn fields(&mut self) -> Result<Vec<tidb_executor::adapter::ResultFieldMetadata>, tidb_terror::MysqlError> {
         Ok(crate::domain::pipeline_session::result_set_fields(
             self.state.columns(),
             self.state.output_names(),
         ))
     }
-    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn finish(&mut self) -> Result<(), tidb_terror::MysqlError> {
         if std::mem::replace(&mut self.finished, true) {
             return Ok(());
         }
@@ -231,17 +231,17 @@ impl ResultSetSource for ClusterRecordSet<'_> {
             self.owner
                 .end_read_statement(snapshot, !self.failed)
                 .map_err(|error| {
-                    tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
+                    tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
                         .with_identity_opt(error.identity)
                 })
         });
         if let Err(error) = &ended {
             self.state
-                .record_error(tidb_executor::DriverError::Mysql(error.clone()));
+                .record_error(tidb_driver_error::DriverError::Mysql(error.clone()));
         }
         result.and(ended)
     }
-    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn close(&mut self) -> Result<(), tidb_terror::MysqlError> {
         if std::mem::replace(&mut self.closed, true) {
             return Ok(());
         }

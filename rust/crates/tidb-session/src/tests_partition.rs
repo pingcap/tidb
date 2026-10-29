@@ -126,7 +126,7 @@ fn linear_hash_is_accepted_as_plain_hash_with_a_warning() {
         .run("CREATE TABLE lh (a int, b int) PARTITION BY LINEAR HASH(a) PARTITIONS 4")
         .expect("LINEAR HASH is accepted");
     assert_eq!(
-        session.warnings().iter().map(SqlWarning::parts).collect::<Vec<_>>(),
+        session.warnings().iter().map(SqlWarn::parts).collect::<Vec<_>>(),
         [(
             WarningLevel::Warning,
             8200,

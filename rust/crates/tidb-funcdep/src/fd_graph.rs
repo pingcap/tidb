@@ -41,7 +41,7 @@
 //! normalization is not an optimization -- Go's own test table asserts on the
 //! resulting edge list, so the shrinking rules are behavior.
 
-use super::ColSet;
+use tidb_intset::FastIntSet;
 mod projection;
 
 /// One dependency edge. `strict`/`equiv` together name the four kinds
@@ -49,9 +49,9 @@ mod projection;
 #[derive(Clone, Debug)]
 struct FdEdge {
     /// The determinants.
-    from: ColSet,
+    from: FastIntSet,
     /// The dependencies.
-    to: ColSet,
+    to: FastIntSet,
     strict: bool,
     equiv: bool,
 }
@@ -63,7 +63,7 @@ struct FdEdge {
 #[derive(Clone, Debug)]
 struct ConditionalFd {
     edge: FdEdge,
-    condition: ColSet,
+    condition: FastIntSet,
 }
 
 impl FdEdge {
@@ -104,7 +104,7 @@ impl FdEdge {
     /// This must not be applied to a lax edge: a lax determinant may be NULL,
     /// and dropping a column from it would claim a determination the NULL rows
     /// do not have.
-    fn remove_columns_from_side(&mut self, constants: &ColSet) -> bool {
+    fn remove_columns_from_side(&mut self, constants: &FastIntSet) -> bool {
         if self.from.intersects(constants) {
             self.from = self.from.difference(constants);
         }
@@ -113,7 +113,7 @@ impl FdEdge {
 
     /// Go `fdEdge.removeColumnsToSide`: drops constant columns from the
     /// dependency side, returning whether nothing is left to determine.
-    fn remove_columns_to_side(&mut self, constants: &ColSet) -> bool {
+    fn remove_columns_to_side(&mut self, constants: &FastIntSet) -> bool {
         if self.to.intersects(constants) {
             self.to = self.to.difference(constants);
         }
@@ -142,11 +142,11 @@ pub struct FdSet {
     conditional_edges: Vec<ConditionalFd>,
     /// Go `FDSet.NotNullCols`: the columns known never to be NULL, kept so a
     /// lax edge added LATER can still be promoted.
-    pub not_null_cols: ColSet,
+    pub not_null_cols: FastIntSet,
     /// Go HashCodeToUniqueID: statement-local identities for scalar expressions.
     pub hash_code_to_unique_id: std::collections::HashMap<Vec<u8>, i64>,
     /// Go GroupByCols, retained through the projection above an aggregation.
-    pub group_by_cols: ColSet,
+    pub group_by_cols: FastIntSet,
     /// Go HasAggBuilt.
     pub has_agg_built: bool,
 }
@@ -179,7 +179,7 @@ impl FdSet {
     /// The equivalence case tests INTERSECTION rather than subset: an
     /// equivalence is stored as one superset edge `{a,b,c} == {a,b,c}`, and
     /// reaching any one member must reach the rest.
-    pub fn closure_of_strict(&self, cols: &ColSet) -> ColSet {
+    pub fn closure_of_strict(&self, cols: &FastIntSet) -> FastIntSet {
         let mut result = cols.clone();
         let mut index = 0usize;
         while index < self.edges.len() {
@@ -205,7 +205,7 @@ impl FdSet {
     /// `a ~~> c`, because the rows where `b` is NULL are unconstrained -- so
     /// this deliberately does not iterate lax edges, only the equivalences
     /// that widen which lax edges are reachable at all.
-    pub fn closure_of_lax(&self, cols: &ColSet) -> ColSet {
+    pub fn closure_of_lax(&self, cols: &FastIntSet) -> FastIntSet {
         let mut reached = cols.clone();
         let mut index = 0usize;
         while index < self.edges.len() {
@@ -229,7 +229,7 @@ impl FdSet {
     }
 
     /// Go `FDSet.ClosureOfEquivalence`: the equivalence classes `cols` touches.
-    pub fn closure_of_equivalence(&self, cols: &ColSet) -> ColSet {
+    pub fn closure_of_equivalence(&self, cols: &FastIntSet) -> FastIntSet {
         let mut result = cols.clone();
         for edge in &self.edges {
             if edge.equiv && edge.from.intersects(&result) && !edge.to.subset_of(&result) {
@@ -241,7 +241,7 @@ impl FdSet {
 
     /// Go `FDSet.InClosure`: whether `set_b` is inferable from `set_a`. A
     /// short-circuiting [`Self::closure_of_strict`].
-    pub fn in_closure(&self, set_a: &ColSet, set_b: &ColSet) -> bool {
+    pub fn in_closure(&self, set_a: &FastIntSet, set_b: &FastIntSet) -> bool {
         if set_b.subset_of(set_a) {
             return true;
         }
@@ -275,8 +275,8 @@ impl FdSet {
     /// Given `A --> B`, the determinant `{A,B}` says no more than `{A}`, so
     /// `B` is dropped. Members are tried in order and put back when the rest
     /// cannot derive them.
-    pub fn reduce_cols(&self, cols: &ColSet) -> ColSet {
-        let mut removed = ColSet::default();
+    pub fn reduce_cols(&self, cols: &FastIntSet) -> FastIntSet {
+        let mut removed = FastIntSet::default();
         let mut result = cols.clone();
         cols.for_each(|value| {
             removed.insert(value);
@@ -290,12 +290,12 @@ impl FdSet {
     }
 
     /// Go `FDSet.AddStrictFunctionalDependency`.
-    pub fn add_strict(&mut self, from: ColSet, to: ColSet) {
+    pub fn add_strict(&mut self, from: FastIntSet, to: FastIntSet) {
         self.add_functional_dependency(from, to, true, false);
     }
 
     /// Go `FDSet.AddLaxFunctionalDependency`.
-    pub fn add_lax(&mut self, from: ColSet, to: ColSet) {
+    pub fn add_lax(&mut self, from: FastIntSet, to: FastIntSet) {
         self.add_functional_dependency(from, to, false, false);
     }
 
@@ -303,9 +303,9 @@ impl FdSet {
     /// null-rejecting predicate makes its condition visible.
     pub fn add_conditional(
         &mut self,
-        from: ColSet,
-        to: ColSet,
-        condition: ColSet,
+        from: FastIntSet,
+        to: FastIntSet,
+        condition: FastIntSet,
         strict: bool,
         equiv: bool,
     ) {
@@ -329,8 +329,8 @@ impl FdSet {
     /// same determinant (`A --> B` plus `A --> C` is `A --> BC`).
     fn add_functional_dependency(
         &mut self,
-        from: ColSet,
-        mut to: ColSet,
+        from: FastIntSet,
+        mut to: FastIntSet,
         strict: bool,
         equiv: bool,
     ) {
@@ -379,7 +379,7 @@ impl FdSet {
 
     /// Go `FDSet.addEquivalence`: merge `cols` into the equivalence closure it
     /// touches, then let that closure simplify the edges already present.
-    fn add_equivalence_closure(&mut self, cols: ColSet) {
+    fn add_equivalence_closure(&mut self, cols: FastIntSet) {
         let equiv_closure = self.closure_of_equivalence(&cols);
         self.edges.push(FdEdge {
             from: equiv_closure.clone(),
@@ -424,7 +424,7 @@ impl FdSet {
     }
 
     /// Go `FDSet.AddEquivalence`: `from` and `to` denote the same value.
-    pub fn add_equivalence(&mut self, from: ColSet, to: ColSet) {
+    pub fn add_equivalence(&mut self, from: FastIntSet, to: FastIntSet) {
         if to.subset_of(&from) {
             return;
         }
@@ -433,7 +433,7 @@ impl FdSet {
 
     /// Go `FDSet.AddEquivalenceUnion`: every column in `union` belongs to one
     /// equivalence class.
-    pub fn add_equivalence_union(&mut self, union: ColSet) {
+    pub fn add_equivalence_union(&mut self, union: FastIntSet) {
         self.add_equivalence_closure(union);
     }
 
@@ -441,13 +441,13 @@ impl FdSet {
     /// rows, which propagates through the strict closure and then simplifies
     /// the determinant of every strict edge and the dependency side of every
     /// edge.
-    pub fn add_constants(&mut self, constants: ColSet) {
+    pub fn add_constants(&mut self, constants: FastIntSet) {
         if constants.is_empty() {
             return;
         }
         let cols = self.closure_of_strict(&constants);
         self.edges.push(FdEdge {
-            from: ColSet::default(),
+            from: FastIntSet::default(),
             to: cols.clone(),
             strict: true,
             equiv: false,
@@ -478,7 +478,7 @@ impl FdSet {
     }
 
     /// Go `FDSet.ConstantCols`: the columns fixed to one value.
-    pub fn constant_cols(&self) -> ColSet {
+    pub fn constant_cols(&self) -> FastIntSet {
         self.edges
             .iter()
             .find(|edge| edge.is_constant())
@@ -487,7 +487,7 @@ impl FdSet {
     }
 
     /// Go `FDSet.EquivalenceCols`: one set per equivalence class.
-    pub fn equivalence_cols(&self) -> Vec<&ColSet> {
+    pub fn equivalence_cols(&self) -> Vec<&FastIntSet> {
         self.edges
             .iter()
             .filter(|edge| edge.is_equivalence())
@@ -502,7 +502,7 @@ impl FdSet {
     /// `UNIQUE(a,b)` contributes only `{a,b} ~~> {rest}`, and a predicate
     /// proving `a` non-null turns it into `{a,b} --> {rest}`, which makes
     /// `GROUP BY a,b` a candidate key.
-    pub fn make_not_null(&mut self, not_null_cols: ColSet) {
+    pub fn make_not_null(&mut self, not_null_cols: FastIntSet) {
         let mut not_null_cols = not_null_cols;
         not_null_cols.union_with(&self.not_null_cols);
         let mut not_null_set = self.closure_of_equivalence(&not_null_cols);
@@ -558,12 +558,12 @@ impl FdSet {
 
     /// Go `FDSet.MakeNullable`: forget NOT NULL facts for the supplied
     /// columns after an outer join makes them nullable.
-    pub fn make_nullable(&mut self, nullable_cols: &ColSet) {
+    pub fn make_nullable(&mut self, nullable_cols: &FastIntSet) {
         self.not_null_cols.difference_with(nullable_cols);
     }
 
     /// Go `FDSet.NotNullCols`.
-    pub fn not_null_cols(&self) -> &ColSet {
+    pub fn not_null_cols(&self) -> &FastIntSet {
         &self.not_null_cols
     }
 
@@ -599,12 +599,12 @@ impl FdSet {
     }
 
     /// Go `FDSet.GroupByCols`.
-    pub fn group_by_cols(&self) -> &ColSet {
+    pub fn group_by_cols(&self) -> &FastIntSet {
         &self.group_by_cols
     }
 
     /// Replaces Go `FDSet.GroupByCols` after aggregation extraction.
-    pub fn set_group_by_cols(&mut self, columns: ColSet) {
+    pub fn set_group_by_cols(&mut self, columns: FastIntSet) {
         self.group_by_cols = columns;
     }
 
@@ -620,7 +620,7 @@ impl FdSet {
 
     /// Go `FDSet.MaxOneRow`: all retained output columns are constants while
     /// equivalence remains the stronger fact.
-    pub fn max_one_row(&mut self, columns: ColSet) {
+    pub fn max_one_row(&mut self, columns: FastIntSet) {
         self.edges = self
             .edges
             .iter()
@@ -637,7 +637,7 @@ impl FdSet {
             .collect();
         if !columns.is_empty() {
             self.edges.push(FdEdge {
-                from: ColSet::default(),
+                from: FastIntSet::default(),
                 to: columns,
                 strict: true,
                 equiv: false,
@@ -648,8 +648,8 @@ impl FdSet {
     /// Every column named by an ordinary edge. This mirrors Go `AllCols`;
     /// equivalence edges name their set once, while all other edges contribute
     /// both sides.
-    pub fn all_cols(&self) -> ColSet {
-        let mut cols = ColSet::default();
+    pub fn all_cols(&self) -> FastIntSet {
+        let mut cols = FastIntSet::default();
         for edge in &self.edges {
             cols.union_with(&edge.from);
             if !edge.equiv {
@@ -661,7 +661,7 @@ impl FdSet {
 
     /// Go `FindPrimaryKey`: a strict determinant whose closure covers every
     /// column currently represented by the relation.
-    pub fn primary_key(&self) -> Option<ColSet> {
+    pub fn primary_key(&self) -> Option<FastIntSet> {
         let all_cols = self.all_cols();
         self.edges
             .iter()
@@ -683,8 +683,8 @@ impl FdSet {
         &mut self,
         inner: &FdSet,
         filter: &FdSet,
-        outer_cols: &ColSet,
-        inner_cols: &ColSet,
+        outer_cols: &FastIntSet,
+        inner_cols: &FastIntSet,
         options: OuterJoinOptions,
     ) {
         let left_key = self.primary_key();
@@ -710,8 +710,8 @@ impl FdSet {
         self.conditional_edges
             .extend(inner.conditional_edges.iter().cloned());
 
-        let mut combined_from = ColSet::default();
-        let mut combined_to = ColSet::default();
+        let mut combined_from = FastIntSet::default();
+        let mut combined_to = FastIntSet::default();
         for edge in &filter.edges {
             if edge.is_constant() {
                 self.add_conditional(
@@ -752,7 +752,7 @@ impl FdSet {
             // value one column at a time.
             right_equiv.for_each(|right| {
                 left_equiv.for_each(|left| {
-                    self.add_lax(ColSet::new([right]), ColSet::new([left]));
+                    self.add_lax(FastIntSet::new([right]), FastIntSet::new([left]));
                 });
             });
             self.add_conditional(left_equiv, right_equiv, inner_cols.clone(), true, true);
@@ -819,11 +819,11 @@ impl std::fmt::Display for FdSet {
 /// edge of the next set keeps more than one column: a single-column remainder
 /// is meaningless in the bi-relation of equivalence, and an empty one carries
 /// no class at all.
-pub fn find_common_equiv_classes(fd_sets: &[&FdSet]) -> Vec<ColSet> {
+pub fn find_common_equiv_classes(fd_sets: &[&FdSet]) -> Vec<FastIntSet> {
     if fd_sets.is_empty() {
         return Vec::new();
     }
-    let mut result: Vec<ColSet> = fd_sets[0]
+    let mut result: Vec<FastIntSet> = fd_sets[0]
         .edges
         .iter()
         .filter(|edge| edge.equiv)
@@ -868,14 +868,14 @@ mod tests {
     /// computations over a set the insertion rules would have normalized.
     fn strict_edge(from: &[i64], to: &[i64]) -> FdEdge {
         FdEdge {
-            from: ColSet::new(from),
-            to: ColSet::new(to),
+            from: FastIntSet::new(from),
+            to: FastIntSet::new(to),
             strict: true,
             equiv: false,
         }
     }
 
-    fn sorted(set: &ColSet) -> Vec<i64> {
+    fn sorted(set: &FastIntSet) -> Vec<i64> {
         set.sorted_array()
     }
 
@@ -892,7 +892,7 @@ mod tests {
             let mut fd = FdSet::new();
             for which in order {
                 let (from, to) = &inputs[which];
-                fd.add_strict(ColSet::new(from.clone()), ColSet::new(to.clone()));
+                fd.add_strict(FastIntSet::new(from.clone()), FastIntSet::new(to.clone()));
             }
             assert_eq!(fd.edges.len(), 1);
             assert_eq!(sorted(&fd.edges[0].from), vec![1, 2]);
@@ -911,11 +911,11 @@ mod tests {
             strict_edge(&[1], &[4, 5, 8]),
         ];
         assert_eq!(
-            sorted(&fd.closure_of_strict(&ColSet::new([1]))),
+            sorted(&fd.closure_of_strict(&FastIntSet::new([1]))),
             vec![1, 4, 5, 8]
         );
         assert_eq!(
-            sorted(&fd.closure_of_strict(&ColSet::new([1, 2]))),
+            sorted(&fd.closure_of_strict(&FastIntSet::new([1, 2]))),
             vec![1, 2, 3, 4, 5, 6, 7, 8]
         );
     }
@@ -930,7 +930,7 @@ mod tests {
             strict_edge(&[3], &[4, 5]),
             strict_edge(&[3, 5], &[2]),
         ];
-        assert_eq!(sorted(&fd.reduce_cols(&ColSet::new([1, 2]))), vec![1]);
+        assert_eq!(sorted(&fd.reduce_cols(&FastIntSet::new([1, 2]))), vec![1]);
     }
 
     /// Go `TestFDSet_InClosure`: a dependency side may be torn apart, a
@@ -943,16 +943,16 @@ mod tests {
             strict_edge(&[1, 2], &[5, 6]),
             strict_edge(&[2], &[6, 7]),
         ];
-        assert!(!fd.in_closure(&ColSet::new([1]), &ColSet::new([6])));
-        assert!(fd.in_closure(&ColSet::new([2]), &ColSet::new([7])));
-        assert!(fd.in_closure(&ColSet::new([1, 2]), &ColSet::new([5])));
-        assert!(fd.in_closure(&ColSet::new([1, 2]), &ColSet::new([6, 7])));
-        assert!(fd.in_closure(&ColSet::new([1, 2]), &ColSet::new([4, 6])));
-        assert!(fd.in_closure(&ColSet::new([1, 2]), &ColSet::new([5, 7])));
-        assert!(!fd.in_closure(&ColSet::new([1, 2]), &ColSet::new([5, 7, 8])));
+        assert!(!fd.in_closure(&FastIntSet::new([1]), &FastIntSet::new([6])));
+        assert!(fd.in_closure(&FastIntSet::new([2]), &FastIntSet::new([7])));
+        assert!(fd.in_closure(&FastIntSet::new([1, 2]), &FastIntSet::new([5])));
+        assert!(fd.in_closure(&FastIntSet::new([1, 2]), &FastIntSet::new([6, 7])));
+        assert!(fd.in_closure(&FastIntSet::new([1, 2]), &FastIntSet::new([4, 6])));
+        assert!(fd.in_closure(&FastIntSet::new([1, 2]), &FastIntSet::new([5, 7])));
+        assert!(!fd.in_closure(&FastIntSet::new([1, 2]), &FastIntSet::new([5, 7, 8])));
 
         fd.edges.push(strict_edge(&[2], &[3, 8]));
-        assert!(fd.in_closure(&ColSet::new([1, 2]), &ColSet::new([5, 7, 8])));
+        assert!(fd.in_closure(&FastIntSet::new([1, 2]), &FastIntSet::new([5, 7, 8])));
     }
 
     /// Go `TestFDSet_AddConstant`.
@@ -961,26 +961,26 @@ mod tests {
         let mut fd = FdSet::new();
         assert_eq!(fd.constant_cols().to_string(), "()");
 
-        fd.add_constants(ColSet::new([1, 2]));
+        fd.add_constants(FastIntSet::new([1, 2]));
         assert_eq!(fd.edges.len(), 1);
         assert!(fd.edges[0].strict && !fd.edges[0].equiv);
         assert_eq!(fd.edges[0].from.to_string(), "()");
         assert_eq!(fd.edges[0].to.to_string(), "(1,2)");
         assert_eq!(fd.constant_cols().to_string(), "(1,2)");
 
-        fd.add_constants(ColSet::new([3]));
+        fd.add_constants(FastIntSet::new([3]));
         assert_eq!(fd.edges.len(), 1);
         assert_eq!(fd.edges[0].to.to_string(), "(1-3)");
         assert_eq!(fd.constant_cols().to_string(), "(1-3)");
 
-        fd.add_strict(ColSet::new([3, 4]), ColSet::new([5, 6]));
+        fd.add_strict(FastIntSet::new([3, 4]), FastIntSet::new([5, 6]));
         assert_eq!(fd.edges.len(), 2);
         assert_eq!(fd.edges[0].to.to_string(), "(1-3)");
         // The constant `3` is dropped from the determinant.
         assert_eq!(fd.edges[1].from.to_string(), "(4)");
         assert_eq!(fd.edges[1].to.to_string(), "(5,6)");
 
-        fd.add_lax(ColSet::new([7]), ColSet::new([5, 6]));
+        fd.add_lax(FastIntSet::new([7]), FastIntSet::new([5, 6]));
         assert_eq!(fd.edges.len(), 3);
         assert!(!fd.edges[2].strict && !fd.edges[2].equiv);
         assert_eq!(fd.edges[2].from.to_string(), "(7)");
@@ -988,7 +988,7 @@ mod tests {
 
         // `{4}` constant makes `{4} --> {5,6}` constant too, and the lax edge
         // then determines nothing that is not already constant.
-        fd.add_constants(ColSet::new([4]));
+        fd.add_constants(FastIntSet::new([4]));
         assert_eq!(fd.edges.len(), 1);
         assert_eq!(fd.edges[0].from.to_string(), "()");
         assert_eq!(fd.edges[0].to.to_string(), "(1-6)");
@@ -1000,23 +1000,23 @@ mod tests {
     #[test]
     fn lax_implies_only_on_equal_dependency_side() {
         let mut fd = FdSet::new();
-        fd.add_lax(ColSet::new([1]), ColSet::new([2, 3]));
-        fd.add_lax(ColSet::new([1]), ColSet::new([2]));
+        fd.add_lax(FastIntSet::new([1]), FastIntSet::new([2, 3]));
+        fd.add_lax(FastIntSet::new([1]), FastIntSet::new([2]));
         assert_eq!(fd.to_string(), "(1)~~>(2,3), (1)~~>(2)");
 
         let mut fd = FdSet::new();
-        fd.add_lax(ColSet::new([1]), ColSet::new([2]));
-        fd.add_lax(ColSet::new([1]), ColSet::new([2, 3]));
+        fd.add_lax(FastIntSet::new([1]), FastIntSet::new([2]));
+        fd.add_lax(FastIntSet::new([1]), FastIntSet::new([2, 3]));
         assert_eq!(fd.to_string(), "(1)~~>(2), (1)~~>(2,3)");
 
         let mut fd = FdSet::new();
-        fd.add_lax(ColSet::new([1]), ColSet::new([3]));
-        fd.add_lax(ColSet::new([1, 2]), ColSet::new([3]));
+        fd.add_lax(FastIntSet::new([1]), FastIntSet::new([3]));
+        fd.add_lax(FastIntSet::new([1, 2]), FastIntSet::new([3]));
         assert_eq!(fd.to_string(), "(1)~~>(3)");
 
         let mut fd = FdSet::new();
-        fd.add_lax(ColSet::new([1]), ColSet::new([3, 4]));
-        fd.add_lax(ColSet::new([1, 2]), ColSet::new([3]));
+        fd.add_lax(FastIntSet::new([1]), FastIntSet::new([3, 4]));
+        fd.add_lax(FastIntSet::new([1, 2]), FastIntSet::new([3]));
         assert_eq!(fd.to_string(), "(1)~~>(3,4), (1,2)~~>(3)");
     }
 
@@ -1027,19 +1027,19 @@ mod tests {
         let mut fd = FdSet::new();
         assert_eq!(fd.equivalence_cols().len(), 0);
 
-        fd.add_equivalence(ColSet::new([1]), ColSet::new([2]));
+        fd.add_equivalence(FastIntSet::new([1]), FastIntSet::new([2]));
         assert_eq!(fd.edges.len(), 1);
         assert_eq!(fd.equivalence_cols().len(), 1);
         assert!(fd.edges[0].strict && fd.edges[0].equiv);
         assert_eq!(fd.edges[0].from.to_string(), "(1,2)");
         assert_eq!(fd.edges[0].to.to_string(), "(1,2)");
 
-        fd.add_equivalence(ColSet::new([3]), ColSet::new([4]));
+        fd.add_equivalence(FastIntSet::new([3]), FastIntSet::new([4]));
         assert_eq!(fd.edges.len(), 2);
         assert_eq!(fd.equivalence_cols().len(), 2);
         assert_eq!(fd.edges[1].from.to_string(), "(3,4)");
 
-        fd.add_constants(ColSet::new([4, 5]));
+        fd.add_constants(FastIntSet::new([4, 5]));
         assert_eq!(fd.edges.len(), 3);
         assert!(fd.edges[2].strict && !fd.edges[2].equiv);
         assert_eq!(fd.edges[2].from.to_string(), "()");
@@ -1048,7 +1048,7 @@ mod tests {
         assert_eq!(fd.edges[2].to.to_string(), "(3-5)");
         assert_eq!(fd.constant_cols().to_string(), "(3-5)");
 
-        fd.add_strict(ColSet::new([2, 3]), ColSet::new([5, 6]));
+        fd.add_strict(FastIntSet::new([2, 3]), FastIntSet::new([5, 6]));
         assert_eq!(fd.edges.len(), 4);
         assert!(fd.edges[3].strict && !fd.edges[3].equiv);
         assert_eq!(fd.edges[3].from.to_string(), "(2)");
@@ -1056,7 +1056,7 @@ mod tests {
 
         // `b == d` bridges the two classes; the merged class extends the
         // constant closure, which in turn swallows the strict edge.
-        fd.add_equivalence(ColSet::new([2]), ColSet::new([3]));
+        fd.add_equivalence(FastIntSet::new([2]), FastIntSet::new([3]));
         assert_eq!(fd.edges.len(), 2);
         assert_eq!(fd.equivalence_cols().len(), 1);
         assert_eq!(fd.equivalence_cols()[0].to_string(), "(1-4)");
@@ -1072,27 +1072,27 @@ mod tests {
         // the key is lax, and `b`'s declared NOT NULL alone does not promote
         // it -- the WHOLE determinant has to be non-null.
         let mut fd = FdSet::new();
-        fd.add_lax(ColSet::new([1, 2]), ColSet::new([1, 2, 3]));
-        fd.make_not_null(ColSet::new([2]));
-        assert!(!ColSet::new([3]).subset_of(&fd.closure_of_strict(&ColSet::new([1, 2]))));
+        fd.add_lax(FastIntSet::new([1, 2]), FastIntSet::new([1, 2, 3]));
+        fd.make_not_null(FastIntSet::new([2]));
+        assert!(!FastIntSet::new([3]).subset_of(&fd.closure_of_strict(&FastIntSet::new([1, 2]))));
         // The lax step alone already reaches it, which is why the checker must
         // use the STRICT closure and not this one.
-        assert!(ColSet::new([3]).subset_of(&fd.closure_of_lax(&ColSet::new([1, 2]))));
+        assert!(FastIntSet::new([3]).subset_of(&fd.closure_of_lax(&FastIntSet::new([1, 2]))));
 
         // `WHERE a IS NOT NULL` supplies the rest of the determinant.
-        fd.make_not_null(ColSet::new([1]));
-        assert!(ColSet::new([3]).subset_of(&fd.closure_of_strict(&ColSet::new([1, 2]))));
+        fd.make_not_null(FastIntSet::new([1]));
+        assert!(FastIntSet::new([3]).subset_of(&fd.closure_of_strict(&FastIntSet::new([1, 2]))));
     }
 
     #[test]
     fn add_from_merges_every_go_fd_kind_and_not_null_fact() {
         let mut left = FdSet::new();
-        left.add_strict(ColSet::new([1]), ColSet::new([2]));
+        left.add_strict(FastIntSet::new([1]), FastIntSet::new([2]));
         let mut right = FdSet::new();
-        right.add_lax(ColSet::new([3]), ColSet::new([4]));
-        right.add_equivalence_union(ColSet::new([5, 6]));
-        right.add_constants(ColSet::new([7]));
-        right.make_not_null(ColSet::new([3]));
+        right.add_lax(FastIntSet::new([3]), FastIntSet::new([4]));
+        right.add_equivalence_union(FastIntSet::new([5, 6]));
+        right.add_constants(FastIntSet::new([7]));
+        right.make_not_null(FastIntSet::new([3]));
 
         left.add_from(&right);
 
@@ -1106,10 +1106,10 @@ mod tests {
     #[test]
     fn max_one_row_keeps_equivalence_and_makes_outputs_constant() {
         let mut fd = FdSet::new();
-        fd.add_strict(ColSet::new([1]), ColSet::new([2, 3]));
-        fd.add_equivalence_union(ColSet::new([1, 2]));
+        fd.add_strict(FastIntSet::new([1]), FastIntSet::new([2, 3]));
+        fd.add_equivalence_union(FastIntSet::new([1, 2]));
 
-        fd.max_one_row(ColSet::new([1, 3]));
+        fd.max_one_row(FastIntSet::new([1, 3]));
 
         assert_eq!(fd.to_string(), "(1)==(1), ()-->(1,3)");
     }
@@ -1117,24 +1117,24 @@ mod tests {
     #[test]
     fn project_cols_preserves_transitive_and_equivalent_determinants() {
         let mut transitive = FdSet::new();
-        transitive.add_strict(ColSet::new([1]), ColSet::new([2]));
-        transitive.add_strict(ColSet::new([2]), ColSet::new([3]));
-        transitive.project_cols(&ColSet::new([1, 3]));
-        assert!(ColSet::new([3]).subset_of(&transitive.closure_of_strict(&ColSet::new([1]))));
+        transitive.add_strict(FastIntSet::new([1]), FastIntSet::new([2]));
+        transitive.add_strict(FastIntSet::new([2]), FastIntSet::new([3]));
+        transitive.project_cols(&FastIntSet::new([1, 3]));
+        assert!(FastIntSet::new([3]).subset_of(&transitive.closure_of_strict(&FastIntSet::new([1]))));
 
         let mut substituted = FdSet::new();
-        substituted.add_strict(ColSet::new([1]), ColSet::new([3]));
-        substituted.add_equivalence_union(ColSet::new([1, 2]));
-        substituted.project_cols(&ColSet::new([2, 3]));
-        assert!(ColSet::new([3]).subset_of(&substituted.closure_of_strict(&ColSet::new([2]))));
+        substituted.add_strict(FastIntSet::new([1]), FastIntSet::new([3]));
+        substituted.add_equivalence_union(FastIntSet::new([1, 2]));
+        substituted.project_cols(&FastIntSet::new([2, 3]));
+        assert!(FastIntSet::new([3]).subset_of(&substituted.closure_of_strict(&FastIntSet::new([2]))));
         assert!(!substituted.all_cols().has(1));
     }
 
     #[test]
     fn make_nullable_forgets_only_selected_not_null_columns() {
         let mut fd = FdSet::new();
-        fd.make_not_null(ColSet::new([1, 2, 3]));
-        fd.make_nullable(&ColSet::new([2, 4]));
+        fd.make_not_null(FastIntSet::new([1, 2, 3]));
+        fd.make_nullable(&FastIntSet::new([2, 4]));
         assert_eq!(fd.not_null_cols().to_string(), "(1,3)");
     }
 
@@ -1142,19 +1142,19 @@ mod tests {
     fn conditional_equivalence_becomes_visible_after_null_rejection() {
         let mut fd = FdSet::new();
         fd.add_conditional(
-            ColSet::new([1]),
-            ColSet::new([2]),
-            ColSet::new([2]),
+            FastIntSet::new([1]),
+            FastIntSet::new([2]),
+            FastIntSet::new([2]),
             true,
             true,
         );
         assert_eq!(
-            sorted(&fd.closure_of_equivalence(&ColSet::new([1]))),
+            sorted(&fd.closure_of_equivalence(&FastIntSet::new([1]))),
             vec![1]
         );
-        fd.make_not_null(ColSet::new([2]));
+        fd.make_not_null(FastIntSet::new([2]));
         assert_eq!(
-            sorted(&fd.closure_of_equivalence(&ColSet::new([1]))),
+            sorted(&fd.closure_of_equivalence(&FastIntSet::new([1]))),
             vec![1, 2]
         );
     }
@@ -1162,24 +1162,24 @@ mod tests {
     #[test]
     fn outer_join_without_a_filter_keeps_both_keys_as_a_combined_key() {
         let mut outer = FdSet::new();
-        outer.add_strict(ColSet::new([1]), ColSet::new([2]));
-        outer.make_not_null(ColSet::new([1]));
+        outer.add_strict(FastIntSet::new([1]), FastIntSet::new([2]));
+        outer.make_not_null(FastIntSet::new([1]));
         let mut inner = FdSet::new();
-        inner.add_strict(ColSet::new([10]), ColSet::new([11]));
-        inner.make_not_null(ColSet::new([10]));
+        inner.add_strict(FastIntSet::new([10]), FastIntSet::new([11]));
+        inner.make_not_null(FastIntSet::new([10]));
         outer.make_outer_join(
             &inner,
             &FdSet::new(),
-            &ColSet::new([1, 2]),
-            &ColSet::new([10, 11]),
+            &FastIntSet::new([1, 2]),
+            &FastIntSet::new([10, 11]),
             OuterJoinOptions {
                 skip_rule_331: true,
                 only_inner_filter: true,
                 inner_is_false: false,
             },
         );
-        assert!(outer.in_closure(&ColSet::new([10]), &ColSet::new([11])));
-        assert!(outer.in_closure(&ColSet::new([1, 10]), &ColSet::new([2, 11])));
+        assert!(outer.in_closure(&FastIntSet::new([10]), &FastIntSet::new([11])));
+        assert!(outer.in_closure(&FastIntSet::new([1, 10]), &FastIntSet::new([2, 11])));
         assert!(!outer.not_null_cols().has(10));
     }
 
@@ -1195,8 +1195,8 @@ mod tests {
         outer.make_outer_join(
             &inner,
             &FdSet::new(),
-            &ColSet::new([1]),
-            &ColSet::new([10]),
+            &FastIntSet::new([1]),
+            &FastIntSet::new([10]),
             OuterJoinOptions::default(),
         );
         assert_eq!(outer.registered_unique_id(b"hash-a"), Some(2));
@@ -1212,7 +1212,7 @@ mod tests {
         fn with_equiv_classes(classes: &[&[i64]]) -> FdSet {
             let mut fd = FdSet::new();
             for class in classes {
-                let set = ColSet::new(*class);
+                let set = FastIntSet::new(*class);
                 fd.edges.push(FdEdge {
                     from: set.copy(),
                     to: set,

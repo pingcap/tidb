@@ -20,7 +20,9 @@ use prost::Message;
 use tidb_codec::{encode_int, encode_key};
 use tidb_tablecodec::table_key::encode_row_key;
 use tidb_datatype::Datum;
-use tidb_distsql::{build_table_ranges, index_ranges_to_kv_ranges, table_handles_to_kv_ranges, table_ranges_to_kv_ranges, DistSqlContext, ExecutorKind, ExecutorShape, KvPriority, PagingConfig, RequestBuilder, RequestEnvelope, RequestKeyRange, TableRangeSpec, DC_LABEL_KEY, DEFAULT_DIST_SQL_CONCURRENCY, GLOBAL_REPLICA_SCOPE};
+use tidb_distsql::{build_table_ranges, index_ranges_to_kv_ranges, table_handles_to_kv_ranges, table_ranges_to_kv_ranges, DistSqlContext, ExecutorKind, ExecutorShape, PagingConfig, RequestBuilder, RequestEnvelope, TableRangeSpec, DC_LABEL_KEY, DEFAULT_DIST_SQL_CONCURRENCY, GLOBAL_REPLICA_SCOPE};
+use tidb_txnkv::KeyRange;
+use tidb_txnkv::Priority;
 use tidb_txnkv::KvRequestMetadata;
 use tidb_txnkv::StoreType;
 use tidb_txnkv::StoreLabel;
@@ -90,7 +92,7 @@ fn test_table_ranges_to_kv_ranges_with_fbs() {
     let table = table_ranges_to_kv_ranges(0, std::slice::from_ref(&fbs)).expect("table FBS");
     assert_eq!(
         table,
-        [RequestKeyRange {
+        [KeyRange {
             start_key: encode_row_key(0, &encoded_int(1)).into(),
             end_key: encode_row_key(0, &encoded_int(5)).into(),
         }]
@@ -196,7 +198,7 @@ fn test_request_builder_5() {
         analyze.isolation_level,
         IsolationLevel::ReadCommitted
     );
-    assert_eq!(analyze.priority, KvPriority::Low);
+    assert_eq!(analyze.priority, Priority::Low);
     assert!(analyze.not_fill_cache);
     assert!(analyze.keep_order);
 }
@@ -514,7 +516,7 @@ fn assert_full_table_ranges(common_handle: bool, low: &[u8], high: &[u8]) {
         .expect("partition ranges");
         let expected = ids
             .into_iter()
-            .map(|id| RequestKeyRange {
+            .map(|id| KeyRange {
                 start_key: encode_row_key(id, low).into(),
                 end_key: encode_row_key(id, high).into(),
             })
@@ -530,7 +532,7 @@ fn assert_full_table_ranges(common_handle: bool, low: &[u8], high: &[u8]) {
     .expect("nonpartitioned ranges");
     assert_eq!(
         ranges,
-        [RequestKeyRange {
+        [KeyRange {
             start_key: encode_row_key(7, low).into(),
             end_key: encode_row_key(7, high).into(),
         }]
@@ -570,7 +572,7 @@ fn build_table_ranges_reads_indexes_over_gos_full_range() {
     let max_high = Key::from_bytes(encode_key(&[Datum::MaxValue]).expect("max datum"))
         .prefix_next()
         .into_bytes();
-    let index_range = |table_id: i64, index_id: i64| RequestKeyRange {
+    let index_range = |table_id: i64, index_id: i64| KeyRange {
         start_key: encode_index_seek_key(table_id, index_id, &null_low).into(),
         end_key: encode_index_seek_key(table_id, index_id, &max_high).into(),
     };
@@ -578,7 +580,7 @@ fn build_table_ranges_reads_indexes_over_gos_full_range() {
     let record_high = Key::from_bytes(encoded_int(i64::MAX))
         .prefix_next()
         .into_bytes();
-    let record_range = |table_id: i64| RequestKeyRange {
+    let record_range = |table_id: i64| KeyRange {
         start_key: encode_row_key(table_id, &record_low).into(),
         end_key: encode_row_key(table_id, &record_high).into(),
     };
@@ -661,14 +663,14 @@ fn go_partition_table_scan_keeps_partition_ids_next_to_ranges() {
     builder.set_partition_id_and_ranges(vec![
         PartitionIdAndRanges {
             id: 41,
-            key_ranges: vec![RequestKeyRange {
+            key_ranges: vec![KeyRange {
                 start_key: vec![1, 2].into(),
                 end_key: vec![3].into(),
             }],
         },
         PartitionIdAndRanges {
             id: 42,
-            key_ranges: vec![RequestKeyRange {
+            key_ranges: vec![KeyRange {
                 start_key: vec![4].into(),
                 end_key: vec![5, 6].into(),
             }],

@@ -28,7 +28,8 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use tidb_store_driver_txn::transaction::StoreClient;
 
-use tidb_ddl_serverstate::{Context as ServerStateContext, EtcdSyncer, MemSyncer, Syncer};
+use tidb_ddl_serverstate::{EtcdSyncer, MemSyncer, Syncer};
+use tidb_timeutil::SleepContext;
 use tidb_infoschema_issyncer::catalog_watch::{CatalogReloadPass, SharedCatalog as SharedClusterCatalog};
 use crate::cluster_ddl::{
     CheckConstraintValidation, DdlPlanError, DdlStatement, ExchangePartitionValidation,
@@ -295,7 +296,7 @@ where
     schema_sync: Arc<ClusterSchemaSync<S>>,
     wake: Arc<(Mutex<u64>, Condvar)>,
     server_state: Arc<dyn Syncer>,
-    server_state_context: ServerStateContext,
+    server_state_context: SleepContext,
     min_job_id_refresher: Arc<MinJobIdRefresher>,
     owner: Mutex<Option<Arc<dyn tidb_owner::Manager>>>,
     worker: Mutex<Option<SchedulerWorker>>,
@@ -339,7 +340,7 @@ where
 
     fn refresh_server_state(
         server_state: &dyn Syncer,
-        context: &ServerStateContext,
+        context: &SleepContext,
         owner: &dyn tidb_owner::Manager,
     ) {
         match server_state.get_global_state(context) {
@@ -370,7 +371,7 @@ where
         schema_sync: Arc<ClusterSchemaSync<S>>,
         wake: Arc<(Mutex<u64>, Condvar)>,
         server_state: Arc<dyn Syncer>,
-        server_state_context: ServerStateContext,
+        server_state_context: SleepContext,
         min_job_id_refresher: Arc<MinJobIdRefresher>,
         owner: Arc<dyn tidb_owner::Manager>,
         stop: Arc<AtomicBool>,
@@ -613,7 +614,7 @@ where
     scheduler: Arc<PersistedDdlScheduler<S>>,
     owner: Arc<dyn tidb_owner::Manager>,
     server_state: Arc<dyn Syncer>,
-    server_state_context: ServerStateContext,
+    server_state_context: SleepContext,
     min_job_id_refresher: Arc<MinJobIdRefresher>,
     min_job_id_stop: Sender<()>,
     min_job_id_worker: Option<JoinHandle<()>>,
@@ -698,7 +699,7 @@ where
         } else {
             None
         };
-        let server_state_context = ServerStateContext::background();
+        let server_state_context = SleepContext::background();
         let server_state: Arc<dyn Syncer> = match notifier.as_ref() {
             Some(etcd) => Arc::new(EtcdSyncer::new(
                 Arc::clone(etcd),
@@ -2614,7 +2615,7 @@ where
                             && error.code == tidb_mysql::errors::errcode::ErrWrongObject =>
                     {
                         notes.push(tidb_context::SqlWarn::from_error(
-                            crate::real_tikv_ddl::DdlWarningLevel::Note,
+                            tidb_context::WarningLevel::Note,
                             error.code,
                             error.message,
                             error.identity,
@@ -2760,7 +2761,7 @@ fn synced_job_warnings(job: &tidb_model::Job) -> Vec<tidb_context::SqlWarn> {
             for sub in info.read().sub_jobs.iter_deref() {
                 if let Some(warning) = &sub.read().warning {
                     warnings.push(tidb_context::SqlWarn::new(
-                        crate::real_tikv_ddl::DdlWarningLevel::Note,
+                        tidb_context::WarningLevel::Note,
                         tidb_context::WarnErr::Terror(warning.read().clone()),
                     ));
                 }
@@ -2804,7 +2805,7 @@ fn reorg_meta_warnings(job: &tidb_model::Job) -> Vec<tidb_context::SqlWarn> {
                 )
             };
             Some(tidb_context::SqlWarn::new(
-                crate::real_tikv_ddl::DdlWarningLevel::Warning,
+                tidb_context::WarningLevel::Warning,
                 tidb_context::WarnErr::Terror(error),
             ))
         })

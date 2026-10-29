@@ -102,7 +102,7 @@ pub fn prepare_exchange_partition_job_submission<S: MetaSnapshot>(
         }),
         // Go appends it once the job succeeded.
         vec![tidb_context::SqlWarn::with_code(
-            DdlWarningLevel::Warning,
+            WarningLevel::Warning,
             1105,
             "after the exchange, please analyze related table of the exchange to update statistics"
                 .to_owned(),

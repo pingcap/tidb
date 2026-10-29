@@ -24,7 +24,7 @@ use tidb_session::domain::cluster_session_node::DomainTestSessions as _;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use tidb_datatype::Datum;
-use tidb_executor::MysqlError;
+use tidb_terror::MysqlError;
 use tidb_infoschema::{Catalog, TableEntry};
 use tidb_session::{Session, StmtResult};
 

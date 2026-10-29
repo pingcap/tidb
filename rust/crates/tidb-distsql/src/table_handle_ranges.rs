@@ -19,7 +19,7 @@ use tidb_codec::encode_int;
 use tidb_tablecodec::table_key::encode_row_key;
 use tidb_txnkv::{Handle, Key};
 
-use crate::RequestKeyRange;
+use tidb_txnkv::KeyRange;
 
 /// Converts sorted handles into canonical row-key ranges and row-count hints.
 ///
@@ -31,7 +31,7 @@ use crate::RequestKeyRange;
 pub fn table_handles_to_kv_ranges(
     mut table_id: i64,
     handles: &[Handle],
-) -> (Vec<RequestKeyRange>, Vec<usize>) {
+) -> (Vec<KeyRange>, Vec<usize>) {
     let mut ranges = Vec::with_capacity(handles.len());
     let mut hints = Vec::with_capacity(handles.len());
     let mut index = 0;
@@ -41,7 +41,7 @@ pub fn table_handles_to_kv_ranges(
         if let Handle::Common(common) = logical {
             let start_key = encode_row_key(table_id, common.encoded());
             let end_handle = Key::from_bytes(common.encoded()).next();
-            ranges.push(RequestKeyRange {
+            ranges.push(KeyRange {
                 start_key: start_key.into(),
                 end_key: encode_row_key(table_id, end_handle.as_bytes()).into(),
             });
@@ -81,7 +81,7 @@ pub fn table_handles_to_kv_ranges(
         let mut high_encoded = Vec::with_capacity(8);
         encode_int(&mut high_encoded, high);
         let high_exclusive = Key::from_bytes(high_encoded).prefix_next();
-        ranges.push(RequestKeyRange {
+        ranges.push(KeyRange {
             start_key: encode_row_key(table_id, &low_encoded).into(),
             end_key: encode_row_key(table_id, high_exclusive.as_bytes()).into(),
         });

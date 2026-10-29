@@ -27,7 +27,7 @@ use std::borrow::Cow;
 
 use tidb_ast::{DmlStmt, Hint, SessionStmt, Stmt, Visitable, Visitor};
 use tidb_datatype::Datum;
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 use tidb_hack::{GoCaseCompare, GoToLower};
 
 use crate::{sysvar, Session, VarError};
@@ -871,7 +871,7 @@ impl Session {
             )
         };
         for warning in warnings {
-            self.append_sql_warning(crate::SqlWarning::from_error(
+            self.append_sql_warning(tidb_context::SqlWarn::from_error(
                 tidb_context::WarningLevel::Warning,
                 warning.code,
                 warning.message,

@@ -15,7 +15,8 @@
 //! Go FDSet.AddFrom and ProjectCols. Projection preserves dependencies
 //! through removed intermediates and substitutes surviving equivalents.
 
-use super::{ColSet, FdSet};
+use super::FdSet;
+use tidb_intset::FastIntSet;
 use std::collections::HashMap;
 
 impl FdSet {
@@ -37,10 +38,10 @@ impl FdSet {
     }
 
     /// Go ProjectCols: preserve transitivity, then eliminate hidden columns.
-    pub fn project_cols(&mut self, columns: &ColSet) {
-        let mut constants = ColSet::default();
-        let mut determinants = ColSet::default();
-        let mut equivalents = ColSet::default();
+    pub fn project_cols(&mut self, columns: &FastIntSet) {
+        let mut constants = FastIntSet::default();
+        let mut determinants = FastIntSet::default();
+        let mut equivalents = FastIntSet::default();
         for index in 0..self.edges.len() {
             let edge = &self.edges[index];
             if edge.is_constant() {
@@ -62,7 +63,7 @@ impl FdSet {
         let mut replacements = HashMap::new();
         for column in determinants.sorted_array() {
             let alternatives = self
-                .closure_of_equivalence(&ColSet::new([column]))
+                .closure_of_equivalence(&FastIntSet::new([column]))
                 .intersection(columns);
             if let Some(alternative) = alternatives.sorted_array().into_iter().next() {
                 replacements.insert(column, alternative);
@@ -103,7 +104,7 @@ impl FdSet {
                     .map(|column| replacements.get(&column).copied())
                     .collect::<Option<Vec<_>>>();
                 if let Some(mapped) = mapped {
-                    edge.from = edge.from.union(&ColSet::new(mapped)).difference(&removed);
+                    edge.from = edge.from.union(&FastIntSet::new(mapped)).difference(&removed);
                     substituted.push(edge);
                 }
                 continue;

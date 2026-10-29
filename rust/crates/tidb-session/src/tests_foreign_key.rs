@@ -2686,7 +2686,7 @@ fn fk_access_batch_read_errors_are_not_success_or_ignored_violations() {
     #[derive(Debug, Clone)]
     struct FailedReads;
     fn failure() -> StorageError {
-        StorageError::Sql(tidb_executor::MysqlError::from_terror(
+        StorageError::Sql(tidb_terror::MysqlError::from_terror(
             &tidb_txnkv::tikv_errors::ERR_REGION_UNAVAILABLE
                 .generate_with_stack("FK read failed"),
         ))

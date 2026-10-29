@@ -29,14 +29,13 @@ use tidb_copr::cop_paging::CopRuntimeConfig;
 use tidb_copr::cop_paging::ReadEngineGeneration;
 use tidb_copr::region_task::RegionTaskEnvelope;
 use tidb_copr::region_task::RegionTaskTopology;
-use tidb_distsql::RequestKeyRange;
+use tidb_txnkv::KeyRange;
 use tidb_copr::response_channel::ResponseChannelEvent;
 use tidb_proto::{
     CoprocessorExecDetails, CoprocessorExecDetailsV2, CoprocessorKeyRange, CoprocessorResponse,
     CoprocessorScanDetailV2, CoprocessorTimeDetail, CoprocessorTimeDetailV2, KvrpcLockInfo,
 };
 use tidb_txnkv::Key;
-use tidb_txnkv::KeyRange;
 use tidb_copr::key_ranges::KeyRanges;
 
 fn ranges(keys: &[&str]) -> KeyRanges {
@@ -269,11 +268,11 @@ fn decoded_response_reuses_go_lock_and_process_time_fields() {
 fn successful_page_updates_ema_grows_size_and_feeds_response_channel() {
     let task = RegionTaskEnvelope {
         ranges: vec![
-            RequestKeyRange {
+            KeyRange {
                 start_key: b"a".to_vec().into(),
                 end_key: b"c".to_vec().into(),
             },
-            RequestKeyRange {
+            KeyRange {
                 start_key: b"e".to_vec().into(),
                 end_key: b"g".to_vec().into(),
             },
@@ -319,7 +318,7 @@ fn successful_page_updates_ema_grows_size_and_feeds_response_channel() {
 #[test]
 fn terminal_nil_range_cannot_resurrect_completed_paging_state() {
     let task = RegionTaskEnvelope {
-        ranges: vec![RequestKeyRange {
+        ranges: vec![KeyRange {
             start_key: b"a".to_vec().into(),
             end_key: b"z".to_vec().into(),
         }],
@@ -364,7 +363,7 @@ fn terminal_nil_range_cannot_resurrect_completed_paging_state() {
 #[test]
 fn bounded_multi_page_channel_drains_then_emits_terminal_closed() {
     let task = RegionTaskEnvelope {
-        ranges: vec![RequestKeyRange {
+        ranges: vec![KeyRange {
             start_key: b"a".to_vec().into(),
             end_key: b"z".to_vec().into(),
         }],
@@ -410,7 +409,7 @@ fn bounded_multi_page_channel_drains_then_emits_terminal_closed() {
 #[test]
 fn bounded_channel_applies_backpressure_before_continuation_mutation() {
     let task = RegionTaskEnvelope {
-        ranges: vec![RequestKeyRange {
+        ranges: vec![KeyRange {
             start_key: b"a".to_vec().into(),
             end_key: b"z".to_vec().into(),
         }],

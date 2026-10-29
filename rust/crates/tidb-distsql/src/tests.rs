@@ -15,6 +15,7 @@
 use std::sync::{atomic::AtomicU64, Arc};
 
 use super::*;
+use tidb_txnkv::{KeyRange, PartitionedKeyRanges};
 use tidb_context::WarningLevel;
 
 #[test]
@@ -206,7 +207,7 @@ fn test_request_builder_maps_session_settings_without_transport() {
     let metadata = ReadRequestMetadata::from_context(&context);
     assert_eq!(metadata.concurrency, 15);
     assert_eq!(metadata.isolation_level, IsolationLevel::Snapshot);
-    assert_eq!(metadata.priority, KvPriority::Low);
+    assert_eq!(metadata.priority, tidb_txnkv::Priority::Low);
     assert_eq!(metadata.replica_read, ReplicaReadType::Follower);
     assert!(!metadata.paging.enabled);
     assert_eq!(metadata.paging.size_bytes, 4 * 1024 * 1024);
@@ -226,10 +227,10 @@ fn test_request_builder_maps_session_settings_without_transport() {
 #[test]
 fn test_request_builder_preserves_go_priority_and_isolation_precedence() {
     for (priority, expected) in [
-        (Priority::None, KvPriority::Normal),
-        (Priority::Delayed, KvPriority::Normal),
-        (Priority::Low, KvPriority::Low),
-        (Priority::High, KvPriority::High),
+        (Priority::None, tidb_txnkv::Priority::Normal),
+        (Priority::Delayed, tidb_txnkv::Priority::Normal),
+        (Priority::Low, tidb_txnkv::Priority::Low),
+        (Priority::High, tidb_txnkv::Priority::High),
     ] {
         let mut context = DistSqlContext::new();
         context.request.priority = priority;
@@ -365,8 +366,8 @@ fn test_kv_request_build_closest_scope_and_range_metadata() {
     builder
         .set_replica_read(ReplicaReadType::Closest)
         .set_read_replica_scope("az-a")
-        .set_key_ranges(RequestKeyRanges::new_partitioned(vec![vec![
-            RequestKeyRange {
+        .set_key_ranges(PartitionedKeyRanges::new_partitioned(vec![vec![
+            KeyRange {
                 start_key: vec![1].into(),
                 end_key: vec![2].into(),
             },

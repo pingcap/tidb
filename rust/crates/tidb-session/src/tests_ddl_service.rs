@@ -8,7 +8,8 @@ use crate::ddl_service::DdlService;
 use crate::tests_support::*;
 use crate::*;
 use tidb_ddl::cluster_ddl::DdlStatement;
-use tidb_ddl::real_tikv_ddl::{ClusterDdlReport, DdlWarningLevel};
+use tidb_ddl::real_tikv_ddl::ClusterDdlReport;
+use tidb_context::WarningLevel;
 
 struct Fake(Result<ClusterDdlReport, (u16, &'static str)>);
 
@@ -19,7 +20,7 @@ impl DdlService for Fake {
         _job_context: &tidb_sessionctx::StmtContext,
     ) -> Result<ClusterDdlReport, DriverError> {
         self.0.clone().map_err(|(code, message)| {
-            DriverError::Mysql(tidb_executor::MysqlError::sql_error(code, message))
+            DriverError::Mysql(tidb_terror::MysqlError::sql_error(code, message))
         })
     }
     /// No table this test drops is cached.
@@ -59,8 +60,8 @@ fn a_dropped_current_database_is_deselected_and_job_warnings_reach_the_session()
         schema_version: 7,
         created_id: None,
         warnings: vec![
-            tidb_context::SqlWarn::with_code(DdlWarningLevel::Note, 1007, "a note"),
-            tidb_context::SqlWarn::with_code(DdlWarningLevel::Warning, 1105, "a warning"),
+            tidb_context::SqlWarn::with_code(WarningLevel::Note, 1007, "a note"),
+            tidb_context::SqlWarn::with_code(WarningLevel::Warning, 1105, "a warning"),
         ],
     }));
     session.begin_ddl_statement(&parsed).unwrap();

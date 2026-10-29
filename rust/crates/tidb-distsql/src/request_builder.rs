@@ -29,12 +29,10 @@ use tidb_tablecodec::table_key::encode_row_key;
 use tidb_datatype::Datum;
 use tidb_txnkv::{Handle, Key, ResourceGroupTagBuilder};
 
-use crate::{
-    DistSqlContext, IsolationLevel, KvPriority, KvRequestMetadata, PartitionIdAndRanges,
-    ReadRequestBuilder, ReplicaReadType, RequestEnvelope, RequestKeyRange, RequestKeyRanges,
-    RequestSource, RequestType, StoreLabel, StoreType, TransportRequest, DC_LABEL_KEY,
-    DEFAULT_DIST_SQL_CONCURRENCY, GLOBAL_REPLICA_SCOPE,
-};
+use crate::{DistSqlContext, IsolationLevel, KvRequestMetadata, PartitionIdAndRanges, ReadRequestBuilder, ReplicaReadType, RequestEnvelope, RequestSource, RequestType, StoreLabel, StoreType, TransportRequest, DC_LABEL_KEY, DEFAULT_DIST_SQL_CONCURRENCY, GLOBAL_REPLICA_SCOPE};
+use tidb_txnkv::KeyRange;
+use tidb_txnkv::PartitionedKeyRanges;
+use tidb_txnkv::Priority;
 
 /// Index metadata required by [`build_table_ranges`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -127,7 +125,7 @@ impl RequestBuilder {
     }
 
     /// Replaces ranges with a complete canonical envelope.
-    pub fn set_key_ranges(&mut self, key_ranges: RequestKeyRanges) -> &mut Self {
+    pub fn set_key_ranges(&mut self, key_ranges: PartitionedKeyRanges) -> &mut Self {
         self.request.key_ranges = Some(Arc::new(key_ranges));
         self
     }
@@ -135,27 +133,27 @@ impl RequestBuilder {
     /// Wraps ordinary ranges as one non-partitioned source group.
     pub fn set_non_partitioned_key_ranges(
         &mut self,
-        key_ranges: Vec<RequestKeyRange>,
+        key_ranges: Vec<KeyRange>,
     ) -> &mut Self {
-        self.request.key_ranges = Some(Arc::new(RequestKeyRanges::new_non_partitioned(key_ranges)));
+        self.request.key_ranges = Some(Arc::new(PartitionedKeyRanges::new_non_partitioned(key_ranges)));
         self
     }
 
     /// Wraps ordinary ranges and aligned row-count hints.
     pub fn set_key_ranges_with_hints(
         &mut self,
-        key_ranges: Vec<RequestKeyRange>,
+        key_ranges: Vec<KeyRange>,
         hints: Vec<usize>,
     ) -> &mut Self {
-        self.request.key_ranges = Some(Arc::new(RequestKeyRanges::new_non_partitioned_with_hints(
+        self.request.key_ranges = Some(Arc::new(PartitionedKeyRanges::new_non_partitioned_with_hints(
             key_ranges, hints,
         )));
         self
     }
 
     /// Replaces ranges with partitioned groups.
-    pub fn set_partition_key_ranges(&mut self, key_ranges: Vec<Vec<RequestKeyRange>>) -> &mut Self {
-        self.request.key_ranges = Some(Arc::new(RequestKeyRanges::new_partitioned(key_ranges)));
+    pub fn set_partition_key_ranges(&mut self, key_ranges: Vec<Vec<KeyRange>>) -> &mut Self {
+        self.request.key_ranges = Some(Arc::new(PartitionedKeyRanges::new_partitioned(key_ranges)));
         self
     }
 
@@ -289,7 +287,7 @@ impl RequestBuilder {
         self.request.data = Some(data.into());
         self.request.not_fill_cache = true;
         self.request.isolation_level = isolation_level;
-        self.request.priority = KvPriority::Low;
+        self.request.priority = Priority::Low;
         self
     }
 
@@ -499,7 +497,7 @@ impl RequestBuilder {
             }];
         }
         if request.key_ranges.is_none() {
-            request.key_ranges = Some(Arc::new(RequestKeyRanges::new_non_partitioned(Vec::new())));
+            request.key_ranges = Some(Arc::new(PartitionedKeyRanges::new_non_partitioned(Vec::new())));
         }
 
         if let Some(dag) = &self.dag {
@@ -535,7 +533,7 @@ impl RequestBuilder {
 pub fn table_ranges_to_kv_ranges(
     table_id: i64,
     ranges: &[Range],
-) -> Result<Vec<RequestKeyRange>, KvRequestBuildError> {
+) -> Result<Vec<KeyRange>, KvRequestBuildError> {
     ranges
         .iter()
         .map(|range| {
@@ -565,7 +563,7 @@ pub fn index_ranges_to_kv_ranges(
     table_ids: &[i64],
     index_id: i64,
     ranges: &[Range],
-) -> Result<Vec<Vec<RequestKeyRange>>, KvRequestBuildError> {
+) -> Result<Vec<Vec<KeyRange>>, KvRequestBuildError> {
     let encoded = ranges
         .iter()
         .map(encode_index_key)
@@ -576,7 +574,7 @@ pub fn index_ranges_to_kv_ranges(
         .map(|table_id| {
             encoded
                 .iter()
-                .map(|(low, high)| RequestKeyRange {
+                .map(|(low, high)| KeyRange {
                     start_key: encode_index_seek_key(*table_id, index_id, low).into(),
                     end_key: encode_index_seek_key(*table_id, index_id, high).into(),
                 })
@@ -604,12 +602,12 @@ fn encode_index_key(range: &Range) -> Result<(Vec<u8>, Vec<u8>), KvRequestBuildE
 pub fn common_handle_ranges_to_kv_ranges(
     table_id: i64,
     ranges: &[Range],
-) -> Result<Vec<RequestKeyRange>, KvRequestBuildError> {
+) -> Result<Vec<KeyRange>, KvRequestBuildError> {
     ranges
         .iter()
         .map(|range| {
             let (low, high) = encode_index_key(range)?;
-            Ok(RequestKeyRange {
+            Ok(KeyRange {
                 start_key: encode_row_key(table_id, &low).into(),
                 end_key: encode_row_key(table_id, &high).into(),
             })
@@ -622,7 +620,7 @@ pub fn common_handle_ranges_to_kv_ranges(
 /// under the logical table ID, ahead of every partition's own ranges.
 pub fn build_table_ranges(
     table: &TableRangeSpec,
-) -> Result<Vec<RequestKeyRange>, KvRequestBuildError> {
+) -> Result<Vec<KeyRange>, KvRequestBuildError> {
     if table.partition_ids.is_empty() {
         // Short path, no partition.
         return append_ranges(table, table.table_id);
@@ -651,7 +649,7 @@ pub fn build_table_ranges(
 fn append_ranges(
     table: &TableRangeSpec,
     table_id: i64,
-) -> Result<Vec<RequestKeyRange>, KvRequestBuildError> {
+) -> Result<Vec<KeyRange>, KvRequestBuildError> {
     let mut output = if table.common_handle {
         common_handle_ranges_to_kv_ranges(table_id, &full_not_null_range())?
     } else {

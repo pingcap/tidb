@@ -94,7 +94,7 @@ impl Session {
     /// session-only ones, and SEM hides its invisible ones.
     fn show_status_rows(&self, global: bool) -> Result<Vec<Vec<Datum>>, DriverError> {
         let status_vars = tidb_variable::statusvar::get_status_vars(Some(&self.vars))
-            .map_err(|error| DriverError::Mysql(tidb_executor::MysqlError::unknown(error)))?;
+            .map_err(|error| DriverError::Mysql(tidb_terror::MysqlError::unknown(error)))?;
         Ok(status_vars
             .into_iter()
             .filter(|(name, status)| {

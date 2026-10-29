@@ -25,7 +25,8 @@
 //! those tests pin through their struct literals.
 
 use tidb_ranger::types::Range;
-use tidb_distsql::{index_ranges_to_kv_ranges, table_ranges_to_kv_ranges, DistSqlContext, KvPriority, RequestBuilder, RequestEnvelope};
+use tidb_distsql::{index_ranges_to_kv_ranges, table_ranges_to_kv_ranges, DistSqlContext, RequestBuilder, RequestEnvelope};
+use tidb_txnkv::Priority;
 use tidb_txnkv::RequestType;
 use tidb_txnkv::ReplicaReadType;
 use tidb_paging::MIN_PAGING_SIZE;
@@ -173,7 +174,7 @@ fn builder_session_projection_pins_the_go_request_field_defaults() {
 
     assert_eq!(request.request_type, RequestType::Dag);
     assert_eq!(request.isolation_level, IsolationLevel::Snapshot);
-    assert_eq!(request.priority, KvPriority::Normal);
+    assert_eq!(request.priority, Priority::Normal);
     assert_eq!(request.replica_read, ReplicaReadType::Leader);
     assert!(!request.not_fill_cache);
     assert_eq!(request.resource_group_name, "default");

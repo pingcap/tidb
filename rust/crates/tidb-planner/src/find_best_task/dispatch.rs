@@ -1422,7 +1422,7 @@ fn apply_reader_cost_side_effects(plan: &mut PhysicalPlan, enable_paging: bool) 
         PhysicalPlan::IndexLookUpReader(reader) => {
             reader.paging = enable_paging
                 && reader.expect_cnt > 0
-                && reader.expect_cnt <= crate::plan_cost_ver2::PAGING_THRESHOLD;
+                && reader.expect_cnt <= tidb_paging::THRESHOLD;
             if let Some(child) = reader.index_plan.as_deref_mut() {
                 apply_reader_cost_side_effects(child, enable_paging);
             }

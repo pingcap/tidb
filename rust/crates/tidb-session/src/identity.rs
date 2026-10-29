@@ -1341,7 +1341,7 @@ impl Session {
 
 /// Go `plannererrors.ErrViewNoExplain` (1345).
 fn view_no_explain() -> DriverError {
-    DriverError::Mysql(tidb_executor::MysqlError::from_terror(
+    DriverError::Mysql(tidb_terror::MysqlError::from_terror(
         &tidb_plannererrors::ERR_VIEW_NO_EXPLAIN.generate_with_stack_by_args(&[]),
     ))
 }

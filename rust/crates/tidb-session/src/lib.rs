@@ -36,7 +36,7 @@ use std::time::Duration;
 use tidb_ast::Stmt;
 use tidb_datatype::{Datum, FieldType};
 use tidb_infoschema::Catalog;
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 use tidb_mathutil::MysqlRng;
 pub use load_stats_arm::ClientLocalFileReader;
 use tidb_planner::txn_mode::{
@@ -493,7 +493,7 @@ pub struct Session {
     active_resource_group: String,
     /// The warnings the last statement produced, which Go keeps in
     /// `StmtCtx.warnings` and `SHOW WARNINGS` reads.
-    warnings: Vec<SqlWarning>,
+    warnings: Vec<SqlWarn>,
     /// Go `handleQuery`'s `parserWarns`: the multi-statement 8130 warning is
     /// carried OUTSIDE the per-statement warning buffer and appended to the
     /// LAST statement's context after it runs (`conn.go:2262`), so the reset
@@ -704,7 +704,7 @@ pub struct Session {
     /// The parser warnings of the statement now running, with where they
     /// start in [`Self::warnings`]; see
     /// [`Self::move_parse_warnings_behind_execution`].
-    pub(crate) parse_warnings: Option<(usize, Vec<SqlWarning>)>,
+    pub(crate) parse_warnings: Option<(usize, Vec<SqlWarn>)>,
     /// Go `ExecStmt.OutputNames` of the statement's materialized query
     /// result, one per column; empty for any other result. With
     /// `last_result_current_db` they give Go `recordSet.Fields()`, which the
@@ -1162,7 +1162,7 @@ pub(crate) use classify::{
 pub use classify::StmtKind;
 pub use prepared_ast::PreparedAst;
 pub(crate) use variables::datum_text;
-pub use warnings::SqlWarning;
+use tidb_context::SqlWarn;
 use tidb_context::WarningLevel;
 #[cfg(test)]
 mod tests_expensivequery;
@@ -2659,7 +2659,7 @@ impl Session {
         identity: Option<tidb_terror::TerrorIdentity>,
     ) {
         self.warnings.clear();
-        self.append_sql_warning(SqlWarning::from_error(WarningLevel::Error, code, message, identity));
+        self.append_sql_warning(SqlWarn::from_error(WarningLevel::Error, code, message, identity));
     }
 
     /// go `driver_tidb.go:376`: every statement error lands in the statement
@@ -2682,7 +2682,7 @@ impl Session {
         {
             return;
         }
-        self.append_sql_warning(SqlWarning::from_error(WarningLevel::Error, code, message, identity));
+        self.append_sql_warning(SqlWarn::from_error(WarningLevel::Error, code, message, identity));
     }
 
     /// Clears the statement warning buffer (go `ResetContextOfStmt`'s
@@ -2794,7 +2794,7 @@ impl Session {
         // `StmtCtx.AppendError`: its warning count excludes the error row.
         self.finish_statement_observation(result);
         if let Some(reported) = error_row {
-            self.append_sql_warning(SqlWarning::from_error(
+            self.append_sql_warning(SqlWarn::from_error(
                 WarningLevel::Error,
                 reported.code,
                 reported.message,

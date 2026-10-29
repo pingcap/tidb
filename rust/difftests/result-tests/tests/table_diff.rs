@@ -31,7 +31,7 @@ use std::path::PathBuf;
 
 use difftest::{corpus_topics, difftest_root, parse_corpus, validate_executable_corpora};
 use result_label::{rows_label, statement_is_ordered};
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 use tidb_session::{Session, StmtResult};
 
 fn corpus_dir() -> PathBuf {

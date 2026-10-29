@@ -38,7 +38,7 @@ pub use var::VarError;
 mod exec_error;
 
 pub use exec_error::ExecError;
-pub use tidb_terror::MysqlError;
+use tidb_terror::MysqlError;
 
 /// An error raised with its Go identity already rendered (Go returns it as a
 /// plain `error`): the statement reports it unchanged.
@@ -127,7 +127,6 @@ mod source_tests {
     }
 }
 
-pub use tidb_sqlkiller::memory_exceed_for_query;
 
 // The lower layers' errors, lifted into the executor's.
 

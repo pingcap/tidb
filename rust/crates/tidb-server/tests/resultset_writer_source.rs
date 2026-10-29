@@ -33,7 +33,7 @@ use tidb_server::resultset_writer::{write_result_set, ResultSetSink, SinkWriteEr
 
 #[derive(Default)]
 struct Source {
-    events: VecDeque<Result<Vec<Vec<Datum>>, tidb_executor::MysqlError>>,
+    events: VecDeque<Result<Vec<Vec<Datum>>, tidb_terror::MysqlError>>,
     log: Vec<&'static str>,
     columns: Option<Vec<ResultFieldMetadata>>,
     columns_calls: usize,
@@ -83,7 +83,7 @@ impl ResultSetSource for Source {
     fn next_chunk(
         &mut self,
         chunk: &mut tidb_chunk::chunk::Chunk,
-    ) -> Result<(), tidb_executor::MysqlError> {
+    ) -> Result<(), tidb_terror::MysqlError> {
         chunk.reset();
         for row in self.next_batch(8)? {
             for (i, datum) in row.iter().enumerate() {
@@ -93,25 +93,25 @@ impl ResultSetSource for Source {
         Ok(())
     }
 
-    fn next_batch(&mut self, _: usize) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
+    fn next_batch(&mut self, _: usize) -> Result<Vec<Vec<Datum>>, tidb_terror::MysqlError> {
         self.log.push("next");
         self.events.pop_front().unwrap_or(Ok(Vec::new()))
     }
 
-    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_terror::MysqlError> {
         self.log.push("columns");
         self.columns_calls += 1;
         Ok(self.columns.clone().unwrap_or_else(|| vec![column()]))
     }
 
-    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn finish(&mut self) -> Result<(), tidb_terror::MysqlError> {
         self.log.push("finish");
         self.finish_error
             .clone()
             .map_or(Ok(()), |error| Err(error.into()))
     }
 
-    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn close(&mut self) -> Result<(), tidb_terror::MysqlError> {
         self.log.push("close");
         self.close_calls += 1;
         Ok(())
@@ -210,7 +210,7 @@ fn first_next_error_is_retryable_and_never_reads_columns_or_writes() {
         .into_iter()
         .enumerate()
     {
-        let expected = tidb_executor::MysqlError::from_terror(
+        let expected = tidb_terror::MysqlError::from_terror(
             &tidb_datatype::types_errors::ERR_OVERFLOW
                 .generate_with_stack("DOUBLE value is out of range in 'cot(0)'"),
         );

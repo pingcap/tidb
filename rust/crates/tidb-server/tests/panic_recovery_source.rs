@@ -91,7 +91,7 @@ struct PanickingRows {
 }
 
 impl ResultSetSource for PanickingRows {
-    fn next_batch(&mut self, _: usize) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
+    fn next_batch(&mut self, _: usize) -> Result<Vec<Vec<Datum>>, tidb_terror::MysqlError> {
         self.pulls += 1;
         if self.pulls == 3 {
             panic!("injected command panic");
@@ -99,7 +99,7 @@ impl ResultSetSource for PanickingRows {
         Ok(vec![vec![Datum::Int(7)]])
     }
 
-    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_terror::MysqlError> {
         Ok(vec![ResultFieldMetadata {
             schema: String::new(),
             table: String::new(),
@@ -118,10 +118,10 @@ impl ResultSetSource for PanickingRows {
         }])
     }
 
-    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn finish(&mut self) -> Result<(), tidb_terror::MysqlError> {
         Ok(())
     }
-    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn close(&mut self) -> Result<(), tidb_terror::MysqlError> {
         Ok(())
     }
 }

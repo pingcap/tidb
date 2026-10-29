@@ -14,9 +14,10 @@
 
 //! Driver failures: [`tidb_driver_error`] owns the types and their MySQL
 //! wire rendering, below the executor; this module keeps the paths the
-//! executor and its callers name them by.
+//! executor names them by inside the crate.
 
-pub use tidb_driver_error::*;
+pub(crate) use tidb_driver_error::*;
+pub(crate) use tidb_terror::MysqlError;
 
 #[cfg(test)]
 mod source_tests {

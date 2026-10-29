@@ -93,7 +93,7 @@ impl DdlSessionPool for ExecutorDdlSessionPool {
             &plan.name,
             &reorg_statement_context(&plan.session_vars),
         )
-        .map_err(tidb_executor::DriverError::to_mysql_error)
+        .map_err(tidb_driver_error::DriverError::to_mysql_error)
     }
 
     /// Every stored row under the DDL's default statement context.

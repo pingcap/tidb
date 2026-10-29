@@ -23,7 +23,8 @@ use tidb_codec::encode_int;
 use tidb_tablecodec::table_key::encode_row_key;
 use tidb_txnkv::Key;
 
-use crate::{KvRequestBuildError, RequestKeyRange};
+use crate::KvRequestBuildError;
+use tidb_txnkv::KeyRange;
 
 /// One non-empty normalized range over a signed clustered integer handle.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -88,7 +89,7 @@ impl SignedHandleRange {
 pub fn signed_handle_ranges_to_kv_ranges(
     table_id: i64,
     ranges: &[SignedHandleRange],
-) -> Vec<RequestKeyRange> {
+) -> Vec<KeyRange> {
     ranges
         .iter()
         .map(|range| {
@@ -114,7 +115,7 @@ pub(crate) fn encode_signed_handle_range(
     high: i64,
     low_exclude: bool,
     high_exclude: bool,
-) -> RequestKeyRange {
+) -> KeyRange {
     let mut low_encoded = Vec::with_capacity(8);
     encode_int(&mut low_encoded, low);
     if low_exclude {
@@ -127,7 +128,7 @@ pub(crate) fn encode_signed_handle_range(
         high_encoded = Key::from_bytes(high_encoded).prefix_next().into_bytes();
     }
 
-    RequestKeyRange {
+    KeyRange {
         start_key: encode_row_key(table_id, &low_encoded).into(),
         end_key: encode_row_key(table_id, &high_encoded).into(),
     }

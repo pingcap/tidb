@@ -30,7 +30,7 @@ use crate::vars::{validation_var_error, SessionVars};
 use crate::VarError;
 
 /// Go's warning levels for what a hook appends (`contextutil.WarnLevel*`).
-pub use tidb_context::WarningLevel as VarWarningLevel;
+use tidb_context::WarningLevel;
 
 /// Go `SessionVars.NoopFuncsMode` (`pkg/sessionctx/variable/session.go:1338`),
 /// Go's `OffInt` / `OnInt` / `WarnInt`, set by `tidb_enable_noop_functions`
@@ -50,7 +50,7 @@ impl SessionVars {
     /// sysvar hook.
     pub fn append_stmt_warning(
         &mut self,
-        level: VarWarningLevel,
+        level: WarningLevel,
         proto: &tidb_terror::TerrorError,
         message: String,
     ) {
@@ -59,7 +59,7 @@ impl SessionVars {
     }
 
     /// Go `StmtCtx.AppendWarning(errors.New(message))` for a sysvar hook.
-    pub fn append_stmt_plain_warning(&mut self, level: VarWarningLevel, message: String) {
+    pub fn append_stmt_plain_warning(&mut self, level: WarningLevel, message: String) {
         self.stmt_warnings.push(tidb_context::SqlWarn::new(
             level,
             tidb_context::WarnErr::Message(message),
@@ -231,7 +231,7 @@ impl SessionVars {
                 // well, so SHOW WARNINGS after the refused statement carries
                 // the same 1235 row.
                 self.append_stmt_warning(
-                    VarWarningLevel::Error,
+                    WarningLevel::Error,
                     &crate::variable_errors::ERR_FUNCTIONS_NOOP_IMPL,
                     message,
                 );
@@ -241,7 +241,7 @@ impl SessionVars {
                 ))
             }
             NoopFuncsMode::Warn => {
-                self.append_stmt_warning(VarWarningLevel::Warning, &crate::variable_errors::ERR_FUNCTIONS_NOOP_IMPL, message);
+                self.append_stmt_warning(WarningLevel::Warning, &crate::variable_errors::ERR_FUNCTIONS_NOOP_IMPL, message);
                 Ok(())
             }
         }
@@ -297,7 +297,7 @@ impl SessionVars {
             ));
         }
         self.append_stmt_warning(
-            VarWarningLevel::Warning,
+            WarningLevel::Warning,
             &crate::variable_errors::ERR_UNSUPPORTED_ISOLATION_LEVEL,
             format!(
                 "The isolation level '{normalized}' is not supported. Set \
@@ -409,7 +409,7 @@ impl SessionVars {
         };
         if normalized.value == "static" {
             self.append_stmt_warning(
-                VarWarningLevel::Warning,
+                WarningLevel::Warning,
                 &crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX_SIMPLE_MSG,
                 "static prune mode is deprecated and will be removed in the future release."
                     .to_owned(),
@@ -418,13 +418,13 @@ impl SessionVars {
             let warn_analyze = is_global || previous.as_deref() == Some("static");
             if warn_analyze {
                 self.append_stmt_plain_warning(
-                    VarWarningLevel::Warning,
+                    WarningLevel::Warning,
                     "Please analyze all partition tables again for consistency between partition and global stats".to_owned(),
                 );
             }
             if !is_global && previous.as_deref() == Some("static") {
                 self.append_stmt_plain_warning(
-                    VarWarningLevel::Warning,
+                    WarningLevel::Warning,
                     "Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level".to_owned(),
                 );
             }
@@ -457,7 +457,7 @@ impl SessionVars {
             .unwrap_or(tidb_vardef::modes::NEWEST_MPP_VERSION);
         if mpp_version == 0 {
             self.append_stmt_plain_warning(
-                VarWarningLevel::Warning,
+                WarningLevel::Warning,
                 "mpp exchange compression won't work under current mpp version 0".to_owned(),
             );
         }
@@ -477,7 +477,7 @@ impl SessionVars {
         };
         if normalized.value == "OFF" {
             self.append_stmt_warning(
-                VarWarningLevel::Warning,
+                WarningLevel::Warning,
                 &crate::variable_errors::ERR_WARN_DEPRECATED_SYNTAX_SIMPLE_MSG,
                 "tidb_enable_parallel_hashagg_spill will be removed in the future and hash aggregate spill will be enabled by default.".to_owned(),
             );
@@ -648,9 +648,9 @@ impl SessionVars {
         };
         match proto {
             Some(proto) => {
-                self.append_stmt_warning(VarWarningLevel::Warning, proto, message.to_owned());
+                self.append_stmt_warning(WarningLevel::Warning, proto, message.to_owned());
             }
-            None => self.append_stmt_plain_warning(VarWarningLevel::Warning, message.to_owned()),
+            None => self.append_stmt_plain_warning(WarningLevel::Warning, message.to_owned()),
         }
     }
 
@@ -672,7 +672,7 @@ impl SessionVars {
         let reported = crate::sysvar::get_sys_var(name)
             .map_or_else(|| name.to_ascii_lowercase(), |def| def.name.to_owned());
         self.append_stmt_warning(
-            VarWarningLevel::Warning,
+            WarningLevel::Warning,
             &crate::variable_errors::ERR_TRUNCATED_WRONG_VALUE,
             format!("Truncated incorrect {reported} value: '{original}'"),
         );
@@ -688,7 +688,7 @@ impl SessionVars {
         let (_, warnings) = tidb_fixcontrol::OptimizerFixControl::parse(value)
             .expect("the system/global writer validated fix-control before publication");
         for warning in warnings {
-            self.append_stmt_plain_warning(VarWarningLevel::Warning, warning);
+            self.append_stmt_plain_warning(WarningLevel::Warning, warning);
         }
     }
 }

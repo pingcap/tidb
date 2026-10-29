@@ -283,11 +283,10 @@ pub trait SessionContext: tidb_syssession::SessionContext {
 pub type SysSession = tidb_syssession::Session<dyn SessionContext>;
 
 /// Go `pkg/session/syssession.Pool`.
-pub use tidb_syssession::Pool as SessionPool;
 
 /// Go `tableTimerStoreCore`.
 pub struct TableTimerStoreCore {
-    pool: Arc<dyn SessionPool<dyn SessionContext>>,
+    pool: Arc<dyn tidb_syssession::Pool<dyn SessionContext>>,
     db_name: String,
     tbl_name: String,
     notifier: Arc<dyn TimerWatchEventNotifier>,
@@ -296,7 +295,7 @@ pub struct TableTimerStoreCore {
 impl TableTimerStoreCore {
     /// The core behind [`new_table_timer_store`].
     pub fn new(
-        pool: Arc<dyn SessionPool<dyn SessionContext>>,
+        pool: Arc<dyn tidb_syssession::Pool<dyn SessionContext>>,
         db_name: &str,
         tbl_name: &str,
     ) -> Self {
@@ -310,7 +309,7 @@ impl TableTimerStoreCore {
 
     /// The same core with a caller-supplied notifier.
     pub fn with_notifier(
-        pool: Arc<dyn SessionPool<dyn SessionContext>>,
+        pool: Arc<dyn tidb_syssession::Pool<dyn SessionContext>>,
         db_name: &str,
         tbl_name: &str,
         notifier: Arc<dyn TimerWatchEventNotifier>,
@@ -717,7 +716,7 @@ impl TimerStoreCore for TableTimerStoreCore {
 /// client selects the in-memory notifier, matching Go's nil branch.
 pub fn new_table_timer_store(
     cluster_id: u64,
-    pool: Arc<dyn SessionPool<dyn SessionContext>>,
+    pool: Arc<dyn tidb_syssession::Pool<dyn SessionContext>>,
     db_name: &str,
     tbl_name: &str,
     etcd: Option<Arc<EtcdClient>>,

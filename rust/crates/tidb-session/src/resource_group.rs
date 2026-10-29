@@ -26,7 +26,8 @@ use tidb_ast::{
     ResourceGroupRunawayOption, ResourceGroupRunawayRule,
 };
 use tidb_config_configtypes::parse_go_duration;
-use tidb_executor::{DriverError, MysqlError};
+use tidb_driver_error::DriverError;
+use tidb_terror::MysqlError;
 use tidb_hack::GoToLower;
 use tidb_model::{
     ResourceGroupBackgroundSettings, ResourceGroupInfo,

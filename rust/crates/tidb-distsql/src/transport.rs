@@ -21,7 +21,7 @@
 use tidb_copr::region_task::build_region_tasks;
 use tidb_copr::region_task::RegionTaskEnvelope;
 use tidb_copr::region_task::RegionTaskTopology;
-use crate::RequestKeyRange;
+use tidb_txnkv::KeyRange;
 use tidb_txnkv::{TransportRequest, TransportRequestError};
 
 /// Go `copr.buildCopTasks` / `SplitKeyRangesByLocations` over a built
@@ -43,14 +43,14 @@ pub trait RegionTaskRequest {
         &self,
         topology: &[RegionTaskTopology],
         limit: isize,
-    ) -> Result<Vec<Vec<RequestKeyRange>>, TransportRequestError>;
+    ) -> Result<Vec<Vec<KeyRange>>, TransportRequestError>;
 
     /// Flattens [`Self::split_key_ranges_by_regions`] in region order.
     fn split_region_ranges(
         &self,
         topology: &[RegionTaskTopology],
         limit: isize,
-    ) -> Result<Vec<RequestKeyRange>, TransportRequestError>;
+    ) -> Result<Vec<KeyRange>, TransportRequestError>;
 }
 
 impl RegionTaskRequest for TransportRequest {
@@ -66,7 +66,7 @@ impl RegionTaskRequest for TransportRequest {
         &self,
         topology: &[RegionTaskTopology],
         limit: isize,
-    ) -> Result<Vec<Vec<RequestKeyRange>>, TransportRequestError> {
+    ) -> Result<Vec<Vec<KeyRange>>, TransportRequestError> {
         if limit == 0 {
             return Ok(Vec::new());
         }
@@ -84,7 +84,7 @@ impl RegionTaskRequest for TransportRequest {
         &self,
         topology: &[RegionTaskTopology],
         limit: isize,
-    ) -> Result<Vec<RequestKeyRange>, TransportRequestError> {
+    ) -> Result<Vec<KeyRange>, TransportRequestError> {
         Ok(self
             .split_key_ranges_by_regions(topology, limit)?
             .into_iter()

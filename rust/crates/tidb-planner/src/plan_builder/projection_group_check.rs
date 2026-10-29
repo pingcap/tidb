@@ -16,7 +16,7 @@
 
 use tidb_expr::expression::Expression;
 use tidb_expr::simple_expr::extract_columns;
-use tidb_funcdep::ColSet;
+use tidb_intset::FastIntSet;
 
 use super::ProjectionField;
 use crate::logical::{LogicalPlan, LogicalProjection};
@@ -42,14 +42,14 @@ pub(super) fn check(
     if !fds.has_agg_built {
         return Ok(());
     }
-    let ungrouped = fds.group_by_cols.equals(&ColSet::new([0]));
+    let ungrouped = fds.group_by_cols.equals(&FastIntSet::new([0]));
     let closure = fds.closure_of_strict(&fds.group_by_cols);
     for (offset, expr) in projection.exprs.iter().take(fields.len()).enumerate() {
         if ungrouped && order_by_range.is_some_and(|(from, to)| (from..to).contains(&offset)) {
             continue;
         }
         let item = match expr {
-            Expression::Column(column) => ColSet::new([column.unique_id]),
+            Expression::Column(column) => FastIntSet::new([column.unique_id]),
             Expression::ScalarFunction(_) => {
                 if contains_any_value(expr) {
                     continue;
@@ -59,7 +59,7 @@ pub(super) fn check(
                     // Go skips expressions absent from its registration map.
                     continue;
                 };
-                ColSet::new([id])
+                FastIntSet::new([id])
             }
             _ => continue,
         };
@@ -72,7 +72,7 @@ pub(super) fn check(
         let columns = extract_columns(expr);
         let Some(column) = columns
             .iter()
-            .find(|column| !ColSet::new([column.unique_id]).subset_of(&closure))
+            .find(|column| !FastIntSet::new([column.unique_id]).subset_of(&closure))
             .or_else(|| columns.first())
         else {
             continue;

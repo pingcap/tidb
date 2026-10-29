@@ -312,7 +312,7 @@ pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
         .warning
         .map(|warning| {
             vec![tidb_context::SqlWarn::with_code(
-                DdlWarningLevel::Warning,
+                WarningLevel::Warning,
                 1105,
                 warning.to_owned(),
             )]

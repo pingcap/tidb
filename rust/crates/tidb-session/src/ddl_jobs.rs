@@ -16,7 +16,7 @@
 //! the store, and `appendJobToChunk`, which renders them for both
 //! `ADMIN SHOW DDL JOBS` and `information_schema.DDL_JOBS`.
 
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 use tidb_model::Job;
 
 use crate::Session;

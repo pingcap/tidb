@@ -101,13 +101,13 @@ pub struct IndexJoinInfo {
 
 /// Go `contextutil.WarnLevel*`; this file writes `WarnLevelWarning` and
 /// `WarnLevelNote`.
-pub use tidb_context::WarningLevel as WarnLevel;
+use tidb_context::WarningLevel;
 
 /// Go `context.SQLWarn`, narrowed: the `error` becomes its rendered message.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SqlWarn {
     /// The warning level.
-    pub level: WarnLevel,
+    pub level: WarningLevel,
     /// The rendered message of Go's wrapped `error`.
     pub message: String,
 }
@@ -149,7 +149,7 @@ impl SimpleWarnings {
     pub fn append_warning(&mut self, message: impl Into<String>) {
         if self.warnings.len() < usize::from(u16::MAX) {
             self.warnings.push(SqlWarn {
-                level: WarnLevel::Warning,
+                level: WarningLevel::Warning,
                 message: message.into(),
             });
         }
@@ -159,7 +159,7 @@ impl SimpleWarnings {
     pub fn append_note(&mut self, message: impl Into<String>) {
         if self.warnings.len() < usize::from(u16::MAX) {
             self.warnings.push(SqlWarn {
-                level: WarnLevel::Note,
+                level: WarningLevel::Note,
                 message: message.into(),
             });
         }

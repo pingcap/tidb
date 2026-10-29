@@ -22,7 +22,8 @@ use crate::Session;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_executor::{DriverError, MysqlError};
+use tidb_driver_error::DriverError;
+use tidb_terror::MysqlError;
 use tidb_sessionstates::{PreparedStmtInfo, SessionStates};
 
 /// A snapshot supplied by the connection owner before exporting session state.

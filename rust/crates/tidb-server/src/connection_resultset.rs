@@ -349,7 +349,7 @@ fn write_binary_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
 }
 
 fn binary_failure<W: ResultSetSink>(
-    message: impl Into<tidb_executor::MysqlError>,
+    message: impl Into<tidb_terror::MysqlError>,
     sink: &W,
     finish_attempted: bool,
 ) -> BinaryTrackedError {
@@ -633,17 +633,17 @@ mod tests {
         fn next_batch(
             &mut self,
             max_rows: usize,
-        ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
+        ) -> Result<Vec<Vec<Datum>>, tidb_terror::MysqlError> {
             std::thread::sleep(self.pull_delay);
             self.inner.next_batch(max_rows)
         }
-        fn fields(&mut self) -> Result<Vec<tidb_executor::adapter::ResultFieldMetadata>, tidb_executor::MysqlError> {
+        fn fields(&mut self) -> Result<Vec<tidb_executor::adapter::ResultFieldMetadata>, tidb_terror::MysqlError> {
             self.inner.fields()
         }
-        fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+        fn finish(&mut self) -> Result<(), tidb_terror::MysqlError> {
             self.inner.finish()
         }
-        fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+        fn close(&mut self) -> Result<(), tidb_terror::MysqlError> {
             self.inner.close()
         }
         fn add_write_sql_resp_duration(&mut self, duration: std::time::Duration) {

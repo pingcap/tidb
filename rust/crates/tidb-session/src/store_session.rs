@@ -19,7 +19,7 @@
 
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_kv::cluster_storage::BufferCheckpoint;
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 
 use crate::statement_lifecycle::{finish_snapshot, CatalogFollowing, SnapshotSlot};
 use crate::txn::driver_error_of;
@@ -30,7 +30,7 @@ use crate::{Session, TxnManagerOps};
 /// the error's own identity and its typed cause (Go `errors.Cause`) carried
 /// across.
 #[must_use]
-pub fn sql_query_error(error: tidb_executor::DriverError) -> SqlQueryError {
+pub fn sql_query_error(error: tidb_driver_error::DriverError) -> SqlQueryError {
     let mapped = error.clone().to_mysql_error();
     SqlQueryError::from(mapped).with_cause(error)
 }

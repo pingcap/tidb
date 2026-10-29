@@ -28,7 +28,7 @@
 
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_ast::{DdlStmt, Stmt};
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 
 use crate::{Session, StmtOutput};
 
@@ -275,7 +275,7 @@ impl Session {
 
 /// A DDL package error as the statement's error.
 pub(crate) fn ddl_error(error: &tidb_ddl::cluster_ddl::DdlPlanError) -> DriverError {
-    DriverError::Mysql(tidb_executor::MysqlError::from_sql_error(
+    DriverError::Mysql(tidb_terror::MysqlError::from_sql_error(
         error.to_sql_error(),
     ))
 }

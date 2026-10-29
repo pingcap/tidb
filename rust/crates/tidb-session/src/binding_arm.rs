@@ -20,7 +20,7 @@
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_ast::Stmt;
 use tidb_datatype::Datum;
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 
 use tidb_bindinfo::binding::{self, Binding};
 use crate::Session;
@@ -428,6 +428,6 @@ pub trait GlobalBindingWriter: Send + Sync {
     /// Commit the complete operation or discard all its writes on error.
     fn execute(
         &self,
-        operation: &mut dyn FnMut(&mut crate::Session) -> Result<u64, tidb_executor::DriverError>,
-    ) -> Result<u64, tidb_executor::DriverError>;
+        operation: &mut dyn FnMut(&mut crate::Session) -> Result<u64, tidb_driver_error::DriverError>,
+    ) -> Result<u64, tidb_driver_error::DriverError>;
 }

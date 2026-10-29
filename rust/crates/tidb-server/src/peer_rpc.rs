@@ -438,14 +438,14 @@ fn drain_peer_executor(
 ) -> Result<Vec<Vec<tidb_datatype::Datum>>, String> {
     executor
         .open()
-        .map_err(|error| tidb_executor::DriverError::from(error).to_string())?;
+        .map_err(|error| tidb_driver_error::DriverError::from(error).to_string())?;
     let result = (|| {
         let mut output = Vec::new();
         let mut chunk = tidb_chunk::chunk::Chunk::new(fields, 32, 1024);
         loop {
             executor
                 .next(&mut chunk)
-                .map_err(|error| tidb_executor::DriverError::from(error).to_string())?;
+                .map_err(|error| tidb_driver_error::DriverError::from(error).to_string())?;
             if chunk.num_rows() == 0 {
                 break;
             }
@@ -457,7 +457,7 @@ fn drain_peer_executor(
     })();
     let close = executor
         .close()
-        .map_err(|error| tidb_executor::DriverError::from(error).to_string());
+        .map_err(|error| tidb_driver_error::DriverError::from(error).to_string());
     warnings.extend(
         ctx.take_warnings()
             .into_iter()
@@ -670,7 +670,7 @@ fn peer_aggregate(
         let mut key = Vec::new();
         for (expr, ft) in group_by.iter().zip(&group_types) {
             let value = expr.eval(&ctx, row.to_row()).map_err(|error| {
-                tidb_executor::DriverError::from(tidb_driver_error::ExecError::Eval(error)).to_string()
+                tidb_driver_error::DriverError::from(tidb_driver_error::ExecError::Eval(error)).to_string()
             })?;
             tidb_codec::append_hash_group_key_in_timezone(&chrono::Utc, &value, ft, &mut key)
                 .map_err(|error| format!("{error:?}"))?;
@@ -1874,7 +1874,7 @@ mod tests {
                 1,
             )?;
             assert!(rows.warnings.is_empty(), "{:?}", rows.warnings);
-            Ok::<_, tidb_executor::DriverError>((columns, rows.rows))
+            Ok::<_, tidb_driver_error::DriverError>((columns, rows.rows))
         };
         let (columns, rows) = read("CLUSTER_TIDB_TRX").unwrap();
         let id = columns

@@ -485,7 +485,7 @@ pub fn optimize_physical<C: OptimizeContext>(
     // Go physicalOptimize: "collect the warnings from task". Every task
     // warning is a planner `ErrInternal` (hint warnings), code 1815.
     for warning in task.warnings().get_warnings() {
-        let note = matches!(warning.level, crate::task::WarnLevel::Note);
+        let note = matches!(warning.level, tidb_context::WarningLevel::Note);
         ctx.append_task_warning(note, 1815, &warning.message);
     }
     // Go physicalOptimize binds positions before postOptimize removes aliases.

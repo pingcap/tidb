@@ -22,7 +22,7 @@
 use tidb_privilege::PrivilegeTypeExt;
 use tidb_datatype::Datum;
 use tidb_executor::mem_table_retrieval::{MemTableRead, MemTableRetriever};
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 use tidb_infoschema::Catalog;
 use tidb_hack::GoCaseCompare;
 

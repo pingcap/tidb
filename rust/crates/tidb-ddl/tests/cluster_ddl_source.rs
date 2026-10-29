@@ -1235,7 +1235,7 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
             1467,
         ),
         (
-            DdlPlanError::from_mysql_error(tidb_executor::MysqlError::sql_error(
+            DdlPlanError::from_mysql_error(tidb_terror::MysqlError::sql_error(
                 3819,
                 "invalid row",
             )),
@@ -1361,7 +1361,7 @@ fn persisted_check_failure_uses_source_identity_for_rollback() {
             "ddl:-1",
         ),
         (
-            DdlPlanError::from_mysql_error(tidb_executor::MysqlError::sql_error(
+            DdlPlanError::from_mysql_error(tidb_terror::MysqlError::sql_error(
                 3819,
                 "number without source identity",
             )),

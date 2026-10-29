@@ -17,7 +17,8 @@
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::{extract_columns, extract_cor_columns};
-use tidb_funcdep::{ColSet, FdSet};
+use tidb_funcdep::FdSet;
+use tidb_intset::FastIntSet;
 
 use super::aggregation::AGG_FUNC_FIRST_ROW;
 use super::LogicalPlan;
@@ -90,8 +91,8 @@ impl FdExtractionContext {
     }
 }
 
-fn schema_columns(schema: Option<&Schema>) -> ColSet {
-    ColSet::new(
+fn schema_columns(schema: Option<&Schema>) -> FastIntSet {
+    FastIntSet::new(
         schema
             .into_iter()
             .flat_map(|schema| schema.columns.iter())
@@ -134,7 +135,7 @@ fn base_dependencies(plan: &LogicalPlan, context: &mut FdExtractionContext) -> F
 }
 
 fn add_not_null_facts(fds: &mut FdSet, conditions: &[Expression]) {
-    let mut not_null = ColSet::default();
+    let mut not_null = FastIntSet::default();
     for condition in conditions {
         for column in extract_columns(condition) {
             if tidb_planner_util::null_misc::is_null_rejected(condition, column.unique_id) {
@@ -150,7 +151,7 @@ fn add_constant_facts(
     fds: &mut FdSet,
     conditions: &[Expression],
 ) {
-    let mut constants = ColSet::default();
+    let mut constants = FastIntSet::default();
     for expression in
         tidb_expr::expr_util::extract_constant_eq_columns_or_scalar(Vec::new(), conditions)
     {
@@ -165,15 +166,15 @@ fn add_equivalence_facts(
     context: &mut FdExtractionContext,
     fds: &mut FdSet,
     conditions: &[Expression],
-) -> Vec<(ColSet, ColSet)> {
+) -> Vec<(FastIntSet, FastIntSet)> {
     let mut equivalences = Vec::new();
     for [left, right] in tidb_expr::expr_util::extract_equivalence_columns(Vec::new(), conditions) {
         if let (Some(left), Some(right)) = (
             fd_object_id(context, fds, &left),
             fd_object_id(context, fds, &right),
         ) {
-            let left = ColSet::new([left]);
-            let right = ColSet::new([right]);
+            let left = FastIntSet::new([left]);
+            let right = FastIntSet::new([right]);
             fds.add_equivalence(left.clone(), right.clone());
             equivalences.push((left, right));
         }
@@ -185,14 +186,14 @@ fn add_condition_facts(
     context: &mut FdExtractionContext,
     fds: &mut FdSet,
     conditions: &[Expression],
-) -> Vec<(ColSet, ColSet)> {
+) -> Vec<(FastIntSet, FastIntSet)> {
     add_not_null_facts(fds, conditions);
     add_constant_facts(context, fds, conditions);
     add_equivalence_facts(context, fds, conditions)
 }
 
-fn expression_columns(expressions: &[Expression]) -> ColSet {
-    ColSet::new(
+fn expression_columns(expressions: &[Expression]) -> FastIntSet {
+    FastIntSet::new(
         expressions
             .iter()
             .flat_map(extract_columns)
@@ -200,8 +201,8 @@ fn expression_columns(expressions: &[Expression]) -> ColSet {
     )
 }
 
-fn expression_determinants(expression: &Expression) -> ColSet {
-    ColSet::new(
+fn expression_determinants(expression: &Expression) -> FastIntSet {
+    FastIntSet::new(
         extract_columns(expression)
             .into_iter()
             .map(|column| column.unique_id)
@@ -247,7 +248,7 @@ impl LogicalPlan {
             Self::DataSource(source) => {
                 let mut fds = FdSet::new();
                 let all_columns =
-                    ColSet::new(source.table_columns.iter().map(|column| column.unique_id));
+                    FastIntSet::new(source.table_columns.iter().map(|column| column.unique_id));
                 if source.pk_is_handle {
                     let primary = source
                         .columns
@@ -257,7 +258,7 @@ impl LogicalPlan {
                         .map(|(_, column)| column.unique_id)
                         .collect::<Vec<_>>();
                     if !primary.is_empty() {
-                        let primary = ColSet::new(primary);
+                        let primary = FastIntSet::new(primary);
                         fds.add_strict(primary.clone(), all_columns.clone());
                         fds.make_not_null(primary);
                     }
@@ -268,29 +269,29 @@ impl LogicalPlan {
                 if let Some(schema) = self.schema() {
                     let (strict_keys, lax_keys) = source.index_keys(schema);
                     for key in strict_keys {
-                        let key = ColSet::new(key.iter().map(|column| column.unique_id));
+                        let key = FastIntSet::new(key.iter().map(|column| column.unique_id));
                         fds.add_strict(key.clone(), all_columns.clone());
                         fds.make_not_null(key);
                     }
                     for key in lax_keys {
                         fds.add_lax(
-                            ColSet::new(key.iter().map(|column| column.unique_id)),
+                            FastIntSet::new(key.iter().map(|column| column.unique_id)),
                             all_columns.clone(),
                         );
                     }
                 }
                 add_condition_facts(context, &mut fds, &source.all_conds);
-                let mut declared_not_null = ColSet::default();
+                let mut declared_not_null = FastIntSet::default();
                 for (metadata, column) in source.columns.iter().zip(&source.table_columns) {
                     if metadata.is_not_null {
                         declared_not_null.insert(column.unique_id);
                     }
                     if let Some(generated) = column.virtual_expr.as_deref() {
                         fds.add_strict(
-                            ColSet::new(
+                            FastIntSet::new(
                                 extract_columns(generated).iter().map(|base| base.unique_id),
                             ),
-                            ColSet::new([column.unique_id]),
+                            FastIntSet::new([column.unique_id]),
                         );
                     }
                 }
@@ -315,13 +316,13 @@ impl LogicalPlan {
                     return fds;
                 };
                 let mut projected = schema_columns(Some(schema));
-                let mut expression_not_null = ColSet::default();
+                let mut expression_not_null = FastIntSet::default();
                 for (expression, output) in projection.exprs.iter().zip(&schema.columns) {
                     match expression {
                         Expression::Column(input) if input.unique_id != output.unique_id => {
                             fds.add_equivalence(
-                                ColSet::new([input.unique_id]),
-                                ColSet::new([output.unique_id]),
+                                FastIntSet::new([input.unique_id]),
+                                FastIntSet::new([output.unique_id]),
                             );
                         }
                         Expression::CorrelatedColumn(_) => {}
@@ -330,7 +331,7 @@ impl LogicalPlan {
                             let hash = expression.hash_code().to_vec();
                             let id = fds.registered_unique_id(&hash).unwrap_or(output.unique_id);
                             fds.register_unique_id(hash, id);
-                            fds.add_constants(ColSet::new([id]));
+                            fds.add_constants(FastIntSet::new([id]));
                         }
                         Expression::ScalarFunction(_) => {
                             let mut expression = expression.clone();
@@ -350,11 +351,11 @@ impl LogicalPlan {
                             {
                                 expression_not_null.insert(id);
                             }
-                            fds.add_strict(determinants, ColSet::new([id]));
+                            fds.add_strict(determinants, FastIntSet::new([id]));
                             if id != output.unique_id {
                                 fds.add_equivalence(
-                                    ColSet::new([id]),
-                                    ColSet::new([output.unique_id]),
+                                    FastIntSet::new([id]),
+                                    FastIntSet::new([output.unique_id]),
                                 );
                             }
                         }
@@ -365,7 +366,7 @@ impl LogicalPlan {
                 projected.union_with(&fds.group_by_cols);
                 fds.project_cols(&projected);
                 if projection.fd_group_check_complete && fds.has_agg_built {
-                    if fds.group_by_cols.equals(&ColSet::new([0])) {
+                    if fds.group_by_cols.equals(&FastIntSet::new([0])) {
                         fds.max_one_row(schema_columns(Some(schema)));
                     }
                     fds.has_agg_built = false;
@@ -448,7 +449,7 @@ impl LogicalPlan {
                             add_condition_facts(context, &mut filter_fd, &all_conditions);
 
                         let mut across = 0usize;
-                        let mut outer_equivalent = ColSet::default();
+                        let mut outer_equivalent = FastIntSet::default();
                         for (left, right) in equivalences {
                             if left.subset_of(&outer_cols) && right.subset_of(&inner_cols) {
                                 across += 1;
@@ -508,7 +509,7 @@ impl LogicalPlan {
                         left_fd.make_cartesian_product(&right_fd);
                         add_condition_facts(context, &mut left_fd, &conditions);
                         for (outer, inner) in correlated_equivalences {
-                            left_fd.add_equivalence(ColSet::new([outer]), ColSet::new([inner]));
+                            left_fd.add_equivalence(FastIntSet::new([outer]), FastIntSet::new([inner]));
                         }
                         left_fd.not_null_cols.union_with(&right_fd.not_null_cols);
                         for (hash, id) in right_fd.hash_code_to_unique_id {
@@ -522,7 +523,7 @@ impl LogicalPlan {
                         add_not_null_facts(&mut left_fd, &conditions);
                         add_constant_facts(context, &mut left_fd, &apply.join.left_conditions);
                         for (outer, inner) in correlated_equivalences {
-                            left_fd.add_equivalence(ColSet::new([outer]), ColSet::new([inner]));
+                            left_fd.add_equivalence(FastIntSet::new([outer]), FastIntSet::new([inner]));
                         }
                         left_fd
                     }
@@ -561,14 +562,14 @@ impl LogicalPlan {
                         let mut equivalences =
                             add_condition_facts(context, &mut filter_fd, &conditions);
                         for (outer, inner) in correlated_equivalences {
-                            let outer = ColSet::new([outer]);
-                            let inner = ColSet::new([inner]);
+                            let outer = FastIntSet::new([outer]);
+                            let inner = FastIntSet::new([inner]);
                             filter_fd.add_equivalence(outer.clone(), inner.clone());
                             equivalences.push((outer, inner));
                         }
 
                         let mut across = 0usize;
-                        let mut outer_equivalent = ColSet::default();
+                        let mut outer_equivalent = FastIntSet::default();
                         for (left, right) in equivalences {
                             if left.subset_of(&outer_cols) && right.subset_of(&inner_cols) {
                                 across += 1;
@@ -602,9 +603,9 @@ impl LogicalPlan {
             }
             Self::Aggregation(aggregation) => {
                 let mut fds = base_dependencies(self, context);
-                let mut group_by = ColSet::default();
-                let mut group_by_outputs = ColSet::default();
-                let mut expression_not_null = ColSet::default();
+                let mut group_by = FastIntSet::default();
+                let mut group_by_outputs = FastIntSet::default();
+                let mut expression_not_null = FastIntSet::default();
                 for expression in &aggregation.group_by_items {
                     match expression {
                         Expression::Column(column) => group_by.insert(column.unique_id),
@@ -630,7 +631,7 @@ impl LogicalPlan {
                             {
                                 expression_not_null.insert(id);
                             }
-                            fds.add_strict(determinants, ColSet::new([id]));
+                            fds.add_strict(determinants, FastIntSet::new([id]));
                         }
                         _ => {}
                     }
@@ -641,7 +642,7 @@ impl LogicalPlan {
                 if let Some(schema) = self.schema() {
                     for (function, output) in aggregation.agg_funcs.iter().zip(&schema.columns) {
                         if function.name() != AGG_FUNC_FIRST_ROW {
-                            fds.add_strict(group_by.clone(), ColSet::new([output.unique_id]));
+                            fds.add_strict(group_by.clone(), FastIntSet::new([output.unique_id]));
                         }
                     }
                     if !aggregation.group_by_items.is_empty() {
@@ -827,8 +828,8 @@ mod tests {
         ));
 
         let fd = LogicalPlan::Join(join).extract_fd();
-        assert!(fd.closure_of_equivalence(&ColSet::new([1])).has(10));
-        assert!(fd.in_closure(&ColSet::new([10]), &ColSet::new([2])));
+        assert!(fd.closure_of_equivalence(&FastIntSet::new([1])).has(10));
+        assert!(fd.in_closure(&FastIntSet::new([10]), &FastIntSet::new([2])));
     }
 
     #[test]
@@ -854,7 +855,7 @@ mod tests {
         )));
 
         let fd = LogicalPlan::Join(join).extract_fd();
-        assert!(!fd.closure_of_equivalence(&ColSet::new([1])).has(10));
+        assert!(!fd.closure_of_equivalence(&FastIntSet::new([1])).has(10));
         assert!(fd.constant_cols().has(2));
     }
 
@@ -879,8 +880,8 @@ mod tests {
         projection.base.base.set_schema(Some(schema(&[1, 5, 6])));
 
         let fd = LogicalPlan::Projection(projection).extract_fd();
-        assert!(fd.in_closure(&ColSet::new([2]), &ColSet::new([5])));
-        assert!(fd.in_closure(&ColSet::new([1]), &ColSet::new([5])));
+        assert!(fd.in_closure(&FastIntSet::new([2]), &FastIntSet::new([5])));
+        assert!(fd.in_closure(&FastIntSet::new([1]), &FastIntSet::new([5])));
         assert!(fd.constant_cols().has(6));
     }
 
@@ -918,18 +919,18 @@ mod tests {
         projection.base.base.set_schema(Some(schema(&[5])));
 
         let fd = LogicalPlan::Projection(projection).extract_fd();
-        assert!(fd.in_closure(&ColSet::new([2, 10]), &ColSet::new([5])));
-        assert!(!fd.in_closure(&ColSet::new([2]), &ColSet::new([5])));
+        assert!(fd.in_closure(&FastIntSet::new([2, 10]), &FastIntSet::new([5])));
+        assert!(!fd.in_closure(&FastIntSet::new([2]), &FastIntSet::new([5])));
     }
 
     #[test]
     fn datasource_filter_promotes_a_nullable_unique_key() {
         let lax = nullable_unique_source(false).extract_fd();
-        assert!(lax.closure_of_lax(&ColSet::new([2, 3])).has(1));
-        assert!(!lax.closure_of_strict(&ColSet::new([2, 3])).has(1));
+        assert!(lax.closure_of_lax(&FastIntSet::new([2, 3])).has(1));
+        assert!(!lax.closure_of_strict(&FastIntSet::new([2, 3])).has(1));
 
         let strict = nullable_unique_source(true).extract_fd();
-        assert!(strict.closure_of_strict(&ColSet::new([2, 3])).has(1));
+        assert!(strict.closure_of_strict(&FastIntSet::new([2, 3])).has(1));
         assert!(strict.constant_cols().has(3));
 
         let mut latest_dropped = nullable_unique_source(false);
@@ -938,7 +939,7 @@ mod tests {
         };
         source.fd_latest_public_index_ids = Some(std::collections::BTreeSet::new());
         let latest_dropped = latest_dropped.extract_fd();
-        assert!(!latest_dropped.closure_of_lax(&ColSet::new([2, 3])).has(1));
+        assert!(!latest_dropped.closure_of_lax(&FastIntSet::new([2, 3])).has(1));
 
         let mut lookup_failed = nullable_unique_source(true);
         let LogicalPlan::DataSource(source) = &mut lookup_failed else {
@@ -949,8 +950,8 @@ mod tests {
         source.columns[0].is_not_null = true;
         source.fd_latest_index_lookup_failed = true;
         let lookup_failed = lookup_failed.extract_fd();
-        assert!(lookup_failed.in_closure(&ColSet::new([1]), &ColSet::new([2, 3])));
-        assert!(!lookup_failed.closure_of_lax(&ColSet::new([2, 3])).has(1));
+        assert!(lookup_failed.in_closure(&FastIntSet::new([1]), &FastIntSet::new([2, 3])));
+        assert!(!lookup_failed.closure_of_lax(&FastIntSet::new([2, 3])).has(1));
         assert!(!lookup_failed.constant_cols().has(3));
     }
 
@@ -987,7 +988,7 @@ mod tests {
 
         assert!(fds.constant_cols().has(1));
         assert!(fds.constant_cols().has(2));
-        assert!(fds.closure_of_equivalence(&ColSet::new([3])).has(4));
+        assert!(fds.closure_of_equivalence(&FastIntSet::new([3])).has(4));
 
         let mut constant_filter = FdSet::new();
         add_condition_facts(
@@ -1014,7 +1015,7 @@ mod tests {
 
         let fd = LogicalPlan::Aggregation(aggregation).extract_fd();
         assert_eq!(fd.group_by_cols().to_string(), "(2)");
-        assert!(fd.in_closure(&ColSet::new([2]), &ColSet::new([5])));
+        assert!(fd.in_closure(&FastIntSet::new([2]), &FastIntSet::new([5])));
         assert!(fd.has_agg_built());
     }
 
@@ -1042,8 +1043,8 @@ mod tests {
         let fd = LogicalPlan::Aggregation(aggregation).extract_fd();
         let (extended, present) = fd.group_by_cols().next(0);
         assert!(present, "scalar group-by extended column");
-        assert!(fd.in_closure(&ColSet::new([2, 10]), &ColSet::new([extended])));
-        assert!(!fd.in_closure(&ColSet::new([2]), &ColSet::new([extended])));
+        assert!(fd.in_closure(&FastIntSet::new([2, 10]), &FastIntSet::new([extended])));
+        assert!(!fd.in_closure(&FastIntSet::new([2]), &FastIntSet::new([extended])));
     }
 
     #[test]
@@ -1071,7 +1072,7 @@ mod tests {
 
         let fd = LogicalPlan::Projection(projection).extract_fd();
         assert!(fd.group_by_cols().has(6));
-        assert!(fd.in_closure(&ColSet::new([2, 3]), &ColSet::new([6])));
+        assert!(fd.in_closure(&FastIntSet::new([2, 3]), &FastIntSet::new([6])));
     }
 
     #[test]
@@ -1098,7 +1099,7 @@ mod tests {
 
         let fd = LogicalPlan::Projection(projection).extract_fd();
         assert!(!fd.group_by_cols().has(6));
-        assert!(fd.in_closure(fd.group_by_cols(), &ColSet::new([6])));
+        assert!(fd.in_closure(fd.group_by_cols(), &FastIntSet::new([6])));
     }
 
     #[test]
@@ -1122,7 +1123,7 @@ mod tests {
 
         let fd = LogicalPlan::UnionAll(union).extract_fd();
         assert_eq!(
-            fd.closure_of_equivalence(&ColSet::new([1])).to_string(),
+            fd.closure_of_equivalence(&FastIntSet::new([1])).to_string(),
             "(1,2)"
         );
         assert!(fd.not_null_cols().has(1));
@@ -1138,8 +1139,8 @@ mod tests {
         join.base.base.set_schema(Some(schema(&[1, 2, 10, 11])));
 
         let fd = LogicalPlan::Join(join).extract_fd();
-        assert!(fd.in_closure(&ColSet::new([10]), &ColSet::new([11])));
-        assert!(fd.in_closure(&ColSet::new([1, 10]), &ColSet::new([2, 11])));
+        assert!(fd.in_closure(&FastIntSet::new([10]), &FastIntSet::new([11])));
+        assert!(fd.in_closure(&FastIntSet::new([1, 10]), &FastIntSet::new([2, 11])));
         assert!(!fd.not_null_cols().has(10));
     }
 
@@ -1163,7 +1164,7 @@ mod tests {
         )));
 
         let fd = LogicalPlan::Join(join).extract_fd();
-        assert!(!fd.in_closure(&ColSet::new([1, 2]), &ColSet::new([10])));
+        assert!(!fd.in_closure(&FastIntSet::new([1, 2]), &FastIntSet::new([10])));
     }
 
     #[test]
@@ -1182,7 +1183,7 @@ mod tests {
             .set_schema(Some(schema(&[1, 2, 10, 11])));
 
         let fd = LogicalPlan::Apply(apply).extract_fd();
-        assert!(fd.closure_of_equivalence(&ColSet::new([1])).has(10));
+        assert!(fd.closure_of_equivalence(&FastIntSet::new([1])).has(10));
     }
 
     #[test]
@@ -1201,8 +1202,8 @@ mod tests {
             .set_schema(Some(schema(&[1, 2, 10, 11])));
 
         let mut fd = LogicalPlan::Apply(apply).extract_fd();
-        assert!(!fd.closure_of_equivalence(&ColSet::new([1])).has(10));
-        fd.make_not_null(ColSet::new([10]));
-        assert!(fd.closure_of_equivalence(&ColSet::new([1])).has(10));
+        assert!(!fd.closure_of_equivalence(&FastIntSet::new([1])).has(10));
+        fd.make_not_null(FastIntSet::new([10]));
+        assert!(fd.closure_of_equivalence(&FastIntSet::new([1])).has(10));
     }
 }

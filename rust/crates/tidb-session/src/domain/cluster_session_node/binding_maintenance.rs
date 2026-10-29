@@ -24,7 +24,7 @@ use std::sync::{
     Arc, Weak,
 };
 use tidb_datatype::Datum;
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 
 pub(super) struct BindingSessions {
     factory: Weak<Domain>,
@@ -105,7 +105,7 @@ struct BindingRunner {
 }
 fn driver_error(error: tidb_store_driver_error::sql_query_error::SqlQueryError) -> DriverError {
     DriverError::Mysql(
-        tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
+        tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
             .with_identity_opt(error.identity),
     )
 }

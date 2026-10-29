@@ -21,13 +21,13 @@ use tidb_copr::cop_paging::{
     build_tikv_unary_request, decode_tikv_unary_response, CopReadTaskRuntime,
 };
 use tidb_copr::cop_paging::CopPagingState;
-use tidb_distsql::KvPriority;
+use tidb_txnkv::Priority;
 use tidb_copr::cop_paging::ReadEngineGeneration;
 use tidb_copr::region_task::RegionTaskEpoch;
 use tidb_copr::region_task::RegionTaskPeer;
 use tidb_copr::region_task::RegionTaskTopology;
-use tidb_distsql::RequestKeyRange;
-use tidb_distsql::RequestKeyRanges;
+use tidb_txnkv::KeyRange;
+use tidb_txnkv::PartitionedKeyRanges;
 use tidb_txnkv::KvRequestMetadata;
 use tidb_txnkv::StoreType;
 use tidb_txnkv::RequestType;
@@ -39,8 +39,8 @@ use tidb_proto::{
 };
 use tidb_txnkv::{ClientReplicaReadType, EndpointType, TraceInfo};
 
-fn range(start: &str, end: &str) -> RequestKeyRange {
-    RequestKeyRange {
+fn range(start: &str, end: &str) -> KeyRange {
+    KeyRange {
         start_key: start.as_bytes().to_vec().into(),
         end_key: end.as_bytes().to_vec().into(),
     }
@@ -50,7 +50,7 @@ fn metadata() -> KvRequestMetadata {
     let mut metadata = KvRequestMetadata::default();
     metadata.request_type = RequestType::Dag;
     metadata.data = Some(b"dag".to_vec());
-    metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(vec![range("a", "z")]).into());
+    metadata.key_ranges = Some(PartitionedKeyRanges::new_non_partitioned(vec![range("a", "z")]).into());
     metadata.keep_order = true;
     metadata.cacheable = true;
     metadata.store_type = StoreType::TiKv;
@@ -65,7 +65,7 @@ fn metadata() -> KvRequestMetadata {
     metadata.paging.min_size = 2;
     metadata.paging.max_size = 8;
     metadata.replica_read = ReplicaReadType::Follower;
-    metadata.priority = KvPriority::High;
+    metadata.priority = Priority::High;
     metadata.not_fill_cache = true;
     metadata.task_id = 42;
     metadata.resource_group_name = "rg1".to_owned();
@@ -153,7 +153,7 @@ fn checked_task_becomes_wire_ready_request_with_exact_context_and_wrapper_metada
     assert_eq!(context.peer.unwrap().store_id, 12);
     assert_eq!(
         context.priority,
-        i32::try_from(KvPriority::High.raw()).unwrap()
+        i32::try_from(Priority::High.raw()).unwrap()
     );
     assert!(context.not_fill_cache);
     assert!(context.record_time_stat);

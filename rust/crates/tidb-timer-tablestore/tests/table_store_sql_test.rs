@@ -29,7 +29,7 @@ use tidb_timer_tablestore::sql::{
     build_update_criteria, build_update_timer_sql, SqlArg, TimerExt,
 };
 use tidb_timer_tablestore::store::{
-    execute_sql, run_in_txn, Datum, Row, SessionContext, SessionPool, SqlContext, SysSession,
+    execute_sql, run_in_txn, Datum, Row, SessionContext, SqlContext, SysSession,
     TableTimerStoreCore,
 };
 use tidb_timer::timer::{
@@ -939,7 +939,7 @@ struct MockSessionPool {
     err: Mutex<Option<&'static str>>,
 }
 
-impl SessionPool<dyn SessionContext> for MockSessionPool {
+impl tidb_syssession::Pool<dyn SessionContext> for MockSessionPool {
     fn get(&self) -> tidb_syssession::Result<SysSession> {
         if let Some(message) = *self.err.lock().unwrap() {
             return Err(tidb_syssession::SysSessionError::new(message));

@@ -26,7 +26,7 @@ use tidb_copr::copr_cache::CoprCacheResponseContext;
 use tidb_copr::copr_cache::CoprCacheResponseOutcome;
 use tidb_copr::copr_cache::CoprCacheValue;
 use tidb_copr::coprocessor_request::CoprocessorRequestEnvelope;
-use tidb_distsql::RequestKeyRange;
+use tidb_txnkv::KeyRange;
 use tidb_proto::{CoprocessorKeyRange, CoprocessorResponse};
 
 const MILLISECOND: i64 = 1_000_000;
@@ -99,11 +99,11 @@ fn test_build_cache_key() {
         start_ts: 0xaa_bb_cc,
         data: vec![0x18, 0, 0x20, 0, 0x40, 0, 0x5a, 0].into(),
         ranges: vec![
-            RequestKeyRange {
+            KeyRange {
                 start_key: vec![0x01].into(),
                 end_key: vec![0x01, 0x02].into(),
             },
-            RequestKeyRange {
+            KeyRange {
                 start_key: vec![0x01, 0x01, 0x02].into(),
                 end_key: vec![0x01, 0x01, 0x03].into(),
             },
@@ -322,7 +322,7 @@ fn test_get_set_and_live_request_response_lifecycle() {
     let mut request = CoprocessorRequestEnvelope {
         tp: 0xab,
         data: b"dag".to_vec().into(),
-        ranges: vec![RequestKeyRange {
+        ranges: vec![KeyRange {
             start_key: b"a".to_vec().into(),
             end_key: b"z".to_vec().into(),
         }],
@@ -408,7 +408,7 @@ fn request_eligibility_and_bounded_storage_stay_inside_the_owner() {
     .unwrap();
     let mut request = CoprocessorRequestEnvelope {
         tp: 1,
-        ranges: vec![RequestKeyRange::default(), RequestKeyRange::default()],
+        ranges: vec![KeyRange::default(), KeyRange::default()],
         ..CoprocessorRequestEnvelope::default()
     };
     assert!(cache
@@ -496,7 +496,7 @@ fn paging_hit_preserves_absent_present_empty_and_nonpaging_range_states() {
     let mut request = CoprocessorRequestEnvelope {
         tp: 1,
         data: b"range-presence".to_vec().into(),
-        ranges: vec![RequestKeyRange {
+        ranges: vec![KeyRange {
             start_key: b"a".to_vec().into(),
             end_key: b"z".to_vec().into(),
         }],
@@ -613,7 +613,7 @@ fn cache_key_rejects_oversized_range_keys_in_source_order() {
     let oversized = vec![0u8; usize::from(u16::MAX) + 1];
     let mut request = CoprocessorRequestEnvelope {
         tp: 1,
-        ranges: vec![RequestKeyRange {
+        ranges: vec![KeyRange {
             start_key: oversized.clone().into(),
             end_key: b"z".to_vec().into(),
         }],

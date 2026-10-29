@@ -146,7 +146,7 @@ fn index(id: i64, name: &str, column: &str, offset: i64, prefix: i64) -> IndexIn
     }
 }
 
-fn result_rows(result: Result<StmtResult, tidb_executor::DriverError>) -> Vec<Vec<Datum>> {
+fn result_rows(result: Result<StmtResult, tidb_driver_error::DriverError>) -> Vec<Vec<Datum>> {
     match result.unwrap() {
         StmtResult::Rows(rows) => rows,
         other => panic!("expected rows, got {other:?}"),
@@ -673,7 +673,7 @@ fn a_cluster_column_whose_default_is_not_a_literal_refuses_the_table() {
     );
 }
 
-fn text_rows(result: Result<StmtResult, tidb_executor::DriverError>) -> Vec<String> {
+fn text_rows(result: Result<StmtResult, tidb_driver_error::DriverError>) -> Vec<String> {
     result_rows(result)
         .iter()
         .map(|row| {

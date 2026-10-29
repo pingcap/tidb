@@ -88,7 +88,7 @@ pub(crate) use write_cast::*;
 
 pub mod error;
 pub(crate) use error::coprocessor_evaluation_error;
-pub use error::{DriverError, MysqlError, VarError};
+pub(crate) use error::{DriverError, MysqlError};
 
 /// Parses and runs a `FROM`-less `SELECT`, returning its rows as `Datum`s.
 pub fn run_select(sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {

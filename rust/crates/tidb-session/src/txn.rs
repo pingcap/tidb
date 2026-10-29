@@ -29,7 +29,7 @@ use tidb_ast::{SessionStmt, Stmt};
 use tidb_datatype::Datum;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_kv::cluster_storage::BufferCheckpoint;
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 use tidb_infoschema::Catalog;
 
 use crate::{txn_mode_for_begin, PESSIMISTIC_TXN_MODE};
@@ -135,7 +135,7 @@ pub(crate) fn driver_error_of(error: SqlQueryError) -> DriverError {
     if let Some(cause) = driver_cause(&error) {
         return cause.clone();
     }
-    let mut mapped = tidb_executor::MysqlError::from_parts(error.code, error.state, error.message);
+    let mut mapped = tidb_terror::MysqlError::from_parts(error.code, error.state, error.message);
     if let Some(identity) = error.identity {
         mapped = mapped.with_identity(identity);
     }
@@ -909,7 +909,7 @@ impl Session {
             && self.statement_txn_mode().is_pessimistic()
             && !self.pessimistic_constraint_check_in_place()
         {
-            return Err(DriverError::Mysql(tidb_executor::MysqlError::unknown(
+            return Err(DriverError::Mysql(tidb_terror::MysqlError::unknown(
                 "savepoint is not supported in pessimistic transactions when in-place constraint check is disabled",
             )));
         }

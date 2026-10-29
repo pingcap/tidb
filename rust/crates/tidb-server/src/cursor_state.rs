@@ -311,7 +311,7 @@ impl Drop for CursorState {
 }
 
 fn cursor_exec_error(error: tidb_driver_error::ExecError) -> SqlQueryError {
-    let mapped = tidb_executor::DriverError::Exec(error).to_mysql_error();
+    let mapped = tidb_driver_error::DriverError::Exec(error).to_mysql_error();
     SqlQueryError::from(mapped)
 }
 
@@ -351,24 +351,24 @@ mod tests {
         fn next_batch(
             &mut self,
             max_rows: usize,
-        ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
+        ) -> Result<Vec<Vec<Datum>>, tidb_terror::MysqlError> {
             self.current_tso.publish(765432109);
             Ok((0..max_rows.max(1))
                 .map_while(|_| self.rows.pop_front())
                 .collect())
         }
 
-        fn fields(&mut self) -> Result<Vec<tidb_executor::adapter::ResultFieldMetadata>, tidb_executor::MysqlError> {
+        fn fields(&mut self) -> Result<Vec<tidb_executor::adapter::ResultFieldMetadata>, tidb_terror::MysqlError> {
             Ok(self.fields.clone())
         }
 
-        fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+        fn finish(&mut self) -> Result<(), tidb_terror::MysqlError> {
             self.current_tso.clear();
             self.lifecycle.lock().unwrap().finish += 1;
             Ok(())
         }
 
-        fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+        fn close(&mut self) -> Result<(), tidb_terror::MysqlError> {
             self.lifecycle.lock().unwrap().close += 1;
             Ok(())
         }

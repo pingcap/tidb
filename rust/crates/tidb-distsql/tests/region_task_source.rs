@@ -18,7 +18,7 @@ use prost::Message;
 use tidb_copr::region_task::RegionTaskEnvelope;
 use tidb_copr::region_task::RegionTaskEpoch;
 use tidb_copr::region_task::RegionTaskPeer;
-use tidb_distsql::RequestKeyRange;
+use tidb_txnkv::KeyRange;
 use tidb_copr::region_task::VersionedRegionKeyRange;
 use tidb_proto::StoreBatchTask;
 
@@ -39,13 +39,13 @@ fn store_batch_task_preserves_region_epoch_peer_ranges_and_bucket_version() {
             role: 1,
             is_witness: true,
         }),
-        ranges: vec![RequestKeyRange {
+        ranges: vec![KeyRange {
             start_key: b"a".to_vec().into(),
             end_key: b"b".to_vec().into(),
         }],
         task_id: 42,
         versioned_ranges: vec![VersionedRegionKeyRange {
-            range: RequestKeyRange {
+            range: KeyRange {
                 start_key: b"p".to_vec().into(),
                 end_key: b"p".to_vec().into(),
             },
@@ -99,11 +99,11 @@ fn absent_region_metadata_stays_absent_and_ranges_keep_order() {
     let envelope = RegionTaskEnvelope {
         region_id: 17,
         ranges: vec![
-            RequestKeyRange {
+            KeyRange {
                 start_key: vec![2].into(),
                 end_key: vec![3].into(),
             },
-            RequestKeyRange {
+            KeyRange {
                 start_key: vec![0].into(),
                 end_key: vec![1].into(),
             },

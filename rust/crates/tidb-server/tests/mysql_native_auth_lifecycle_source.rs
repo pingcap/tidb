@@ -94,11 +94,11 @@ impl ResultSetSource for Rows {
     fn next_batch(
         &mut self,
         max_rows: usize,
-    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
+    ) -> Result<Vec<Vec<Datum>>, tidb_terror::MysqlError> {
         Ok((0..max_rows).map_while(|_| self.rows.pop_front()).collect())
     }
 
-    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_terror::MysqlError> {
         Ok(vec![ResultFieldMetadata {
             schema: "campaign21".to_owned(),
             table: "rows".to_owned(),
@@ -117,11 +117,11 @@ impl ResultSetSource for Rows {
         }])
     }
 
-    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn finish(&mut self) -> Result<(), tidb_terror::MysqlError> {
         Ok(())
     }
 
-    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn close(&mut self) -> Result<(), tidb_terror::MysqlError> {
         Ok(())
     }
 }

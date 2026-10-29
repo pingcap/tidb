@@ -70,7 +70,7 @@ use tidb_txnkv::transaction::{BufferMutation, MutationSetError};
 use tidb_infoschema::cluster_catalog::{
     load_cluster_catalog, ClusterCatalog, ClusterCatalogError, MetaSnapshot,
 };
-use crate::real_tikv_ddl::DdlWarningLevel;
+use tidb_context::WarningLevel;
 use tidb_hack::GoToLower;
 use tidb_ddl_build::column_types::resolve_charset_collation;
 
@@ -2055,7 +2055,7 @@ fn resolve_alter_algorithm(
         ));
     }
     context.append_sql_warn(tidb_context::SqlWarn::of(
-        DdlWarningLevel::Error,
+        WarningLevel::Error,
         &tidb_dbterror::ERR_ALTER_OPERATION_NOT_SUPPORTED,
         message,
     ));
@@ -2366,14 +2366,14 @@ fn lower_alter_table_catalog(
                 // warning; ENABLE / DISABLE KEYS do nothing (MyISAM only).
                 tidb_ast::AlterTableAction::WithValidation => {
                     context.append_sql_warn(tidb_context::SqlWarn::raised(
-                        DdlWarningLevel::Warning,
+                        WarningLevel::Warning,
                         tidb_dbterror::ERR_UNSUPPORTED_ALTER_TABLE_WITH_VALIDATION
                             .generate_with_stack_by_args(&[]),
                     ))
                 }
                 tidb_ast::AlterTableAction::WithoutValidation => {
                     context.append_sql_warn(tidb_context::SqlWarn::raised(
-                        DdlWarningLevel::Warning,
+                        WarningLevel::Warning,
                         tidb_dbterror::ERR_UNSUPPORTED_ALTER_TABLE_WITHOUT_VALIDATION
                             .generate_with_stack_by_args(&[]),
                     ))
@@ -4452,7 +4452,7 @@ fn check_table_info_valid_extra(
 ) -> Result<(), DdlPlanError> {
     tidb_ddl_build::table_info_build::check_table_info_valid_extra(
         &mut |warning| {
-            warnings.push(tidb_context::SqlWarn::new(DdlWarningLevel::Warning, warning));
+            warnings.push(tidb_context::SqlWarn::new(WarningLevel::Warning, warning));
         },
         info,
     )?;
@@ -8125,7 +8125,7 @@ pub fn plan_ddl<S: MetaSnapshot>(
                 .as_ref()
                 .map(|(code, message)| {
                     vec![tidb_context::SqlWarn::with_code(
-                        crate::real_tikv_ddl::DdlWarningLevel::Warning,
+                        tidb_context::WarningLevel::Warning,
                         *code,
                         message.clone(),
                     )]
@@ -8166,7 +8166,7 @@ pub fn plan_ddl<S: MetaSnapshot>(
                 })
                 .map(|message| {
                     vec![tidb_context::SqlWarn::with_code(
-                        DdlWarningLevel::Warning,
+                        WarningLevel::Warning,
                         1105,
                         message,
                     )]

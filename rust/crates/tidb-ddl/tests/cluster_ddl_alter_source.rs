@@ -9,7 +9,7 @@
 
 use crate::cluster_ddl_source::{lower_ddl, plan_ddl};
 use tidb_ddl::cluster_ddl::{DdlPlan, DdlPlanError};
-use tidb_ddl::real_tikv_ddl::DdlWarningLevel;
+use tidb_context::WarningLevel;
 use tidb_meta::key;
 
 // The fixture helpers stay with the file that owns the bootstrap; the
@@ -96,7 +96,7 @@ fn rebase_auto_increment_moves_the_counter_and_floors_without_force() {
     let write = plan(&mut store, "ALTER TABLE u6.t AUTO_INCREMENT = 10", 300);
     assert_eq!(
         write.warnings.iter().map(tidb_context::SqlWarn::parts).collect::<Vec<_>>(),
-        vec![(DdlWarningLevel::Warning, 1105, "Can't reset AUTO_INCREMENT to 10 without FORCE option, using 500 instead".to_owned())]
+        vec![(WarningLevel::Warning, 1105, "Can't reset AUTO_INCREMENT to 10 without FORCE option, using 500 instead".to_owned())]
     );
     apply(&mut store, &write);
     assert_eq!(
@@ -212,7 +212,7 @@ fn accepted_no_op_alters_publish_nothing_and_order_by_warns_under_a_primary_key(
     let (_, warnings) = satisfied(&mut store, "ALTER TABLE u6.keyed ORDER BY v", 400);
     assert_eq!(
         warnings.iter().map(tidb_context::SqlWarn::parts).collect::<Vec<_>>(),
-        vec![(DdlWarningLevel::Warning, 1105, "ORDER BY ignored as there is a user-defined clustered index in the table 'keyed'".to_owned())]
+        vec![(WarningLevel::Warning, 1105, "ORDER BY ignored as there is a user-defined clustered index in the table 'keyed'".to_owned())]
     );
 
     // No primary key column, so Go raises nothing at all.

@@ -266,7 +266,7 @@ impl DomainSessions for Domain {
                 let hold = Arc::new(tidb_txnkv::ACTIVE_START_TS.hold(ts));
                 let snapshot = transactions
                     .open_snapshot_at(ts, resource_group)
-                    .map_err(tidb_executor::DriverError::unsupported)?;
+                    .map_err(tidb_driver_error::DriverError::unsupported)?;
                 let (catalog, snapshot) = if let Some(schema) = schema {
                     (schema.clone(), snapshot)
                 } else {
@@ -317,7 +317,7 @@ impl DomainSessions for Domain {
                 let hold = tidb_txnkv::ACTIVE_START_TS.hold(ts);
                 let snapshot = transactions
                     .open_snapshot_at(ts, resource_group)
-                    .map_err(tidb_executor::DriverError::unsupported)?;
+                    .map_err(tidb_driver_error::DriverError::unsupported)?;
                 if validate {
                     crate::gcutil::validate_snapshot(restricted_sql.as_ref(), ts)?;
                 }
@@ -447,12 +447,12 @@ impl DomainSessions for Domain {
 /// timestamp behind the txn safe point) is returned unwrapped.
 pub(crate) fn historical_catalog_error(
     error: tidb_infoschema::cluster_catalog::ClusterCatalogError,
-) -> tidb_executor::DriverError {
+) -> tidb_driver_error::DriverError {
     match error {
         tidb_infoschema::cluster_catalog::ClusterCatalogError::Sql(error) => {
-            tidb_executor::DriverError::Mysql(error)
+            tidb_driver_error::DriverError::Mysql(error)
         }
-        other => tidb_executor::DriverError::unsupported(other.to_string()),
+        other => tidb_driver_error::DriverError::unsupported(other.to_string()),
     }
 }
 
@@ -985,16 +985,16 @@ pub(crate) struct InternalBindingWriter {
 impl crate::binding_arm::GlobalBindingWriter for InternalBindingWriter {
     fn execute(
         &self,
-        operation: &mut dyn FnMut(&mut Session) -> Result<u64, tidb_executor::DriverError>,
-    ) -> Result<u64, tidb_executor::DriverError> {
+        operation: &mut dyn FnMut(&mut Session) -> Result<u64, tidb_driver_error::DriverError>,
+    ) -> Result<u64, tidb_driver_error::DriverError> {
         let to_driver = |error: SqlQueryError| {
-            tidb_executor::DriverError::Mysql(
-                tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
+            tidb_driver_error::DriverError::Mysql(
+                tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
                     .with_identity_opt(error.identity),
             )
         };
         let factory = self.factory.upgrade().ok_or_else(|| {
-            tidb_executor::DriverError::unsupported("global binding session factory is stopped")
+            tidb_driver_error::DriverError::unsupported("global binding session factory is stopped")
         })?;
         let mut internal_session = factory
             .open_storage_session(self.connection_id)

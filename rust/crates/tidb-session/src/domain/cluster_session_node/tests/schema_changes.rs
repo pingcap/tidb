@@ -70,7 +70,7 @@ impl ClusterDdl for ReportDdl {
 
 #[test]
 fn ddl_reports_preserve_warning_order_levels_and_statement_lifetime() {
-    use tidb_ddl::real_tikv_ddl::DdlWarningLevel::{Note, Warning};
+    use tidb_context::WarningLevel::{Note, Warning};
 
     let node = MockNode::start();
     let notes = vec![

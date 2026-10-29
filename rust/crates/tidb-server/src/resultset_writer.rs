@@ -138,7 +138,7 @@ pub struct ResultSetWriteOutcome {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResultSetWriteError {
     /// Typed SQL error from the source, protocol encoder, or packet sink.
-    pub cause: tidb_executor::MysqlError,
+    pub cause: tidb_terror::MysqlError,
     /// True only when the first `Next` failed before any packet escaped.
     pub retryable: bool,
     /// Whether any response bytes may already be visible to the client.
@@ -377,7 +377,7 @@ fn tracked(error: ResultSetWriteError, finish_attempted: bool) -> TrackedResultS
 }
 
 fn tracked_after_pull<W: ResultSetSink>(
-    message: impl Into<tidb_executor::MysqlError>,
+    message: impl Into<tidb_terror::MysqlError>,
     sink: &W,
     finish_attempted: bool,
 ) -> TrackedResultSetWriteError {
@@ -424,7 +424,7 @@ fn flush_sink<W: ResultSetSink>(sink: &mut W) -> Result<(), ResultSetWriteError>
 }
 
 fn failed_after_pull<W: ResultSetSink>(
-    message: impl Into<tidb_executor::MysqlError>,
+    message: impl Into<tidb_terror::MysqlError>,
     sink: &W,
 ) -> ResultSetWriteError {
     ResultSetWriteError {

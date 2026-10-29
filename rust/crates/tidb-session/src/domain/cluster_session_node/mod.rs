@@ -2009,14 +2009,14 @@ impl Session {
 /// Go `DDLExec` over this connection: the session's DDL state and the store
 /// steps the node takes for it.
 impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
-    fn begin_ddl_statement(&mut self, parsed: &Stmt) -> Result<(), tidb_executor::DriverError> {
+    fn begin_ddl_statement(&mut self, parsed: &Stmt) -> Result<(), tidb_driver_error::DriverError> {
         self.session.begin_ddl_statement(parsed)
     }
 
     fn cluster_cleanup_table_lock_statement(
         &self,
         tables: &[Vec<String>],
-    ) -> Result<Option<DdlStatement>, tidb_executor::DriverError> {
+    ) -> Result<Option<DdlStatement>, tidb_driver_error::DriverError> {
         self.session.cluster_cleanup_table_lock_statement(tables)
     }
 
@@ -2044,14 +2044,14 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         self.session.vars()
     }
 
-    fn ddl_target_checks(&mut self, stmt: &Stmt) -> Result<(), tidb_executor::DriverError> {
+    fn ddl_target_checks(&mut self, stmt: &Stmt) -> Result<(), tidb_driver_error::DriverError> {
         self.session.ddl_target_checks(stmt)
     }
 
     fn cluster_lock_tables_statement(
         &mut self,
         locks: &[tidb_ast::TableLock],
-    ) -> Result<DdlStatement, tidb_executor::DriverError> {
+    ) -> Result<DdlStatement, tidb_driver_error::DriverError> {
         self.session.cluster_lock_tables_statement(locks)
     }
 
@@ -2059,7 +2059,7 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         self.session.cluster_unlock_tables_statement()
     }
 
-    fn require_table_exists(&mut self, path: &[String]) -> Result<(), tidb_executor::DriverError> {
+    fn require_table_exists(&mut self, path: &[String]) -> Result<(), tidb_driver_error::DriverError> {
         self.session.require_table_exists(path)
     }
 
@@ -2074,7 +2074,7 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
     fn drop_local_temporary_tables(
         &mut self,
         names: &[Vec<String>],
-    ) -> Result<(), tidb_executor::DriverError> {
+    ) -> Result<(), tidb_driver_error::DriverError> {
         self.session.drop_local_temporary_tables(names)
     }
 
@@ -2095,7 +2095,7 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         self.session.set_statement_message(message);
     }
 
-    fn validate_snapshot_write(&self, stmt: &Stmt) -> Result<(), tidb_executor::DriverError> {
+    fn validate_snapshot_write(&self, stmt: &Stmt) -> Result<(), tidb_driver_error::DriverError> {
         self.session.validate_snapshot_write(stmt)
     }
 
@@ -2107,7 +2107,7 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         &mut self,
         stmt: Stmt,
         sql: &str,
-    ) -> Result<StmtOutput, tidb_executor::DriverError> {
+    ) -> Result<StmtOutput, tidb_driver_error::DriverError> {
         self.session.exec_statement_parsed(stmt, sql)
     }
 
@@ -2154,7 +2154,7 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         sql: &str,
         parsed: &Stmt,
         statement: &DdlStatement,
-    ) -> Result<Option<i64>, tidb_executor::DriverError> {
+    ) -> Result<Option<i64>, tidb_driver_error::DriverError> {
         let service = Arc::clone(&self.domain_services().ddl);
         self.session
             .run_ddl_statement(sql, parsed, statement, service.as_ref())
@@ -2791,7 +2791,7 @@ impl<'s> ClusterServerSession<'s> {
         let Some(mut result) = self.reborrow().execute_stmt(sql, &stmt)? else {
             return Ok(Vec::new());
         };
-        let to_sql_error = |error: tidb_executor::MysqlError| SqlQueryError::from(error);
+        let to_sql_error = |error: tidb_terror::MysqlError| SqlQueryError::from(error);
         let source = result.source();
         let mut rows = Vec::new();
         loop {
@@ -3004,17 +3004,17 @@ struct ClusterAccountService {
 }
 
 impl crate::stored_state_service::AccountService for ClusterAccountService {
-    fn load_accounts(&self) -> Result<PrivilegeRegistry, tidb_executor::DriverError> {
+    fn load_accounts(&self) -> Result<PrivilegeRegistry, tidb_driver_error::DriverError> {
         self.accounts
             .load_accounts()
-            .map_err(tidb_executor::DriverError::unsupported)
+            .map_err(tidb_driver_error::DriverError::unsupported)
     }
 
     fn system_session(
         &self,
-    ) -> Result<Box<dyn crate::user_table::AccountSqlSession>, tidb_executor::DriverError> {
+    ) -> Result<Box<dyn crate::user_table::AccountSqlSession>, tidb_driver_error::DriverError> {
         let factory = self.factory.upgrade().ok_or_else(|| {
-            tidb_executor::DriverError::unsupported("cluster session factory is stopped")
+            tidb_driver_error::DriverError::unsupported("cluster session factory is stopped")
         })?;
         let session = factory
             .open_system_session()
@@ -3022,10 +3022,10 @@ impl crate::stored_state_service::AccountService for ClusterAccountService {
         Ok(Box::new(AccountSystemSession(session)))
     }
 
-    fn notify_update_privilege(&self) -> Result<(), tidb_executor::DriverError> {
+    fn notify_update_privilege(&self) -> Result<(), tidb_driver_error::DriverError> {
         self.accounts
             .notify_update_privilege()
-            .map_err(tidb_executor::DriverError::unsupported)
+            .map_err(tidb_driver_error::DriverError::unsupported)
     }
 }
 
@@ -3043,9 +3043,9 @@ impl tidb_executor::memtable_reader::RestrictedSqlExecutor for NodeRestrictedSql
     fn exec_restricted_sql(
         &self,
         sql: &str,
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_executor::DriverError> {
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_driver_error::DriverError> {
         let factory = self.factory.upgrade().ok_or_else(|| {
-            tidb_executor::DriverError::unsupported("cluster session factory is stopped")
+            tidb_driver_error::DriverError::unsupported("cluster session factory is stopped")
         })?;
         let session = factory
             .open_system_session()
@@ -3058,7 +3058,7 @@ impl crate::user_table::AccountSqlSession for AccountSystemSession {
     fn execute(
         &mut self,
         sql: &str,
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_executor::DriverError> {
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_driver_error::DriverError> {
         self.0
             .node_conn()
             .execute_internal(sql)
@@ -3076,12 +3076,12 @@ struct ClusterPendingSysvarChange(Box<dyn tidb_domain_core::cluster_sysvar_seam:
 impl crate::stored_state_service::SysvarService for ClusterSysvarService {
     fn begin(
         &self,
-    ) -> Result<Box<dyn crate::stored_state_service::PendingSysvarChange>, tidb_executor::DriverError>
+    ) -> Result<Box<dyn crate::stored_state_service::PendingSysvarChange>, tidb_driver_error::DriverError>
     {
         let pending = self
             .0
             .begin()
-            .map_err(tidb_executor::DriverError::unsupported)?;
+            .map_err(tidb_driver_error::DriverError::unsupported)?;
         Ok(Box::new(ClusterPendingSysvarChange(pending)))
     }
 }
@@ -3091,14 +3091,14 @@ impl crate::stored_state_service::PendingSysvarChange for ClusterPendingSysvarCh
         self.0.table()
     }
 
-    fn commit(self: Box<Self>) -> Result<Vec<String>, tidb_executor::DriverError> {
+    fn commit(self: Box<Self>) -> Result<Vec<String>, tidb_driver_error::DriverError> {
         self.0.commit().map_err(sql_query_error_to_driver)
     }
 }
 
-fn sql_query_error_to_driver(error: SqlQueryError) -> tidb_executor::DriverError {
-    tidb_executor::DriverError::Mysql(
-        tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
+fn sql_query_error_to_driver(error: SqlQueryError) -> tidb_driver_error::DriverError {
+    tidb_driver_error::DriverError::Mysql(
+        tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
             .with_identity_opt(error.identity),
     )
 }
@@ -3114,10 +3114,10 @@ impl crate::ddl_service::DdlService for ClusterDdlService {
         &self,
         statement: &DdlStatement,
         job_context: &tidb_sessionctx::StmtContext,
-    ) -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, tidb_executor::DriverError> {
+    ) -> Result<tidb_ddl::real_tikv_ddl::ClusterDdlReport, tidb_driver_error::DriverError> {
         self.ddl.execute(statement, job_context).map_err(|error| {
-            tidb_executor::DriverError::Mysql(
-                tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
+            tidb_driver_error::DriverError::Mysql(
+                tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
                     .with_identity_opt(error.identity),
             )
         })
@@ -3127,13 +3127,13 @@ impl crate::ddl_service::DdlService for ClusterDdlService {
         &self,
         stmt: &Stmt,
         current_db: &str,
-    ) -> Result<(), tidb_executor::DriverError> {
+    ) -> Result<(), tidb_driver_error::DriverError> {
         tidb_ddl::cluster_ddl::cached_table::check_cached_table_ddl(
             &self.catalog.load(),
             current_db,
             stmt,
         )
-        .map_err(tidb_executor::DriverError::Mysql)
+        .map_err(tidb_driver_error::DriverError::Mysql)
     }
 
     fn tiflash_store_count(&self) -> Result<u64, String> {

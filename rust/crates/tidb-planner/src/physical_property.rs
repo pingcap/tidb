@@ -698,7 +698,7 @@ impl PhysicalProperty {
             .iter()
             .map(|column| {
                 let closure =
-                    fd.closure_of_equivalence(&tidb_funcdep::ColSet::new(&[column.col.unique_id]));
+                    fd.closure_of_equivalence(&tidb_intset::FastIntSet::new(&[column.col.unique_id]));
                 (column, closure)
             })
             .collect();
@@ -992,10 +992,11 @@ mod required_property_tests {
         need_enforce_exchanger, CteProducerStatus, MppPartitionColumn, MppPartitionType,
         PartialOrderInfo, PhysicalProperty, SortItem, TaskType,
     };
-    use tidb_funcdep::{ColSet, FdSet};
+    use tidb_funcdep::FdSet;
+    use tidb_intset::FastIntSet;
 
-    fn cols(values: &[i64]) -> ColSet {
-        ColSet::new(values)
+    fn cols(values: &[i64]) -> FastIntSet {
+        FastIntSet::new(values)
     }
 
     fn partition_cols(values: &[i64]) -> Vec<MppPartitionColumn> {

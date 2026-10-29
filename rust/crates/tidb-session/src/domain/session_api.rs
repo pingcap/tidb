@@ -567,7 +567,7 @@ impl ResultSetSource for ProcessTrackedResultSet<'_> {
     fn next_chunk(
         &mut self,
         chunk: &mut tidb_chunk::chunk::Chunk,
-    ) -> Result<(), tidb_executor::MysqlError> {
+    ) -> Result<(), tidb_terror::MysqlError> {
         self.inner.next_chunk(chunk)
     }
     fn field_types(&self) -> &[tidb_datatype::FieldType] {
@@ -577,21 +577,21 @@ impl ResultSetSource for ProcessTrackedResultSet<'_> {
     fn next_batch(
         &mut self,
         max_rows: usize,
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_executor::MysqlError> {
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
         self.inner.next_batch(max_rows)
     }
 
-    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_terror::MysqlError> {
         self.inner.fields()
     }
 
-    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn finish(&mut self) -> Result<(), tidb_terror::MysqlError> {
         let result = self.inner.finish();
         self.statement.take();
         result
     }
 
-    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn close(&mut self) -> Result<(), tidb_terror::MysqlError> {
         let result = self.inner.close();
         self.statement.take();
         result
@@ -621,7 +621,7 @@ impl ResultSetSource for BoxedResultSetSource<'_> {
     fn next_chunk(
         &mut self,
         chunk: &mut tidb_chunk::chunk::Chunk,
-    ) -> Result<(), tidb_executor::MysqlError> {
+    ) -> Result<(), tidb_terror::MysqlError> {
         self.inner.next_chunk(chunk)
     }
     fn field_types(&self) -> &[tidb_datatype::FieldType] {
@@ -631,19 +631,19 @@ impl ResultSetSource for BoxedResultSetSource<'_> {
     fn next_batch(
         &mut self,
         max_rows: usize,
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_executor::MysqlError> {
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_terror::MysqlError> {
         self.inner.next_batch(max_rows)
     }
 
-    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_executor::MysqlError> {
+    fn fields(&mut self) -> Result<Vec<ResultFieldMetadata>, tidb_terror::MysqlError> {
         self.inner.fields()
     }
 
-    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn finish(&mut self) -> Result<(), tidb_terror::MysqlError> {
         self.inner.finish()
     }
 
-    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+    fn close(&mut self) -> Result<(), tidb_terror::MysqlError> {
         self.inner.close()
     }
 

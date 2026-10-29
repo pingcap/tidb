@@ -27,7 +27,7 @@
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_ddl::cluster_ddl::DdlStatement;
 use tidb_ddl::real_tikv_ddl::ClusterDdlReport;
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 use tidb_sessionctx::StmtContext;
 
 use crate::Session;

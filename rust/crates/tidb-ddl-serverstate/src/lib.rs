@@ -25,8 +25,7 @@ use serde::de::{DeserializeSeed, Error as _, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserializer, Serialize};
 use tidb_log::{Field, Value};
 use tidb_pd_client::{EtcdClient, EtcdError, EtcdLeaseSession, EtcdWatcher};
-pub use tidb_timeutil::SleepContext as Context;
-use tidb_timeutil::{sleep, SleepError};
+use tidb_timeutil::{sleep, SleepContext, SleepError};
 
 /// Go `util.ServerGlobalState`.
 pub const SERVER_GLOBAL_STATE: &str = "/tidb/server/global_state";
@@ -114,7 +113,7 @@ fn result_label<T, E>(result: &Result<T, E>) -> &'static str {
     }
 }
 
-fn child_timeout(context: &Context, maximum: Duration) -> Result<Duration, Error> {
+fn child_timeout(context: &SleepContext, maximum: Duration) -> Result<Duration, Error> {
     if context.is_cancelled() {
         return Err(sleep(context, Duration::ZERO).unwrap_err().into());
     }
@@ -327,22 +326,22 @@ impl From<SleepError> for Error {
 /// Go `Syncer`'s behavior surface.
 pub trait Syncer: Send + Sync {
     /// Loads the current state and starts the watch.
-    fn init(&self, context: &Context) -> Result<(), Error>;
+    fn init(&self, context: &SleepContext) -> Result<(), Error>;
     /// Persists the global state.
-    fn update_global_state(&self, context: &Context, state: &StateInfo) -> Result<(), Error>;
+    fn update_global_state(&self, context: &SleepContext, state: &StateInfo) -> Result<(), Error>;
     /// Reloads and caches the global state.
-    fn get_global_state(&self, context: &Context) -> Result<StateInfo, Error>;
+    fn get_global_state(&self, context: &SleepContext) -> Result<StateInfo, Error>;
     /// Whether the last loaded state is upgrading.
     fn is_upgrading_state(&self) -> bool;
     /// Returns the syncer's watch channel.
     fn watch_chan(&self) -> Option<WatchChannel>;
     /// Re-establishes the watch.
-    fn rewatch(&self, context: &Context);
+    fn rewatch(&self, context: &SleepContext);
 }
 
 fn create_session(
     client: &Arc<EtcdClient>,
-    context: &Context,
+    context: &SleepContext,
     log_prefix: &str,
 ) -> Result<EtcdLeaseSession, Error> {
     let mut last = None;
@@ -411,7 +410,7 @@ impl EtcdSyncer {
     fn make_watch(
         client: &EtcdClient,
         path: Vec<u8>,
-        context: Context,
+        context: SleepContext,
     ) -> Result<(EtcdWatcher, WatchChannel), EtcdError> {
         let (sender, receiver) = mpsc::channel();
         let event_key = path.clone();
@@ -442,11 +441,11 @@ impl EtcdSyncer {
         Ok((watcher, WatchChannel(Arc::new(Mutex::new(receiver)))))
     }
 
-    fn start_watch(&self, context: &Context) -> Result<(EtcdWatcher, WatchChannel), EtcdError> {
+    fn start_watch(&self, context: &SleepContext) -> Result<(EtcdWatcher, WatchChannel), EtcdError> {
         Self::make_watch(&self.client, self.path.clone(), context.clone())
     }
 
-    fn get_with_retry(&self, context: &Context) -> Result<Option<Vec<u8>>, Error> {
+    fn get_with_retry(&self, context: &SleepContext) -> Result<Option<Vec<u8>>, Error> {
         let mut last = None;
         for _ in 0..KEY_OP_DEFAULT_RETRY_COUNT {
             let timeout = child_timeout(context, GET_KEY_TIMEOUT)?;
@@ -479,7 +478,7 @@ impl EtcdSyncer {
             .into())
     }
 
-    fn put_with_retry(&self, context: &Context, value: &[u8]) -> Result<(), Error> {
+    fn put_with_retry(&self, context: &SleepContext, value: &[u8]) -> Result<(), Error> {
         let mut last = None;
         for retry_count in 0..KEY_OP_DEFAULT_RETRY_COUNT {
             let timeout = child_timeout(context, PUT_KEY_TIMEOUT)?;
@@ -522,7 +521,7 @@ impl EtcdSyncer {
 }
 
 impl Syncer for EtcdSyncer {
-    fn init(&self, context: &Context) -> Result<(), Error> {
+    fn init(&self, context: &SleepContext) -> Result<(), Error> {
         let started = Instant::now();
         let result = (|| {
             let path = String::from_utf8_lossy(&self.path);
@@ -547,7 +546,7 @@ impl Syncer for EtcdSyncer {
         result
     }
 
-    fn update_global_state(&self, context: &Context, state: &StateInfo) -> Result<(), Error> {
+    fn update_global_state(&self, context: &SleepContext, state: &StateInfo) -> Result<(), Error> {
         let started = Instant::now();
         let value = state.marshal()?;
         let result = self.put_with_retry(context, &value);
@@ -557,7 +556,7 @@ impl Syncer for EtcdSyncer {
         result
     }
 
-    fn get_global_state(&self, context: &Context) -> Result<StateInfo, Error> {
+    fn get_global_state(&self, context: &SleepContext) -> Result<StateInfo, Error> {
         let started = Instant::now();
         let mut state = StateInfo::default();
         let Some(value) = self.get_with_retry(context)? else {
@@ -613,7 +612,7 @@ impl Syncer for EtcdSyncer {
             .map(|(_, receiver)| receiver.clone())
     }
 
-    fn rewatch(&self, context: &Context) {
+    fn rewatch(&self, context: &SleepContext) {
         let started = Instant::now();
         *self
             .watcher
@@ -666,7 +665,7 @@ impl Default for MemSyncer {
 }
 
 impl Syncer for MemSyncer {
-    fn init(&self, _context: &Context) -> Result<(), Error> {
+    fn init(&self, _context: &SleepContext) -> Result<(), Error> {
         let (sender, receiver) = mpsc::sync_channel(1);
         *self
             .watch
@@ -682,7 +681,7 @@ impl Syncer for MemSyncer {
         Ok(())
     }
 
-    fn update_global_state(&self, _context: &Context, state: &StateInfo) -> Result<(), Error> {
+    fn update_global_state(&self, _context: &SleepContext, state: &StateInfo) -> Result<(), Error> {
         #[cfg(feature = "failpoints")]
         if fail::eval("mockUpgradingState", |value| {
             value.as_deref() == Some("true")
@@ -708,7 +707,7 @@ impl Syncer for MemSyncer {
         Ok(())
     }
 
-    fn get_global_state(&self, _context: &Context) -> Result<StateInfo, Error> {
+    fn get_global_state(&self, _context: &SleepContext) -> Result<StateInfo, Error> {
         Ok(memory_cluster_state()
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -735,7 +734,7 @@ impl Syncer for MemSyncer {
             .map(|(_, receiver)| receiver.clone())
     }
 
-    fn rewatch(&self, _context: &Context) {}
+    fn rewatch(&self, _context: &SleepContext) {}
 }
 
 #[cfg(test)]
@@ -820,10 +819,10 @@ mod tests {
     #[test]
     fn child_operations_use_the_earlier_context_deadline() {
         assert_eq!(
-            child_timeout(&Context::background(), GET_KEY_TIMEOUT).unwrap(),
+            child_timeout(&SleepContext::background(), GET_KEY_TIMEOUT).unwrap(),
             GET_KEY_TIMEOUT
         );
-        let context = Context::with_timeout(Duration::from_millis(100));
+        let context = SleepContext::with_timeout(Duration::from_millis(100));
         assert!(child_timeout(&context, GET_KEY_TIMEOUT).unwrap() <= Duration::from_millis(100));
         context.cancel();
         assert!(matches!(
@@ -838,7 +837,7 @@ mod tests {
         let client =
             Arc::new(EtcdClient::connect(["127.0.0.1:1"], Duration::from_millis(20)).unwrap());
         let syncer = EtcdSyncer::new(client, SERVER_GLOBAL_STATE);
-        let context = Context::background();
+        let context = SleepContext::background();
 
         let get_started = std::time::Instant::now();
         let retries_before_get = counter_total(&RETRYABLE_ERROR_COUNT);
@@ -868,7 +867,7 @@ mod tests {
         let client =
             Arc::new(EtcdClient::connect(["127.0.0.1:1"], Duration::from_millis(20)).unwrap());
         let before = histogram_count(&NEW_SESSION_HISTOGRAM);
-        assert!(create_session(&client, &Context::background(), "[test] /state").is_err());
+        assert!(create_session(&client, &SleepContext::background(), "[test] /state").is_err());
         assert_eq!(histogram_count(&NEW_SESSION_HISTOGRAM), before + 3);
     }
 
@@ -876,7 +875,7 @@ mod tests {
     fn memory_syncer_keeps_process_global_state_and_delivers_update_notification() {
         let _guard = memory_test_guard();
         let first = MemSyncer::new();
-        let context = Context::background();
+        let context = SleepContext::background();
         assert!(first.watch_chan().is_none());
         first.init(&context).unwrap();
         first
@@ -903,7 +902,7 @@ mod tests {
         let client =
             Arc::new(EtcdClient::connect(["127.0.0.1:1"], Duration::from_secs(1)).unwrap());
         let syncer = EtcdSyncer::new(client, SERVER_GLOBAL_STATE);
-        let context = Context::background();
+        let context = SleepContext::background();
         let (watcher, channel) = syncer.start_watch(&context).unwrap();
         context.cancel();
         assert_eq!(
@@ -917,7 +916,7 @@ mod tests {
     #[test]
     fn mock_upgrading_state_stores_without_notifying() {
         let _guard = memory_test_guard();
-        let context = Context::background();
+        let context = SleepContext::background();
         let syncer = MemSyncer::new();
         syncer.init(&context).unwrap();
         fail::cfg("mockUpgradingState", "return(true)").unwrap();
@@ -946,7 +945,7 @@ mod tests {
         let original = client
             .get(SERVER_GLOBAL_STATE.as_bytes())
             .expect("read the original state");
-        let context = Context::background();
+        let context = SleepContext::background();
         let syncer = EtcdSyncer::new(Arc::clone(&client), SERVER_GLOBAL_STATE);
         syncer.init(&context).expect("initialize the state syncer");
         assert_eq!(

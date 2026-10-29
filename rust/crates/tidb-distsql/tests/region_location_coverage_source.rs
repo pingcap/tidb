@@ -17,10 +17,10 @@
 
 use tidb_copr::region_task::RegionTaskEnvelope;
 use tidb_copr::region_location::RegionTaskLocation;
-use tidb_distsql::RequestKeyRange;
+use tidb_txnkv::KeyRange;
 
-fn kr(start: &str, end: &str) -> RequestKeyRange {
-    RequestKeyRange {
+fn kr(start: &str, end: &str) -> KeyRange {
+    KeyRange {
         start_key: start.as_bytes().to_vec().into(),
         end_key: end.as_bytes().to_vec().into(),
     }
@@ -36,7 +36,7 @@ fn kl(start: &str, end: &str, region_id: u64) -> Option<RegionTaskLocation> {
 
 struct Case {
     name: &'static str,
-    ranges: Vec<RequestKeyRange>,
+    ranges: Vec<KeyRange>,
     locations: Vec<Option<RegionTaskLocation>>,
     want_valid: bool,
 }

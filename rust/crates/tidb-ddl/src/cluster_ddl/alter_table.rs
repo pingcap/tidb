@@ -391,7 +391,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                 )?;
                 if adjusted != new_base {
                     warnings.push(tidb_context::SqlWarn::with_code(
-                        DdlWarningLevel::Warning,
+                        WarningLevel::Warning,
                         tidb_mysql::errors::errcode::ErrUnknown,
                         cant_reset_auto_increment(new_base, adjusted),
                     ));
@@ -448,7 +448,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                 )?;
                 if adjusted != new_base {
                     warnings.push(tidb_context::SqlWarn::with_code(
-                        DdlWarningLevel::Warning,
+                        WarningLevel::Warning,
                         tidb_mysql::errors::errcode::ErrUnknown,
                         cant_reset_auto_increment(new_base, adjusted),
                     ));

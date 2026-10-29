@@ -36,7 +36,7 @@ use tidb_executor::compiler::PreparedExec;
 use tidb_ast::Stmt;
 use tidb_datatype::Datum;
 use tidb_executor::access_path::StatementReadShape;
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 
 use crate::Session;
 

@@ -17,7 +17,7 @@
 use prost::Message;
 use tidb_copr::coprocessor_request::CoprocessorRequestEnvelope;
 use tidb_distsql::KvRequestBuilder;
-use tidb_distsql::RequestKeyRange;
+use tidb_txnkv::KeyRange;
 use tidb_txnkv::RequestType;
 use tidb_proto::{CoprocessorRequest, KvrpcContext};
 
@@ -39,7 +39,7 @@ fn coprocessor_request_uses_source_field_numbers_and_preserves_payload() {
 
     let envelope = CoprocessorRequestEnvelope::from_metadata(
         &metadata,
-        vec![RequestKeyRange {
+        vec![KeyRange {
             start_key: vec![1].into(),
             end_key: vec![2, 3].into(),
         }],
@@ -97,15 +97,15 @@ fn coprocessor_request_encoding_matches_the_derived_message_for_every_range_shap
         .set_data(vec![9; 40]);
     let metadata = builder.build().expect("metadata");
     let ranges = vec![
-        RequestKeyRange {
+        KeyRange {
             start_key: vec![1, 2].into(),
             end_key: vec![].into(),
         },
-        RequestKeyRange {
+        KeyRange {
             start_key: vec![].into(),
             end_key: vec![3].into(),
         },
-        RequestKeyRange {
+        KeyRange {
             start_key: vec![0x80; 300].into(),
             end_key: vec![0x81; 300].into(),
         },

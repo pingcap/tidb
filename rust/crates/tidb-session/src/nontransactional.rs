@@ -27,7 +27,7 @@ use std::any::Any;
 use tidb_ast::{Assignment, BatchDml, BatchDmlDryRun, BatchDmlStmt, BinaryOp, DeleteKind, Expr, Join, JoinNode, QueryStmt, TableRef, UpdateKind, Visitable, Visitor};
 use tidb_parser_format::RestoreFlags;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 use tidb_infoschema::TableEntry;
 use tidb_hack::GoCaseCompare;
 

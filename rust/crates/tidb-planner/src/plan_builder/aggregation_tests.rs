@@ -24,7 +24,7 @@ use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags, SessionTimeZone};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::ZonedNoColumns;
-use tidb_funcdep::ColSet;
+use tidb_intset::FastIntSet;
 
 use tidb_infoschema::table_source::SourceTable;
 use tidb_infoschema::table_source::SourceIndexColumn;
@@ -189,8 +189,8 @@ fn extract_fd_source_projection_and_aggregation_cases() {
     let projection_schema = projection.schema().expect("projection schema");
     let projection_fd = projection.extract_fd();
     assert!(projection_fd.in_closure(
-        &ColSet::new([1]),
-        &ColSet::new(
+        &FastIntSet::new([1]),
+        &FastIntSet::new(
             projection_schema
                 .columns
                 .iter()
@@ -198,16 +198,16 @@ fn extract_fd_source_projection_and_aggregation_cases() {
         ),
     ));
     assert!(projection_fd.in_closure(
-        &ColSet::new([2]),
-        &ColSet::new([projection_schema.columns[2].unique_id]),
+        &FastIntSet::new([2]),
+        &FastIntSet::new([projection_schema.columns[2].unique_id]),
     ));
 
     let grouped = build_with_fd_expression_ids("SELECT b + 1, SUM(a) FROM t GROUP BY b");
     let grouped_schema = grouped.schema().expect("grouped projection schema");
     let grouped_fd = grouped.extract_fd();
     assert!(grouped_fd.in_closure(
-        &ColSet::new([2]),
-        &ColSet::new(grouped_schema.columns.iter().map(|column| column.unique_id),),
+        &FastIntSet::new([2]),
+        &FastIntSet::new(grouped_schema.columns.iter().map(|column| column.unique_id),),
     ));
     assert!(grouped_fd.group_by_cols().has(2));
 
@@ -218,7 +218,7 @@ fn extract_fd_source_projection_and_aggregation_cases() {
         .build_select(&parse_select("SELECT a, c FROM t WHERE b = 1"))
         .expect("nullable unique key query builds");
     let filtered_fd = filtered.extract_fd();
-    assert!(filtered_fd.in_closure(&ColSet::new([2]), &ColSet::new([1, 3])));
+    assert!(filtered_fd.in_closure(&FastIntSet::new([2]), &FastIntSet::new([1, 3])));
 }
 
 /// The first operator of the given kind on the way down from the root.

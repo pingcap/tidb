@@ -58,7 +58,7 @@ use tidb_planner_costusage::{
 };
 use crate::physical_table_reader::StoreType;
 use crate::task_type::TaskType;
-pub use tidb_paging::THRESHOLD as PAGING_THRESHOLD;
+use tidb_paging::THRESHOLD;
 
 /// Minimum row count used to avoid underestimation (`MinNumRows`).
 pub const MIN_NUM_ROWS: f64 = 1.0;
@@ -941,7 +941,7 @@ pub fn index_lookup_reader_cost(
     ]);
     if session.enable_paging
         && input.expected_cnt > 0.0
-        && input.expected_cnt <= PAGING_THRESHOLD as f64
+        && input.expected_cnt <= THRESHOLD as f64
     {
         cost = mul_cost_ver2(&cost, 0.6);
     }

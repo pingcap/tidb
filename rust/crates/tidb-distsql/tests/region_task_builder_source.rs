@@ -24,8 +24,8 @@ use tidb_copr::region_task::RegionTaskEnvelope;
 use tidb_distsql::RegionTaskRequest;
 use tidb_copr::region_task::RegionTaskPeer;
 use tidb_copr::region_task::RegionTaskTopology;
-use tidb_distsql::RequestKeyRange;
-use tidb_distsql::RequestKeyRanges;
+use tidb_txnkv::KeyRange;
+use tidb_txnkv::PartitionedKeyRanges;
 use tidb_txnkv::KvRequestMetadata;
 use tidb_txnkv::TransportRequest;
 use tidb_txnkv::StoreType;
@@ -46,14 +46,14 @@ type RegionTaskCase<'a> = (&'a [&'a str], &'a [ExpectedRegionTask<'a>]);
 type RegionBatchCase<'a> = (&'a [&'a str], isize, &'a [&'a [KeyPair<'a>]]);
 type RegionPagingCase<'a> = (&'a [&'a str], isize, &'a [KeyPair<'a>]);
 
-fn kr(start: &str, end: &str) -> RequestKeyRange {
-    RequestKeyRange {
+fn kr(start: &str, end: &str) -> KeyRange {
+    KeyRange {
         start_key: start.as_bytes().to_vec().into(),
         end_key: end.as_bytes().to_vec().into(),
     }
 }
 
-fn ranges(keys: &[&str]) -> Vec<RequestKeyRange> {
+fn ranges(keys: &[&str]) -> Vec<KeyRange> {
     assert_eq!(keys.len() % 2, 0);
     keys.chunks_exact(2)
         .map(|pair| kr(pair[0], pair[1]))
@@ -62,8 +62,8 @@ fn ranges(keys: &[&str]) -> Vec<RequestKeyRange> {
 
 fn request(keys: &[&str], hints: Option<Vec<usize>>) -> TransportRequest {
     let key_ranges = hints.map_or_else(
-        || RequestKeyRanges::new_non_partitioned(ranges(keys)),
-        |hints| RequestKeyRanges::new_non_partitioned_with_hints(ranges(keys), hints),
+        || PartitionedKeyRanges::new_non_partitioned(ranges(keys)),
+        |hints| PartitionedKeyRanges::new_non_partitioned_with_hints(ranges(keys), hints),
     );
     let mut builder = KvRequestBuilder::new();
     builder.set_key_ranges(key_ranges);

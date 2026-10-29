@@ -23,8 +23,8 @@ use tidb_copr::copr_cache::CoprCacheConfig;
 use tidb_copr::copr_cache::CoprCacheResponseOutcome;
 use tidb_copr::cop_paging::ReadEngineGeneration;
 use tidb_copr::region_task::RegionTaskTopology;
-use tidb_distsql::RequestKeyRange;
-use tidb_distsql::RequestKeyRanges;
+use tidb_txnkv::KeyRange;
+use tidb_txnkv::PartitionedKeyRanges;
 use tidb_copr::response_channel::ResponseChannelEvent;
 use tidb_txnkv::KvRequestMetadata;
 use tidb_txnkv::StoreType;
@@ -33,18 +33,18 @@ use tidb_proto::{
     CoprocessorExecDetailsV2, CoprocessorKeyRange, CoprocessorResponse, CoprocessorScanDetailV2,
 };
 
-fn range(start: &str, end: &str) -> RequestKeyRange {
-    RequestKeyRange {
+fn range(start: &str, end: &str) -> KeyRange {
+    KeyRange {
         start_key: start.as_bytes().to_vec().into(),
         end_key: end.as_bytes().to_vec().into(),
     }
 }
 
-fn metadata(ranges: Vec<RequestKeyRange>) -> KvRequestMetadata {
+fn metadata(ranges: Vec<KeyRange>) -> KvRequestMetadata {
     let mut metadata = KvRequestMetadata::default();
     metadata.request_type = RequestType::Dag;
     metadata.data = Some(b"dag".to_vec());
-    metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(ranges).into());
+    metadata.key_ranges = Some(PartitionedKeyRanges::new_non_partitioned(ranges).into());
     metadata.keep_order = true;
     metadata.cacheable = true;
     metadata.store_type = StoreType::TiKv;
@@ -256,7 +256,7 @@ fn unsupported_request_shapes_fail_before_task_or_cache_mutation() {
 
     let mut request = metadata(vec![range("a", "z")]);
     request.key_ranges =
-        Some(RequestKeyRanges::new_partitioned(vec![vec![range("a", "z")]]).into());
+        Some(PartitionedKeyRanges::new_partitioned(vec![vec![range("a", "z")]]).into());
     cases.push((request, "partitioned_ranges"));
 
     for (request, expected) in cases {

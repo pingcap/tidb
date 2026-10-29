@@ -915,8 +915,8 @@ fn bench_read_task_setup() {
     use tidb_copr::cop_paging::ReadEngineGeneration;
     use tidb_copr::region_task::RegionTaskTopology;
     use tidb_distsql::RegionTaskRequest;
-    use tidb_distsql::RequestKeyRange;
-    use tidb_distsql::RequestKeyRanges;
+    use tidb_txnkv::KeyRange;
+    use tidb_txnkv::PartitionedKeyRanges;
     use tidb_txnkv::{CancelHandle, KvRequestMetadata, TransportRequest};
     use tidb_txnkv::RequestType;
 
@@ -928,9 +928,9 @@ fn bench_read_task_setup() {
         metadata.keep_order = true;
         metadata.start_ts = 100;
         metadata.key_ranges = Some(
-            RequestKeyRanges::new_non_partitioned(
+            PartitionedKeyRanges::new_non_partitioned(
                 (0..count)
-                    .map(|index| RequestKeyRange {
+                    .map(|index| KeyRange {
                         start_key: key(index * 2).into(),
                         end_key: key(index * 2 + 1).into(),
                     })

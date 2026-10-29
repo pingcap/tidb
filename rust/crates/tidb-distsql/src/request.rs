@@ -21,7 +21,7 @@
 use std::sync::{atomic::AtomicU64, Arc};
 
 use crate::{DistSqlContext, PagingConfig, Priority, ReplicaRead, ReplicaReadType, RequestContext};
-use tidb_txnkv::{IsolationLevel, Priority as KvPriority, RequestSource};
+use tidb_txnkv::{IsolationLevel, RequestSource};
 
 /// The immutable, dependency-closed request metadata produced by the builder.
 #[derive(Clone, Debug, Default)]
@@ -31,7 +31,7 @@ pub struct ReadRequestMetadata {
     /// Effective transaction isolation.
     pub isolation_level: IsolationLevel,
     /// Effective KV priority.
-    pub priority: KvPriority,
+    pub priority: tidb_txnkv::Priority,
     /// Source `NotFillCache` setting.
     pub not_fill_cache: bool,
     /// Source statement task identifier.
@@ -167,10 +167,10 @@ impl ReadRequestBuilder {
     }
 }
 
-const fn kv_priority(priority: Priority) -> KvPriority {
+const fn kv_priority(priority: Priority) -> tidb_txnkv::Priority {
     match priority {
-        Priority::None | Priority::Delayed => KvPriority::Normal,
-        Priority::Low => KvPriority::Low,
-        Priority::High => KvPriority::High,
+        Priority::None | Priority::Delayed => tidb_txnkv::Priority::Normal,
+        Priority::Low => tidb_txnkv::Priority::Low,
+        Priority::High => tidb_txnkv::Priority::High,
     }
 }

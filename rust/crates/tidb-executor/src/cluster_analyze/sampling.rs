@@ -720,7 +720,7 @@ where
             .set_paging(false)
             .set_start_ts(read_ts)
             .set_keep_order(true)
-            .set_non_partitioned_key_ranges(vec![tidb_distsql::RequestKeyRange {
+            .set_non_partitioned_key_ranges(vec![tidb_txnkv::KeyRange {
                 start_key: start.into(),
                 end_key: end.into(),
             }])
@@ -793,7 +793,7 @@ mod tests {
             let mut builder = tidb_distsql::RequestBuilder::new();
             builder
                 .set_analyze_request(Vec::new(), tidb_txnkv::IsolationLevel::ReadCommitted)
-                .set_non_partitioned_key_ranges(vec![tidb_distsql::RequestKeyRange {
+                .set_non_partitioned_key_ranges(vec![tidb_txnkv::KeyRange {
                     start_key: b"a".to_vec().into(),
                     end_key: b"b".to_vec().into(),
                 }]);

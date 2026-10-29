@@ -649,7 +649,7 @@ impl Ver2Coster {
                 let expect = reader.expect_cnt as f64;
                 if self.session.enable_paging
                     && expect > 0.0
-                    && expect <= crate::plan_cost_ver2::PAGING_THRESHOLD as f64
+                    && expect <= tidb_paging::THRESHOLD as f64
                 {
                     cost = tidb_planner_costusage::mul_cost_ver2(&cost, 0.6);
                 }

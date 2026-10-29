@@ -96,14 +96,14 @@ impl<'s> ClusterServerSession<'s> {
     pub(crate) fn with_read_snapshot<R>(
         &mut self,
         body: impl FnOnce(&mut Session) -> R,
-    ) -> Result<R, tidb_executor::DriverError> {
+    ) -> Result<R, tidb_driver_error::DriverError> {
         self.rebuild_catalog_if_stale();
         let snapshot = self
             .node
             .domain
             .transactions
             .open_snapshot("default")
-            .map_err(tidb_executor::DriverError::unsupported)?;
+            .map_err(tidb_driver_error::DriverError::unsupported)?;
         let previous =
             crate::statement_lifecycle::bind_snapshot(&self.node.slot, &self.session, snapshot);
         let result = body(&mut self.session);
@@ -119,14 +119,14 @@ impl<'s> ClusterServerSession<'s> {
     /// (a prepared execution, a held record set) reads through it until it
     /// closes, as a Go statement keeps the snapshot it started on. The next
     /// statement's own binding replaces it.
-    pub(crate) fn bind_open_statement_snapshot(&mut self) -> Result<(), tidb_executor::DriverError> {
+    pub(crate) fn bind_open_statement_snapshot(&mut self) -> Result<(), tidb_driver_error::DriverError> {
         self.rebuild_catalog_if_stale();
         let snapshot = self
             .node
             .domain
             .transactions
             .open_snapshot("default")
-            .map_err(tidb_executor::DriverError::unsupported)?;
+            .map_err(tidb_driver_error::DriverError::unsupported)?;
         let _previous =
             crate::statement_lifecycle::bind_snapshot(&self.node.slot, &self.session, snapshot);
         Ok(())
@@ -138,7 +138,7 @@ impl<'s> ClusterServerSession<'s> {
     pub(crate) fn run_transaction_control(
         &mut self,
         sql: &str,
-    ) -> Result<Option<bool>, tidb_executor::DriverError> {
+    ) -> Result<Option<bool>, tidb_driver_error::DriverError> {
         self.control_transaction(sql).map_err(driver_error)
     }
 
@@ -148,7 +148,7 @@ impl<'s> ClusterServerSession<'s> {
     pub(crate) fn run_statement_output(
         &mut self,
         sql: &str,
-    ) -> Result<StmtOutput, tidb_executor::DriverError> {
+    ) -> Result<StmtOutput, tidb_driver_error::DriverError> {
         let stmt = match self.session.parse_at_statement_boundary(sql).map_err(map_error) {
             Ok(stmt) => stmt,
             Err(error) => {
@@ -195,13 +195,13 @@ impl<'s> ClusterServerSession<'s> {
         &mut self,
         sql: &str,
         stmt: Stmt,
-    ) -> Result<StmtOutput, tidb_executor::DriverError> {
+    ) -> Result<StmtOutput, tidb_driver_error::DriverError> {
         if let Some(mut result) = self
             .reborrow()
             .execute_stmt(sql, &stmt)
             .map_err(driver_error)?
         {
-            return drain_result(result.source()).map_err(tidb_executor::DriverError::Mysql);
+            return drain_result(result.source()).map_err(tidb_driver_error::DriverError::Mysql);
         }
         // Go `clientConn.handleQuery`: a LOAD DATA LOCAL or LOAD STATS parks
         // its file request, and the connection answers it with the client's
@@ -241,7 +241,7 @@ impl<'s> ClusterServerSession<'s> {
 impl super::NodeConn {
     /// Go testkit's `dom.StatsHandle().Update(ctx, is)`: the stats cache
     /// reloads every table whose `mysql.stats_meta` moved since it last read.
-    pub(crate) fn update_stats_cache(&self) -> Result<(), tidb_executor::DriverError> {
+    pub(crate) fn update_stats_cache(&self) -> Result<(), tidb_driver_error::DriverError> {
         super::node_services(&self.domain)
             .analyze()
             .update_stats_cache(Vec::new())
@@ -278,7 +278,7 @@ impl super::NodeConn {
 
 /// The rows and column types of an opened result, closed afterwards as the
 /// connection's writer closes it.
-fn drain_result(source: &mut dyn ResultSetSource) -> Result<StmtOutput, tidb_executor::MysqlError> {
+fn drain_result(source: &mut dyn ResultSetSource) -> Result<StmtOutput, tidb_terror::MysqlError> {
     let fields = source.fields()?;
     let native = source.field_types().to_vec();
     let columns = fields
@@ -306,13 +306,13 @@ fn drain_result(source: &mut dyn ResultSetSource) -> Result<StmtOutput, tidb_exe
     Ok(StmtOutput::Rows { columns, rows })
 }
 
-fn driver_error(error: SqlQueryError) -> tidb_executor::DriverError {
+fn driver_error(error: SqlQueryError) -> tidb_driver_error::DriverError {
     if let Some(cause) = crate::txn::driver_cause(&error) {
         return cause.clone();
     }
-    let mut mapped = tidb_executor::MysqlError::from_parts(error.code, error.state, error.message);
+    let mut mapped = tidb_terror::MysqlError::from_parts(error.code, error.state, error.message);
     if let Some(identity) = error.identity {
         mapped = mapped.with_identity(identity);
     }
-    tidb_executor::DriverError::Mysql(mapped)
+    tidb_driver_error::DriverError::Mysql(mapped)
 }

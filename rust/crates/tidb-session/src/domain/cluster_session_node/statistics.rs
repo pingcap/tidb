@@ -34,9 +34,9 @@ const NO_ROWS: WriteOutcome = WriteOutcome {
 };
 
 /// A cluster seam's error as the session's.
-fn into_driver_error(error: SqlQueryError) -> tidb_executor::DriverError {
-    tidb_executor::DriverError::Mysql(
-        tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
+fn into_driver_error(error: SqlQueryError) -> tidb_driver_error::DriverError {
+    tidb_driver_error::DriverError::Mysql(
+        tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
             .with_identity_opt(error.identity),
     )
 }
@@ -428,7 +428,7 @@ struct ClusterAnalyzeService {
 }
 
 impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
-    fn flush_stats_delta(&self, target_ids: &[i64]) -> Result<(), tidb_executor::DriverError> {
+    fn flush_stats_delta(&self, target_ids: &[i64]) -> Result<(), tidb_driver_error::DriverError> {
         super::Domain::dump_stats_delta_to_kv_parts(
             self.stats_usage.as_ref(),
             self.transactions.as_ref(),
@@ -440,7 +440,7 @@ impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
             &self.resource_group,
             &self.row_ids,
         )
-        .map_err(tidb_executor::DriverError::unsupported)
+        .map_err(tidb_driver_error::DriverError::unsupported)
     }
 
     fn builds_column_task(&self, statement: &AnalyzeStatement) -> bool {
@@ -451,7 +451,7 @@ impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
         &self,
         statement: &AnalyzeStatement,
         historical_stats_enabled: bool,
-    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_executor::DriverError>
+    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_driver_error::DriverError>
     {
         let jobs = PersistedAnalyzeJobs {
             transactions: Arc::clone(&self.transactions),
@@ -474,8 +474,8 @@ impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
         .map_err(|error| SqlQueryError::unknown(error.rendered_message()))
         .and_then(|result| result)
         .map_err(|error| {
-            tidb_executor::DriverError::Mysql(
-                tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
+            tidb_driver_error::DriverError::Mysql(
+                tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
                     .with_identity_opt(error.identity),
             )
         })?;
@@ -499,7 +499,7 @@ impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
         Ok(report)
     }
 
-    fn update_stats_cache(&self, physical_ids: &[i64]) -> Result<(), tidb_executor::DriverError> {
+    fn update_stats_cache(&self, physical_ids: &[i64]) -> Result<(), tidb_driver_error::DriverError> {
         self.analyze
             .update_stats_cache(physical_ids.to_vec())
             .map_err(into_driver_error)
@@ -533,7 +533,7 @@ struct ClusterStatsStatementService {
 }
 
 impl tidb_executor::stats_exec::StatsStatementService for ClusterStatsStatementService {
-    fn flush_stats_delta(&self, target_ids: &[i64]) -> Result<(), tidb_executor::DriverError> {
+    fn flush_stats_delta(&self, target_ids: &[i64]) -> Result<(), tidb_driver_error::DriverError> {
         super::Domain::dump_stats_delta_to_kv_parts(
             self.stats_usage.as_ref(),
             self.transactions.as_ref(),
@@ -545,10 +545,10 @@ impl tidb_executor::stats_exec::StatsStatementService for ClusterStatsStatementS
             &self.resource_group,
             &self.row_ids,
         )
-        .map_err(tidb_executor::DriverError::unsupported)
+        .map_err(tidb_driver_error::DriverError::unsupported)
     }
 
-    fn drop_stats(&self, physical_ids: &[i64]) -> Result<(), tidb_executor::DriverError> {
+    fn drop_stats(&self, physical_ids: &[i64]) -> Result<(), tidb_driver_error::DriverError> {
         self.analyze
             .drop_stats(physical_ids)
             .map_err(into_driver_error)
@@ -557,7 +557,7 @@ impl tidb_executor::stats_exec::StatsStatementService for ClusterStatsStatementS
     fn lock_stats(
         &self,
         statement: &ClusterStatsLockStatement,
-    ) -> Result<String, tidb_executor::DriverError> {
+    ) -> Result<String, tidb_driver_error::DriverError> {
         self.stats_lock
             .execute(statement)
             .map(|report| report.warning)
@@ -568,7 +568,7 @@ impl tidb_executor::stats_exec::StatsStatementService for ClusterStatsStatementS
         &self,
         json: &tidb_stats::JsonTable,
         historical_stats_enabled: bool,
-    ) -> Result<(), tidb_executor::DriverError> {
+    ) -> Result<(), tidb_driver_error::DriverError> {
         // Go's LOAD STATS path logs nothing on success.
         self.analyze
             .load_stats(json, historical_stats_enabled)

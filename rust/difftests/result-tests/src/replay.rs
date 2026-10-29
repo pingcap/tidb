@@ -32,7 +32,7 @@ use crate::mysqltest_script::{
     align_bytes, parse_test, recording_path, split_warnings_bytes, ConnectionCmd, Item, Stmt,
 };
 use tidb_datatype::Datum;
-use tidb_executor::DriverError;
+use tidb_driver_error::DriverError;
 use tidb_executor::StmtOutput;
 
 /// One connection of a replay backend: what the engine asks of whatever

@@ -30,7 +30,7 @@ use crate::{DriverError, Session};
 
 /// A statement warning, Go's `contextutil.SQLWarn`: the level and the error
 /// `StmtCtx` keeps, which `SHOW WARNINGS` reports as `Level | Code | Message`.
-pub use tidb_context::SqlWarn as SqlWarning;
+use tidb_context::SqlWarn;
 
 /// `StmtCtx.warnings[i].Level`: Go's `contextutil.WarnLevelWarning`,
 /// `WarnLevelError` and `WarnLevelNote` (`pkg/util/context/warn.go`), reached
@@ -74,14 +74,14 @@ impl Session {
     /// once the buffer holds `math.MaxUint16` entries,
     /// since the count it publishes is a `uint16`.
     pub(crate) fn append_warning(&mut self, level: WarningLevel, code: u16, message: String) {
-        self.append_sql_warning(SqlWarning::with_code(level, code, message));
+        self.append_sql_warning(SqlWarn::with_code(level, code, message));
     }
 
     /// Go's error door (`driver_tidb.go:376`): a statement's error is also
     /// appended to the warning buffer at `level`, error and all.
     pub(crate) fn append_driver_error(&mut self, level: WarningLevel, error: &DriverError) {
         let reported = error.clone().to_mysql_error();
-        self.append_sql_warning(SqlWarning::from_error(
+        self.append_sql_warning(SqlWarn::from_error(
             level,
             reported.code,
             reported.message,
@@ -90,7 +90,7 @@ impl Session {
     }
 
     /// [`Self::append_warning`] of a warning kept with its error.
-    pub(crate) fn append_sql_warning(&mut self, warning: SqlWarning) {
+    pub(crate) fn append_sql_warning(&mut self, warning: SqlWarn) {
         if self.warnings.len() >= u16::MAX as usize {
             return;
         }
@@ -203,7 +203,7 @@ impl Session {
 
     /// The warnings the last statement produced.
     #[must_use]
-    pub fn warnings(&self) -> &[SqlWarning] {
+    pub fn warnings(&self) -> &[SqlWarn] {
         &self.warnings
     }
 
@@ -272,7 +272,7 @@ impl Session {
             let proto = diagnostic
                 .terror
                 .unwrap_or(&tidb_parser::parser_errors::ERR_WARN_OPTIMIZER_HINT_PARSE_ERROR);
-            self.append_sql_warning(SqlWarning::of(
+            self.append_sql_warning(SqlWarn::of(
                 crate::WarningLevel::Warning,
                 proto,
                 diagnostic.body(),
@@ -280,7 +280,7 @@ impl Session {
         }
         for message in decimal_literal_warnings(sql, &mut stmt) {
             // Go lexer `toDecimal`: the parser's `types.ErrTruncatedWrongValue`.
-            self.append_sql_warning(SqlWarning::of(
+            self.append_sql_warning(SqlWarn::of(
                 crate::WarningLevel::Warning,
                 &tidb_parser_types::parser_types_errors::ERR_TRUNCATED_WRONG_VALUE,
                 message,
@@ -385,7 +385,7 @@ impl Session {
         self.in_show_warning = false;
     }
 
-    fn install_statement_warning_state(&mut self, stmt: &Stmt, previous: Vec<SqlWarning>) {
+    fn install_statement_warning_state(&mut self, stmt: &Stmt, previous: Vec<SqlWarn>) {
         self.restore_statement_variables();
         // Go `ResetContextOfStmt` resolves an EXECUTE's prepared statement
         // (`GetPreparedStmt`) before it counts the previous warnings and
@@ -449,7 +449,7 @@ impl Session {
 
     /// Go's `NumErrorWarnings`: the error count is the ERROR-level entries,
     /// the warning count is every entry.
-    fn set_previous_warning_counts(&mut self, previous: &[SqlWarning]) {
+    fn set_previous_warning_counts(&mut self, previous: &[SqlWarn]) {
         self.vars.sys_warning_count = previous.len();
         self.vars.sys_error_count = previous
             .iter()

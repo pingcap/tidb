@@ -1111,7 +1111,7 @@ fn test_source_index_join_seeking_cost() {
     let cost = index_join_seeking_cost(None, 2.0, 3.0, &factors.tikv_scan);
     assert_eq!(cost.value(), 2.0 * 10.0 * 3.0 * 3.0 * 40.70);
     assert_eq!(INDEX_JOIN_BATCH_RATIO, 6.0);
-    assert_eq!(PAGING_THRESHOLD, 960);
+    assert_eq!(THRESHOLD, 960);
     assert_eq!(TIFLASH_STARTUP_ROW_PENALTY, 10000.0);
     assert_eq!(MAX_PENALTY_ROW_COUNT, 1000.0);
     assert_eq!(MIN_NUM_ROWS, 1.0);
@@ -1172,7 +1172,7 @@ fn test_source_index_lookup_paging_discount_and_its_threshold() {
     };
     let full = cost(961.0);
     // At the paging threshold and below, the whole lookup costs 60%.
-    assert_eq!(cost(PAGING_THRESHOLD as f64), full * 0.6);
+    assert_eq!(cost(THRESHOLD as f64), full * 0.6);
     assert_eq!(cost(1.0), full * 0.6);
     // Above it, and at the "no expected count" sentinel, nothing is deducted.
     assert_eq!(cost(0.0), full);
