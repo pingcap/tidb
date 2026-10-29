@@ -288,12 +288,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	case AntiSemiJoin:
-<<<<<<< HEAD
 		predicates = expression.PropagateConstant(p.SCtx().GetExprCtx(), predicates)
-=======
-		predicates = utilfuncp.ApplyPredicateSimplification(p.SCtx(), predicates, true)
 		predicates = p.joinPropConst(predicates)
->>>>>>> a64de14f105 (planner: constant propagation can deal with anti semi join (#62539))
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
@@ -1702,9 +1698,8 @@ func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 
 // joinPropConst propagates constant equal and column equal conditions over outer join or anti semi join.
 func (p *LogicalJoin) joinPropConst(predicates []expression.Expression) []expression.Expression {
-	children := p.Children()
-	innerTable := children[1]
-	outerTable := children[0]
+	outerTable := p.Children()[0]
+	innerTable := p.Children()[1]
 	if p.JoinType == RightOuterJoin {
 		innerTable, outerTable = outerTable, innerTable
 	}
@@ -1724,12 +1719,8 @@ func (p *LogicalJoin) joinPropConst(predicates []expression.Expression) []expres
 	exprCtx := p.SCtx().GetExprCtx()
 	outerTableSchema := outerTable.Schema()
 	innerTableSchema := innerTable.Schema()
-<<<<<<< HEAD
-	joinConds, predicates = expression.PropConstOverOuterJoin(exprCtx, joinConds, predicates, outerTableSchema, innerTableSchema,
+	joinConds, predicates = expression.PropConstOverSpecialJoin(exprCtx, joinConds, predicates, outerTableSchema, innerTableSchema,
 		p.SCtx().GetSessionVars().AlwaysKeepJoinKey, nullSensitive)
-=======
-	joinConds, predicates = expression.PropConstOverSpecialJoin(exprCtx, joinConds, predicates, outerTableSchema, innerTableSchema, nullSensitive)
->>>>>>> a64de14f105 (planner: constant propagation can deal with anti semi join (#62539))
 	p.AttachOnConds(joinConds)
 	return predicates
 }
