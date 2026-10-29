@@ -728,10 +728,27 @@ type LateMaterializationAlternative struct {
 }
 
 type lateMaterializationTask struct {
-	region       int
-	targets      []int
-	shape        []lateMaterializationRegionNode
-	targetTables []int64
+	region  int
+	targets []lateMaterializationTargetID
+	shape   []lateMaterializationRegionNode
+}
+
+// lateMaterializationTargetID identifies a table occurrence across AST builds.
+// Eligibility can change when physical optimization prunes access paths, so
+// neither a position in the eligible-target list nor a table ID is sufficient.
+// Query blocks distinguish repeated aliases in separate derived tables.
+type lateMaterializationTargetID struct {
+	tableID          int64
+	alias            string
+	queryBlockOffset int
+}
+
+func (t *lateMaterializeTarget) identity() lateMaterializationTargetID {
+	alias := t.ds.TableInfo.Name.L
+	if t.ds.TableAsName != nil && t.ds.TableAsName.L != "" {
+		alias = t.ds.TableAsName.L
+	}
+	return lateMaterializationTargetID{tableID: t.ds.TableInfo.ID, alias: alias, queryBlockOffset: t.ds.QueryBlockOffset()}
 }
 
 // lateMaterializationRegionNode records only table identities and binary join
@@ -761,30 +778,40 @@ func lateMaterializationRegionShape(root base.LogicalPlan) []lateMaterialization
 	return shape
 }
 
-// validate checks every task before any region is changed. Equal region/target
-// counts alone do not establish that positional mappings still refer to the
-// same tables. Selected target IDs also detect a shifted eligibility list.
-func (a *LateMaterializationAlternative) validate(regions []*lateMaterializeRegion) error {
+// validate checks all regions and resolves target occurrences before any
+// rewrite. The returned lists belong to the rebuilt plan, in proposal order;
+// their positions in the current eligibility lists may differ from baseline.
+func (a *LateMaterializationAlternative) validate(regions []*lateMaterializeRegion) ([][]*lateMaterializeTarget, error) {
+	resolved := make([][]*lateMaterializeTarget, 0, len(a.tasks))
 	for _, task := range a.tasks {
 		if task.region >= len(regions) {
-			return errors.New("late materialization region missing from rebuilt plan")
+			return nil, errors.New("late materialization region missing from rebuilt plan")
 		}
 		r := regions[task.region]
 		shape := lateMaterializationRegionShape(r.root)
 		failpoint.InjectCall("lateMaterializationReplayShape", task.region, task.shape, shape)
 		if !slices.Equal(task.shape, shape) {
-			return errors.New("late materialization region tables or join types changed during replay")
+			return nil, errors.New("late materialization region tables or join types changed during replay")
 		}
-		for i, index := range task.targets {
-			if index >= len(r.targets) {
-				return errors.New("late materialization target missing from rebuilt plan")
+		byIdentity := make(map[lateMaterializationTargetID]*lateMaterializeTarget, len(r.targets))
+		for _, target := range r.targets {
+			id := target.identity()
+			if _, exists := byIdentity[id]; exists {
+				return nil, errors.New("late materialization target occurrence is ambiguous in rebuilt plan")
 			}
-			if r.targets[index].ds.TableInfo.ID != task.targetTables[i] {
-				return errors.New("late materialization target table changed during replay")
-			}
+			byIdentity[id] = target
 		}
+		targets := make([]*lateMaterializeTarget, 0, len(task.targets))
+		for _, id := range task.targets {
+			target, exists := byIdentity[id]
+			if !exists {
+				return nil, errors.New("late materialization target missing from rebuilt plan")
+			}
+			targets = append(targets, target)
+		}
+		resolved = append(resolved, targets)
 	}
-	return nil
+	return resolved, nil
 }
 
 type lateMaterializationContextKey struct{}
@@ -816,19 +843,15 @@ func (a *LateMaterializationAlternative) record(logic base.LogicalPlan, plan bas
 	var regions []*lateMaterializeRegion
 	findLateMaterializeRegions(logic, nil, 0, &regions)
 	for i, r := range regions {
-		var chosen []int
-		for j, target := range r.targets {
+		var chosen []lateMaterializationTargetID
+		for _, target := range r.targets {
 			if worthLateMaterializing(plan, target) {
-				chosen = append(chosen, j)
+				chosen = append(chosen, target.identity())
 			}
 		}
 		if len(chosen) > 0 {
-			tables := make([]int64, 0, len(chosen))
-			for _, index := range chosen {
-				tables = append(tables, r.targets[index].ds.TableInfo.ID)
-			}
 			a.tasks = append(a.tasks, lateMaterializationTask{
-				region: i, targets: chosen, shape: lateMaterializationRegionShape(r.root), targetTables: tables,
+				region: i, targets: chosen, shape: lateMaterializationRegionShape(r.root),
 			})
 		}
 	}
@@ -865,16 +888,13 @@ func (a *LateMaterializationAlternative) apply(logic base.LogicalPlan) (base.Log
 	})
 	var regions []*lateMaterializeRegion
 	findLateMaterializeRegions(logic, nil, 0, &regions)
-	if err := a.validate(regions); err != nil {
+	resolved, err := a.validate(regions)
+	if err != nil {
 		return nil, err
 	}
-	for _, task := range a.tasks {
+	for i, task := range a.tasks {
 		r := regions[task.region]
-		targets := make([]*lateMaterializeTarget, 0, len(task.targets))
-		for _, index := range task.targets {
-			targets = append(targets, r.targets[index])
-		}
-		r.targets = targets
+		r.targets = resolved[i]
 		rewritten, ok := rewriteLateMaterializeRegion(r)
 		if !ok {
 			return nil, errors.New("cannot wire late materialization fetch joins")
