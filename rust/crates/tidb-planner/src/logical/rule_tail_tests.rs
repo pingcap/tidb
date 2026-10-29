@@ -23,7 +23,7 @@
 //! the shape it recognises, what it REFUSES to touch, and that it survives a
 //! tree far deeper than a recursive walk would.
 
-use crate::physical_property::ColumnSortItem;
+use tidb_planner_property::ColumnSortItem;
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;

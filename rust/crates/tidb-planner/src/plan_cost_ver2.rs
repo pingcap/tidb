@@ -57,7 +57,7 @@ use tidb_planner_costusage::{
     div_cost_ver2, mul_cost_ver2, new_cost_ver2, new_zero_cost_ver2, sum_cost_ver2, trace_cost,
 };
 use crate::physical_table_reader::StoreType;
-use crate::task_type::TaskType;
+use tidb_planner_property::task_type::TaskType;
 use tidb_paging::THRESHOLD;
 
 /// Minimum row count used to avoid underestimation (`MinNumRows`).

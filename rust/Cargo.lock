@@ -4553,6 +4553,7 @@ dependencies = [
  "tidb-planner-core-metrics",
  "tidb-planner-costusage",
  "tidb-planner-indexadvisor",
+ "tidb-planner-property",
  "tidb-planner-rule",
  "tidb-plannererrors",
  "tidb-ppcpuusage",
@@ -5791,6 +5792,7 @@ dependencies = [
  "tidb-planner-core-cost",
  "tidb-planner-coreusage",
  "tidb-planner-costusage",
+ "tidb-planner-property",
  "tidb-planner-tablesampler",
  "tidb-planner-util",
  "tidb-plannererrors",
@@ -5898,6 +5900,18 @@ dependencies = [
  "tidb-sqlescape",
  "tidb-terror",
  "tidb-util",
+]
+
+[[package]]
+name = "tidb-planner-property"
+version = "0.0.0"
+dependencies = [
+ "tidb-codec",
+ "tidb-datatype",
+ "tidb-expr",
+ "tidb-funcdep",
+ "tidb-intset",
+ "tidb-size",
 ]
 
 [[package]]

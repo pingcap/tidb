@@ -18,7 +18,7 @@
 //! `pkg/planner/core/casetest/plan_test.go:398`; these vectors isolate the
 //! partition and match-result contracts from plan/protobuf construction.
 
-use tidb_planner::physical_property::{ExchangeKind, MppPartitionType, PhysicalPropMatchResult};
+use tidb_planner_property::{ExchangeKind, MppPartitionType, PhysicalPropMatchResult};
 
 #[test]
 fn partition_types_preserve_source_exchange_mapping() {

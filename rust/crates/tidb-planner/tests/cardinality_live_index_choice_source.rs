@@ -6,6 +6,7 @@
 #![allow(missing_docs)]
 
 use tidb_planner::cardinality::index_range_policy::{IndexRangeShape, RangeBoundKind};
+use tidb_planner_property::task_type::TaskType;
 use tidb_planner::{
     access_path::{
         AccessPathStore, DataSourceAccessPath, ExpectedCountRows, IndexAccessPath, IndexReadShape,
@@ -17,7 +18,6 @@ use tidb_planner::{
     logical_data_source::LogicalDataSource,
     logical_data_source_task::{IndexOrderingRequirement, IndexTaskProperty},
     physical::PhysicalIndexScan,
-    task_type::TaskType,
     tikv_scan_spec::TiKvTableScanSpec,
 };
 

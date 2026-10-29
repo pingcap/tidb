@@ -5,6 +5,7 @@
 
 #![allow(missing_docs)]
 
+use tidb_planner_property::task_type::TaskType;
 use tidb_planner::{
     access_path::{
         AccessPathStore, DataSourceAccessPath, IndexAccessPath, PointGetAdmission,
@@ -18,7 +19,6 @@ use tidb_planner::{
     logical_data_source::LogicalDataSource,
     logical_data_source_task::{IndexOrderingRequirement, IndexTaskProperty},
     physical::{PhysicalTableReader, PhysicalTableScan},
-    task_type::TaskType,
     tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec, UnsupportedScanFeature},
 };
 

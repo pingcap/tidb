@@ -33,8 +33,8 @@ use crate::{
     },
     logical_data_source::LogicalDataSource,
     physical::{BasePhysicalPlan, PhysicalIndexScan, PhysicalTableDual, PhysicalTableScan},
-    task_type::TaskType,
 };
+use tidb_planner_property::task_type::TaskType;
 
 /// Ordering refusal used only by this legacy bounded task builder.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

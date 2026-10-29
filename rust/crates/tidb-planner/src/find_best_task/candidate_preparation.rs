@@ -18,7 +18,7 @@ use super::dispatch::{
 };
 use crate::access_path::PossiblePath;
 use crate::logical::{data_source::index_path_is_single_scan, DataSource};
-use crate::physical_property::{PhysicalProperty, TaskType};
+use tidb_planner_property::{PhysicalProperty, TaskType};
 
 pub(super) struct PreparedOrdinaryPaths<'a> {
     pub paths: Vec<&'a PossiblePath>,

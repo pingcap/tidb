@@ -54,10 +54,10 @@ use std::collections::{HashMap, HashSet};
 use crate::enforce::enforce_property_in;
 use crate::logical::LogicalPlan;
 use crate::physical::{self, PhysicalPlan};
-use crate::physical_property::PhysicalProperty;
+use tidb_planner_property::PhysicalProperty;
 use crate::plan_base::{PlanError, PlanIdAllocator};
 use crate::task::Task;
-use crate::task_type::TaskType;
+use tidb_planner_property::task_type::TaskType;
 
 /// Go `getTaskPlanCost`'s pricing half: what a built task costs.
 ///
@@ -1028,7 +1028,7 @@ fn exhaust_physical_plans(
                         ctx.ordering_index_selectivity_ratio,
                     );
                     child_props[inner_idx].index_join_prop =
-                        Some(crate::physical_property::IndexJoinRuntimeProp {
+                        Some(tidb_planner_property::IndexJoinRuntimeProp {
                             other_conditions: op.other_conditions.clone(),
                             outer_join_keys,
                             inner_join_keys,
@@ -1464,7 +1464,7 @@ fn task_has_index_join_info(task: &Task) -> bool {
 /// couldn't allow join, sort, limit, because they are Optimization Fence."
 fn admits_index_join_inner_child_pattern(
     plan: &LogicalPlan,
-    property: &crate::physical_property::IndexJoinRuntimeProp,
+    property: &tidb_planner_property::IndexJoinRuntimeProp,
     multi_pattern: bool,
 ) -> bool {
     match plan {
@@ -1719,7 +1719,7 @@ fn find_best_task_4_logical_mem_table(
     ctx: &mut DispatchContext<'_>,
 ) -> Result<Task, PlanError> {
     if prop.index_join_prop.is_some()
-        || prop.mpp_partition_tp != crate::physical_property::MppPartitionType::Any
+        || prop.mpp_partition_tp != tidb_planner_property::MppPartitionType::Any
     {
         return Ok(Task::invalid_task());
     }
@@ -1823,7 +1823,7 @@ fn empty_range_dual_task(ds: &crate::logical::DataSource, ctx: &DispatchContext<
 }
 
 /// Go's `[]*util.ByItems` built from a property's sort items.
-fn sort_items_to_by_items(items: &[crate::physical_property::SortItem]) -> Vec<tidb_expression_aggregation::ByItems> {
+fn sort_items_to_by_items(items: &[tidb_planner_property::SortItem]) -> Vec<tidb_expression_aggregation::ByItems> {
     items
         .iter()
         .map(|item| tidb_expression_aggregation::ByItems {
@@ -1837,13 +1837,13 @@ fn sort_items_to_by_items(items: &[crate::physical_property::SortItem]) -> Vec<t
 /// required order, and the index columns whose per-range constants force the
 /// reader to merge-sort the range groups (`AccessPath.GroupByColIdxs`).
 pub(super) struct OrderMatch {
-    pub result: crate::physical_property::PhysicalPropMatchResult,
+    pub result: tidb_planner_property::PhysicalPropMatchResult,
     pub group_by_col_idxs: Vec<usize>,
 }
 
 impl OrderMatch {
     pub(super) const NOT_MATCHED: Self = Self {
-        result: crate::physical_property::PhysicalPropMatchResult::NotMatched,
+        result: tidb_planner_property::PhysicalPropMatchResult::NotMatched,
         group_by_col_idxs: Vec::new(),
     };
 
@@ -1906,7 +1906,7 @@ fn match_sort_items(
         }
     }
     let matched = || OrderMatch {
-        result: crate::physical_property::PhysicalPropMatchResult::Matched,
+        result: tidb_planner_property::PhysicalPropMatchResult::Matched,
         group_by_col_idxs: Vec::new(),
     };
     if group_by_col_idxs.is_empty() {
@@ -1916,7 +1916,7 @@ fn match_sort_items(
         None => OrderMatch::NOT_MATCHED,
         Some(0) => matched(),
         Some(_) => OrderMatch {
-            result: crate::physical_property::PhysicalPropMatchResult::MatchedNeedMergeSort,
+            result: tidb_planner_property::PhysicalPropMatchResult::MatchedNeedMergeSort,
             group_by_col_idxs,
         },
     }
@@ -1979,7 +1979,7 @@ pub(super) fn table_path_matches_order(
             return OrderMatch::NOT_MATCHED;
         }
         return OrderMatch {
-            result: crate::physical_property::PhysicalPropMatchResult::Matched,
+            result: tidb_planner_property::PhysicalPropMatchResult::Matched,
             group_by_col_idxs: Vec::new(),
         };
     }
@@ -2141,8 +2141,8 @@ pub(super) fn global_index_partition_filter(
 pub(super) fn match_partial_order_property(
     ds: &crate::logical::DataSource,
     index: &tidb_infoschema::table_source::SourceIndex,
-    partial: &crate::physical_property::PartialOrderInfo,
-) -> Option<crate::physical_property::PartialOrderMatchResult> {
+    partial: &tidb_planner_property::PartialOrderInfo,
+) -> Option<tidb_planner_property::PartialOrderMatchResult> {
     if partial.sort_items.is_empty() || !partial.all_same_order().0 {
         return None;
     }
@@ -2180,7 +2180,7 @@ pub(super) fn match_partial_order_property(
     let Some((prefix_col, prefix_len)) = prefix else {
         return None;
     };
-    Some(crate::physical_property::PartialOrderMatchResult {
+    Some(tidb_planner_property::PartialOrderMatchResult {
         matched: true,
         prefix_col: Some(prefix_col),
         prefix_len: usize::try_from(prefix_len).ok()?,
@@ -2264,7 +2264,7 @@ fn build_index_join_path_result(
     ds: &crate::logical::DataSource,
     path: &crate::access_path::PossiblePath,
     position: usize,
-    runtime: &crate::physical_property::IndexJoinRuntimeProp,
+    runtime: &tidb_planner_property::IndexJoinRuntimeProp,
     ctx: &DispatchContext<'_>,
 ) -> Result<IndexJoinPathAnswer, PlanError> {
     let Some(inner_schema) = ds.base.base.schema() else {
@@ -2432,7 +2432,7 @@ fn index_join_candidate(
 fn choose_index_join_index_path(
     ds: &crate::logical::DataSource,
     paths: &[&crate::access_path::PossiblePath],
-    runtime: &crate::physical_property::IndexJoinRuntimeProp,
+    runtime: &tidb_planner_property::IndexJoinRuntimeProp,
     ctx: &DispatchContext<'_>,
     table_pseudo: bool,
 ) -> Option<IndexJoinPathResult> {
@@ -2460,7 +2460,7 @@ fn choose_index_join_index_path(
 fn choose_index_join_common_handle_path(
     ds: &crate::logical::DataSource,
     paths: &[&crate::access_path::PossiblePath],
-    runtime: &crate::physical_property::IndexJoinRuntimeProp,
+    runtime: &tidb_planner_property::IndexJoinRuntimeProp,
     ctx: &DispatchContext<'_>,
 ) -> Option<IndexJoinPathResult> {
     let (position, path) = paths.iter().enumerate().find(|(_, path)| {
@@ -2544,7 +2544,7 @@ fn is_ndv_close(lhs: f64, rhs: f64) -> bool {
 fn index_join_info_from_result(
     ds: &crate::logical::DataSource,
     result: &IndexJoinPathResult,
-    runtime: &crate::physical_property::IndexJoinRuntimeProp,
+    runtime: &tidb_planner_property::IndexJoinRuntimeProp,
     index_id: Option<i64>,
 ) -> crate::task::IndexJoinInfo {
     // "reverse idxOff2KeyOff as keyOff2IdxOff"
@@ -2575,7 +2575,7 @@ fn index_join_info_from_result(
 /// "global var(ranges) which will be handled as empty range".
 fn index_join_int_pk_info(
     ds: &crate::logical::DataSource,
-    runtime: &crate::physical_property::IndexJoinRuntimeProp,
+    runtime: &tidb_planner_property::IndexJoinRuntimeProp,
 ) -> Option<crate::task::IndexJoinInfo> {
     let pk_col = ds.handle_cols.first()?;
     let key_off2_idx_off = runtime
@@ -3674,7 +3674,7 @@ fn find_best_task_4_logical_data_source_paths(
                     by_items: if keep_order
                         && (!ds.partition_definition_ids.is_empty()
                             || order_match.result
-                                == crate::physical_property::PhysicalPropMatchResult::MatchedNeedMergeSort)
+                                == tidb_planner_property::PhysicalPropMatchResult::MatchedNeedMergeSort)
                     {
                         sort_items_to_by_items(&prop.sort_items)
                     } else {
@@ -4470,7 +4470,7 @@ fn find_best_task_4_logical_data_source_paths(
                     by_items: if keep_order
                         && ((!ds.partition_definition_ids.is_empty() && !source_index.global)
                             || order_match.result
-                                == crate::physical_property::PhysicalPropMatchResult::MatchedNeedMergeSort)
+                                == tidb_planner_property::PhysicalPropMatchResult::MatchedNeedMergeSort)
                     {
                         sort_items_to_by_items(&prop.sort_items_for_keep_order())
                     } else {
@@ -5360,7 +5360,7 @@ mod tests {
     use crate::logical::{
         BaseLogicalPlan, LogicalMaxOneRow, LogicalMemTable, LogicalSelection, LogicalTableDual,
     };
-    use crate::physical_property::SortItem;
+    use tidb_planner_property::SortItem;
     use crate::stats_info::StatsInfo;
     use std::cell::RefCell;
     use tidb_datatype::{
@@ -6664,7 +6664,7 @@ mod tests {
         };
         let partial = PhysicalProperty {
             task_tp: TaskType::CopMultiRead,
-            partial_order_info: Some(crate::physical_property::PartialOrderInfo {
+            partial_order_info: Some(tidb_planner_property::PartialOrderInfo {
                 sort_items: vec![SortItem::from_column(column.clone(), false)],
             }),
             ..PhysicalProperty::default()
@@ -7205,7 +7205,7 @@ mod tests {
         // A required order enumerates nothing (getHashAggs' first gate);
         // with CanAddEnforcer the enforcer branch sorts ABOVE the agg.
         let prop = PhysicalProperty {
-            sort_items: vec![crate::physical_property::SortItem::new(1, false)],
+            sort_items: vec![tidb_planner_property::SortItem::new(1, false)],
             can_add_enforcer: true,
             ..PhysicalProperty::default()
         };
@@ -7310,7 +7310,7 @@ mod tests {
             LogicalPlan::Selection(LogicalSelection::new(base, Vec::new()))
         };
         let prop = PhysicalProperty {
-            task_tp: crate::task_type::TaskType::CopSingleRead,
+            task_tp: tidb_planner_property::task_type::TaskType::CopSingleRead,
             ..PhysicalProperty::default()
         };
         let task = find_best_task(&selection, &prop, &mut ctx).expect("answers");
@@ -7396,7 +7396,7 @@ mod tests {
         let allocator = PlanIdAllocator::new();
         let col = |id: i64| Column::new(id, FieldType::new(FieldTypeCode::LongLong));
         let runtime_prop = |inner_keys: Vec<Column>| {
-            crate::physical_property::IndexJoinRuntimeProp::new(
+            tidb_planner_property::IndexJoinRuntimeProp::new(
                 Vec::new(),
                 Vec::new(),
                 inner_keys,

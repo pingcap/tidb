@@ -434,7 +434,7 @@ impl std::error::Error for PlanError {}
 ///
 /// `Orders` holds `*expression.Column`; the identity Go compares with is
 /// `Column.Equals`, so the columns are carried whole rather than reduced to
-/// their `UniqueID` — unlike [`crate::physical_property::SortItem`], which
+/// their `UniqueID` — unlike [`tidb_planner_property::SortItem`], which
 /// only ever needs the id.
 #[derive(Clone, Debug, Default)]
 pub struct PossiblePropertiesInfo {

@@ -20,7 +20,7 @@
 //! no session for. Each test therefore states the CONTRACT of one ported Go
 //! body directly: what it classifies, what it keeps, what it drops.
 
-use crate::physical_property::ColumnSortItem;
+use tidb_planner_property::ColumnSortItem;
 
 use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode};
 use tidb_expression_aggregation::{AggFuncDesc, AggFunctionMode, BaseFuncDesc, ByItems};
@@ -1564,7 +1564,7 @@ fn limit_derive_stats_caps_at_the_count_and_memoises() {
 fn limit_explain_info_is_exact_without_partitioning() {
     let mut limit = LogicalLimit::new(BaseLogicalPlan::with_id(1, LogicalLimit::TYPE, 0), 3, 7);
     assert_eq!(limit.explain_info(), "offset:3, count:7");
-    limit.partition_by = vec![crate::physical_property::SortItem::new(1, false)];
+    limit.partition_by = vec![tidb_planner_property::SortItem::new(1, false)];
     assert_eq!(
         limit.explain_info(),
         "partition by 1 cols, offset:3, count:7"
@@ -1583,7 +1583,7 @@ fn limit_converts_to_a_topn_that_is_still_a_limit() {
     );
     let limit_id = limit.base.base.id();
     limit.prefer_limit_to_cop = true;
-    limit.partition_by = vec![crate::physical_property::SortItem::new(1, false)];
+    limit.partition_by = vec![tidb_planner_property::SortItem::new(1, false)];
     let topn = limit.convert_to_topn(&allocator);
     assert!(topn.is_limit());
     assert_eq!(topn.offset, 2);
@@ -1646,7 +1646,7 @@ fn topn_attach_child_degrades_to_a_limit_without_by_items() {
         1,
         4,
     );
-    topn.partition_by = vec![crate::physical_property::SortItem::new(8, true)];
+    topn.partition_by = vec![tidb_planner_property::SortItem::new(8, true)];
     topn.prefer_limit_to_cop = true;
     let child = LogicalPlan::TableDual(super::LogicalTableDual {
         base: BaseLogicalPlan::with_id(1, "TableDual", 0),
@@ -1704,7 +1704,7 @@ fn topn_explain_info_reports_every_list_it_carries() {
         5,
     );
     assert_eq!(topn.explain_info(), "1 by items, offset:0, count:5");
-    topn.partition_by = vec![crate::physical_property::SortItem::new(2, false)];
+    topn.partition_by = vec![tidb_planner_property::SortItem::new(2, false)];
     assert_eq!(
         topn.explain_info(),
         "partition by 1 cols order by 1 by items, offset:0, count:5"
@@ -1806,7 +1806,7 @@ fn union_all_child_topn_folds_the_offset_into_the_count() {
         5,
     );
     topn.prefer_limit_to_cop = true;
-    topn.partition_by = vec![crate::physical_property::SortItem::new(1, false)];
+    topn.partition_by = vec![tidb_planner_property::SortItem::new(1, false)];
     let child = LogicalUnionAll::push_down_topn_for_child(&topn, &allocator);
     assert_eq!(child.offset, 0);
     assert_eq!(child.count, 15);
@@ -3320,8 +3320,8 @@ fn index_prop_matching_rejects_prefix_indexes_and_short_indexes() {
         tidb_datatype::UNSPECIFIED_LENGTH,
     ];
     let prop = [
-        crate::physical_property::SortItem::new(1, false),
-        crate::physical_property::SortItem::new(2, false),
+        tidb_planner_property::SortItem::new(1, false),
+        tidb_planner_property::SortItem::new(2, false),
     ];
     assert!(matches_indices_prop(&idx, &full, &prop));
     // A prefix length on the first column breaks it.
@@ -3331,8 +3331,8 @@ fn index_prop_matching_rejects_prefix_indexes_and_short_indexes() {
         &idx,
         &full,
         &[
-            crate::physical_property::SortItem::new(2, false),
-            crate::physical_property::SortItem::new(1, false),
+            tidb_planner_property::SortItem::new(2, false),
+            tidb_planner_property::SortItem::new(1, false),
         ]
     ));
     // Fewer index columns than required attributes.
@@ -3766,7 +3766,7 @@ fn mem_table_pushes_hints_only_for_a_limit_or_a_slow_log_time_order() {
     assert_eq!(LogicalMemTable::push_down_row_limit(&limit), u64::MAX);
     // A partitioned TopN pushes nothing at all.
     limit.offset = 5;
-    limit.partition_by = vec![crate::physical_property::SortItem::new(1, false)];
+    limit.partition_by = vec![tidb_planner_property::SortItem::new(1, false)];
     assert_eq!(slow.push_down_topn(&limit), MemTableTopNHints::default());
 
     let mut time_col = column(1);

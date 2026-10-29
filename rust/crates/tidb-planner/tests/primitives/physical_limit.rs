@@ -20,7 +20,7 @@
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_expr::{column::Column, schema::Schema};
 use tidb_planner::physical::{BasePhysicalPlan, PhysicalLimit, RedactMode};
-use tidb_planner::physical_property::SortItem;
+use tidb_planner_property::SortItem;
 
 fn limit(offset: u64, count: u64, query_block_offset: i32) -> PhysicalLimit {
     PhysicalLimit {

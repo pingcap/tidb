@@ -17,10 +17,10 @@
 //! The Go anchor is `TestTableDual` at
 //! `pkg/planner/core/casetest/cbotest/cbo_test.go:367`.
 
+use tidb_planner_property::{PhysicalProperty, SortItem};
 use tidb_planner::{
     logical::{BaseLogicalPlan, LogicalTableDual},
     physical::{find_best_task_4_logical_table_dual, PhysicalPlan},
-    physical_property::{PhysicalProperty, SortItem},
     plan_base::PlanIdAllocator,
 };
 

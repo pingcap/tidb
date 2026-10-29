@@ -138,7 +138,7 @@ use tidb_expr::expression::{CorrelatedColumn, Expression};
 use tidb_expr::schema::Schema;
 
 use crate::physical::PhysicalPlan;
-use crate::physical_property::PhysicalProperty;
+use tidb_planner_property::PhysicalProperty;
 use crate::physical_table_reader::StoreType;
 use crate::plan_base::{BasePlan, PlanError, PlanIdAllocator, PossiblePropertiesInfo};
 use crate::stats_info::StatsInfo;

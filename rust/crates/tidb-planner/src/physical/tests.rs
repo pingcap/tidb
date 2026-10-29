@@ -1205,9 +1205,9 @@ fn max_one_row_enumeration_needs_an_orderless_root_property() {
     // exactly one PhysicalMaxOneRow whose child property caps ExpectedCnt
     // at 2 — one row to keep, one to prove the violation.
     use crate::logical::{BaseLogicalPlan, LogicalMaxOneRow};
-    use crate::physical_property::SortItem;
+    use tidb_planner_property::SortItem;
     use crate::stats_info::StatsInfo;
-    use crate::task_type::TaskType;
+    use tidb_planner_property::task_type::TaskType;
 
     let allocator = PlanIdAllocator::new();
     let mut base = BaseLogicalPlan::new(&allocator, LogicalMaxOneRow::TYPE, 7);
@@ -1248,7 +1248,7 @@ fn max_one_row_enumeration_needs_an_orderless_root_property() {
 #[test]
 fn max_one_row_and_hash_agg_preserve_the_no_cop_requirement() {
     use crate::logical::{BaseLogicalPlan, LogicalAggregation, LogicalMaxOneRow};
-    use crate::physical_property::CteProducerStatus;
+    use tidb_planner_property::CteProducerStatus;
 
     let allocator = PlanIdAllocator::new();
     let required = PhysicalProperty {
@@ -1363,7 +1363,7 @@ fn a_table_dual_is_born_inside_its_own_root_task() {
     // over MORE than one row answers the invalid task; the built plan
     // carries the logical dual's stats, offset, schema, names and RowCount.
     use crate::logical::{BaseLogicalPlan, LogicalTableDual};
-    use crate::physical_property::SortItem;
+    use tidb_planner_property::SortItem;
     use crate::stats_info::StatsInfo;
     use tidb_datatype::FieldName;
 
@@ -1408,7 +1408,7 @@ fn a_cte_table_promises_no_order_and_is_born_in_a_root_task() {
     // 1-row escape); the built plan carries stats, schema, IDForStorage and
     // Go's fixed query-block offset 0, and explains as `Scan on CTE_N`.
     use crate::logical::{BaseLogicalPlan, LogicalCTETable};
-    use crate::physical_property::SortItem;
+    use tidb_planner_property::SortItem;
     use crate::stats_info::StatsInfo;
 
     let allocator = PlanIdAllocator::new();
@@ -1454,7 +1454,7 @@ fn a_show_and_its_ddl_jobs_twin_are_born_in_root_tasks() {
         BaseLogicalPlan, LogicalShow, LogicalShowDDLJobs, ShowContents,
         ShowStatsMetaPredicateExtractor,
     };
-    use crate::physical_property::SortItem;
+    use tidb_planner_property::SortItem;
 
     let allocator = PlanIdAllocator::new();
     let mut base = BaseLogicalPlan::new(&allocator, LogicalShow::TYPE, 0);
@@ -1500,7 +1500,7 @@ fn root_leaf_tasks_reject_an_index_join_runtime_property() {
         BaseLogicalPlan, LogicalCTETable, LogicalShow, LogicalShowDDLJobs, LogicalTableDual,
         ShowContents,
     };
-    use crate::physical_property::IndexJoinRuntimeProp;
+    use tidb_planner_property::IndexJoinRuntimeProp;
 
     let allocator = PlanIdAllocator::new();
     let prop = PhysicalProperty {
@@ -1733,7 +1733,7 @@ fn a_projection_maps_the_order_or_refuses_and_drops_constant_items() {
 #[test]
 fn partial_order_projection_maps_columns_and_rejects_computed_keys() {
     use crate::logical::{BaseLogicalPlan, LogicalProjection};
-    use crate::physical_property::{PartialOrderInfo, SortItem};
+    use tidb_planner_property::{PartialOrderInfo, SortItem};
 
     let allocator = PlanIdAllocator::new();
     let ty = FieldType::new(FieldTypeCode::LongLong);
@@ -1821,7 +1821,7 @@ fn a_limit_enumerates_the_three_task_types_in_order() {
     assert!(exhaust_physical_plans_4_logical_limit(&limit, &sorted, &allocator).is_empty());
 
     let required = PhysicalProperty {
-        cte_producer_status: crate::physical_property::CteProducerStatus::AllCteCanMpp,
+        cte_producer_status: tidb_planner_property::CteProducerStatus::AllCteCanMpp,
         no_cop_push_down: true,
         ..PhysicalProperty::default()
     };
@@ -1842,7 +1842,7 @@ fn a_limit_enumerates_the_three_task_types_in_order() {
         assert_eq!(child.task_tp, tp);
         assert_eq!(
             child.cte_producer_status,
-            crate::physical_property::CteProducerStatus::AllCteCanMpp
+            tidb_planner_property::CteProducerStatus::AllCteCanMpp
         );
         assert!(child.no_cop_push_down);
         assert!(
@@ -1911,7 +1911,7 @@ fn a_union_all_fans_one_child_property_per_child() {
 
     let prop = PhysicalProperty {
         expected_cnt: 7.0,
-        cte_producer_status: crate::physical_property::CteProducerStatus::AllCteCanMpp,
+        cte_producer_status: tidb_planner_property::CteProducerStatus::AllCteCanMpp,
         no_cop_push_down: true,
         ..PhysicalProperty::default()
     };
@@ -1927,7 +1927,7 @@ fn a_union_all_fans_one_child_property_per_child() {
         let child = built.base.child_req_prop(child_idx).expect("child prop");
         assert_eq!(
             child.cte_producer_status,
-            crate::physical_property::CteProducerStatus::AllCteCanMpp
+            tidb_planner_property::CteProducerStatus::AllCteCanMpp
         );
         assert!(child.no_cop_push_down);
     }
@@ -1946,7 +1946,7 @@ fn a_sequence_plans_producers_at_root_and_stamps_some_cte_failed_mpp() {
     // property with SomeCTEFailedMpp stamped on, and the sequence's schema
     // is the last child's.
     use crate::logical::{BaseLogicalPlan, LogicalPlan, LogicalSequence, LogicalTableDual};
-    use crate::physical_property::CteProducerStatus;
+    use tidb_planner_property::CteProducerStatus;
 
     let allocator = PlanIdAllocator::new();
     let child = || {

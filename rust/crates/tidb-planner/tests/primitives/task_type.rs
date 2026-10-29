@@ -18,7 +18,7 @@
 //! `pkg/planner/property/physical_property_test.go:26`, while these vectors
 //! isolate the task-kind value/label contract from physical-property FD logic.
 
-use tidb_planner::task_type::TaskType;
+use tidb_planner_property::task_type::TaskType;
 
 #[test]
 fn known_task_types_preserve_raw_values_and_labels() {

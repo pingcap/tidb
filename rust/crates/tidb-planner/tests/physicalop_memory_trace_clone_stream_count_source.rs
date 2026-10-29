@@ -20,7 +20,7 @@ use tidb_expression_aggregation::ByItems;
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_planner::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
-use tidb_planner::physical_property::{MppPartitionColumn, PhysicalProperty};
+use tidb_planner_property::{MppPartitionColumn, PhysicalProperty};
 
 /// GO PORT (Sort half) of `pkg/planner/core/physical_plan_test.go:677
 /// TestPhysicalPlanMemoryTrace`.

@@ -104,7 +104,6 @@ pub mod optimize;
 pub mod partidx;
 pub mod physical;
 pub mod physical_plan_cache;
-pub mod physical_property;
 pub mod physical_table_reader;
 pub mod plan_base;
 pub mod plan_builder;
@@ -123,7 +122,6 @@ pub mod show_predicate_extractor;
 pub mod show_schema;
 pub mod stats_info;
 pub mod task;
-pub mod task_type;
 pub mod tikv_scan_spec;
 
 /// Typed Rust counterpart of Go `planner/util.SliceRecursiveFlattenIter`.

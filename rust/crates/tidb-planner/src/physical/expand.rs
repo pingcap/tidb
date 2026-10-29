@@ -16,7 +16,7 @@
 
 use super::{BasePhysicalPlan, PhysicalPlan};
 use crate::logical::LogicalExpand;
-use crate::physical_property::{MppPartitionType, PhysicalProperty, TaskType};
+use tidb_planner_property::{MppPartitionType, PhysicalProperty, TaskType};
 use crate::plan_base::PlanIdAllocator;
 use tidb_expr::expression::Expression;
 

@@ -1,0 +1,19 @@
+[package]
+name = "tidb-planner-property"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/planner/property (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-intset = { path = "../tidb-intset" }
+tidb-size = { path = "../tidb-size" }
+tidb-codec = { path = "../tidb-codec" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-funcdep = { path = "../tidb-funcdep" }

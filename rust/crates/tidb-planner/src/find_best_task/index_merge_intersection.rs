@@ -81,7 +81,7 @@ pub(super) fn build_prepared_index_merge_task(
             tikv_pushdown: None,
             db_name: ds.db_name.clone(),
             is_temporary: ds.is_temporary,
-            prop: Some(Box::new(crate::physical_property::PhysicalProperty::default())),
+            prop: Some(Box::new(tidb_planner_property::PhysicalProperty::default())),
             pk_is_handle_col: ds.pk_is_handle.then(|| ds.handle_cols.first().cloned()).flatten(),
         });
         if !filled.index_filters.is_empty() {

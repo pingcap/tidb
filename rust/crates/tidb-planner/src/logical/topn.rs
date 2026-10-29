@@ -37,7 +37,7 @@ use tidb_expr::simple_expr::extract_cor_columns;
 use crate::logical::limit::LogicalLimit;
 use crate::logical::sort::{get_possible_property_from_by_items, prune_by_items};
 use crate::logical::{schema_producer, BaseLogicalPlan, LogicalPlan};
-use crate::physical_property::SortItem;
+use tidb_planner_property::SortItem;
 use crate::plan_base::PossiblePropertiesInfo;
 use crate::stats_info::StatsInfo;
 

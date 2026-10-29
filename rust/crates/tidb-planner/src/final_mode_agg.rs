@@ -82,7 +82,7 @@ pub struct ThreeStageAggSplit {
     /// The single-partition final aggregate.
     pub final_agg: crate::physical::PhysicalPlan,
     /// The columns used by the partial-to-middle hash exchange.
-    pub partition_cols: Vec<crate::physical_property::MppPartitionColumn>,
+    pub partition_cols: Vec<tidb_planner_property::MppPartitionColumn>,
 }
 
 /// The physical pieces Go's multi-distinct scalar MPP rewrite inserts around
@@ -101,7 +101,7 @@ pub struct MultiDistinctThreeStageAggSplit {
     /// The single-partition final aggregate.
     pub final_agg: crate::physical::PhysicalPlan,
     /// The columns used by the partial-to-middle hash exchange.
-    pub partition_cols: Vec<crate::physical_property::MppPartitionColumn>,
+    pub partition_cols: Vec<tidb_planner_property::MppPartitionColumn>,
 }
 
 /// Go `BasePhysicalAgg.canUse3Stage4SingleDistinctAgg` (`base_physical_agg.go:403`).
@@ -346,10 +346,10 @@ pub fn adjust_three_stage_single_distinct(
         let collate_id = column
             .get_static_type()
             .map(|field_type| {
-                crate::physical_property::collate_id_for_partition(field_type.collation_name())
+                tidb_planner_property::collate_id_for_partition(field_type.collation_name())
             })
             .unwrap_or(-1);
-        partition_cols.push(crate::physical_property::MppPartitionColumn {
+        partition_cols.push(tidb_planner_property::MppPartitionColumn {
             col: column.clone(),
             collate_id,
         });
@@ -372,7 +372,7 @@ pub fn adjust_three_stage_single_distinct(
     };
     middle_hash.base.base.set_id(plan_ids.alloc());
     middle_hash.base.set_children_req_props(vec![Some(
-        crate::physical_property::PhysicalProperty::default(),
+        tidb_planner_property::PhysicalProperty::default(),
     )]);
 
     let mut middle_schema = Schema::default();
@@ -418,7 +418,7 @@ pub fn adjust_three_stage_single_distinct(
         function.mode = AggFunctionMode::Final;
     }
     final_hash.base.set_children_req_props(vec![Some(
-        crate::physical_property::PhysicalProperty::default(),
+        tidb_planner_property::PhysicalProperty::default(),
     )]);
 
     Ok(Some(ThreeStageAggSplit {
@@ -629,7 +629,7 @@ pub fn adjust_three_stage_multi_distinct_with_group_ndv_skew_ratio(
     };
     middle_hash.base.base.set_id(plan_ids.alloc());
     middle_hash.base.set_children_req_props(vec![Some(
-        crate::physical_property::PhysicalProperty::default(),
+        tidb_planner_property::PhysicalProperty::default(),
     )]);
 
     let mut middle_schema = Schema::default();
@@ -674,18 +674,18 @@ pub fn adjust_three_stage_multi_distinct_with_group_ndv_skew_ratio(
         function.grouping_id = 0;
     }
     final_hash.base.set_children_req_props(vec![Some(
-        crate::physical_property::PhysicalProperty::default(),
+        tidb_planner_property::PhysicalProperty::default(),
     )]);
 
     let partition_cols = partial_hash
         .group_by_items
         .iter()
         .filter_map(|item| match item {
-            Expression::Column(column) => Some(crate::physical_property::MppPartitionColumn {
+            Expression::Column(column) => Some(tidb_planner_property::MppPartitionColumn {
                 collate_id: column
                     .get_static_type()
                     .map(|field_type| {
-                        crate::physical_property::collate_id_for_partition(
+                        tidb_planner_property::collate_id_for_partition(
                             field_type.collation_name(),
                         )
                     })
@@ -1751,7 +1751,7 @@ fn new_partial_aggregate_for_store(
         crate::physical::BasePhysicalPlan::new(plan_ids, plan.tp(), plan.query_block_offset());
     final_base.base.set_stats(plan.stats_info().cloned());
     final_base.set_children_req_props(vec![Some(
-        crate::physical_property::PhysicalProperty::default(),
+        tidb_planner_property::PhysicalProperty::default(),
     )]);
     let mut final_plan = match &plan {
         PhysicalPlan::HashAgg(_) => PhysicalPlan::HashAgg(crate::physical::PhysicalHashAgg {
@@ -1944,7 +1944,7 @@ mod tests {
         base.base
             .set_schema(Some(Schema::new(vec![output.clone()])));
         base.set_children_req_props(vec![Some(
-            crate::physical_property::PhysicalProperty::default(),
+            tidb_planner_property::PhysicalProperty::default(),
         )]);
         let mut plan = crate::physical::PhysicalPlan::HashAgg(crate::physical::PhysicalHashAgg {
             base,

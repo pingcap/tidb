@@ -29,7 +29,7 @@
 //! # Narrowings, by name
 //!
 //! * `PartitionBy`/`OrderBy` are `[]property.SortItem`, whose `Col` is a whole
-//!   `*expression.Column`. This crate's [`crate::physical_property::SortItem`]
+//!   `*expression.Column`. This crate's [`tidb_planner_property::SortItem`]
 //!   narrows that to the `UniqueID`, which is enough for a required ORDER but
 //!   not for `GetPartitionByCols`, which hands the columns to
 //!   `expression.NewSchema`. So the window carries [`ColumnSortItem`], which
@@ -45,7 +45,7 @@
 //!   `ruleutil.ResolveExprAndReplace`. None is transcreated.
 //! * `GetGroupNDVs` is vacuous: [`StatsInfo`] has no `GroupNDVs` field.
 
-use crate::physical_property::ColumnSortItem;
+use tidb_planner_property::ColumnSortItem;
 
 use tidb_datatype::EvalType;
 use tidb_expression_aggregation::WindowFuncDesc;

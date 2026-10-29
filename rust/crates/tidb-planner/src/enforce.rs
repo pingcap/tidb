@@ -31,10 +31,10 @@
 //!   [`crate::find_best_task::dispatch::MppWarningSink`].
 
 use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
-use crate::physical_property::PhysicalProperty;
+use tidb_planner_property::PhysicalProperty;
 use crate::plan_base::{PlanError, PlanIdAllocator};
 use crate::task::{MppTask, Task};
-use crate::task_type::TaskType;
+use tidb_planner_property::task_type::TaskType;
 
 impl MppTask {
     /// Go `MppTask.EnforceExchanger(prop, fd)` (`enforce.go:63`): insert an
@@ -44,7 +44,7 @@ impl MppTask {
         required: &PhysicalProperty,
         allocator: &PlanIdAllocator,
     ) -> Result<MppTask, PlanError> {
-        if !crate::physical_property::need_enforce_exchanger(
+        if !tidb_planner_property::need_enforce_exchanger(
             self.partition_type(),
             self.hash_cols(),
             required,
@@ -69,11 +69,11 @@ impl MppTask {
             .ok_or_else(|| PlanError::internal("MppTask.EnforceExchanger: empty plan"))?
             .deep_clone();
         let exchange_type = match required.mpp_partition_tp.exchange_kind() {
-            crate::physical_property::ExchangeKind::Broadcast => {
+            tidb_planner_property::ExchangeKind::Broadcast => {
                 crate::physical::ExchangeType::Broadcast
             }
-            crate::physical_property::ExchangeKind::Hash => crate::physical::ExchangeType::Hash,
-            crate::physical_property::ExchangeKind::PassThrough => {
+            tidb_planner_property::ExchangeKind::Hash => crate::physical::ExchangeType::Hash,
+            tidb_planner_property::ExchangeKind::PassThrough => {
                 crate::physical::ExchangeType::PassThrough
             }
         };
@@ -238,7 +238,7 @@ pub(crate) fn enforce_property_in(
 mod tests {
     use super::*;
     use crate::physical::{BasePhysicalPlan, ExchangeType, PhysicalPlan, PhysicalTableDual};
-    use crate::physical_property::{MppPartitionColumn, MppPartitionType};
+    use tidb_planner_property::{MppPartitionColumn, MppPartitionType};
     use crate::stats_info::StatsInfo;
 
     fn mpp_task(allocator: &PlanIdAllocator) -> MppTask {

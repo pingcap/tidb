@@ -208,7 +208,7 @@ impl OwnedRewrite for DeriveTopN<'_, '_> {
         let mut derived = LogicalTopN::new(base, by_items, 0, count);
         derived.partition_by = partition_by
             .iter()
-            .map(|item| crate::physical_property::SortItem {
+            .map(|item| tidb_planner_property::SortItem {
                 // Go keeps the window's own column object, so EXPLAIN names it.
                 col: item.col.clone(),
                 desc: item.desc,

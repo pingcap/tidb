@@ -50,7 +50,7 @@ use crate::plan_cost_ver2::{
     Ver2Factors,
 };
 use crate::task::Task;
-use crate::task_type::TaskType;
+use tidb_planner_property::task_type::TaskType;
 use tidb_expr::column::Column;
 
 use super::dispatch::TaskCoster;

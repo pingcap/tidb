@@ -20,6 +20,7 @@ use tidb_executor::dag_request::{
     construct_dag_req, DagRequestBuildError, DagRequestContext, TiKvScanPlan,
     DEFAULT_DIV_PRECISION_INCREMENT,
 };
+use tidb_planner_property::task_type::TaskType;
 use tidb_planner::{
     access_path::{DataSourceAccessPath, IndexAccessPath, PointGetAdmission},
     cardinality::{
@@ -29,7 +30,6 @@ use tidb_planner::{
     logical_data_source::LogicalDataSource,
     logical_data_source_task::IndexTaskProperty,
     physical::{PhysicalIndexScan, PhysicalTableScan},
-    task_type::TaskType,
     tikv_scan_spec::{
         check_cover_index, IndexPushdownMetadataError, ResolvedIndexDescriptor, ScanColumnInfo,
         TiKvIndexScanSpec, TiKvTableScanSpec, UnsupportedScanFeature,

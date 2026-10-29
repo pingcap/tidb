@@ -112,7 +112,7 @@
 //! [`PlanBuilder::enable_pipelined_window_exec`] carries it with Go's own
 //! default (`ON`).
 
-use crate::physical_property::ColumnSortItem;
+use tidb_planner_property::ColumnSortItem;
 
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -14,6 +14,7 @@ autotests = false
 test-util = ["tidb-sessmgr/test-util"]
 
 [dependencies]
+tidb-planner-property = { path = "../tidb-planner-property" }
 tidb-executor-windows = { path = "../tidb-executor-windows" }
 tidb-executor-aggregate = { path = "../tidb-executor-aggregate" }
 tidb-executor-sortexec = { path = "../tidb-executor-sortexec" }

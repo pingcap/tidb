@@ -36,7 +36,7 @@ pub fn build_union_index_merge_task(
             build_prepared_union_index_merge_task(
                 ds,
                 &path,
-                &crate::physical_property::PhysicalProperty::default(),
+                &tidb_planner_property::PhysicalProperty::default(),
                 ctx,
             )
         })
@@ -49,7 +49,7 @@ pub fn build_union_index_merge_task(
 fn partial_matches_order(
     ds: &DataSource,
     partial: &Partial,
-    items: &[crate::physical_property::SortItem],
+    items: &[tidb_planner_property::SortItem],
 ) -> Option<Vec<usize>> {
     let first = items.first()?;
     if items.iter().any(|item| item.desc != first.desc) {
@@ -114,7 +114,7 @@ fn index_partial_matches_order(
     ds: &DataSource,
     index_pos: usize,
     filled: &crate::access_path::ordinary::FilledIndexPath,
-    items: &[crate::physical_property::SortItem],
+    items: &[tidb_planner_property::SortItem],
     allow_groups: bool,
 ) -> Option<Vec<usize>> {
     let index = &ds.indexes[index_pos];
@@ -133,7 +133,7 @@ fn index_partial_matches_order(
 fn key_columns_match_order(
     columns: &[(tidb_expr::column::Column, i64)],
     ranges: &[tidb_ranger::types::Range],
-    items: &[crate::physical_property::SortItem],
+    items: &[tidb_planner_property::SortItem],
     allow_groups: bool,
 ) -> Option<Vec<usize>> {
     let mut offset = 0;
@@ -190,7 +190,7 @@ fn key_columns_match_order(
 pub(super) fn build_prepared_union_index_merge_task(
     ds: &DataSource,
     path: &UnionIndexMergePath,
-    prop: &crate::physical_property::PhysicalProperty,
+    prop: &tidb_planner_property::PhysicalProperty,
     ctx: &DispatchContext<'_>,
 ) -> Result<Task, PlanError> {
     let Some(path) = converge_union_index_merge_path(ds, path, prop, ctx) else {
@@ -202,10 +202,10 @@ pub(super) fn build_prepared_union_index_merge_task(
 pub(super) fn converge_union_index_merge_path<'a>(
     ds: &DataSource,
     path: &'a UnionIndexMergePath,
-    prop: &crate::physical_property::PhysicalProperty,
+    prop: &tidb_planner_property::PhysicalProperty,
     ctx: &DispatchContext<'_>,
 ) -> Option<ConvergedUnionPath<'a>> {
-    use crate::physical_property::PhysicalPropMatchResult;
+    use tidb_planner_property::PhysicalPropMatchResult;
     let advisory = prop.sort_items.is_empty()
         && !prop.advisory_sort_items.is_empty()
         && prop
@@ -362,7 +362,7 @@ impl<'a> ConvergedUnionPath<'a> {
 
 pub(super) struct ConvergedUnionPath<'a> {
     partials: Vec<&'a Partial>,
-    partial_matches: Vec<crate::physical_property::PhysicalPropMatchResult>,
+    partial_matches: Vec<tidb_planner_property::PhysicalPropMatchResult>,
     /// Go `GroupByColIdxs` of each partial path, empty when it is ordered
     /// outright or unordered.
     partial_groups: Vec<Vec<usize>>,
@@ -899,7 +899,7 @@ fn push_index_partial(
         is_temporary: ds.is_temporary,
         // Go's partial scan keeps the data source's required property (the
         // default one for an unordered read) and the integer handle column.
-        prop: Some(Box::new(crate::physical_property::PhysicalProperty::default())),
+        prop: Some(Box::new(tidb_planner_property::PhysicalProperty::default())),
         pk_is_handle_col: ds.pk_is_handle.then(|| ds.handle_cols.first().cloned()).flatten(),
     }));
     let global_partition_filter = super::dispatch::global_index_partition_filter(
@@ -1316,8 +1316,8 @@ mod tests {
         let candidates = crate::access_path::index_merge::prepare_union_index_merge_paths(&multiple_or, &derivation, false).unwrap();
         assert_eq!(candidates.len(), 2, "each top-level OR retains its own candidate");
         assert_ne!(candidates[0].source_filter.canonical_hash_code(), candidates[1].source_filter.canonical_hash_code());
-        let advisory = crate::physical_property::PhysicalProperty {
-            advisory_sort_items: vec![crate::physical_property::SortItem::new(b.unique_id, false)],
+        let advisory = tidb_planner_property::PhysicalProperty {
+            advisory_sort_items: vec![tidb_planner_property::SortItem::new(b.unique_id, false)],
             ..Default::default()
         };
         let mut logical_source = choices.clone();
@@ -1409,7 +1409,7 @@ mod tests {
         };
         for property in [
             &advisory,
-            &crate::physical_property::PhysicalProperty::default(),
+            &tidb_planner_property::PhysicalProperty::default(),
         ] {
             let task = build_prepared_union_index_merge_task(
                 derived_source,
@@ -1468,7 +1468,7 @@ mod tests {
         let before_ordinary = allocator.current();
         let ordinary_task = crate::find_best_task::dispatch::find_best_task(
             &ordinary,
-            &crate::physical_property::PhysicalProperty::default(),
+            &tidb_planner_property::PhysicalProperty::default(),
             &mut ordinary_context,
         )
         .unwrap();
@@ -1500,7 +1500,7 @@ mod tests {
             .with_expression_evaluator(&must_not_evaluate);
         let survivor_task = crate::find_best_task::dispatch::find_best_task(
             &surviving_only,
-            &crate::physical_property::PhysicalProperty::default(),
+            &tidb_planner_property::PhysicalProperty::default(),
             &mut survivor_context,
         )
         .unwrap();
@@ -1530,7 +1530,7 @@ mod tests {
             .with_expression_evaluator(&must_not_evaluate);
         let table_task = crate::find_best_task::dispatch::find_best_task(
             &table,
-            &crate::physical_property::PhysicalProperty::default(),
+            &tidb_planner_property::PhysicalProperty::default(),
             &mut table_context,
         )
         .unwrap();

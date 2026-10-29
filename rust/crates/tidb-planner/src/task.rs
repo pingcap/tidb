@@ -40,7 +40,7 @@
 //!   it through every task transition belongs to this task package.
 
 use crate::physical::PhysicalPlan;
-use crate::physical_property::MppPartitionType;
+use tidb_planner_property::MppPartitionType;
 use crate::physical_table_reader::{ReadReqType, StoreType};
 use crate::plan_base::PlanError;
 use std::sync::Arc;
@@ -245,7 +245,7 @@ pub struct MppTask {
     part_tp: MppPartitionType,
     /// Go `HashCols`, retained so exchange enforcement can compare and carry
     /// the current partitioning contract.
-    pub hash_cols: Vec<crate::physical_property::MppPartitionColumn>,
+    pub hash_cols: Vec<tidb_planner_property::MppPartitionColumn>,
     /// Go `RootTaskConds`: TableScan filters TiFlash cannot take, executed
     /// in a TiDB-side Selection when the task converts to root.
     pub root_task_conds: Vec<Expression>,
@@ -274,7 +274,7 @@ impl MppTask {
     pub fn new_with_hash_cols(
         plan: PhysicalPlan,
         part_tp: MppPartitionType,
-        hash_cols: Vec<crate::physical_property::MppPartitionColumn>,
+        hash_cols: Vec<tidb_planner_property::MppPartitionColumn>,
         warnings: impl IntoIterator<Item = SimpleWarnings>,
     ) -> MppTask {
         let mut task = MppTask {
@@ -305,7 +305,7 @@ impl MppTask {
 
     /// Go `GetHashCols`.
     #[must_use]
-    pub fn hash_cols(&self) -> &[crate::physical_property::MppPartitionColumn] {
+    pub fn hash_cols(&self) -> &[tidb_planner_property::MppPartitionColumn] {
         &self.hash_cols
     }
 
@@ -413,7 +413,7 @@ pub struct IndexMergeOrder {
     /// Source matching used advisory rather than required sort items.
     pub advisory: bool,
     /// One source property result for each partial plan, in the same order.
-    pub partial_matches: Vec<crate::physical_property::PhysicalPropMatchResult>,
+    pub partial_matches: Vec<tidb_planner_property::PhysicalPropMatchResult>,
     /// Required merge order. Advisory order does not order the final reader.
     /// Go carries these ByItems on the partial scans before reader conversion.
     pub by_items: Vec<tidb_expression_aggregation::ByItems>,
@@ -465,7 +465,7 @@ pub struct CopTask {
     pub index_join_info: Option<IndexJoinInfo>,
     /// Go `PartialOrderMatchResult`, set when a prefix index supplies the
     /// partial order requested by a TopN child property.
-    pub partial_order_match_result: Option<crate::physical_property::PartialOrderMatchResult>,
+    pub partial_order_match_result: Option<tidb_planner_property::PartialOrderMatchResult>,
     /// Go `PhysPlanPartInfo`: shared with the table scan below and carried
     /// onto the reader this task becomes.
     pub phys_plan_part_info: Option<std::sync::Arc<crate::physical::PhysPlanPartInfo>>,
@@ -1392,8 +1392,8 @@ mod tests {
             let attached = attached.into_root_task_in(&allocator, &evaluate).unwrap();
             assert_eq!(filter_rows(attached.plan().unwrap()), Some(10.0));
 
-            let property = crate::physical_property::PhysicalProperty {
-                sort_items: vec![crate::physical_property::SortItem::new(1, false)],
+            let property = tidb_planner_property::PhysicalProperty {
+                sort_items: vec![tidb_planner_property::SortItem::new(1, false)],
                 ..Default::default()
             };
             let enforced =
@@ -1831,7 +1831,7 @@ mod tests {
                     100.0,
                 ))),
                 partial_order_match_result: Some(
-                    crate::physical_property::PartialOrderMatchResult {
+                    tidb_planner_property::PartialOrderMatchResult {
                         matched: true,
                         prefix_col: Some(column_with_id(1)),
                         prefix_len: 4,
@@ -1849,7 +1849,7 @@ mod tests {
                     false,
                 )],
                 partition_by: if partitioned {
-                    vec![crate::physical_property::SortItem::from_column(
+                    vec![tidb_planner_property::SortItem::from_column(
                         column_with_id(1),
                         false,
                     )]
@@ -2750,11 +2750,11 @@ fn attach_hash_agg_to_mpp(
                     .iter()
                     .map(|item| match item {
                         Expression::Column(column) => {
-                            Ok(crate::physical_property::MppPartitionColumn {
+                            Ok(tidb_planner_property::MppPartitionColumn {
                                 collate_id: column
                                     .get_static_type()
                                     .map(|field_type| {
-                                        crate::physical_property::collate_id_for_partition(
+                                        tidb_planner_property::collate_id_for_partition(
                                             field_type.collation_name(),
                                         )
                                     })
@@ -2773,12 +2773,12 @@ fn attach_hash_agg_to_mpp(
             if partition_cols.is_empty() {
                 return Ok(Task::invalid_task());
             }
-            let required = crate::physical_property::PhysicalProperty {
-                task_tp: crate::task_type::TaskType::Mpp,
+            let required = tidb_planner_property::PhysicalProperty {
+                task_tp: tidb_planner_property::task_type::TaskType::Mpp,
                 expected_cnt: f64::MAX,
                 mpp_partition_tp: MppPartitionType::Hash,
                 mpp_partition_cols: partition_cols.clone(),
-                ..crate::physical_property::PhysicalProperty::default()
+                ..tidb_planner_property::PhysicalProperty::default()
             };
             let mpp = mpp.enforce_exchanger_impl(&required, allocator)?;
             let task = attach_plan_to_task(final_agg, Task::Mpp(mpp));
@@ -2833,13 +2833,13 @@ fn attach_hash_agg_to_mpp(
             let can_use_three_stage =
                 can_use_three_stage_single || multi_distinct_grouping_sets.is_some();
             let original_schema = plan.schema().cloned();
-            let required = crate::physical_property::PhysicalProperty {
-                task_tp: crate::task_type::TaskType::Mpp,
+            let required = tidb_planner_property::PhysicalProperty {
+                task_tp: tidb_planner_property::task_type::TaskType::Mpp,
                 expected_cnt: f64::MAX,
                 mpp_partition_tp: MppPartitionType::SinglePartition,
-                ..crate::physical_property::PhysicalProperty::default()
+                ..tidb_planner_property::PhysicalProperty::default()
             };
-            if !crate::physical_property::need_enforce_exchanger(
+            if !tidb_planner_property::need_enforce_exchanger(
                 mpp.partition_type(),
                 mpp.hash_cols(),
                 &required,
@@ -2897,12 +2897,12 @@ fn attach_hash_agg_to_mpp(
                     let Task::Mpp(mpp) = task else {
                         unreachable!("multi-distinct partial HashAgg must retain MPP task");
                     };
-                    let hash_required = crate::physical_property::PhysicalProperty {
-                        task_tp: crate::task_type::TaskType::Mpp,
+                    let hash_required = tidb_planner_property::PhysicalProperty {
+                        task_tp: tidb_planner_property::task_type::TaskType::Mpp,
                         expected_cnt: f64::MAX,
                         mpp_partition_tp: MppPartitionType::Hash,
                         mpp_partition_cols: split.partition_cols,
-                        ..crate::physical_property::PhysicalProperty::default()
+                        ..tidb_planner_property::PhysicalProperty::default()
                     };
                     let mpp = mpp.enforce_exchanger(&hash_required, allocator)?;
                     let task = attach_plan_to_task(split.middle, Task::Mpp(mpp));
@@ -2928,12 +2928,12 @@ fn attach_hash_agg_to_mpp(
                 let Task::Mpp(mpp) = task else {
                     unreachable!("three-stage partial HashAgg must retain MPP task");
                 };
-                let hash_required = crate::physical_property::PhysicalProperty {
-                    task_tp: crate::task_type::TaskType::Mpp,
+                let hash_required = tidb_planner_property::PhysicalProperty {
+                    task_tp: tidb_planner_property::task_type::TaskType::Mpp,
                     expected_cnt: f64::MAX,
                     mpp_partition_tp: MppPartitionType::Hash,
                     mpp_partition_cols: split.partition_cols,
-                    ..crate::physical_property::PhysicalProperty::default()
+                    ..tidb_planner_property::PhysicalProperty::default()
                 };
                 let mpp = mpp.enforce_exchanger(&hash_required, allocator)?;
                 let task = attach_plan_to_task(split.middle, Task::Mpp(mpp));
@@ -2996,7 +2996,7 @@ fn finish_scalar_aggregate_output(
     base.base.set_stats(child.stats_info().cloned());
     base.base.set_schema(Some(schema.clone()));
     base.set_children_req_props(vec![Some(
-        crate::physical_property::PhysicalProperty::default(),
+        tidb_planner_property::PhysicalProperty::default(),
     )]);
     let projection = PhysicalPlan::Projection(crate::physical::PhysicalProjection {
         base,
@@ -4127,7 +4127,7 @@ pub(crate) fn attach2_task_in(
                 return Ok(Task::Mpp(
                     MppTask::new(
                         mpp_plan,
-                        crate::physical_property::MppPartitionType::Any,
+                        tidb_planner_property::MppPartitionType::Any,
                         [],
                     )
                     .with_stats_context(stats_context),
@@ -5003,7 +5003,7 @@ mod attach_tests {
     fn mpp_two_phase_hash_agg_attaches_partial_exchange_and_final() {
         use crate::expression_rewriter::ColumnIdAllocator;
         use crate::physical::{AggMppRunMode, PhysicalHashAgg};
-        use crate::physical_property::MppPartitionColumn;
+        use tidb_planner_property::MppPartitionColumn;
         use tidb_expression_aggregation::{names, AggFuncDesc};
         use tidb_exprctx::ZonedNoColumns;
         use tidb_datatype::SessionTimeZone;
@@ -5665,7 +5665,7 @@ mod attach_tests {
                 base: op_with_stats("Dual", 1.0),
                 ..crate::physical::PhysicalTableDual::default()
             }),
-            crate::physical_property::MppPartitionType::Any,
+            tidb_planner_property::MppPartitionType::Any,
             [],
         ));
         let task = attach2_task(

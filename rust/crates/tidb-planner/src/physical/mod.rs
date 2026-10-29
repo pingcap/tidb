@@ -53,7 +53,7 @@ use tidb_expr::schema::Schema;
 
 use tidb_planner_costusage::{CostVer2, PlanCostOption};
 use crate::find_best_task::LogicalJoinType;
-use crate::physical_property::{
+use tidb_planner_property::{
     choose_partition_keys, ColumnSortItem, MppPartitionColumn, MppPartitionType, PhysicalProperty,
     TaskType,
 };
@@ -1029,7 +1029,7 @@ pub fn exhaust_physical_plans_4_logical_sort(
         .iter()
         .map(|item| {
             let column = item.expr.as_column()?;
-            Some(crate::physical_property::SortItem::new(
+            Some(tidb_planner_property::SortItem::new(
                 column.unique_id,
                 item.desc,
             ))
@@ -1083,7 +1083,7 @@ pub fn exhaust_physical_plans_4_logical_sort(
                 .by_items
                 .iter()
                 .filter_map(|item| {
-                    Some(crate::physical_property::SortItem::new(
+                    Some(tidb_planner_property::SortItem::new(
                         item.expr.as_column()?.unique_id,
                         item.desc,
                     ))
@@ -1105,7 +1105,7 @@ pub struct PhysicalLimit {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
     /// Go `PartitionBy`: the enhanced-TopN partition order.
-    pub partition_by: Vec<crate::physical_property::SortItem>,
+    pub partition_by: Vec<tidb_planner_property::SortItem>,
     /// Go `Offset`.
     pub offset: u64,
     /// Go `Count`.
@@ -1593,7 +1593,7 @@ pub struct NominalSort {
     /// Go `ByItems`, kept (issue #11653) so the NominalSorts that convert to
     /// Projections can check whether their scalar functions are out of
     /// bounds; carried as `SortItem`s like [`PhysicalSort::by_items`].
-    pub by_items: Vec<crate::physical_property::SortItem>,
+    pub by_items: Vec<tidb_planner_property::SortItem>,
     /// Go `OnlyColumn`: every by-item is a bare column, and `Attach2Task`
     /// then drops the operator entirely.
     pub only_column: bool,
@@ -1614,7 +1614,7 @@ pub fn exhaust_physical_plans_4_logical_max_one_row(
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
 ) -> Vec<PhysicalPlan> {
-    if !prop.is_sort_item_empty() || prop.task_tp == crate::task_type::TaskType::Mpp {
+    if !prop.is_sort_item_empty() || prop.task_tp == tidb_planner_property::task_type::TaskType::Mpp {
         return Vec::new();
     }
     let mut base = BasePhysicalPlan::new(
@@ -1681,7 +1681,7 @@ pub fn find_best_task_4_logical_cte(
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
 ) -> Result<Task, PlanError> {
-    if prop.index_join_prop.is_some() || prop.task_tp != crate::task_type::TaskType::Root {
+    if prop.index_join_prop.is_some() || prop.task_tp != tidb_planner_property::task_type::TaskType::Root {
         return Ok(Task::invalid_task());
     }
     if !prop.is_sort_item_empty() && !prop.can_add_enforcer {
@@ -2114,7 +2114,7 @@ pub fn exhaust_physical_plans_4_logical_sequence(
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
 ) -> Vec<PhysicalPlan> {
-    use crate::physical_property::CteProducerStatus;
+    use tidb_planner_property::CteProducerStatus;
     if prop.task_tp == TaskType::Mpp {
         return Vec::new();
     }
@@ -2270,7 +2270,7 @@ pub struct PhysicalExchangeSender {
     pub exchange_type: ExchangeType,
     /// Go `HashCols`: the hash-exchange keys; empty unless
     /// [`Self::exchange_type`] is [`ExchangeType::Hash`].
-    pub hash_cols: Vec<crate::physical_property::MppPartitionColumn>,
+    pub hash_cols: Vec<tidb_planner_property::MppPartitionColumn>,
 }
 
 impl PhysicalExchangeSender {
@@ -2290,7 +2290,7 @@ impl PhysicalExchangeSender {
                 if !self.hash_cols.is_empty() {
                     info.push_str(", Hash Cols: ");
                     info.push_str(&String::from_utf8_lossy(
-                        &crate::physical_property::explain_column_list(&self.hash_cols),
+                        &tidb_planner_property::explain_column_list(&self.hash_cols),
                     ));
                 }
             }
@@ -3059,13 +3059,13 @@ pub struct PushedDownLimit {
 #[must_use]
 pub fn get_prop_by_order_by_items(
     items: &[tidb_expression_aggregation::ByItems],
-) -> Option<Vec<crate::physical_property::SortItem>> {
+) -> Option<Vec<tidb_planner_property::SortItem>> {
     let mut prop_items = Vec::with_capacity(items.len());
     for item in items {
         let tidb_expr::expression::Expression::Column(col) = &item.expr else {
             return None;
         };
-        prop_items.push(crate::physical_property::SortItem::new(
+        prop_items.push(tidb_planner_property::SortItem::new(
             col.unique_id,
             item.desc,
         ));
@@ -3149,7 +3149,7 @@ pub struct PhysicalTopN {
     /// Go `ByItems`.
     pub by_items: Vec<tidb_expression_aggregation::ByItems>,
     /// Go `PartitionBy`.
-    pub partition_by: Vec<crate::physical_property::SortItem>,
+    pub partition_by: Vec<tidb_planner_property::SortItem>,
     /// Go `Offset`.
     pub offset: u64,
     /// Go `Count`.
@@ -3217,7 +3217,7 @@ pub fn get_phys_topn(
             .iter()
             .map(|item| match &item.expr {
                 tidb_expr::expression::Expression::Column(column) => Some(
-                    crate::physical_property::SortItem::new(column.unique_id, item.desc),
+                    tidb_planner_property::SortItem::new(column.unique_id, item.desc),
                 ),
                 _ => None,
             })
@@ -3235,7 +3235,7 @@ pub fn get_phys_topn(
             .iter()
             .map(|item| match &item.expr {
                 tidb_expr::expression::Expression::Column(column) => Some(
-                    crate::physical_property::SortItem::from_column(column.clone(), item.desc),
+                    tidb_planner_property::SortItem::from_column(column.clone(), item.desc),
                 ),
                 _ => None,
             })
@@ -3246,7 +3246,7 @@ pub fn get_phys_topn(
                 expected_cnt: f64::MAX,
                 cte_producer_status: prop.cte_producer_status,
                 no_cop_push_down: prop.no_cop_push_down,
-                partial_order_info: Some(crate::physical_property::PartialOrderInfo { sort_items }),
+                partial_order_info: Some(tidb_planner_property::PartialOrderInfo { sort_items }),
                 ..PhysicalProperty::default()
             };
             let mut base = BasePhysicalPlan::new(
@@ -3379,7 +3379,7 @@ pub struct PhysicalHashAgg {
     /// Go `BasePhysicalAgg.MppRunMode`.
     pub mpp_run_mode: AggMppRunMode,
     /// Go `BasePhysicalAgg.MppPartitionCols`.
-    pub mpp_partition_cols: Vec<crate::physical_property::MppPartitionColumn>,
+    pub mpp_partition_cols: Vec<tidb_planner_property::MppPartitionColumn>,
     /// Go `SessionVars.Enable3StageDistinctAgg`, captured on the MPP
     /// candidate before attachment mutates its aggregate descriptors.
     pub enable_3_stage_distinct_agg: bool,
@@ -3843,9 +3843,9 @@ pub fn get_stream_aggs(
         if possible.len() < group_by_cols.len() {
             continue;
         }
-        let child_sort: Vec<crate::physical_property::SortItem> = possible[..group_by_cols.len()]
+        let child_sort: Vec<tidb_planner_property::SortItem> = possible[..group_by_cols.len()]
             .iter()
-            .map(|col| crate::physical_property::SortItem::new(col.unique_id, desc))
+            .map(|col| tidb_planner_property::SortItem::new(col.unique_id, desc))
             .collect();
         let child_prop_probe = PhysicalProperty {
             sort_items: child_sort.clone(),
@@ -3898,7 +3898,7 @@ pub fn get_stream_aggs(
     {
         let child_sort = group_by_cols
             .iter()
-            .map(|column| crate::physical_property::SortItem::new(column.unique_id, desc))
+            .map(|column| tidb_planner_property::SortItem::new(column.unique_id, desc))
             .collect::<Vec<_>>();
         let child_prop_probe = PhysicalProperty {
             sort_items: child_sort.clone(),
@@ -3978,7 +3978,7 @@ pub fn exhaust_physical_plans_4_logical_window(
     let child_prop = PhysicalProperty {
         sort_items: by_items
             .iter()
-            .map(|item| crate::physical_property::SortItem::new(item.col.unique_id, item.desc))
+            .map(|item| tidb_planner_property::SortItem::new(item.col.unique_id, item.desc))
             .collect(),
         task_tp: TaskType::Root,
         expected_cnt: f64::MAX,

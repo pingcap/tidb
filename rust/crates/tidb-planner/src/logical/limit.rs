@@ -39,7 +39,7 @@ use tidb_expr::schema::Schema;
 use crate::logical::schema_producer;
 use crate::logical::topn::LogicalTopN;
 use crate::logical::BaseLogicalPlan;
-use crate::physical_property::SortItem;
+use tidb_planner_property::SortItem;
 use crate::stats_info::StatsInfo;
 
 /// Go `logicalop.LogicalLimit` (`logical_limit.go:29`).

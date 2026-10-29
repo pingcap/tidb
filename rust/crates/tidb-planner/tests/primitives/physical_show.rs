@@ -20,7 +20,7 @@ use tidb_planner::logical::{BaseLogicalPlan, LogicalShow, LogicalShowDDLJobs, Sh
 use tidb_planner::physical::{
     find_best_task_4_logical_show, find_best_task_4_logical_show_ddl_jobs, PhysicalPlan,
 };
-use tidb_planner::physical_property::{PhysicalProperty, SortItem};
+use tidb_planner_property::{PhysicalProperty, SortItem};
 use tidb_planner::plan_base::PlanIdAllocator;
 
 #[test]

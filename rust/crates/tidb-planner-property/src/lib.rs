@@ -23,6 +23,8 @@
 /// `Any` is the default: Go's `AnyType` is the iota zero value
 /// (`property/physical_property.go:110`), which is what a zero
 /// `MppTask.partTp` reads as.
+pub mod task_type;
+
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum MppPartitionType {
     /// No special partitioning requirement.
@@ -109,7 +111,7 @@ impl PhysicalPropMatchResult {
 /// cost functions. This module used to declare a second, four-variant copy of
 /// it, which meant one Go file was ported twice at two fidelities: the copy
 /// could not represent Go's `String()` fallthrough for an unrecognised integer,
-/// and [`find_best_task`](crate::find_best_task) had to import both and alias
+/// and `tidb_planner::find_best_task` had to import both and alias
 /// them apart. They are now the same type, as in Go.
 ///
 /// Two tasks of different types cannot be compared by cost directly -- a cop
@@ -141,32 +143,6 @@ impl ColumnSortItem {
     #[must_use]
     pub const fn new(col: tidb_expr::column::Column, desc: bool) -> Self {
         Self { col, desc }
-    }
-
-    /// Expand identity-only search properties using the logical input schema.
-    pub fn from_property(
-        items: &[SortItem],
-        schema: Option<&tidb_expr::schema::Schema>,
-    ) -> Result<Vec<Self>, crate::plan_base::PlanError> {
-        items
-            .iter()
-            .map(|item| {
-                let col = schema
-                    .and_then(|schema| {
-                        schema
-                            .columns
-                            .iter()
-                            .find(|col| col.unique_id == item.col.unique_id)
-                    })
-                    .ok_or_else(|| {
-                        crate::plan_base::PlanError::internal(format!(
-                            "sort column {} is not in input schema",
-                            item.col.unique_id
-                        ))
-                    })?;
-                Ok(Self::new(col.clone(), item.desc))
-            })
-            .collect()
     }
 }
 
@@ -988,10 +964,14 @@ impl std::fmt::Display for PhysicalProperty {
 
 #[cfg(test)]
 mod required_property_tests {
-    use super::{
-        need_enforce_exchanger, CteProducerStatus, MppPartitionColumn, MppPartitionType,
-        PartialOrderInfo, PhysicalProperty, SortItem, TaskType,
-    };
+    use super::need_enforce_exchanger;
+    use super::CteProducerStatus;
+    use super::MppPartitionColumn;
+    use super::MppPartitionType;
+    use super::PartialOrderInfo;
+    use super::PhysicalProperty;
+    use super::SortItem;
+    use super::TaskType;
     use tidb_funcdep::FdSet;
     use tidb_intset::FastIntSet;
 

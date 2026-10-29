@@ -1713,11 +1713,11 @@ fn physical_explain_operator(
         match coster.cost_option() {
             Some(option) => coster.plan_cost_with_option(
                 plan,
-                tidb_planner::task_type::TaskType::Root,
+                tidb_planner_property::task_type::TaskType::Root,
                 false,
                 *option,
             ),
-            None => coster.plan_cost(plan, tidb_planner::task_type::TaskType::Root, false),
+            None => coster.plan_cost(plan, tidb_planner_property::task_type::TaskType::Root, false),
         }
     });
     let estimated_cost = priced.as_ref().map(|cost| cost.value());
@@ -3901,7 +3901,7 @@ pub fn query_plan_cost(
     crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
     let coster = Ver2Coster::from_env(ctx.optimizer_cost_env()).with_explain_cache();
     Ok(coster
-        .plan_cost(&physical, tidb_planner::task_type::TaskType::Root, false)
+        .plan_cost(&physical, tidb_planner_property::task_type::TaskType::Root, false)
         .value())
 }
 

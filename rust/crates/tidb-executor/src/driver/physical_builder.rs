@@ -6466,7 +6466,7 @@ fn group_ranges_by_cols(
 /// the planner built it under.
 fn range_grouped_scan(
     plan: &PhysicalPlan,
-) -> Option<(&[usize], &tidb_ranger::types::Ranges, Option<&tidb_planner::physical_property::PhysicalProperty>)> {
+) -> Option<(&[usize], &tidb_ranger::types::Ranges, Option<&tidb_planner_property::PhysicalProperty>)> {
     let leaf = match plan {
         PhysicalPlan::TableReader(reader) => reader.table_plan.as_deref().and_then(|plan| {
             embedded_table_scan(plan).map(|scan| {

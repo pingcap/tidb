@@ -121,8 +121,8 @@ impl LogicalProjection {
     #[must_use]
     pub fn try_transform_sort_items(
         &self,
-        items: &[crate::physical_property::SortItem],
-    ) -> Option<Vec<crate::physical_property::SortItem>> {
+        items: &[tidb_planner_property::SortItem],
+    ) -> Option<Vec<tidb_planner_property::SortItem>> {
         let schema = self.base.base.schema()?;
         let mut new_items = Vec::with_capacity(items.len());
         for item in items {
@@ -132,7 +132,7 @@ impl LogicalProjection {
                 .position(|c| c.unique_id == item.col.unique_id)?;
             match self.exprs.get(idx)? {
                 Expression::Column(col) => {
-                    new_items.push(crate::physical_property::SortItem::new(
+                    new_items.push(tidb_planner_property::SortItem::new(
                         col.unique_id,
                         item.desc,
                     ));
@@ -150,8 +150,8 @@ impl LogicalProjection {
     #[must_use]
     pub fn try_to_get_child_prop(
         &self,
-        prop: &crate::physical_property::PhysicalProperty,
-    ) -> Option<crate::physical_property::PhysicalProperty> {
+        prop: &tidb_planner_property::PhysicalProperty,
+    ) -> Option<tidb_planner_property::PhysicalProperty> {
         let mut new_prop = prop.clone_essential_fields();
         if !prop.sort_items.is_empty() {
             new_prop.sort_items = self.try_transform_sort_items(&prop.sort_items)?;
@@ -166,14 +166,14 @@ impl LogicalProjection {
                 };
                 match self.exprs.get(index)? {
                     Expression::Column(column) => sort_items.push(
-                        crate::physical_property::SortItem::from_column(column.clone(), item.desc),
+                        tidb_planner_property::SortItem::from_column(column.clone(), item.desc),
                     ),
                     Expression::ScalarFunction(_) => return None,
                     Expression::Constant(_) | Expression::CorrelatedColumn(_) => {}
                 }
             }
             new_prop.partial_order_info =
-                Some(crate::physical_property::PartialOrderInfo { sort_items });
+                Some(tidb_planner_property::PartialOrderInfo { sort_items });
         }
         Some(new_prop)
     }

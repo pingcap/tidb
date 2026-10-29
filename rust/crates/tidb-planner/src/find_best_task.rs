@@ -52,7 +52,7 @@
 //!   Go's COST are different objectives -- fidelity is the objective here.
 //!
 use crate::logical::LogicalPlan;
-use crate::physical_property::{PhysicalProperty, SortItem, TaskType};
+use tidb_planner_property::{PhysicalProperty, SortItem, TaskType};
 use crate::plan_base::PlanError;
 use crate::plan_cost_ver2::IndexJoinKind;
 
@@ -861,7 +861,7 @@ pub mod index_merge_union;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::physical_property::CteProducerStatus;
+    use tidb_planner_property::CteProducerStatus;
 
     #[test]
     fn natural_merge_join_does_not_require_parent_order() {

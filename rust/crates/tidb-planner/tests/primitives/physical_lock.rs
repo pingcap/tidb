@@ -19,7 +19,7 @@
 
 use tidb_planner::logical::{BaseLogicalPlan, LogicalLock, SelectLockType};
 use tidb_planner::physical::{exhaust_physical_plans_4_logical_lock, PhysicalPlan};
-use tidb_planner::physical_property::{PhysicalProperty, TaskType};
+use tidb_planner_property::{PhysicalProperty, TaskType};
 use tidb_planner::plan_base::PlanIdAllocator;
 
 #[test]

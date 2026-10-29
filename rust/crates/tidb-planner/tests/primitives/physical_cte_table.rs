@@ -20,7 +20,7 @@
 
 use tidb_planner::logical::{BaseLogicalPlan, LogicalCTETable};
 use tidb_planner::physical::{find_best_task_4_logical_cte_table, PhysicalPlan};
-use tidb_planner::physical_property::{PhysicalProperty, SortItem};
+use tidb_planner_property::{PhysicalProperty, SortItem};
 use tidb_planner::plan_base::PlanIdAllocator;
 
 fn logical_cte(allocator: &PlanIdAllocator) -> LogicalCTETable {

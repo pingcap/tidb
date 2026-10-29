@@ -153,16 +153,16 @@ impl LogicalAggregation {
     #[must_use]
     pub fn get_potential_partition_keys(
         &self,
-    ) -> Vec<crate::physical_property::MppPartitionColumn> {
+    ) -> Vec<tidb_planner_property::MppPartitionColumn> {
         self.group_by_items
             .iter()
             .filter_map(|item| match item {
-                Expression::Column(column) => Some(crate::physical_property::MppPartitionColumn {
+                Expression::Column(column) => Some(tidb_planner_property::MppPartitionColumn {
                     col: column.clone(),
                     collate_id: column
                         .get_static_type()
                         .map(|field_type| {
-                            crate::physical_property::collate_id_for_partition(
+                            tidb_planner_property::collate_id_for_partition(
                                 field_type.collation_name(),
                             )
                         })

@@ -38,7 +38,7 @@ use crate::logical::rule_collect_plan_stats::StatisticsLoadRequester;
 use crate::logical::rule_partition_processor::PartitionPruning;
 use crate::logical::{prepare_possible_properties, LogicalPlan};
 use crate::physical::PhysicalPlan;
-use crate::physical_property::PhysicalProperty;
+use tidb_planner_property::PhysicalProperty;
 use crate::plan_base::{PlanError, PlanIdAllocator};
 
 /// Go `base.PlanContext` as the optimizer reads it: the statement's session

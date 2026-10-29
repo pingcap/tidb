@@ -647,7 +647,7 @@ mod tests {
         base.base.set_schema(Some(Schema::new(outputs)));
         base.set_children(vec![child]);
         base.set_children_req_props(vec![Some(
-            crate::physical_property::PhysicalProperty::default(),
+            tidb_planner_property::PhysicalProperty::default(),
         )]);
         PhysicalPlan::HashAgg(crate::physical::PhysicalHashAgg {
             base,
@@ -681,7 +681,7 @@ mod tests {
         base.base.set_schema(Some(schema));
         base.set_children(vec![child]);
         base.set_children_req_props(vec![Some(
-            crate::physical_property::PhysicalProperty::default(),
+            tidb_planner_property::PhysicalProperty::default(),
         )]);
         PhysicalPlan::Sort(crate::physical::PhysicalSort {
             base,
@@ -827,11 +827,11 @@ mod tests {
             .set_schema(Some(child.schema().cloned().unwrap_or_default()));
         base.set_children(vec![child]);
         base.set_children_req_props(vec![Some(
-            crate::physical_property::PhysicalProperty::default(),
+            tidb_planner_property::PhysicalProperty::default(),
         )]);
         let plan = PhysicalPlan::NominalSort(crate::physical::NominalSort {
             base,
-            by_items: vec![crate::physical_property::SortItem::new(1, false)],
+            by_items: vec![tidb_planner_property::SortItem::new(1, false)],
             only_column: true,
         });
 
@@ -850,11 +850,11 @@ mod tests {
             .set_schema(Some(child.schema().cloned().unwrap_or_default()));
         base.set_children(vec![child]);
         base.set_children_req_props(vec![Some(
-            crate::physical_property::PhysicalProperty::default(),
+            tidb_planner_property::PhysicalProperty::default(),
         )]);
         let plan = PhysicalPlan::NominalSort(crate::physical::NominalSort {
             base,
-            by_items: vec![crate::physical_property::SortItem::new(1, false)],
+            by_items: vec![tidb_planner_property::SortItem::new(1, false)],
             only_column: false,
         });
 
@@ -888,7 +888,7 @@ mod tests {
         base.base.set_schema(Some(Schema::new(vec![column(200)])));
         base.set_children(vec![child]);
         base.set_children_req_props(vec![Some(
-            crate::physical_property::PhysicalProperty::default(),
+            tidb_planner_property::PhysicalProperty::default(),
         )]);
         let plan = PhysicalPlan::StreamAgg(crate::physical::PhysicalStreamAgg {
             base,

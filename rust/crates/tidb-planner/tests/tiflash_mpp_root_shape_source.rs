@@ -89,7 +89,7 @@ fn hash_sender_explain_lists_hash_columns_like_go() {
     // `, Hash Cols: ` plus `ExplainColumnList`.
     let mut sender = PhysicalExchangeSender::default();
     sender.exchange_type = ExchangeType::Hash;
-    sender.hash_cols = vec![tidb_planner::physical_property::MppPartitionColumn::new(
+    sender.hash_cols = vec![tidb_planner_property::MppPartitionColumn::new(
         7, -1,
     )];
     let rendered = sender.explain_info(false);

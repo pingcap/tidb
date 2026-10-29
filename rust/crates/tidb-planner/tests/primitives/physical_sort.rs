@@ -23,7 +23,7 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_expr::{column::Column, expression::Expression};
 use tidb_expression_aggregation::ByItems;
 use tidb_planner::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
-use tidb_planner::physical_property::SortItem;
+use tidb_planner_property::SortItem;
 
 fn sort(items: Vec<SortItem>, partial: bool, offset: i32, stream_count: u64) -> PhysicalSort {
     let mut base = BasePhysicalPlan::with_id(1, "Sort", offset);

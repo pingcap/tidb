@@ -37,7 +37,7 @@ use tidb_size::{
 
 use super::part_info::part_info_memory_usage;
 use super::{BasePhysicalPlan, PhysicalPlan, PhysicalTableScan};
-use crate::physical_property::{ColumnSortItem, MppPartitionColumn, PhysicalProperty};
+use tidb_planner_property::{ColumnSortItem, MppPartitionColumn, PhysicalProperty};
 
 /// Go `emptyPhysicalTableScanSize`.
 pub const GO_EMPTY_PHYSICAL_TABLE_SCAN_SIZE: i64 = 672;
