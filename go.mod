@@ -125,7 +125,7 @@ require (
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a
 	github.com/tikv/client-go/v2 v2.0.8-0.20261027104816-348a939fb4b6
-	github.com/tikv/pd/client v0.0.0-20260804033407-85a975a5ca78
+	github.com/tikv/pd/client v0.0.0-20261028135905-3150b0b95aa1
 	github.com/timakin/bodyclose v0.0.0-20260723120731-857993a2939c
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -366,5 +366,3 @@ replace (
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
-
-replace github.com/tikv/pd/client => github.com/ti-chi-bot/pd/client v0.0.0-20261026085850-0e8e3f7f530a
