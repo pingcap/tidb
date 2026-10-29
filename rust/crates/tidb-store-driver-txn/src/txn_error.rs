@@ -16,13 +16,14 @@
 //! conflicts and retryable errors into TiDB's, decoding the table keys in
 //! them (`newWriteConflictError`, `prettyWriteKey`,
 //! `prettyLockNotFoundKey`), and hands every other storage error to
-//! `ToTiDBErr` (`tidb_txnkv::to_tidb_driver_error`).
+//! `ToTiDBErr` (`tidb_store_driver_error::driver_error::to_tidb_driver_error`).
 
 use std::fmt;
 
 use tidb_tablecodec::table_key::{decode_index_key, decode_meta_key, decode_record_key, hex};
 use tidb_txnkv::driver::transaction_error::{RedactArg, Redaction, WriteConflict, WriteConflictArgs};
-use tidb_txnkv::{ConvertedDriverError, StorageDriverError, TXN_RETRYABLE_MARK};
+use tidb_txnkv::{StorageDriverError, TXN_RETRYABLE_MARK};
+use tidb_store_driver_error::driver_error::ConvertedDriverError;
 
 /// Retryable transaction failure exposed by the TiDB KV driver boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -214,6 +215,6 @@ pub fn extract_key_err(error: &StorageDriverError) -> ExtractedKeyError {
         StorageDriverError::Retryable { message } => {
             ExtractedKeyError::Transaction(TransactionError::Retryable(message.clone()))
         }
-        other => ExtractedKeyError::Driver(tidb_txnkv::to_tidb_driver_error(other)),
+        other => ExtractedKeyError::Driver(tidb_store_driver_error::driver_error::to_tidb_driver_error(other)),
     }
 }

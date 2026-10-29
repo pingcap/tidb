@@ -37,8 +37,8 @@ pub fn coordinator_sql_error(error: OptimisticCoordinatorError) -> LockSqlError 
         // Go `ToTiDBErr`: client-go's `ErrTxnAbortedByGC` becomes TiDB's
         // `ErrTxnAbortedByGC` (9006) and `ErrPDServerTimeout` keeps its own.
         OptimisticCoordinatorError::Visibility(error) => {
-            match tidb_txnkv::to_tidb_driver_error(&error.into_storage_driver_error()) {
-                tidb_txnkv::ConvertedDriverError::Terror(converted) => {
+            match crate::driver_error::to_tidb_driver_error(&error.into_storage_driver_error()) {
+                crate::driver_error::ConvertedDriverError::Terror(converted) => {
                     LockSqlError::from(tidb_terror::MysqlError::from_terror(&converted))
                 }
                 other => engine_sql_error(other.to_string()),

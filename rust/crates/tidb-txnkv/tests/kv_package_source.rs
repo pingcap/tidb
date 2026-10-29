@@ -304,7 +304,7 @@ fn TestBasicFunc() {
         "test"
     ))));
 
-    let region_unavailable = to_tidb_driver_error(&StorageDriverError::RegionUnavailable);
+    let region_unavailable = tidb_store_driver_error::driver_error::to_tidb_driver_error(&StorageDriverError::RegionUnavailable);
     assert!(!is_txn_retryable_error(Some(&region_unavailable)));
 }
 

@@ -143,7 +143,7 @@ pub use option::{
     INTERNAL_TXN_SYS_VAR, INTERNAL_TXN_TELEMETRY, INTERNAL_TXN_TOOLS, INTERNAL_TXN_TRACE,
     INTERNAL_TXN_TTL, INTERNAL_TXN_WORKLOAD_LEARNING,
 };
-pub use driver_error::{to_tidb_driver_error, ConvertedDriverError, StorageDriverError};
+pub use driver_error::StorageDriverError;
 pub use resource_group::{
     set_decode_table_id_func, ClientRequest, ResourceGroupTagBuilder, ResourceGroupTaggedRequest,
 };

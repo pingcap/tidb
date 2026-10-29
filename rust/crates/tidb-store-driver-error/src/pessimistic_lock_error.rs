@@ -35,7 +35,9 @@ use tidb_kv::cluster_storage::DuplicateKeyHint;
 use tidb_txnkv::driver::transaction_error::WriteConflictArgs;
 use tidb_txnkv::retry::RegionBackoffKind;
 use tidb_txnkv::transaction::{OptimisticCommitOutcome, PessimisticLockFailure, TransactionCause};
-use tidb_txnkv::{to_tidb_driver_error, ConvertedDriverError, StorageDriverError};
+use tidb_txnkv::StorageDriverError;
+use crate::driver_error::to_tidb_driver_error;
+use crate::driver_error::ConvertedDriverError;
 
 /// Go `errno.ErrLockWaitTimeout`.
 

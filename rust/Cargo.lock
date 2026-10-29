@@ -7813,6 +7813,7 @@ dependencies = [
  "tidb-pd-client",
  "tidb-proto",
  "tidb-resourcegrouptag",
+ "tidb-store-driver-error",
  "tidb-tablecodec",
  "tidb-terror",
  "tidb-tiflash",

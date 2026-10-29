@@ -72,9 +72,10 @@ impl fmt::Display for OptimisticCoordinatorError {
             Self::Timestamp(error) => write!(formatter, "PD timestamp allocation failed: {error}"),
             Self::Mutations(error) => error.fmt(formatter),
             Self::SnapshotGet(error) => write!(formatter, "snapshot Get failed: {error}"),
+            // client-go's backoffer returns its config's sentinel error when the
+            // budget runs out; TiDB's `ToTiDBErr` maps it at the SQL boundary.
             Self::SnapshotBackoff { kind, detail } => {
-                crate::to_tidb_driver_error(&crate::StorageDriverError::from_backoff(*kind, detail))
-                    .fmt(formatter)
+                crate::StorageDriverError::from_backoff(*kind, detail).fmt(formatter)
             }
             Self::Visibility(error) => error.fmt(formatter),
             Self::GcState(error) => write!(formatter, "txn safe point unavailable: {error}"),

@@ -1189,10 +1189,10 @@ mod tests {
             let OptimisticCoordinatorError::SnapshotBackoff { kind, detail } = error else {
                 panic!("native backoff was flattened: {error:?}");
             };
-            let sql = tidb_txnkv::to_tidb_driver_error(&tidb_txnkv::StorageDriverError::from_backoff(
+            let sql = tidb_store_driver_error::driver_error::to_tidb_driver_error(&tidb_txnkv::StorageDriverError::from_backoff(
                 kind, &detail,
             ));
-            let tidb_txnkv::ConvertedDriverError::Terror(sql) = sql else {
+            let tidb_store_driver_error::driver_error::ConvertedDriverError::Terror(sql) = sql else {
                 panic!("expected a TiDB error, got {sql:?}");
             };
             assert_eq!(sql.code().value(), expected_code);

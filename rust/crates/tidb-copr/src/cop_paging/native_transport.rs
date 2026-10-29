@@ -106,8 +106,8 @@ impl From<NativeCopError> for QueryResponseError {
                     Some(kind) => {
                         let source =
                             tidb_txnkv::StorageDriverError::from_backoff(kind, &error.to_string());
-                        match tidb_txnkv::to_tidb_driver_error(&source) {
-                            tidb_txnkv::ConvertedDriverError::Terror(converted) => Self::Sql {
+                        match tidb_store_driver_error::driver_error::to_tidb_driver_error(&source) {
+                            tidb_store_driver_error::driver_error::ConvertedDriverError::Terror(converted) => Self::Sql {
                                 code: u16::try_from(converted.code().value())
                                     .expect("registered storage error fits the MySQL protocol"),
                                 // The client reads Go's `terror.ToSQLError`
@@ -124,8 +124,8 @@ impl From<NativeCopError> for QueryResponseError {
             // Go `kvStore.CheckVisibility` -> `ToTiDBErr`: `ErrTxnAbortedByGC`
             // (9006) or `ErrPDServerTimeout`.
             NativeCopError::Visibility(error) => {
-                match tidb_txnkv::to_tidb_driver_error(&error.into_storage_driver_error()) {
-                    tidb_txnkv::ConvertedDriverError::Terror(converted) => Self::Sql {
+                match tidb_store_driver_error::driver_error::to_tidb_driver_error(&error.into_storage_driver_error()) {
+                    tidb_store_driver_error::driver_error::ConvertedDriverError::Terror(converted) => Self::Sql {
                         code: u16::try_from(converted.code().value())
                             .expect("registered storage error fits the MySQL protocol"),
                         message: converted.message().to_owned(),

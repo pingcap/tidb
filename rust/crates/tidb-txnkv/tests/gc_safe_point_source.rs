@@ -25,7 +25,9 @@ use std::time::{Duration, SystemTime};
 use tidb_terror::TerrorClass;
 use tidb_errno as tidb;
 use tidb_txnkv::transaction::OptimisticCoordinatorError;
-use tidb_txnkv::{to_tidb_driver_error, ConvertedDriverError, StorageDriverError, VisibilityError};
+use tidb_txnkv::{StorageDriverError, VisibilityError};
+use tidb_store_driver_error::driver_error::to_tidb_driver_error;
+use tidb_store_driver_error::driver_error::ConvertedDriverError;
 use tikv_client::tikv::{TxnSafePointCache, GC_CPU_TIME_INACCURACY_BOUND, GC_STATE_CACHE_INTERVAL};
 
 #[test]

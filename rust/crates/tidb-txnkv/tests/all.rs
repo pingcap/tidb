@@ -15,7 +15,6 @@
 //! All topology-independent `tidb-txnkv` integration tests in one process.
 
 // Register module-safe suites here; isolated suites remain explicit Cargo targets.
-mod driver_error_source;
 mod gc_safe_point_realtikv_source;
 mod gc_safe_point_source;
 mod interface_source;

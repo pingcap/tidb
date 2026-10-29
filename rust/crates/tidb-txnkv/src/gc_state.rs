@@ -237,12 +237,5 @@ mod tests {
             txn_safe_point: safe_point,
         };
         assert_eq!(error.to_string(), expected);
-        let crate::ConvertedDriverError::Terror(converted) =
-            crate::to_tidb_driver_error(&error.into_storage_driver_error())
-        else {
-            panic!("a GC-aborted read must use the TiKV error catalog")
-        };
-        assert_eq!(converted.code().value(), 9006);
-        assert_eq!(converted.message(), expected);
     }
 }

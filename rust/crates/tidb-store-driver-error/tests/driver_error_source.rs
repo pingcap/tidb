@@ -20,7 +20,9 @@
 
 use tidb_terror::{TerrorClass, CODE_RESULT_UNDETERMINED};
 use tidb_errno as tidb;
-use tidb_txnkv::{to_tidb_driver_error, ConvertedDriverError, MysqlErrorCode, StorageDriverError};
+use tidb_txnkv::{MysqlErrorCode, StorageDriverError};
+use tidb_store_driver_error::driver_error::to_tidb_driver_error;
+use tidb_store_driver_error::driver_error::ConvertedDriverError;
 
 #[test]
 fn test_convert_error_follows_every_source_wrapper_shape() {

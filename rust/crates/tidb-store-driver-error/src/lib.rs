@@ -15,6 +15,7 @@
 //! Go `pkg/store/driver/error` (`ToTiDBErr`) and the client-visible statement error built on it.
 pub mod backoff;
 pub mod coordinator;
+pub mod driver_error;
 pub mod pessimistic_lock_error;
 pub mod sql_query_error;
 

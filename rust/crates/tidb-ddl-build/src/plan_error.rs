@@ -150,6 +150,7 @@ impl DdlPlanError {
     }
 }
 
+/// A DDL-class error with the unknown code, carrying `message` as its text.
 pub fn unknown_ddl_job_error(message: impl Into<String>) -> tidb_terror::TerrorError {
     tidb_terror::TerrorError::synthesize(
         tidb_terror::TerrorClass::Ddl,

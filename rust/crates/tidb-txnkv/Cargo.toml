@@ -47,6 +47,7 @@ tonic.workspace = true
 fail = { version = "0.4", optional = true }
 
 [dev-dependencies]
+tidb-store-driver-error = { path = "../tidb-store-driver-error" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tonic-prost.workspace = true
 
