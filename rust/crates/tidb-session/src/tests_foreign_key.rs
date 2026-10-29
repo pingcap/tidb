@@ -2719,7 +2719,7 @@ fn fk_access_batch_read_errors_are_not_success_or_ignored_violations() {
     let mut session = pair("");
     session
         .with_staged_catalog(|catalog| {
-            let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_mut_in("test", "p")
+            let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_mut_in("test", "p")
             else {
                 panic!("missing parent");
             };

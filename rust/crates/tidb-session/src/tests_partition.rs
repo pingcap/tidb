@@ -68,7 +68,7 @@ const GO_KEY: &str = "CREATE TABLE `k1` (\n  `a` int NOT NULL,\n  `b` int DEFAUL
 fn partition_counts(session: &mut Session, table: &str) -> Vec<(String, usize)> {
     session
         .with_committed_catalog_mut(|catalog| {
-            let Some(tidb_executor::TableEntry::Kv(kv)) = catalog.table_mut_in("test", table)
+            let Some(tidb_infoschema::TableEntry::Kv(kv)) = catalog.table_mut_in("test", table)
             else {
                 panic!("{table} is not stored as bytes");
             };

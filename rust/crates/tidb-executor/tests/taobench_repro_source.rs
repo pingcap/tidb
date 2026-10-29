@@ -6,7 +6,8 @@
 use std::sync::{Arc, Mutex};
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_executor::driver::{run_select_on, Catalog};
+use tidb_executor::driver::run_select_on;
+use tidb_infoschema::Catalog;
 use tidb_table::kv_table::KvTable;
 use tidb_table::kv_table::KvIndex;
 use tidb_table::kv_table::KvColumn;

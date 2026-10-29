@@ -353,7 +353,7 @@ impl Session {
     /// session holds a LOCAL temporary table: 1733, once the partitioned
     /// table has resolved.
     pub(crate) fn exchange_local_temporary_refusal(
-        catalog: &tidb_executor::Catalog,
+        catalog: &tidb_infoschema::Catalog,
         partitioned: (&str, &str),
         local_temporary: Option<&str>,
     ) -> Result<(), DriverError> {

@@ -17,7 +17,7 @@
 //! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use crate::support::testkit::TestKit;
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 
 /// Go `serial_test.go:108-230::TestCreateTableWithLike`, ported over
 /// same-schema names (Go uses `ctwl_db`/`ctwl_db1`; this port stays in

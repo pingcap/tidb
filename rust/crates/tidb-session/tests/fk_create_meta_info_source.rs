@@ -40,7 +40,7 @@
 //! session row-check switch is `@@foreign_key_checks`, set as Go sets it.
 
 use crate::support::testkit::TestKit;
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 use tidb_table::kv_table::FkAction;
 use tidb_table::kv_table::KvForeignKey;
 

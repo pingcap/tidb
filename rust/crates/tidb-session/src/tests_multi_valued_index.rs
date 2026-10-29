@@ -32,7 +32,7 @@ fn error_text(session: &mut Session, sql: &str) -> String {
 fn index_entry_count(session: &mut Session, table: &str, index: &str) -> usize {
     session
         .with_committed_catalog_mut(|catalog| {
-            let Some(tidb_executor::TableEntry::Kv(stored)) = catalog.table_mut_in("test", table)
+            let Some(tidb_infoschema::TableEntry::Kv(stored)) = catalog.table_mut_in("test", table)
             else {
                 panic!("{table} is not stored as bytes");
             };

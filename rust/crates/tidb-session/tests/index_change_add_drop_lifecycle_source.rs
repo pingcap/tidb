@@ -16,7 +16,7 @@
 //! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
 
 use crate::support::testkit::TestKit;
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 
 // --- TestIndexChange (pkg/ddl/index_change_test.go:39) ---
 //

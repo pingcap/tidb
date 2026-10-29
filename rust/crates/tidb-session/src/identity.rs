@@ -706,9 +706,9 @@ impl Session {
     /// of the same name for name resolution too).
     pub(crate) fn with_planning_catalog<T>(
         &self,
-        plan: impl FnOnce(&tidb_executor::Catalog) -> Result<T, DriverError>,
+        plan: impl FnOnce(&tidb_infoschema::Catalog) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
-        let overlay = |catalog: &tidb_executor::Catalog| {
+        let overlay = |catalog: &tidb_infoschema::Catalog| {
             if self.local_temporary_tables.is_empty() {
                 return plan(catalog);
             }
@@ -818,7 +818,7 @@ impl Session {
                         };
                         if self.is_local_temporary_table(db, name)
                             || catalog.table_in(db, name).is_some_and(|table| {
-                                !matches!(table, tidb_executor::TableEntry::Kv(table)
+                                !matches!(table, tidb_infoschema::TableEntry::Kv(table)
                                     if table.temp_table_type() == tidb_model::TempTableType::GLOBAL)
                             })
                         {

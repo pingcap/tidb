@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use tidb_datatype::{Collation, CoreTime, Datum, FieldTypeCode, StringDatum, Time, TimeType};
 use tidb_deadlockhistory::{DeadlockRecord, WaitChainItem, GLOBAL_DEADLOCK_HISTORY};
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 use tidb_stmtsummary::statement_summary::{
     EncodedPlanError, StmtExecInfo, StmtExecLazyInfo, StmtSummaryStmtCtx,
     STMT_SUMMARY_BY_DIGEST_MAP,

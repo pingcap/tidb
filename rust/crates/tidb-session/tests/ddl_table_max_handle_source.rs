@@ -17,7 +17,7 @@
 //! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use crate::support::testkit::TestKit;
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 use tidb_table::kv_table::KvTable;
 
 /// Go `TestCreateClusteredIndex` (`pkg/ddl/primary_key_handle_test.go:262`):

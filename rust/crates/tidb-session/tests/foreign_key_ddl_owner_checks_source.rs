@@ -21,7 +21,7 @@
 //! errors, and its metadata reads are `external.GetTableByName`.
 
 use crate::support::testkit::TestKit;
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 use tidb_table::kv_table::FkAction;
 use tidb_table::kv_table::KvTable;
 

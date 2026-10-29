@@ -17,7 +17,8 @@
 //! node, while point reads keep using the reader's own transaction overlay.
 
 use tidb_datatype::Datum;
-use tidb_executor::{run_create_table_on, run_insert_on, run_select_on, Catalog};
+use tidb_executor::{run_create_table_on, run_insert_on, run_select_on};
+use tidb_infoschema::Catalog;
 use tidb_sessionctx::StmtContext;
 
 #[test]

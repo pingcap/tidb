@@ -123,14 +123,14 @@ impl Session {
             DdlStmt::CreateTable(create) => {
                 let current_db = self.vars.current_db.clone();
                 let (database, _) =
-                    tidb_executor::driver::split_table_path_pub(&create.name, &current_db)?;
+                    tidb_infoschema::split_table_path_pub(&create.name, &current_db)?;
                 let database = database.to_owned();
                 let source = create
                     .like_table
                     .as_ref()
                     .map(|like| -> Result<(String, String), DriverError> {
                         let (schema, name) =
-                            tidb_executor::driver::split_table_path_pub(like, &current_db)?;
+                            tidb_infoschema::split_table_path_pub(like, &current_db)?;
                         Ok((schema.to_owned(), name.to_owned()))
                     })
                     .transpose()?;
@@ -147,8 +147,8 @@ impl Session {
                     // table; the message names the TARGET schema.
                     if let Some((schema, name)) = &source {
                         if let Some(
-                            tidb_executor::TableEntry::View(_)
-                            | tidb_executor::TableEntry::Sequence(_),
+                            tidb_infoschema::TableEntry::View(_)
+                            | tidb_infoschema::TableEntry::Sequence(_),
                         ) = catalog.table_in(schema, name)
                         {
                             return Err(DriverError::from(
@@ -179,7 +179,7 @@ impl Session {
         verb: &'static str,
     ) -> Result<(), DriverError> {
         let current_db = self.vars.current_db.clone();
-        let (database, name) = tidb_executor::driver::split_table_path_pub(path, &current_db)?;
+        let (database, name) = tidb_infoschema::split_table_path_pub(path, &current_db)?;
         let (database, name) = (go_to_lower(database), name.to_owned());
         // The session's infoschema Go resolves through carries its LOCAL
         // temporary tables (`AttachLocalTemporaryTableInfoSchema`).
@@ -214,7 +214,7 @@ impl Session {
     /// user who holds no privilege on it.
     pub fn require_table_exists(&mut self, path: &[String]) -> Result<(), DriverError> {
         let current_db = self.vars.current_db.clone();
-        let (database, name) = tidb_executor::driver::split_table_path_pub(path, &current_db)?;
+        let (database, name) = tidb_infoschema::split_table_path_pub(path, &current_db)?;
         let (database, name) = (database.to_owned(), name.to_owned());
         self.with_catalog_mut(|catalog| {
             if catalog.table_in(&database, &name).is_some() {
@@ -237,14 +237,14 @@ impl Session {
     ) -> Result<(), DriverError> {
         let current_db = self.vars.current_db.clone();
         let (database, name) =
-            tidb_executor::driver::split_table_path_pub(&alter.name, &current_db)?;
+            tidb_infoschema::split_table_path_pub(&alter.name, &current_db)?;
         let (database, name) = (database.to_owned(), name.to_owned());
         self.with_catalog_mut(|catalog| match catalog.table_in(&database, &name) {
             None => Err(DriverError::from(
                 tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                     .generate_with_stack_by_args(&[(&database).into(), (&name).into()]),
             )),
-            Some(tidb_executor::TableEntry::View(_) | tidb_executor::TableEntry::Sequence(_)) => {
+            Some(tidb_infoschema::TableEntry::View(_) | tidb_infoschema::TableEntry::Sequence(_)) => {
                 Err(DriverError::from(
                     tidb_infoschema::infoschema_errors::ERR_WRONG_OBJECT.generate_with_stack_by_args(
                         &[(&database).into(), (&name).into(), ("BASE TABLE").into()],

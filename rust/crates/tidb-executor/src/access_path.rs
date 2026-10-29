@@ -349,7 +349,7 @@ mod common_handle_shape_tests {
     // the first read, not a transport test.
     #[test]
     fn common_handle_point_read_is_admitted() {
-        let mut table = crate::driver::Catalog::mock();
+        let mut table = tidb_infoschema::Catalog::mock();
         let mut kv = tidb_table::kv_table::KvTable::new(
             1,
             vec![
@@ -392,7 +392,7 @@ mod common_handle_shape_tests {
 
     #[test]
     fn a_limit_bound_does_not_replace_the_complete_point_key_proof() {
-        let mut table = crate::driver::Catalog::mock();
+        let mut table = tidb_infoschema::Catalog::mock();
         let mut kv = tidb_table::kv_table::KvTable::new(
             1,
             vec![
@@ -471,7 +471,7 @@ mod common_handle_shape_tests {
     /// confused with the max-ts point-get shortcut used by SELECT.
     #[test]
     fn update_and_delete_use_the_prefetchable_write_shape() {
-        let catalog = crate::driver::Catalog::mock();
+        let catalog = tidb_infoschema::Catalog::mock();
         for sql in [
             "UPDATE t SET v = 1 WHERE k = 'x'",
             "DELETE FROM t WHERE k = 'x'",
@@ -6576,7 +6576,8 @@ use std::collections::HashMap;
     use tidb_txnkv::Key;
 
     use super::*;
-    use crate::driver::{run_select_on, Catalog};
+    use crate::driver::run_select_on;
+    use tidb_infoschema::Catalog;
     use tidb_sessionctx::explain_format::ExplainFormat;
     use tidb_table::kv_table::KvTable;
     use tidb_table::kv_table::KvColumn;
@@ -7260,7 +7261,7 @@ use std::collections::HashMap;
             &ctx,
         )
         .unwrap();
-        let Some(crate::driver::TableEntry::Kv(table)) = catalog.get_in("test", "p") else {
+        let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.get_in("test", "p") else {
             panic!("table");
         };
         let field_type = table.columns()[0].field_type.clone();
@@ -7336,8 +7337,8 @@ use std::collections::HashMap;
             let store = CountingStorage::default();
             let gets = Arc::clone(&store.gets);
             let entries = Arc::clone(&store.entries);
-            let Some(crate::driver::TableEntry::Kv(table)) =
-                catalog.get_mut_in(crate::driver::DEFAULT_DATABASE, "t")
+            let Some(tidb_infoschema::TableEntry::Kv(table)) =
+                catalog.get_mut_in(tidb_infoschema::DEFAULT_DATABASE, "t")
             else {
                 panic!("test table must be byte-backed");
             };
@@ -8229,8 +8230,8 @@ use std::collections::HashMap;
     fn a_missing_lookup_row_does_not_reopen_the_scanned_key_limit() {
         let ctx = crate::StmtContext::for_query();
         let (mut catalog, entries, gets) = table_of(ROWS, true);
-        let Some(crate::driver::TableEntry::Kv(table)) =
-            catalog.get_mut_in(crate::driver::DEFAULT_DATABASE, "t")
+        let Some(tidb_infoschema::TableEntry::Kv(table)) =
+            catalog.get_mut_in(tidb_infoschema::DEFAULT_DATABASE, "t")
         else {
             panic!("test table must be byte-backed");
         };

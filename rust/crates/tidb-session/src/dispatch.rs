@@ -27,7 +27,7 @@ use tidb_executor::compiler::PreparedExec;
 use tidb_executor::compiler::NonPreparedPlanCacheCompile;
 use tidb_executor::compiler::PlanCacheableChecker;
 use tidb_ast::{DmlStmt, SessionStmt, Stmt};
-use tidb_executor::Catalog;
+use tidb_infoschema::Catalog;
 use tidb_executor::DriverError;
 
 pub(crate) use tidb_executor::compiler::explain::variant_name;
@@ -580,7 +580,7 @@ impl Session {
     pub(crate) fn table_storage_statistics_catalog(
         &mut self,
         needs_column_lengths: bool,
-    ) -> Result<tidb_executor::Catalog, DriverError> {
+    ) -> Result<tidb_infoschema::Catalog, DriverError> {
         let scratch = self.with_catalog_mut(|catalog| Ok(catalog.clone()))?;
         tidb_executor::memtable_retrievers::table_storage_statistics_catalog_of(
             scratch,

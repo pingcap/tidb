@@ -154,10 +154,10 @@ fn result_rows(result: Result<StmtResult, tidb_executor::DriverError>) -> Vec<Ve
 }
 
 fn kv_table<'a>(
-    catalog: &'a tidb_executor::Catalog,
+    catalog: &'a tidb_infoschema::Catalog,
     name: &str,
 ) -> &'a tidb_table::kv_table::KvTable {
-    let tidb_executor::driver::TableEntry::Kv(kv) = catalog
+    let tidb_infoschema::TableEntry::Kv(kv) = catalog
         .table_in("app", name)
         .expect("the table is in the catalog")
     else {

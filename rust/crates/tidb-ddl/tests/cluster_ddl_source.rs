@@ -5143,7 +5143,7 @@ fn prefix_index_spellings_preserve_key_part_lengths() {
 /// plan-arm pins below — the RESOLUTION itself is the session tier's
 /// `resolve_view_definition`, tested beside `run_create_view_in`.
 fn view_statement(schema: &str, name: &str, or_replace: bool) -> DdlStatement {
-    let view = tidb_executor::ViewDef {
+    let view = tidb_infoschema::ViewDef {
         name: name.to_owned(),
         columns: vec![(
             "a".to_owned(),

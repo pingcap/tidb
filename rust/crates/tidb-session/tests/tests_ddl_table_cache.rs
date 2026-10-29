@@ -22,7 +22,7 @@
 //! with `tk.get_table_by_name`.
 
 use crate::support::testkit::TestKit;
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 use tidb_model::TableCacheStatusType;
 
 /// Go `checkTableCacheStatus(t, tk, dbName, tableName, status)`.

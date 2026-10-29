@@ -44,6 +44,7 @@ tonic.workspace = true
 tokio-stream = { workspace = true, features = ["net"] }
 
 [dev-dependencies]
+tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-infoschema-perfschema = { path = "../tidb-infoschema-perfschema" }

@@ -18,7 +18,7 @@
 //! the entries the job backfills or rewrites.
 
 use crate::support::testkit::TestKit;
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 
 /// An `INVISIBLE` index added by `CREATE INDEX` or `ALTER TABLE ... ADD
 /// INDEX` is listed with `Visible = NO` and is no access path: `use index`

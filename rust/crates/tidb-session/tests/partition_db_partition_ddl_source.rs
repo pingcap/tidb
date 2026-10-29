@@ -17,7 +17,8 @@
 //! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use crate::support::testkit::TestKit;
-use tidb_executor::{PartitionKind, TableEntry};
+use tidb_executor::PartitionKind;
+use tidb_infoschema::TableEntry;
 use tidb_table::kv_table::KvTable;
 
 fn drop_table(tk: &mut TestKit, name: &str) {

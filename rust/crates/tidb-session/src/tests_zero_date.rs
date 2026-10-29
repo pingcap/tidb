@@ -137,7 +137,7 @@ fn check_datetime_default_ddl(
             });
             let stored = session
                 .with_committed_catalog_mut(|catalog| {
-                    let Some(tidb_executor::TableEntry::Kv(table)) =
+                    let Some(tidb_infoschema::TableEntry::Kv(table)) =
                         catalog.table_mut_in("test", "d")
                     else {
                         panic!("d is not storage-backed");

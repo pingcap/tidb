@@ -1,7 +1,8 @@
 //! DEFAULT/ON UPDATE column-option rules: Go `checkColumnOptions` /
 //! `isInvalidDefaultValue` / the CURRENT_TIMESTAMP expression-default check.
 
-use tidb_executor::{run_create_table_on, Catalog};
+use tidb_executor::run_create_table_on;
+use tidb_infoschema::Catalog;
 
 fn create_error(sql: &str) -> String {
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();

@@ -21,7 +21,7 @@
 
 #![cfg(test)]
 
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 use tidb_tablecodec::is_record_key;
 use tidb_tablecodec::table_key::is_index_key;
 
@@ -41,7 +41,7 @@ use crate::{Session, StmtResult};
 /// invisible here until `COMMIT` -- which is what
 /// [`an_uncommitted_delete_is_invisible_in_the_committed_key_set`] pins.
 fn key_shapes(session: &mut Session, table: &str) -> Vec<&'static str> {
-    let read = |catalog: &mut tidb_executor::Catalog| {
+    let read = |catalog: &mut tidb_infoschema::Catalog| {
         let entry = catalog
             .table_mut_in("test", table)
             .unwrap_or_else(|| panic!("table `{table}` is in the catalog"));

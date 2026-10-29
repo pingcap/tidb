@@ -177,7 +177,7 @@ impl tidb_executor::simple::account_tables::AccountSession for Session {
         Session::exec_restricted_sql(self, sql)
     }
 
-    fn lock_catalog(&self) -> Result<std::sync::MutexGuard<'_, tidb_executor::Catalog>, DriverError> {
+    fn lock_catalog(&self) -> Result<std::sync::MutexGuard<'_, tidb_infoschema::Catalog>, DriverError> {
         Session::lock_catalog(self)
     }
 

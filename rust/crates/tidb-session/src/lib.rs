@@ -35,7 +35,7 @@ use std::time::Duration;
 
 use tidb_ast::Stmt;
 use tidb_datatype::{Datum, FieldType};
-use tidb_executor::Catalog;
+use tidb_infoschema::Catalog;
 use tidb_executor::DriverError;
 use tidb_mathutil::MysqlRng;
 pub use load_stats_arm::ClientLocalFileReader;
@@ -2424,7 +2424,7 @@ impl Session {
     #[doc(hidden)]
     pub fn publish_table_statistics_for_test(
         &self,
-        catalog: &tidb_executor::Catalog,
+        catalog: &tidb_infoschema::Catalog,
         physical_id: i64,
         statistics: &tidb_stats::table_statistics::TableStatistics,
     ) {
@@ -2432,7 +2432,7 @@ impl Session {
             .table_names_by_id(physical_id)
             .or_else(|| catalog.find_table_by_partition_id(physical_id))
             .unwrap_or_else(|| panic!("{physical_id} is no table or partition of the catalog"));
-        let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in(&schema, &name) else {
+        let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_in(&schema, &name) else {
             panic!("{schema}.{name} is not a stored table");
         };
         self.update_stats_cache_with(vec![Arc::new(

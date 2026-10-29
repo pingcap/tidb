@@ -966,7 +966,8 @@ mod tests {
     use tidb_kv::cluster_storage::{
         ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
     };
-    use crate::driver::{run_select_on, Catalog};
+    use crate::driver::run_select_on;
+    use tidb_infoschema::Catalog;
     use tidb_table::kv_table::KvTable;
     use tidb_table::kv_table::KvColumn;
     use tidb_kv::storage::StorageError;

@@ -345,7 +345,7 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
 
     fn with_catalog_mut<T>(
         &mut self,
-        body: impl FnOnce(&mut tidb_executor::Catalog) -> Result<T, DriverError>,
+        body: impl FnOnce(&mut tidb_infoschema::Catalog) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
         Session::with_catalog_mut(self, body)
     }

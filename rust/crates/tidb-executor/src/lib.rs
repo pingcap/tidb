@@ -265,10 +265,10 @@ pub use driver::{
     run_insert_on, run_insert_reporting, run_insert_stmt, run_insert_stmt_with_physical,
     run_query_meta_stmt_with_physical, run_select, run_select_meta_in, run_select_meta_on,
     run_select_meta_stmt, run_select_meta_stmt_with_physical, run_select_on, run_set_opr_stmt,
-    run_update_in, run_update_on, run_update_stmt, run_update_stmt_with_physical, Catalog,
-    DriverError, MemTable, MysqlError, PreparedDmlExecution, PreparedDmlPlan, SelectMeta,
-    TableEntry, VarError, ViewDef, DEFAULT_DATABASE,
+    run_update_in, run_update_on, run_update_stmt, run_update_stmt_with_physical,
+    DriverError, MysqlError, PreparedDmlExecution, PreparedDmlPlan, SelectMeta, VarError,
 };
+use tidb_infoschema::{Catalog, MemTable, TableEntry, ViewDef, DEFAULT_DATABASE};
 pub use executor::{Executor, ExecutorMeta};
 use tidb_driver_error::ExecError;
 pub use explain::{brief_binary_plan, explain_analyze_delete_stmt, explain_analyze_insert_stmt, explain_connection_plan, query_plan_cost, explain_analyze_physical_plan, explain_analyze_select_stmt, explain_analyze_set_opr_stmt, explain_analyze_update_stmt, explain_delete_stmt, explain_insert_stmt, explain_physical_plan, explain_select_stmt, explain_set_opr_stmt, explain_update_stmt, process_plan_info};

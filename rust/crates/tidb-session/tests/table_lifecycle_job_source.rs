@@ -16,7 +16,7 @@
 //! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
 
 use crate::support::testkit::TestKit;
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 
 /// The view `db.name`'s column names, read off the table info as Go's
 /// `dom.InfoSchema().TableByName` reads it.

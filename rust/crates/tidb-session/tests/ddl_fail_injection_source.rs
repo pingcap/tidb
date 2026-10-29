@@ -16,7 +16,7 @@
 //! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
 
 use crate::support::testkit::TestKit;
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 
 // --- TestModifyColumn (pkg/ddl/tests/fail/fail_db_test.go:362) ---
 //

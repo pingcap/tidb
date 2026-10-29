@@ -2138,7 +2138,7 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
     fn probe_cluster_view(
         &mut self,
         stmt: &Stmt,
-    ) -> Result<Option<(String, String, bool, tidb_executor::ViewDef)>, SqlQueryError> {
+    ) -> Result<Option<(String, String, bool, tidb_infoschema::ViewDef)>, SqlQueryError> {
         let resource_group = self.session.current_resource_group().to_owned();
         self.probe_statement(StatementReadShape::Unknown, &resource_group, |session| {
             session.resolve_cluster_view_parsed(stmt).map_err(map_error)

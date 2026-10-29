@@ -29,7 +29,8 @@ use tidb_ast::{SessionStmt, Stmt};
 use tidb_datatype::Datum;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_kv::cluster_storage::BufferCheckpoint;
-use tidb_executor::{Catalog, DriverError};
+use tidb_executor::DriverError;
+use tidb_infoschema::Catalog;
 
 use crate::{txn_mode_for_begin, PESSIMISTIC_TXN_MODE};
 use crate::{Session, SessionTxnMode};

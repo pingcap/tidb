@@ -21,7 +21,7 @@
 //! `tk.get_table_by_name` against the domain's current schema.
 
 use crate::support::testkit::TestKit;
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 use tidb_table::kv_table::KvForeignKey;
 use tidb_table::kv_table::KvTable;
 

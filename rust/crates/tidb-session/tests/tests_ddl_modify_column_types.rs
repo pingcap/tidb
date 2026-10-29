@@ -24,7 +24,7 @@
 //! cases are not Go-parity evidence.
 
 use crate::support::testkit::TestKit;
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 use tidb_table::kv_table::KvColumn;
 
 // Go `modify_column_test.go::TestModifyColumnBetweenStringTypes`: same-family

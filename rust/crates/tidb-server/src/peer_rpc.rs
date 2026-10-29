@@ -177,12 +177,12 @@ impl PeerService {
             }
             Some(tipb::ExecType::TypeTableScan) => {
                 let scan = executor.tbl_scan.as_ref().ok_or("missing table scan")?;
-                let table = tidb_executor::driver::infoschema_meta::CLUSTER_TABLES
+                let table = tidb_infoschema::infoschema_meta::CLUSTER_TABLES
                     .iter()
                     .map(|(name, _)| *name)
                     .find(|name| scan.table_id == tidb_infoschema::infoschema_meta::memory_table_id(name))
                     .ok_or("unsupported TiDB cluster table")?;
-                let columns = tidb_executor::driver::infoschema_meta::table_schema(table)
+                let columns = tidb_infoschema::infoschema_meta::table_schema(table)
                     .ok_or("missing cluster table schema")?;
                 let selected = scan
                     .columns
@@ -1795,7 +1795,7 @@ mod tests {
             .unwrap();
         let (table_id, index_id) = {
             let mut catalog = catalog.lock().unwrap();
-            let tidb_executor::TableEntry::Kv(table) =
+            let tidb_infoschema::TableEntry::Kv(table) =
                 catalog.table_mut_in("diagnostic_batch", "t").unwrap()
             else {
                 panic!("KV table")
@@ -1863,7 +1863,7 @@ mod tests {
         info.static_info.status_port = server.local_addr().port() as usize;
         let outbound = peer_client();
         let read = |table: &str| {
-            let columns = tidb_executor::driver::infoschema_meta::table_schema(table).unwrap();
+            let columns = tidb_infoschema::infoschema_meta::table_schema(table).unwrap();
             let rows = outbound.scan(
                 &[info.clone()],
                 tidb_infoschema::infoschema_meta::memory_table_id(table).unwrap(),
@@ -2074,7 +2074,7 @@ mod tests {
             "CLUSTER_STATEMENTS_SUMMARY_HISTORY",
             "CLUSTER_TIDB_STATEMENTS_STATS",
         ] {
-            let columns = tidb_executor::driver::infoschema_meta::table_schema(table).unwrap();
+            let columns = tidb_infoschema::infoschema_meta::table_schema(table).unwrap();
             let rows = outbound
                 .scan(
                     &[address.clone()],
@@ -2196,7 +2196,7 @@ mod tests {
                 );
             }
         }
-        let columns = tidb_executor::driver::infoschema_meta::table_schema(
+        let columns = tidb_infoschema::infoschema_meta::table_schema(
             "CLUSTER_STATEMENTS_SUMMARY_EVICTED",
         )
         .unwrap();
@@ -2408,7 +2408,7 @@ mod tests {
             assert_eq!(chunk.rows_data.as_deref().unwrap(), expected);
             assert!(stream.message().await.unwrap().is_none());
             let columns =
-                tidb_executor::driver::infoschema_meta::table_schema("CLUSTER_PROCESSLIST")
+                tidb_infoschema::infoschema_meta::table_schema("CLUSTER_PROCESSLIST")
                     .unwrap();
             let fields = vec![columns[1].1.clone(), columns[2].1.clone()];
             let mut chunk = tidb_chunk::chunk::Chunk::new(&fields, 1, 1024);
@@ -2556,7 +2556,7 @@ mod tests {
         let outbound = peer_client();
         let context = tidb_sessionctx::StmtContext::for_query();
         let columns =
-            tidb_executor::driver::infoschema_meta::table_schema("CLUSTER_PROCESSLIST").unwrap();
+            tidb_infoschema::infoschema_meta::table_schema("CLUSTER_PROCESSLIST").unwrap();
         let rows = outbound
             .scan(
                 &[info.clone()],

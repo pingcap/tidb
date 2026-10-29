@@ -24,7 +24,7 @@
 use std::sync::Arc;
 
 use crate::support::testkit::TestKit;
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 use tidb_table::kv_table::KvTable;
 
 /// The `(id, followers, primary_region, regions, schedule)` a policy must

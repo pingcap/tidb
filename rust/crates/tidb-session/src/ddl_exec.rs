@@ -158,7 +158,7 @@ impl Session {
                 let names = names
                     .iter()
                     .map(|path| {
-                        tidb_executor::driver::split_table_path_pub(path, &current_db)
+                        tidb_infoschema::split_table_path_pub(path, &current_db)
                             .map(|(schema, name)| format!("{schema}.{name}"))
                     })
                     .collect::<Result<Vec<_>, _>>()?;
@@ -177,7 +177,7 @@ impl Session {
             DdlExecNext::TruncateLocalTemporaryTable(path) => {
                 let current_db = self.vars.current_db.clone();
                 let (schema, table) =
-                    tidb_executor::driver::split_table_path_pub(path, &current_db)?;
+                    tidb_infoschema::split_table_path_pub(path, &current_db)?;
                 self.temporary_table_ddl()
                     .truncate_local_temporary_table(schema, table)?;
             }
@@ -200,7 +200,7 @@ impl Session {
     ) -> Result<(), DriverError> {
         let current_db = self.vars.current_db.clone();
         for path in local {
-            let (schema, name) = tidb_executor::driver::split_table_path_pub(path, &current_db)?;
+            let (schema, name) = tidb_infoschema::split_table_path_pub(path, &current_db)?;
             self.temporary_table_ddl()
                 .drop_local_temporary_table(schema, name)?;
         }
@@ -214,7 +214,7 @@ impl Session {
     ) -> Result<(), DriverError> {
         let current_db = self.vars.current_db.clone();
         let (schema, table) =
-            tidb_executor::driver::split_table_path_pub(&create.name, &current_db)?;
+            tidb_infoschema::split_table_path_pub(&create.name, &current_db)?;
         let info_schema = self.info_schema.clone().ok_or_else(|| {
             DriverError::unsupported("a LOCAL temporary table needs the session's infoschema")
         })?;
@@ -222,7 +222,7 @@ impl Session {
         let like = match &create.like_table {
             Some(source) => {
                 let (source_schema, source_table) =
-                    tidb_executor::driver::split_table_path_pub(source, &current_db)?;
+                    tidb_infoschema::split_table_path_pub(source, &current_db)?;
                 let source = tidb_ddl::cluster_ddl::create_object::resolve_like_source(
                     &info_schema,
                     source_schema,

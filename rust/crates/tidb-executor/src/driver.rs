@@ -73,11 +73,11 @@ mod subquery;
 mod tests;
 pub(crate) mod write_cast;
 
-// Re-exported flat, so every caller inside and outside this module keeps
-// naming these as `driver::…` exactly as before the split.
+// Re-exported flat, so every caller inside this module keeps naming these as
+// `driver::…` exactly as before the split.
 pub(crate) use access::*;
 pub(crate) use point_get_plan::*;
-pub use tidb_infoschema::*;
+use tidb_infoschema::*;
 pub use catalog_ctx::CatalogStatisticsLoad;
 pub(crate) use catalog_ctx::PlannerCatalogContext;
 pub use dml::*;

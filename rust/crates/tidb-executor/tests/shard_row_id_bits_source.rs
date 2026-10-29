@@ -3,7 +3,8 @@
 //! primary key is the CLUSTERED row id is refused (8200); any other table
 //! accepts the option with the value CLAMPED to `MaxShardRowIDBits` (15).
 
-use tidb_executor::{run_create_table_on, Catalog};
+use tidb_executor::run_create_table_on;
+use tidb_infoschema::Catalog;
 
 #[test]
 fn non_clustered_over_large_bits_are_clamped_not_rejected() {

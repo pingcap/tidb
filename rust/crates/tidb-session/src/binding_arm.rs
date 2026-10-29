@@ -319,7 +319,7 @@ impl Session {
     fn has_global_binding_rows(&mut self) -> bool {
         self.with_catalog_mut(|catalog| {
             Ok(match catalog.table_in("mysql", "bind_info") {
-                Some(tidb_executor::TableEntry::Kv(table)) => {
+                Some(tidb_infoschema::TableEntry::Kv(table)) => {
                     table.len() > 1 + table.indexes().len()
                 }
                 _ => false,

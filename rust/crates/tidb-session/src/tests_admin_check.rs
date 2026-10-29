@@ -349,7 +349,7 @@ fn a_corrupted_index_is_caught() {
     // Drop ONE entry of `idx_b`, leaving the rows untouched.
     let entry = session
         .with_committed_catalog_mut(|catalog| {
-            let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
+            let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
             else {
                 panic!("t is not stored as bytes");
             };
@@ -404,7 +404,7 @@ fn an_orphaned_index_entry_is_caught() {
 
     session
         .with_committed_catalog_mut(|catalog| {
-            let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
+            let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
             else {
                 panic!("t is not stored as bytes");
             };
@@ -436,7 +436,7 @@ fn a_unique_index_entry_naming_the_wrong_row_reports_both_records() {
 
     session
         .with_committed_catalog_mut(|catalog| {
-            let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
+            let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
             else {
                 panic!("t is not stored as bytes");
             };
@@ -484,7 +484,7 @@ fn an_index_value_mismatch_reports_the_column_and_both_values() {
 
     session
         .with_committed_catalog_mut(|catalog| {
-            let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
+            let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
             else {
                 panic!("t is not stored as bytes");
             };
@@ -592,7 +592,7 @@ fn recover_and_cleanup_index_repair_what_check_finds() {
     let corrupt = |session: &mut Session, drop_entry: bool| {
         let key = session
             .with_committed_catalog_mut(|catalog| {
-                let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
+                let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
                 else {
                     panic!("t is not stored as bytes");
                 };

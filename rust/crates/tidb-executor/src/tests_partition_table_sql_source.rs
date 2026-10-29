@@ -457,7 +457,7 @@ fn view_over_partitioned_table_matches_regular() {
         .register_view_in(
             "test",
             "vhash",
-            crate::driver::ViewDef {
+            tidb_infoschema::ViewDef {
                 name: "vhash".to_owned(),
                 columns: vec![("a".to_owned(), field()), ("b".to_owned(), field())],
                 select_sql: "SELECT a*2 AS a, a+b AS b FROM test.thash".to_owned(),
@@ -477,7 +477,7 @@ fn view_over_partitioned_table_matches_regular() {
         .register_view_in(
             "test",
             "v1",
-            crate::driver::ViewDef {
+            tidb_infoschema::ViewDef {
                 name: "v1".to_owned(),
                 columns: vec![("a".to_owned(), field()), ("b".to_owned(), field())],
                 select_sql: "SELECT a*2 AS a, a+b AS b FROM test.t1".to_owned(),

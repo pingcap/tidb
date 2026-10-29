@@ -58,7 +58,7 @@ fn subset_index_cardinality_after_async_statistics_load() {
     let shared = session.shared_catalog();
     let (table_id, column_ids, index_id) = {
         let catalog = shared.lock().unwrap();
-        let tidb_executor::TableEntry::Kv(table) = catalog.table_in("test", "t").unwrap() else {
+        let tidb_infoschema::TableEntry::Kv(table) = catalog.table_in("test", "t").unwrap() else {
             panic!("not KV")
         };
         let column_ids = table
@@ -197,7 +197,7 @@ fn builtin_in_estimate_survives_statistics_initialization() {
     let shared_catalog = session.shared_catalog();
     let table_id = {
         let catalog = shared_catalog.lock().unwrap();
-        let tidb_executor::TableEntry::Kv(table) = catalog.table_in("test", "t").unwrap() else {
+        let tidb_infoschema::TableEntry::Kv(table) = catalog.table_in("test", "t").unwrap() else {
             panic!("not KV")
         };
         table.table_id()
@@ -370,7 +370,7 @@ fn datetime_range_overflow_survives_async_statistics_load() {
     let shared = session.shared_catalog();
     let (table_id, column_id) = {
         let catalog = shared.lock().unwrap();
-        let tidb_executor::TableEntry::Kv(table) = catalog.table_in("test", "t").unwrap() else {
+        let tidb_infoschema::TableEntry::Kv(table) = catalog.table_in("test", "t").unwrap() else {
             panic!("not KV")
         };
         (table.table_id(), table.columns()[0].id)

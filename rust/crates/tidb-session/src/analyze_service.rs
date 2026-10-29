@@ -43,7 +43,7 @@ impl tidb_executor::analyze::exec::AnalyzeExec for crate::Session {
         crate::Session::append_routed_note(self, code, message);
     }
 
-    fn catalog_ignoring_poison(&self) -> std::sync::MutexGuard<'_, tidb_executor::Catalog> {
+    fn catalog_ignoring_poison(&self) -> std::sync::MutexGuard<'_, tidb_infoschema::Catalog> {
         self.catalog
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

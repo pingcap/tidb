@@ -18,7 +18,7 @@
 //! `docs/parity/current-audit/test-owner-cleanup-validation.json`.
 
 use crate::support::testkit::TestKit;
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 
 /// Go `db_partition_test.go:3872::checkGlobalAndPK`: `indexes` count,
 /// `PKIsHandle`, `IsCommonHandle`, and — when an index exists — the PRIMARY

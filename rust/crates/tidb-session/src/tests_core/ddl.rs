@@ -1977,7 +1977,7 @@ fn truncate_partition_replaces_only_the_selected_physical_tables() {
     let physical_ids = |session: &Session| {
         let catalog = session.shared_catalog();
         let catalog = catalog.lock().unwrap();
-        let tidb_executor::TableEntry::Kv(table) = catalog.get_table_for_test("pt").unwrap() else {
+        let tidb_infoschema::TableEntry::Kv(table) = catalog.get_table_for_test("pt").unwrap() else {
             panic!("pt should remain a storage-backed table");
         };
         table.partition().unwrap().physical_ids()

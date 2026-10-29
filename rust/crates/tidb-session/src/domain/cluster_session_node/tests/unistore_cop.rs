@@ -4742,7 +4742,7 @@ fn add_column_ddl_initializes_statistics_like_go() {
     {
         let catalog = session.shared_catalog();
         let catalog = catalog.lock().expect("session catalog is available");
-        let tidb_executor::driver::TableEntry::Kv(table) = catalog
+        let tidb_infoschema::TableEntry::Kv(table) = catalog
             .table_in("test", "stats_add_column")
             .expect("rebuilt executor table is available")
         else {
@@ -25135,7 +25135,7 @@ fn a_storage_sessions_tables_carry_the_nodes_coprocessor_client() {
         .expect("storage session");
     let has_client = opened
         .with_committed_catalog_mut(|catalog| match catalog.table_in("mysql", "user") {
-            Some(tidb_executor::TableEntry::Kv(table)) => Ok(table.store().client().is_some()),
+            Some(tidb_infoschema::TableEntry::Kv(table)) => Ok(table.store().client().is_some()),
             _ => Ok(false),
         })
         .expect("catalog");

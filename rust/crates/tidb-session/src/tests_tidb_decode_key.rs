@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 use tidb_tablecodec::table_key::encode_table_prefix;
 use tidb_tablecodec::table_key::decode_record_key;
 

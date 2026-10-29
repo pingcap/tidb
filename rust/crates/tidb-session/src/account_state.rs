@@ -22,7 +22,8 @@
 use tidb_privilege::PrivilegeTypeExt;
 use tidb_datatype::Datum;
 use tidb_executor::mem_table_retrieval::{MemTableRead, MemTableRetriever};
-use tidb_executor::{Catalog, DriverError};
+use tidb_executor::DriverError;
+use tidb_infoschema::Catalog;
 use tidb_hack::GoCaseCompare;
 
 use tidb_privilege;
@@ -363,7 +364,7 @@ impl MemTableRetriever for AccountRetriever {
         !read.is_cluster_scan
             && read
                 .db_name
-                .go_lower_eq(tidb_executor::driver::infoschema_meta::INFORMATION_SCHEMA)
+                .go_lower_eq(tidb_infoschema::infoschema_meta::INFORMATION_SCHEMA)
             && ["USER_PRIVILEGES", "USER_ATTRIBUTES"]
                 .iter()
                 .any(|name| read.table_name.go_lower_eq(name))
@@ -401,7 +402,7 @@ impl MemTableRetriever for VariablesRetriever {
         }
         (read
             .db_name
-            .go_lower_eq(tidb_executor::driver::infoschema_meta::INFORMATION_SCHEMA)
+            .go_lower_eq(tidb_infoschema::infoschema_meta::INFORMATION_SCHEMA)
             && ["VARIABLES_INFO", "PROFILING"]
                 .iter()
                 .any(|name| read.table_name.go_lower_eq(name)))

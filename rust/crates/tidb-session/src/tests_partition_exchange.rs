@@ -401,13 +401,13 @@ fn a_marked_standalone_table_takes_only_rows_of_the_partition() {
     session
         .with_committed_catalog_mut(|catalog| {
             let (pt_id, p0_id) = {
-                let Some(tidb_executor::TableEntry::Kv(pt)) = catalog.table_in("test", "pt") else {
+                let Some(tidb_infoschema::TableEntry::Kv(pt)) = catalog.table_in("test", "pt") else {
                     panic!("pt is not stored as bytes");
                 };
                 let p0 = pt.partition().expect("pt is partitioned").definitions[0].id;
                 (pt.table_id(), p0)
             };
-            let Some(tidb_executor::TableEntry::Kv(nt)) = catalog.table_mut_in("test", "nt") else {
+            let Some(tidb_infoschema::TableEntry::Kv(nt)) = catalog.table_mut_in("test", "nt") else {
                 panic!("nt is not stored as bytes");
             };
             std::sync::Arc::make_mut(nt).set_exchange_partition_info(Some((pt_id, p0_id)));

@@ -10,7 +10,7 @@
 //! Go vardef/sysvar and ddl/foreign_key policy in an isolated process, so OFF
 //! cannot race the other suites' ordinary ON fixtures.
 use std::sync::atomic::Ordering;
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 use tidb_session::Session;
 use tidb_domain::global_sysvars::GlobalSysvars;
 

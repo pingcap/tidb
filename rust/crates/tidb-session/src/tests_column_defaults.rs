@@ -705,7 +705,7 @@ fn malformed_literal_timestamp_default_has_surface_specific_error_handling() {
         .unwrap();
     session
         .with_committed_catalog_mut(|catalog| {
-            let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_mut_in("test", "bad_ts")
+            let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_mut_in("test", "bad_ts")
             else {
                 panic!("bad_ts is not storage-backed");
             };

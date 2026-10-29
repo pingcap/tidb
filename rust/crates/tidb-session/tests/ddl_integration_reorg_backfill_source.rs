@@ -17,7 +17,7 @@
 //! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
 use crate::support::testkit::TestKit;
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 
 /// Focused shape/type slice of Go `TestPartialIndex`: unsupported conditions
 /// are rejected with the dedicated 8200 errno, while the accepted type-family

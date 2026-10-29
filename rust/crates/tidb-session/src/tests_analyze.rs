@@ -14,7 +14,7 @@ use tidb_stats_handle::catalog_statistics::CatalogStatistics;
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::tests_support::*;
 use crate::*;
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 
 /// The scan row's `estRows` and `operator info`, which is where the statistics
 /// show up.
@@ -1250,7 +1250,7 @@ fn physical_statistics_loads_become_shared_at_the_next_statement_boundary() {
                 ("nation", 25, &[("n_nationkey", 25), ("n_name", 25)][..]),
             ] {
                 let (table_id, column_ndvs, indexes, mut statistics) = {
-                    let tidb_executor::TableEntry::Kv(table) =
+                    let tidb_infoschema::TableEntry::Kv(table) =
                         catalog.table_mut_in("test", table_name).unwrap()
                     else {
                         panic!("{table_name} is not a KV table");

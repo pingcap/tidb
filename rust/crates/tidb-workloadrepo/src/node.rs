@@ -250,7 +250,7 @@ impl crate::RepositorySession for WorkloadRepositorySession {
             .table_in(schema, table)
             .ok_or_else(|| format!("table `{schema}`.`{table}` does not exist"))?;
         let columns = match entry {
-            tidb_executor::TableEntry::Kv(table) => table
+            tidb_infoschema::TableEntry::Kv(table) => table
                 .visible_columns()
                 .iter()
                 .map(|column| crate::Column {
@@ -272,7 +272,7 @@ impl crate::RepositorySession for WorkloadRepositorySession {
                 .collect(),
         };
         let partitions = match entry {
-            tidb_executor::TableEntry::Kv(table) => table
+            tidb_infoschema::TableEntry::Kv(table) => table
                 .partition()
                 .map(|partition| {
                     partition

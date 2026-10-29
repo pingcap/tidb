@@ -26,7 +26,7 @@ use crate::support::testkit::TestKit;
 // The partition definitions as (name, id) pairs, in definition order, read
 // from the domain's current schema (Go `external.GetTableByName(...).Meta()`).
 fn partition_defs(tk: &TestKit, table: &str) -> Vec<(String, i64)> {
-    let tidb_executor::TableEntry::Kv(kv) = tk.get_table_by_name("test", table) else {
+    let tidb_infoschema::TableEntry::Kv(kv) = tk.get_table_by_name("test", table) else {
         panic!("table {table} is not a KV table");
     };
     let partition = kv.partition().expect("table is partitioned");

@@ -119,7 +119,7 @@ fn only_explicit_analyze_publishes_temporary_table_statistics() {
         let stats_handle = session.stats_handle();
     let local_id = session
         .with_committed_catalog_mut(|catalog| {
-            let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in("test", "local_t")
+            let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_in("test", "local_t")
             else {
                 panic!("local_t exists")
             };
@@ -157,7 +157,7 @@ fn only_explicit_analyze_publishes_temporary_table_statistics() {
         let stats_handle = session.stats_handle();
     let global_id = session
         .with_committed_catalog_mut(|catalog| {
-            let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in("test", "global_t")
+            let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_in("test", "global_t")
             else {
                 panic!("global_t exists")
             };
@@ -978,7 +978,7 @@ fn local_create_like_and_truncate_share_global_identity_owner() {
         session
             .with_committed_catalog_mut(|catalog| {
                 let id = |name| match catalog.table_in("test", name).unwrap() {
-                    tidb_executor::TableEntry::Kv(table) => table.table_id(),
+                    tidb_infoschema::TableEntry::Kv(table) => table.table_id(),
                     _ => unreachable!(),
                 };
                 Ok((id("identity_t"), id("identity_copy")))

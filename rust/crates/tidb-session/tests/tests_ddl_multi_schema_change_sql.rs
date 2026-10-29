@@ -32,7 +32,7 @@
 //! through `tk.get_table_by_name` (Go `external.GetTableByName`).
 
 use crate::support::testkit::{enable_failpoint, TestKit};
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 use tidb_table::kv_table::KvTable;
 use tidb_context::WarningLevel;
 

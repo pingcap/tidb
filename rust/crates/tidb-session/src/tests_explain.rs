@@ -23,7 +23,7 @@ fn install_cardinality_mock_statistics_for_table(
 
     let shared = session.shared_catalog();
     let catalog = shared.lock().unwrap();
-    let tidb_executor::TableEntry::Kv(table) = catalog.table_in("test", table_name).unwrap() else {
+    let tidb_infoschema::TableEntry::Kv(table) = catalog.table_in("test", table_name).unwrap() else {
         panic!("{table_name} must be a KV table");
     };
     assert_eq!(columns.len(), table.columns().len());
@@ -253,7 +253,7 @@ fn process_stats_info_reports_the_get_stats_table_version() {
     let table_id = {
         let shared = session.shared_catalog();
         let catalog = shared.lock().unwrap();
-        let tidb_executor::TableEntry::Kv(table) =
+        let tidb_infoschema::TableEntry::Kv(table) =
             catalog.table_in("test", "stats_info_src").unwrap()
         else {
             panic!("stats_info_src is not a stored table");
@@ -891,7 +891,7 @@ fn appended_handle_range_uses_partial_column_statistics() {
     let (table_id, index_id) = {
         let catalog = shared.lock().unwrap();
         let table = match catalog.table_in("test", "appended_partial_stats").unwrap() {
-            tidb_executor::TableEntry::Kv(table) => table,
+            tidb_infoschema::TableEntry::Kv(table) => table,
             _ => panic!("appended_partial_stats is not a KV table"),
         };
         (
@@ -1253,7 +1253,7 @@ fn determinate_objective_uses_analyzed_row_count_after_inserts() {
     {
         let catalog = shared.lock().unwrap();
         let table_id = match catalog.table_in("test", "ignore_realtime_stats").unwrap() {
-            tidb_executor::TableEntry::Kv(table) => table.table_id(),
+            tidb_infoschema::TableEntry::Kv(table) => table.table_id(),
             _ => panic!("ignore_realtime_stats is not a KV table"),
         };
         // Go's source test flushes these four committed inserts and reloads
@@ -1768,7 +1768,7 @@ fn explain_marks_missing_stats_for_selected_index() {
     let (table_id, index_id, column_b_id, original_statistics) = {
         let catalog = shared.lock().unwrap();
         let table = match catalog.table_in("test", "explain_partial_index").unwrap() {
-            tidb_executor::TableEntry::Kv(table) => table,
+            tidb_infoschema::TableEntry::Kv(table) => table,
             _ => panic!("explain_partial_index is not a KV table"),
         };
         let statistics = catalog.table_statistics_in(&shared.stats_handle(), table.table_id()).unwrap().clone();
@@ -1925,7 +1925,7 @@ fn determinate_explain_reports_the_pseudo_table_get_stats_table_returns() {
             .table_in("test", "explain_determinate_pseudo")
             .unwrap()
         {
-            tidb_executor::TableEntry::Kv(table) => table.table_id(),
+            tidb_infoschema::TableEntry::Kv(table) => table.table_id(),
             _ => panic!("explain_determinate_pseudo is not a KV table"),
         };
         let mut statistics = (*catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap()).clone();
@@ -2001,7 +2001,7 @@ fn explain_partial_stats_match_go_plan_matrix() {
     let (tp_id, tp_b_id, tp_original, t_id, t_original) = {
         let catalog = shared.lock().unwrap();
         let table = match catalog.table_in("test", "tp").unwrap() {
-            tidb_executor::TableEntry::Kv(table) => table,
+            tidb_infoschema::TableEntry::Kv(table) => table,
             _ => panic!("tp is not a KV table"),
         };
         let column_b_id = table
@@ -2011,7 +2011,7 @@ fn explain_partial_stats_match_go_plan_matrix() {
             .unwrap()
             .id;
         let t = match catalog.table_in("test", "t").unwrap() {
-            tidb_executor::TableEntry::Kv(table) => table,
+            tidb_infoschema::TableEntry::Kv(table) => table,
             _ => panic!("t is not a KV table"),
         };
         (
@@ -2405,7 +2405,7 @@ fn builtin_in_estimate_without_stats_keeps_selection_floor() {
     let shared = session.shared_catalog();
     let catalog = shared.lock().unwrap();
     let table_id = match catalog.table_in("test", "builtin_in_pseudo").unwrap() {
-        tidb_executor::TableEntry::Kv(table) => table.table_id(),
+        tidb_infoschema::TableEntry::Kv(table) => table.table_id(),
         _ => panic!("builtin_in_pseudo is not a KV table"),
     };
     let statistics = catalog
@@ -4469,7 +4469,7 @@ fn outdated_statistics_follow_the_session_pseudo_switch() {
     {
         let mut catalog = shared.lock().unwrap();
         let table_id = match catalog.table_mut_in("test", "t").unwrap() {
-            tidb_executor::TableEntry::Kv(table) => table.table_id(),
+            tidb_infoschema::TableEntry::Kv(table) => table.table_id(),
             _ => panic!("t is not a KV table"),
         };
         let mut statistics = (*catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap()).clone();
@@ -4908,7 +4908,7 @@ fn unknown_value_estimates_follow_analyze_and_truncate_lifecycle() {
         let shared = session.shared_catalog();
         let catalog = shared.lock().unwrap();
         let (table_id, column_id) = match catalog.table_in("test", table).unwrap() {
-            tidb_executor::TableEntry::Kv(table) => (table.table_id(), table.columns()[0].id),
+            tidb_infoschema::TableEntry::Kv(table) => (table.table_id(), table.columns()[0].id),
             _ => panic!("{table} is not a KV table"),
         };
         let stats = catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap();
@@ -5010,7 +5010,7 @@ fn unknown_value_estimates_follow_modify_delta_lifecycle() {
             .table_in("test", "unknown_modify_lifecycle")
             .unwrap()
         {
-            tidb_executor::TableEntry::Kv(table) => (table.table_id(), table.columns()[0].id),
+            tidb_infoschema::TableEntry::Kv(table) => (table.table_id(), table.columns()[0].id),
             _ => panic!("unknown_modify_lifecycle is not a KV table"),
         };
         let stats = catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap();

@@ -642,7 +642,7 @@ fn tidb_index_usage_records_a_clustered_point_read() {
     let (table_id, primary_id) = {
         let catalog = session.shared_catalog();
         let catalog = catalog.lock().unwrap();
-        let tidb_executor::TableEntry::Kv(table) = catalog.table_in("test", "usage_point").unwrap()
+        let tidb_infoschema::TableEntry::Kv(table) = catalog.table_in("test", "usage_point").unwrap()
         else {
             panic!("usage_point must be a stored table");
         };
@@ -712,7 +712,7 @@ fn tidb_index_usage_sizes_a_determinate_read_by_the_analyze_count() {
     let (table_id, index_id) = {
         let catalog = session.shared_catalog();
         let catalog = catalog.lock().unwrap();
-        let tidb_executor::TableEntry::Kv(table) =
+        let tidb_infoschema::TableEntry::Kv(table) =
             catalog.table_in("test", "usage_determinate").unwrap()
         else {
             panic!("usage_determinate must be a stored table");
@@ -782,7 +782,7 @@ fn tidb_index_usage_sizes_a_prepared_point_read_without_statistics() {
     let table_id = {
         let catalog = session.shared_catalog();
         let catalog = catalog.lock().unwrap();
-        let tidb_executor::TableEntry::Kv(table) =
+        let tidb_infoschema::TableEntry::Kv(table) =
             catalog.table_in("test", "usage_prepared_point").unwrap()
         else {
             panic!("usage_prepared_point must be a stored table");
@@ -888,7 +888,7 @@ fn tidb_index_usage_records_clustered_handle_and_primary_index_reads() {
     let table_index = |name: &str| {
         let catalog = session.shared_catalog();
         let catalog = catalog.lock().unwrap();
-        let tidb_executor::TableEntry::Kv(table) = catalog.table_in("test", name).unwrap() else {
+        let tidb_infoschema::TableEntry::Kv(table) = catalog.table_in("test", name).unwrap() else {
             panic!("{name} must be a stored table");
         };
         let primary_id = table
@@ -905,7 +905,7 @@ fn tidb_index_usage_records_clustered_handle_and_primary_index_reads() {
     let merge_index_id = {
         let catalog = session.shared_catalog();
         let catalog = catalog.lock().unwrap();
-        let tidb_executor::TableEntry::Kv(table) =
+        let tidb_infoschema::TableEntry::Kv(table) =
             catalog.table_in("test", "usage_cluster_merge").unwrap()
         else {
             panic!("usage_cluster_merge must be a stored table");
@@ -1091,7 +1091,7 @@ fn tidb_index_usage_records_a_partition_local_index_read() {
     let (table_id, index_id) = {
         let catalog = session.shared_catalog();
         let catalog = catalog.lock().unwrap();
-        let tidb_executor::TableEntry::Kv(table) =
+        let tidb_infoschema::TableEntry::Kv(table) =
             catalog.table_in("test", "usage_partition_local").unwrap()
         else {
             panic!("usage_partition_local must be a stored table");
@@ -1240,7 +1240,7 @@ fn tidb_index_usage_records_real_data_reads() {
     let (table_id, index_1_id, index_2_id) = {
         let catalog = session.shared_catalog();
         let catalog = catalog.lock().unwrap();
-        let tidb_executor::TableEntry::Kv(table) =
+        let tidb_infoschema::TableEntry::Kv(table) =
             catalog.table_in("test", "usage_real_data").unwrap()
         else {
             panic!("usage_real_data must be a stored table");
@@ -1403,7 +1403,7 @@ fn tidb_index_usage_records_a_partitioned_global_index_point_read() {
     let (table_id, index_id) = {
         let catalog = session.shared_catalog();
         let catalog = catalog.lock().unwrap();
-        let tidb_executor::TableEntry::Kv(table) =
+        let tidb_infoschema::TableEntry::Kv(table) =
             catalog.table_in("test", "usage_global_index").unwrap()
         else {
             panic!("usage_global_index must be a stored table");

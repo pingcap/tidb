@@ -212,10 +212,8 @@ mod tests {
     use tidb_kv::cluster_storage::{
         ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
     };
-    use crate::driver::{
-        build_prepared_select_plan, run_select_on, Catalog, PreparedPlanCacheEnvironment,
-        DEFAULT_DATABASE,
-    };
+    use crate::driver::{build_prepared_select_plan, run_select_on, PreparedPlanCacheEnvironment};
+    use tidb_infoschema::{Catalog, DEFAULT_DATABASE};
     use crate::executor::{Executor, ExecutorMeta};
     use crate::join::{IndexLookupPlan, IndexLookupSource, JoinExec, JoinKind};
     use tidb_table::kv_table::TableHandle;

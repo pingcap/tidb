@@ -16,7 +16,7 @@
 //! indexed in rust/docs/parity/current-audit/comment-test-cleanup-validation.json.
 
 use crate::support::testkit::TestKit;
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 
 /// Go `tbl.Indices()` names (lower-cased, Go's `Name.L`) of `db.name`, read
 /// off the domain's current schema as `external.GetTableByName` reads it.

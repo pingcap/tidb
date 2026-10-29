@@ -16,7 +16,7 @@
 //! `pkg/ddl/db_rename_test.go` tests.
 
 use crate::support::testkit::TestKit;
-use tidb_executor::TableEntry;
+use tidb_infoschema::TableEntry;
 
 fn create(tk: &mut TestKit, database: &str, table: &str) {
     tk.must_exec(&format!("create table {database}.{table} (a int, b int)"));
