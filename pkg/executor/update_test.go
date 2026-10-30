@@ -169,6 +169,14 @@ func TestLockUnchangedUniqueKeys(t *testing.T) {
 
 					tk1.MustExec(tt.update)
 
+					if !shouldLock && !tt.isClusteredPK {
+						// The insert must finish while the updating transaction is open.
+						defer tk1.MustExec("rollback")
+						_, err := tk2.Exec(tt.insert)
+						require.True(t, kv.ErrKeyExists.Equal(err), "unexpected insert error: %v", err)
+						return
+					}
+
 					errCh := make(chan error, 1)
 					go func() {
 						_, err := tk2.Exec(tt.insert)
@@ -177,9 +185,6 @@ func TestLockUnchangedUniqueKeys(t *testing.T) {
 
 					select {
 					case <-time.After(100 * time.Millisecond):
-						if !shouldLock && !tt.isClusteredPK {
-							require.Fail(t, "insert is blocked by update")
-						}
 						tk1.MustExec("rollback")
 						require.Error(t, <-errCh)
 					case err := <-errCh:
