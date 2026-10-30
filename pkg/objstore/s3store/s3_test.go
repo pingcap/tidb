@@ -576,6 +576,82 @@ func TestWriteNoError(t *testing.T) {
 	CheckAccessStats(t, accessRec, 0, 0, 0, 4)
 }
 
+func TestMultipartUploadFailureIsTerminal(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		dataSize   int
+		failedPart int
+		abortFails bool
+	}{
+		{"first part", 9, 1, false},
+		{"second part", 17, 2, false},
+		{"close flush", 8, 1, false},
+		{"abort failure", 17, 2, true},
+		{"successful upload", 17, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := CreateS3SuiteWithRec(t, &recording.AccessStats{})
+			ctx := context.Background()
+			rootErr := errors.New("injected upload failure")
+			s.MockS3.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any(), gomock.Any()).Return(
+				&s3.CreateMultipartUploadOutput{Bucket: aws.String("bucket"), Key: aws.String("prefix/file"), UploadId: aws.String("upload")}, nil)
+			part := 0
+			expectedParts := tc.failedPart
+			if expectedParts == 0 {
+				expectedParts = (tc.dataSize + 7) / 8
+			}
+			s.MockS3.EXPECT().UploadPart(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+				func(_ context.Context, input *s3.UploadPartInput, _ ...func(*s3.Options)) (*s3.UploadPartOutput, error) {
+					part++
+					require.Equal(t, int32(part), aws.ToInt32(input.PartNumber))
+					if part == tc.failedPart {
+						return nil, rootErr
+					}
+					return &s3.UploadPartOutput{ETag: aws.String("etag")}, nil
+				}).Times(expectedParts)
+			completed, aborted := 0, 0
+			s.MockS3.EXPECT().CompleteMultipartUpload(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+				func(_ context.Context, input *s3.CompleteMultipartUploadInput, _ ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error) {
+					completed++
+					if tc.failedPart == 0 {
+						require.Len(t, input.MultipartUpload.Parts, expectedParts)
+					}
+					return &s3.CompleteMultipartUploadOutput{}, nil
+				}).AnyTimes()
+			s.MockS3.EXPECT().AbortMultipartUpload(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+				func(_ context.Context, input *s3.AbortMultipartUploadInput, _ ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error) {
+					aborted++
+					require.Equal(t, "upload", aws.ToString(input.UploadId))
+					if tc.abortFails {
+						return nil, errors.New("injected abort failure")
+					}
+					return &s3.AbortMultipartUploadOutput{}, nil
+				}).AnyTimes()
+			w, err := s.Storage.Create(ctx, "file", &storeapi.WriterOption{Concurrency: 1, PartSize: 8})
+			require.NoError(t, err)
+			_, err = w.Write(ctx, make([]byte, tc.dataSize))
+			if tc.failedPart == 0 {
+				require.NoError(t, err)
+				require.NoError(t, w.Close(ctx))
+				require.Equal(t, 1, completed)
+				require.Zero(t, aborted)
+				return
+			}
+			if tc.dataSize > 8 {
+				require.ErrorIs(t, err, rootErr)
+			} else {
+				require.NoError(t, err)
+			}
+			require.ErrorIs(t, w.Close(ctx), rootErr)
+			require.ErrorIs(t, w.Close(ctx), rootErr)
+			_, err = w.(*objectio.BufferedWriter).GetWriter().Write(ctx, []byte("retry"))
+			require.ErrorIs(t, err, rootErr)
+			require.Equal(t, 0, completed)
+			require.Equal(t, 1, aborted)
+		})
+	}
+}
+
 func TestMultiUploadErrorNotOverwritten(t *testing.T) {
 	accessRec := &recording.AccessStats{}
 	s := CreateS3SuiteWithRec(t, accessRec)
