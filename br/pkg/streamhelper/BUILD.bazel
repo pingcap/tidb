@@ -17,18 +17,21 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/streamhelper",
     visibility = ["//visibility:public"],
     deps = [
+        "//br/pkg/conn/util",
         "//br/pkg/errors",
         "//br/pkg/logutil",
         "//br/pkg/streamhelper/config",
         "//br/pkg/streamhelper/spans",
         "//br/pkg/utils",
         "//pkg/config",
+        "//pkg/config/configtypes",
         "//pkg/kv",
         "//pkg/metrics",
         "//pkg/owner",
         "//pkg/util",
         "//pkg/util/codec",
         "//pkg/util/engine",
+        "//pkg/util/httputil",
         "//pkg/util/redact",
         "@com_github_gogo_protobuf//proto",
         "@com_github_golang_protobuf//proto",
@@ -72,7 +75,11 @@ go_test(
     embed = [":streamhelper"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 38,
+=======
+    shard_count = 48,
+>>>>>>> 21e43a87e43 (br: optimize resolve lock for tidb advancer (#69301))
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",
