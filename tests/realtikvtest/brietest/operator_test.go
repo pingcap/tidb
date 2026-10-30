@@ -28,11 +28,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/task/operator"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/br/pkg/utils"
-=======
 	"github.com/pingcap/tidb/tests/realtikvtest"
->>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"

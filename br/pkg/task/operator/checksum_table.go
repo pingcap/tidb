@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/conn"

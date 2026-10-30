@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	brstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -55,7 +55,7 @@ type SnapshotDeleteResult struct {
 }
 
 type SnapshotOps struct {
-	storeapi.Storage
+	brstorage.ExternalStorage
 }
 
 // SnapshotMutationOption customizes repo snapshot mutation progress observation.
@@ -109,14 +109,14 @@ func (opts snapshotMutationOptions) deleted(count int) {
 // SnapshotOpsExtension wraps repo-root storage with snapshot management helpers.
 // For example, `SnapshotOpsExtension(root).DeleteSnapshot(ctx, id)` deletes one
 // snapshot.
-func SnapshotOpsExtension(storage storeapi.Storage) SnapshotOps {
-	return SnapshotOps{Storage: storage}
+func SnapshotOpsExtension(storage brstorage.ExternalStorage) SnapshotOps {
+	return SnapshotOps{ExternalStorage: storage}
 }
 
 // ListPendingBackups returns all pending backups with finished, resumable, or non-resumable state.
 // For example, a marker whose backup has `backupmeta` is returned as finished.
 func (ops SnapshotOps) ListPendingBackups(ctx context.Context) ([]PendingBackup, error) {
-	return listPendingBackups(ctx, ops.Storage, WalkPendingMarkers(ctx, ops.Storage))
+	return listPendingBackups(ctx, ops.ExternalStorage, WalkPendingMarkers(ctx, ops.ExternalStorage))
 }
 
 // ListPendingBackupsForConfigHash returns pending backups under one config hash.
@@ -128,14 +128,14 @@ func (ops SnapshotOps) ListPendingBackupsForConfigHash(
 ) ([]PendingBackup, error) {
 	return listPendingBackups(
 		ctx,
-		ops.Storage,
-		walkPendingMarkers(ctx, ops.Storage, &storeapi.WalkOption{SubDir: PendingDir(configHash)}),
+		ops.ExternalStorage,
+		walkPendingMarkers(ctx, ops.ExternalStorage, &brstorage.WalkOption{SubDir: PendingDir(configHash)}),
 	)
 }
 
 func listPendingBackups(
 	ctx context.Context,
-	storage storeapi.Storage,
+	storage brstorage.ExternalStorage,
 	markers TrySeq[PendingMarker],
 ) ([]PendingBackup, error) {
 	grouped := make(map[BackupID]*PendingBackup)
@@ -152,7 +152,7 @@ func listPendingBackups(
 	}
 
 	backups := make([]PendingBackup, 0, len(grouped))
-	ops := SnapshotOps{Storage: storage}
+	ops := SnapshotOps{ExternalStorage: storage}
 	for _, entry := range grouped {
 		slices.Sort(entry.MarkerPaths)
 		state, err := ops.inspectPendingBackupState(ctx, entry.BackupID)
@@ -173,7 +173,7 @@ func (ops SnapshotOps) inspectPendingBackupState(
 	ctx context.Context,
 	backupID BackupID,
 ) (PendingBackupState, error) {
-	metadataStorage := NewPrefixedStorage(ops.Storage, SnapshotMetadataDir(backupID))
+	metadataStorage := NewPrefixedStorage(ops.ExternalStorage, SnapshotMetadataDir(backupID))
 	hasBackupMeta, err := metadataStorage.FileExists(ctx, metautil.MetaFile)
 	if err != nil {
 		return "", errors.Annotatef(err, "check %s for pending backup %s", metautil.MetaFile, backupID)
@@ -242,7 +242,7 @@ func (ops SnapshotOps) deleteFilesFromStream(
 		}
 		opts.discovered(1)
 		group.Go(func() error {
-			if err := ops.Storage.DeleteFile(groupCtx, filePath); err != nil {
+			if err := ops.ExternalStorage.DeleteFile(groupCtx, filePath); err != nil {
 				return errors.Annotatef(err, "delete file %s", filePath)
 			}
 			deleted.Add(1)
@@ -307,8 +307,8 @@ func (ops SnapshotOps) DeleteSnapshot(
 
 // ValidateRepoStartAfterSupport checks whether storage can use WalkDir StartAfter.
 // It inspects the Features bitset returned by FeatureOf.
-func ValidateRepoStartAfterSupport(storage storeapi.Storage) error {
-	if storeapi.FeatureOf(storage)&storeapi.FeatureSupportsStartAfter != 0 {
+func ValidateRepoStartAfterSupport(storage brstorage.ExternalStorage) error {
+	if brstorage.FeatureOf(storage)&brstorage.FeatureSupportsStartAfter != 0 {
 		return nil
 	}
 	return errors.Annotatef(
@@ -319,7 +319,7 @@ func ValidateRepoStartAfterSupport(storage storeapi.Storage) error {
 }
 
 func (ops SnapshotOps) requireRepoStartAfter() error {
-	return ValidateRepoStartAfterSupport(ops.Storage)
+	return ValidateRepoStartAfterSupport(ops.ExternalStorage)
 }
 
 func (ops SnapshotOps) deletePendingMarkersForBackup(
@@ -341,7 +341,7 @@ func (ops SnapshotOps) deletePendingMarkersForBackup(
 }
 
 func (ops SnapshotOps) prepareSnapshotDeletingMarker(ctx context.Context, backupID BackupID) (bool, error) {
-	metadataStorage := NewPrefixedStorage(ops.Storage, SnapshotMetadataDir(backupID))
+	metadataStorage := NewPrefixedStorage(ops.ExternalStorage, SnapshotMetadataDir(backupID))
 	hasBackupMeta, err := metadataStorage.FileExists(ctx, metautil.MetaFile)
 	if err != nil {
 		return false, errors.Annotatef(err, "check snapshot metadata for %s", backupID)
@@ -375,7 +375,7 @@ func (ops SnapshotOps) deleteSnapshotMetadataFiles(
 }
 
 func (ops SnapshotOps) deleteSnapshotDeletingMarker(ctx context.Context, backupID BackupID) error {
-	if err := ops.Storage.DeleteFile(ctx, SnapshotDeletingMarkerFile(backupID)); err != nil {
+	if err := ops.ExternalStorage.DeleteFile(ctx, SnapshotDeletingMarkerFile(backupID)); err != nil {
 		return errors.Annotatef(err, "delete snapshot deleting marker for %s", backupID)
 	}
 	return nil
@@ -406,7 +406,7 @@ func (ops SnapshotOps) deleteSnapshotDataFilesForBackup(
 
 func (ops SnapshotOps) walkFilesWithPrefix(ctx context.Context, prefix string) TrySeq[string] {
 	return func(yield func(error, string) bool) {
-		err := ops.Storage.WalkDir(ctx, &storeapi.WalkOption{SubDir: prefix}, func(filePath string, _ int64) error {
+		err := ops.ExternalStorage.WalkDir(ctx, &brstorage.WalkOption{SubDir: prefix}, func(filePath string, _ int64) error {
 			if yield(nil, filePath) {
 				return nil
 			}
@@ -487,8 +487,8 @@ func (ops SnapshotOps) walkSnapshotDataFilesForStoreBackup(
 func (ops SnapshotOps) walkSnapshotDataFilesAfter(ctx context.Context, startAfter string) TrySeq[SnapshotDataFile] {
 	return walkParsedSeq(
 		ctx,
-		ops.Storage,
-		&storeapi.WalkOption{SubDir: snapshotDataRootDir, StartAfter: startAfter},
+		ops.ExternalStorage,
+		&brstorage.WalkOption{SubDir: snapshotDataRootDir, StartAfter: startAfter},
 		ParseSnapshotDataFilePath,
 	)
 }

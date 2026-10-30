@@ -29,14 +29,13 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	brstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 func TestListPendingBackupsClassifiesStates(t *testing.T) {
 	ctx := context.Background()
-	storage := objstore.NewMemStorage()
+	storage := brstorage.NewMemStorage()
 	snapshotOps := repo.SnapshotOpsExtension(storage)
 
 	finishedID := repo.BackupID(0x1111)
@@ -111,7 +110,7 @@ func TestDeleteSnapshotWithoutBackupMetaUsesStartAfter(t *testing.T) {
 
 func TestDeleteSnapshotRejectsUnsupportedStorage(t *testing.T) {
 	ctx := context.Background()
-	storage := objstore.NewMemStorage()
+	storage := brstorage.NewMemStorage()
 	snapshotOps := repo.SnapshotOpsExtension(storage)
 
 	backupID := repo.BackupID(0x6789)
@@ -196,14 +195,14 @@ func TestDeleteSnapshotStopsWalkingAfterDeleteError(t *testing.T) {
 	require.Equal(t, int32(2), storage.walked.Load())
 }
 
-func createPendingCheckpoint(ctx context.Context, t *testing.T, storage storeapi.Storage, backupID repo.BackupID) {
+func createPendingCheckpoint(ctx context.Context, t *testing.T, storage brstorage.ExternalStorage, backupID repo.BackupID) {
 	t.Helper()
 	createPendingMarker(ctx, t, storage, backupID)
 	metadataStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID))
 	require.NoError(t, metadataStorage.WriteFile(ctx, checkpoint.CheckpointMetaPathForBackup, []byte("checkpoint")))
 }
 
-func createPendingMarker(ctx context.Context, t *testing.T, storage storeapi.Storage, backupID repo.BackupID) {
+func createPendingMarker(ctx context.Context, t *testing.T, storage brstorage.ExternalStorage, backupID repo.BackupID) {
 	t.Helper()
 	require.NoError(t, storage.WriteFile(ctx, repo.PendingFile([]byte("hash"), backupID), []byte("{}")))
 }
@@ -211,7 +210,7 @@ func createPendingMarker(ctx context.Context, t *testing.T, storage storeapi.Sto
 func createBackupMeta(
 	ctx context.Context,
 	t *testing.T,
-	storage storeapi.Storage,
+	storage brstorage.ExternalStorage,
 	backupID repo.BackupID,
 	options ...func(*backuppb.BackupMeta),
 ) {
@@ -233,19 +232,19 @@ func createBackupMeta(
 	require.NoError(t, metaWriter.FlushBackupMeta(ctx))
 }
 
-func createDataFile(ctx context.Context, t *testing.T, storage storeapi.Storage, storeID uint64, backupID repo.BackupID, name string) {
+func createDataFile(ctx context.Context, t *testing.T, storage brstorage.ExternalStorage, storeID uint64, backupID repo.BackupID, name string) {
 	t.Helper()
 	require.NoError(t, storage.WriteFile(ctx, repo.SnapshotStoreDataPrefix(storeID, backupID)+"/"+name, []byte(name)))
 }
 
-func requireFileExists(ctx context.Context, t *testing.T, storage storeapi.Storage, name string) {
+func requireFileExists(ctx context.Context, t *testing.T, storage brstorage.ExternalStorage, name string) {
 	t.Helper()
 	exists, err := storage.FileExists(ctx, name)
 	require.NoError(t, err)
 	require.True(t, exists, name)
 }
 
-func requireFileMissing(ctx context.Context, t *testing.T, storage storeapi.Storage, name string) {
+func requireFileMissing(ctx context.Context, t *testing.T, storage brstorage.ExternalStorage, name string) {
 	t.Helper()
 	exists, err := storage.FileExists(ctx, name)
 	require.NoError(t, err)
@@ -257,7 +256,7 @@ func pathJoin(parts ...string) string {
 }
 
 type walkAssertingLocalStorage struct {
-	storeapi.Storage
+	brstorage.ExternalStorage
 	rejectEmptySnapshotWalkAfterFirst bool
 }
 
@@ -269,10 +268,10 @@ type deletingMarkerAssertingStorage struct {
 
 func newWalkAssertingLocalStorage(t *testing.T, rejectEmptySnapshotWalkAfterFirst bool) *walkAssertingLocalStorage {
 	t.Helper()
-	storage, err := objstore.NewLocalStorage(t.TempDir())
+	storage, err := brstorage.NewLocalStorage(t.TempDir())
 	require.NoError(t, err)
 	return &walkAssertingLocalStorage{
-		Storage:                           storage,
+		ExternalStorage:                   storage,
 		rejectEmptySnapshotWalkAfterFirst: rejectEmptySnapshotWalkAfterFirst,
 	}
 }
@@ -293,27 +292,27 @@ func (s *deletingMarkerAssertingStorage) WriteFile(ctx context.Context, name str
 	if name == repo.SnapshotDeletingMarkerFile(s.backupID) {
 		s.markerWritten.Store(true)
 	}
-	return s.Storage.WriteFile(ctx, name, data)
+	return s.ExternalStorage.WriteFile(ctx, name, data)
 }
 
 func (s *deletingMarkerAssertingStorage) DeleteFile(ctx context.Context, name string) error {
 	if name == repo.SnapshotMetadataFile(s.backupID) && !s.markerWritten.Load() {
 		return fmt.Errorf("deleting marker was not written before deleting %s", name)
 	}
-	return s.Storage.DeleteFile(ctx, name)
+	return s.ExternalStorage.DeleteFile(ctx, name)
 }
 
-func (s *walkAssertingLocalStorage) Features() storeapi.Features {
-	return storeapi.FeatureOf(s.Storage)
+func (s *walkAssertingLocalStorage) Features() brstorage.Features {
+	return brstorage.FeatureOf(s.ExternalStorage)
 }
 
 func (s *walkAssertingLocalStorage) WalkDir(
 	ctx context.Context,
-	opt *storeapi.WalkOption,
+	opt *brstorage.WalkOption,
 	fn func(string, int64) error,
 ) error {
 	emitted := 0
-	return s.Storage.WalkDir(ctx, opt, func(path string, size int64) error {
+	return s.ExternalStorage.WalkDir(ctx, opt, func(path string, size int64) error {
 		emitted++
 		if s.rejectEmptySnapshotWalkAfterFirst &&
 			opt != nil &&
@@ -363,7 +362,7 @@ func newStopAfterDeleteErrorStorage(t *testing.T, prefix string, paths []string)
 
 func (s *walkErrorDeleteBlockingStorage) WalkDir(
 	ctx context.Context,
-	opt *storeapi.WalkOption,
+	opt *brstorage.WalkOption,
 	fn func(string, int64) error,
 ) error {
 	if opt != nil && opt.SubDir == s.failSubDir {
@@ -383,12 +382,12 @@ func (s *walkErrorDeleteBlockingStorage) DeleteFile(ctx context.Context, name st
 		}
 		<-s.releaseDelete
 	}
-	return s.Storage.DeleteFile(ctx, name)
+	return s.ExternalStorage.DeleteFile(ctx, name)
 }
 
 func (s *stopAfterDeleteErrorStorage) WalkDir(
 	ctx context.Context,
-	opt *storeapi.WalkOption,
+	opt *brstorage.WalkOption,
 	fn func(string, int64) error,
 ) error {
 	if opt != nil && opt.SubDir == s.prefix {

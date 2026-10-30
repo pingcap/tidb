@@ -200,9 +200,6 @@ func (ops ConsoleOperations) StartProgressBar(title string, total int, extraFiel
 	return ops.startProgressBarOverTTY(title, total, extraFields...)
 }
 
-<<<<<<< HEAD
-func (ops ConsoleOperations) startProgressBarOverDummy(title string, total int, _ ...ExtraField) ProgressWaiter {
-=======
 // StartDynamicProgressBar starts a progress bar whose total can grow while the
 // task is running.
 func (ops ConsoleOperations) StartDynamicProgressBar(title string, extraFields ...ExtraField) DynamicProgressWaiter {
@@ -217,7 +214,6 @@ func (ops ConsoleOperations) StartDynamicProgressBar(title string, extraFields .
 
 func (ops ConsoleOperations) startProgressBarOverDummy(title string, total int,
 	extraFields ...ExtraField) ProgressWaiter {
->>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
 	return noOPWaiter{utils.StartProgress(context.TODO(), title, int64(total), true, nil)}
 }
 

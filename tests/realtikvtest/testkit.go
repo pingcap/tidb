@@ -78,12 +78,8 @@ func RunTestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	*WithRealTiKV = true
 	flag.Parse()
-<<<<<<< HEAD
-	session.SetSchemaLease(5 * time.Second)
-=======
 	PDAddr = CurrentPDAddr()
-	vardef.SetSchemaLease(5 * time.Second)
->>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
+	session.SetSchemaLease(5 * time.Second)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
@@ -120,8 +116,6 @@ func RunTestMain(m *testing.M) {
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
-<<<<<<< HEAD
-=======
 func mustParsePDAddr(tikvPath string) string {
 	pdAddrs, _, _, err := tikvcfg.ParsePath(tikvPath)
 	if err != nil {
@@ -130,124 +124,6 @@ func mustParsePDAddr(tikvPath string) string {
 	return strings.Join(pdAddrs, ",")
 }
 
-type realtikvStoreOption struct {
-	retainData bool
-	keyspace   string
-	// newCollationsEnabledOnFirstBootstrap is nil unless the test wants to
-	// bootstrap a keyspace with a specific persisted new-collation setting.
-	newCollationsEnabledOnFirstBootstrap *bool
-	// only used when keyspace is not SYSTEM, in that case, the SYSTEM store will
-	// be closed together with its domain, if we close it before domain of SYSTEM,
-	// some routine might report errors, and we don't want close twice as the storage
-	// driver will cache store.
-	keepSystemStore bool
-	keepSelfStore   bool
-	// whether to allocate port for the mock domain, else keep the default.
-	// some tests depend on the default port, such as TestImportFromServer, as
-	// infosync.MockGlobalServerInfoManagerEntry only have one mock server info
-	// with default port 4000.
-	allocPort bool
-}
-
-// RealTiKVStoreOption is the config option for creating a real TiKV store.
-type RealTiKVStoreOption func(opt *realtikvStoreOption)
-
-// WithRetainData allows the store to retain old data when creating a new store.
-func WithRetainData() RealTiKVStoreOption {
-	return func(opt *realtikvStoreOption) {
-		opt.retainData = true
-	}
-}
-
-// WithKeyspaceName allows the store to use a specific keyspace name.
-func WithKeyspaceName(name string) RealTiKVStoreOption {
-	return func(opt *realtikvStoreOption) {
-		opt.keyspace = name
-	}
-}
-
-// WithNewCollationsEnabledOnFirstBootstrap bootstraps a real TiKV test store
-// with the requested persisted new-collation setting.
-func WithNewCollationsEnabledOnFirstBootstrap(enabled bool) RealTiKVStoreOption {
-	return func(opt *realtikvStoreOption) {
-		opt.newCollationsEnabledOnFirstBootstrap = &enabled
-	}
-}
-
-// WithKeepSystemStore allows the store to keep the SYSTEM keyspace store
-func WithKeepSystemStore(keep bool) RealTiKVStoreOption {
-	return func(opt *realtikvStoreOption) {
-		opt.keepSystemStore = keep
-	}
-}
-
-// WithKeepSelfStore allows the store to keep the self store.
-func WithKeepSelfStore(keep bool) RealTiKVStoreOption {
-	return func(opt *realtikvStoreOption) {
-		opt.keepSelfStore = keep
-	}
-}
-
-// WithAllocPort allows the store to allocate port for the mock domain.
-func WithAllocPort(alloc bool) RealTiKVStoreOption {
-	return func(opt *realtikvStoreOption) {
-		opt.allocPort = alloc
-	}
-}
-
-// KSRuntime is a runtime environment for a keyspace.
-type KSRuntime struct {
-	Store kv.Storage
-	Dom   *domain.Domain
-}
-
-// PrepareForCrossKSTest prepares the environment for cross keyspace tests.
-func PrepareForCrossKSTest(t *testing.T, userKSs ...string) map[string]*KSRuntime {
-	return PrepareForCrossKSTestWithNewCollation(t, nil, userKSs...)
-}
-
-// PrepareForCrossKSTestWithNewCollation prepares cross-keyspace runtimes with
-// optional per-keyspace persisted new-collation settings.
-func PrepareForCrossKSTestWithNewCollation(
-	t *testing.T,
-	newCollationEnabled map[string]bool,
-	userKSs ...string,
-) map[string]*KSRuntime {
-	if !kerneltype.IsNextGen() {
-		t.Fail()
-	}
-	res := make(map[string]*KSRuntime, len(userKSs)+1)
-	// stores are cached, we want to make sure stores are closed after domain,
-	// else some routine might be blocked.
-	t.Cleanup(func() {
-		for _, runtime := range res {
-			require.NoError(t, runtime.Store.Close())
-		}
-	})
-
-	ksList := append([]string{keyspace.System}, userKSs...)
-	for _, ks := range ksList {
-		opts := []RealTiKVStoreOption{
-			WithKeyspaceName(ks),
-			WithKeepSystemStore(true),
-			WithKeepSelfStore(true),
-			WithAllocPort(true),
-		}
-		if newCollationEnabled != nil {
-			if enabled, ok := newCollationEnabled[ks]; ok {
-				opts = append(opts, WithNewCollationsEnabledOnFirstBootstrap(enabled))
-			}
-		}
-		store, dom := CreateMockStoreAndDomainAndSetup(t, opts...)
-		res[ks] = &KSRuntime{
-			Store: store,
-			Dom:   dom,
-		}
-	}
-	return res
-}
-
->>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
 // CreateMockStoreAndSetup return a new kv.Storage.
 func CreateMockStoreAndSetup(t *testing.T, opts ...mockstore.MockTiKVStoreOption) kv.Storage {
 	store, _ := CreateMockStoreAndDomainAndSetup(t, opts...)
@@ -319,31 +195,3 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 	})
 	return store, dom
 }
-<<<<<<< HEAD
-=======
-
-// UpdateTiDBConfig updates the TiDB configuration for the real TiKV test.
-func UpdateTiDBConfig() {
-	// need a real PD
-	config.UpdateGlobal(func(conf *config.Config) {
-		// Ignore -tikv-path here: it may be used in `init`,
-		// where flags are not parsed.
-		conf.Path = "127.0.0.1:2379"
-		if kerneltype.IsNextGen() {
-			conf.TiKVWorkerURL = "localhost:19000"
-			conf.KeyspaceName = keyspace.System
-			conf.Instance.TiDBServiceScope = handle.NextGenTargetScope
-			conf.MeteringStorageURI = getNextGenObjStoreURIWithArgs("metering-data", "&region=local")
-		}
-	})
-}
-
-// GetNextGenObjStoreURI returns a next-gen object store URI for testing.
-func GetNextGenObjStoreURI(path string) string {
-	return getNextGenObjStoreURIWithArgs(path, "&provider=minio")
-}
-
-func getNextGenObjStoreURIWithArgs(path string, args string) string {
-	return fmt.Sprintf("s3://next-gen-test/%s?access-key=minioadmin&secret-access-key=minioadmin&endpoint=http%%3a%%2f%%2f0.0.0.0%%3a9000%s", path, args)
-}
->>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))

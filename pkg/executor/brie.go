@@ -283,18 +283,13 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 
 	// build common config and override for specific task if needed
 	cfg := task.DefaultConfig()
-<<<<<<< HEAD
 	switch s.Kind {
 	case ast.BRIEKindBackup:
 		cfg.OverrideDefaultForBackup()
 	default:
 	}
 
-	cfg.PD = pds
-	cfg.TLS = tlsCfg
-=======
 	task.ApplyTiDBRuntimeConfig(&cfg)
->>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
 
 	storageURL, err := storage.ParseRawURL(s.Storage)
 	if err != nil {

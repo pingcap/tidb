@@ -29,8 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	brstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -83,7 +82,7 @@ func TestPreparedRepoSnapshotBackupRewritesStoreRequestAndResponse(t *testing.T)
 func TestCollectResumablePendingBackups(t *testing.T) {
 	t.Run("finished_markers_removed_and_resumable_retained", func(t *testing.T) {
 		ctx := context.Background()
-		storage := objstore.NewMemStorage()
+		storage := brstorage.NewMemStorage()
 		cfgHash := []byte("hash")
 		finishedID := repo.BackupID(1)
 		resumableID := repo.BackupID(2)
@@ -121,7 +120,7 @@ func TestCollectResumablePendingBackups(t *testing.T) {
 
 	t.Run("non_resumable_pending_cleans_checkpoint_debris", func(t *testing.T) {
 		ctx := context.Background()
-		storage := objstore.NewMemStorage()
+		storage := brstorage.NewMemStorage()
 		cfgHash := []byte("hash")
 		backupID := repo.BackupID(3)
 		metadataStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID))
@@ -150,7 +149,7 @@ func TestLoadSnapshotBackupMetaReadsRepoMetadataStorage(t *testing.T) {
 	t.Run("load_backup_meta_from_repo_snapshot_storage", func(t *testing.T) {
 		ctx := context.Background()
 		baseDir := t.TempDir()
-		storage, err := objstore.NewLocalStorage(baseDir)
+		storage, err := brstorage.NewLocalStorage(baseDir)
 		require.NoError(t, err)
 		backupID := repo.BackupID(0x1234)
 		cipherInfo := backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
@@ -196,7 +195,7 @@ func TestLoadSnapshotBackupMetaReadsRepoMetadataStorage(t *testing.T) {
 				{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT},
 				{CipherType: encryptionpb.EncryptionMethod_AES128_CTR, CipherKey: []byte("0123456789abcdef")},
 			} {
-				ref := &SnapshotStorageRef{BackupID: backupID, RootStorage: objstore.NewMemStorage()}
+				ref := &SnapshotStorageRef{BackupID: backupID, RootStorage: brstorage.NewMemStorage()}
 				for _, tc := range []struct {
 					name          string
 					schemaVersion uint32
@@ -236,8 +235,8 @@ func TestLoadSnapshotBackupMetaReadsRepoMetadataStorage(t *testing.T) {
 	t.Run("validate_rejects_repo_without_startafter_support", func(t *testing.T) {
 		ctx := context.Background()
 		storage := &uriOverrideStorage{
-			Storage: objstore.NewMemStorage(),
-			uri:     "azure://bucket/prefix",
+			ExternalStorage: brstorage.NewMemStorage(),
+			uri:             "azure://bucket/prefix",
 		}
 		rootBackend := &backuppb.StorageBackend{
 			Backend: &backuppb.StorageBackend_AzureBlobStorage{
@@ -262,7 +261,7 @@ func TestLoadSnapshotBackupMetaReadsRepoMetadataStorage(t *testing.T) {
 
 func TestPrepareRepoSnapshotBackupStartsNewWithoutPending(t *testing.T) {
 	ctx := context.Background()
-	storage := objstore.NewMemStorage()
+	storage := brstorage.NewMemStorage()
 	_, err := repo.EnsureRepo(ctx, storage, "test")
 	require.NoError(t, err)
 
@@ -286,7 +285,7 @@ func TestPrepareRepoSnapshotBackupStartsNewWithoutPending(t *testing.T) {
 
 func TestPrepareRepoSnapshotBackupResumePendingBackup(t *testing.T) {
 	ctx := context.Background()
-	storage := objstore.NewMemStorage()
+	storage := brstorage.NewMemStorage()
 	_, err := repo.EnsureRepo(ctx, storage, "test")
 	require.NoError(t, err)
 
@@ -373,7 +372,7 @@ func TestActivateSnapshotBackupResumeRejectsMismatchedCheckpointBackupID(t *test
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			storage := objstore.NewMemStorage()
+			storage := brstorage.NewMemStorage()
 			prepared := &PreparedRepoSnapshotBackup{
 				SnapshotStorageRef: SnapshotStorageRef{
 					BackupID:    repo.BackupID(0x1234),
@@ -397,7 +396,7 @@ func TestActivateSnapshotBackupResumeRejectsMismatchedCheckpointBackupID(t *test
 
 func TestPrepareRepoSnapshotBackupRejectsAmbiguousResume(t *testing.T) {
 	ctx := context.Background()
-	storage := objstore.NewMemStorage()
+	storage := brstorage.NewMemStorage()
 	_, err := repo.EnsureRepo(ctx, storage, "test")
 	require.NoError(t, err)
 
@@ -429,7 +428,7 @@ func TestPrepareRepoSnapshotBackupRejectsAmbiguousResume(t *testing.T) {
 
 func TestPrepareRepoSnapshotBackupWithoutCheckpointStartsFreshDespitePending(t *testing.T) {
 	ctx := context.Background()
-	storage := objstore.NewMemStorage()
+	storage := brstorage.NewMemStorage()
 	_, err := repo.EnsureRepo(ctx, storage, "test")
 	require.NoError(t, err)
 
@@ -460,7 +459,7 @@ func TestPrepareRepoSnapshotBackupWithoutCheckpointStartsFreshDespitePending(t *
 }
 
 type uriOverrideStorage struct {
-	storeapi.Storage
+	brstorage.ExternalStorage
 	uri string
 }
 

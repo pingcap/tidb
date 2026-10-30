@@ -27,19 +27,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/operation"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-=======
 	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/metaservice"
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
->>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -895,37 +887,15 @@ func NewMgr(ctx context.Context,
 	)
 }
 
-<<<<<<< HEAD
-// GetStorage gets the storage backend from the config.
-func GetStorage(
-	ctx context.Context,
-	storageName string,
-	cfg *Config,
-) (*backuppb.StorageBackend, storage.ExternalStorage, error) {
-	u, err := storage.ParseBackend(storageName, &cfg.BackendOptions)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	s, err := storage.New(ctx, u, storageOpts(cfg))
-	if err != nil {
-		return nil, nil, errors.Annotate(err, "create storage failed")
-	}
-	return u, s, nil
-}
-
 func storageOpts(cfg *Config) *storage.ExternalStorageOptions {
 	return &storage.ExternalStorageOptions{
-=======
-func storageOpts(cfg *Config) *storeapi.Options {
-	return &storeapi.Options{
->>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
 	}
 }
 
 // GetStorage is a thin wrapper around task/common.GetStorage for task.Config callers.
-func GetStorage(ctx context.Context, storageName string, cfg *Config) (*backuppb.StorageBackend, storeapi.Storage, error) {
+func GetStorage(ctx context.Context, storageName string, cfg *Config) (*backuppb.StorageBackend, storage.ExternalStorage, error) {
 	return taskcommon.GetStorage(ctx, storageName, cfg.BackendOptions, cfg.NoCreds, cfg.SendCreds)
 }
 

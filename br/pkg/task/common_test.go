@@ -12,13 +12,9 @@ import (
 	kvconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/operation"
-<<<<<<< HEAD
+	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-=======
-	"github.com/pingcap/tidb/br/pkg/repo"
-	restoresplit "github.com/pingcap/tidb/br/pkg/restore/split"
->>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
 	"github.com/pingcap/tidb/pkg/config"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/pflag"

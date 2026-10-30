@@ -450,20 +450,14 @@ type Client struct {
 	mgr       ClientMgr
 	clusterID uint64
 
-<<<<<<< HEAD
-	storage    storage.ExternalStorage
-	backend    *backuppb.StorageBackend
-	apiVersion kvrpcpb.APIVersion
-=======
 	// Most backups use one external storage, so these two fields normally point to the same object.
 	// Repo snapshot backups split them on purpose:
 	//   - storage keeps the original/root backend view for data files and repo-level operations.
 	//   - metaStorage is the metadata view used for backupmeta/checkpoint/lock files.
-	storage     storeapi.Storage
-	metaStorage storeapi.Storage
+	storage     storage.ExternalStorage
+	metaStorage storage.ExternalStorage
 	backend     *backuppb.StorageBackend
 	apiVersion  kvrpcpb.APIVersion
->>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
 
 	cipher           *backuppb.CipherInfo
 	checkpointMeta   *checkpoint.CheckpointMetadataForBackup
@@ -594,14 +588,10 @@ func (bc *Client) GetStorageBackend() *backuppb.StorageBackend {
 	return bc.backend
 }
 
-<<<<<<< HEAD
-// GetStorage gets storage for this backup.
-func (bc *Client) GetStorage() storage.ExternalStorage {
-=======
 // GetStorage is the historical accessor kept for existing callers.
 // It returns the storage used for backup metadata/checkpoint/lock files;
 // callers that need the original/root backend view should use GetBaseStorage.
-func (bc *Client) GetStorage() storeapi.Storage {
+func (bc *Client) GetStorage() storage.ExternalStorage {
 	if bc.metaStorage != nil {
 		return bc.metaStorage
 	}
@@ -609,8 +599,7 @@ func (bc *Client) GetStorage() storeapi.Storage {
 }
 
 // GetBaseStorage gets the original storage created from the configured backend before any metadata view rewrite.
-func (bc *Client) GetBaseStorage() storeapi.Storage {
->>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
+func (bc *Client) GetBaseStorage() storage.ExternalStorage {
 	return bc.storage
 }
 
@@ -676,7 +665,7 @@ func (bc *Client) CheckCheckpoint(hash []byte) error {
 }
 
 // LoadCheckpointMetadataFromStorage loads backup checkpoint metadata from the given storage.
-func (bc *Client) LoadCheckpointMetadataFromStorage(ctx context.Context, storage storeapi.Storage) error {
+func (bc *Client) LoadCheckpointMetadataFromStorage(ctx context.Context, storage storage.ExternalStorage) error {
 	if storage == nil {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "checkpoint storage is missing")
 	}
@@ -761,17 +750,13 @@ func (bc *Client) SetStorage(
 	var err error
 
 	bc.backend = backend
-<<<<<<< HEAD
 	bc.storage, err = storage.New(ctx, backend, opts)
-=======
-	bc.storage, err = objstore.New(ctx, backend, opts)
 	bc.metaStorage = bc.storage
->>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
 	return errors.Trace(err)
 }
 
 // SetMetadataStorage overrides what GetStorage returns for metadata/checkpoint/lock files.
-func (bc *Client) SetMetadataStorage(storage storeapi.Storage) {
+func (bc *Client) SetMetadataStorage(storage storage.ExternalStorage) {
 	bc.metaStorage = storage
 }
 

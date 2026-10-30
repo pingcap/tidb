@@ -21,7 +21,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
@@ -295,13 +294,8 @@ type RestoreConfig struct {
 	PitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
 	PitrConcurrency uint32                      `json:"-" toml:"-"`
-<<<<<<< HEAD
-=======
 	Layout          repo.Layout                 `json:"storage-layout" toml:"storage-layout"`
 	BackupID        repo.BackupID               `json:"backup-id" toml:"backup-id"`
-	// RetainLatestMVCCVersion means restoring compacted SSTs by retaining only newest MVCC versions.
-	RetainLatestMVCCVersion bool `json:"retain-latest-mvcc-version" toml:"retain-latest-mvcc-version"`
->>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
 
 	UseCheckpoint                 bool                            `json:"use-checkpoint" toml:"use-checkpoint"`
 	CheckpointStorage             string                          `json:"checkpoint-storage" toml:"checkpoint-storage"`
@@ -563,25 +557,9 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagAllowPITRFromIncremental)
 	}
-<<<<<<< HEAD
-=======
 	if err := taskrepo.ValidateSnapshotRestoreStorage(cfg.Layout, cfg.BackupID); err != nil {
 		return err
 	}
-	cfg.RestorePhase, err = flags.GetUint64(FlagRestorePhase)
-	if err != nil {
-		return errors.Annotatef(err, "failed to get flag %s", FlagRestorePhase)
-	}
-	cfg.RestoreInPhase = flags.Changed(FlagRestorePhase) || cfg.RestorePhase > 0
-	if cfg.RestoreInPhase && cfg.RestorePhase != 1 && cfg.RestorePhase != 2 {
-		return errors.Annotatef(berrors.ErrInvalidArgument, "%v is an invalid value, please specify 1 or 2",
-			FlagRestorePhase)
-	}
-	if cfg.RestoreInPhase && !cfg.UseCheckpoint {
-		return errors.Annotatef(berrors.ErrInvalidArgument, "%v requires %s to be enabled",
-			FlagRestorePhase, flagUseCheckpoint)
-	}
->>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
 
 	if flags.Lookup(flagFullBackupType) != nil {
 		// for restore full only
@@ -950,38 +928,6 @@ func printRestoreMetrics() {
 	log.Info("Metric: upload_sst_meta_for_pitr_seconds", zap.Object("metric", logutil.MarshalHistogram(metrics.RestoreUploadSSTMetaForPiTRSeconds)))
 }
 
-<<<<<<< HEAD
-=======
-func checkSnapshotRestoreMode(ctx context.Context, cfg *RestoreConfig) error {
-	var backupMeta *backuppb.BackupMeta
-	var err error
-	if cfg.BackupID.IsZero() {
-		_, _, backupMeta, err = ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
-	} else {
-		u, s, storageErr := GetStorage(ctx, cfg.Storage, &cfg.Config)
-		if storageErr != nil {
-			return errors.Trace(storageErr)
-		}
-		resolvedStorage := &taskrepo.SnapshotStorageRef{
-			BackupID:    cfg.BackupID,
-			RootBackend: u,
-			RootStorage: s,
-		}
-		if err := resolvedStorage.Validate(ctx); err != nil {
-			return errors.Trace(err)
-		}
-		backupMeta, err = resolvedStorage.LoadBackupMeta(ctx, &cfg.CipherInfo, cfg.CheckRequirements)
-	}
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if backupMeta.IsRawKv || backupMeta.IsTxnKv {
-		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw/txn kv data")
-	}
-	return nil
-}
-
->>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) (restoreErr error) {
 	if err := cfg.EnsureOperationContext(restoreOperationCommandName(cmdName)); err != nil {

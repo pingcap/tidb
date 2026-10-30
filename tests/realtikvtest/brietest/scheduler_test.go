@@ -25,11 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/testkit"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
->>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
 	"github.com/stretchr/testify/require"
 )
 

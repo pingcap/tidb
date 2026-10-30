@@ -751,11 +751,6 @@ func (rs *KS3Storage) Rename(ctx context.Context, oldFileName, newFileName strin
 // Close implements ExternalStorage interface.
 func (*KS3Storage) Close() {}
 
-// Features implements FeatureProvider.
-func (*KS3Storage) Features() storeapi.Features {
-	return storeapi.FeatureStrongConsistency
-}
-
 func maybeObjectAlreadyExists(err awserr.Error) bool {
 	// Some versions of server did return the error code "ObjectAlreayExists"...
 	return err.Code() == "ObjectAlreayExists" || err.Code() == "ObjectAlreadyExists"
@@ -796,4 +791,9 @@ func (rs *KS3Storage) CopyFrom(ctx context.Context, e ExternalStorage, spec Copy
 		}
 	}
 	return nil
+}
+
+// Features implements FeatureProvider.
+func (*KS3Storage) Features() Features {
+	return FeatureStrongConsistency
 }

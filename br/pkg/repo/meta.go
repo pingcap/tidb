@@ -24,8 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	brstorage "github.com/pingcap/tidb/br/pkg/storage"
 )
 
 const RepoVersion = 1
@@ -50,7 +49,7 @@ type Meta struct {
 // revive:disable-next-line:cyclomatic
 func LoadRepoMeta(
 	ctx context.Context,
-	storage storeapi.Storage,
+	storage brstorage.ExternalStorage,
 ) (*Meta, error) {
 	data, err := storage.ReadFile(ctx, RepoMetaPath)
 	if err != nil {
@@ -72,15 +71,15 @@ func LoadRepoMeta(
 // revive:disable-next-line:cognitive-complexity
 func EnsureRepo(
 	ctx context.Context,
-	storage storeapi.Storage,
+	storage brstorage.ExternalStorage,
 	createdBy string,
 ) (*Meta, error) {
-	lock, err := objstore.LockWithRetry(
+	lock, err := brstorage.LockWithRetry(
 		ctx,
-		objstore.TryLockRemote,
+		brstorage.TryLockRemote,
 		storage,
 		repoInitLockPath,
-		objstore.LockMetaInput{
+		brstorage.LockMetaInput{
 			Hint: "initialize BR snapshot repository metadata",
 		},
 	)
@@ -128,7 +127,7 @@ func EnsureRepo(
 }
 
 // revive:disable-next-line:cognitive-complexity
-func ensureRepoRootIsCleanForInit(ctx context.Context, storage storeapi.Storage) error {
+func ensureRepoRootIsCleanForInit(ctx context.Context, storage brstorage.ExternalStorage) error {
 	for _, path := range []string{
 		metautil.MetaFile,
 		metautil.LockFile,
@@ -154,7 +153,7 @@ func ensureRepoRootIsCleanForInit(ctx context.Context, storage storeapi.Storage)
 		found := false
 		err := storage.WalkDir(
 			ctx,
-			&storeapi.WalkOption{SubDir: prefix},
+			&brstorage.WalkOption{SubDir: prefix},
 			func(string, int64) error {
 				found = true
 				return errRepoRootContainsArtifacts
@@ -175,7 +174,7 @@ func ensureRepoRootIsCleanForInit(ctx context.Context, storage storeapi.Storage)
 	return nil
 }
 
-func ensureRepoGuard(ctx context.Context, storage storeapi.Storage) error {
+func ensureRepoGuard(ctx context.Context, storage brstorage.ExternalStorage) error {
 	exists, err := storage.FileExists(ctx, RootLockPath)
 	if err != nil {
 		return errors.Trace(err)

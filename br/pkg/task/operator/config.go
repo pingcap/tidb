@@ -9,16 +9,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-<<<<<<< HEAD
+	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/task"
-=======
-	"github.com/pingcap/tidb/br/pkg/repo"
-	crrconfig "github.com/pingcap/tidb/br/pkg/stream/crr/config"
-	"github.com/pingcap/tidb/br/pkg/task"
 	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
-	"github.com/pingcap/tidb/pkg/objstore"
->>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
 	"github.com/spf13/pflag"
 )
 

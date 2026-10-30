@@ -28,12 +28,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/br/pkg/storage"
-=======
 	"github.com/pingcap/tidb/br/pkg/repo"
-	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
->>>>>>> 22a4bedc15 (br: support snapshot backup repository layout (#66576))
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -292,7 +288,7 @@ func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 func TestGetFullBackupTSReadsRepoMetadataStorage(t *testing.T) {
 	ctx := context.Background()
 	testDir := t.TempDir()
-	storage, err := objstore.NewLocalStorage(testDir)
+	storage, err := storage.NewLocalStorage(testDir)
 	require.NoError(t, err)
 
 	backupID := repo.BackupID(0x1234)

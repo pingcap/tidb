@@ -6,6 +6,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/pingcap/errors"
@@ -17,6 +18,34 @@ import (
 
 // Permission represents the permission we need to check in create storage.
 type Permission string
+
+// Features is a bitset of optional capabilities a Storage implementation may expose.
+// It replaces ad-hoc marker interfaces so callers can probe multiple features with one
+// method call.
+type Features uint64
+
+const (
+	// FeatureStrongConsistency means the storage is strongly consistent over its
+	// Read, Write and WalkDir APIs.
+	FeatureStrongConsistency Features = 1 << iota
+	// FeatureSupportsStartAfter means the storage supports WalkDir StartAfter.
+	FeatureSupportsStartAfter
+)
+
+// FeatureProvider is an optional interface storages may implement to expose
+// capabilities via a Features bitset.
+type FeatureProvider interface {
+	Features() Features
+}
+
+// FeatureOf returns the Features bitset of s. If s does not implement
+// FeatureProvider, it returns 0.
+func FeatureOf(s ExternalStorage) Features {
+	if p, ok := s.(FeatureProvider); ok {
+		return p.Features()
+	}
+	return 0
+}
 
 // StrongConsistency is a marker interface that indicates the storage is strong consistent
 // over its `Read`, `Write` and `WalkDir` APIs.
@@ -77,6 +106,9 @@ type WalkOption struct {
 	//
 	// The size of a deleted file should be `TombstoneSize`.
 	IncludeTombstone bool
+	// StartAfter is the storage-relative exclusive lower bound for walking.
+	// Backends must advertise FeatureSupportsStartAfter before callers use it.
+	StartAfter string
 }
 
 // ReadSeekCloser is the interface that groups the basic Read, Seek and Close methods.
@@ -318,4 +350,52 @@ func ReadDataInRange(
 		}
 	}()
 	return io.ReadFull(rd, p)
+}
+
+// Prefix is like a folder if not empty, we still call it a prefix to match S3
+// terminology.
+// if not empty, it cannot start with '/' and must end with a '/', such as
+// 'a/b/'. the folder name must be valid, we don't check it here.
+type Prefix string
+
+// NewPrefix returns a new Prefix instance from the given string.
+func NewPrefix(prefix string) Prefix {
+	p := strings.Trim(prefix, "/")
+	if p != "" {
+		p += "/"
+	}
+	return Prefix(p)
+}
+
+func (p Prefix) join(other Prefix) Prefix {
+	// due to the definition of Prefix, we can add them directly.
+	return p + other
+}
+
+// JoinStr returns a new Prefix by joining the given string to the current Prefix.
+func (p Prefix) JoinStr(str string) Prefix {
+	strPrefix := NewPrefix(str)
+	return p.join(strPrefix)
+}
+
+// ObjectKey returns the object key by joining the name to the Prefix.
+func (p Prefix) ObjectKey(name string) string {
+	// if p is not empty, it already ends with '/'.
+	// the name better not start with '/', else there will be double '/' in the
+	// key.
+	// this is existing behavior, we keep it.
+	return string(p) + name
+}
+
+// ToPath convert the object storage prefix into a URL path.
+// we expect `p` relative to the bucket, not to another prefix, so we add a
+// leading '/' directly. if p is empty, it will return '/', which is also a
+// valid path.
+func (p Prefix) ToPath() string {
+	return "/" + string(p)
+}
+
+// String implements fmt.Stringer interface.
+func (p Prefix) String() string {
+	return string(p)
 }

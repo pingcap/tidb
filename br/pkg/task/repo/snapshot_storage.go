@@ -29,15 +29,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	brstorage "github.com/pingcap/tidb/br/pkg/storage"
 	gozap "go.uber.org/zap"
 )
 
 const flagStorageLayout = "storage-layout"
 
 type Config struct {
-	objstore.BackendOptions
+	brstorage.BackendOptions
 
 	Storage    string
 	CipherInfo backuppb.CipherInfo
@@ -48,7 +47,7 @@ type Config struct {
 type SnapshotStorageRef struct {
 	BackupID    repo.BackupID
 	RootBackend *backuppb.StorageBackend
-	RootStorage storeapi.Storage
+	RootStorage brstorage.ExternalStorage
 }
 
 type PreparedRepoSnapshotBackup struct {
@@ -98,7 +97,7 @@ func PrepareRepoSnapshotBackup(
 	ctx context.Context,
 	console glue.ConsoleOperations,
 	rootBackend *backuppb.StorageBackend,
-	rootStorage storeapi.Storage,
+	rootStorage brstorage.ExternalStorage,
 	params SnapshotBackupStorageParams,
 ) (*PreparedRepoSnapshotBackup, error) {
 	if _, err := repo.EnsureRepo(ctx, rootStorage, params.CreatedBy); err != nil {
@@ -175,7 +174,7 @@ func chooseRepoBackupAttempt(
 	console glue.ConsoleOperations,
 	useCheckpoint bool,
 	skipPrompt bool,
-	rootStorage storeapi.Storage,
+	rootStorage brstorage.ExternalStorage,
 	cfgHash []byte,
 	resumableBackups []repo.BackupID,
 ) (repoBackupAttempt, error) {
@@ -215,7 +214,7 @@ func chooseRepoBackupAttempt(
 func confirmRepoSnapshotResume(
 	console glue.ConsoleOperations,
 	skipPrompt bool,
-	rootStorage storeapi.Storage,
+	rootStorage brstorage.ExternalStorage,
 	cfgHash []byte,
 	backupID repo.BackupID,
 ) bool {
@@ -259,7 +258,7 @@ func formatRepoBackupIDs(ids []repo.BackupID) string {
 }
 
 // MetadataStorage returns the metadata storage derived from the snapshot reference.
-func (ref *SnapshotStorageRef) MetadataStorage() storeapi.Storage {
+func (ref *SnapshotStorageRef) MetadataStorage() brstorage.ExternalStorage {
 	if ref.BackupID.IsZero() {
 		return ref.RootStorage
 	}
@@ -328,7 +327,7 @@ func (ref *SnapshotStorageRef) LoadBackupMeta(
 // lifecycle, an attempt with neither backupmeta nor checkpoint metadata has not
 // started writing backup files. Finished attempts must retain their backup files;
 // both cases only need leftover checkpoint state and pending markers cleaned up.
-func collectResumablePendingBackups(ctx context.Context, rootStorage storeapi.Storage, cfgHash []byte) ([]repo.BackupID, error) {
+func collectResumablePendingBackups(ctx context.Context, rootStorage brstorage.ExternalStorage, cfgHash []byte) ([]repo.BackupID, error) {
 	pendingBackups, err := repo.SnapshotOpsExtension(rootStorage).ListPendingBackupsForConfigHash(ctx, cfgHash)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -352,8 +351,8 @@ func collectResumablePendingBackups(ctx context.Context, rootStorage storeapi.St
 
 func cleanupPendingBackupState(
 	ctx context.Context,
-	rootStorage storeapi.Storage,
-	metadataStorage storeapi.Storage,
+	rootStorage brstorage.ExternalStorage,
+	metadataStorage brstorage.ExternalStorage,
 	pending repo.PendingBackup,
 ) error {
 	if removeErr := checkpoint.RemoveCheckpointDataForBackup(ctx, metadataStorage); removeErr != nil {
@@ -367,7 +366,7 @@ func cleanupPendingBackupState(
 	return nil
 }
 
-func writePendingSnapshot(ctx context.Context, rootStorage storeapi.Storage, pendingFile string) error {
+func writePendingSnapshot(ctx context.Context, rootStorage brstorage.ExternalStorage, pendingFile string) error {
 	return rootStorage.WriteFile(ctx, pendingFile, []byte("{}"))
 }
 

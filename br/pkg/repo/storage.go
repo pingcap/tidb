@@ -19,23 +19,21 @@ import (
 	"context"
 	"path"
 	"strings"
-	"time"
 
-	"github.com/pingcap/tidb/pkg/objstore/objectio"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	brstorage "github.com/pingcap/tidb/br/pkg/storage"
 )
 
 const pathSeparator = "/"
 
 type prefixedStorage struct {
-	base   storeapi.Storage
-	prefix storeapi.Prefix
+	base   brstorage.ExternalStorage
+	prefix brstorage.Prefix
 }
 
-func NewPrefixedStorage(base storeapi.Storage, prefix string) storeapi.Storage {
+func NewPrefixedStorage(base brstorage.ExternalStorage, prefix string) brstorage.ExternalStorage {
 	return &prefixedStorage{
 		base:   base,
-		prefix: storeapi.NewPrefix(prefix),
+		prefix: brstorage.NewPrefix(prefix),
 	}
 }
 
@@ -68,8 +66,8 @@ func (s *prefixedStorage) DeleteFile(ctx context.Context, name string) error {
 func (s *prefixedStorage) Open(
 	ctx context.Context,
 	name string,
-	option *storeapi.ReaderOption,
-) (objectio.Reader, error) {
+	option *brstorage.ReaderOption,
+) (brstorage.ExternalFileReader, error) {
 	return s.base.Open(ctx, s.fullPath(name), option)
 }
 
@@ -86,10 +84,10 @@ func (s *prefixedStorage) DeleteFiles(
 
 func (s *prefixedStorage) WalkDir(
 	ctx context.Context,
-	opt *storeapi.WalkOption,
+	opt *brstorage.WalkOption,
 	fn func(filePath string, size int64) error,
 ) error {
-	walkOpt := &storeapi.WalkOption{}
+	walkOpt := &brstorage.WalkOption{}
 	if opt != nil {
 		*walkOpt = *opt
 	}
@@ -118,8 +116,8 @@ func (s *prefixedStorage) URI() string {
 func (s *prefixedStorage) Create(
 	ctx context.Context,
 	name string,
-	option *storeapi.WriterOption,
-) (objectio.Writer, error) {
+	option *brstorage.WriterOption,
+) (brstorage.ExternalFileWriter, error) {
 	return s.base.Create(ctx, s.fullPath(name), option)
 }
 
@@ -130,16 +128,8 @@ func (s *prefixedStorage) Rename(
 	return s.base.Rename(ctx, s.fullPath(oldFileName), s.fullPath(newFileName))
 }
 
-func (s *prefixedStorage) PresignFile(
-	ctx context.Context,
-	fileName string,
-	expire time.Duration,
-) (string, error) {
-	return s.base.PresignFile(ctx, s.fullPath(fileName), expire)
-}
-
-func (s *prefixedStorage) Features() storeapi.Features {
-	return storeapi.FeatureOf(s.base)
+func (s *prefixedStorage) Features() brstorage.Features {
+	return brstorage.FeatureOf(s.base)
 }
 
 func (s *prefixedStorage) Close() {

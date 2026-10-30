@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/pkg/objstore"
+	brstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,7 +37,7 @@ func (fixedCheckpointTimer) GetTS(context.Context) (int64, int64, error) {
 
 func TestBuildProgressRangeTreeLoadsCheckpointDataFromMetadataStorage(t *testing.T) {
 	ctx := context.Background()
-	rootStorage := objstore.NewMemStorage()
+	rootStorage := brstorage.NewMemStorage()
 	metadataStorage := repo.NewPrefixedStorage(rootStorage, repo.SnapshotMetadataDir(repo.BackupID(0x1234)))
 	cipher := &backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
 
@@ -54,7 +54,7 @@ func TestBuildProgressRangeTreeLoadsCheckpointDataFromMetadataStorage(t *testing
 			LoadCheckpointDataMap: true,
 		},
 	}
-	metaWriter := metautil.NewMetaWriter(objstore.NewMemStorage(), metautil.MetaFileSize, false, "", cipher)
+	metaWriter := metautil.NewMetaWriter(brstorage.NewMemStorage(), metautil.MetaFileSize, false, "", cipher)
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
 	progressTree, err := client.BuildProgressRangeTree(ctx, []rtree.KeyRange{{StartKey: []byte("a"), EndKey: []byte("b")}}, metaWriter, func(ProgressUnit) {})
 	require.NoError(t, err)

@@ -22,31 +22,30 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	brstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
 func GetStorage(
 	ctx context.Context,
 	storageName string,
-	backendOptions objstore.BackendOptions,
+	backendOptions brstorage.BackendOptions,
 	noCreds bool,
 	sendCreds bool,
-) (*backuppb.StorageBackend, storeapi.Storage, error) {
-	u, err := objstore.ParseBackend(storageName, &backendOptions)
+) (*backuppb.StorageBackend, brstorage.ExternalStorage, error) {
+	u, err := brstorage.ParseBackend(storageName, &backendOptions)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	s, err := objstore.New(ctx, u, storageOpts(noCreds, sendCreds))
+	s, err := brstorage.New(ctx, u, storageOpts(noCreds, sendCreds))
 	if err != nil {
 		return nil, nil, errors.Annotate(err, "create storage failed")
 	}
 	return u, s, nil
 }
 
-func storageOpts(noCreds bool, sendCreds bool) *storeapi.Options {
-	return &storeapi.Options{
+func storageOpts(noCreds bool, sendCreds bool) *brstorage.ExternalStorageOptions {
+	return &brstorage.ExternalStorageOptions{
 		NoCredentials:   noCreds,
 		SendCredentials: sendCreds,
 	}
@@ -77,7 +76,7 @@ func DecodeBackupMeta(metaData []byte, cipherInfo *backuppb.CipherInfo) (*backup
 func ReadBackupMetaFromStorage(
 	ctx context.Context,
 	fileName string,
-	storage storeapi.Storage,
+	storage brstorage.ExternalStorage,
 	cipherInfo *backuppb.CipherInfo,
 ) (*backuppb.BackupMeta, error) {
 	metaData, err := storage.ReadFile(ctx, fileName)
