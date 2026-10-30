@@ -25,7 +25,7 @@ use std::{error::Error, fmt};
 use tidb_distsql::{system_endian, EncodeType as DistSqlEncodeType, SystemEndian};
 use tidb_planner::{
     physical::{PhysicalIndexScan, PhysicalTableScan},
-    tikv_scan_spec::{
+    logical::tikv_scan_spec::{
         check_cover_index, ScanColumnInfo, TiKvIndexScanSpec, TiKvTableScanSpec,
         UnsupportedScanFeature,
     },

@@ -518,9 +518,9 @@ pub(super) fn build_converged_union_index_merge_task(
                     .iter()
                     .all(|range| range.is_full_range(unsigned_int_handle))
                 {
-                    crate::access_path::ResolvedTableScanKind::Full
+                    crate::logical::data_source_paths::ResolvedTableScanKind::Full
                 } else {
-                    crate::access_path::ResolvedTableScanKind::Range
+                    crate::logical::data_source_paths::ResolvedTableScanKind::Range
                 };
                 let mut base = crate::physical::BasePhysicalPlan::new(
                     ctx.allocator,
@@ -563,11 +563,11 @@ pub(super) fn build_converged_union_index_merge_task(
                         plan_part_info: None,
                         filter_condition: Vec::new(),
                         resolved_descriptor: Some(
-                            crate::access_path::ResolvedTableDescriptor::new(
+                            crate::logical::data_source_paths::ResolvedTableDescriptor::new(
                                 ds.physical_table_id,
                                 !ds.common_handle_cols.is_empty(),
                                 scan_kind,
-                                crate::access_path::TableScanExplainIdSuffix::IncludePlanId,
+                                crate::logical::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
                             ),
                         ),
                     },
@@ -663,11 +663,11 @@ pub(super) fn build_converged_union_index_merge_task(
                 prop: None,
                 plan_part_info: None,
                 filter_condition: Vec::new(),
-                resolved_descriptor: Some(crate::access_path::ResolvedTableDescriptor::new(
+                resolved_descriptor: Some(crate::logical::data_source_paths::ResolvedTableDescriptor::new(
                     ds.physical_table_id,
                     !ds.common_handle_cols.is_empty(),
-                    crate::access_path::ResolvedTableScanKind::RowId,
-                    crate::access_path::TableScanExplainIdSuffix::IncludePlanId,
+                    crate::logical::data_source_paths::ResolvedTableScanKind::RowId,
+                    crate::logical::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
                 )),
             },
         ))

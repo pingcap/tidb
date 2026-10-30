@@ -25,7 +25,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::extract_columns;
 
-use crate::access_path::DataSourceAccessPath;
+use crate::logical::data_source_paths::DataSourceAccessPath;
 use crate::expression_rewriter::{
     extract_correlated_cols_4_logical_plan, matching_cor_columns_by_schema,
 };

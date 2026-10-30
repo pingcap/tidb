@@ -1289,10 +1289,10 @@ pub struct PhysicalTableScan {
     pub table_scan_penalty: crate::logical::data_source::TableScanPenaltyInput,
     /// Schema-resolved fields consumed by the TiKV protobuf lowering path.
     /// Go reads these values from this operator's `Table` and `Columns`.
-    pub tikv_pushdown: Option<crate::tikv_scan_spec::TiKvTableScanSpec>,
+    pub tikv_pushdown: Option<crate::logical::tikv_scan_spec::TiKvTableScanSpec>,
     /// The resolved table metadata behind Go's `Table` pointer. The Rust
     /// schema boundary retains only the fields needed by this scan.
-    pub resolved_descriptor: Option<crate::access_path::ResolvedTableDescriptor>,
+    pub resolved_descriptor: Option<crate::logical::data_source_paths::ResolvedTableDescriptor>,
     /// Go `PlanPartInfo` (`copTask.PhysPlanPartInfo`, shared with the reader
     /// above): kept so the plan cache charges what Go charges.
     pub plan_part_info: Option<std::sync::Arc<PhysPlanPartInfo>>,
@@ -1380,7 +1380,7 @@ impl PhysicalTableScan {
     pub fn init(
         plan_id: i32,
         query_block_offset: i32,
-        pushdown: crate::tikv_scan_spec::TiKvTableScanSpec,
+        pushdown: crate::logical::tikv_scan_spec::TiKvTableScanSpec,
     ) -> Self {
         Self {
             base: BasePhysicalPlan::with_id(plan_id, "TableScan", query_block_offset),
@@ -1397,7 +1397,7 @@ impl PhysicalTableScan {
     pub(crate) fn from_validated_pushdown(
         plan_id: i32,
         query_block_offset: i32,
-        pushdown: crate::access_path::ValidatedTablePushdown,
+        pushdown: crate::logical::data_source_paths::ValidatedTablePushdown,
     ) -> Self {
         let descriptor = pushdown.descriptor();
         let mut scan = Self::init(plan_id, query_block_offset, pushdown.spec().clone());
@@ -1417,19 +1417,19 @@ impl PhysicalTableScan {
     /// Returns the pre-resolved TiKV scan fields, when this plan is executable
     /// by the bounded TiKV DAG path.
     #[must_use]
-    pub const fn pushdown(&self) -> Option<&crate::tikv_scan_spec::TiKvTableScanSpec> {
+    pub const fn pushdown(&self) -> Option<&crate::logical::tikv_scan_spec::TiKvTableScanSpec> {
         self.tikv_pushdown.as_ref()
     }
 
     /// Returns the source-authoritative table descriptor.
     #[must_use]
-    pub const fn descriptor(&self) -> Option<crate::access_path::ResolvedTableDescriptor> {
+    pub const fn descriptor(&self) -> Option<crate::logical::data_source_paths::ResolvedTableDescriptor> {
         self.resolved_descriptor
     }
 
     /// Returns the source-resolved full/range scan kind.
     #[must_use]
-    pub const fn scan_kind(&self) -> Option<crate::access_path::ResolvedTableScanKind> {
+    pub const fn scan_kind(&self) -> Option<crate::logical::data_source_paths::ResolvedTableScanKind> {
         match self.resolved_descriptor {
             Some(descriptor) => Some(descriptor.scan_kind()),
             None => None,
@@ -1443,10 +1443,10 @@ impl PhysicalTableScan {
         let plan_type = descriptor.scan_kind().plan_type();
         Some(match (ignore_suffix, descriptor.explain_id_suffix()) {
             (true, _) => plan_type.to_owned(),
-            (false, crate::access_path::TableScanExplainIdSuffix::IncludePlanId) => {
+            (false, crate::logical::data_source_paths::TableScanExplainIdSuffix::IncludePlanId) => {
                 format!("{plan_type}_{}", self.base.base.id())
             }
-            (false, crate::access_path::TableScanExplainIdSuffix::Omit) => plan_type.to_owned(),
+            (false, crate::logical::data_source_paths::TableScanExplainIdSuffix::Omit) => plan_type.to_owned(),
         })
     }
 
@@ -2536,7 +2536,7 @@ pub struct PhysicalIndexScan {
     /// cardinality adapter consumes the full ranger type.
     pub covering_ranges: Vec<tidb_planner_cardinality::index_range_policy::IndexRangeShape>,
     /// Schema-validated fields consumed by TiKV protobuf lowering.
-    pub tikv_pushdown: Option<crate::tikv_scan_spec::ValidatedIndexPushdown>,
+    pub tikv_pushdown: Option<crate::logical::tikv_scan_spec::ValidatedIndexPushdown>,
     /// Go `DBName`.
     pub db_name: String,
     /// Go `Prop`.
@@ -2594,10 +2594,10 @@ impl PhysicalIndexScan {
     /// Validates and attaches schema-resolved TiKV fields.
     pub fn try_with_pushdown(
         mut self,
-        descriptor: crate::tikv_scan_spec::ResolvedIndexDescriptor,
-        pushdown: crate::tikv_scan_spec::TiKvIndexScanSpec,
-    ) -> Result<Self, crate::tikv_scan_spec::IndexPushdownMetadataError> {
-        self.tikv_pushdown = Some(crate::tikv_scan_spec::ValidatedIndexPushdown::new(
+        descriptor: crate::logical::tikv_scan_spec::ResolvedIndexDescriptor,
+        pushdown: crate::logical::tikv_scan_spec::TiKvIndexScanSpec,
+    ) -> Result<Self, crate::logical::tikv_scan_spec::IndexPushdownMetadataError> {
+        self.tikv_pushdown = Some(crate::logical::tikv_scan_spec::ValidatedIndexPushdown::new(
             self.index_id,
             descriptor,
             pushdown,
@@ -2609,7 +2609,7 @@ impl PhysicalIndexScan {
     #[must_use]
     pub(crate) fn with_validated_pushdown(
         mut self,
-        pushdown: crate::tikv_scan_spec::ValidatedIndexPushdown,
+        pushdown: crate::logical::tikv_scan_spec::ValidatedIndexPushdown,
     ) -> Self {
         self.tikv_pushdown = Some(pushdown);
         self
@@ -2644,7 +2644,7 @@ impl PhysicalIndexScan {
 
     /// Returns the schema-validated TiKV fields, if supplied.
     #[must_use]
-    pub const fn pushdown(&self) -> Option<&crate::tikv_scan_spec::TiKvIndexScanSpec> {
+    pub const fn pushdown(&self) -> Option<&crate::logical::tikv_scan_spec::TiKvIndexScanSpec> {
         match self.tikv_pushdown.as_ref() {
             Some(pushdown) => Some(pushdown.spec()),
             None => None,

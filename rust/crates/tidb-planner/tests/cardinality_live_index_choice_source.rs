@@ -7,17 +7,13 @@
 
 use tidb_planner_cardinality::index_range_policy::{IndexRangeShape, RangeBoundKind};
 use tidb_planner_property::task_type::TaskType;
-use tidb_planner::access_path::{
-        AccessPathStore, DataSourceAccessPath, ExpectedCountRows, IndexAccessPath, IndexReadShape,
-        PointEstimateAdmissionError, PointGetAdmission, ResolvedTableDescriptor,
-        ResolvedTableScanKind, TableAccessPath, TableScanExplainIdSuffix,
-    };
+use tidb_planner::logical::data_source_paths::{AccessPathStore, DataSourceAccessPath, ExpectedCountRows, IndexAccessPath, IndexReadShape, PointEstimateAdmissionError, PointGetAdmission, ResolvedTableDescriptor, ResolvedTableScanKind, TableAccessPath, TableScanExplainIdSuffix};
 use tidb_planner_cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
 use tidb_planner::index_task::{CopIndexTask, IndexTask, IndexTaskRejection};
 use tidb_planner::logical_data_source::LogicalDataSource;
 use tidb_planner::logical_data_source_task::{IndexOrderingRequirement, IndexTaskProperty};
 use tidb_planner::physical::PhysicalIndexScan;
-use tidb_planner::tikv_scan_spec::TiKvTableScanSpec;
+use tidb_planner::logical::tikv_scan_spec::TiKvTableScanSpec;
 
 fn range(low: RangeBoundKind, high: RangeBoundKind) -> IndexRangeShape {
     IndexRangeShape::new([low], [high], false, false)

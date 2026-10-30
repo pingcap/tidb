@@ -123,7 +123,7 @@ fn split_correlated_access(
         return 0;
     }
     let (cols, lengths): (Vec<_>, Vec<_>) = columns.iter().cloned().unzip();
-    let (accesses, remained) = crate::access_path::split_correlated_access_conditions(
+    let (accesses, remained) = crate::logical::data_source_paths::split_correlated_access_conditions(
         &detached.remained_conds,
         &cols,
         &lengths,

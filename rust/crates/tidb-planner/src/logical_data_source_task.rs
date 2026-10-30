@@ -23,7 +23,7 @@
 //! path.
 
 use crate::{
-    access_path::{
+    logical::data_source_paths::{
         AccessPathStore, DataSourceAccessPath, IndexAccessPath, IndexReadShape, PointGetAdmission,
         TableAccessPath,
     },
@@ -220,7 +220,7 @@ fn build_supported_table_task(
     if path.is_partitioned()
         || matches!(
             path.pushdown().unsupported,
-            Some(crate::tikv_scan_spec::UnsupportedScanFeature::Partition)
+            Some(crate::logical::tikv_scan_spec::UnsupportedScanFeature::Partition)
         )
     {
         return invalid_table(TableTaskRejection::Partition);

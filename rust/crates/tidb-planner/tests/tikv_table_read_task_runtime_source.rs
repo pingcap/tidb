@@ -11,7 +11,7 @@ use tidb_planner_cardinality::{
         live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate},
 };
 use tidb_planner::{
-    access_path::{
+    logical::data_source_paths::{
         AccessPathStore, DataSourceAccessPath, IndexAccessPath, PointGetAdmission,
         ResolvedTableDescriptor, ResolvedTableScanKind, TableAccessPath, TableScanExplainIdSuffix,
     },
@@ -19,7 +19,7 @@ use tidb_planner::{
     logical_data_source::LogicalDataSource,
     logical_data_source_task::{IndexOrderingRequirement, IndexTaskProperty},
     physical::{PhysicalTableReader, PhysicalTableScan},
-    tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec, UnsupportedScanFeature},
+    logical::tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec, UnsupportedScanFeature},
 };
 
 fn source(paths: impl IntoIterator<Item = DataSourceAccessPath>) -> LogicalDataSource {

@@ -21,12 +21,12 @@
 
 use tidb_kv::store_type::StoreType;
 use tidb_planner::{
-    access_path::{ResolvedTableDescriptor, ResolvedTableScanKind, TableScanExplainIdSuffix},
+    logical::data_source_paths::{ResolvedTableDescriptor, ResolvedTableScanKind, TableScanExplainIdSuffix},
     physical::{
         BasePhysicalPlan, PhysicalHashJoin, PhysicalPlan, PhysicalTableReader, PhysicalTableScan,
     },
     physical_table_reader::ReadReqType,
-    tikv_scan_spec::TiKvTableScanSpec,
+    logical::tikv_scan_spec::TiKvTableScanSpec,
 };
 
 fn table_scan(id: i32) -> PhysicalTableScan {

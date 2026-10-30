@@ -16,7 +16,7 @@
 //! `DataSource`, the leaf that reads one (physical) table.
 //!
 //! SEED of `pkg/planner/core`. The ACCESS PATHS are
-//! [`crate::access_path::DataSourceAccessPath`], already in this crate and
+//! [`crate::logical::data_source_paths::DataSourceAccessPath`], already in this crate and
 //! reused rather than restated; the path-to-task lowering stays in
 //! [`crate::logical_data_source`] / [`crate::logical_data_source_task`], which
 //! this operator feeds rather than duplicates.
@@ -50,7 +50,7 @@ use tidb_expr::simple_expr::{
     extract_columns_from_expressions, extract_cor_columns, parse_simple_expr, BuildOptions,
 };
 
-use crate::access_path::DataSourceAccessPath;
+use crate::logical::data_source_paths::DataSourceAccessPath;
 use crate::logical::schema_producer;
 use crate::logical::BaseLogicalPlan;
 use tidb_planner_core_base::PossiblePropertiesInfo;

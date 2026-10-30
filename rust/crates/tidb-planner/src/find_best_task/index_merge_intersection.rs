@@ -149,11 +149,11 @@ pub(super) fn build_prepared_index_merge_task(
         prop: None,
         plan_part_info: None,
         filter_condition: Vec::new(),
-        resolved_descriptor: Some(crate::access_path::ResolvedTableDescriptor::new(
+        resolved_descriptor: Some(crate::logical::data_source_paths::ResolvedTableDescriptor::new(
             ds.physical_table_id,
             !ds.common_handle_cols.is_empty(),
-            crate::access_path::ResolvedTableScanKind::RowId,
-            crate::access_path::TableScanExplainIdSuffix::IncludePlanId,
+            crate::logical::data_source_paths::ResolvedTableScanKind::RowId,
+            crate::logical::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
         )),
     });
     // Go `BuildIndexMergeTableScan` separates root conditions before sealing

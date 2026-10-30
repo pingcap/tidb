@@ -26,11 +26,11 @@ use tidb_planner_cardinality::{
         live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate},
 };
 use tidb_planner::{
-    access_path::{DataSourceAccessPath, IndexAccessPath, PointGetAdmission},
+    logical::data_source_paths::{DataSourceAccessPath, IndexAccessPath, PointGetAdmission},
     logical_data_source::LogicalDataSource,
     logical_data_source_task::IndexTaskProperty,
     physical::{PhysicalIndexScan, PhysicalTableScan},
-    tikv_scan_spec::{
+    logical::tikv_scan_spec::{
         check_cover_index, IndexPushdownMetadataError, ResolvedIndexDescriptor, ScanColumnInfo,
         TiKvIndexScanSpec, TiKvTableScanSpec, UnsupportedScanFeature,
     },

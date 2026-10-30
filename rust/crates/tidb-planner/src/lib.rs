@@ -117,7 +117,6 @@ pub mod transaction_control;
 pub mod show_predicate_extractor;
 pub mod show_schema;
 pub mod task;
-pub mod tikv_scan_spec;
 
 /// Typed Rust counterpart of Go `planner/util.SliceRecursiveFlattenIter`.
 ///

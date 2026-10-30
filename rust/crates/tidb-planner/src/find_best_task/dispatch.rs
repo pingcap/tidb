@@ -3646,9 +3646,9 @@ fn find_best_task_4_logical_data_source_paths(
                         .iter()
                         .all(|range| range.is_full_range(unsigned_int_handle))
                 {
-                    crate::access_path::ResolvedTableScanKind::Range
+                    crate::logical::data_source_paths::ResolvedTableScanKind::Range
                 } else {
-                    crate::access_path::ResolvedTableScanKind::Full
+                    crate::logical::data_source_paths::ResolvedTableScanKind::Full
                 };
                 let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
                     base,
@@ -3711,11 +3711,11 @@ fn find_best_task_4_logical_data_source_paths(
                     handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
                     is_temporary: ds.is_temporary,
                     prop: Some(Box::new(prop.clone())),
-                    resolved_descriptor: Some(crate::access_path::ResolvedTableDescriptor::new(
+                    resolved_descriptor: Some(crate::logical::data_source_paths::ResolvedTableDescriptor::new(
                         ds.physical_table_id,
                         common_handle.is_some(),
                         scan_kind,
-                        crate::access_path::TableScanExplainIdSuffix::IncludePlanId,
+                        crate::logical::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
                     )),
                 });
                 let table_plan = if table_filters.is_empty() {
@@ -3821,11 +3821,11 @@ fn find_best_task_4_logical_data_source_paths(
                     prop: None,
                     plan_part_info: Some(std::sync::Arc::clone(&phys_plan_part_info)),
                     filter_condition: Vec::new(),
-                    resolved_descriptor: Some(crate::access_path::ResolvedTableDescriptor::new(
+                    resolved_descriptor: Some(crate::logical::data_source_paths::ResolvedTableDescriptor::new(
                         ds.physical_table_id,
                         ds.is_common_handle,
-                        crate::access_path::ResolvedTableScanKind::Full,
-                        crate::access_path::TableScanExplainIdSuffix::IncludePlanId,
+                        crate::logical::data_source_paths::ResolvedTableScanKind::Full,
+                        crate::logical::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
                     )),
                 });
                 let (table_filters, root_task_conds) = crate::pushdown::split_scan_filters(
@@ -4589,11 +4589,11 @@ fn find_best_task_4_logical_data_source_paths(
                         plan_part_info: None,
                         filter_condition: Vec::new(),
                         resolved_descriptor: Some(
-                            crate::access_path::ResolvedTableDescriptor::new(
+                            crate::logical::data_source_paths::ResolvedTableDescriptor::new(
                                 ds.physical_table_id,
                                 !ds.common_handle_cols.is_empty(),
-                                crate::access_path::ResolvedTableScanKind::RowId,
-                                crate::access_path::TableScanExplainIdSuffix::IncludePlanId,
+                                crate::logical::data_source_paths::ResolvedTableScanKind::RowId,
+                                crate::logical::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
                             ),
                         ),
                     });
