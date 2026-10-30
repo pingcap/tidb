@@ -36,12 +36,12 @@
 //! [`fold_owned`] keeps a selection rather than dropping one, which is the
 //! direction that keeps a filter in the plan.
 
-use crate::base_arms;
+use tidb_planner_core_operator_logicalop::base_arms;
 use tidb_planner_core_base::PlanError;
 
-use crate::logical::fold::{fold_owned, Descend, OwnedRewrite};
-use crate::logical::plan_context::{LogicalOptRule, RuleContext};
-use crate::logical::LogicalPlan;
+use tidb_planner_core_operator_logicalop::fold::{fold_owned, Descend, OwnedRewrite};
+use tidb_planner_core_operator_logicalop::plan_context::{LogicalOptRule, RuleContext};
+use tidb_planner_core_operator_logicalop::LogicalPlan;
 
 /// Go's `child.(*logicalop.LogicalSelection)` with `len(sel.Conditions) == 0`.
 fn is_empty_selection(node: &LogicalPlan) -> bool {

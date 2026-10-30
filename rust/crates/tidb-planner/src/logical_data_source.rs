@@ -14,8 +14,8 @@
 
 //! Logical datasource input for bounded table/index access-task transitions.
 
+use tidb_planner_core_operator_logicalop::data_source_paths::DataSourceAccessPath;
 use crate::{
-    logical::data_source_paths::DataSourceAccessPath,
     index_task::{IndexTask, ScanReadTask},
     logical_data_source_task::{build_index_task, build_scan_read_task, IndexTaskProperty},
 };

@@ -152,17 +152,6 @@ impl PlannerStmtCtxData for StmtContextData {
     }
 }
 
-
-impl crate::logical::plan_context::HintWarningSink for StmtContext {
-    fn set_hint_warning(&self, message: &str) {
-        self.append_warning_parts(1815, message);
-    }
-
-    fn set_hint_warning_from_error(&self, code: u16, message: &str) {
-        self.append_warning_parts(code, message);
-    }
-}
-
 impl crate::find_best_task::dispatch::MppWarningSink for StmtContext {
     fn raise_mpp_warning(&self, message: &str) {
         StmtContext::append_mpp_warning(self, message);

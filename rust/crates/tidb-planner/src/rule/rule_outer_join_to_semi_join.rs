@@ -23,10 +23,10 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
 use tidb_planner_core_base::LogicalJoinType;
-use crate::logical::{BaseLogicalPlan, LogicalJoin, LogicalPlan, LogicalProjection};
+use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalJoin, LogicalPlan, LogicalProjection};
 use tidb_planner_core_base::PlanError;
 
-use crate::logical::plan_context::{LogicalOptRule, RuleContext};
+use tidb_planner_core_operator_logicalop::plan_context::{LogicalOptRule, RuleContext};
 
 /// Go `OuterJoinToSemiJoin`.
 #[derive(Debug)]

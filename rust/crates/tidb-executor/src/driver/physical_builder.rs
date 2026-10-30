@@ -2031,16 +2031,16 @@ fn build_window(
 
 /// Retains Go's typed RANGE expressions and positional ROWS bounds.
 fn window_frame_spec(
-    frame: &tidb_planner::logical::window::WindowFrame,
+    frame: &tidb_planner_core_operator_logicalop::window::WindowFrame,
     range_desc: bool,
 ) -> Result<tidb_executor_windows::WindowFrameSpec, DriverError> {
-    use tidb_planner::logical::window::{BoundType, FrameType};
+    use tidb_planner_core_operator_logicalop::window::{BoundType, FrameType};
     if frame.frame_type == FrameType::Groups {
         return Err(DriverError::unsupported(
             "GROUPS window frames are not supported by TiDB",
         ));
     }
-    let bound = |bound: Option<&tidb_planner::logical::window::FrameBound>| {
+    let bound = |bound: Option<&tidb_planner_core_operator_logicalop::window::FrameBound>| {
         let Some(bound) = bound else {
             return tidb_executor_windows::WindowBound::Unbounded;
         };
@@ -4890,7 +4890,7 @@ fn select_lock_executor(
     let Some(selected) = ctx.selected_lock_keys() else {
         return Ok(child);
     };
-    use tidb_planner::logical::SelectLockType;
+    use tidb_planner_core_operator_logicalop::SelectLockType;
     use tidb_txnkv::transaction::LockWaitTime;
     if matches!(
         lock.lock_type,
@@ -5018,7 +5018,7 @@ fn select_lock_executor(
 /// from those columns, and a projection restores the plan's own columns.
 fn with_select_lock(
     plan: &PhysicalPlan,
-    select_lock: Option<(tidb_planner::logical::SelectLockType, u64)>,
+    select_lock: Option<(tidb_planner_core_operator_logicalop::SelectLockType, u64)>,
     table_id: i64,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
@@ -5105,10 +5105,10 @@ fn with_select_lock(
 /// SELECT's own `NOWAIT` / `WAIT n` choose the wait.
 fn point_lock(
     lock: bool,
-    select_lock: Option<(tidb_planner::logical::SelectLockType, u64)>,
+    select_lock: Option<(tidb_planner_core_operator_logicalop::SelectLockType, u64)>,
     ctx: &crate::StmtContext,
 ) -> Option<crate::access_path::PointLock> {
-    use tidb_planner::logical::SelectLockType;
+    use tidb_planner_core_operator_logicalop::SelectLockType;
     use tidb_txnkv::transaction::LockWaitTime;
     if !lock {
         return None;
@@ -6010,7 +6010,7 @@ fn mem_table_read_of(plan: &PhysicalPlan) -> Option<crate::mem_table_retrieval::
                         .map(|schema| schema.columns.iter().map(|column| column.id).collect())
                         .unwrap_or_default(),
                     None,
-                    tidb_planner::logical::mem_table::QueryTimeRange::default(),
+                    tidb_planner_core_operator_logicalop::mem_table::QueryTimeRange::default(),
                     true,
                 )
             }

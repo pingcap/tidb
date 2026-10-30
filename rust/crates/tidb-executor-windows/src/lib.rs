@@ -108,7 +108,7 @@ pub struct WindowFrameSpec {
     /// Go `WindowFrame.End`.
     pub end: WindowBound,
     /// Go's RANGE comparison expressions; absent for ROWS.
-    pub range: Option<tidb_planner::logical::window::WindowFrame>,
+    pub range: Option<tidb_planner_core_operator_logicalop::window::WindowFrame>,
     /// Go rangeFrameWindowProcessor.expectedCmpResult.
     pub range_desc: bool,
 }
@@ -345,13 +345,13 @@ impl<C: Columns> WindowExec<C> {
     /// CompareCols reads the candidate row; CalcFuncs reads the current row.
     fn range_bound(
         &self,
-        bound: Option<&tidb_planner::logical::window::FrameBound>,
+        bound: Option<&tidb_planner_core_operator_logicalop::window::FrameBound>,
         current: usize,
         mut cursor: usize,
         end: usize,
         is_end: bool,
     ) -> Result<usize, ExecError> {
-        use tidb_planner::logical::window::BoundType;
+        use tidb_planner_core_operator_logicalop::window::BoundType;
         let Some(bound) = bound.filter(|bound| !bound.unbounded) else {
             return Ok(if is_end { end } else { 0 });
         };

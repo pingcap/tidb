@@ -30,7 +30,7 @@ pub(crate) mod ordinary;
 /// stores as `HistColl.MVIdx2Columns`.
 #[must_use]
 pub fn prepare_cols_for_mv_index(
-    ds: &crate::logical::DataSource,
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
     index: &tidb_infoschema::table_source::SourceIndex,
 ) -> Option<Vec<tidb_expr::column::Column>> {
     mv_index::prepare_idx_cols_and_unwrap_array_type(ds, index, true)
@@ -52,7 +52,7 @@ pub(crate) struct AccessPathDerivationContext<'a> {
     pub plan_cache_marker: Option<&'a dyn tidb_planner_core_base::PlanCacheMarker>,
     /// Go `recordUsedItemStatsStatus`; `None` outside the statement's
     /// statistics derivation.
-    pub used_stats_recorder: Option<&'a dyn crate::logical::plan_context::UsedStatsRecorder>,
+    pub used_stats_recorder: Option<&'a dyn tidb_planner_core_operator_logicalop::plan_context::UsedStatsRecorder>,
 }
 
 impl AccessPathDerivationContext<'_> {
@@ -97,7 +97,7 @@ impl AccessPathDerivationContext<'_> {
 }
 
 pub(crate) fn derive_access_paths(
-    source: &mut crate::logical::DataSource,
+    source: &mut tidb_planner_core_operator_logicalop::DataSource,
     context: &AccessPathDerivationContext<'_>,
     index_merge_enabled: bool,
     no_index_merge_hint: bool,
@@ -466,7 +466,7 @@ pub fn apply_table_index_hints(
     table: &tidb_infoschema::table_source::SourceTable,
     public_paths: &[PossiblePath],
     hints: &[tidb_ast::IndexHint],
-    comment_hints: &[crate::logical::data_source::DataSourceIndexHint],
+    comment_hints: &[tidb_planner_core_operator_logicalop::data_source::DataSourceIndexHint],
     remove_global_indexes: bool,
     force_no_index_lookup_push_down: bool,
     session: IndexLookupPushDownSession,
@@ -1004,15 +1004,15 @@ mod index_range_collation_tests {
             high_exclude: false,
         };
         assert_eq!(ordinal_of_range_cond(&range), 1);
-        assert!(crate::logical::data_source_paths::only_point_ranges(
-            crate::logical::data_source_paths::PointRangePath::Index { column_count: 1 },
+        assert!(tidb_planner_core_operator_logicalop::data_source_paths::only_point_ranges(
+            tidb_planner_core_operator_logicalop::data_source_paths::PointRangePath::Index { column_count: 1 },
             std::slice::from_ref(&range),
         ));
         let mut binary_range = range.clone();
         binary_range.collators[0] = Collation::Binary;
         assert_eq!(ordinal_of_range_cond(&binary_range), 0);
-        assert!(!crate::logical::data_source_paths::only_point_ranges(
-            crate::logical::data_source_paths::PointRangePath::Index { column_count: 1 },
+        assert!(!tidb_planner_core_operator_logicalop::data_source_paths::only_point_ranges(
+            tidb_planner_core_operator_logicalop::data_source_paths::PointRangePath::Index { column_count: 1 },
             &[binary_range],
         ));
     }
@@ -1027,8 +1027,8 @@ mod index_range_collation_tests {
             high_exclude: false,
         };
         assert_eq!(ordinal_of_range_cond(&range), 1);
-        assert!(crate::logical::data_source_paths::only_point_ranges(
-            crate::logical::data_source_paths::PointRangePath::Index { column_count: 2 },
+        assert!(tidb_planner_core_operator_logicalop::data_source_paths::only_point_ranges(
+            tidb_planner_core_operator_logicalop::data_source_paths::PointRangePath::Index { column_count: 2 },
             &[range],
         ));
     }

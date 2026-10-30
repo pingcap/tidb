@@ -57,7 +57,7 @@
 //! * `dataSource.AllPossibleAccessPaths[i].StoreType == kv.TiFlash` refuses the
 //!   derivation ("Pushing down window aggregation is good enough in this
 //!   case"). [`super::super::access_path::DataSourceAccessPath`] does not carry
-//!   `util.AccessPath.StoreType`, so [`crate::logical::DataSource::has_tiflash_replica`]
+//!   `util.AccessPath.StoreType`, so [`tidb_planner_core_operator_logicalop::DataSource::has_tiflash_replica`]
 //!   stands in: a table with a TiFlash replica is where such a path can come
 //!   from, so the test refuses a SUPERSET of what Go refuses. Refusing is the
 //!   safe direction — the plan keeps the window without a derived TopN, which
@@ -71,11 +71,11 @@ use tidb_expr::expression::Expression;
 
 use tidb_planner_core_base::PlanError;
 
-use crate::logical::fold::{fold_owned, Descend, OwnedRewrite};
-use crate::logical::plan_context::{LogicalOptRule, RuleContext};
-use crate::logical::topn::LogicalTopN;
-use crate::logical::window::{BoundType, FrameType, LogicalWindow};
-use crate::logical::{BaseLogicalPlan, LogicalPlan};
+use tidb_planner_core_operator_logicalop::fold::{fold_owned, Descend, OwnedRewrite};
+use tidb_planner_core_operator_logicalop::plan_context::{LogicalOptRule, RuleContext};
+use tidb_planner_core_operator_logicalop::topn::LogicalTopN;
+use tidb_planner_core_operator_logicalop::window::{BoundType, FrameType, LogicalWindow};
+use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalPlan};
 
 /// Go's `"row_number"`, the only window function this rule accepts.
 const ROW_NUMBER: &str = "row_number";
@@ -101,7 +101,7 @@ fn check_partition_by(window: &LogicalWindow, handle_cols: &[tidb_expr::column::
 /// Go `(*LogicalSelection).windowIsTopN()` (`logical_selection.go:349`).
 ///
 /// Returns Go's `(true, limitValue)` as `Some(limit)`.
-fn window_is_topn(selection: &crate::logical::LogicalSelection, child: &LogicalPlan) -> Option<u64> {
+fn window_is_topn(selection: &tidb_planner_core_operator_logicalop::LogicalSelection, child: &LogicalPlan) -> Option<u64> {
     let LogicalPlan::Window(window) = child else {
         return None;
     };

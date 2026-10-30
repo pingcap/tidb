@@ -36,8 +36,8 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 
 use tidb_planner_util::handle_cols::{CommonHandleIdentity, HandleColumnIdentity, HandleMetadataIdentity};
-use tidb_planner::logical::schema_producer::expressions_equal;
-use tidb_planner::logical::window::{BoundType, FrameBound, FrameType, RangeCmpDataType, WindowFrame};
+use tidb_planner_core_operator_logicalop::schema_producer::expressions_equal;
+use tidb_planner_core_operator_logicalop::window::{BoundType, FrameBound, FrameType, RangeCmpDataType, WindowFrame};
 
 /// Go `&expression.Column{UniqueID/ID, Index, RetType}`.
 fn column(unique_id: i64, index: i64) -> Column {

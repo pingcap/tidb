@@ -22,16 +22,16 @@ use tidb_expr::schema::{merge_schema, Schema};
 
 use tidb_hint::join_hint_flags::REWRITE_SEMI_JOIN as PREFER_REWRITE_SEMI_JOIN;
 use tidb_planner_core_base::LogicalJoinType;
-use crate::logical::aggregation::AGG_FUNC_FIRST_ROW;
+use tidb_planner_core_operator_logicalop::aggregation::AGG_FUNC_FIRST_ROW;
 
-use crate::logical::plan_context::{LogicalOptRule, RuleContext};
-use crate::logical::{BaseLogicalPlan, LogicalAggregation, LogicalPlan, LogicalProjection, LogicalSelection};
+use tidb_planner_core_operator_logicalop::plan_context::{LogicalOptRule, RuleContext};
+use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalAggregation, LogicalPlan, LogicalProjection, LogicalSelection};
 use tidb_planner_core_base::{PlanError};
 
 /// Go `SemiJoinRewriter`.
 pub struct SemiJoinRewriter;
 
-fn rewrite_join(context: &RuleContext<'_>, mut join: crate::logical::LogicalJoin) -> LogicalPlan {
+fn rewrite_join(context: &RuleContext<'_>, mut join: tidb_planner_core_operator_logicalop::LogicalJoin) -> LogicalPlan {
     if !matches!(
         join.join_type,
         LogicalJoinType::Semi | LogicalJoinType::LeftOuterSemi
@@ -136,10 +136,10 @@ fn rewrite_join(context: &RuleContext<'_>, mut join: crate::logical::LogicalJoin
         .set_schema(Some(aggregation_schema.clone()));
 
     let query_block_offset = join.base.base.query_block_offset();
-    let mut inner_join = crate::logical::LogicalJoin::new(
+    let mut inner_join = tidb_planner_core_operator_logicalop::LogicalJoin::new(
         BaseLogicalPlan::new(
             context.allocator,
-            crate::logical::LogicalJoin::TYPE,
+            tidb_planner_core_operator_logicalop::LogicalJoin::TYPE,
             query_block_offset,
         ),
         LogicalJoinType::Inner,
@@ -227,9 +227,9 @@ mod tests {
     use tidb_expr::column::Column;
     use tidb_expr::scalar_function::ScalarFunction;
 
-    use crate::logical::plan_context::{HintWarningSink, LogicalOptRule};
+    use tidb_planner_core_operator_logicalop::plan_context::{HintWarningSink, LogicalOptRule};
     use crate::rule::rule_tests::test_context;
-    use crate::logical::{LogicalJoin, LogicalTableDual};
+    use tidb_planner_core_operator_logicalop::{LogicalJoin, LogicalTableDual};
     use tidb_planner_core_base::{PlanIdAllocator};
 
     use super::*;

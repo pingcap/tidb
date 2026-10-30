@@ -28,10 +28,10 @@ use tidb_expr::expression::Expression;
 use tidb_expr::simple_expr::extract_columns;
 use tidb_model::TableItemID;
 
-use crate::logical::LogicalPlan;
-use crate::logical::data_source::DataSource;
-use crate::logical::fold::{Descend, OwnedRewrite, fold_owned};
-use crate::logical::plan_context::{LogicalOptRule, RuleContext};
+use tidb_planner_core_operator_logicalop::LogicalPlan;
+use tidb_planner_core_operator_logicalop::data_source::DataSource;
+use tidb_planner_core_operator_logicalop::fold::{Descend, OwnedRewrite, fold_owned};
+use tidb_planner_core_operator_logicalop::plan_context::{LogicalOptRule, RuleContext};
 use super::rule_prune_indexes::prune_data_source_with_options;
 use tidb_planner_core_base::PlanError;
 
@@ -231,7 +231,7 @@ impl InterestingColumnPruner {
                 for function in &aggregation.agg_funcs {
                     if matches!(
                         function.name(),
-                        crate::logical::aggregation::AGG_FUNC_MIN | crate::logical::aggregation::AGG_FUNC_MAX
+                        tidb_planner_core_operator_logicalop::aggregation::AGG_FUNC_MIN | tidb_planner_core_operator_logicalop::aggregation::AGG_FUNC_MAX
                     ) {
                         for argument in function.args() {
                             down.ordering_columns.extend(extract_columns(argument));
@@ -460,7 +460,7 @@ impl Collector {
         self.add_expressions(&source.pushed_down_conds, true);
     }
 
-    fn collect_join(&mut self, join: &crate::logical::join::LogicalJoin) {
+    fn collect_join(&mut self, join: &tidb_planner_core_operator_logicalop::join::LogicalJoin) {
         let mut expressions = join
             .equal_conditions
             .iter()
@@ -687,14 +687,14 @@ mod tests {
     use tidb_expr::schema::Schema;
 
     use super::*;
-    use crate::logical::plan_context::StatisticsLoadRequester;
+    use tidb_planner_core_operator_logicalop::plan_context::StatisticsLoadRequester;
     use tidb_planner_util::path::PossiblePath;
-    use crate::logical::data_source::DataSourceColumn;
-    use crate::logical::join::LogicalJoin;
-    use crate::logical::projection::LogicalProjection;
+    use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
+    use tidb_planner_core_operator_logicalop::join::LogicalJoin;
+    use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
     use crate::rule::rule_tests::{test_context, TEST_BUILDER};
-    use crate::logical::selection::LogicalSelection;
-    use crate::logical::BaseLogicalPlan;
+    use tidb_planner_core_operator_logicalop::selection::LogicalSelection;
+    use tidb_planner_core_operator_logicalop::BaseLogicalPlan;
     use tidb_planner_core_base::PlanIdAllocator;
     use tidb_infoschema::table_source::SourceIndexColumn;
     use tidb_infoschema::table_source::SourceIndex;

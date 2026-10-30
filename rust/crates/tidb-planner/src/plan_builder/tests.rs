@@ -40,7 +40,7 @@ use tidb_planner_core_base::ColumnIdAllocator;
 use crate::rule::flags;
 use crate::rule::logical_optimize;
 use crate::rule::rule_tests::test_context;
-use crate::logical::LogicalPlan;
+use tidb_planner_core_operator_logicalop::LogicalPlan;
 use tidb_planner_core_base::PlanIdAllocator;
 
 // ***** a TableSource implementation, which is what a downstream crate writes *****
@@ -432,7 +432,7 @@ fn test_handle_less_table_gets_the_extra_row_id_handle() {
     assert_eq!(data_source.columns.len(), 4);
     assert_eq!(
         data_source.columns[2].id,
-        crate::logical::data_source::EXTRA_HANDLE_ID
+        tidb_planner_core_operator_logicalop::data_source::EXTRA_HANDLE_ID
     );
     assert!(data_source.handle_is_int);
     assert_eq!(data_source.handle_cols.len(), 1);
@@ -919,7 +919,7 @@ fn test_comment_index_hint_warnings_match_go() {
 
 #[test]
 fn test_read_from_storage_is_resolved_from_plan_hints_like_go() {
-    use crate::logical::data_source::{PREFER_TIFLASH, PREFER_TIKV};
+    use tidb_planner_core_operator_logicalop::data_source::{PREFER_TIFLASH, PREFER_TIKV};
 
     let mut harness = Harness::new();
     harness.tables_mut()[0].tiflash_replica = Some(tidb_model::TiFlashReplicaInfo {
@@ -1177,7 +1177,7 @@ fn test_lookup_pushdown_rejects_go_unsupported_index_metadata() {
 fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
     use crate::access_path::{apply_table_index_hints, get_possible_access_paths, IndexLookupPushDownPolicy, IndexLookupPushDownSession};
     use tidb_planner_util::path::{IndexLookupPushDownBy};
-    use crate::logical::data_source::DataSourceIndexHint;
+    use tidb_planner_core_operator_logicalop::data_source::DataSourceIndexHint;
 
     let hint = DataSourceIndexHint {
         kind: tidb_ast::IndexHintKind::Use,

@@ -29,7 +29,7 @@ use tidb_datatype::{FieldName, FieldNameMetadata, IdentifierMetadata};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 
-use crate::logical::DataSource;
+use tidb_planner_core_operator_logicalop::DataSource;
 
 /// Go `unsafe.Sizeof(PhysPlanPartInfo{})`.
 const GO_EMPTY_PARTITION_INFO_SIZE: i64 = 96;

@@ -25,11 +25,11 @@ use std::{error::Error, fmt};
 use tidb_distsql::{system_endian, EncodeType as DistSqlEncodeType, SystemEndian};
 use tidb_planner::{
     physical::{PhysicalIndexScan, PhysicalTableScan},
-    logical::tikv_scan_spec::{
+};
+use tidb_planner_core_operator_logicalop::tikv_scan_spec::{
         check_cover_index, ScanColumnInfo, TiKvIndexScanSpec, TiKvTableScanSpec,
         UnsupportedScanFeature,
-    },
-};
+    };
 use tidb_proto::tipb::{
     Aggregation, ChunkMemoryLayout, ColumnInfo, DagRequest, EncodeType, Endian, EngineType,
     ExecType, Executor, Expr, IndexScan, Limit, Selection, TableScan,

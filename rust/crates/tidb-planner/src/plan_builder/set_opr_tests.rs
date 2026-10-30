@@ -38,7 +38,7 @@ use tidb_infoschema::table_source::SourceColumn;
 use super::set_opr::union_join_field_type;
 use super::PlanBuilder;
 use tidb_planner_core_base::ColumnIdAllocator;
-use crate::logical::LogicalPlan;
+use tidb_planner_core_operator_logicalop::LogicalPlan;
 use tidb_planner_core_base::{PlanError, PlanIdAllocator};
 
 // ***** the catalogue *****

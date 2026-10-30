@@ -29,7 +29,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 use tidb_datatype::Datum;
-use tidb_planner::logical::mem_table::QueryTimeRange;
+use tidb_planner_core_operator_logicalop::mem_table::QueryTimeRange;
 use tidb_planner::memtable_predicate_extractor::MemTableExtractor;
 
 /// What one memory-table scan hands its retriever: Go's `PhysicalMemTable`

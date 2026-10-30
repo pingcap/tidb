@@ -13,7 +13,7 @@
 
 use tidb_planner_util::path::{FilledIndexPath, FilledTablePath, PossiblePath};
 use super::AccessPathDerivationContext;
-use crate::logical::DataSource;
+use tidb_planner_core_operator_logicalop::DataSource;
 use tidb_planner_core_base::PlanError;
 use tidb_expr::{column::Column, expression::Expression};
 
@@ -92,7 +92,7 @@ pub(crate) fn fill_index_path(
         .iter()
         .cloned()
         .partition(|condition| {
-            crate::logical::data_source::index_covers_condition(
+            tidb_planner_core_operator_logicalop::data_source::index_covers_condition(
                 source,
                 index,
                 condition,
@@ -123,7 +123,7 @@ fn split_correlated_access(
         return 0;
     }
     let (cols, lengths): (Vec<_>, Vec<_>) = columns.iter().cloned().unzip();
-    let (accesses, remained) = crate::logical::data_source_paths::split_correlated_access_conditions(
+    let (accesses, remained) = tidb_planner_core_operator_logicalop::data_source_paths::split_correlated_access_conditions(
         &detached.remained_conds,
         &cols,
         &lengths,

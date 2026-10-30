@@ -36,7 +36,7 @@ use super::index_merge::{enumerated_index_mask, estimate_partial_index_ranges, i
 use tidb_planner_util::path::{IndexMergePartial, IndexMergePath};
 use super::AccessPathDerivationContext;
 use tidb_planner_util::path::IndexPathState;
-use crate::logical::DataSource;
+use tidb_planner_core_operator_logicalop::DataSource;
 use tidb_planner_core_base::PlanError;
 use tidb_ranger::points::ExpressionEvaluator;
 use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode};
@@ -601,7 +601,7 @@ fn split_index_filter_conditions(
     ctx: &AccessPathDerivationContext<'_>,
 ) -> (Vec<Expression>, Vec<Expression>) {
     conditions.into_iter().partition(|condition| {
-        crate::logical::data_source::index_covers_condition(
+        tidb_planner_core_operator_logicalop::data_source::index_covers_condition(
             ds,
             &ds.indexes[index_pos],
             condition,

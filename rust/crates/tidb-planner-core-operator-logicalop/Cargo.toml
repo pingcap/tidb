@@ -1,0 +1,42 @@
+[package]
+name = "tidb-planner-core-operator-logicalop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/planner/core/operator/logicalop (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-kv = { path = "../tidb-kv" }
+tidb-planner-core-partidx = { path = "../tidb-planner-core-partidx" }
+tidb-planner-core-rule-util = { path = "../tidb-planner-core-rule-util" }
+tidb-planner-cardinality = { path = "../tidb-planner-cardinality" }
+tidb-planner-core-base = { path = "../tidb-planner-core-base" }
+tidb-planner-property = { path = "../tidb-planner-property" }
+tidb-planner-core-access = { path = "../tidb-planner-core-access" }
+tidb-planner-core-constraint = { path = "../tidb-planner-core-constraint" }
+tidb-planner-core-cost = { path = "../tidb-planner-core-cost" }
+tidb-expression-aggregation = { path = "../tidb-expression-aggregation" }
+tidb-exprctx = { path = "../tidb-exprctx" }
+tidb-charset = { path = "../tidb-charset" }
+tidb-planner-tablesampler = { path = "../tidb-planner-tablesampler" }
+tidb-planner-util = { path = "../tidb-planner-util" }
+tidb-planner-cascades-base = { path = "../tidb-planner-cascades-base" }
+tidb-context = { path = "../tidb-context" }
+tidb-intset = { path = "../tidb-intset" }
+tidb-ranger = { path = "../tidb-ranger" }
+tidb-hack = { path = "../tidb-hack" }
+tidb-ast = { path = "../tidb-ast" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-funcdep = { path = "../tidb-funcdep" }
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-sessionctx = { path = "../tidb-sessionctx" }
+tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-stats = { path = "../tidb-stats" }
+tidb-vardef = { path = "../tidb-vardef" }

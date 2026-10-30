@@ -16,7 +16,7 @@
 //! Removed empty entries and their original contracts are indexed in
 //! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
-use tidb_planner::logical::{data_source::DataSource, BaseLogicalPlan};
+use tidb_planner_core_operator_logicalop::{data_source::DataSource, BaseLogicalPlan};
 use tidb_planner_core_base::PlanIdAllocator;
 
 /// GO PORT of `pkg/planner/core/logical_plans_test.go:761 TestAllocID`.

@@ -16,8 +16,8 @@
 //! Removed empty entries and their original contracts are indexed in
 //! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
-use tidb_planner::logical::projection::LogicalProjection;
-use tidb_planner::logical::{schema_producer, BaseLogicalPlan};
+use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
+use tidb_planner_core_operator_logicalop::{schema_producer, BaseLogicalPlan};
 
 /// GO PORT of
 /// `pkg/planner/core/operator/logicalop/logicalop_test/hash64_equals_test.go:308

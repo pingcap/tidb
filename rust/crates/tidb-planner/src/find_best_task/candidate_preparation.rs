@@ -17,7 +17,7 @@ use super::dispatch::{
     DispatchContext,
 };
 use tidb_planner_util::path::PossiblePath;
-use crate::logical::{data_source::index_path_is_single_scan, DataSource};
+use tidb_planner_core_operator_logicalop::{data_source::index_path_is_single_scan, DataSource};
 use tidb_planner_property::{PhysicalProperty, TaskType};
 
 pub(super) struct PreparedOrdinaryPaths<'a> {
@@ -51,9 +51,9 @@ pub(super) fn prepare_ordinary_paths<'a>(
     let retained = ds.derived_access_paths.as_ref()?;
     let mut candidates = Vec::new();
     for &path in paths {
-        if (ds.prefer_store_type & crate::logical::data_source::PREFER_TIFLASH != 0
+        if (ds.prefer_store_type & tidb_planner_core_operator_logicalop::data_source::PREFER_TIFLASH != 0
             && !matches!(path, PossiblePath::TiFlashTable))
-            || (ds.prefer_store_type & crate::logical::data_source::PREFER_TIKV != 0
+            || (ds.prefer_store_type & tidb_planner_core_operator_logicalop::data_source::PREFER_TIKV != 0
                 && matches!(path, PossiblePath::TiFlashTable))
         {
             continue;
@@ -271,7 +271,7 @@ fn range_scan_flags(
             let index_filter_count = remained
                 .iter()
                 .filter(|condition| {
-                    crate::logical::data_source::index_covers_condition(
+                    tidb_planner_core_operator_logicalop::data_source::index_covers_condition(
                         ds,
                         index,
                         condition,

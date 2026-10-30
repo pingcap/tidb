@@ -30,8 +30,8 @@
 //!   columns, ids 1/2/3.
 //!
 //! Both drive the enum-level dispatches this crate ships:
-//! [`tidb_planner::logical::LogicalCTE::prepare_possible_properties`] and
-//! [`tidb_planner::logical::LogicalPlan::prune_columns`] (the owned rewrite
+//! [`tidb_planner_core_operator_logicalop::LogicalCTE::prepare_possible_properties`] and
+//! [`tidb_planner_core_operator_logicalop::LogicalPlan::prune_columns`] (the owned rewrite
 //! whose `TopN` arm mirrors `logical_top_n.go:79` arm by arm).
 
 use std::cell::RefCell;
@@ -43,13 +43,13 @@ use tidb_expr::expr_util::builder::PreservingFunctionBuilder;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
-use tidb_planner::logical::cte::{CteClass, LogicalCTE};
-use tidb_planner::logical::plan_context::RuleContext;
-use tidb_planner::logical::table_dual::LogicalTableDual;
-use tidb_planner::logical::topn::LogicalTopN;
+use tidb_planner_core_operator_logicalop::cte::{CteClass, LogicalCTE};
+use tidb_planner_core_operator_logicalop::plan_context::RuleContext;
+use tidb_planner_core_operator_logicalop::table_dual::LogicalTableDual;
+use tidb_planner_core_operator_logicalop::topn::LogicalTopN;
 use tidb_planner_core_base::{PlanIdAllocator, PossiblePropertiesInfo};
 
-use tidb_planner::logical::{BaseLogicalPlan, LogicalPlan};
+use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalPlan};
 
 fn column(unique_id: i64) -> Column {
     let mut col = Column::new(

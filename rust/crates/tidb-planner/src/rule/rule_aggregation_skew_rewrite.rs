@@ -23,8 +23,8 @@ use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::extract_columns;
 use tidb_exprctx::NoColumns;
 
-use crate::logical::plan_context::{LogicalOptRule, RuleContext};
-use crate::logical::{BaseLogicalPlan, LogicalAggregation, LogicalPlan, LogicalProjection};
+use tidb_planner_core_operator_logicalop::plan_context::{LogicalOptRule, RuleContext};
+use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalAggregation, LogicalPlan, LogicalProjection};
 use tidb_planner_core_base::{PlanError};
 
 /// Go `SkewDistinctAggRewriter`.
@@ -308,9 +308,9 @@ mod tests {
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_expr::constant::Constant;
 
-    use crate::logical::plan_context::LogicalOptRule;
+    use tidb_planner_core_operator_logicalop::plan_context::LogicalOptRule;
     use crate::rule::rule_tests::test_context;
-    use crate::logical::{LogicalTableDual};
+    use tidb_planner_core_operator_logicalop::{LogicalTableDual};
     use tidb_planner_core_base::{PlanIdAllocator};
 
     use super::*;

@@ -94,7 +94,6 @@ pub mod stmt_ctx;
 pub mod fulltext;
 pub mod index_task;
 pub mod joinorder;
-pub mod logical;
 pub mod rule;
 pub mod logical_data_source;
 pub mod logical_data_source_task;

@@ -124,7 +124,7 @@ pub(super) fn equality_facts(detached: &tidb_ranger::detacher::DetachRangeResult
 /// Go `getIndexCandidate`: read both coverage maps and estimate stages from
 /// the logically filled path. Missing facts must not eliminate a competitor.
 pub(crate) fn index_candidate_metrics(
-    source: &crate::logical::DataSource,
+    source: &tidb_planner_core_operator_logicalop::DataSource,
     index: &tidb_infoschema::table_source::SourceIndex,
     path: &tidb_planner_util::path::IndexPathState,
     single_scan: bool,
@@ -477,7 +477,7 @@ mod skyline_tests {
             columns: vec![SourceIndexColumn::default(); 3],
             ..Default::default()
         };
-        let source = crate::logical::DataSource::default();
+        let source = tidb_planner_core_operator_logicalop::DataSource::default();
         let mut path = IndexPathState {
             row_estimate: Some(tidb_stats::RowEstimate::new(
                 100.0, 20.0, 200.0,

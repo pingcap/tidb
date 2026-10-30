@@ -103,7 +103,7 @@ use tidb_expr::pb_predicate::{
     string_like_to_pb, time_comparison_to_pb, DecimalPbOperand, IntPbOperand, PbPredicateError,
     StringPbOperand, TimePbOperand,
 };
-use tidb_planner::logical::tikv_scan_spec::ScanColumnInfo;
+use tidb_planner_core_operator_logicalop::tikv_scan_spec::ScanColumnInfo;
 use tidb_proto::tipb::Expr;
 
 /// Why a pushed conjunct cannot become a coprocessor Selection condition.

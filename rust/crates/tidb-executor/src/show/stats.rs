@@ -185,7 +185,7 @@ pub(crate) fn stats_row_admitted(
     }
     if let Some(filters) = extractor
         .as_any()
-        .downcast_ref::<tidb_planner::logical::ShowStatsMetaPredicateExtractor>()
+        .downcast_ref::<tidb_planner_core_operator_logicalop::ShowStatsMetaPredicateExtractor>()
     {
         return (filters.db.is_empty() || filters.db.contains(&lower(0)))
             && (filters.table.is_empty() || filters.table.contains(&lower(1)));

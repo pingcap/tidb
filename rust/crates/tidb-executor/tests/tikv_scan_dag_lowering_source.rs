@@ -26,15 +26,15 @@ use tidb_planner_cardinality::{
         live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate},
 };
 use tidb_planner::{
-    logical::data_source_paths::{DataSourceAccessPath, IndexAccessPath, PointGetAdmission},
     logical_data_source::LogicalDataSource,
     logical_data_source_task::IndexTaskProperty,
     physical::{PhysicalIndexScan, PhysicalTableScan},
-    logical::tikv_scan_spec::{
+};
+use tidb_planner_core_operator_logicalop::data_source_paths::{DataSourceAccessPath, IndexAccessPath, PointGetAdmission};
+use tidb_planner_core_operator_logicalop::tikv_scan_spec::{
         check_cover_index, IndexPushdownMetadataError, ResolvedIndexDescriptor, ScanColumnInfo,
         TiKvIndexScanSpec, TiKvTableScanSpec, UnsupportedScanFeature,
-    },
-};
+    };
 use tidb_proto::tipb::{DagRequest, EncodeType, Endian, EngineType, ExecType};
 
 fn value_range(width: usize) -> IndexRangeShape {

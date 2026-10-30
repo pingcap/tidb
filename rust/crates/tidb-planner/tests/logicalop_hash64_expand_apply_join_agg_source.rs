@@ -22,10 +22,10 @@ use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
 
 use tidb_planner_core_base::LogicalJoinType;
-use tidb_planner::logical::aggregation::LogicalAggregation;
-use tidb_planner::logical::expand::{LogicalExpand, RollupGroupingSet};
-use tidb_planner::logical::join::LogicalJoin;
-use tidb_planner::logical::BaseLogicalPlan;
+use tidb_planner_core_operator_logicalop::aggregation::LogicalAggregation;
+use tidb_planner_core_operator_logicalop::expand::{LogicalExpand, RollupGroupingSet};
+use tidb_planner_core_operator_logicalop::join::LogicalJoin;
+use tidb_planner_core_operator_logicalop::BaseLogicalPlan;
 use tidb_planner_core_base::PossiblePropertiesInfo;
 
 /// Go `&expression.Column{ID: n, Index: i, RetType: TypeLonglong}`.

@@ -132,9 +132,9 @@ use super::{
     find_field_name, hide_rewrite_columns, snapshot_schema_and_names, PlanBuilder, ProjectionField,
 };
 use crate::expression_rewriter::ClauseCode;
-use crate::logical::aggregation::LogicalAggregation;
+use tidb_planner_core_operator_logicalop::aggregation::LogicalAggregation;
 use crate::rule::flags;
-use crate::logical::LogicalPlan;
+use tidb_planner_core_operator_logicalop::LogicalPlan;
 use tidb_planner_core_base::PlanError;
 
 // ***** the generic AST traversal every resolver below is written over *****

@@ -47,8 +47,8 @@ use super::window::{
 };
 use super::PlanBuilder;
 use tidb_planner_core_base::ColumnIdAllocator;
-use crate::logical::window::{BoundType, FrameType, LogicalWindow};
-use crate::logical::LogicalPlan;
+use tidb_planner_core_operator_logicalop::window::{BoundType, FrameType, LogicalWindow};
+use tidb_planner_core_operator_logicalop::LogicalPlan;
 use tidb_planner_core_base::{PlanError, PlanIdAllocator};
 
 // ***** the harness *****
@@ -213,7 +213,7 @@ fn collect_windows<'a>(plan: &'a LogicalPlan, out: &mut Vec<&'a LogicalWindow>) 
 }
 
 /// Every `LogicalProjection` in the plan, root first.
-fn projections(plan: &LogicalPlan) -> Vec<&crate::logical::projection::LogicalProjection> {
+fn projections(plan: &LogicalPlan) -> Vec<&tidb_planner_core_operator_logicalop::projection::LogicalProjection> {
     let mut found = Vec::new();
     collect_projections(plan, &mut found);
     found
@@ -221,7 +221,7 @@ fn projections(plan: &LogicalPlan) -> Vec<&crate::logical::projection::LogicalPr
 
 fn collect_projections<'a>(
     plan: &'a LogicalPlan,
-    out: &mut Vec<&'a crate::logical::projection::LogicalProjection>,
+    out: &mut Vec<&'a tidb_planner_core_operator_logicalop::projection::LogicalProjection>,
 ) {
     if let LogicalPlan::Projection(projection) = plan {
         out.push(projection);

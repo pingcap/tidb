@@ -32,8 +32,8 @@ use tidb_executor_internal_exec::predicate_pushdown::{
 use tidb_expr::pushdown_catalog::{build_call, PbScalar};
 use tidb_planner::{
     physical::PhysicalTableScan,
-    logical::tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec},
 };
+use tidb_planner_core_operator_logicalop::tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec};
 use tidb_proto::tipb::{DagRequest, ExecType, Expr, ExprType, ScalarFuncSig};
 
 /// Go `mysql.TypeLonglong`, `TypeLong`, `TypeVarchar`.

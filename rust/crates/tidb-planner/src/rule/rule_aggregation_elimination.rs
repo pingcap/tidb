@@ -22,7 +22,7 @@
 //! loses keys carried through projections, joins, and derived tables and can
 //! reverse later physical-join choices.
 
-use crate::base_arms;
+use tidb_planner_core_operator_logicalop::base_arms;
 use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanError;
 use tidb_datatype::{Datum, FieldType, FieldTypeFlags};
@@ -32,10 +32,10 @@ use tidb_expr::expr_util::builder::tiny_int_type;
 use tidb_expr::expression::Expression;
 use tidb_expr::simple_expr::compose_dnf_condition;
 
-use crate::logical::fold::{fold_owned, Descend, OwnedRewrite, RewriteFailure};
-use crate::logical::projection::LogicalProjection;
-use crate::logical::plan_context::{LogicalOptRule, RuleContext};
-use crate::logical::{BaseLogicalPlan, LogicalAggregation, LogicalPlan};
+use tidb_planner_core_operator_logicalop::fold::{fold_owned, Descend, OwnedRewrite, RewriteFailure};
+use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
+use tidb_planner_core_operator_logicalop::plan_context::{LogicalOptRule, RuleContext};
+use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalAggregation, LogicalPlan};
 
 fn covers_key(columns: &[tidb_expr::column::Column], key: &[tidb_expr::column::Column]) -> bool {
     key.iter().all(|key_column| {

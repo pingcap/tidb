@@ -17,7 +17,7 @@
 
 use crate::find_best_task::dispatch::DispatchContext;
 use crate::find_best_task::index_merge_union::merge_scan_stats;
-use crate::logical::DataSource;
+use tidb_planner_core_operator_logicalop::DataSource;
 use crate::physical::PhysicalPlan;
 use tidb_planner_core_base::PlanError;
 use crate::task::Task;
@@ -149,11 +149,11 @@ pub(super) fn build_prepared_index_merge_task(
         prop: None,
         plan_part_info: None,
         filter_condition: Vec::new(),
-        resolved_descriptor: Some(crate::logical::data_source_paths::ResolvedTableDescriptor::new(
+        resolved_descriptor: Some(tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableDescriptor::new(
             ds.physical_table_id,
             !ds.common_handle_cols.is_empty(),
-            crate::logical::data_source_paths::ResolvedTableScanKind::RowId,
-            crate::logical::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
+            tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::RowId,
+            tidb_planner_core_operator_logicalop::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
         )),
     });
     // Go `BuildIndexMergeTableScan` separates root conditions before sealing

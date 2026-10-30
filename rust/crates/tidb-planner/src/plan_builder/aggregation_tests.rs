@@ -34,7 +34,7 @@ use tidb_infoschema::table_source::SourceColumn;
 use super::marker::{MarkerKind, PlanMarker};
 use super::{PlanBuilder, ProjectionField};
 use tidb_planner_core_base::ColumnIdAllocator;
-use crate::logical::{prepare_possible_properties, LogicalPlan};
+use tidb_planner_core_operator_logicalop::{prepare_possible_properties, LogicalPlan};
 use tidb_planner_core_base::PlanIdAllocator;
 
 // ***** the catalogue *****

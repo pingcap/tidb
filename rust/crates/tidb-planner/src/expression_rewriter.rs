@@ -142,14 +142,14 @@ use tidb_expr::simple_expr::{compose_cnf_condition, compose_dnf_condition, extra
 use tidb_exprctx::Columns;
 
 use tidb_planner_core_base::LogicalJoinType;
-use crate::logical::aggregation::LogicalAggregation;
-use crate::logical::apply::LogicalApply;
-use crate::logical::join::LogicalJoin;
-use crate::logical::limit::LogicalLimit;
-use crate::logical::max_one_row::LogicalMaxOneRow;
-use crate::logical::projection::LogicalProjection;
-use crate::logical::table_dual::LogicalTableDual;
-use crate::logical::{BaseLogicalPlan, LogicalPlan};
+use tidb_planner_core_operator_logicalop::aggregation::LogicalAggregation;
+use tidb_planner_core_operator_logicalop::apply::LogicalApply;
+use tidb_planner_core_operator_logicalop::join::LogicalJoin;
+use tidb_planner_core_operator_logicalop::limit::LogicalLimit;
+use tidb_planner_core_operator_logicalop::max_one_row::LogicalMaxOneRow;
+use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
+use tidb_planner_core_operator_logicalop::table_dual::LogicalTableDual;
+use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalPlan};
 use tidb_planner_core_base::PlanIdAllocator;
 
 // ***** planbuilder.go: the two small enums the rewriter is keyed on *****
@@ -442,7 +442,7 @@ fn visit_logical_correlated_columns_mut(
     }
 
     fn join(
-        join: &mut crate::logical::join::LogicalJoin,
+        join: &mut tidb_planner_core_operator_logicalop::join::LogicalJoin,
         visitor: &mut impl FnMut(&mut CorrelatedColumn),
     ) {
         for function in &mut join.equal_conditions {

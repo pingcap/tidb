@@ -22,18 +22,16 @@
 //! table-only branch of `CopTask.convertToRootTaskImpl` for one admitted TiKV
 //! path.
 
-use crate::{
-    logical::data_source_paths::{
+use tidb_planner_core_operator_logicalop::data_source_paths::{
         AccessPathStore, DataSourceAccessPath, IndexAccessPath, IndexReadShape, PointGetAdmission,
         TableAccessPath,
-    },
-    index_task::{
+    };
+use crate::index_task::{
         CopIndexTask, CopTableTask, IndexTask, IndexTaskRejection, ScanReadTask,
         ScanReadTaskRejection, TableTaskRejection,
-    },
-    logical_data_source::LogicalDataSource,
-    physical::{BasePhysicalPlan, PhysicalIndexScan, PhysicalTableDual, PhysicalTableScan},
-};
+    };
+use crate::logical_data_source::LogicalDataSource;
+use crate::physical::{BasePhysicalPlan, PhysicalIndexScan, PhysicalTableDual, PhysicalTableScan};
 use tidb_planner_property::task_type::TaskType;
 
 /// Ordering refusal used only by this legacy bounded task builder.
@@ -194,7 +192,7 @@ pub fn build_scan_read_task(
 fn empty_range_table_dual(source: &LogicalDataSource) -> PhysicalTableDual {
     let base = BasePhysicalPlan::with_id(
         source.physical_plan_id(),
-        crate::logical::LogicalTableDual::TYPE,
+        tidb_planner_core_operator_logicalop::LogicalTableDual::TYPE,
         source.query_block_offset(),
     );
     PhysicalTableDual::new(base, 0)
@@ -220,7 +218,7 @@ fn build_supported_table_task(
     if path.is_partitioned()
         || matches!(
             path.pushdown().unsupported,
-            Some(crate::logical::tikv_scan_spec::UnsupportedScanFeature::Partition)
+            Some(tidb_planner_core_operator_logicalop::tikv_scan_spec::UnsupportedScanFeature::Partition)
         )
     {
         return invalid_table(TableTaskRejection::Partition);

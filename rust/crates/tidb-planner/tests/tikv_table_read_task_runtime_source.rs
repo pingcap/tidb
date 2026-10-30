@@ -11,16 +11,16 @@ use tidb_planner_cardinality::{
         live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate},
 };
 use tidb_planner::{
-    logical::data_source_paths::{
-        AccessPathStore, DataSourceAccessPath, IndexAccessPath, PointGetAdmission,
-        ResolvedTableDescriptor, ResolvedTableScanKind, TableAccessPath, TableScanExplainIdSuffix,
-    },
     index_task::{IndexTaskRejection, ScanReadTask, ScanReadTaskRejection, TableTaskRejection},
     logical_data_source::LogicalDataSource,
     logical_data_source_task::{IndexOrderingRequirement, IndexTaskProperty},
     physical::{PhysicalTableReader, PhysicalTableScan},
-    logical::tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec, UnsupportedScanFeature},
 };
+use tidb_planner_core_operator_logicalop::data_source_paths::{
+        AccessPathStore, DataSourceAccessPath, IndexAccessPath, PointGetAdmission,
+        ResolvedTableDescriptor, ResolvedTableScanKind, TableAccessPath, TableScanExplainIdSuffix,
+    };
+use tidb_planner_core_operator_logicalop::tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec, UnsupportedScanFeature};
 
 fn source(paths: impl IntoIterator<Item = DataSourceAccessPath>) -> LogicalDataSource {
     LogicalDataSource::new(91, -4, paths)

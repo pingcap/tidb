@@ -66,7 +66,7 @@ use tidb_txnkv::CancelHandle;
 use tidb_context::WarningCollector;
 use tidb_planner_cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
 use tidb_planner::physical::{PhysicalIndexScan, PhysicalTableScan};
-use tidb_planner::logical::tikv_scan_spec::{
+use tidb_planner_core_operator_logicalop::tikv_scan_spec::{
     ResolvedIndexDescriptor, ScanColumnInfo, TiKvIndexScanSpec, TiKvTableScanSpec,
 };
 use tidb_proto::tipb::{

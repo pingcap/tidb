@@ -19,7 +19,7 @@ use tidb_expr::simple_expr::extract_columns;
 use tidb_intset::FastIntSet;
 
 use super::ProjectionField;
-use crate::logical::{LogicalPlan, LogicalProjection};
+use tidb_planner_core_operator_logicalop::{LogicalPlan, LogicalProjection};
 use tidb_planner_core_base::PlanError;
 
 fn contains_any_value(expr: &Expression) -> bool {

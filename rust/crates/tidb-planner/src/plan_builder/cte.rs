@@ -107,8 +107,8 @@
 //!   `IsInApply`. It belongs to `buildLateralJoin` (6b) rather than to any
 //!   symbol in this batch, its only reader is the physical CTE executor, and
 //!   the walk it needs is an OWNED rewrite through
-//!   [`crate::logical::fold`] rather than the recursive descent Go writes.
-//!   [`crate::logical::cte::CteClass::is_in_apply`] therefore stays `false`;
+//!   [`tidb_planner_core_operator_logicalop::fold`] rather than the recursive descent Go writes.
+//!   [`tidb_planner_core_operator_logicalop::cte::CteClass::is_in_apply`] therefore stays `false`;
 //!   it is named here because 6b's header pointed at this batch for it.
 
 use std::any::Any;
@@ -123,10 +123,10 @@ use tidb_expr::column::Column;
 use tidb_expr::schema::Schema;
 use tidb_exprctx::Columns;
 
-use crate::logical::cte::{CteClass, LogicalCTE, LogicalCTETable};
+use tidb_planner_core_operator_logicalop::cte::{CteClass, LogicalCTE, LogicalCTETable};
 use crate::rule::flags;
-use crate::logical::sequence::LogicalSequence;
-use crate::logical::LogicalPlan;
+use tidb_planner_core_operator_logicalop::sequence::LogicalSequence;
+use tidb_planner_core_operator_logicalop::LogicalPlan;
 use tidb_planner_core_base::PlanError;
 use tidb_planner_property::stats_info::StatsInfo;
 
@@ -899,8 +899,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
         }
         self.opt_flag |= flags::ELIMINATE_PROJECTION;
-        let mut projection = crate::logical::projection::LogicalProjection::new(
-            self.base(crate::logical::projection::LogicalProjection::TYPE),
+        let mut projection = tidb_planner_core_operator_logicalop::projection::LogicalProjection::new(
+            self.base(tidb_planner_core_operator_logicalop::projection::LogicalProjection::TYPE),
             exprs,
         );
         projection.base.set_children(vec![recur]);

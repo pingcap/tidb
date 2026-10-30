@@ -92,11 +92,11 @@ use tidb_expr::schema::Schema;
 use tidb_exprctx::Columns;
 
 use tidb_planner_core_base::LogicalJoinType;
-use crate::logical::join::LogicalJoin;
-use crate::logical::projection::LogicalProjection;
+use tidb_planner_core_operator_logicalop::join::LogicalJoin;
+use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
 use crate::rule::flags;
-use crate::logical::union_all::LogicalUnionAll;
-use crate::logical::LogicalPlan;
+use tidb_planner_core_operator_logicalop::union_all::LogicalUnionAll;
+use tidb_planner_core_operator_logicalop::LogicalPlan;
 use tidb_planner_core_base::PlanError;
 
 use tidb_infoschema::table_source::TableSource;

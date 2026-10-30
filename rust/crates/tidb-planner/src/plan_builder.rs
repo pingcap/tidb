@@ -78,7 +78,7 @@
 //! Do NOT reach for `Rc`, interior mutability or a second traversal to work
 //! around this: the logical tree's whole rule surface is
 //! `fn(self, ...) -> LogicalPlan` precisely so children can be owned, and a
-//! shared handle on a child edge would undo that (see [`crate::logical`]'s
+//! shared handle on a child edge would undo that (see [`tidb_planner_core_operator_logicalop`]'s
 //! header).
 //!
 //! # 4. `opt_flag`, and where it lives
@@ -226,17 +226,17 @@ use crate::expression_rewriter::{
     RewriteError, RewriterEnv, RewriterHints, RewriterSessionFlags, ScalarSubqueryOutcome,
     SubQueryCtx,
 };
-use crate::logical::data_source::{
+use tidb_planner_core_operator_logicalop::data_source::{
     DataSource, DataSourceColumn, DataSourceIndexHint, DataSourceIndexMergeHint, EXTRA_HANDLE_ID,
     PREFER_TIFLASH, PREFER_TIKV,
 };
-use crate::logical::limit::LogicalLimit;
-use crate::logical::projection::LogicalProjection;
+use tidb_planner_core_operator_logicalop::limit::LogicalLimit;
+use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
 use crate::rule::flags;
-use crate::logical::selection::LogicalSelection;
-use crate::logical::sort::LogicalSort;
-use crate::logical::table_dual::LogicalTableDual;
-use crate::logical::{BaseLogicalPlan, LogicalPlan};
+use tidb_planner_core_operator_logicalop::selection::LogicalSelection;
+use tidb_planner_core_operator_logicalop::sort::LogicalSort;
+use tidb_planner_core_operator_logicalop::table_dual::LogicalTableDual;
+use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalPlan};
 use tidb_planner_core_base::{PlanError, PlanIdAllocator};
 
 use tidb_infoschema::table_source::TableSource;
@@ -277,7 +277,7 @@ impl From<RewriteError> for PlanError {
 /// touches one of these takes an INDEX rather than a handle.
 ///
 /// NOT [`Clone`]: it owns built [`LogicalPlan`] trees, and this crate does not
-/// deep-clone a plan (see [`crate::logical`]'s header).
+/// deep-clone a plan (see [`tidb_planner_core_operator_logicalop`]'s header).
 #[derive(Debug)]
 pub struct OuterCte {
     /// Go `cteInfo.def.Name.L`.
@@ -319,10 +319,10 @@ pub struct OuterCte {
     /// Go `cteInfo.optFlag`: the flags the CTE's OWN build accumulated.
     pub opt_flag: u64,
     /// Go `cteInfo.seedStat`, aliased by every `LogicalCTE`/`LogicalCTETable`
-    /// for this CTE; see [`crate::logical::cte`]'s header.
+    /// for this CTE; see [`tidb_planner_core_operator_logicalop::cte`]'s header.
     pub seed_stat: std::rc::Rc<std::cell::RefCell<tidb_planner_property::stats_info::StatsInfo>>,
     /// Go `cteInfo.cteClass`, created at the FIRST reference and shared.
-    pub cte_class: Option<std::rc::Rc<std::cell::RefCell<crate::logical::cte::CteClass>>>,
+    pub cte_class: Option<std::rc::Rc<std::cell::RefCell<tidb_planner_core_operator_logicalop::cte::CteClass>>>,
     /// Go `cteInfo.isInline`.
     pub is_inline: bool,
     /// Go `cteInfo.forceInlineByHintOrVar`.
@@ -3753,8 +3753,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         {
             self.set_extra_phys_tbl_id_cols(&mut child, &mut BTreeMap::new());
         }
-        let mut union_scan = crate::logical::LogicalUnionScan::new(
-            self.base(crate::logical::LogicalUnionScan::TYPE),
+        let mut union_scan = tidb_planner_core_operator_logicalop::LogicalUnionScan::new(
+            self.base(tidb_planner_core_operator_logicalop::LogicalUnionScan::TYPE),
             handle_cols,
         );
         union_scan
@@ -5073,7 +5073,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // with the a-group weights, not the raw-byte order that puts it
         // after 'b').
         let collate_blocked = match &plan {
-            crate::logical::LogicalPlan::Sort(sort) => {
+            tidb_planner_core_operator_logicalop::LogicalPlan::Sort(sort) => {
                 let Some(child) = sort.base.children().first() else {
                     return Err(PlanError::internal("a sort has no child"));
                 };
@@ -5252,7 +5252,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // LIMIT, and the trailing projection, which is what puts the
             // physical `SelectLock` between the reader and the projection in
             // the optimized tree.
-            plan = self.build_select_lock(plan, crate::logical::SelectLockType::ForUpdate, 0)?;
+            plan = self.build_select_lock(plan, tidb_planner_core_operator_logicalop::SelectLockType::ForUpdate, 0)?;
         }
         if !select.order_by.is_empty() {
             // Go `buildSelect`: "flag it if cte contain order by".
@@ -5627,7 +5627,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
 
         if let Some(lock) = &select.lock {
-            use crate::logical::SelectLockType;
+            use tidb_planner_core_operator_logicalop::SelectLockType;
             use tidb_ast::{LockKind, LockWait};
             let lock_type = match (lock.kind, lock.wait) {
                 (LockKind::Update, LockWait::Default) => SelectLockType::ForUpdate,

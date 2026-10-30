@@ -18,9 +18,9 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
 use tidb_expr::expression::Expression;
-use tidb_planner::logical::projection::LogicalProjection;
+use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
 use tidb_planner::rule::RuleId;
-use tidb_planner::logical::BaseLogicalPlan;
+use tidb_planner_core_operator_logicalop::BaseLogicalPlan;
 
 fn column(unique_id: i64) -> Expression {
     Expression::Column(Column::new(

@@ -33,7 +33,7 @@
 //! `{a,b}`, `{a,b,c}`. Go does NOT compute four aggregates: it REPLICATES each
 //! source row once per grouping set, NULLing the columns that set does not
 //! group by, tags the copy with a `gid`, and then runs ONE aggregation grouped
-//! additionally by `gid`. [`crate::logical::expand::LogicalExpand`] is the
+//! additionally by `gid`. [`tidb_planner_core_operator_logicalop::expand::LogicalExpand`] is the
 //! replicator, and this file is the only thing in the crate that builds one.
 //!
 //! `tidb-executor`'s `driver/grouping.rs:221` `run_rollup_aggregate` solves the
@@ -43,7 +43,7 @@
 //! (`replace_grouping_expr`, `grouping_call_args`, `grouping_arg_positions`),
 //! the `GROUPING()` argument resolution, which is
 //! [`PlanBuilder::replace_grouping_func`] here over
-//! [`crate::logical::expand::LogicalExpand::resolve_grouping_func_args_in_group_by`].
+//! [`tidb_planner_core_operator_logicalop::expand::LogicalExpand::resolve_grouping_func_args_in_group_by`].
 //!
 //! # Narrowings, by exact blocking Go symbol
 //!
@@ -54,7 +54,7 @@
 //!   column whose unique id appears in any grouping set — which is the whole
 //!   content of that function.
 //! * `expression.GroupingSets`/`GroupingSet`/`GroupingExprs` are not
-//!   transcreated; [`crate::logical::expand::RollupGroupingSet`]'s own header
+//!   transcreated; [`tidb_planner_core_operator_logicalop::expand::RollupGroupingSet`]'s own header
 //!   records why, and [`distinct_size`] is the one method of that file the
 //!   builder must supply, ported here against the column-id sets.
 //! * `expression.Expression.CanonicalHashCode`, which
@@ -74,10 +74,10 @@ use tidb_exprctx::Columns;
 
 use tidb_infoschema::table_source::TableSource;
 use super::{snapshot_schema_and_names, BlockExpand, PlanBuilder};
-use crate::logical::expand::{GroupingMode, LogicalExpand, RollupGroupingSet};
-use crate::logical::projection::LogicalProjection;
+use tidb_planner_core_operator_logicalop::expand::{GroupingMode, LogicalExpand, RollupGroupingSet};
+use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
 use crate::rule::flags;
-use crate::logical::LogicalPlan;
+use tidb_planner_core_operator_logicalop::LogicalPlan;
 use tidb_planner_core_base::PlanError;
 
 /// Go `expression.DeduplicateGbyExpression(gbyItems)`: the distinct group-by
@@ -93,7 +93,7 @@ pub fn deduplicate_gby_expression(gby_items: &[Expression]) -> (Vec<Expression>,
     for item in gby_items {
         let position = distinct
             .iter()
-            .position(|existing| crate::logical::schema_producer::expressions_equal(existing, item))
+            .position(|existing| tidb_planner_core_operator_logicalop::schema_producer::expressions_equal(existing, item))
             .unwrap_or_else(|| {
                 distinct.push(item.clone());
                 distinct.len() - 1

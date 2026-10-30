@@ -11,6 +11,7 @@ description = "TiDB pkg/executor/windows (Rust)."
 workspace = true
 
 [dependencies]
+tidb-planner-core-operator-logicalop = { path = "../tidb-planner-core-operator-logicalop" }
 tidb-executor-internal-exec = { path = "../tidb-executor-internal-exec" }
 tidb-executor-aggfuncs = { path = "../tidb-executor-aggfuncs" }
 tidb-executor-internal-vecgroupchecker = { path = "../tidb-executor-internal-vecgroupchecker" }

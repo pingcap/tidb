@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! Semantic tests for the physical plan tree. Written, not transcreated; see
-//! the note in `crate::logical::tests`.
+//! the note in `tidb_planner_core_operator_logicalop::tests`.
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
@@ -1204,7 +1204,7 @@ fn max_one_row_enumeration_needs_an_orderless_root_property() {
     // TiFlash (MPP) property enumerates nothing; the admitted arm builds
     // exactly one PhysicalMaxOneRow whose child property caps ExpectedCnt
     // at 2 — one row to keep, one to prove the violation.
-    use crate::logical::{BaseLogicalPlan, LogicalMaxOneRow};
+    use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalMaxOneRow};
     use tidb_planner_property::SortItem;
     use tidb_planner_property::stats_info::StatsInfo;
     use tidb_planner_property::task_type::TaskType;
@@ -1247,7 +1247,7 @@ fn max_one_row_enumeration_needs_an_orderless_root_property() {
 
 #[test]
 fn max_one_row_and_hash_agg_preserve_the_no_cop_requirement() {
-    use crate::logical::{BaseLogicalPlan, LogicalAggregation, LogicalMaxOneRow};
+    use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalAggregation, LogicalMaxOneRow};
     use tidb_planner_property::CteProducerStatus;
 
     let allocator = PlanIdAllocator::new();
@@ -1283,7 +1283,7 @@ fn max_one_row_and_hash_agg_preserve_the_no_cop_requirement() {
 
 #[test]
 fn mpp_hash_agg_enumeration_matches_go_run_modes() {
-    use crate::logical::{BaseLogicalPlan, LogicalAggregation};
+    use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalAggregation};
     use crate::physical::{get_hash_aggs_with_mpp, AggMppRunMode, PhysicalPlan};
     use tidb_planner_property::stats_info::StatsInfo;
     use tidb_expression_aggregation::{names, AggFuncDesc};
@@ -1362,7 +1362,7 @@ fn a_table_dual_is_born_inside_its_own_root_task() {
     // 0/1-row dual satisfies any order vacuously, so only a required order
     // over MORE than one row answers the invalid task; the built plan
     // carries the logical dual's stats, offset, schema, names and RowCount.
-    use crate::logical::{BaseLogicalPlan, LogicalTableDual};
+    use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalTableDual};
     use tidb_planner_property::SortItem;
     use tidb_planner_property::stats_info::StatsInfo;
     use tidb_datatype::FieldName;
@@ -1407,7 +1407,7 @@ fn a_cte_table_promises_no_order_and_is_born_in_a_root_task() {
     // required sort answers the invalid task (unlike the dual there is no
     // 1-row escape); the built plan carries stats, schema, IDForStorage and
     // Go's fixed query-block offset 0, and explains as `Scan on CTE_N`.
-    use crate::logical::{BaseLogicalPlan, LogicalCTETable};
+    use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalCTETable};
     use tidb_planner_property::SortItem;
     use tidb_planner_property::stats_info::StatsInfo;
 
@@ -1450,7 +1450,7 @@ fn a_show_and_its_ddl_jobs_twin_are_born_in_root_tasks() {
     // required sort answers the invalid task; the built plans carry the
     // logical contents/extractor/JobNumber and schema over Go's fixed
     // one-row pseudo stats at query-block offset 0.
-    use crate::logical::{
+    use tidb_planner_core_operator_logicalop::{
         BaseLogicalPlan, LogicalShow, LogicalShowDDLJobs, ShowContents,
         ShowStatsMetaPredicateExtractor,
     };
@@ -1496,7 +1496,7 @@ fn a_show_and_its_ddl_jobs_twin_are_born_in_root_tasks() {
 
 #[test]
 fn root_leaf_tasks_reject_an_index_join_runtime_property() {
-    use crate::logical::{
+    use tidb_planner_core_operator_logicalop::{
         BaseLogicalPlan, LogicalCTETable, LogicalShow, LogicalShowDDLJobs, LogicalTableDual,
         ShowContents,
     };
@@ -1548,7 +1548,7 @@ fn a_selection_enumerates_one_root_candidate_with_scaled_stats() {
     // one root-side candidate; stats scale to the parent's expected count
     // (ScaleByExpectCnt) and the child property drops CanAddEnforcer
     // (CloneEssentialFields does not copy it).
-    use crate::logical::{BaseLogicalPlan, LogicalSelection};
+    use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalSelection};
     use tidb_planner_property::stats_info::StatsInfo;
 
     let allocator = PlanIdAllocator::new();
@@ -1580,7 +1580,7 @@ fn a_selection_enumerates_one_root_candidate_with_scaled_stats() {
 
 #[test]
 fn selection_and_projection_emit_tiflash_candidates_when_mpp_is_allowed() {
-    use crate::logical::{BaseLogicalPlan, LogicalProjection, LogicalSelection};
+    use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalProjection, LogicalSelection};
     use tidb_planner_property::stats_info::StatsInfo;
 
     let allocator = PlanIdAllocator::new();
@@ -1636,7 +1636,7 @@ fn selection_and_projection_emit_tiflash_candidates_when_mpp_is_allowed() {
 
 #[test]
 fn published_blacklist_prevents_remote_candidate_enumeration() {
-    use crate::logical::{BaseLogicalPlan, LogicalProjection, LogicalSelection};
+    use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalProjection, LogicalSelection};
     let allocator = PlanIdAllocator::new();
     let col = Column::new(1, FieldType::new(FieldTypeCode::LongLong));
     let expression = Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
@@ -1687,7 +1687,7 @@ fn a_projection_maps_the_order_or_refuses_and_drops_constant_items() {
     // scalar function refuses the enumeration, and Go's switch silently
     // DROPS an item projected from a Constant — a quirk reproduced, not
     // fixed.
-    use crate::logical::{BaseLogicalPlan, LogicalProjection};
+    use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalProjection};
     use tidb_datatype::Datum;
     use tidb_expr::column::Column;
     use tidb_expr::expression::{Constant, Expression, ScalarFunction};
@@ -1732,7 +1732,7 @@ fn a_projection_maps_the_order_or_refuses_and_drops_constant_items() {
 
 #[test]
 fn partial_order_projection_maps_columns_and_rejects_computed_keys() {
-    use crate::logical::{BaseLogicalPlan, LogicalProjection};
+    use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalProjection};
     use tidb_planner_property::{PartialOrderInfo, SortItem};
 
     let allocator = PlanIdAllocator::new();
@@ -1776,7 +1776,7 @@ fn partial_order_projection_maps_columns_and_rejects_computed_keys() {
 fn a_physical_sort_retains_scalar_by_items_like_go() {
     // Go `getPhysicalSort` copies `LogicalSort.ByItems` verbatim. Only the
     // separate NominalSort candidate requires column-only items.
-    use crate::logical::{BaseLogicalPlan, LogicalSort};
+    use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalSort};
     use tidb_expression_aggregation::ByItems;
 
     let allocator = PlanIdAllocator::new();
@@ -1811,7 +1811,7 @@ fn a_limit_enumerates_the_three_task_types_in_order() {
     // `ExhaustPhysicalPlans4LogicalLimit` (`physical_limit.go:53`): no
     // required order admitted; one candidate per task type in Go's fixed
     // order, each child property capped at Count + Offset.
-    use crate::logical::{BaseLogicalPlan, LogicalLimit};
+    use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalLimit};
 
     let allocator = PlanIdAllocator::new();
     let base = BaseLogicalPlan::new(&allocator, LogicalLimit::TYPE, 0);
@@ -1857,7 +1857,7 @@ fn a_lock_enumerates_one_candidate_and_explains_go_style() {
     // `ExhaustPhysicalPlans4LogicalLock` (`physical_lock.go:44`) + the
     // `{LockType} {WaitSec}` ExplainInfo — Go prints WaitSec even for lock
     // types that carry none.
-    use crate::logical::{BaseLogicalPlan, LogicalLock, SelectLockType};
+    use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalLock, SelectLockType};
     use tidb_planner_property::stats_info::StatsInfo;
 
     let allocator = PlanIdAllocator::new();
@@ -1889,7 +1889,7 @@ fn a_union_all_fans_one_child_property_per_child() {
     // `ExhaustPhysicalPlans4LogicalUnionAll` (`physical_union_all.go:77`):
     // no order promised; one candidate with one per-child property carrying
     // the parent's expected count. The partition form re-stamps the type.
-    use crate::logical::{
+    use tidb_planner_core_operator_logicalop::{
         BaseLogicalPlan, LogicalPartitionUnionAll, LogicalPlan, LogicalTableDual, LogicalUnionAll,
     };
 
@@ -1945,7 +1945,7 @@ fn a_sequence_plans_producers_at_root_and_stamps_some_cte_failed_mpp() {
     // SomeCTEFailedMpp}`, the LAST child gets the parent's essential
     // property with SomeCTEFailedMpp stamped on, and the sequence's schema
     // is the last child's.
-    use crate::logical::{BaseLogicalPlan, LogicalPlan, LogicalSequence, LogicalTableDual};
+    use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalPlan, LogicalSequence, LogicalTableDual};
     use tidb_planner_property::CteProducerStatus;
 
     let allocator = PlanIdAllocator::new();
@@ -2283,7 +2283,7 @@ fn shuffle_keeps_source_projection_alive_across_post_optimization() {
 
 #[test]
 fn limit_candidates_wrap_uint64_row_bounds_like_go() {
-    use crate::logical::{BaseLogicalPlan, LogicalLimit, LogicalTopN};
+    use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalLimit, LogicalTopN};
     for (offset, count, expected) in [(0, 10, 10.0), (u64::MAX, 1, 0.0), (u64::MAX, 8, 7.0)] {
         let allocator = PlanIdAllocator::new();
         let limit = LogicalLimit::new(
@@ -2325,8 +2325,8 @@ fn a_cte_scan_explains_as_cte_full_scan_like_go_master() {
     // row while the definition row is `CTE_N` (`CTEDefinition.ExplainID`,
     // `physical_cte.go:178`). Before this correction the Rust tree named the
     // scan row with the logical type, printing `CTE_N` for both rows.
-    use crate::logical::cte::CteClass;
-    use crate::logical::{BaseLogicalPlan, LogicalCTE};
+    use tidb_planner_core_operator_logicalop::cte::CteClass;
+    use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalCTE};
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -2431,8 +2431,8 @@ fn apply_window_arguments_and_frame_bounds_rebind_to_worker_owned_cells() {
                 ret_type: column.ret_type.clone().unwrap(),
             },
         }],
-        frame: Some(crate::logical::window::WindowFrame {
-            start: Some(crate::logical::window::FrameBound {
+        frame: Some(tidb_planner_core_operator_logicalop::window::WindowFrame {
+            start: Some(tidb_planner_core_operator_logicalop::window::FrameBound {
                 calc_funcs: vec![expression],
                 ..Default::default()
             }),
@@ -2588,7 +2588,7 @@ fn remove_union_scans_replaces_each_by_its_child() {
 
 #[test]
 fn shallow_clone_keeps_the_lock_a_locking_point_read_takes() {
-    use crate::logical::SelectLockType;
+    use tidb_planner_core_operator_logicalop::SelectLockType;
     let lock = Some((SelectLockType::ForUpdateNoWait, 0));
     let point = PhysicalPlan::PointGet(PhysicalPointGet {
         base: BasePhysicalPlan::with_id(31, "Point_Get", 0),
@@ -2612,7 +2612,7 @@ fn shallow_clone_keeps_the_lock_a_locking_point_read_takes() {
     assert!(copy.lock && copy.select_lock == lock);
 }
 
-fn lock_over(id: i32, child: PhysicalPlan, lock_type: crate::logical::SelectLockType) -> PhysicalPlan {
+fn lock_over(id: i32, child: PhysicalPlan, lock_type: tidb_planner_core_operator_logicalop::SelectLockType) -> PhysicalPlan {
     let mut base = BasePhysicalPlan::with_id(id, "SelectLock", 0);
     base.set_children(vec![child]);
     PhysicalPlan::Lock(PhysicalLock {
@@ -2626,7 +2626,7 @@ fn lock_over(id: i32, child: PhysicalPlan, lock_type: crate::logical::SelectLock
 
 #[test]
 fn a_select_lock_over_a_point_get_becomes_the_point_gets_lock() {
-    use crate::logical::SelectLockType;
+    use tidb_planner_core_operator_logicalop::SelectLockType;
     // Go `eliminateUnionScanAndLock`: inside a transaction the point get
     // takes the lock and both the lock and the union scan above it vanish.
     let plan = eliminate_union_scan_over_point_get(

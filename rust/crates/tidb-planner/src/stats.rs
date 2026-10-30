@@ -30,8 +30,8 @@ use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 use tidb_planner_core_base::PlanError;
 use tidb_planner_property::stats_info::StatsInfo;
 
-use crate::logical::data_source::DataSource;
-use crate::logical::rewrite::{DataSourceStatsDeriver, DeriveStatsEnv};
+use tidb_planner_core_operator_logicalop::data_source::DataSource;
+use tidb_planner_core_operator_logicalop::rewrite::{DataSourceStatsDeriver, DeriveStatsEnv};
 
 pub(crate) fn analyzed_filter_selectivity(
     table_stats: &StatsInfo,
@@ -172,7 +172,7 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                         .map(|index| {
                             (
                                 index.id,
-                                crate::logical::data_source::index_path_is_single_scan(
+                                tidb_planner_core_operator_logicalop::data_source::index_path_is_single_scan(
                                     op,
                                     index,
                                     env.opt_prefix_index_single_scan,
@@ -259,7 +259,7 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                         path.is_single_scan = None;
                     }
                     for index in &op.indexes {
-                        let is_single_scan = crate::logical::data_source::index_path_is_single_scan(
+                        let is_single_scan = tidb_planner_core_operator_logicalop::data_source::index_path_is_single_scan(
                             op,
                             index,
                             env.opt_prefix_index_single_scan,

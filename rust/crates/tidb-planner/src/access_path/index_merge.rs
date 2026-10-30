@@ -17,7 +17,7 @@
 
 use tidb_planner_util::path::{IndexMergePartial, IndexMergePath, Partial, UnionIndexMergePath};
 use super::AccessPathDerivationContext;
-use crate::logical::DataSource;
+use tidb_planner_core_operator_logicalop::DataSource;
 use tidb_planner_core_base::PlanError;
 use tidb_expr::expression::Expression;
 

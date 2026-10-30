@@ -31,7 +31,7 @@ use super::{
     check_not_multi_column_row, snapshot_schema_and_names, ClauseCode, PlanBuilder,
     EXTRA_COMMIT_TS_ID,
 };
-use crate::logical::{LogicalPlan, LogicalProjection};
+use tidb_planner_core_operator_logicalop::{LogicalPlan, LogicalProjection};
 use crate::physical::{DeleteHandle, UpdateAssign, UpdateTablePos};
 use tidb_planner_core_base::PlanError;
 

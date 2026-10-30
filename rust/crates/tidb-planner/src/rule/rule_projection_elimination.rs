@@ -23,13 +23,13 @@ use tidb_expr::expr_util::substitute::SubstituteOptions;
 use tidb_expr::expression::{Expression, ScalarFunction};
 use tidb_expr::schema::{merge_schema, Schema};
 
-use crate::base_arms;
+use tidb_planner_core_operator_logicalop::base_arms;
 use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanError;
 
-use crate::logical::fold::{fold_owned, Descend, OwnedRewrite};
-use crate::logical::plan_context::{LogicalOptRule, RuleContext};
-use crate::logical::LogicalPlan;
+use tidb_planner_core_operator_logicalop::fold::{fold_owned, Descend, OwnedRewrite};
+use tidb_planner_core_operator_logicalop::plan_context::{LogicalOptRule, RuleContext};
+use tidb_planner_core_operator_logicalop::LogicalPlan;
 
 type ColumnReplacements = BTreeMap<Vec<u8>, Column>;
 
@@ -184,7 +184,7 @@ fn replace_operator_expressions(plan: &mut LogicalPlan, replace: &ColumnReplacem
     }
 }
 
-fn replace_join_expressions(join: &mut crate::logical::LogicalJoin, replace: &ColumnReplacements) {
+fn replace_join_expressions(join: &mut tidb_planner_core_operator_logicalop::LogicalJoin, replace: &ColumnReplacements) {
     for condition in &mut join.equal_conditions {
         *condition = resolve_scalar_function(condition.clone(), replace);
     }
@@ -284,9 +284,9 @@ fn preserve_not_null_flag(source: &Expression, target: &mut Expression) {
 }
 
 fn merge_adjacent_projections(
-    mut projection: crate::logical::LogicalProjection,
+    mut projection: tidb_planner_core_operator_logicalop::LogicalProjection,
     builder: &dyn tidb_expr::expr_util::builder::FunctionBuilder,
-) -> crate::logical::LogicalProjection {
+) -> tidb_planner_core_operator_logicalop::LogicalProjection {
     let mut children = projection.base.take_children();
     let Some(child_plan) = children.pop() else {
         projection.base.set_children(children);
@@ -460,11 +460,11 @@ mod tests {
     use tidb_expr::schema::Schema;
 
     use super::eliminate_projections;
-    use crate::logical::aggregation::LogicalAggregation;
-    use crate::logical::projection::LogicalProjection;
-    use crate::logical::table_dual::LogicalTableDual;
-    use crate::logical::union_all::LogicalUnionAll;
-    use crate::logical::{BaseLogicalPlan, LogicalPlan};
+    use tidb_planner_core_operator_logicalop::aggregation::LogicalAggregation;
+    use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
+    use tidb_planner_core_operator_logicalop::table_dual::LogicalTableDual;
+    use tidb_planner_core_operator_logicalop::union_all::LogicalUnionAll;
+    use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalPlan};
 
     fn column(unique_id: i64) -> Column {
         Column::new(unique_id, FieldType::new(FieldTypeCode::LongLong))
@@ -575,9 +575,9 @@ mod apply_schema_tests {
     
 
     use tidb_planner_core_base::LogicalJoinType;
-    use crate::logical::join::LogicalJoin;
-    use crate::logical::table_dual::LogicalTableDual;
-    use crate::logical::{BaseLogicalPlan, LogicalPlan};
+    use tidb_planner_core_operator_logicalop::join::LogicalJoin;
+    use tidb_planner_core_operator_logicalop::table_dual::LogicalTableDual;
+    use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalPlan};
 
     use super::apply_schema;
 

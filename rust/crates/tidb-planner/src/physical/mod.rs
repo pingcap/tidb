@@ -22,7 +22,7 @@
 //!
 //! SEED of `pkg/planner/core`: the tree and its method surface land here; the
 //! operator set does not. The closed-enum rationale is the same as
-//! [`crate::logical`]'s and is argued there.
+//! [`tidb_planner_core_operator_logicalop`]'s and is argued there.
 //!
 //! # Narrowings, by name
 //!
@@ -69,7 +69,7 @@ use crate::task::{RootTask, Task};
 /// Go `physicalop.BasePhysicalPlan` (`base_physical_plan.go:120`).
 ///
 /// The `Self base.PhysicalPlan` back-pointer is dropped for the same reason
-/// as [`crate::logical::BaseLogicalPlan`]'s: an enum dispatches on its
+/// as [`tidb_planner_core_operator_logicalop::BaseLogicalPlan`]'s: an enum dispatches on its
 /// variant.
 #[derive(Clone, Debug, Default)]
 pub struct BasePhysicalPlan {
@@ -214,7 +214,7 @@ pub struct PhysicalSelection {
 /// list unchanged, which is this body.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_selection(
-    p: &crate::logical::LogicalSelection,
+    p: &tidb_planner_core_operator_logicalop::LogicalSelection,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
@@ -232,7 +232,7 @@ pub fn exhaust_physical_plans_4_logical_selection(
 /// MPP-aware form of [`exhaust_physical_plans_4_logical_selection`].
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_selection_with_mpp(
-    p: &crate::logical::LogicalSelection,
+    p: &tidb_planner_core_operator_logicalop::LogicalSelection,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
@@ -272,7 +272,7 @@ pub fn exhaust_physical_plans_4_logical_selection_with_mpp(
         .map(|child_prop| {
             let mut base = BasePhysicalPlan::new(
                 allocator,
-                crate::logical::LogicalSelection::TYPE,
+                tidb_planner_core_operator_logicalop::LogicalSelection::TYPE,
                 p.base.base.query_block_offset(),
             );
             base.base.set_stats(stats.clone());
@@ -354,7 +354,7 @@ pub fn eliminate_union_scan_over_point_get(plan: PhysicalPlan, lock_eligible: bo
     }
     let mut plan = plan;
     if let Some(lock) = lock.filter(|(lock_type, _)| {
-        lock_eligible && *lock_type != crate::logical::SelectLockType::None
+        lock_eligible && *lock_type != tidb_planner_core_operator_logicalop::SelectLockType::None
     }) {
         set_point_get_lock(&mut plan, lock);
     }
@@ -362,7 +362,7 @@ pub fn eliminate_union_scan_over_point_get(plan: PhysicalPlan, lock_eligible: bo
 }
 
 /// Marks the point get at the end of the single-child chain as locking.
-fn set_point_get_lock(plan: &mut PhysicalPlan, lock: (crate::logical::SelectLockType, u64)) {
+fn set_point_get_lock(plan: &mut PhysicalPlan, lock: (tidb_planner_core_operator_logicalop::SelectLockType, u64)) {
     match plan {
         PhysicalPlan::PointGet(op) => {
             op.lock = true;
@@ -388,7 +388,7 @@ fn set_point_get_lock(plan: &mut PhysicalPlan, lock: (crate::logical::SelectLock
 /// executor reads the underlying reader's order. A TiFlash property is
 /// refused (the caller raises Go's MPP warning).
 pub fn exhaust_physical_plans_4_logical_union_scan(
-    p: &crate::logical::LogicalUnionScan,
+    p: &tidb_planner_core_operator_logicalop::LogicalUnionScan,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
 ) -> Vec<PhysicalPlan> {
@@ -396,7 +396,7 @@ pub fn exhaust_physical_plans_4_logical_union_scan(
     child_prop.index_join_prop = prop.index_join_prop.clone();
     let mut base = BasePhysicalPlan::new(
         allocator,
-        crate::logical::LogicalUnionScan::TYPE,
+        tidb_planner_core_operator_logicalop::LogicalUnionScan::TYPE,
         p.base.base.query_block_offset(),
     );
     base.base.set_stats(p.base.base.stats_info().cloned());
@@ -435,7 +435,7 @@ pub struct PhysicalProjection {
 /// expression-pushdown, virtual-column, and performance-benefit gates.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_projection(
-    p: &crate::logical::LogicalProjection,
+    p: &tidb_planner_core_operator_logicalop::LogicalProjection,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
@@ -455,7 +455,7 @@ pub fn exhaust_physical_plans_4_logical_projection(
 /// MPP-aware form of [`exhaust_physical_plans_4_logical_projection`].
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_projection_with_mpp(
-    p: &crate::logical::LogicalProjection,
+    p: &tidb_planner_core_operator_logicalop::LogicalProjection,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
@@ -490,7 +490,7 @@ pub fn exhaust_physical_plans_4_logical_projection_with_mpp(
         .base
         .children()
         .first()
-        .and_then(crate::logical::LogicalPlan::schema)
+        .and_then(tidb_planner_core_operator_logicalop::LogicalPlan::schema)
         .map_or(0, Schema::len);
     let contains_virtual_column = p.exprs.iter().any(|expr| {
         tidb_expr::simple_expr::extract_columns(expr)
@@ -518,7 +518,7 @@ pub fn exhaust_physical_plans_4_logical_projection_with_mpp(
             child_prop.index_join_prop = prop.index_join_prop.clone();
             let mut base = BasePhysicalPlan::new(
                 allocator,
-                crate::logical::LogicalProjection::TYPE,
+                tidb_planner_core_operator_logicalop::LogicalProjection::TYPE,
                 p.base.base.query_block_offset(),
             );
             base.base.set_stats(stats.clone());
@@ -1018,7 +1018,7 @@ impl PhysicalSort {
 /// StreamAgg win without an executor-side ORDER BY heuristic.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_sort(
-    sort: &crate::logical::LogicalSort,
+    sort: &tidb_planner_core_operator_logicalop::LogicalSort,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
@@ -1046,7 +1046,7 @@ pub fn exhaust_physical_plans_4_logical_sort(
 
     let mut base = BasePhysicalPlan::new(
         allocator,
-        crate::logical::LogicalSort::TYPE,
+        tidb_planner_core_operator_logicalop::LogicalSort::TYPE,
         sort.base.base.query_block_offset(),
     );
     base.base.set_stats(stats.clone());
@@ -1067,7 +1067,7 @@ pub fn exhaust_physical_plans_4_logical_sort(
     if let Some(items) = sort_items {
         let mut base = BasePhysicalPlan::new(
             allocator,
-            crate::logical::LogicalSort::TYPE,
+            tidb_planner_core_operator_logicalop::LogicalSort::TYPE,
             sort.base.base.query_block_offset(),
         );
         base.base.set_stats(stats);
@@ -1208,7 +1208,7 @@ impl PhysicalLimit {
 /// parent's `CTEProducerStatus` and `NoCopPushDown` requirements.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_limit(
-    p: &crate::logical::LogicalLimit,
+    p: &tidb_planner_core_operator_logicalop::LogicalLimit,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
 ) -> Vec<PhysicalPlan> {
@@ -1231,7 +1231,7 @@ pub fn exhaust_physical_plans_4_logical_limit(
         };
         let mut base = BasePhysicalPlan::new(
             allocator,
-            crate::logical::LogicalLimit::TYPE,
+            tidb_planner_core_operator_logicalop::LogicalLimit::TYPE,
             p.base.base.query_block_offset(),
         );
         base.base.set_stats(p.base.base.stats_info().cloned());
@@ -1286,13 +1286,13 @@ pub struct PhysicalTableScan {
     /// cache range rebuild.
     pub range_rebuild: Option<crate::physical_plan_cache::TableRangeRebuild>,
     /// Go `getTableScanPenalty`'s table/session inputs.
-    pub table_scan_penalty: crate::logical::data_source::TableScanPenaltyInput,
+    pub table_scan_penalty: tidb_planner_core_operator_logicalop::data_source::TableScanPenaltyInput,
     /// Schema-resolved fields consumed by the TiKV protobuf lowering path.
     /// Go reads these values from this operator's `Table` and `Columns`.
-    pub tikv_pushdown: Option<crate::logical::tikv_scan_spec::TiKvTableScanSpec>,
+    pub tikv_pushdown: Option<tidb_planner_core_operator_logicalop::tikv_scan_spec::TiKvTableScanSpec>,
     /// The resolved table metadata behind Go's `Table` pointer. The Rust
     /// schema boundary retains only the fields needed by this scan.
-    pub resolved_descriptor: Option<crate::logical::data_source_paths::ResolvedTableDescriptor>,
+    pub resolved_descriptor: Option<tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableDescriptor>,
     /// Go `PlanPartInfo` (`copTask.PhysPlanPartInfo`, shared with the reader
     /// above): kept so the plan cache charges what Go charges.
     pub plan_part_info: Option<std::sync::Arc<PhysPlanPartInfo>>,
@@ -1366,9 +1366,9 @@ pub struct PhysicalMemTable {
     /// Go `Table.Name.O`.
     pub table_name: String,
     /// Go `Columns`, after logical memory-table column pruning.
-    pub columns: Vec<crate::logical::mem_table::MemTableColumn>,
+    pub columns: Vec<tidb_planner_core_operator_logicalop::mem_table::MemTableColumn>,
     /// Go `QueryTimeRange`.
-    pub query_time_range: crate::logical::mem_table::QueryTimeRange,
+    pub query_time_range: tidb_planner_core_operator_logicalop::mem_table::QueryTimeRange,
     /// Go `Extractor`, carried from the logical scan after it claimed its
     /// predicates.
     pub extractor: Option<crate::memtable_predicate_extractor::MemTableExtractor>,
@@ -1380,7 +1380,7 @@ impl PhysicalTableScan {
     pub fn init(
         plan_id: i32,
         query_block_offset: i32,
-        pushdown: crate::logical::tikv_scan_spec::TiKvTableScanSpec,
+        pushdown: tidb_planner_core_operator_logicalop::tikv_scan_spec::TiKvTableScanSpec,
     ) -> Self {
         Self {
             base: BasePhysicalPlan::with_id(plan_id, "TableScan", query_block_offset),
@@ -1397,7 +1397,7 @@ impl PhysicalTableScan {
     pub(crate) fn from_validated_pushdown(
         plan_id: i32,
         query_block_offset: i32,
-        pushdown: crate::logical::data_source_paths::ValidatedTablePushdown,
+        pushdown: tidb_planner_core_operator_logicalop::data_source_paths::ValidatedTablePushdown,
     ) -> Self {
         let descriptor = pushdown.descriptor();
         let mut scan = Self::init(plan_id, query_block_offset, pushdown.spec().clone());
@@ -1417,19 +1417,19 @@ impl PhysicalTableScan {
     /// Returns the pre-resolved TiKV scan fields, when this plan is executable
     /// by the bounded TiKV DAG path.
     #[must_use]
-    pub const fn pushdown(&self) -> Option<&crate::logical::tikv_scan_spec::TiKvTableScanSpec> {
+    pub const fn pushdown(&self) -> Option<&tidb_planner_core_operator_logicalop::tikv_scan_spec::TiKvTableScanSpec> {
         self.tikv_pushdown.as_ref()
     }
 
     /// Returns the source-authoritative table descriptor.
     #[must_use]
-    pub const fn descriptor(&self) -> Option<crate::logical::data_source_paths::ResolvedTableDescriptor> {
+    pub const fn descriptor(&self) -> Option<tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableDescriptor> {
         self.resolved_descriptor
     }
 
     /// Returns the source-resolved full/range scan kind.
     #[must_use]
-    pub const fn scan_kind(&self) -> Option<crate::logical::data_source_paths::ResolvedTableScanKind> {
+    pub const fn scan_kind(&self) -> Option<tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind> {
         match self.resolved_descriptor {
             Some(descriptor) => Some(descriptor.scan_kind()),
             None => None,
@@ -1443,10 +1443,10 @@ impl PhysicalTableScan {
         let plan_type = descriptor.scan_kind().plan_type();
         Some(match (ignore_suffix, descriptor.explain_id_suffix()) {
             (true, _) => plan_type.to_owned(),
-            (false, crate::logical::data_source_paths::TableScanExplainIdSuffix::IncludePlanId) => {
+            (false, tidb_planner_core_operator_logicalop::data_source_paths::TableScanExplainIdSuffix::IncludePlanId) => {
                 format!("{plan_type}_{}", self.base.base.id())
             }
-            (false, crate::logical::data_source_paths::TableScanExplainIdSuffix::Omit) => plan_type.to_owned(),
+            (false, tidb_planner_core_operator_logicalop::data_source_paths::TableScanExplainIdSuffix::Omit) => plan_type.to_owned(),
         })
     }
 
@@ -1536,7 +1536,7 @@ impl PhysicalTableDual {
 /// enum does not carry.
 #[must_use]
 pub fn find_best_task_4_logical_table_dual(
-    p: &crate::logical::LogicalTableDual,
+    p: &tidb_planner_core_operator_logicalop::LogicalTableDual,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
 ) -> Task {
@@ -1545,7 +1545,7 @@ pub fn find_best_task_4_logical_table_dual(
     }
     let mut base = BasePhysicalPlan::new(
         allocator,
-        crate::logical::LogicalTableDual::TYPE,
+        tidb_planner_core_operator_logicalop::LogicalTableDual::TYPE,
         p.base.base.query_block_offset(),
     );
     base.base.set_stats(p.base.base.stats_info().cloned());
@@ -1612,7 +1612,7 @@ pub struct NominalSort {
 /// which holds the warning sink.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_max_one_row(
-    p: &crate::logical::LogicalMaxOneRow,
+    p: &tidb_planner_core_operator_logicalop::LogicalMaxOneRow,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
 ) -> Vec<PhysicalPlan> {
@@ -1621,7 +1621,7 @@ pub fn exhaust_physical_plans_4_logical_max_one_row(
     }
     let mut base = BasePhysicalPlan::new(
         allocator,
-        crate::logical::LogicalMaxOneRow::TYPE,
+        tidb_planner_core_operator_logicalop::LogicalMaxOneRow::TYPE,
         p.base.base.query_block_offset(),
     );
     base.base.set_stats(p.base.base.stats_info().cloned());
@@ -1679,7 +1679,7 @@ impl PhysicalCTE {
 /// non-root requirement is invalid in this TiKV-only implementation, and an
 /// order is accepted only when the caller permits a Sort enforcer.
 pub fn find_best_task_4_logical_cte(
-    p: &crate::logical::LogicalCTE,
+    p: &tidb_planner_core_operator_logicalop::LogicalCTE,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
 ) -> Result<Task, PlanError> {
@@ -1771,14 +1771,14 @@ impl PhysicalCTETable {
 /// exactly as [`find_best_task_4_logical_table_dual`] does.
 #[must_use]
 pub fn find_best_task_4_logical_cte_table(
-    p: &crate::logical::LogicalCTETable,
+    p: &tidb_planner_core_operator_logicalop::LogicalCTETable,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
 ) -> Task {
     if prop.index_join_prop.is_some() || !prop.is_sort_item_empty() {
         return Task::invalid_task();
     }
-    let mut base = BasePhysicalPlan::new(allocator, crate::logical::LogicalCTETable::TYPE, 0);
+    let mut base = BasePhysicalPlan::new(allocator, tidb_planner_core_operator_logicalop::LogicalCTETable::TYPE, 0);
     base.base.set_stats(p.base.base.stats_info().cloned());
     base.base.set_schema(p.base.base.schema().cloned());
     let cte_table = PhysicalPlan::CTETable(PhysicalCTETable {
@@ -1795,14 +1795,14 @@ pub fn find_best_task_4_logical_cte_table(
 /// Its Go `Init` pins two quirks reproduced here: query-block offset 0, and
 /// pseudo stats of exactly one row — "Just use pseudo stats to avoid
 /// panic." `Extractor base.ShowPredicateExtractor` narrows to the one form
-/// [`crate::logical::LogicalShow`] installs. `MemoryUsage` follows the
+/// [`tidb_planner_core_operator_logicalop::LogicalShow`] installs. `MemoryUsage` follows the
 /// enum's standing narrowing.
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalShow {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
     /// Go's embedded `logicalop.ShowContents`.
-    pub contents: crate::logical::ShowContents,
+    pub contents: tidb_planner_core_operator_logicalop::ShowContents,
     /// Go `Extractor`, in the one ported form.
     pub extractor: Option<Box<dyn tidb_planner_core_base::ShowPredicateExtractor>>,
 }
@@ -1827,14 +1827,14 @@ pub struct PhysicalShowDDLJobs {
 /// exactly as [`find_best_task_4_logical_table_dual`] does.
 #[must_use]
 pub fn find_best_task_4_logical_show(
-    p: &crate::logical::LogicalShow,
+    p: &tidb_planner_core_operator_logicalop::LogicalShow,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
 ) -> Task {
     if prop.index_join_prop.is_some() || !prop.is_sort_item_empty() {
         return Task::invalid_task();
     }
-    let mut base = BasePhysicalPlan::new(allocator, crate::logical::LogicalShow::TYPE, 0);
+    let mut base = BasePhysicalPlan::new(allocator, tidb_planner_core_operator_logicalop::LogicalShow::TYPE, 0);
     base.base.set_stats(Some(StatsInfo::new(1.0, [])));
     base.base.set_schema(p.base.base.schema().cloned());
     let show = PhysicalPlan::Show(PhysicalShow {
@@ -1852,14 +1852,14 @@ pub fn find_best_task_4_logical_show(
 /// body over `JobNumber`.
 #[must_use]
 pub fn find_best_task_4_logical_show_ddl_jobs(
-    p: &crate::logical::LogicalShowDDLJobs,
+    p: &tidb_planner_core_operator_logicalop::LogicalShowDDLJobs,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
 ) -> Task {
     if prop.index_join_prop.is_some() || !prop.is_sort_item_empty() {
         return Task::invalid_task();
     }
-    let mut base = BasePhysicalPlan::new(allocator, crate::logical::LogicalShowDDLJobs::TYPE, 0);
+    let mut base = BasePhysicalPlan::new(allocator, tidb_planner_core_operator_logicalop::LogicalShowDDLJobs::TYPE, 0);
     base.base.set_stats(Some(StatsInfo::new(1.0, [])));
     base.base.set_schema(p.base.base.schema().cloned());
     let show = PhysicalPlan::ShowDDLJobs(PhysicalShowDDLJobs {
@@ -1874,8 +1874,8 @@ pub fn find_best_task_4_logical_show_ddl_jobs(
 /// Go `physicalop.PhysicalLock` (`physical_lock.go`, whole file): the
 /// physical operator of `SELECT ... FOR UPDATE`. Go's `Init` fixes the
 /// query-block offset at 0. The `Lock *ast.SelectLockInfo` pointer narrows
-/// to its decision-bearing pair — [`crate::logical::SelectLockType`] and
-/// `WaitSec` — the same narrowing [`crate::logical::LogicalLock`] made.
+/// to its decision-bearing pair — [`tidb_planner_core_operator_logicalop::SelectLockType`] and
+/// `WaitSec` — the same narrowing [`tidb_planner_core_operator_logicalop::LogicalLock`] made.
 /// `ResolveIndices` and `MemoryUsage` follow the enum's standing
 /// narrowings.
 #[derive(Clone, Debug, Default)]
@@ -1883,7 +1883,7 @@ pub struct PhysicalLock {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
     /// Go `Lock.LockType`.
-    pub lock_type: crate::logical::SelectLockType,
+    pub lock_type: tidb_planner_core_operator_logicalop::SelectLockType,
     /// Go `Lock.WaitSec`.
     pub wait_sec: u64,
     /// Go `TblID2Handle`, as handle columns per table id.
@@ -1910,7 +1910,7 @@ impl PhysicalLock {
 /// with the `SelectLock` warning.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_lock(
-    p: &crate::logical::LogicalLock,
+    p: &tidb_planner_core_operator_logicalop::LogicalLock,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
@@ -1924,7 +1924,7 @@ pub fn exhaust_physical_plans_4_logical_lock(
         .base
         .stats_info()
         .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
-    let mut base = BasePhysicalPlan::new(allocator, crate::logical::LogicalLock::TYPE, 0);
+    let mut base = BasePhysicalPlan::new(allocator, tidb_planner_core_operator_logicalop::LogicalLock::TYPE, 0);
     base.base.set_stats(stats);
     base.set_children_req_props(vec![Some(child_prop)]);
     // Go plans the UPDATE/DELETE read as Project(Lock-child): the logical
@@ -1939,8 +1939,8 @@ pub fn exhaust_physical_plans_4_logical_lock(
         .children()
         .first()
         .is_some_and(|child| {
-            fn contains_join(plan: &crate::logical::LogicalPlan) -> bool {
-                if matches!(plan, crate::logical::LogicalPlan::Join(_)) {
+            fn contains_join(plan: &tidb_planner_core_operator_logicalop::LogicalPlan) -> bool {
+                if matches!(plan, tidb_planner_core_operator_logicalop::LogicalPlan::Join(_)) {
                     return true;
                 }
                 plan.children().iter().any(contains_join)
@@ -1948,7 +1948,7 @@ pub fn exhaust_physical_plans_4_logical_lock(
             contains_join(child)
         });
     if read_has_join {
-        let _ = BasePhysicalPlan::new(allocator, crate::logical::LogicalProjection::TYPE, 0);
+        let _ = BasePhysicalPlan::new(allocator, tidb_planner_core_operator_logicalop::LogicalProjection::TYPE, 0);
     }
     vec![PhysicalPlan::Lock(PhysicalLock {
         base,
@@ -1986,7 +1986,7 @@ pub struct PhysicalUnionAll {
 /// `NoCopPushDown` requirements.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_union_all(
-    p: &crate::logical::LogicalUnionAll,
+    p: &tidb_planner_core_operator_logicalop::LogicalUnionAll,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
@@ -2012,7 +2012,7 @@ pub fn exhaust_physical_plans_4_logical_union_all(
         .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
     let mut base = BasePhysicalPlan::new(
         allocator,
-        crate::logical::LogicalUnionAll::TYPE,
+        tidb_planner_core_operator_logicalop::LogicalUnionAll::TYPE,
         p.base.base.query_block_offset(),
     );
     base.base.set_stats(stats.clone());
@@ -2040,7 +2040,7 @@ pub fn exhaust_physical_plans_4_logical_union_all(
             .collect();
         let mut mpp_base = BasePhysicalPlan::new(
             allocator,
-            crate::logical::LogicalUnionAll::TYPE,
+            tidb_planner_core_operator_logicalop::LogicalUnionAll::TYPE,
             p.base.base.query_block_offset(),
         );
         mpp_base.base.set_stats(stats);
@@ -2059,7 +2059,7 @@ pub fn exhaust_physical_plans_4_logical_union_all(
 /// candidate's plan type re-stamped `PartitionUnion`.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_partition_union_all(
-    p: &crate::logical::LogicalPartitionUnionAll,
+    p: &tidb_planner_core_operator_logicalop::LogicalPartitionUnionAll,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
@@ -2075,7 +2075,7 @@ pub fn exhaust_physical_plans_4_logical_partition_union_all(
     for plan in &mut plans {
         plan.base_mut()
             .base
-            .set_tp(crate::logical::LogicalPartitionUnionAll::TYPE);
+            .set_tp(tidb_planner_core_operator_logicalop::LogicalPartitionUnionAll::TYPE);
     }
     plans
 }
@@ -2114,7 +2114,7 @@ impl PhysicalSequence {
 /// property cannot arise here at all.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_sequence(
-    p: &crate::logical::LogicalSequence,
+    p: &tidb_planner_core_operator_logicalop::LogicalSequence,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
 ) -> Vec<PhysicalPlan> {
@@ -2137,11 +2137,11 @@ pub fn exhaust_physical_plans_4_logical_sequence(
         .base
         .children()
         .last()
-        .and_then(crate::logical::LogicalPlan::schema)
+        .and_then(tidb_planner_core_operator_logicalop::LogicalPlan::schema)
         .cloned();
     let mut base = BasePhysicalPlan::new(
         allocator,
-        crate::logical::LogicalSequence::TYPE,
+        tidb_planner_core_operator_logicalop::LogicalSequence::TYPE,
         p.base.base.query_block_offset(),
     );
     base.base.set_stats(p.base.base.stats_info().cloned());
@@ -2538,7 +2538,7 @@ pub struct PhysicalIndexScan {
     /// cardinality adapter consumes the full ranger type.
     pub covering_ranges: Vec<tidb_planner_cardinality::index_range_policy::IndexRangeShape>,
     /// Schema-validated fields consumed by TiKV protobuf lowering.
-    pub tikv_pushdown: Option<crate::logical::tikv_scan_spec::ValidatedIndexPushdown>,
+    pub tikv_pushdown: Option<tidb_planner_core_operator_logicalop::tikv_scan_spec::ValidatedIndexPushdown>,
     /// Go `DBName`.
     pub db_name: String,
     /// Go `Prop`.
@@ -2596,10 +2596,10 @@ impl PhysicalIndexScan {
     /// Validates and attaches schema-resolved TiKV fields.
     pub fn try_with_pushdown(
         mut self,
-        descriptor: crate::logical::tikv_scan_spec::ResolvedIndexDescriptor,
-        pushdown: crate::logical::tikv_scan_spec::TiKvIndexScanSpec,
-    ) -> Result<Self, crate::logical::tikv_scan_spec::IndexPushdownMetadataError> {
-        self.tikv_pushdown = Some(crate::logical::tikv_scan_spec::ValidatedIndexPushdown::new(
+        descriptor: tidb_planner_core_operator_logicalop::tikv_scan_spec::ResolvedIndexDescriptor,
+        pushdown: tidb_planner_core_operator_logicalop::tikv_scan_spec::TiKvIndexScanSpec,
+    ) -> Result<Self, tidb_planner_core_operator_logicalop::tikv_scan_spec::IndexPushdownMetadataError> {
+        self.tikv_pushdown = Some(tidb_planner_core_operator_logicalop::tikv_scan_spec::ValidatedIndexPushdown::new(
             self.index_id,
             descriptor,
             pushdown,
@@ -2611,7 +2611,7 @@ impl PhysicalIndexScan {
     #[must_use]
     pub(crate) fn with_validated_pushdown(
         mut self,
-        pushdown: crate::logical::tikv_scan_spec::ValidatedIndexPushdown,
+        pushdown: tidb_planner_core_operator_logicalop::tikv_scan_spec::ValidatedIndexPushdown,
     ) -> Self {
         self.tikv_pushdown = Some(pushdown);
         self
@@ -2646,7 +2646,7 @@ impl PhysicalIndexScan {
 
     /// Returns the schema-validated TiKV fields, if supplied.
     #[must_use]
-    pub const fn pushdown(&self) -> Option<&crate::logical::tikv_scan_spec::TiKvIndexScanSpec> {
+    pub const fn pushdown(&self) -> Option<&tidb_planner_core_operator_logicalop::tikv_scan_spec::TiKvIndexScanSpec> {
         match self.tikv_pushdown.as_ref() {
             Some(pushdown) => Some(pushdown.spec()),
             None => None,
@@ -2799,7 +2799,7 @@ pub struct PhysicalPointGet {
     /// The lock a locking SELECT takes (Go `LockInfo` / `LockWaitTime`),
     /// which the executor applies around this read. `None` for a write's
     /// point plan, whose statement locks its rows itself.
-    pub select_lock: Option<(crate::logical::SelectLockType, u64)>,
+    pub select_lock: Option<(tidb_planner_core_operator_logicalop::SelectLockType, u64)>,
 }
 
 /// Go `PointGetPlan.PartitionNames` and its execution-time `PartitionIdx`.
@@ -2843,7 +2843,7 @@ pub struct PhysicalBatchPointGet {
     /// locks the rows it reads; rendered as the `lock` operator detail.
     pub lock: bool,
     /// See [`PhysicalPointGet::select_lock`].
-    pub select_lock: Option<(crate::logical::SelectLockType, u64)>,
+    pub select_lock: Option<(tidb_planner_core_operator_logicalop::SelectLockType, u64)>,
 }
 
 /// Go `physicalop.PhysicalIndexMergeReader`. Each partial access path owns a
@@ -3101,7 +3101,7 @@ pub fn match_items(prop: &PhysicalProperty, items: &[tidb_expression_aggregation
 /// the job. MPP and the TopN half's own operators are separate slices.
 #[must_use]
 pub fn get_phys_limits(
-    topn: &crate::logical::LogicalTopN,
+    topn: &tidb_planner_core_operator_logicalop::LogicalTopN,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
 ) -> Vec<PhysicalPlan> {
@@ -3125,7 +3125,7 @@ pub fn get_phys_limits(
         };
         let mut base = BasePhysicalPlan::new(
             allocator,
-            crate::logical::LogicalLimit::TYPE,
+            tidb_planner_core_operator_logicalop::LogicalLimit::TYPE,
             topn.base.base.query_block_offset(),
         );
         base.base.set_stats(topn.base.base.stats_info().cloned());
@@ -3196,7 +3196,7 @@ impl Default for PhysicalTopN {
 /// with ranger, each named in `physical_topn.go`.
 #[must_use]
 pub fn get_phys_topn(
-    topn: &crate::logical::LogicalTopN,
+    topn: &tidb_planner_core_operator_logicalop::LogicalTopN,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
     mpp_allowed: bool,
@@ -3214,7 +3214,7 @@ pub fn get_phys_topn(
     }
     let advisory_sort_items = matches!(
         topn.base.children().first(),
-        Some(crate::logical::LogicalPlan::DataSource(_))
+        Some(tidb_planner_core_operator_logicalop::LogicalPlan::DataSource(_))
     )
     .then(|| {
         topn.by_items
@@ -3255,7 +3255,7 @@ pub fn get_phys_topn(
             };
             let mut base = BasePhysicalPlan::new(
                 allocator,
-                crate::logical::LogicalTopN::TYPE,
+                tidb_planner_core_operator_logicalop::LogicalTopN::TYPE,
                 topn.base.base.query_block_offset(),
             );
             base.base.set_stats(topn.base.base.stats_info().cloned());
@@ -3284,7 +3284,7 @@ pub fn get_phys_topn(
         };
         let mut base = BasePhysicalPlan::new(
             allocator,
-            crate::logical::LogicalTopN::TYPE,
+            tidb_planner_core_operator_logicalop::LogicalTopN::TYPE,
             topn.base.base.query_block_offset(),
         );
         base.base.set_stats(topn.base.base.stats_info().cloned());
@@ -3307,7 +3307,7 @@ pub fn get_phys_topn(
                 advisory_prop.advisory_sort_items = advisory_sort_items.clone();
                 let mut base = BasePhysicalPlan::new(
                     allocator,
-                    crate::logical::LogicalTopN::TYPE,
+                    tidb_planner_core_operator_logicalop::LogicalTopN::TYPE,
                     topn.base.base.query_block_offset(),
                 );
                 base.base.set_stats(topn.base.base.stats_info().cloned());
@@ -3334,16 +3334,16 @@ pub fn get_phys_topn(
 /// ordering is only admitted through Selection/Projection wrappers directly
 /// above one DataSource. The projection itself transforms the partial-order
 /// columns when the child property is requested.
-fn can_use_partial_order_topn(topn: &crate::logical::LogicalTopN) -> bool {
-    fn supported(plan: Option<&crate::logical::LogicalPlan>) -> bool {
+fn can_use_partial_order_topn(topn: &tidb_planner_core_operator_logicalop::LogicalTopN) -> bool {
+    fn supported(plan: Option<&tidb_planner_core_operator_logicalop::LogicalPlan>) -> bool {
         match plan {
-            Some(crate::logical::LogicalPlan::DataSource(_)) => true,
-            Some(crate::logical::LogicalPlan::Selection(selection))
+            Some(tidb_planner_core_operator_logicalop::LogicalPlan::DataSource(_)) => true,
+            Some(tidb_planner_core_operator_logicalop::LogicalPlan::Selection(selection))
                 if selection.base.children().len() == 1 =>
             {
                 supported(selection.base.children().first())
             }
-            Some(crate::logical::LogicalPlan::Projection(projection))
+            Some(tidb_planner_core_operator_logicalop::LogicalPlan::Projection(projection))
                 if projection.base.children().len() == 1 =>
             {
                 supported(projection.base.children().first())
@@ -3420,7 +3420,7 @@ impl Default for PhysicalHashAgg {
 /// with the runtime property, both named.
 #[must_use]
 pub fn get_hash_aggs(
-    agg: &crate::logical::LogicalAggregation,
+    agg: &tidb_planner_core_operator_logicalop::LogicalAggregation,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
@@ -3431,7 +3431,7 @@ pub fn get_hash_aggs(
 /// MPP-aware form of [`get_hash_aggs`].
 #[must_use]
 pub fn get_hash_aggs_with_mpp(
-    agg: &crate::logical::LogicalAggregation,
+    agg: &tidb_planner_core_operator_logicalop::LogicalAggregation,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
@@ -3456,7 +3456,7 @@ pub fn get_hash_aggs_with_mpp(
 /// Go carries on `SessionVars` into `PhysicalHashAgg`.
 #[must_use]
 pub fn get_hash_aggs_with_mpp_options(
-    agg: &crate::logical::LogicalAggregation,
+    agg: &tidb_planner_core_operator_logicalop::LogicalAggregation,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
@@ -3548,12 +3548,12 @@ pub fn get_hash_aggs_with_mpp_options(
 /// Go `checkCanPushDownToMPP` plus the TiFlash half of
 /// `CheckAggCanPushCop`.  The caller has already established the TiFlash
 /// replica and MPP session gates.
-fn check_agg_can_push_mpp(agg: &crate::logical::LogicalAggregation, blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist) -> bool {
+fn check_agg_can_push_mpp(agg: &tidb_planner_core_operator_logicalop::LogicalAggregation, blacklist: &tidb_expr::infer_pushdown::ExprPushDownBlacklist) -> bool {
     crate::final_mode_agg::check_agg_can_push_mpp(&agg.agg_funcs, &agg.group_by_items, blacklist)
 }
 
 fn get_mpp_hash_aggs(
-    agg: &crate::logical::LogicalAggregation,
+    agg: &tidb_planner_core_operator_logicalop::LogicalAggregation,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
@@ -3777,7 +3777,7 @@ pub struct PhysicalStreamAgg {
 /// candidates (`getEnforcedStreamAggs`).
 #[must_use]
 pub fn get_stream_aggs(
-    agg: &crate::logical::LogicalAggregation,
+    agg: &tidb_planner_core_operator_logicalop::LogicalAggregation,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
@@ -3962,7 +3962,7 @@ pub struct PhysicalWindow {
     /// Go `OrderBy`.
     pub order_by: Vec<ColumnSortItem>,
     /// Go `Frame`.
-    pub frame: Option<crate::logical::window::WindowFrame>,
+    pub frame: Option<tidb_planner_core_operator_logicalop::window::WindowFrame>,
 }
 
 /// Go `physicalop.ExhaustPhysicalPlans4LogicalWindow`
@@ -3972,7 +3972,7 @@ pub struct PhysicalWindow {
 /// tier.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_window(
-    window: &crate::logical::LogicalWindow,
+    window: &tidb_planner_core_operator_logicalop::LogicalWindow,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
@@ -4001,7 +4001,7 @@ pub fn exhaust_physical_plans_4_logical_window(
         .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
     let mut base = BasePhysicalPlan::new(
         allocator,
-        crate::logical::LogicalWindow::TYPE,
+        tidb_planner_core_operator_logicalop::LogicalWindow::TYPE,
         window.base.base.query_block_offset(),
     );
     base.base.set_stats(stats);
@@ -4623,7 +4623,7 @@ impl PhysicalPlan {
     /// shallow copy of a physical plan aliases its children into two trees.
     /// Rust's `Clone` is a deep copy by construction, so the refusal has
     /// nothing to protect against and the derived clone is the answer; see
-    /// the clone-cost note in [`crate::logical`].
+    /// the clone-cost note in [`tidb_planner_core_operator_logicalop`].
     #[must_use]
     pub fn clone_plan(&self) -> Self {
         self.clone()
@@ -4702,7 +4702,7 @@ impl PhysicalPlan {
     // ***** depth-safe tree utilities *****
 
     /// This node with its OWN fields copied and NO children; see
-    /// [`crate::logical::LogicalPlan::clone_shallow`].
+    /// [`tidb_planner_core_operator_logicalop::LogicalPlan::clone_shallow`].
     #[must_use]
     pub fn clone_shallow(&self) -> Self {
         fn base_of(base: &BasePhysicalPlan) -> BasePhysicalPlan {
@@ -5088,7 +5088,7 @@ impl PhysicalPlan {
     }
 
     /// A deep copy of this subtree, built without recursion; see
-    /// [`crate::logical::LogicalPlan::deep_clone`]. This is what
+    /// [`tidb_planner_core_operator_logicalop::LogicalPlan::deep_clone`]. This is what
     /// [`Self::clone_plan`] (Go `Clone`) should be reached through when the
     /// depth is not known to be small.
     #[must_use]
@@ -5137,7 +5137,7 @@ impl PhysicalPlan {
         count
     }
 
-    /// Tears the subtree down iteratively; see [`crate::logical::LogicalPlan::dismantle`].
+    /// Tears the subtree down iteratively; see [`tidb_planner_core_operator_logicalop::LogicalPlan::dismantle`].
     pub fn dismantle(mut self) {
         let mut stack = Vec::new();
         loop {

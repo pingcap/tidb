@@ -119,14 +119,14 @@ use tidb_exprctx::Columns;
 
 use crate::expression_rewriter::{extract_cor_columns_by_schema_4_logical_plan, ClauseCode};
 use tidb_planner_core_base::LogicalJoinType;
-use crate::logical::apply::LogicalApply;
-use crate::logical::join::LogicalJoin;
-use crate::logical::lock::{LogicalLock, SelectLockType};
-use crate::logical::mem_table::{LogicalMemTable, MemTableColumn};
-use crate::logical::projection::LogicalProjection;
+use tidb_planner_core_operator_logicalop::apply::LogicalApply;
+use tidb_planner_core_operator_logicalop::join::LogicalJoin;
+use tidb_planner_core_operator_logicalop::lock::{LogicalLock, SelectLockType};
+use tidb_planner_core_operator_logicalop::mem_table::{LogicalMemTable, MemTableColumn};
+use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
 use crate::rule::flags;
-use crate::logical::selection::LogicalSelection;
-use crate::logical::LogicalPlan;
+use tidb_planner_core_operator_logicalop::selection::LogicalSelection;
+use tidb_planner_core_operator_logicalop::LogicalPlan;
 use tidb_planner_core_base::PlanError;
 
 use tidb_infoschema::table_source::TableSource;
@@ -1823,7 +1823,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             );
             source
                 .columns
-                .push(crate::logical::data_source::DataSourceColumn {
+                .push(tidb_planner_core_operator_logicalop::data_source::DataSourceColumn {
                     id: column.id,
                     name: EXTRA_PHYS_TBL_ID_NAME.to_owned(),
                     is_primary_key: false,

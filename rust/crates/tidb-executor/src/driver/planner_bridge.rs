@@ -33,11 +33,11 @@ use tidb_expr::expression::Expression;
 use tidb_expr::simple_expr::compose_dnf_condition;
 use tidb_hack::{GoCaseCompare, GoToLower};
 use tidb_planner_core_base::ColumnIdAllocator;
-use tidb_planner::logical::cte::CteClass;
-use tidb_planner::logical::fold::{Descend, OwnedRewrite, fold_owned};
+use tidb_planner_core_operator_logicalop::cte::CteClass;
+use tidb_planner_core_operator_logicalop::fold::{Descend, OwnedRewrite, fold_owned};
 use tidb_planner::rule::{flags, logical_optimize};
-use tidb_planner::logical::plan_context::{RuleContext};
-use tidb_planner::logical::{
+use tidb_planner_core_operator_logicalop::plan_context::{RuleContext};
+use tidb_planner_core_operator_logicalop::{
     BaseLogicalPlan, LogicalPlan, LogicalSelection, prepare_possible_properties,
 };
 use tidb_planner::physical::PhysicalPlan;
@@ -459,7 +459,7 @@ fn list_columns_pruned_ids(
 
 fn partition_indices_for_spec(
     partition: &tidb_table::partition_routing::PartitionSpec,
-    source: &tidb_planner::logical::DataSource,
+    source: &tidb_planner_core_operator_logicalop::DataSource,
     builder: &RealFunctionBuilder<'_, crate::StmtContext>,
     context: &crate::StmtContext,
 ) -> Result<Vec<usize>, tidb_planner_core_base::PlanError> {
@@ -729,7 +729,7 @@ mod list_columns_pruning_tests {
     #[test]
     fn partition_pruning_fallback_keeps_explicit_partition_names() {
         let spec = list_columns_spec();
-        let mut source = tidb_planner::logical::DataSource::default();
+        let mut source = tidb_planner_core_operator_logicalop::DataSource::default();
         source.partition_names = vec!["p1".to_owned()];
         source.all_conds = vec![Expression::Constant(Constant::new(
             Datum::Int(1),
@@ -1120,7 +1120,7 @@ impl InitStats<'_> {
     /// source, which leaves the caller on the cache's fully loaded subset.
     fn predicate_loaded_items(
         &self,
-        source: &tidb_planner::logical::DataSource,
+        source: &tidb_planner_core_operator_logicalop::DataSource,
         statistics: Option<&tidb_stats::table_statistics::TableStatistics>,
     ) -> Option<(BTreeSet<i64>, BTreeSet<i64>)> {
         statistics?;
@@ -1420,7 +1420,7 @@ struct DriverCteOptimizer<'a> {
     parallel_apply_allowed: std::cell::Cell<bool>,
 }
 
-impl tidb_planner::logical::plan_context::CteOptimizer for DriverCteOptimizer<'_> {
+impl tidb_planner_core_operator_logicalop::plan_context::CteOptimizer for DriverCteOptimizer<'_> {
     fn optimize_cte(
         &self,
         class: &Rc<RefCell<CteClass>>,
@@ -2674,8 +2674,8 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     // ids 10, 11, 12). The port folds those constructions into the
     // in-subquery rewrite, so mirror the ledger here whenever the DML read
     // actually contains such a join.
-    fn logical_contains_join(plan: &tidb_planner::logical::LogicalPlan) -> bool {
-        if matches!(plan, tidb_planner::logical::LogicalPlan::Join(_)) {
+    fn logical_contains_join(plan: &tidb_planner_core_operator_logicalop::LogicalPlan) -> bool {
+        if matches!(plan, tidb_planner_core_operator_logicalop::LogicalPlan::Join(_)) {
             return true;
         }
         plan.children().iter().any(logical_contains_join)
@@ -2683,17 +2683,17 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     if logical_contains_join(&plan) {
         let _ = tidb_planner::physical::BasePhysicalPlan::new(
             plan_ids,
-            tidb_planner::logical::LogicalJoin::TYPE,
+            tidb_planner_core_operator_logicalop::LogicalJoin::TYPE,
             0,
         );
         let _ = tidb_planner::physical::BasePhysicalPlan::new(
             plan_ids,
-            tidb_planner::logical::LogicalJoin::TYPE,
+            tidb_planner_core_operator_logicalop::LogicalJoin::TYPE,
             0,
         );
         let _ = tidb_planner::physical::BasePhysicalPlan::new(
             plan_ids,
-            tidb_planner::logical::LogicalProjection::TYPE,
+            tidb_planner_core_operator_logicalop::LogicalProjection::TYPE,
             0,
         );
     }
@@ -2845,7 +2845,7 @@ fn optimize_built_logical(
         records_used_items: std::cell::Cell<bool>,
     }
 
-    impl tidb_planner::logical::plan_context::UsedStatsRecorder for PlannerStatisticsLoad<'_> {
+    impl tidb_planner_core_operator_logicalop::plan_context::UsedStatsRecorder for PlannerStatisticsLoad<'_> {
         fn record_used_item(
             &self,
             physical_table_id: i64,
@@ -2871,7 +2871,7 @@ fn optimize_built_logical(
         }
     }
 
-    impl tidb_planner::logical::plan_context::StatisticsLoadRequester
+    impl tidb_planner_core_operator_logicalop::plan_context::StatisticsLoadRequester
         for PlannerStatisticsLoad<'_>
     {
         fn request(
@@ -2932,12 +2932,12 @@ fn optimize_built_logical(
         plan_ids: &'a PlanIdAllocator,
     }
 
-    impl tidb_planner::logical::plan_context::PartitionPruning
+    impl tidb_planner_core_operator_logicalop::plan_context::PartitionPruning
         for PlannerPartitionPruning<'_>
     {
         fn partition_indices(
             &self,
-            source: &tidb_planner::logical::DataSource,
+            source: &tidb_planner_core_operator_logicalop::DataSource,
         ) -> Result<Vec<usize>, tidb_planner_core_base::PlanError> {
             let table = self
                 .catalog
@@ -2959,7 +2959,7 @@ fn optimize_built_logical(
         // `PlanID.Add(1)` before parsing the partition expression, "to make
         // sure some tests will pass" (their words): a HASH and a plain RANGE
         // table spend one plan id per statically pruned source.
-        fn spend_partition_expression_plan_id(&self, source: &tidb_planner::logical::DataSource) {
+        fn spend_partition_expression_plan_id(&self, source: &tidb_planner_core_operator_logicalop::DataSource) {
             let spends = self
                 .catalog
                 .kv_table_by_id(source.table_id)
@@ -3004,7 +3004,7 @@ fn optimize_built_logical(
     let initialize_statistics = |plan: LogicalPlan| {
         statistics_load.record_used_stats.set(false);
         let initialized =
-            tidb_planner::logical::plan_context::StatisticsLoadRequester::initialize(
+            tidb_planner_core_operator_logicalop::plan_context::StatisticsLoadRequester::initialize(
                 &statistics_load,
                 plan,
             );
@@ -3363,7 +3363,7 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
 mod predicate_column_tests {
     use super::*;
     use tidb_stats::table_statistics::TableStatistics;
-    use tidb_planner::logical::DataSource;
+    use tidb_planner_core_operator_logicalop::DataSource;
     use tidb_model::TableItemID;
 
     /// The loaded set follows `CollectPredicateColumnsPoint`'s demand over the
@@ -3425,8 +3425,8 @@ mod statistics_initialization_tests {
     use tidb_expr::scalar_function::ScalarFunction;
     use std::collections::BTreeMap;
     use tidb_expr::schema::Schema;
-    use tidb_planner::logical::DataSource;
-    use tidb_planner::logical::data_source::DataSourceColumn;
+    use tidb_planner_core_operator_logicalop::DataSource;
+    use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
     use tidb_infoschema::table_source::SourceIndexColumn;
     use tidb_infoschema::table_source::SourceIndex;
 

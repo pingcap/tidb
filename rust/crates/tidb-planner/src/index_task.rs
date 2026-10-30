@@ -17,8 +17,8 @@
 use crate::{
     physical::{PhysicalIndexScan, PhysicalTableDual, PhysicalTableReader, PhysicalTableScan},
     physical_table_reader::MissingTableDescriptorError,
-    logical::tikv_scan_spec::UnsupportedScanFeature,
 };
+use tidb_planner_core_operator_logicalop::tikv_scan_spec::UnsupportedScanFeature;
 
 /// Why the bounded index task builder did not construct a task.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

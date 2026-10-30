@@ -15,7 +15,7 @@
 //! Physical grouping-level projections, corresponding to Go PhysicalExpand.
 
 use super::{BasePhysicalPlan, PhysicalPlan};
-use crate::logical::LogicalExpand;
+use tidb_planner_core_operator_logicalop::LogicalExpand;
 use tidb_planner_property::{MppPartitionType, PhysicalProperty, TaskType};
 use tidb_planner_core_base::PlanIdAllocator;
 use tidb_expr::expression::Expression;
@@ -103,7 +103,7 @@ fn candidate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::logical::BaseLogicalPlan;
+    use tidb_planner_core_operator_logicalop::BaseLogicalPlan;
 
     #[test]
     fn expand_candidates_match_source_task_requirements() {

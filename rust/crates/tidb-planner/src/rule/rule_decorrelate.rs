@@ -44,12 +44,12 @@ use tidb_exprctx::NoColumns;
 
 use tidb_planner_core_base::LogicalJoinType;
 
-use crate::logical::aggregation::LogicalAggregation;
-use crate::logical::apply::LogicalApply;
-use crate::logical::projection::LogicalProjection;
-use crate::logical::plan_context::{LogicalOptRule, RuleContext};
-use crate::logical::BaseLogicalPlan;
-use crate::logical::{LogicalPlan};
+use tidb_planner_core_operator_logicalop::aggregation::LogicalAggregation;
+use tidb_planner_core_operator_logicalop::apply::LogicalApply;
+use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
+use tidb_planner_core_operator_logicalop::plan_context::{LogicalOptRule, RuleContext};
+use tidb_planner_core_operator_logicalop::BaseLogicalPlan;
+use tidb_planner_core_operator_logicalop::{LogicalPlan};
 use tidb_planner_core_base::{PlanError};
 
 /// Which aggregation arm fired.
@@ -124,7 +124,7 @@ impl DecorrelateSolver {
         {
             return None;
         }
-        let simplified = crate::logical::plan_context::apply_predicate_simplification(
+        let simplified = tidb_planner_core_operator_logicalop::plan_context::apply_predicate_simplification(
             ctx,
             selection.conditions.clone(),
             true,
@@ -355,7 +355,7 @@ impl DecorrelateSolver {
                         }
                         let apply_schema = apply.base().base.schema().cloned().unwrap_or_default();
                         let new_projection = |exprs: Vec<Expression>, schema: Schema| {
-                            let base = crate::logical::BaseLogicalPlan::new(
+                            let base = tidb_planner_core_operator_logicalop::BaseLogicalPlan::new(
                                 ctx.allocator,
                                 LogicalProjection::TYPE,
                                 query_block_offset,

@@ -42,16 +42,17 @@ use tidb_planner_core_base::PlanIdAllocator;
 
 use tidb_planner_core_base::LogicalJoinType;
 
-use crate::logical::aggregation::{LogicalAggregation, AGG_FUNC_MAX};
-use crate::logical::cte::{CteClass, LogicalCTE};
-use crate::logical::data_source::DataSource;
-use crate::logical::expand::{LogicalExpand, RollupGroupingSet};
-use crate::logical::join::LogicalJoin;
-use crate::logical::limit::LogicalLimit;
-use crate::logical::projection::LogicalProjection;
-use crate::logical::rewrite::{prune_columns, push_down_topn};
-use crate::logical::plan_context::LogicalOptRule;
-use crate::logical::plan_context::RuleContext;
+use tidb_planner_core_operator_logicalop::aggregation::{LogicalAggregation, AGG_FUNC_MAX};
+use tidb_planner_core_operator_logicalop::cte::{CteClass, LogicalCTE};
+use tidb_planner_core_operator_logicalop::data_source::DataSource;
+use tidb_planner_core_operator_logicalop::expand::{LogicalExpand, RollupGroupingSet};
+use tidb_planner_core_operator_logicalop::join::LogicalJoin;
+use tidb_planner_core_operator_logicalop::limit::LogicalLimit;
+use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
+use tidb_planner_core_operator_logicalop::rewrite::prune_columns;
+use crate::rule::rule_tests::push_down_topn;
+use tidb_planner_core_operator_logicalop::plan_context::LogicalOptRule;
+use tidb_planner_core_operator_logicalop::plan_context::RuleContext;
 use super::rule_aggregation_elimination::AggregationEliminator;
 use super::rule_derive_topn_from_window::derive_topn;
 use super::rule_eliminate_empty_selection::eliminate_empty_selection;
@@ -64,16 +65,16 @@ use super::rule_resolve_expand::gen_expand;
 use super::rule_result_reorder::result_reorder;
 use super::rule_semi_join_rewrite::SemiJoinRewriter;
 use super::rule_tests::test_context;
-use crate::logical::selection::LogicalSelection;
-use crate::logical::sequence::LogicalSequence;
-use crate::logical::sort::LogicalSort;
-use crate::logical::table_dual::LogicalTableDual;
-use crate::logical::topn::LogicalTopN;
-use crate::logical::union_all::LogicalUnionAll;
-use crate::logical::window::{BoundType, FrameBound, FrameType, LogicalWindow, WindowFrame};
-use crate::logical::{BaseLogicalPlan, LogicalPlan};
+use tidb_planner_core_operator_logicalop::selection::LogicalSelection;
+use tidb_planner_core_operator_logicalop::sequence::LogicalSequence;
+use tidb_planner_core_operator_logicalop::sort::LogicalSort;
+use tidb_planner_core_operator_logicalop::table_dual::LogicalTableDual;
+use tidb_planner_core_operator_logicalop::topn::LogicalTopN;
+use tidb_planner_core_operator_logicalop::union_all::LogicalUnionAll;
+use tidb_planner_core_operator_logicalop::window::{BoundType, FrameBound, FrameType, LogicalWindow, WindowFrame};
+use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalPlan};
 
-/// A tree this deep would abort a recursive walk; see [`crate::logical::fold`].
+/// A tree this deep would abort a recursive walk; see [`tidb_planner_core_operator_logicalop::fold`].
 const DEEP: usize = 20_000;
 
 fn int_type() -> FieldType {

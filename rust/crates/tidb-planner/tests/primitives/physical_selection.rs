@@ -20,9 +20,9 @@ use tidb_expr::{constant::Constant, expression::Expression};
 use tidb_planner_property::PhysicalProperty;
 use tidb_planner_core_base::PlanIdAllocator;
 use tidb_planner::{
-    logical::{BaseLogicalPlan, LogicalSelection},
     physical::{exhaust_physical_plans_4_logical_selection, PhysicalPlan},
 };
+use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalSelection};
 
 #[test]
 fn logical_selection_enumerates_the_wired_physical_operator() {

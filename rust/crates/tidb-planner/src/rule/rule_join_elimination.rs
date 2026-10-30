@@ -25,15 +25,15 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::extract_columns;
 
-use crate::logical::data_source_paths::DataSourceAccessPath;
+use tidb_planner_core_operator_logicalop::data_source_paths::DataSourceAccessPath;
 use crate::expression_rewriter::{
     extract_correlated_cols_4_logical_plan, matching_cor_columns_by_schema,
 };
 use tidb_planner_core_base::LogicalJoinType;
 
-use crate::logical::plan_context::{LogicalOptRule, RuleContext};
-use crate::logical::window::{BoundType, FrameType};
-use crate::logical::{BaseLogicalPlan, LogicalAggregation, LogicalJoin, LogicalPlan, LogicalProjection};
+use tidb_planner_core_operator_logicalop::plan_context::{LogicalOptRule, RuleContext};
+use tidb_planner_core_operator_logicalop::window::{BoundType, FrameType};
+use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalAggregation, LogicalJoin, LogicalPlan, LogicalProjection};
 use tidb_planner_core_base::{PlanError};
 
 /// Go `OuterJoinEliminator`.

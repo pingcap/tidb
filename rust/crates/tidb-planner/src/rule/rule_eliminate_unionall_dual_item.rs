@@ -32,15 +32,15 @@
 //!
 //! Go's `p.(*logicalop.LogicalUnionAll)` is a CONCRETE type assertion, and Go
 //! embedding is not subtyping: a `*LogicalPartitionUnionAll` fails it even
-//! though it embeds a `LogicalUnionAll`. So [`crate::logical::LogicalPlan::UnionAll`]
+//! though it embeds a `LogicalUnionAll`. So [`tidb_planner_core_operator_logicalop::LogicalPlan::UnionAll`]
 //! alone is matched.
 
 use tidb_planner_core_base::PlanError;
 
-use crate::logical::fold::{fold_owned, Descend, OwnedRewrite};
-use crate::logical::plan_context::{LogicalOptRule, RuleContext};
-use crate::logical::table_dual::LogicalTableDual;
-use crate::logical::{BaseLogicalPlan, LogicalPlan};
+use tidb_planner_core_operator_logicalop::fold::{fold_owned, Descend, OwnedRewrite};
+use tidb_planner_core_operator_logicalop::plan_context::{LogicalOptRule, RuleContext};
+use tidb_planner_core_operator_logicalop::table_dual::LogicalTableDual;
+use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalPlan};
 
 /// Go's `child.(*logicalop.LogicalTableDual)` with `dual.RowCount == 0`.
 fn is_zero_row_dual(plan: &LogicalPlan) -> bool {

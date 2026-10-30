@@ -23,7 +23,7 @@ use tidb_datatype::FieldName;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
-use crate::logical::LogicalPlan;
+use tidb_planner_core_operator_logicalop::LogicalPlan;
 use crate::physical::PhysicalPlan;
 
 /// Go `ShowNextRowID` (`common_plans.go:83`): `SHOW TABLE t NEXT_ROW_ID`,

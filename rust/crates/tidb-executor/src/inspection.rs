@@ -18,7 +18,7 @@
 
 use tidb_datatype::Datum;
 use crate::DriverError;
-use tidb_planner::logical::mem_table::QueryTimeRange;
+use tidb_planner_core_operator_logicalop::mem_table::QueryTimeRange;
 use tidb_planner::memtable_predicate_extractor::InspectionSummaryTableExtractor;
 
 /// Go `inspectionRuleTypeInspection`.

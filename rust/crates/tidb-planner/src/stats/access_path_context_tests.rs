@@ -15,8 +15,8 @@
 //! The DataSource derivation (`stats::CoreDataSourceStats`) under the
 //! statement's prepared parameters.
 
-use crate::logical::rewrite::*;
-use crate::logical::*;
+use tidb_planner_core_operator_logicalop::rewrite::*;
+use tidb_planner_core_operator_logicalop::*;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_planner_property::stats_info::StatsInfo;
@@ -62,7 +62,7 @@ fn logical_range_derivation_uses_current_statement_parameters() {
             ],
         ))
     };
-    let mut source = crate::logical::data_source::DataSource {
+    let mut source = tidb_planner_core_operator_logicalop::data_source::DataSource {
         handle_is_int: true,
         handle_cols: vec![column.clone()],
         table_columns: vec![column.clone()],
@@ -185,7 +185,7 @@ fn analyzed_derivation_evaluates_parameters_like_literal_predicates() {
     let mut context = crate::rule::rule_tests::test_context(&allocator);
     context.eval_context = &parameters;
     let estimate = |predicates| {
-        let mut source = crate::logical::data_source::DataSource {
+        let mut source = tidb_planner_core_operator_logicalop::data_source::DataSource {
             table_columns: columns.to_vec(),
             table_stats: Some(profile.clone()),
             pushed_down_conds: predicates,

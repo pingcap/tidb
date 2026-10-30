@@ -17,7 +17,7 @@
 //! The Go anchor is `TestIssue52592ForNextGen` at
 //! `pkg/planner/core/tests/pointget/point_get_plan_test.go:407`.
 
-use tidb_planner::logical::{BaseLogicalPlan, LogicalLock, SelectLockType};
+use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalLock, SelectLockType};
 use tidb_planner::physical::{exhaust_physical_plans_4_logical_lock, PhysicalPlan};
 use tidb_planner_property::{PhysicalProperty, TaskType};
 use tidb_planner_core_base::PlanIdAllocator;

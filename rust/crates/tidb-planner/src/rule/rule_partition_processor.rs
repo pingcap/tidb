@@ -14,13 +14,13 @@
 
 //! Go `pkg/planner/core/rule/rule_partition_processor.go`.
 
-use crate::logical::{
+use tidb_planner_core_operator_logicalop::{
     BaseLogicalPlan, DataSource, LogicalPartitionUnionAll, LogicalPlan, LogicalTableDual,
     LogicalUnionScan,
 };
 use tidb_planner_core_base::PlanError;
 
-use crate::logical::plan_context::{conds_to_table_dual, LogicalOptRule, RuleContext};
+use tidb_planner_core_operator_logicalop::plan_context::{conds_to_table_dual, LogicalOptRule, RuleContext};
 use super::rule_predicate_simplification::apply_predicate_simplification;
 
 // Go `resolveOptimizeHint` keeps a hint for a partition when one of its
@@ -47,7 +47,7 @@ fn resolve_storage_hints_for_partition(
     source: &mut DataSource,
     partition_name: &str,
 ) {
-    use crate::logical::data_source::{PREFER_TIFLASH, PREFER_TIKV};
+    use tidb_planner_core_operator_logicalop::data_source::{PREFER_TIFLASH, PREFER_TIKV};
     for store in [PREFER_TIKV, PREFER_TIFLASH] {
         if source.prefer_store_type & store == 0 {
             continue;
@@ -167,7 +167,7 @@ fn warn_for_unknown_storage_partitions(
     source: &DataSource,
     used_partition_names: &std::collections::BTreeSet<String>,
 ) {
-    use crate::logical::data_source::{PREFER_TIFLASH, PREFER_TIKV};
+    use tidb_planner_core_operator_logicalop::data_source::{PREFER_TIFLASH, PREFER_TIKV};
     let Some(sink) = ctx.hint_warning_sink else {
         return;
     };
@@ -183,7 +183,7 @@ fn warn_for_unknown_storage_partitions(
 /// Go `appendWarnForUnknownPartitions`: `SetHintWarningFromError` of a
 /// `fmt.Errorf`, so the warning is ErrUnknown (1105).
 fn append_warn_for_unknown_partitions(
-    sink: &dyn crate::logical::plan_context::HintWarningSink,
+    sink: &dyn tidb_planner_core_operator_logicalop::plan_context::HintWarningSink,
     hint_name: &str,
     unknown_partitions: &[String],
 ) {
@@ -228,7 +228,7 @@ fn make_children(
         // Go builds each copy with `NewBaseLogicalPlan`, which draws a plan id,
         // and then `SetID(ds.ID())` puts the original back: the id is spent
         // all the same.
-        let _ = crate::logical::BaseLogicalPlan::new(
+        let _ = tidb_planner_core_operator_logicalop::BaseLogicalPlan::new(
             ctx.allocator,
             "TableScan",
             query_block_offset,
@@ -251,7 +251,7 @@ fn make_children(
     Ok(match children.len() {
         0 => {
             let mut dual = LogicalTableDual::new(
-                crate::logical::BaseLogicalPlan::new(
+                tidb_planner_core_operator_logicalop::BaseLogicalPlan::new(
                     ctx.allocator,
                     LogicalTableDual::TYPE,
                     query_block_offset,
@@ -263,7 +263,7 @@ fn make_children(
         }
         1 => children.pop().expect("one partition child"),
         _ => {
-            let mut union = LogicalPartitionUnionAll::new(crate::logical::BaseLogicalPlan::new(
+            let mut union = LogicalPartitionUnionAll::new(tidb_planner_core_operator_logicalop::BaseLogicalPlan::new(
                 ctx.allocator,
                 LogicalPartitionUnionAll::TYPE,
                 query_block_offset,
@@ -389,7 +389,7 @@ impl LogicalOptRule for PartitionProcessor {
 mod tests {
     use super::*;
     use tidb_planner_util::path::PossiblePath;
-    use crate::logical::data_source::{DataSourceIndexHint, DataSourceIndexMergeHint};
+    use tidb_planner_core_operator_logicalop::data_source::{DataSourceIndexHint, DataSourceIndexMergeHint};
     use tidb_infoschema::table_source::SourceIndex;
 
     #[test]
@@ -509,7 +509,7 @@ mod tests {
     /// named; an unscoped one stays everywhere.
     #[test]
     fn storage_hints_are_resolved_per_static_partition() {
-        use crate::logical::data_source::{PREFER_TIFLASH, PREFER_TIKV};
+        use tidb_planner_core_operator_logicalop::data_source::{PREFER_TIFLASH, PREFER_TIKV};
         let allocator = tidb_planner_core_base::PlanIdAllocator::new();
         let ctx = crate::rule::rule_tests::test_context(&allocator);
         let source = DataSource {

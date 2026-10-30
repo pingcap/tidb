@@ -41,7 +41,7 @@
 //! # Which rules actually run
 //!
 //! Go's list has 35 entries. Four rule bodies live in this file because their
-//! tree walks are [`crate::logical::rewrite`]'s:
+//! tree walks are [`tidb_planner_core_operator_logicalop::rewrite`]'s:
 //! [`ColumnPruner`] (#1 and #29), [`BuildKeySolver`] (#3), [`PpdSolver`] (#13)
 //! and [`PushDownTopNOptimizer`] (#21). The remaining implemented bodies live
 //! in their owning `rule_*.rs` modules beside this one, including:
@@ -90,8 +90,8 @@
 //! — the plan comes back on BOTH arms. That is the by-value equivalent of Go
 //! still holding its pointer, and it is what lets [`logical_optimize`] return
 //! the plan as it stood when the failing rule started. The rewrites themselves
-//! are infallible; see [`crate::logical::fold`] for why, and for the
-//! [`crate::logical::fold::RewriteFailure`] slot that carries Go's `error` out of a
+//! are infallible; see [`tidb_planner_core_operator_logicalop::fold`] for why, and for the
+//! [`tidb_planner_core_operator_logicalop::fold::RewriteFailure`] slot that carries Go's `error` out of a
 //! fold without unwinding it.
 //!
 //! # The arm-listing convention
@@ -105,7 +105,7 @@
 //! variants that take Go's BASE body into one [`base_arms!`] invocation. The
 //! macro expands its ident list into an or-pattern, so the base set costs one
 //! comma-separated line per few operators instead of one arm each, and the
-//! match stays exhaustive — adding a variant to [`crate::logical::LogicalPlan`] still
+//! match stays exhaustive — adding a variant to [`tidb_planner_core_operator_logicalop::LogicalPlan`] still
 //! fails to compile until it is placed in some rule's explicit arm or its
 //! `base_arms!` list. Do NOT invent a second convention.
 
@@ -114,8 +114,8 @@ use tidb_expr::schema::Schema;
 
 use tidb_planner_core_base::PlanError;
 
-use crate::logical::LogicalPlan;
-use crate::logical::plan_context::{DisabledLogicalRules, LogicalOptRule, RuleContext};
+use tidb_planner_core_operator_logicalop::LogicalPlan;
+use tidb_planner_core_operator_logicalop::plan_context::{DisabledLogicalRules, LogicalOptRule, RuleContext};
 
 pub mod rule_aggregation_elimination;
 pub mod rule_aggregation_push_down;
@@ -146,25 +146,6 @@ pub mod rule_semi_join_rewrite;
 pub(crate) mod rule_tail_tests;
 #[cfg(test)]
 pub(crate) mod rule_tests;
-
-/// Expands an ident list of [`crate::logical::LogicalPlan`] variants into an
-/// or-pattern binding nothing.
-///
-/// See this module's header for why this exists and when to use it.
-///
-/// ```text
-/// match plan {
-///     LogicalPlan::Selection(op) => ...,
-///     base_arms![Sort, Limit, TopN] => ...,
-///     ...
-/// }
-/// ```
-#[macro_export]
-macro_rules! base_arms {
-    ($($variant:ident),+ $(,)?) => {
-        $( $crate::logical::LogicalPlan::$variant(..) )|+
-    };
-}
 
 /// Go's optimizer rule bitmask values (`rule/logical_rules.go:20-55`).
 ///
@@ -719,7 +700,7 @@ impl LogicalOptRule for ColumnPruner {
             .schema()
             .map(|schema| schema.columns.clone())
             .unwrap_or_default();
-        let (plan, failure) = crate::logical::rewrite::prune_columns(ctx, plan, root_cols);
+        let (plan, failure) = tidb_planner_core_operator_logicalop::rewrite::prune_columns(ctx, plan, root_cols);
         match failure {
             // Go's `planChanged` is hard-coded `false` in this rule.
             None => {
@@ -753,7 +734,7 @@ impl LogicalOptRule for BuildKeySolver {
         plan: LogicalPlan,
     ) -> Result<(LogicalPlan, bool), (LogicalPlan, PlanError)> {
         Ok((
-            crate::logical::rewrite::build_key_info_portal_with_allocator(plan, _ctx.column_allocator),
+            tidb_planner_core_operator_logicalop::rewrite::build_key_info_portal_with_allocator(plan, _ctx.column_allocator),
             false,
         ))
     }
@@ -777,7 +758,7 @@ impl LogicalOptRule for PpdSolver {
         plan: LogicalPlan,
     ) -> Result<(LogicalPlan, bool), (LogicalPlan, PlanError)> {
         let (plan, _remaining, failure) =
-            crate::logical::rewrite::predicate_push_down(ctx, plan, Vec::new());
+            tidb_planner_core_operator_logicalop::rewrite::predicate_push_down(ctx, plan, Vec::new());
         match failure {
             None => Ok((plan, false)),
             Some(error) => Err((plan, error)),
@@ -803,7 +784,7 @@ impl LogicalOptRule for PushDownTopNOptimizer {
         plan: LogicalPlan,
     ) -> Result<(LogicalPlan, bool), (LogicalPlan, PlanError)> {
         Ok((
-            crate::logical::rewrite::push_down_topn_with_builder(ctx.builder, ctx.allocator, plan, None),
+            tidb_planner_core_operator_logicalop::rewrite::push_down_topn_with_builder(ctx.builder, ctx.allocator, plan, None),
             false,
         ))
     }

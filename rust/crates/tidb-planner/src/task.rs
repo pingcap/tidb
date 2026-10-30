@@ -757,7 +757,7 @@ impl CopTask {
                         .iter()
                         .rposition(|column| {
                             column.id >= 0
-                                || column.id == crate::logical::data_source::EXTRA_HANDLE_ID
+                                || column.id == tidb_planner_core_operator_logicalop::data_source::EXTRA_HANDLE_ID
                         })
                         .ok_or_else(|| {
                             PlanError::internal("cannot find handle column in index schema")
@@ -1291,7 +1291,7 @@ mod tests {
         let allocator = PlanIdAllocator::new();
         let mut base = crate::physical::BasePhysicalPlan::default();
         base.base =
-            tidb_planner_core_base::BasePlan::new(&allocator, crate::logical::LogicalTableDual::TYPE, 0);
+            tidb_planner_core_base::BasePlan::new(&allocator, tidb_planner_core_operator_logicalop::LogicalTableDual::TYPE, 0);
         base.base.set_stats(Some(StatsInfo::new(rows, [])));
         base.base
             .set_schema(Some(tidb_expr::schema::Schema::new(vec![

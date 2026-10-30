@@ -133,10 +133,10 @@ use super::aggregation::{has_window_flag, is_aggregate_call, visit_exprs, walk_e
 use tidb_infoschema::table_source::TableSource;
 use super::marker::{self, MarkerKind, PlanMarker};
 use super::{snapshot_schema_and_names, ClauseCode, PlanBuilder, PlanError, ProjectionField};
-use crate::logical::projection::LogicalProjection;
+use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
 use crate::rule::flags;
-use crate::logical::window::{BoundType, FrameBound, FrameType, LogicalWindow, WindowFrame};
-use crate::logical::LogicalPlan;
+use tidb_planner_core_operator_logicalop::window::{BoundType, FrameBound, FrameType, LogicalWindow, WindowFrame};
+use tidb_planner_core_operator_logicalop::LogicalPlan;
 
 // ***** the spec arena: Go's `*ast.WindowSpec` identity *****
 
@@ -304,7 +304,7 @@ pub fn merge_window_spec(
 ///
 /// Recursion here is over the WINDOW clause's reference graph, which the
 /// `in_stack` guard bounds by the number of named windows in one statement —
-/// not over a plan tree, so [`crate::logical::fold`] does not apply.
+/// not over a plan tree, so [`tidb_planner_core_operator_logicalop::fold`] does not apply.
 ///
 /// # Errors
 ///
@@ -568,7 +568,7 @@ const fn is_hybrid(code: FieldTypeCode) -> bool {
 
 /// Go `expression.GetCmpFunction`'s RESULT identity
 /// (`builtin_compare.go:1489`), as [`FrameBound::cmp_func_tokens`] carries it;
-/// see [`crate::logical::window`]'s header for why a token and not a function
+/// see [`tidb_planner_core_operator_logicalop::window`]'s header for why a token and not a function
 /// pointer.
 #[must_use]
 pub fn cmp_func_token(eval_type: EvalType) -> &'static str {

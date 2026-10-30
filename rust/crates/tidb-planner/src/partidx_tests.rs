@@ -25,8 +25,8 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
 use tidb_planner_util::path::PossiblePath;
-use crate::logical::data_source::DataSourceColumn;
-use crate::logical::{BaseLogicalPlan, DataSource};
+use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
+use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, DataSource};
 use tidb_planner_core_base::PlanIdAllocator;
 use tidb_infoschema::table_source::SourceIndex;
 

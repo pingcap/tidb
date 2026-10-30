@@ -29,7 +29,7 @@ use tidb_infoschema::table_source::TableSource;
 use super::visit_info::VisitAuthError;
 use super::{PlanBuilder, SubqueryKind};
 use crate::common_plans::{Plan, Set, VarAssignment};
-use crate::logical::{LogicalPlan, LogicalTableDual};
+use tidb_planner_core_operator_logicalop::{LogicalPlan, LogicalTableDual};
 use tidb_planner_core_base::PlanError;
 
 impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {

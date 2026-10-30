@@ -51,7 +51,7 @@
 //!   is unreachable without a hint, so reproducing Go's CHOICE and minimising
 //!   Go's COST are different objectives -- fidelity is the objective here.
 //!
-use crate::logical::LogicalPlan;
+use tidb_planner_core_operator_logicalop::LogicalPlan;
 use tidb_planner_property::{PhysicalProperty, SortItem, TaskType};
 use tidb_planner_core_base::{LogicalJoinType, PlanError};
 use crate::plan_cost_ver2::IndexJoinKind;
@@ -351,7 +351,7 @@ pub(crate) fn resolve_hash_join_hints(
         force_left = false;
         force_right = false;
     }
-    let join_type_name = crate::logical::LogicalJoin::join_type_name(join.join_type);
+    let join_type_name = tidb_planner_core_operator_logicalop::LogicalJoin::join_type_name(join.join_type);
     match join.join_type {
         LogicalJoinType::Semi | LogicalJoinType::AntiSemi
             if !semi_outer_build(join, use_hash_join_v2) && (force_left || force_right) =>
@@ -764,7 +764,7 @@ fn hash_join_candidates(
 /// * `force_merge` as `PreferJoinType & PreferMergeJoin`, Go's own test;
 /// * schemas and provided orders from the operator's fields.
 pub(crate) fn project_one_join(
-    join: &crate::logical::LogicalJoin,
+    join: &tidb_planner_core_operator_logicalop::LogicalJoin,
     node: &LogicalPlan,
 ) -> Result<LogicalJoin, PlanError> {
     let (left_key_cols, right_key_cols, _, has_null_eq) = join.get_join_keys();

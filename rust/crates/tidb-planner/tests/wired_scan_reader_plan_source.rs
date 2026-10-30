@@ -11,15 +11,15 @@ use tidb_planner_cardinality::{
         live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate},
 };
 use tidb_planner::{
-    logical::data_source_paths::{
-        DataSourceAccessPath, IndexAccessPath, PointGetAdmission, ResolvedTableDescriptor,
-        ResolvedTableScanKind, TableAccessPath, TableScanExplainIdSuffix,
-    },
     logical_data_source::LogicalDataSource,
     logical_data_source_task::IndexTaskProperty,
     physical::{PhysicalIndexScan, PhysicalPlan, PhysicalTableReader, PhysicalTableScan},
-    logical::tikv_scan_spec::TiKvTableScanSpec,
 };
+use tidb_planner_core_operator_logicalop::data_source_paths::{
+        DataSourceAccessPath, IndexAccessPath, PointGetAdmission, ResolvedTableDescriptor,
+        ResolvedTableScanKind, TableAccessPath, TableScanExplainIdSuffix,
+    };
+use tidb_planner_core_operator_logicalop::tikv_scan_spec::TiKvTableScanSpec;
 
 #[test]
 fn datasource_table_task_uses_the_wired_reader_and_scan_tree() {

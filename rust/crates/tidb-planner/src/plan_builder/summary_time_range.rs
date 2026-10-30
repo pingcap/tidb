@@ -27,7 +27,7 @@ use tidb_exprctx::Columns;
 
 use tidb_infoschema::table_source::TableSource;
 use super::PlanBuilder;
-use crate::logical::mem_table::QueryTimeRange;
+use tidb_planner_core_operator_logicalop::mem_table::QueryTimeRange;
 
 /// Go `util.MetricTableTimeFormat`.
 const METRIC_TABLE_TIME_FORMAT: &str = "2006-01-02 15:04:05.999";

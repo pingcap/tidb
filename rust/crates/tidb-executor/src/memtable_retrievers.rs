@@ -31,7 +31,7 @@ use tidb_kv::region_map::RegionStore;
 use crate::Catalog;
 use crate::DriverError;
 use tidb_hack::{GoCaseCompare, GoToLower};
-use tidb_planner::logical::mem_table::QueryTimeRange;
+use tidb_planner_core_operator_logicalop::mem_table::QueryTimeRange;
 use tidb_planner::memtable_predicate_extractor::{
     HotRegionsHistoryTableExtractor, MetricSummaryTableExtractor, TableStorageStatsExtractor,
     TiKVRegionStatusExtractor, TikvRegionPeersExtractor,

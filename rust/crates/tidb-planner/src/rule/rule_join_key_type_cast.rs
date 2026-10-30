@@ -22,9 +22,9 @@
 //! without changing the result for strings such as `"1.5"`.
 
 use tidb_planner_core_base::LogicalJoinType;
-use crate::logical::projection::LogicalProjection;
-use crate::logical::plan_context::{LogicalOptRule, RuleContext};
-use crate::logical::{BaseLogicalPlan, LogicalPlan, LogicalSelection};
+use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
+use tidb_planner_core_operator_logicalop::plan_context::{LogicalOptRule, RuleContext};
+use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalPlan, LogicalSelection};
 use tidb_planner_core_base::PlanError;
 use tidb_datatype::{EvalType, FieldTypeCode, FieldTypeFlags};
 use tidb_expr::wrap_cast::{wrap_with_cast_as_int, wrap_with_cast_as_real};

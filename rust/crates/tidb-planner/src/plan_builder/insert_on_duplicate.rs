@@ -37,7 +37,7 @@ use tidb_infoschema::table_source::TableSource;
 use super::insert_values::InsertTarget;
 use super::marker::MarkerKind;
 use super::{ClauseCode, PlanBuilder};
-use crate::logical::{LogicalPlan, LogicalTableDual};
+use tidb_planner_core_operator_logicalop::{LogicalPlan, LogicalTableDual};
 use tidb_planner_core_base::PlanError;
 
 /// What the planner knows of an `INSERT ... SELECT`'s source once it is

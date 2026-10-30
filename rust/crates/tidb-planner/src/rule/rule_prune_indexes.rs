@@ -20,7 +20,7 @@ use std::collections::HashSet;
 
 use tidb_planner_util::path::PossiblePath;
 
-use crate::logical::data_source::DataSource;
+use tidb_planner_core_operator_logicalop::data_source::DataSource;
 
 const DEFAULT_MAX_INDEXES: usize = 10;
 
@@ -130,7 +130,7 @@ fn score_index_path(
             .and_then(|state| state.is_single_scan)
             .unwrap_or_else(|| {
                 declared.is_some()
-                    && crate::logical::data_source::index_path_is_single_scan(source, metadata, false)
+                    && tidb_planner_core_operator_logicalop::data_source::index_path_is_single_scan(source, metadata, false)
             }),
         columns: declared.map_or(0, Vec::len),
         index_id: metadata.id,
@@ -378,7 +378,7 @@ pub fn prune_data_source_with_options(
             .is_some_and(|state| state.declared_columns.is_some())
         {
             let single =
-                crate::logical::data_source::index_path_is_single_scan(source, index, prefix_single_scan);
+                tidb_planner_core_operator_logicalop::data_source::index_path_is_single_scan(source, index, prefix_single_scan);
             source
                 .derived_index_paths
                 .get_mut(&index.id)
@@ -503,7 +503,7 @@ mod tests {
     #[test]
     fn a_named_index_merge_path_survives_without_a_score() {
         let mut source = source();
-        source.index_merge_hints = vec![crate::logical::data_source::DataSourceIndexMergeHint {
+        source.index_merge_hints = vec![tidb_planner_core_operator_logicalop::data_source::DataSourceIndexMergeHint {
             index_names: vec!["IDX_B".to_owned()],
             ..Default::default()
         }];
@@ -603,7 +603,7 @@ mod tests {
         let mut source = source();
         source.pk_is_handle = true;
         source.columns = (1..=3)
-            .map(|id| crate::logical::data_source::DataSourceColumn {
+            .map(|id| tidb_planner_core_operator_logicalop::data_source::DataSourceColumn {
                 id,
                 name: format!("c{id}"),
                 is_primary_key: id == 3,

@@ -32,10 +32,10 @@ use crate::find_best_task::coster::{CostEnv, Ver2Coster};
 use crate::find_best_task::dispatch::{find_best_task, DispatchContext, MppWarningSink};
 use tidb_fixcontrol::OptimizerFixControl;
 use crate::rule::{flags, logical_optimize};
-use crate::logical::plan_context::{CteOptimizer, DisabledLogicalRules, HintWarningSink, RuleContext, UsedStatsRecorder};
-use crate::logical::plan_context::StatisticsLoadRequester;
-use crate::logical::plan_context::PartitionPruning;
-use crate::logical::{prepare_possible_properties, LogicalPlan};
+use tidb_planner_core_operator_logicalop::plan_context::{CteOptimizer, DisabledLogicalRules, HintWarningSink, RuleContext, UsedStatsRecorder};
+use tidb_planner_core_operator_logicalop::plan_context::StatisticsLoadRequester;
+use tidb_planner_core_operator_logicalop::plan_context::PartitionPruning;
+use tidb_planner_core_operator_logicalop::{prepare_possible_properties, LogicalPlan};
 use crate::physical::PhysicalPlan;
 use tidb_planner_property::PhysicalProperty;
 use tidb_planner_core_base::{PlanError, PlanIdAllocator};
@@ -267,7 +267,7 @@ pub fn optimize_logical<C: OptimizeContext>(
     // `IsOuterMostCTE` on every CTE class before ANY optimization runs --
     // `LogicalCTE.PredicatePushDown` refuses to record predicates for a
     // non-outermost CTE.
-    crate::logical::cte::recheck_cte(&mut plan);
+    tidb_planner_core_operator_logicalop::cte::recheck_cte(&mut plan);
     // Go `planner/optimize.go:525`: the result's field names are the logical
     // plan's `OutputNames()` captured BEFORE optimization. A rule may replace
     // the root (an always-false filter makes a TableDual) with a node that
@@ -311,7 +311,7 @@ pub fn check_partial_index_paths<C: OptimizeContext>(
     ctx: &C,
     use_plan_cache: bool,
 ) -> LogicalPlan {
-    use crate::logical::fold::{fold_owned, Descend, OwnedRewrite};
+    use tidb_planner_core_operator_logicalop::fold::{fold_owned, Descend, OwnedRewrite};
 
     struct PartialIndexChecker<'a> {
         resolver: &'a tidb_expr::rewriter::ZonedNoResolver,

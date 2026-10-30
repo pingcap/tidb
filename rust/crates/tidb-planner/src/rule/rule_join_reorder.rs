@@ -26,10 +26,10 @@ use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::{merge_schema, Schema};
 use tidb_expr::simple_expr::extract_columns;
 
-use crate::logical::projection::LogicalProjection;
-use crate::logical::plan_context::{LogicalOptRule, RuleContext};
-use crate::logical::selection::LogicalSelection;
-use crate::logical::{BaseLogicalPlan, LogicalPlan};
+use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
+use tidb_planner_core_operator_logicalop::plan_context::{LogicalOptRule, RuleContext};
+use tidb_planner_core_operator_logicalop::selection::LogicalSelection;
+use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalPlan};
 use tidb_planner_core_base::{PlanError};
 use tidb_planner_core_base::LogicalJoinType;
 use crate::joinorder::JoinMethodHint;
@@ -778,7 +778,7 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
         plans
             .into_iter()
             .map(|plan| {
-                let (plan, result) = crate::logical::rewrite::recursive_derive_stats_with_context(
+                let (plan, result) = tidb_planner_core_operator_logicalop::rewrite::recursive_derive_stats_with_context(
                     plan,
                     Vec::new(),
                     self.context,
@@ -1122,7 +1122,7 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
             return Ok((plan, column));
         }
         let original_id = plan.id();
-        crate::logical::rewrite::ensure_join_projection(self.context, &mut plan)?;
+        tidb_planner_core_operator_logicalop::rewrite::ensure_join_projection(self.context, &mut plan)?;
         let projection_id = plan.id();
         let LogicalPlan::Projection(projection) = &plan else {
             return Err(PlanError::internal(
@@ -1151,7 +1151,7 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
                 return Ok((plan, schema.columns[index].clone()));
             }
         }
-        let column = crate::logical::rewrite::append_join_projection_expr(
+        let column = tidb_planner_core_operator_logicalop::rewrite::append_join_projection_expr(
             self.context,
             &mut plan,
             expression,
@@ -1365,7 +1365,7 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
     }
 
     fn derive_join(&self, plan: LogicalPlan) -> Result<LogicalPlan, PlanError> {
-        let (plan, result) = crate::logical::rewrite::recursive_derive_stats_with_context(
+        let (plan, result) = tidb_planner_core_operator_logicalop::rewrite::recursive_derive_stats_with_context(
             plan,
             Vec::new(),
             self.context,
@@ -1514,7 +1514,7 @@ fn find_node_for_column_nodes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::logical::data_source::DataSource;
+    use tidb_planner_core_operator_logicalop::data_source::DataSource;
     use tidb_planner_core_base::PlanIdAllocator;
     use tidb_planner_property::stats_info::StatsInfo;
     use tidb_ast::CiString;

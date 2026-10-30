@@ -1,0 +1,588 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Go `pkg/planner/core/operator/logicalop/logical_projection.go`:
+//! `LogicalProjection`, one expression per output column.
+//!
+//! SEED of `pkg/planner/core`. This file MERGES the crate's former
+//! `logical_projection` identity leaf: the `Hash64`/`Equals` framing that
+//! module modelled over a normalised column adapter now runs on the real
+//! [`Expression`]/[`Schema`], as [`LogicalProjection::hash64`] and
+//! [`LogicalProjection::equals`], and the adapter module is gone.
+
+use tidb_expr::column::Column;
+use tidb_expr::expr_util::substitute::{column_substitute_impl, SubstituteOptions};
+use tidb_expr::expression::{CorrelatedColumn, Expression};
+use tidb_expr::schema::Schema;
+use tidb_expr::simple_expr::{
+    extract_columns, extract_columns_from_expressions, extract_cor_columns,
+};
+
+use tidb_planner_cascades_base::{new_hash_equaler, Hasher};
+use crate::schema_producer;
+use crate::BaseLogicalPlan;
+use tidb_planner_property::stats_info::StatsInfo;
+
+/// Go `logicalop.LogicalProjection` (`logical_projection.go:33`).
+#[derive(Clone, Debug, Default)]
+pub struct LogicalProjection {
+    /// The shared logical base.
+    pub base: BaseLogicalPlan,
+    /// Go `Exprs`: one expression per output column, in schema order.
+    pub exprs: Vec<Expression>,
+    /// Go `CalculateNoDelay`: set for the `select @@autocommit` style
+    /// statement whose value must be computed before the response is sent.
+    pub calculate_no_delay: bool,
+    /// Go `Proj4Expand`: this projection re-allocates column ids for an
+    /// `Expand`, so its column references are NOT real references and it must
+    /// not be eliminated.
+    pub proj4_expand: bool,
+    /// Whether Go's statement-scoped
+    /// `MapHashCode2UniqueID4ExtendedCol` recorded this projection's computed
+    /// outputs. The map is populated only while
+    /// `tidb_enable_new_only_full_group_by_check` is enabled.
+    pub fd_expression_ids_registered: bool,
+    /// Go buildProjection consumed HasAggBuilt for this query block.
+    pub fd_group_check_complete: bool,
+}
+
+impl LogicalProjection {
+    /// Go `LogicalProjection.PreparePossibleProperties` maps every child
+    /// order through the projection's bare-column expressions. A computed
+    /// expression stops an order at that position; an order with no mapped
+    /// prefix is discarded.
+    pub fn prepare_possible_properties(
+        &mut self,
+        child: Option<&tidb_planner_core_base::PossiblePropertiesInfo>,
+    ) -> tidb_planner_core_base::PossiblePropertiesInfo {
+        let Some(child) = child else {
+            self.base.set_has_tiflash(false);
+            return tidb_planner_core_base::PossiblePropertiesInfo::default();
+        };
+        let output_schema = self.base.base.schema();
+        let mut old_columns = Vec::new();
+        let mut new_columns = Vec::new();
+        if let Some(output_schema) = output_schema {
+            for (index, expression) in self.exprs.iter().enumerate() {
+                if let (Expression::Column(input), Some(output)) =
+                    (expression, output_schema.columns.get(index))
+                {
+                    old_columns.push(input.clone());
+                    new_columns.push(output.clone());
+                }
+            }
+        }
+        let input_schema = Schema::new(old_columns);
+        let orders = child
+            .orders
+            .iter()
+            .filter_map(|order| {
+                let mapped: Vec<Column> = order
+                    .iter()
+                    .map_while(|column| {
+                        let position = input_schema.column_index(column);
+                        usize::try_from(position)
+                            .ok()
+                            .and_then(|position| new_columns.get(position).cloned())
+                    })
+                    .collect();
+                (!mapped.is_empty()).then_some(mapped)
+            })
+            .collect();
+        self.base.set_has_tiflash(child.has_tiflash);
+        tidb_planner_core_base::PossiblePropertiesInfo {
+            orders,
+            has_tiflash: child.has_tiflash,
+        }
+    }
+
+    /// Go `tryTransformSortItems` (`logical_projection.go:553`): map each
+    /// required-order column through this projection's exprs — a bare
+    /// `Column` maps to the child column it projects, a `ScalarFunction`
+    /// cannot preserve order and fails the whole transform. Go's switch has
+    /// NO arm for `Constant`/`CorrelatedColumn`: such an item is silently
+    /// DROPPED from the transformed list. That is a quirk visible through
+    /// the API and is reproduced, not fixed.
+    ///
+    /// Go indexes `p.Exprs[idx]` with `Schema().ColumnIndex(col)` and would
+    /// panic on a column absent from the schema; this returns failure for
+    /// that impossible input instead.
+    #[must_use]
+    pub fn try_transform_sort_items(
+        &self,
+        items: &[tidb_planner_property::SortItem],
+    ) -> Option<Vec<tidb_planner_property::SortItem>> {
+        let schema = self.base.base.schema()?;
+        let mut new_items = Vec::with_capacity(items.len());
+        for item in items {
+            let idx = schema
+                .columns
+                .iter()
+                .position(|c| c.unique_id == item.col.unique_id)?;
+            match self.exprs.get(idx)? {
+                Expression::Column(col) => {
+                    new_items.push(tidb_planner_property::SortItem::new(
+                        col.unique_id,
+                        item.desc,
+                    ));
+                }
+                Expression::ScalarFunction(_) => return None,
+                Expression::Constant(_) | Expression::CorrelatedColumn(_) => {}
+            }
+        }
+        Some(new_items)
+    }
+
+    /// Go `TryToGetChildProp` (`logical_projection.go:524`): the parent's
+    /// property expressed over this projection's child, or `None` when a
+    /// required order runs through a computed expression.
+    #[must_use]
+    pub fn try_to_get_child_prop(
+        &self,
+        prop: &tidb_planner_property::PhysicalProperty,
+    ) -> Option<tidb_planner_property::PhysicalProperty> {
+        let mut new_prop = prop.clone_essential_fields();
+        if !prop.sort_items.is_empty() {
+            new_prop.sort_items = self.try_transform_sort_items(&prop.sort_items)?;
+        }
+        if let Some(partial) = &prop.partial_order_info {
+            let schema = self.base.base.schema()?;
+            let mut sort_items = Vec::with_capacity(partial.sort_items.len());
+            for item in &partial.sort_items {
+                let Ok(index) = usize::try_from(schema.column_index(&item.col)) else {
+                    // Go tryTransformSortItemPtrs skips absent constant items.
+                    continue;
+                };
+                match self.exprs.get(index)? {
+                    Expression::Column(column) => sort_items.push(
+                        tidb_planner_property::SortItem::from_column(column.clone(), item.desc),
+                    ),
+                    Expression::ScalarFunction(_) => return None,
+                    Expression::Constant(_) | Expression::CorrelatedColumn(_) => {}
+                }
+            }
+            new_prop.partial_order_info =
+                Some(tidb_planner_property::PartialOrderInfo { sort_items });
+        }
+        Some(new_prop)
+    }
+
+    /// Go `plancodec.TypeProj`.
+    pub const TYPE: &'static str = "Projection";
+
+    /// Go `LogicalProjection.Init(ctx, qbOffset)`
+    /// (`logical_projection.go:50`).
+    #[must_use]
+    pub fn new(base: BaseLogicalPlan, exprs: Vec<Expression>) -> Self {
+        Self {
+            base,
+            exprs,
+            calculate_no_delay: false,
+            proj4_expand: false,
+            fd_expression_ids_registered: false,
+            fd_group_check_complete: false,
+        }
+    }
+
+    /// Go `LogicalProjection.GetUsedCols()` (`logical_projection.go:496`):
+    /// every column any projected expression reads, WITHOUT deduplication
+    /// across expressions.
+    #[must_use]
+    pub fn get_used_cols(&self) -> Vec<Column> {
+        let mut used = Vec::new();
+        for expr in &self.exprs {
+            used.extend(extract_columns(expr));
+        }
+        used
+    }
+
+    /// Go `LogicalProjection.ExtractCorrelatedCols()`
+    /// (`logical_projection.go:367`).
+    #[must_use]
+    pub fn extract_correlated_cols(&self) -> Vec<CorrelatedColumn> {
+        let mut cor_cols = Vec::with_capacity(self.exprs.len());
+        for expr in &self.exprs {
+            cor_cols.extend(extract_cor_columns(expr));
+        }
+        cor_cols
+    }
+
+    /// Go `canProjectionBeEliminatedLoose(p)` (`logical_projection.go:663`):
+    /// every expression is a bare column reference and this is not an
+    /// `Expand` projection.
+    #[must_use]
+    pub fn can_be_eliminated_loose(&self) -> bool {
+        !self.proj4_expand
+            && self
+                .exprs
+                .iter()
+                .all(|expr| matches!(expr, Expression::Column(_)))
+    }
+
+    /// Go `breakDownPredicates(p, predicates)`
+    /// (`logical_projection.go:647`): rewrite each predicate through this
+    /// projection's expressions, splitting into those that survived the
+    /// rewrite and those that did not.
+    ///
+    /// A predicate is pushable only when it was actually substituted, the
+    /// substitution did not fail, and the result contains no `GET_VAR`/
+    /// `SET_VAR`.
+    #[must_use]
+    pub fn break_down_predicates(
+        &self,
+        predicates: &[Expression],
+        schema: &Schema,
+        opts: &SubstituteOptions<'_>,
+    ) -> (Vec<Expression>, Vec<Expression>) {
+        let mut can_be_pushed = Vec::with_capacity(predicates.len());
+        let mut cannot_be_pushed = Vec::with_capacity(predicates.len());
+        for cond in predicates {
+            let outcome = column_substitute_impl(cond, schema, &self.exprs, true, opts);
+            if outcome.substituted
+                && !outcome.has_fail
+                && !tidb_expr::evaluator::has_get_set_var_func(&outcome.expr)
+            {
+                can_be_pushed.push(outcome.expr);
+            } else {
+                cannot_be_pushed.push(cond.clone());
+            }
+        }
+        (can_be_pushed, cannot_be_pushed)
+    }
+
+    /// Go `LogicalProjection.PruneColumns(parentUsedCols)`'s LOCAL half
+    /// (`logical_projection.go:105`): drop every output the parent does not
+    /// use, then report the columns the child must still produce.
+    ///
+    /// Returns `(child_used_cols, self_became_empty)`. Go's two escapes from
+    /// this body are decided by the enum-level driver, which owns the child:
+    /// * an all-pruned projection over a `LogicalTableDual` is rewritten to a
+    ///   single constant column, and
+    /// * a projection left with no columns is replaced by its child.
+    ///
+    /// An expression with `SET_VAR`/`SLEEP` is never pruned, because dropping
+    /// it would drop its side effect.
+    pub fn prune_columns_local(
+        &mut self,
+        parent_used_cols: &[Column],
+        schema: &mut Schema,
+    ) -> (Vec<Column>, bool) {
+        let mut used = schema_producer::get_used_list(parent_used_cols, schema);
+        for (i, keep) in used.iter_mut().enumerate() {
+            if *keep || tidb_expr::expr_util::predicates::expr_has_set_var_or_sleep(&self.exprs[i])
+            {
+                *keep = true;
+                break;
+            }
+        }
+        // Go runs this deletion loop even when every output is pruned: the
+        // projection then empties and its caller replaces it with the child
+        // (`logical_projection.go:139`). Skipping it kept the columns alive, so
+        // a restore projection over a reordered join survived column pruning
+        // while Go drops it (the child supplies the row count).
+        for i in (0..used.len()).rev() {
+            if !used[i]
+                && !tidb_expr::expr_util::predicates::expr_has_set_var_or_sleep(&self.exprs[i])
+            {
+                schema.columns.remove(i);
+                self.exprs.remove(i);
+            }
+        }
+        let child_used = extract_columns_from_expressions(&self.exprs, None);
+        (child_used, schema.columns.is_empty())
+    }
+
+    /// Go `LogicalProjection.PruneColumns`'s `allPruned` test
+    /// (`logical_projection.go:109`): no output column is used by the parent
+    /// and no expression carries a `SET_VAR`/`SLEEP` side effect. The
+    /// enum-level driver pairs this with "the child is a `LogicalTableDual`"
+    /// to keep the projection instead of emptying it.
+    #[must_use]
+    pub fn all_outputs_pruned(&self, parent_used_cols: &[Column], schema: &Schema) -> bool {
+        let used = schema_producer::get_used_list(parent_used_cols, schema);
+        !used.iter().enumerate().any(|(i, keep)| {
+            *keep || tidb_expr::expr_util::predicates::expr_has_set_var_or_sleep(&self.exprs[i])
+        })
+    }
+
+    /// Go `LogicalProjection.buildSchemaByExprs(selfSchema)`
+    /// (`logical_projection.go:505`): the schema formed by the projected
+    /// expressions themselves, so a child key can be matched positionally.
+    ///
+    /// Go allocates a fresh plan column id for every non-column expression;
+    /// there is no id allocator on this operator, so the placeholder is a
+    /// column with `unique_id` set to the SENTINEL `i64::MIN + position`.
+    /// A sentinel can never collide with a real allocation and can never
+    /// match a child key, which is exactly the role Go's fresh id plays.
+    #[must_use]
+    pub fn build_schema_by_exprs(&self) -> Schema {
+        let columns = self
+            .exprs
+            .iter()
+            .enumerate()
+            .map(|(i, expr)| match expr {
+                Expression::Column(column) => column.clone(),
+                _ => {
+                    let mut placeholder = Column::default();
+                    placeholder.unique_id = i64::MIN + i as i64;
+                    placeholder
+                }
+            })
+            .collect();
+        Schema::new(columns)
+    }
+
+    /// Go `LogicalProjection.BuildKeyInfo(selfSchema, childSchema)`
+    /// (`logical_projection.go:163`): carry a child key forward when every one
+    /// of its columns is projected, mapping through
+    /// [`Self::build_schema_by_exprs`] rather than through `selfSchema`,
+    /// because the projection renames.
+    pub fn build_key_info(&self, self_schema: &mut Schema, child_schema: &[Schema]) {
+        self_schema.pk_or_uk.clear();
+        let Some(child) = child_schema.first() else {
+            return;
+        };
+        let by_exprs = self.build_schema_by_exprs();
+        let mut carried = Vec::new();
+        for key in &child.pk_or_uk {
+            let Some(indices) = by_exprs.columns_indices(key) else {
+                continue;
+            };
+            if indices.iter().any(|i| *i >= self_schema.columns.len()) {
+                continue;
+            }
+            carried.push(
+                indices
+                    .into_iter()
+                    .map(|i| self_schema.columns[i].clone())
+                    .collect::<Vec<_>>(),
+            );
+        }
+        self_schema.pk_or_uk = carried;
+    }
+
+    /// Go `LogicalProjection.DeriveStats(childStats, selfSchema, childSchema,
+    /// reloads)` (`logical_projection.go:278`).
+    ///
+    /// The row count passes through unchanged; each output column's NDV is the
+    /// NDV of the columns its expression reads.
+    ///
+    /// # Blocked
+    ///
+    /// Go calls `cardinality.EstimateColsNDVWithMatchedLen` per expression.
+    /// The context-aware body below uses the same estimator and session ratio;
+    /// the no-context wrapper supplies Go's default ratio.
+    pub fn derive_stats(
+        &mut self,
+        child_stats: &[StatsInfo],
+        self_schema: &Schema,
+        reloads: &[bool],
+    ) -> Option<(StatsInfo, bool)> {
+        self.derive_stats_with_group_ndv_skew_ratio(
+            child_stats,
+            self_schema,
+            reloads,
+            tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
+        )
+    }
+
+    /// Go `LogicalProjection.DeriveStats` with its session group-NDV ratio.
+    pub fn derive_stats_with_group_ndv_skew_ratio(
+        &mut self,
+        child_stats: &[StatsInfo],
+        self_schema: &Schema,
+        reloads: &[bool],
+        group_ndv_skew_ratio: f64,
+    ) -> Option<(StatsInfo, bool)> {
+        let child = child_stats
+            .first()
+            .expect("projection derive_stats requires a child");
+        let group_ndvs = self.project_group_ndvs(child, self_schema);
+        let reload = reloads.len() == 1 && reloads[0];
+        if !reload {
+            if let Some(existing) = self.base.base.stats_info() {
+                let mut stats = existing.clone();
+                stats.set_group_ndvs(group_ndvs);
+                self.base.base.set_stats(Some(stats.clone()));
+                return Some((stats, false));
+            }
+        }
+        let mut col_ndvs = Vec::new();
+        for (i, expr) in self.exprs.iter().enumerate() {
+            // Go indexes `selfSchema.Columns[i]` directly
+            // (`logical_projection.go:296`).
+            let output = &self_schema.columns[i];
+            let read = extract_columns(expr);
+            let input_ids = read
+                .iter()
+                .map(|column| column.unique_id)
+                .collect::<Vec<_>>();
+            let (ndv, _) = tidb_planner_cardinality::derive_stats::
+                estimate_cols_ndv_with_matched_len_and_skew_ratio(
+                    &input_ids,
+                    child,
+                    group_ndv_skew_ratio,
+                );
+            col_ndvs.push((output.unique_id, ndv));
+        }
+        let mut stats = StatsInfo::new(child.row_count(), col_ndvs);
+        stats.set_group_ndvs(group_ndvs);
+        self.base.base.set_stats(Some(stats.clone()));
+        Some((stats, true))
+    }
+
+    /// Go `LogicalProjection.getGroupNDVs`: only bare columns preserve groups.
+    fn project_group_ndvs(
+        &self,
+        child: &StatsInfo,
+        schema: &Schema,
+    ) -> Vec<tidb_planner_property::stats_info::GroupNdv> {
+        let mapping: std::collections::HashMap<_, _> = self
+            .exprs
+            .iter()
+            .zip(&schema.columns)
+            .filter_map(|(expr, output)| match expr {
+                Expression::Column(input) => Some((input.unique_id, output.unique_id)),
+                _ => None,
+            })
+            .collect();
+        child
+            .group_ndvs()
+            .iter()
+            .filter_map(|group| {
+                let mut columns = group
+                    .columns
+                    .iter()
+                    .map(|id| mapping.get(id).copied())
+                    .collect::<Option<Vec<_>>>()?;
+                columns.sort_unstable();
+                Some(tidb_planner_property::stats_info::GroupNdv {
+                    columns,
+                    ndv: group.ndv,
+                })
+            })
+            .collect()
+    }
+
+    /// Go `LogicalProjection.Hash64(h)`
+    /// (`logicalop/hash64_equals_generated.go`): the embedded schema producer,
+    /// then the expression count and each expression, then the two flags.
+    ///
+    /// This is the merged form of the crate's former
+    /// `logical_projection::LogicalProjectionIdentity`.
+    #[must_use]
+    pub fn hash64(&self, schema: Option<&Schema>) -> u64 {
+        let mut hasher = new_hash_equaler();
+        hasher.hash_uint64(schema_producer::schema_hash64(schema));
+        hasher.hash_int(self.exprs.len() as i64);
+        for expr in &self.exprs {
+            let mut expr = expr.clone();
+            hasher.hash_bytes(expr.hash_code());
+        }
+        hasher.hash_bool(self.calculate_no_delay);
+        hasher.hash_bool(self.proj4_expand);
+        hasher.sum64()
+    }
+
+    /// Go `LogicalProjection.Equals(other)`: schema identity, then the
+    /// expression list in order, then the two flags.
+    #[must_use]
+    pub fn equals(
+        &self,
+        self_schema: Option<&Schema>,
+        other: &Self,
+        other_schema: Option<&Schema>,
+    ) -> bool {
+        schema_producer::schema_equals(self_schema, other_schema)
+            && schema_producer::expression_lists_equal(&self.exprs, &other.exprs)
+            && self.calculate_no_delay == other.calculate_no_delay
+            && self.proj4_expand == other.proj4_expand
+    }
+}
+
+impl LogicalProjection {
+    /// This operator's own fields with NO children; see
+    /// [`crate::LogicalPlan::clone_shallow`].
+    #[must_use]
+    pub fn clone_shallow(&self) -> Self {
+        Self {
+            base: self.base.shell(),
+            exprs: self.exprs.clone(),
+            calculate_no_delay: self.calculate_no_delay,
+            proj4_expand: self.proj4_expand,
+            fd_expression_ids_registered: self.fd_expression_ids_registered,
+            fd_group_check_complete: self.fd_group_check_complete,
+        }
+    }
+}
+
+#[cfg(test)]
+mod statistics_tests {
+    use super::*;
+    use tidb_planner_property::stats_info::GroupNdv;
+
+    #[test]
+    fn projection_preserves_and_refreshes_renamed_group_ndvs() {
+        let column = |unique_id| {
+            Column::new(
+                unique_id,
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            )
+        };
+        let mut projection = LogicalProjection {
+            exprs: vec![Expression::Column(column(1)), Expression::Column(column(2))],
+            ..LogicalProjection::default()
+        };
+        let schema = Schema::new(vec![column(12), column(11)]);
+        let mut child = StatsInfo::new(8.0, [(1, 0.8), (2, 0.8)]);
+        child.set_group_ndvs(vec![GroupNdv {
+            columns: vec![1, 2],
+            ndv: 8.0,
+        }]);
+        let (stats, _) = projection
+            .derive_stats(&[child.clone()], &schema, &[true])
+            .unwrap();
+        assert_eq!(
+            stats.group_ndvs(),
+            &[GroupNdv {
+                columns: vec![11, 12],
+                ndv: 8.0
+            }]
+        );
+        assert_eq!(
+            tidb_planner_cardinality::derive_stats::estimate_cols_ndv_with_matched_len(&[11, 12], &stats),
+            (8.0, 2)
+        );
+
+        child.set_group_ndvs(vec![GroupNdv {
+            columns: vec![1, 2],
+            ndv: 4.0,
+        }]);
+        let (stats, reloaded) = projection
+            .derive_stats(&[child.clone()], &schema, &[false])
+            .unwrap();
+        assert!(!reloaded);
+        assert_eq!(stats.group_ndvs()[0].ndv, 4.0);
+
+        // A computed output cannot carry a group that requires its input.
+        projection.exprs[1] =
+            Expression::ScalarFunction(tidb_expr::expression::ScalarFunction::new(
+                tidb_ast::CiString::new("plus"),
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                vec![Expression::Column(column(2)), Expression::Column(column(2))],
+            ));
+        let (stats, _) = projection.derive_stats(&[child], &schema, &[true]).unwrap();
+        assert!(stats.group_ndvs().is_empty());
+    }
+}

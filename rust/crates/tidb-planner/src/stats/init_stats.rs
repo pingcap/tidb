@@ -17,7 +17,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::logical::DataSource;
+use tidb_planner_core_operator_logicalop::DataSource;
 use tidb_stats::table_statistics::{analyze_row_count, TableStatsSnapshot};
 use tidb_planner_property::stats_info::{RowSizeColumnStats, RowSizeType};
 use tidb_planner_property::stats_info::{HistColl, StatsInfo};
@@ -449,7 +449,7 @@ pub fn init_stats(
                 }
             })),
     );
-    source.table_scan_penalty = crate::logical::data_source::TableScanPenaltyInput {
+    source.table_scan_penalty = tidb_planner_core_operator_logicalop::data_source::TableScanPenaltyInput {
         has_range_info: false,
         // Go's `tidb_opt_prefer_range_scan` default is ON. This executor
         // does not expose a session override yet.
@@ -485,8 +485,8 @@ use tidb_charset::Collation;
     use tidb_stats::table_statistics::ColumnStats;
     use tidb_stats::table_statistics::IndexStats;
     use tidb_planner_cardinality::selectivity::get_row_count_by_index_ranges;
-    use crate::logical::data_source::DataSourceColumn;
-    use crate::logical::DataSource;
+    use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
+    use tidb_planner_core_operator_logicalop::DataSource;
     use tidb_infoschema::table_source::SourceIndexColumn;
     use tidb_infoschema::table_source::SourceIndex;
 

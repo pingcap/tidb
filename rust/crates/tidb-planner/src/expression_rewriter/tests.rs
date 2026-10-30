@@ -27,11 +27,11 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_exprctx::NoColumns;
 
-use crate::logical::limit::LogicalLimit;
+use tidb_planner_core_operator_logicalop::limit::LogicalLimit;
 
 use super::*;
-use crate::logical::data_source::DataSource;
-use crate::logical::selection::LogicalSelection;
+use tidb_planner_core_operator_logicalop::data_source::DataSource;
+use tidb_planner_core_operator_logicalop::selection::LogicalSelection;
 
 // ***** fixtures *****
 
@@ -1010,7 +1010,7 @@ fn the_ctx_stack_pops_names_with_expressions() {
 fn a_childless_unary_chain_panics_when_resolving_a_natural_join_name_like_go() {
     let _fixture = Fixture::new();
     let plan = LogicalPlan::Selection(LogicalSelection::new(
-        crate::logical::BaseLogicalPlan::with_id(1, LogicalSelection::TYPE, 0),
+        tidb_planner_core_operator_logicalop::BaseLogicalPlan::with_id(1, LogicalSelection::TYPE, 0),
         Vec::new(),
     ));
 
@@ -1027,7 +1027,7 @@ fn push_last_schema_column_panics_on_an_empty_schema_like_go() {
     let fixture = Fixture::new();
     let mut rewriter = fixture.rewriter(RewriterSessionFlags::default());
     let mut plan = LogicalPlan::Limit(LogicalLimit::new(
-        crate::logical::BaseLogicalPlan::with_id(1, LogicalLimit::TYPE, 0),
+        tidb_planner_core_operator_logicalop::BaseLogicalPlan::with_id(1, LogicalLimit::TYPE, 0),
         0,
         1,
     ));

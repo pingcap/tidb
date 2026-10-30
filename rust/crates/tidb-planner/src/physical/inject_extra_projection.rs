@@ -238,7 +238,7 @@ fn inject_proj_below_agg(
         .map(|stats| stats.scale_by_expect_cnt(child_prop.expected_cnt, ctx.skew_ratio));
     let mut base = BasePhysicalPlan::new(
         ctx.plan_ids,
-        crate::logical::LogicalProjection::TYPE,
+        tidb_planner_core_operator_logicalop::LogicalProjection::TYPE,
         block_offset,
     );
     base.base.set_stats(stats);
@@ -367,7 +367,7 @@ fn inject_proj_below_sort(ctx: &InjectContext<'_>, p: PhysicalPlan) -> PhysicalP
         .map(|stats| stats.scale_by_expect_cnt(child_prop.expected_cnt, ctx.skew_ratio));
     let mut bottom_base = BasePhysicalPlan::new(
         ctx.plan_ids,
-        crate::logical::LogicalProjection::TYPE,
+        tidb_planner_core_operator_logicalop::LogicalProjection::TYPE,
         block_offset,
     );
     bottom_base.base.set_stats(bottom_stats);
@@ -401,7 +401,7 @@ fn inject_proj_below_sort(ctx: &InjectContext<'_>, p: PhysicalPlan) -> PhysicalP
     let top_stats = p.stats_info().cloned();
     let mut top_base = BasePhysicalPlan::new(
         ctx.plan_ids,
-        crate::logical::LogicalProjection::TYPE,
+        tidb_planner_core_operator_logicalop::LogicalProjection::TYPE,
         block_offset,
     );
     top_base.base.set_stats(top_stats);
@@ -478,7 +478,7 @@ fn turn_nominal_sort_into_proj(
         .map(|stats| stats.scale_by_expect_cnt(child_prop.expected_cnt, ctx.skew_ratio));
     let mut bottom_base = BasePhysicalPlan::new(
         ctx.plan_ids,
-        crate::logical::LogicalProjection::TYPE,
+        tidb_planner_core_operator_logicalop::LogicalProjection::TYPE,
         block_offset,
     );
     bottom_base.base.set_stats(bottom_stats);
@@ -509,7 +509,7 @@ fn turn_nominal_sort_into_proj(
         .map(|stats| stats.scale_by_expect_cnt(child_prop.expected_cnt, ctx.skew_ratio));
     let mut top_base = BasePhysicalPlan::new(
         ctx.plan_ids,
-        crate::logical::LogicalProjection::TYPE,
+        tidb_planner_core_operator_logicalop::LogicalProjection::TYPE,
         block_offset,
     );
     top_base.base.set_stats(top_stats);

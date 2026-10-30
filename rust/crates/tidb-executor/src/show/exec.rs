@@ -221,7 +221,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
     /// Table,Sequence,View}`: the one row a SHOW CREATE answers.
     fn show_create_rows(
         &mut self,
-        contents: &tidb_planner::logical::ShowContents,
+        contents: &tidb_planner_core_operator_logicalop::ShowContents,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         if contents.tp == tidb_ast::ShowStmtType::CreateDatabase {
             let database = &contents.db_name;
@@ -1480,7 +1480,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
     /// LABELS forms (`executor/show_placement.go`).
     fn placement_rows(
         &mut self,
-        show: &tidb_planner::logical::ShowContents,
+        show: &tidb_planner_core_operator_logicalop::ShowContents,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         match show.tp {
             tidb_ast::ShowStmtType::Placement => self.all_placement_rows(),

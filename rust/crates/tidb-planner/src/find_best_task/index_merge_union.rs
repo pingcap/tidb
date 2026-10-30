@@ -17,7 +17,7 @@ use crate::access_path::index_merge::compare_alternatives;
 
 use tidb_planner_util::path::{Partial, UnionIndexMergePath};
 use crate::find_best_task::dispatch::DispatchContext;
-use crate::logical::DataSource;
+use tidb_planner_core_operator_logicalop::DataSource;
 use crate::physical::PhysicalPlan;
 use tidb_planner_core_base::PlanError;
 use crate::task::Task;
@@ -287,7 +287,7 @@ pub(super) fn converge_union_index_merge_path<'a>(
                 Partial::Index {
                     index_pos, filled, ..
                 } => {
-                    crate::logical::data_source::index_covers_condition(
+                    tidb_planner_core_operator_logicalop::data_source::index_covers_condition(
                         ds,
                         &ds.indexes[*index_pos],
                         filter,
@@ -518,9 +518,9 @@ pub(super) fn build_converged_union_index_merge_task(
                     .iter()
                     .all(|range| range.is_full_range(unsigned_int_handle))
                 {
-                    crate::logical::data_source_paths::ResolvedTableScanKind::Full
+                    tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::Full
                 } else {
-                    crate::logical::data_source_paths::ResolvedTableScanKind::Range
+                    tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::Range
                 };
                 let mut base = crate::physical::BasePhysicalPlan::new(
                     ctx.allocator,
@@ -563,11 +563,11 @@ pub(super) fn build_converged_union_index_merge_task(
                         plan_part_info: None,
                         filter_condition: Vec::new(),
                         resolved_descriptor: Some(
-                            crate::logical::data_source_paths::ResolvedTableDescriptor::new(
+                            tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableDescriptor::new(
                                 ds.physical_table_id,
                                 !ds.common_handle_cols.is_empty(),
                                 scan_kind,
-                                crate::logical::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
+                                tidb_planner_core_operator_logicalop::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
                             ),
                         ),
                     },
@@ -663,11 +663,11 @@ pub(super) fn build_converged_union_index_merge_task(
                 prop: None,
                 plan_part_info: None,
                 filter_condition: Vec::new(),
-                resolved_descriptor: Some(crate::logical::data_source_paths::ResolvedTableDescriptor::new(
+                resolved_descriptor: Some(tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableDescriptor::new(
                     ds.physical_table_id,
                     !ds.common_handle_cols.is_empty(),
-                    crate::logical::data_source_paths::ResolvedTableScanKind::RowId,
-                    crate::logical::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
+                    tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::RowId,
+                    tidb_planner_core_operator_logicalop::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
                 )),
             },
         ))
@@ -777,7 +777,7 @@ fn append_index_merge_scan_columns(
     } else if !schema
         .columns
         .iter()
-        .any(|column| column.id == crate::logical::data_source::EXTRA_HANDLE_ID)
+        .any(|column| column.id == tidb_planner_core_operator_logicalop::data_source::EXTRA_HANDLE_ID)
     {
         let mut extra = tidb_expr::column::Column::new(
             ctx.column_ids.map(|ids| ids.alloc()).unwrap_or_default(),
@@ -786,7 +786,7 @@ fn append_index_merge_scan_columns(
                     tidb_datatype::FieldTypeFlags::NOT_NULL | tidb_datatype::FieldTypeFlags::PRI_KEY,
                 ),
         );
-        extra.id = crate::logical::data_source::EXTRA_HANDLE_ID;
+        extra.id = tidb_planner_core_operator_logicalop::data_source::EXTRA_HANDLE_ID;
         extra.orig_name = "_tidb_rowid".to_owned();
         schema.columns.push(extra);
         added = true;
@@ -1103,7 +1103,7 @@ mod tests {
 
     #[test]
     fn named_intersection_hint_does_not_make_other_merge_hints_wildcards() {
-        use crate::logical::data_source::DataSourceIndexMergeHint;
+        use tidb_planner_core_operator_logicalop::data_source::DataSourceIndexMergeHint;
 
         let ds = DataSource {
             index_merge_hints: vec![
@@ -1128,7 +1128,7 @@ mod tests {
     /// is `idx`.
     #[test]
     fn index_merge_hint_names_compare_by_equal_fold() {
-        use crate::logical::data_source::DataSourceIndexMergeHint;
+        use tidb_planner_core_operator_logicalop::data_source::DataSourceIndexMergeHint;
 
         let hinted = |name: &str| DataSource {
             index_merge_hints: vec![DataSourceIndexMergeHint {
@@ -1148,7 +1148,7 @@ mod tests {
     /// TestIndexMergePathGeneration: pruning cannot change physical key layout.
     #[test]
     fn index_merge_restores_index_columns_and_handle_suffix() {
-        use crate::logical::{data_source::DataSourceColumn, BaseLogicalPlan};
+        use tidb_planner_core_operator_logicalop::{data_source::DataSourceColumn, BaseLogicalPlan};
         use tidb_infoschema::table_source::SourceIndexColumn;
         use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -1331,12 +1331,12 @@ mod tests {
             .base
             .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(2.0, [])));
         logical_source.index_merge_hints = vec![Default::default()];
-        let mut logical = crate::logical::LogicalPlan::DataSource(logical_source);
+        let mut logical = tidb_planner_core_operator_logicalop::LogicalPlan::DataSource(logical_source);
         let rule_context = crate::rule::rule_tests::test_context(&allocator);
         logical
             .recursive_derive_stats_with_context(&[], &rule_context)
             .unwrap();
-        let crate::logical::LogicalPlan::DataSource(derived_source) = &logical else {
+        let tidb_planner_core_operator_logicalop::LogicalPlan::DataSource(derived_source) = &logical else {
             unreachable!()
         };
         assert!(
@@ -1459,7 +1459,7 @@ mod tests {
                 100.0, 0.0, 0.0,
             ));
         }
-        let mut ordinary = crate::logical::LogicalPlan::DataSource(ordinary_source);
+        let mut ordinary = tidb_planner_core_operator_logicalop::LogicalPlan::DataSource(ordinary_source);
         ordinary
             .recursive_derive_stats_with_context(&[], &rule_context)
             .unwrap();
@@ -1479,7 +1479,7 @@ mod tests {
         );
         let ordinary_allocations = allocator.current() - before_ordinary;
         let mut surviving_only = ordinary.clone();
-        let crate::logical::LogicalPlan::DataSource(surviving_source) = &mut surviving_only else {
+        let tidb_planner_core_operator_logicalop::LogicalPlan::DataSource(surviving_source) = &mut surviving_only else {
             unreachable!()
         };
         surviving_source
@@ -1522,7 +1522,7 @@ mod tests {
             is_int_handle: false,
             primary_index: Some(0),
         }];
-        let mut table = crate::logical::LogicalPlan::DataSource(table_source);
+        let mut table = tidb_planner_core_operator_logicalop::LogicalPlan::DataSource(table_source);
         table
             .recursive_derive_stats_with_context(&[], &rule_context)
             .unwrap();

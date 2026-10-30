@@ -21,8 +21,8 @@ use tidb_expr::column::Column;
 use tidb_expr::expr_util::predicates::is_mutable_effects_expr;
 use tidb_expr::expression::Expression;
 
-use crate::logical::plan_context::{LogicalOptRule, RuleContext};
-use crate::logical::{LogicalPlan};
+use tidb_planner_core_operator_logicalop::plan_context::{LogicalOptRule, RuleContext};
+use tidb_planner_core_operator_logicalop::{LogicalPlan};
 use tidb_planner_core_base::{PlanError};
 
 /// Go `OrderAwareJoinReorder`.
@@ -301,7 +301,7 @@ fn same_ordering_columns(left: &[Column], right: &[Column]) -> bool {
 }
 
 fn rewrite_ordering_for_projection(
-    projection: &crate::logical::projection::LogicalProjection,
+    projection: &tidb_planner_core_operator_logicalop::projection::LogicalProjection,
     order_columns: &[Column],
 ) -> Vec<Column> {
     let Some(schema) = projection.base.base.schema() else {
@@ -325,10 +325,10 @@ fn rewrite_ordering_for_projection(
 mod tests {
     use super::*;
     use tidb_planner_core_base::LogicalJoinType;
-    use crate::logical::data_source::DataSource;
-    use crate::logical::join::LogicalJoin;
-    use crate::logical::topn::LogicalTopN;
-    use crate::logical::BaseLogicalPlan;
+    use tidb_planner_core_operator_logicalop::data_source::DataSource;
+    use tidb_planner_core_operator_logicalop::join::LogicalJoin;
+    use tidb_planner_core_operator_logicalop::topn::LogicalTopN;
+    use tidb_planner_core_operator_logicalop::BaseLogicalPlan;
     use tidb_planner_core_base::PlanIdAllocator;
     use tidb_infoschema::table_source::SourceIndexColumn;
     use tidb_infoschema::table_source::SourceIndex;

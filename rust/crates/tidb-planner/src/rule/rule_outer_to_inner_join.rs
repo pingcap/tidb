@@ -20,8 +20,8 @@ use tidb_expr::expression::{is_null_rejected, Expression};
 
 use tidb_planner_core_base::LogicalJoinType;
 
-use crate::logical::plan_context::{LogicalOptRule, RuleContext};
-use crate::logical::{LogicalJoin, LogicalPlan};
+use tidb_planner_core_operator_logicalop::plan_context::{LogicalOptRule, RuleContext};
+use tidb_planner_core_operator_logicalop::{LogicalJoin, LogicalPlan};
 use tidb_planner_core_base::{PlanError};
 
 /// Go `ConvertOuterToInnerJoin`.

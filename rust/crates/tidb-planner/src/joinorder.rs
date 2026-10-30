@@ -30,11 +30,11 @@ use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::{merge_schema, Schema};
 use tidb_expr::simple_expr::extract_columns;
 
-use crate::logical::join::LogicalJoin;
-use crate::logical::projection::LogicalProjection;
-use crate::logical::plan_context::RuleContext;
-use crate::logical::selection::LogicalSelection;
-use crate::logical::{BaseLogicalPlan, LogicalPlan};
+use tidb_planner_core_operator_logicalop::join::LogicalJoin;
+use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
+use tidb_planner_core_operator_logicalop::plan_context::RuleContext;
+use tidb_planner_core_operator_logicalop::selection::LogicalSelection;
+use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalPlan};
 use tidb_planner_core_base::PlanError;
 use tidb_intset::FastIntSet;
 
@@ -425,7 +425,7 @@ impl ConflictDetector {
             // Go `ConflictDetector.Build` derives every leaf vertex before
             // reading its cumulative cost. The logical-rule phase runs
             // before the later whole-plan physical-optimization derivation.
-            let (vertex, result) = crate::logical::rewrite::recursive_derive_stats_with_context(
+            let (vertex, result) = tidb_planner_core_operator_logicalop::rewrite::recursive_derive_stats_with_context(
                 vertex.as_ref().clone(),
                 Vec::new(),
                 context,
@@ -764,7 +764,7 @@ impl ConflictDetector {
             )
         };
         let (plan, stats_result) =
-            crate::logical::rewrite::recursive_derive_stats_with_context(plan, Vec::new(), context);
+            tidb_planner_core_operator_logicalop::rewrite::recursive_derive_stats_with_context(plan, Vec::new(), context);
         let (stats, _) = stats_result?;
         let cumulative_cost = stats.row_count()
             + check_result.node1.cumulative_cost
@@ -941,12 +941,12 @@ fn align_equal_conditions(
             let mut right_argument = first.clone();
             if !matches!(left_argument, Expression::Column(_)) {
                 let (new_left, column) =
-                    crate::logical::rewrite::inject_join_expression(context, left, left_argument)?;
+                    tidb_planner_core_operator_logicalop::rewrite::inject_join_expression(context, left, left_argument)?;
                 left = new_left;
                 left_argument = Expression::Column(column);
             }
             if !matches!(right_argument, Expression::Column(_)) {
-                let (new_right, column) = crate::logical::rewrite::inject_join_expression(
+                let (new_right, column) = tidb_planner_core_operator_logicalop::rewrite::inject_join_expression(
                     context,
                     right,
                     right_argument,
@@ -2170,7 +2170,7 @@ pub fn outer_join_side_filters_touch_multiple_leaves(
 /// Go `DsSatisfiesOrdering`.
 #[must_use]
 pub fn data_source_satisfies_ordering(
-    data_source: &crate::logical::data_source::DataSource,
+    data_source: &tidb_planner_core_operator_logicalop::data_source::DataSource,
     ordering_columns: &[Column],
     parent_filters: &[Expression],
 ) -> bool {
@@ -2343,7 +2343,7 @@ fn schema_contains_all_ordering_columns(
 }
 
 fn table_has_index_matching_ordering(
-    data_source: &crate::logical::data_source::DataSource,
+    data_source: &tidb_planner_core_operator_logicalop::data_source::DataSource,
     ordering_column_ids: &[i64],
     group_selection_conditions: &[Expression],
     parent_filters: &[Expression],
@@ -2367,7 +2367,7 @@ fn table_has_index_matching_ordering(
 
 fn index_matches_ordering(
     index: &tidb_infoschema::table_source::SourceIndex,
-    data_source: &crate::logical::data_source::DataSource,
+    data_source: &tidb_planner_core_operator_logicalop::data_source::DataSource,
     ordering_column_ids: &[i64],
     equality_column_ids: &BTreeSet<i64>,
 ) -> bool {
@@ -2395,7 +2395,7 @@ fn index_matches_ordering(
 }
 
 fn collect_equality_predicate_column_ids(
-    data_source: &crate::logical::data_source::DataSource,
+    data_source: &tidb_planner_core_operator_logicalop::data_source::DataSource,
     group_selection_conditions: &[Expression],
     parent_filters: &[Expression],
 ) -> BTreeSet<i64> {
@@ -2469,9 +2469,9 @@ fn is_deterministic_const_expression(expression: &Expression) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::logical::data_source::DataSource;
-    use crate::logical::table_dual::LogicalTableDual;
-    use crate::logical::BaseLogicalPlan;
+    use tidb_planner_core_operator_logicalop::data_source::DataSource;
+    use tidb_planner_core_operator_logicalop::table_dual::LogicalTableDual;
+    use tidb_planner_core_operator_logicalop::BaseLogicalPlan;
     use tidb_planner_core_base::PlanIdAllocator;
     use tidb_infoschema::table_source::SourceIndexColumn;
     use tidb_infoschema::table_source::SourceIndex;

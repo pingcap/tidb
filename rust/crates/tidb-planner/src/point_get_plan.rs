@@ -262,11 +262,11 @@ fn build_fast_point_physical_plan(
     .then_some(select.lock.as_ref())
     .flatten()
     .map(|lock| match lock.wait {
-        tidb_ast::LockWait::NoWait => (crate::logical::SelectLockType::ForUpdateNoWait, 0),
+        tidb_ast::LockWait::NoWait => (tidb_planner_core_operator_logicalop::SelectLockType::ForUpdateNoWait, 0),
         tidb_ast::LockWait::Wait(seconds) => {
-            (crate::logical::SelectLockType::ForUpdateWaitN, seconds)
+            (tidb_planner_core_operator_logicalop::SelectLockType::ForUpdateWaitN, seconds)
         }
-        _ => (crate::logical::SelectLockType::ForUpdate, 0),
+        _ => (tidb_planner_core_operator_logicalop::SelectLockType::ForUpdate, 0),
     });
     // The PARTITION clause is decided below, against the table and pin.
     let Some(table_ref) = sole_table_ref(&select.from) else {

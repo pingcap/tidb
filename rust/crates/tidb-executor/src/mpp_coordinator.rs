@@ -145,7 +145,7 @@ pub fn root_fragment_dag(
         .columns
         .iter()
         .map(scan_column)
-        .collect::<Option<Vec<tidb_planner::logical::tikv_scan_spec::ScanColumnInfo>>>()
+        .collect::<Option<Vec<tidb_planner_core_operator_logicalop::tikv_scan_spec::ScanColumnInfo>>>()
         .ok_or_else(|| "a column has no bounded coprocessor descriptor".to_owned())?;
     // Go `util.ColumnToProto` rewrites EVERY column's collation id for
     // the new-collation framework (binary included, so an INT reads

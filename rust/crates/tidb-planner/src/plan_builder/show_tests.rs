@@ -23,7 +23,7 @@ use tidb_infoschema::table_source::SourceTable;
 use super::PlanBuilder;
 use tidb_planner_core_base::ColumnIdAllocator;
 use crate::common_plans::Plan;
-use crate::logical::LogicalPlan;
+use tidb_planner_core_operator_logicalop::LogicalPlan;
 use tidb_planner_core_base::PlanIdAllocator;
 
 /// A catalog with no tables: the SHOW kinds tested here read none.

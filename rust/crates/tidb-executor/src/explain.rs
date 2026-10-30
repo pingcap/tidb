@@ -583,9 +583,9 @@ fn window_info(
     }
     if let Some(frame) = &window.frame {
         let kind = match frame.frame_type {
-            tidb_planner::logical::window::FrameType::Rows => "rows",
-            tidb_planner::logical::window::FrameType::Ranges => "range",
-            tidb_planner::logical::window::FrameType::Groups => "groups",
+            tidb_planner_core_operator_logicalop::window::FrameType::Rows => "rows",
+            tidb_planner_core_operator_logicalop::window::FrameType::Ranges => "range",
+            tidb_planner_core_operator_logicalop::window::FrameType::Groups => "groups",
         };
         parts.push(format!(
             "{kind} between {} and {}",
@@ -601,10 +601,10 @@ fn window_info(
 /// the offset constant for plus/minus), a ROWS bound its row count.
 fn frame_bound_text(
     eval_ctx: &dyn tidb_exprctx::Columns,
-    bound: Option<&tidb_planner::logical::window::FrameBound>,
+    bound: Option<&tidb_planner_core_operator_logicalop::window::FrameBound>,
 ) -> String {
     use tidb_expr::expression::Expression;
-    use tidb_planner::logical::window::BoundType;
+    use tidb_planner_core_operator_logicalop::window::BoundType;
     let Some(bound) = bound else {
         return String::new();
     };

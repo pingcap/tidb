@@ -22,10 +22,10 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::{merge_schema, Schema};
 use tidb_expr::simple_expr::extract_columns;
 
-use crate::logical::aggregation::{AGG_FUNC_MAX, AGG_FUNC_MIN};
-use crate::logical::plan_context::{LogicalOptRule, RuleContext};
-use crate::logical::{BaseLogicalPlan, LogicalAggregation, LogicalJoin, LogicalLimit, LogicalPlan, LogicalSelection, LogicalSort};
-use crate::logical::data_source_paths::{AccessPathStore, DataSourceAccessPath};
+use tidb_planner_core_operator_logicalop::aggregation::{AGG_FUNC_MAX, AGG_FUNC_MIN};
+use tidb_planner_core_operator_logicalop::plan_context::{LogicalOptRule, RuleContext};
+use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalAggregation, LogicalJoin, LogicalLimit, LogicalPlan, LogicalSelection, LogicalSort};
+use tidb_planner_core_operator_logicalop::data_source_paths::{AccessPathStore, DataSourceAccessPath};
 use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanError;
 
@@ -468,7 +468,7 @@ mod tests {
 
     use super::*;
     use crate::rule::rule_tests::test_context;
-    use crate::logical::DataSource;
+    use tidb_planner_core_operator_logicalop::DataSource;
     use tidb_planner_core_base::PlanIdAllocator;
 
     fn column(id: i64, nullable: bool) -> Column {
@@ -513,12 +513,12 @@ mod tests {
 
     #[test]
     fn integer_handle_residual_stops_before_later_covering_index() {
-        use crate::logical::data_source_paths::{IndexAccessPath, PointGetAdmission, ResolvedTableDescriptor, ResolvedTableScanKind, TableAccessPath, TableScanExplainIdSuffix};
+        use tidb_planner_core_operator_logicalop::data_source_paths::{IndexAccessPath, PointGetAdmission, ResolvedTableDescriptor, ResolvedTableScanKind, TableAccessPath, TableScanExplainIdSuffix};
         use tidb_planner_cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
-        use crate::logical::data_source::DataSourceColumn;
+        use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
         use tidb_infoschema::table_source::SourceIndexColumn;
         use tidb_infoschema::table_source::SourceIndex;
-        use crate::logical::tikv_scan_spec::TiKvTableScanSpec;
+        use tidb_planner_core_operator_logicalop::tikv_scan_spec::TiKvTableScanSpec;
         let allocator = PlanIdAllocator::new();
         let handle = column(1, false);
         let other = column(2, false);
@@ -650,7 +650,7 @@ mod tests {
 
     #[test]
     fn split_source_clone_restores_all_access_paths() {
-        use crate::logical::data_source_paths::IndexAccessPath;
+        use tidb_planner_core_operator_logicalop::data_source_paths::IndexAccessPath;
         use tidb_planner_cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
         let path = |index_id| {
             DataSourceAccessPath::Index(IndexAccessPath::new(LiveIndexCandidate {

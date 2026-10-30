@@ -21,13 +21,13 @@
 
 use tidb_kv::store_type::StoreType;
 use tidb_planner::{
-    logical::data_source_paths::{ResolvedTableDescriptor, ResolvedTableScanKind, TableScanExplainIdSuffix},
     physical::{
         BasePhysicalPlan, PhysicalHashJoin, PhysicalPlan, PhysicalTableReader, PhysicalTableScan,
     },
     physical_table_reader::ReadReqType,
-    logical::tikv_scan_spec::TiKvTableScanSpec,
 };
+use tidb_planner_core_operator_logicalop::data_source_paths::{ResolvedTableDescriptor, ResolvedTableScanKind, TableScanExplainIdSuffix};
+use tidb_planner_core_operator_logicalop::tikv_scan_spec::TiKvTableScanSpec;
 
 fn table_scan(id: i32) -> PhysicalTableScan {
     let mut scan = PhysicalTableScan::init(id, 0, TiKvTableScanSpec::new(i64::from(id), vec![]));

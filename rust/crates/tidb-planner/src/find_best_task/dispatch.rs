@@ -48,11 +48,11 @@
 //! Joins refuse toward [`crate::find_best_task`]'s own specialized search,
 //! which owns candidate enumeration for them.
 
-use crate::logical::data_source::{index_covers_condition, index_path_is_single_scan};
+use tidb_planner_core_operator_logicalop::data_source::{index_covers_condition, index_path_is_single_scan};
 use std::collections::{HashMap, HashSet};
 
 use crate::enforce::enforce_property_in;
-use crate::logical::LogicalPlan;
+use tidb_planner_core_operator_logicalop::LogicalPlan;
 use crate::physical::{self, PhysicalPlan};
 use tidb_planner_property::PhysicalProperty;
 use tidb_planner_core_base::{PlanError, PlanIdAllocator};
@@ -302,7 +302,7 @@ impl<'a> DispatchContext<'a> {
     /// Estimate only the predicates retained in the remote scan.
     fn pushed_filter_stats(
         &self,
-        source: &crate::logical::DataSource,
+        source: &tidb_planner_core_operator_logicalop::DataSource,
         input: Option<&tidb_planner_property::stats_info::StatsInfo>,
         filters: &[tidb_expr::expression::Expression],
     ) -> Option<tidb_planner_property::stats_info::StatsInfo> {
@@ -324,7 +324,7 @@ impl<'a> DispatchContext<'a> {
     /// Retain the same statement settings for ordinary and merge task conversion.
     pub(crate) fn task_stats_context(
         &self,
-        source: &crate::logical::DataSource,
+        source: &tidb_planner_core_operator_logicalop::DataSource,
         root_filters: &[tidb_expr::expression::Expression],
     ) -> crate::task::TaskStatsContext {
         crate::task::TaskStatsContext {
@@ -1313,7 +1313,7 @@ fn exhaust_physical_plans(
             }
             let mut base = physical::BasePhysicalPlan::new(
                 ctx.allocator,
-                crate::logical::LogicalApply::TYPE,
+                tidb_planner_core_operator_logicalop::LogicalApply::TYPE,
                 op.base().base.query_block_offset(),
             );
             base.base.set_stats(
@@ -1470,7 +1470,7 @@ fn admits_index_join_inner_child_pattern(
 ) -> bool {
     match plan {
         LogicalPlan::DataSource(ds) => {
-            ds.prefer_store_type & crate::logical::data_source::PREFER_TIFLASH == 0
+            ds.prefer_store_type & tidb_planner_core_operator_logicalop::data_source::PREFER_TIFLASH == 0
         }
         LogicalPlan::Selection(_) | LogicalPlan::Projection(_) => multi_pattern,
         LogicalPlan::Join(join) => {
@@ -1518,7 +1518,7 @@ fn admits_index_join_inner_child_pattern(
 /// `PhysicalIndexJoin` of an index hash join.
 fn burn_index_join_candidate_ids(
     ctx: &DispatchContext<'_>,
-    join: &crate::logical::LogicalJoin,
+    join: &tidb_planner_core_operator_logicalop::LogicalJoin,
     strategy: &crate::find_best_task::JoinStrategy,
 ) {
     let crate::find_best_task::JoinStrategy::Index { kind, .. } = strategy else {
@@ -1715,7 +1715,7 @@ fn find_best_task_uncached(
 
 fn find_best_task_4_logical_mem_table(
     logical: &LogicalPlan,
-    mem_table: &crate::logical::LogicalMemTable,
+    mem_table: &tidb_planner_core_operator_logicalop::LogicalMemTable,
     prop: &PhysicalProperty,
     ctx: &mut DispatchContext<'_>,
 ) -> Result<Task, PlanError> {
@@ -1751,7 +1751,7 @@ fn find_best_task_4_logical_mem_table(
 
     let mut base = physical::BasePhysicalPlan::new(
         ctx.allocator,
-        crate::logical::LogicalMemTable::TYPE,
+        tidb_planner_core_operator_logicalop::LogicalMemTable::TYPE,
         mem_table.base.base.query_block_offset(),
     );
     base.base
@@ -1794,7 +1794,7 @@ fn find_best_task_4_logical_mem_table(
 /// unshort-circuited rather than mis-coercing them (the source still plans,
 /// just without the dual fast path).
 fn try_to_get_dual_task(
-    ds: &crate::logical::DataSource,
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
     ctx: &DispatchContext<'_>,
 ) -> Option<Task> {
     use tidb_expr::expression::Expression;
@@ -1817,10 +1817,10 @@ fn try_to_get_dual_task(
 /// Go's empty-range branch returns an uncacheable `PhysicalTableDual` before
 /// converting the selected access path into a scan.  Keep the same shape for
 /// both constant-false predicates and ranger-proven empty ranges.
-fn empty_range_dual_task(ds: &crate::logical::DataSource, ctx: &DispatchContext<'_>) -> Task {
+fn empty_range_dual_task(ds: &tidb_planner_core_operator_logicalop::DataSource, ctx: &DispatchContext<'_>) -> Task {
     let mut base = crate::physical::BasePhysicalPlan::new(
         ctx.allocator,
-        crate::logical::LogicalTableDual::TYPE,
+        tidb_planner_core_operator_logicalop::LogicalTableDual::TYPE,
         ds.base.base.query_block_offset(),
     );
     base.base.set_stats(ds.base.base.stats_info().cloned());
@@ -1957,7 +1957,7 @@ pub(super) fn range_group_count<'a>(
 /// rebuilt per outer row at execution, so the plan-time groups would be stale;
 /// such a path keeps the Sort instead.
 fn grouping_ranges<'a>(
-    ds: &crate::logical::DataSource,
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
     ranges: Option<&'a tidb_ranger::types::Ranges>,
 ) -> Option<&'a tidb_ranger::types::Ranges> {
     ranges.filter(|_| {
@@ -1969,7 +1969,7 @@ fn grouping_ranges<'a>(
 /// `matchProperty` checks integer handles directly and common-handle prefixes
 /// through the schema columns retained after pruning.
 pub(super) fn table_path_matches_order(
-    ds: &crate::logical::DataSource,
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
     prop: &PhysicalProperty,
     ranges: Option<&tidb_ranger::types::Ranges>,
 ) -> OrderMatch {
@@ -2011,7 +2011,7 @@ pub(super) fn table_path_matches_order(
 }
 
 pub(super) fn index_path_matches_order(
-    ds: &crate::logical::DataSource,
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
     index: &tidb_infoschema::table_source::SourceIndex,
     prop: &PhysicalProperty,
     ranges: Option<&tidb_ranger::types::Ranges>,
@@ -2075,7 +2075,7 @@ pub(super) fn add_extra_phys_tbl_id_column(
 }
 
 /// Go `hasV0NewCollationStringHandle`.
-fn has_v0_new_collation_string_handle(ds: &crate::logical::DataSource) -> bool {
+fn has_v0_new_collation_string_handle(ds: &tidb_planner_core_operator_logicalop::DataSource) -> bool {
     if ds.common_handle_version != 0 || !tidb_datatype::new_collation_enabled() {
         return false;
     }
@@ -2094,7 +2094,7 @@ fn has_v0_new_collation_string_handle(ds: &crate::logical::DataSource) -> bool {
 /// impossible id -1 when none survive. A full partition set adds nothing
 /// (no partition here is hidden by an in-flight DDL).
 pub(super) fn global_index_partition_filter(
-    ds: &crate::logical::DataSource,
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
     index: &tidb_infoschema::table_source::SourceIndex,
     scan_schema: Option<&tidb_expr::schema::Schema>,
 ) -> Option<tidb_expr::expression::Expression> {
@@ -2148,7 +2148,7 @@ pub(super) fn global_index_partition_filter(
 /// columns line up with the ORDER BY columns, the final definition column is
 /// a prefix column, and no earlier definition column is truncated.
 pub(super) fn match_partial_order_property(
-    ds: &crate::logical::DataSource,
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
     index: &tidb_infoschema::table_source::SourceIndex,
     partial: &tidb_planner_property::PartialOrderInfo,
 ) -> Option<tidb_planner_property::PartialOrderMatchResult> {
@@ -2196,7 +2196,7 @@ pub(super) fn match_partial_order_property(
     })
 }
 
-fn equality_fixed_ids(ds: &crate::logical::DataSource) -> Vec<i64> {
+fn equality_fixed_ids(ds: &tidb_planner_core_operator_logicalop::DataSource) -> Vec<i64> {
     use tidb_expr::expression::Expression;
     let mut ids = Vec::new();
     for condition in &ds.pushed_down_conds {
@@ -2270,7 +2270,7 @@ fn index_join_range_env<'a>(
 /// index-join probe and, for an index path, its skyline candidate
 /// (`getIndexCandidateForIndexJoin`) and equality-prefix NDV.
 fn build_index_join_path_result(
-    ds: &crate::logical::DataSource,
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
     path: &tidb_planner_util::path::PossiblePath,
     position: usize,
     runtime: &tidb_planner_property::IndexJoinRuntimeProp,
@@ -2396,7 +2396,7 @@ fn build_index_join_path_result(
 /// DataSource cannot see the join keys, so every column the index join uses
 /// joins both coverage maps, and the equality count is that width.
 fn index_join_candidate(
-    ds: &crate::logical::DataSource,
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
     source_index: &tidb_infoschema::table_source::SourceIndex,
     idx_cols: &[tidb_expr::column::Column],
     idx_col_lens: &[i64],
@@ -2439,7 +2439,7 @@ fn index_join_candidate(
 /// index-join result and keep the winner of `indexJoinPathCompare`. An empty
 /// range on any path answers no index join at all.
 fn choose_index_join_index_path(
-    ds: &crate::logical::DataSource,
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
     paths: &[&tidb_planner_util::path::PossiblePath],
     runtime: &tidb_planner_property::IndexJoinRuntimeProp,
     ctx: &DispatchContext<'_>,
@@ -2467,7 +2467,7 @@ fn choose_index_join_index_path(
 /// Go `buildDataSource2TableScanByIndexJoinProp`'s common handle step: the
 /// common handle path is the only candidate (`IsCommonHandlePath`).
 fn choose_index_join_common_handle_path(
-    ds: &crate::logical::DataSource,
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
     paths: &[&tidb_planner_util::path::PossiblePath],
     runtime: &tidb_planner_property::IndexJoinRuntimeProp,
     ctx: &DispatchContext<'_>,
@@ -2551,7 +2551,7 @@ fn is_ndv_close(lhs: f64, rhs: f64) -> bool {
 /// `indexJoinPathBuild`: the template ranges, the reversed key mapping and
 /// the comparison-range manager travel up to the index join.
 fn index_join_info_from_result(
-    ds: &crate::logical::DataSource,
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
     result: &IndexJoinPathResult,
     runtime: &tidb_planner_property::IndexJoinRuntimeProp,
     index_id: Option<i64>,
@@ -2583,7 +2583,7 @@ fn index_join_info_from_result(
 /// handle probes by the inner key that IS the handle. Its ranges are the
 /// "global var(ranges) which will be handled as empty range".
 fn index_join_int_pk_info(
-    ds: &crate::logical::DataSource,
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
     runtime: &tidb_planner_property::IndexJoinRuntimeProp,
 ) -> Option<crate::task::IndexJoinInfo> {
     let pk_col = ds.handle_cols.first()?;
@@ -2607,7 +2607,7 @@ fn index_join_int_pk_info(
 }
 
 fn find_best_task_4_logical_data_source(
-    ds: &crate::logical::DataSource,
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
     prop: &PhysicalProperty,
     ctx: &mut DispatchContext<'_>,
 ) -> Result<Task, PlanError> {
@@ -2838,8 +2838,8 @@ mod cross_estimate_dispatch_tests {
     use tidb_planner_util::path::PossiblePath;
     use tidb_stats::table_statistics::ColumnStats;
     use crate::find_best_task::coster::Ver2Coster;
-    use crate::logical::data_source::DataSourceColumn;
-    use crate::logical::{BaseLogicalPlan, DataSource};
+    use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
+    use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, DataSource};
     use tidb_planner_core_base::PlanIdAllocator;
     use tidb_planner_property::stats_info::{HistColl, StatsInfo};
     use std::sync::Arc;
@@ -2972,7 +2972,7 @@ mod cross_estimate_dispatch_tests {
 }
 
 fn find_best_task_4_logical_data_source_without_enforcer(
-    ds: &crate::logical::DataSource,
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
     prop: &PhysicalProperty,
     ctx: &mut DispatchContext<'_>,
 ) -> Result<Task, PlanError> {
@@ -2986,7 +2986,7 @@ fn find_best_task_4_logical_data_source_without_enforcer(
 }
 
 fn find_best_task_4_logical_data_source_paths(
-    ds: &crate::logical::DataSource,
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
     prop: &PhysicalProperty,
     ctx: &mut DispatchContext<'_>,
     pruning_info: &mut Option<String>,
@@ -3075,7 +3075,7 @@ fn find_best_task_4_logical_data_source_paths(
                 // when a TiFlash preference keeps the TiFlash path next to the
                 // selected TiKV one.
                 let tiflash_kept = ds.prefer_store_type
-                    & crate::logical::data_source::PREFER_TIFLASH
+                    & tidb_planner_core_operator_logicalop::data_source::PREFER_TIFLASH
                     != 0
                     && !matches!(path, tidb_planner_util::path::PossiblePath::TiFlashTable)
                     && ds
@@ -3139,9 +3139,9 @@ fn find_best_task_4_logical_data_source_paths(
     // table scan and the reader above (Go shares the pointer).
     let phys_plan_part_info = crate::physical::PhysPlanPartInfo::from_data_source(ds);
     'paths: for (path_position, path) in ordinary_paths.iter().enumerate() {
-        if (ds.prefer_store_type & crate::logical::data_source::PREFER_TIFLASH != 0
+        if (ds.prefer_store_type & tidb_planner_core_operator_logicalop::data_source::PREFER_TIFLASH != 0
             && !matches!(path, tidb_planner_util::path::PossiblePath::TiFlashTable))
-            || (ds.prefer_store_type & crate::logical::data_source::PREFER_TIKV != 0
+            || (ds.prefer_store_type & tidb_planner_core_operator_logicalop::data_source::PREFER_TIKV != 0
                 && matches!(path, tidb_planner_util::path::PossiblePath::TiFlashTable))
         {
             continue;
@@ -3654,9 +3654,9 @@ fn find_best_task_4_logical_data_source_paths(
                         .iter()
                         .all(|range| range.is_full_range(unsigned_int_handle))
                 {
-                    crate::logical::data_source_paths::ResolvedTableScanKind::Range
+                    tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::Range
                 } else {
-                    crate::logical::data_source_paths::ResolvedTableScanKind::Full
+                    tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::Full
                 };
                 let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
                     base,
@@ -3708,7 +3708,7 @@ fn find_best_task_4_logical_data_source_paths(
                     // partition-level scan": a filtered scan is charged
                     // `max(MaxPenaltyRowCount, rows)` rather than the table's
                     // modify count.
-                    table_scan_penalty: crate::logical::data_source::TableScanPenaltyInput {
+                    table_scan_penalty: tidb_planner_core_operator_logicalop::data_source::TableScanPenaltyInput {
                         has_range_info: prop.index_join_prop.is_some(),
                         has_partition_scan: !ds.all_conds.is_empty(),
                         ..ds.table_scan_penalty
@@ -3719,11 +3719,11 @@ fn find_best_task_4_logical_data_source_paths(
                     handle_col_unique_id: ds.handle_cols.first().map(|column| column.unique_id),
                     is_temporary: ds.is_temporary,
                     prop: Some(Box::new(prop.clone())),
-                    resolved_descriptor: Some(crate::logical::data_source_paths::ResolvedTableDescriptor::new(
+                    resolved_descriptor: Some(tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableDescriptor::new(
                         ds.physical_table_id,
                         common_handle.is_some(),
                         scan_kind,
-                        crate::logical::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
+                        tidb_planner_core_operator_logicalop::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
                     )),
                 });
                 let table_plan = if table_filters.is_empty() {
@@ -3829,11 +3829,11 @@ fn find_best_task_4_logical_data_source_paths(
                     prop: None,
                     plan_part_info: Some(std::sync::Arc::clone(&phys_plan_part_info)),
                     filter_condition: Vec::new(),
-                    resolved_descriptor: Some(crate::logical::data_source_paths::ResolvedTableDescriptor::new(
+                    resolved_descriptor: Some(tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableDescriptor::new(
                         ds.physical_table_id,
                         ds.is_common_handle,
-                        crate::logical::data_source_paths::ResolvedTableScanKind::Full,
-                        crate::logical::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
+                        tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::Full,
+                        tidb_planner_core_operator_logicalop::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
                     )),
                 });
                 let (table_filters, root_task_conds) = crate::pushdown::split_scan_filters(
@@ -4597,11 +4597,11 @@ fn find_best_task_4_logical_data_source_paths(
                         plan_part_info: None,
                         filter_condition: Vec::new(),
                         resolved_descriptor: Some(
-                            crate::logical::data_source_paths::ResolvedTableDescriptor::new(
+                            tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableDescriptor::new(
                                 ds.physical_table_id,
                                 !ds.common_handle_cols.is_empty(),
-                                crate::logical::data_source_paths::ResolvedTableScanKind::RowId,
-                                crate::logical::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
+                                tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::RowId,
+                                tidb_planner_core_operator_logicalop::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
                             ),
                         ),
                     });
@@ -4762,7 +4762,7 @@ fn find_best_task_4_logical_data_source_paths(
                                         | tidb_datatype::FieldTypeFlags::PRI_KEY,
                                 ),
                             );
-                            extra.id = crate::logical::data_source::EXTRA_HANDLE_ID;
+                            extra.id = tidb_planner_core_operator_logicalop::data_source::EXTRA_HANDLE_ID;
                             extra.orig_name = "_tidb_rowid".to_owned();
                             schema.columns.push(extra);
                             table_plan.base_mut().base.set_schema(Some(schema));
@@ -4884,7 +4884,7 @@ fn find_best_task_4_logical_data_source_paths(
 }
 
 /// Go `DataSource` table name in a note: the alias when there is one.
-fn note_table_name(ds: &crate::logical::DataSource) -> &str {
+fn note_table_name(ds: &tidb_planner_core_operator_logicalop::DataSource) -> &str {
     ds.table_as_name
         .as_deref()
         .filter(|name| !name.is_empty())
@@ -4894,7 +4894,7 @@ fn note_table_name(ds: &crate::logical::DataSource) -> &str {
 /// The note Go raises when `derivePathStatsAndTryHeuristics` keeps one path
 /// (`stats.go`, "is selected since the path ...").
 fn heuristic_selection_note(
-    ds: &crate::logical::DataSource,
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
     path: &tidb_planner_util::path::PossiblePath,
     refined: bool,
     single_scan: bool,
@@ -4927,7 +4927,7 @@ fn heuristic_selection_note(
 /// Go `getPruningInfo`: the paths that survive `skylinePruning`, in the
 /// order of `PossibleAccessPaths`, when pruning removed any.
 fn pruning_info_message(
-    ds: &crate::logical::DataSource,
+    ds: &tidb_planner_core_operator_logicalop::DataSource,
     derived: &tidb_planner_util::path::DerivedAccessPaths,
     ordinary: &[&tidb_planner_util::path::PossiblePath],
     merges: &[super::candidate_preparation::PreparedMerge<'_>],
@@ -5202,7 +5202,7 @@ fn record_warnings(plan: &LogicalPlan, prop: &PhysicalProperty, in_enforce: bool
 /// matched `BROADCAST_JOIN`/`SHUFFLE_JOIN` as invalid and never sets those
 /// preference bits, so only the index-join arm can fire.
 fn record_index_join_hint_warnings(
-    join: &crate::logical::LogicalJoin,
+    join: &tidb_planner_core_operator_logicalop::LogicalJoin,
     prop: &PhysicalProperty,
     in_enforce: bool,
 ) -> Option<String> {
@@ -5365,8 +5365,8 @@ mod tests {
     // plans); these pin the transcreated control flow over a fixture coster.
 
     use super::*;
-    use crate::logical::mem_table::MemTableColumn;
-    use crate::logical::{
+    use tidb_planner_core_operator_logicalop::mem_table::MemTableColumn;
+    use tidb_planner_core_operator_logicalop::{
         BaseLogicalPlan, LogicalMaxOneRow, LogicalMemTable, LogicalSelection, LogicalTableDual,
     };
     use tidb_planner_property::SortItem;
@@ -5428,7 +5428,7 @@ mod tests {
     /// `ExhaustPhysicalPlans4LogicalLock`'s own `Lock` warning can run.
     #[test]
     fn lock_under_a_tiflash_property_raises_the_select_lock_warning_like_go() {
-        use crate::logical::{LogicalLock, SelectLockType};
+        use tidb_planner_core_operator_logicalop::{LogicalLock, SelectLockType};
         let allocator = PlanIdAllocator::new();
         let coster = CountCoster;
         let sink = RecordingMppWarningSink(RefCell::new(Vec::new()));
@@ -5606,7 +5606,7 @@ mod tests {
         // (`findBestTask4LogicalCTETable`), so the fits-prop pass dies at
         // the child and the ENFORCED branch — empty-property re-exhaust
         // plus `EnforceProperty` — produces the Sort that wins by validity.
-        use crate::logical::LogicalCTETable;
+        use tidb_planner_core_operator_logicalop::LogicalCTETable;
         let allocator = PlanIdAllocator::new();
         let coster = CountCoster;
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
@@ -5653,7 +5653,7 @@ mod tests {
         // task -> convertToRootTaskImpl's reader -> the Selection attaches
         // above it. The first table query plannable start to finish.
         use tidb_planner_util::path::PossiblePath;
-        use crate::logical::DataSource;
+        use tidb_planner_core_operator_logicalop::DataSource;
 
         let allocator = PlanIdAllocator::new();
         let coster = CountCoster;
@@ -5714,7 +5714,7 @@ mod tests {
         base.base.set_schema(outer.schema().cloned());
         base.base.set_stats(Some(StatsInfo::new(apply_rows, [(1, outer_ndv)])));
         base.set_children(vec![outer, dual(&allocator, 10.0)]);
-        let mut apply = crate::logical::LogicalApply::new(base, tidb_planner_core_base::LogicalJoinType::Inner);
+        let mut apply = tidb_planner_core_operator_logicalop::LogicalApply::new(base, tidb_planner_core_base::LogicalJoinType::Inner);
         apply.is_lateral = true;
         apply.cor_cols = vec![tidb_expr::column::CorrelatedColumn::new(column)];
         let prop = PhysicalProperty {
@@ -5747,7 +5747,7 @@ mod tests {
         // `SessionVars.HashJoinConcurrency()` onto every candidate, and the
         // plan cost later reads the candidate field. This must not fall back
         // to the default after the shared physical tree is cached or cloned.
-        use crate::logical::LogicalJoin;
+        use tidb_planner_core_operator_logicalop::LogicalJoin;
 
         let allocator = PlanIdAllocator::new();
         let coster = CountCoster;
@@ -5774,7 +5774,7 @@ mod tests {
 
     #[test]
     fn index_join_probe_average_preserves_fractional_outer_rows() {
-        use crate::logical::LogicalJoin;
+        use tidb_planner_core_operator_logicalop::LogicalJoin;
         use tidb_expr::expression::Expression;
         use tidb_expr::scalar_function::ScalarFunction;
 
@@ -5837,7 +5837,7 @@ mod tests {
     fn a_false_pushed_constant_short_circuits_into_a_dual() {
         // `tryToGetDualTask` (`find_best_task.go:749`): WHERE FALSE never
         // touches a path.
-        use crate::logical::DataSource;
+        use tidb_planner_core_operator_logicalop::DataSource;
         use tidb_datatype::Datum;
         use tidb_expr::constant::Constant;
         use tidb_expr::expression::Expression;
@@ -5873,7 +5873,7 @@ mod tests {
         // KeepOrder (and Desc for a descending item); any other order
         // refuses.
         use tidb_planner_util::path::PossiblePath;
-        use crate::logical::DataSource;
+        use tidb_planner_core_operator_logicalop::DataSource;
         use tidb_datatype::{FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
 
@@ -5916,8 +5916,8 @@ mod tests {
     #[test]
     fn read_from_storage_tiflash_selects_the_tiflash_table_path() {
         use tidb_planner_util::path::PossiblePath;
-        use crate::logical::DataSource;
-        use crate::logical::data_source::PREFER_TIFLASH;
+        use tidb_planner_core_operator_logicalop::DataSource;
+        use tidb_planner_core_operator_logicalop::data_source::PREFER_TIFLASH;
 
         let allocator = PlanIdAllocator::new();
         let coster = CountCoster;
@@ -5978,8 +5978,8 @@ mod tests {
         // table scan's ranges with `(5, +inf]`; an indexed `b = 7` fills
         // the index scan's ranges with the point.
         use tidb_planner_util::path::PossiblePath;
-        use crate::logical::DataSource;
-        use crate::logical::data_source::DataSourceColumn;
+        use tidb_planner_core_operator_logicalop::DataSource;
+        use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
         use tidb_infoschema::table_source::SourceIndexColumn;
         use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -6186,7 +6186,7 @@ mod tests {
         let mut binary = FieldType::new(FieldTypeCode::VarString);
         binary.add_flags(FieldTypeFlags::BINARY);
         let handle = tidb_expr::column::Column::new(2, binary);
-        let source = crate::logical::DataSource {
+        let source = tidb_planner_core_operator_logicalop::DataSource {
             is_common_handle: true,
             common_handle_version: 0,
             common_handle_cols: vec![handle],
@@ -6211,8 +6211,8 @@ mod tests {
         // tuple comparison ranges over the declared `a` key part alone;
         // Go prints `range:[1,+inf]` for this shape.
         use tidb_planner_util::path::PossiblePath;
-        use crate::logical::DataSource;
-        use crate::logical::data_source::DataSourceColumn;
+        use tidb_planner_core_operator_logicalop::DataSource;
+        use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
         use tidb_infoschema::table_source::SourceIndexColumn;
         use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
@@ -6318,7 +6318,7 @@ mod tests {
 
     #[test]
     fn prefix_single_scan_distinguishes_unpruned_full_values_and_null_arguments() {
-        use crate::logical::data_source::{DataSource, DataSourceColumn};
+        use tidb_planner_core_operator_logicalop::data_source::{DataSource, DataSourceColumn};
         use tidb_infoschema::table_source::SourceIndexColumn;
         use tidb_infoschema::table_source::SourceIndex;
         use tidb_expr::expression::{Expression, ScalarFunction};
@@ -6491,8 +6491,8 @@ mod tests {
         // `BuildIndexLookUpTask` — while a covering index still plans the
         // plain IndexReader.
         use tidb_planner_util::path::PossiblePath;
-        use crate::logical::DataSource;
-        use crate::logical::data_source::DataSourceColumn;
+        use tidb_planner_core_operator_logicalop::DataSource;
+        use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
         use tidb_infoschema::table_source::SourceIndexColumn;
         use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{FieldType, FieldTypeCode};
@@ -6635,8 +6635,8 @@ mod tests {
     #[test]
     fn a_prefix_index_matches_partial_order_and_carries_the_match_result() {
         use tidb_planner_util::path::PossiblePath;
-        use crate::logical::DataSource;
-        use crate::logical::data_source::DataSourceColumn;
+        use tidb_planner_core_operator_logicalop::DataSource;
+        use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
         use tidb_infoschema::table_source::SourceIndexColumn;
         use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{FieldType, FieldTypeCode};
@@ -6864,8 +6864,8 @@ mod tests {
 
     #[test]
     fn a_constant_index_prefix_is_skipped_when_matching_order() {
-        use crate::logical::DataSource;
-        use crate::logical::data_source::DataSourceColumn;
+        use tidb_planner_core_operator_logicalop::DataSource;
+        use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
         use tidb_infoschema::table_source::SourceIndexColumn;
         use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -6931,7 +6931,7 @@ mod tests {
 
     #[test]
     fn a_constant_common_handle_prefix_is_skipped_when_matching_order() {
-        use crate::logical::DataSource;
+        use tidb_planner_core_operator_logicalop::DataSource;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
         use tidb_expr::column::Column;
         use tidb_expr::constant::Constant;
@@ -6977,7 +6977,7 @@ mod tests {
         // the offset. `derive_limit_stats`' recorded verdict ("awaiting
         // core/task.go") is hereby closed: its Go caller arrived.
         use tidb_planner_util::path::PossiblePath;
-        use crate::logical::{DataSource, LogicalLimit};
+        use tidb_planner_core_operator_logicalop::{DataSource, LogicalLimit};
 
         let allocator = PlanIdAllocator::new();
         let coster = CountCoster;
@@ -7039,7 +7039,7 @@ mod tests {
         // scan through the child property's order, the pushed partial limit
         // inside the reader, and the root limit above — no Sort anywhere.
         use tidb_planner_util::path::PossiblePath;
-        use crate::logical::{DataSource, LogicalTopN};
+        use tidb_planner_core_operator_logicalop::{DataSource, LogicalTopN};
         use tidb_datatype::{FieldType, FieldTypeCode};
         use tidb_expression_aggregation::ByItems;
         use tidb_expr::column::Column;
@@ -7108,7 +7108,7 @@ mod tests {
         // Count, offset removed, DeriveLimitStats) and the root TopN keeps
         // the offset. Go's exact plan for this query shape.
         use tidb_planner_util::path::PossiblePath;
-        use crate::logical::{DataSource, LogicalTopN};
+        use tidb_planner_core_operator_logicalop::{DataSource, LogicalTopN};
         use tidb_datatype::{FieldType, FieldTypeCode};
         use tidb_expression_aggregation::ByItems;
         use tidb_expr::column::Column;
@@ -7172,7 +7172,7 @@ mod tests {
         // inside the TableReader next to the scan, and the final half
         // merges above it.
         use tidb_planner_util::path::PossiblePath;
-        use crate::logical::{DataSource, LogicalAggregation};
+        use tidb_planner_core_operator_logicalop::{DataSource, LogicalAggregation};
 
         let allocator = PlanIdAllocator::new();
         let coster = crate::find_best_task::coster::Ver2Coster::default();
@@ -7250,7 +7250,7 @@ mod tests {
     #[test]
     fn a_global_aggregate_costs_stream_and_hash_over_the_same_child() {
         use tidb_planner_util::path::PossiblePath;
-        use crate::logical::{DataSource, LogicalAggregation};
+        use tidb_planner_core_operator_logicalop::{DataSource, LogicalAggregation};
         use tidb_planner_core_base::PossiblePropertiesInfo;
 
         let allocator = PlanIdAllocator::new();
@@ -7393,7 +7393,7 @@ mod tests {
     #[test]
     fn admits_index_join_inner_child_pattern_matches_go() {
         use tidb_planner_core_base::LogicalJoinType;
-        use crate::logical::{
+        use tidb_planner_core_operator_logicalop::{
             DataSource, LogicalAggregation, LogicalJoin, LogicalSort, LogicalUnionScan,
             data_source::PREFER_TIFLASH,
         };
