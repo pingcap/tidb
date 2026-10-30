@@ -160,90 +160,107 @@ func TestLoadFromTS(t *testing.T) {
 }
 
 func TestLoadFromTSForCrossKS(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	l := NewLoaderForCrossKS(store, infoschema.NewCache(nil, 1))
-	ver, err := store.CurrentVersion(tidbkv.GlobalTxnScope)
-	require.NoError(t, err)
-	_, _, _, _, err = l.LoadWithTS(ver.Ver, false)
-	require.ErrorContains(t, err, "system database not found")
+	for _, tc := range []struct {
+		name    string
+		dbID    int64
+		tableID int64
+	}{
+		{name: "nextgen", dbID: metadef.SystemDatabaseID, tableID: metadef.TiDBDDLReorgTableID},
+		{name: "classic", dbID: 1, tableID: 100},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := mockstore.NewMockStore()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, store.Close()) })
+			l := NewLoaderForCrossKS(store, infoschema.NewCache(nil, 1))
+			ver, err := store.CurrentVersion(tidbkv.GlobalTxnScope)
+			require.NoError(t, err)
+			_, _, _, _, err = l.LoadWithTS(ver.Ver, false)
+			require.ErrorContains(t, err, "system database not found")
 
-	ctx := tidbkv.WithInternalSourceType(context.Background(), tidbkv.InternalTxnAdmin)
-	systemDBID := metadef.SystemDatabaseID
-	require.NoError(t, tidbkv.RunInNewTxn(ctx, l.store, true, func(_ context.Context, txn tidbkv.Transaction) error {
-		mu := meta.NewMutator(txn)
-		require.NoError(t, mu.CreateDatabase(&model.DBInfo{ID: systemDBID, Name: ast.NewCIStr(mysql.SystemDB)}))
-		testTblID := metadef.ReservedGlobalIDUpperBound - 1
-		require.NoError(t, mu.CreateTableOrView(systemDBID, &model.TableInfo{ID: testTblID, Name: ast.NewCIStr("t"), State: model.StatePublic}))
-		schVer, err := mu.GenSchemaVersion()
-		require.NoError(t, err)
-		require.NoError(t, mu.SetSchemaDiff(&model.SchemaDiff{
-			Version:  schVer,
-			Type:     model.ActionCreateTable,
-			SchemaID: systemDBID,
-			TableID:  testTblID,
-		}))
-		return nil
-	}))
-	ver, err = store.CurrentVersion(tidbkv.GlobalTxnScope)
-	require.NoError(t, err)
-	is, hitCache, oldSchemaVersion, changes, err := l.LoadWithTS(ver.Ver, false)
-	require.NoError(t, err)
-	allSchemas := is.AllSchemas()
-	require.EqualValues(t, 1, is.SchemaMetaVersion())
-	require.Len(t, allSchemas, 1)
-	require.Equal(t, mysql.SystemDB, allSchemas[0].Name.L)
-	require.Equal(t, systemDBID, allSchemas[0].ID)
-	require.False(t, hitCache)
-	require.Zero(t, oldSchemaVersion)
-	require.Nil(t, changes)
-	tbls, err := is.SchemaTableInfos(ctx, ast.NewCIStr(mysql.SystemDB))
-	require.NoError(t, err)
-	require.Len(t, tbls, 1)
-	require.Equal(t, "t", tbls[0].Name.L)
+			ctx := tidbkv.WithInternalSourceType(context.Background(), tidbkv.InternalTxnAdmin)
+			systemDBID := tc.dbID
+			require.NoError(t, tidbkv.RunInNewTxn(ctx, l.store, true, func(_ context.Context, txn tidbkv.Transaction) error {
+				mu := meta.NewMutator(txn)
+				require.NoError(t, mu.CreateDatabase(&model.DBInfo{ID: systemDBID, Name: ast.NewCIStr(mysql.SystemDB)}))
+				testTblID := tc.tableID
+				require.NoError(t, mu.CreateTableOrView(systemDBID, &model.TableInfo{ID: testTblID, Name: ast.NewCIStr("t"), State: model.StatePublic}))
+				schVer, err := mu.GenSchemaVersion()
+				require.NoError(t, err)
+				require.NoError(t, mu.SetSchemaDiff(&model.SchemaDiff{
+					Version:  schVer,
+					Type:     model.ActionCreateTable,
+					SchemaID: systemDBID,
+					TableID:  testTblID,
+				}))
+				return nil
+			}))
+			ver, err = store.CurrentVersion(tidbkv.GlobalTxnScope)
+			require.NoError(t, err)
+			is, hitCache, oldSchemaVersion, changes, err := l.LoadWithTS(ver.Ver, false)
+			require.NoError(t, err)
+			allSchemas := is.AllSchemas()
+			require.EqualValues(t, 1, is.SchemaMetaVersion())
+			require.Len(t, allSchemas, 1)
+			require.Equal(t, mysql.SystemDB, allSchemas[0].Name.L)
+			require.Equal(t, systemDBID, allSchemas[0].ID)
+			require.False(t, hitCache)
+			require.Zero(t, oldSchemaVersion)
+			require.Nil(t, changes)
+			tbls, err := is.SchemaTableInfos(ctx, ast.NewCIStr(mysql.SystemDB))
+			require.NoError(t, err)
+			require.Len(t, tbls, 1)
+			require.Equal(t, "t", tbls[0].Name.L)
 
-	// load from diff, diff of non-reserved table ID is not loaded
-	require.NoError(t, tidbkv.RunInNewTxn(ctx, l.store, true, func(_ context.Context, txn tidbkv.Transaction) error {
-		mu := meta.NewMutator(txn)
-		testTblID := metadef.ReservedGlobalIDUpperBound - 2
-		require.NoError(t, mu.CreateTableOrView(systemDBID, &model.TableInfo{ID: testTblID, Name: ast.NewCIStr("t1"), State: model.StatePublic}))
-		schVer, err := mu.GenSchemaVersion()
-		require.NoError(t, err)
-		require.NoError(t, mu.SetSchemaDiff(&model.SchemaDiff{
-			Version:  schVer,
-			Type:     model.ActionCreateTable,
-			SchemaID: systemDBID,
-			TableID:  testTblID,
-		}))
+			// Load new mysql tables by schema membership, including legacy IDs.
+			require.NoError(t, tidbkv.RunInNewTxn(ctx, l.store, true, func(_ context.Context, txn tidbkv.Transaction) error {
+				mu := meta.NewMutator(txn)
+				testTblID := tc.tableID + 1
+				require.NoError(t, mu.CreateTableOrView(systemDBID, &model.TableInfo{ID: testTblID, Name: ast.NewCIStr("t1"), State: model.StatePublic}))
+				schVer, err := mu.GenSchemaVersion()
+				require.NoError(t, err)
+				require.NoError(t, mu.SetSchemaDiff(&model.SchemaDiff{
+					Version:  schVer,
+					Type:     model.ActionCreateTable,
+					SchemaID: systemDBID,
+					TableID:  testTblID,
+				}))
 
-		require.NoError(t, mu.CreateTableOrView(systemDBID, &model.TableInfo{ID: 100, Name: ast.NewCIStr("t100"), State: model.StatePublic}))
-		schVer, err = mu.GenSchemaVersion()
-		require.NoError(t, err)
-		require.NoError(t, mu.SetSchemaDiff(&model.SchemaDiff{
-			Version:  schVer,
-			Type:     model.ActionCreateTable,
-			SchemaID: systemDBID,
-			TableID:  100,
-		}))
-		return nil
-	}))
-	ver, err = store.CurrentVersion(tidbkv.GlobalTxnScope)
-	require.NoError(t, err)
-	is, hitCache, oldSchemaVersion, changes, err = l.LoadWithTS(ver.Ver, false)
-	require.NoError(t, err)
-	allSchemas = is.AllSchemas()
-	require.EqualValues(t, 3, is.SchemaMetaVersion())
-	require.Len(t, allSchemas, 1)
-	require.Equal(t, mysql.SystemDB, allSchemas[0].Name.L)
-	require.Equal(t, systemDBID, allSchemas[0].ID)
-	require.False(t, hitCache)
-	require.EqualValues(t, 1, oldSchemaVersion)
-	require.Len(t, changes.PhyTblIDS, 1)
-	tbls, err = is.SchemaTableInfos(ctx, ast.NewCIStr(mysql.SystemDB))
-	require.NoError(t, err)
-	require.Len(t, tbls, 2)
-	require.True(t, slices.ContainsFunc(tbls, func(t *model.TableInfo) bool { return t.Name.L == "t" }))
-	require.True(t, slices.ContainsFunc(tbls, func(t *model.TableInfo) bool { return t.Name.L == "t1" }))
+				require.NoError(t, mu.CreateTableOrView(systemDBID, &model.TableInfo{ID: 200, Name: ast.NewCIStr("t200"), State: model.StatePublic}))
+				schVer, err = mu.GenSchemaVersion()
+				require.NoError(t, err)
+				require.NoError(t, mu.SetSchemaDiff(&model.SchemaDiff{
+					Version:  schVer,
+					Type:     model.ActionCreateTable,
+					SchemaID: systemDBID,
+					TableID:  200,
+				}))
+				require.NoError(t, mu.CreateDatabase(&model.DBInfo{ID: 8000, Name: ast.NewCIStr("userdb")}))
+				require.NoError(t, mu.CreateTableOrView(8000, &model.TableInfo{ID: 8001, Name: ast.NewCIStr("user_table"), State: model.StatePublic}))
+				schVer, err = mu.GenSchemaVersion()
+				require.NoError(t, err)
+				require.NoError(t, mu.SetSchemaDiff(&model.SchemaDiff{Version: schVer, Type: model.ActionCreateTable, SchemaID: 8000, TableID: 8001}))
+				return nil
+			}))
+			ver, err = store.CurrentVersion(tidbkv.GlobalTxnScope)
+			require.NoError(t, err)
+			is, hitCache, oldSchemaVersion, changes, err = l.LoadWithTS(ver.Ver, false)
+			require.NoError(t, err)
+			allSchemas = is.AllSchemas()
+			require.EqualValues(t, 4, is.SchemaMetaVersion())
+			require.Len(t, allSchemas, 1)
+			require.Equal(t, mysql.SystemDB, allSchemas[0].Name.L)
+			require.Equal(t, systemDBID, allSchemas[0].ID)
+			require.False(t, hitCache)
+			require.EqualValues(t, 1, oldSchemaVersion)
+			require.Len(t, changes.PhyTblIDS, 2)
+			tbls, err = is.SchemaTableInfos(ctx, ast.NewCIStr(mysql.SystemDB))
+			require.NoError(t, err)
+			require.Len(t, tbls, 3)
+			require.True(t, slices.ContainsFunc(tbls, func(t *model.TableInfo) bool { return t.Name.L == "t" }))
+			require.True(t, slices.ContainsFunc(tbls, func(t *model.TableInfo) bool { return t.Name.L == "t1" }))
+		})
+	}
 }
 
 type testStoreWithKS struct {
@@ -265,15 +282,24 @@ func TestLoaderSkipLoadingDiff(t *testing.T) {
 	require.False(t, syncer.loader.skipLoadingDiff(&model.SchemaDiff{TableID: metadef.ReservedGlobalIDUpperBound,
 		OldTableID: metadef.ReservedGlobalIDUpperBound}))
 
-	loaderForCrossKS := NewLoaderForCrossKS(testStoreWithKS{}, nil)
+	cache := infoschema.NewCache(nil, 1)
+	cache.Insert(infoschema.MockInfoSchema(nil), 0)
+	loaderForCrossKS := NewLoaderForCrossKS(testStoreWithKS{}, cache)
 	require.True(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{}))
 	require.True(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{TableID: 100}))
 	require.True(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{OldTableID: 100}))
 	require.True(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{TableID: 100, OldTableID: 100}))
-	require.False(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{TableID: metadef.ReservedGlobalIDUpperBound}))
-	require.False(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{OldTableID: metadef.ReservedGlobalIDUpperBound}))
-	require.False(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{TableID: metadef.ReservedGlobalIDUpperBound,
+	require.True(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{TableID: metadef.ReservedGlobalIDUpperBound}))
+	require.True(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{OldTableID: metadef.ReservedGlobalIDUpperBound}))
+	require.True(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{TableID: metadef.ReservedGlobalIDUpperBound,
 		OldTableID: metadef.ReservedGlobalIDUpperBound}))
+	// Use this target keyspace's loaded IDs, including new tables in mysql.
+	require.False(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{TableID: 9999}))
+	require.False(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{OldTableID: 9999}))
+	require.False(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{SchemaID: 2, TableID: 100}))
+	require.False(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{OldSchemaID: 2, OldTableID: 100}))
+	require.True(t, loaderForCrossKS.skipLoadingDiff(&model.SchemaDiff{SchemaID: 2}))
+
 }
 
 func TestLoaderSkipLoadingDiffForBR(t *testing.T) {

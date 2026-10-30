@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -287,21 +288,21 @@ func TestIsUndroppableTable(t *testing.T) {
 		skipClassic bool
 		skipNextGen bool
 	}{
-		// Test reserved ID in next gen
+		// IDs alone do not identify a system table.
 		{
-			name:        "reserved ID upper bound in next gen",
+			name:        "user table with reserved ID upper bound in next gen",
 			schema:      "test",
 			table:       "test_table",
 			tableID:     metadef.ReservedGlobalIDUpperBound,
-			want:        true,
+			want:        false,
 			skipClassic: true,
 		},
 		{
-			name:        "reserved ID lower bound in next gen",
+			name:        "user table with reserved ID lower bound in next gen",
 			schema:      "test",
 			table:       "test_table",
 			tableID:     metadef.ReservedGlobalIDLowerBound + 1,
-			want:        true,
+			want:        false,
 			skipClassic: true,
 		},
 		{
@@ -350,13 +351,13 @@ func TestIsUndroppableTable(t *testing.T) {
 			tableID: 100,
 			want:    true,
 		},
-		// Test SystemDB with non-system tables
+		// All tables in mysql are protected in NextGen, including legacy IDs.
 		{
-			name:    "non-system table in mysql schema",
+			name:    "legacy-ID system table in mysql schema",
 			schema:  mysql.SystemDB,
 			table:   "user",
 			tableID: 100,
-			want:    false,
+			want:    kerneltype.IsNextGen(),
 		},
 		// Test non-system schemas
 		{
@@ -385,11 +386,17 @@ func TestIsUndroppableTable(t *testing.T) {
 			}
 
 			tableInfo := &model.TableInfo{
-				ID:   tt.tableID,
-				Name: ast.NewCIStr(tt.table),
+				ID:    tt.tableID,
+				DBID:  1,
+				Name:  ast.NewCIStr(tt.table),
+				State: model.StatePublic,
 			}
+			db := &model.DBInfo{ID: 1, Name: ast.NewCIStr(tt.schema), State: model.StatePublic}
+			db.Deprecated.Tables = []*model.TableInfo{tableInfo}
+			builder := infoschema.NewBuilder(nil, 0, nil, infoschema.NewData(), false).WithCrossKS(true)
+			require.NoError(t, builder.InitWithDBInfos([]*model.DBInfo{db}, nil, nil, nil, 1))
 
-			result := isUndroppableTable(tt.schema, tt.table, tableInfo)
+			result := isUndroppableTable(builder.Build(0), tt.schema, tt.table, tableInfo)
 			require.Equal(t, tt.want, result, "schema=%s, table=%s, tableID=%d", tt.schema, tt.table, tt.tableID)
 		})
 	}

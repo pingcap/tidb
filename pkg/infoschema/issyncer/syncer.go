@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
@@ -170,7 +169,8 @@ func (s *Syncer) refreshMDLCheckTableInfo(ctx context.Context) {
 		return
 	}
 	defer s.sysSessionPool.Put(se)
-	domainSchemaVer := s.InfoSchema().SchemaMetaVersion()
+	is := s.InfoSchema()
+	domainSchemaVer := is.SchemaMetaVersion()
 	// the job must stay inside tidb_ddl_job if we need to wait schema version for it.
 	sql := fmt.Sprintf(`select job_id, version, table_ids from mysql.tidb_mdl_info
 		where job_id >= %d and version <= %d`, s.minJobIDRefresher.GetCurrMinJobID(), domainSchemaVer)
@@ -187,7 +187,7 @@ func (s *Syncer) refreshMDLCheckTableInfo(ctx context.Context) {
 	for i := range rows {
 		jobID := rows[i].GetInt64(0)
 		tableIDs := util.Str2Int64Map(rows[i].GetString(2))
-		if s.skipMDLCheck(tableIDs) {
+		if s.skipMDLCheck(tableIDs, is) {
 			continue
 		}
 		s.mdlCheckTableInfo.jobs[jobID] = &mdldef.JobMDL{
@@ -197,7 +197,7 @@ func (s *Syncer) refreshMDLCheckTableInfo(ctx context.Context) {
 	}
 }
 
-func (s *Syncer) skipMDLCheck(tableIDs map[int64]struct{}) bool {
+func (s *Syncer) skipMDLCheck(tableIDs map[int64]struct{}, is infoschema.InfoSchema) bool {
 	if !s.crossKS {
 		return false
 	}
@@ -205,7 +205,7 @@ func (s *Syncer) skipMDLCheck(tableIDs map[int64]struct{}) bool {
 	// for cross keyspace syncer, we only care about the system tables, so we can
 	// skip the MDL check for user tables.
 	for id := range tableIDs {
-		if metadef.IsReservedID(id) {
+		if infoschema.IsSystemTable(is, id) {
 			return false
 		}
 	}

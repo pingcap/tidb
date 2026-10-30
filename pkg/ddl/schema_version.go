@@ -22,9 +22,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -413,7 +413,7 @@ func waitVersionSynced(
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.DDLWaitSchemaSynced, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
-	checkAssumedSvr := shouldCheckAssumedServer(job)
+	checkAssumedSvr := shouldCheckAssumedServer(job, jobCtx.infoCache.GetLatest())
 	logger := logutil.DDLLogger().With(zap.Int64("ver", latestSchemaVersion), zap.Bool("checkAssumedSvr", checkAssumedSvr))
 	// WaitVersionSynced returns only when all TiDB schemas are synced(exclude the isolated TiDB).
 	sum, err := jobCtx.schemaVerSyncer.WaitVersionSynced(ctx, job.ID, latestSchemaVersion, checkAssumedSvr)
@@ -432,7 +432,7 @@ func waitVersionSynced(
 // assumedServer is the virtual server that involved in the online schema change
 // of some keyspace, it's run on a real server with different keyspace, it's only
 // used in cross keyspace scenario.
-func shouldCheckAssumedServer(job *model.Job) bool {
+func shouldCheckAssumedServer(job *model.Job, is infoschema.InfoSchema) bool {
 	if kerneltype.IsClassic() {
 		return false
 	}
@@ -440,7 +440,7 @@ func shouldCheckAssumedServer(job *model.Job) bool {
 	// check the table ID is enough, as we forbid doing DDL which involve multiple
 	// table IDs on system tables in nextgen, such as RenameTables, TruncateTable,
 	// ExchangePartition, etc.
-	return metadef.IsReservedID(job.TableID)
+	return infoschema.IsSystemTable(is, job.TableID)
 }
 
 // waitVersionSyncedWithoutMDL handles the following situation:

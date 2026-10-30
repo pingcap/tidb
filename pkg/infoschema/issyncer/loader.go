@@ -310,11 +310,24 @@ func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff) bool {
 		return false
 	}
 
+	// Use the target keyspace's loaded IDs, including legacy Classic IDs.
+	is := l.infoCache.GetLatest()
+	// Check the schema IDs too: a newly created mysql table is not in the old
+	// InfoSchema yet. Database IDs alone must not match policy/resource diffs.
+	for _, obj := range []struct{ schemaID, tableID int64 }{
+		{diff.SchemaID, diff.TableID},
+		{diff.OldSchemaID, diff.OldTableID},
+	} {
+		if db, ok := is.SchemaByID(obj.schemaID); obj.tableID != 0 && ok && metadef.IsSystemDB(db.Name.L) {
+			return false
+		}
+	}
+
 	// for cross keyspace loader, we only load diff related to system tables.
 	// we don't check AffectedOpts, as we forbid doing DDL which involve multiple
 	// table IDs on system tables in nextgen, such as RenameTables, TruncateTable,
 	// ExchangePartition, etc.
-	isRelatedToSystemTables := metadef.IsReservedID(diff.TableID) || metadef.IsReservedID(diff.OldTableID)
+	isRelatedToSystemTables := infoschema.IsSystemTable(is, diff.TableID) || infoschema.IsSystemTable(is, diff.OldTableID)
 	return !isRelatedToSystemTables
 }
 
@@ -421,7 +434,14 @@ func (l *Loader) fetchAllSchemasWithTables(m meta.Reader, schemaCacheSize uint64
 	allSchemas []*model.DBInfo, err error) {
 	if l.crossKS {
 		var dbInfo *model.DBInfo
-		dbInfo, err = m.GetDatabase(metadef.SystemDatabaseID)
+		systemDBID, err := m.GetSystemDBID()
+		if err != nil {
+			return nil, err
+		}
+		if systemDBID == 0 {
+			return nil, errors.New("system database not found")
+		}
+		dbInfo, err = m.GetDatabase(systemDBID)
 		if err != nil {
 			return nil, err
 		}

@@ -415,7 +415,7 @@ func checkBootstrapSchemaDeployment(m meta.Reader) (classicBootstrapped bool, er
 	return systemDB == nil && bootstrapVer > notBootstrapped, nil
 }
 
-func bootstrapSchemas(store kv.Storage) error {
+func bootstrapNextGenSchemas(store kv.Storage) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	return kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)

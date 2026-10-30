@@ -333,6 +333,26 @@ func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
 	return is.schemaByName(name)
 }
 
+// IsSystemSchema checks whether id identifies the persisted mysql or sys schema
+// in this keyspace. Classic-bootstrapped keyspaces can use non-reserved IDs.
+func IsSystemSchema(is InfoSchema, id int64) bool {
+	if is == nil {
+		return false
+	}
+	db, ok := is.SchemaByID(id)
+	return ok && (metadef.IsSystemDB(db.Name.L) || db.Name.L == mysql.SysDB)
+}
+
+// IsSystemTable checks whether id identifies a mysql table in this keyspace,
+// using the IDs already loaded into InfoSchema without accessing storage.
+func IsSystemTable(is InfoSchema, id int64) bool {
+	if is == nil || id <= 0 {
+		return false
+	}
+	tbl, ok := is.TableItemByID(id)
+	return ok && metadef.IsSystemDB(tbl.DBName.L)
+}
+
 // SchemaByTable get a table's schema name
 func SchemaByTable(is InfoSchema, tableInfo *model.TableInfo) (val *model.DBInfo, ok bool) {
 	if tableInfo == nil {

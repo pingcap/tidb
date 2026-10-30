@@ -90,7 +90,7 @@ func TestBootstrapSchemasDeploymentCheck(t *testing.T) {
 					if tt.dbID != metadef.SystemDatabaseID && tt.version > 0 && mode != deploymode.Starter {
 						errMsg = `the cluster is already bootstrapped with a non-NextGen binary; please start with starter deployment mode (deploy-mode="starter")`
 					}
-					err = bootstrapSchemas(store)
+					err = bootstrapNextGenSchemas(store)
 					if errMsg == "" {
 						require.NoError(t, err)
 						if tt.dbID == metadef.SystemDatabaseID || tt.version == 0 {

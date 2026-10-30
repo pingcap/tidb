@@ -934,6 +934,28 @@ func (m *Mutator) CreateSysDatabaseByID(name string, id int64) error {
 
 // GetSystemDBID gets the system DB ID. return (0, nil) indicates that the system DB does not exist.
 func (m *Mutator) GetSystemDBID() (int64, error) {
+	if kerneltype.IsNextGen() {
+		db, err := m.GetDatabase(metadef.SystemDatabaseID)
+		if err != nil {
+			return 0, err
+		}
+		if db != nil && db.Name.L == mysql.SystemDB {
+			return db.ID, nil
+		}
+		// Classic creates mysql early in bootstrap. Upgraded keyspaces retain
+		// its legacy ID, so bound the fallback to the first ten database IDs.
+		for id := int64(1); id <= 10; id++ {
+			db, err := m.GetDatabase(id)
+			if err != nil {
+				return 0, err
+			}
+			if db != nil && db.Name.L == mysql.SystemDB {
+				return db.ID, nil
+			}
+		}
+		return 0, nil
+	}
+
 	dbs, err := m.ListDatabases()
 	if err != nil {
 		return 0, err

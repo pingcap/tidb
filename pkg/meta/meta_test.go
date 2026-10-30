@@ -804,6 +804,55 @@ func TestCreateMySQLDatabase(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// systemDBPointReadTxn rejects range scans to verify NextGen discovery stays bounded.
+type systemDBPointReadTxn struct {
+	kv.Transaction
+}
+
+func (systemDBPointReadTxn) Iter(kv.Key, kv.Key) (kv.Iterator, error) {
+	return nil, errors.New("unexpected database range scan")
+}
+
+func TestGetSystemDBID(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+
+	for _, tc := range []struct {
+		name    string
+		mysqlID int64
+		want    int64
+	}{
+		{name: "missing"},
+		{name: "reserved", mysqlID: metadef.SystemDatabaseID, want: metadef.SystemDatabaseID},
+		{name: "legacy", mysqlID: 1, want: 1},
+		{name: "legacy boundary", mysqlID: 10, want: 10},
+		{name: "outside legacy range", mysqlID: 11, want: 11},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, txn.Rollback()) })
+			m := meta.NewMutator(txn)
+			// A database in the early range must match by name.
+			require.NoError(t, m.CreateSysDatabaseByID("other", 2))
+			if tc.mysqlID != 0 {
+				require.NoError(t, m.CreateSysDatabaseByID("mysql", tc.mysqlID))
+			}
+			want := tc.want
+			if kerneltype.IsNextGen() {
+				m = meta.NewMutator(systemDBPointReadTxn{txn})
+				if tc.mysqlID == 11 {
+					want = 0
+				}
+			}
+			id, err := m.GetSystemDBID()
+			require.NoError(t, err)
+			require.Equal(t, want, id)
+		})
+	}
+}
+
 func TestIsTableInfoMustLoad(t *testing.T) {
 	tableInfo := &model.TableInfo{
 		TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"},

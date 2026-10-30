@@ -18,17 +18,22 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
 
 func TestShouldCheckAssumedServer(t *testing.T) {
-	if kerneltype.IsClassic() {
-		require.False(t, shouldCheckAssumedServer(&model.Job{TableID: 100}))
-		require.False(t, shouldCheckAssumedServer(&model.Job{TableID: metadef.ReservedGlobalIDUpperBound}))
-	} else {
-		require.False(t, shouldCheckAssumedServer(&model.Job{TableID: 100}))
-		require.True(t, shouldCheckAssumedServer(&model.Job{TableID: metadef.ReservedGlobalIDUpperBound}))
-	}
+	// This keyspace has mysql.stats_meta at legacy ID 9999; even a reserved
+	// table ID in a user schema must not identify a system table.
+	is := infoschema.MockInfoSchema([]*model.TableInfo{{ID: 100, Name: ast.NewCIStr("user_table")}, {ID: metadef.ReservedGlobalIDUpperBound, Name: ast.NewCIStr("reserved_user_table")}})
+	require.False(t, shouldCheckAssumedServer(&model.Job{TableID: 100}, is))
+	require.False(t, shouldCheckAssumedServer(&model.Job{TableID: metadef.ReservedGlobalIDUpperBound}, is))
+	require.Equal(t, kerneltype.IsNextGen(), shouldCheckAssumedServer(&model.Job{TableID: 9999}, is))
+	// A schema ID alone must not classify an unknown table as a system table.
+	require.False(t, shouldCheckAssumedServer(&model.Job{SchemaID: 2, TableID: 10000}, is))
+	require.False(t, shouldCheckAssumedServer(&model.Job{SchemaID: 2}, is))
+	require.False(t, shouldCheckAssumedServer(&model.Job{TableID: 9999}, nil))
 }

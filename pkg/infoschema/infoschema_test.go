@@ -44,6 +44,45 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestSystemSchemaIDs(t *testing.T) {
+	for _, useV2 := range []bool{false, true} {
+		for _, layout := range []struct {
+			name                    string
+			mysqlID, sysID, tableID int64
+		}{
+			{name: "classic", mysqlID: 1, sysID: 2, tableID: 100},
+			{name: "nextgen", mysqlID: metadef.SystemDatabaseID, sysID: metadef.SysDatabaseID, tableID: metadef.TiDBTableID},
+		} {
+			t.Run(fmt.Sprintf("v2=%t/%s", useV2, layout.name), func(t *testing.T) {
+				mysqlDB := &model.DBInfo{ID: layout.mysqlID, Name: ast.NewCIStr(mysql.SystemDB), State: model.StatePublic}
+				mysqlDB.Deprecated.Tables = []*model.TableInfo{{ID: layout.tableID, DBID: layout.mysqlID, Name: ast.NewCIStr("tidb"), State: model.StatePublic}}
+				sysDB := &model.DBInfo{ID: layout.sysID, Name: ast.NewCIStr(mysql.SysDB), State: model.StatePublic}
+				userDB := &model.DBInfo{ID: 3, Name: ast.NewCIStr("test"), State: model.StatePublic}
+				userTableID := metadef.ReservedGlobalIDLowerBound + 1
+				userDB.Deprecated.Tables = []*model.TableInfo{{ID: userTableID, DBID: userDB.ID, Name: ast.NewCIStr("user_table"), State: model.StatePublic}}
+				builder := infoschema.NewBuilder(nil, 0, nil, infoschema.NewData(), useV2).WithCrossKS(true)
+				require.NoError(t, builder.InitWithDBInfos([]*model.DBInfo{mysqlDB, sysDB, userDB}, nil, nil, nil, 1))
+				is := builder.Build(0)
+				if v2, raw := infoschema.IsV2(is); v2 {
+					// The ID index must work even when table metadata is not cached;
+					// there is no backing store for this test to load it from.
+					raw.EvictTable(mysqlDB.Name, ast.NewCIStr("tidb"))
+				}
+				require.True(t, infoschema.IsSystemSchema(is, layout.mysqlID))
+				require.True(t, infoschema.IsSystemSchema(is, layout.sysID))
+				require.False(t, infoschema.IsSystemSchema(is, userDB.ID))
+				require.False(t, infoschema.IsSystemSchema(is, layout.tableID))
+				require.True(t, infoschema.IsSystemTable(is, layout.tableID))
+				for _, id := range []int64{0, -1, layout.mysqlID, layout.sysID, userTableID, metadef.ReservedGlobalIDLowerBound + 2} {
+					require.False(t, infoschema.IsSystemTable(is, id), "id=%d", id)
+				}
+			})
+		}
+	}
+	require.False(t, infoschema.IsSystemTable(nil, 100))
+	require.False(t, infoschema.IsSystemSchema(nil, 1))
+}
+
 func TestBasic(t *testing.T) {
 	re := internal.CreateAutoIDRequirement(t)
 	defer func() {
