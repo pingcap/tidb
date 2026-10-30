@@ -329,8 +329,8 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 			return err
 		}
 		// Rebuild groupedRanges if it was originally set
-		if len(is.GroupByColIdxs) != 0 {
-			e.groupedRanges, err = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
+		if len(is.GroupByColIdxs) != 0 || len(is.NullsHighColIdxs) != 0 {
+			e.groupedRanges, err = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs, is.NullsHighColIdxs)
 			if err != nil {
 				return err
 			}
@@ -634,8 +634,8 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 			return err
 		}
 		// Rebuild groupedRanges if it was originally set
-		if len(is.GroupByColIdxs) != 0 {
-			e.groupedRanges, err = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs)
+		if len(is.GroupByColIdxs) != 0 || len(is.NullsHighColIdxs) != 0 {
+			e.groupedRanges, err = plannercore.GroupRangesByCols(e.ranges, is.GroupByColIdxs, is.NullsHighColIdxs)
 			if err != nil {
 				return err
 			}

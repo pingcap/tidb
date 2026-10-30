@@ -38,6 +38,11 @@ var wholeTaskTypes = []TaskType{CopSingleReadTaskType, CopMultiReadTaskType, Roo
 type SortItem struct {
 	Col  *expression.Column
 	Desc bool
+	// NullsHigh means NULLs sort as if they were greater than any other value
+	// (ASC NULLS LAST, DESC NULLS FIRST), instead of the default smallest.
+	// Only DataSource can satisfy such an item without a sort, see
+	// PhysicalProperty.HasNullsHigh.
+	NullsHigh bool
 }
 
 // Hash64 implements the HashEquals interface.
@@ -49,6 +54,7 @@ func (s *SortItem) Hash64(h base.Hasher) {
 		s.Col.Hash64(h)
 	}
 	h.HashBool(s.Desc)
+	h.HashBool(s.NullsHigh)
 }
 
 // Equals implements the HashEquals interface.
@@ -63,19 +69,23 @@ func (s *SortItem) Equals(other any) bool {
 	if s2 == nil {
 		return false
 	}
-	return s.Col.Equals(s2.Col) && s.Desc == s2.Desc
+	return s.Col.Equals(s2.Col) && s.Desc == s2.Desc && s.NullsHigh == s2.NullsHigh
 }
 
 func (s *SortItem) String() string {
-	if s.Desc {
-		return fmt.Sprintf("{%s desc}", s.Col)
+	nullsHigh := ""
+	if s.NullsHigh {
+		nullsHigh = " nulls high"
 	}
-	return fmt.Sprintf("{%s asc}", s.Col)
+	if s.Desc {
+		return fmt.Sprintf("{%s desc%s}", s.Col, nullsHigh)
+	}
+	return fmt.Sprintf("{%s asc%s}", s.Col, nullsHigh)
 }
 
 // Clone makes a copy of SortItem.
 func (s SortItem) Clone() SortItem {
-	return SortItem{Col: s.Col.Clone().(*expression.Column), Desc: s.Desc}
+	return SortItem{Col: s.Col.Clone().(*expression.Column), Desc: s.Desc, NullsHigh: s.NullsHigh}
 }
 
 // MemoryUsage return the memory usage of SortItem
@@ -555,7 +565,8 @@ func (p *PhysicalProperty) IsPrefix(prop *PhysicalProperty) bool {
 		return false
 	}
 	for i := range p.SortItems {
-		if !p.SortItems[i].Col.EqualColumn(prop.SortItems[i].Col) || p.SortItems[i].Desc != prop.SortItems[i].Desc {
+		if !p.SortItems[i].Col.EqualColumn(prop.SortItems[i].Col) || p.SortItems[i].Desc != prop.SortItems[i].Desc ||
+			p.SortItems[i].NullsHigh != prop.SortItems[i].NullsHigh {
 			return false
 		}
 	}
@@ -569,11 +580,22 @@ func (p *PhysicalProperty) IsSortItemAllForPartition() bool {
 	}
 	for i := range p.SortItemsForPartition {
 		if !p.SortItemsForPartition[i].Col.EqualColumn(p.SortItems[i].Col) ||
-			p.SortItemsForPartition[i].Desc != p.SortItems[i].Desc {
+			p.SortItemsForPartition[i].Desc != p.SortItems[i].Desc ||
+			p.SortItemsForPartition[i].NullsHigh != p.SortItems[i].NullsHigh {
 			return false
 		}
 	}
 	return true
+}
+
+// HasNullsHigh reports whether any sort item requires NULLs to sort high.
+func (p *PhysicalProperty) HasNullsHigh() bool {
+	for _, item := range p.SortItems {
+		if item.NullsHigh {
+			return true
+		}
+	}
+	return false
 }
 
 // IsSortItemEmpty checks whether the order property is empty.
@@ -634,11 +656,14 @@ func (p *PhysicalProperty) HashCode() []byte {
 	p.hashcode = codec.EncodeFloat(p.hashcode, p.ExpectedCnt)
 	for _, item := range p.SortItems {
 		p.hashcode = append(p.hashcode, item.Col.HashCode()...)
+		order := int64(0)
 		if item.Desc {
-			p.hashcode = codec.EncodeInt(p.hashcode, 1)
-		} else {
-			p.hashcode = codec.EncodeInt(p.hashcode, 0)
+			order = 1
 		}
+		if item.NullsHigh {
+			order |= 2
+		}
+		p.hashcode = codec.EncodeInt(p.hashcode, order)
 	}
 	if p.TaskTp == MppTaskType {
 		p.hashcode = codec.EncodeInt(p.hashcode, int64(p.MPPPartitionTp))

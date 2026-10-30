@@ -461,6 +461,8 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		}
 	case *ast.GroupByClause:
 		p.checkGroupBy(node)
+	case *ast.PartitionByClause:
+		p.checkNoNullsOrder(node.Items, "PARTITION BY")
 	case *ast.CommonTableExpression, *ast.SubqueryExpr:
 		with := p.preprocessWith
 		beforeOffset := len(with.cteCanUsed)
@@ -1420,6 +1422,9 @@ func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
 }
 
 func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
+	if p.checkNoNullsOrder(stmt.Items, "GROUP BY"); p.err != nil {
+		return
+	}
 	noopFuncsMode := p.sctx.GetSessionVars().NoopFuncsMode
 	for _, item := range stmt.Items {
 		if !item.NullOrder && noopFuncsMode != variable.OnInt {
@@ -1430,6 +1435,16 @@ func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
 			}
 			// NoopFuncsMode is Warn, append an error
 			p.sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		}
+	}
+}
+
+// checkNoNullsOrder rejects NULLS FIRST/LAST, which only applies to ORDER BY.
+func (p *preprocessor) checkNoNullsOrder(items []*ast.ByItem, clause string) {
+	for _, item := range items {
+		if item.NullsOrder != ast.NullsOrderDefault {
+			p.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("NULLS FIRST/LAST in " + clause)
+			return
 		}
 	}
 }

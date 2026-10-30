@@ -162,6 +162,9 @@ type AccessPath struct {
 	// This field is used to rebuild GroupedRanges from ranges using GroupRangesByCols().
 	// It's used in plan cache or Apply.
 	GroupByColIdxs []int
+	// NullsHighColIdxs stores the index columns whose NULL ranges are split into separate groups, so the merge
+	// sort can order NULLs high (NULLS LAST for ASC, NULLS FIRST for DESC). See GroupRangesByCols().
+	NullsHighColIdxs []int
 
 	// Disables plan cache for plans using this Path.
 	NoncacheableReason string
@@ -204,6 +207,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
 		GroupedRanges:                make([][]*ranger.Range, 0, len(path.GroupedRanges)),
 		GroupByColIdxs:               slices.Clone(path.GroupByColIdxs),
+		NullsHighColIdxs:             slices.Clone(path.NullsHighColIdxs),
 		NoncacheableReason:           path.NoncacheableReason,
 	}
 	if path.IndexMergeORSourceFilter != nil {

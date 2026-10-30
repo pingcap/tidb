@@ -17,7 +17,10 @@ package physicalop
 import (
 	"math"
 
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -53,6 +56,10 @@ func EnforceProperty(p *property.PhysicalProperty, tsk base.Task, ctx base.PlanC
 		IsPartialSort: p.IsSortItemAllForPartition(),
 	}.Init(ctx, tsk.Plan().StatsInfo(), tsk.Plan().QueryBlockOffset(), sortReqProp)
 	for _, col := range p.SortItems {
+		if col.NullsHigh {
+			isNull := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.IsNull, types.NewFieldType(mysql.TypeTiny), col.Col)
+			sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: isNull, Desc: col.Desc})
+		}
 		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
 	}
 	return sort.Attach2Task(tsk)

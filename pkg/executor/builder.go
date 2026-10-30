@@ -1024,9 +1024,9 @@ func adaptiveLimitIndexLookupMayNeedMergeSort(indexLookup *IndexLookUpExecutor) 
 	if len(indexLookup.idxPlans) == 0 {
 		return true
 	}
-	// Correlated access can rebuild groupedRanges from GroupByColIdxs in Open.
+	// Correlated access can rebuild groupedRanges from GroupByColIdxs and NullsHighColIdxs in Open.
 	indexScan, ok := indexLookup.idxPlans[0].(*physicalop.PhysicalIndexScan)
-	return !ok || len(indexScan.GroupByColIdxs) > 0
+	return !ok || len(indexScan.GroupByColIdxs) > 0 || len(indexScan.NullsHighColIdxs) > 0
 }
 
 func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) exec.Executor {
