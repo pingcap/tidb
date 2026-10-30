@@ -823,6 +823,68 @@ func (f *mockImportClientFactory) create(_ context.Context, storeID uint64) (sst
 func (f *mockImportClientFactory) close() {}
 
 func TestMultiIngest(t *testing.T) {
+	t.Run("limiter uses ingest context", func(t *testing.T) {
+		for _, tc := range []struct {
+			name           string
+			maxReqInFlight int
+			maxReqPerSec   float64
+		}{
+			{name: "concurrency", maxReqInFlight: 1},
+			{name: "rate", maxReqPerSec: 0.001},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				parentCtx, cancelParent := context.WithCancel(context.Background())
+				defer cancelParent()
+				limiter := newIngestLimiter(tc.maxReqInFlight, tc.maxReqPerSec)
+				require.NoError(t, limiter.Acquire(parentCtx, 1, 1))
+				defer limiter.Release(1, 1)
+
+				client := newMockImportClient()
+				client.store = &metapb.Store{Id: 1}
+				clientCreated := make(chan struct{})
+				local := &Backend{
+					supportMultiIngest: true,
+					importClientFactory: &mockImportClientFactory{
+						stores: []*metapb.Store{client.store},
+						createClientFn: func(*metapb.Store) sst.ImportSSTClient {
+							close(clientCreated)
+							return client
+						},
+					},
+				}
+				local.ingestLimiter.Store(limiter)
+				job := &regionJob{
+					region:      dummyRegionInfo,
+					writeResult: &tikvWriteResult{sstMeta: []*sst.SSTMeta{{RegionId: 1}}},
+				}
+				ctx, cancel := context.WithCancel(parentCtx)
+				defer cancel()
+				errCh := make(chan error, 1)
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					_, err := local.doIngest(ctx, job)
+					errCh <- err
+				}()
+				defer func() {
+					cancelParent()
+					<-done
+				}()
+
+				<-clientCreated
+				cancel()
+				select {
+				case err := <-errCh:
+					require.ErrorIs(t, err, context.Canceled)
+				case <-time.After(time.Second):
+					t.Fatal("ingest limiter did not stop after the ingest context was canceled")
+				}
+				require.NoError(t, parentCtx.Err())
+				require.Zero(t, client.cnt, "canceled acquisition must not send an ingest RPC")
+			})
+		}
+	})
+
 	allStores := []*metapb.Store{
 		{
 			Id:    1,
