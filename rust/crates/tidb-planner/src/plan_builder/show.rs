@@ -33,7 +33,7 @@ use tidb_infoschema::table_source::TableSource;
 use super::visit_info::{VisitAuthError, VisitInfo};
 use super::PlanBuilder;
 use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
-use crate::rule::flags;
+use tidb_planner_core_rule::flags;
 use tidb_planner_core_operator_logicalop::sort::LogicalSort;
 use crate::common_plans::{Plan, ShowNextRowID};
 use tidb_planner_core_operator_logicalop::show_ddl_jobs::LogicalShowDDLJobs;

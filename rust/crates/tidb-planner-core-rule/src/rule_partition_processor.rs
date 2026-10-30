@@ -21,7 +21,7 @@ use tidb_planner_core_operator_logicalop::{
 use tidb_planner_core_base::PlanError;
 
 use tidb_planner_core_operator_logicalop::plan_context::{conds_to_table_dual, LogicalOptRule, RuleContext};
-use super::rule_predicate_simplification::apply_predicate_simplification;
+use crate::rule_predicate_simplification::apply_predicate_simplification;
 
 // Go `resolveOptimizeHint` keeps a hint for a partition when one of its
 // partitions satisfies `p.String() == partitionName.String()`: the names as
@@ -81,7 +81,14 @@ fn resolve_storage_hints_for_partition(
     }
 }
 
-fn resolve_index_hints_for_partition(
+/// Go `resolveOptimizeHint`'s index-hint half for one partition: the
+/// partition-scoped comment hints and the table-syntax hints, resolved
+/// through core's access-path hint resolution.
+///
+/// # Errors
+///
+/// Go's hint errors.
+pub fn resolve_index_hints_for_partition(
     ctx: &RuleContext<'_>,
     source: &mut DataSource,
     partition_name: &str,
@@ -389,9 +396,7 @@ impl LogicalOptRule for PartitionProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_planner_util::path::PossiblePath;
-    use tidb_planner_core_operator_logicalop::data_source::{DataSourceIndexHint, DataSourceIndexMergeHint};
-    use tidb_infoschema::table_source::SourceIndex;
+    use tidb_planner_core_operator_logicalop::data_source::DataSourceIndexMergeHint;
 
     #[test]
     fn index_merge_hints_are_resolved_per_static_partition() {
@@ -433,78 +438,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn ordinary_index_hints_are_resolved_per_static_partition() {
-        let hinted = |name: &str, partitions: &[&str]| DataSourceIndexHint {
-            kind: tidb_ast::IndexHintKind::Use,
-            index_names: vec![name.to_owned()],
-            partitions: partitions.iter().map(|name| (*name).to_owned()).collect(),
-            push_down_lookup: false,
-            force_keep_order: false,
-            force_no_keep_order: false,
-            restored: format!("/*+ USE_INDEX(t, {name}) */"),
-        };
-        let mut source = DataSource {
-            table_name: "t".to_owned(),
-            indexes: vec![
-                SourceIndex {
-                    id: 1,
-                    name: "idx_all".to_owned(),
-                    ..SourceIndex::default()
-                },
-                SourceIndex {
-                    id: 2,
-                    name: "idx_p0".to_owned(),
-                    ..SourceIndex::default()
-                },
-                SourceIndex {
-                    id: 3,
-                    name: "idx_p1".to_owned(),
-                    ..SourceIndex::default()
-                },
-            ],
-            public_enumerated_paths: vec![
-                PossiblePath::Table {
-                    is_int_handle: true,
-                    primary_index: None,
-                },
-                PossiblePath::Index { index: 0 },
-                PossiblePath::Index { index: 1 },
-                PossiblePath::Index { index: 2 },
-            ],
-            index_hints: vec![
-                hinted("idx_all", &[]),
-                hinted("idx_p0", &["p0"]),
-                hinted("idx_p1", &["P1"]),
-            ],
-            // These are comment hints (`/*+ USE_INDEX(t, ...) */`), which
-            // live in `index_hints` only; `ast_index_hints` holds the
-            // table-syntax list, empty for this statement.
-            ast_index_hints: Vec::new(),
-            isolation_read_engines_value: "tikv".to_owned(),
-            tikv_in_isolation_read: true,
-            ..DataSource::default()
-        };
-
-        // `PARTITION(P1)` applies to the partition written `P1` only.
-        let mut folded = source.clone_shallow();
-        resolve_index_hints_for_partition(&crate::rule::rule_tests::test_context(&tidb_planner_core_base::PlanIdAllocator::new()), &mut folded, "p1").expect("paths resolve");
-        assert_eq!(folded.index_hints.len(), 1);
-        resolve_index_hints_for_partition(&crate::rule::rule_tests::test_context(&tidb_planner_core_base::PlanIdAllocator::new()), &mut source, "P1").expect("paths resolve");
-        assert_eq!(
-            source.enumerated_paths,
-            vec![
-                PossiblePath::Index { index: 0 },
-                PossiblePath::Index { index: 2 }
-            ]
-        );
-        assert_eq!(
-            source.forced_index_ids,
-            std::collections::BTreeSet::from([1, 3])
-        );
-        assert_eq!(source.index_hints.len(), 2);
-    }
-
     /// Go `resolveOptimizeHint`'s read-from-storage half: a store preference
     /// scoped to partitions stays only on a partition written exactly as
     /// named; an unscoped one stays everywhere.
@@ -512,7 +445,7 @@ mod tests {
     fn storage_hints_are_resolved_per_static_partition() {
         use tidb_planner_core_operator_logicalop::data_source::{PREFER_TIFLASH, PREFER_TIKV};
         let allocator = tidb_planner_core_base::PlanIdAllocator::new();
-        let ctx = crate::rule::rule_tests::test_context(&allocator);
+        let ctx = crate::test_support::test_context(&allocator);
         let source = DataSource {
             prefer_store_type: PREFER_TIKV,
             prefer_partitions: std::collections::BTreeMap::from([(
@@ -536,43 +469,4 @@ mod tests {
         assert_eq!(child.prefer_store_type, PREFER_TIFLASH);
     }
 
-    /// Go `resolveAccessPaths` passes `ds.AstIndexHints` back into
-    /// `getPossibleAccessPaths` for each partition: a table-syntax
-    /// `t USE INDEX (ia)` keeps the table path out of every partition.
-    #[test]
-    fn table_syntax_index_hints_survive_per_partition_resolution() {
-        let mut source = DataSource {
-            table_name: "t".to_owned(),
-            indexes: vec![SourceIndex {
-                id: 1,
-                name: "ia".to_owned(),
-                ..SourceIndex::default()
-            }],
-            public_enumerated_paths: vec![
-                PossiblePath::Table {
-                    is_int_handle: true,
-                    primary_index: None,
-                },
-                PossiblePath::Index { index: 0 },
-            ],
-            ast_index_hints: vec![tidb_ast::IndexHint {
-                kind: tidb_ast::IndexHintKind::Use,
-                scope: tidb_ast::IndexHintScope::All,
-                indexes: vec!["ia".to_owned()],
-            }],
-            isolation_read_engines_value: "tikv".to_owned(),
-            tikv_in_isolation_read: true,
-            ..DataSource::default()
-        };
-
-        resolve_index_hints_for_partition(&crate::rule::rule_tests::test_context(&tidb_planner_core_base::PlanIdAllocator::new()), &mut source, "p0").expect("paths resolve");
-        assert_eq!(
-            source.enumerated_paths,
-            vec![PossiblePath::Index { index: 0 }]
-        );
-        assert_eq!(
-            source.forced_index_ids,
-            std::collections::BTreeSet::from([1])
-        );
-    }
 }

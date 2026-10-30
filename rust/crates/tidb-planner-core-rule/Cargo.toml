@@ -1,0 +1,39 @@
+[package]
+name = "tidb-planner-core-rule"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/planner/core/rule (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-expression-aggregation = { path = "../tidb-expression-aggregation" }
+tidb-filter = { path = "../tidb-filter" }
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-planner-cardinality = { path = "../tidb-planner-cardinality" }
+tidb-planner-core-base = { path = "../tidb-planner-core-base" }
+tidb-planner-core-constraint = { path = "../tidb-planner-core-constraint" }
+tidb-planner-core-joinorder = { path = "../tidb-planner-core-joinorder" }
+tidb-planner-core-operator-logicalop = { path = "../tidb-planner-core-operator-logicalop" }
+tidb-planner-property = { path = "../tidb-planner-property" }
+tidb-planner-util = { path = "../tidb-planner-util" }
+tidb-ranger = { path = "../tidb-ranger" }
+tidb-stats = { path = "../tidb-stats" }
+
+[dev-dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-chunk = { path = "../tidb-chunk" }
+tidb-context = { path = "../tidb-context" }
+tidb-exprctx = { path = "../tidb-exprctx" }
+tidb-planner-core-cost = { path = "../tidb-planner-core-cost" }
+tidb-plannererrors = { path = "../tidb-plannererrors" }
+tidb-sessionctx = { path = "../tidb-sessionctx" }
+tidb-vardef = { path = "../tidb-vardef" }

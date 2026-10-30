@@ -36,7 +36,8 @@ use tidb_hack::{GoCaseCompare, GoToLower};
 use tidb_planner_core_base::ColumnIdAllocator;
 use tidb_planner_core_operator_logicalop::cte::CteClass;
 use tidb_planner_core_operator_logicalop::fold::{Descend, OwnedRewrite, fold_owned};
-use tidb_planner::rule::{flags, logical_optimize};
+use tidb_planner::rule::logical_optimize;
+use tidb_planner_core_rule::flags;
 use tidb_planner_core_operator_logicalop::plan_context::{RuleContext};
 use tidb_planner_core_operator_logicalop::{
     BaseLogicalPlan, LogicalPlan, LogicalSelection, prepare_possible_properties,
@@ -1236,7 +1237,7 @@ impl InitStats<'_> {
         if !source.forced_index_ids.is_empty() {
             self.context.set_index_force();
         }
-        tidb_planner::rule::rule_collect_plan_stats::refresh_source_group_ndvs_with_scale_ratio(
+        tidb_planner_core_rule::rule_collect_plan_stats::refresh_source_group_ndvs_with_scale_ratio(
             source, self.context.optimizer_cost_env().session.scale_ndv_skew_ratio,
         );
         Ok(Descend::Stop(()))
@@ -1475,7 +1476,7 @@ impl DriverCteOptimizer<'_> {
             );
             selection.base.set_children(vec![seed]);
             seed = LogicalPlan::Selection(selection);
-            opt_flag = tidb_planner::rule::set_predicate_push_down_flag(opt_flag);
+            opt_flag = tidb_planner_core_rule::set_predicate_push_down_flag(opt_flag);
             class.borrow_mut().opt_flag = opt_flag;
         }
         let (seed_logical, seed_physical) = self.optimize_tree(seed, opt_flag, rule_context)?;
@@ -2423,7 +2424,7 @@ pub(crate) fn plan_insert_expressions(
     builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
     // Go `PlanBuilder.Build`'s `b.optFlag |= FlagPruneColumns`, which every
     // statement's build starts from; `DoOptimize` of each subquery reads it.
-    builder.add_opt_flag(tidb_planner::rule::flags::PRUNE_COLUMNS);
+    builder.add_opt_flag(tidb_planner_core_rule::flags::PRUNE_COLUMNS);
     let target = builder.resolve_insert_target(insert)?;
     let values = if insert.source.is_none() {
         builder.build_insert_values(insert, &target)?
@@ -2657,7 +2658,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     // projected column never reaches them (`DoOptimize(..., b.optFlag &^
     // rule.FlagEliminateProjection, p)`).
     if operator.eq_ignore_ascii_case("Update") {
-        plan_flags &= !tidb_planner::rule::flags::ELIMINATE_PROJECTION;
+        plan_flags &= !tidb_planner_core_rule::flags::ELIMINATE_PROJECTION;
     }
     // Go `buildUpdate`/`buildDelete` allocate the `Update`/`Delete` root
     // after the logical build (which now includes `buildSelectLock` and the
@@ -3339,7 +3340,7 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     let node = tidb_resolve::NodeW::new(query.clone());
     let plan = builder.build_query_node(&node, false)?;
     let flags = builder.get_opt_flag();
-    let (plan, before) = tidb_planner::rule::rule_collect_plan_stats::collect_column_stats_usage(
+    let (plan, before) = tidb_planner_core_rule::rule_collect_plan_stats::collect_column_stats_usage(
         plan,
         ctx.opt_index_prune_threshold(),
     );
@@ -3353,7 +3354,7 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
         &column_ids,
         &session_zone,
     )?;
-    let (_, after) = tidb_planner::rule::rule_collect_plan_stats::collect_column_stats_usage(
+    let (_, after) = tidb_planner_core_rule::rule_collect_plan_stats::collect_column_stats_usage(
         optimized,
         ctx.opt_index_prune_threshold(),
     );

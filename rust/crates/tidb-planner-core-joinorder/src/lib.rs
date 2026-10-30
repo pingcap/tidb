@@ -77,9 +77,13 @@ struct JoinGroup {
     selection_conditions: BTreeMap<i32, Vec<Expression>>,
 }
 
+/// Go `joinMethodHint`: a join group leaf's preferred join method and the
+/// hints it came from.
 #[derive(Clone, Debug)]
 pub struct JoinMethodHint {
+    /// Go `preferredJoinMethod`.
     pub prefer_join_method: u32,
+    /// Go `joinMethodHintInfo`.
     pub hint_info: Rc<tidb_planner_util::misc::JoinHints>,
 }
 
@@ -967,6 +971,7 @@ fn align_equal_conditions(
     Ok((left, right, aligned))
 }
 
+/// Go `newCartesianJoin`: a join of `left` and `right` with no conditions.
 pub fn new_cartesian_join(
     context: &RuleContext<'_>,
     join_type: tidb_planner_core_base::LogicalJoinType,
@@ -1377,6 +1382,8 @@ fn validate_cumulative_cost(cost: f64) -> Result<(), PlanError> {
     Ok(())
 }
 
+/// Go `cumulativeCostByChildren`: the plan's row count plus its children's
+/// cumulative costs.
 pub fn cumulative_cost_by_children(plan: &LogicalPlan) -> Result<f64, PlanError> {
     let mut cost = plan
         .stats_info()

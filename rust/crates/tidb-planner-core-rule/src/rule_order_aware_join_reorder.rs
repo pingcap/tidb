@@ -425,7 +425,7 @@ mod tests {
             1,
         ));
 
-        let mut context = crate::rule::rule_tests::test_context(&allocator);
+        let mut context = crate::test_support::test_context(&allocator);
         context.join_reorder_threshold = 0;
         context.advanced_join_reorder = true;
         let (optimized, changed) = OrderAwareJoinReorder.optimize(&context, topn).unwrap();

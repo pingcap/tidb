@@ -467,7 +467,7 @@ mod tests {
     use tidb_expr::schema::Schema;
 
     use super::*;
-    use crate::rule::rule_tests::test_context;
+    use crate::test_support::test_context;
     use tidb_planner_core_operator_logicalop::DataSource;
     use tidb_planner_core_base::PlanIdAllocator;
 

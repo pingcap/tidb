@@ -453,6 +453,8 @@ impl LogicalJoin {
         (left_cond, right_cond)
     }
 
+    /// Go `LogicalJoin.ExtractOnCondition`: splits `conditions` into equal,
+    /// left, right and other conditions over the two children's schemas.
     pub fn extract_on_condition(
         &mut self,
         conditions: &[Expression],

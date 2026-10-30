@@ -76,7 +76,7 @@ use tidb_infoschema::table_source::TableSource;
 use super::{snapshot_schema_and_names, BlockExpand, PlanBuilder};
 use tidb_planner_core_operator_logicalop::expand::{GroupingMode, LogicalExpand, RollupGroupingSet};
 use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
-use crate::rule::flags;
+use tidb_planner_core_rule::flags;
 use tidb_planner_core_operator_logicalop::LogicalPlan;
 use tidb_planner_core_base::PlanError;
 

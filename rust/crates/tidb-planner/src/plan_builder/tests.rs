@@ -37,7 +37,7 @@ use super::{
     EXTRA_COMMIT_TS_ID, EXTRA_COMMIT_TS_NAME,
 };
 use tidb_planner_core_base::ColumnIdAllocator;
-use crate::rule::flags;
+use tidb_planner_core_rule::flags;
 use crate::rule::logical_optimize;
 use crate::rule::rule_tests::test_context;
 use tidb_planner_core_operator_logicalop::LogicalPlan;

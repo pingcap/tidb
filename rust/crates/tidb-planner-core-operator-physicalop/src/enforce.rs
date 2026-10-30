@@ -148,6 +148,12 @@ pub fn enforce_property(
     )
 }
 
+/// [`enforce_property`] with the statement's evaluator, MPP warning sink and
+/// core's attach hook.
+///
+/// # Errors
+///
+/// The attachment's planner error.
 pub fn enforce_property_in(
     prop: &PhysicalProperty,
     mut task: Task,

@@ -954,7 +954,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         // builds the Apply; a subquery evaluated on its own never does, so its
         // `DoOptimize` runs without them.
         {
-            use crate::rule::flags;
+            use tidb_planner_core_rule::flags;
             let mut turned_on = flags::PREDICATE_PUSH_DOWN
                 | flags::BUILD_KEY_INFO
                 | flags::DECORRELATE
@@ -1043,7 +1043,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             join.prefer_join_type |= tidb_hint::join_hint_flags::REWRITE_SEMI_JOIN;
             self.env
                 .opt_flags
-                .set(self.env.opt_flags.get() | crate::rule::flags::SEMI_JOIN_REWRITE);
+                .set(self.env.opt_flags.get() | tidb_planner_core_rule::flags::SEMI_JOIN_REWRITE);
         }
         // Go `buildSemiApply`'s `ap.LogicalJoin.SetPreferredJoinTypeAndOrder(
         // b.TableHints())` (`logical_plan_builder.go:5760`): a subquery was
@@ -1098,7 +1098,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
     ) -> Result<LogicalPlan, RewriteError> {
         // Go `buildSemiApply` opens with the same three rules.
         {
-            use crate::rule::flags;
+            use tidb_planner_core_rule::flags;
             self.env.opt_flags.set(
                 self.env.opt_flags.get()
                     | flags::PREDICATE_PUSH_DOWN
@@ -1852,7 +1852,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         // makes the de-duplicating aggregation redundant, but the rule only
         // runs when these flags are set.
         {
-            use crate::rule::flags;
+            use tidb_planner_core_rule::flags;
             self.env.opt_flags.set(
                 self.env.opt_flags.get()
                     | flags::ELIMINATE_AGG

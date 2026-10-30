@@ -94,7 +94,7 @@ use tidb_exprctx::Columns;
 use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_operator_logicalop::join::LogicalJoin;
 use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
-use crate::rule::flags;
+use tidb_planner_core_rule::flags;
 use tidb_planner_core_operator_logicalop::union_all::LogicalUnionAll;
 use tidb_planner_core_operator_logicalop::LogicalPlan;
 use tidb_planner_core_base::PlanError;

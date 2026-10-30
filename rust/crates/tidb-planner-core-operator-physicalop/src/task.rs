@@ -74,7 +74,9 @@ pub trait TaskAttacher {
 pub struct TaskStatsContext {
     /// Go CopTask.TblColHists: the source population, before access/filter scaling.
     pub root_filter_stats: Option<Arc<tidb_planner_property::stats_info::StatsInfo>>,
+    /// The session's estimator switches.
     pub estimator_options: tidb_planner_cardinality::row_count_estimator::EstimatorOptions,
+    /// Go `SessionVars.RiskScaleNDVSkewRatio`.
     pub scale_ndv_skew_ratio: f64,
     /// Go `cardinality.CollectFilters4MVIndex` / `BuildPartialPaths4MVIndex`,
     /// which core registers (`core_init.go`); core's task builder sets it
@@ -154,6 +156,7 @@ pub struct SqlWarn {
 /// warning slice, copied — never shared — between task instances.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SimpleWarnings {
+    /// The warnings, in order.
     pub warnings: Vec<SqlWarn>,
 }
 
@@ -867,6 +870,11 @@ impl CopTask {
         Ok(Task::Root(root))
     }
 
+    /// Go `CopTask.ConvertToRootTaskImpl` with the static evaluator.
+    ///
+    /// # Errors
+    ///
+    /// The conversion's planner error.
     pub fn convert_to_root_task_impl(
         self,
         allocator: &tidb_planner_core_base::PlanIdAllocator,

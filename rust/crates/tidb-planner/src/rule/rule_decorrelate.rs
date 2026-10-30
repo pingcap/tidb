@@ -132,7 +132,7 @@ impl DecorrelateSolver {
         );
         let true_selection = match simplified.as_slice() {
             [] => true,
-            [only] => super::rule_predicate_simplification::is_true_predicate(ctx, only),
+            [only] => tidb_planner_core_rule::rule_predicate_simplification::is_true_predicate(ctx, only),
             _ => false,
         };
         if !true_selection {

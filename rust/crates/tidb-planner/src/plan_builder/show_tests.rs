@@ -147,7 +147,7 @@ fn show_where_selects_under_a_projection_and_variables_sort() {
     let Plan::Logical(plan) = plan else { panic!("a logical SHOW plan") };
     assert_eq!(plan_shape(&plan), ["Sort", "Projection", "Selection", "Show"]);
     assert_eq!(column_names(&plan), ["Variable_name", "Value"]);
-    assert_ne!(builder.opt_flag & crate::rule::flags::ELIMINATE_PROJECTION, 0);
+    assert_ne!(builder.opt_flag & tidb_planner_core_rule::flags::ELIMINATE_PROJECTION, 0);
 }
 
 /// Go `buildShow`: SHOW WARNINGS has no extractor, so LIKE tests `Level`.

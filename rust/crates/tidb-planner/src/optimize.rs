@@ -33,7 +33,8 @@ use crate::find_best_task::coster::{CostEnv, Ver2Coster};
 use tidb_planner_core_operator_physicalop::enforce::MppWarningSink;
 use crate::find_best_task::dispatch::{find_best_task, DispatchContext};
 use tidb_fixcontrol::OptimizerFixControl;
-use crate::rule::{flags, logical_optimize};
+use crate::rule::logical_optimize;
+use tidb_planner_core_rule::flags;
 use tidb_planner_core_operator_logicalop::plan_context::{CteOptimizer, DisabledLogicalRules, HintWarningSink, RuleContext, UsedStatsRecorder};
 use tidb_planner_core_operator_logicalop::plan_context::StatisticsLoadRequester;
 use tidb_planner_core_operator_logicalop::plan_context::PartitionPruning;
@@ -258,7 +259,7 @@ pub fn optimize_logical<C: OptimizeContext>(
         used_stats_recorder: Some(services.used_stats_recorder),
         cte_optimizer: Some(services.cte_optimizer),
         data_source_stats: &crate::stats::CoreDataSourceStats,
-        predicate_simplifier: &crate::rule::rule_predicate_simplification::RulePredicateSimplifier,
+        predicate_simplifier: &tidb_planner_core_rule::rule_predicate_simplification::RulePredicateSimplifier,
         access_path_resolver: &crate::access_path::CoreAccessPathResolver,
     };
     // Go DataSource.InitStats is available to logical rules themselves;

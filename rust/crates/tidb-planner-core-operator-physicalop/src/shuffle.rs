@@ -98,6 +98,8 @@ impl PhysicalShuffle {
                 .sum::<i64>()
     }
 
+    /// Go `PhysicalShuffle.ResolveIndices`'s by-item half: binds each data
+    /// source's sort items to that source's schema.
     pub fn resolve_by_items(&mut self) -> Result<(), PlanError> {
         for i in 0..self.by_item_arrays.len() {
             let source = *self

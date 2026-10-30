@@ -85,7 +85,7 @@
 //!
 //! Go accumulates `PlanBuilder.optFlag` as the clauses are built and hands it
 //! to `logicalOptimize` beside the plan. [`PlanBuilder::opt_flag`] is that
-//! `u64`, over [`crate::rule::flags`]' already-ported bit values, and
+//! `u64`, over [`tidb_planner_core_rule::flags`]' already-ported bit values, and
 //! [`PlanBuilder::build_select`] returns `(LogicalPlan, u64)`.
 //!
 //! It is deliberately NOT a field on [`BasePlan`](tidb_planner_core_base::BasePlan):
@@ -232,7 +232,7 @@ use tidb_planner_core_operator_logicalop::data_source::{
 };
 use tidb_planner_core_operator_logicalop::limit::LogicalLimit;
 use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
-use crate::rule::flags;
+use tidb_planner_core_rule::flags;
 use tidb_planner_core_operator_logicalop::selection::LogicalSelection;
 use tidb_planner_core_operator_logicalop::sort::LogicalSort;
 use tidb_planner_core_operator_logicalop::table_dual::LogicalTableDual;

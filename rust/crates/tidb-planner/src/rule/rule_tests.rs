@@ -46,10 +46,11 @@ use tidb_planner_core_operator_logicalop::join::LogicalJoin;
 use tidb_planner_core_operator_logicalop::limit::LogicalLimit;
 use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
 use crate::rule;
-use super::{flags, logical_optimize, no_unexpected_zero_column_schema, BuildKeySolver, ColumnPruner, PpdSolver, PushDownTopNOptimizer, RuleId, OPT_RULE_FLAGS, OPT_RULE_LIST};
+use super::{logical_optimize, PpdSolver, PushDownTopNOptimizer, RuleId, OPT_RULE_FLAGS, OPT_RULE_LIST};
+use tidb_planner_core_rule::{flags, no_unexpected_zero_column_schema, BuildKeySolver, ColumnPruner};
 use tidb_planner_core_operator_logicalop::plan_context::{add_selection, DisabledLogicalRules, LogicalOptRule, RuleContext};
 use tidb_planner_core_operator_logicalop::plan_context::PartitionPruning;
-use super::rule_partition_processor::PartitionProcessor;
+use tidb_planner_core_rule::rule_partition_processor::PartitionProcessor;
 use tidb_planner_core_operator_logicalop::selection::LogicalSelection;
 use tidb_planner_core_operator_logicalop::sort::LogicalSort;
 use tidb_planner_core_operator_logicalop::topn::LogicalTopN;
@@ -105,7 +106,7 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         used_stats_recorder: None,
         cte_optimizer: None,
         data_source_stats: &crate::stats::CoreDataSourceStats,
-        predicate_simplifier: &crate::rule::rule_predicate_simplification::RulePredicateSimplifier,
+        predicate_simplifier: &tidb_planner_core_rule::rule_predicate_simplification::RulePredicateSimplifier,
         access_path_resolver: &crate::access_path::CoreAccessPathResolver,
     }
 }
@@ -364,11 +365,11 @@ fn the_flag_bit_order_deliberately_differs_from_the_execution_order() {
 #[test]
 fn set_predicate_push_down_flag_only_sets_its_bit() {
     assert_eq!(
-        rule::set_predicate_push_down_flag(0),
+        tidb_planner_core_rule::set_predicate_push_down_flag(0),
         flags::PREDICATE_PUSH_DOWN
     );
     let existing = flags::PRUNE_COLUMNS | flags::PREDICATE_PUSH_DOWN;
-    assert_eq!(rule::set_predicate_push_down_flag(existing), existing);
+    assert_eq!(tidb_planner_core_rule::set_predicate_push_down_flag(existing), existing);
 }
 
 #[test]
@@ -510,12 +511,12 @@ fn every_ported_rule_names_itself_as_go_does() {
     assert_eq!(ColumnPruner.name(), RuleId::ColumnPruner.name());
     assert_eq!(BuildKeySolver.name(), RuleId::BuildKeySolver.name());
     assert_eq!(
-        super::rule_constant_propagation::ConstantPropagationSolver.name(),
+        tidb_planner_core_rule::rule_constant_propagation::ConstantPropagationSolver.name(),
         RuleId::ConstantPropagationSolver.name()
     );
     assert_eq!(PpdSolver.name(), RuleId::PpdSolver.name());
     assert_eq!(
-        super::rule_predicate_simplification::PredicateSimplification.name(),
+        tidb_planner_core_rule::rule_predicate_simplification::PredicateSimplification.name(),
         RuleId::PredicateSimplification.name()
     );
     assert_eq!(
@@ -1178,7 +1179,7 @@ fn constant_propagation_pulls_a_projected_child_predicate_above_an_inner_join() 
     ));
     join.set_children(vec![projection, right]);
 
-    let out = super::rule_constant_propagation::constant_propagation(&ctx, join);
+    let out = tidb_planner_core_rule::rule_constant_propagation::constant_propagation(&ctx, join);
     let LogicalPlan::Selection(pulled) = &out else {
         panic!("the join must gain a parent Selection, got {out:?}")
     };
@@ -1211,7 +1212,7 @@ fn constant_propagation_keeps_go_preorder_for_nested_joins() {
     ));
     outer.set_children(vec![inner, data_source(&allocator, &[3])]);
 
-    let out = super::rule_constant_propagation::constant_propagation(&ctx, outer);
+    let out = tidb_planner_core_rule::rule_constant_propagation::constant_propagation(&ctx, outer);
     assert!(matches!(out, LogicalPlan::Join(_)));
     assert!(matches!(out.children()[0], LogicalPlan::Selection(_)));
     assert!(matches!(
@@ -2199,4 +2200,124 @@ pub(crate) fn push_down_topn(
         plan,
         topn,
     )
+}
+
+/// Partition-scoped index hints run through core's access-path hint
+/// resolution (`CoreAccessPathResolver`).
+mod partition_index_hints {
+    use tidb_planner_util::path::PossiblePath;
+    use tidb_planner_core_operator_logicalop::data_source::{DataSource, DataSourceIndexHint};
+    use tidb_infoschema::table_source::SourceIndex;
+
+    #[test]
+    fn ordinary_index_hints_are_resolved_per_static_partition() {
+        let hinted = |name: &str, partitions: &[&str]| DataSourceIndexHint {
+            kind: tidb_ast::IndexHintKind::Use,
+            index_names: vec![name.to_owned()],
+            partitions: partitions.iter().map(|name| (*name).to_owned()).collect(),
+            push_down_lookup: false,
+            force_keep_order: false,
+            force_no_keep_order: false,
+            restored: format!("/*+ USE_INDEX(t, {name}) */"),
+        };
+        let mut source = DataSource {
+            table_name: "t".to_owned(),
+            indexes: vec![
+                SourceIndex {
+                    id: 1,
+                    name: "idx_all".to_owned(),
+                    ..SourceIndex::default()
+                },
+                SourceIndex {
+                    id: 2,
+                    name: "idx_p0".to_owned(),
+                    ..SourceIndex::default()
+                },
+                SourceIndex {
+                    id: 3,
+                    name: "idx_p1".to_owned(),
+                    ..SourceIndex::default()
+                },
+            ],
+            public_enumerated_paths: vec![
+                PossiblePath::Table {
+                    is_int_handle: true,
+                    primary_index: None,
+                },
+                PossiblePath::Index { index: 0 },
+                PossiblePath::Index { index: 1 },
+                PossiblePath::Index { index: 2 },
+            ],
+            index_hints: vec![
+                hinted("idx_all", &[]),
+                hinted("idx_p0", &["p0"]),
+                hinted("idx_p1", &["P1"]),
+            ],
+            // These are comment hints (`/*+ USE_INDEX(t, ...) */`), which
+            // live in `index_hints` only; `ast_index_hints` holds the
+            // table-syntax list, empty for this statement.
+            ast_index_hints: Vec::new(),
+            isolation_read_engines_value: "tikv".to_owned(),
+            tikv_in_isolation_read: true,
+            ..DataSource::default()
+        };
+
+        // `PARTITION(P1)` applies to the partition written `P1` only.
+        let mut folded = source.clone_shallow();
+        tidb_planner_core_rule::rule_partition_processor::resolve_index_hints_for_partition(&crate::rule::rule_tests::test_context(&tidb_planner_core_base::PlanIdAllocator::new()), &mut folded, "p1").expect("paths resolve");
+        assert_eq!(folded.index_hints.len(), 1);
+        tidb_planner_core_rule::rule_partition_processor::resolve_index_hints_for_partition(&crate::rule::rule_tests::test_context(&tidb_planner_core_base::PlanIdAllocator::new()), &mut source, "P1").expect("paths resolve");
+        assert_eq!(
+            source.enumerated_paths,
+            vec![
+                PossiblePath::Index { index: 0 },
+                PossiblePath::Index { index: 2 }
+            ]
+        );
+        assert_eq!(
+            source.forced_index_ids,
+            std::collections::BTreeSet::from([1, 3])
+        );
+        assert_eq!(source.index_hints.len(), 2);
+    }
+
+    /// Go `resolveAccessPaths` passes `ds.AstIndexHints` back into
+    /// `getPossibleAccessPaths` for each partition: a table-syntax
+    /// `t USE INDEX (ia)` keeps the table path out of every partition.
+    #[test]
+    fn table_syntax_index_hints_survive_per_partition_resolution() {
+        let mut source = DataSource {
+            table_name: "t".to_owned(),
+            indexes: vec![SourceIndex {
+                id: 1,
+                name: "ia".to_owned(),
+                ..SourceIndex::default()
+            }],
+            public_enumerated_paths: vec![
+                PossiblePath::Table {
+                    is_int_handle: true,
+                    primary_index: None,
+                },
+                PossiblePath::Index { index: 0 },
+            ],
+            ast_index_hints: vec![tidb_ast::IndexHint {
+                kind: tidb_ast::IndexHintKind::Use,
+                scope: tidb_ast::IndexHintScope::All,
+                indexes: vec!["ia".to_owned()],
+            }],
+            isolation_read_engines_value: "tikv".to_owned(),
+            tikv_in_isolation_read: true,
+            ..DataSource::default()
+        };
+
+        tidb_planner_core_rule::rule_partition_processor::resolve_index_hints_for_partition(&crate::rule::rule_tests::test_context(&tidb_planner_core_base::PlanIdAllocator::new()), &mut source, "p0").expect("paths resolve");
+        assert_eq!(
+            source.enumerated_paths,
+            vec![PossiblePath::Index { index: 0 }]
+        );
+        assert_eq!(
+            source.forced_index_ids,
+            std::collections::BTreeSet::from([1])
+        );
+    }
 }

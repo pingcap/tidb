@@ -124,7 +124,7 @@ use tidb_expr::schema::Schema;
 use tidb_exprctx::Columns;
 
 use tidb_planner_core_operator_logicalop::cte::{CteClass, LogicalCTE, LogicalCTETable};
-use crate::rule::flags;
+use tidb_planner_core_rule::flags;
 use tidb_planner_core_operator_logicalop::sequence::LogicalSequence;
 use tidb_planner_core_operator_logicalop::LogicalPlan;
 use tidb_planner_core_base::PlanError;
@@ -398,7 +398,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         is_cte: bool,
     ) -> Result<LogicalPlan, PlanError> {
         self.resolve_ctx = node.resolve_context();
-        self.add_opt_flag(crate::rule::flags::PRUNE_COLUMNS);
+        self.add_opt_flag(tidb_planner_core_rule::flags::PRUNE_COLUMNS);
         self.build_query_stmt(&node.node, is_cte)
     }
 

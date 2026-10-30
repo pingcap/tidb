@@ -32,7 +32,7 @@ use tidb_planner_core_operator_logicalop::LogicalPlan;
 use tidb_planner_core_operator_logicalop::data_source::DataSource;
 use tidb_planner_core_operator_logicalop::fold::{Descend, OwnedRewrite, fold_owned};
 use tidb_planner_core_operator_logicalop::plan_context::{LogicalOptRule, RuleContext};
-use super::rule_prune_indexes::prune_data_source_with_options;
+use crate::rule_prune_indexes::prune_data_source_with_options;
 use tidb_planner_core_base::PlanError;
 
 use tidb_stats::table_statistics::ColumnStatsUsage;
@@ -692,7 +692,7 @@ mod tests {
     use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
     use tidb_planner_core_operator_logicalop::join::LogicalJoin;
     use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
-    use crate::rule::rule_tests::{test_context, TEST_BUILDER};
+    use crate::test_support::{test_context, TEST_BUILDER};
     use tidb_planner_core_operator_logicalop::selection::LogicalSelection;
     use tidb_planner_core_operator_logicalop::BaseLogicalPlan;
     use tidb_planner_core_base::PlanIdAllocator;

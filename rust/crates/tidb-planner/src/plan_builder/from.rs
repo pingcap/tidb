@@ -124,7 +124,7 @@ use tidb_planner_core_operator_logicalop::join::LogicalJoin;
 use tidb_planner_core_operator_logicalop::lock::{LogicalLock, SelectLockType};
 use tidb_planner_core_operator_logicalop::mem_table::{LogicalMemTable, MemTableColumn};
 use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
-use crate::rule::flags;
+use tidb_planner_core_rule::flags;
 use tidb_planner_core_operator_logicalop::selection::LogicalSelection;
 use tidb_planner_core_operator_logicalop::LogicalPlan;
 use tidb_planner_core_base::PlanError;

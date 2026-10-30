@@ -547,7 +547,7 @@ fn prune_empty_or_branches(
 
 /// Go `FindPredicateType(...) == TruePredicate`.
 #[must_use]
-pub(crate) fn is_true_predicate(ctx: &RuleContext<'_>, expression: &Expression) -> bool {
+pub fn is_true_predicate(ctx: &RuleContext<'_>, expression: &Expression) -> bool {
     predicate_type(ctx, expression).1 == PredicateType::True
 }
 
@@ -743,7 +743,7 @@ mod tests {
     use tidb_exprctx::NoColumns;
 
     use super::*;
-    use crate::rule::rule_tests::test_context;
+    use crate::test_support::test_context;
     use tidb_planner_core_base::PlanIdAllocator;
 
     fn integer_type() -> FieldType {

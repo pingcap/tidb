@@ -25,7 +25,7 @@
 //! in the statement's `AllocPlanColumnID` stream: `Column#12` for this
 //! schema (seven source ids, two `updateEQCond` casts, two
 //! `BuildKeyInfoPortal` re-allocations, then the rule's own). The production
-//! implementation lives in `tidb_planner::rule::rule_join_key_type_cast`.
+//! implementation lives in `tidb_planner_core_rule::rule_join_key_type_cast`.
 
 #![cfg(test)]
 

@@ -1249,6 +1249,8 @@ fn index_covers_expression_column(
         .is_some_and(|position| index_covers_column(ds, index, position, ignore_len))
 }
 
+/// Whether `index` covers every column `condition` reads (Go
+/// `isIndexCoveringCondition` over the path's columns).
 pub fn index_covers_condition(
     ds: &crate::DataSource,
     index: &tidb_infoschema::table_source::SourceIndex,

@@ -115,7 +115,7 @@ fn test_context<'a>(allocator: &'a PlanIdAllocator) -> RuleContext<'a> {
         used_stats_recorder: None,
         cte_optimizer: None,
         data_source_stats: &tidb_planner::stats::CoreDataSourceStats,
-        predicate_simplifier: &tidb_planner::rule::rule_predicate_simplification::RulePredicateSimplifier,
+        predicate_simplifier: &tidb_planner_core_rule::rule_predicate_simplification::RulePredicateSimplifier,
         access_path_resolver: &tidb_planner::access_path::CoreAccessPathResolver,
     }
 }

@@ -69,6 +69,7 @@ impl TableScanCountError {
         self.actual
     }
 
+    /// The error for a reader whose descriptor count is `actual`.
     pub const fn new(actual: usize) -> Self {
         Self { actual }
     }
