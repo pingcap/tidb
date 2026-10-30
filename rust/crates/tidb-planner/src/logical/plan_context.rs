@@ -94,9 +94,9 @@ pub struct RuleContext<'a> {
     /// Published expression policy, read before datasource range derivation.
     pub expr_pushdown_blacklist: tidb_expr::infer_pushdown::ExprPushDownBlacklist,
     /// Go's domain `StatsHandle`, reached at this rule's exact position.
-    pub statistics_load: Option<&'a dyn super::rule_collect_plan_stats::StatisticsLoadRequester>,
+    pub statistics_load: Option<&'a dyn StatisticsLoadRequester>,
     /// Go's partition metadata/ranger access at the partition-processor rule.
-    pub partition_pruning: Option<&'a dyn super::rule_partition_processor::PartitionPruning>,
+    pub partition_pruning: Option<&'a dyn PartitionPruning>,
     /// Go `SessionVars.OptIndexPruneThreshold`.
     pub opt_index_prune_threshold: i32,
     /// Go `SessionVars.OptPrefixIndexSingleScan`, read while deriving access paths.
@@ -409,4 +409,38 @@ pub fn add_selection(
     let mut selection = LogicalPlan::Selection(LogicalSelection::new(base, conditions));
     selection.set_children(vec![child]);
     selection
+}
+
+/// The domain statistics handle reached by Go
+/// `CollectPredicateColumnsPoint.Optimize`.
+pub trait StatisticsLoadRequester {
+    /// Requests the collected items before later logical rules and physical
+    /// enumeration read their statistics.
+    fn request(&self, usage: &tidb_stats::table_statistics::ColumnStatsUsage) -> Result<(), PlanError>;
+
+    /// Waits at Go `SyncWaitStatsLoadPoint`, after the intervening logical
+    /// rules have had a chance to run while the workers load in parallel.
+    fn wait(&self) -> Result<(), PlanError>;
+
+    /// Attach the loaded snapshot before join reorder derives path costs.
+    /// An estimation failure retains the plan and its original error, as
+    /// required by the logical-rule error boundary.
+    fn initialize(&self, plan: LogicalPlan) -> Result<LogicalPlan, (LogicalPlan, PlanError)> {
+        Ok(plan)
+    }
+}
+
+/// The ranger-backed half of Go's partition processor. The planner owns the
+/// tree rewrite; the catalog implementation owns partition expressions and
+/// therefore answers which definition ordinals survive.
+pub trait PartitionPruning {
+    /// Go `PartitionProcessor.prune`, reduced to its surviving definition
+    /// ordinals in table-definition order.
+    fn partition_indices(&self, source: &super::data_source::DataSource) -> Result<Vec<usize>, PlanError>;
+
+    /// Go's static pruner `PlanID.Add(1)`s before it parses the partition
+    /// expression (`generateHashPartitionExpr`, `MakePartitionByFnCol`); the
+    /// dynamic-mode access object does not run that code. The default spends
+    /// nothing.
+    fn spend_partition_expression_plan_id(&self, _source: &super::data_source::DataSource) {}
 }

@@ -14,6 +14,7 @@
 
 //! Go `pkg/planner/core/rule/rule_partition_processor.go`.
 
+use super::plan_context::PartitionPruning;
 use crate::logical::{
     BaseLogicalPlan, DataSource, LogicalPartitionUnionAll, LogicalPlan, LogicalTableDual,
     LogicalUnionScan,
@@ -211,20 +212,6 @@ fn unknown_hint_partitions(
         .collect()
 }
 
-/// The ranger-backed half of Go's partition processor. The planner owns the
-/// tree rewrite; the catalog implementation owns partition expressions and
-/// therefore answers which definition ordinals survive.
-pub trait PartitionPruning {
-    /// Go `PartitionProcessor.prune`, reduced to its surviving definition
-    /// ordinals in table-definition order.
-    fn partition_indices(&self, source: &DataSource) -> Result<Vec<usize>, PlanError>;
-
-    /// Go's static pruner `PlanID.Add(1)`s before it parses the partition
-    /// expression (`generateHashPartitionExpr`, `MakePartitionByFnCol`); the
-    /// dynamic-mode access object does not run that code. The default spends
-    /// nothing.
-    fn spend_partition_expression_plan_id(&self, _source: &DataSource) {}
-}
 
 fn make_children(
     ctx: &RuleContext<'_>,

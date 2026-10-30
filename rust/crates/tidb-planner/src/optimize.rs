@@ -33,8 +33,8 @@ use crate::find_best_task::dispatch::{find_best_task, DispatchContext, MppWarnin
 use tidb_fixcontrol::OptimizerFixControl;
 use crate::logical::rule::{flags, logical_optimize};
 use crate::logical::plan_context::{CteOptimizer, DisabledLogicalRules, HintWarningSink, RuleContext, UsedStatsRecorder};
-use crate::logical::rule_collect_plan_stats::StatisticsLoadRequester;
-use crate::logical::rule_partition_processor::PartitionPruning;
+use crate::logical::plan_context::StatisticsLoadRequester;
+use crate::logical::plan_context::PartitionPruning;
 use crate::logical::{prepare_possible_properties, LogicalPlan};
 use crate::physical::PhysicalPlan;
 use tidb_planner_property::PhysicalProperty;

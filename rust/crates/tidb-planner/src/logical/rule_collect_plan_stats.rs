@@ -20,6 +20,7 @@
 //! `true` means the histogram payload is required; `false` means metadata such
 //! as NDV is sufficient.
 
+use super::plan_context::StatisticsLoadRequester;
 use std::collections::{HashMap, HashSet};
 
 use tidb_expr::column::Column;
@@ -37,24 +38,6 @@ use tidb_planner_core_base::PlanError;
 
 use tidb_stats::table_statistics::ColumnStatsUsage;
 
-/// The domain statistics handle reached by Go
-/// `CollectPredicateColumnsPoint.Optimize`.
-pub trait StatisticsLoadRequester {
-    /// Requests the collected items before later logical rules and physical
-    /// enumeration read their statistics.
-    fn request(&self, usage: &ColumnStatsUsage) -> Result<(), PlanError>;
-
-    /// Waits at Go `SyncWaitStatsLoadPoint`, after the intervening logical
-    /// rules have had a chance to run while the workers load in parallel.
-    fn wait(&self) -> Result<(), PlanError>;
-
-    /// Attach the loaded snapshot before join reorder derives path costs.
-    /// An estimation failure retains the plan and its original error, as
-    /// required by the logical-rule error boundary.
-    fn initialize(&self, plan: LogicalPlan) -> Result<LogicalPlan, (LogicalPlan, PlanError)> {
-        Ok(plan)
-    }
-}
 
 /// Go `SyncWaitStatsLoadPoint`.
 pub struct SyncWaitStatsLoadPoint;

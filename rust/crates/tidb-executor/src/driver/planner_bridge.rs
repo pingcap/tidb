@@ -2871,7 +2871,7 @@ fn optimize_built_logical(
         }
     }
 
-    impl tidb_planner::logical::rule_collect_plan_stats::StatisticsLoadRequester
+    impl tidb_planner::logical::plan_context::StatisticsLoadRequester
         for PlannerStatisticsLoad<'_>
     {
         fn request(
@@ -2932,7 +2932,7 @@ fn optimize_built_logical(
         plan_ids: &'a PlanIdAllocator,
     }
 
-    impl tidb_planner::logical::rule_partition_processor::PartitionPruning
+    impl tidb_planner::logical::plan_context::PartitionPruning
         for PlannerPartitionPruning<'_>
     {
         fn partition_indices(
@@ -3004,7 +3004,7 @@ fn optimize_built_logical(
     let initialize_statistics = |plan: LogicalPlan| {
         statistics_load.record_used_stats.set(false);
         let initialized =
-            tidb_planner::logical::rule_collect_plan_stats::StatisticsLoadRequester::initialize(
+            tidb_planner::logical::plan_context::StatisticsLoadRequester::initialize(
                 &statistics_load,
                 plan,
             );
