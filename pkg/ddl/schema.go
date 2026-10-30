@@ -181,15 +181,17 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		var tables []*model.TableInfo
-		tables, err = metaMut.ListTables(jobCtx.stepCtx, job.SchemaID)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
 		var ruleIDs []string
-		for _, tblInfo := range tables {
+		err = metaMut.IterTables(job.SchemaID, func(tblInfo *model.TableInfo) error {
+			if err := jobCtx.stepCtx.Err(); err != nil {
+				return err
+			}
 			rules := append(getPartitionRuleIDs(job.SchemaName, tblInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))
 			ruleIDs = append(ruleIDs, rules...)
+			return nil
+		})
+		if err != nil {
+			return ver, errors.Trace(err)
 		}
 		patch := label.NewRulePatch([]*label.Rule{}, ruleIDs)
 		err = infosync.UpdateLabelRules(context.TODO(), patch)
@@ -206,16 +208,36 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		}
 	case model.StateDeleteOnly:
 		dbInfo.State = model.StateNone
-		var tables []*model.TableInfo
-		tables, err = metaMut.ListTables(jobCtx.stepCtx, job.SchemaID)
+		var (
+			miniTables         []*notifier.MiniTableInfoForSchemaEvent
+			allDroppedTableIDs []int64
+			affinityErr        error
+		)
+		affinityGroupIDs := make(map[string]struct{})
+		allDroppedTableIDs = make([]int64, 0)
+		codec := jobCtx.store.GetCodec()
+		err = metaMut.IterTables(job.SchemaID, func(tblInfo *model.TableInfo) error {
+			if err := jobCtx.stepCtx.Err(); err != nil {
+				return err
+			}
+			miniTables = append(miniTables, notifier.NewMiniTableInfoForSchemaEvent(tblInfo))
+			if tblInfo.Affinity != nil && affinityErr == nil {
+				affinityErr = collectTableAffinityGroupIDs(codec, tblInfo, affinityGroupIDs)
+			}
+			allDroppedTableIDs = appendPhysicalTableIDs(allDroppedTableIDs, tblInfo)
+			return nil
+		})
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 
 		// Best-effort cleanup - log errors but continue with DROP DATABASE
-		if err := batchDeleteTableAffinityGroups(jobCtx, tables); err != nil {
+		if affinityErr == nil {
+			affinityErr = batchDeleteTableAffinityGroups(jobCtx, affinityGroupIDs)
+		}
+		if affinityErr != nil {
 			logutil.DDLLogger().Warn("failed to delete affinity groups for batch tables, but operation will continue",
-				zap.Error(err),
+				zap.Error(affinityErr),
 				zap.Int64("databaseID", dbInfo.ID))
 		}
 
@@ -231,12 +253,12 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		// Split tables into multiple jobs to avoid too big records in the notifier.
 		const tooManyTablesThreshold = 100000
 		tablesPerJob := 100
-		if len(tables) > tooManyTablesThreshold {
+		if len(miniTables) > tooManyTablesThreshold {
 			tablesPerJob = 500
 		}
-		for i := 0; i < len(tables); i += tablesPerJob {
-			end := min(i+tablesPerJob, len(tables))
-			dropSchemaEvent := notifier.NewDropSchemaEvent(dbInfo, tables[i:end])
+		for i := 0; i < len(miniTables); i += tablesPerJob {
+			end := min(i+tablesPerJob, len(miniTables))
+			dropSchemaEvent := notifier.NewDropSchemaEvent(dbInfo, miniTables[i:end])
 			err = asyncNotifyEvent(jobCtx, dropSchemaEvent, job, int64(i/tablesPerJob), w.sess)
 			if err != nil {
 				return ver, errors.Trace(err)
@@ -244,7 +266,7 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		}
 		// Finish this job.
 		job.FillFinishedArgs(&model.DropSchemaArgs{
-			AllDroppedTableIDs: getIDs(tables),
+			AllDroppedTableIDs: allDroppedTableIDs,
 		})
 		job.FinishDBJob(model.JobStateDone, model.StateNone, ver, dbInfo)
 	default:
@@ -379,11 +401,13 @@ func checkSchemaExistAndCancelNotExistJob(t *meta.Mutator, job *model.Job) (*mod
 func getIDs(tables []*model.TableInfo) []int64 {
 	ids := make([]int64, 0, len(tables))
 	for _, t := range tables {
-		ids = append(ids, t.ID)
-		if t.GetPartitionInfo() != nil {
-			ids = append(ids, getPartitionIDs(t)...)
-		}
+		ids = appendPhysicalTableIDs(ids, t)
 	}
 
 	return ids
+}
+
+func appendPhysicalTableIDs(dst []int64, tblInfo *model.TableInfo) []int64 {
+	dst = append(dst, tblInfo.ID)
+	return append(dst, getPartitionIDs(tblInfo)...)
 }
