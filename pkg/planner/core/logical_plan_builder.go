@@ -4502,6 +4502,17 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	if err != nil {
 		return nil, err
 	}
+	// b.correlatedAggMapper is keyed by AST node and is filled by buildAggregation below, for the sub-queries of this
+	// SELECT to look up. The entries are only meaningful while this SELECT is being built. If they were left behind,
+	// building the same AST again (e.g. an inlined CTE is built once as a CTE definition and again at the reference)
+	// would treat these aggregates as already built, and the outer aggregation would be skipped.
+	// All of them are in aggFuncs (the correlated ones are appended to the SELECT fields above), and aggFuncs is
+	// assigned before buildAggregation registers anything in the mapper. Deleting a key that is absent is a no-op.
+	defer func() {
+		for _, agg := range aggFuncs {
+			delete(b.correlatedAggMapper, agg)
+		}
+	}()
 
 	// b.allNames will be used in evalDefaultExpr(). Default function is special because it needs to find the
 	// corresponding column name, but does not need the value in the column.
