@@ -8417,7 +8417,7 @@ use super::*;
             by_item_arrays: vec![vec![], vec![]],
             ..Default::default()
         });
-        let mut plan = tidb_planner::physical::eliminate_physical_projection(plan);
+        let mut plan = tidb_planner::post_optimize::eliminate_physical_projection(plan);
         let ids = tidb_planner_core_base::PlanIdAllocator::new();
         for _ in 0..7 {
             ids.alloc();

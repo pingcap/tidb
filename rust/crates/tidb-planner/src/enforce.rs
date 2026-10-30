@@ -131,11 +131,12 @@ impl MppTask {
 ///    offset, its child property `{RootTaskType, p.SortItems, MaxFloat64}`,
 ///    its `ByItems` copied from `p.SortItems`, `IsPartialSort` from
 ///    `p.IsSortItemAllForPartition()`, and attached via
-///    [`crate::task_attach::attach2_task`]'s Sort arm.
+///    core's `attach2Task` Sort arm (Go `utilfuncp.Attach2Task4PhysicalSort`).
 pub fn enforce_property(
     prop: &PhysicalProperty,
     task: Task,
     allocator: &PlanIdAllocator,
+    attacher: &dyn crate::task::TaskAttacher,
 ) -> Result<Task, PlanError> {
     enforce_property_in(
         prop,
@@ -143,6 +144,7 @@ pub fn enforce_property(
         allocator,
         &tidb_ranger::points::evaluate_static,
         None,
+        attacher,
     )
 }
 
@@ -152,6 +154,7 @@ pub(crate) fn enforce_property_in(
     allocator: &PlanIdAllocator,
     evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
     mpp_warning_sink: Option<&dyn MppWarningSink>,
+    attacher: &dyn crate::task::TaskAttacher,
 ) -> Result<Task, PlanError> {
     if prop.task_tp == TaskType::Mpp {
         let Task::Mpp(mpp) = &task else {
@@ -223,15 +226,7 @@ pub(crate) fn enforce_property_in(
         by_items,
         is_partial_sort: prop.is_sort_item_all_for_partition(),
     });
-    crate::task_attach::attach2_task_in(
-        sort,
-        vec![task],
-        None,
-        allocator,
-        tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
-        evaluate,
-        &Default::default(),
-    )
+    attacher.attach2_task(sort, vec![task], allocator, evaluate)
 }
 
 #[cfg(test)]

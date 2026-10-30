@@ -29,6 +29,31 @@ use crate::task::*;
 // Go `Attach2Task`: how a physical operator composes onto a child task.
 // ---------------------------------------------------------------------------
 
+/// Core's `attach2Task`, registered for the operators (Go `core_init.go`'s
+/// `utilfuncp.Attach2Task4X`).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CoreTaskAttacher;
+
+impl TaskAttacher for CoreTaskAttacher {
+    fn attach2_task(
+        &self,
+        plan: PhysicalPlan,
+        tasks: Vec<Task>,
+        allocator: &tidb_planner_core_base::PlanIdAllocator,
+        evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
+    ) -> Result<Task, PlanError> {
+        attach2_task_in(
+            plan,
+            tasks,
+            None,
+            allocator,
+            tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
+            evaluate,
+            &Default::default(),
+        )
+    }
+}
+
 /// The body of Go's `attach2Task4PhysicalUnionScan` after the child became a
 /// root task: `unionScan -> selection -> projection` becomes `projection ->
 /// unionScan -> selection`, `unionScan -> projection` becomes `projection ->
@@ -3692,7 +3717,14 @@ mod task_tests {
                 ..Default::default()
             };
             let enforced =
-                crate::enforce::enforce_property_in(&property, task, &allocator, &evaluate, None)
+                crate::enforce::enforce_property_in(
+                    &property,
+                    task,
+                    &allocator,
+                    &evaluate,
+                    None,
+                    &CoreTaskAttacher,
+                )
                     .unwrap();
             let filter = &enforced.plan().unwrap().children()[0];
             assert!(matches!(filter, PhysicalPlan::Selection(_)));

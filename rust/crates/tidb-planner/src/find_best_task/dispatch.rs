@@ -1575,7 +1575,12 @@ fn find_best_task_uncached(
             ));
         }
         LogicalPlan::CTE(op) if op.base.children().is_empty() => {
-            return physical::find_best_task_4_logical_cte(op, prop, ctx.allocator);
+            return physical::find_best_task_4_logical_cte(
+                op,
+                prop,
+                ctx.allocator,
+                &crate::task_attach::CoreTaskAttacher,
+            );
         }
         LogicalPlan::Show(op) => {
             return Ok(physical::find_best_task_4_logical_show(
@@ -1725,6 +1730,7 @@ fn find_best_task_4_logical_mem_table(
             ctx.allocator,
             ctx.expression_evaluator,
             ctx.mpp_warning_sink,
+            &crate::task_attach::CoreTaskAttacher,
         );
     }
 
@@ -2612,6 +2618,7 @@ fn find_best_task_4_logical_data_source(
             ctx.allocator,
             ctx.expression_evaluator,
             ctx.mpp_warning_sink,
+            &crate::task_attach::CoreTaskAttacher,
         )?;
         if compare_task_cost(ctx.coster, &direct, &enforced)? {
             return Ok(direct);
@@ -5086,6 +5093,7 @@ fn enumerate_physical_plans_4_task(
             ctx.allocator,
             ctx.expression_evaluator,
             ctx.mpp_warning_sink,
+            &crate::task_attach::CoreTaskAttacher,
         )?;
             }
             // A column-only NominalSort returns its ordered child task directly.

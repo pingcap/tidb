@@ -493,7 +493,7 @@ pub fn optimize_physical<C: OptimizeContext>(
     let resolved = physical.resolve_indices();
     ctx.set_physical_opt(begin_physical_opt.elapsed());
     resolved?;
-    let physical = crate::physical::eliminate_physical_projection_for_update(
+    let physical = crate::post_optimize::eliminate_physical_projection_for_update(
         physical,
         col_ref_from_update_plan,
     );
@@ -503,13 +503,13 @@ pub fn optimize_physical<C: OptimizeContext>(
     // nominal sorts) that the elimination pass removed.
     let mut physical = crate::inject_extra_projection::inject_extra_projection(physical, plan_ids, column_ids);
     // Go postOptimize: mergeContinuousSelections.
-    crate::physical::merge_continuous_selections(&mut physical);
+    crate::post_optimize::merge_continuous_selections(&mut physical);
     // Go postOptimize: eliminateUnionScanAndLock (the UnionScan half).
     let mut physical =
-        crate::physical::eliminate_union_scan_over_point_get(physical, ctx.in_transaction());
+        crate::post_optimize::eliminate_union_scan_over_point_get(physical, ctx.in_transaction());
     crate::physical::shuffle::install_receivers(&mut physical, plan_ids)?;
     if ctx.enable_parallel_apply() {
-        crate::physical::enable_parallel_apply(&mut physical, ctx.executor_concurrency());
+        crate::post_optimize::enable_parallel_apply(&mut physical, ctx.executor_concurrency());
     }
     // Go postOptimize: disableReuseChunkIfNeeded.
     if ctx.is_chunk_alloc_valid()

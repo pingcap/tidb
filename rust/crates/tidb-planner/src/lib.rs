@@ -103,6 +103,7 @@ pub mod optimize;
 #[cfg(test)]
 mod partidx_tests;
 pub mod physical;
+pub mod post_optimize;
 pub mod chunk_reuse;
 pub mod resolve_indices;
 pub mod inject_extra_projection;

@@ -50,6 +50,24 @@ use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 
 mod virtual_columns;
 
+/// Go `utilfuncp.Attach2Task4X`: core's `attach2Task` bodies (`core/task.go`),
+/// which the operators reach through these variables -- here, the physical
+/// sort `EnforceProperty` puts over a task.
+pub trait TaskAttacher {
+    /// Go `p.Attach2Task(tasks...)` for `plan`.
+    ///
+    /// # Errors
+    ///
+    /// The attachment's planner error.
+    fn attach2_task(
+        &self,
+        plan: PhysicalPlan,
+        tasks: Vec<Task>,
+        allocator: &tidb_planner_core_base::PlanIdAllocator,
+        evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
+    ) -> Result<Task, PlanError>;
+}
+
 /// The statistics settings from Go's statement PlanContext that must survive
 /// candidate dispatch and task composition until root conversion.
 #[derive(Clone)]

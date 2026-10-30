@@ -15,6 +15,7 @@
 //! Semantic tests for the physical plan tree. Written, not transcreated; see
 //! the note in `tidb_planner_core_operator_logicalop::tests`.
 
+use crate::post_optimize::{eliminate_physical_projection, eliminate_union_scan_over_point_get, remove_union_scans};
 use crate::resolve_indices::ResolveIndices;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
@@ -2349,7 +2350,7 @@ fn a_cte_scan_explains_as_cte_full_scan_like_go_master() {
         BaseLogicalPlan::new(&allocator, LogicalCTE::TYPE, 0),
         Rc::new(RefCell::new(class)),
     );
-    let task = find_best_task_4_logical_cte(&lp, &PhysicalProperty::default(), &allocator)
+    let task = find_best_task_4_logical_cte(&lp, &PhysicalProperty::default(), &allocator, &crate::task_attach::CoreTaskAttacher)
         .expect("a root CTE build");
     let Some(PhysicalPlan::CTE(built)) = task.plan() else {
         panic!("a PhysicalCTE, got {:?}", task.plan());
