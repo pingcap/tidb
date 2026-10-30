@@ -45,11 +45,3 @@ func init() {
 func GetBytesFromPtr(ptr unsafe.Pointer, length int) []byte {
 	return unsafe.Slice((*byte)(ptr), length)
 }
-
-// Memory usage constants for swiss map
-const (
-	DefBucketMemoryUsageForMapStringToAny = 312
-	DefBucketMemoryUsageForSetString      = 248
-	DefBucketMemoryUsageForSetFloat64     = 184
-	DefBucketMemoryUsageForSetInt64       = 184
-)
