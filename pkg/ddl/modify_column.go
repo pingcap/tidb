@@ -2655,7 +2655,7 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 		if err != nil {
 			return
 		}
-		err = checkIndexPrefixLength(columns, indexInfo.Columns, indexInfo.GetColumnarIndexType())
+		err = checkIndexPrefixLength(columns, indexInfo)
 		return
 	}
 
@@ -2693,6 +2693,15 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxInfo *model.I
 		}
 
 		if indexType != model.ColumnarIndexTypeNA {
+			continue
+		}
+		if idxInfo.IsTiKVFullTextIndex() && ic == idxInfo.TiKVFullTextColumn() {
+			// The index tokenizes the column, so the column must stay text;
+			// the key-length rules do not apply to it. The key columns before
+			// it follow the ordinary rules below.
+			if err := checkTiKVFullTextColumn(col); err != nil {
+				return err
+			}
 			continue
 		}
 

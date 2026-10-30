@@ -1567,6 +1567,60 @@ func TestStringMatchSelectivityDoesNotRestoreTransientHistogramBoundsSelection(t
 	require.Equal(t, transientSel, colStats.Bounds.Sel())
 }
 
+// TestStringMatchSelectivityIsCachedPerStatement checks that a filter estimated
+// against a column's statistics is evaluated once per statement: planning asks
+// for the same string-match estimate for every access path and task, and each
+// evaluation runs the filter over every TopN value and histogram bound.
+func TestStringMatchSelectivityIsCachedPerStatement(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().EnableVectorizedExpression = true
+
+	tp := types.NewFieldType(mysql.TypeVarchar)
+	hist := statistics.NewHistogram(1, 6, 0, 0, tp, 3, 0)
+	for _, v := range []string{"BRASS", "IRON", "STEEL"} {
+		d := types.NewStringDatum(v)
+		hist.AppendBucket(&d, &d, int64(2*(hist.Len()+1)), 1)
+	}
+	colStats := &statistics.Column{
+		Info:              &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("a"), FieldType: *tp},
+		Histogram:         *hist,
+		TopN:              &statistics.TopN{},
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          statistics.Version2,
+	}
+	coll := statistics.NewHistColl(1, 6, 0, 1, 0)
+	coll.SetCol(1, colStats)
+	like := func(pattern string) expression.Expression {
+		f, err := expression.NewFunction(sctx, ast.Like, types.NewFieldType(mysql.TypeLonglong),
+			&expression.Column{UniqueID: 1, RetType: tp},
+			&expression.Constant{Value: types.NewStringDatum(pattern), RetType: tp},
+			&expression.Constant{Value: types.NewIntDatum('\\'), RetType: types.NewFieldType(mysql.TypeLonglong)})
+		require.NoError(t, err)
+		return f
+	}
+	estimate := func(pattern string) float64 {
+		ok, selectivity, err := cardinality.GetSelectivityByFilter(sctx, coll, like(pattern))
+		require.NoError(t, err)
+		require.True(t, ok)
+		return selectivity
+	}
+
+	require.InEpsilon(t, 2.0/3.0, estimate("%R%"), 1e-12)
+	// Change the bounds the estimate is evaluated against, in place: within the
+	// statement the first result is reused, and a different filter is
+	// evaluated against the changed bounds.
+	bounds := colStats.Bounds
+	bounds.Reset()
+	for range 6 {
+		bounds.AppendString(0, "IRON")
+	}
+	require.InEpsilon(t, 2.0/3.0, estimate("%R%"), 1e-12)
+	require.InEpsilon(t, 1.0, estimate("%I%"), 1e-12)
+	// A new statement evaluates again.
+	sctx.GetSessionVars().StmtCtx.Reset()
+	require.InEpsilon(t, 1.0, estimate("%R%"), 1e-12)
+}
+
 func getTableReaderEstRows(t *testing.T, tk *testkit.TestKit, query string) float64 {
 	rows := tk.MustQuery("explain format = 'brief' " + query).Rows()
 	estRows, err := strconv.ParseFloat(rows[0][1].(string), 64)

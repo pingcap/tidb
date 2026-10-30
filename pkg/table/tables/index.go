@@ -65,6 +65,8 @@ type index struct {
 	needRestoredData    bool
 	encoder             codec.Encoder
 	indexPartialCondition
+	// fullText is set for a FULLTEXT index built in TiKV; see index_fulltext.go.
+	fullText *fullTextIndex
 }
 
 // NeedRestoredData checks whether the index columns needs restored data.
@@ -91,6 +93,9 @@ func newIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.Index
 		encoder:  codec.NewEncoder(useNewCollate),
 	}
 	if err := idx.initPartialCondition(); err != nil {
+		return nil, err
+	}
+	if err := idx.initFullText(); err != nil {
 		return nil, err
 	}
 	return idx, nil
@@ -144,6 +149,11 @@ func (c *index) TableMeta() *model.TableInfo {
 func (c *index) castIndexValuesToChangingTypes(indexedValues []types.Datum) error {
 	var err error
 	for i, idxCol := range c.idxInfo.Columns {
+		if i >= len(indexedValues) {
+			// A FULLTEXT index built in TiKV casts only the values of its
+			// key columns, which come first.
+			break
+		}
 		tblCol := c.tblInfo.Columns[idxCol.Offset]
 		if !idxCol.UseChangingType || tblCol.ChangingFieldType == nil {
 			continue
@@ -177,6 +187,9 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 		}
 	}
 
+	if c.fullText != nil {
+		return c.genFullTextIndexKey(ec, loc, indexedValues, fullHandle, buf)
+	}
 	if err = c.castIndexValuesToChangingTypes(indexedValues); err != nil {
 		return
 	}
@@ -190,6 +203,9 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 // GenIndexValue generates the index value.
 func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, untouched bool, indexedValues []types.Datum,
 	h kv.Handle, restoredData []types.Datum, buf []byte) ([]byte, error) {
+	if c.fullText != nil {
+		return c.genFullTextIndexValue(untouched, indexedValues, buf)
+	}
 	c.initNeedRestoreData.Do(func() {
 		c.needRestoredData = NeedRestoredData(c.encoder.UseNewCollate(), c.idxInfo.Columns, c.tblInfo.Columns)
 	})
@@ -209,9 +225,13 @@ func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, u
 // 2. (i1, [m1,m2], i2, ...) ==> [(i1, m1, i2, ...), (i1, m2, i2, ...)]
 // 3. (i1, null, i2, ...) ==> [(i1, null, i2, ...)]
 // 4. (i1, [], i2, ...) ==> nothing.
-func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {
+// 5. For a FULLTEXT index built in TiKV, (k1, ..., doc) ==> [(k1, ..., term1, positions1), (k1, ..., term2, positions2), ...].
+func (c *index) getIndexedValue(indexedValues []types.Datum) ([][]types.Datum, error) {
+	if c.fullText != nil {
+		return c.fullTextIndexedValues(indexedValues)
+	}
 	if !c.idxInfo.MVIndex {
-		return [][]types.Datum{indexedValues}
+		return [][]types.Datum{indexedValues}, nil
 	}
 
 	vals := make([][]types.Datum, 0, 16)
@@ -253,7 +273,7 @@ func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {
 		vals = append(vals, val)
 	}
 out:
-	return vals
+	return vals, nil
 }
 
 // MeetPartialCondition checks whether the row meets the partial index condition of the index.
@@ -300,7 +320,19 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 	if c.Meta().Unique {
 		txn.CacheTableInfo(c.phyTblID, c.tblInfo)
 	}
-	indexedValues := c.getIndexedValue(indexedValue)
+	if untouched && c.fullText != nil {
+		// An untouched entry is rewritten only so that later reads in the
+		// same transaction find the key in the memory buffer. A FULLTEXT
+		// index is read from the snapshot, with the transaction's own
+		// changes merged in by UnionScan from the rows themselves, so the
+		// entry is not needed there, and rewriting it would re-tokenize the
+		// whole document for every update of an unrelated column.
+		return nil, nil
+	}
+	indexedValues, err := c.getIndexedValue(indexedValue)
+	if err != nil {
+		return nil, err
+	}
 	ctx := opt.Ctx()
 	if ctx != nil {
 		var r tracing.Region
@@ -568,7 +600,10 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 
 // Delete removes the entry for handle h and indexedValues from KV index.
 func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) error {
-	indexedValues := c.getIndexedValue(indexedValue)
+	indexedValues, err := c.getIndexedValue(indexedValue)
+	if err != nil {
+		return err
+	}
 	evalCtx := ctx.GetExprCtx().GetEvalCtx()
 	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 	for _, value := range indexedValues {
@@ -679,9 +714,11 @@ func (c *index) mayDDLMergingTempIndex() bool {
 
 func (c *index) GenIndexKVIter(ec errctx.Context, loc *time.Location, indexedValue []types.Datum,
 	h kv.Handle, handleRestoreData []types.Datum) table.IndexKVGenerator {
-	var mvIndexValues [][]types.Datum
-	if c.Meta().MVIndex {
-		mvIndexValues = c.getIndexedValue(indexedValue)
+	if c.Meta().MVIndex || c.fullText != nil {
+		mvIndexValues, err := c.getIndexedValue(indexedValue)
+		if err != nil {
+			return table.NewErrIndexKVGenerator(err)
+		}
 		return table.NewMultiValueIndexKVGenerator(c, ec, loc, h, handleRestoreData, mvIndexValues)
 	}
 	return table.NewPlainIndexKVGenerator(c, ec, loc, h, handleRestoreData, indexedValue)
@@ -713,7 +750,10 @@ func GenTempIdxKeyByState(indexInfo *model.IndexInfo, indexKey kv.Key) (key, tem
 }
 
 func (c *index) Exist(ec errctx.Context, loc *time.Location, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) (bool, kv.Handle, error) {
-	indexedValues := c.getIndexedValue(indexedValue)
+	indexedValues, err := c.getIndexedValue(indexedValue)
+	if err != nil {
+		return false, nil, err
+	}
 	for _, val := range indexedValues {
 		key, distinct, err := c.GenIndexKey(ec, loc, val, h, nil)
 		if err != nil {

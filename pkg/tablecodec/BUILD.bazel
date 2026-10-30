@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "tablecodec",
-    srcs = ["tablecodec.go"],
+    srcs = [
+        "fulltext.go",
+        "tablecodec.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/tablecodec",
     visibility = ["//visibility:public"],
     deps = [
@@ -30,12 +33,13 @@ go_test(
     timeout = "short",
     srcs = [
         "bench_test.go",
+        "fulltext_test.go",
         "main_test.go",
         "tablecodec_test.go",
     ],
     embed = [":tablecodec"],
     flaky = True,
-    shard_count = 25,
+    shard_count = 27,
     deps = [
         "//pkg/kv",
         "//pkg/meta/model",

@@ -378,9 +378,15 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		childCtx.storeType = kv.TiKV
 		hasProbe := plan.TablePlan != nil
 		for i, pchild := range plan.PartialPlansRaw {
-			childCtx.label = BuildSide
-			childCtx.isLastChild = !hasProbe && i == len(plan.PartialPlansRaw)-1
-			target, childIdx = f.flattenRecursively(pchild, childCtx, target)
+			partialCtx := *childCtx
+			if is, ok := pchild.(*physicalop.PhysicalIndexScan); ok && is.FullText != nil {
+				// A full-text index scan runs in TiDB, not in a coprocessor.
+				partialCtx.isRoot = true
+				partialCtx.storeType = kv.TiDB
+			}
+			partialCtx.label = BuildSide
+			partialCtx.isLastChild = !hasProbe && i == len(plan.PartialPlansRaw)-1
+			target, childIdx = f.flattenRecursively(pchild, &partialCtx, target)
 			childIdxs = append(childIdxs, childIdx)
 		}
 		if plan.TablePlan != nil {

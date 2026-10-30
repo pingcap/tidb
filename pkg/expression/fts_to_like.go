@@ -352,13 +352,15 @@ func buildFTSNaturalLanguageModeILikeExpression(ctx BuildContext, columns []Expr
 // reuse its TopN/histogram-based estimation paths instead of falling back
 // to a flat default that ignores column statistics.
 //
-// Restricted to single-column MATCH: GetSelectivityByFilter only estimates
-// expressions over a single column, so a multi-column substituted ILIKE would
-// be declined by the stats engine and fall through to the same str-match
-// default that the un-substituted FTS expression already receives. Returning
-// an error for the multi-column case lets the selectivity caller's existing
-// err-check fall through cleanly, without producing a substitute that would
-// never improve the estimate.
+// Non-NULL string proxies are restricted to single-column MATCH:
+// GetSelectivityByFilter only estimates expressions over a single column, so a
+// multi-column substituted ILIKE would be declined by the stats engine and fall
+// through to the same str-match default that the un-substituted FTS expression
+// already receives. Returning an error for the multi-column case lets the
+// selectivity caller's existing err-check fall through cleanly, without
+// producing a substitute that would never improve the estimate. A NULL search
+// is returned before that restriction because it is column-independent and
+// preserves SQL three-valued logic for every MATCH arity.
 func BuildFTSToILikeExpressionFromBuiltin(ctx BuildContext, fts *ScalarFunction) (Expression, error) {
 	if fts == nil || fts.FuncName.L != ast.FTSMysqlMatchAgainst {
 		return nil, errors.Errorf("expected %s, got %v", ast.FTSMysqlMatchAgainst, fts)
@@ -366,9 +368,6 @@ func BuildFTSToILikeExpressionFromBuiltin(ctx BuildContext, fts *ScalarFunction)
 	args := fts.GetArgs()
 	if len(args) < 2 {
 		return nil, errors.Errorf("%s expects at least 2 args, got %d", ast.FTSMysqlMatchAgainst, len(args))
-	}
-	if len(args) > 2 {
-		return nil, ErrNotSupportedYet.GenWithStackByArgs("multi-column MATCH...AGAINST in selectivity substitution")
 	}
 	againstConst, ok := args[0].(*Constant)
 	if !ok {
@@ -386,6 +385,15 @@ func BuildFTSToILikeExpressionFromBuiltin(ctx BuildContext, fts *ScalarFunction)
 			RetType: types.NewFieldType(mysql.TypeTiny),
 		}, nil
 	}
+	localInfo, local := FTSMysqlMatchAgainstLocalEvalInfo(fts)
+	if local && localInfo.MatchNothing {
+		// The query provably matches nothing, so the exact selectivity is 0
+		// for every arity. Report that directly instead of approximating.
+		return ftsZeroIntConst(), nil
+	}
+	if len(args) > 2 {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("multi-column MATCH...AGAINST in selectivity substitution")
+	}
 	if againstConst.Value.Kind() != types.KindString {
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST with non-string search constant")
 	}
@@ -393,12 +401,52 @@ func BuildFTSToILikeExpressionFromBuiltin(ctx BuildContext, fts *ScalarFunction)
 	if !ok {
 		return nil, errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, fts.Function)
 	}
+	if local {
+		// Estimate the locally-evaluated predicate from a single analyzed
+		// token rather than re-deriving terms from the raw search string: the
+		// analyzer may have dropped stop words or over-length tokens, so the
+		// raw string can name terms the predicate never actually tests.
+		if localInfo.SelectivityTerm == "" {
+			return nil, ErrNotSupportedYet.GenWithStackByArgs(
+				"local MATCH...AGAINST query has no analyzer-safe string selectivity proxy",
+			)
+		}
+		return buildFTSILikePredicate(ctx, args[1], localInfo.SelectivityTerm)
+	}
 	return BuildFTSToILikeExpression(ctx, args[1:], againstConst.Value.GetString(), sig.modifier)
+}
+
+// BuildFTSTermILikePredicate builds the ILIKE predicate that selects the rows
+// whose column contains term, for estimating how many rows contain one
+// analyzed term of a full-text index. It is the bare ILIKE, without the IFNULL
+// buildFTSILikePredicate adds for negation: the statistics recognize an ILIKE
+// as a string match and estimate it from the column's TopN and histogram,
+// while an IFNULL around it would get the generic selectivity.
+func BuildFTSTermILikePredicate(ctx BuildContext, column Expression, term string) (Expression, error) {
+	return buildFTSILike(ctx, column, term)
 }
 
 // buildFTSILikePredicate builds a single ILIKE predicate for a column and search term,
 // wrapped in IFNULL so that NULL columns are treated as not containing the term.
 func buildFTSILikePredicate(ctx BuildContext, column Expression, term string) (Expression, error) {
+	likeFunc, err := buildFTSILike(ctx, column, term)
+	if err != nil {
+		return nil, err
+	}
+
+	// Wrap with IFNULL so a NULL column is treated as not containing the term
+	// (consistent with MySQL FTS semantics where NULL columns are ignored).
+	// Without this, NOT(NULL ILIKE %term%) = NOT(NULL) = NULL which incorrectly
+	// filters rows that have a NULL column and don't contain the excluded term.
+	zeroConst := &Constant{
+		Value:   types.NewIntDatum(0),
+		RetType: types.NewFieldType(mysql.TypeTiny),
+	}
+	return NewFunction(ctx, ast.Ifnull, types.NewFieldType(mysql.TypeTiny), likeFunc, zeroConst)
+}
+
+// buildFTSILike builds the ILIKE predicate matching a column that contains term.
+func buildFTSILike(ctx BuildContext, column Expression, term string) (Expression, error) {
 	escapedTerm := escapeFTSLikePattern(term)
 
 	// NOTE: Prefix matching (word*) in MySQL full-text search matches words that START with
@@ -421,18 +469,5 @@ func buildFTSILikePredicate(ctx BuildContext, column Expression, term string) (E
 	// MySQL full-text search is always case-insensitive regardless of column
 	// collation, so ILIKE matches that semantic rather than plain LIKE which
 	// would follow the column's collation.
-	likeFunc, err := NewFunction(ctx, ast.Ilike, types.NewFieldType(mysql.TypeTiny), column, patternConst, escapeConst)
-	if err != nil {
-		return nil, err
-	}
-
-	// Wrap with IFNULL so a NULL column is treated as not containing the term
-	// (consistent with MySQL FTS semantics where NULL columns are ignored).
-	// Without this, NOT(NULL ILIKE %term%) = NOT(NULL) = NULL which incorrectly
-	// filters rows that have a NULL column and don't contain the excluded term.
-	zeroConst := &Constant{
-		Value:   types.NewIntDatum(0),
-		RetType: types.NewFieldType(mysql.TypeTiny),
-	}
-	return NewFunction(ctx, ast.Ifnull, types.NewFieldType(mysql.TypeTiny), likeFunc, zeroConst)
+	return NewFunction(ctx, ast.Ilike, types.NewFieldType(mysql.TypeTiny), column, patternConst, escapeConst)
 }
