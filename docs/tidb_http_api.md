@@ -1297,6 +1297,8 @@ These APIs let an operator inspect and refresh TiDB's local region cache for one
 
 `ready` is true only when no matching cache entries remain, no unresolved refresh failures remain, and no refresh is in progress. `GET` and `POST` return status counters without refresh error details; callers must inspect `ready` to determine completion. Cache entries that expire or are deleted during a failed probe are not treated as successfully refreshed. Region-cache TTL expiry is also not refresh success: if the operator times out, stop waiting for `ready`, wait the original region-cache TTL, then restart. Do not treat a later `ready=true` caused only by expiry as a completed refresh.
 
+Matching entries are cached working-leader routes to the target store. `ready=true` does not indicate that all traffic to the store has drained: follower or mixed reads and forwarding-proxy requests can still reach it. Restarting the store can therefore still cause request retries or timeouts. Readiness also does not establish global leader eviction or new-leader reachability.
+
 `observed_at` is a Unix timestamp. For multiple in-process stores it is the oldest store observation, not the last store in the loop. Each `stores[]` entry has its own `observed_at` when `detail=1`.
 
 For GET and POST startup snapshots, `in_progress` is true when any participating store/keyspace has a running refresh. The POST startup snapshot reports `in_progress=true` for tasks it starts or reuses, even if they finish before the response is sent. GET returns the current progress and completion state. A reset failure returns an error instead of a startup snapshot for that store.
@@ -1364,4 +1366,3 @@ Example `POST` response with `detail=1`:
   ]
 }
 ```
-
