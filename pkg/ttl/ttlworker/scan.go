@@ -144,7 +144,7 @@ func (t *ttlScanTask) taskLogger(l *zap.Logger) *zap.Logger {
 }
 
 func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, sessPool syssession.Pool) *ttlScanTaskExecResult {
-	err := withSession(sessPool, func(se session.Session) error {
+	err := withSession(ctx, sessPool, func(se session.Session) error {
 		return t.doScanWithSession(ctx, delCh, se)
 	})
 	return t.result(err)

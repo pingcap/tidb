@@ -15,6 +15,7 @@ go_test(
         "//pkg/ddl",
         "//pkg/ddl/ingest/testutil",
         "//pkg/errno",
+        "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/server",
         "//pkg/testkit",

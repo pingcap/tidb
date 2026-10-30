@@ -211,7 +211,7 @@ func (m *JobManager) jobLoop() error {
 		}
 		logutil.Logger(m.ctx).Info("ttlJobManager loop exited.")
 	}()
-	return withSession(m.sessPool, m.jobLoopWithSession)
+	return withSession(m.ctx, m.sessPool, m.jobLoopWithSession)
 }
 
 func (m *JobManager) jobLoopWithSession(se session.Session) (err error) {
@@ -1342,7 +1342,7 @@ func NewManagerJobAdapter(store kv.Storage, sessPool syssession.Pool, requestCh 
 }
 
 func (a *managerJobAdapter) CanSubmitJob(tableID, physicalID int64) (ok bool) {
-	err := withSession(a.sessPool, func(se session.Session) (internalErr error) {
+	err := withSession(context.Background(), a.sessPool, func(se session.Session) (internalErr error) {
 		ok, internalErr = a.canSubmitJobWithSession(tableID, physicalID, se)
 		return
 	})
@@ -1446,7 +1446,7 @@ func (a *managerJobAdapter) SubmitJob(ctx context.Context, tableID, physicalID i
 
 func (a *managerJobAdapter) GetJob(ctx context.Context, tableID, physicalID int64, requestID string) (*TTLJobTrace, error) {
 	var job *TTLJobTrace
-	err := withSession(a.sessPool, func(se session.Session) (internalErr error) {
+	err := withSession(ctx, a.sessPool, func(se session.Session) (internalErr error) {
 		job, internalErr = a.getJobWithSession(ctx, se, tableID, physicalID, requestID)
 		return
 	})
@@ -1500,7 +1500,7 @@ func (a *managerJobAdapter) getJobWithSession(ctx context.Context, se session.Se
 }
 
 func (a *managerJobAdapter) Now() (now time.Time, _ error) {
-	err := withSession(a.sessPool, func(se session.Session) error {
+	err := withSession(context.Background(), a.sessPool, func(se session.Session) error {
 		tz, err := se.GlobalTimeZone(context.TODO())
 		if err != nil {
 			return err

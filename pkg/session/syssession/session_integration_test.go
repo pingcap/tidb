@@ -17,6 +17,7 @@ package syssession_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -71,6 +72,63 @@ func TestDomainAdvancedSessionPoolInternalSessionRegistry(t *testing.T) {
 	require.NotNil(t, sctx)
 	require.True(t, sessManager.ContainsInternalSession(sctx))
 	se.Close()
+	require.False(t, sessManager.ContainsInternalSession(sctx))
+}
+
+func TestWithRegisteredSessionWaitsForSessionManager(t *testing.T) {
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	pool := dom.AdvancedSysSessionPool()
+	require.NotNil(t, pool)
+
+	// Reproduce the server startup order: internal workers can start after the
+	// domain is bootstrapped but before the server installs its session manager.
+	dom.InfoSyncer().SetSessionManager(nil)
+	require.Nil(t, dom.InfoSyncer().GetSessionManager())
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/syssession/ForceRegisterInTest", "return(true)")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	entered := make(chan sessionctx.Context, 1)
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- pool.WithRegisteredSession(ctx, func(se *syssession.Session) error {
+			return se.WithSessionContext(func(sctx sessionctx.Context) error {
+				entered <- sctx
+				select {
+				case <-release:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			})
+		})
+	}()
+
+	select {
+	case <-entered:
+		require.FailNow(t, "callback ran before the session manager was installed")
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	sessManager := &testkit.MockSessionManager{}
+	dom.InfoSyncer().SetSessionManager(sessManager)
+
+	var sctx sessionctx.Context
+	select {
+	case sctx = <-entered:
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "callback did not run after the session manager was installed")
+	}
+	require.True(t, sessManager.ContainsInternalSession(sctx))
+
+	close(release)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "registered session callback did not finish")
+	}
 	require.False(t, sessManager.ContainsInternalSession(sctx))
 }
 
