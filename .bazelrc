@@ -7,6 +7,10 @@ run:ci --color=yes
 build --announce_rc
 build --experimental_guard_against_concurrent_changes
 build --incompatible_strict_action_env --incompatible_enable_cc_toolchain_resolution
+# Keep C/C++ objects PIC for Go's Linux -z nocopyreloc links.
+# Remove this override if rules_go restores its cgo PIC default in normal mode.
+build --copt=-fPIC
+build --remote_retries=6 --remote_retry_max_delay=8s
 build:ci --color=yes
 build:ci --experimental_remote_cache_compression
 build:release --workspace_status_command=./build/print-workspace-status.sh --stamp
