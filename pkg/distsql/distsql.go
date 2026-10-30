@@ -26,9 +26,15 @@ import (
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+=======
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+>>>>>>> d880d7fabe5 (*: redact keys, values and SQL in diagnostic logs (#71922))
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
@@ -69,10 +75,14 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 	eventCb := func(event trxevents.TransactionEvent) {
 		// Note: Do not assume this callback will be invoked within the same goroutine.
 		if copMeetLock := event.GetCopMeetLock(); copMeetLock != nil {
-			logutil.Logger(ctx).Debug("coprocessor encounters lock",
-				zap.Uint64("startTS", kvReq.StartTs),
-				zap.Stringer("lock", copMeetLock.LockInfo),
-				zap.String("stmt", originalSQL))
+			if ce := logutil.Logger(ctx).Check(zap.DebugLevel, "coprocessor encounters lock"); ce != nil {
+				// Use the global mode at logging time for both fields, including delayed callbacks.
+				redactMode := errors.RedactLogEnabled.Load()
+				ce.Write(
+					zap.Uint64("startTS", kvReq.StartTs),
+					zap.Stringer("lock", redact.LockInfoWithMode(copMeetLock.LockInfo, redactMode)),
+					zap.String("stmt", parser.Normalize(originalSQL, redactMode)))
+			}
 		}
 	}
 

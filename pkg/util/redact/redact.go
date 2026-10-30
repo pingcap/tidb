@@ -28,6 +28,8 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -287,4 +289,101 @@ func (t TaskInfoRedacted) String() string {
 	}
 
 	return proto.CompactTextString(&infoCopy)
+}
+
+var redactedKey = []byte("?")
+
+// LockInfo returns a fmt.Stringer of the lock info. The keys in the lock info (primary lock, key, secondaries and
+// the keys of nested shared locks) are replaced by '?' if redact log is enabled. The String() method is evaluated
+// lazily, so it is cheap to pass it to a logger whose level is not enabled.
+func LockInfo(lock *kvrpcpb.LockInfo) fmt.Stringer {
+	return lockInfoRedacted{lock: lock}
+}
+
+// LockInfoWithMode is like LockInfo, but also masks keys when mode is ON or MARKER.
+// Process-global redaction still applies when mode is OFF or empty. All enabled modes
+// replace key bytes with '?', and formatting remains lazy.
+func LockInfoWithMode(lock *kvrpcpb.LockInfo, mode string) fmt.Stringer {
+	return lockInfoRedacted{
+		lock:        lock,
+		forceRedact: mode == errors.RedactLogEnable || mode == errors.RedactLogMarker,
+	}
+}
+
+type lockInfoRedacted struct {
+	lock        *kvrpcpb.LockInfo
+	forceRedact bool
+}
+
+// String implements fmt.Stringer.
+func (l lockInfoRedacted) String() string {
+	if l.lock == nil || !(l.forceRedact || NeedRedact()) {
+		return l.lock.String()
+	}
+	lockCopy := proto.Clone(l.lock).(*kvrpcpb.LockInfo)
+	redactLockInfoKeys(lockCopy)
+	return lockCopy.String()
+}
+
+func redactLockInfoKeys(lock *kvrpcpb.LockInfo) {
+	if lock == nil {
+		return
+	}
+	if len(lock.PrimaryLock) > 0 {
+		lock.PrimaryLock = redactedKey
+	}
+	if len(lock.Key) > 0 {
+		lock.Key = redactedKey
+	}
+	for i := range lock.Secondaries {
+		lock.Secondaries[i] = redactedKey
+	}
+	for _, shared := range lock.SharedLockInfos {
+		redactLockInfoKeys(shared)
+	}
+}
+
+// RegionError formats a region error without modifying it. When redaction is enabled,
+// keys and the top-level message are masked while internal diagnostic metadata,
+// including nested reasons and messages, is preserved.
+func RegionError(regionErr *errorpb.Error) string {
+	if regionErr == nil || !NeedRedact() {
+		return regionErr.String()
+	}
+	redacted := proto.Clone(regionErr).(*errorpb.Error)
+	maskKey := func(key []byte) []byte {
+		if len(key) == 0 {
+			return key
+		}
+		return redactedKey
+	}
+	if redacted.Message != "" {
+		redacted.Message = "?"
+	}
+	if e := redacted.KeyNotInRegion; e != nil {
+		e.Key = maskKey(e.Key)
+		e.StartKey = maskKey(e.StartKey)
+		e.EndKey = maskKey(e.EndKey)
+	}
+	if e := redacted.EpochNotMatch; e != nil {
+		for _, region := range e.CurrentRegions {
+			if region == nil {
+				continue
+			}
+			region.StartKey = maskKey(region.StartKey)
+			region.EndKey = maskKey(region.EndKey)
+			if meta := region.EncryptionMeta; meta != nil {
+				meta.Iv = maskKey(meta.Iv)
+			}
+		}
+	}
+	if e := redacted.BucketVersionNotMatch; e != nil {
+		for i := range e.Keys {
+			e.Keys[i] = maskKey(e.Keys[i])
+		}
+	}
+	if result := redacted.String(); result != "" {
+		return result
+	}
+	return "?"
 }

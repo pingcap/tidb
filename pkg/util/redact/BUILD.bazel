@@ -10,6 +10,8 @@ go_library(
         "@com_github_gogo_protobuf//proto",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/errorpb",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
     ],
 )
 
@@ -19,5 +21,18 @@ go_test(
     srcs = ["redact_test.go"],
     embed = [":redact"],
     flaky = True,
+<<<<<<< HEAD
     deps = ["@com_github_stretchr_testify//require"],
+=======
+    deps = [
+        "@com_github_gogo_protobuf//proto",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/encryptionpb",
+        "@com_github_pingcap_kvproto//pkg/errorpb",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_stretchr_testify//require",
+    ],
+>>>>>>> d880d7fabe5 (*: redact keys, values and SQL in diagnostic logs (#71922))
 )
