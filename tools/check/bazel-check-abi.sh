@@ -16,15 +16,9 @@
 set -euo pipefail
 
 GOROOT=$(bazel run @io_bazel_rules_go//go -- env GOROOT)
-cd ${GOROOT}
+GOVERSION=$(bazel run @io_bazel_rules_go//go -- env GOVERSION)
 
 gosrc_md5=()
-<<<<<<< HEAD
-gosrc_md5+=("src/internal/runtime/maps/map.go a29531cd3447fd3c90ceabfde5a08921")
-gosrc_md5+=("src/internal/runtime/maps/table.go 1ff4f281722eb83ac7d64ae0453e9718")
-gosrc_md5+=("src/internal/abi/map_swiss.go 7ef614406774c5be839e63aea0225b00")
-gosrc_md5+=("src/internal/abi/type.go d0caafb471a5b971854ca6426510608c")
-=======
 case "${GOVERSION}" in
 	go1.25.*)
 		gosrc_md5+=("src/internal/runtime/maps/map.go a29531cd3447fd3c90ceabfde5a08921")
@@ -51,18 +45,12 @@ case "${GOVERSION}" in
 		exit 1
 		;;
 esac
->>>>>>> d65e32fc9b2 (util: prepare map ABI support for Go 1.27 (#72081) (#72405))
 
 for x in "${gosrc_md5[@]}"; do
 	x=($x)
 	src="${x[0]}"
 	md5="${x[1]}"
 	echo "Checking ${src}"
-<<<<<<< HEAD
-	if [ $(md5sum "${src}" | cut -d' ' -f1) != "${md5}" ]; then
-		echo "Unexpect checksum for ${src}"
-		exit -1
-=======
 	src_path="${GOROOT}/${src}"
 	if [ ! -f "${src_path}" ]; then
 		echo "Missing source file: ${src_path}"
@@ -73,6 +61,5 @@ for x in "${gosrc_md5[@]}"; do
 		echo "Unexpected checksum for ${src}: expected ${md5}, got ${actual_md5}"
 		echo "Verify the runtime map ABI layout before updating the source MD5 checksums for a new Go patch release."
 		exit 1
->>>>>>> d65e32fc9b2 (util: prepare map ABI support for Go 1.27 (#72081) (#72405))
 	fi
 done

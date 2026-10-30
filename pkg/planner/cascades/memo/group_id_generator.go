@@ -17,7 +17,6 @@ package memo
 // GroupID is the unique id for a group.
 type GroupID uint64
 
-<<<<<<< HEAD:pkg/planner/cascades/memo/group_id_generator.go
 // GroupIDGenerator is used to generate group id.
 type GroupIDGenerator struct {
 	id uint64
@@ -28,20 +27,4 @@ type GroupIDGenerator struct {
 func (gi *GroupIDGenerator) NextGroupID() GroupID {
 	gi.id++
 	return GroupID(gi.id)
-=======
-import (
-	"testing"
-
-	"github.com/stretchr/testify/require"
-)
-
-type testMapTable = mapTable
-
-const testMapGroupSlots = mapGroupSlots
-
-func testMapSlotLayout(t *testing.T, typ *mapType, slotSize, elemOff uintptr) {
-	t.Helper()
-	require.Equal(t, slotSize, typ.SlotSize)
-	require.Equal(t, elemOff, typ.ElemOff)
->>>>>>> d65e32fc9b2 (util: prepare map ABI support for Go 1.27 (#72081) (#72405)):pkg/util/hack/map_abi_test_type_go126_test.go
 }

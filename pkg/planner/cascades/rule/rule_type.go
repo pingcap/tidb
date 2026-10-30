@@ -16,7 +16,6 @@ package rule
 
 type ruleType int
 
-<<<<<<< HEAD:pkg/planner/cascades/rule/rule_type.go
 const (
 	// DefaultNone indicates this is none rule.
 	DefaultNone ruleType = iota
@@ -32,20 +31,4 @@ func (tp *ruleType) String() string {
 	default:
 		return "default_none"
 	}
-=======
-import (
-	"testing"
-
-	"github.com/stretchr/testify/require"
-)
-
-type testMapTable = swissMapTable
-
-const testMapGroupSlots = swissMapGroupSlots
-
-func testMapSlotLayout(t *testing.T, typ *swissMapType, slotSize, elemOff uintptr) {
-	t.Helper()
-	require.Equal(t, slotSize, typ.SlotSize)
-	require.Equal(t, elemOff, typ.ElemOff)
->>>>>>> d65e32fc9b2 (util: prepare map ABI support for Go 1.27 (#72081) (#72405)):pkg/util/hack/map_abi_test_type_go125_test.go
 }
