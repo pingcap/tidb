@@ -1966,6 +1966,16 @@ error = '''
 Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'
 '''
 
+["executor:8182"]
+error = '''
+materialized view advisory lock conflict: %s
+'''
+
+["executor:8183"]
+error = '''
+refresh materialized view %s.%s fast: input log baseline has changed; run COMPLETE refresh to rebuild it
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s

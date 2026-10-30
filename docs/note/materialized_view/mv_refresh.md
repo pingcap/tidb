@@ -256,6 +256,16 @@ UPDATE mysql.tidb_mview_refresh_hist
 
 ### Lock behavior and error semantics
 
+Materialized view advisory-lock conflicts return `8182` (`ErrMVAdvisoryLockConflict`).
+This covers refresh, CREATE output MLog, PURGE MLog, and an OOP cutover exhausting its
+purge-lock wait budget. Retry the failed statement after the competing operation finishes.
+The existing lock timeouts and DDL cancellation behavior still apply.
+
+FAST refresh returns `8183` (`ErrMVRefreshLogBaselineChanged`) when a source has no MLog
+or its input MLog IDs no longer match the recorded baseline, including after a parent MV
+completes OOP refresh. If the baseline has changed, run COMPLETE refresh on the affected MV
+to rebuild it before resuming FAST. FAST refresh is unavailable while a source has no MLog.
+
 For `SELECT ... FOR UPDATE NOWAIT` on `mysql.tidb_mview_refresh_info`, there are 3 outcomes:
 
 1. **Returns 1 row**: lock acquired, refresh can continue.

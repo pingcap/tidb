@@ -1087,6 +1087,8 @@ const (
 	ErrDeleteNotFoundColumn                = 8177
 	ErrKeyTooLarge                         = 8178
 	ErrTimeStampInDSTTransition            = 8179
+	ErrMVAdvisoryLockConflict              = 8182
+	ErrMVRefreshLogBaselineChanged         = 8183
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200

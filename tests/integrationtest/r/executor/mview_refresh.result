@@ -182,6 +182,14 @@ set @source_log_id = (select mlog_id from information_schema.tidb_mlogs where ta
 select MLOG_ID = @source_log_id as input_log_matches from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = @source_mv_old_id;
 input_log_matches
 1
+select get_lock(concat('mlog_purge_', @source_log_id), 0) as lock_acquired;
+lock_acquired
+1
+purge materialized view log on t_mv_source_info;
+Error 8182 (HY000): materialized view advisory lock conflict: another purge or materialized view cutover is running for materialized view log on test.t_mv_source_info, please retry later
+select release_lock(concat('mlog_purge_', @source_log_id)) as lock_released;
+lock_released
+1
 insert into t_mv_source_info values (1, 5);
 refresh materialized view mv_source_info fast;
 select * from mv_source_info order by a;
@@ -194,7 +202,7 @@ input_log_matches
 update mysql.tidb_mview_fast_refresh_source_info set MLOG_ID = 0 where MVIEW_ID = @source_mv_old_id;
 insert into t_mv_source_info values (2, 3);
 refresh materialized view mv_source_info fast;
-Error 1105 (HY000): refresh materialized view fast: input log baseline has changed; run COMPLETE refresh to rebuild it
+Error 8183 (HY000): refresh materialized view test.mv_source_info fast: input log baseline has changed; run COMPLETE refresh to rebuild it
 select * from mv_source_info order by a;
 a	s	cnt
 1	15	2
@@ -209,7 +217,7 @@ input_log_matches
 1
 insert into mysql.tidb_mview_fast_refresh_source_info values (@source_mv_old_id, -1);
 refresh materialized view mv_source_info fast;
-Error 1105 (HY000): refresh materialized view fast: input log baseline has changed; run COMPLETE refresh to rebuild it
+Error 8183 (HY000): refresh materialized view test.mv_source_info fast: input log baseline has changed; run COMPLETE refresh to rebuild it
 refresh materialized view mv_source_info complete in place;
 select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = @source_mv_old_id;
 count(*)
@@ -276,7 +284,7 @@ select LAST_SUCCESS_READ_TSO=@oop_child_tso as child_watermark_preserved from my
 child_watermark_preserved
 1
 refresh materialized view mv_oop_child fast;
-Error 1105 (HY000): refresh materialized view fast: input log baseline has changed; run COMPLETE refresh to rebuild it
+Error 8183 (HY000): refresh materialized view test.mv_oop_child fast: input log baseline has changed; run COMPLETE refresh to rebuild it
 select * from mv_oop_child order by a;
 a	s	cnt	cnt_s
 1	10	1	1

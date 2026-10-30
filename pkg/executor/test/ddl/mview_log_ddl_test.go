@@ -1305,8 +1305,8 @@ func TestCreateMaterializedViewLogRefreshLockLifetime(t *testing.T) {
 			}
 			tkLock := testkit.NewTestKit(t, store)
 			tkLock.MustExec("use test")
-			err = tkLock.ExecToErr("refresh materialized view mv_mlog_lock fast")
-			require.ErrorContains(t, err, "another refresh or materialized view log creation is running", "the job must hold the refresh lock after its metadata transaction commits")
+			// The job must hold the refresh lock after its metadata transaction commits.
+			tkLock.MustGetErrCode("refresh materialized view mv_mlog_lock fast", errno.ErrMVAdvisoryLockConflict)
 			release()
 			select {
 			case err = <-ddlDone:
@@ -2222,6 +2222,12 @@ func TestPurgeMaterializedViewLogNowaitConflict(t *testing.T) {
 	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_purge_nowait_conflict"))
 	require.NoError(t, err)
 	mlogID := mlogTable.Meta().ID
+
+	advisoryLockName := fmt.Sprintf("mlog_purge_%d", mlogID)
+	require.NoError(t, tk1.Session().GetAdvisoryLock(advisoryLockName, 1))
+	defer tk1.Session().ReleaseAllAdvisoryLocks()
+	tk2.MustGetErrCode("purge materialized view log on t_purge_nowait_conflict", errno.ErrMVAdvisoryLockConflict)
+	require.True(t, tk1.Session().ReleaseAdvisoryLock(advisoryLockName))
 
 	tk1.MustExec("begin pessimistic")
 	tk1.MustQuery(fmt.Sprintf("select 1 from mysql.tidb_mlog_purge_info where mlog_id = %d for update", mlogID)).
