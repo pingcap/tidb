@@ -113,13 +113,15 @@ type executorBuilder struct {
 	hasLock bool
 	Ti      *TelemetryInfo
 	// isStaleness means whether this statement use stale read.
-	isStaleness      bool
-	txnScope         string
-	readReplicaScope string
-	inUpdateStmt     bool
-	inDeleteStmt     bool
-	inInsertStmt     bool
-	inSelectLockStmt bool
+	isStaleness                   bool
+	txnScope                      string
+	readReplicaScope              string
+	inUpdateStmt                  bool
+	inDeleteStmt                  bool
+	inInsertStmt                  bool
+	inSelectLockStmt              bool
+	inMViewDeltaMergeStmt         bool
+	inMViewCompleteDeltaApplyStmt bool
 
 	// forDataReaderBuilder indicates whether the builder is used by a dataReaderBuilder.
 	// When forDataReader is true, the builder should use the dataReaderTS as the executor read ts. This is because
@@ -218,6 +220,18 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildDDL(v)
 	case *plannercore.PurgeMaterializedViewLog:
 		return b.buildPurgeMaterializedViewLog(v)
+	case *plannercore.CompareMaterializedView:
+		return b.buildCompareMaterializedView(v)
+	case *plannercore.RefreshMaterializedView:
+		return b.buildRefreshMaterializedView(v)
+	case *plannercore.DryRunRefreshMaterializedView:
+		return b.buildDryRunRefreshMaterializedView(v)
+	case *plannercore.ProfileRefreshMaterializedView:
+		return b.buildProfileRefreshMaterializedView(v)
+	case *plannercore.MViewDeltaMerge:
+		return b.buildMViewDeltaMerge(v)
+	case *plannercore.MViewCompleteDeltaApply:
+		return b.buildMViewCompleteDeltaApply(v)
 	case *plannercore.Deallocate:
 		return b.buildDeallocate(v)
 	case *physicalop.Delete:
@@ -1283,6 +1297,14 @@ func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Execut
 		children   []exec.Executor
 	)
 	if v.SelectPlan != nil {
+		if b.sctx.GetSessionVars().InMViewMaintenance {
+			// MV builds persist the read timestamp as the refresh watermark, even
+			// when the SELECT becomes a TableDual and never opens a data reader.
+			if _, err := sessiontxn.GetTxnManager(b.sctx).GetStmtReadTS(); err != nil {
+				b.err = err
+				return nil
+			}
+		}
 		selectExec = b.build(v.SelectPlan)
 		if b.err != nil {
 			return nil
@@ -2543,7 +2565,7 @@ func (b *executorBuilder) buildExpand(v *physicalop.PhysicalExpand) exec.Executo
 
 	// Use un-parallel projection for query that write on memdb to avoid data race.
 	// See also https://github.com/pingcap/tidb/issues/26832
-	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.hasLock {
+	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.inMViewDeltaMergeStmt || b.inMViewCompleteDeltaApplyStmt || b.hasLock {
 		e.numWorkers = 0
 	}
 	return e
@@ -2576,7 +2598,7 @@ func (b *executorBuilder) newProjectionExec(childExec exec.Executor, v *physical
 
 	// Use un-parallel projection for query that write on memdb to avoid data race.
 	// See also https://github.com/pingcap/tidb/issues/26832
-	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.hasLock {
+	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.inMViewDeltaMergeStmt || b.inMViewCompleteDeltaApplyStmt || b.hasLock {
 		e.numWorkers = 0
 	}
 	return e
@@ -2596,15 +2618,16 @@ func (b *executorBuilder) buildTableDual(v *physicalop.PhysicalTableDual) exec.E
 	return e
 }
 
-// `getSnapshotTS` returns for-update-ts if in insert/update/delete/lock statement otherwise the isolation read ts
-// Please notice that in RC isolation, the above two ts are the same
+// getSnapshotTS returns an explicit data-reader timestamp when provided. Otherwise,
+// writes and locking reads use for-update-ts, and other reads use the isolation read ts.
+// The two statement timestamps are the same in RC isolation.
 func (b *executorBuilder) getSnapshotTS() (ts uint64, err error) {
 	if b.forDataReaderBuilder {
 		return b.dataReaderTS, nil
 	}
 
 	txnManager := sessiontxn.GetTxnManager(b.sctx)
-	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
+	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt || b.inMViewDeltaMergeStmt || b.inMViewCompleteDeltaApplyStmt {
 		return txnManager.GetStmtForUpdateTS()
 	}
 	return txnManager.GetStmtReadTS()
@@ -2617,7 +2640,7 @@ func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
 	var err error
 
 	txnManager := sessiontxn.GetTxnManager(b.sctx)
-	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
+	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt || b.inMViewDeltaMergeStmt || b.inMViewCompleteDeltaApplyStmt {
 		snapshot, err = txnManager.GetSnapshotWithStmtForUpdateTS()
 	} else {
 		snapshot, err = txnManager.GetSnapshotWithStmtReadTS()
@@ -2822,6 +2845,9 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 			strings.ToLower(infoschema.TableTiDBCheckConstraints),
 			strings.ToLower(infoschema.TableKeywords),
 			strings.ToLower(infoschema.TableTiDBIndexUsage),
+			strings.ToLower(infoschema.TableTiDBMViews),
+			strings.ToLower(infoschema.TableTiDBMLogs),
+			strings.ToLower(infoschema.TableTiDBTableMViewDependencies),
 			strings.ToLower(infoschema.TableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage),
@@ -3265,6 +3291,7 @@ func (b *executorBuilder) buildUpdate(v *physicalop.Update) exec.Executor {
 		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
 		virtualAssignmentsOffset:  v.VirtualAssignmentsOffset,
 		multiUpdateOnSameTable:    multiUpdateOnSameTable,
+		isMultiTable:              v.IsMultiTable,
 		tblID2table:               tblID2table,
 		tblColPosInfos:            v.TblColPosInfos,
 		assignFlag:                assignFlag,
@@ -3548,6 +3575,11 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle, false, false),
 		ColumnGroups: colGroups,
 	}
+	// A rate raised to 1 is still sent, so the job shows it and NDVRATE does not
+	// look unused. TiKV reads every row at 1.
+	if rate, raised := b.chooseNDVRate(task, opts, count, *sampleRate); rate < 1 || raised {
+		e.analyzePB.ColReq.NdvRate = &rate
+	}
 	if task.TblInfo != nil {
 		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
 		if task.TblInfo.IsCommonHandle {
@@ -3556,6 +3588,54 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	}
 	b.err = tables.SetPBColumnsDefaultValue(b.sctx.GetExprCtx(), e.analyzePB.ColReq.ColumnsInfo, task.ColsInfo)
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
+}
+
+// minNDVRate is the lowest rate the row-count rule picks. Below it, scanning every
+// row dominates ANALYZE, so a lower rate saves little time while the NDV error
+// keeps growing.
+const minNDVRate = 0.05
+
+// chooseNDVRate returns the fraction of rows that TiKV processes for NDV. While
+// tidb_analyze_sampled_ndv_threshold is not 0, a table or partition with more
+// rows than it uses its NDVRATE option or, without one, max(minNDVRate,
+// threshold / rows). Others use full input. TiKV draws the TopN and histogram
+// rows from the rows selected for NDV, so the rate covers sampleRate, or with
+// a fixed sample size that many rows. It also reports whether it raised the rate.
+func (b *executorBuilder) chooseNDVRate(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, count int64, sampleRate float64) (float64, bool) {
+	threshold := vardef.AnalyzeSampledNDVThreshold.Load()
+	rate := math.Float64frombits(opts[ast.AnalyzeOptNDVRate])
+	// 1 NDVRATE reads every row whatever the row count, so skip the PD lookup.
+	if threshold == 0 || rate >= 1 {
+		return 1, false
+	}
+	rows := float64(count)
+	// Like getAdjustedSampleRate, trust PD when stats_meta is far behind.
+	if approx, _ := b.getApproximateTableCountFromStorage(b.ctx, task.TableID.GetStatisticsID(), task); statsCountFarBehindPD(rows, approx) {
+		rows = approx
+	}
+	if rows <= float64(threshold) {
+		return 1, false
+	}
+	if rate <= 0 {
+		rate = max(minNDVRate, float64(threshold)/rows)
+	}
+	needed := sampleRate
+	if samples := opts[ast.AnalyzeOptNumSamples]; samples > 0 {
+		needed = min(1, float64(samples)/rows)
+	}
+	if rate >= needed {
+		return rate, false
+	}
+	// Raise instead of failing: the low rate can come from saved options or an
+	// adjusted SAMPLERATE, and Auto Analyze has no user to fix it.
+	table := task.DBName + "." + task.TableName
+	if task.PartitionName != "" {
+		table += "'s partition " + task.PartitionName
+	}
+	b.sctx.GetSessionVars().StmtCtx.AppendNote(errors.NewNoStackErrorf(
+		"Analyze raised the NDV rate from %g to %g for table %s, because TopN and histograms sample only the rows selected for NDV",
+		rate, needed, table))
+	return needed, true
 }
 
 // getAdjustedSampleRate calculate the sample rate by the table size. If we cannot get the table size. We use the 0.001 as the default sample rate.
@@ -3596,7 +3676,7 @@ func (b *executorBuilder) getAdjustedSampleRate(ctx context.Context, task planne
 	// To do a workaround for this issue, we check the approxiCount from the pd side to do a comparison.
 	// If the count from the stats_meta is extremely smaller than the approximate count from the pd,
 	// we think that we meet this issue and use the approximate count to calculate the sample rate.
-	if float64(statsTbl.RealtimeCount*5) < approxiCount {
+	if statsCountFarBehindPD(float64(statsTbl.RealtimeCount), approxiCount) {
 		// Confirmed by TiKV side, the experience error rate of the approximate count is about 20%.
 		// So we increase the number to 150000 to reduce this error rate.
 		sampleRate = math.Min(1, 150000/approxiCount)
@@ -3610,6 +3690,13 @@ func (b *executorBuilder) getAdjustedSampleRate(ctx context.Context, task planne
 	// Since there's tiny error rate around the count from the stats meta, we use 110000 to get a little big result
 	sampleRate = math.Min(1, config.DefRowsForSampleRate/float64(statsTbl.RealtimeCount))
 	return sampleRate, fmt.Sprintf("use min(1, %v/%v) as the sample-rate=%v", config.DefRowsForSampleRate, statsTbl.RealtimeCount, sampleRate)
+}
+
+// statsCountFarBehindPD reports whether the stats_meta count is so far below the
+// PD approximate count that PD is more reliable, for example right after a
+// physical import (https://github.com/pingcap/tidb/issues/29216).
+func statsCountFarBehindPD(statsCount, pdCount float64) bool {
+	return statsCount*5 < pdCount
 }
 
 func (b *executorBuilder) getApproximateTableCountFromStorage(ctx context.Context, tid int64, task plannercore.AnalyzeColumnsTask) (float64, bool) {
@@ -3813,6 +3900,27 @@ func (b *executorBuilder) newDataReaderBuilder(p base.PhysicalPlan) (*dataReader
 		executorBuilder: &builderForDataReader,
 		once:            &dataReaderBuilderOnce{},
 	}, nil
+}
+
+func (b *executorBuilder) newDataReaderBuilderWithSnapshot(p base.PhysicalPlan, snapshot *plannercore.DataReaderSnapshot) (*dataReaderBuilder, error) {
+	if snapshot == nil {
+		return nil, errors.New("snapshot is nil")
+	}
+	if snapshot.TS == 0 {
+		return nil, errors.New("snapshot ts is zero")
+	}
+	if snapshot.InfoSchema == nil {
+		return nil, errors.New("snapshot infoschema is nil")
+	}
+	builderForDataReader := *b
+	builderForDataReader.forDataReaderBuilder = true
+	builderForDataReader.dataReaderTS = snapshot.TS
+	builderForDataReader.is = snapshot.InfoSchema
+	builderForDataReader.isStaleness = true
+	if builderForDataReader.stmtCtxLock == nil {
+		builderForDataReader.stmtCtxLock = &sync.Mutex{}
+	}
+	return &dataReaderBuilder{plan: p, executorBuilder: &builderForDataReader, once: &dataReaderBuilderOnce{}}, nil
 }
 
 func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) exec.Executor {
@@ -4164,12 +4272,18 @@ func (b *executorBuilder) buildMPPGather(v *physicalop.PhysicalTableReader) exec
 		return nil
 	}
 
+	serverID, err := getMPPServerID(b.sctx)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
 	gather := &MPPGather{
 		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
-		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.sctx), LocalQueryID: getMPPQueryID(b.sctx), ServerID: domain.GetDomain(b.sctx).ServerID()},
+		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.sctx), LocalQueryID: getMPPQueryID(b.sctx), ServerID: serverID},
 		memTracker:   memory.NewTracker(v.ID(), -1),
 
 		columns:                    []*model.ColumnInfo{},
@@ -6605,4 +6719,11 @@ func (b *executorBuilder) buildRecommendIndex(v *plannercore.RecommendIndexPlan)
 func (b *executorBuilder) buildWorkloadRepoCreate(_ *plannercore.WorkloadRepoCreate) exec.Executor {
 	base := exec.NewBaseExecutor(b.sctx, nil, 0)
 	return &WorkloadRepoCreateExec{base}
+}
+
+func (b *executorBuilder) buildCompareMaterializedView(v *plannercore.CompareMaterializedView) exec.Executor {
+	return &CompareMaterializedViewExec{
+		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		stmt:         v.Statement,
+	}
 }

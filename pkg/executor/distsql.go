@@ -99,10 +99,8 @@ type lookupTableTask struct {
 	// Without this map, the original index order might be lost.
 	// The handles fetched from index is originally ordered by index, but we need handles to be ordered by itself
 	// to do table request.
+	// Values are []int: one position for normal lookup, all positions for ADMIN CHECK.
 	indexOrder *kv.HandleMap
-	// duplicatedIndexOrder map likes indexOrder. But it's used when checkIndexValue isn't nil and
-	// the same handle of index has multiple values.
-	duplicatedIndexOrder *kv.HandleMap
 
 	// partitionTable indicates whether this task belongs to a partition table and which partition table it is.
 	partitionTable table.PhysicalTable
@@ -258,6 +256,11 @@ type IndexReaderExecutor struct {
 
 	paging bool
 
+	// rowCountUpperBound is a proven upper bound of the number of rows the ranges can return.
+	// It is only valid when hasRowCountUpperBound is true.
+	rowCountUpperBound    uint64
+	hasRowCountUpperBound bool
+
 	keepOrder bool
 	desc      bool
 	// byItems only for partition table with orderBy + pushedLimit
@@ -338,6 +341,15 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	// They are two different sources of ranges, and should not appear together.
 	intest.Assert(!(len(e.partRangeMap) > 0 && len(e.groupedRanges) > 0), "partRangeMap and groupedRanges should not appear together")
 
+	// The bound only matters for a Scan -> Limit DAG with a small limit that is not smaller than the number of
+	// ranges. When partRangeMap is set, e.ranges is not what is sent to each partition, so no bound is derived.
+	e.hasRowCountUpperBound = false
+	if limit, ok := distsql.ScanLimitWithMinimalConcurrency(e.dagPB); ok && uint64(len(e.ranges)) <= limit &&
+		len(e.partRangeMap) == 0 && e.table != nil {
+		e.rowCountUpperBound, e.hasRowCountUpperBound = ranger.RowCountUpperBoundByUniqueKey(
+			e.rctx.TypeCtx, e.table.Meta(), e.idxCols, e.colLens, e.ranges)
+	}
+
 	// Build kvRanges considering both partitions and groupedRanges
 	kvRanges, err := e.buildKVRangesForIndexReader()
 	if err != nil {
@@ -377,9 +389,13 @@ func (e *IndexReaderExecutor) buildKVRangesForIndexReader() ([]kv.KeyRange, erro
 
 func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 	var builder distsql.RequestBuilder
-	builder.SetKeyRanges(r).
-		SetDAGRequest(e.dagPB).
-		SetStartTS(e.startTS).
+	builder.SetKeyRanges(r)
+	if e.hasRowCountUpperBound {
+		builder.SetDAGRequestWithRowCountUpperBound(e.dagPB, e.rowCountUpperBound)
+	} else {
+		builder.SetDAGRequest(e.dagPB)
+	}
+	builder.SetStartTS(e.startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).
@@ -2018,34 +2034,40 @@ func (*indexWorker) buildCompletedTask(taskID int, rows []chunk.Row) *lookupTabl
 
 func (w *indexWorker) buildTableTask(taskID int, handles []kv.Handle, retChk *chunk.Chunk) *lookupTableTask {
 	var indexOrder *kv.HandleMap
-	var duplicatedIndexOrder *kv.HandleMap
 	if w.keepOrder {
 		// Save the index order.
 		indexOrder = kv.NewHandleMap()
 		for i, h := range handles {
-			indexOrder.Set(h, i)
+			indexOrder.Set(h, []int{i})
 		}
 	}
 
 	if w.checkIndexValue != nil {
 		// Save the index order.
 		indexOrder = kv.NewHandleMap()
-		duplicatedIndexOrder = kv.NewHandleMap()
 		for i, h := range handles {
-			if _, ok := indexOrder.Get(h); ok {
-				duplicatedIndexOrder.Set(h, i)
-			} else {
-				indexOrder.Set(h, i)
-			}
+			v, _ := indexOrder.Get(h)
+			offsets, _ := v.([]int)
+			indexOrder.Set(h, append(offsets, i))
+		}
+		// The Region range splitter requires non-overlapping ranges, so deduplicate
+		// handles produced by multi-valued index entries before table lookup.
+		// Deduplicate after building the map above: its offsets must refer to
+		// the original rows in retChk, not positions in the deduplicated handles.
+		if len(handles) > indexOrder.Len() {
+			handles = make([]kv.Handle, 0, indexOrder.Len())
+			indexOrder.Range(func(h kv.Handle, _ any) bool {
+				handles = append(handles, h)
+				return true
+			})
 		}
 	}
 
 	task := &lookupTableTask{
-		id:                   taskID,
-		handles:              handles,
-		indexOrder:           indexOrder,
-		duplicatedIndexOrder: duplicatedIndexOrder,
-		idxRows:              retChk,
+		id:         taskID,
+		handles:    handles,
+		indexOrder: indexOrder,
+		idxRows:    retChk,
 	}
 
 	task.doneCh = make(chan error, 1)
@@ -2313,7 +2335,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 
 		if chk.NumRows() == 0 {
 			task.indexOrder.Range(func(h kv.Handle, val any) bool {
-				idxRow := task.idxRows.GetRow(val.(int))
+				idxRow := task.idxRows.GetRow(val.([]int)[0])
 				err = ir().ReportAdminCheckInconsistent(ctx, h, &consistency.RecordData{Handle: h, Values: getDatumRow(&idxRow, w.idxColTps)}, nil)
 				return false
 			})
@@ -2329,43 +2351,42 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			if err != nil {
 				return err
 			}
-			v, ok := task.indexOrder.Get(handle)
-			if !ok {
-				v, _ = task.duplicatedIndexOrder.Get(handle)
-			}
-			offset, _ := v.(int)
+			v, _ := task.indexOrder.Get(handle)
+			offsets := v.([]int)
 			task.indexOrder.Delete(handle)
-			idxRow := task.idxRows.GetRow(offset)
 			vals = vals[:0]
 			for i, col := range w.idxTblCols {
 				vals = append(vals, row.GetDatum(i, &col.FieldType))
 			}
 			tablecodec.TruncateIndexValues(tblInfo, w.idxLookup.index, vals)
 			tc := w.idxLookup.ectx.GetEvalCtx().TypeCtx()
-			for i := range vals {
-				col := w.idxTblCols[i]
-				idxVal := idxRow.GetDatum(i, w.idxColTps[i])
-				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
-				cmpRes, err := tables.CompareIndexAndVal(tc, vals[i], idxVal, collators[i], col.FieldType.IsArray() && vals[i].Kind() == types.KindMysqlJSON)
-				if err != nil {
-					return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
-						handle,
-						col.Name.O,
-						idxVal,
-						vals[i],
-						err,
-						&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
-					)
-				}
-				if cmpRes != 0 {
-					return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
-						handle,
-						col.Name.O,
-						idxRow.GetDatum(i, w.idxColTps[i]),
-						vals[i],
-						err,
-						&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
-					)
+			for _, offset := range offsets {
+				idxRow := task.idxRows.GetRow(offset)
+				for i := range vals {
+					col := w.idxTblCols[i]
+					idxVal := idxRow.GetDatum(i, w.idxColTps[i])
+					tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
+					cmpRes, err := tables.CompareIndexAndVal(tc, vals[i], idxVal, collators[i], col.FieldType.IsArray() && vals[i].Kind() == types.KindMysqlJSON)
+					if err != nil {
+						return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
+							handle,
+							col.Name.O,
+							idxVal,
+							vals[i],
+							err,
+							&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
+						)
+					}
+					if cmpRes != 0 {
+						return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
+							handle,
+							col.Name.O,
+							idxRow.GetDatum(i, w.idxColTps[i]),
+							vals[i],
+							err,
+							&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
+						)
+					}
 				}
 			}
 		}
@@ -2411,9 +2432,6 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		if task.indexOrder != nil {
 			memUsage += task.indexOrder.MemUsage()
 		}
-		if task.duplicatedIndexOrder != nil {
-			memUsage += task.duplicatedIndexOrder.MemUsage()
-		}
 		memUsage += task.idxRows.MemoryUsage()
 		task.memUsage = memUsage
 		task.memTracker.Consume(memUsage)
@@ -2457,7 +2475,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				return err
 			}
 			rowIdx, _ := task.indexOrder.Get(handle)
-			task.rowIdx = append(task.rowIdx, rowIdx.(int))
+			task.rowIdx = append(task.rowIdx, rowIdx.([]int)[0])
 		}
 		{
 			memUsage := int64(cap(task.rowIdx) * int(size.SizeOfInt))

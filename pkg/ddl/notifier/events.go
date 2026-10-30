@@ -488,32 +488,36 @@ func NewFlashbackClusterEvent() *SchemaChangeEvent {
 	}
 }
 
-// NewDropSchemaEvent creates a schema change event whose type is ActionDropSchema.
-func NewDropSchemaEvent(dbInfo *model.DBInfo, tables []*model.TableInfo) *SchemaChangeEvent {
-	miniTables := make([]*MiniTableInfoForSchemaEvent, len(tables))
-	for i, table := range tables {
-		miniTables[i] = &MiniTableInfoForSchemaEvent{
-			ID:   table.ID,
-			Name: table.Name,
-		}
-		if table.Partition != nil {
-			partLen := len(table.Partition.Definitions)
-			miniTables[i].Partitions = make([]*MiniPartitionInfoForSchemaEvent, partLen)
-			for j, part := range table.Partition.Definitions {
-				miniTables[i].Partitions[j] = &MiniPartitionInfoForSchemaEvent{
-					ID:   part.ID,
-					Name: part.Name,
-				}
+// NewMiniTableInfoForSchemaEvent extracts the table information required by a drop schema event.
+func NewMiniTableInfoForSchemaEvent(table *model.TableInfo) *MiniTableInfoForSchemaEvent {
+	miniTable := &MiniTableInfoForSchemaEvent{
+		ID:   table.ID,
+		Name: table.Name,
+	}
+	if table.Partition != nil {
+		miniTable.Partitions = make([]*MiniPartitionInfoForSchemaEvent, len(table.Partition.Definitions))
+		for i, part := range table.Partition.Definitions {
+			miniTable.Partitions[i] = &MiniPartitionInfoForSchemaEvent{
+				ID:   part.ID,
+				Name: part.Name,
 			}
 		}
 	}
+	return miniTable
+}
+
+// NewDropSchemaEvent creates a drop schema event from already-extracted table information.
+func NewDropSchemaEvent(
+	dbInfo *model.DBInfo,
+	tables []*MiniTableInfoForSchemaEvent,
+) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
 		inner: &jsonSchemaChangeEvent{
 			Tp: model.ActionDropSchema,
 			MiniDBInfo: &MiniDBInfoForSchemaEvent{
 				ID:     dbInfo.ID,
 				Name:   dbInfo.Name,
-				Tables: miniTables,
+				Tables: tables,
 			},
 		},
 	}

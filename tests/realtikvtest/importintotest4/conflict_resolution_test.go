@@ -658,6 +658,8 @@ func (s *mockGCSSuite) TestGlobalSortFunctionalIndexConflictAfterAddingVisibleCo
 		unique key uk_expr ((a + 1))
 	)`)
 	s.tk.MustExec("alter table t add column tail int")
+	// ADD UNIQUE KEY rebuilds the index, which requires global sort on NextGen.
+	realtikvtest.SetupNextGenGlobalSort(s.T(), s.tk)
 	s.tk.MustExec("alter table t add unique key uk_tail (tail)")
 
 	result := s.tk.MustQuery(fmt.Sprintf(`import into t from '%s'

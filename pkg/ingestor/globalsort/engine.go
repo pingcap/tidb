@@ -129,6 +129,29 @@ func (b *memKVsAndBuffers) build(ctx context.Context) {
 	b.kvsPerFile = nil
 }
 
+// EngineConfig is the configuration used to create an external engine
+// that reads globally sorted KV files.
+type EngineConfig struct {
+	ExtStore  storeapi.Storage
+	DataFiles []string
+	StatFiles []string
+	StartKey  []byte
+	EndKey    []byte
+	JobKeys   [][]byte
+	SplitKeys [][]byte
+	// TotalFileSize can be an estimated value.
+	TotalFileSize int64
+	// TotalKVCount can be an estimated value.
+	TotalKVCount int64
+	CheckHotspot bool
+	// MemCapacity is the memory capacity for the whole subtask.
+	MemCapacity int64
+	// OnDup is the action when a duplicate key is found during global sort.
+	OnDup engineapi.OnDuplicateKey
+	// this is the prefix of files recording conflicted KVs
+	FilePrefix string
+}
+
 // Engine stored sorted key/value pairs in an external storage.
 type Engine struct {
 	storage           storeapi.Storage
@@ -190,41 +213,31 @@ const (
 	smallBlockSize = units.MiB
 )
 
-// NewExternalEngine creates an (external) engine.
+// NewExternalEngine creates an (external) engine that reads the globally sorted
+// KV files described by cfg. ts is the commit TS of the ingested data. The
+// caller owns the returned engine and must close it.
 func NewExternalEngine(
 	ctx context.Context,
-	storage storeapi.Storage,
-	dataFiles []string,
-	statsFiles []string,
-	startKey []byte,
-	endKey []byte,
-	jobKeys [][]byte,
-	splitKeys [][]byte,
+	cfg *EngineConfig,
 	workerConcurrency int,
 	ts uint64,
-	totalKVSize int64,
-	totalKVCount int64,
-	checkHotspot bool,
-	memCapacity int64,
-	onDup engineapi.OnDuplicateKey,
-	filePrefix string,
 ) *Engine {
-	memLimit := getEngineMemoryLimit(memCapacity)
+	memLimit := getEngineMemoryLimit(cfg.MemCapacity)
 	logutil.Logger(ctx).Info("create external engine",
 		zap.String("memLimitForLoadRange", units.BytesSize(float64(memLimit))),
-		zap.Int("dataFileCount", len(dataFiles)),
-		zap.Int("jobKeysCount", len(jobKeys)),
-		zap.Int("splitKeysCount", len(splitKeys)),
+		zap.Int("dataFileCount", len(cfg.DataFiles)),
+		zap.Int("jobKeysCount", len(cfg.JobKeys)),
+		zap.Int("splitKeysCount", len(cfg.SplitKeys)),
 	)
 	memLimiter := membuf.NewLimiter(memLimit)
 	return &Engine{
-		storage:    storage,
-		dataFiles:  dataFiles,
-		statsFiles: statsFiles,
-		startKey:   startKey,
-		endKey:     endKey,
-		jobKeys:    jobKeys,
-		splitKeys:  splitKeys,
+		storage:    cfg.ExtStore,
+		dataFiles:  cfg.DataFiles,
+		statsFiles: cfg.StatFiles,
+		startKey:   cfg.StartKey,
+		endKey:     cfg.EndKey,
+		jobKeys:    cfg.JobKeys,
+		splitKeys:  cfg.SplitKeys,
 		smallBlockBufPool: membuf.NewPool(
 			membuf.WithBlockNum(0),
 			membuf.WithPoolMemoryLimiter(memLimiter),
@@ -235,17 +248,17 @@ func NewExternalEngine(
 			membuf.WithPoolMemoryLimiter(memLimiter),
 			membuf.WithBlockSize(simplesst.ConcurrentReaderBufferSizePerConc),
 		),
-		checkHotspot:      checkHotspot,
+		checkHotspot:      cfg.CheckHotspot,
 		workerConcurrency: *atomic.NewInt32(int32(workerConcurrency)),
 		readyCh:           make(chan struct{}),
 		ts:                ts,
-		totalKVSize:       totalKVSize,
-		totalKVCount:      totalKVCount,
+		totalKVSize:       cfg.TotalFileSize,
+		totalKVCount:      cfg.TotalKVCount,
 		importedKVSize:    atomic.NewInt64(0),
 		importedKVCount:   atomic.NewInt64(0),
 		memLimit:          memLimit,
-		onDup:             onDup,
-		filePrefix:        filePrefix,
+		onDup:             cfg.OnDup,
+		filePrefix:        cfg.FilePrefix,
 		dataReleaseCh:     make(chan struct{}, 1),
 	}
 }

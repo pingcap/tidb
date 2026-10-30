@@ -704,6 +704,68 @@ func TestHelperFuncs(t *testing.T) {
 }
 
 func TestSessionStatesSystemVar(t *testing.T) {
+	t.Run("snapshot readback", func(t *testing.T) {
+		vars := NewSessionVars(nil)
+		require.NoError(t, vars.SetSystemVar(vardef.TimeZone, "+08:00"))
+		const snapshot = "2020-01-02 03:04:05.123456"
+		require.NoError(t, vars.SetSystemVar(vardef.TiDBSnapshot, snapshot))
+		value, keep, err := vars.GetSessionStatesSystemVar(vardef.TiDBSnapshot)
+		require.NoError(t, err)
+		require.True(t, keep)
+		require.Equal(t, snapshot, value)
+	})
+	t.Run("ambiguous read timestamp", func(t *testing.T) {
+		vars := NewSessionVars(nil)
+		require.NoError(t, vars.SetSystemVar(vardef.TimeZone, "+00:00"))
+		// This is the second occurrence of 01:30 during the DST rollback.
+		require.NoError(t, vars.SetSystemVar(vardef.TiDBTxnReadTS, "2020-11-01 06:30:00"))
+		require.NoError(t, vars.SetSystemVar(vardef.TimeZone, "America/New_York"))
+		_, _, err := vars.GetSessionStatesSystemVar(vardef.TiDBTxnReadTS)
+		require.ErrorContains(t, err, "tx_read_ts cannot be represented")
+	})
+	t.Run("read timestamps", func(t *testing.T) {
+		for _, tt := range []struct {
+			name string
+			sets [][2]string
+		}{
+			{"snapshot timezone changed", [][2]string{{vardef.TiDBSnapshot, "2020-01-02 03:04:05.123456"}, {vardef.TimeZone, "+00:00"}}},
+			{"numeric snapshot", [][2]string{{vardef.TiDBSnapshot, "420000000000000123"}}},
+			{"read timestamp timezone changed", [][2]string{{vardef.TiDBTxnReadTS, "2020-01-02 03:04:05.123456"}, {vardef.TimeZone, "+00:00"}}},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				source := NewSessionVars(nil)
+				require.NoError(t, source.SetSystemVar(vardef.TimeZone, "+08:00"))
+				for _, setting := range tt.sets {
+					require.NoError(t, source.SetSystemVar(setting[0], setting[1]))
+				}
+				states := make(map[string]string)
+				for _, name := range []string{vardef.TimeZone, vardef.TiDBSnapshot, vardef.TiDBTxnReadTS} {
+					value, keep, err := source.GetSessionStatesSystemVar(name)
+					require.NoError(t, err)
+					if keep {
+						states[name] = value
+					}
+				}
+				if source.SnapshotTS != 0 {
+					require.Equal(t, strconv.FormatUint(source.SnapshotTS, 10), states[vardef.TiDBSnapshot])
+				} else {
+					require.Empty(t, states[vardef.TiDBSnapshot])
+				}
+				if source.TxnReadTS.PeakTxnReadTS() == 0 {
+					require.Empty(t, states[vardef.TiDBTxnReadTS])
+				}
+				for range 20 {
+					dest := NewSessionVars(nil)
+					require.NoError(t, dest.SetSystemVar(vardef.TimeZone, "-07:00"))
+					for _, name := range OrderByDependency(states) {
+						require.NoError(t, dest.SetSystemVar(name, states[name]))
+					}
+					require.Equal(t, source.SnapshotTS, dest.SnapshotTS)
+					require.Equal(t, source.TxnReadTS.PeakTxnReadTS(), dest.TxnReadTS.PeakTxnReadTS())
+				}
+			})
+		}
+	})
 	vars := NewSessionVars(nil)
 	err := vars.SetSystemVar("autocommit", "1")
 	require.NoError(t, err)

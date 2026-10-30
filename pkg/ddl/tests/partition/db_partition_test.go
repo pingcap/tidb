@@ -3409,6 +3409,36 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
+	t.Run("FIRST preserves request and restores query", func(t *testing.T) {
+		tk.MustExec(`create table t_first (id int) partition by range columns (id)
+interval (10) first partition less than (10) last partition less than (50) null partition maxvalue partition`)
+		tk.MustExec(`insert into t_first values (null), (5), (25), (45), (100)`)
+		for _, endpoint := range []int{35, 30} {
+			query := fmt.Sprintf("alter table test.t_first first partition less than (%d)", endpoint)
+			stmts, err := tk.Session().Parse(context.Background(), query)
+			require.NoError(t, err)
+			original, err := tk.Session().Parse(context.Background(), query)
+			require.NoError(t, err)
+			spec := stmts[0].(*ast.AlterTableStmt).Specs[0]
+			tk.Session().SetValue(sessionctx.QueryString, query)
+			err = domain.GetDomain(tk.Session()).DDLExecutor().AlterTable(context.Background(), tk.Session(), stmts[0].(*ast.AlterTableStmt))
+			if endpoint == 35 {
+				require.ErrorContains(t, err, "not matching FIRST + n INTERVALs")
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, original[0].(*ast.AlterTableStmt).Specs[0].Partition, spec.Partition)
+			require.Empty(t, spec.PartitionNames)
+			require.Equal(t, query, tk.Session().Value(sessionctx.QueryString))
+		}
+		definitions := external.GetTableByName(t, tk, "test", "t_first").Meta().Partition.Definitions
+		names := make([]string, 0, len(definitions))
+		for _, def := range definitions {
+			names = append(names, def.Name.O)
+		}
+		require.Equal(t, []string{"P_NULL", "P_LT_30", "P_LT_40", "P_LT_50", "P_MAXVALUE"}, names)
+		tk.MustQuery(`select id from t_first order by id`).Check(testkit.Rows("<nil>", "25", "45", "100"))
+	})
 	tk.MustExec(`create table t (id int, create_time datetime)
 		partition by range columns (create_time)
 		interval (1 day)

@@ -87,10 +87,10 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/handler/tikvhandler"
-	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/server/internal/dump"
 	"github.com/pingcap/tidb/pkg/server/internal/handshake"
+	"github.com/pingcap/tidb/pkg/server/internal/packetio"
 	"github.com/pingcap/tidb/pkg/server/internal/parse"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
@@ -170,7 +170,7 @@ func newClientConn(s *Server) *clientConn {
 // clientConn represents a connection between server and client, it maintains connection specific state,
 // handles client query.
 type clientConn struct {
-	pkt          *internal.PacketIO      // a helper to read and write data in packet format.
+	pkt          *packetio.PacketIO      // a helper to read and write data in packet format.
 	bufReadConn  *util2.BufferedReadConn // a buffered-read net.Conn or buffered-read tls.Conn.
 	tlsConn      *tls.Conn               // TLS connection, nil if not TLS.
 	tlsConnState *tls.ConnectionState    // forwarded TLS state from gateway when starter mode is enabled.
@@ -2710,7 +2710,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 func (cc *clientConn) setConn(conn net.Conn) {
 	cc.bufReadConn = util2.NewBufferedReadConn(conn)
 	if cc.pkt == nil {
-		cc.pkt = internal.NewPacketIO(cc.bufReadConn)
+		cc.pkt = packetio.New(cc.bufReadConn)
 	} else {
 		// Preserve current sequence number.
 		cc.pkt.SetBufferedReadConn(cc.bufReadConn)

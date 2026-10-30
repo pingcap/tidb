@@ -2614,6 +2614,28 @@ func (n *QueryWatchTextOption) AcceptInPlace(v InPlaceVisitor) bool {
 	return v.Leave(n)
 }
 
+func (n *CompareMaterializedViewStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	if n.ViewName != nil {
+		if !n.ViewName.AcceptInPlace(v) {
+			return false
+		}
+	}
+	if n.AsOf != nil {
+		if !n.AsOf.AcceptInPlace(v) {
+			return false
+		}
+	}
+	if n.OutputTable != nil {
+		if !n.OutputTable.AcceptInPlace(v) {
+			return false
+		}
+	}
+	return v.Leave(n)
+}
+
 func (n *StoreParameter) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)

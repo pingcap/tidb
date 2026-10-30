@@ -29,6 +29,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/errors"
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/dumpformat/parsedef"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -54,6 +55,11 @@ var (
 	// readBatchSize is the number of rows to read in a single batch
 	// from parquet column reader. Modified in test.
 	readBatchSize = 128
+	// maxRowSize is the max byte size of a single row that the parser accepts.
+	// A row larger than this is rejected to avoid OOM and to respect the txn
+	// entry size limit, mirroring the CSV and SQL parsers' row length check.
+	// Modified in test.
+	maxRowSize = tidbconfig.MaxTxnEntrySizeLimit
 )
 
 func validateParquetLogicalType(logicalType schema.LogicalType, physicalType parquet.Type, typeLength int) error {
@@ -589,8 +595,14 @@ func (pp *Parser) ReadRow() error {
 		return err
 	}
 
+	rowSize := estimateRowSize(row)
+	if rowSize > maxRowSize {
+		pp.rowPool.Put(row)
+		return parsedef.ErrRowTooLarge
+	}
+
 	pp.lastRow.Row = row
-	pp.lastRow.Length = estimateRowSize(row)
+	pp.lastRow.Length = rowSize
 	return nil
 }
 

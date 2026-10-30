@@ -114,6 +114,7 @@ go_test(
         "//pkg/util/chunk",
         "//pkg/util/codec",
         "//pkg/util/logutil",
+        "//pkg/util/sem/v2:sem",
         "//pkg/util/skip",
         "//pkg/util/sqlexec",
         "//pkg/util/timeutil",

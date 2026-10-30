@@ -140,7 +140,7 @@ func TestRollbackColumnTypeChangeBetweenInteger(t *testing.T) {
 	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-write only")
 	assertRollBackedColUnchanged(t, tk)
 
-	// Mock roll back at model.StateWriteReorg.
+	// Mock roll back at model.StateWriteReorganization.
 	customizeHookRollbackAtState(t, tbl, model.StateWriteReorganization)
 	err = tk.ExecToErr(SQL)
 	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-write reorganization")

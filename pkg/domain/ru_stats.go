@@ -234,7 +234,7 @@ func (r *RUStatsWriter) insertRUStats(stats *meta.RUStats) error {
 	return err
 }
 
-// GCOutdatedRecords delete outdated records from target table.
+// GCOutdatedRecords deletes outdated records from the target table.
 func (r *RUStatsWriter) GCOutdatedRecords(lastEndTime time.Time) error {
 	gcEndDate := lastEndTime.Add(-ruStatsGCDuration).Format(time.DateTime)
 	countSQL := fmt.Sprintf("SELECT count(*) FROM mysql.request_unit_by_group where end_time <= '%s'", gcEndDate)

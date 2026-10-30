@@ -69,14 +69,12 @@ func allowMViewMaintenanceBypass(sv *variable.SessionVars) (bool, error) {
 	return true, nil
 }
 
-// CheckMViewReadable checks whether a read on an MV-related table should be rejected.
+// CheckMViewReadable checks whether a read on an MV or its shadow table is allowed.
 func CheckMViewReadable(sv *variable.SessionVars, tableInfo *model.TableInfo, aliasName string) error {
 	if tableInfo == nil || (tableInfo.MaterializedView == nil && tableInfo.MaterializedViewShadow == nil) {
 		return nil
 	}
-
 	if tableInfo.MaterializedViewShadow != nil {
-		// check mv shadow table
 		allowMaintenance, err := allowMViewMaintenanceBypass(sv)
 		if err != nil {
 			return err
@@ -89,8 +87,6 @@ func CheckMViewReadable(sv *variable.SessionVars, tableInfo *model.TableInfo, al
 		}
 		return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", sv.User.AuthUsername, sv.User.AuthHostname, aliasName)
 	}
-
-	// check mv table
 	initBuildState := tableInfo.MaterializedView.GetInitBuildState()
 	if initBuildState.IsReady() {
 		return nil

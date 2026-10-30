@@ -436,8 +436,8 @@ func JobNeedGC(job *model.Job) bool {
 	return false
 }
 
-// finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
-// If the DDL job need to handle in background, it will prepare a background job.
+// finishDDLJob deletes the finished DDL job from the DDL queue and puts it in the history queue.
+// If the finished job needs deferred cleanup, it enqueues delete-range tasks first.
 func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
 	// Failed DDL jobs are not accounted for yet. Clear any RU accumulated by
 	// earlier steps before moving a cancelled or rolled-back job to history.

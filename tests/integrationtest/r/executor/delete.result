@@ -162,3 +162,113 @@ number of jobs	job status
 1	all succeeded
 Level	Code	Message
 Warning	1451	Cannot delete or update a parent row: a foreign key constraint fails (`executor__delete`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent` (`a`))
+drop table if exists t, tx, t2;
+create table t (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue);
+insert into t values (1, 1);
+create table tx (a int, b int);
+insert into tx values (11, 1);
+alter table t exchange partition p1 with table tx;
+select *, _tidb_rowid from t order by a;
+a	b	_tidb_rowid
+1	1	1
+11	1	1
+create table t2 (b int);
+insert into t2 values (1);
+delete t from t join t2 on t.b = t2.b;
+affected rows: 2
+info: 
+select * from t;
+a	b
+select * from t2;
+b
+1
+drop table t, tx;
+create table t (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue);
+insert into t values (1, 1);
+create table tx (a int, b int);
+insert into tx values (11, 1);
+alter table t exchange partition p1 with table tx;
+delete t, t2 from t join t2 on t.b = t2.b;
+affected rows: 3
+info: 
+select * from t;
+a	b
+select * from t2;
+b
+drop table t, tx;
+create table t (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue);
+insert into t values (1, 1);
+create table tx (a int, b int);
+insert into tx values (11, 1);
+alter table t exchange partition p1 with table tx;
+delete t from t, (select 1) s where t.b = 1;
+affected rows: 2
+info: 
+select * from t;
+a	b
+drop table t, tx;
+create table t (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue);
+insert into t values (1, 1), (2, 2);
+create table tx (a int, b int);
+insert into tx values (11, 1), (12, 2);
+alter table t exchange partition p1 with table tx;
+select *, _tidb_rowid from t order by a;
+a	b	_tidb_rowid
+1	1	1
+2	2	2
+11	1	1
+12	2	2
+insert into t2 values (1), (1);
+delete t from t join t2 on t.b = t2.b;
+affected rows: 2
+info: 
+select *, _tidb_rowid from t order by a;
+a	b	_tidb_rowid
+2	2	2
+12	2	2
+insert into t2 values (2), (2);
+delete t, t2 from t join t2 on t.b = t2.b;
+affected rows: 4
+info: 
+select * from t;
+a	b
+select * from t2;
+b
+1
+1
+drop table t, tx;
+create table t (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue);
+insert into t values (1, 1);
+create table tx (a int, b int);
+insert into tx values (11, 1);
+alter table t exchange partition p1 with table tx;
+delete x, y from t x join t y on x.b = y.b;
+affected rows: 2
+info: 
+select * from t;
+a	b
+drop table t, tx;
+create table t (a int, b int, primary key (a) clustered) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue);
+insert into t values (1, 1), (2, 2);
+create table tx (a int, b int, primary key (a) clustered);
+insert into tx values (11, 1), (12, 2);
+alter table t exchange partition p1 with table tx;
+truncate table t2;
+insert into t2 values (1), (1);
+delete t from t join t2 on t.b = t2.b;
+affected rows: 2
+info: 
+select * from t;
+a	b
+12	2
+2	2
+drop table t;
+create table t (a int, b int);
+insert into t values (1, 1), (11, 1), (2, 2);
+delete t from t join t2 on t.b = t2.b;
+affected rows: 2
+info: 
+select * from t;
+a	b
+2	2
+drop table t, tx, t2;

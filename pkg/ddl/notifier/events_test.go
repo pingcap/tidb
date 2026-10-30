@@ -102,3 +102,35 @@ func TestMVAlterEventConstructors(t *testing.T) {
 	require.Same(t, mvTbl, newTableInfo)
 	require.Same(t, oldMVTbl, oldTableInfo)
 }
+
+func TestDropSchemaEventMiniTableInfo(t *testing.T) {
+	table := &model.TableInfo{
+		ID:   101,
+		Name: ast.NewCIStr("partitioned"),
+		Partition: &model.PartitionInfo{
+			Definitions: []model.PartitionDefinition{
+				{ID: 201, Name: ast.NewCIStr("p0")},
+				{ID: 202, Name: ast.NewCIStr("p1")},
+			},
+		},
+	}
+
+	miniTable := NewMiniTableInfoForSchemaEvent(table)
+	require.Equal(t, &MiniTableInfoForSchemaEvent{
+		ID:   101,
+		Name: ast.NewCIStr("partitioned"),
+		Partitions: []*MiniPartitionInfoForSchemaEvent{
+			{ID: 201, Name: ast.NewCIStr("p0")},
+			{ID: 202, Name: ast.NewCIStr("p1")},
+		},
+	}, miniTable)
+
+	event := NewDropSchemaEvent(
+		&model.DBInfo{ID: 1, Name: ast.NewCIStr("test")},
+		[]*MiniTableInfoForSchemaEvent{miniTable},
+	)
+	miniDBInfo := event.GetDropSchemaInfo()
+	require.Equal(t, int64(1), miniDBInfo.ID)
+	require.Equal(t, ast.NewCIStr("test"), miniDBInfo.Name)
+	require.Equal(t, []*MiniTableInfoForSchemaEvent{miniTable}, miniDBInfo.Tables)
+}

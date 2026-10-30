@@ -33,7 +33,9 @@
 // The above copyright notice and this permission notice shall be included in all
 // copies or substantial portions of the Software.
 
-package internal
+// Package packetio provides helpers to read and write MySQL protocol packets
+// on a single connection.
+package packetio
 
 import (
 	"bufio"
@@ -72,16 +74,17 @@ type PacketIO struct {
 	compressedSequence   uint8
 }
 
-// NewPacketIO creates a new PacketIO with given net.Conn.
-func NewPacketIO(bufReadConn *util.BufferedReadConn) *PacketIO {
+// New creates a new PacketIO reading from the given *util.BufferedReadConn,
+// with the max allowed packet taken from the global config.
+func New(bufReadConn *util.BufferedReadConn) *PacketIO {
 	p := &PacketIO{sequence: 0, compressionAlgorithm: mysql.CompressionNone, compressedSequence: 0, zstdLevel: 3}
 	p.SetBufferedReadConn(bufReadConn)
 	p.SetMaxAllowedPacket(config.GetMaxAllowedPacket())
 	return p
 }
 
-// NewPacketIOForTest creates a new PacketIO with given bufio.Writer.
-func NewPacketIOForTest(bufWriter *bufio.Writer) *PacketIO {
+// NewForTest creates a new PacketIO with given bufio.Writer.
+func NewForTest(bufWriter *bufio.Writer) *PacketIO {
 	p := &PacketIO{}
 	p.SetBufWriter(bufWriter)
 	return p

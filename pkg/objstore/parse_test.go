@@ -15,10 +15,13 @@
 package objstore
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -26,6 +29,64 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
+
+func TestS3SSEKMSContextURL(t *testing.T) {
+	const contextJSON = `{"kk":"¾","tenant":"租户😀","value":"a+b / = & ?"}`
+	const normalized = `{"kk":"¾","tenant":"租户😀","value":"a+b / = \u0026 ?"}`
+	encoded := base64.StdEncoding.EncodeToString([]byte(normalized))
+	require.Contains(t, encoded, "+")
+	// ParseRawURL preserves literal plus signs for existing storage parameters.
+	query := strings.ReplaceAll(url.QueryEscape(contextJSON), "+", "%20")
+	for _, key := range []string{"sse-kms-context", "SSE_KMS_CONTEXT"} {
+		t.Run(key, func(t *testing.T) {
+			options := &BackendOptions{}
+			require.NoError(t, json.Unmarshal([]byte(`{"sse":"aws:kms","sse-kms-context":"{\"tenant\":\"from-options\"}"}`), &options.S3))
+			backend, err := ParseBackend("s3://bucket/prefix?"+key+"="+query, options)
+			require.NoError(t, err)
+			require.Equal(t, encoded, backend.GetS3().GetSseKmsEncryptionContext())
+			require.Equal(t, "aws:kms", backend.GetS3().Sse)
+			require.Empty(t, backend.GetS3().SseKmsKeyId)
+
+			// Parsing a URL overrides options for this backend, without mutating them.
+			fromOptions, err := ParseBackend("s3://bucket/prefix", options)
+			require.NoError(t, err)
+			require.Equal(t, base64.StdEncoding.EncodeToString([]byte(`{"tenant":"from-options"}`)), fromOptions.GetS3().GetSseKmsEncryptionContext())
+			unset, err := ParseBackend("s3://bucket/prefix?"+key+"=", options)
+			require.NoError(t, err)
+			require.Empty(t, unset.GetS3().GetSseKmsEncryptionContext())
+
+			parsedURL, err := url.Parse("s3://bucket/prefix?" + key + "=" + query)
+			require.NoError(t, err)
+			fromURL, err := ParseBackendFromURL(parsedURL, options)
+			require.NoError(t, err)
+			require.Equal(t, encoded, fromURL.GetS3().GetSseKmsEncryptionContext())
+		})
+	}
+
+	// The encoded value survives snapshot request serialization.
+	backend, err := ParseBackend("s3://bucket/prefix?sse=aws:kms&sse-kms-context="+query, nil)
+	require.NoError(t, err)
+	request := &backuppb.BackupRequest{StorageBackend: backend}
+	data, err := request.Marshal()
+	require.NoError(t, err)
+	var restoredRequest backuppb.BackupRequest
+	require.NoError(t, restoredRequest.Unmarshal(data))
+	require.Equal(t, encoded, restoredRequest.GetStorageBackend().GetS3().GetSseKmsEncryptionContext())
+
+	for _, input := range []string{`{"tenant":null}`, `{"tenant":"private-context","tenant":"other"}`, encoded} {
+		_, err := ParseBackend("s3://bucket/prefix?sse-kms-context="+url.QueryEscape(input), nil)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "sse-kms-context")
+		require.NotContains(t, err.Error(), "private-context")
+	}
+
+	// A query that cannot be fully decoded must not silently lose the context.
+	for _, rawQuery := range []string{`{"tenant":"a;private-context"}`, `{"tenant":"private-context%zz"}`} {
+		_, err := ParseBackend("s3://bucket/prefix?sse=aws:kms&sse-kms-context="+rawQuery, nil)
+		require.ErrorContains(t, err, "parse storage URL query failed")
+		require.NotContains(t, err.Error(), "private-context")
+	}
+}
 
 func TestCreateStorage(t *testing.T) {
 	_, err := ParseBackend("1invalid:", nil)
@@ -602,6 +663,7 @@ func TestBackendOptionsRedacted(t *testing.T) {
 	opts.S3.AccessKey = "AKID"
 	opts.S3.SecretAccessKey = "SKEY"
 	opts.S3.SessionToken = "TOKEN"
+	opts.S3.SseKmsContext = `{"tenant":"context-value"}`
 	opts.S3.Region = "us-east-1"
 	opts.Azblob.AccountKey = "AZKEY"
 	opts.Azblob.SASToken = "SAS"
@@ -614,6 +676,8 @@ func TestBackendOptionsRedacted(t *testing.T) {
 	require.Equal(t, ast.RedactedValue, redacted.S3.AccessKey)
 	require.Equal(t, ast.RedactedValue, redacted.S3.SecretAccessKey)
 	require.Equal(t, ast.RedactedValue, redacted.S3.SessionToken)
+	require.Equal(t, ast.RedactedValue, redacted.S3.SseKmsContext)
+	require.Equal(t, `{"tenant":"context-value"}`, opts.S3.SseKmsContext)
 	require.Equal(t, ast.RedactedValue, redacted.Azblob.AccountKey)
 	require.Equal(t, ast.RedactedValue, redacted.Azblob.SASToken)
 	require.Equal(t, ast.RedactedValue, redacted.Azblob.EncryptionKey)
@@ -631,8 +695,14 @@ func TestRedactURL(t *testing.T) {
 		expected string
 	}{
 		{"/local/path", "/local/path"},
+		{"/local/path#name", "/local/path#name"},
 		{"/data/my files/100%off", "/data/my files/100%off"},
 		{"s3://bucket/prefix", "s3://bucket/prefix"},
+		{"s3://bucket/prefix?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D", "s3://bucket/prefix?sse-kms-context=xxxxxx"},
+		{`s3://bucket/prefix?sse-kms-context={"tenant":"#context-value"}`, "s3://bucket/prefix"},
+		{`s3://bucket/prefix?sse=aws:kms&sse-kms-context={"tenant":"a&private-context-value"}`, "s3://bucket/prefix"},
+		{`s3://bucket/prefix?sse=aws:kms&sse-kms-context={"tenant":"a;x&private-context-value"}`, "s3://bucket/prefix"},
+		{`s3://bucket/prefix?sse=aws:kms&sse-kms-context={"tenant":"a%zz&private-context-value"}`, "s3://bucket/prefix"},
 		{"s3://bucket/prefix?access-key=AKID&secret-access-key=SKEY&region=us", "s3://bucket/prefix?access-key=xxxxxx&region=us&secret-access-key=xxxxxx"},
 		{"azure://bucket/prefix?sas-token=SAS", "azure://bucket/prefix?sas-token=xxxxxx"},
 		{"s3://bucket:port/prefix?access-key=AKID&secret-access-key=SKEY", InvalidURLPlaceholder},

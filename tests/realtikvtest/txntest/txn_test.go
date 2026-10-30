@@ -25,18 +25,24 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/txnkv/txnlock"
 )
 
 func TestInTxnPSProtoPointGet(t *testing.T) {
@@ -240,6 +246,207 @@ func TestDuplicateErrorMessage(t *testing.T) {
 	tk2.MustExec("insert into t3 values (1, 1)")
 	tk2.MustExec("insert into t4 values (1, 2)")
 	tk.MustContainErrMsg("update t3 set c = c + 1 where v = 1", "Duplicate entry '1' for key 't3.i1'")
+}
+
+type observeInsertLockClient struct {
+	tikv.Client
+	onResponse func(*tikvrpc.Request, *tikvrpc.Response, error) (*tikvrpc.Response, error)
+}
+
+func (c *observeInsertLockClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
+	return c.onResponse(req, resp, err)
+}
+
+// TestInsertOnDuplicateKeyUpdateResolvesRepeatedLocks verifies that an INSERT
+// encountering repeated locks from unique-index checks resolves them and preserves committed rows.
+// See https://github.com/pingcap/tidb/issues/72231.
+func TestInsertOnDuplicateKeyUpdateResolvesRepeatedLocks(t *testing.T) {
+	testInsertOnDuplicateKeyUpdateResolvesRepeatedLocks(t, false)
+}
+
+// TestInsertOnDuplicateKeyUpdateRollsBackRepeatedLocks verifies that an INSERT
+// encountering expired repeated locks rolls them back and writes the expected rows.
+// See https://github.com/pingcap/tidb/issues/72231.
+func TestInsertOnDuplicateKeyUpdateRollsBackRepeatedLocks(t *testing.T) {
+	testInsertOnDuplicateKeyUpdateResolvesRepeatedLocks(t, true)
+}
+
+func testInsertOnDuplicateKeyUpdateResolvesRepeatedLocks(t *testing.T, rollback bool) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table insert_duplicate_locks (id int primary key, u int unique, v int)")
+	tk.MustExec("set tidb_enable_async_commit = OFF")
+	tk.MustExec("set tidb_enable_1pc = OFF")
+	t.Log("TiDB version:", tk.MustQuery("select tidb_version()").Rows())
+
+	// Leave prewrite locks for the next INSERT to resolve, either committed or expired.
+	var startTS uint64
+	func() {
+		var enabledFailpoints []string
+		defer func() {
+			for i := len(enabledFailpoints) - 1; i >= 0; i-- {
+				if err := failpoint.Disable(enabledFailpoints[i]); err != nil {
+					t.Errorf("failed to disable failpoint %s: %v", enabledFailpoints[i], err)
+				}
+			}
+		}()
+		enableFailpoint := func(name, expression string) {
+			require.NoError(t, failpoint.Enable(name, expression))
+			enabledFailpoints = append(enabledFailpoints, name)
+		}
+
+		enableFailpoint("tikvclient/twoPCRequestBatchSizeLimit", "return")
+		if rollback {
+			enableFailpoint("tikvclient/beforeCommit", `return("fail")`)
+			enableFailpoint("tikvclient/commitFailedSkipCleanup", "return")
+			enableFailpoint("tikvclient/twoPCShortLockTTL", "return")
+			enableFailpoint("tikvclient/doNotKeepAlive", "return")
+		} else {
+			enableFailpoint("tikvclient/beforeCommitSecondaries", `return("skip")`)
+		}
+		tk.MustExec("begin optimistic")
+		tk.MustExec("insert into insert_duplicate_locks values (1, 1, 10), (2, 2, 20), (3, 3, 30)")
+		txn, err := tk.Session().Txn(false)
+		require.NoError(t, err)
+		startTS = txn.StartTS()
+		if rollback {
+			tk.MustContainErrMsg("commit", "injected failure before commit")
+		} else {
+			tk.MustExec("commit")
+		}
+		tk.Session().GetCommitWaitGroup().Wait()
+	}()
+
+	tikvStore := store.(tikv.Storage)
+	tableID := external.GetTableByName(t, tk, "test", "insert_duplicate_locks").Meta().ID
+	tableStart := tablecodec.EncodeTablePrefix(tableID)
+	tableEnd := tableStart.PrefixNext()
+	scanLocks := func() (int, error) {
+		resolver := tikv.NewRegionLockResolver("insert-duplicate-locks", tikvStore)
+		bo := tikv.NewBackoffer(context.Background(), 5000)
+		count := 0
+		for key := []byte(tableStart); ; {
+			locks, loc, err := resolver.ScanLocksInOneRegion(bo, key, tableEnd, startTS, 16)
+			if err != nil {
+				return 0, err
+			}
+			count += len(locks)
+			if len(loc.EndKey) == 0 || bytes.Compare(loc.EndKey, tableEnd) >= 0 {
+				return count, nil
+			}
+			key = loc.EndKey
+		}
+	}
+	lockCount, err := scanLocks()
+	require.NoError(t, err)
+	if rollback {
+		require.Equal(t, 6, lockCount, "the primary and all five secondaries must remain prewritten")
+		// The short-TTL failpoint sets TTL to 1ms. Refresh TSO instead of waiting for the periodic oracle update.
+		require.Eventually(t, func() bool {
+			_, err := store.CurrentVersion(kv.GlobalTxnScope)
+			return err == nil && tikvStore.GetOracle().IsExpired(startTS, 1, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		}, time.Second, time.Millisecond)
+	} else {
+		require.Equal(t, 5, lockCount, "three row keys and three unique-index keys leave five secondary locks")
+	}
+
+	// Observe actual responses and cleanup RPCs; do not inject locks or rewrite requests.
+	var mu sync.Mutex
+	type lockObservations struct {
+		duplicateBatchGetLocks bool
+		resolveRequests        int
+		rollbackRequests       int
+		expiredPrimary         bool
+		resolveErrors          []string
+	}
+	var observations lockObservations
+	onRPCFinished := func(req *tikvrpc.Request, resp *tikvrpc.Response, rpcErr error) (*tikvrpc.Response, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if req.Type == tikvrpc.CmdResolveLock && req.ResolveLock().GetStartVersion() == startTS {
+			observations.resolveRequests++
+			if req.ResolveLock().GetCommitVersion() == 0 {
+				observations.rollbackRequests++
+			}
+			if rpcErr != nil {
+				observations.resolveErrors = append(observations.resolveErrors, rpcErr.Error())
+			} else if resp == nil {
+				observations.resolveErrors = append(observations.resolveErrors, "missing ResolveLock response")
+			} else if body, ok := resp.Resp.(*kvrpcpb.ResolveLockResponse); ok && body.GetError() != nil {
+				observations.resolveErrors = append(observations.resolveErrors, body.GetError().String())
+			}
+		}
+		if resp != nil {
+			if body, ok := resp.Resp.(*kvrpcpb.CheckTxnStatusResponse); ok &&
+				req.CheckTxnStatus().GetLockTs() == startTS && body.GetAction() == kvrpcpb.Action_TTLExpireRollback {
+				observations.expiredPrimary = true
+			}
+			if body, ok := resp.Resp.(*kvrpcpb.BatchGetResponse); ok {
+				seen := make(map[string]struct{})
+				for _, pair := range body.GetPairs() {
+					lock := pair.GetError().GetLocked()
+					if lock == nil || lock.GetLockVersion() != startTS {
+						continue
+					}
+					if _, ok := seen[string(lock.GetKey())]; ok {
+						observations.duplicateBatchGetLocks = true
+					}
+					seen[string(lock.GetKey())] = struct{}{}
+				}
+				if observations.duplicateBatchGetLocks {
+					t.Logf("BatchGet returned repeated locks for transaction %d", startTS)
+				}
+			}
+		}
+		return resp, rpcErr
+	}
+	originalClient := tikvStore.GetTiKVClient()
+	tikvStore.SetTiKVClient(&observeInsertLockClient{Client: originalClient, onResponse: onRPCFinished})
+	t.Cleanup(func() { tikvStore.SetTiKVClient(originalClient) })
+
+	// Repeated unique values make INSERT's duplicate checks read the same locked index keys twice.
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("set tidb_enable_async_commit = OFF")
+	tk2.MustExec("set tidb_enable_1pc = OFF")
+	resolveStarted := time.Now()
+	_, insertErr := tk2.Exec(`insert into insert_duplicate_locks values
+		(4, 2, 100), (5, 3, 100), (6, 2, 100), (7, 3, 100)
+		on duplicate key update v = v + 1`)
+	require.NoError(t, insertErr)
+
+	// Wait for INSERT's asynchronous cleanup before reading data, since SELECT can also resolve locks.
+	// Locks not touched by INSERT may still exist in the same transaction.
+	lockResolver := txnlock.LockResolverProbe{LockResolver: tikvStore.GetLockResolver()}
+	require.Eventually(t, func() bool {
+		return lockResolver.AsyncResolveTaskCount() == 0
+	}, 3*time.Second, 10*time.Millisecond)
+	mu.Lock()
+	// Snapshot INSERT's observations before SELECT can issue more RPCs; copy the slice so later callbacks cannot change the snapshot.
+	insertObservations := observations
+	insertObservations.resolveErrors = append([]string(nil), observations.resolveErrors...)
+	mu.Unlock()
+	require.True(t, insertObservations.duplicateBatchGetLocks, "INSERT must encounter repeated locks from BatchGet")
+	require.Positive(t, insertObservations.resolveRequests, "INSERT must trigger physical lock resolution")
+	require.Empty(t, insertObservations.resolveErrors, "INSERT cleanup must not return errors")
+	if rollback {
+		require.True(t, insertObservations.expiredPrimary, "the primary must be rolled back after its 1ms TTL expires")
+		require.Equal(t, insertObservations.resolveRequests, insertObservations.rollbackRequests,
+			"all cleanup requests for the expired transaction must roll back")
+	}
+	t.Logf("INSERT cleanup: repeated BatchGet locks=%v, ResolveLock requests=%d, rollback requests=%d, errors=%v, elapsed=%s",
+		insertObservations.duplicateBatchGetLocks, insertObservations.resolveRequests,
+		insertObservations.rollbackRequests, insertObservations.resolveErrors, time.Since(resolveStarted))
+
+	// Verify the SQL result after the INSERT's cleanup assertions are captured.
+	if rollback {
+		tk2.MustQuery("select * from insert_duplicate_locks order by id").Check(testkit.Rows("4 2 101", "5 3 101"))
+	} else {
+		tk2.MustQuery("select * from insert_duplicate_locks order by id").Check(testkit.Rows("1 1 10", "2 2 22", "3 3 32"))
+	}
+	tk2.MustExec("admin check table insert_duplicate_locks")
 }
 
 func TestAssertionWhenPessimisticLockLost(t *testing.T) {

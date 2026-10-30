@@ -95,13 +95,13 @@ func GetGroups(ctx context.Context, ids []string) (map[string]*pdhttp.AffinityGr
 	return manager.GetAffinityGroups(ctx, ids)
 }
 
-// GetAllGroupStates gets all affinity group states from PD.
-// This is used by SHOW AFFINITY to directly query PD without going through the manager.
-func GetAllGroupStates(ctx context.Context) (map[string]*pdhttp.AffinityGroupState, error) {
-	if pdClient == nil {
+// GetGroupStates gets the requested affinity group states from PD for SHOW AFFINITY.
+// It uses the same compatibility fallbacks as DDL group lookups.
+func GetGroupStates(ctx context.Context, ids []string) (map[string]*pdhttp.AffinityGroupState, error) {
+	if pdClient == nil || len(ids) == 0 {
 		return make(map[string]*pdhttp.AffinityGroupState), nil
 	}
-	return pdClient.GetAllAffinityGroups(ctx)
+	return NewPDManager(pdClient).GetAffinityGroups(ctx, ids)
 }
 
 // SetPDClientForTest sets the PD client for testing.

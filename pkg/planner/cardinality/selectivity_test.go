@@ -3116,3 +3116,36 @@ func TestEqualEstimateOnZeroRepeatBucketUpper(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 5.0, est.Est, "an observed Repeat must still be used as is")
 }
+
+// TestOutOfRangeNullOnlyRange covers the [NULL, MinNotNull) range that cross
+// estimation builds for the rows that precede an `IS NOT NULL` range when a
+// Limit is over a table scan. The range holds only NULLs, so it has no
+// out-of-range part. NULL converts to scalar 0 and MinNotNull to -MaxFloat64,
+// so the range used to reach the "Right bound should not be less than left
+// bound" assertion in OutOfRangeShape.
+func TestOutOfRangeNullOnlyRange(t *testing.T) {
+	colValues, err := generateIntDatum(1, 100)
+	require.NoError(t, err)
+	hist := mockStatsHistogram(1, colValues, 1, types.NewFieldType(mysql.TypeLonglong))
+	minNotNull := types.MinNotNullDatum()
+	shape := hist.OutOfRangeShape(&types.Datum{}, &minNotNull, 100)
+	require.True(t, shape.Impossible)
+	require.Zero(t, hist.ScaleOutOfRangeShape(mock.NewContext(), shape, 200, 100).Est)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, k int, pad varchar(20), unique key uk(k))")
+	tk.MustExec("create table s (id int primary key, pad varchar(20))")
+	// k equals the handle, so it is fully correlated with the table scan order.
+	values := make([]string, 0, 300)
+	for i := 1; i <= 300; i++ {
+		values = append(values, fmt.Sprintf("(%d, %d, 'p%d')", i, i, i))
+	}
+	tk.MustExec("insert into t values " + strings.Join(values, ","))
+	tk.MustExec("insert into s select id, pad from t")
+	tk.MustExec("analyze table t, s")
+	require.Len(t, tk.MustQuery("select pad from t where k is not null limit 10").Rows(), 10)
+	// An inner join adds `not(isnull(t.k))` to t, which takes the same path.
+	require.Len(t, tk.MustQuery("select s.pad, t.pad from s join t on s.id = t.k limit 10").Rows(), 10)
+}

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -183,6 +184,9 @@ func (s *Syncer) cleanupFailedRegistration(session *concurrency.Session) {
 
 // StoreServerInfo stores self server static information to etcd.
 func (s *Syncer) StoreServerInfo(ctx context.Context) error {
+	if diagnosticmode.Enabled() {
+		return nil
+	}
 	if s.etcdCli == nil {
 		return nil
 	}
@@ -221,6 +225,9 @@ func (s *Syncer) GetServerInfoByID(ctx context.Context, id string) (*ServerInfo,
 
 // UpdateServerLabel updates the labels of the local server information in etcd.
 func (s *Syncer) UpdateServerLabel(ctx context.Context, labels map[string]string) error {
+	if diagnosticmode.Enabled() {
+		return nil
+	}
 	// when etcdCli is nil, the server infos are generated from the latest config, no need to update.
 	if s.etcdCli == nil {
 		return nil
@@ -350,6 +357,9 @@ func (s *Syncer) RemoveServerInfo() {
 		}
 		cancel()
 	}
+	if diagnosticmode.Enabled() {
+		return
+	}
 	err := etcd.DeleteKeyFromEtcd(s.serverInfoPath, s.etcdCli, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout)
 	if err != nil {
 		logutil.BgLogger().Error("remove server info failed", zap.Error(err))
@@ -434,6 +444,9 @@ func (s *Syncer) NewTopologySessionAndStoreServerInfo(ctx context.Context) error
 
 // StoreTopologyInfo stores the topology of tidb to etcd.
 func (s *Syncer) StoreTopologyInfo(ctx context.Context) error {
+	if diagnosticmode.Enabled() {
+		return nil
+	}
 	if s.etcdCli == nil {
 		return nil
 	}
@@ -456,6 +469,9 @@ func (s *Syncer) StoreTopologyInfo(ctx context.Context) error {
 
 // refreshTopology refreshes etcd topology with ttl stored in "/topology/tidb/ip:port/ttl".
 func (s *Syncer) updateTopologyAliveness(ctx context.Context) error {
+	if diagnosticmode.Enabled() {
+		return nil
+	}
 	if s.etcdCli == nil {
 		return nil
 	}
@@ -492,6 +508,9 @@ func (s *Syncer) GetAllTiDBTopology(ctx context.Context) ([]*TopologyInfo, error
 
 // RemoveTopologyInfo remove self server topology information from etcd.
 func (s *Syncer) RemoveTopologyInfo() {
+	if diagnosticmode.Enabled() {
+		return
+	}
 	if s.etcdCli == nil {
 		return
 	}

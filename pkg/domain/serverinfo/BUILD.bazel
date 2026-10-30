@@ -11,6 +11,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/config/diagnosticmode",
         "//pkg/ddl/util",
         "//pkg/kv",
         "//pkg/metrics",

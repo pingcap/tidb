@@ -46,7 +46,42 @@ const (
 	// https://github.com/aliyun/aliyun_assist_client/blob/feb283504ee5a11484067af9762f1008baa664b0/common/metaserver/prop.go#L34-L37
 	// and https://www.alibabacloud.com/blog/alibaba-cloud-ecs-metadata-user-data-and-dynamic-data_594351#:~:text=Retrieve%20Region%20Information
 	regionIDMetaURL = "http://100.100.100.200/latest/meta-data/region-id"
+	// ecsMetadataIP is the Aliyun ECS metadata service address. Failing to reach
+	// it is often transient, unlike a missing local credential configuration.
+	ecsMetadataIP = "100.100.100.200"
 )
+
+// IsTransientNoCredentialsError reports whether err is a transient failure to
+// resolve credentials from the default provider chain because the Aliyun ECS
+// metadata service request timed out or hit its deadline. Permanent causes,
+// e.g. missing credential configuration or the metadata service refusing the
+// request, are not reported as retryable.
+//
+// It is exported so callers that run on top of this store, such as IMPORT INTO,
+// can classify a failed store creation as retryable.
+//
+// The reason it is matched this way is that the Aliyun SDK does its own
+// transient-error detection the same way. The OSS SDK's ConnectionErrorRetryable
+// treats a connection error as retryable when net.Error.Timeout() or
+// Temporary() is true (and falls back to a few message substrings), see
+// oss/retry/retryable_error.go in github.com/aliyun/alibabacloud-oss-go-sdk-v2.
+// But by the time the error reaches us it has already been flattened to a
+// string: the credentials SDK wraps the metadata request error with
+// fmt.Errorf("refresh Ecs sts token err: %s", err.Error()) (see ecs_ram_role.go
+// in github.com/aliyun/credentials-go), and the import code reformats it again
+// via errors.GetErrStackMsg. So the net.Error type is gone and we match the same
+// signals as text: the metadata host and the Go HTTP timeout messages that the
+// SDK's type check would have caught.
+func IsTransientNoCredentialsError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if !strings.Contains(msg, ecsMetadataIP) {
+		return false
+	}
+	return strings.Contains(msg, "context deadline exceeded") || strings.Contains(msg, "i/o timeout")
+}
 
 // OSSStore is the OSS storage implementation.
 type OSSStore struct {
@@ -121,7 +156,7 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 		ossCfg = ossCfg.WithCredentialsProvider(credProvider)
 	} else {
 		var provider providers.CredentialsProvider = providers.NewDefaultCredentialsProvider()
-		cred, err := provider.GetCredentials()
+		cred, err := fetchCredentials(ctx, provider, logger)
 		if err != nil {
 			return nil, errors.Annotatef(err, "failed to get credentials from default provider")
 		}
