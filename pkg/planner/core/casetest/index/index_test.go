@@ -600,6 +600,31 @@ func TestIndexPruneWithSharedClusteredPrefix(t *testing.T) {
 	})
 }
 
+func TestSkylinePruningWithMissingIndexStats(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_opt_prefer_range_scan = on")
+	tk.MustExec(`create table t (
+		id int not null, a int not null, b int not null, c int not null,
+		payload varchar(100), key idx_id(id))`)
+	var values strings.Builder
+	for i := 1; i <= 1000; i++ {
+		if i > 1 {
+			values.WriteString(",")
+		}
+		fmt.Fprintf(&values, "(%d, 1, 1, 1, 'payload')", i)
+	}
+	tk.MustExec("insert into t values " + values.String())
+	tk.MustExec("analyze table t")
+	tk.MustExec("alter table t add index idx_abc(a, b, c)")
+	// Only idx_id has statistics, and it is much more selective than idx_abc.
+	tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't' and is_index = 1").CheckAt([]int{3}, testkit.Rows("idx_id"))
+	const query = "select * from t where id = 1 and a = 1 and b = 1 and c = 1"
+	tk.MustQuery("explain format = 'brief' " + query).CheckContain("index:idx_id(id)")
+	tk.MustQuery(query).Check(testkit.Rows("1 1 1 1 payload"))
+}
+
 func TestForceIndexLimit(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec(`use test`)

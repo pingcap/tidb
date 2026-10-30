@@ -303,9 +303,8 @@ func indexJoinPathCompare(ds *logicalop.DataSource, best, current *indexJoinPath
 
 	// reuse Skyline pruning to compare the index join paths.
 	prop := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64} // default property without any requirement
-	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan()
 
-	cmpResult, _ := compareCandidates(ds.SCtx(), ds.StatisticTable, prop, current.candidate, best.candidate, preferRange)
+	cmpResult, _ := compareCandidates(ds.SCtx(), ds.StatisticTable, prop, current.candidate, best.candidate)
 	if cmpResult == 1 {
 		return true
 	} else if cmpResult == -1 {
