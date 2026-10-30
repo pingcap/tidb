@@ -259,6 +259,48 @@ func TestVectorizedCastStringAsDecimalWithUnsignedFlagInUnion(t *testing.T) {
 	cast := &builtinCastStringAsDecimalSig{baseCast}
 	require.True(t, cast.vectorized() && cast.isChildrenVectorized())
 
+	t.Run("sign-only", func(t *testing.T) {
+		for _, value := range []string{"-", " - ", "+", "", "abc", "1x"} {
+			input := chunk.NewChunkWithCapacity([]*types.FieldType{col.RetType}, 1)
+			input.AppendString(0, value)
+			_, _, scalarErr := cast.evalDecimal(ctx, input.GetRow(0))
+			require.Error(t, scalarErr)
+			result := chunk.NewColumn(cast.tp, 1)
+			require.EqualError(t, cast.vecEvalDecimal(ctx, input, result), scalarErr.Error(), "input %q", value)
+		}
+	})
+
+	t.Run("warnings", func(t *testing.T) {
+		sc := ctx.GetSessionVars().StmtCtx
+		flags := sc.TypeFlags()
+		defer sc.SetTypeFlags(flags)
+		sc.SetTypeFlags(flags.WithTruncateAsWarning(true))
+		input := chunk.NewChunkWithCapacity([]*types.FieldType{col.RetType}, 8)
+		for _, value := range []string{"-", " - ", "+", "", "abc", "1x", "-1"} {
+			input.AppendString(0, value)
+		}
+		input.AppendNull(0)
+		sc.SetWarnings(nil)
+		result := chunk.NewColumn(cast.tp, input.NumRows())
+		require.NoError(t, cast.vecEvalDecimal(ctx, input, result))
+		vecWarnings := sc.GetWarnings()
+		sc.SetWarnings(nil)
+		for i := range input.NumRows() {
+			res, isNull, err := cast.evalDecimal(ctx, input.GetRow(i))
+			require.NoError(t, err)
+			require.Equal(t, isNull, result.IsNull(i))
+			if !isNull {
+				require.Zero(t, result.GetDecimal(i).Compare(res))
+			}
+		}
+		scalarWarnings := sc.GetWarnings()
+		require.Len(t, vecWarnings, 6)
+		require.Len(t, scalarWarnings, len(vecWarnings))
+		for i := range vecWarnings {
+			require.EqualError(t, vecWarnings[i].Err, scalarWarnings[i].Err.Error())
+		}
+	})
+
 	inputs := []*chunk.Chunk{
 		genCastStringAsDecimal(false),
 		genCastStringAsDecimal(true),
