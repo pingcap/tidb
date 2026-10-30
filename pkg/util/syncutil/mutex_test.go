@@ -24,16 +24,19 @@ func TestRWMutexConcurrentReaders(t *testing.T) {
 	mu.RLock()
 	defer mu.RUnlock()
 
+	acquired := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
 		mu.RLock()
+		close(acquired)
 		mu.RUnlock()
 		close(done)
 	}()
 
 	select {
-	case <-done:
+	case <-acquired:
 	case <-time.After(time.Second):
 		t.Fatal("the second reader should not be blocked by the first reader")
 	}
+	<-done
 }
