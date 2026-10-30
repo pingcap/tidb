@@ -210,6 +210,20 @@ func updateRecord(
 		}
 	}
 
+	// Generated columns must be evaluated from the values that will be stored,
+	// so a NULL written into a NOT NULL column has to become its zero value first.
+	for i, col := range cols {
+		if col.IsGenerated() || !newData[i].IsNull() {
+			continue
+		}
+		if err := col.HandleBadNull(sc.ErrCtx(), &newData[i], 0); err != nil {
+			return false, false, err
+		}
+		if len(assignments) > 0 {
+			evalBuffer.SetDatum(i+offset, newData[i])
+		}
+	}
+
 	// Step 4: fill auto generated columns
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	for _, assign := range assignments {
@@ -225,12 +239,15 @@ func updateRecord(
 		if err == nil {
 			newData[idxInCols], err = table.CastValue(sctx, rawVal, assign.Col.ToInfo(), false, false)
 		}
-		evalBuffer.SetDatum(assign.Col.Index, newData[idxInCols])
 
 		err = errorHandler(sctx, assign, &rawVal, err)
 		if err != nil {
 			return false, false, err
 		}
+		if err = cols[idxInCols].HandleBadNull(sc.ErrCtx(), &newData[idxInCols], 0); err != nil {
+			return false, false, err
+		}
+		evalBuffer.SetDatum(assign.Col.Index, newData[idxInCols])
 
 		if err := checkColumnFunc(idxInCols, false); err != nil {
 			return false, false, err
