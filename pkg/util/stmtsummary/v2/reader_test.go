@@ -20,14 +20,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-<<<<<<< HEAD
-=======
 	"path/filepath"
 	"strings"
->>>>>>> 44538075bdf (stmtsummary: prefilter history digests before full record decoding (#71601))
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -425,8 +423,6 @@ func TestHistoryReader(t *testing.T) {
 			require.Equal(t, len(columns), len(row))
 		}
 	}()
-<<<<<<< HEAD
-=======
 
 	func() {
 		// Duplicate digest keys: the full decode keeps the last occurrence, and the
@@ -485,59 +481,6 @@ func TestHistoryReader(t *testing.T) {
 		}
 		require.ElementsMatch(t, []string{"target", "a\ufffdb"}, digests)
 	}()
-
-	t.Run("bounds open file descriptors", func(t *testing.T) {
-		restore := config.RestoreFunc()
-		defer restore()
-
-		dir := t.TempDir()
-		filename := filepath.Join(dir, "tidb-statements.log")
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.Instance.StmtSummaryFilename = filename
-		})
-
-		const fileCount = 32
-		base := time.Date(2022, 12, 27, 0, 0, 0, 0, time.Local)
-		for i := range fileCount {
-			begin := base.Add(time.Duration(i) * 2 * time.Hour)
-			end := begin.Add(10 * time.Minute)
-			path := filepath.Join(dir, fmt.Sprintf("tidb-statements-%s.log", end.Format(logFileTimeFormat)))
-			content := fmt.Sprintf("{\"begin\":%d,\"end\":%d,\"digest\":\"digest%d\",\"exec_count\":1}\n", begin.Unix(), end.Unix(), i)
-			require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
-		}
-		currentBegin := base.Add(fileCount * 2 * time.Hour)
-		currentEnd := currentBegin.Add(10 * time.Minute)
-		currentContent := fmt.Sprintf("{\"begin\":%d,\"end\":%d,\"digest\":\"current\",\"exec_count\":1}\n", currentBegin.Unix(), currentEnd.Unix())
-		require.NoError(t, os.WriteFile(filename, []byte(currentContent), 0o600))
-
-		t.Run("matching files", func(t *testing.T) {
-			before, canCount := countOpenFileDescriptors()
-			reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, nil, []*StmtTimeRange{
-				{Begin: base.Unix(), End: 0},
-			}, 2)
-			require.NoError(t, err)
-			if canCount {
-				after, _ := countOpenFileDescriptors()
-				require.LessOrEqual(t, after-before, 4)
-			}
-			require.NoError(t, reader.Close())
-		})
-
-		t.Run("rejected files", func(t *testing.T) {
-			before, canCount := countOpenFileDescriptors()
-			reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, nil, []*StmtTimeRange{
-				{Begin: 0, End: base.Add(-time.Minute).Unix()},
-			}, 2)
-			require.NoError(t, err)
-			require.Empty(t, readAllRows(t, reader))
-			require.NoError(t, reader.Close())
-			if canCount {
-				after, _ := countOpenFileDescriptors()
-				require.LessOrEqual(t, after-before, 4)
-			}
-		})
-	})
->>>>>>> 44538075bdf (stmtsummary: prefilter history digests before full record decoding (#71601))
 }
 
 func TestHistoryReaderInvalidLine(t *testing.T) {
@@ -589,8 +532,6 @@ func readAllRows(t *testing.T, reader *HistoryReader) [][]types.Datum {
 	}
 	return results
 }
-<<<<<<< HEAD
-=======
 
 // benchmarkHistoryReaderRows compares the same persisted-file workload before
 // and after prefiltering, including high match rates and all text columns.
@@ -733,12 +674,3 @@ func TestExtractDigest(t *testing.T) {
 		require.False(t, ok, bad)
 	}
 }
-
-func countOpenFileDescriptors() (int, bool) {
-	entries, err := os.ReadDir("/proc/self/fd")
-	if err != nil {
-		return 0, false
-	}
-	return len(entries), true
-}
->>>>>>> 44538075bdf (stmtsummary: prefilter history digests before full record decoding (#71601))
