@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/paging"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
@@ -1462,7 +1463,7 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.GetTotalSleep(), backoffTypes)
 	}
 	if regionErr := resp.GetRegionError(); regionErr != nil {
-		logStr += fmt.Sprintf(" region_err:%s", regionErr.String())
+		logStr += fmt.Sprintf(" region_err:%s", redact.RegionError(regionErr))
 	}
 	// resp might be nil, but it is safe to call resp.GetXXX here.
 	detailV2 := resp.GetExecDetailsV2()
@@ -1552,7 +1553,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			return &copTaskResult{resp: resp}, nil
 		}
 		errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
-			task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
+			task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, redact.RegionError(regionErr))
 		if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1699,7 +1700,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		})
 		if regionErr := batchResp.GetRegionError(); regionErr != nil {
 			errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
-				task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
+				task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, redact.RegionError(regionErr))
 			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
 				return batchRespList, nil, errors.Trace(err)
 			}
@@ -1744,8 +1745,8 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			// guard At(0)/At(Len-1) to avoid a nil dereference.
 			if task.ranges.Len() > 0 {
 				otherErrFields = append(otherErrFields,
-					zap.ByteString("firstRangeStartKey", task.ranges.At(0).StartKey),
-					zap.ByteString("lastRangeEndKey", task.ranges.At(task.ranges.Len()-1).EndKey),
+					zap.String("firstRangeStartKey", redact.Key(task.ranges.At(0).StartKey)),
+					zap.String("lastRangeEndKey", redact.Key(task.ranges.At(task.ranges.Len()-1).EndKey)),
 				)
 			}
 			logutil.Logger(bo.GetCtx()).Warn("other error", otherErrFields...)
@@ -1779,8 +1780,8 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			// guard At(0)/At(Len-1) to avoid a nil dereference.
 			if task.ranges.Len() > 0 {
 				missingFields = append(missingFields,
-					zap.ByteString("firstRangeStartKey", task.ranges.At(0).StartKey),
-					zap.ByteString("lastRangeEndKey", task.ranges.At(task.ranges.Len()-1).EndKey),
+					zap.String("firstRangeStartKey", redact.Key(task.ranges.At(0).StartKey)),
+					zap.String("lastRangeEndKey", redact.Key(task.ranges.At(task.ranges.Len()-1).EndKey)),
 				)
 			}
 			logutil.Logger(bo.GetCtx()).Error("response of batched task missing", missingFields...)
@@ -1818,7 +1819,7 @@ func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.L
 		}))
 	} else {
 		logutil.Logger(bo.GetCtx()).Debug("coprocessor encounters lock",
-			zap.Stringer("lock", lockErr))
+			zap.Stringer("lock", redact.LockInfo(lockErr)))
 	}
 	var locks []*txnlock.Lock
 	if sharedLocks := lockErr.GetSharedLockInfos(); len(sharedLocks) > 0 {

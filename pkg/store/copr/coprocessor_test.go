@@ -16,17 +16,23 @@ package copr
 
 import (
 	"context"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func buildTestCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv.Request, eventCb trxevents.EventCallback) ([]*copTask, error) {
@@ -930,5 +936,66 @@ func TestBatchStoreCoprOnlySendToLeader(t *testing.T) {
 	require.Len(t, tasks, 4)
 	for _, task := range tasks {
 		require.Equal(t, task.busyThreshold, time.Second)
+	}
+}
+
+func TestHandleBatchCopResponseRedaction(t *testing.T) {
+	previousMode := errors.RedactLogEnabled.Load()
+	t.Cleanup(func() { errors.RedactLogEnabled.Store(previousMode) })
+	for _, mode := range []string{"OFF", "ON", "MARKER"} {
+		for _, empty := range []bool{false, true} {
+			for _, missing := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/empty=%t/missing=%t", mode, empty, missing), func(t *testing.T) {
+					errors.RedactLogEnabled.Store(mode)
+					core, recorded := observer.New(zap.WarnLevel)
+					ctx := context.WithValue(context.Background(), logutil.CtxLogKey, zap.New(core))
+					bo := backoff.NewBackofferWithVars(ctx, 3000, nil)
+					worker := &copIteratorWorker{
+						req:                     &kv.Request{StartTs: 42},
+						storeBatchedNum:         new(atomic.Uint64),
+						storeBatchedFallbackNum: new(atomic.Uint64),
+					}
+					ranges := NewKeyRanges(nil)
+					if !empty {
+						ranges = NewKeyRanges([]kv.KeyRange{{StartKey: []byte("start-secret"), EndKey: []byte("end-secret")}})
+					}
+					tasks := map[uint64]*batchedCopTask{2: {task: &copTask{taskID: 2, ranges: ranges}}}
+					resp := &coprocessor.Response{
+						BatchResponses: []*coprocessor.StoreBatchTaskResponse{{TaskId: 2, OtherError: "test error"}},
+					}
+					message := "other error"
+					if missing {
+						tasks[1] = &batchedCopTask{task: &copTask{taskID: 1}}
+						resp.BatchResponses = []*coprocessor.StoreBatchTaskResponse{{TaskId: 1}}
+						message = "response of batched task missing"
+					}
+					_, remains, err := worker.handleBatchCopResponse(bo, nil, resp, tasks)
+					if missing {
+						require.NoError(t, err)
+						require.Len(t, remains, 1)
+					} else {
+						require.EqualError(t, err, "other error: test error")
+					}
+					entries := recorded.FilterMessage(message).All()
+					require.Len(t, entries, 1)
+					fields := entries[0].ContextMap()
+					if empty {
+						require.NotContains(t, fields, "firstRangeStartKey")
+						require.NotContains(t, fields, "lastRangeEndKey")
+						return
+					}
+					if mode == "OFF" {
+						require.Equal(t, "73746172742D736563726574", fields["firstRangeStartKey"])
+						require.Equal(t, "656E642D736563726574", fields["lastRangeEndKey"])
+					} else {
+						require.Equal(t, "?", fields["firstRangeStartKey"])
+						require.Equal(t, "?", fields["lastRangeEndKey"])
+						require.NotContains(t, fmt.Sprint(fields), "secret")
+					}
+					require.Equal(t, kv.Key("start-secret"), ranges.At(0).StartKey)
+					require.Equal(t, kv.Key("end-secret"), ranges.At(0).EndKey)
+				})
+			}
+		}
 	}
 }
