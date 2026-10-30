@@ -3225,20 +3225,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-<<<<<<< HEAD
-        sha256 = "762cb953349fa06ef28f951dda66f9ee9fe529344bbb20e7d3d42b78c451b615",
-        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20261026041219-2c5f843b9827",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20261026041219-2c5f843b9827.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20261026041219-2c5f843b9827.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20261026041219-2c5f843b9827.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20261026041219-2c5f843b9827.zip",
-            "https://proxy.golang.org/github.com/pingcap/kvproto/@v/v0.0.0-20261026041219-2c5f843b9827.zip",
-        ],
-=======
-        sum = "h1:JuajF3N4+xYrvBFtQsGtNeYylzrll1Mw5+QyDSR7V1M=",
-        version = "v0.0.0-20260608025309-50b863799195",
->>>>>>> b69c87116eb (build: resolve Bazel Go deps through GOPROXY (#69844))
+        sum = "h1:36snzl9cRshFt/A9/mzbYPk5C9Y+iZlNQIUCvR5SUb4=",
+        version = "v0.0.0-20261026041219-2c5f843b9827",
     )
     go_repository(
         name = "com_github_pingcap_log",
