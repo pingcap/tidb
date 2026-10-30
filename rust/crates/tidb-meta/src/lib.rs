@@ -40,12 +40,10 @@
 //! assert!(!raw_key.is_empty());
 //! ```
 
-pub mod structure_errors;
 pub mod meta_errors;
 pub mod element;
 pub mod error;
 pub mod key;
-pub mod structure;
 pub mod transaction;
 pub mod value;
 

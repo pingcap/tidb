@@ -43,21 +43,11 @@ pub const fn which_magic_type(byte: u8) -> MagicType {
     }
 }
 
-/// Go writes every structure scalar as `strconv.FormatInt`.
-#[must_use]
-pub fn encode_int_value(value: i64) -> Vec<u8> {
-    value.to_string().into_bytes()
-}
+pub use tidb_structure::encode_int_value;
 
-/// Go `TxStructure.GetInt64`: `strconv.ParseInt` over the stored bytes.
-///
-/// Go returns 0 for a missing key before it ever parses; a caller that has no
-/// value should not call this.
+/// [`tidb_structure::parse_int_value`] as a metadata-transaction error.
 pub fn parse_int_value(value: &[u8]) -> Result<i64> {
-    std::str::from_utf8(value)
-        .map_err(|_| MetaError::InvalidIntValue)?
-        .parse()
-        .map_err(|_| MetaError::InvalidIntValue)
+    Ok(tidb_structure::parse_int_value(value)?)
 }
 
 /// Go `meta.attachMagicByte`.

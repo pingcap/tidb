@@ -3440,6 +3440,7 @@ dependencies = [
  "tidb-pd-client",
  "tidb-sqlkiller",
  "tidb-store-driver-error",
+ "tidb-tablecodec",
  "tidb-terror",
  "tidb-tracing",
  "tidb-txnkv",
@@ -5528,6 +5529,7 @@ dependencies = [
  "tidb-model",
  "tidb-mysql",
  "tidb-partialjson",
+ "tidb-structure",
  "tidb-tablecodec",
  "tidb-terror",
 ]
@@ -6831,6 +6833,7 @@ dependencies = [
  "tidb-store-driver-error",
  "tidb-store-driver-txn",
  "tidb-stringutil",
+ "tidb-structure",
  "tidb-syssession",
  "tidb-table",
  "tidb-tablecodec",
@@ -7554,6 +7557,7 @@ dependencies = [
  "tidb-pd-client",
  "tidb-proto",
  "tidb-store-driver-error",
+ "tidb-structure",
  "tidb-tablecodec",
  "tidb-terror",
  "tidb-tracing",
@@ -7589,6 +7593,17 @@ dependencies = [
  "serde_json",
  "tidb-goruntime",
  "tidb-mysql",
+]
+
+[[package]]
+name = "tidb-structure"
+version = "0.0.0"
+dependencies = [
+ "tidb-codec",
+ "tidb-errno",
+ "tidb-kv",
+ "tidb-meta",
+ "tidb-terror",
 ]
 
 [[package]]

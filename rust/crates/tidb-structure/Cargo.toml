@@ -1,0 +1,20 @@
+[package]
+name = "tidb-structure"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB string/hash/list structures over a KV transaction: Go pkg/structure (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-codec = { path = "../tidb-codec" }
+tidb-errno = { path = "../tidb-errno" }
+tidb-kv = { path = "../tidb-kv" }
+tidb-terror = { path = "../tidb-terror" }
+
+[dev-dependencies]
+tidb-meta = { path = "../tidb-meta" }

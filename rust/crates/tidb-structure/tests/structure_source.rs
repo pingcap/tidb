@@ -18,7 +18,7 @@
 //! `NewStructure(txn, nil, prefix)`; here those are [`TxStructure::new`] and
 //! [`TxStructure::read_only`] over one [`MemoryTransaction`].
 
-use tidb_meta::structure::{HashPair, TxStructure};
+use tidb_structure::{HashPair, StructureError, TxStructure};
 use tidb_meta::transaction::MemoryTransaction;
 use tidb_meta::MetaError;
 
@@ -50,9 +50,9 @@ fn string_operations_cover_set_get_inc_iterate_clear_and_snapshot_refusal() {
     assert_eq!(tx.get(key).unwrap(), None);
 
     let mut tx1 = TxStructure::read_only(&mut transaction, &[0x01]);
-    assert_eq!(tx1.set(key, value), Err(MetaError::WriteOnSnapshot));
-    assert_eq!(tx1.inc(key, 1), Err(MetaError::WriteOnSnapshot));
-    assert_eq!(tx1.clear(key), Err(MetaError::WriteOnSnapshot));
+    assert_eq!(tx1.set(key, value), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));
+    assert_eq!(tx1.inc(key, 1), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));
+    assert_eq!(tx1.clear(key), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));
 }
 
 // Go `TestList`.
@@ -83,7 +83,7 @@ fn list_operations_cover_push_pop_index_set_clear_and_snapshot_refusal() {
     // Go `LSet(key, 100, ...)`: the error reports the adjusted index.
     assert_eq!(
         tx.lset(key, 100, b"2"),
-        Err(MetaError::InvalidListIndex(97))
+        Err(MetaError::Structure(StructureError::InvalidListIndex(97)))
     );
 
     assert_eq!(
@@ -111,10 +111,10 @@ fn list_operations_cover_push_pop_index_set_clear_and_snapshot_refusal() {
     assert_eq!(tx.llen(key).unwrap(), 0);
 
     let mut tx1 = TxStructure::read_only(&mut transaction, &[0x01]);
-    assert_eq!(tx1.lpush(key, &[b"1"]), Err(MetaError::WriteOnSnapshot));
-    assert_eq!(tx1.rpop(key), Err(MetaError::WriteOnSnapshot));
-    assert_eq!(tx1.lset(key, 1, b"2"), Err(MetaError::WriteOnSnapshot));
-    assert_eq!(tx1.lclear(key), Err(MetaError::WriteOnSnapshot));
+    assert_eq!(tx1.lpush(key, &[b"1"]), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));
+    assert_eq!(tx1.rpop(key), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));
+    assert_eq!(tx1.lset(key, 1, b"2"), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));
+    assert_eq!(tx1.lclear(key), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));
 }
 
 // Go `TestHash`.
@@ -231,8 +231,8 @@ fn hash_operations_cover_set_get_iterate_last_n_inc_del_clear_and_nil_values() {
     );
 
     let mut tx1 = TxStructure::read_only(&mut transaction, &[0x01]);
-    assert_eq!(tx1.hinc(key, b"1", 1), Err(MetaError::WriteOnSnapshot));
-    assert_eq!(tx1.hdel(key, &[b"1"]), Err(MetaError::WriteOnSnapshot));
+    assert_eq!(tx1.hinc(key, b"1", 1), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));
+    assert_eq!(tx1.hdel(key, &[b"1"]), Err(MetaError::Structure(StructureError::WriteOnSnapshot)));
 
     // Go commits and reuses the store in a fresh transaction.
     let mut new_transaction = MemoryTransaction::default();
@@ -264,10 +264,10 @@ fn hash_clear_on_a_read_only_snapshot_panics_like_go() {
 fn structure_errors_expose_their_source_error_codes() {
     const ERR_UNKNOWN: u16 = 1105;
     for (error, code) in [
-        (MetaError::UnexpectedTypeFlag(b'x'), 8217),
-        (MetaError::InvalidListIndex(0), 8218),
-        (MetaError::InvalidListMetaData, 8219),
-        (MetaError::WriteOnSnapshot, 8220),
+        (StructureError::UnexpectedTypeFlag(b'x'), 8217),
+        (StructureError::InvalidListIndex(0), 8218),
+        (StructureError::InvalidListMetaData, 8219),
+        (StructureError::WriteOnSnapshot, 8220),
     ] {
         assert_eq!(error.code(), Some(code), "err: {error}");
         assert_ne!(error.code(), Some(ERR_UNKNOWN));

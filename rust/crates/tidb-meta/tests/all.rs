@@ -22,5 +22,4 @@ mod key_prefix_and_element_source;
 mod meta_test_go_parity;
 mod meta_test_part2_go_parity;
 mod meta_test_part3_go_parity;
-mod structure_source;
 mod transaction_source;

@@ -63,8 +63,8 @@ where
                     tidb_codec::encode_bytes(&mut logical_start, range_start.as_bytes());
                     let mut logical_end = b"DB:".to_vec();
                     tidb_codec::encode_bytes(&mut logical_end, range_end.as_bytes());
-                    let encoded_start = structure::encode_hash_data_key_prefix(&logical_start);
-                    let encoded_end = structure::encode_hash_data_key_prefix(&logical_end);
+                    let encoded_start = tidb_tablecodec::table_key::encode_meta_key_prefix(&logical_start);
+                    let encoded_end = tidb_tablecodec::table_key::encode_meta_key_prefix(&logical_end);
 
                     snapshot.iterate_range(
                         &encoded_start,
@@ -81,7 +81,7 @@ where
                             // Go deliberately skips malformed unrelated keys
                             // inside the bounded raw range.
                             let Ok((database_key, field)) =
-                                structure::decode_hash_data_key(encoded_key)
+                                tidb_tablecodec::table_key::decode_meta_key(encoded_key)
                             else {
                                 return Ok(());
                             };

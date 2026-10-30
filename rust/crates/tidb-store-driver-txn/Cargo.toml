@@ -12,6 +12,7 @@ description = "Go `pkg/store/driver/txn`: the TiKV transaction (`tikvTxn`) a ses
 workspace = true
 
 [dependencies]
+tidb-structure = { path = "../tidb-structure" }
 tracing = "0.1"
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 futures.workspace = true

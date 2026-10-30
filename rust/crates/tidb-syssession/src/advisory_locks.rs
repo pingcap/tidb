@@ -64,7 +64,7 @@ pub fn find_system_table<S: MetaSnapshot>(
     table_name: &str,
 ) -> Result<Option<TableInfo>, SystemTableLookupError> {
     for (raw_key, stored) in snapshot.scan_prefix(&key::databases_kv_prefix())? {
-        let (_, field) = tidb_meta::structure::decode_hash_data_key(&raw_key)
+        let (_, field) = tidb_tablecodec::table_key::decode_meta_key(&raw_key)
             .map_err(|error| SystemTableLookupError::Encode(format!("DBs hash key: {error}")))?;
         if !key::has_prefix(key::DB_PREFIX, &field) {
             continue;

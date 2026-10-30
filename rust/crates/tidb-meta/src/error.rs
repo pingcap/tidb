@@ -16,6 +16,8 @@
 
 use std::fmt;
 
+use tidb_structure::StructureError;
+
 /// Go `strconv.Atoi`'s two failure classes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IntegerParseFailure {
@@ -25,18 +27,12 @@ pub enum IntegerParseFailure {
     Range,
 }
 
-/// Go's `structure.ErrInvalidHashKeyFlag` / `meta.ErrInvalidString` surface,
-/// narrowed to the decode failures this crate can actually produce.
+/// Go `pkg/meta`'s errors, and the `pkg/structure` and `pkg/kv` errors a
+/// metadata transaction propagates.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MetaError {
-    /// The key does not start with the `m` meta namespace prefix.
-    NotMetaKey,
-    /// The mem-comparable bytes/uint framing inside the key is malformed.
-    MalformedKey,
-    /// The type byte did not match the expected structure flag.
-    ///
-    /// Go: `ErrInvalidHashKeyFlag`, "invalid encoded ... key flag %c".
-    UnexpectedTypeFlag(u8),
+    /// An error Go `pkg/structure` raised under the metadata transaction.
+    Structure(StructureError),
     /// A field name did not carry the source function's required prefix.
     ///
     /// Go: `[meta:1300]` / `ErrInvalidString.GenWithStack(message)`.
@@ -56,23 +52,8 @@ pub enum MetaError {
         /// Whether the owning Go parser calls `errors.Trace`.
         traced: bool,
     },
-    /// Go `structure.ErrWriteOnSnapshot`: a mutation reached a `TxStructure`
-    /// whose Go `readWriter` is nil.
-    WriteOnSnapshot,
-    /// Go `structure.ErrInvalidListIndex.GenWithStack("invalid list index %d")`.
-    InvalidListIndex(i64),
-    /// Go `structure.ErrInvalidListMetaData`: a stored list meta value was not
-    /// exactly sixteen bytes.
-    InvalidListMetaData,
     /// Go `kv.ErrCannotSetNilValue`: `Set` received an empty value.
     CannotSetNilValue,
-    /// Go `kv.ErrNotExist` where the source propagates it instead of mapping a
-    /// missing key to nil (list data reads).
-    KeyNotExist,
-    /// A scalar value was not the decimal ASCII integer Go writes.
-    ///
-    /// Go: `strconv.ParseInt` failing inside `TxStructure.GetInt64`.
-    InvalidIntValue,
     /// A scalar value was not a decimal ASCII unsigned integer.
     InvalidUnsignedIntValue,
     /// A scalar value was not a Go-compatible floating-point string.
@@ -135,11 +116,7 @@ pub enum MetaError {
 impl fmt::Display for MetaError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotMetaKey => formatter.write_str("invalid encoded meta key prefix"),
-            Self::MalformedKey => formatter.write_str("malformed encoded meta key"),
-            Self::UnexpectedTypeFlag(flag) => {
-                write!(formatter, "invalid encoded key flag {}", *flag as char)
-            }
+            Self::Structure(error) => error.fmt(formatter),
             Self::InvalidFieldPrefix(message) => classed(formatter, self, message),
             Self::InvalidFieldInteger { value, failure, .. } => write!(
                 formatter,
@@ -150,14 +127,7 @@ impl fmt::Display for MetaError {
                     IntegerParseFailure::Range => "value out of range",
                 }
             ),
-            Self::WriteOnSnapshot => classed(formatter, self, "write on snapshot"),
-            Self::InvalidListIndex(index) => {
-                classed(formatter, self, format_args!("invalid list index {index}"))
-            }
-            Self::InvalidListMetaData => classed(formatter, self, "invalid list meta data"),
             Self::CannotSetNilValue => classed(formatter, self, "can not set nil value"),
-            Self::KeyNotExist => classed(formatter, self, "Error: key not exist"),
-            Self::InvalidIntValue => formatter.write_str("invalid meta integer value"),
             Self::InvalidUnsignedIntValue => {
                 formatter.write_str("invalid meta unsigned integer value")
             }
@@ -220,6 +190,12 @@ impl fmt::Display for MetaError {
 
 impl std::error::Error for MetaError {}
 
+impl From<StructureError> for MetaError {
+    fn from(error: StructureError) -> Self {
+        Self::Structure(error)
+    }
+}
+
 /// Go `*terror.Error`'s `Error()`: `[<class>:<code>]<message>`.
 fn classed(
     formatter: &mut fmt::Formatter<'_>,
@@ -234,20 +210,15 @@ fn classed(
 
 impl MetaError {
     /// The Go definition this error is raised as (`pkg/meta/meta.go`,
-    /// `pkg/structure/structure.go`, and the `pkg/kv` errors they propagate):
+    /// `pkg/structure`'s, and the `pkg/kv` errors they propagate):
     /// class and code travel with the value.
     #[must_use]
     pub fn proto(&self) -> Option<&'static tidb_terror::TerrorError> {
         use tidb_kv::kv_errors as kv;
         use crate::meta_errors as meta;
-        use crate::structure_errors as structure;
         Some(match self {
+            Self::Structure(error) => return error.proto(),
             Self::InvalidFieldPrefix(_) => &meta::ERR_INVALID_STRING,
-            Self::UnexpectedTypeFlag(_) => &structure::ERR_INVALID_HASH_KEY_FLAG,
-            Self::InvalidListIndex(_) => &structure::ERR_INVALID_LIST_INDEX,
-            Self::InvalidListMetaData => &structure::ERR_INVALID_LIST_META_DATA,
-            Self::WriteOnSnapshot => &structure::ERR_WRITE_ON_SNAPSHOT,
-            Self::KeyNotExist => &kv::ERR_NOT_EXIST,
             Self::CannotSetNilValue => &kv::ERR_CANNOT_SET_NIL_VALUE,
             Self::DatabaseExists => &meta::ERR_DB_EXISTS,
             Self::DatabaseNotExists => &meta::ERR_DB_NOT_EXISTS,

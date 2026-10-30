@@ -27,7 +27,7 @@
 //! ```
 
 use crate::error::{IntegerParseFailure, MetaError, Result};
-use crate::structure::{encode_hash_data_key, encode_hash_data_key_prefix, encode_string_data_key};
+use tidb_tablecodec::table_key::{encode_meta_key, encode_meta_key_prefix, META_PREFIX};
 
 /// Go `mNextGlobalIDKey`. Holds the max *used* ID, not the next one.
 pub const NEXT_GLOBAL_ID: &[u8] = b"NextGlobalID";
@@ -327,52 +327,52 @@ pub fn ddl_job_id_key(job_id: i64) -> [u8; 8] {
 
 /// Go test-only `DDLJobHistoryKey`.
 pub fn ddl_job_history_kv_key(job_id: i64) -> Vec<u8> {
-    encode_hash_data_key(DDL_JOB_HISTORY, &ddl_job_id_key(job_id))
+    encode_meta_key(DDL_JOB_HISTORY, &ddl_job_id_key(job_id))
 }
 
 /// The raw KV key holding `NextGlobalID`. Go `Mutator.GlobalIDKey`.
 #[must_use]
 pub fn next_global_id_kv_key() -> Vec<u8> {
-    encode_string_data_key(NEXT_GLOBAL_ID)
+    tidb_structure::encode_string_data_key(META_PREFIX, NEXT_GLOBAL_ID)
 }
 
 /// The raw KV key holding the last placement-policy id handed out (Go
 /// `mPolicyGlobalID`, its own sequence apart from the global ids).
 #[must_use]
 pub fn policy_global_id_kv_key() -> Vec<u8> {
-    encode_string_data_key(POLICY_GLOBAL_ID)
+    tidb_structure::encode_string_data_key(META_PREFIX, POLICY_GLOBAL_ID)
 }
 
 /// The raw KV key holding the global schema version.
 #[must_use]
 pub fn schema_version_kv_key() -> Vec<u8> {
-    encode_string_data_key(SCHEMA_VERSION)
+    tidb_structure::encode_string_data_key(META_PREFIX, SCHEMA_VERSION)
 }
 
 /// The raw KV key holding the bootstrap version. Go `Mutator.GetBootstrapVersion`.
 #[must_use]
 pub fn bootstrap_kv_key() -> Vec<u8> {
-    encode_string_data_key(BOOTSTRAP)
+    tidb_structure::encode_string_data_key(META_PREFIX, BOOTSTRAP)
 }
 
 /// The raw KV key holding the metadata-lock switch. Go `Mutator.GetMetadataLock`
 /// / `SetMetadataLock` read and write `"1"`/`"0"` at this key.
 #[must_use]
 pub fn metadata_lock_kv_key() -> Vec<u8> {
-    encode_string_data_key(METADATA_LOCK)
+    tidb_structure::encode_string_data_key(META_PREFIX, METADATA_LOCK)
 }
 
 /// The raw KV key holding the starter bootstrap version. Go
 /// `Mutator.GetStarterBootstrapVersion`.
 #[must_use]
 pub fn starter_bootstrap_kv_key() -> Vec<u8> {
-    encode_string_data_key(STARTER_BOOTSTRAP)
+    tidb_structure::encode_string_data_key(META_PREFIX, STARTER_BOOTSTRAP)
 }
 
 /// The raw KV key holding Go `Mutator.GetBDRRole`.
 #[must_use]
 pub fn bdr_role_kv_key() -> Vec<u8> {
-    encode_string_data_key(BDR_ROLE)
+    tidb_structure::encode_string_data_key(META_PREFIX, BDR_ROLE)
 }
 
 /// The raw KV key holding the DDL-table version. Go
@@ -380,31 +380,31 @@ pub fn bdr_role_kv_key() -> Vec<u8> {
 /// a field of any hash.
 #[must_use]
 pub fn ddl_table_version_kv_key() -> Vec<u8> {
-    encode_string_data_key(DDL_TABLE_VERSION)
+    tidb_structure::encode_string_data_key(META_PREFIX, DDL_TABLE_VERSION)
 }
 
 /// The raw KV key holding one schema diff. Go `Mutator.EncodeSchemaDiffKey`.
 #[must_use]
 pub fn schema_diff_kv_key(schema_version: i64) -> Vec<u8> {
-    encode_string_data_key(&schema_diff_key(schema_version))
+    tidb_structure::encode_string_data_key(META_PREFIX, &schema_diff_key(schema_version))
 }
 
 /// The raw KV key holding one database's `DBInfo`. Go `Mutator.GetDatabase`.
 #[must_use]
 pub fn database_kv_key(db_id: i64) -> Vec<u8> {
-    encode_hash_data_key(DBS, &db_key(db_id))
+    encode_meta_key(DBS, &db_key(db_id))
 }
 
 /// The scan prefix covering every database. Go `Mutator.ListDatabases`.
 #[must_use]
 pub fn databases_kv_prefix() -> Vec<u8> {
-    encode_hash_data_key_prefix(DBS)
+    encode_meta_key_prefix(DBS)
 }
 
 /// The raw KV key holding one table's `TableInfo`. Go `Mutator.GetTable`.
 #[must_use]
 pub fn table_kv_key(db_id: i64, table_id: i64) -> Vec<u8> {
-    encode_hash_data_key(&db_key(db_id), &table_key(table_id))
+    encode_meta_key(&db_key(db_id), &table_key(table_id))
 }
 
 /// The scan prefix covering one database's whole hash: table metadata *and*
@@ -412,47 +412,47 @@ pub fn table_kv_key(db_id: i64, table_id: i64) -> Vec<u8> {
 /// prefix afterwards.
 #[must_use]
 pub fn database_metas_kv_prefix(db_id: i64) -> Vec<u8> {
-    encode_hash_data_key_prefix(&db_key(db_id))
+    encode_meta_key_prefix(&db_key(db_id))
 }
 
 /// The raw KV key holding one table's `_tidb_rowid` allocator value.
 #[must_use]
 pub fn auto_table_id_kv_key(db_id: i64, table_id: i64) -> Vec<u8> {
-    encode_hash_data_key(&db_key(db_id), &auto_table_id_key(table_id))
+    encode_meta_key(&db_key(db_id), &auto_table_id_key(table_id))
 }
 
 /// The raw KV key holding one table's `auto_increment` allocator value.
 #[must_use]
 pub fn auto_increment_id_kv_key(db_id: i64, table_id: i64) -> Vec<u8> {
-    encode_hash_data_key(&db_key(db_id), &auto_increment_id_key(table_id))
+    encode_meta_key(&db_key(db_id), &auto_increment_id_key(table_id))
 }
 
 /// The raw KV key holding one table's `auto_random` allocator value.
 #[must_use]
 pub fn auto_random_table_id_kv_key(db_id: i64, table_id: i64) -> Vec<u8> {
-    encode_hash_data_key(&db_key(db_id), &auto_random_table_id_key(table_id))
+    encode_meta_key(&db_key(db_id), &auto_random_table_id_key(table_id))
 }
 
 /// The raw KV key holding one placement policy. Go `Mutator.GetPolicy`.
 #[must_use]
 pub fn policy_kv_key(policy_id: i64) -> Vec<u8> {
-    encode_hash_data_key(POLICIES, &policy_key(policy_id))
+    encode_meta_key(POLICIES, &policy_key(policy_id))
 }
 
 /// The scan prefix covering every placement policy.
 #[must_use]
 pub fn policies_kv_prefix() -> Vec<u8> {
-    encode_hash_data_key_prefix(POLICIES)
+    encode_meta_key_prefix(POLICIES)
 }
 
 /// The raw KV key holding one resource group.
 #[must_use]
 pub fn resource_group_kv_key(group_id: i64) -> Vec<u8> {
-    encode_hash_data_key(RESOURCE_GROUPS, &resource_group_key(group_id))
+    encode_meta_key(RESOURCE_GROUPS, &resource_group_key(group_id))
 }
 
 /// The scan prefix covering every resource group.
 #[must_use]
 pub fn resource_groups_kv_prefix() -> Vec<u8> {
-    encode_hash_data_key_prefix(RESOURCE_GROUPS)
+    encode_meta_key_prefix(RESOURCE_GROUPS)
 }

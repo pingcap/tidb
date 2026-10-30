@@ -42,7 +42,7 @@ use std::time::Duration;
 use crate::sequence::{
     calc_sequence_batch_size, sequence_offset, SequenceCounter, SequenceError,
 };
-use tidb_meta::structure::encode_hash_data_key;
+use tidb_tablecodec::table_key::encode_meta_key;
 use tidb_meta::{key, value};
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{BufferMutation, OptimisticCommitOutcome};
@@ -85,8 +85,8 @@ impl ClusterSequenceCounter {
     ) -> Self {
         ClusterSequenceCounter {
             opener,
-            value_key: encode_hash_data_key(&key::db_key(db_id), &key::sequence_key(table_id)),
-            cycle_key: encode_hash_data_key(
+            value_key: encode_meta_key(&key::db_key(db_id), &key::sequence_key(table_id)),
+            cycle_key: encode_meta_key(
                 &key::db_key(db_id),
                 &key::sequence_cycle_key(table_id),
             ),

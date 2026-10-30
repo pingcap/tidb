@@ -18,6 +18,7 @@ workspace = true
 
 [dependencies]
 tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-structure = { path = "../tidb-structure" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-errno = { path = "../tidb-errno" }
 tidb-terror = { path = "../tidb-terror" }

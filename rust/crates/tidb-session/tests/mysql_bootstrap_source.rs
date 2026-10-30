@@ -327,7 +327,7 @@ fn next_gen_table_infos_are_what_go_stores() {
         .expect("the keyspace bootstraps");
     let mut seen = 0;
     for mutation in &write.mutations {
-        let Ok((hash, field)) = tidb_meta::structure::decode_hash_data_key(mutation.key()) else {
+        let Ok((hash, field)) = tidb_tablecodec::table_key::decode_meta_key(mutation.key()) else {
             continue;
         };
         if !field.starts_with(b"Table:") || !hash.starts_with(b"DB:") {

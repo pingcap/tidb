@@ -23,10 +23,8 @@
 //! and `json.Marshal` on the real `model.DBInfo` / `model.TableInfo`.
 
 use tidb_meta::key;
-use tidb_meta::structure::{
-    decode_hash_data_key, decode_string_data_key, encode_hash_data_key,
-    encode_hash_data_key_prefix, encode_hash_meta_key, encode_string_data_key,
-};
+use tidb_structure::{decode_string_data_key, encode_hash_meta_key, encode_string_data_key};
+use tidb_tablecodec::table_key::{decode_meta_key, encode_meta_key, encode_meta_key_prefix, META_PREFIX};
 use tidb_meta::value;
 use tidb_meta::MetaError;
 
@@ -85,14 +83,14 @@ const STRING_KEY_VECTORS: &[(&[u8], &str)] = &[
 #[test]
 fn string_data_keys_match_go() {
     for (name, expected) in STRING_KEY_VECTORS {
-        let encoded = encode_string_data_key(name);
+        let encoded = encode_string_data_key(META_PREFIX, name);
         assert_eq!(
             encoded,
             hex(expected),
             "key {:?}",
             String::from_utf8_lossy(name)
         );
-        assert_eq!(decode_string_data_key(&encoded).unwrap(), *name);
+        assert_eq!(decode_string_data_key(META_PREFIX, &encoded).unwrap(), *name);
     }
 }
 
@@ -109,19 +107,19 @@ fn schema_diff_key_matches_go() {
 fn named_string_key_helpers_agree_with_the_generic_encoder() {
     assert_eq!(
         key::next_global_id_kv_key(),
-        encode_string_data_key(key::NEXT_GLOBAL_ID)
+        encode_string_data_key(META_PREFIX, key::NEXT_GLOBAL_ID)
     );
     assert_eq!(
         key::schema_version_kv_key(),
-        encode_string_data_key(key::SCHEMA_VERSION)
+        encode_string_data_key(META_PREFIX, key::SCHEMA_VERSION)
     );
     assert_eq!(
         key::bootstrap_kv_key(),
-        encode_string_data_key(key::BOOTSTRAP)
+        encode_string_data_key(META_PREFIX, key::BOOTSTRAP)
     );
     assert_eq!(
         key::starter_bootstrap_kv_key(),
-        encode_string_data_key(key::STARTER_BOOTSTRAP)
+        encode_string_data_key(META_PREFIX, key::STARTER_BOOTSTRAP)
     );
 }
 
@@ -183,7 +181,7 @@ fn hash_data_keys_match_go() {
     ];
 
     for (hash_key, field, expected) in cases {
-        let encoded = encode_hash_data_key(hash_key, field);
+        let encoded = encode_meta_key(hash_key, field);
         assert_eq!(
             encoded,
             hex(expected),
@@ -191,7 +189,7 @@ fn hash_data_keys_match_go() {
             String::from_utf8_lossy(hash_key),
             String::from_utf8_lossy(field)
         );
-        let (decoded_key, decoded_field) = decode_hash_data_key(&encoded).unwrap();
+        let (decoded_key, decoded_field) = decode_meta_key(&encoded).unwrap();
         assert_eq!(
             (decoded_key, decoded_field),
             (hash_key.clone(), field.clone())
@@ -203,31 +201,31 @@ fn hash_data_keys_match_go() {
 fn named_hash_key_helpers_agree_with_the_generic_encoder() {
     assert_eq!(
         key::database_kv_key(1),
-        encode_hash_data_key(key::DBS, &key::db_key(1))
+        encode_meta_key(key::DBS, &key::db_key(1))
     );
     assert_eq!(
         key::table_kv_key(1, 2),
-        encode_hash_data_key(&key::db_key(1), &key::table_key(2))
+        encode_meta_key(&key::db_key(1), &key::table_key(2))
     );
     assert_eq!(
         key::auto_table_id_kv_key(1, 2),
-        encode_hash_data_key(&key::db_key(1), &key::auto_table_id_key(2))
+        encode_meta_key(&key::db_key(1), &key::auto_table_id_key(2))
     );
     assert_eq!(
         key::auto_increment_id_kv_key(1, 2),
-        encode_hash_data_key(&key::db_key(1), &key::auto_increment_id_key(2))
+        encode_meta_key(&key::db_key(1), &key::auto_increment_id_key(2))
     );
     assert_eq!(
         key::auto_random_table_id_kv_key(1, 2),
-        encode_hash_data_key(&key::db_key(1), &key::auto_random_table_id_key(2))
+        encode_meta_key(&key::db_key(1), &key::auto_random_table_id_key(2))
     );
     assert_eq!(
         key::policy_kv_key(3),
-        encode_hash_data_key(key::POLICIES, &key::policy_key(3))
+        encode_meta_key(key::POLICIES, &key::policy_key(3))
     );
     assert_eq!(
         key::resource_group_kv_key(1),
-        encode_hash_data_key(key::RESOURCE_GROUPS, &key::resource_group_key(1))
+        encode_meta_key(key::RESOURCE_GROUPS, &key::resource_group_key(1))
     );
 }
 
@@ -235,20 +233,20 @@ fn named_hash_key_helpers_agree_with_the_generic_encoder() {
 fn hash_scan_prefixes_match_go() {
     // Go hashDataKeyPrefix("DBs") and EncodeHashMetaKey("DBs").
     assert_eq!(
-        encode_hash_data_key_prefix(key::DBS),
+        encode_meta_key_prefix(key::DBS),
         hex("6d4442730000000000fa0000000000000068")
     );
     assert_eq!(
-        encode_hash_meta_key(key::DBS),
+        encode_hash_meta_key(META_PREFIX, key::DBS),
         hex("6d4442730000000000fa0000000000000048")
     );
     assert_eq!(
         key::databases_kv_prefix(),
-        encode_hash_data_key_prefix(key::DBS)
+        encode_meta_key_prefix(key::DBS)
     );
     assert_eq!(
         key::database_metas_kv_prefix(7),
-        encode_hash_data_key_prefix(&key::db_key(7))
+        encode_meta_key_prefix(&key::db_key(7))
     );
 
     // Every field of a hash sorts under that hash's prefix.

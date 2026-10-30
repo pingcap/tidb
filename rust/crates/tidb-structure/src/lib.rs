@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `pkg/structure`: the string/hash/list data model TiDB layers over a raw KV
-//! transaction. [`TxStructure`] owns the operations; the free functions keep
-//! the catalog's `m`-prefixed key codec, since the catalog lives entirely in
-//! the `m` namespace and starts every key with
-//! [`tidb_tablecodec::table_key::META_PREFIX`].
+//! Go `pkg/structure`: the string/hash/list data model TiDB layers over a raw
+//! KV transaction. [`TxStructure`] owns the operations, under one key prefix
+//! (Go `NewStructure(reader, readWriter, prefix)`); the free functions are its
+//! key codec for a caller holding only the prefix (Go `NewStructure(nil, nil,
+//! prefix).EncodeStringDataKey(...)`).
 //!
-//! Layout (Go `pkg/structure/type.go`), under the structure's own prefix:
+//! Layout (Go `pkg/structure/type.go`), under the structure's prefix:
 //!
 //! ```text
 //! string data: prefix + EncodeBytes(key) + EncodeUint('s')
@@ -28,16 +28,18 @@
 //! list data:   prefix + EncodeBytes(key) + EncodeUint('l') + EncodeInt(index)
 //! ```
 //!
-//! The `m`-prefixed hash-data encoders are `tidb-codec`'s existing
-//! `encode_meta_key` / `decode_meta_key` / `encode_meta_key_prefix`,
-//! re-exported under their Go names.
+//! Errors: [`StructureError`] is what this package raises; everything else
+//! (the transaction's own failures, a visitor's error) passes through as the
+//! transaction's [`RawTransaction::Error`], as Go returns the `error` it got.
 
-use tidb_tablecodec::table_key::META_PREFIX;
+pub mod error;
+pub mod structure_errors;
+pub mod transaction;
+
 use tidb_codec::{decode_bytes, decode_int, decode_uint, encode_bytes, encode_int, encode_uint};
 
-use crate::error::{MetaError, Result};
+pub use crate::error::StructureError;
 use crate::transaction::{RawKvIterator, RawRangeVisitor, RawTransaction};
-use crate::value;
 
 /// Go `structure.StringMeta`.
 pub const STRING_META: u8 = b'S';
@@ -52,11 +54,6 @@ pub const LIST_META: u8 = b'L';
 /// Go `structure.ListData`.
 pub const LIST_DATA: u8 = b'l';
 
-pub use tidb_tablecodec::table_key::{
-    decode_meta_key as decode_hash_data_key, encode_meta_key as encode_hash_data_key,
-    encode_meta_key_prefix as encode_hash_data_key_prefix,
-};
-
 /// Encodes `prefix` + `EncodeBytes(key)` + `EncodeUint(flag)`, the shared
 /// head of every structure key.
 fn encode_head_with(prefix: &[u8], key: &[u8], flag: u8) -> Vec<u8> {
@@ -67,75 +64,88 @@ fn encode_head_with(prefix: &[u8], key: &[u8], flag: u8) -> Vec<u8> {
     encoded
 }
 
-fn encode_head(key: &[u8], flag: u8) -> Vec<u8> {
-    encode_head_with(META_PREFIX, key, flag)
-}
-
 /// Splits `prefix` + `EncodeBytes(key)` + `EncodeUint(flag)` back apart,
 /// checking the flag. Returns the decoded key and the bytes after the flag.
 fn decode_head_with<'a>(
     prefix: &[u8],
     encoded: &'a [u8],
     expected: u8,
-) -> Result<(Vec<u8>, &'a [u8])> {
-    let tail = encoded.strip_prefix(prefix).ok_or(MetaError::NotMetaKey)?;
-    let (tail, key) = decode_bytes(tail).map_err(|_| MetaError::MalformedKey)?;
-    let (tail, flag) = decode_uint(tail).map_err(|_| MetaError::MalformedKey)?;
+) -> Result<(Vec<u8>, &'a [u8]), StructureError> {
+    let tail = encoded.strip_prefix(prefix).ok_or(StructureError::InvalidKeyPrefix)?;
+    let (tail, key) = decode_bytes(tail).map_err(|_| StructureError::MalformedKey)?;
+    let (tail, flag) = decode_uint(tail).map_err(|_| StructureError::MalformedKey)?;
     if flag != u64::from(expected) {
         // Go reports the low byte of the decoded uint as a character.
         #[expect(clippy::cast_possible_truncation, reason = "Go formats %c of the byte")]
-        return Err(MetaError::UnexpectedTypeFlag(flag as u8));
+        return Err(StructureError::UnexpectedTypeFlag(flag as u8));
     }
     Ok((key, tail))
 }
 
-fn decode_head(encoded: &[u8], expected: u8) -> Result<(Vec<u8>, &[u8])> {
-    decode_head_with(META_PREFIX, encoded, expected)
-}
-
 /// Go `TxStructure.decodeHashDataKey`, under an arbitrary prefix.
-fn decode_hash_data_key_with(prefix: &[u8], encoded: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
+fn decode_hash_data_key_with(
+    prefix: &[u8],
+    encoded: &[u8],
+) -> Result<(Vec<u8>, Vec<u8>), StructureError> {
     let (key, tail) = decode_head_with(prefix, encoded, HASH_DATA)?;
-    let (_, field) = decode_bytes(tail).map_err(|_| MetaError::MalformedKey)?;
+    let (_, field) = decode_bytes(tail).map_err(|_| StructureError::MalformedKey)?;
     Ok((key, field))
 }
 
-/// Go `TxStructure.EncodeStringDataKey`.
+/// Go `TxStructure.EncodeStringDataKey` under `prefix`.
 #[must_use]
-pub fn encode_string_data_key(key: &[u8]) -> Vec<u8> {
-    encode_head(key, STRING_DATA)
+pub fn encode_string_data_key(prefix: &[u8], key: &[u8]) -> Vec<u8> {
+    encode_head_with(prefix, key, STRING_DATA)
 }
 
-/// Go `TxStructure.decodeStringDataKey`.
-pub fn decode_string_data_key(encoded: &[u8]) -> Result<Vec<u8>> {
-    decode_head(encoded, STRING_DATA).map(|(key, _)| key)
+/// Go `TxStructure.decodeStringDataKey` under `prefix`.
+pub fn decode_string_data_key(prefix: &[u8], encoded: &[u8]) -> Result<Vec<u8>, StructureError> {
+    decode_head_with(prefix, encoded, STRING_DATA).map(|(key, _)| key)
 }
 
-/// Go `TxStructure.EncodeHashMetaKey` (written by v5.1 and earlier).
+/// Go `TxStructure.EncodeHashMetaKey` under `prefix` (written by v5.1 and
+/// earlier).
 #[must_use]
-pub fn encode_hash_meta_key(key: &[u8]) -> Vec<u8> {
-    encode_head(key, HASH_META)
+pub fn encode_hash_meta_key(prefix: &[u8], key: &[u8]) -> Vec<u8> {
+    encode_head_with(prefix, key, HASH_META)
 }
 
-/// Go `TxStructure.encodeListMetaKey`.
+/// Go `TxStructure.encodeListMetaKey` under `prefix`.
 #[must_use]
-pub fn encode_list_meta_key(key: &[u8]) -> Vec<u8> {
-    encode_head(key, LIST_META)
+pub fn encode_list_meta_key(prefix: &[u8], key: &[u8]) -> Vec<u8> {
+    encode_head_with(prefix, key, LIST_META)
 }
 
-/// Go `TxStructure.encodeListDataKey`.
+/// Go `TxStructure.encodeListDataKey` under `prefix`.
 #[must_use]
-pub fn encode_list_data_key(key: &[u8], index: i64) -> Vec<u8> {
-    let mut encoded = encode_head(key, LIST_DATA);
+pub fn encode_list_data_key(prefix: &[u8], key: &[u8], index: i64) -> Vec<u8> {
+    let mut encoded = encode_head_with(prefix, key, LIST_DATA);
     encode_int(&mut encoded, index);
     encoded
 }
 
 /// Decodes [`encode_list_data_key`] back into its key and index.
-pub fn decode_list_data_key(encoded: &[u8]) -> Result<(Vec<u8>, i64)> {
-    let (key, tail) = decode_head(encoded, LIST_DATA)?;
-    let (_, index) = decode_int(tail).map_err(|_| MetaError::MalformedKey)?;
+pub fn decode_list_data_key(prefix: &[u8], encoded: &[u8]) -> Result<(Vec<u8>, i64), StructureError> {
+    let (key, tail) = decode_head_with(prefix, encoded, LIST_DATA)?;
+    let (_, index) = decode_int(tail).map_err(|_| StructureError::MalformedKey)?;
     Ok((key, index))
+}
+
+/// Go writes every structure scalar with `strconv.FormatInt`.
+#[must_use]
+pub fn encode_int_value(value: i64) -> Vec<u8> {
+    value.to_string().into_bytes()
+}
+
+/// Go `TxStructure.GetInt64`: `strconv.ParseInt` over the stored bytes.
+///
+/// Go returns 0 for a missing key before it ever parses; a caller that has no
+/// value should not call this.
+pub fn parse_int_value(value: &[u8]) -> Result<i64, StructureError> {
+    std::str::from_utf8(value)
+        .map_err(|_| StructureError::InvalidIntValue)?
+        .parse()
+        .map_err(|_| StructureError::InvalidIntValue)
 }
 
 /// Go `kv.Key.PrefixNext`: the smallest key strictly greater than every key
@@ -154,7 +164,7 @@ fn prefix_next(key: &[u8]) -> Vec<u8> {
 }
 
 /// Callback shape for Go `IterateHashWithBoundedKey`: hash key, field, value.
-pub type BoundedHashVisitor<'a> = dyn FnMut(&[u8], &[u8], &[u8]) -> Result<()> + 'a;
+pub type BoundedHashVisitor<'a, E> = dyn FnMut(&[u8], &[u8], &[u8]) -> Result<(), E> + 'a;
 
 /// Go `structure.HashPair`.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -228,17 +238,11 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
         }
     }
 
-    /// The catalog's structure: Go `meta.NewMutator` wires `NewStructure(txn,
-    /// txn, mMetaPrefix)`.
-    pub fn meta(transaction: &'a mut T) -> Self {
-        Self::new(transaction, META_PREFIX)
-    }
-
-    fn require_writable(&self) -> Result<()> {
+    fn require_writable(&self) -> Result<(), StructureError> {
         if self.writable {
             Ok(())
         } else {
-            Err(MetaError::WriteOnSnapshot)
+            Err(StructureError::WriteOnSnapshot)
         }
     }
 
@@ -285,35 +289,34 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     // String operations (Go `pkg/structure/string.go`).
 
     /// Go `TxStructure.Set`.
-    pub fn set(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
+    pub fn set(&mut self, key: &[u8], value: &[u8]) -> Result<(), T::Error> {
         self.require_writable()?;
         self.transaction
             .set(self.string_data_key(key), value.to_vec())
     }
 
     /// Go `TxStructure.Get`: a missing key is `None`, not an error.
-    pub fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+    pub fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, T::Error> {
         self.transaction.get(&self.string_data_key(key))
     }
 
     /// Go `TxStructure.GetInt64`: a missing key is zero.
-    pub fn get_int64(&mut self, key: &[u8]) -> Result<i64> {
-        self.get(key)?
-            .map_or(Ok(0), |stored| value::parse_int_value(&stored))
+    pub fn get_int64(&mut self, key: &[u8]) -> Result<i64, T::Error> {
+        Ok(self.get(key)?.map_or(Ok(0), |stored| parse_int_value(&stored))?)
     }
 
     /// Go `TxStructure.Inc` via `kv.IncInt64`: read, add, write back as
     /// decimal ASCII, and return the incremented value.
-    pub fn inc(&mut self, key: &[u8], step: i64) -> Result<i64> {
+    pub fn inc(&mut self, key: &[u8], step: i64) -> Result<i64, T::Error> {
         self.require_writable()?;
         let encoded = self.string_data_key(key);
         let current = self
             .transaction
             .get(&encoded)?
-            .map_or(Ok(0), |stored| value::parse_int_value(&stored))?;
+            .map_or(Ok(0), |stored| parse_int_value(&stored))?;
         let next = current.wrapping_add(step);
         self.transaction
-            .set(encoded, value::encode_int_value(next))?;
+            .set(encoded, encode_int_value(next))?;
         Ok(next)
     }
 
@@ -322,8 +325,8 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
         &mut self,
         key: &[u8],
         upper_bound: &[u8],
-        visit: &mut RawRangeVisitor<'_>,
-    ) -> Result<()> {
+        visit: &mut RawRangeVisitor<'_, T::Error>,
+    ) -> Result<(), T::Error> {
         let start = self.string_data_key(key);
         let end = self.string_data_key(upper_bound);
         let prefix = self.prefix.clone();
@@ -335,7 +338,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.Clear`: deleting a missing key succeeds.
-    pub fn clear(&mut self, key: &[u8]) -> Result<()> {
+    pub fn clear(&mut self, key: &[u8]) -> Result<(), T::Error> {
         self.require_writable()?;
         self.transaction.delete(&self.string_data_key(key))
     }
@@ -344,7 +347,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
 
     /// Go `TxStructure.HSet`: the write is skipped when the new value equals
     /// the stored one, which is also how writing nil over nothing succeeds.
-    pub fn hset(&mut self, key: &[u8], field: &[u8], value: &[u8]) -> Result<()> {
+    pub fn hset(&mut self, key: &[u8], field: &[u8], value: &[u8]) -> Result<(), T::Error> {
         self.require_writable()?;
         let encoded = self.hash_data_key(key, field);
         let old = self.transaction.get(&encoded)?;
@@ -355,7 +358,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.HGet`: a missing field is `None`, not an error.
-    pub fn hget(&mut self, key: &[u8], field: &[u8]) -> Result<Option<Vec<u8>>> {
+    pub fn hget(&mut self, key: &[u8], field: &[u8]) -> Result<Option<Vec<u8>>, T::Error> {
         self.transaction.get(&self.hash_data_key(key, field))
     }
 
@@ -368,20 +371,20 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     ) -> (Vec<u8>, Vec<u8>) {
         (
             self.hash_data_key(key, field),
-            value::encode_int_value(value),
+            encode_int_value(value),
         )
     }
 
     /// Go `TxStructure.HInc`.
-    pub fn hinc(&mut self, key: &[u8], field: &[u8], step: i64) -> Result<i64> {
+    pub fn hinc(&mut self, key: &[u8], field: &[u8], step: i64) -> Result<i64, T::Error> {
         self.require_writable()?;
         let encoded = self.hash_data_key(key, field);
         let old = self.transaction.get(&encoded)?;
         let base = old
             .as_deref()
-            .map_or(Ok(0), value::parse_int_value)?
+            .map_or(Ok(0), parse_int_value)?
             .wrapping_add(step);
-        let next = value::encode_int_value(base);
+        let next = encode_int_value(base);
         if old.as_deref().unwrap_or_default() != next.as_slice() {
             self.transaction.set(encoded, next)?;
         }
@@ -389,13 +392,12 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.HGetInt64`: a missing field is zero.
-    pub fn hget_int64(&mut self, key: &[u8], field: &[u8]) -> Result<i64> {
-        self.hget(key, field)?
-            .map_or(Ok(0), |stored| value::parse_int_value(&stored))
+    pub fn hget_int64(&mut self, key: &[u8], field: &[u8]) -> Result<i64, T::Error> {
+        Ok(self.hget(key, field)?.map_or(Ok(0), |stored| parse_int_value(&stored))?)
     }
 
     /// Go `TxStructure.HDel`: only stored fields are deleted.
-    pub fn hdel(&mut self, key: &[u8], fields: &[&[u8]]) -> Result<()> {
+    pub fn hdel(&mut self, key: &[u8], fields: &[&[u8]]) -> Result<(), T::Error> {
         self.require_writable()?;
         for field in fields {
             let encoded = self.hash_data_key(key, field);
@@ -407,7 +409,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.HKeys`.
-    pub fn hkeys(&mut self, key: &[u8]) -> Result<Vec<Vec<u8>>> {
+    pub fn hkeys(&mut self, key: &[u8]) -> Result<Vec<Vec<u8>>, T::Error> {
         let mut keys = Vec::new();
         self.iterate_hash(key, &mut |field, _| {
             keys.push(field.to_vec());
@@ -417,7 +419,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.HGetAll`.
-    pub fn hget_all(&mut self, key: &[u8]) -> Result<Vec<HashPair>> {
+    pub fn hget_all(&mut self, key: &[u8]) -> Result<Vec<HashPair>, T::Error> {
         let mut pairs = Vec::new();
         self.iterate_hash(key, &mut |field, stored| {
             pairs.push(HashPair {
@@ -433,8 +435,8 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     pub fn hget_iter(
         &mut self,
         key: &[u8],
-        visit: &mut dyn FnMut(HashPair) -> Result<()>,
-    ) -> Result<()> {
+        visit: &mut dyn FnMut(HashPair) -> Result<(), T::Error>,
+    ) -> Result<(), T::Error> {
         self.iterate_hash(key, &mut |field, stored| {
             visit(HashPair {
                 field: field.to_vec(),
@@ -444,7 +446,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.HGetLen`.
-    pub fn hget_len(&mut self, key: &[u8]) -> Result<u64> {
+    pub fn hget_len(&mut self, key: &[u8]) -> Result<u64, T::Error> {
         let mut length: u64 = 0;
         self.iterate_hash(key, &mut |_, _| {
             length += 1;
@@ -454,7 +456,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.HGetLastN`: the latest `num` pairs, newest first.
-    pub fn hget_last_n(&mut self, key: &[u8], num: usize) -> Result<Vec<HashPair>> {
+    pub fn hget_last_n(&mut self, key: &[u8], num: usize) -> Result<Vec<HashPair>, T::Error> {
         let mut pairs = Vec::with_capacity(num);
         let data_prefix = self.hash_data_key_prefix(key);
         let mut iterator = self.transaction.reverse_scan_prefix(&data_prefix, None)?;
@@ -473,7 +475,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.HClear`: collects the stored fields, then deletes them.
-    pub fn hclear(&mut self, key: &[u8]) -> Result<()> {
+    pub fn hclear(&mut self, key: &[u8]) -> Result<(), T::Error> {
         let mut keys = Vec::new();
         let data_prefix = self.hash_data_key_prefix(key);
         self.iterate_hash(key, &mut |field, _| {
@@ -496,7 +498,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.IterateHash`: every field of one hash, in field order.
-    pub fn iterate_hash(&mut self, key: &[u8], visit: &mut RawRangeVisitor<'_>) -> Result<()> {
+    pub fn iterate_hash(&mut self, key: &[u8], visit: &mut RawRangeVisitor<'_, T::Error>) -> Result<(), T::Error> {
         let data_prefix = self.hash_data_key_prefix(key);
         let end = prefix_next(&data_prefix);
         let prefix = self.prefix.clone();
@@ -513,8 +515,8 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
         &mut self,
         start: &[u8],
         end: &[u8],
-        visit: &mut BoundedHashVisitor<'_>,
-    ) -> Result<()> {
+        visit: &mut BoundedHashVisitor<'_, T::Error>,
+    ) -> Result<(), T::Error> {
         let range_start = self.hash_data_key_prefix(start);
         let range_end = self.hash_data_key_prefix(end);
         let prefix = self.prefix.clone();
@@ -528,7 +530,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `structure.NewHashReverseIter`.
-    pub fn hash_reverse_iter(&mut self, key: &[u8]) -> Result<ReverseHashIterator> {
+    pub fn hash_reverse_iter(&mut self, key: &[u8]) -> Result<ReverseHashIterator<T::Error>, T::Error> {
         self.new_hash_reverse_iter(key, None)
     }
 
@@ -537,7 +539,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
         &mut self,
         key: &[u8],
         field: &[u8],
-    ) -> Result<ReverseHashIterator> {
+    ) -> Result<ReverseHashIterator<T::Error>, T::Error> {
         self.new_hash_reverse_iter(key, Some(field))
     }
 
@@ -545,7 +547,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
         &mut self,
         key: &[u8],
         field: Option<&[u8]>,
-    ) -> Result<ReverseHashIterator> {
+    ) -> Result<ReverseHashIterator<T::Error>, T::Error> {
         let data_prefix = self.hash_data_key_prefix(key);
         // Go starts at PrefixNext of either the whole hash prefix or the
         // encoded begin field; the raw contract expresses the same bound as
@@ -567,16 +569,16 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     // List operations (Go `pkg/structure/list.go`).
 
     /// Go `TxStructure.LPush`.
-    pub fn lpush(&mut self, key: &[u8], values: &[&[u8]]) -> Result<()> {
+    pub fn lpush(&mut self, key: &[u8], values: &[&[u8]]) -> Result<(), T::Error> {
         self.list_push(key, true, values)
     }
 
     /// Go `TxStructure.RPush`.
-    pub fn rpush(&mut self, key: &[u8], values: &[&[u8]]) -> Result<()> {
+    pub fn rpush(&mut self, key: &[u8], values: &[&[u8]]) -> Result<(), T::Error> {
         self.list_push(key, false, values)
     }
 
-    fn list_push(&mut self, key: &[u8], left: bool, values: &[&[u8]]) -> Result<()> {
+    fn list_push(&mut self, key: &[u8], left: bool, values: &[&[u8]]) -> Result<(), T::Error> {
         self.require_writable()?;
         if values.is_empty() {
             return Ok(());
@@ -599,16 +601,16 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.LPop`: `None` when the list is empty.
-    pub fn lpop(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+    pub fn lpop(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, T::Error> {
         self.list_pop(key, true)
     }
 
     /// Go `TxStructure.RPop`: `None` when the list is empty.
-    pub fn rpop(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+    pub fn rpop(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, T::Error> {
         self.list_pop(key, false)
     }
 
-    fn list_pop(&mut self, key: &[u8], left: bool) -> Result<Option<Vec<u8>>> {
+    fn list_pop(&mut self, key: &[u8], left: bool) -> Result<Option<Vec<u8>>, T::Error> {
         self.require_writable()?;
         let meta_key = self.list_meta_key(key);
         let mut meta = self.load_list_meta(&meta_key)?;
@@ -628,7 +630,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
         let data = self
             .transaction
             .get(&data_key)?
-            .ok_or(MetaError::KeyNotExist)?;
+            .ok_or(StructureError::KeyNotExist)?;
         self.transaction.delete(&data_key)?;
         if meta.is_empty() {
             self.transaction.delete(&meta_key)?;
@@ -639,14 +641,14 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.LLen`.
-    pub fn llen(&mut self, key: &[u8]) -> Result<i64> {
+    pub fn llen(&mut self, key: &[u8]) -> Result<i64, T::Error> {
         let meta_key = self.list_meta_key(key);
         let meta = self.load_list_meta(&meta_key)?;
         Ok(meta.r_index - meta.l_index)
     }
 
     /// Go `TxStructure.LGetAll`: every element, in order from right to left.
-    pub fn lget_all(&mut self, key: &[u8]) -> Result<Vec<Vec<u8>>> {
+    pub fn lget_all(&mut self, key: &[u8]) -> Result<Vec<Vec<u8>>, T::Error> {
         let meta_key = self.list_meta_key(key);
         let meta = self.load_list_meta(&meta_key)?;
         if meta.is_empty() {
@@ -659,7 +661,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
             let element = self
                 .transaction
                 .get(&self.list_data_key(key, index))?
-                .ok_or(MetaError::KeyNotExist)?;
+                .ok_or(StructureError::KeyNotExist)?;
             elements.push(element);
             index -= 1;
         }
@@ -668,7 +670,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
 
     /// Go `TxStructure.LIndex`: `None` when the adjusted index is out of
     /// range; negative indexes count from the right.
-    pub fn lindex(&mut self, key: &[u8], index: i64) -> Result<Option<Vec<u8>>> {
+    pub fn lindex(&mut self, key: &[u8], index: i64) -> Result<Option<Vec<u8>>, T::Error> {
         let meta_key = self.list_meta_key(key);
         let meta = self.load_list_meta(&meta_key)?;
         if meta.is_empty() {
@@ -679,7 +681,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
             Ok(Some(
                 self.transaction
                     .get(&self.list_data_key(key, index))?
-                    .ok_or(MetaError::KeyNotExist)?,
+                    .ok_or(StructureError::KeyNotExist)?,
             ))
         } else {
             Ok(None)
@@ -687,7 +689,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     /// Go `TxStructure.LSet`: an out-of-range adjusted index is an error.
-    pub fn lset(&mut self, key: &[u8], index: i64, value: &[u8]) -> Result<()> {
+    pub fn lset(&mut self, key: &[u8], index: i64, value: &[u8]) -> Result<(), T::Error> {
         self.require_writable()?;
         let meta_key = self.list_meta_key(key);
         let meta = self.load_list_meta(&meta_key)?;
@@ -699,12 +701,12 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
             self.transaction
                 .set(self.list_data_key(key, index), value.to_vec())
         } else {
-            Err(MetaError::InvalidListIndex(index))
+            Err(StructureError::InvalidListIndex(index).into())
         }
     }
 
     /// Go `TxStructure.LClear`.
-    pub fn lclear(&mut self, key: &[u8]) -> Result<()> {
+    pub fn lclear(&mut self, key: &[u8]) -> Result<(), T::Error> {
         self.require_writable()?;
         let meta_key = self.list_meta_key(key);
         let meta = self.load_list_meta(&meta_key)?;
@@ -719,7 +721,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
 
     /// Go `TxStructure.loadListMeta`: a missing meta is empty, a stored meta
     /// that is not sixteen bytes is `ErrInvalidListMetaData`.
-    fn load_list_meta(&mut self, meta_key: &[u8]) -> Result<ListMeta> {
+    fn load_list_meta(&mut self, meta_key: &[u8]) -> Result<ListMeta, T::Error> {
         let Some(stored) = self.transaction.get(meta_key)? else {
             return Ok(ListMeta::default());
         };
@@ -727,7 +729,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
             .split_first_chunk::<8>()
             .and_then(|(l, rest)| Some((l, <&[u8; 8]>::try_from(rest).ok()?)))
         else {
-            return Err(MetaError::InvalidListMetaData);
+            return Err(StructureError::InvalidListMetaData.into());
         };
         Ok(ListMeta {
             l_index: i64::from_be_bytes(*l_bytes),
@@ -740,13 +742,13 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
 ///
 /// Mirroring Go, construction does not decode the first entry: `key()` is
 /// empty until the first `next()`.
-pub struct ReverseHashIterator {
-    iterator: Box<dyn RawKvIterator>,
+pub struct ReverseHashIterator<E> {
+    iterator: Box<dyn RawKvIterator<Error = E>>,
     prefix: Vec<u8>,
     field: Vec<u8>,
 }
 
-impl ReverseHashIterator {
+impl<E: From<StructureError>> ReverseHashIterator<E> {
     /// Go `ReverseHashIterator.Valid`.
     pub fn valid(&self) -> bool {
         self.iterator.valid()
@@ -768,7 +770,7 @@ impl ReverseHashIterator {
         clippy::should_implement_trait,
         reason = "Go's Next is fallible mid-iteration; Iterator::next cannot be"
     )]
-    pub fn next(&mut self) -> Result<()> {
+    pub fn next(&mut self) -> Result<(), E> {
         self.iterator.next()?;
         if self.iterator.valid() {
             let (_, field) = decode_hash_data_key_with(&self.prefix, self.iterator.key())?;

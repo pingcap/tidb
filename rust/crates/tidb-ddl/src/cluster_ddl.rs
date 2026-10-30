@@ -7634,7 +7634,7 @@ fn build_sequence_table_info(
 
 /// Go `Mutator.sequenceKey` in the database hash: the sequence's counter.
 fn sequence_value_kv_key(db_id: i64, sequence_id: i64) -> Vec<u8> {
-    tidb_meta::structure::encode_hash_data_key(&key::db_key(db_id), &key::sequence_key(sequence_id))
+    tidb_tablecodec::table_key::encode_meta_key(&key::db_key(db_id), &key::sequence_key(sequence_id))
 }
 
 /// Go `createSequenceWithCheck` / `restartSequenceValue`: the counter sits one

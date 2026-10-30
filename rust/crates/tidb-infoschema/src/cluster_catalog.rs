@@ -260,7 +260,7 @@ pub fn load_cluster_catalog<S: MetaSnapshot>(
 
     let mut databases = Vec::new();
     for (raw_key, stored) in snapshot.scan_prefix(&key::databases_kv_prefix())? {
-        let (_, field) = tidb_meta::structure::decode_hash_data_key(&raw_key)
+        let (_, field) = tidb_tablecodec::table_key::decode_meta_key(&raw_key)
             .map_err(|error| ClusterCatalogError::Decode(format!("DBs hash key: {error}")))?;
         if !key::has_prefix(key::DB_PREFIX, &field) {
             continue;
@@ -286,7 +286,7 @@ pub fn load_database_tables<S: MetaSnapshot>(
 ) -> Result<Vec<TableInfo>, ClusterCatalogError> {
     let mut tables = Vec::new();
     for (raw_key, stored) in snapshot.scan_prefix(&key::database_metas_kv_prefix(db_id))? {
-        let (_, field) = tidb_meta::structure::decode_hash_data_key(&raw_key)
+        let (_, field) = tidb_tablecodec::table_key::decode_meta_key(&raw_key)
             .map_err(|error| ClusterCatalogError::Decode(format!("DB hash key: {error}")))?;
         // The same hash also holds TID/IID/TARID/SID allocator fields.
         if !key::has_prefix(key::TABLE_PREFIX, &field) {

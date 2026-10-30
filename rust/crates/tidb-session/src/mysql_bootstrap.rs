@@ -332,7 +332,7 @@ pub fn read_schema_cache_size<S: MetaSnapshot>(
 }
 
 fn schema_cache_size_kv_key() -> Vec<u8> {
-    tidb_meta::structure::encode_string_data_key(key::SCHEMA_CACHE_SIZE)
+    tidb_structure::encode_string_data_key(tidb_tablecodec::table_key::META_PREFIX, key::SCHEMA_CACHE_SIZE)
 }
 
 /// One view Go's bootstrap session creates with `CREATE OR REPLACE VIEW`

@@ -212,7 +212,7 @@ fn table_infos_are_what_the_classic_go_server_stores() {
     let mut go: BTreeMap<String, Value> = serde_json::from_str(GO_TABLE_INFOS).unwrap();
     let mut seen = 0;
     for mutation in &write.mutations {
-        let Ok((hash, field)) = tidb_meta::structure::decode_hash_data_key(mutation.key()) else {
+        let Ok((hash, field)) = tidb_tablecodec::table_key::decode_meta_key(mutation.key()) else {
             continue;
         };
         if !field.starts_with(b"Table:") || !hash.starts_with(b"DB:") {

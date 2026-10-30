@@ -28,10 +28,13 @@ use tidb_meta::transaction::{
     split_range_int64_max, table_info_must_load, unescape_name, unescape_name_bytes, AutoIdGroup,
     DailyRuStats, DdlJobCodec, DdlTableVersion, GroupRuStats, MemoryTransaction, MetaSnapshotStore,
     MustLoadFilterAttr, Mutator, MutatorOption, MvccInfo, MvccReader, MvccWrite,
-    NextGenBootTableVersion, RawTransaction, RuConsumption, RuStats,
+    NextGenBootTableVersion, RuConsumption, RuStats,
     NAME_EXTRACT_REGEXP,
 };
-use tidb_meta::{key, structure, value, MetaError, Result};
+use tidb_meta::{key, value, MetaError, Result};
+use tidb_structure::transaction::RawTransaction;
+use tidb_structure::StructureError;
+use tidb_tablecodec::table_key::META_PREFIX;
 use tidb_model::go_runtime::GoShared;
 use tidb_model::placement::PlacementSettings;
 use tidb_model::resource_group::{ResourceGroupInfo, ResourceGroupSettings};
@@ -710,7 +713,7 @@ fn policies_masking_policies_and_resource_groups_preserve_source_lifecycle() {
             .learner_constraints,
         "+zone=nanjing"
     );
-    let policy_field = structure::encode_hash_data_key(key::POLICIES, b"Policy:7");
+    let policy_field = tidb_tablecodec::table_key::encode_meta_key(key::POLICIES, b"Policy:7");
     let raw_policy = meta
         .inspect(|transaction| transaction.entries()[&policy_field].clone())
         .unwrap();
@@ -816,7 +819,7 @@ fn policies_masking_policies_and_resource_groups_preserve_source_lifecycle() {
         100
     );
     let group_field =
-        structure::encode_hash_data_key(key::RESOURCE_GROUPS, &key::resource_group_key(2));
+        tidb_tablecodec::table_key::encode_meta_key(key::RESOURCE_GROUPS, &key::resource_group_key(2));
     let raw_group = meta
         .inspect(|transaction| transaction.entries()[&group_field].clone())
         .unwrap();
@@ -877,7 +880,7 @@ fn policy_masking_and_resource_reads_preserve_magic_json_and_empty_panics() {
         let mut transaction = MemoryTransaction::default();
         transaction
             .set(
-                structure::encode_hash_data_key(hash, field),
+                tidb_tablecodec::table_key::encode_meta_key(hash, field),
                 stored.to_vec(),
             )
             .unwrap();
@@ -1183,7 +1186,7 @@ fn composed_auto_id_sequence_and_schema_diff_methods_preserve_source_order() {
     assert_eq!(meta.schema_version_with_non_empty_diff().unwrap(), 1);
     assert_eq!(
         meta.encoded_schema_diff_key(1),
-        structure::encode_string_data_key(b"Diff:1")
+        tidb_structure::encode_string_data_key(META_PREFIX, b"Diff:1")
     );
 }
 
@@ -1240,7 +1243,7 @@ fn scalar_settings_preserve_absence_formatting_and_non_boolean_lock_bytes() {
         (2.675, "2.67"),
     ] {
         meta.set_ingest_max_per_sec(input).unwrap();
-        let encoded = structure::encode_string_data_key(key::INGEST_MAX_PER_SEC);
+        let encoded = tidb_structure::encode_string_data_key(META_PREFIX, key::INGEST_MAX_PER_SEC);
         assert_eq!(
             meta.inspect(|transaction| transaction.entries()[&encoded].clone())
                 .unwrap(),
@@ -1262,7 +1265,7 @@ fn malformed_scalar_storage_returns_the_source_parse_error_class() {
         // seed, not set: Go's kv layer refuses empty values, and several of
         // these malformed scalars are exactly the empty stored value.
         transaction.seed(
-            structure::encode_string_data_key(logical_key),
+            tidb_structure::encode_string_data_key(META_PREFIX, logical_key),
             stored.to_vec(),
         );
         Mutator::new(transaction)
@@ -1285,17 +1288,17 @@ fn malformed_scalar_storage_returns_the_source_parse_error_class() {
     ] {
         assert_eq!(
             getter(&with_string_value(logical_key, b"x")),
-            Err(MetaError::InvalidIntValue)
+            Err(MetaError::Structure(StructureError::InvalidIntValue))
         );
     }
 
     assert_eq!(
         with_string_value(key::DDL_TABLE_VERSION, b"x").ddl_table_version(),
-        Err(MetaError::InvalidIntValue)
+        Err(MetaError::Structure(StructureError::InvalidIntValue))
     );
     assert_eq!(
         with_string_value(key::BOOT_TABLE_VERSION, b"x").next_gen_boot_table_version(),
-        Err(MetaError::InvalidIntValue)
+        Err(MetaError::Structure(StructureError::InvalidIntValue))
     );
     assert_eq!(
         with_string_value(key::SCHEMA_CACHE_SIZE, b"-1").schema_cache_size(),
@@ -1316,11 +1319,11 @@ fn malformed_scalar_storage_returns_the_source_parse_error_class() {
     ] {
         assert_eq!(
             getter(&with_string_value(logical_key, b"one")),
-            Err(MetaError::InvalidIntValue)
+            Err(MetaError::Structure(StructureError::InvalidIntValue))
         );
         assert_eq!(
             getter(&with_string_value(logical_key, b"")),
-            Err(MetaError::InvalidIntValue),
+            Err(MetaError::Structure(StructureError::InvalidIntValue)),
             "Go distinguishes an empty stored value from a missing key"
         );
     }
@@ -1584,7 +1587,7 @@ fn iter_all_tables_clamps_workers_streams_ranges_and_serializes_callbacks() {
     // IterateHashWithBoundedKey skips it instead of failing the scan.
     snapshot
         .set(
-            structure::encode_string_data_key(b"DB:2"),
+            tidb_structure::encode_string_data_key(META_PREFIX, b"DB:2"),
             b"not table metadata".to_vec(),
         )
         .unwrap();
@@ -1799,7 +1802,7 @@ fn ddl_history_is_big_endian_reverse_inclusive_and_filtered_before_decode() {
     assert!(one.update_raw_args_seen);
     assert_eq!(meta.history_ddl_count().unwrap(), 3);
     let job_two_key =
-        structure::encode_hash_data_key(key::DDL_JOB_HISTORY, &key::ddl_job_id_key(2));
+        tidb_tablecodec::table_key::encode_meta_key(key::DDL_JOB_HISTORY, &key::ddl_job_id_key(2));
     assert!(
         meta.inspect(|transaction| transaction.entries().contains_key(&job_two_key))
             .unwrap(),
@@ -1965,7 +1968,7 @@ fn dxf_and_ru_stats_match_go_json_shapes_including_null() {
     let meta = Mutator::new(MemoryTransaction::default());
     let factors = tidb_dxf::schstatus::TtlTuneFactors::default();
     meta.set_dxf_schedule_tune_factors("ks", &factors).unwrap();
-    let dxf_key = structure::encode_hash_data_key(key::DXF_SCHEDULE_TUNE, b"ks");
+    let dxf_key = tidb_tablecodec::table_key::encode_meta_key(key::DXF_SCHEDULE_TUNE, b"ks");
     let dxf = meta
         .inspect(|transaction| transaction.entries()[&dxf_key].clone())
         .unwrap();
@@ -1983,7 +1986,7 @@ fn dxf_and_ru_stats_match_go_json_shapes_including_null() {
         },
     };
     meta.set_dxf_schedule_tune_factors("ks2", &factors).unwrap();
-    let dxf_key = structure::encode_hash_data_key(key::DXF_SCHEDULE_TUNE, b"ks2");
+    let dxf_key = tidb_tablecodec::table_key::encode_meta_key(key::DXF_SCHEDULE_TUNE, b"ks2");
     assert_eq!(
         meta.inspect(|transaction| transaction.entries()[&dxf_key].clone())
             .unwrap(),
@@ -1996,7 +1999,7 @@ fn dxf_and_ru_stats_match_go_json_shapes_including_null() {
 
     meta.set_ru_stats(None).unwrap();
     assert_eq!(meta.ru_stats().unwrap(), None);
-    let ru_key = structure::encode_string_data_key(key::REQUEST_UNIT_STATS);
+    let ru_key = tidb_structure::encode_string_data_key(META_PREFIX, key::REQUEST_UNIT_STATS);
     assert_eq!(
         meta.inspect(|transaction| transaction.entries()[&ru_key].clone())
             .unwrap(),
@@ -2029,7 +2032,7 @@ fn dxf_and_ru_stats_match_go_json_shapes_including_null() {
     let mut corrupt_dxf = meta.inspect(Clone::clone).unwrap();
     corrupt_dxf
         .set(
-            structure::encode_hash_data_key(key::DXF_SCHEDULE_TUNE, b"bad"),
+            tidb_tablecodec::table_key::encode_meta_key(key::DXF_SCHEDULE_TUNE, b"bad"),
             b"{".to_vec(),
         )
         .unwrap();
@@ -2041,7 +2044,7 @@ fn dxf_and_ru_stats_match_go_json_shapes_including_null() {
     let mut corrupt_ru = meta.inspect(Clone::clone).unwrap();
     corrupt_ru
         .set(
-            structure::encode_string_data_key(key::REQUEST_UNIT_STATS),
+            tidb_structure::encode_string_data_key(META_PREFIX, key::REQUEST_UNIT_STATS),
             b"{".to_vec(),
         )
         .unwrap();
@@ -2107,7 +2110,7 @@ fn oldest_schema_version_reads_the_last_mvcc_short_value_at_max_ts() {
     });
     assert_eq!(
         oldest_schema_version(&mut reader),
-        Err(MetaError::InvalidIntValue)
+        Err(MetaError::Structure(StructureError::InvalidIntValue))
     );
 
     reader.error = Some(MetaError::Storage("mvcc unavailable".to_owned()));

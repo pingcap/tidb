@@ -805,7 +805,8 @@ pub fn unistore_cluster_session_stack_from(
 mod meta_txn_tests {
     use super::*;
     use tidb_store_driver_txn::meta_txn::MetaTxnStorage;
-    use tidb_meta::transaction::{Mutator, RawTransaction};
+    use tidb_meta::transaction::Mutator;
+    use tidb_structure::transaction::RawTransaction;
     use tidb_txnkv::{run_in_new_txn, NewTxnStorage, NewTxnTransaction, RunInNewTxnContext};
 
     /// The embedded stack: the PD oracle and the opener over the store.

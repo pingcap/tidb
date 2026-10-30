@@ -188,7 +188,7 @@ impl<S: MetaSnapshot> MetaSnapshot for Overlay<'_, S> {
 
 /// A `DB:<id>` hash field `Table:<id>`: one table's stored `TableInfo`.
 fn is_table_meta_key(raw_key: &[u8]) -> bool {
-    tidb_meta::structure::decode_hash_data_key(raw_key)
+    tidb_tablecodec::table_key::decode_meta_key(raw_key)
         .is_ok_and(|(hash, field)| hash.starts_with(b"DB:") && field.starts_with(b"Table:"))
 }
 
@@ -355,7 +355,7 @@ fn parse_statement(sql: &str, default_schema: &str) -> Result<DdlStatement, Boot
 /// name: under the classic layout no id is reserved for it.
 fn refuse_if_present<S: MetaSnapshot>(snapshot: &mut S) -> Result<(), BootstrapError> {
     for (raw_key, stored) in snapshot.scan_prefix(&key::databases_kv_prefix())? {
-        let (_, field) = tidb_meta::structure::decode_hash_data_key(&raw_key)
+        let (_, field) = tidb_tablecodec::table_key::decode_meta_key(&raw_key)
             .map_err(|error| BootstrapError::Encode(format!("DBs hash key: {error}")))?;
         if !key::has_prefix(key::DB_PREFIX, &field) {
             continue;
@@ -700,7 +700,7 @@ mod tests {
             tidb_tablecodec::table_key::gen_table_prefix(tidb_metadef::system::TI_DBDDLHISTORY_TABLE_ID);
         let is_history = |raw_key: &[u8]| {
             raw_key.starts_with(&history_prefix)
-                || tidb_meta::structure::decode_hash_data_key(raw_key)
+                || tidb_tablecodec::table_key::decode_meta_key(raw_key)
                     .is_ok_and(|(hash, _)| hash == b"DDLJobHistory")
         };
         let bytes = |write: &BootstrapWrite| {

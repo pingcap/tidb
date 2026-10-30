@@ -42,7 +42,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::time::Duration;
 
-use tidb_meta::transaction::{RawRangeVisitor, RawTransaction};
+use tidb_meta::transaction::MetaTransaction;
+use tidb_structure::transaction::{RawRangeVisitor, RawTransaction};
 use tidb_meta::MetaError;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{BufferMutation, OptimisticCommitOutcome};
@@ -173,7 +174,7 @@ where
     }
 }
 
-impl<S> RawTransaction for MetaTxn<S>
+impl<S> MetaTransaction for MetaTxn<S>
 where
     S: StoreClient,
 {
@@ -184,6 +185,13 @@ where
     fn configure_meta_mutator(&mut self) {
         self.configured_for_meta = true;
     }
+}
+
+impl<S> RawTransaction for MetaTxn<S>
+where
+    S: StoreClient,
+{
+    type Error = MetaError;
 
     fn get(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>, MetaError> {
         if let Some(write) = self.writes.get(key) {
@@ -221,7 +229,7 @@ where
         &mut self,
         start: &[u8],
         end: &[u8],
-        visit: &mut RawRangeVisitor<'_>,
+        visit: &mut RawRangeVisitor<'_, MetaError>,
     ) -> Result<(), MetaError> {
         for (key, value) in self.merged_range(start, end)? {
             visit(&key, &value)?;
