@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/objstore/ossstore"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/s3store"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -87,7 +88,7 @@ func TestMalformedEndpointDoesNotLeakCredentials(t *testing.T) {
 }
 
 func TestMalformedS3BackendDoesNotLeakCredentials(t *testing.T) {
-	for _, provider := range []string{"", "aws", "minio", s3like.KS3SDKProvider} {
+	for _, provider := range []string{"", "aws", "minio", s3like.KS3SDKProvider, s3like.OSSProvider} {
 		for _, entry := range []string{"dispatcher", "constructor"} {
 			for _, endpoint := range []string{
 				"https://FAKE_USER:FAKE_PASS@host/path%zz?sig=FAKE_SIGNATURE",
@@ -111,6 +112,8 @@ func TestMalformedS3BackendDoesNotLeakCredentials(t *testing.T) {
 						_, err = New(ctx, &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: backend}}, opts)
 					} else if provider == s3like.KS3SDKProvider {
 						_, err = s3store.NewKS3Storage(ctx, backend, opts)
+					} else if provider == s3like.OSSProvider {
+						_, err = ossstore.NewOSSStorage(ctx, backend, opts)
 					} else {
 						_, err = s3store.NewS3Storage(ctx, backend, opts)
 					}
