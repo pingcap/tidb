@@ -20,7 +20,7 @@ use tidb_ast::{
     BindingScope, CreateBindingSource, CreateBindingStmt, DropBindingStmt, DropBindingTarget,
     Stmt,
 };
-use tidb_bindinfo::binding::{self, Binding, BIND_INFO_COLUMNS, SOURCE_MANUAL, STATUS_ENABLED};
+use tidb_bindinfo::binding::{self, Binding, SOURCE_MANUAL, STATUS_ENABLED};
 use tidb_datatype::Datum;
 use tidb_variable::user_vars::UserVarsReader;
 use tidb_hack::go_to_lower;
@@ -53,7 +53,9 @@ pub(crate) fn truncated_sample_text(query: &str) -> bool {
 }
 
 /// Go `SQLBindExec`.
-pub trait SqlBindExec: crate::show::exec::ShowExec {
+pub trait SqlBindExec:
+    crate::show::exec::ShowExec + tidb_bindinfo::binding_operator::BindingOperatorSession
+{
     /// Go `GlobalBindingHandle`'s storage write: one operation in an
     /// independent internal transaction.
     fn with_global_binding_storage(
@@ -64,10 +66,6 @@ pub trait SqlBindExec: crate::show::exec::ShowExec {
     fn validate_binding_statement(&mut self, hinted: &Stmt) -> Result<(), DriverError>;
     /// The statement clock as a binding's `create_time` / `update_time`.
     fn binding_timestamp(&self) -> String;
-    /// The binding storage's own clock (Go's `now(6)` on the internal session).
-    fn global_binding_timestamp(&self) -> String;
-    /// A write to `mysql.bind_info` with its parameters bound.
-    fn bind_info_exec(&mut self, sql: &str, params: &[Datum]) -> Result<u64, DriverError>;
     /// The rows of an internal read of `sql` under `ctx`.
     fn set_value_rows(
         &mut self,
@@ -99,32 +97,13 @@ pub trait SqlBindExec: crate::show::exec::ShowExec {
             }
             tidb_ast::SetBindingTarget::SqlDigest(digest) => digest.clone(),
         };
-        let (new_status, old_status0, old_status1) = match set.status {
-            tidb_ast::BindingStatus::Enabled => (
-                STATUS_ENABLED,
-                binding::STATUS_DISABLED,
-                binding::STATUS_DISABLED,
-            ),
-            tidb_ast::BindingStatus::Disabled => (
-                binding::STATUS_DISABLED,
-                binding::STATUS_USING,
-                STATUS_ENABLED,
-            ),
+        let new_status = match set.status {
+            tidb_ast::BindingStatus::Enabled => STATUS_ENABLED,
+            tidb_ast::BindingStatus::Disabled => binding::STATUS_DISABLED,
         };
         let changed = self.with_global_binding_storage(|storage| {
-            let now = storage.global_binding_timestamp();
-            storage.bind_info_exec(
-                "UPDATE mysql.bind_info SET status = ?, update_time = ? \
-             WHERE sql_digest = ? AND update_time < ? AND status IN (?, ?)",
-                &[
-                    Datum::new_string(new_status.to_owned()),
-                    Datum::new_string(now.clone()),
-                    Datum::new_string(digest.clone()),
-                    Datum::new_string(now),
-                    Datum::new_string(old_status0.to_owned()),
-                    Datum::new_string(old_status1.to_owned()),
-                ],
-            )
+            tidb_bindinfo::binding_operator::set_binding_status(storage, new_status, &digest)
+                .map(u64::from)
         })?;
         if changed == 0 {
             // Go wraps `errors.NewNoStackError(...)` as an ordinary 1105.
@@ -213,7 +192,7 @@ pub trait SqlBindExec: crate::show::exec::ShowExec {
         };
         if create.scope == BindingScope::Global {
             self.with_global_binding_storage(|storage| {
-                storage.create_global_binding(&binding)?;
+                tidb_bindinfo::binding_operator::create_binding(storage, std::slice::from_ref(&binding))?;
                 Ok(0)
             })?;
         } else {
@@ -260,9 +239,7 @@ pub trait SqlBindExec: crate::show::exec::ShowExec {
         }
         if scope == BindingScope::Global {
             self.with_global_binding_storage(|storage| {
-                for binding in &bindings {
-                    storage.create_global_binding(binding)?;
-                }
+                tidb_bindinfo::binding_operator::create_binding(storage, &bindings)?;
                 Ok(0)
             })?;
         } else {
@@ -463,51 +440,6 @@ pub trait SqlBindExec: crate::show::exec::ShowExec {
         })
     }
 
-    /// Go `bindingOperator.CreateBinding`'s storage half: older rows for the
-    /// same normalized statement become `deleted`, then the new row is
-    /// inserted `enabled`. The timestamps print with SIX fractional digits
-    /// (`types.NewTime(..., 6)` there, against the session handle's 3).
-    fn create_global_binding(&mut self, binding: &Binding) -> Result<(), DriverError> {
-        let now = self.global_binding_timestamp();
-        self.bind_info_exec(
-            "UPDATE mysql.bind_info SET status = ?, update_time = ? \
-             WHERE original_sql = ? AND update_time < ?",
-            &[
-                Datum::new_string("deleted".to_owned()),
-                Datum::new_string(now.clone()),
-                Datum::new_string(binding.original_sql.clone()),
-                Datum::new_string(now.clone()),
-            ],
-        )?;
-        self.bind_info_exec(
-            &format!(
-                "INSERT INTO mysql.bind_info({BIND_INFO_COLUMNS}, plan_digest) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-            ),
-            &[
-                Datum::new_string(binding.original_sql.clone()),
-                Datum::new_string(binding.bind_sql.clone()),
-                // Go lowercases the schema on the way in
-                // (`strings.ToLower(binding.Db)`).
-                Datum::new_string(go_to_lower(&binding.db)),
-                Datum::new_string(binding.status.to_owned()),
-                Datum::new_string(now.clone()),
-                Datum::new_string(now),
-                Datum::new_string(binding.charset.clone()),
-                Datum::new_string(binding.collation.clone()),
-                Datum::new_string(binding.source.to_owned()),
-                Datum::new_string(binding.sql_digest.clone()),
-                // Go stores NULL for a binding without a plan digest.
-                if binding.plan_digest.is_empty() {
-                    Datum::Null
-                } else {
-                    Datum::new_string(binding.plan_digest.clone())
-                },
-            ],
-        )?;
-        Ok(())
-    }
-
     /// Go `SQLBindExec`'s drop half. Dropping a binding that is not there is
     /// NOT an error (measured on real TiDB: `DROP SESSION BINDING FOR <sql>`
     /// with no such binding answers OK), so the affected count is the only
@@ -551,22 +483,7 @@ pub trait SqlBindExec: crate::show::exec::ShowExec {
             // Go `bindingOperator.DropBinding`: a drop is an UPDATE to
             // `deleted`, and the affected count is the answer.
             let dropped = self.with_global_binding_storage(|storage| {
-                let now = storage.global_binding_timestamp();
-                let mut dropped = 0u64;
-                for digest in &digests {
-                    dropped += storage.bind_info_exec(
-                        "UPDATE mysql.bind_info SET status = ?, update_time = ? \
-                     WHERE sql_digest = ? AND update_time < ? AND status != ?",
-                        &[
-                            Datum::new_string("deleted".to_owned()),
-                            Datum::new_string(now.clone()),
-                            Datum::new_string(digest.clone()),
-                            Datum::new_string(now.clone()),
-                            Datum::new_string("deleted".to_owned()),
-                        ],
-                    )?;
-                }
-                Ok(dropped)
+                tidb_bindinfo::binding_operator::drop_binding(storage, &digests)
             })?;
             return Ok(StmtOutput::Affected(dropped));
         }

@@ -277,14 +277,6 @@ impl tidb_executor::bind_exec::SqlBindExec for Session {
         Session::binding_timestamp(self)
     }
 
-    fn global_binding_timestamp(&self) -> String {
-        Session::global_binding_timestamp(self)
-    }
-
-    fn bind_info_exec(&mut self, sql: &str, params: &[Datum]) -> Result<u64, DriverError> {
-        Session::bind_info_exec(self, sql, params)
-    }
-
     fn set_value_rows(
         &mut self,
         sql: &str,

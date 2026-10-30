@@ -565,8 +565,8 @@ fn a_range_bound_is_folded_at_create_time() {
 /// ```
 ///
 /// -- 28800 seconds apart, exactly the offset. This bound was REFUSED
-/// outright until the session's context reached `run_create_table_in`,
-/// because that entry re-parses the statement and folding under a fixed UTC
+/// outright until the session's context reached the table builder,
+/// because that builder re-parsed the statement and folding under a fixed UTC
 /// settles the bound to the other session's integer: a row real TiDB routes
 /// to one partition lands in another, and every later pruned read answers
 /// from it wrongly, with no error at all.

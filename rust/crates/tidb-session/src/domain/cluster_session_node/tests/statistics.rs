@@ -58,8 +58,8 @@ impl ClusterAnalyze for PanickingAnalyze {
     }
 }
 
-/// Resolves the statement against the node's catalog, as the internal
-/// transaction does, and reports Go's skipped-target warning.
+/// Checks the tables the executor resolved against the node's catalog,
+/// and reports Go's skipped-target warning.
 struct WarningStatsLock {
     calls: AtomicUsize,
     catalog: Arc<tidb_infoschema_issyncer::catalog_watch::SharedCatalog>,
@@ -157,7 +157,7 @@ fn usage_workers_stop_before_the_shutdown_delta_flush() {
 impl tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock for WarningStatsLock {
     fn execute(
         &self,
-        resolver: &dyn tidb_stats_handle_lockstats::cluster_stats_lock::StatsLockResolver,
+        request: &tidb_stats_handle_lockstats::cluster_stats_lock::StatsLockRequest,
     ) -> Result<
         tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockReport,
         tidb_store_driver_error::sql_query_error::SqlQueryError,
@@ -165,7 +165,7 @@ impl tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock for 
         let catalog = self.catalog.load();
         let (_, table) = catalog.find_table("app", "t").expect("app.t");
         assert_eq!(
-            resolver.resolve(&catalog).expect("LOCK STATS t resolves"),
+            *request,
             tidb_stats_handle_lockstats::cluster_stats_lock::StatsLockRequest::Tables {
                 lock: true,
                 tables: [(

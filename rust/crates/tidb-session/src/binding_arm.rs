@@ -328,63 +328,11 @@ impl Session {
         .unwrap_or(false)
     }
 
-    /// [`Self::binding_timestamp`] at SIX fractional digits: the global
-    /// operator stores `types.NewTime(..., 6)` where the session handle uses
-    /// 3, and `bind_info.update_time` is a `TIMESTAMP(6)` column.
-    pub(crate) fn global_binding_timestamp(&self) -> String {
-        self.global_binding_timestamp_offset(0)
-    }
-
-    /// [`Self::global_binding_timestamp`] shifted by `seconds` -- the GC
-    /// cutoff is "now minus ten leases" in the same TIMESTAMP(6) spelling
-    /// the rows store, so the comparison happens in one text domain.
-    fn global_binding_timestamp_offset(&self, seconds: i64) -> String {
-        let zone = self.session_time_zone();
-        let (clock_seconds, nanos, offset) = self.statement_clock(&zone);
-        let at = chrono::DateTime::from_timestamp(clock_seconds, nanos)
-            .unwrap_or_else(chrono::Utc::now)
-            .naive_utc()
-            + chrono::Duration::seconds(i64::from(offset) + seconds);
-        at.format("%Y-%m-%d %H:%M:%S%.6f").to_string()
-    }
-
-    /// Go `bindingOperator.GCBinding`: `deleted` tombstones whose
-    /// `update_time` is older than TEN LEASES (`bindinfo.Lease` = 3s) are
-    /// physically removed after peers can observe them. The Domain binding
-    /// owner invokes this through the shared internal writer and lock row.
+    /// Go `bindingOperator.GCBinding` on this internal session: the Domain
+    /// binding owner invokes it through the shared internal writer and lock
+    /// row.
     pub fn gc_global_bindings(&mut self) -> Result<(), DriverError> {
-        let cutoff = self.global_binding_timestamp_offset(-30);
-        self.bind_info_exec(
-            "DELETE FROM mysql.bind_info WHERE status = ? AND update_time < ?",
-            &[
-                Datum::new_string("deleted".to_owned()),
-                Datum::new_string(cutoff),
-            ],
-        )?;
-        Ok(())
-    }
-
-    /// One parameterized write against `mysql.bind_info`, the same shape as
-    /// Go's `exec(sctx, sql, args...)` in `binding_operator.go`. The
-    /// parameters go through [`tidb_executor::bind_parameters`] -- the
-    /// prepared-statement binder -- so a bound SQL text (which contains
-    /// quotes freely) can never break out of its literal.
-    pub(crate) fn bind_info_exec(
-        &mut self,
-        sql: &str,
-        params: &[Datum],
-    ) -> Result<u64, DriverError> {
-        let text = tidb_executor::bind_parameters(sql, params, self.scanner_sql_mode())?;
-        let ctx = self.statement_context_for_update_read(false);
-        self.with_staged_catalog(|catalog| match text.trim_start().get(..6) {
-            Some(word) if word.eq_ignore_ascii_case("INSERT") => {
-                tidb_executor::run_insert_in(&text, catalog, "mysql", &ctx)
-            }
-            Some(word) if word.eq_ignore_ascii_case("DELETE") => {
-                tidb_executor::run_delete_in(&text, catalog, "mysql", &ctx)
-            }
-            _ => tidb_executor::run_update_in(&text, catalog, "mysql", &ctx),
-        })
+        tidb_bindinfo::binding_operator::gc_binding(self)
     }
 
     /// Materialize the published bindings for SHOW. Standalone in-memory
@@ -430,4 +378,45 @@ pub trait GlobalBindingWriter: Send + Sync {
         &self,
         operation: &mut dyn FnMut(&mut crate::Session) -> Result<u64, tidb_driver_error::DriverError>,
     ) -> Result<u64, tidb_driver_error::DriverError>;
+}
+
+/// The binding operator's internal session (Go `binding_operator.go`'s
+/// `sctx`).
+impl tidb_bindinfo::binding_operator::BindingOperatorSession for Session {
+    /// Go `exec(sctx, sql, args...)` against `mysql.bind_info`. The
+    /// parameters go through [`tidb_executor::bind_parameters`] -- the
+    /// prepared-statement binder -- so a bound SQL text (which contains
+    /// quotes freely) can never break out of its literal.
+    fn exec(&mut self, sql: &str, params: &[Datum]) -> Result<(u64, Vec<String>), DriverError> {
+        let text = tidb_executor::bind_parameters(sql, params, self.scanner_sql_mode())?;
+        let ctx = self.statement_context_for_update_read(false);
+        let affected = self.with_staged_catalog(|catalog| match text.trim_start().get(..6) {
+            Some(word) if word.eq_ignore_ascii_case("INSERT") => {
+                tidb_executor::run_insert_in(&text, catalog, "mysql", &ctx)
+            }
+            Some(word) if word.eq_ignore_ascii_case("DELETE") => {
+                tidb_executor::run_delete_in(&text, catalog, "mysql", &ctx)
+            }
+            _ => tidb_executor::run_update_in(&text, catalog, "mysql", &ctx),
+        })?;
+        let warnings = ctx
+            .take_warnings()
+            .iter()
+            .map(|warning| warning.message().to_owned())
+            .collect();
+        Ok((affected, warnings))
+    }
+
+    /// The statement clock in the session's zone, at six fractional digits
+    /// (`bind_info.update_time` is a `TIMESTAMP(6)` column).
+    fn now_timestamp(&self, offset_micros: i64) -> String {
+        let zone = self.session_time_zone();
+        let (clock_seconds, nanos, offset) = self.statement_clock(&zone);
+        let at = chrono::DateTime::from_timestamp(clock_seconds, nanos)
+            .unwrap_or_else(chrono::Utc::now)
+            .naive_utc()
+            + chrono::Duration::seconds(i64::from(offset))
+            + chrono::Duration::microseconds(offset_micros);
+        at.format("%Y-%m-%d %H:%M:%S%.6f").to_string()
+    }
 }

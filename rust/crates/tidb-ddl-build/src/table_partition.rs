@@ -1112,7 +1112,7 @@ pub fn partition_definition_placement(
 ) -> Option<tidb_model::PolicyRefInfo> {
     definition.options.iter().find_map(|option| match option {
         // The ID is left at zero here and stamped where the catalog is in
-        // reach (`run_create_table_in`, the ALTER partition builders). Go resolves a table's and its partitions' references in ONE
+        // reach (the DDL jobs that store the table). Go resolves a table's and its partitions' references in ONE
         // place for the same reason (`CreateTableWithInfo`): the policy has
         // to exist, and the reference is BY id once it does.
         tidb_ast::TableOption::PlacementPolicy(name) => Some(tidb_model::PolicyRefInfo {

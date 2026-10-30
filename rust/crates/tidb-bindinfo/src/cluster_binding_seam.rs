@@ -27,7 +27,7 @@ use crate::binding_cache::SharedBindingCache;
 use tidb_txnkv::kv_storage::Storage;
 
 /// Go pkg/bindinfo.Lease, independent of the schema lease.
-const BINDING_LEASE: Duration = Duration::from_secs(3);
+const BINDING_LEASE: Duration = crate::binding_operator::LEASE;
 const COLUMNS: &[&str] = &[
     "original_sql",
     "bind_sql",

@@ -107,19 +107,6 @@ pub enum StatsLockRequest {
     },
 }
 
-/// Go `pkg/executor/lockstats`' half of a lock statement: resolving its
-/// tables against the catalog the stats transaction reads, into the handle's
-/// arguments.
-pub trait StatsLockResolver {
-    /// The request the statement resolves to under `catalog`.
-    ///
-    /// # Errors
-    ///
-    /// Go's statement errors (`ErrTableNotExists`, `ErrUnknownPartition`, an
-    /// empty target list, a non-partitioned table named with partitions).
-    fn resolve(&self, catalog: &ClusterCatalog) -> Result<StatsLockRequest, ClusterStatsLockError>;
-}
-
 /// Drives Go's lockstats policy (`lock_stats`) for a resolved request.
 pub(crate) fn apply_stats_lock_request<T: StatsLockTransaction>(
     transaction: &mut T,

@@ -17,7 +17,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::cluster_stats_lock::StatsLockResolver;
+use crate::cluster_stats_lock::StatsLockRequest;
 use crate::real_tikv_stats_lock::{commit_cluster_stats_lock, ClusterStatsLockReport};
 use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreClient};
 
@@ -26,11 +26,12 @@ use tidb_store_driver_error::sql_query_error::SqlQueryError;
 
 /// The one persisted-statistics-lock operation exposed to a cluster session.
 pub trait ClusterStatsLock: Send + Sync {
-    /// Executes one `LOCK STATS` or `UNLOCK STATS` internal transaction, its
-    /// tables resolved by the executor's `resolver`.
+    /// Go `StatsLock.LockTables` / `LockPartitions` (and their `Unlock`
+    /// twins): one internal transaction over the tables the executor
+    /// resolved.
     fn execute(
         &self,
-        resolver: &dyn StatsLockResolver,
+        request: &StatsLockRequest,
     ) -> Result<ClusterStatsLockReport, SqlQueryError>;
 }
 
@@ -60,9 +61,9 @@ where
 {
     fn execute(
         &self,
-        resolver: &dyn StatsLockResolver,
+        request: &StatsLockRequest,
     ) -> Result<ClusterStatsLockReport, SqlQueryError> {
-        commit_cluster_stats_lock(&self.opener, resolver, self.timeout)
+        commit_cluster_stats_lock(&self.opener, request, self.timeout)
             .map_err(cluster_stats_lock_error)
     }
 }

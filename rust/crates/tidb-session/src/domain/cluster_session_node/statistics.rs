@@ -558,8 +558,17 @@ impl tidb_executor::stats_exec::StatsStatementService for ClusterStatsStatementS
         &self,
         statement: &ClusterStatsLockStatement,
     ) -> Result<String, tidb_driver_error::DriverError> {
+        // Go `LockExec.Next`: the tables resolve against the domain's latest
+        // schema (`do.InfoSchema()`) before the handle's transaction.
+        let request = statement.resolve(&self.catalog.load()).map_err(|error| {
+            into_driver_error(
+                tidb_stats_handle_lockstats::real_tikv_stats_lock::cluster_stats_lock_error(
+                    tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockCommitError::Plan(error),
+                ),
+            )
+        })?;
         self.stats_lock
-            .execute(statement)
+            .execute(&request)
             .map(|report| report.warning)
             .map_err(into_driver_error)
     }

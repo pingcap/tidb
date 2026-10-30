@@ -23,9 +23,7 @@ use std::collections::BTreeMap;
 use tidb_hack::GoToLower;
 use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_model::table_info::TableInfo;
-use tidb_stats_handle_lockstats::cluster_stats_lock::{
-    ClusterStatsLockError, StatsLockRequest, StatsLockResolver,
-};
+use tidb_stats_handle_lockstats::cluster_stats_lock::{ClusterStatsLockError, StatsLockRequest};
 use tidb_stats_handle_types::StatsLockTable;
 
 /// One table target retained from a parsed lock statement.
@@ -100,11 +98,18 @@ pub fn prepare_cluster_stats_lock_parsed(
     Ok(Some(ClusterStatsLockStatement { lock, targets }))
 }
 
-impl StatsLockResolver for ClusterStatsLockStatement {
-    /// Go `LockExec.Next` / `UnlockExec.Next`: `populatePartitionIDAndNames`
-    /// for one table named with partitions, `populateTableAndPartitionIDs`
-    /// otherwise.
-    fn resolve(&self, catalog: &ClusterCatalog) -> Result<StatsLockRequest, ClusterStatsLockError> {
+impl ClusterStatsLockStatement {
+    /// Go `LockExec.Next` / `UnlockExec.Next` over the domain's latest
+    /// schema (`do.InfoSchema()`):
+    /// `populatePartitionIDAndNames` for one table named with partitions,
+    /// `populateTableAndPartitionIDs` otherwise -- the arguments of the
+    /// handle's `LockPartitions` / `LockTables`.
+    ///
+    /// # Errors
+    ///
+    /// Go's statement errors (an empty target list, `ErrTableNotExists`, a
+    /// non-partitioned table named with partitions, `ErrUnknownPartition`).
+    pub fn resolve(&self, catalog: &ClusterCatalog) -> Result<StatsLockRequest, ClusterStatsLockError> {
         if self.targets.is_empty() {
             return Err(ClusterStatsLockError::Invalid(if self.lock {
                 "Lock Stats: table should not empty".to_owned()
