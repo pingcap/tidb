@@ -69,3 +69,56 @@ func TestConstantPropagation(t *testing.T) {
 			`  └─TableFullScan cop[tikv] table:a1 keep order:true, stats:pseudo`))
 	}
 }
+
+func TestBinaryColumnConstantPropagation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// `user_id = 'u1'` compares bytes, so 'u1' replaces user_id in the OR, `user_id > 'u1'` folds to false and
+	// `object_id > 1` becomes part of the index range instead of a filter.
+	tk.MustExec("create table c (user_id varbinary(64), is_primary int, object_id bigint, key k (user_id, is_primary, object_id))")
+	tk.MustExec("insert into c values ('u1', 1, 1), ('u1', 1, 2), ('u1', 1, 3), ('u1', 2, 1), ('u2', 1, 1)")
+	keysetQuery := "select object_id from c where user_id = 'u1' and is_primary = 1 and " +
+		"((user_id > 'u1') or (user_id = 'u1' and is_primary > 1) or (user_id = 'u1' and is_primary = 1 and object_id > 1)) " +
+		"order by object_id limit 10"
+	tk.MustQuery("explain format='plan_tree' " + keysetQuery).Check(testkit.Rows(
+		`Limit root  offset:0, count:10`,
+		`└─IndexReader root  index:Limit`,
+		`  └─Limit cop[tikv]  offset:0, count:10`,
+		`    └─IndexRangeScan cop[tikv] table:c, index:k(user_id, is_primary, object_id) range:("u1" 1 1,"u1" 1 +inf], keep order:true, stats:pseudo`))
+	tk.MustQuery(keysetQuery).Check(testkit.Rows("2", "3"))
+
+	// A binary column joined with a case-insensitive one: substituting 'a' into `t1.a = t2.a` would compare with
+	// t2.a's collation and wrongly match 'A'.
+	tk.MustExec("create table t1 (a varbinary(10), index (a))")
+	tk.MustExec("create table t2 (a varchar(10) collate utf8mb4_general_ci, index (a))")
+	tk.MustExec("insert into t1 values ('a')")
+	tk.MustExec("insert into t2 values ('A'), ('a')")
+	tk.MustQuery("select * from t1, t2 where t1.a = t2.a and t1.a = 'a'").Check(testkit.Rows("a a"))
+	tk.MustQuery("select * from t1 left join t2 on t1.a = t2.a where t1.a = 'a'").Check(testkit.Rows("a a"))
+	tk.MustQuery("select * from t2 left join t1 on t1.a = t2.a and t1.a = 'a' order by t2.a").Check(testkit.Rows("A <nil>", "a a"))
+
+	// Comparisons that are not byte-wise must not propagate: an explicit COLLATE pads spaces, and a numeric
+	// comparison matches '01' = 1.
+	tk.MustExec("create table t3 (a varbinary(10))")
+	tk.MustExec("insert into t3 values ('x'), ('x '), ('1'), ('01')")
+	tk.MustQuery("select hex(a) from t3 where a = 'x' collate utf8mb4_bin and length(a) = 2").Check(testkit.Rows("7820"))
+	tk.MustQuery("select a from t3 where a = 1 and length(a) = 2").Check(testkit.Rows("01"))
+
+	// BINARY(n) stores its value padded with zero bytes.
+	tk.MustExec("create table t4 (a binary(5))")
+	tk.MustExec("insert into t4 values ('abc')")
+	tk.MustQuery("select hex(a) from t4 where a = 'abc' and length(a) = 3").Check(testkit.Rows())
+	tk.MustQuery("select hex(a), length(a) from t4 where a = 'abc\\0\\0' and length(a) = 5").Check(testkit.Rows("6162630000 5"))
+
+	// A cached plan holds the propagated parameter, not its value at the first execution.
+	tk.MustExec("prepare st from 'select object_id from c where user_id = ? and length(user_id) = ?'")
+	tk.MustExec("set @u = 'u1', @n = 2")
+	tk.MustQuery("execute st using @u, @n").Sort().Check(testkit.Rows("1", "1", "2", "3"))
+	tk.MustExec("set @u = 'u12', @n = 2")
+	tk.MustQuery("execute st using @u, @n").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @u = 'u2', @n = 2")
+	tk.MustQuery("execute st using @u, @n").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}

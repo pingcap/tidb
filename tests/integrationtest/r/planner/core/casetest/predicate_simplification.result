@@ -176,8 +176,7 @@ Projection	root		planner__core__casetest__predicate_simplification.dt.a, planner
   ├─Limit(Build)	root		offset:0, count:240
   │ └─IndexReader	root		index:Limit
   │   └─Limit	cop[tikv]		offset:0, count:240
-  │     └─Selection	cop[tikv]		or(gt(planner__core__casetest__predicate_simplification.it.a, "a"), and(eq(planner__core__casetest__predicate_simplification.it.a, "a"), gt(planner__core__casetest__predicate_simplification.it.pk, 1)))
-  │       └─IndexRangeScan	cop[tikv]	table:it, index:f(a, pk)	range:["a","a"], keep order:true, stats:pseudo
+  │     └─IndexRangeScan	cop[tikv]	table:it, index:f(a, pk)	range:("a" 1,"a" +inf], keep order:true, stats:pseudo
   └─TableReader(Probe)	root		data:TableRangeScan
     └─TableRangeScan	cop[tikv]	table:dt	range: decided by [planner__core__casetest__predicate_simplification.it.pk], keep order:false, stats:pseudo
 explain format='plan_tree' SELECT * FROM

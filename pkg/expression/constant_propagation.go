@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
@@ -147,18 +148,64 @@ func ValidCompareConstantPredicateHelper(ctx EvalContext, eq *ScalarFunction, co
 }
 
 // validEqualCond checks if the cond is an expression like [column eq constant].
-func validEqualCond(ctx EvalContext, cond Expression) (*Column, *Constant) {
+func validEqualCond(ctx BuildContext, cond Expression) (*Column, *Constant) {
 	if eq, ok := cond.(*ScalarFunction); ok {
 		if eq.FuncName.L != ast.EQ {
 			return nil, nil
 		}
-		col, con := ValidCompareConstantPredicateHelper(ctx, eq, true)
+		evalCtx := ctx.GetEvalCtx()
+		col, con := ValidCompareConstantPredicateHelper(evalCtx, eq, true)
 		if col == nil {
-			return ValidCompareConstantPredicateHelper(ctx, eq, false)
+			col, con = ValidCompareConstantPredicateHelper(evalCtx, eq, false)
+		}
+		if col == nil {
+			return validBinaryEqualCond(ctx, eq)
 		}
 		return col, con
 	}
 	return nil, nil
+}
+
+// validBinaryEqualCond checks if the cond is an expression like [binary column eq string constant] that compares
+// bytes, such as `varbinary_col = 'abc'` where 'abc' has the connection collation. ValidCompareConstantPredicateHelper
+// rejects it because the column and the constant have different collations, but a row satisfying a byte-wise
+// comparison holds exactly the constant's bytes. Once cast to the column's type, the constant is indistinguishable
+// from the column for that row, so it is returned in that form to be propagated in the column's place.
+func validBinaryEqualCond(ctx BuildContext, eq *ScalarFunction) (*Column, *Constant) {
+	// The comparison's own collation decides whether it is byte-wise: `varbinary_col = 'x' COLLATE utf8mb4_bin`
+	// compares with PAD SPACE, so a row holding 'x ' also satisfies it. Such a comparison currently wraps the column
+	// in from_binary(), which fails the bare-column check below, so this check guards against that changing.
+	if _, coll := eq.CharsetAndCollation(); coll != charset.CollationBin {
+		return nil, nil
+	}
+	args := eq.GetArgs()
+	col, ok := args[0].(*Column)
+	conArg := args[1]
+	if !ok {
+		col, ok = args[1].(*Column)
+		conArg = args[0]
+	}
+	if !ok {
+		return nil, nil
+	}
+	con, ok := conArg.(*Constant)
+	if !ok {
+		return nil, nil
+	}
+	evalCtx := ctx.GetEvalCtx()
+	colType := col.GetStaticType()
+	if colType.GetCollate() != charset.CollationBin || colType.EvalType() != types.ETString || colType.Hybrid() ||
+		con.GetType(evalCtx).EvalType() != types.ETString {
+		return nil, nil
+	}
+	oriWarningCnt := evalCtx.WarningCount()
+	casted := BuildCastFunction(ctx, con, colType.DeepCopy())
+	evalCtx.TruncateWarnings(oriWarningCnt)
+	castedCon, ok := casted.(*Constant)
+	if !ok {
+		return nil, nil
+	}
+	return col, castedCon
 }
 
 // replaceEqCondtionWithTrue replaces eq condition in 'cond' by true if both 'src' and 'tgt' appear in 'eq cond'.
@@ -501,7 +548,7 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 		if visited[i] {
 			continue
 		}
-		col, con := validEqualCond(s.ctx.GetEvalCtx(), cond)
+		col, con := validEqualCond(s.ctx, cond)
 		// Then we check if this CNF item is a false constant. If so, we will set the whole condition to false.
 		var ok bool
 		if col == nil {
@@ -738,7 +785,7 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 		if visited[i+condsOffset] {
 			continue
 		}
-		col, con := validEqualCond(s.ctx.GetEvalCtx(), cond)
+		col, con := validEqualCond(s.ctx, cond)
 		// Then we check if this CNF item is a false constant. If so, we will set the whole condition to false.
 		var ok bool
 		if col == nil {
