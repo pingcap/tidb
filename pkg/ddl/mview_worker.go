@@ -600,10 +600,11 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 	}
 	restoreDivPrecision := func() {}
 	if mviewTableInfo != nil && mviewTableInfo.MaterializedView != nil {
-		originalField := sessVars.DivPrecisionIncrement
+		// Take the original value from the field, which internal code may set
+		// without the session variable.
+		original := strconv.Itoa(sessVars.DivPrecisionIncrement)
 		divPrecision := strconv.Itoa(mviewTableInfo.MaterializedView.DefinitionDivPrecisionIncrement)
-		original, err := sessVars.SetSystemVarWithOldStateAsRet(vardef.DivPrecisionIncrement, divPrecision)
-		if err != nil {
+		if err := sessVars.SetSystemVar(vardef.DivPrecisionIncrement, divPrecision); err != nil {
 			restoreExecution()
 			restore(sessCtx)
 			return nil, errors.Trace(err)
@@ -612,7 +613,6 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 			if err := sessVars.SetSystemVar(vardef.DivPrecisionIncrement, original); err != nil {
 				logutil.DDLLogger().Warn("create materialized view: restore div_precision_increment", zap.Error(err))
 			}
-			sessVars.DivPrecisionIncrement = originalField
 		}
 	}
 	sessVars.CurrentDB = currentDB

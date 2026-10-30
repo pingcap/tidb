@@ -46,6 +46,12 @@ func TestInitCreateMaterializedViewBuildSessionAppliesDefinitionDivPrecisionIncr
 	mviewTableInfo := &model.TableInfo{
 		MaterializedView: &model.MaterializedViewInfo{DefinitionDivPrecisionIncrement: 9},
 	}
+	// The submitter has loaded the global variables that track and spill the
+	// memory of aggregations, while the internal session has not.
+	submitter := mock.NewContext().GetSessionVars()
+	submitter.TrackAggregateMemoryUsage, submitter.EnableParallelHashaggSpill = true, true
+	AddMViewExecutionSessionVarsToJob(job, submitter)
+	sessVars.TrackAggregateMemoryUsage, sessVars.EnableParallelHashaggSpill = false, false
 	sessionVar := func(name string) string {
 		value, err := sessVars.GetSessionOrGlobalSystemVar(context.Background(), name)
 		require.NoError(t, err)
@@ -67,13 +73,21 @@ func TestInitCreateMaterializedViewBuildSessionAppliesDefinitionDivPrecisionIncr
 	require.Equal(t, "PAD_CHAR_TO_FULL_LENGTH", sessionVar(vardef.SQLModeVar))
 	require.Equal(t, "UTC", sessionVar(vardef.TimeZone))
 	require.Equal(t, "rg1", sessVars.ResourceGroupName)
+	require.True(t, sessVars.TrackAggregateMemoryUsage)
+	require.True(t, sessVars.EnableParallelHashaggSpill)
+	require.Equal(t, vardef.On, sessionVar(vardef.TiDBTrackAggregateMemoryUsage))
+	require.Equal(t, vardef.On, sessionVar(vardef.TiDBEnableParallelHashaggSpill))
 
 	restore()
 	require.Equal(t, 2, sessVars.DivPrecisionIncrement)
 	require.Equal(t, "before", sessVars.CurrentDB)
 	require.Equal(t, sqlMode, sessVars.SQLMode)
 	require.Equal(t, "default", sessVars.ResourceGroupName)
-	for _, name := range names {
+	require.False(t, sessVars.TrackAggregateMemoryUsage)
+	require.False(t, sessVars.EnableParallelHashaggSpill)
+	// The session variable takes the value of the field it had.
+	require.Equal(t, "2", sessionVar(vardef.DivPrecisionIncrement))
+	for _, name := range names[1:] {
 		require.Equal(t, before[name], sessionVar(name))
 	}
 
@@ -441,30 +455,4 @@ func TestUpdateMaterializedViewBaseInfoOnDropMLogDependency(t *testing.T) {
 	t.Run("mlog with wrong base table does not retry a started drop", func(t *testing.T) {
 		runCase(t, true, true, true, true)
 	})
-}
-
-func TestCreateMaterializedViewBuildSessionTracksAggregateMemory(t *testing.T) {
-	// The submitting session has loaded the global variables, while the
-	// internal session that builds the MV has not.
-	submitter := mock.NewContext().GetSessionVars()
-	submitter.TrackAggregateMemoryUsage, submitter.EnableParallelHashaggSpill = true, true
-	job := &model.Job{ReorgMeta: &model.DDLReorgMeta{Location: &model.TimeZoneLocation{Name: "UTC"}}}
-	AddMViewExecutionSessionVarsToJob(job, submitter)
-	sessCtx := mock.NewContext()
-	sessVars := sessCtx.GetSessionVars()
-	sessVars.TrackAggregateMemoryUsage, sessVars.EnableParallelHashaggSpill = false, false
-
-	restore, err := initCreateMaterializedViewBuildSession(sessCtx, job, nil, "test")
-	require.NoError(t, err)
-	require.True(t, sessVars.TrackAggregateMemoryUsage)
-	require.True(t, sessVars.EnableParallelHashaggSpill)
-	// They are set as session variables, which the session states carry.
-	for _, name := range []string{vardef.TiDBTrackAggregateMemoryUsage, vardef.TiDBEnableParallelHashaggSpill} {
-		value, ok := sessVars.GetSystemVar(name)
-		require.True(t, ok)
-		require.Equal(t, vardef.On, value)
-	}
-	restore()
-	require.False(t, sessVars.TrackAggregateMemoryUsage)
-	require.False(t, sessVars.EnableParallelHashaggSpill)
 }
