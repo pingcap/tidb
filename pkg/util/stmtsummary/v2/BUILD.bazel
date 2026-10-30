@@ -49,12 +49,21 @@ go_test(
     ],
     embed = [":stmtsummary"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 18,
+=======
+    shard_count = 24,
+>>>>>>> 78cac443a4f (planner, util: fix statement summary history and display correctness (#70159))
     deps = [
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
+<<<<<<< HEAD
+=======
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx/stmtctx",
+>>>>>>> 78cac443a4f (planner, util: fix statement summary history and display correctness (#70159))
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util",
