@@ -20,6 +20,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/distsql"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/mpp"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -52,6 +54,23 @@ func getMPPQueryTS(ctx sessionctx.Context) uint64 {
 	mppQueryInfo := &ctx.GetSessionVars().StmtCtx.MPPQueryInfo
 	mppQueryInfo.QueryTS.CompareAndSwap(0, uint64(time.Now().UnixNano()))
 	return mppQueryInfo.QueryTS.Load()
+}
+
+// getMPPServerID returns the server ID of the MPP queries of sctx, which is
+// the server ID of the Domain that hosts the process.
+func getMPPServerID(sctx sessionctx.Context) (uint64, error) {
+	if dom := domain.GetDomain(sctx); dom != nil {
+		return dom.ServerID(), nil
+	}
+	// Cross-keyspace sessions have no Domain. The process server info getter is
+	// registered from the hosting Domain's ServerID method. The server info that
+	// a cross-keyspace runtime registers in its target keyspace has server ID 0,
+	// which is only for connection IDs.
+	info, err := infosync.GetServerInfo()
+	if err != nil {
+		return 0, err
+	}
+	return info.ServerIDGetter(), nil
 }
 
 func collectPlanIDs(plan base.PhysicalPlan, ids []int) []int {

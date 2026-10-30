@@ -34,8 +34,10 @@ import (
 	zaplog "github.com/pingcap/log"
 	meter_config "github.com/pingcap/metering_sdk/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -1779,6 +1781,45 @@ max-allowed-packet = %d`, packetSize)), 0644))
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "unknown"`), 0644))
 	conf = NewConfig()
 	require.ErrorContains(t, conf.Load(configFile), `invalid deploy mode "unknown"`)
+}
+
+func TestDiagnosticSkipGrantTableConfig(t *testing.T) {
+	if !intest.InTest {
+		t.Skip("diagnosticmode.SetForTest requires the intest build tag")
+	}
+
+	tests := []struct {
+		name       string
+		diagnostic bool
+		skipGrant  bool
+		host       string
+		port       uint
+		socket     string
+		wantError  string
+	}{
+		{name: "diagnostic socket only", diagnostic: true, skipGrant: true, host: "127.0.0.1", socket: "/tmp/tidb.sock"},
+		{name: "diagnostic empty host", diagnostic: true, skipGrant: true, port: 4000, socket: "/tmp/tidb.sock"},
+		{name: "diagnostic TCP", diagnostic: true, skipGrant: true, host: "127.0.0.1", port: 4000, socket: "/tmp/tidb.sock", wantError: "requires a Unix socket and no MySQL TCP listener"},
+		{name: "diagnostic no socket", diagnostic: true, skipGrant: true, host: "127.0.0.1", wantError: "requires a Unix socket and no MySQL TCP listener"},
+		{name: "diagnostic grants enabled", diagnostic: true, host: "127.0.0.1", port: 4000},
+		{name: "normal mode", skipGrant: true, host: "127.0.0.1", port: 4000},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(diagnosticmode.SetForTest(tt.diagnostic))
+			cfg := NewConfig()
+			cfg.Security.SkipGrantTable = tt.skipGrant
+			cfg.Host, cfg.Port, cfg.Socket = tt.host, tt.port, tt.socket
+			err := cfg.Valid()
+			if !tt.diagnostic && tt.skipGrant && !hasRootPrivilege() {
+				require.ErrorContains(t, err, "skip-grant-table need root privilege")
+			} else if tt.wantError != "" {
+				require.ErrorContains(t, err, tt.wantError)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }
 
 func TestKeyspaceActivateModeConfig(t *testing.T) {

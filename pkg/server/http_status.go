@@ -172,6 +172,12 @@ func (s *Server) listenStatusHTTPServer() error {
 		s.statusAddr = s.statusListener.Addr().String()
 		s.cfg.Status.StatusPort = uint(s.statusListener.Addr().(*net.TCPAddr).Port)
 	}
+	// Diagnostic HTTP bypasses cmux and tracks connections itself. Leave its
+	// TLS connections unwrapped so net/http can recognize them.
+	if !diagnosticmode.Enabled() {
+		// Track connections before cmux can block reading their protocol prefix.
+		s.statusListener = newStatusListener(s.statusListener)
+	}
 	return nil
 }
 
@@ -296,6 +302,8 @@ func (s *Server) startHTTPServer() {
 
 	tikvHandlerTool := s.NewTikvHandlerTool()
 	router.Handle("/settings", tikvhandler.NewSettingsHandler(tikvHandlerTool)).Name("Settings")
+	router.Handle("/regions/cache/status", tikvhandler.NewRegionCacheHandler(tikvHandlerTool)).Methods("GET").Name("RegionCacheStatus")
+	router.Handle("/regions/cache/refresh", tikvhandler.NewRegionCacheHandler(tikvHandlerTool)).Methods("POST").Name("RegionCacheRefresh")
 
 	router.Handle("/schema", tikvhandler.NewSchemaHandler(tikvHandlerTool)).Name("Schema")
 	router.Handle("/schema/{db}", tikvhandler.NewSchemaHandler(tikvHandlerTool))

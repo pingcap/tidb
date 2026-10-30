@@ -220,6 +220,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildDDL(v)
 	case *plannercore.PurgeMaterializedViewLog:
 		return b.buildPurgeMaterializedViewLog(v)
+	case *plannercore.CompareMaterializedView:
+		return b.buildCompareMaterializedView(v)
 	case *plannercore.RefreshMaterializedView:
 		return b.buildRefreshMaterializedView(v)
 	case *plannercore.DryRunRefreshMaterializedView:
@@ -2843,6 +2845,9 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 			strings.ToLower(infoschema.TableTiDBCheckConstraints),
 			strings.ToLower(infoschema.TableKeywords),
 			strings.ToLower(infoschema.TableTiDBIndexUsage),
+			strings.ToLower(infoschema.TableTiDBMViews),
+			strings.ToLower(infoschema.TableTiDBMLogs),
+			strings.ToLower(infoschema.TableTiDBTableMViewDependencies),
 			strings.ToLower(infoschema.TableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage),
@@ -4267,12 +4272,18 @@ func (b *executorBuilder) buildMPPGather(v *physicalop.PhysicalTableReader) exec
 		return nil
 	}
 
+	serverID, err := getMPPServerID(b.sctx)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
 	gather := &MPPGather{
 		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
-		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.sctx), LocalQueryID: getMPPQueryID(b.sctx), ServerID: domain.GetDomain(b.sctx).ServerID()},
+		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.sctx), LocalQueryID: getMPPQueryID(b.sctx), ServerID: serverID},
 		memTracker:   memory.NewTracker(v.ID(), -1),
 
 		columns:                    []*model.ColumnInfo{},
@@ -6708,4 +6719,11 @@ func (b *executorBuilder) buildRecommendIndex(v *plannercore.RecommendIndexPlan)
 func (b *executorBuilder) buildWorkloadRepoCreate(_ *plannercore.WorkloadRepoCreate) exec.Executor {
 	base := exec.NewBaseExecutor(b.sctx, nil, 0)
 	return &WorkloadRepoCreateExec{base}
+}
+
+func (b *executorBuilder) buildCompareMaterializedView(v *plannercore.CompareMaterializedView) exec.Executor {
+	return &CompareMaterializedViewExec{
+		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
+		stmt:         v.Statement,
+	}
 }

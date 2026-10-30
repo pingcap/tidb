@@ -32,6 +32,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"maps"
@@ -53,6 +54,7 @@ import (
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
@@ -371,8 +373,12 @@ func (s *Server) InitTiDBListener() error {
 }
 
 func (s *Server) initTiDBListener() (err error) {
-	needTCPListener := s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest)
+	socketOnly := diagnosticmode.Enabled() && s.cfg.Security.SkipGrantTable
+	needTCPListener := s.cfg.Host != "" && (s.cfg.Port != 0 || (RunInGoTest && !socketOnly))
 	needUnixSocket := s.cfg.Socket != ""
+	if socketOnly && (needTCPListener || s.listener != nil || !needUnixSocket) {
+		return errors.New("diagnostic mode with skip-grant-table requires a Unix socket and no MySQL TCP listener")
+	}
 	if (!needTCPListener || s.listener != nil) && (!needUnixSocket || s.socket != nil) &&
 		(s.listener != nil || s.socket != nil) {
 		return nil
@@ -690,6 +696,11 @@ func (s *Server) closeListener() {
 		err := s.socket.Close()
 		terror.Log(errors.Trace(err))
 		s.socket = nil
+	}
+	if s.statusListener != nil {
+		if err := s.statusListener.Close(); err != nil && !stderrors.Is(err, net.ErrClosed) {
+			terror.Log(errors.Trace(err))
+		}
 	}
 	if statusServer := s.statusServer.Load(); statusServer != nil {
 		err := statusServer.Close()

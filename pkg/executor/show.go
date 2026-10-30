@@ -2528,6 +2528,9 @@ func (e *ShowExec) fetchShowBuiltins() error {
 
 func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	sessionStates := &sessionstates.SessionStates{}
+	if err := e.Ctx().CheckCanMigrateStates(); err != nil {
+		return err
+	}
 	err := e.Ctx().EncodeStates(ctx, sessionStates)
 	if err != nil {
 		return err

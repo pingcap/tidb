@@ -662,6 +662,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildSetConfig(ctx, x)
 	case *ast.AnalyzeTableStmt:
 		return b.buildAnalyze(x)
+	case *ast.CompareMaterializedViewStmt:
+		return b.buildCompareMaterializedView(ctx, x)
 	case *ast.RefreshMaterializedViewStmt:
 		return b.buildRefreshMaterializedView(ctx, x)
 	case *ast.RefreshMaterializedViewImplementStmt:
@@ -6841,4 +6843,61 @@ func (b *PlanBuilder) checkSEMStmt(stmt ast.Node) error {
 	}
 
 	return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs(stmtNode.Text())
+}
+
+func (b *PlanBuilder) buildCompareMaterializedView(_ context.Context, stmt *ast.CompareMaterializedViewStmt) (base.Plan, error) {
+	dbName := stmt.ViewName.Schema.L
+	if dbName == "" {
+		dbName = b.ctx.GetSessionVars().CurrentDB
+	}
+	if dbName == "" {
+		return nil, plannererrors.ErrNoDB
+	}
+
+	var authErr error
+	if user := b.ctx.GetSessionVars().User; user != nil {
+		authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs(
+			"OPERATE VIEW",
+			user.AuthUsername,
+			user.AuthHostname,
+			stmt.ViewName.Name.L,
+		)
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.OperateViewPriv, dbName, stmt.ViewName.Name.L, "", authErr)
+
+	if stmt.OutputTable != nil {
+		outputDBName := stmt.OutputTable.Schema.L
+		if outputDBName == "" {
+			outputDBName = b.ctx.GetSessionVars().CurrentDB
+		}
+		if outputDBName == "" {
+			return nil, plannererrors.ErrNoDB
+		}
+		if user := b.ctx.GetSessionVars().User; user != nil {
+			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs(
+				"CREATE",
+				user.AuthUsername,
+				user.AuthHostname,
+				stmt.OutputTable.Name.L,
+			)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, outputDBName, stmt.OutputTable.Name.L, "", authErr)
+		if user := b.ctx.GetSessionVars().User; user != nil {
+			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs(
+				"INSERT",
+				user.AuthUsername,
+				user.AuthHostname,
+				stmt.OutputTable.Name.L,
+			)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, outputDBName, stmt.OutputTable.Name.L, "", authErr)
+	}
+
+	p := &CompareMaterializedView{Statement: stmt}
+	if stmt.OutputTable == nil {
+		schema := newColumnsWithNames(1)
+		schema.Append(buildColumnWithName("", "compare result", mysql.TypeString, mysql.MaxBlobWidth))
+		p.SetSchemaAndNames(schema.col2Schema(), schema.names)
+	}
+	return p, nil
 }

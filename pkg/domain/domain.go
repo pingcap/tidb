@@ -917,6 +917,16 @@ func (do *Domain) GetKSInfoCache(targetKS string) (*infoschema.InfoCache, error)
 	return mgr.InfoCache(), nil
 }
 
+// GetKSGlobalVarAccessor returns the global variable accessor of the sessions
+// of the runtime of the given keyspace.
+func (do *Domain) GetKSGlobalVarAccessor(targetKS string) (variable.GlobalVarAccessor, error) {
+	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return mgr.GlobalVarAccessor(), nil
+}
+
 // GetKSSessPool returns the session pool for the given keyspace.
 func (do *Domain) GetKSSessPool(targetKS string) (util.DestroyableSessionPool, error) {
 	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
@@ -1495,7 +1505,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 	var watchCh clientv3.WatchChan
 	duration := 30 * time.Second
 	if do.etcdClient != nil {
-		watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
+		watchCh = do.etcdClient.Watch(context.Background(), ddlutil.SysVarCacheKey)
 	}
 
 	do.wg.Run(func() {
@@ -1528,7 +1538,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 
 			if !ok {
 				logutil.BgLogger().Warn("LoadSysVarCacheLoop loop watch channel closed")
-				watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
+				watchCh = do.etcdClient.Watch(context.Background(), ddlutil.SysVarCacheKey)
 				count++
 				if count > 10 {
 					time.Sleep(time.Duration(count) * time.Second)
@@ -2520,7 +2530,6 @@ func (do *Domain) ServerMemoryLimitHandle() *servermemorylimit.Handle {
 
 const (
 	privilegeKey          = "/tidb/privilege"
-	sysVarCacheKey        = "/tidb/sysvars"
 	tiflashComputeNodeKey = "/tiflash/new_tiflash_compute_nodes"
 )
 
@@ -2578,7 +2587,7 @@ func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 // synchronously so that the effect is immediate.
 func (do *Domain) NotifyUpdateSysVarCache(updateLocal bool) {
 	if do.etcdClient != nil {
-		err := ddlutil.PutKVToEtcd(context.Background(), do.etcdClient, etcd.KeyOpDefaultRetryCnt, sysVarCacheKey, "")
+		err := ddlutil.PutKVToEtcd(context.Background(), do.etcdClient, etcd.KeyOpDefaultRetryCnt, ddlutil.SysVarCacheKey, "")
 		if err != nil {
 			logutil.BgLogger().Warn("notify update sysvar cache failed", zap.Error(err))
 		}
