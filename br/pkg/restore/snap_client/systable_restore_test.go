@@ -104,6 +104,30 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, canLoadSysTablePhysical)
 
+	// mysql.user upgraded from an old TiDB has nullable privilege columns, which
+	// are NOT NULL in a new cluster. They can only be restored logically.
+	mockedUserTI = userTI.Clone()
+	tablespacePrivCol := model.FindColumnInfo(mockedUserTI.Columns, "create_tablespace_priv")
+	require.NotNil(t, tablespacePrivCol)
+	require.True(t, mysql.HasNotNullFlag(tablespacePrivCol.GetFlag()))
+	tablespacePrivCol.Name = ast.NewCIStr("Create_tablespace_priv")
+	tablespacePrivCol.DelFlag(mysql.NotNullFlag)
+	canLoadSysTablePhysical, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedUserTI,
+	}}, false)
+	require.NoError(t, err)
+	require.False(t, canLoadSysTablePhysical)
+
+	// other nullable columns are still incompatible with NOT NULL columns.
+	mockedUserTI = userTI.Clone()
+	mockedUserTI.Columns[0].DelFlag(mysql.NotNullFlag) // Columns[0] is `Host` char(255) NOT NULL
+	_, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedUserTI,
+	}}, false)
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
+
 	// mysql.user backup from older TiDB may miss Operate_view_priv. It cannot be
 	// loaded physically, but logical restore can fill the target default value and
 	// execute a fixed compatibility expression while copying rows into mysql.user.
