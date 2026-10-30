@@ -2300,11 +2300,16 @@ func TestRangeFallbackForBuildColumnRange(t *testing.T) {
 	conds, filters = ranger.DetachCondsForColumn(rctx, conds, cola)
 	require.Equal(t, 1, len(conds))
 	require.Equal(t, 0, len(filters))
+	tracker := sctx.GetSessionVars().StmtCtx.MemTracker
+	tracker.Consume(-tracker.BytesConsumed())
+	tracker.ResetMaxConsumed()
 	ranges, access, remained, err := ranger.BuildColumnRange(conds, rctx, cola.RetType, types.UnspecifiedLength, 0)
 	require.NoError(t, err)
 	require.Equal(t, "[[\"aaa\",\"aaa\"] [\"bbb\",\"bbb\"] [\"ccc\",\"ccc\"] [\"ddd\",\"ddd\"] [\"eee\",\"eee\"]]", fmt.Sprintf("%v", ranges))
 	require.Equal(t, "[in(test.t.a, aaa, bbb, ccc, ddd, eee)]", expression.StringifyExpressionsWithCtx(ectx, access))
 	require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, remained))
+	require.Greater(t, tracker.MaxConsumed(), int64(0))
+	require.Equal(t, int64(0), tracker.BytesConsumed())
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota := ranges.MemUsage() - 1
 	peer := ranges[1].Clone()

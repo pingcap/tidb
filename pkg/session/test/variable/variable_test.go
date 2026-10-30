@@ -142,6 +142,20 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 	}
 
+	queryToErrAtAnyStage := func(tk *testkit.TestKit, sql string) error {
+		res, err := tk.Exec(sql)
+		if err != nil {
+			if res != nil {
+				require.NoError(t, res.Close())
+			}
+			return err
+		}
+		require.NotNil(t, res)
+		_, err = session.GetRows4Test(context.Background(), tk.Session(), res)
+		require.NoError(t, res.Close())
+		return err
+	}
+
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/testRateLimitActionMockWaitMax", `return(true)`))
 	// assert oom action and switch
 	for _, testcase := range testcases {
@@ -185,7 +199,9 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		tk.MustExec("set tidb_distsql_scan_concurrency = 1")
 		tk.MustExec("set @@tidb_mem_quota_query=1;")
 		tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
-		err = tk.QueryToErr(testcase.sql)
+		// The statement may exceed the query quota either during compile-time range
+		// building or later while fetching coprocessor results.
+		err = queryToErrAtAnyStage(tk, testcase.sql)
 		require.Error(t, err)
 		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 		tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
