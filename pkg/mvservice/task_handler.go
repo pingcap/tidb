@@ -31,14 +31,32 @@ var (
 	errMVTaskCanceledManually         = errors.New("materialized view task canceled manually")
 )
 
+type mlogAccumulationTask struct {
+	schemaName string
+	mlogName   string
+	alertRows  uint64
+}
+
 // MVTaskHandler defines all task operations needed by MVService.
 type MVTaskHandler interface {
 	RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mviewID int64) (nextRefresh time.Time, err error)
 	PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mlogID int64) (nextPurge time.Time, err error)
 	TryBackoffRefreshManualCancel(ctx context.Context, sysSessionPool basic.SessionPool, mviewID int64, nextRefresh time.Time) (applied bool, appliedNext time.Time, err error)
 	TryBackoffPurgeManualCancel(ctx context.Context, sysSessionPool basic.SessionPool, mlogID int64, nextPurge time.Time) (applied bool, appliedNext time.Time, err error)
+	SyncMVRefreshAlertStates(ctx context.Context, sysSessionPool basic.SessionPool, updatedAt time.Time, states []refreshAlertTask) error
+	CleanupStaleMVRefreshAlerts(ctx context.Context, sysSessionPool basic.SessionPool) error
 	LoadAllTiDBMVLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mlogPurgeTask, error)
+	LoadAllTiDBMVLogAccumulationTasks(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mlogAccumulationTask, error)
+	LoadTiDBMVLogAccumulationRowCounts(ctx context.Context, sysSessionPool basic.SessionPool, tasks map[int64]*mlogAccumulationTask) (map[int64]uint64, error)
 	LoadAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mviewTask, error)
+	GetCurrentTSO(ctx context.Context, sysSessionPool basic.SessionPool) (uint64, error)
+	PurgeMVHistoryBeforeTSO(
+		ctx context.Context,
+		sysSessionPool basic.SessionPool,
+		currentTSO uint64,
+		mviewRefreshRetention time.Duration,
+		mlogPurgeRetention time.Duration,
+	) error
 }
 
 func isMVTaskCanceledManually(err error) bool {

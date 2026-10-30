@@ -24,9 +24,12 @@ const (
 
 	mvMetricComponentService = "service"
 
-	mvMetricTaskStatusMVTotal        = "mv_total"
-	mvMetricTaskStatusMVLogTotal     = "mvlog_total"
-	mvMetricTaskStatusMVServicePanic = "panic"
+	mvMetricTaskStatusMVTotal           = "mv_total"
+	mvMetricTaskStatusMVLogTotal        = "mvlog_total"
+	mvMetricTaskStatusMVRefreshWarning  = "mv_refresh_warning"
+	mvMetricTaskStatusMVRefreshOverdue  = "mv_refresh_overdue"
+	mvMetricTaskStatusMVLogAccumulation = "mvlog_accumulation"
+	mvMetricTaskStatusMVServicePanic    = "panic"
 )
 
 // Metrics for materialized view service.
@@ -38,9 +41,12 @@ var (
 
 	MVServiceRunEventCounterVec *prometheus.CounterVec
 
-	MVServiceMVRefreshTotalGauge  prometheus.Gauge
-	MVServiceMVLogPurgeTotalGauge prometheus.Gauge
-	MVServicePanicGauge           prometheus.Gauge
+	MVServiceMVRefreshTotalGauge    prometheus.Gauge
+	MVServiceMVLogPurgeTotalGauge   prometheus.Gauge
+	MVServiceMVRefreshWarningGauge  prometheus.Gauge
+	MVServiceMVRefreshOverdueGauge  prometheus.Gauge
+	MVServiceMVLogAccumulationGauge prometheus.Gauge
+	MVServicePanicGauge             prometheus.Gauge
 )
 
 // InitMVMetrics initializes metrics for materialized view service.
@@ -81,5 +87,8 @@ func InitMVMetrics() {
 
 	MVServiceMVRefreshTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVTotal)
 	MVServiceMVLogPurgeTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVLogTotal)
+	MVServiceMVRefreshWarningGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVRefreshWarning)
+	MVServiceMVRefreshOverdueGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVRefreshOverdue)
+	MVServiceMVLogAccumulationGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVLogAccumulation)
 	MVServicePanicGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVServicePanic)
 }

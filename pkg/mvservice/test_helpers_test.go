@@ -17,6 +17,7 @@ package mvservice
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -25,6 +26,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/kv"
 	meta "github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -42,19 +44,32 @@ const (
 )
 
 const (
-	testSQLFetchMVLogPurge     = `SELECT NEXT_PURGE_UNIX_SECONDS, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_PURGE_UNIX_SECONDS IS NOT NULL`
-	testSQLFetchMVRefresh      = `SELECT NEXT_REFRESH_UNIX_SECONDS, MVIEW_ID FROM mysql.tidb_mview_refresh_info WHERE NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
-	testSQLRefreshMV           = `REFRESH MATERIALIZED VIEW %n.%n FAST`
-	testSQLFindMVNextTime      = `SELECT NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
-	testSQLLockMVNextTime      = `SELECT NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT`
-	testSQLUpdateMVNextTime    = `UPDATE mysql.tidb_mview_refresh_info SET NEXT_REFRESH_UNIX_SECONDS = %? WHERE MVIEW_ID = %?`
-	testSQLPurgeMVLog          = `PURGE MATERIALIZED VIEW LOG ON %n.%n`
-	testSQLFindPurgeNextTime   = `SELECT NEXT_PURGE_UNIX_SECONDS FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_PURGE_UNIX_SECONDS IS NOT NULL`
-	testSQLLockPurgeNextTime   = `SELECT NEXT_PURGE_UNIX_SECONDS FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT`
-	testSQLUpdatePurgeNextTime = `UPDATE mysql.tidb_mlog_purge_info SET NEXT_PURGE_UNIX_SECONDS = %? WHERE MLOG_ID = %?`
+	testSQLCountMVLogRows         = `SELECT /*+ read_from_storage(tiflash[%n.%n]) */ COUNT(*) FROM %n.%n`
+	testSQLFetchMVLogAccumulation = `SELECT MLOG_ID FROM mysql.tidb_mlog_purge_info`
+	testSQLFetchMVLogPurge        = `SELECT NEXT_PURGE_UNIX_SECONDS, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_PURGE_UNIX_SECONDS IS NOT NULL`
+	testSQLFetchMVRefresh         = `SELECT NEXT_REFRESH_UNIX_SECONDS, MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
+	testSQLRefreshMV              = `REFRESH MATERIALIZED VIEW %n.%n FAST`
+	testSQLFindMVNextTime         = `SELECT NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
+	testSQLLockMVNextTime         = `SELECT NEXT_REFRESH_UNIX_SECONDS FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT`
+	testSQLUpdateMVNextTime       = `UPDATE mysql.tidb_mview_refresh_info SET NEXT_REFRESH_UNIX_SECONDS = %? WHERE MVIEW_ID = %?`
+	testSQLPurgeMVLog             = `PURGE MATERIALIZED VIEW LOG ON %n.%n`
+	testSQLFindPurgeNextTime      = `SELECT NEXT_PURGE_UNIX_SECONDS FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? AND NEXT_PURGE_UNIX_SECONDS IS NOT NULL`
+	testSQLLockPurgeNextTime      = `SELECT NEXT_PURGE_UNIX_SECONDS FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %? FOR UPDATE NOWAIT`
+	testSQLUpdatePurgeNextTime    = `UPDATE mysql.tidb_mlog_purge_info SET NEXT_PURGE_UNIX_SECONDS = %? WHERE MLOG_ID = %?`
 )
 
-var testExpectedPurgeMVLogSQL = []string{testSQLPurgeMVLog, testSQLFindPurgeNextTime}
+var (
+	testSQLMarkStaleMVRefreshHistOrphaned  = buildMarkRefreshHistoryRunningRowsOrphanedSQL()
+	testSQLMarkStaleMVLogPurgeHistOrphaned = buildMarkLogPurgeHistoryRunningRowsOrphanedSQL()
+	testSQLDeleteMVRefreshHistBeforeTSO    = buildDeleteRefreshHistoryByCutoffTSOSQL()
+	testSQLDeleteMVLogPurgeHistBeforeTSO   = buildDeleteLogPurgeHistoryByCutoffTSOSQL()
+	testSQLCountMVRefreshHist              = countRefreshHistorySQL
+	testSQLCountMVLogPurgeHist             = countLogPurgeHistorySQL
+	testExpectedPurgeMVLogSQL              = []string{
+		testSQLPurgeMVLog,
+		testSQLFindPurgeNextTime,
+	}
+)
 
 type mockSessionPool struct{}
 
@@ -282,13 +297,24 @@ type mockMVServiceHelper struct {
 	purgeErr                          error
 	refreshPanic                      bool
 	purgePanic                        bool
+	currentTSO                        uint64
+	currentTSOErr                     error
+	historyGCErr                      error
+	historyGCPanic                    bool
 	fetchLogs                         map[int64]*mlogPurgeTask
+	fetchAccumulationTasks            map[int64]*mlogAccumulationTask
+	fetchAccumulationRowCounts        map[int64]uint64
 	fetchViews                        map[int64]*mviewTask
 	fetchLogsErr                      error
+	fetchAccumulationTasksErr         error
+	fetchAccumulationRowCountsErr     error
 	fetchViewsErr                     error
 	fetchLogsCalls                    atomic.Int32
+	fetchAccumulationTaskCalls        atomic.Int32
+	fetchAccumulationRowCountCalls    atomic.Int32
 	fetchViewCalls                    atomic.Int32
 	serverRefreshCalls                atomic.Int32
+	historyGCCalls                    atomic.Int32
 	refreshManualCancelBackoffApplied bool
 	purgeManualCancelBackoffApplied   bool
 	refreshManualCancelBackoffNext    time.Time
@@ -299,9 +325,25 @@ type mockMVServiceHelper struct {
 	purgeManualCancelBackoffErr       error
 	refreshManualCancelBackoffCalls   atomic.Int32
 	purgeManualCancelBackoffCalls     atomic.Int32
+	lastHistoryGCCurrentTSO           atomic.Uint64
+	lastMViewHistoryGCRetention       atomic.Int64
+	lastMLogHistoryGCRetention        atomic.Int64
+	syncRefreshAlertCalls             atomic.Int32
+	cleanupStaleRefreshAlertCalls     atomic.Int32
+	syncRefreshAlertErr               error
+	cleanupStaleRefreshAlertErr       error
+	lastMViewHistoryGCMaxRecords      atomic.Uint64
+	lastMLogHistoryGCMaxRecords       atomic.Uint64
 
 	lastRefreshID int64
 	lastPurgeID   int64
+
+	syncRefreshAlertMu              sync.Mutex
+	lastRefreshAlertAt              time.Time
+	lastRefreshAlertSync            []refreshAlertTask
+	lastAccumulationRowCountTaskIDs []int64
+	accumulationRowCountEntered     chan struct{}
+	blockAccumulationRowCount       chan struct{}
 
 	metricsMu          sync.Mutex
 	taskDurationCounts map[string]int
@@ -463,4 +505,198 @@ func cloneServerInfoMap(in map[string]serverInfo) map[string]serverInfo {
 		out[k] = v
 	}
 	return out
+}
+
+func testSQLDeleteMVRefreshHistByCount(limit uint64) string {
+	return buildDeleteRefreshHistoryByCountLimitSQL(limit)
+}
+
+func testSQLDeleteMVLogPurgeHistByCount(limit uint64) string {
+	return buildDeleteLogPurgeHistoryByCountLimitSQL(limit)
+}
+
+type mockCurrentVersionStore struct {
+	*mock.Store
+	version kv.Version
+	err     error
+}
+
+func (s *mockCurrentVersionStore) CurrentVersion(string) (kv.Version, error) {
+	if s.err != nil {
+		return kv.Version{}, s.err
+	}
+	return s.version, nil
+}
+
+func (m *mockMVServiceHelper) SyncMVRefreshAlertStates(_ context.Context, _ basic.SessionPool, updatedAt time.Time, states []refreshAlertTask) error {
+	m.syncRefreshAlertCalls.Add(1)
+	m.syncRefreshAlertMu.Lock()
+	defer m.syncRefreshAlertMu.Unlock()
+	m.lastRefreshAlertAt = updatedAt
+	m.lastRefreshAlertSync = append(m.lastRefreshAlertSync[:0], states...)
+	return m.syncRefreshAlertErr
+}
+
+func (m *mockMVServiceHelper) CleanupStaleMVRefreshAlerts(_ context.Context, _ basic.SessionPool) error {
+	m.cleanupStaleRefreshAlertCalls.Add(1)
+	return m.cleanupStaleRefreshAlertErr
+}
+
+func (m *mockMVServiceHelper) LoadAllTiDBMVLogAccumulationTasks(context.Context, basic.SessionPool) (map[int64]*mlogAccumulationTask, error) {
+	m.fetchAccumulationTaskCalls.Add(1)
+	if m.fetchAccumulationTasksErr != nil {
+		return nil, m.fetchAccumulationTasksErr
+	}
+	return m.fetchAccumulationTasks, nil
+}
+
+func (m *mockMVServiceHelper) LoadTiDBMVLogAccumulationRowCounts(_ context.Context, _ basic.SessionPool, tasks map[int64]*mlogAccumulationTask) (map[int64]uint64, error) {
+	m.fetchAccumulationRowCountCalls.Add(1)
+	if m.fetchAccumulationRowCountsErr != nil {
+		return nil, m.fetchAccumulationRowCountsErr
+	}
+	if m.accumulationRowCountEntered != nil {
+		select {
+		case m.accumulationRowCountEntered <- struct{}{}:
+		default:
+		}
+	}
+	if m.blockAccumulationRowCount != nil {
+		<-m.blockAccumulationRowCount
+	}
+	ids := make([]int64, 0, len(tasks))
+	ret := make(map[int64]uint64, len(tasks))
+	for id := range tasks {
+		ids = append(ids, id)
+		if rowCount, ok := m.fetchAccumulationRowCounts[id]; ok {
+			ret[id] = rowCount
+		}
+	}
+	slices.Sort(ids)
+	m.lastAccumulationRowCountTaskIDs = ids
+	return ret, nil
+}
+
+func (m *mockMVServiceHelper) GetCurrentTSO(context.Context, basic.SessionPool) (uint64, error) {
+	if m.currentTSOErr != nil {
+		return 0, m.currentTSOErr
+	}
+	if m.currentTSO == 0 {
+		return 1, nil
+	}
+	return m.currentTSO, nil
+}
+
+func (m *mockMVServiceHelper) PurgeMVHistoryBeforeTSO(
+	_ context.Context,
+	_ basic.SessionPool,
+	currentTSO uint64,
+	mviewRefreshRetention time.Duration,
+	mlogPurgeRetention time.Duration,
+) error {
+	if m.historyGCPanic {
+		panic("mock history gc panic")
+	}
+	m.historyGCCalls.Add(1)
+	m.lastHistoryGCCurrentTSO.Store(currentTSO)
+	m.lastMViewHistoryGCRetention.Store(int64(mviewRefreshRetention))
+	m.lastMLogHistoryGCRetention.Store(int64(mlogPurgeRetention))
+	m.lastMViewHistoryGCMaxRecords.Store(defaultMVHistoryGCMaxRecords)
+	m.lastMLogHistoryGCMaxRecords.Store(defaultMVHistoryGCMaxRecords)
+	return m.historyGCErr
+}
+
+func setHistoryGCOwnerForTest(svc *MVService, ownerHash uint32) {
+	setServiceOwnersForTest(svc, map[string]uint32{
+		mvHistoryGCOwnerKey: ownerHash,
+	})
+	svc.nextHistoryGCAtMillis.Store(0)
+}
+
+func setRefreshAlertCleanupOwnerForTest(svc *MVService, ownerHash uint32) {
+	setServiceOwnersForTest(svc, map[string]uint32{
+		mvRefreshAlertCleanupOwnerKey: ownerHash,
+	})
+}
+
+func addMVRefreshAlertTasksForTest(svc *MVService, tasks ...*mviewTask) {
+	pending := make(map[int64]*mviewTask, len(tasks))
+	for _, task := range tasks {
+		if task == nil {
+			continue
+		}
+		if task.orderTs == 0 && !task.nextRefresh.IsZero() {
+			task.orderTs = task.nextRefresh.UnixMilli()
+		}
+		pending[task.ID] = task
+	}
+	svc.buildMViewRefreshAlertTasks(pending)
+}
+
+func addMVRefreshExecutionTasksForTest(svc *MVService, tasks ...*mviewTask) {
+	svc.mviewRefreshMu.Lock()
+	defer svc.mviewRefreshMu.Unlock()
+	if svc.mviewRefreshMu.pending == nil {
+		svc.mviewRefreshMu.pending = make(map[int64]mviewTaskItem, len(tasks))
+	}
+	for _, task := range tasks {
+		if task == nil {
+			continue
+		}
+		if task.orderTs == 0 && !task.nextRefresh.IsZero() {
+			task.orderTs = task.nextRefresh.UnixMilli()
+		}
+		svc.mviewRefreshMu.pending[task.ID] = svc.mviewRefreshMu.prio.Push(task)
+	}
+}
+
+func setTaskOwnersForTest(svc *MVService, taskHashes map[int64]uint32) {
+	overrides := make(map[string]uint32, len(taskHashes))
+	for id, hash := range taskHashes {
+		overrides[string(int64KeyToBinaryBytes(id))] = hash
+	}
+	setServiceHashOverridesForTest(svc, overrides)
+}
+
+func setServiceOwnersForTest(svc *MVService, ownerHashes map[string]uint32) {
+	setServiceHashOverridesForTest(svc, ownerHashes)
+}
+
+func setServiceHashOverridesForTest(svc *MVService, overrides map[string]uint32) {
+	svc.sch.mu.Lock()
+	svc.sch.ID = "nodeA"
+	svc.sch.chash.replicas = 1
+	mapping := map[string]uint32{
+		"nodeA#0":                     10,
+		"nodeB#0":                     30,
+		mvHistoryGCOwnerKey:           10,
+		mvRefreshAlertCleanupOwnerKey: 10,
+	}
+	for key, hash := range overrides {
+		mapping[key] = hash
+	}
+	svc.sch.chash.hashFunc = mustHash(mapping)
+	svc.sch.rebuildLocked(map[string]serverInfo{
+		"nodeA": {ID: "nodeA"},
+		"nodeB": {ID: "nodeB"},
+	})
+	svc.sch.mu.Unlock()
+}
+
+func setThreeNodeRefreshAlertOwnersForTest(svc *MVService, selfID string) {
+	svc.sch.mu.Lock()
+	svc.sch.ID = selfID
+	svc.sch.chash.replicas = 1
+	svc.sch.chash.hashFunc = mustHash(map[string]uint32{
+		"nodeA#0":                     10,
+		"nodeB#0":                     20,
+		"nodeC#0":                     30,
+		mvRefreshAlertCleanupOwnerKey: 25,
+	})
+	svc.sch.rebuildLocked(map[string]serverInfo{
+		"nodeA": {ID: "nodeA"},
+		"nodeB": {ID: "nodeB"},
+		"nodeC": {ID: "nodeC"},
+	})
+	svc.sch.mu.Unlock()
 }
