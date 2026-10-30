@@ -191,6 +191,18 @@ func columnKinds(colTypes []string) []dumpformat.FieldKind {
 	return kinds
 }
 
+// tableSampleKeyKinds classifies the key columns selected by
+// buildTiDBTableSampleQuery, which reads ENUM and SET keys as numbers.
+func tableSampleKeyKinds(pkColTypes []string) []dumpformat.FieldKind {
+	kinds := columnKinds(pkColTypes)
+	for i, colType := range pkColTypes {
+		if isEnumOrSetType(colType) {
+			kinds[i] = dumpformat.KindNumber
+		}
+	}
+	return kinds
+}
+
 // toCSVBinaryFormat maps the export BinaryFormat to its csvfile counterpart.
 func toCSVBinaryFormat(f BinaryFormat) csvfile.BinaryFormat {
 	switch f {

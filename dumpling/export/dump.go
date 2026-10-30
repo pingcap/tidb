@@ -1133,7 +1133,7 @@ func (d *Dumper) concurrentDumpTiDBTables(tctx *tcontext.Context, conn *BaseConn
 func (d *Dumper) concurrentDumpTiDBPartitionTablesWithTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskChan chan<- Task) error {
 	db, tbl := meta.DatabaseName(), meta.TableName()
 
-	pkFields, pkColTypes, err := selectTiDBRowKeyFields(tctx, conn, meta, nil)
+	pkFields, pkColTypes, err := selectTiDBTableSampleKeyFields(tctx, conn, meta)
 	if err != nil {
 		return err
 	}
@@ -1227,16 +1227,16 @@ func (d *Dumper) L() log.Logger {
 }
 
 func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, partitions ...string) (pkFields []string, pkVals [][]string, err error) {
-	pkFields, pkColTypes, err := selectTiDBRowKeyFields(tctx, conn, meta, nil)
+	pkFields, pkColTypes, err := selectTiDBTableSampleKeyFields(tctx, conn, meta)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 
-	query := buildTiDBTableSampleQuery(pkFields, meta.DatabaseName(), meta.TableName(), partitions...)
+	query := buildTiDBTableSampleQuery(pkFields, pkColTypes, meta.DatabaseName(), meta.TableName(), partitions...)
 	pkValNum := len(pkFields)
 	var iter SQLRowIter
 	rowRec := MakeRowReceiver(pkColTypes)
-	pkKinds := columnKinds(pkColTypes)
+	pkKinds := tableSampleKeyKinds(pkColTypes)
 	var (
 		rawRow []sql.RawBytes
 		valBuf []byte
@@ -1277,11 +1277,11 @@ func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMet
 }
 
 func selectTiDBTableSampleForPartition(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, pkFields, pkColTypes []string, partition string) ([][]string, error) {
-	query := buildTiDBTableSampleQuery(pkFields, meta.DatabaseName(), meta.TableName(), partition)
+	query := buildTiDBTableSampleQuery(pkFields, pkColTypes, meta.DatabaseName(), meta.TableName(), partition)
 	pkValNum := len(pkFields)
 	var iter SQLRowIter
 	rowRec := MakeRowReceiver(pkColTypes)
-	pkKinds := columnKinds(pkColTypes)
+	pkKinds := tableSampleKeyKinds(pkColTypes)
 	var (
 		rawRow []sql.RawBytes
 		valBuf []byte
@@ -1321,22 +1321,35 @@ func selectTiDBTableSampleForPartition(tctx *tcontext.Context, conn *BaseConn, m
 	return pkVals, err
 }
 
-func buildTiDBTableSampleQuery(pkFields []string, dbName, tblName string, partitions ...string) string {
+// isEnumOrSetType reports whether the key column is ordered by the number of
+// its value instead of its string. Chunk boundaries of such a column must be
+// read and compared as numbers, otherwise the chunks overlap.
+func isEnumOrSetType(colType string) bool {
+	return colType == "ENUM" || colType == "SET"
+}
+
+func buildTiDBTableSampleQuery(pkFields, pkColTypes []string, dbName, tblName string, partitions ...string) string {
 	template := "SELECT %s FROM `%s`.`%s` TABLESAMPLE REGIONS() ORDER BY %s"
 	quotaPk := make([]string, len(pkFields))
+	selectedPk := make([]string, len(pkFields))
 	for i, s := range pkFields {
 		quotaPk[i] = fmt.Sprintf("`%s`", escapeString(s))
+		selectedPk[i] = quotaPk[i]
+		if isEnumOrSetType(pkColTypes[i]) {
+			selectedPk[i] += "+0"
+		}
 	}
 	pks := strings.Join(quotaPk, ",")
+	selected := strings.Join(selectedPk, ",")
 	if len(partitions) > 0 {
 		template = "SELECT %s FROM `%s`.`%s` PARTITION(%s) TABLESAMPLE REGIONS() ORDER BY %s"
 		quotedPartitions := make([]string, len(partitions))
 		for i, partition := range partitions {
 			quotedPartitions[i] = fmt.Sprintf("`%s`", escapeString(partition))
 		}
-		return fmt.Sprintf(template, pks, escapeString(dbName), escapeString(tblName), strings.Join(quotedPartitions, ","), pks)
+		return fmt.Sprintf(template, selected, escapeString(dbName), escapeString(tblName), strings.Join(quotedPartitions, ","), pks)
 	}
-	return fmt.Sprintf(template, pks, escapeString(dbName), escapeString(tblName), pks)
+	return fmt.Sprintf(template, selected, escapeString(dbName), escapeString(tblName), pks)
 }
 
 func selectTiDBRowKeyFields(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, checkPkFields func([]string, []string) error) (pkFields, pkColTypes []string, err error) {
@@ -1351,6 +1364,43 @@ func selectTiDBRowKeyFields(tctx *tcontext.Context, conn *BaseConn, meta TableMe
 		}
 	}
 	return
+}
+
+// selectTiDBTableSampleKeyFields returns the row key fields like
+// selectTiDBRowKeyFields. The MySQL driver reports ENUM and SET columns as
+// CHAR, so their types are read from SHOW COLUMNS.
+func selectTiDBTableSampleKeyFields(tctx *tcontext.Context, conn *BaseConn, meta TableMeta) (pkFields, pkColTypes []string, err error) {
+	pkFields, pkColTypes, err = selectTiDBRowKeyFields(tctx, conn, meta, nil)
+	if err != nil || meta.HasImplicitRowID() || len(pkFields) == 0 {
+		return pkFields, pkColTypes, err
+	}
+	query := fmt.Sprintf("SHOW COLUMNS FROM `%s`.`%s`", escapeString(meta.DatabaseName()), escapeString(meta.TableName()))
+	results, err := conn.QuerySQLWithColumns(tctx, []string{"FIELD", "TYPE"}, query)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	for _, row := range results {
+		colType := enumOrSetColumnType(row[1])
+		if colType == "" {
+			continue
+		}
+		for i, pkField := range pkFields {
+			if strings.EqualFold(pkField, row[0]) {
+				pkColTypes[i] = colType
+			}
+		}
+	}
+	return pkFields, pkColTypes, nil
+}
+
+func enumOrSetColumnType(showColumnsType string) string {
+	switch tp := strings.ToUpper(showColumnsType); {
+	case strings.HasPrefix(tp, "ENUM("):
+		return "ENUM"
+	case strings.HasPrefix(tp, "SET("):
+		return "SET"
+	}
+	return ""
 }
 
 func checkTiDBTableRegionPkFields(pkFields, pkColTypes []string) (err error) {
