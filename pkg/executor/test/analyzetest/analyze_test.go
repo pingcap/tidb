@@ -924,6 +924,51 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 	}
 }
 
+// TestKillAnalyzeBeforeResultIsConsumed kills an analyze whose worker has already
+// sent its result, before the result handler reads it. The handler stops on the
+// kill without reading, and the job must still end as failed instead of running.
+func TestKillAnalyzeBeforeResultIsConsumed(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_kill_unconsumed (a int, b int)")
+	tk.MustExec("insert into t_kill_unconsumed values (1,2), (3,4)")
+
+	fp := "github.com/pingcap/tidb/pkg/executor/handleResultsErrorSingleThreadPanic"
+	testfailpoint.Enable(t, fp, "pause")
+	sent := make(chan struct{}, 1)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeResultSent", func() {
+		select {
+		case sent <- struct{}{}:
+		default:
+		}
+	})
+	tkAnalyze := testkit.NewTestKit(t, store)
+	tkAnalyze.MustExec("use test")
+	done := make(chan error, 1)
+	go func() {
+		done <- tkAnalyze.ExecToErr("analyze table t_kill_unconsumed")
+	}()
+
+	// Kill once the worker's result is buffered and the handler is still paused.
+	select {
+	case <-sent:
+	case <-time.After(10 * time.Second):
+		t.Fatal("analyze worker did not send its result")
+	}
+	tkAnalyze.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	testfailpoint.Disable(t, fp)
+
+	select {
+	case err := <-done:
+		require.ErrorContains(t, err, exeerrors.ErrQueryInterrupted.Error())
+	case <-time.After(10 * time.Second):
+		t.Fatal("analyze does not stop after kill")
+	}
+	tk.MustQuery("select state, fail_reason from mysql.analyze_jobs where table_name = 't_kill_unconsumed'").
+		Check(testkit.Rows(statistics.AnalyzeFailed + " " + exeerrors.ErrQueryInterrupted.Error()))
+}
+
 func TestAnalyzeJob(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	for _, result := range []string{statistics.AnalyzeFinished, statistics.AnalyzeFailed} {
