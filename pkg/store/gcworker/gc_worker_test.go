@@ -430,14 +430,17 @@ func timeEqual(t *testing.T, t1, t2 time.Time, epsilon time.Duration) {
 func TestGetOracleTime(t *testing.T) {
 	s := createGCWorkerSuite(t)
 
+	// Bound each read by wall-clock samples, accounting for millisecond TSO precision.
+	before := time.Now().Truncate(time.Millisecond)
 	t1, err := s.gcWorker.getOracleTime()
 	require.NoError(t, err)
-	timeEqual(t, time.Now(), t1, time.Millisecond*10)
+	require.WithinRange(t, t1, before, time.Now())
 
 	s.oracle.AddOffset(time.Second * 10)
+	before = time.Now().Add(time.Second * 10).Truncate(time.Millisecond)
 	t2, err := s.gcWorker.getOracleTime()
 	require.NoError(t, err)
-	timeEqual(t, t2, t1.Add(time.Second*10), time.Millisecond*10)
+	require.WithinRange(t, t2, before, time.Now().Add(time.Second*10))
 }
 
 func TestPrepareGC(t *testing.T) {
