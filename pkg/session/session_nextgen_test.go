@@ -26,11 +26,110 @@ import (
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/extworkload"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
+
+func TestBootstrapSchemasDeploymentCheck(t *testing.T) {
+	originalMode := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+
+	for _, mode := range deploymode.ModeList() {
+		t.Run(mode.String(), func(t *testing.T) {
+			require.NoError(t, deploymode.Set(mode))
+			for _, tt := range []struct {
+				name       string
+				dbID       int64
+				legacyDBID int64
+				version    int64
+				errMsg     string
+			}{
+				{name: "fresh"},
+				{name: "interrupted nextgen bootstrap", dbID: metadef.SystemDatabaseID},
+				{name: "bootstrapped nextgen", dbID: metadef.SystemDatabaseID, version: currentBootstrapVersion},
+				{name: "interrupted classic bootstrap", dbID: 1, errMsg: "interrupted Classic bootstrap"},
+				{name: "interrupted classic bootstrap at scan boundary", dbID: 10, errMsg: "interrupted Classic bootstrap"},
+				{name: "bootstrapped classic", dbID: 1, version: currentBootstrapVersion},
+				{name: "positive bootstrap version without mysql", version: currentBootstrapVersion},
+				{name: "mixed schemas before bootstrap", dbID: metadef.SystemDatabaseID, legacyDBID: 1, errMsg: "both reserved-ID and legacy-ID mysql databases"},
+				{name: "mixed schemas after bootstrap at scan boundary", dbID: metadef.SystemDatabaseID, legacyDBID: 10, version: currentBootstrapVersion, errMsg: "both reserved-ID and legacy-ID mysql databases"},
+			} {
+				t.Run(tt.name, func(t *testing.T) {
+					store, err := mockstore.NewMockStore()
+					require.NoError(t, err)
+					t.Cleanup(func() { require.NoError(t, store.Close()) })
+					ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+					require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+						m := meta.NewMutator(txn)
+						// An unrelated early database must not be mistaken for mysql.
+						if err := m.CreateSysDatabaseByID("other", 2); err != nil {
+							return err
+						}
+						if tt.dbID != 0 {
+							if err := m.CreateSysDatabaseByID(mysql.SystemDB, tt.dbID); err != nil {
+								return err
+							}
+						}
+						if tt.legacyDBID != 0 {
+							if err := m.CreateSysDatabaseByID(mysql.SystemDB, tt.legacyDBID); err != nil {
+								return err
+							}
+						}
+						return m.FinishBootstrap(tt.version)
+					}))
+
+					errMsg := tt.errMsg
+					if tt.dbID != metadef.SystemDatabaseID && tt.version > 0 && mode != deploymode.Starter {
+						errMsg = `the cluster is already bootstrapped with a non-NextGen binary; please start with starter deployment mode (deploy-mode="starter")`
+					}
+					err = bootstrapSchemas(store)
+					if errMsg == "" {
+						require.NoError(t, err)
+						if tt.dbID == metadef.SystemDatabaseID || tt.version == 0 {
+							return
+						}
+					} else {
+						require.ErrorContains(t, err, errMsg)
+					}
+					// Rejected startup and skipped Classic bootstrap must not change
+					// reserved schemas or advance versions.
+					require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+						m := meta.NewMutator(txn)
+						db, err := m.GetDatabase(metadef.SystemDatabaseID)
+						require.NoError(t, err)
+						if tt.dbID == metadef.SystemDatabaseID {
+							require.NotNil(t, db)
+							require.Equal(t, mysql.SystemDB, db.Name.L)
+							tables, err := m.ListTables(ctx, db.ID)
+							require.NoError(t, err)
+							require.Empty(t, tables)
+						} else {
+							require.Nil(t, db)
+						}
+						sysDB, err := m.GetDatabase(metadef.SysDatabaseID)
+						require.NoError(t, err)
+						require.Nil(t, sysDB)
+						version, err := m.GetBootstrapVersion()
+						require.NoError(t, err)
+						require.Equal(t, tt.version, version)
+						tableVersion, err := m.GetNextGenBootTableVersion()
+						require.NoError(t, err)
+						require.Zero(t, tableVersion)
+						return nil
+					}))
+				})
+			}
+		})
+	}
+}
 
 type upgradeGCV2Manager struct {
 	extworkload.Manager

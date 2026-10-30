@@ -30,6 +30,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -376,10 +377,56 @@ var versionedBootstrapSchemas = []versionedBootstrapSchema{
 	}},
 }
 
+// checkBootstrapSchemaDeployment validates the system schema layout and reports
+// whether Classic bootstrap has already completed.
+func checkBootstrapSchemaDeployment(m meta.Reader) (classicBootstrapped bool, err error) {
+	systemDB, err := m.GetDatabase(metadef.SystemDatabaseID)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	bootstrapVer, err := m.GetBootstrapVersion()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	// Classic creates mysql early in bootstrap, so a partially bootstrapped
+	// cluster may already contain the Classic mysql database. Bound the lookup
+	// to the first ten IDs instead of loading all databases in the keyspace.
+	var classicMySQLDBID int64
+	for id := int64(1); id <= 10; id++ {
+		db, err := m.GetDatabase(id)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if db != nil && db.Name.L == mysql.SystemDB {
+			classicMySQLDBID = db.ID
+			break
+		}
+	}
+
+	if systemDB == nil && bootstrapVer > notBootstrapped && !deploymode.IsStarter() {
+		return false, errors.Errorf("the cluster is already bootstrapped with a non-NextGen binary; please start with starter deployment mode (deploy-mode=\"starter\"); bootstrap version is %d, configured deploy-mode is %q", bootstrapVer, deploymode.Get())
+	}
+	if classicMySQLDBID != 0 && systemDB != nil {
+		return false, errors.Errorf("both reserved-ID and legacy-ID mysql databases exist: reserved ID %d, legacy ID %d; resolve the mixed system schema layout before starting NextGen TiDB", systemDB.ID, classicMySQLDBID)
+	}
+	if classicMySQLDBID != 0 && bootstrapVer == notBootstrapped {
+		return false, errors.Errorf("interrupted Classic bootstrap detected: mysql database has legacy ID %d but bootstrap version is 0; complete Classic bootstrap before starting NextGen TiDB", classicMySQLDBID)
+	}
+	return systemDB == nil && bootstrapVer > notBootstrapped, nil
+}
+
 func bootstrapSchemas(store kv.Storage) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	return kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
+		classicBootstrapped, err := checkBootstrapSchemaDeployment(m)
+		if err != nil {
+			return err
+		}
+		if classicBootstrapped {
+			logutil.BgLogger().Info("skip NextGen schema bootstrap for a cluster already bootstrapped with a non-NextGen binary")
+			return nil
+		}
 		currVer, err := m.GetNextGenBootTableVersion()
 		if err != nil {
 			return errors.Trace(err)
