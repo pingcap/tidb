@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
@@ -206,8 +207,11 @@ func TestAnalyzeRestrict(t *testing.T) {
 		defer dom.InfoSyncer().SetSessionManager(origSM)
 
 		tkAnalyze := testkit.NewTestKit(t, store)
+		// TestKit IDs are sequential; global KILL interprets small odd IDs as truncated.
+		connID := (&globalconn.GCID{ServerID: sm.ServerID(), LocalConnID: tkAnalyze.Session().GetSessionVars().ConnectionID}).ToConnID()
+		tkAnalyze.Session().SetConnectionID(connID)
 		tkAnalyze.Session().SetSessionManager(sm)
-		sm.Conn[tkAnalyze.Session().GetSessionVars().ConnectionID] = tkAnalyze.Session()
+		sm.Conn[connID] = tkAnalyze.Session()
 		tkAnalyze.MustExec("use test")
 		tkAnalyze.MustExec("drop table if exists t")
 		tkAnalyze.MustExec("create table t(a int)")
@@ -230,14 +234,18 @@ func TestAnalyzeRestrict(t *testing.T) {
 			done <- err
 		}()
 
-		select {
-		case err := <-done:
-			t.Fatalf("analyze finished before kill query, err=%v", err)
-		case <-time.After(50 * time.Millisecond):
-		}
-
-		connID := tkAnalyze.Session().GetSessionVars().ConnectionID
+		// Wait until statement setup has reset SQLKiller and the analyze job is running.
+		require.Eventually(t, func() bool {
+			select {
+			case err := <-done:
+				t.Fatalf("analyze finished before kill query, err=%v", err)
+			default:
+			}
+			rows := tkKiller.MustQuery("select state from mysql.analyze_jobs where table_name = 't'").Rows()
+			return len(rows) == 1 && rows[0][0] == statistics.AnalyzeRunning
+		}, 5*time.Second, 10*time.Millisecond)
 		tkKiller.MustExec(fmt.Sprintf("kill tidb query %d", connID))
+		require.Empty(t, tkKiller.Session().GetSessionVars().StmtCtx.GetWarnings())
 
 		select {
 		case err := <-done:
