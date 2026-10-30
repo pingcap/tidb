@@ -30,7 +30,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 use tidb_datatype::Datum;
 use tidb_planner::logical::mem_table::QueryTimeRange;
-use tidb_planner::memtable_predicate_extractor::MemTablePredicateExtractor;
+use tidb_planner::memtable_predicate_extractor::MemTableExtractor;
 
 /// What one memory-table scan hands its retriever: Go's `PhysicalMemTable`
 /// fields a `memTableRetriever` is built from.
@@ -50,7 +50,7 @@ pub struct MemTableRead {
     /// cluster table's TiDB-store scan (empty for a `PhysicalMemTable`).
     pub column_ids: Vec<i64>,
     /// Go `Extractor`.
-    pub extractor: Option<MemTablePredicateExtractor>,
+    pub extractor: Option<MemTableExtractor>,
     /// Go `QueryTimeRange`.
     pub query_time_range: QueryTimeRange,
     /// Whether the scan is a cluster table's TiDB-store `TableScan` rather

@@ -1365,7 +1365,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// "We can use the `TableInfo.Columns` directly because the memory table
     /// has a stable schema and there is no online DDL on the memory table."
     /// The `Extractor` switch is
-    /// [`crate::memtable_predicate_extractor::MemTablePredicateExtractor::for_table`].
+    /// [`crate::memtable_predicate_extractor::MemTableExtractor::for_table`].
     pub fn build_mem_table(
         &mut self,
         db_name: &str,
@@ -1423,10 +1423,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         mem_table.columns = columns;
         // Some memory tables can receive some predicates.
         mem_table.extractor =
-            crate::memtable_predicate_extractor::MemTablePredicateExtractor::for_table(
+            crate::memtable_predicate_extractor::MemTableExtractor::for_table(
                 db_name,
                 &table.table_name,
-            );
+            )
+            .map(|extractor| {
+                Box::new(extractor) as Box<dyn tidb_planner_core_base::MemTablePredicateExtractor>
+            });
         // Go sets the summary tables' `QueryTimeRange` with their extractors.
         if db_name.eq_ignore_ascii_case("information_schema")
             && matches!(

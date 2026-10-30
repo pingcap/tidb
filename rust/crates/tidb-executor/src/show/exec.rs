@@ -521,9 +521,9 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             // Go `ShowExec.fetchShowStatsMeta` (`executor/show_stats.go:36`).
             T::StatsMeta => {
                 self.require_show_stats_privilege("stats_meta")?;
-                self.stats_meta_rows(leaf.extractor.as_ref())?
+                self.stats_meta_rows(leaf.extractor.as_deref())?
             }
-            T::StatsHealthy => self.stats_healthy_rows(leaf.extractor.as_ref())?,
+            T::StatsHealthy => self.stats_healthy_rows(leaf.extractor.as_deref())?,
             T::ColumnStatsUsage => self.column_stats_usage_rows()?,
             T::HistogramsInFlight => {
                 let count =
@@ -895,7 +895,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
     /// `appendTableForStatsMeta` makes on `IsAnalyzed()`.
     fn stats_meta_rows(
         &mut self,
-        extractor: Option<&tidb_planner::logical::ShowPredicateExtractor>,
+        extractor: Option<&dyn tidb_planner_core_base::ShowPredicateExtractor>,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         let stats_handle = self.stats_handle();
         // Go renders through `oracle.GetTimeFromTS`, which builds the
@@ -1029,7 +1029,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
     /// non-pseudo physical statistics object visible under this prune mode.
     fn stats_healthy_rows(
         &mut self,
-        extractor: Option<&tidb_planner::logical::ShowPredicateExtractor>,
+        extractor: Option<&dyn tidb_planner_core_base::ShowPredicateExtractor>,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         let stats_handle = self.stats_handle();
         let dynamic_partition_prune = !self
@@ -1807,8 +1807,8 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
 fn base_extractor(
     leaf: &tidb_planner::physical::PhysicalShow,
 ) -> Option<&tidb_planner::show_predicate_extractor::ShowBaseExtractor> {
-    match &leaf.extractor {
-        Some(tidb_planner::logical::ShowPredicateExtractor::Base(extractor)) => Some(extractor),
-        _ => None,
-    }
+    leaf.extractor
+        .as_deref()?
+        .as_any()
+        .downcast_ref::<tidb_planner::show_predicate_extractor::ShowBaseExtractor>()
 }

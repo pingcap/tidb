@@ -111,15 +111,14 @@ impl ShowContents {
     }
 }
 
-/// Go `base.ShowPredicateExtractor`, in the two forms Go installs:
-/// `buildShow`'s `ShowBaseExtractor` and `PredicatePushDown`'s
-/// `ShowStatsMetaPredicateExtractor`.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ShowPredicateExtractor {
-    /// Go `ShowBaseExtractor`.
-    Base(crate::show_predicate_extractor::ShowBaseExtractor),
-    /// Go `ShowStatsMetaPredicateExtractor`.
-    StatsMeta(ShowStatsMetaPredicateExtractor),
+impl tidb_planner_core_base::ShowPredicateExtractor for ShowStatsMetaPredicateExtractor {
+    fn clone_box(&self) -> Box<dyn tidb_planner_core_base::ShowPredicateExtractor> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// Go `logicalop.LogicalShow` (`logical_show.go:35`).
@@ -130,7 +129,7 @@ pub struct LogicalShow {
     /// Go's embedded `ShowContents`.
     pub contents: ShowContents,
     /// Go `Extractor base.ShowPredicateExtractor`.
-    pub extractor: Option<ShowPredicateExtractor>,
+    pub extractor: Option<Box<dyn tidb_planner_core_base::ShowPredicateExtractor>>,
 }
 
 impl LogicalShow {
@@ -174,12 +173,10 @@ impl LogicalShow {
         let (remained, table_filters) =
             extract_stats_meta_filters(schema, names, remained, "table_name", false);
         if remained.len() != predicates.len() {
-            self.extractor = Some(ShowPredicateExtractor::StatsMeta(
-                ShowStatsMetaPredicateExtractor {
-                    db: db_filters.unwrap_or_default(),
-                    table: table_filters.unwrap_or_default(),
-                },
-            ));
+            self.extractor = Some(Box::new(ShowStatsMetaPredicateExtractor {
+                db: db_filters.unwrap_or_default(),
+                table: table_filters.unwrap_or_default(),
+            }));
         }
         remained
     }

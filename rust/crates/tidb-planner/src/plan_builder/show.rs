@@ -37,7 +37,7 @@ use crate::logical::rule::flags;
 use crate::logical::sort::LogicalSort;
 use crate::common_plans::{Plan, ShowNextRowID};
 use crate::logical::show_ddl_jobs::LogicalShowDDLJobs;
-use crate::logical::{LogicalPlan, LogicalShow, ShowContents, ShowPredicateExtractor};
+use crate::logical::{LogicalPlan, LogicalShow, ShowContents};
 use tidb_planner_core_base::PlanError;
 use crate::show_predicate_extractor::ShowBaseExtractor;
 use crate::show_schema::{build_show_ddl_jobs_fields, build_show_next_row_id, build_show_schema};
@@ -143,7 +143,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     ));
                 }
                 if let Some(extractor) = ShowBaseExtractor::extract(show) {
-                    p.extractor = Some(ShowPredicateExtractor::Base(extractor));
+                    p.extractor = Some(Box::new(extractor));
                     build_pattern = false;
                 }
             }
@@ -258,7 +258,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 );
                 if show.tp == T::StatsHealthy {
                     if let Some(extractor) = ShowBaseExtractor::extract(show) {
-                        p.extractor = Some(ShowPredicateExtractor::Base(extractor));
+                        p.extractor = Some(Box::new(extractor));
                         build_pattern = false;
                     }
                 }
@@ -275,7 +275,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 );
                 if show.tp == T::StatsMeta {
                     if let Some(extractor) = ShowBaseExtractor::extract(show) {
-                        p.extractor = Some(ShowPredicateExtractor::Base(extractor));
+                        p.extractor = Some(Box::new(extractor));
                         build_pattern = false;
                     }
                 }

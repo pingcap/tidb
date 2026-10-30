@@ -1371,7 +1371,7 @@ pub struct PhysicalMemTable {
     pub query_time_range: crate::logical::mem_table::QueryTimeRange,
     /// Go `Extractor`, carried from the logical scan after it claimed its
     /// predicates.
-    pub extractor: Option<crate::memtable_predicate_extractor::MemTablePredicateExtractor>,
+    pub extractor: Option<crate::memtable_predicate_extractor::MemTableExtractor>,
 }
 
 impl PhysicalTableScan {
@@ -1804,7 +1804,7 @@ pub struct PhysicalShow {
     /// Go's embedded `logicalop.ShowContents`.
     pub contents: crate::logical::ShowContents,
     /// Go `Extractor`, in the one ported form.
-    pub extractor: Option<crate::logical::ShowPredicateExtractor>,
+    pub extractor: Option<Box<dyn tidb_planner_core_base::ShowPredicateExtractor>>,
 }
 
 /// Go `physicalop.PhysicalShowDDLJobs` (`physical_show.go:53`): the

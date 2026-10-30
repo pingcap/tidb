@@ -318,7 +318,7 @@ impl MemTableRetriever for InstanceStateRetriever {
         catalog: &Catalog,
         ctx: &crate::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
-        use tidb_planner::memtable_predicate_extractor::MemTablePredicateExtractor as Extractor;
+        use tidb_planner::memtable_predicate_extractor::MemTableExtractor as Extractor;
         let table = read.table_name.as_str();
         if table.go_lower_eq("SLOW_QUERY") {
             let extractors: Vec<_> = match &read.extractor {

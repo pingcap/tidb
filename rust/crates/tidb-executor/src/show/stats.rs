@@ -167,22 +167,29 @@ pub fn analyze_status_rows_of(
 /// `buildShow`'s `ShowBaseExtractor` on the lowercased database name, or the
 /// `db_name` / `table_name` sets `PredicatePushDown` gave STATS_META.
 pub(crate) fn stats_row_admitted(
-    extractor: Option<&tidb_planner::logical::ShowPredicateExtractor>,
+    extractor: Option<&dyn tidb_planner_core_base::ShowPredicateExtractor>,
     row: &[Datum],
 ) -> bool {
     let lower = |index: usize| {
         tidb_hack::go_to_lower(&datum_text(&row[index]).unwrap_or_default())
     };
-    match extractor {
-        None => true,
-        Some(tidb_planner::logical::ShowPredicateExtractor::Base(base)) => {
-            let database = lower(0);
-            crate::show::extractor_admits(Some(base), &database, &database)
-        }
-        Some(tidb_planner::logical::ShowPredicateExtractor::StatsMeta(filters)) => {
-            (filters.db.is_empty() || filters.db.contains(&lower(0)))
-                && (filters.table.is_empty() || filters.table.contains(&lower(1)))
-        }
+    let Some(extractor) = extractor else {
+        return true;
+    };
+    if let Some(base) = extractor
+        .as_any()
+        .downcast_ref::<tidb_planner::show_predicate_extractor::ShowBaseExtractor>()
+    {
+        let database = lower(0);
+        return crate::show::extractor_admits(Some(base), &database, &database);
     }
+    if let Some(filters) = extractor
+        .as_any()
+        .downcast_ref::<tidb_planner::logical::ShowStatsMetaPredicateExtractor>()
+    {
+        return (filters.db.is_empty() || filters.db.contains(&lower(0)))
+            && (filters.table.is_empty() || filters.table.contains(&lower(1)));
+    }
+    true
 }
 

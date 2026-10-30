@@ -660,6 +660,60 @@ impl From<EvalError> for PlanError {
     }
 }
 
+/// Go `base.MemTablePredicateExtractor`: the extractor a memory table owns,
+/// which `LogicalMemTable.PredicatePushDown` hands its predicates to, with
+/// Go's optional `MemTableRowLimitHintSetter` / `MemTableDescHintSetter`
+/// (`LogicalMemTable.PushDownTopN`); the planner reads it back by its concrete
+/// type when it builds the physical scan.
+pub trait MemTablePredicateExtractor: std::fmt::Debug + Send + Sync {
+    /// Go `Extract(ctx, schema, names, predicates)`: the predicates this
+    /// extractor does not claim.
+    fn extract(
+        &mut self,
+        ctx: &dyn tidb_exprctx::Columns,
+        schema: &tidb_expr::schema::Schema,
+        names: &[tidb_datatype::FieldName],
+        predicates: Vec<tidb_expr::expression::Expression>,
+    ) -> Vec<tidb_expr::expression::Expression>;
+
+    /// Go `MemTableRowLimitHintSetter.SetRowLimitHint`, for an extractor that
+    /// implements it.
+    fn set_row_limit_hint(&mut self, _limit: u64) {}
+
+    /// Go `MemTableDescHintSetter.SetDesc`, for an extractor that implements it.
+    fn set_desc(&mut self, _desc: bool) {}
+
+    /// A boxed copy, for the plan's clone.
+    fn clone_box(&self) -> Box<dyn MemTablePredicateExtractor>;
+
+    /// The concrete extractor, for the planner's type assertion.
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
+impl Clone for Box<dyn MemTablePredicateExtractor> {
+    fn clone(&self) -> Self {
+        self.clone_box()
+    }
+}
+
+/// Go `base.ShowPredicateExtractor`: the extractor `buildShow`
+/// (`ShowBaseExtractor`) or `LogicalShow.PredicatePushDown`
+/// (`ShowStatsMetaPredicateExtractor`) installs on a SHOW, which the executor
+/// reads back by its concrete type (Go's type switch).
+pub trait ShowPredicateExtractor: std::fmt::Debug + Send + Sync {
+    /// A boxed copy, for the plan's clone.
+    fn clone_box(&self) -> Box<dyn ShowPredicateExtractor>;
+
+    /// The concrete extractor, for the reader's type switch.
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
+impl Clone for Box<dyn ShowPredicateExtractor> {
+    fn clone(&self) -> Self {
+        self.clone_box()
+    }
+}
+
 /// Go `base.PhysicalPlan` as a logical operator holds one: a CTE class keeps
 /// its seed and recursive parts' physical plans, whose statistics
 /// `LogicalCTE.DeriveStats` reads; the planner that built them reads them back

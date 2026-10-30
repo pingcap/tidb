@@ -23,7 +23,7 @@
 //! [`crate::memtable_infoschema_extractor`].
 //!
 //! Go's readers request only what the extractor kept. This port's readers
-//! materialize a whole virtual table first, so [`MemTablePredicateExtractor::keeps_row`]
+//! materialize a whole virtual table first, so [`MemTableExtractor::keeps_row`]
 //! applies the claimed filters to those rows; its doc names the extractors whose
 //! claimed time ranges and patterns have no materialized rows to apply to.
 
@@ -1850,9 +1850,10 @@ impl TiKVRegionStatusExtractor {
     }
 }
 
-/// Go `base.MemTablePredicateExtractor`: the extractor one memory table owns.
+/// The extractors Go installs behind `base.MemTablePredicateExtractor`, one
+/// per memory table that has one.
 #[derive(Clone, Debug)]
-pub enum MemTablePredicateExtractor {
+pub enum MemTableExtractor {
     /// Go `*ClusterTableExtractor`.
     ClusterTable(ClusterTableExtractor),
     /// Go `*ClusterLogTableExtractor`.
@@ -1885,7 +1886,7 @@ pub enum MemTablePredicateExtractor {
     TiKVRegionStatus(TiKVRegionStatusExtractor),
 }
 
-impl MemTablePredicateExtractor {
+impl MemTableExtractor {
     /// Go `buildMemTable`'s extractor switch (`logical_plan_builder.go`):
     /// every `metrics_schema` table, and the named `information_schema`
     /// tables by their upper-cased name.
@@ -2107,19 +2108,39 @@ impl MemTablePredicateExtractor {
             _ => None,
         }
     }
+}
 
-    /// Go `MemTableRowLimitHintSetter` / `MemTableDescHintSetter`: only the
-    /// slow-query extractor takes `LogicalMemTable.PushDownTopN`'s hints.
-    pub fn apply_topn_hints(&mut self, hints: crate::logical::mem_table::MemTableTopNHints) {
-        let Self::SlowQuery(e) = self else {
-            return;
-        };
-        if let Some(desc) = hints.desc {
-            e.set_desc(desc);
-        }
-        if let Some(limit) = hints.row_limit_hint {
+impl tidb_planner_core_base::MemTablePredicateExtractor for MemTableExtractor {
+    fn extract(
+        &mut self,
+        ctx: &dyn Columns,
+        schema: &Schema,
+        names: &[FieldName],
+        predicates: Vec<Expression>,
+    ) -> Vec<Expression> {
+        MemTableExtractor::extract(self, ctx, schema, names, predicates)
+    }
+
+    /// Only the slow-query extractor sets Go's row-limit hint.
+    fn set_row_limit_hint(&mut self, limit: u64) {
+        if let Self::SlowQuery(e) = self {
             e.set_row_limit_hint(limit);
         }
+    }
+
+    /// Only the slow-query extractor sets Go's descending-order hint.
+    fn set_desc(&mut self, desc: bool) {
+        if let Self::SlowQuery(e) = self {
+            e.set_desc(desc);
+        }
+    }
+
+    fn clone_box(&self) -> Box<dyn tidb_planner_core_base::MemTablePredicateExtractor> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -2190,9 +2211,9 @@ impl ClusterTableFilter {
     /// The routing one scan's extractor asks for; a scan with none, or one
     /// that is not a cluster table's, asks for every node.
     #[must_use]
-    pub fn of(extractor: Option<&MemTablePredicateExtractor>) -> Self {
+    pub fn of(extractor: Option<&MemTableExtractor>) -> Self {
         extractor
-            .and_then(MemTablePredicateExtractor::as_cluster_table)
+            .and_then(MemTableExtractor::as_cluster_table)
             .map_or_else(Self::default, |e| Self {
                 skip_request: e.skip_request,
                 node_types: e.node_types.clone(),
@@ -2240,7 +2261,7 @@ fn mem_table_scans<'a>(
 fn mem_table_extractors<'a>(
     plan: &'a PhysicalPlan,
     table: &str,
-    out: &mut Vec<Option<&'a MemTablePredicateExtractor>>,
+    out: &mut Vec<Option<&'a MemTableExtractor>>,
 ) {
     let mut scans = Vec::new();
     mem_table_scans(plan, table, &mut scans);
@@ -2254,7 +2275,7 @@ pub struct MemTableScanRead {
     /// The scanned table's name, upper-cased.
     pub table: String,
     /// The scan's extractor, `None` for a table that has none.
-    pub extractor: Option<MemTablePredicateExtractor>,
+    pub extractor: Option<MemTableExtractor>,
     /// The summary tables' time window (empty for the others).
     pub query_time_range: crate::logical::mem_table::QueryTimeRange,
 }
@@ -2306,7 +2327,7 @@ pub fn cluster_log_extractors(plan: &PhysicalPlan) -> Vec<ClusterLogTableExtract
         .into_iter()
         .map(|extractor| {
             extractor
-                .and_then(MemTablePredicateExtractor::as_cluster_log_table)
+                .and_then(MemTableExtractor::as_cluster_log_table)
                 .cloned()
                 .unwrap_or_default()
         })

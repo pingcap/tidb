@@ -26,7 +26,7 @@
 //! # Narrowings, by name
 //!
 //! * `Extractor base.MemTablePredicateExtractor` is
-//!   [`crate::memtable_predicate_extractor::MemTablePredicateExtractor`]; the
+//!   [`tidb_planner_core_base::MemTablePredicateExtractor`]; the
 //!   `skipExtractor` failpoint is not transcreated.
 //! * `base.MemTableRowLimitHintSetter` / `base.MemTableDescHintSetter` are the
 //!   two OPTIONAL halves of that interface. `PushDownTopN`'s whole decision is
@@ -53,7 +53,6 @@ use tidb_datatype::FieldName;
 
 use crate::logical::topn::LogicalTopN;
 use crate::logical::{schema_producer, BaseLogicalPlan};
-use crate::memtable_predicate_extractor::MemTablePredicateExtractor;
 use tidb_planner_property::stats_info::StatsInfo;
 
 /// Go `variable.SlowLogTimeStr`.
@@ -150,7 +149,7 @@ pub struct LogicalMemTable {
     /// Go `QueryTimeRange`.
     pub query_time_range: QueryTimeRange,
     /// Go `Extractor`: the predicates this table can claim.
-    pub extractor: Option<MemTablePredicateExtractor>,
+    pub extractor: Option<Box<dyn tidb_planner_core_base::MemTablePredicateExtractor>>,
 }
 
 impl LogicalMemTable {
@@ -192,7 +191,12 @@ impl LogicalMemTable {
     /// them only when it implements Go's hint setters.
     pub fn apply_topn_hints(&mut self, hints: MemTableTopNHints) {
         if let Some(extractor) = &mut self.extractor {
-            extractor.apply_topn_hints(hints);
+            if let Some(desc) = hints.desc {
+                extractor.set_desc(desc);
+            }
+            if let Some(limit) = hints.row_limit_hint {
+                extractor.set_row_limit_hint(limit);
+            }
         }
     }
 

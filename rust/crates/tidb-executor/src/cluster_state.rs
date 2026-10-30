@@ -907,7 +907,7 @@ use tidb_charset::Collation;
         &self,
         ctx: &crate::StmtContext,
         table_name: &str,
-        extractor: Option<&tidb_planner::memtable_predicate_extractor::MemTablePredicateExtractor>,
+        extractor: Option<&tidb_planner::memtable_predicate_extractor::MemTableExtractor>,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         use tidb_hack::GoCaseCompare;
         use tidb_proto::diagnosticspb::ServerInfoType;
@@ -925,7 +925,7 @@ use tidb_charset::Collation;
             ));
         }
         let extractors = [extractor
-            .and_then(tidb_planner::memtable_predicate_extractor::MemTablePredicateExtractor::as_cluster_table)
+            .and_then(tidb_planner::memtable_predicate_extractor::MemTableExtractor::as_cluster_table)
             .cloned()
             .unwrap_or_default()];
         self.cluster_server_info_rows(ctx, tp, &extractors)
@@ -999,7 +999,7 @@ impl crate::mem_table_retrieval::MemTableRetriever for ClusterTablesRetriever {
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         use tidb_hack::GoCaseCompare;
         use tidb_planner::memtable_predicate_extractor::{
-            ClusterTableFilter, MemTablePredicateExtractor as Extractor,
+            ClusterTableFilter, MemTableExtractor as Extractor,
         };
         let table = read.table_name.as_str();
         let columns = tidb_infoschema::infoschema_meta::table_schema(table);

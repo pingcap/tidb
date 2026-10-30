@@ -125,7 +125,11 @@ fn show_tables_literal_like_is_extracted_not_selected() {
     assert_eq!(plan_shape(&plan), ["Show"]);
     assert_eq!(column_names(&plan), ["Tables_in_test (T%)"]);
     let LogicalPlan::Show(show) = &plan else { unreachable!() };
-    let Some(crate::logical::ShowPredicateExtractor::Base(extractor)) = &show.extractor else {
+    let Some(extractor) = show
+        .extractor
+        .as_deref()
+        .and_then(|extractor| extractor.as_any().downcast_ref::<crate::show_predicate_extractor::ShowBaseExtractor>())
+    else {
         panic!("the base extractor claimed the pattern");
     };
     assert_eq!(extractor.field_pattern, "t%");

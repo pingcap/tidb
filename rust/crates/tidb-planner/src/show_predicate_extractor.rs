@@ -32,6 +32,16 @@ pub struct ShowBaseExtractor {
     pub field_pattern: String,
 }
 
+impl tidb_planner_core_base::ShowPredicateExtractor for ShowBaseExtractor {
+    fn clone_box(&self) -> Box<dyn tidb_planner_core_base::ShowPredicateExtractor> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
 /// Go `driver.ValueExpr.GetString()` for a literal pattern: the bytes of a
 /// string, hex or bit literal; empty for a numeric, NULL or boolean one,
 /// whose datum carries no bytes. `None` for an expression that is not a

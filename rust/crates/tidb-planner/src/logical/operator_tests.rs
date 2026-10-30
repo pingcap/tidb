@@ -3967,7 +3967,11 @@ fn show_installs_an_extractor_only_when_it_claimed_a_predicate() {
         ],
     );
     assert!(remained.is_empty());
-    let Some(crate::logical::ShowPredicateExtractor::StatsMeta(extractor)) = claimed.extractor.clone()
+    let Some(extractor) = claimed
+        .extractor
+        .as_deref()
+        .and_then(|extractor| extractor.as_any().downcast_ref::<crate::logical::ShowStatsMetaPredicateExtractor>())
+        .cloned()
     else {
         panic!("the stats-meta extractor installed");
     };

@@ -1387,7 +1387,7 @@ impl crate::mem_table_retrieval::MemTableRetriever for CatalogTablesRetriever {
         catalog: &Catalog,
         ctx: &crate::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
-        use tidb_planner::memtable_predicate_extractor::MemTablePredicateExtractor as Extractor;
+        use tidb_planner::memtable_predicate_extractor::MemTableExtractor as Extractor;
         let table = read.table_name.as_str();
         let store = ctx.region_store();
         if table.go_lower_eq("TIKV_STORE_STATUS") {

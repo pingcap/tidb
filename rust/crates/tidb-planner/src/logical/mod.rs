@@ -406,7 +406,7 @@ pub use possible_properties::prepare_possible_properties;
 pub use projection::LogicalProjection;
 pub use selection::LogicalSelection;
 pub use sequence::LogicalSequence;
-pub use show::{LogicalShow, ShowContents, ShowPredicateExtractor, ShowStatsMetaPredicateExtractor};
+pub use show::{LogicalShow, ShowContents, ShowStatsMetaPredicateExtractor};
 pub use show_ddl_jobs::LogicalShowDDLJobs;
 pub use sort::LogicalSort;
 pub use table_dual::LogicalTableDual;
