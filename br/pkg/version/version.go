@@ -361,16 +361,19 @@ const (
 	ServerTypeMariaDB
 	// ServerTypeTiDB represents TiDB server type
 	ServerTypeTiDB
+	// ServerTypeDumpService represents a TiDB KV dump service without a SQL connection.
+	ServerTypeDumpService
 
 	// ServerTypeAll represents All server types
 	ServerTypeAll
 )
 
 var serverTypeString = []string{
-	ServerTypeUnknown: "Unknown",
-	ServerTypeMySQL:   "MySQL",
-	ServerTypeMariaDB: "MariaDB",
-	ServerTypeTiDB:    "TiDB",
+	ServerTypeUnknown:     "Unknown",
+	ServerTypeMySQL:       "MySQL",
+	ServerTypeMariaDB:     "MariaDB",
+	ServerTypeTiDB:        "TiDB",
+	ServerTypeDumpService: "DumpService",
 }
 
 // String implements Stringer.String

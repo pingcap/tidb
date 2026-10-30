@@ -438,15 +438,15 @@ func (*multiQueriesChunk) RawRows() *sql.Rows {
 	return nil
 }
 
+var mysqlCompatibleSpecialComments = []string{
+	"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
+	"/*!40101 SET NAMES binary*/;",
+}
+
 var serverSpecialComments = map[version.ServerType][]string{
-	version.ServerTypeMySQL: {
-		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
-		"/*!40101 SET NAMES binary*/;",
-	},
-	version.ServerTypeTiDB: {
-		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
-		"/*!40101 SET NAMES binary*/;",
-	},
+	version.ServerTypeMySQL:       mysqlCompatibleSpecialComments,
+	version.ServerTypeTiDB:        mysqlCompatibleSpecialComments,
+	version.ServerTypeDumpService: mysqlCompatibleSpecialComments,
 	version.ServerTypeMariaDB: {
 		"/*!40101 SET NAMES binary*/;",
 		"SET FOREIGN_KEY_CHECKS=0;",

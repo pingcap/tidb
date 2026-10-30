@@ -30,17 +30,28 @@ var errTiDBDisableTableLock = errors.New("try to apply lock consistency on TiDB 
 
 // NewConsistencyController returns a new consistency controller
 func NewConsistencyController(ctx context.Context, conf *Config, session *sql.DB) (ConsistencyController, error) {
-	conn, err := session.Conn(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	switch conf.Consistency {
-	case ConsistencyTypeFlush:
-		return &ConsistencyFlushTableWithReadLock{
-			serverType: conf.ServerInfo.ServerType,
-			conn:       conn,
-		}, nil
-	case ConsistencyTypeLock:
+	case ConsistencyTypeFlush, ConsistencyTypeLock:
+		// Only the lock-based controllers own a dedicated connection: they keep
+		// it for the whole dump and close it in TearDown.
+		//
+		// Do not acquire the connection before this switch. This function used to
+		// call session.Conn unconditionally and then return ConsistencyNone for
+		// snapshot/none, which dropped the connection without closing it. Since
+		// auto consistency resolves to snapshot on TiDB, every SQL dump leaked
+		// one connection; the leak keeps the server-side connection handler and
+		// the driver's watcher goroutine alive (caught by goleak), and the
+		// server cannot reclaim it on Close because it only closes the listener.
+		conn, err := session.Conn(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if conf.Consistency == ConsistencyTypeFlush {
+			return &ConsistencyFlushTableWithReadLock{
+				serverType: conf.ServerInfo.ServerType,
+				conn:       conn,
+			}, nil
+		}
 		return &ConsistencyLockDumpingTables{
 			conn:         conn,
 			conf:         conf,

@@ -125,6 +125,7 @@ func TestCreateExternalStorage(t *testing.T) {
 	loc, err := mockConfig.createExternalStorage(tcontext.Background())
 	require.NoError(t, err)
 	require.Regexp(t, "^file:", loc.URI())
+	loc.Close()
 }
 
 func TestMatchMysqlBugVersion(t *testing.T) {
@@ -498,6 +499,42 @@ func TestOutputFilenameTemplateWithRowsValidation(t *testing.T) {
 		)
 		require.NoError(t, err)
 	})
+}
+
+func TestDumpServiceFlags(t *testing.T) {
+	conf := parseConfigFromArgsForTest(t, "--dump-service", "unix:///tmp/dumper.sock", "--threads", "32", "--filetype", "csv", "--filter", "test.*")
+	require.Equal(t, "unix:///tmp/dumper.sock", conf.DumpService)
+	require.Equal(t, 32, conf.Threads)
+	require.NoError(t, validateDumpService(conf))
+	for _, option := range []string{flagColumnFilter, flagColumnFilterFile} {
+		t.Run(option, func(t *testing.T) {
+			value := `{ matcher = ["test.*"], columns = ["*", "!secret"] }`
+			if option == flagColumnFilterFile {
+				value = writeColumnFilterFileForTest(t, "[[filters]]\nmatcher = [\"test.*\"]\ncolumns = [\"*\", \"!secret\"]\n")
+			}
+			conf := parseConfigFromArgsForTest(t, "--dump-service", "unix:///tmp/dumper.sock", "--"+option, value)
+			columns, indexes, err := conf.columnFilter.applyToColumns("test", "t", []string{"id", "secret", "name"})
+			require.NoError(t, err)
+			require.Equal(t, []string{"id", "name"}, columns)
+			require.Equal(t, []int{0, 2}, indexes)
+		})
+	}
+	invalidConf := DefaultConfig()
+	invalidConf.DumpService = "http://localhost/dumper.sock"
+	require.Error(t, validateDumpService(invalidConf))
+
+	for _, flagName := range dumpServiceIncompatibleFlags {
+		t.Run(flagName, func(t *testing.T) {
+			flags := pflag.NewFlagSet("dumpling", pflag.ContinueOnError)
+			DefaultConfig().DefineFlags(flags)
+			require.NoError(t, flags.Set(flagDumpService, "unix:///tmp/dumper.sock"))
+			flags.Lookup(flagName).Changed = true
+			require.EqualError(t, validateDumpServiceFlags(flags), "--"+flagName+" cannot be combined with --dump-service")
+		})
+	}
+	_, err := parseConfigFromArgsForTestWithErr(t, "--dump-service", "")
+	require.Error(t, err)
+	require.Empty(t, parseConfigFromArgsForTest(t).DumpService)
 }
 
 func parseConfigFromArgsForTest(t *testing.T, args ...string) *Config {

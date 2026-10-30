@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -114,6 +115,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 
 	err = adjustConfig(conf,
 		buildTLSConfig,
+		validateDumpService,
 		validateSpecifiedSQL,
 		adjustFileFormat,
 		validateIncludeGeneratedColumns)
@@ -130,6 +132,15 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 			}
 		}()
 	})
+
+	if conf.DumpService != "" {
+		conf.ServerInfo = version.ServerInfo{ServerType: version.ServerTypeDumpService}
+		err = runSteps(d,
+			initLogger,
+			createExternalStore,
+			startHTTPService)
+		return d, err
+	}
 
 	err = runSteps(d,
 		initLogger,
@@ -149,67 +160,171 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 	return d, err
 }
 
-// Dump dumps table from database
-// nolint: gocyclo
+// dumpSource supplies source-specific operations to the common Dump lifecycle.
+// writersReady runs only after every writer has acquired its source resources.
+type dumpSource struct {
+	newWriter    func(*tcontext.Context, int64) (*Writer, error)
+	writersReady func(*tcontext.Context) error
+	produceTasks func(*tcontext.Context, chan<- Task) error
+	close        func()
+}
+
+// Dump dumps table from database.
 func (d *Dumper) Dump() (dumpErr error) {
 	initColumnTypeSets()
-	var (
-		conn    *sql.Conn
-		err     error
-		conCtrl ConsistencyController
-	)
-	tctx, conf, pool := d.tctx, d.conf, d.dbHandle
+	tctx, conf := d.tctx, d.conf
 	tctx.L().Info("begin to run Dump", zap.Stringer("conf", conf))
+
+	summary.SetLogCollector(summary.NewLogCollector(tctx.L().Info))
+	summary.SetUnit(summary.BackupUnit)
+	defer func() {
+		if dumpErr != nil {
+			summary.CollectFailureUnit("dump", dumpErr)
+		}
+		summary.Summary(summary.BackupUnit)
+	}()
+	stopLogProgress := d.startLogProgress(tctx)
+	defer stopLogProgress()
+
 	if len(conf.columnFilter.Filters) > 0 {
 		// Config can be built or mutated without ParseFromFlags, so keep this runtime guard.
-		if err = validateColumnFilterOptions(conf, flagColumnFilterFile); err != nil {
+		if err := validateColumnFilterOptions(conf, flagColumnFilterFile); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	m := newGlobalMetadata(tctx, d.extStore, conf.Snapshot)
-	repeatableRead := needRepeatableRead(conf.ServerInfo.ServerType, conf.Consistency)
+	m.recordStartTime(time.Now())
 	defer func() {
 		if dumpErr == nil {
 			_ = m.writeGlobalMetaData()
 		}
 	}()
 
+	var source *dumpSource
+	var err error
+	if conf.DumpService != "" {
+		source, err = d.prepareKVDump()
+	} else {
+		source, err = d.prepareSQLDump(m)
+	}
+	if err != nil {
+		return err
+	}
+	defer source.close()
+
+	chanSize := defaultTaskChannelCapacity
+	failpoint.Inject("SmallDumpChanSize", func() {
+		chanSize = 1
+	})
+	taskIn, taskOut := infiniteChan[Task]()
+	// todo: refine metrics
+	AddGauge(d.metrics.taskChannelCapacity, float64(chanSize))
+	runCtx, cancel := tctx.WithCancel()
+	wg, writingCtx := errgroup.WithContext(runCtx)
+	writerCtx := tctx.WithContext(writingCtx)
+	closeTasks := sync.OnceFunc(func() { close(taskIn) })
+	var writers []*Writer
+	defer func() {
+		cancel()
+		closeTasks()
+		writerErr := wg.Wait()
+		// Workers can exit with queued tasks after cancellation or an error.
+		// Drain the forwarding channel so its goroutine can release the queue.
+		//revive:disable-next-line:empty-block
+		for range taskOut {
+		}
+		for _, writer := range writers {
+			if writer.conn != nil {
+				_ = writer.conn.Close()
+			}
+		}
+		if writerErr != nil && (dumpErr == nil || errors.ErrorEqual(dumpErr, context.Canceled)) {
+			dumpErr = errors.Trace(writerErr)
+		}
+		if dumpErr == nil {
+			dumpErr = tctx.Err()
+		}
+	}()
+
+	writers, err = d.startWriters(writerCtx, wg, taskOut, source.newWriter)
+	if err != nil {
+		return err
+	}
+	if source.writersReady != nil {
+		if err := source.writersReady(writerCtx); err != nil {
+			return err
+		}
+	}
+
+	tableDataStartTime := time.Now()
+	if err := source.produceTasks(writerCtx, taskIn); err != nil {
+		return err
+	}
+	d.metrics.progressReady.Store(true)
+	closeTasks()
+	failpoint.Inject("EnableLogProgress", func() {
+		time.Sleep(time.Second)
+		tctx.L().Debug("progress ready, sleep 1s")
+	})
+	if err := wg.Wait(); err != nil {
+		return errors.Trace(err)
+	}
+	if err := tctx.Err(); err != nil {
+		return err
+	}
+	summary.CollectSuccessUnit("dump cost", countTotalTask(writers), time.Since(tableDataStartTime))
+	summary.SetSuccessStatus(true)
+	m.recordFinishTime(time.Now())
+	return nil
+}
+
+func (d *Dumper) prepareSQLDump(m *globalMetadata) (_ *dumpSource, prepareErr error) {
+	tctx, conf, pool := d.tctx, d.conf, d.dbHandle
+	repeatableRead := needRepeatableRead(conf.ServerInfo.ServerType, conf.Consistency)
+	var conn *sql.Conn
+	var err error
 	// for consistency lock, we should get table list at first to generate the lock tables SQL
 	if conf.Consistency == ConsistencyTypeLock {
 		conn, err = createConnWithConsistency(tctx, pool, repeatableRead)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		if err = prepareTableListToDump(tctx, conf, conn); err != nil {
 			_ = conn.Close()
-			return err
+			return nil, err
 		}
 		_ = conn.Close()
 	}
 
-	conCtrl, err = NewConsistencyController(tctx, conf, pool)
+	conCtrl, err := NewConsistencyController(tctx, conf, pool)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err = conCtrl.Setup(tctx); err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	// To avoid lock is not released
-	defer func() {
-		err = conCtrl.TearDown(tctx)
-		if err != nil {
+	var metaConn *sql.Conn
+	var baseConn *BaseConn
+	closeSource := func() {
+		if baseConn != nil {
+			_ = baseConn.DBConn.Close()
+		} else if metaConn != nil {
+			_ = metaConn.Close()
+		}
+		if err := conCtrl.TearDown(tctx); err != nil {
 			tctx.L().Warn("fail to tear down consistency controller", zap.Error(err))
+		}
+	}
+	defer func() {
+		if prepareErr != nil {
+			closeSource()
 		}
 	}()
 
-	metaConn, err := createConnWithConsistency(tctx, pool, repeatableRead)
+	metaConn, err = createConnWithConsistency(tctx, pool, repeatableRead)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer func() {
-		_ = metaConn.Close()
-	}()
-	m.recordStartTime(time.Now())
 	// for consistency lock, we can write snapshot info after all tables are locked.
 	// the binlog pos may changed because there is still possible write between we lock tables and write master status.
 	// but for the locked tables doing replication that starts from metadata is safe.
@@ -225,14 +340,14 @@ func (d *Dumper) Dump() (dumpErr error) {
 		//init charset and default collation map
 		d.charsetAndDefaultCollationMap, err = GetCharsetAndDefaultCollation(tctx.Context, metaConn)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	// for other consistencies, we should get table list after consistency is set up and GlobalMetaData is cached
 	if conf.Consistency != ConsistencyTypeLock {
 		if err = prepareTableListToDump(tctx, conf, metaConn); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if err = d.renewSelectTableRegionFuncForLowerTiDB(tctx); err != nil {
@@ -272,105 +387,75 @@ func (d *Dumper) Dump() (dumpErr error) {
 		return rebuildMetaConn(conn, updateMeta)
 	}
 
-	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
-	chanSize := defaultTaskChannelCapacity
-	failpoint.Inject("SmallDumpChanSize", func() {
-		chanSize = 1
-	})
-	taskIn, taskOut := infiniteChan[Task]()
-	// todo: refine metrics
-	AddGauge(d.metrics.taskChannelCapacity, float64(chanSize))
-	wg, writingCtx := errgroup.WithContext(tctx)
-	writerCtx := tctx.WithContext(writingCtx)
-	writers, tearDownWriters, err := d.startWriters(writerCtx, wg, taskOut, rebuildConn)
-	if err != nil {
-		return err
-	}
-	defer tearDownWriters()
+	baseConn = newBaseConn(metaConn, true, rebuildMetaConn)
+	return &dumpSource{
+		newWriter: func(writerCtx *tcontext.Context, id int64) (*Writer, error) {
+			conn, err := createConnWithConsistency(writerCtx, pool, repeatableRead)
+			if err != nil {
+				return nil, err
+			}
+			writer := NewWriter(writerCtx, id, conf, conn, d.extStore, d.metrics)
+			writer.rebuildConnFn = rebuildConn
+			return writer, nil
+		},
+		writersReady: func(writerCtx *tcontext.Context) error {
+			var err error
+			if conf.TransactionalConsistency {
+				if conf.Consistency == ConsistencyTypeFlush || conf.Consistency == ConsistencyTypeLock {
+					writerCtx.L().Info("All the dumping transactions have started. Start to unlock tables")
+				}
+				if err = conCtrl.TearDown(writerCtx); err != nil {
+					return errors.Trace(err)
+				}
+			}
+			// Inject consistency failpoint test after we release the table lock
+			failpoint.Inject("ConsistencyCheck", nil)
 
-	if conf.TransactionalConsistency {
-		if conf.Consistency == ConsistencyTypeFlush || conf.Consistency == ConsistencyTypeLock {
-			tctx.L().Info("All the dumping transactions have started. Start to unlock tables")
-		}
-		if err = conCtrl.TearDown(tctx); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	// Inject consistency failpoint test after we release the table lock
-	failpoint.Inject("ConsistencyCheck", nil)
+			if conf.PosAfterConnect {
+				// record again, to provide a location to exit safe mode for DM
+				err = m.recordGlobalMetaData(metaConn, conf.ServerInfo, true)
+				if err != nil {
+					writerCtx.L().Info("get global metadata (after connection pool established) failed", log.ShortError(err))
+				}
+			}
 
-	if conf.PosAfterConnect {
-		// record again, to provide a location to exit safe mode for DM
-		err = m.recordGlobalMetaData(metaConn, conf.ServerInfo, true)
-		if err != nil {
-			tctx.L().Info("get global metadata (after connection pool established) failed", log.ShortError(err))
-		}
-	}
-
-	if conf.SQL == "" && len(conf.columnFilter.Filters) > 0 {
-		if err = prepareColumnProjection(tctx, conf, baseConn); err != nil {
-			close(taskIn)
-			_ = baseConn.DBConn.Close()
-			return errors.Trace(err)
-		}
-	}
-
-	summary.SetLogCollector(summary.NewLogCollector(tctx.L().Info))
-	summary.SetUnit(summary.BackupUnit)
-	defer summary.Summary(summary.BackupUnit)
-
-	stopLogProgress := d.startLogProgress(tctx)
-	defer stopLogProgress()
-
-	tableDataStartTime := time.Now()
-
-	failpoint.Inject("PrintTiDBMemQuotaQuery", func(_ failpoint.Value) {
-		row := d.dbHandle.QueryRowContext(tctx, "select @@tidb_mem_quota_query;")
-		var s string
-		err = row.Scan(&s)
-		if err != nil {
-			fmt.Println(errors.Trace(err))
-		} else {
-			fmt.Printf("tidb_mem_quota_query == %s\n", s)
-		}
-	})
-
-	if conf.SQL == "" {
-		if err = d.dumpDatabases(writerCtx, baseConn, taskIn); err != nil && !errors.ErrorEqual(err, context.Canceled) {
-			return err
-		}
-	} else {
-		d.dumpSQL(writerCtx, baseConn, taskIn)
-	}
-	d.metrics.progressReady.Store(true)
-	close(taskIn)
-	failpoint.Inject("EnableLogProgress", func() {
-		time.Sleep(1 * time.Second)
-		tctx.L().Debug("progress ready, sleep 1s")
-	})
-	_ = baseConn.DBConn.Close()
-	if err := wg.Wait(); err != nil {
-		summary.CollectFailureUnit("dump table data", err)
-		return errors.Trace(err)
-	}
-	summary.CollectSuccessUnit("dump cost", countTotalTask(writers), time.Since(tableDataStartTime))
-
-	summary.SetSuccessStatus(true)
-	m.recordFinishTime(time.Now())
-	return nil
+			if conf.SQL == "" && len(conf.columnFilter.Filters) > 0 {
+				if err = prepareColumnProjection(writerCtx, conf, baseConn); err != nil {
+					return errors.Trace(err)
+				}
+			}
+			failpoint.Inject("PrintTiDBMemQuotaQuery", func(_ failpoint.Value) {
+				row := d.dbHandle.QueryRowContext(tctx, "select @@tidb_mem_quota_query;")
+				var s string
+				err = row.Scan(&s)
+				if err != nil {
+					fmt.Println(errors.Trace(err))
+				} else {
+					fmt.Printf("tidb_mem_quota_query == %s\n", s)
+				}
+			})
+			return nil
+		},
+		produceTasks: func(writerCtx *tcontext.Context, taskChan chan<- Task) error {
+			defer func() { _ = baseConn.DBConn.Close() }()
+			if conf.SQL == "" {
+				return d.dumpDatabases(writerCtx, baseConn, taskChan)
+			}
+			d.dumpSQL(writerCtx, baseConn, taskChan)
+			return writerCtx.Err()
+		},
+		close: closeSource,
+	}, nil
 }
 
 func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskChan <-chan Task,
-	rebuildConnFn func(*sql.Conn, bool) (*sql.Conn, error)) ([]*Writer, func(), error) {
-	conf, pool := d.conf, d.dbHandle
-	writers := make([]*Writer, conf.Threads)
-	for i := range conf.Threads {
-		conn, err := createConnWithConsistency(tctx, pool, needRepeatableRead(conf.ServerInfo.ServerType, conf.Consistency))
+	newWriter func(*tcontext.Context, int64) (*Writer, error)) ([]*Writer, error) {
+	writers := make([]*Writer, 0, d.conf.Threads)
+	for i := range d.conf.Threads {
+		writer, err := newWriter(tctx, int64(i))
 		if err != nil {
-			return nil, func() {}, err
+			return writers, err
 		}
-		writer := NewWriter(tctx, int64(i), conf, conn, d.extStore, d.metrics)
-		writer.rebuildConnFn = rebuildConnFn
 		writer.setFinishTableCallBack(func(task Task) {
 			if _, ok := task.(*TaskTableData); ok {
 				IncCounter(d.metrics.finishedTablesCounter)
@@ -399,14 +484,9 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 		wg.Go(func() error {
 			return writer.run(taskChan)
 		})
-		writers[i] = writer
+		writers = append(writers, writer)
 	}
-	tearDown := func() {
-		for _, w := range writers {
-			_ = w.conn.Close()
-		}
-	}
-	return writers, tearDown, nil
+	return writers, nil
 }
 
 func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskChan chan<- Task) error {
