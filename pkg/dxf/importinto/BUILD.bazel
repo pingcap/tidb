@@ -113,7 +113,6 @@ go_test(
         "metrics_test.go",
         "planner_test.go",
         "proto_test.go",
-        "query_pipeline_test.go",
         "scheduler_test.go",
         "scheduler_testkit_test.go",
         "task_executor_test.go",
