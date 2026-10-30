@@ -25,25 +25,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func assertUnblocksBetween(t *testing.T, wg *sync.WaitGroup, minv, maxv time.Duration) {
-	ch := make(chan time.Duration)
-	start := time.Now()
+const (
+	waitTimeout          = 10 * time.Second
+	blockedCheckDuration = 100 * time.Millisecond
+)
+
+func waitGroupDone(wg *sync.WaitGroup) <-chan struct{} {
+	ch := make(chan struct{})
 	go func() {
 		wg.Wait()
-		ch <- time.Since(start)
+		close(ch)
 	}()
+	return ch
+}
+
+func waitUnblocked(t *testing.T, ch <-chan struct{}) {
+	t.Helper()
 	select {
-	case dur := <-ch:
-		if dur < minv {
-			t.Fatal("WaitGroup unblocked before minimum duration, it was " + dur.String())
-		}
-	case <-time.After(maxv):
-		select {
-		case dur := <-ch:
-			t.Fatal("WaitGroup did not unblock after maximum duration, it was " + dur.String())
-		case <-time.After(1 * time.Second):
-			t.Fatal("WaitGroup did not unblock after maximum duration")
-		}
+	case <-ch:
+	case <-time.After(waitTimeout):
+		t.Fatal("WaitGroup did not unblock")
+	}
+}
+
+func assertStillBlocked(t *testing.T, ch <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-ch:
+		t.Fatal("WaitGroup unblocked before pause was released")
+	case <-time.After(blockedCheckDuration):
 	}
 }
 
@@ -62,8 +72,8 @@ func TestPause(t *testing.T) {
 		}()
 	}
 
-	// Give them more time to unblock in case of time exceeding due to high pressure of CI.
-	assertUnblocksBetween(t, &wg, 0*time.Millisecond, 100*time.Millisecond)
+	done := waitGroupDone(&wg)
+	waitUnblocked(t, done)
 
 	// after calling Pause(), these should be blocking...
 
@@ -78,15 +88,12 @@ func TestPause(t *testing.T) {
 		}()
 	}
 
+	done = waitGroupDone(&wg)
+	assertStillBlocked(t, done)
+
 	// ... until we call Resume()
-
-	go func() {
-		time.Sleep(500 * time.Millisecond)
-		p.Resume()
-	}()
-
-	// Give them more time to unblock in case of time exceeding due to high pressure of CI.
-	assertUnblocksBetween(t, &wg, 500*time.Millisecond, 800*time.Millisecond)
+	p.Resume()
+	waitUnblocked(t, done)
 
 	// if the context is canceled, Wait() should immediately unblock...
 
@@ -103,9 +110,10 @@ func TestPause(t *testing.T) {
 		}()
 	}
 
+	done = waitGroupDone(&wg)
+	assertStillBlocked(t, done)
 	cancel()
-	// Give them more time to unblock in case of time exceeding due to high pressure of CI.
-	assertUnblocksBetween(t, &wg, 0*time.Millisecond, 100*time.Millisecond)
+	waitUnblocked(t, done)
 
 	// canceling the context does not affect the state of the pauser
 
@@ -116,13 +124,11 @@ func TestPause(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	go func() {
-		time.Sleep(500 * time.Millisecond)
-		p.Resume()
-	}()
+	done = waitGroupDone(&wg)
+	assertStillBlocked(t, done)
 
-	// Give them more time to unblock in case of time exceeding due to high pressure of CI.
-	assertUnblocksBetween(t, &wg, 500*time.Millisecond, 800*time.Millisecond)
+	p.Resume()
+	waitUnblocked(t, done)
 }
 
 // Run `go test github.com/pingcap/tidb/pkg/lightning/common -check.b -test.v` to get benchmark result.
