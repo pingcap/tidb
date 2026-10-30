@@ -19,6 +19,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -35,6 +36,74 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 )
+
+func TestReplaceConflictEmptyEffectPage(t *testing.T) {
+	col := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("id"), State: model.StatePublic,
+		FieldType: *types.NewFieldType(mysql.TypeLonglong)}
+	col.AddFlag(mysql.PriKeyFlag)
+	info := &model.TableInfo{ID: 104, Name: ast.NewCIStr("t"), State: model.StatePublic,
+		PKIsHandle: true, Columns: []*model.ColumnInfo{col}}
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(info.SepAutoInc()), info)
+	require.NoError(t, err)
+	encoder, err := tidbkv.NewBaseKVEncoder(&encode.EncodingConfig{Table: tbl, Logger: log.L()})
+	require.NoError(t, err)
+	_, err = encoder.AddRecord(types.MakeDatums(1))
+	require.NoError(t, err)
+	pair := encoder.SessionCtx.TakeKvPairs().Pairs[0]
+	for _, stage := range []string{"index", "data", "empty"} {
+		t.Run(stage, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer func() { _ = db.Close() }()
+			cfg := config.NewConfig()
+			// Nonzero task IDs must not exclude other incremental imports' conflicts.
+			cfg.TaskID = 42
+			cfg.App.TaskInfoSchemaName = "lightning_task_info"
+			em := New(db, cfg, log.L())
+			indexQuery := "SELECT id, raw_key, index_name, raw_value, raw_handle FROM .* WHERE table_name = [?] AND kv_type = 0.*"
+			dataQuery := "SELECT id, raw_key, raw_value FROM .* WHERE table_name = [?] AND kv_type <> 0.*"
+			if stage == "empty" {
+				mock.ExpectQuery(indexQuery).WithArgs("t", 0, int64(math.MaxInt64), 1000).
+					WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "index_name", "raw_value", "raw_handle"}))
+				mock.ExpectQuery(dataQuery).WithArgs("t", 0, int64(math.MaxInt64), 1000).
+					WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "raw_value"}))
+				mock.ExpectBegin()
+				mock.ExpectExec("DELETE FROM .* WHERE table_name = [?] AND kv_type = 2 LIMIT [?]").
+					WithArgs("t", 1000).WillReturnResult(sqlmock.NewResult(0, 0))
+				mock.ExpectCommit()
+				require.NoError(t, em.ReplaceConflictKeys(context.Background(), tbl, "t", util.NewWorkerPool(1, "test"),
+					func(context.Context, []byte) ([]byte, error) { return nil, fmt.Errorf("unexpected read") },
+					func(context.Context, [][]byte) error { return fmt.Errorf("unexpected delete") }))
+				require.NoError(t, mock.ExpectationsWereMet())
+				return
+			}
+			query := indexQuery
+			rows := sqlmock.NewRows([]string{"id", "raw_key", "index_name", "raw_value", "raw_handle"})
+			if stage == "data" {
+				mock.ExpectQuery(indexQuery).WillReturnRows(rows)
+				query = dataQuery
+				rows = sqlmock.NewRows([]string{"id", "raw_key", "raw_value"})
+			}
+			for i := 1; i <= 1000; i++ {
+				if stage == "index" {
+					rows.AddRow(i, pair.Key, "PRIMARY", pair.Val, pair.Key)
+				} else {
+					rows.AddRow(i, pair.Key, pair.Val)
+				}
+			}
+			mock.ExpectQuery(query).WithArgs("t", 0, int64(math.MaxInt64), 1000).WillReturnRows(rows)
+			nextPageErr := fmt.Errorf("next input page reached")
+			mock.ExpectQuery(query).WithArgs("t", 1001, int64(math.MaxInt64), 1000).WillReturnError(nextPageErr)
+			err = em.ReplaceConflictKeys(context.Background(), tbl, "t", util.NewWorkerPool(1, "test"),
+				func(context.Context, []byte) ([]byte, error) { return pair.Val, nil },
+				func(context.Context, [][]byte) error {
+					return fmt.Errorf("an effect-free page must not delete keys")
+				})
+			require.ErrorIs(t, err, nextPageErr)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
 
 func TestInit(t *testing.T) {
 	db, mock, err := sqlmock.New()
