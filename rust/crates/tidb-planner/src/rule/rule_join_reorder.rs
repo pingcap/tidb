@@ -32,7 +32,7 @@ use tidb_planner_core_operator_logicalop::selection::LogicalSelection;
 use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalPlan};
 use tidb_planner_core_base::{PlanError};
 use tidb_planner_core_base::LogicalJoinType;
-use crate::joinorder::JoinMethodHint;
+use tidb_planner_core_joinorder::JoinMethodHint;
 
 #[derive(Clone, Debug)]
 struct JoinTypeWithExtMsg {
@@ -74,7 +74,7 @@ impl LogicalOptRule for JoinReOrderSolver {
         plan: LogicalPlan,
     ) -> Result<(LogicalPlan, bool), (LogicalPlan, PlanError)> {
         let result = if context.advanced_join_reorder {
-            crate::joinorder::optimize(context, plan.clone())
+            tidb_planner_core_joinorder::optimize(context, plan.clone())
         } else {
             optimize_recursive(context, plan.clone())
         };
@@ -241,7 +241,7 @@ fn extract_join_group(context: &RuleContext<'_>, plan: &mut LogicalPlan) -> Join
         {
             if let [child @ LogicalPlan::Join(_)] = selection.base.children_mut().as_mut_slice() {
                 let mut result = extract_join_group(context, child);
-                let conditions = crate::joinorder::substitute_cols_in_exprs(
+                let conditions = tidb_planner_core_joinorder::substitute_cols_in_exprs(
                     &selection.conditions,
                     &result.column_expressions,
                 );
@@ -336,7 +336,7 @@ fn extract_join_group(context: &RuleContext<'_>, plan: &mut LogicalPlan) -> Join
 
     let left_preserved = current_leading
         .as_ref()
-        .is_some_and(|hint| crate::joinorder::is_derived_table_in_leading_hint(left, hint));
+        .is_some_and(|hint| tidb_planner_core_joinorder::is_derived_table_in_leading_hint(left, hint));
     let mut left_result = if join_snapshot.join_type != LogicalJoinType::RightOuter
         && !left_has_hint
         && !left_preserved
@@ -346,7 +346,7 @@ fn extract_join_group(context: &RuleContext<'_>, plan: &mut LogicalPlan) -> Join
         single_group(left.clone())
     };
     if join_snapshot.join_type == LogicalJoinType::LeftOuter
-        && crate::joinorder::outer_join_side_filters_touch_multiple_leaves(
+        && tidb_planner_core_joinorder::outer_join_side_filters_touch_multiple_leaves(
             &join_snapshot,
             &left_result.group,
             &left_result.column_expressions,
@@ -358,7 +358,7 @@ fn extract_join_group(context: &RuleContext<'_>, plan: &mut LogicalPlan) -> Join
 
     let right_preserved = current_leading
         .as_ref()
-        .is_some_and(|hint| crate::joinorder::is_derived_table_in_leading_hint(right, hint));
+        .is_some_and(|hint| tidb_planner_core_joinorder::is_derived_table_in_leading_hint(right, hint));
     let mut right_result = if join_snapshot.join_type != LogicalJoinType::LeftOuter
         && !right_has_hint
         && !right_preserved
@@ -368,7 +368,7 @@ fn extract_join_group(context: &RuleContext<'_>, plan: &mut LogicalPlan) -> Join
         single_group(right.clone())
     };
     if join_snapshot.join_type == LogicalJoinType::RightOuter
-        && crate::joinorder::outer_join_side_filters_touch_multiple_leaves(
+        && tidb_planner_core_joinorder::outer_join_side_filters_touch_multiple_leaves(
             &join_snapshot,
             &right_result.group,
             &right_result.column_expressions,
@@ -472,16 +472,16 @@ fn extract_join_group(context: &RuleContext<'_>, plan: &mut LogicalPlan) -> Join
         result.info.other_conditions.extend(local_conditions);
     }
     if !result.column_expressions.is_empty() {
-        result.info.equal_edges = crate::joinorder::substitute_cols_in_eq_edges(
+        result.info.equal_edges = tidb_planner_core_joinorder::substitute_cols_in_eq_edges(
             &result.info.equal_edges,
             &result.column_expressions,
         );
-        result.info.other_conditions = crate::joinorder::substitute_cols_in_exprs(
+        result.info.other_conditions = tidb_planner_core_joinorder::substitute_cols_in_exprs(
             &result.info.other_conditions,
             &result.column_expressions,
         );
         for join_type in &mut result.info.join_types {
-            join_type.outer_bind_conditions = crate::joinorder::substitute_cols_in_exprs(
+            join_type.outer_bind_conditions = tidb_planner_core_joinorder::substitute_cols_in_exprs(
                 &join_type.outer_bind_conditions,
                 &result.column_expressions,
             );
@@ -522,7 +522,7 @@ fn try_inline_projection(
     let schema = projection.base.base.schema()?;
     let mut mappings = BTreeMap::new();
     for (output, expression) in schema.columns.iter().zip(&projection.exprs) {
-        let rewritten = crate::joinorder::substitute_cols_in_expr(
+        let rewritten = tidb_planner_core_joinorder::substitute_cols_in_expr(
             expression.clone(),
             &child_result.column_expressions,
         );
@@ -567,7 +567,7 @@ fn can_inline_projection(projection: &LogicalProjection, child_result: &JoinGrou
         }
     }
     for expression in &projection.exprs {
-        let rewritten = crate::joinorder::substitute_cols_in_expr(
+        let rewritten = tidb_planner_core_joinorder::substitute_cols_in_expr(
             expression.clone(),
             &child_result.column_expressions,
         );
@@ -720,7 +720,7 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
             let next = match element {
                 tidb_ast::LeadingElement::Table(table) => {
                     let Some(index) =
-                        crate::joinorder::find_plan_by_ast_hint(&available, table, hints, |plan| Some(plan))
+                        tidb_planner_core_joinorder::find_plan_by_ast_hint(&available, table, hints, |plan| Some(plan))
                     else {
                         return Ok((None, original, false));
                     };
@@ -784,7 +784,7 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
                     self.context,
                 );
                 result?;
-                let cumulative_cost = crate::joinorder::cumulative_cost_by_children(&plan)?;
+                let cumulative_cost = tidb_planner_core_joinorder::cumulative_cost_by_children(&plan)?;
                 Ok(JoinReorderNode {
                     plan,
                     cumulative_cost,
@@ -1089,7 +1089,7 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
                 .schema()
                 .ok_or_else(|| PlanError::internal("join right child has no schema"))?;
             let Some((mut left_expr, mut right_expr, _)) =
-                crate::joinorder::align_join_edge_args(first, second, left_schema, right_schema)
+                tidb_planner_core_joinorder::align_join_edge_args(first, second, left_schema, right_schema)
             else {
                 return Err(PlanError::internal(
                     "join reorder dp: eq edge doesn't connect left/right plans",
@@ -1202,7 +1202,7 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
             let [first, second] = edge.get_args() else {
                 continue;
             };
-            let Some((_, _, swapped)) = crate::joinorder::align_join_edge_args(
+            let Some((_, _, swapped)) = tidb_planner_core_joinorder::align_join_edge_args(
                 first,
                 second,
                 left.schema().unwrap_or(&Schema::default()),
@@ -1329,8 +1329,8 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
         right_conditions: Vec<Expression>,
         join_type: LogicalJoinType,
     ) -> Result<LogicalPlan, PlanError> {
-        let mut join = crate::joinorder::new_cartesian_join(self.context, join_type, left, right)?;
-        crate::joinorder::set_new_join_with_hint(
+        let mut join = tidb_planner_core_joinorder::new_cartesian_join(self.context, join_type, left, right)?;
+        tidb_planner_core_joinorder::set_new_join_with_hint(
             self.context,
             &mut join,
             &self.info.join_method_hints,
@@ -1401,13 +1401,13 @@ impl<'a, 'ctx> LegacyGroupSolver<'a, 'ctx> {
                     next.push(left);
                     break;
                 };
-                let mut join = crate::joinorder::new_cartesian_join(
+                let mut join = tidb_planner_core_joinorder::new_cartesian_join(
                     self.context,
                     LogicalJoinType::Inner,
                     left,
                     right,
                 )?;
-                crate::joinorder::set_new_join_with_hint(
+                tidb_planner_core_joinorder::set_new_join_with_hint(
             self.context,
             &mut join,
             &self.info.join_method_hints,
@@ -1557,7 +1557,7 @@ mod tests {
         equality: Option<(i64, i64)>,
     ) -> LogicalPlan {
         let mut join =
-            crate::joinorder::new_cartesian_join(context, LogicalJoinType::Inner, left, right)
+            tidb_planner_core_joinorder::new_cartesian_join(context, LogicalJoinType::Inner, left, right)
                 .unwrap();
         if let Some((left, right)) = equality {
             join.equal_conditions.push(ScalarFunction::new(

@@ -1,0 +1,30 @@
+[package]
+name = "tidb-planner-core-joinorder"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB pkg/planner/core/joinorder (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-planner-core-operator-logicalop = { path = "../tidb-planner-core-operator-logicalop" }
+tidb-planner-core-base = { path = "../tidb-planner-core-base" }
+tidb-planner-property = { path = "../tidb-planner-property" }
+tidb-planner-util = { path = "../tidb-planner-util" }
+tidb-intset = { path = "../tidb-intset" }
+tidb-ast = { path = "../tidb-ast" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-hint = { path = "../tidb-hint" }
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-mysql = { path = "../tidb-mysql" }
+
+[dev-dependencies]
+tidb-exprctx = { path = "../tidb-exprctx" }
+tidb-planner-cardinality = { path = "../tidb-planner-cardinality" }
+tidb-planner-core-cost = { path = "../tidb-planner-core-cost" }
+tidb-vardef = { path = "../tidb-vardef" }

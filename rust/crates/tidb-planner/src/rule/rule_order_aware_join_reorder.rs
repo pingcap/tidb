@@ -115,7 +115,7 @@ fn optimize_recursive(
                         .collect()
                 };
                 if !order_columns.is_empty() && should_use_cdc_based_join_reorder(context) {
-                    if let Some(choice) = crate::joinorder::find_ordered_leading_choice(
+                    if let Some(choice) = tidb_planner_core_joinorder::find_ordered_leading_choice(
                         context,
                         &LogicalPlan::Selection(selection.clone()),
                         order_columns,
@@ -128,7 +128,7 @@ fn optimize_recursive(
                             &filters,
                         )?;
                         if child_ordered
-                            && crate::joinorder::try_annotate_ordered_leading_on_selection(
+                            && tidb_planner_core_joinorder::try_annotate_ordered_leading_on_selection(
                                 context, selection, &choice,
                             )
                         {
@@ -151,7 +151,7 @@ fn optimize_recursive(
         }
         LogicalPlan::Join(join) => {
             if !order_columns.is_empty() && should_use_cdc_based_join_reorder(context) {
-                if let Some(choice) = crate::joinorder::find_ordered_leading_choice(
+                if let Some(choice) = tidb_planner_core_joinorder::find_ordered_leading_choice(
                     context,
                     &LogicalPlan::Join(join.clone()),
                     order_columns,
@@ -164,7 +164,7 @@ fn optimize_recursive(
                         middle_filters,
                     )?;
                     if child_ordered
-                        && crate::joinorder::try_annotate_ordered_leading_on_join(
+                        && tidb_planner_core_joinorder::try_annotate_ordered_leading_on_join(
                             context, join, &choice,
                         )
                     {
@@ -179,7 +179,7 @@ fn optimize_recursive(
         LogicalPlan::DataSource(data_source) => Ok((
             false,
             !order_columns.is_empty()
-                && crate::joinorder::data_source_satisfies_ordering(
+                && tidb_planner_core_joinorder::data_source_satisfies_ordering(
                     data_source,
                     order_columns,
                     middle_filters,
@@ -213,7 +213,7 @@ fn optimize_children(
 fn optimize_choice_vertices(
     context: &RuleContext<'_>,
     children: &mut [LogicalPlan],
-    choice: &crate::joinorder::OrderedLeadingChoice,
+    choice: &tidb_planner_core_joinorder::OrderedLeadingChoice,
     order_columns: &[Column],
     parent_filters: &[Expression],
 ) -> Result<(bool, bool), PlanError> {

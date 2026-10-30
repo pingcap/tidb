@@ -5791,6 +5791,7 @@ dependencies = [
  "tidb-planner-core-base",
  "tidb-planner-core-constraint",
  "tidb-planner-core-cost",
+ "tidb-planner-core-joinorder",
  "tidb-planner-core-operator-logicalop",
  "tidb-planner-core-operator-physicalop",
  "tidb-planner-core-partidx",
@@ -5885,6 +5886,27 @@ name = "tidb-planner-core-cost"
 version = "0.0.0"
 dependencies = [
  "tidb-expression-aggregation",
+]
+
+[[package]]
+name = "tidb-planner-core-joinorder"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-expr",
+ "tidb-exprctx",
+ "tidb-hint",
+ "tidb-infoschema",
+ "tidb-intset",
+ "tidb-mysql",
+ "tidb-planner-cardinality",
+ "tidb-planner-core-base",
+ "tidb-planner-core-cost",
+ "tidb-planner-core-operator-logicalop",
+ "tidb-planner-property",
+ "tidb-planner-util",
+ "tidb-vardef",
 ]
 
 [[package]]

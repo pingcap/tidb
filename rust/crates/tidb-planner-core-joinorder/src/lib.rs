@@ -78,9 +78,9 @@ struct JoinGroup {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct JoinMethodHint {
-    pub(crate) prefer_join_method: u32,
-    pub(crate) hint_info: Rc<tidb_planner_util::misc::JoinHints>,
+pub struct JoinMethodHint {
+    pub prefer_join_method: u32,
+    pub hint_info: Rc<tidb_planner_util::misc::JoinHints>,
 }
 
 impl JoinGroup {
@@ -233,7 +233,7 @@ fn extract_join_group(context: &RuleContext<'_>, plan: Rc<LogicalPlan>) -> JoinG
 /// Go `joinorder.IsDerivedTableInLeadingHint`: whether `plan` stands for a
 /// derived table, a query block with an alias in `PlannerSelectBlockAsName`,
 /// that the LEADING hint names, so the join group keeps it whole.
-pub(crate) fn is_derived_table_in_leading_hint(
+pub fn is_derived_table_in_leading_hint(
     plan: &LogicalPlan,
     hint: &tidb_planner_util::misc::JoinHints,
 ) -> bool {
@@ -275,7 +275,7 @@ pub(crate) fn is_derived_table_in_leading_hint(
 /// and an `@sel_N` block); only when none matches does the derived-table
 /// alias of a plan's query block count, and an alias several plans share
 /// (a derived table whose join was flattened into the group) matches none.
-pub(crate) fn find_plan_by_ast_hint<T>(
+pub fn find_plan_by_ast_hint<T>(
     plans: &[T],
     table: &tidb_ast::HintTable,
     hint: &tidb_planner_util::misc::JoinHints,
@@ -967,7 +967,7 @@ fn align_equal_conditions(
     Ok((left, right, aligned))
 }
 
-pub(crate) fn new_cartesian_join(
+pub fn new_cartesian_join(
     context: &RuleContext<'_>,
     join_type: tidb_planner_core_base::LogicalJoinType,
     left: LogicalPlan,
@@ -1143,7 +1143,7 @@ fn make_inner_join(
 }
 
 /// Go `SetNewJoinWithHint`, ending in `LogicalJoin.SetPreferredJoinType`.
-pub(crate) fn set_new_join_with_hint(
+pub fn set_new_join_with_hint(
     context: &RuleContext<'_>,
     join: &mut LogicalJoin,
     vertex_hints: &BTreeMap<i32, JoinMethodHint>,
@@ -1377,7 +1377,7 @@ fn validate_cumulative_cost(cost: f64) -> Result<(), PlanError> {
     Ok(())
 }
 
-pub(crate) fn cumulative_cost_by_children(plan: &LogicalPlan) -> Result<f64, PlanError> {
+pub fn cumulative_cost_by_children(plan: &LogicalPlan) -> Result<f64, PlanError> {
     let mut cost = plan
         .stats_info()
         .ok_or_else(|| {
@@ -2480,6 +2480,105 @@ mod tests {
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_expr::constant::Constant;
 
+    /// Core's hooks as the join-order tests need them: sources carry their
+    /// statistics, and no predicate is simplified.
+    struct NoCore;
+
+    impl tidb_planner_core_operator_logicalop::rewrite::DataSourceStatsDeriver for NoCore {
+        /// Every source here carries its statistics, which Go's
+        /// `deriveStats4DataSource` returns as they are; join ordering reads
+        /// no access path, so none is derived.
+        fn derive_stats_4_data_source(
+            &self,
+            source: &mut tidb_planner_core_operator_logicalop::data_source::DataSource,
+            _self_schema: &Schema,
+            _source_had_stats: bool,
+            _env: &tidb_planner_core_operator_logicalop::rewrite::DeriveStatsEnv<'_>,
+        ) -> Result<(StatsInfo, bool), tidb_planner_core_base::PlanError> {
+            let stats = source
+                .base
+                .base
+                .stats_info()
+                .cloned()
+                .expect("join-order tests give every source its statistics");
+            Ok((stats, source.all_conds.is_empty()))
+        }
+    }
+
+    impl tidb_planner_core_operator_logicalop::plan_context::PredicateSimplifier for NoCore {
+        fn apply_predicate_simplification(
+            &self,
+            _ctx: &tidb_planner_core_operator_logicalop::plan_context::RuleContext<'_>,
+            _predicates: Vec<Expression>,
+            _propagate_constant: bool,
+            _valid: Option<&dyn Fn(&Expression) -> bool>,
+        ) -> Vec<Expression> {
+            unreachable!("join-order tests run no predicate simplification")
+        }
+
+        fn apply_predicate_simplification_for_join(
+            &self,
+            _ctx: &tidb_planner_core_operator_logicalop::plan_context::RuleContext<'_>,
+            _predicates: Vec<Expression>,
+            _left_schema: &Schema,
+            _right_schema: &Schema,
+            _propagate_constant: bool,
+            _valid: Option<&dyn Fn(&Expression) -> bool>,
+        ) -> Vec<Expression> {
+            unreachable!("join-order tests run no predicate simplification")
+        }
+    }
+
+    fn test_context(allocator: &PlanIdAllocator) -> tidb_planner_core_operator_logicalop::plan_context::RuleContext<'_> {
+        static COLUMN_ALLOCATOR: tidb_planner_core_base::ColumnIdAllocator =
+            tidb_planner_core_base::ColumnIdAllocator::new();
+        tidb_planner_core_operator_logicalop::plan_context::RuleContext {
+            estimator_options: Default::default(),
+            allocator,
+            column_allocator: &COLUMN_ALLOCATOR,
+            builder: &tidb_expr::expr_util::builder::PreservingFunctionBuilder,
+            eval_context: &tidb_exprctx::NoColumns,
+            use_plan_cache: false,
+            plan_cache_marker: None,
+            // Go's `AllowDeriveTopN` defaults ON in `sessionVars`.
+            allow_derive_topn: true,
+            expr_pushdown_blacklist: Default::default(),
+            disabled_rules: tidb_planner_core_operator_logicalop::plan_context::DisabledLogicalRules::default(),
+            statistics_load: None,
+            partition_pruning: None,
+            opt_index_prune_threshold: 20,
+            opt_prefix_index_single_scan: true,
+            index_merge_enabled: true,
+            no_index_merge_hint: false,
+            in_explain_stmt: false,
+            range_max_size: 0,
+            selectivity_factor: tidb_planner_core_cost::SELECTION_FACTOR,
+            range_fallback_handler: None,
+            always_keep_join_key: true,
+            enable_unsafe_substitute: false,
+            enable_semi_join_rewrite: false,
+            // Go's `OptimizerEnableNAAJ` defaults ON in `sessionVars`.
+            enable_null_aware_anti_join: true,
+            enable_no_decorrelate_in_select: false,
+            allow_eliminate_apply: true,
+            join_reorder_threshold: 0,
+            group_ndv_skew_ratio: tidb_vardef::defaults::DEF_OPT_RISK_GROUP_NDV_SKEW_RATIO,
+            scale_ndv_skew_ratio: tidb_planner_cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
+            allow_agg_push_down: false,
+            advanced_join_reorder: true,
+            cartesian_join_order_threshold: 0.0,
+            join_reorder_through_proj: false,
+            join_reorder_through_sel: false,
+            outer_join_reorder: true,
+            advanced_join_hint: true,
+            hint_warning_sink: None,
+            used_stats_recorder: None,
+            cte_optimizer: None,
+            data_source_stats: &NoCore,
+            predicate_simplifier: &NoCore,
+        }
+    }
+
     fn column(id: i64) -> Column {
         let mut column = Column::new(id, FieldType::new(FieldTypeCode::LongLong));
         column.id = id;
@@ -2819,7 +2918,7 @@ mod tests {
         };
 
         let allocator = tidb_planner_core_base::PlanIdAllocator::new();
-        let context = crate::rule::rule_tests::test_context(&allocator);
+        let context = test_context(&allocator);
         let mut detector = ConflictDetector::default();
         let nodes = detector.build(&group, &context).unwrap();
         assert_eq!(nodes.len(), 4);
@@ -2889,7 +2988,7 @@ mod tests {
         };
 
         let allocator = tidb_planner_core_base::PlanIdAllocator::new();
-        let context = crate::rule::rule_tests::test_context(&allocator);
+        let context = test_context(&allocator);
         let mut detector = ConflictDetector::default();
         let nodes = detector.build(&group, &context).unwrap();
         assert_eq!(nodes.len(), 2);
@@ -2902,7 +3001,7 @@ mod tests {
         assert!(!connection.no_equal_edge());
 
         let allocator = tidb_planner_core_base::PlanIdAllocator::new();
-        let context = crate::rule::rule_tests::test_context(&allocator);
+        let context = test_context(&allocator);
         let mut greedy_detector = ConflictDetector::default();
         let greedy_nodes = greedy_detector.build(&group, &context).unwrap();
         let greedy = optimize_greedy(&context, &mut greedy_detector, greedy_nodes, &group)
