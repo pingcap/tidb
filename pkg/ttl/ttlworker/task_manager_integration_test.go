@@ -43,6 +43,7 @@ import (
 
 func TestParallelLockNewTask(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_ttl_running_tasks = 1000")
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
