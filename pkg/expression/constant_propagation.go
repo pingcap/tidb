@@ -295,7 +295,14 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 		}
 	}
 	if replaced {
-		return true, false, NewFunctionInternal(ctx, sf.FuncName.L, sf.GetType(ctx.GetEvalCtx()), args...)
+		newExpr := NewFunctionInternal(ctx, sf.FuncName.L, sf.GetType(ctx.GetEvalCtx()), args...)
+		if sf.FuncName.L == ast.Cast {
+			// The coercibility and repertoire of a cast are set by the expression rewriter,
+			// rebuilding it derives them from the new argument instead.
+			newExpr.SetCoercibility(sf.Coercibility())
+			newExpr.SetRepertoire(sf.Repertoire())
+		}
+		return true, false, newExpr
 	}
 	return false, false, cond
 }

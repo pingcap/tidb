@@ -134,3 +134,15 @@ WHERE EXISTS (
     SELECT 1 FROM t3
     WHERE t3.k = t2.k AND t3.b = t2.b AND t2.k = 1
 );
+
+# propagating a column into a cast keeps the coercibility of the cast
+drop table if exists l, r;
+create table l (id bigint not null primary key);
+create table r (id bigint not null primary key, c0 datetime null);
+insert into l values (1);
+insert into r values (1, null);
+explain format='brief' select l.id from l join r on l.id = r.id where binary(cast(l.id as decimal)) <= '|';
+select l.id from l join r on l.id = r.id where binary(cast(l.id as decimal)) <= '|';
+select l.id from l join r on l.id = r.id where '^' >= binary(l.id | '2020-01-18');
+select l.id from l join r on l.id = r.id where binary(l.id > l.id) < '}';
+drop table if exists l, r;

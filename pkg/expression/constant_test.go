@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
@@ -193,6 +194,30 @@ func TestConstantPropagation(t *testing.T) {
 			require.Equalf(t, tt.result, strings.Join(result, ", "), "different for expr %s", tt.conditions)
 		}
 	}
+}
+
+func TestConstantPropagationKeepsCoercibilityOfCast(t *testing.T) {
+	ctx := mock.NewContext()
+	intType := types.NewFieldTypeWithCollation(mysql.TypeLonglong, charset.CollationBin, 20)
+	toDecimal := BuildCastFunction(ctx, newColumnWithType(0, intType), types.NewFieldType(mysql.TypeNewDecimal))
+	toDecimal.SetCoercibility(CoercibilityImplicit)
+	toDecimal.SetRepertoire(UNICODE)
+	conds := []Expression{
+		newFunction(ctx, ast.EQ, newColumnWithType(0, intType), newColumnWithType(1, intType)),
+		newFunction(ctx, ast.LE, toDecimal, newLonglong(1)),
+	}
+
+	newConds := newPropConstSolver().PropagateConstant(ctx, false, nil, nil, nil, conds)
+
+	var propagated []Expression
+	for _, cond := range newConds {
+		if lhs, ok := cond.(*ScalarFunction).GetArgs()[0].(*ScalarFunction); ok && lhs.GetArgs()[0].(*Column).UniqueID == 1 {
+			propagated = append(propagated, lhs)
+		}
+	}
+	require.Len(t, propagated, 1)
+	require.Equal(t, CoercibilityImplicit, propagated[0].Coercibility())
+	require.Equal(t, UNICODE, propagated[0].Repertoire())
 }
 
 func TestConstantFolding(t *testing.T) {
