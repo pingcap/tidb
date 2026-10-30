@@ -1445,10 +1445,18 @@ create global binding from history using plan digest '34905d92850ad6e2f8a75c3402
 Error 1105 (HY000): binding failed: SQL query is truncated due to tidb_stmt_summary_max_sql_length limit. Please increase tidb_stmt_summary_max_sql_length. Plan Digest: 34905d92850ad6e2f8a75c3402ec9157ad2d4582ac30e9e0ad5aa8d7ebbeceab
 show global bindings;
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-select count(*) as truncated_count
+select coalesce(max(
+digest_text like '%(len:%' or query_sample_text like '%(len:%'
+), 0) as truncated_count
+from (
+select digest_text, query_sample_text
 from information_schema.cluster_statements_summary
 where digest_text like 'select%long_column_name_just_fill_out_the_plan_and_sql_digest_text%'
-and (digest_text like '%(len:%' or query_sample_text like '%(len:%');
+union all
+select digest_text, query_sample_text
+from information_schema.cluster_statements_summary_history
+where digest_text like 'select%long_column_name_just_fill_out_the_plan_and_sql_digest_text%'
+) summaries;
 truncated_count
 1
 drop table long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill;
