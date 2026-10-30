@@ -2208,6 +2208,18 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	// Like DROP INDEX, index copies stop taking writes for one schema version before being removed.
+	// convertReorgPartitionJob2RollbackJob has moved every copy that is not delete only to write only.
+	stopWrites := false
+	for _, indexInfo := range tblInfo.Indices {
+		if indexInfo.State == model.StateWriteOnly {
+			indexInfo.State = model.StateDeleteOnly
+			stopWrites = true
+		}
+	}
+	if stopWrites {
+		return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+	}
 	tblInfo.Partition.DroppingDefinitions = nil
 	// Collect table/partition ids to clean up, through args.OldPhysicalTblIDs
 	// GC will later also drop matching Placement bundles.
@@ -2239,7 +2251,7 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 
 	var dropIndices []*model.IndexInfo
 	for _, indexInfo := range tblInfo.Indices {
-		if indexInfo.State == model.StateWriteOnly {
+		if indexInfo.State == model.StateDeleteOnly {
 			dropIndices = append(dropIndices, indexInfo)
 		}
 	}
