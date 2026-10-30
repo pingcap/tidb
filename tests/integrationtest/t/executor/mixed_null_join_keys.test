@@ -1,0 +1,14 @@
+create table null_keys_l(a int, b int);
+create table null_keys_r(a int, b int);
+insert into null_keys_l values (null,null);
+insert into null_keys_r values (null,null);
+select exists(select 1 from null_keys_l l where l.b=r.b and l.a<=>r.a) from null_keys_r r;
+select exists(select 1 from null_keys_l l where l.a<=>r.a and l.b=r.b) from null_keys_r r;
+select not exists(select 1 from null_keys_l l where l.b=r.b and l.a<=>r.a) from null_keys_r r;
+select exists(select 1 from null_keys_l l where l.a<=>r.a and l.b<=>r.b) from null_keys_r r;
+select * from null_keys_r r where not exists(select 1 from null_keys_l l where l.b=r.b and l.a<=>r.a);
+insert into null_keys_l values (null,1), (2,2);
+insert into null_keys_r values (null,1), (2,2), (3,3);
+select a,b,exists(select 1 from null_keys_l l where l.b=r.b and l.a<=>r.a) as matched from null_keys_r r order by b;
+select a,b,not exists(select 1 from null_keys_l l where l.b=r.b and l.a<=>r.a) as unmatched from null_keys_r r order by b;
+drop table null_keys_l,null_keys_r;

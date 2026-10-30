@@ -28,16 +28,21 @@ var (
 
 // Metrics
 var (
-	PacketIOCounter            *prometheus.CounterVec
-	QueryDurationHistogram     *prometheus.HistogramVec
-	QueryRPCHistogram          *prometheus.HistogramVec
-	QueryProcessedKeyHistogram *prometheus.HistogramVec
-	QueryTotalCounter          *prometheus.CounterVec
-	ConnGauge                  *prometheus.GaugeVec
-	DisconnectionCounter       *prometheus.CounterVec
-	PreparedStmtGauge          prometheus.Gauge
-	ExecuteErrorCounter        *prometheus.CounterVec
-	CriticalErrorCounter       prometheus.Counter
+	PacketIOCounter                 *prometheus.CounterVec
+	QueryDurationHistogram          *prometheus.HistogramVec
+	CommandDurationHistogram        *prometheus.HistogramVec
+	QueryRPCHistogram               *prometheus.HistogramVec
+	QueryProcessedKeyHistogram      *prometheus.HistogramVec
+	IACacheHitCount                 *prometheus.CounterVec
+	IARemoteReadSegmentCount        *prometheus.CounterVec
+	IARemoteReadSegmentSize         *prometheus.CounterVec
+	IARemoteReadSegmentWaitDuration *prometheus.HistogramVec
+	QueryTotalCounter               *prometheus.CounterVec
+	ConnGauge                       *prometheus.GaugeVec
+	DisconnectionCounter            *prometheus.CounterVec
+	PreparedStmtGauge               prometheus.Gauge
+	ExecuteErrorCounter             *prometheus.CounterVec
+	CriticalErrorCounter            prometheus.Counter
 
 	ServerStart = "server-start"
 	ServerStop  = "server-stop"
@@ -98,8 +103,17 @@ func InitServerMetrics() {
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "handle_query_duration_seconds",
-			Help:      "Bucketed histogram of processing time (s) of handled queries.",
+			Help:      "Bucketed histogram of processing time (s) of individual SQL statements.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
+		}, []string{LblSQLType, LblDb, LblResourceGroup})
+
+	CommandDurationHistogram = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "handle_command_duration_seconds",
+			Help:      "Bucketed histogram of processing time (s) of handled commands and restricted SQL operations.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29),
 		}, []string{LblSQLType, LblDb, LblResourceGroup})
 
 	QueryRPCHistogram = metricscommon.NewHistogramVec(
@@ -118,6 +132,39 @@ func InitServerMetrics() {
 			Name:      "query_statement_processed_keys",
 			Help:      "Bucketed histogram of processed key count during the scan of handled query statements.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 32),
+		}, []string{LblSQLType, LblDb})
+
+	IACacheHitCount = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "ia_cache_hit_count",
+			Help:      "Counter of IA segment cache hits observed by TiDB.",
+		}, []string{LblSQLType, LblDb})
+
+	IARemoteReadSegmentCount = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "ia_remote_read_segment_count",
+			Help:      "Counter of IA remote read segments observed by TiDB.",
+		}, []string{LblSQLType, LblDb})
+
+	IARemoteReadSegmentSize = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "ia_remote_read_segment_size_bytes",
+			Help:      "Counter of IA remote read segment bytes observed by TiDB.",
+		}, []string{LblSQLType, LblDb})
+
+	IARemoteReadSegmentWaitDuration = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "ia_remote_read_segment_wait_duration_seconds",
+			Help:      "Bucketed histogram of IA remote read segment wait time observed by TiDB.",
+			Buckets:   prometheus.ExponentialBuckets(0.00005, 2, 20), // 50us ~ 26s
 		}, []string{LblSQLType, LblDb})
 
 	QueryTotalCounter = metricscommon.NewCounterVec(

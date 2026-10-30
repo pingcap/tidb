@@ -133,7 +133,13 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		err                       error
 	)
 	if err := util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		query := "SELECT version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta where version > %? "
+		query := "SELECT"
+		if onlyForAnalyzedTables {
+			query += " /*+ use_index(mysql.stats_meta, tbl) */"
+		} else {
+			query += " /*+ use_index(mysql.stats_meta, idx_ver) */"
+		}
+		query += " version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta where version > %? "
 		args := []any{lastVersion}
 
 		if onlyForAnalyzedTables {

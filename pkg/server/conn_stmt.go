@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/plugin"
-	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/server/internal/dump"
 	"github.com/pingcap/tidb/pkg/server/internal/parse"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
@@ -209,7 +208,10 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			paramValues = data[pos+1:]
 		}
 
-		err = parseBinaryParams(args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues, cc.inputDecoder)
+		err = stmt.CheckLongDataSize()
+		if err == nil {
+			err = parseBinaryParams(args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues, cc.inputDecoder)
+		}
 		// This `.Reset` resets the arguments, so it's fine to just ignore the error (and the it'll be reset again in the following routine)
 		errReset := stmt.Reset()
 		if errReset != nil {
@@ -231,6 +233,8 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 }
 
 func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args []param.BinaryParam, useCursor bool) (err error) {
+	// Binary execution bypasses Parse and ExecutePreparedStmt, including their timing resets.
+	cc.ctx.GetSessionVars().DurationParse = 0
 	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 
 	//nolint:forcetypeassert
@@ -281,24 +285,10 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	}
 
 	// first, try to clear the left cursor if there is one
-	if useCursor && stmt.GetCursorActive() {
-		resultset.ReportCursorRUV2Delta(stmt.GetResultSet(), 0)
-		if stmt.GetResultSet() != nil && stmt.GetResultSet().GetRowIterator() != nil {
-			stmt.GetResultSet().GetRowIterator().Close()
+	if stmt.GetCursorActive() {
+		if err := stmt.CloseCursor(); err != nil {
+			logutil.Logger(ctx).Error("Fail to close cursor before executing statement", zap.Error(err))
 		}
-		if stmt.GetRowContainer() != nil {
-			stmt.GetRowContainer().GetMemTracker().Detach()
-			stmt.GetRowContainer().GetDiskTracker().Detach()
-			err := stmt.GetRowContainer().Close()
-			if err != nil {
-				logutil.Logger(ctx).Error(
-					"Fail to close rowContainer before executing statement. May cause resource leak",
-					zap.Error(err))
-			}
-			stmt.StoreRowContainer(nil)
-		}
-		stmt.StoreResultSet(nil)
-		stmt.SetCursorActive(false)
 	}
 
 	// For the combination of `ComPrepare` and `ComExecute`, the statement name is stored in the client side, and the
@@ -311,26 +301,18 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	}
 	execStmt.SetText(charset.EncodingUTF8Impl, sql)
 	clearConnectionAlive := func() {}
-	checkingConnectionAlive := false
-	if planCacheStmt != nil && planCacheStmt.PreparedAst != nil {
-		checkingConnectionAlive = shouldInstallConnectionAliveDuringExecute(planCacheStmt.PreparedAst.Stmt, vars)
-		if checkingConnectionAlive {
-			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
-			defer clearConnectionAlive()
-		}
+	if shouldInstallConnectionAlive(execStmt, vars) {
+		clearConnectionAlive = cc.setSQLKillerConnectionAlive()
+		defer clearConnectionAlive()
 	}
 	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
 	if rs == nil || err != nil {
 		clearConnectionAlive()
 	}
-	var lazy bool
+	var detached bool
 	if rs != nil {
-		if !checkingConnectionAlive {
-			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
-			defer clearConnectionAlive()
-		}
 		defer func() {
-			if !lazy {
+			if !detached {
 				rs.Close()
 			}
 		}()
@@ -359,7 +341,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	// we should hold the ResultSet in PreparedStatement for next stmt_fetch, and only send back ColumnInfo.
 	// Tell the client cursor exists in server by setting proper serverStatus.
 	if useCursor {
-		lazy, err = cc.executeWithCursor(ctx, stmt, rs)
+		detached, err = cc.executeWithCursor(ctx, stmt, rs)
 		return false, err
 	}
 	retryable, err := cc.writeResultSet(ctx, rs, true, cc.ctx.Status(), 0)
@@ -369,15 +351,25 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	return false, nil
 }
 
-func (cc *clientConn) executeWithCursor(ctx context.Context, stmt PreparedStatement, rs resultset.ResultSet) (lazy bool, err error) {
+// The detached result indicates that the caller no longer owns the original result set,
+// even when detaching or sending the cursor metadata fails.
+func (cc *clientConn) executeWithCursor(ctx context.Context, stmt PreparedStatement, rs resultset.ResultSet) (detached bool, err error) {
+	defer func() {
+		if err != nil {
+			if closeErr := stmt.CloseCursor(); closeErr != nil {
+				logutil.Logger(ctx).Error("Fail to close cursor after execution error",
+					zap.NamedError("original-error", err), zap.NamedError("close-error", closeErr))
+			}
+		}
+	}()
 	vars := (&cc.ctx).GetSessionVars()
 	if vars.EnableLazyCursorFetch {
 		// try to execute with lazy cursor fetch
 		ok, err := cc.executeWithLazyCursor(ctx, stmt, rs)
 
-		// if `ok` is false, should try to execute without lazy cursor fetch
-		if ok {
-			return true, err
+		// Fall back to eager execution only when detaching is unsupported.
+		if ok || err != nil {
+			return ok, err
 		}
 	}
 
@@ -411,20 +403,6 @@ func (cc *clientConn) executeWithCursor(ctx context.Context, stmt PreparedStatem
 	// store the rowContainer in the statement right after it's created, so that even if the logic in defer is not triggered,
 	// the rowContainer will be released when the statement is closed.
 	stmt.StoreRowContainer(rowContainer)
-	defer func() {
-		if err != nil {
-			// if the execution panic, it'll not reach this branch. The `rowContainer` will be released in the `stmt.Close`.
-			stmt.StoreRowContainer(nil)
-
-			rowContainer.GetMemTracker().Detach()
-			rowContainer.GetDiskTracker().Detach()
-			errCloseRowContainer := rowContainer.Close()
-			if errCloseRowContainer != nil {
-				logutil.Logger(ctx).Error("Fail to close rowContainer in error handler. May cause resource leak",
-					zap.NamedError("original-error", err), zap.NamedError("close-error", errCloseRowContainer))
-			}
-		}
-	}()
 
 	for {
 		chk := rs.NewChunk(nil)
@@ -444,11 +422,6 @@ func (cc *clientConn) executeWithCursor(ctx context.Context, stmt PreparedStatem
 	}
 
 	reader := chunk.NewRowContainerReader(rowContainer)
-	defer func() {
-		if err != nil {
-			reader.Close()
-		}
-	}()
 	crs := resultset.WrapWithRowContainerCursor(rs, reader)
 	resultset.AttachCursorRUV2Tracker(crs, cc.buildCursorRUV2Tracker(ctx))
 	if cl, ok := crs.(resultset.FetchNotifier); ok {
@@ -460,38 +433,25 @@ func (cc *clientConn) executeWithCursor(ctx context.Context, stmt PreparedStatem
 }
 
 // executeWithLazyCursor tries to detach the `ResultSet` and make it suitable to execute lazily.
-// Be careful that the return value `(bool, error)` has different meaning with other similar functions. The first `bool` represent whether
-// the `ResultSet` is suitable for lazy execution. If the return value is `(false, _)`, the `rs` in argument can still be used. If the
-// first return value is `true` and `err` is not nil, the `rs` cannot be used anymore and should return the error to the upper layer.
+// The first return value reports whether ownership has been detached from rs,
+// including on error. Only (false, nil) allows falling back to eager execution.
 func (cc *clientConn) executeWithLazyCursor(ctx context.Context, stmt PreparedStatement, rs resultset.ResultSet) (ok bool, err error) {
 	drs, ok, err := rs.TryDetach()
 	if !ok || err != nil {
-		return false, err
+		return ok, err
 	}
 
 	vars := (&cc.ctx).GetSessionVars()
 	crs := resultset.WrapWithLazyCursor(drs, vars.InitChunkSize, vars.MaxChunkSize)
-	// The execute phase may already have accumulated RU before the first cursor fetch arrives.
-	// Seed the tracker from the current totals so FETCH/CLOSE only reports post-execute deltas.
 	resultset.AttachCursorRUV2Tracker(crs, cc.buildCursorRUV2Tracker(ctx))
 	err = cc.writeExecuteResultWithCursor(ctx, stmt, crs)
 	return true, err
 }
 
-func (cc *clientConn) buildCursorRUV2Tracker(ctx context.Context) *resultset.CursorRUV2Tracker {
+func (*clientConn) buildCursorRUV2Tracker(ctx context.Context) *resultset.CursorRUV2Tracker {
 	ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
 	ruDetails, _ := ctx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
-	if ruv2Metrics == nil && ruDetails == nil {
-		return nil
-	}
-
-	var reporter resourcegroup.ConsumptionReporter
-	var resourceGroupName string
-	if dctx := cc.ctx.GetDistSQLCtx(); dctx != nil {
-		reporter = dctx.RUConsumptionReporter
-		resourceGroupName = dctx.ResourceGroupName
-	}
-	return resultset.NewCursorRUV2Tracker(reporter, resourceGroupName, ruv2Metrics, ruDetails, cc.ctx.GetSessionVars().RUV2Weights())
+	return resultset.NewCursorRUV2Tracker(ruv2Metrics, ruDetails)
 }
 
 // writeExecuteResultWithCursor will store the `ResultSet` in `stmt` and send the column info to the client. The logic is shared between
@@ -499,13 +459,6 @@ func (cc *clientConn) buildCursorRUV2Tracker(ctx context.Context) *resultset.Cur
 func (cc *clientConn) writeExecuteResultWithCursor(ctx context.Context, stmt PreparedStatement, rs resultset.CursorResultSet) (err error) {
 	stmt.StoreResultSet(rs)
 	stmt.SetCursorActive(true)
-	defer func() {
-		if err != nil {
-			// the resultSet and rowContainer have been closed in former "defer" statement.
-			stmt.StoreResultSet(nil)
-			stmt.SetCursorActive(false)
-		}
-	}()
 
 	if err = cc.writeColumnInfo(rs.Columns()); err != nil {
 		return err

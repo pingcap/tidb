@@ -24,6 +24,8 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -31,12 +33,15 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config/configtypes"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/naming"
@@ -100,6 +105,8 @@ const (
 	DefMemoryUsageAlarmRatio = 0.8
 	// DefDXFResourceLimit is the default resource percentage available for DXF.
 	DefDXFResourceLimit = 100
+	// DefStarterMaxImportDataSize is the default IMPORT INTO source data size limit for Starter deployments.
+	DefStarterMaxImportDataSize configtypes.ByteSize = 25 * units.GiB
 	// MinDXFResourceLimit is the minimum resource percentage available for DXF.
 	// Keep it at 10 while mysql.dist_framework_meta.cpu_count changes from total
 	// node CPU to usable DXF CPU, so the stored value stays non-zero.
@@ -137,7 +144,6 @@ const (
 	maxOfMaxAllowedPacket = 1 << 30
 	// DefMaxAllowedPacket is the default value of max_allowed_packet.
 	DefMaxAllowedPacket = 64 << 20
-	UnavailableIP       = "<nil>"
 )
 
 // Valid config maps
@@ -250,11 +256,17 @@ type Config struct {
 	IndexLimit                 int                     `toml:"index-limit" json:"index-limit"`
 	TableColumnCountLimit      uint32                  `toml:"table-column-count-limit" json:"table-column-count-limit"`
 	GracefulWaitBeforeShutdown int                     `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
+	// GracefulCloseConnectionsTimeout is the number of seconds the server waits during shutdown for running
+	// statements and open transactions to finish before it kills the remaining connections.
+	GracefulCloseConnectionsTimeout int `toml:"graceful-close-connections-timeout" json:"graceful-close-connections-timeout"`
 	// AlterPrimaryKey is used to control alter primary key feature.
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
 	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
+	// EnableStorageClass permits storage-class DDL and exposes transition status queries.
+	// It defaults to false. Existing data and transition policies are unaffected when disabled.
+	EnableStorageClass bool `toml:"enable-storage-class" json:"enable-storage-class"`
 	// EnableTableLock indicate whether enable table lock.
 	// TODO: remove this after table lock features stable.
 	EnableTableLock     bool   `toml:"enable-table-lock" json:"enable-table-lock"`
@@ -282,6 +294,9 @@ type Config struct {
 	// 2. 'zone' is a special key that indicates the DC location of this tidb-server. If it is set, the value for this
 	// key will be the default value of the session variable `txn_scope` for this tidb-server.
 	Labels map[string]string `toml:"labels" json:"labels"`
+	// ErrorMessageExtensions appends configured suffixes to selected user-facing errors.
+	// Patterns should be anchored and specific because they are matched against every SQL error sent to clients.
+	ErrorMessageExtensions []ErrorMessageExtension `toml:"error-msg-extension" json:"error-msg-extension"`
 
 	KeyspaceObservability       KeyspaceObservability       `toml:"keyspace-observability" json:"keyspace-observability"`
 	KeyspaceObservabilityValues KeyspaceObservabilityValues `toml:"-" json:"-"`
@@ -328,6 +343,11 @@ type Config struct {
 	// StarterParams contains Starter-only extension parameters.
 	StarterParams StarterParams `toml:"starter-params" json:"starter-params"`
 
+	// HostedEmbedding controls the TiDB Cloud hosted embedding provider.
+	HostedEmbedding HostedEmbedding `toml:"hosted-embedding" json:"hosted-embedding"`
+	// ExternalWorkload configures Starter-only external workload coordination.
+	ExternalWorkload ExternalWorkload `toml:"external-workload" json:"external-workload"`
+
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
@@ -373,54 +393,44 @@ type Config struct {
 	CSE CSE `toml:"cse" json:"cse"`
 }
 
-// RUV2Config is the configuration for RU v2 weight calculation.
-// The default values are experimentally fitted so they stay stable under the
-// same workload while remaining numerically aligned with RU v1.
-type RUV2Config struct {
-	// RUScale is the scale factor used to convert RU v2 float values into scaled integer values.
-	// It is intentionally chosen to match legacy RU values for compatibility.
-	RUScale float64 `toml:"ru-scale" json:"ru-scale"`
-
-	// ResultChunkCells is the weight for cells materialized into result chunks.
-	ResultChunkCells float64 `toml:"result-chunk-cells" json:"result-chunk-cells"`
-	// ExecutorL1 is the weight for fast-path executors that scale by cells:
-	// BatchPointGet, PointGet, and Limit.
-	ExecutorL1 float64 `toml:"executor-l1" json:"executor-l1"`
-	// ExecutorL2 is the weight for general executors, including HashAgg,
-	// HashJoin, IndexLookUpJoin, IndexLookUpExecutor, IndexReaderExecutor,
-	// MemTableReaderExec, SelectionExec, TableDualExec, TableReaderExecutor,
-	// UnionScanExec, and SelectLockExec.
-	ExecutorL2 float64 `toml:"executor-l2" json:"executor-l2"`
-	// ExecutorL3 is the weight for heavier operators: Sort and StreamAgg.
-	ExecutorL3 float64 `toml:"executor-l3" json:"executor-l3"`
-	// ExecutorL5InsertRows is the per-row weight for insert work. Level 4 is
-	// intentionally unused today because only L1/L2/L3 executor groups and this
-	// insert-specific tier are currently modeled.
-	ExecutorL5InsertRows    float64 `toml:"executor-l5-insert-rows" json:"executor-l5-insert-rows"`
-	PlanCnt                 float64 `toml:"plan-cnt" json:"plan-cnt"`
-	PlanDeriveStatsPaths    float64 `toml:"plan-derive-stats-paths" json:"plan-derive-stats-paths"`
-	ResourceManagerReadCnt  float64 `toml:"resource-manager-read-cnt" json:"resource-manager-read-cnt"`
-	ResourceManagerWriteCnt float64 `toml:"resource-manager-write-cnt" json:"resource-manager-write-cnt"`
-	SessionParserTotal      float64 `toml:"session-parser-total" json:"session-parser-total"`
-	TxnCnt                  float64 `toml:"txn-cnt" json:"txn-cnt"`
+// ErrorMessageExtension configures a suffix for SQL errors matching Pattern.
+type ErrorMessageExtension struct {
+	Pattern string `toml:"pattern" json:"pattern"`
+	Suffix  string `toml:"suffix" json:"suffix"`
+	// Regexp is populated internally when the global config is published. Do not set it manually.
+	Regexp *regexp.Regexp `toml:"-" json:"-"`
 }
 
-// DefaultRUV2Config returns the default RU v2 configuration.
+// RU report modes separate production engine results from calibration metrics.
+const (
+	RUReportModeResult = "result"
+	RUReportModeFull   = "full"
+)
+
+// RUV2Config configures legacy, statement, and DDL RU v2 weights and reporting.
+// Legacy RU v2 defaults are experimentally fitted to remain aligned with RU v1.
+// Statement RU v2 reuses this config section while replacing the legacy model.
+type RUV2Config struct {
+	// ReportMode controls statement RU v2 metrics. Full additionally reports raw units and
+	// calculation outcomes; result reports total, SQL-type and per-engine RU consumption.
+	ReportMode string `toml:"report-mode" json:"report-mode"`
+
+	// Statement weights convert RU v2 raw work units to RU. They must be finite
+	// and non-negative; zero disables the corresponding charge. Their defaults
+	// are uncalibrated internal placeholders, not billing values.
+	ruv2.StmtWeights `toml:"stmt-weights" json:"stmt-weights"`
+
+	// DDLWeights convert DDL RU v2 byte units to RU.
+	DDLWeights ruv2.DDLWeights `toml:"ddl-weights" json:"ddl-weights"`
+}
+
+// DefaultRUV2Config returns the default legacy, statement, and DDL RU v2 configuration.
 func DefaultRUV2Config() RUV2Config {
 	return RUV2Config{
-		RUScale: 2.01,
+		ReportMode: RUReportModeResult,
 
-		ResultChunkCells:        0.00010000,
-		ExecutorL1:              0.00013278,
-		ExecutorL2:              0.00000383,
-		ExecutorL3:              0.00141739,
-		ExecutorL5InsertRows:    0.00472572,
-		PlanCnt:                 0.15392217,
-		PlanDeriveStatsPaths:    0.24968182,
-		ResourceManagerReadCnt:  0.02072003,
-		ResourceManagerWriteCnt: 0.07179779,
-		SessionParserTotal:      0.19230499,
-		TxnCnt:                  0.03013709,
+		StmtWeights: ruv2.DefaultWeights(),
+		DDLWeights:  ruv2.DefaultDDLWeights(),
 	}
 }
 
@@ -628,8 +638,11 @@ type Log struct {
 	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
 	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 
-	// Make tidb panic if write log operation hang in `Timeout` seconds
+	// Timeout is the maximum seconds allowed for a log write/sync operation.
 	Timeout int `toml:"timeout" json:"timeout"`
+	// TimeoutAction controls the action when log write/sync timeout occurs.
+	// Valid values: panic, discard.
+	TimeoutAction string `toml:"timeout-action" json:"timeout-action"`
 }
 
 // Instance is the section of instance scope system variables.
@@ -1048,8 +1061,37 @@ type IsolationRead struct {
 type Experimental struct {
 	// Whether enable creating expression index.
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
+	// Whether SQL users can enable tidb_foreign_key_check_in_shared_lock on next-gen TiKV.
+	AllowEnableForeignKeyCheckInSharedLock bool `toml:"allow-enable-foreign-key-check-in-shared-lock" json:"allow-enable-foreign-key-check-in-shared-lock"`
 	// Whether enable charset feature.
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
+}
+
+// HostedEmbedding is the config for the TiDB Cloud hosted embedding provider
+// (the tidbcloud_free/ prefix in EMBED_TEXT).
+type HostedEmbedding struct {
+	// Enabled indicates whether the hosted embedding service is enabled.
+	// It is only valid for Starter deploy mode and only takes effect for NextGen kernels.
+	Enabled bool `toml:"enabled" json:"enabled,omitempty"`
+
+	// APIEndpoint is the base URL for the hosted embedding service. TiDB appends
+	// /api/v1/inference/embeddings/<billing-id> when sending a request.
+	// If it is empty, hosted embedding requests fail without preventing TiDB from starting.
+	APIEndpoint string `toml:"api-endpoint" json:"api-endpoint,omitempty"`
+
+	// APIKeyPath is the path to the Bearer API key file for accessing the hosted embedding service.
+	APIKeyPath string `toml:"api-key-path" json:"api-key-path,omitempty"`
+}
+
+func (c HostedEmbedding) configured() bool {
+	return c.Enabled || c.APIEndpoint != "" || c.APIKeyPath != ""
+}
+
+func isHostedEmbeddingDefined(metaData toml.MetaData) bool {
+	return metaData.IsDefined("hosted-embedding") ||
+		metaData.IsDefined("hosted-embedding", "enabled") ||
+		metaData.IsDefined("hosted-embedding", "api-endpoint") ||
+		metaData.IsDefined("hosted-embedding", "api-key-path")
 }
 
 // Standby is the config for standby mode.
@@ -1070,14 +1112,23 @@ type Standby struct {
 type StarterParams struct {
 	// ExportID is the export identifier supplied by standby activation.
 	ExportID string `toml:"export-id" json:"export-id,omitempty"`
+	// BootstrapFile is the path to a starter-only JSON manifest of versioned SQL.
+	// Its bootstrap blocks define the complete starter state for a cluster without
+	// a starter bootstrap version, and its upgrade entries migrate older versions.
+	// Unlike InitializeSQLFile, which runs only after the core cluster bootstrap,
+	// this manifest also initializes existing clusters and applies later upgrades.
+	BootstrapFile string `toml:"bootstrap-file" json:"bootstrap-file,omitempty"`
 	// EnableManagerNotifier indicates whether Starter graceful shutdown should notify TiDB manager.
 	// It is only used in NextGen Starter deployments.
 	EnableManagerNotifier bool `toml:"enable-manager-notifier" json:"enable-manager-notifier,omitempty"`
 	// ManagerAddr is the TiDB manager address used by the shutdown notifier.
 	// When empty and EnableManagerNotifier is true, the Starter path derives the service address from starter additional params.
 	ManagerAddr string `toml:"manager-addr" json:"manager-addr,omitempty"`
+	// EnableRGFallback enables resource group lookup fallback for resource control.
+	// It is populated from --starter-additional-params and is not file-backed config.
+	EnableRGFallback bool `toml:"-" json:"-"`
 	// MaxImportDataSize is the maximum total real source data size allowed for IMPORT INTO.
-	// Zero means unlimited.
+	// Starter deployments default to DefStarterMaxImportDataSize. An explicitly configured zero means unlimited.
 	MaxImportDataSize configtypes.ByteSize `toml:"max-import-data-size" json:"max-import-data-size,omitempty"`
 }
 
@@ -1123,6 +1174,7 @@ var defaultConf = Config{
 	DeployMode:                   deploymode.Premium,
 	DXFResourceLimit:             DefDXFResourceLimit,
 	RUV2:                         DefaultRUV2Config(),
+	ExternalWorkload:             defaultExternalWorkload(),
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
@@ -1137,6 +1189,7 @@ var defaultConf = Config{
 		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
 		EnableSlowLog:       *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
+		TimeoutAction:       zaplog.LogTimeoutActionPanic,
 	},
 	Instance: Instance{
 		TiDBGeneralLog:              false,
@@ -1243,8 +1296,10 @@ var defaultConf = Config{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental:               Experimental{},
+	HostedEmbedding:            HostedEmbedding{Enabled: false},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            false,
+	EnableStorageClass:         false,
 	Labels:                     make(map[string]string),
 	EnableGlobalIndex:          false,
 	Security: Security{
@@ -1276,6 +1331,7 @@ var defaultConf = Config{
 	TiDBEnableExitCheck:                  false,
 	InMemSlowQueryTopNNum:                30,
 	InMemSlowQueryRecentNum:              500,
+	GracefulCloseConnectionsTimeout:      15,
 	CSE: CSE{
 		ColumnarStoreType:      "tiflash",
 		ColumnarCollectTimeout: 5 * time.Second,
@@ -1283,7 +1339,8 @@ var defaultConf = Config{
 }
 
 var (
-	globalConf atomic.Pointer[Config]
+	globalConf                     atomic.Pointer[Config]
+	preparedErrorMessageExtensions atomic.Pointer[[]ErrorMessageExtension]
 )
 
 // NewConfig creates a new config instance with default value.
@@ -1299,8 +1356,22 @@ func GetGlobalConfig() *Config {
 	return globalConf.Load()
 }
 
+// GetErrorMessageExtensions returns a copy of the prepared error message extension matchers.
+func GetErrorMessageExtensions() []ErrorMessageExtension {
+	extensions := preparedErrorMessageExtensions.Load()
+	if extensions == nil {
+		return nil
+	}
+	return slices.Clone(*extensions)
+}
+
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
 func StoreGlobalConfig(config *Config) {
+	extensions, err := prepareErrorMessageExtensions(config.ErrorMessageExtensions, true)
+	if err != nil {
+		logutil.BgLogger().Warn("skip invalid error message extension config", zap.Error(err))
+	}
+	preparedErrorMessageExtensions.Store(&extensions)
 	globalConf.Store(config)
 	TikvConfigLock.Lock()
 	defer TikvConfigLock.Unlock()
@@ -1541,8 +1612,23 @@ func (c *Config) Load(confFile string) error {
 	if dxfResourceLimitDefined && c.DeployMode != deploymode.PremiumReserved {
 		return fmt.Errorf("dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
 	}
+	if metaData.IsDefined("error-msg-extension") && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("error-msg-extension can only be configured when deploy-mode is starter")
+	}
+	if isHostedEmbeddingDefined(metaData) && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("hosted-embedding can only be configured for starter deploy mode")
+	}
+	if metaData.IsDefined("external-workload") && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("external-workload can only be configured when deploy-mode is starter")
+	}
+	if metaData.IsDefined("starter-params", "bootstrap-file") && c.StarterParams.BootstrapFile != "" && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("starter-params.bootstrap-file can only be configured for starter deploy mode")
+	}
 	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("standby", "enable-zero-backend") {
 		c.Standby.EnableZeroBackend = true
+	}
+	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("starter-params", "max-import-data-size") {
+		c.StarterParams.MaxImportDataSize = DefStarterMaxImportDataSize
 	}
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
@@ -1588,10 +1674,64 @@ func (c *Config) Load(confFile string) error {
 	return err
 }
 
+func prepareErrorMessageExtensions(extensions []ErrorMessageExtension, ignoreInvalid bool) ([]ErrorMessageExtension, error) {
+	preparedExtensions := make([]ErrorMessageExtension, 0, len(extensions))
+	var firstErr error
+	for _, extension := range extensions {
+		extension.Regexp = nil
+		if strings.TrimSpace(extension.Pattern) == "" {
+			if ignoreInvalid {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("empty error-msg-extension pattern")
+				}
+				continue
+			}
+			return nil, fmt.Errorf("empty error-msg-extension pattern")
+		}
+		// Go's regexp package uses the RE2 engine, so operator-configured
+		// patterns cannot trigger catastrophic backtracking in the error path.
+		compiledRegexp, err := regexp.Compile(extension.Pattern)
+		if err != nil {
+			if ignoreInvalid {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("invalid error-msg-extension regexp %q: %w", extension.Pattern, err)
+				}
+				continue
+			}
+			return nil, fmt.Errorf("invalid error-msg-extension regexp %q: %w", extension.Pattern, err)
+		}
+		extension.Regexp = compiledRegexp
+		preparedExtensions = append(preparedExtensions, extension)
+	}
+	sort.Slice(preparedExtensions, func(i, j int) bool {
+		left := preparedExtensions[i]
+		right := preparedExtensions[j]
+		if len(left.Pattern) != len(right.Pattern) {
+			return len(left.Pattern) > len(right.Pattern)
+		}
+		if left.Pattern != right.Pattern {
+			return left.Pattern < right.Pattern
+		}
+		return left.Suffix < right.Suffix
+	})
+	return preparedExtensions, firstErr
+}
+
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
+	switch c.RUV2.ReportMode {
+	case RUReportModeResult, RUReportModeFull:
+	default:
+		return fmt.Errorf("invalid ru-v2.report-mode %q, expected result or full", c.RUV2.ReportMode)
+	}
 	if err := naming.CheckKeyspaceName(c.KeyspaceName); err != nil {
 		return errors.Annotate(err, "invalid keyspace name")
+	}
+	if err := c.RUV2.StmtWeights.Validate(); err != nil {
+		return fmt.Errorf("ru-v2.stmt-weights.%w", err)
+	}
+	if err := c.RUV2.DDLWeights.Validate(); err != nil {
+		return fmt.Errorf("ru-v2.ddl-weights.%w", err)
 	}
 	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
 		logutil.BgLogger().Warn(fmt.Sprintf("\"enable-error-stack\" (%v) conflicts \"disable-error-stack\" (%v). \"disable-error-stack\" is deprecated, please use \"enable-error-stack\" instead. disable-error-stack is ignored.", c.Log.EnableErrorStack, c.Log.DisableErrorStack))
@@ -1603,8 +1743,20 @@ func (c *Config) Valid() error {
 		// if two options conflict, we will use the value of EnableTimestamp
 		c.Log.DisableTimestamp = nbUnset
 	}
-	if c.Security.SkipGrantTable && !hasRootPrivilege() {
-		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
+	if c.Security.SkipGrantTable {
+		if diagnosticmode.Enabled() {
+			if c.Socket == "" || (c.Host != "" && c.Port != 0) {
+				return fmt.Errorf("diagnostic mode with skip-grant-table requires a Unix socket and no MySQL TCP listener")
+			}
+		} else if !hasRootPrivilege() {
+			return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
+		}
+	}
+	if len(c.ErrorMessageExtensions) > 0 && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("error-msg-extension can only be configured when deploy-mode is starter")
+	}
+	if _, err := prepareErrorMessageExtensions(c.ErrorMessageExtensions, false); err != nil {
+		return err
 	}
 	if !c.Store.Valid() {
 		return fmt.Errorf("invalid store=%s, valid storages=%v", c.Store, StoreTypeList())
@@ -1624,8 +1776,14 @@ func (c *Config) Valid() error {
 	if c.StarterParams.EnableManagerNotifier && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("starter-params.enable-manager-notifier can only be configured for starter deploy mode")
 	}
+	if c.StarterParams.BootstrapFile != "" && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("starter-params.bootstrap-file can only be configured for starter deploy mode")
+	}
 	if c.StarterParams.MaxImportDataSize > 0 && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("starter-params.max-import-data-size can only be configured for starter deploy mode")
+	}
+	if c.HostedEmbedding.configured() && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("hosted-embedding can only be configured for starter deploy mode")
 	}
 	if len(c.KeyspaceObservability.Fields) > 0 && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("keyspace-observability.fields can only be configured when deploy-mode is starter")
@@ -1651,8 +1809,19 @@ func (c *Config) Valid() error {
 	if c.IndexLimit < DefIndexLimit || c.IndexLimit > DefMaxOfIndexLimit {
 		return fmt.Errorf("index-limit should be [%d, %d]", DefIndexLimit, DefMaxOfIndexLimit)
 	}
+	if c.GracefulCloseConnectionsTimeout < 0 {
+		return fmt.Errorf("graceful-close-connections-timeout should not be negative")
+	}
 	if c.Log.File.MaxSize > MaxLogFileSize {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
+	}
+	switch strings.ToLower(c.Log.TimeoutAction) {
+	case "", zaplog.LogTimeoutActionPanic:
+		c.Log.TimeoutAction = zaplog.LogTimeoutActionPanic
+	case zaplog.LogTimeoutActionDiscard:
+		c.Log.TimeoutAction = zaplog.LogTimeoutActionDiscard
+	default:
+		return fmt.Errorf("log.timeout-action should be one of [%s, %s]", zaplog.LogTimeoutActionPanic, zaplog.LogTimeoutActionDiscard)
 	}
 	if c.TableColumnCountLimit < DefTableColumnCountLimit || c.TableColumnCountLimit > DefMaxOfTableColumnCountLimit {
 		return fmt.Errorf("table-column-limit should be [%d, %d]", DefIndexLimit, DefMaxOfTableColumnCountLimit)
@@ -1679,6 +1848,15 @@ func (c *Config) Valid() error {
 	}
 	if err := c.TrxSummary.Valid(); err != nil {
 		return err
+	}
+	if c.DeployMode != deploymode.Starter {
+		if c.ExternalWorkload.isConfigured() {
+			return fmt.Errorf("external-workload can only be configured when deploy-mode is starter")
+		}
+	} else {
+		if err := c.ExternalWorkload.Valid(); err != nil {
+			return err
+		}
 	}
 
 	if c.Performance.TxnTotalSizeLimit > 1<<40 {
@@ -1769,6 +1947,7 @@ func (l *Log) ToLogConfig() *logutil.LogConfig {
 	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.GeneralLogFile, l.File, l.getDisableTimestamp(),
 		func(config *zaplog.Config) { config.DisableErrorVerbose = l.getDisableErrorStack() },
 		func(config *zaplog.Config) { config.Timeout = l.Timeout },
+		func(config *zaplog.Config) { config.TimeoutAction = l.TimeoutAction },
 	)
 }
 

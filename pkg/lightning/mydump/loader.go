@@ -160,6 +160,9 @@ type MDLoaderSetupConfig struct {
 	// will not be sampled.
 	SkipRealSizeEstimation bool
 
+	// AuroraAutoMapping validates and recognizes native snapshot export paths.
+	AuroraAutoMapping bool
+
 	// ReturnPartialResultOnError specifies whether the currently scanned files are analyzed,
 	// and return the partial result.
 	ReturnPartialResultOnError bool
@@ -203,6 +206,14 @@ func WithScanFileConcurrency(concurrency int) MDLoaderSetupOption {
 func WithSkipRealSizeEstimation(skip bool) MDLoaderSetupOption {
 	return func(cfg *MDLoaderSetupConfig) {
 		cfg.SkipRealSizeEstimation = skip
+	}
+}
+
+// WithAuroraAutoMapping opts into native Aurora source validation and routing.
+// It requires default file rules and a complete listing, never partial results.
+func WithAuroraAutoMapping() MDLoaderSetupOption {
+	return func(cfg *MDLoaderSetupConfig) {
+		cfg.AuroraAutoMapping = true
 	}
 }
 
@@ -268,6 +279,8 @@ type MDLoader struct {
 	router     *regexprrouter.RouteTable
 	fileRouter FileRouter
 	charSet    string
+
+	auroraSource bool
 }
 
 // RawFile store the path and size of a file.
@@ -320,6 +333,12 @@ func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
 	mdLoaderSetupCfg := DefaultMDLoaderSetupConfig()
 	for _, o := range opts {
 		o(mdLoaderSetupCfg)
+	}
+	if mdLoaderSetupCfg.AuroraAutoMapping {
+		if !cfg.DefaultFileRules || len(cfg.FileRouters) > 0 {
+			return nil, common.ErrInvalidConfig.GenWithStack("Aurora automatic mapping requires default file rules")
+		}
+		mdLoaderSetupCfg.ReturnPartialResultOnError = false
 	}
 	if mdLoaderSetupCfg.FileIter == nil {
 		mdLoaderSetupCfg.FileIter = &allFileIterator{
@@ -468,10 +487,24 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 		allFiles = append(allFiles, RawFile{path, size})
 		return nil
 	}); err != nil {
+		if s.setupCfg.AuroraAutoMapping {
+			err = errors.Annotate(err, "incomplete automatic source scan")
+		}
 		if !s.setupCfg.ReturnPartialResultOnError {
 			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
 		}
 		gerr = err
+	}
+
+	if s.setupCfg.AuroraAutoMapping {
+		router, err := newAuroraFileRouter(allFiles, s.loader.fileRouter, log.Wrap(logutil.Logger(ctx)))
+		if err != nil {
+			return err
+		}
+		if router != nil {
+			s.loader.fileRouter = chainRouters{router, s.loader.fileRouter}
+			s.loader.auroraSource = true
+		}
 	}
 
 	// Parallel process all files
@@ -888,6 +921,11 @@ func (l *MDLoader) GetDatabases() []*MDDatabaseMeta {
 // GetStore gets the external storage used by the loader.
 func (l *MDLoader) GetStore() storeapi.Storage {
 	return l.store
+}
+
+// IsAuroraSource reports whether automatic mapping detected a native Aurora export.
+func (l *MDLoader) IsAuroraSource() bool {
+	return l.auroraSource
 }
 
 // GetAllFiles gets all the files for the loader.

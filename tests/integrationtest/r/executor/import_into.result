@@ -197,3 +197,9 @@ create table cachetbl (id int);
 alter table cachetbl cache;
 import into cachetbl from '/file.csv';
 Error 1105 (HY000): IMPORT INTO does not support cached table
+drop table if exists import_into_ttl_precheck_source, import_into_ttl_precheck_target;
+create table import_into_ttl_precheck_source (id int primary key, created_at datetime);
+create table import_into_ttl_precheck_target (id int primary key, created_at datetime) TTL = `created_at` + INTERVAL 1 DAY;
+IMPORT INTO import_into_ttl_precheck_target FROM SELECT * FROM import_into_ttl_precheck_source WITH DISABLE_PRECHECK;
+Error 8173 (HY000): PreCheck failed: target table has TTL enabled, please disable TTL before IMPORT INTO
+drop table if exists import_into_ttl_precheck_source, import_into_ttl_precheck_target;

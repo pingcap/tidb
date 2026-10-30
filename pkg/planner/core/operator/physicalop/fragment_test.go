@@ -17,6 +17,7 @@ package physicalop
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -50,4 +51,46 @@ func TestFragmentInitSingleton(t *testing.T) {
 	err = f.init(p)
 	require.NoError(t, err)
 	require.Equal(t, f.singleton, false)
+}
+
+func TestFillLocalCTECountsUsesLocalTaskCounts(t *testing.T) {
+	task := func(addr string) *kv.MPPTask {
+		return &kv.MPPTask{Meta: &mppAddr{addr: addr}}
+	}
+
+	// This models a CTE producer with UNION ALL split into two CTESink fragments:
+	// one sink runs on tiflash0, the other runs on tiflash1, and both CTE consumers
+	// run on both TiFlash nodes. Each TiFlash address should see one local sink
+	// and two local sources for the CTE.
+	sink0 := &PhysicalCTESink{IDForStorage: 1}
+	sink0.SetSelfTasks([]*kv.MPPTask{task("tiflash0")})
+	sink1 := &PhysicalCTESink{IDForStorage: 1}
+	sink1.SetSelfTasks([]*kv.MPPTask{task("tiflash1")})
+
+	source0 := &PhysicalCTESource{IDForStorage: 1}
+	sourceSink0 := &PhysicalExchangeSender{}
+	sourceSink0.SetChildren(source0)
+	sourceSink0.SetSelfTasks([]*kv.MPPTask{task("tiflash0"), task("tiflash1")})
+	source1 := &PhysicalCTESource{IDForStorage: 1}
+	sourceSink1 := &PhysicalExchangeSender{}
+	sourceSink1.SetChildren(source1)
+	sourceSink1.SetSelfTasks([]*kv.MPPTask{task("tiflash0"), task("tiflash1")})
+
+	frags := []*Fragment{
+		{Sink: sink0},
+		{Sink: sink1},
+		{Sink: sourceSink0},
+		{Sink: sourceSink1},
+	}
+	err := (&mppTaskGenerator{}).fillLocalCTECounts(frags)
+	require.NoError(t, err)
+
+	for _, sink := range []*PhysicalCTESink{sink0, sink1} {
+		require.Equal(t, uint32(1), sink.CteSinkNum)
+		require.Equal(t, uint32(2), sink.CteSourceNum)
+	}
+	for _, source := range []*PhysicalCTESource{source0, source1} {
+		require.Equal(t, uint32(1), source.CteSinkNum)
+		require.Equal(t, uint32(2), source.CteSourceNum)
+	}
 }

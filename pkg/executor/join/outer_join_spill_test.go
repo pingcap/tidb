@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -368,11 +369,13 @@ func TestOuterJoinUnderApplyExec(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
+	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 	leftDataSource, rightDataSource := buildLeftAndRightDataSource(ctx, leftCols, rightCols, false)
 
 	info := &hashJoinInfo{
 		ctx:              ctx,
 		schema:           buildSchema(retTypes),
+		planID:           1,
 		leftExec:         leftDataSource,
 		rightExec:        rightDataSource,
 		joinType:         base.InnerJoin,

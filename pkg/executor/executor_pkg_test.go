@@ -15,23 +15,37 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	executil "github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/executor/join"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/inference"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/property"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -45,6 +59,483 @@ var (
 	InspectionSummaryRules = inspectionSummaryRules
 	InspectionRules        = inspectionRules
 )
+
+func newTestMViewCompleteDeltaTargetTable(tp *types.FieldType) *tables.TableCommon {
+	return tables.MockTableFromMeta(&model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("mv"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				FieldType: *tp,
+				State:     model.StatePublic,
+			},
+		},
+	}).(*tables.TableCommon)
+}
+
+func TestValidateMViewCompleteDeltaWritableInputColTypesAllowsNullableInput(t *testing.T) {
+	targetTp := types.NewFieldType(mysql.TypeLonglong)
+	targetTp.AddFlag(mysql.NotNullFlag)
+	targetTbl := newTestMViewCompleteDeltaTargetTable(targetTp)
+
+	inputTp := targetTp.Clone()
+	inputTp.DelFlag(mysql.NotNullFlag)
+	require.NoError(t, validateMViewCompleteDeltaWritableInputColTypes(targetTbl, []*types.FieldType{inputTp}, []int{0}))
+
+	unsignedInputTp := inputTp.Clone()
+	unsignedInputTp.AddFlag(mysql.UnsignedFlag)
+	err := validateMViewCompleteDeltaWritableInputColTypes(targetTbl, []*types.FieldType{unsignedInputTp}, []int{0})
+	require.EqualError(t, err, fmt.Sprintf(
+		"MViewCompleteDeltaApply writable input col id 0 type mismatch, target col `a` expects %s but input is %s",
+		targetTp.String(), unsignedInputTp.String(),
+	))
+}
+
+func TestMViewCompleteDeltaApplyMappingDiagnostics(t *testing.T) {
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	valid := newTestMViewCompleteDeltaTargetTable(tp)
+	nonPublic := newTestMViewCompleteDeltaTargetTable(tp)
+	nonPublic.Columns[0].State = model.StateWriteOnly
+	nonPublic.ResetColumnsCache()
+	nilCol := newTestMViewCompleteDeltaTargetTable(tp)
+	nilCol.WritableCols()[0] = nil
+	negativeOffset := newTestMViewCompleteDeltaTargetTable(tp)
+	negativeOffset.Columns[0].Offset = -1
+	invalidOffset := newTestMViewCompleteDeltaTargetTable(tp)
+	invalidOffset.Columns[0].Offset = 2
+
+	for _, tc := range []struct {
+		name     string
+		target   table.Table
+		inputIDs []int
+		err      string
+	}{
+		{"nil_table", nil, nil, "MViewCompleteDeltaApply target table is nil"},
+		{"empty_writable", &tables.TableCommon{}, nil, "MViewCompleteDeltaApply target table has no writable columns"},
+		{"non_public", nonPublic, []int{0}, "MViewCompleteDeltaApply does not support target table with non-public writable columns"},
+		{"input_count", valid, nil, "MViewCompleteDeltaApply row input column mapping length 0 != target public column count 1"},
+		{"nil_column", nilCol, []int{0}, "MViewCompleteDeltaApply target writable column at offset 0 is nil"},
+		{"negative_offset", negativeOffset, []int{0}, "MViewCompleteDeltaApply target writable column `a` offset -1 out of range [0,1)"},
+		{"invalid_offset", invalidOffset, []int{0}, "MViewCompleteDeltaApply target writable column `a` offset 2 out of range [0,1)"},
+	} {
+		t.Run("writable/"+tc.name, func(t *testing.T) {
+			_, err := buildMViewCompleteDeltaWritableInputColIDs(tc.target, tc.inputIDs)
+			require.EqualError(t, err, tc.err)
+		})
+	}
+
+	for _, tc := range []struct {
+		name          string
+		target        table.Table
+		groupKeys     []int
+		currentIDs    []int
+		recomputedIDs []int
+		err           string
+	}{
+		{"nil_table", nil, []int{0}, []int{0}, []int{1}, "MViewCompleteDeltaApply target table is nil"},
+		{"input_count", valid, []int{0}, []int{0}, nil, "MViewCompleteDeltaApply writable input mapping length mismatch: current=1 recomputed=0"},
+		{"non_public", nonPublic, []int{0}, []int{0}, []int{1}, "MViewCompleteDeltaApply does not support target table with non-public writable columns"},
+		{"empty_group_keys", valid, nil, []int{0}, []int{1}, "MViewCompleteDeltaApply group key offsets are empty"},
+		{"invalid_group_key", valid, []int{0, 2}, []int{0}, []int{1}, "MViewCompleteDeltaApply group key offset 2 at index 1 out of range [0,1)"},
+		{"nil_column", nilCol, []int{0}, []int{0}, []int{1}, "MViewCompleteDeltaApply target writable column at offset 0 is nil"},
+		{"negative_offset", negativeOffset, []int{0}, []int{0}, []int{1}, "MViewCompleteDeltaApply target writable column `a` offset -1 out of range [0,1)"},
+		{"invalid_offset", invalidOffset, []int{0}, []int{0}, []int{1}, "MViewCompleteDeltaApply target writable column `a` offset 2 out of range [0,1)"},
+	} {
+		t.Run("compare/"+tc.name, func(t *testing.T) {
+			_, _, _, err := buildMViewCompleteDeltaCompareMappings(tc.target, tc.groupKeys, tc.currentIDs, tc.recomputedIDs)
+			require.EqualError(t, err, tc.err)
+		})
+	}
+
+	ids, err := buildMViewCompleteDeltaWritableInputColIDs(valid, []int{4})
+	require.NoError(t, err)
+	require.Equal(t, []int{4}, ids)
+	_, _, _, err = buildMViewCompleteDeltaCompareMappings(valid, []int{0}, []int{4}, []int{5})
+	require.NoError(t, err)
+}
+
+type mviewCompleteDeltaApplyOpenProbeChild struct {
+	exec.BaseExecutor
+	opened bool
+}
+
+func (e *mviewCompleteDeltaApplyOpenProbeChild) Open(context.Context) error {
+	e.opened = true
+	return nil
+}
+
+func TestMViewCompleteDeltaApplyOpenValidatesMappingsBeforeOpeningChild(t *testing.T) {
+	sctx := mock.NewContext()
+	targetTp := types.NewFieldType(mysql.TypeLonglong)
+	targetTbl := newTestMViewCompleteDeltaTargetTable(targetTp)
+	childSchema := expression.NewSchema(&expression.Column{
+		Index:   0,
+		RetType: targetTp,
+	})
+	child := &mviewCompleteDeltaApplyOpenProbeChild{
+		BaseExecutor: exec.NewBaseExecutor(sctx, childSchema, 0),
+	}
+	applyExec := &MViewCompleteDeltaApplyExec{
+		BaseExecutor:                  exec.NewBaseExecutor(sctx, nil, 0, child),
+		TargetTable:                   targetTbl,
+		TargetHandleCols:              plannerutil.NewIntHandleCols(&expression.Column{Index: 0, RetType: targetTp}),
+		CurrentWritableInputColIDs:    []int{1},
+		RecomputedWritableInputColIDs: []int{0},
+	}
+
+	err := applyExec.Open(context.Background())
+	require.ErrorContains(t, err, "writable input col id 1")
+	require.False(t, child.opened)
+}
+
+func TestMViewRefreshSourceExecutorConcurrency(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		builder    executorBuilder
+		numWorkers int64
+	}{
+		{name: "read", numWorkers: 4},
+		{name: "insert", builder: executorBuilder{inInsertStmt: true}},
+		{name: "update", builder: executorBuilder{inUpdateStmt: true}},
+		{name: "delete", builder: executorBuilder{inDeleteStmt: true}},
+		{name: "lock", builder: executorBuilder{hasLock: true}},
+		{name: "fast_refresh", builder: executorBuilder{inMViewDeltaMergeStmt: true}},
+		{name: "complete_delta_apply", builder: executorBuilder{inMViewCompleteDeltaApplyStmt: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sctx := mock.NewContext()
+			sctx.GetSessionVars().SetProjectionConcurrency(4)
+			b := tc.builder
+			b.sctx = sctx
+			col := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
+			schema := expression.NewSchema(col)
+			child := physicalop.PhysicalTableDual{RowCount: 1}.Init(sctx, &property.StatsInfo{RowCount: 1}, 0)
+			child.SetSchema(schema)
+			// Keep the estimate above the chunk threshold so the small-result shortcut
+			// cannot hide a missing write-statement concurrency guard.
+			stats := &property.StatsInfo{RowCount: float64(sctx.GetSessionVars().MaxChunkSize * 2)}
+
+			t.Run("projection", func(t *testing.T) {
+				plan := physicalop.PhysicalProjection{Exprs: []expression.Expression{col}}.Init(sctx, stats, 0)
+				plan.SetSchema(schema)
+				plan.SetChildren(child)
+				e := b.build(plan)
+				require.NoError(t, b.err)
+				require.IsType(t, (*ProjectionExec)(nil), e)
+				require.Equal(t, tc.numWorkers, e.(*ProjectionExec).numWorkers)
+			})
+
+			t.Run("expand", func(t *testing.T) {
+				plan := physicalop.PhysicalExpand{LevelExprs: [][]expression.Expression{{col}}}.Init(sctx, stats, 0)
+				plan.SetSchema(schema)
+				plan.SetChildren(child)
+				e := b.build(plan)
+				require.NoError(t, b.err)
+				require.IsType(t, (*ExpandExec)(nil), e)
+				require.Equal(t, tc.numWorkers, e.(*ExpandExec).numWorkers)
+			})
+		})
+	}
+}
+
+func TestMarkMViewCompleteDeltaTouchedRowsByColumnStringUsesBinaryCompare(t *testing.T) {
+	testCases := []struct {
+		name      string
+		collation string
+		oldVal    string
+		newVal    string
+		touched   bool
+	}{
+		{
+			name:      "case-insensitive collation still compares bytes",
+			collation: "utf8mb4_general_ci",
+			oldVal:    "a",
+			newVal:    "A",
+			touched:   true,
+		},
+		{
+			name:      "binary collation keeps byte-sensitive change",
+			collation: "utf8mb4_bin",
+			oldVal:    "a",
+			newVal:    "A",
+			touched:   true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ft := types.NewFieldTypeWithCollation(mysql.TypeVarString, tc.collation, types.UnspecifiedLength)
+			input := chunk.NewChunkWithCapacity([]*types.FieldType{ft, ft}, 1)
+			input.AppendString(0, tc.oldVal)
+			input.AppendString(1, tc.newVal)
+
+			updateTouchedBitmap := make([]uint8, 1)
+			err := executil.MarkTouchedRowsByColumn(
+				[]int{0},
+				updateTouchedBitmap,
+				1,
+				0,
+				input.Column(0),
+				input.Column(1),
+				ft,
+				true,
+				"test",
+			)
+			require.NoError(t, err)
+			require.Equal(t, tc.touched, updateTouchedBitmap[0] != 0)
+		})
+	}
+}
+
+func TestMarkMViewCompleteDeltaTouchedRowsByColumnEnumSetUseBinaryNameCompare(t *testing.T) {
+	enumFT := types.NewFieldType(mysql.TypeEnum)
+	enumFT.SetCharset("utf8mb4")
+	enumFT.SetCollate("utf8mb4_general_ci")
+	enumChk := chunk.NewChunkWithCapacity([]*types.FieldType{enumFT, enumFT}, 1)
+	enumChk.AppendEnum(0, types.Enum{Name: "x", Value: 1})
+	enumChk.AppendEnum(1, types.Enum{Name: "x", Value: 2})
+
+	enumBitmap := make([]uint8, 1)
+	err := executil.MarkTouchedRowsByColumn(
+		[]int{0},
+		enumBitmap,
+		1,
+		0,
+		enumChk.Column(0),
+		enumChk.Column(1),
+		enumFT,
+		true,
+		"test",
+	)
+	require.NoError(t, err)
+	require.Equal(t, []uint8{0}, enumBitmap)
+
+	setFT := types.NewFieldType(mysql.TypeSet)
+	setFT.SetCharset("utf8mb4")
+	setFT.SetCollate("utf8mb4_general_ci")
+	setChk := chunk.NewChunkWithCapacity([]*types.FieldType{setFT, setFT}, 1)
+	setChk.AppendSet(0, types.Set{Name: "a,b", Value: 3})
+	setChk.AppendSet(1, types.Set{Name: "a,b", Value: 7})
+
+	setBitmap := make([]uint8, 1)
+	err = executil.MarkTouchedRowsByColumn(
+		[]int{0},
+		setBitmap,
+		1,
+		0,
+		setChk.Column(0),
+		setChk.Column(1),
+		setFT,
+		true,
+		"test",
+	)
+	require.NoError(t, err)
+	require.Equal(t, []uint8{0}, setBitmap)
+}
+
+func TestMViewCompleteDeltaApplyRuntimeStatsString(t *testing.T) {
+	stats := &mviewCompleteDeltaApplyRuntimeStats{
+		writerTime: 12 * time.Millisecond,
+		writerDetail: mviewCompleteDeltaApplyWriterStats{
+			chunks:     2,
+			rowOps:     7,
+			insertRows: 1,
+			updateRows: 3,
+			deleteRows: 2,
+		},
+	}
+	s := stats.String()
+	require.Contains(t, s, "mview_complete_delta_apply")
+	require.Contains(t, s, "writer:{time:12ms")
+	require.Contains(t, s, "chunks:2")
+	require.Contains(t, s, "row_ops:7")
+	require.Contains(t, s, "rows:{insert:1, update:3, delete:2}")
+}
+
+func TestMViewCompleteDeltaApplyRuntimeStatsMergeAndClone(t *testing.T) {
+	left := &mviewCompleteDeltaApplyRuntimeStats{
+		writerTime: 5 * time.Millisecond,
+		writerDetail: mviewCompleteDeltaApplyWriterStats{
+			chunks:     1,
+			rowOps:     4,
+			insertRows: 1,
+			updateRows: 2,
+			deleteRows: 1,
+		},
+	}
+	right := &mviewCompleteDeltaApplyRuntimeStats{
+		writerTime: 7 * time.Millisecond,
+		writerDetail: mviewCompleteDeltaApplyWriterStats{
+			chunks:     2,
+			rowOps:     5,
+			updateRows: 1,
+			deleteRows: 1,
+		},
+	}
+
+	left.Merge(right)
+	require.Equal(t, 12*time.Millisecond, left.writerTime)
+	require.Equal(t, int64(3), left.writerDetail.chunks)
+	require.Equal(t, int64(9), left.writerDetail.rowOps)
+	require.Equal(t, int64(1), left.writerDetail.insertRows)
+	require.Equal(t, int64(3), left.writerDetail.updateRows)
+	require.Equal(t, int64(2), left.writerDetail.deleteRows)
+
+	cloned, ok := left.Clone().(*mviewCompleteDeltaApplyRuntimeStats)
+	require.True(t, ok)
+	require.Equal(t, left.writerTime, cloned.writerTime)
+	require.Equal(t, left.writerDetail, cloned.writerDetail)
+}
+
+func TestStorageClassTransitionTimeZoneSetup(t *testing.T) {
+	vars := variable.NewSessionVars(nil)
+	internalTimeZone := time.FixedZone("internal", -12*60*60)
+	callerTimeZone := time.FixedZone("caller", 14*60*60)
+	vars.TimeZone = internalTimeZone
+
+	restore := storageClassTransitionTimeZoneSetup(callerTimeZone)(vars)
+	require.Same(t, callerTimeZone, vars.TimeZone)
+	restore()
+	require.Same(t, internalTimeZone, vars.TimeZone)
+}
+
+func TestFillEmbedTextValues(t *testing.T) {
+	sctx := mock.NewContext()
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("id"),
+				Offset:    0,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldType(mysql.TypeLong),
+			},
+			{
+				ID:        2,
+				Name:      ast.NewCIStr("text"),
+				Offset:    1,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldType(mysql.TypeVarchar),
+			},
+			{
+				ID:                  3,
+				Name:                ast.NewCIStr("vec"),
+				Offset:              2,
+				State:               model.StatePublic,
+				FieldType:           *types.NewFieldType(mysql.TypeTiDBVectorFloat32),
+				GeneratedExprString: "embed_text('mock/json', text)",
+				GeneratedStored:     true,
+				Dependences:         map[string]struct{}{"text": {}},
+			},
+		},
+	}
+	tbl, err := tables.TableFromMeta(autoid.NewAllocators(false), tblInfo)
+	require.NoError(t, err)
+
+	rows := [][]types.Datum{nil}
+	insertValues := &InsertValues{
+		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0),
+		Table:        tbl,
+		GenExprs:     []expression.Expression{nil},
+	}
+	generatedCols := insertValues.getEmbedTextGeneratedCols()
+	require.Len(t, generatedCols, 1)
+	require.Equal(t, 2, generatedCols[0].offset)
+	require.Same(t, tbl.Cols()[2], generatedCols[0].column)
+	require.True(t, insertValues.embedTextGeneratedColsInitialized)
+	require.Equal(t, generatedCols, insertValues.getEmbedTextGeneratedCols())
+
+	emptyRows, err := insertValues.fillEmbedTextValues(context.Background(), nil)
+	require.NoError(t, err)
+	require.Nil(t, emptyRows)
+
+	withoutGeneratedCols := &InsertValues{
+		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0),
+	}
+	plainRows := [][]types.Datum{types.MakeDatums(1, "plain")}
+	got, err := withoutGeneratedCols.fillEmbedTextValuesWithRowCount(context.Background(), plainRows, 1)
+	require.NoError(t, err)
+	require.Equal(t, plainRows, got)
+	require.True(t, withoutGeneratedCols.embedTextGeneratedColsInitialized)
+
+	if !kerneltype.IsNextGen() {
+		return
+	}
+	originalMode := deploymode.Get()
+	require.NoError(t, deploymode.Set(deploymode.Premium))
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+
+	modelExpr := &expression.Constant{
+		Value:   types.NewDatum("mock/json"),
+		RetType: types.NewFieldType(mysql.TypeString),
+	}
+	textExpr := &expression.Column{
+		Index:   1,
+		RetType: types.NewFieldType(mysql.TypeString),
+	}
+	optionsExpr := &expression.Constant{
+		Value:   types.NewDatum(`{"plus":1}`),
+		RetType: types.NewFieldType(mysql.TypeString),
+	}
+	embedExpr, err := expression.NewFunction(
+		sctx,
+		ast.EmbedText,
+		types.NewFieldType(mysql.TypeTiDBVectorFloat32),
+		modelExpr,
+		textExpr,
+		optionsExpr,
+	)
+	require.NoError(t, err)
+	insertValues = &InsertValues{
+		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0),
+		Table:        tbl,
+		GenExprs:     []expression.Expression{embedExpr},
+		rowCount:     4,
+	}
+	validRows := [][]types.Datum{
+		types.MakeDatums(1, "[1,2,3]", nil),
+		types.MakeDatums(2, "[4,5,6]", nil),
+		types.MakeDatums(3, nil, nil),
+		nil,
+	}
+	_, err = insertValues.fillEmbedTextValues(context.Background(), validRows)
+	require.ErrorContains(t, err, "EMBED_TEXT is only supported in starter deployment mode")
+
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	embedFn := inference.NewEmbedFn()
+	t.Cleanup(inference.SetDefaultEmbedFnForTest(embedFn))
+	got, err = insertValues.fillEmbedTextValuesWithRowCount(context.Background(), rows, 1)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Nil(t, got[0])
+
+	got, err = insertValues.fillEmbedTextValues(context.Background(), validRows)
+	require.NoError(t, err)
+	require.Equal(t, "[2,3,4]", got[0][2].GetVectorFloat32().String())
+	require.Equal(t, "[5,6,7]", got[1][2].GetVectorFloat32().String())
+	require.True(t, got[2][2].IsNull())
+	require.Nil(t, got[3])
+
+	invalidRows := [][]types.Datum{types.MakeDatums(3, "not-json", nil)}
+	_, err = insertValues.fillEmbedTextValuesWithRowCount(context.Background(), invalidRows, 3)
+	require.Error(t, err)
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = insertValues.fillEmbedTextValuesWithRowCount(canceledCtx, [][]types.Datum{
+		types.MakeDatums(4, "[4,5,6]", nil),
+	}, 4)
+	require.ErrorIs(t, err, context.Canceled)
+}
 
 func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
 	indexRanges := make([]*ranger.Range, 0, 6)
@@ -130,6 +621,51 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 
 	require.Equal(t, 2*bytesConsumed1, bytesConsumed2)
 	require.Equal(t, int64(23640), bytesConsumed1)
+}
+
+func TestIndexReaderPartitionRangesUseMemoryTracker(t *testing.T) {
+	sctx := mock.NewContext()
+	partition0 := tables.MockTableFromMeta(&model.TableInfo{ID: 101})
+	partition1 := tables.MockTableFromMeta(&model.TableInfo{ID: 102})
+	rangeMemTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
+	e := &IndexReaderExecutor{
+		indexReaderExecutorContext: newIndexReaderExecutorContext(sctx),
+		BaseExecutorV2:             exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 0),
+		index:                      &model.IndexInfo{ID: 1},
+		partitions:                 []table.PhysicalTable{partition0.(table.PhysicalTable), partition1.(table.PhysicalTable)},
+		ranges:                     []*ranger.Range{generateIndexRange(1, 1)},
+		rangeMemTracker:            rangeMemTracker,
+		dummy:                      true,
+	}
+
+	require.NoError(t, e.Open(context.Background()))
+	require.Greater(t, rangeMemTracker.BytesConsumed(), int64(0))
+	require.Nil(t, e.memTracker)
+}
+
+func TestIndexLookUpPartitionRangesUseMemoryTracker(t *testing.T) {
+	sctx := mock.NewContext()
+	partition0 := tables.MockTableFromMeta(&model.TableInfo{ID: 101})
+	partition1 := tables.MockTableFromMeta(&model.TableInfo{ID: 102})
+	rangeMemTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
+	e := &IndexLookUpExecutor{
+		indexLookUpExecutorContext: newIndexLookUpExecutorContext(sctx),
+		BaseExecutorV2:             exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 0),
+		index:                      &model.IndexInfo{ID: 1},
+		prunedPartitions:           []table.PhysicalTable{partition0.(table.PhysicalTable), partition1.(table.PhysicalTable)},
+		partitionTableMode:         true,
+		ranges:                     []*ranger.Range{generateIndexRange(1, 1)},
+		rangeMemTracker:            rangeMemTracker,
+	}
+
+	require.NoError(t, e.buildTableKeyRanges())
+	require.Greater(t, rangeMemTracker.BytesConsumed(), int64(0))
+
+	executorMemTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
+	e.rangeMemTracker = nil
+	e.memTracker = executorMemTracker
+	require.NoError(t, e.buildTableKeyRanges())
+	require.Greater(t, executorMemTracker.BytesConsumed(), int64(0))
 }
 
 func generateIndexRange(vals ...int64) *ranger.Range {
@@ -552,4 +1088,16 @@ func TestStrictNotNullCheckForInsert(t *testing.T) {
 		require.Equal(t, c.expectBadNullLevel, ec.LevelMap()[errctx.ErrGroupBadNull], "%s: BadNull level", c.name)
 		require.Equal(t, c.expectNoDefaultLevel, ec.LevelMap()[errctx.ErrGroupNoDefault], "%s: NoDefault level", c.name)
 	}
+}
+
+func TestGetMPPServerID(t *testing.T) {
+	// A session without a Domain, like one of a cross-keyspace runtime, takes
+	// the server ID from the server info of the process.
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), t.Name(), func() uint64 { return 7 }, nil, nil, nil, nil, keyspace.CodecV1, true, nil)
+	require.NoError(t, err)
+	sctx := mock.NewContext()
+	require.Nil(t, domain.GetDomain(sctx))
+	serverID, err := getMPPServerID(sctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 7, serverID)
 }

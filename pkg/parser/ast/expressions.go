@@ -1696,7 +1696,7 @@ func (e *exprCleaner) BeginRestore() {
 	e.restore = true
 }
 
-func (e *exprCleaner) Enter(n Node) (node Node, skipChildren bool) {
+func (e *exprCleaner) Enter(n Node) bool {
 	if e.restore {
 		n.SetOriginTextPosition(e.oldTextPos[0])
 		e.oldTextPos = e.oldTextPos[1:]
@@ -1704,7 +1704,7 @@ func (e *exprCleaner) Enter(n Node) (node Node, skipChildren bool) {
 			f.FnName.O = e.oldOriginFuncName[0]
 			e.oldOriginFuncName = e.oldOriginFuncName[1:]
 		}
-		return n, false
+		return false
 	}
 	e.oldTextPos = append(e.oldTextPos, n.OriginTextPosition())
 	n.SetOriginTextPosition(0)
@@ -1712,23 +1712,23 @@ func (e *exprCleaner) Enter(n Node) (node Node, skipChildren bool) {
 		e.oldOriginFuncName = append(e.oldOriginFuncName, f.FnName.O)
 		f.FnName.O = f.FnName.L
 	}
-	return n, false
+	return false
 }
 
-func (e *exprCleaner) Leave(n Node) (node Node, ok bool) {
-	return n, true
+func (e *exprCleaner) Leave(Node) bool {
+	return true
 }
 
 // ExpressionDeepEqual compares the equivalence of two expressions.
 func ExpressionDeepEqual(a ExprNode, b ExprNode) bool {
 	cleanerA := &exprCleaner{}
 	cleanerB := &exprCleaner{}
-	a.Accept(cleanerA)
-	b.Accept(cleanerB)
+	Walk(a, cleanerA)
+	Walk(b, cleanerB)
 	result := reflect.DeepEqual(a, b)
 	cleanerA.BeginRestore()
 	cleanerB.BeginRestore()
-	a.Accept(cleanerA)
-	b.Accept(cleanerB)
+	Walk(a, cleanerA)
+	Walk(b, cleanerB)
 	return result
 }

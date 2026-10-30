@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"go.uber.org/zap/zapcore"
@@ -721,11 +722,15 @@ func prepare4HashJoinV2(testCase *hashJoinTestCase, innerExec, outerExec exec.Ex
 	e.ProbeSideTupleFetcher.ProbeSideExec = outerExec
 	e.LUsed = make([]int, 0, len(innerTypes))
 	for index := range innerTypes {
-		e.LUsed = append(e.LUsed, index)
+		if testCase.childrenUsedSchema == nil || testCase.childrenUsedSchema[0][index] {
+			e.LUsed = append(e.LUsed, index)
+		}
 	}
 	e.RUsed = make([]int, 0, len(outerTypes))
 	for index := range outerTypes {
-		e.RUsed = append(e.RUsed, index)
+		if testCase.childrenUsedSchema == nil || testCase.childrenUsedSchema[1][index] {
+			e.RUsed = append(e.RUsed, index)
+		}
 	}
 
 	for i := range testCase.concurrency {
@@ -937,6 +942,85 @@ func benchmarkHashJoinExec(b *testing.B, casTest *hashJoinTestCase, opt1, opt2 *
 	b.StopTimer()
 	if totalRow == 0 {
 		b.Fatal("totalRow == 0")
+	}
+}
+
+// BenchmarkHashJoinJoinedRows measures join execution with runtime statistics enabled.
+// Mock source preparation is excluded; Open, full consumption, and Close are timed.
+func BenchmarkHashJoinJoinedRows(b *testing.B) {
+	for _, version := range []string{"legacy", "optimized"} {
+		for _, scenario := range []struct {
+			name     string
+			rows     int
+			keys     int
+			joinType base.JoinType
+		}{
+			{"unique", 16384, 16384, base.InnerJoin},
+			{"fanout64", 4096, 64, base.InnerJoin},
+			{"fanout64_no_columns", 4096, 64, base.InnerJoin},
+			{"semi", 16384, 256, base.SemiJoin},
+		} {
+			b.Run(version+"/"+scenario.name, func(b *testing.B) {
+				b.StopTimer()
+				cols := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+				cas := defaultHashJoinTestCase(cols, scenario.joinType, false)
+				cas.rows, cas.concurrency, cas.keyIdx = scenario.rows, 1, []int{0}
+				if scenario.joinType == base.SemiJoin {
+					cas.childrenUsedSchema = [][]bool{{true}, {false}}
+				} else if scenario.name == "fanout64_no_columns" {
+					cas.childrenUsedSchema = [][]bool{{false}, {false}}
+				}
+				sc := cas.ctx.GetSessionVars().StmtCtx
+				sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+				makeSource := func() *testutil.MockDataSource {
+					return testutil.BuildMockDataSource(testutil.MockDataSourceParameters{
+						Rows: scenario.rows, Ctx: cas.ctx, DataSchema: expression.NewSchema(cas.columns()...),
+						GenDataFunc: func(row int, _ *types.FieldType) any { return int64(row % scenario.keys) },
+					})
+				}
+				build, probe := makeSource(), makeSource()
+				wantRows := scenario.rows * (scenario.rows / scenario.keys)
+				if scenario.joinType == base.SemiJoin {
+					wantRows = scenario.rows
+				}
+				ctx := context.Background()
+				b.ReportAllocs()
+				b.ResetTimer()
+				for range b.N {
+					sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(sc.RuntimeStatsColl)
+					var e exec.Executor
+					if version == "legacy" {
+						e = prepare4HashJoin(cas, build, probe)
+					} else {
+						e = prepare4HashJoinV2(cas, build, probe)
+					}
+					build.PrepareChunks()
+					probe.PrepareChunks()
+					result := exec.NewFirstChunk(e)
+					b.StartTimer()
+					if err := e.Open(ctx); err != nil {
+						b.Fatal(err)
+					}
+					rows := 0
+					for {
+						if err := e.Next(ctx, result); err != nil {
+							b.Fatal(err)
+						}
+						if result.NumRows() == 0 {
+							break
+						}
+						rows += result.NumRows()
+					}
+					if err := e.Close(); err != nil {
+						b.Fatal(err)
+					}
+					b.StopTimer()
+					if rows != wantRows {
+						b.Fatalf("got %d rows, want %d", rows, wantRows)
+					}
+				}
+			})
+		}
 	}
 }
 

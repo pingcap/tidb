@@ -258,7 +258,7 @@ func TestFailSchemaSyncer(t *testing.T) {
 func TestGenGlobalIDFail(t *testing.T) {
 	s := createFailDBSuite(t)
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockGenGlobalIDFail"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/jobsubmit/mockGenGlobalIDFail"))
 	}()
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("create database if not exists gen_global_id_fail")
@@ -290,11 +290,11 @@ func TestGenGlobalIDFail(t *testing.T) {
 
 	for idx, test := range testcases {
 		if test.mockErr {
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockGenGlobalIDFail", `return(true)`))
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/jobsubmit/mockGenGlobalIDFail", `return(true)`))
 			_, err := tk.Exec(test.sql)
 			require.Errorf(t, err, "the %dth test case '%s' fail", idx, test.sql)
 		} else {
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockGenGlobalIDFail", `return(false)`))
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/jobsubmit/mockGenGlobalIDFail", `return(false)`))
 			tk.MustExec(test.sql)
 			tk.MustExec(fmt.Sprintf("insert into %s values (%d, 42)", test.table, rand.Intn(65536)))
 			tk.MustExec(fmt.Sprintf("admin check table %s", test.table))

@@ -16,6 +16,7 @@ package copr
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -189,4 +190,40 @@ func TestMPPFailedStoreAssertFailed(t *testing.T) {
 
 	GlobalMPPFailedStoreProber.failedMPPStores.Store("errorinfo", nil)
 	GlobalMPPFailedStoreProber.IsRecovery(ctx, "errorinfo", 0)
+}
+
+func TestMppServerInfoManager(t *testing.T) {
+	manager := newMppServerInfoManager()
+	manager.Delete("123") // Should happen nothing
+	manager.Add(&MPPServerInfo{
+		Address:         "123",
+		LogicalCPUCount: 123,
+		StartTimestamp:  456,
+	})
+	require.Equal(t, 1, manager.cachedStores.Size())
+	info := manager.Get("123")
+	require.True(t, info != nil)
+	require.Equal(t, info.Address, "123")
+	require.Equal(t, info.LogicalCPUCount, uint64(123))
+	require.Equal(t, info.StartTimestamp, int64(456))
+
+	manager.Delete("123")
+	require.Equal(t, 0, manager.cachedStores.Size())
+	info = manager.Get("123")
+	require.True(t, info == nil)
+
+	for i := 0; i < mppServerInfoManagerCacheSize; i++ {
+		manager.Add(&MPPServerInfo{
+			Address: fmt.Sprintf("store-%d", i),
+		})
+	}
+	require.Equal(t, mppServerInfoManagerCacheSize, manager.cachedStores.Size())
+	require.NotNil(t, manager.Get("store-0"))
+
+	manager.Add(&MPPServerInfo{
+		Address: fmt.Sprintf("store-%d", mppServerInfoManagerCacheSize),
+	})
+	require.Equal(t, mppServerInfoManagerCacheSize, manager.cachedStores.Size())
+	require.NotNil(t, manager.Get("store-0"))
+	require.Nil(t, manager.Get("store-1"))
 }

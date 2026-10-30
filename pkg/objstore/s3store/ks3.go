@@ -737,7 +737,6 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *storeapi.
 			Bucket: aws.String(rs.options.Bucket),
 			Key:    aws.String(rs.options.Prefix + name),
 			Body:   rd,
-			Size:   1024 * 1024 * 5, // ks3 SDK need to set this value to non-zero.
 		}
 		s3Writer := &asyncWriter{wd: wd, wg: &sync.WaitGroup{}}
 		s3Writer.wg.Add(1)
@@ -784,6 +783,11 @@ func (rs *KS3Storage) Rename(ctx context.Context, oldFileName, newFileName strin
 
 // Close implements Storage interface.
 func (*KS3Storage) Close() {}
+
+// Features implements FeatureProvider.
+func (*KS3Storage) Features() storeapi.Features {
+	return storeapi.FeatureStrongConsistency
+}
 
 func maybeObjectAlreadyExists(err awserr.Error) bool {
 	// Some versions of server did return the error code "ObjectAlreayExists"...

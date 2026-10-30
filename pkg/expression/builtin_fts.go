@@ -16,6 +16,8 @@ package expression
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -34,6 +36,7 @@ var (
 
 type ftsMatchWordFunctionClass struct {
 	baseFunctionClass
+	expropt.SessionVarsPropReader
 }
 
 type builtinFtsMatchWordSig struct {
@@ -81,6 +84,9 @@ func (c *ftsMatchWordFunctionClass) getFunction(ctx BuildContext, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
+	if !deploymode.IsStarter() {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("FTS_MATCH_WORD() is only supported in starter deployment mode")
+	}
 
 	argAgainst := args[0]
 	argAgainstConstant, ok := argAgainst.(*Constant)
@@ -105,6 +111,12 @@ func (c *ftsMatchWordFunctionClass) getFunction(ctx BuildContext, args []Express
 	if err != nil {
 		return nil, err
 	}
+
+	sessionVars, err := c.GetSessionVars(ctx.GetEvalCtx())
+	if err != nil {
+		return nil, err
+	}
+	sessionVars.StmtCtx.FTSFunctionIsUsed = true
 
 	sig := &builtinFtsMatchWordSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_FTSMatchWord)

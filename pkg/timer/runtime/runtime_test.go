@@ -869,7 +869,6 @@ func TestTimerFullProcess(t *testing.T) {
 	})
 	require.NoError(t, err)
 	timerID := timer.ID
-	close(hookStartWait)
 
 	hook.On("OnPreSchedEvent", mock.Anything, mock.Anything).
 		Return(api.PreSchedEventResult{EventData: []byte("eventdata1")}, nil).
@@ -880,6 +879,8 @@ func TestTimerFullProcess(t *testing.T) {
 		Return(nil).
 		Once().
 		Run(checkOnSchedEventFunc([]byte("eventdata1"), *now.Load()))
+
+	close(hookStartWait)
 	waitDone(onSchedDone, 5*time.Second)
 	onSchedDone = make(chan struct{})
 	hook.AssertExpectations(t)
@@ -912,7 +913,7 @@ func TestTimerFullProcess(t *testing.T) {
 	checkNotDone(onSchedDone, time.Second)
 
 	// trigger again after 1 minute
-	setNow(now.Load().Add(time.Minute))
+	nextTriggerTime := now.Load().Add(time.Minute)
 	hook.On("OnPreSchedEvent", mock.Anything, mock.Anything).
 		Return(api.PreSchedEventResult{EventData: []byte("eventdata2")}, nil).
 		Once().
@@ -921,7 +922,8 @@ func TestTimerFullProcess(t *testing.T) {
 	hook.On("OnSchedEvent", mock.Anything, mock.Anything).
 		Return(nil).
 		Once().
-		Run(checkOnSchedEventFunc([]byte("eventdata2"), *now.Load()))
+		Run(checkOnSchedEventFunc([]byte("eventdata2"), nextTriggerTime))
+	setNow(nextTriggerTime)
 	waitDone(onSchedDone, 5*time.Second)
 	onSchedDone = make(chan struct{})
 	hook.AssertExpectations(t)

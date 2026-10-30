@@ -58,7 +58,7 @@ var (
 	// part-size in range 5~20M, but not all thread will upload at same time.
 	// this value might not be optimal.
 	// TODO need data on AWS and other machine types
-	maxUploadWorkersPerThread = 8
+	maxUploadWorkersPerThread = 4
 	// we use hex of 0-256 as partition prefix, it might duplicate with task ID,
 	// so we add a header to it.
 	partitionHeader     = "p"
@@ -90,7 +90,8 @@ func commonGetAdjustCount(isOverlapThreshold bool, concurrency int) int64 {
 		logutil.BgLogger().Error("concurrency is less than 0 or equal to 0, set to 1", zap.Int("concurrency", concurrency))
 		concurrency = 1
 	}
-	cnt := 250 * int64(concurrency)
+	const maxOpenedConnPerCore = 250
+	cnt := maxOpenedConnPerCore * int64(concurrency)
 	if isOverlapThreshold {
 		cnt = min(cnt, maxMergeSortOverlapThreshold)
 	} else {

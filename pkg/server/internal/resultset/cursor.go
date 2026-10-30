@@ -72,9 +72,9 @@ func (tcrs *tidbCursorResultSet) setCursorRUV2Tracker(tracker *CursorRUV2Tracker
 	}
 }
 
-func (tcrs *tidbCursorResultSet) reportCursorRUV2Delta(resultChunkCellsDelta int64) {
+func (tcrs *tidbCursorResultSet) reportCursorRUV2Delta() {
 	if rs, ok := tcrs.ResultSet.(cursorRUV2Trackable); ok {
-		rs.reportCursorRUV2Delta(resultChunkCellsDelta)
+		rs.reportCursorRUV2Delta()
 	}
 }
 
@@ -129,9 +129,9 @@ func (tcrs *tidbLazyCursorResultSet) setCursorRUV2Tracker(tracker *CursorRUV2Tra
 	}
 }
 
-func (tcrs *tidbLazyCursorResultSet) reportCursorRUV2Delta(resultChunkCellsDelta int64) {
+func (tcrs *tidbLazyCursorResultSet) reportCursorRUV2Delta() {
 	if rs, ok := tcrs.ResultSet.(cursorRUV2Trackable); ok {
-		rs.reportCursorRUV2Delta(resultChunkCellsDelta)
+		rs.reportCursorRUV2Delta()
 	}
 }
 

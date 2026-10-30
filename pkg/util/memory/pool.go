@@ -475,6 +475,13 @@ func (p *ResourcePool) allocate(request int64) error {
 	return err
 }
 
+// ApproxAllocated returns the approximate allocated bytes of the resource pool
+//
+//go:norace
+func (p *ResourcePool) ApproxAllocated() int64 {
+	return p.allocated()
+}
+
 func (p *ResourcePool) allocated() int64 {
 	return p.mu.allocated
 }

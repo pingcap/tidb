@@ -45,6 +45,7 @@ import (
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -75,12 +76,51 @@ import (
 
 const defaultStatusPort = 10080
 
+// fullStatusServerEnabled reports whether cluster HTTP APIs and gRPC are available.
+func (s *Server) fullStatusServerEnabled() bool {
+	return s.cfg.Status.ReportStatus && !diagnosticmode.Enabled()
+}
+
 func (s *Server) startStatusHTTP() error {
+	if !s.cfg.Status.ReportStatus {
+		return nil
+	}
+	if diagnosticmode.Enabled() {
+		return s.startDiagnosticHTTP()
+	}
 	err := s.initHTTPListener()
 	if err != nil {
 		return err
 	}
 	go s.startHTTPServer()
+	return nil
+}
+
+// startDiagnosticHTTP exposes local diagnostics without starting cluster services.
+func (s *Server) startDiagnosticHTTP() error {
+	if err := s.listenStatusHTTPServer(); err != nil {
+		return err
+	}
+
+	// Keep this allowlist separate from the normal management API router.
+	router := mux.NewRouter()
+	router.HandleFunc("/status", s.handleStatus).Methods(http.MethodGet)
+	router.Handle("/metrics", promhttp.Handler()).Methods(http.MethodGet)
+	router.HandleFunc("/debug/pprof/cmdline", withProfilingRequestLog(pprof.Cmdline)).Methods(http.MethodGet)
+	router.HandleFunc("/debug/pprof/profile", withProfilingRequestLog(cpuprofile.ProfileHTTPHandler)).Methods(http.MethodGet)
+	router.HandleFunc("/debug/pprof/symbol", withProfilingRequestLog(pprof.Symbol)).Methods(http.MethodGet)
+	router.HandleFunc("/debug/pprof/trace", withProfilingRequestLog(pprof.Trace)).Methods(http.MethodGet)
+	router.PathPrefix("/debug/pprof/").HandlerFunc(withProfilingRequestLog(pprof.Index)).Methods(http.MethodGet)
+
+	statusServer := &http.Server{Addr: s.statusAddr, Handler: util2.NewCorsHandler(router, s.cfg)}
+	// Publish before Serve starts so closeListener also handles early shutdown.
+	s.statusServer.Store(statusServer)
+	listener := s.statusListener
+	go util.WithRecovery(func() {
+		if err := statusServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+			logutil.BgLogger().Warn("diagnostic http server error", zap.Error(err))
+		}
+	}, nil)
 	return nil
 }
 
@@ -116,9 +156,11 @@ func (s *Server) listenStatusHTTPServer() error {
 	tlsConfig = s.SetCNChecker(tlsConfig)
 
 	if tlsConfig != nil {
-		// The protocols should be listed as the same order we dispatch the connection with cmux.
-		tlsConfig.NextProtos = []string{"http/1.1", "h2"}
-		// we need to manage TLS here for cmux to distinguish between HTTP and gRPC.
+		tlsConfig.NextProtos = []string{"http/1.1"}
+		if !diagnosticmode.Enabled() {
+			// Match the order used by cmux to dispatch HTTP and gRPC connections.
+			tlsConfig.NextProtos = append(tlsConfig.NextProtos, "h2")
+		}
 		s.statusListener, err = tls.Listen("tcp", s.statusAddr, tlsConfig)
 	} else {
 		s.statusListener, err = net.Listen("tcp", s.statusAddr)
@@ -129,6 +171,12 @@ func (s *Server) listenStatusHTTPServer() error {
 	} else if RunInGoTest && s.cfg.Status.StatusPort == 0 {
 		s.statusAddr = s.statusListener.Addr().String()
 		s.cfg.Status.StatusPort = uint(s.statusListener.Addr().(*net.TCPAddr).Port)
+	}
+	// Diagnostic HTTP bypasses cmux and tracks connections itself. Leave its
+	// TLS connections unwrapped so net/http can recognize them.
+	if !diagnosticmode.Enabled() {
+		// Track connections before cmux can block reading their protocol prefix.
+		s.statusListener = newStatusListener(s.statusListener)
 	}
 	return nil
 }
@@ -214,6 +262,24 @@ func (b *Ballast) GenHTTPHandler() func(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+func withProfilingRequestLog(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		fields := []zap.Field{
+			zap.String("method", r.Method),
+			zap.String("path", r.URL.Path),
+			zap.String("remote-addr", r.RemoteAddr),
+		}
+		query := r.URL.Query()
+		for _, key := range []string{"seconds", "debug", "gc"} {
+			if value := query.Get(key); value != "" {
+				fields = append(fields, zap.String(key, value))
+			}
+		}
+		logutil.BgLogger().Info("profiling request received", fields...)
+		next(w, r)
+	}
+}
+
 func (s *Server) startHTTPServer() {
 	router := mux.NewRouter()
 
@@ -236,6 +302,8 @@ func (s *Server) startHTTPServer() {
 
 	tikvHandlerTool := s.NewTikvHandlerTool()
 	router.Handle("/settings", tikvhandler.NewSettingsHandler(tikvHandlerTool)).Name("Settings")
+	router.Handle("/regions/cache/status", tikvhandler.NewRegionCacheHandler(tikvHandlerTool)).Methods("GET").Name("RegionCacheStatus")
+	router.Handle("/regions/cache/refresh", tikvhandler.NewRegionCacheHandler(tikvHandlerTool)).Methods("POST").Name("RegionCacheRefresh")
 
 	router.Handle("/schema", tikvhandler.NewSchemaHandler(tikvHandlerTool)).Name("Schema")
 	router.Handle("/schema/{db}", tikvhandler.NewSchemaHandler(tikvHandlerTool))
@@ -254,13 +322,19 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/dxf/schedule", tikvhandler.NewDXFScheduleHandler()).Name("DXF_Schedule")
 		router.Handle("/dxf/schedule/tune", tikvhandler.NewDXFScheduleTuneHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DXF_Schedule_Tune")
 		router.Handle("/dxf/task/active", tikvhandler.NewDXFActiveTaskHandler()).Name("DXF_Task_Active")
+		router.Handle("/dxf/nodes", tikvhandler.NewDXFNodesHandler()).Name("DXF_Nodes")
 		router.Handle("/dxf/task/history", tikvhandler.NewDXFTaskHistoryHandler()).Name("DXF_Task_History")
+		// These APIs update only the TiDB process that handles the request and are not persisted.
+		router.Handle("/dxf/schedule/max_concurrent_task", tikvhandler.NewDXFTaskMaxConcurrentHandler()).Name("DXF_Schedule_Max_Concurrent_Task")
+		router.Handle("/dxf/schedule/task_cleanup_batch_size", tikvhandler.NewDXFTaskCleanupBatchSizeHandler()).Name("DXF_Schedule_Task_Cleanup_Batch_Size")
 		router.Handle("/dxf/import-into/history/job/{keyspace}/{job_id}", tikvhandler.NewDXFImportIntoHistoryJobInfoHandler()).Name("DXF_Import_Into_History_Job_Info")
 		router.Handle("/dxf/task/{taskID}/max_runtime_slots", tikvhandler.NewDXFTaskMaxRuntimeSlotsHandler()).Name("DXF_Task_Max_Runtime_Slots")
 	}
 
 	if kerneltype.IsNextGen() {
 		router.Handle("/ddl/check/{db}/{table}/{index}", tikvhandler.NewDDLCheckHandler(tikvHandlerTool)).Name("DDL_Check")
+		router.Handle("/variables/global", tikvhandler.NewGlobalVariablesHandler(tikvHandlerTool)).
+			Methods(http.MethodGet).Name("GlobalVariables")
 	}
 
 	// HTTP path for transaction GC states.
@@ -277,8 +351,11 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/info/all", tikvhandler.NewAllServerInfoHandler(tikvHandlerTool)).Name("InfoALL")
 	// HTTP path for get db and table info that is related to the tableID.
 	router.Handle("/db-table/{tableID}", tikvhandler.NewDBTableHandler(tikvHandlerTool))
-	// HTTP path for get table tiflash replica info.
-	router.Handle("/tiflash/replica-deprecated", tikvhandler.NewFlashReplicaHandler(tikvHandlerTool))
+	// HTTP path for live TiFlash replica count (cluster operators). GET only.
+	router.Handle("/tiflash/replica", tikvhandler.NewFlashReplicaSummaryHandler(tikvHandlerTool)).
+		Methods(http.MethodGet).Name("TiFlashReplicaSummary")
+	// HTTP path for get table tiflash replica info. Only used by tiflash prior than v6.0. Deprecated.
+	router.Handle("/tiflash/replica-deprecated", tikvhandler.NewFlashReplicaDeprecatedHandler(tikvHandlerTool))
 
 	// HTTP path for upgrade operations.
 	router.Handle("/upgrade/{op}", handler.NewClusterUpgradeHandler(tikvHandlerTool.Store.(kv.Storage))).Name("upgrade operations")
@@ -340,12 +417,12 @@ func (s *Server) startHTTPServer() {
 		router.PathPrefix(path).Handler(handler)
 	}
 
-	router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	router.HandleFunc("/debug/pprof/profile", cpuprofile.ProfileHTTPHandler)
-	router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	router.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	router.HandleFunc("/debug/pprof/cmdline", withProfilingRequestLog(pprof.Cmdline))
+	router.HandleFunc("/debug/pprof/profile", withProfilingRequestLog(cpuprofile.ProfileHTTPHandler))
+	router.HandleFunc("/debug/pprof/symbol", withProfilingRequestLog(pprof.Symbol))
+	router.HandleFunc("/debug/pprof/trace", withProfilingRequestLog(pprof.Trace))
 	// Other /debug/pprof paths not covered above are redirected to pprof.Index.
-	router.PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
+	router.PathPrefix("/debug/pprof/").HandlerFunc(withProfilingRequestLog(pprof.Index))
 	router.HandleFunc("/debug/traceevent", traceeventHandler)
 
 	router.HandleFunc("/covdata", func(writer http.ResponseWriter, _ *http.Request) {
@@ -440,7 +517,7 @@ func (s *Server) startHTTPServer() {
 		}
 	})
 
-	router.HandleFunc("/debug/zip", func(w http.ResponseWriter, r *http.Request) {
+	router.HandleFunc("/debug/zip", withProfilingRequestLog(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", `attachment; filename="tidb_debug"`+time.Now().Format("20060102150405")+".zip")
 
 		// dump goroutine/heap/mutex
@@ -522,7 +599,7 @@ func (s *Server) startHTTPServer() {
 
 		err = zw.Close()
 		terror.Log(err)
-	})
+	}))
 
 	// failpoint is enabled only for tests so we can add some http APIs here for tests.
 	failpoint.Inject("enableTestAPI", func() {

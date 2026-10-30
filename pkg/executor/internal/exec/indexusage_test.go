@@ -81,7 +81,7 @@ func TestIndexUsageReporter(t *testing.T) {
 		return usage.QueryTotal == 1 && usage.RowAccessTotal == 2024+2024 && usage.KvReqTotal == 2
 	}, time.Second*5, time.Millisecond)
 
-	// If the version is pseudo, skip it
+	// Point get still records index usage when table stats are pseudo.
 	statsMap.RecordUsedInfo(tableID, &stmtctx.UsedStatsInfoForTable{
 		Version:       statistics.PseudoVersion,
 		RealtimeCount: 100,
@@ -91,7 +91,7 @@ func TestIndexUsageReporter(t *testing.T) {
 	require.Eventually(t, func() bool {
 		tk.Session().ReportUsageStats()
 		usage := dom.StatsHandle().GetIndexUsage(tableID, indexID)
-		return usage.QueryTotal == 1 && usage.RowAccessTotal == 2024+2024 && usage.KvReqTotal == 2
+		return usage.QueryTotal == 1 && usage.RowAccessTotal == 2024+2024+2024 && usage.KvReqTotal == 3
 	}, time.Second*5, time.Millisecond)
 }
 
@@ -435,6 +435,9 @@ func TestDisableIndexUsageReporter(t *testing.T) {
 	}, time.Second*5, time.Millisecond*100)
 	tk.MustExec("use test")
 	// turn off the index usage collection
+	t.Cleanup(func() {
+		tk.MustExec("set tidb_enable_collect_execution_info='ON'")
+	})
 	tk.MustExec("set tidb_enable_collect_execution_info='OFF'")
 	tk.MustQuery("select id_1 from t where id_1 >= 30")
 	tk.RefreshSession()

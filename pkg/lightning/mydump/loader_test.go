@@ -1328,6 +1328,36 @@ func TestSetupOptions(t *testing.T) {
 	_ = md.WithMaxScanFiles
 	_ = md.ReturnPartialResultOnError
 	_ = md.WithFileIterator
+
+	t.Run("Aurora opt in", func(t *testing.T) {
+		ctx := context.Background()
+		store, err := objstore.NewLocalStorage(t.TempDir())
+		require.NoError(t, err)
+		t.Cleanup(store.Close)
+		require.NoError(t, store.WriteFile(ctx, "export/db/db.users/1/part-a.parquet", []byte("data")))
+		cfg := md.LoaderConfig{DefaultFileRules: true, Filter: []string{"*.*"}}
+		loader, err := md.NewLoaderWithStore(ctx, cfg, store, md.WithSkipRealSizeEstimation(true))
+		require.NoError(t, err)
+		require.Equal(t, "users/1/part-a", loader.GetDatabases()[0].Tables[0].Name)
+		require.False(t, loader.IsAuroraSource())
+		loader, err = md.NewLoaderWithStore(ctx, cfg, store, md.WithSkipRealSizeEstimation(true), md.WithAuroraAutoMapping())
+		require.NoError(t, err)
+		require.True(t, loader.IsAuroraSource())
+		require.Len(t, loader.GetDatabases(), 1)
+
+		require.NoError(t, store.WriteFile(ctx, "export/db/db.users/2/part-b.parquet", []byte("data")))
+		for _, opts := range [][]md.MDLoaderSetupOption{
+			{md.WithMaxScanFiles(1), md.WithAuroraAutoMapping()},
+			{md.WithAuroraAutoMapping(), md.WithMaxScanFiles(1)},
+		} {
+			loader, err = md.NewLoaderWithStore(ctx, cfg, store, append(opts, md.WithSkipRealSizeEstimation(true))...)
+			require.ErrorContains(t, err, "incomplete")
+			require.Nil(t, loader, "automatic mapping must not expose partial results")
+		}
+		cfg.FileRouters = []*config.FileRouteRule{{Pattern: `.*\.parquet$`, Schema: "db", Table: "users", Type: "parquet"}}
+		_, err = md.NewLoaderWithStore(ctx, cfg, store, md.WithAuroraAutoMapping())
+		require.ErrorContains(t, err, "requires default file rules")
+	})
 }
 
 func TestParallelProcess(t *testing.T) {

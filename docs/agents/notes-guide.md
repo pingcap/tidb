@@ -20,10 +20,6 @@ Policy-level requirements remain in the repository root `AGENTS.md`.
 
 - If a notes file grows beyond 2000 lines, split it by functionality and update any references that pointed to the old path.
 
-## Planner Rule Notes
-
-- Planner rule notes live at `docs/agents/planner/rule/rule_ai_notes.md`.
-
 ## IMPORT INTO Notes
 
 - IMPORT INTO notes live at `docs/agents/import-into/README.md`.

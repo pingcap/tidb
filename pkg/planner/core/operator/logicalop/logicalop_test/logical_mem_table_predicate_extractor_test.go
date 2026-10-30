@@ -45,6 +45,12 @@ import (
 )
 
 func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessionapi.Session, parser *parser.Parser, sql string) (*logicalop.LogicalMemTable, bool) {
+	memTable, ok, _ := getLogicalMemTableWithRemained(t, dom, se, parser, sql)
+	return memTable, ok
+}
+
+func getLogicalMemTableWithRemained(t *testing.T, dom *domain.Domain, se sessionapi.Session, parser *parser.Parser, sql string) (*logicalop.LogicalMemTable, bool, []expression.Expression) {
+	se.GetSessionVars().PlanColumnID.Store(0)
 	stmt, err := parser.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 
@@ -59,14 +65,18 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessionapi.Session,
 
 	// Obtain the leaf plan
 	leafPlan := logicalPlan
+	var remained []expression.Expression
 	for len(leafPlan.Children()) > 0 {
+		if selection, ok := leafPlan.(*logicalop.LogicalSelection); ok {
+			remained = append(remained, selection.Conditions...)
+		}
 		leafPlan = leafPlan.Children()[0]
 	}
 	switch lg := leafPlan.(type) {
 	case *logicalop.LogicalMemTable:
-		return lg, true
+		return lg, true, remained
 	case *logicalop.LogicalTableDual:
-		return nil, false
+		return nil, false, remained
 	}
 	panic("unreachable")
 }
@@ -252,6 +262,54 @@ func timestamp(t *testing.T, s string) int64 {
 	tt, err := time.ParseInLocation("2006-01-02 15:04:05.999", s, time.Local)
 	require.NoError(t, err)
 	return tt.UnixMilli()
+}
+
+func TestStatementsSummaryExtractorOpenEndedTimeRange(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	se.GetSessionVars().TimeZone = time.Local
+	se.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
+
+	minTime, err := types.MinDatetime.GoTime(time.UTC)
+	require.NoError(t, err)
+	maxTime, err := types.MaxDatetime.GoTime(time.UTC)
+	require.NoError(t, err)
+	startTime := time.Date(2020, 1, 1, 0, 0, 0, 0, time.Local)
+	endTime := time.Date(2020, 1, 2, 0, 0, 0, 0, time.Local)
+	cases := []struct {
+		sql   string
+		start time.Time
+		end   time.Time
+	}{
+		{
+			sql:   "select * from information_schema.statements_summary where summary_end_time >= '2020-01-01 00:00:00'",
+			start: startTime,
+			end:   maxTime,
+		},
+		{
+			sql:   "select * from information_schema.statements_summary where summary_begin_time <= '2020-01-02 00:00:00'",
+			start: minTime,
+			end:   endTime,
+		},
+	}
+
+	p := parser.New()
+	for _, ca := range cases {
+		logicalMemTable, ok := getLogicalMemTable(t, dom, se, p, ca.sql)
+		require.True(t, ok, ca.sql)
+		extractor, ok := logicalMemTable.Extractor.(*plannercore.StatementsSummaryExtractor)
+		require.True(t, ok, ca.sql)
+		require.NotNil(t, extractor.CoarseTimeRange, ca.sql)
+		require.Equal(t, ca.start, extractor.CoarseTimeRange.StartTime, ca.sql)
+		require.Equal(t, ca.end, extractor.CoarseTimeRange.EndTime, ca.sql)
+	}
+
+	tk := testkit.NewTestKitWithSession(t, store, se)
+	tk.MustExec("set time_zone = '+08:00'")
+	tk.MustQuery("explain select * from information_schema.statements_summary where summary_end_time >= '2020-01-01 00:00:00'").MultiCheckContain([]string{
+		"end_time: 9999-12-31 23:59:59.999999",
+	})
 }
 
 func TestClusterLogTableExtractor(t *testing.T) {
@@ -539,6 +597,41 @@ func TestClusterLogTableExtractor(t *testing.T) {
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
 			level:     set.NewStringSet("debug", "error"),
+		},
+		{
+			// ILIKE is case-insensitive while the pattern is matched
+			// case-sensitively by the remote log search, so it is pushed down as a
+			// case-insensitive group -- an "ERROR" line still matches '%error%'.
+			// The predicate stays for a scalar recheck (see the executor test in
+			// TestClusterLogTableIlike), and a pattern is still produced so the
+			// retriever does not reject the scan as a full-log scan.
+			sql:       "select * from information_schema.cluster_log where message ilike '%error%'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"(?i:^.*error.*$)"},
+		},
+		{
+			// Same for an ILIKE carrying a non-default ESCAPE ('#%' is a literal '%').
+			sql:       "select * from information_schema.cluster_log where message ilike '%error#%%' escape '#'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"(?i:^.*error%.*$)"},
+		},
+		{
+			// In a DNF the scoped (?i:...) keeps the case-insensitive branch from
+			// leaking case folding onto the case-sensitive one across the '|'.
+			sql:       "select * from information_schema.cluster_log where (message ilike '%pd%' or message like '%tikv%')",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"(?i:^.*pd.*$)|^.*tikv.*$"},
+		},
+		{
+			// A case-sensitive LIKE still pushes down, honouring a custom ESCAPE
+			// so the pattern matches the predicate ('#%' is a literal '%').
+			sql:       "select * from information_schema.cluster_log where message like '%a#%b%' escape '#'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"^.*a%b.*$"},
 		},
 	}
 	for _, ca := range cases {
@@ -1640,6 +1733,7 @@ func TestColumns(t *testing.T) {
 		tableSchemaPattern []string
 		tableNamePattern   []string
 		skipRequest        bool
+		remained           string
 	}{
 		{
 			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where lower(column_name)=lower('T');`,
@@ -1677,27 +1771,41 @@ func TestColumns(t *testing.T) {
 		{
 			sql:              `select * from information_schema.COLUMNS where table_name like 'T%';`,
 			tableNamePattern: []string{"t%"},
+			remained:         "[like(Column#3, T%, 92)]",
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'T%';`,
 			columnNamePattern: []string{"t%"},
+			remained:          "[like(Column#4, T%, 92)]",
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'i%';`,
 			columnNamePattern: []string{"i%"},
+			remained:          "[like(Column#4, i%, 92)]",
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'abc%' or column_name like "def%";`,
 			columnNamePattern: []string{},
+			remained:          "[or(like(Column#4, abc%, 92), like(Column#4, def%, 92))]",
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'abc%' and column_name like "%def";`,
 			columnNamePattern: []string{"abc%", "%def"},
+			remained:          "[like(Column#4, abc%, 92) like(Column#4, %def, 92)]",
+		},
+		{
+			sql:               `select * from information_schema.COLUMNS where column_name ilike 'T%';`,
+			columnNamePattern: []string{"t%"},
 		},
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable, ok := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, ok, remained := getLogicalMemTableWithRemained(t, dom, se, parser, ca.sql)
+		if ca.remained == "" {
+			require.Empty(t, remained, ca.sql)
+		} else {
+			require.Equal(t, ca.remained, expression.StringifyExpressionsWithCtx(se.GetExprCtx().GetEvalCtx(), remained), ca.sql)
+		}
 		if ok {
 			require.NotNil(t, logicalMemTable.Extractor)
 
@@ -1795,6 +1903,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		prepared string
 		userVars []any
 		params   []any
+		filter   bool
 		checker  func(extractor base.MemTablePredicateExtractor)
 	}{
 		{
@@ -1834,6 +1943,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			prepared: "select * from information_schema.COLUMNS where table_name like ?",
 			userVars: []any{`"a%"`},
 			params:   []any{"a%"},
+			filter:   true,
 			checker: func(extractor base.MemTablePredicateExtractor) {
 				rse := extractor.(*plannercore.InfoSchemaColumnsExtractor)
 				require.EqualValues(t, []string{"a%"}, rse.LikePatterns["table_name"])
@@ -1875,7 +1985,13 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
-		extractor := plan.(*plannercore.Execute).Plan.(*physicalop.PhysicalMemTable).Extractor
+		inner := plan.(*plannercore.Execute).Plan
+		if ca.filter {
+			selection := inner.(*physicalop.PhysicalSelection)
+			require.Len(t, selection.Conditions, 1)
+			inner = selection.Children()[0]
+		}
+		extractor := inner.(*physicalop.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
 
@@ -1893,7 +2009,13 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		nodeW := resolve.NewNodeW(execStmt)
 		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
-		extractor := plan.(*plannercore.Execute).Plan.(*physicalop.PhysicalMemTable).Extractor
+		inner := plan.(*plannercore.Execute).Plan
+		if ca.filter {
+			selection := inner.(*physicalop.PhysicalSelection)
+			require.Len(t, selection.Conditions, 1)
+			inner = selection.Children()[0]
+		}
+		extractor := inner.(*physicalop.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
 }
@@ -1908,7 +2030,31 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 		skipRequest   bool
 		colPredicates map[string]set.StringSet
 		dual          bool
+		likePatterns  []string
+		remained      string
 	}{
+		{
+			sql:           `select * from information_schema.tables where table_name like 'T%';`,
+			colPredicates: map[string]set.StringSet{},
+			likePatterns:  []string{"t%"},
+			remained:      "[like(Column#3, T%, 92)]",
+		},
+		{
+			sql:           `select * from information_schema.tables where table_name like 't%';`,
+			colPredicates: map[string]set.StringSet{},
+			likePatterns:  []string{"t%"},
+			remained:      "[like(Column#3, t%, 92)]",
+		},
+		{
+			sql:           `select * from information_schema.tables where table_name collate utf8mb4_bin like 'T%';`,
+			colPredicates: map[string]set.StringSet{},
+			remained:      "[like(cast(Column#3, varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin), T%, 92)]",
+		},
+		{
+			sql:           `select * from information_schema.tables where table_name ilike 'T%';`,
+			colPredicates: map[string]set.StringSet{},
+			likePatterns:  []string{"t%"},
+		},
 		{
 			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_schema='test';`,
 			skipRequest: false,
@@ -2134,7 +2280,12 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable, ok := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, ok, remained := getLogicalMemTableWithRemained(t, dom, se, parser, ca.sql)
+		if ca.remained != "" {
+			require.Equal(t, ca.remained, expression.StringifyExpressionsWithCtx(se.GetExprCtx().GetEvalCtx(), remained), ca.sql)
+		} else if ca.likePatterns != nil {
+			require.Empty(t, remained, ca.sql)
+		}
 		if ca.dual {
 			require.False(t, ok, ca.sql)
 		} else {
@@ -2146,6 +2297,343 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 			require.True(t, ok)
 			require.Equal(t, ca.skipRequest, ex.GetBase().SkipRequest, "SQL: %v", ca.sql)
 			require.Equal(t, ca.colPredicates, ex.GetBase().ColPredicates, "SQL: %v", ca.sql)
+			require.Equal(t, ca.likePatterns, ex.GetBase().LikePatterns["table_name"], ca.sql)
+		}
+	}
+}
+
+func TestTiDBMViews(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+
+	var cases = []struct {
+		sql                string
+		tableSchema        set.StringSet
+		mviewName          set.StringSet
+		mviewID            set.StringSet
+		tableSchemaPattern []string
+		mviewNamePattern   []string
+		skipRequest        bool
+	}{
+		{
+			sql:         `select * from information_schema.tidb_mviews where table_schema='TEST';`,
+			tableSchema: set.NewStringSet("test"),
+		},
+		{
+			sql:       `select * from information_schema.tidb_mviews where mview_name='MV_TEST';`,
+			mviewName: set.NewStringSet("mv_test"),
+		},
+		{
+			sql:     `select * from information_schema.tidb_mviews where mview_id in (1, 2, 3);`,
+			mviewID: set.NewStringSet("1", "2", "3"),
+		},
+		{
+			sql:              `select * from information_schema.tidb_mviews where mview_name like 'MV%';`,
+			mviewNamePattern: []string{"mv%"},
+		},
+		{
+			sql:                `select * from information_schema.tidb_mviews where table_schema like 'TE%';`,
+			tableSchemaPattern: []string{"te%"},
+		},
+		{
+			sql:         `select * from information_schema.tidb_mviews where mview_id=1 and mview_id=2;`,
+			skipRequest: true,
+		},
+	}
+
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable, ok := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		if !ok {
+			require.True(t, ca.skipRequest, "SQL: %s", ca.sql)
+			continue
+		}
+		require.NotNil(t, logicalMemTable.Extractor)
+
+		mviewExtractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaTiDBMViewsExtractor)
+		require.Equal(t, ca.skipRequest, mviewExtractor.SkipRequest, "SQL: %v", ca.sql)
+
+		require.Equal(t, ca.tableSchema.Count(), mviewExtractor.ColPredicates["table_schema"].Count())
+		if ca.tableSchema.Count() > 0 && mviewExtractor.ColPredicates["table_schema"].Count() > 0 {
+			require.EqualValues(t, ca.tableSchema, mviewExtractor.ColPredicates["table_schema"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.mviewName.Count(), mviewExtractor.ColPredicates["mview_name"].Count())
+		if ca.mviewName.Count() > 0 && mviewExtractor.ColPredicates["mview_name"].Count() > 0 {
+			require.EqualValues(t, ca.mviewName, mviewExtractor.ColPredicates["mview_name"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.mviewID.Count(), mviewExtractor.ColPredicates["mview_id"].Count())
+		if ca.mviewID.Count() > 0 && mviewExtractor.ColPredicates["mview_id"].Count() > 0 {
+			require.EqualValues(t, ca.mviewID, mviewExtractor.ColPredicates["mview_id"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, len(ca.tableSchemaPattern), len(mviewExtractor.LikePatterns["table_schema"]))
+		if len(ca.tableSchemaPattern) > 0 && len(mviewExtractor.LikePatterns["table_schema"]) > 0 {
+			require.EqualValues(t, ca.tableSchemaPattern, mviewExtractor.LikePatterns["table_schema"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, len(ca.mviewNamePattern), len(mviewExtractor.LikePatterns["mview_name"]))
+		if len(ca.mviewNamePattern) > 0 && len(mviewExtractor.LikePatterns["mview_name"]) > 0 {
+			require.EqualValues(t, ca.mviewNamePattern, mviewExtractor.LikePatterns["mview_name"], "SQL: %v", ca.sql)
+		}
+	}
+}
+
+func TestTiDBMLogs(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+
+	var cases = []struct {
+		sql                  string
+		tableSchema          set.StringSet
+		mlogName             set.StringSet
+		mlogID               set.StringSet
+		baseTableSchema      set.StringSet
+		baseTableName        set.StringSet
+		baseTableID          set.StringSet
+		tableSchemaPattern   []string
+		mlogNamePattern      []string
+		baseTableNamePattern []string
+		skipRequest          bool
+	}{
+		{
+			sql:         `select * from information_schema.tidb_mlogs where table_schema='TEST';`,
+			tableSchema: set.NewStringSet("test"),
+		},
+		{
+			sql:      `select * from information_schema.tidb_mlogs where mlog_name='$MLOG$T';`,
+			mlogName: set.NewStringSet("$mlog$t"),
+		},
+		{
+			sql:    `select * from information_schema.tidb_mlogs where mlog_id in (1, 2, 3);`,
+			mlogID: set.NewStringSet("1", "2", "3"),
+		},
+		{
+			sql:             `select * from information_schema.tidb_mlogs where base_table_schema='TEST';`,
+			baseTableSchema: set.NewStringSet("test"),
+		},
+		{
+			sql:           `select * from information_schema.tidb_mlogs where base_table_name='T';`,
+			baseTableName: set.NewStringSet("t"),
+		},
+		{
+			sql:         `select * from information_schema.tidb_mlogs where base_table_id in ('10', '11');`,
+			baseTableID: set.NewStringSet("10", "11"),
+		},
+		{
+			sql:             `select * from information_schema.tidb_mlogs where mlog_name like '$MLOG$%';`,
+			mlogNamePattern: []string{"$mlog$%"},
+		},
+		{
+			sql:                  `select * from information_schema.tidb_mlogs where base_table_name like 'T%';`,
+			baseTableNamePattern: []string{"t%"},
+		},
+		{
+			sql:         `select * from information_schema.tidb_mlogs where base_table_id='1' and base_table_id='2';`,
+			skipRequest: true,
+		},
+	}
+
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable, ok := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		if !ok {
+			require.True(t, ca.skipRequest, "SQL: %s", ca.sql)
+			continue
+		}
+		require.NotNil(t, logicalMemTable.Extractor)
+
+		mlogExtractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaTiDBMLogsExtractor)
+		require.Equal(t, ca.skipRequest, mlogExtractor.SkipRequest, "SQL: %v", ca.sql)
+
+		require.Equal(t, ca.tableSchema.Count(), mlogExtractor.ColPredicates["table_schema"].Count())
+		if ca.tableSchema.Count() > 0 && mlogExtractor.ColPredicates["table_schema"].Count() > 0 {
+			require.EqualValues(t, ca.tableSchema, mlogExtractor.ColPredicates["table_schema"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.mlogName.Count(), mlogExtractor.ColPredicates["mlog_name"].Count())
+		if ca.mlogName.Count() > 0 && mlogExtractor.ColPredicates["mlog_name"].Count() > 0 {
+			require.EqualValues(t, ca.mlogName, mlogExtractor.ColPredicates["mlog_name"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.mlogID.Count(), mlogExtractor.ColPredicates["mlog_id"].Count())
+		if ca.mlogID.Count() > 0 && mlogExtractor.ColPredicates["mlog_id"].Count() > 0 {
+			require.EqualValues(t, ca.mlogID, mlogExtractor.ColPredicates["mlog_id"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.baseTableSchema.Count(), mlogExtractor.ColPredicates["base_table_schema"].Count())
+		if ca.baseTableSchema.Count() > 0 && mlogExtractor.ColPredicates["base_table_schema"].Count() > 0 {
+			require.EqualValues(t, ca.baseTableSchema, mlogExtractor.ColPredicates["base_table_schema"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.baseTableName.Count(), mlogExtractor.ColPredicates["base_table_name"].Count())
+		if ca.baseTableName.Count() > 0 && mlogExtractor.ColPredicates["base_table_name"].Count() > 0 {
+			require.EqualValues(t, ca.baseTableName, mlogExtractor.ColPredicates["base_table_name"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.baseTableID.Count(), mlogExtractor.ColPredicates["base_table_id"].Count())
+		if ca.baseTableID.Count() > 0 && mlogExtractor.ColPredicates["base_table_id"].Count() > 0 {
+			require.EqualValues(t, ca.baseTableID, mlogExtractor.ColPredicates["base_table_id"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, len(ca.tableSchemaPattern), len(mlogExtractor.LikePatterns["table_schema"]))
+		if len(ca.tableSchemaPattern) > 0 && len(mlogExtractor.LikePatterns["table_schema"]) > 0 {
+			require.EqualValues(t, ca.tableSchemaPattern, mlogExtractor.LikePatterns["table_schema"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, len(ca.mlogNamePattern), len(mlogExtractor.LikePatterns["mlog_name"]))
+		if len(ca.mlogNamePattern) > 0 && len(mlogExtractor.LikePatterns["mlog_name"]) > 0 {
+			require.EqualValues(t, ca.mlogNamePattern, mlogExtractor.LikePatterns["mlog_name"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, len(ca.baseTableNamePattern), len(mlogExtractor.LikePatterns["base_table_name"]))
+		if len(ca.baseTableNamePattern) > 0 && len(mlogExtractor.LikePatterns["base_table_name"]) > 0 {
+			require.EqualValues(t, ca.baseTableNamePattern, mlogExtractor.LikePatterns["base_table_name"], "SQL: %v", ca.sql)
+		}
+	}
+}
+
+func TestTiDBTableMViewDependencies(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+
+	var cases = []struct {
+		sql              string
+		tableSchema      set.StringSet
+		tableName        set.StringSet
+		tableID          set.StringSet
+		mlogName         set.StringSet
+		mlogID           set.StringSet
+		mviewSchema      set.StringSet
+		mviewName        set.StringSet
+		mviewID          set.StringSet
+		tableNamePattern []string
+		mlogNamePattern  []string
+		mviewNamePattern []string
+		skipRequest      bool
+	}{
+		{
+			sql:         `select * from information_schema.tidb_table_mview_dependencies where table_schema='TEST';`,
+			tableSchema: set.NewStringSet("test"),
+		},
+		{
+			sql:       `select * from information_schema.tidb_table_mview_dependencies where table_name='BASE_T';`,
+			tableName: set.NewStringSet("base_t"),
+		},
+		{
+			sql:     `select * from information_schema.tidb_table_mview_dependencies where table_id in (1, 2, 3);`,
+			tableID: set.NewStringSet("1", "2", "3"),
+		},
+		{
+			sql:      `select * from information_schema.tidb_table_mview_dependencies where mlog_name='$MLOG$T';`,
+			mlogName: set.NewStringSet("$mlog$t"),
+		},
+		{
+			sql:    `select * from information_schema.tidb_table_mview_dependencies where mlog_id in (10, 11);`,
+			mlogID: set.NewStringSet("10", "11"),
+		},
+		{
+			sql:         `select * from information_schema.tidb_table_mview_dependencies where mview_schema='TEST';`,
+			mviewSchema: set.NewStringSet("test"),
+		},
+		{
+			sql:       `select * from information_schema.tidb_table_mview_dependencies where mview_name='MV';`,
+			mviewName: set.NewStringSet("mv"),
+		},
+		{
+			sql:     `select * from information_schema.tidb_table_mview_dependencies where mview_id in ('10', '11');`,
+			mviewID: set.NewStringSet("10", "11"),
+		},
+		{
+			sql:              `select * from information_schema.tidb_table_mview_dependencies where table_name like 'BASE%';`,
+			tableNamePattern: []string{"base%"},
+		},
+		{
+			sql:             `select * from information_schema.tidb_table_mview_dependencies where mlog_name like '$MLOG$%';`,
+			mlogNamePattern: []string{"$mlog$%"},
+		},
+		{
+			sql:              `select * from information_schema.tidb_table_mview_dependencies where mview_name like 'MV%';`,
+			mviewNamePattern: []string{"mv%"},
+		},
+		{
+			sql:         `select * from information_schema.tidb_table_mview_dependencies where mview_id='1' and mview_id='2';`,
+			skipRequest: true,
+		},
+	}
+
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable, ok := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		if !ok {
+			require.True(t, ca.skipRequest, "SQL: %s", ca.sql)
+			continue
+		}
+		require.NotNil(t, logicalMemTable.Extractor)
+
+		depExtractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaTiDBTableMViewDependenciesExtractor)
+		require.Equal(t, ca.skipRequest, depExtractor.SkipRequest, "SQL: %v", ca.sql)
+
+		require.Equal(t, ca.tableSchema.Count(), depExtractor.ColPredicates["table_schema"].Count())
+		if ca.tableSchema.Count() > 0 && depExtractor.ColPredicates["table_schema"].Count() > 0 {
+			require.EqualValues(t, ca.tableSchema, depExtractor.ColPredicates["table_schema"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.tableName.Count(), depExtractor.ColPredicates["table_name"].Count())
+		if ca.tableName.Count() > 0 && depExtractor.ColPredicates["table_name"].Count() > 0 {
+			require.EqualValues(t, ca.tableName, depExtractor.ColPredicates["table_name"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.tableID.Count(), depExtractor.ColPredicates["table_id"].Count())
+		if ca.tableID.Count() > 0 && depExtractor.ColPredicates["table_id"].Count() > 0 {
+			require.EqualValues(t, ca.tableID, depExtractor.ColPredicates["table_id"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.mlogName.Count(), depExtractor.ColPredicates["mlog_name"].Count())
+		if ca.mlogName.Count() > 0 && depExtractor.ColPredicates["mlog_name"].Count() > 0 {
+			require.EqualValues(t, ca.mlogName, depExtractor.ColPredicates["mlog_name"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.mlogID.Count(), depExtractor.ColPredicates["mlog_id"].Count())
+		if ca.mlogID.Count() > 0 && depExtractor.ColPredicates["mlog_id"].Count() > 0 {
+			require.EqualValues(t, ca.mlogID, depExtractor.ColPredicates["mlog_id"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.mviewSchema.Count(), depExtractor.ColPredicates["mview_schema"].Count())
+		if ca.mviewSchema.Count() > 0 && depExtractor.ColPredicates["mview_schema"].Count() > 0 {
+			require.EqualValues(t, ca.mviewSchema, depExtractor.ColPredicates["mview_schema"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.mviewName.Count(), depExtractor.ColPredicates["mview_name"].Count())
+		if ca.mviewName.Count() > 0 && depExtractor.ColPredicates["mview_name"].Count() > 0 {
+			require.EqualValues(t, ca.mviewName, depExtractor.ColPredicates["mview_name"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.mviewID.Count(), depExtractor.ColPredicates["mview_id"].Count())
+		if ca.mviewID.Count() > 0 && depExtractor.ColPredicates["mview_id"].Count() > 0 {
+			require.EqualValues(t, ca.mviewID, depExtractor.ColPredicates["mview_id"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, len(ca.tableNamePattern), len(depExtractor.LikePatterns["table_name"]))
+		if len(ca.tableNamePattern) > 0 && len(depExtractor.LikePatterns["table_name"]) > 0 {
+			require.EqualValues(t, ca.tableNamePattern, depExtractor.LikePatterns["table_name"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, len(ca.mlogNamePattern), len(depExtractor.LikePatterns["mlog_name"]))
+		if len(ca.mlogNamePattern) > 0 && len(depExtractor.LikePatterns["mlog_name"]) > 0 {
+			require.EqualValues(t, ca.mlogNamePattern, depExtractor.LikePatterns["mlog_name"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, len(ca.mviewNamePattern), len(depExtractor.LikePatterns["mview_name"]))
+		if len(ca.mviewNamePattern) > 0 && len(depExtractor.LikePatterns["mview_name"]) > 0 {
+			require.EqualValues(t, ca.mviewNamePattern, depExtractor.LikePatterns["mview_name"], "SQL: %v", ca.sql)
 		}
 	}
 }

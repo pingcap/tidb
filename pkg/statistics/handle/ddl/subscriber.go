@@ -66,28 +66,10 @@ func (h subscriber) handle(
 		}
 	case model.ActionTruncateTable:
 		newTableInfo, droppedTableInfo := change.GetTruncateTableInfo()
-		ids, err := getPhysicalIDs(sctx, newTableInfo)
-		if err != nil {
-			return err
-		}
-		for _, id := range ids {
-			err = h.insertStats4PhysicalID(ctx, sctx, newTableInfo, id)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-
-		// Remove the old table stats.
-		droppedIDs, err2 := getPhysicalIDs(sctx, droppedTableInfo)
-		if err2 != nil {
-			return err2
-		}
-		for _, id := range droppedIDs {
-			err2 = h.delayedDeleteStats4PhysicalID(ctx, sctx, id)
-			if err2 != nil {
-				return errors.Trace(err2)
-			}
-		}
+		return errors.Trace(h.handleTruncateLikeEvent(ctx, sctx, newTableInfo, droppedTableInfo))
+	case model.ActionMViewRefreshOutOfPlaceCutover:
+		newTableInfo, droppedTableInfo := change.GetMViewRefreshOutOfPlaceCutoverInfo()
+		return errors.Trace(h.handleTruncateLikeEvent(ctx, sctx, newTableInfo, droppedTableInfo))
 	case model.ActionDropTable:
 		droppedTableInfo := change.GetDropTableInfo()
 		ids, err := getPhysicalIDs(sctx, droppedTableInfo)
@@ -250,11 +232,30 @@ func (h subscriber) handle(
 		return errors.Trace(storage.UpdateStatsVersion(ctx, sctx))
 	case model.ActionAddIndex:
 		// No need to update the stats meta for the adding index event.
+	case model.ActionAlterMaterializedViewRefresh,
+		model.ActionAlterMaterializedViewAttributes,
+		model.ActionAlterMaterializedViewLogPurge,
+		model.ActionCreateMaterializedViewLog,
+		model.ActionCreateMaterializedView:
+		// MV DDL updates metadata only and does not change table data or partition topology.
 	case model.ActionDropSchema:
 		miniDBInfo := change.GetDropSchemaInfo()
 		intest.Assert(miniDBInfo != nil)
 		for _, table := range miniDBInfo.Tables {
-			// Try best effort to update the stats meta version for gc.
+			// Partition stats are keyed by partition physical IDs, so update them separately for stats GC.
+			for _, partition := range table.Partitions {
+				if err := h.delayedDeleteStats4PhysicalID(ctx, sctx, partition.ID); err != nil {
+					logutil.StatsLogger().Error(
+						"Failed to update stats meta version for gc",
+						zap.Int64("partitionID", partition.ID),
+						zap.Int64("tableID", table.ID),
+						zap.Error(err),
+					)
+				}
+			}
+			// Best effort: update the table stats meta version for GC.
+			// In static partition pruning mode, the underlying UPDATE is a no-op if
+			// the global table stats record does not exist.
 			if err := h.delayedDeleteStats4PhysicalID(ctx, sctx, table.ID); err != nil {
 				logutil.StatsLogger().Error(
 					"Failed to update stats meta version for gc",
@@ -267,6 +268,37 @@ func (h subscriber) handle(
 		intest.Assert(false)
 		logutil.StatsLogger().Error("Unhandled schema change event",
 			zap.Stringer("type", change))
+	}
+	return nil
+}
+
+func (h subscriber) handleTruncateLikeEvent(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	newTableInfo *model.TableInfo,
+	droppedTableInfo *model.TableInfo,
+) error {
+	ids, err := getPhysicalIDs(sctx, newTableInfo)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		err = h.insertStats4PhysicalID(ctx, sctx, newTableInfo, id)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	// Remove the old table stats.
+	droppedIDs, err2 := getPhysicalIDs(sctx, droppedTableInfo)
+	if err2 != nil {
+		return err2
+	}
+	for _, id := range droppedIDs {
+		err2 = h.delayedDeleteStats4PhysicalID(ctx, sctx, id)
+		if err2 != nil {
+			return errors.Trace(err2)
+		}
 	}
 	return nil
 }

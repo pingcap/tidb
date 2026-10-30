@@ -23,7 +23,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/server/internal"
+	"github.com/pingcap/tidb/pkg/server/internal/packetio"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/arena"
@@ -37,7 +37,7 @@ func TestRcReadCheckTSConflict(t *testing.T) {
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
-		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:        packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -86,7 +86,7 @@ func TestRcReadCheckTSConflictExtra(t *testing.T) {
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
-		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:        packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

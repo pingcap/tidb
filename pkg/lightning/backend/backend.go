@@ -22,7 +22,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/importdef"
@@ -30,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -95,16 +93,12 @@ type EngineConfig struct {
 	TableInfo *importdef.TableInfo
 	// local backend specified configuration
 	Local LocalEngineConfig
-	// local backend external engine specified configuration
-	External *ExternalEngineConfig
 	// KeepSortDir indicates whether to keep the temporary sort directory
 	// when opening the engine, instead of removing it.
 	KeepSortDir bool
 	// TS is the preset timestamp of data in the engine. When it's 0, the used TS
 	// will be set lazily. This is used by local backend. This field will be written
-	// to engineMeta.TS and take effect in below cases:
-	// - engineManager.openEngine
-	// - engineManager.closeEngine only for an external engine
+	// to engineMeta.TS in engineManager.openEngine.
 	TS uint64
 }
 
@@ -119,28 +113,6 @@ type LocalEngineConfig struct {
 
 	// blocksize
 	BlockSize int
-}
-
-// ExternalEngineConfig is the configuration used for local backend external engine.
-type ExternalEngineConfig struct {
-	ExtStore  storeapi.Storage
-	DataFiles []string
-	StatFiles []string
-	StartKey  []byte
-	EndKey    []byte
-	JobKeys   [][]byte
-	SplitKeys [][]byte
-	// TotalFileSize can be an estimated value.
-	TotalFileSize int64
-	// TotalKVCount can be an estimated value.
-	TotalKVCount int64
-	CheckHotspot bool
-	// MemCapacity is the memory capacity for the whole subtask.
-	MemCapacity int64
-	// OnDup is the action when a duplicate key is found during global sort.
-	OnDup engineapi.OnDuplicateKey
-	// this is the prefix of files recording conflicted KVs
-	FilePrefix string
 }
 
 // CheckCtx contains all parameters used in CheckRequirements

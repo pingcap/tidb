@@ -18,17 +18,19 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"net"
 	"net/http"
 	"path/filepath"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/extstore"
-	"github.com/pingcap/tidb/pkg/server/internal"
+	"github.com/pingcap/tidb/pkg/server/internal/packetio"
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
@@ -36,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/stretchr/testify/require"
 	uatomic "go.uber.org/atomic"
@@ -52,6 +55,8 @@ func (*testStandbyController) Handler(*Server) (string, *http.ServeMux) {
 }
 
 func (*testStandbyController) OnConnActive() {}
+
+func (*testStandbyController) PrepareForActivation(StandbyReadyServer) error { return nil }
 
 func (*testStandbyController) OnServerCreated(*Server) {}
 
@@ -89,7 +94,7 @@ func TestIssue46197(t *testing.T) {
 
 	// clientConn setup
 	brc := util.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
-	pkt := internal.NewPacketIO(brc)
+	pkt := packetio.New(brc)
 	pkt.SetBufWriter(bufio.NewWriter(bytes.NewBuffer(nil)))
 	cc := &clientConn{
 		server:     server,
@@ -125,7 +130,7 @@ func TestGetConAttrs(t *testing.T) {
 		server:     server,
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
-		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:        packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		attrs: map[string]string{
 			"_client_name": "tidb_test",
 		},
@@ -159,7 +164,7 @@ func TestGetConAttrs(t *testing.T) {
 			server:       server,
 			alloc:        arena.NewAllocator(1024),
 			chunkAlloc:   chunk.NewAllocator(),
-			pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+			pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 			attrs: map[string]string{
 				tidbGatewayAttrsConnKey: gwConnID,
 			},
@@ -209,6 +214,80 @@ func TestSeverHealth(t *testing.T) {
 	require.True(t, server.health.Load(), "server should be healthy")
 }
 
+func TestInitTiDBListenerIsIdempotent(t *testing.T) {
+	originalRunInGoTest := RunInGoTest
+	RunInGoTest = true
+	t.Cleanup(func() {
+		RunInGoTest = originalRunInGoTest
+	})
+
+	socketDir := t.TempDir()
+
+	cfg := util.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.ReportStatus = false
+	cfg.Socket = filepath.Join(socketDir, "normal.sock")
+	svr := NewTestServer(cfg)
+	t.Cleanup(svr.Close)
+
+	require.NoError(t, svr.initTiDBListener())
+	require.NotNil(t, svr.Listener())
+	require.NotNil(t, svr.Socket())
+	listenAddr := svr.Listener().Addr().String()
+
+	require.NoError(t, svr.initTiDBListener())
+	require.Equal(t, listenAddr, svr.Listener().Addr().String())
+	require.NotNil(t, svr.Socket())
+
+	t.Run("diagnostic skip grant", func(t *testing.T) {
+		if !intest.InTest {
+			t.Skip("diagnosticmode.SetForTest requires the intest build tag")
+		}
+		t.Cleanup(diagnosticmode.SetForTest(true))
+
+		t.Run("socket only", func(t *testing.T) {
+			cfg := util.NewTestConfig()
+			cfg.Security.SkipGrantTable = true
+			cfg.Port = 0
+			cfg.Socket = filepath.Join(socketDir, "diagnostic.sock")
+			svr := NewTestServer(cfg)
+			t.Cleanup(svr.Close)
+
+			require.NoError(t, svr.initTiDBListener())
+			require.Nil(t, svr.Listener())
+			require.NotNil(t, svr.Socket())
+			socket := svr.Socket()
+			require.NoError(t, svr.initTiDBListener())
+			require.Nil(t, svr.Listener())
+			require.Same(t, socket, svr.Socket())
+			require.Zero(t, cfg.Port)
+		})
+
+		for _, name := range []string{"configured TCP", "existing TCP listener", "missing socket"} {
+			t.Run(name, func(t *testing.T) {
+				cfg := util.NewTestConfig()
+				cfg.Security.SkipGrantTable = true
+				cfg.Port = 0
+				cfg.Socket = filepath.Join(socketDir, "diagnostic.sock")
+				svr := NewTestServer(cfg)
+				t.Cleanup(svr.Close)
+				switch name {
+				case "configured TCP":
+					cfg.Port = 4000
+				case "existing TCP listener":
+					var err error
+					svr.listener, err = net.Listen("tcp", "127.0.0.1:0")
+					require.NoError(t, err)
+				case "missing socket":
+					cfg.Socket = ""
+				}
+				require.ErrorContains(t, svr.initTiDBListener(), "requires a Unix socket and no MySQL TCP listener")
+				require.Nil(t, svr.Socket())
+			})
+		}
+	})
+}
+
 func TestServerShutdownFlags(t *testing.T) {
 	svr := NewTestServer(util.NewTestConfig())
 	require.False(t, svr.GetForceShutdown())
@@ -235,6 +314,8 @@ func (c *mockStandbyController) Handler(_ *Server) (string, *http.ServeMux) {
 }
 
 func (c *mockStandbyController) OnConnActive() {}
+
+func (c *mockStandbyController) PrepareForActivation(StandbyReadyServer) error { return nil }
 
 func (c *mockStandbyController) OnServerCreated(_ *Server) {}
 

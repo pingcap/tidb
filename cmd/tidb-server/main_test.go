@@ -15,18 +15,25 @@
 package main
 
 import (
+	"context"
 	"os"
 	"syscall"
 	"testing"
+	"time"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
 	"go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
 )
@@ -85,13 +92,40 @@ func TestOverrideConfigKeyspaceActivateMode(t *testing.T) {
 	fset := initFlagSet()
 	require.NoError(t, fset.Parse([]string{
 		"--keyspace-activate=true",
-		"--starter-additional-params=pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1",
+		"--starter-additional-params=pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1,enable-rg-fallback=true",
 	}))
 
 	cfg := config.NewConfig()
+	cfg.DeployMode = deploymode.Starter
 	overrideConfig(cfg, fset)
 	require.True(t, cfg.KeyspaceActivateMode)
-	require.Equal(t, "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1", *starterAdditionalParams)
+	require.True(t, cfg.StarterParams.EnableRGFallback)
+	require.Equal(t, "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1,enable-rg-fallback=true", *starterAdditionalParams)
+}
+
+func TestDiagnosticModeFlag(t *testing.T) {
+	originalArgs := os.Args
+	originalDiagnosticMode := diagnosticMode
+	os.Args = []string{"tidb-server"}
+	t.Cleanup(func() {
+		os.Args = originalArgs
+		diagnosticMode = originalDiagnosticMode
+	})
+
+	for _, testCase := range []struct {
+		name     string
+		argument string
+		expected bool
+	}{
+		{name: "enable", argument: "--diagnostic-mode", expected: true},
+		{name: "disable", argument: "--diagnostic-mode=false", expected: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			fset := initFlagSet()
+			require.NoError(t, fset.Parse([]string{testCase.argument}))
+			require.Equal(t, testCase.expected, *diagnosticMode)
+		})
+	}
 }
 
 func TestSetGlobalVars(t *testing.T) {
@@ -182,6 +216,50 @@ func TestInitDeployMode(t *testing.T) {
 	})
 }
 
+type gcv2InitManager struct {
+	extworkload.Manager
+	gcLifeTime time.Duration
+	initCnt    int
+}
+
+func (m *gcv2InitManager) Role() config.ExternalWorkloadRole {
+	return config.RoleMaster
+}
+
+func (*gcv2InitManager) Meta() *keyspacepb.KeyspaceMeta {
+	return &keyspacepb.KeyspaceMeta{
+		Config: map[string]string{
+			pd.KeyspaceConfigGCManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel,
+		},
+	}
+}
+
+func (m *gcv2InitManager) InitializeGCV2(_ context.Context, gcLifeTime time.Duration) error {
+	m.initCnt++
+	m.gcLifeTime = gcLifeTime
+	return nil
+}
+
+func TestInitializeExternalWorkloadGCV2UsesEffectiveGCLifeTime(t *testing.T) {
+	t.Cleanup(diagnosticmode.SetForTest(false))
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_gc_life_time = '24h'")
+
+	mgr := &gcv2InitManager{}
+	initializeExternalWorkloadGCV2(context.Background(), store, mgr)
+
+	require.Equal(t, 1, mgr.initCnt)
+	require.Equal(t, 24*time.Hour, mgr.gcLifeTime)
+
+	t.Run("diagnostic mode", func(t *testing.T) {
+		t.Cleanup(diagnosticmode.SetForTest(true))
+		diagnosticMgr := &gcv2InitManager{}
+		initializeExternalWorkloadGCV2(context.Background(), store, diagnosticMgr)
+		require.Zero(t, diagnosticMgr.initCnt)
+	})
+}
+
 func TestCreateMgrClientRequiresPodIdentityInStarter(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("only for nextgen kernel")
@@ -216,6 +294,11 @@ func TestCreateMgrClientRequiresPodIdentityInStarter(t *testing.T) {
 	starterAdditionalParams = &unknownParam
 	_, err = createMgrClientForStarter()
 	require.ErrorContains(t, err, `unknown starter additional param "unknown"`)
+
+	invalidBoolParam := "enable-rg-fallback=definitely"
+	starterAdditionalParams = &invalidBoolParam
+	_, err = createMgrClientForStarter()
+	require.ErrorContains(t, err, `starter additional param "enable-rg-fallback" must be a bool`)
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.StarterParams.ManagerAddr = ""

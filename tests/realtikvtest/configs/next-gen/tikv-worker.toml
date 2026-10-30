@@ -6,6 +6,12 @@ s3-secret-key = "minioadmin"
 s3-bucket = "next-gen-test"
 s3-region = "local"
 
+[schema-manager]
+enabled = true
+dir = "/tmp/tidb-realtikvtest-schemas"
+keyspace-refresh-interval = "500ms"
+schema-refresh-threshold = 1
+
 [ia]
 mem-cap = "5GB"   # or "10%"
 disk-cap = "20GB" # or "20%"

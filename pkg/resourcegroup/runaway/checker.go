@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -90,6 +91,11 @@ func NewChecker(
 
 // DeriveChecker derives a RunawayChecker from the given resource group
 func (rm *Manager) DeriveChecker(resourceGroupName, originalSQL, sqlDigest, planDigest string, startTime time.Time) *Checker {
+	// Diagnostic queries must not enforce runaway rules or produce records for
+	// the disabled background flush loop.
+	if diagnosticmode.Enabled() {
+		return nil
+	}
 	group, err := rm.ResourceGroupCtl.GetResourceGroup(resourceGroupName)
 	if err != nil || group == nil {
 		logutil.BgLogger().Warn("cannot setup up runaway checker", zap.Error(err))

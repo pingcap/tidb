@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -28,11 +29,15 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	meter_config "github.com/pingcap/metering_sdk/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -129,7 +134,10 @@ func TestLogConfig(t *testing.T) {
 		require.Equal(t, expectedDisableErrorStack, conf.Log.DisableErrorStack)
 		require.Equal(t, expectedEnableTimestamp, conf.Log.EnableTimestamp)
 		require.Equal(t, expectedDisableTimestamp, conf.Log.DisableTimestamp)
-		require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", "", conf.Log.File, resultedDisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = resultedDisableErrorVerbose }), conf.Log.ToLogConfig())
+		require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", "", conf.Log.File, resultedDisableTimestamp,
+			func(config *zaplog.Config) { config.DisableErrorVerbose = resultedDisableErrorVerbose },
+			func(config *zaplog.Config) { config.TimeoutAction = conf.Log.TimeoutAction },
+		), conf.Log.ToLogConfig())
 		err := f.Truncate(0)
 		require.NoError(t, err)
 		_, err = f.Seek(0, 0)
@@ -168,6 +176,113 @@ disable-timestamp = true
 enable-error-stack = false
 disable-error-stack = false
 `, nbFalse, nbUnset, nbUnset, nbUnset, false, true)
+}
+
+func TestLogTimeoutAction(t *testing.T) {
+	conf := NewConfig()
+	require.Equal(t, zaplog.LogTimeoutActionPanic, conf.Log.TimeoutAction)
+	require.NoError(t, conf.Valid())
+	require.Equal(t, zaplog.LogTimeoutActionPanic, conf.Log.ToLogConfig().TimeoutAction)
+
+	conf.Log.TimeoutAction = zaplog.LogTimeoutActionDiscard
+	require.NoError(t, conf.Valid())
+	require.Equal(t, zaplog.LogTimeoutActionDiscard, conf.Log.ToLogConfig().TimeoutAction)
+
+	conf.Log.TimeoutAction = "DISCARD"
+	require.NoError(t, conf.Valid())
+	require.Equal(t, zaplog.LogTimeoutActionDiscard, conf.Log.TimeoutAction)
+
+	conf.Log.TimeoutAction = "invalid"
+	require.EqualError(t, conf.Valid(), "log.timeout-action should be one of [panic, discard]")
+}
+
+func TestErrorMessageExtensionConfig(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+error-msg-extension = [
+  { pattern = "^Access denied for user '.+'@'.+' \\(using password: (YES|NO)\\)$", suffix = "see https://docs.pingcap.com/tidbcloud/select-cluster-tier#user-name-prefix for more details" },
+  { pattern = "^require_secure_transport can not be set to ON with SEM\\(security enhanced mode\\) enabled$", suffix = "see https://docs.pingcap.com/tidbcloud/secure-connections-to-serverless-tier-clusters for more details" },
+  { pattern = "^sleep\\(\\) argument is greater than [0-9]+$", suffix = "see https://docs.pingcap.com/tidbcloud/serverless-tier-limitations#sql for more details" },
+  { pattern = "^[A-Z ]+ command denied to user '[^']+'@'[^']+' for table '[^']+'$", suffix = "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-tables for more details" },
+  { pattern = "^Access denied; you need \\(at least one of\\) the RESTRICTED_VARIABLES_ADMIN privilege\\(s\\) for this operation$", suffix = "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-variables for more details" },
+  { pattern = "^Feature '.+' is not supported when security enhanced mode is enabled$", suffix = "see https://docs.pingcap.com/tidbcloud/limited-sql-features#statements for more details" },
+]
+`), 0644))
+
+	conf := NewConfig()
+	conf.DeployMode = deploymode.Starter
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, []ErrorMessageExtension{
+		{Pattern: `^Access denied for user '.+'@'.+' \(using password: (YES|NO)\)$`, Suffix: "see https://docs.pingcap.com/tidbcloud/select-cluster-tier#user-name-prefix for more details"},
+		{Pattern: `^require_secure_transport can not be set to ON with SEM\(security enhanced mode\) enabled$`, Suffix: "see https://docs.pingcap.com/tidbcloud/secure-connections-to-serverless-tier-clusters for more details"},
+		{Pattern: `^sleep\(\) argument is greater than [0-9]+$`, Suffix: "see https://docs.pingcap.com/tidbcloud/serverless-tier-limitations#sql for more details"},
+		{Pattern: `^[A-Z ]+ command denied to user '[^']+'@'[^']+' for table '[^']+'$`, Suffix: "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-tables for more details"},
+		{Pattern: `^Access denied; you need \(at least one of\) the RESTRICTED_VARIABLES_ADMIN privilege\(s\) for this operation$`, Suffix: "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-variables for more details"},
+		{Pattern: `^Feature '.+' is not supported when security enhanced mode is enabled$`, Suffix: "see https://docs.pingcap.com/tidbcloud/limited-sql-features#statements for more details"},
+	}, conf.ErrorMessageExtensions)
+
+	require.Empty(t, NewConfig().ErrorMessageExtensions)
+
+	originGlobalConfig := GetGlobalConfig()
+	StoreGlobalConfig(conf)
+	t.Cleanup(func() {
+		StoreGlobalConfig(originGlobalConfig)
+	})
+	preparedExtensions := GetErrorMessageExtensions()
+	require.NotEmpty(t, preparedExtensions)
+	preparedExtensions[0].Suffix = ""
+	require.NotEmpty(t, GetErrorMessageExtensions()[0].Suffix)
+}
+
+func TestErrorMessageExtensionInvalidRegexp(t *testing.T) {
+	conf := NewConfig()
+	conf.DeployMode = deploymode.Starter
+	conf.ErrorMessageExtensions = []ErrorMessageExtension{
+		{Pattern: "[", Suffix: "invalid regexp"},
+	}
+	require.ErrorContains(t, conf.Valid(), "invalid error-msg-extension regexp")
+
+	conf = NewConfig()
+	conf.DeployMode = deploymode.Starter
+	conf.ErrorMessageExtensions = []ErrorMessageExtension{
+		{Pattern: " \t", Suffix: "missing pattern"},
+	}
+	require.ErrorContains(t, conf.Valid(), "empty error-msg-extension pattern")
+
+	conf = NewConfig()
+	conf.ErrorMessageExtensions = []ErrorMessageExtension{
+		{Pattern: ".*", Suffix: "not allowed"},
+	}
+	require.ErrorContains(t, conf.Valid(), "error-msg-extension can only be configured when deploy-mode is starter")
+
+	configFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+error-msg-extension = [
+  { pattern = ".*", suffix = "not allowed" },
+]
+`), 0644))
+	conf = NewConfig()
+	require.ErrorContains(t, conf.Load(configFile), "error-msg-extension can only be configured when deploy-mode is starter")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+error-msg-extension = [
+  { suffix = "missing pattern" },
+]
+`), 0644))
+	conf = NewConfig()
+	conf.DeployMode = deploymode.Starter
+	require.NoError(t, conf.Load(configFile))
+	require.ErrorContains(t, conf.Valid(), "empty error-msg-extension pattern")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+error-msg-extension = [
+  { pattern = "", suffix = "empty pattern" },
+]
+`), 0644))
+	conf = NewConfig()
+	conf.DeployMode = deploymode.Starter
+	require.NoError(t, conf.Load(configFile))
+	require.ErrorContains(t, conf.Valid(), "empty error-msg-extension pattern")
 }
 
 func TestKeyspaceObservability(t *testing.T) {
@@ -868,8 +983,163 @@ engines = ["tikv", "tiflash", "tidb"]
 	require.NoError(t, err)
 }
 
+func TestEnableStorageClassConfig(t *testing.T) {
+	require.False(t, NewConfig().EnableStorageClass)
+	for _, tt := range []struct {
+		name    string
+		content string
+		initial bool
+		want    bool
+	}{
+		{name: "missing"},
+		{name: "enabled", content: "enable-storage-class = true", want: true},
+		{name: "disabled", content: "enable-storage-class = false", initial: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			configFile := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(configFile, []byte(tt.content), 0600))
+			conf := NewConfig()
+			conf.EnableStorageClass = tt.initial
+			require.NoError(t, conf.Load(configFile))
+			require.Equal(t, tt.want, conf.EnableStorageClass)
+
+			data, err := json.Marshal(conf)
+			require.NoError(t, err)
+			var settings map[string]any
+			require.NoError(t, json.Unmarshal(data, &settings))
+			require.Equal(t, tt.want, settings["enable-storage-class"])
+		})
+	}
+}
+
 func TestConfig(t *testing.T) {
-	conf := new(Config)
+	t.Run("cross AZ weight is not configurable", func(t *testing.T) {
+		conf := NewConfig()
+		_, err := toml.Decode("[ru-v2.stmt-weights]\nCrossAZNetByte = 2\ncross-az-net-byte = 2\n", conf)
+		require.NoError(t, err)
+		require.Zero(t, conf.RUV2.StmtWeights.CrossAZNetByte)
+		require.NoError(t, json.Unmarshal([]byte(`{"ru-v2":{"stmt-weights":{"CrossAZNetByte":2,"cross-az-net-byte":2}}}`), conf))
+		require.Zero(t, conf.RUV2.StmtWeights.CrossAZNetByte)
+		conf.RUV2.StmtWeights.CrossAZNetByte = 2
+		data, err := json.Marshal(conf.RUV2.StmtWeights)
+		require.NoError(t, err)
+		require.NotContains(t, string(data), "CrossAZ")
+		require.NotContains(t, string(data), "cross-az")
+		var encoded bytes.Buffer
+		require.NoError(t, toml.NewEncoder(&encoded).Encode(conf.RUV2.StmtWeights))
+		require.NotContains(t, encoded.String(), "CrossAZ")
+		require.NotContains(t, encoded.String(), "cross-az")
+	})
+
+	t.Run("RU v2 statement weights", func(t *testing.T) {
+		field, ok := reflect.TypeOf(RUV2Config{}).FieldByName("StmtWeights")
+		require.True(t, ok)
+		require.True(t, field.Anonymous)
+		require.Equal(t, reflect.TypeOf(ruv2.StmtWeights{}), field.Type)
+		require.Equal(t, "stmt-weights", field.Tag.Get("toml"))
+		require.Equal(t, "stmt-weights", field.Tag.Get("json"))
+
+		require.Equal(t, ruv2.DefaultWeights(), NewConfig().RUV2.StmtWeights)
+
+		want := ruv2.StmtWeights{
+			CPUWork: 2, ScanByte: 3, NetByte: 5, FrontendCompileByte: 7,
+			HashStateRow: 11, JoinOutputRow: 13, WriteStatement: 17,
+			OperatorNum: 19, WriteKey: 23, WriteByte: 29,
+		}
+		conf := NewConfig()
+		meta, err := toml.Decode(`
+[ru-v2.stmt-weights]
+cpu-work = 2
+scan-byte = 3
+net-byte = 5
+frontend-compile-byte = 7
+hash-state-row = 11
+join-output-row = 13
+write-statement = 17
+operator-num = 19
+write-key = 23
+write-byte = 29
+`, conf)
+		require.NoError(t, err)
+		require.Empty(t, meta.Undecoded())
+		require.Equal(t, want, conf.RUV2.StmtWeights)
+
+		conf = NewConfig()
+		require.NoError(t, json.Unmarshal([]byte(`{
+			"ru-v2": {
+				"stmt-weights": {
+					"cpu-work": 2,
+					"scan-byte": 3,
+					"net-byte": 5,
+					"frontend-compile-byte": 7,
+					"hash-state-row": 11,
+					"join-output-row": 13,
+					"write-statement": 17,
+					"operator-num": 19,
+					"write-key": 23,
+					"write-byte": 29
+				}
+			}
+		}`), conf))
+		require.Equal(t, want, conf.RUV2.StmtWeights)
+
+		conf.RUV2.StmtWeights.CPUWork = -1
+		require.EqualError(t, conf.Valid(), "ru-v2.stmt-weights.cpu-work must be finite and non-negative, got -1")
+	})
+
+	t.Run("RU report mode", func(t *testing.T) {
+		require.Equal(t, RUReportModeResult, NewConfig().RUV2.ReportMode)
+		for _, mode := range []string{RUReportModeResult, RUReportModeFull} {
+			conf := NewConfig()
+			path := filepath.Join(t.TempDir(), "ru.toml")
+			require.NoError(t, os.WriteFile(path, []byte("[ru-v2]\nreport-mode = \""+mode+"\"\n"), 0600))
+			require.NoError(t, conf.Load(path))
+			require.NoError(t, conf.Valid())
+			require.Equal(t, mode, conf.RUV2.ReportMode)
+		}
+		for _, mode := range []string{"", "FULL", "invalid"} {
+			conf := NewConfig()
+			conf.RUV2.ReportMode = mode
+			require.ErrorContains(t, conf.Valid(), "invalid ru-v2.report-mode")
+		}
+	})
+	t.Run("DDL RU weights", func(t *testing.T) {
+		conf := NewConfig()
+		require.Equal(t, float64(1), conf.RUV2.DDLWeights.TxnKVBytes)
+		require.Equal(t, float64(1), conf.RUV2.DDLWeights.IngestKVBytes)
+
+		path := filepath.Join(t.TempDir(), "ru.toml")
+		require.NoError(t, os.WriteFile(path, []byte(`[ru-v2.ddl-weights]
+txn-kv-bytes = 2
+ingest-kv-bytes = 3
+`), 0600))
+		require.NoError(t, conf.Load(path))
+		require.NoError(t, conf.Valid())
+		require.Equal(t, float64(2), conf.RUV2.DDLWeights.TxnKVBytes)
+		require.Equal(t, float64(3), conf.RUV2.DDLWeights.IngestKVBytes)
+
+		encoded, err := json.Marshal(conf.RUV2.DDLWeights)
+		require.NoError(t, err)
+		require.JSONEq(t, `{"txn-kv-bytes":2,"ingest-kv-bytes":3}`, string(encoded))
+
+		for _, invalid := range []float64{-1, math.NaN(), math.Inf(1)} {
+			conf := NewConfig()
+			conf.RUV2.DDLWeights.TxnKVBytes = invalid
+			require.ErrorContains(t, conf.Valid(), "ru-v2.ddl-weights.txn-kv-bytes")
+
+			conf = NewConfig()
+			conf.RUV2.DDLWeights.IngestKVBytes = invalid
+			require.ErrorContains(t, conf.Valid(), "ru-v2.ddl-weights.ingest-kv-bytes")
+		}
+	})
+	require.Equal(t, 15, NewConfig().GracefulCloseConnectionsTimeout)
+	conf := NewConfig()
+	conf.GracefulCloseConnectionsTimeout = 0
+	require.NoError(t, conf.Valid())
+	conf.GracefulCloseConnectionsTimeout = -1
+	require.ErrorContains(t, conf.Valid(), "graceful-close-connections-timeout")
+
+	conf = new(Config)
 	conf.TempStoragePath = tempStorageDirName
 	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
@@ -877,6 +1147,26 @@ func TestConfig(t *testing.T) {
 	conf.Instance.EnableSlowLog.Store(logutil.DefaultTiDBEnableSlowLog)
 	storeDir := t.TempDir()
 	configFile := filepath.Join(storeDir, "config.toml")
+	hostedEmbeddingErr := "hosted-embedding can only be configured for starter deploy mode"
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`[hosted-embedding]`), 0644))
+	conf = NewConfig()
+	require.ErrorContains(t, conf.Load(configFile), hostedEmbeddingErr)
+
+	conf = NewConfig()
+	conf.HostedEmbedding.Enabled = true
+	require.ErrorContains(t, conf.Valid(), hostedEmbeddingErr)
+
+	conf = NewConfig()
+	conf.HostedEmbedding.APIEndpoint = "https://example.com/v1"
+	require.ErrorContains(t, conf.Valid(), hostedEmbeddingErr)
+
+	if kerneltype.IsNextGen() {
+		conf = NewConfig()
+		conf.DeployMode = deploymode.Starter
+		conf.HostedEmbedding.Enabled = true
+		require.NoError(t, conf.Valid())
+	}
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
 	defer func(configFile string) {
@@ -913,6 +1203,7 @@ repair-mode = true
 max-index-length = 3080
 index-limit = 70
 table-column-count-limit = 4000
+graceful-close-connections-timeout = 120
 skip-register-to-dashboard = true
 deprecate-integer-display-length = true
 enable-enum-length-limit = false
@@ -944,6 +1235,7 @@ keys-limit=123
 total-key-size-limit=1024
 [experimental]
 allow-expression-index = true
+allow-enable-foreign-key-check-in-shared-lock = true
 [isolation-read]
 engines = ["tiflash"]
 [labels]
@@ -1000,6 +1292,7 @@ max_connections = 200
 	require.Equal(t, 3080, conf.MaxIndexLength)
 	require.Equal(t, 70, conf.IndexLimit)
 	require.Equal(t, uint32(4000), conf.TableColumnCountLimit)
+	require.Equal(t, 120, conf.GracefulCloseConnectionsTimeout)
 	require.True(t, conf.SkipRegisterToDashboard)
 	require.Equal(t, 3, len(conf.Labels))
 	require.Equal(t, "bar", conf.Labels["foo"])
@@ -1015,6 +1308,7 @@ max_connections = 200
 	require.True(t, conf.PessimisticTxn.PessimisticAutoCommit.Load())
 	require.Equal(t, "127.0.0.1:10100", conf.TopSQL.ReceiverAddress)
 	require.True(t, conf.Experimental.AllowsExpressionIndex)
+	require.True(t, conf.Experimental.AllowEnableForeignKeyCheckInSharedLock)
 	require.Equal(t, uint(20), conf.Status.GRPCKeepAliveTime)
 	require.Equal(t, uint(10), conf.Status.GRPCKeepAliveTimeout)
 	require.Equal(t, uint(2048), conf.Status.GRPCConcurrentStreams)
@@ -1120,8 +1414,7 @@ grpc-keepalive-timeout = 0.01
 	}
 	require.NoError(t, conf.Load(configFile))
 
-	require.Equal(t, 2.01, conf.RUV2.RUScale)
-	require.Equal(t, GetGlobalConfig().TiKVClient.RUV2.RUScale, conf.TiKVClient.RUV2.RUScale)
+	require.Equal(t, RUReportModeResult, conf.RUV2.ReportMode)
 
 	// Make sure the example config is the same as default config except `auto_tls`.
 	conf.Security.AutoTLS = false
@@ -1131,7 +1424,10 @@ grpc-keepalive-timeout = 0.01
 	require.Equal(t, GetGlobalConfig(), conf)
 
 	// Test for log config.
-	require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", "", conf.Log.File, false, func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.getDisableErrorStack() }), conf.Log.ToLogConfig())
+	require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", "", conf.Log.File, false,
+		func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.getDisableErrorStack() },
+		func(config *zaplog.Config) { config.TimeoutAction = conf.Log.TimeoutAction },
+	), conf.Log.ToLogConfig())
 
 	// Test for tracing config.
 	tracingConf := &tracing.Configuration{
@@ -1248,6 +1544,7 @@ func TestDeployModeConfig(t *testing.T) {
 	conf := NewConfig()
 	require.Equal(t, deploymode.Premium, conf.DeployMode)
 	require.Equal(t, DefDXFResourceLimit, conf.DXFResourceLimit)
+	require.Zero(t, conf.StarterParams.MaxImportDataSize)
 	require.NoError(t, conf.Valid())
 	conf.DeployMode = deploymode.Mode(100)
 	require.ErrorContains(t, conf.Valid(), "invalid deploy-mode")
@@ -1280,6 +1577,7 @@ func TestDeployModeConfig(t *testing.T) {
 	require.NoError(t, conf.Load(configFile))
 	require.Equal(t, deploymode.PremiumReserved, conf.DeployMode)
 	require.Equal(t, DefDXFResourceLimit, conf.DXFResourceLimit)
+	require.Zero(t, conf.StarterParams.MaxImportDataSize)
 	require.NoError(t, conf.Valid())
 
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"
@@ -1312,6 +1610,19 @@ dxf-resource-limit = 101`), 0644))
 	require.NoError(t, conf.Load(configFile))
 	require.Equal(t, deploymode.Starter, conf.DeployMode)
 	require.True(t, conf.Standby.EnableZeroBackend)
+	require.EqualValues(t, 25*units.GiB, conf.StarterParams.MaxImportDataSize)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
+[hosted-embedding]
+enabled = true
+api-endpoint = "https://example.com/v1"
+api-key-path = "/tmp/embedding-api-key"`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.True(t, conf.HostedEmbedding.Enabled)
+	require.Equal(t, "https://example.com/v1", conf.HostedEmbedding.APIEndpoint)
+	require.Equal(t, "/tmp/embedding-api-key", conf.HostedEmbedding.APIKeyPath)
 	require.NoError(t, conf.Valid())
 
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
@@ -1322,9 +1633,36 @@ max-import-data-size = "1MiB"`), 0644))
 	require.EqualValues(t, 1024*1024, conf.StarterParams.MaxImportDataSize)
 	require.NoError(t, conf.Valid())
 
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
+[starter-params]
+max-import-data-size = "0B"`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Zero(t, conf.StarterParams.MaxImportDataSize)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
+[starter-params]
+bootstrap-file = "/etc/tidb/starter-bootstrap.json"`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, "/etc/tidb/starter-bootstrap.json", conf.StarterParams.BootstrapFile)
+	require.NoError(t, conf.Valid())
+
 	conf = NewConfig()
 	conf.StarterParams.EnableManagerNotifier = true
 	require.ErrorContains(t, conf.Valid(), "starter-params.enable-manager-notifier can only be configured for starter deploy mode")
+	conf = NewConfig()
+	conf.StarterParams.BootstrapFile = "/etc/tidb/starter-bootstrap.json"
+	require.ErrorContains(t, conf.Valid(), "starter-params.bootstrap-file can only be configured for starter deploy mode")
+	require.NoError(t, os.WriteFile(configFile, []byte(`[starter-params]
+bootstrap-file = ""`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.NoError(t, os.WriteFile(configFile, []byte(`[starter-params]
+bootstrap-file = "/etc/tidb/starter-bootstrap.json"`), 0644))
+	conf = NewConfig()
+	require.ErrorContains(t, conf.Load(configFile), "starter-params.bootstrap-file can only be configured for starter deploy mode")
 	conf = NewConfig()
 	conf.StarterParams.MaxImportDataSize = 1
 	require.ErrorContains(t, conf.Valid(), "starter-params.max-import-data-size can only be configured for starter deploy mode")
@@ -1443,6 +1781,45 @@ max-allowed-packet = %d`, packetSize)), 0644))
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "unknown"`), 0644))
 	conf = NewConfig()
 	require.ErrorContains(t, conf.Load(configFile), `invalid deploy mode "unknown"`)
+}
+
+func TestDiagnosticSkipGrantTableConfig(t *testing.T) {
+	if !intest.InTest {
+		t.Skip("diagnosticmode.SetForTest requires the intest build tag")
+	}
+
+	tests := []struct {
+		name       string
+		diagnostic bool
+		skipGrant  bool
+		host       string
+		port       uint
+		socket     string
+		wantError  string
+	}{
+		{name: "diagnostic socket only", diagnostic: true, skipGrant: true, host: "127.0.0.1", socket: "/tmp/tidb.sock"},
+		{name: "diagnostic empty host", diagnostic: true, skipGrant: true, port: 4000, socket: "/tmp/tidb.sock"},
+		{name: "diagnostic TCP", diagnostic: true, skipGrant: true, host: "127.0.0.1", port: 4000, socket: "/tmp/tidb.sock", wantError: "requires a Unix socket and no MySQL TCP listener"},
+		{name: "diagnostic no socket", diagnostic: true, skipGrant: true, host: "127.0.0.1", wantError: "requires a Unix socket and no MySQL TCP listener"},
+		{name: "diagnostic grants enabled", diagnostic: true, host: "127.0.0.1", port: 4000},
+		{name: "normal mode", skipGrant: true, host: "127.0.0.1", port: 4000},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(diagnosticmode.SetForTest(tt.diagnostic))
+			cfg := NewConfig()
+			cfg.Security.SkipGrantTable = tt.skipGrant
+			cfg.Host, cfg.Port, cfg.Socket = tt.host, tt.port, tt.socket
+			err := cfg.Valid()
+			if !tt.diagnostic && tt.skipGrant && !hasRootPrivilege() {
+				require.ErrorContains(t, err, "skip-grant-table need root privilege")
+			} else if tt.wantError != "" {
+				require.ErrorContains(t, err, tt.wantError)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }
 
 func TestKeyspaceActivateModeConfig(t *testing.T) {
@@ -1813,6 +2190,40 @@ func TestStatsLoadLimit(t *testing.T) {
 	checkQueueSizeValid(DefMaxOfStatsLoadQueueSizeLimit+1, false)
 }
 
+func TestExternalWorkloadValid(t *testing.T) {
+	conf := NewConfig()
+	require.NoError(t, conf.Valid())
+
+	conf.ExternalWorkload.Enable = true
+	require.ErrorContains(t, conf.Valid(), "external-workload can only be configured when deploy-mode is starter")
+
+	conf = NewConfig()
+	confFile := filepath.Join(t.TempDir(), "tidb.toml")
+	require.NoError(t, os.WriteFile(confFile, []byte("[external-workload]\nenable = false\n"), 0644))
+	require.ErrorContains(t, conf.Load(confFile), "external-workload can only be configured when deploy-mode is starter")
+
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+
+	conf = NewConfig()
+	conf.DeployMode = deploymode.Starter
+	conf.ExternalWorkload.Enable = true
+	require.ErrorContains(t, conf.Valid(), "external-workload controller-addr must not be empty")
+
+	conf.ExternalWorkload.ControllerAddr = "http://127.0.0.1:1234"
+	conf.ExternalWorkload.TidbPool = ""
+	require.ErrorContains(t, conf.Valid(), "external-workload tidb-pool must not be empty")
+
+	conf.ExternalWorkload.TidbPool = "pool-a"
+	conf.ExternalWorkload.Role = "unknown"
+	require.ErrorContains(t, conf.Valid(), `invalid external-workload role "unknown"`)
+
+	conf.ExternalWorkload.Role = " GCV2 "
+	require.NoError(t, conf.Valid())
+	require.Equal(t, RoleGCV2Worker, conf.ExternalWorkload.Role)
+}
+
 func TestGetGlobalKeyspaceName(t *testing.T) {
 	conf := NewConfig()
 	require.Empty(t, conf.KeyspaceName)
@@ -1937,13 +2348,4 @@ func TestMetering(t *testing.T) {
 			tc.checkFunc(t, mcfg)
 		})
 	}
-}
-
-func TestGetTiKVConfigKeepsZeroRUV2RUScale(t *testing.T) {
-	conf := NewConfig()
-	conf.RUV2.RUScale = 123
-	conf.TiKVClient.RUV2.RUScale = 0
-
-	tikvConf := conf.GetTiKVConfig()
-	require.Zero(t, tikvConf.TiKVClient.RUV2.RUScale)
 }

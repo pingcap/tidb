@@ -93,7 +93,7 @@ func processRegionResult(region *router.Region, err error) (*router.Region, erro
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if region == nil {
+	if region == nil || region.Meta == nil {
 		return nil, nil
 	}
 	err = decodeRegionMetaKey(region.Meta)

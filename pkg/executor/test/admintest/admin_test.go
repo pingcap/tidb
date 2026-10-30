@@ -28,6 +28,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	mysql "github.com/pingcap/tidb/pkg/errno"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -54,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
 	"go.uber.org/zap"
 )
 
@@ -291,7 +294,6 @@ func TestAdminCleanupMVIndex(t *testing.T) {
 	cpIdx.MVIndex = false
 	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
 	require.NoError(t, err)
-
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	_, err = indexOpr.Create(ctx, txn, types.MakeDatums(9), kv.IntHandle(9), nil)
@@ -870,18 +872,21 @@ func TestClusteredAdminCleanupIndex(t *testing.T) {
 }
 
 func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
-	store, domain := testkit.CreateMockStoreAndDomain(t)
+	var cluster testutils.Cluster
+	store, domain := testkit.CreateMockStoreAndDomain(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+		mockstore.BootstrapWithSingleStore(c)
+		cluster = c
+	}))
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(pk int primary key, a json, index idx((cast(a as signed array))))")
-	tk.MustExec("insert into t values (0, '[0,1,2]')")
+	tk.MustExec("insert into t values (0, '[0,2,4]')")
 	tk.MustExec("insert into t values (1, '[1,2,3]')")
 	tk.MustExec("insert into t values (2, '[2,3,4]')")
 	tk.MustExec("insert into t values (3, '[3,4,5]')")
 	tk.MustExec("insert into t values (4, '[4,5,6]')")
-	tk.MustExec("admin check table t")
 
 	// Make some corrupted index. Build the index information.
 	sctx := mock.NewContext()
@@ -893,14 +898,60 @@ func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
+
+	// Split inside the point range of handle 0. ADMIN CHECK sees the same handle
+	// once for every multi-valued index entry, but the table reader must only
+	// receive one point range for it.
+	splitKey := tablecodec.EncodeRowKeyWithHandle(tblInfo.ID, kv.IntHandle(0)).Next()
+	if kerneltype.IsNextGen() {
+		splitKey = store.GetCodec().EncodeKey(splitKey)
+	}
+	region, _, _, _ := cluster.GetRegionByKey(splitKey)
+	peerID := cluster.AllocID()
+	cluster.Split(region.GetId(), cluster.AllocID(), splitKey, []uint64{peerID}, peerID)
+	var checkedRequest atomic.Bool
+	checkCtx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
+		checkedRequest.Store(true)
+		req.KeyRanges.ForEachPartition(func(ranges []kv.KeyRange) {
+			for i := 1; i < len(ranges); i++ {
+				assert.LessOrEqual(t, ranges[i-1].EndKey.Cmp(ranges[i].StartKey), 0, "ADMIN CHECK request ranges must not overlap")
+			}
+		})
+	})
+	tk.MustExecWithContext(checkCtx, "admin check table t")
+	require.True(t, checkedRequest.Load())
+
 	idxInfo := tblInfo.Indices[0]
-	tk.Session().GetSessionVars().IndexLookupSize = 3
-	tk.Session().GetSessionVars().MaxChunkSize = 3
+	tk.Session().GetSessionVars().IndexLookupSize = 100
+	tk.Session().GetSessionVars().MaxChunkSize = 100
 
 	cpIdx := idxInfo.Clone()
 	cpIdx.MVIndex = false
 	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, cpIdx)
 	require.NoError(t, err)
+
+	// Check corrupt entries both between valid entries and after the last one
+	// for the same handle. Keep all entries in one lookup batch.
+	for _, value := range []int64{1, 5} {
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(value), kv.IntHandle(0), nil)
+		require.NoError(t, err)
+		require.NoError(t, txn.Commit(context.Background()))
+		err = tk.ExecToErr("admin check table t")
+		require.Error(t, err)
+		require.True(t, consistency.ErrAdminCheckInconsistentWithColInfo.Equal(err))
+
+		txn, err = store.Begin()
+		require.NoError(t, err)
+		require.NoError(t, indexOpr.Delete(ctx, txn, types.MakeDatums(value), kv.IntHandle(0)))
+		require.NoError(t, txn.Commit(context.Background()))
+		tk.MustExec("admin check table t")
+	}
+
+	tk.Session().GetSessionVars().IndexLookupSize = 3
+	tk.Session().GetSessionVars().MaxChunkSize = 3
+
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	err = indexOpr.Delete(ctx, txn, types.MakeDatums(0), kv.IntHandle(0))
@@ -927,6 +978,19 @@ func TestAdminCheckTableWithMultiValuedIndex(t *testing.T) {
 	require.NoError(t, err)
 	err = tk.ExecToErr("admin check table t")
 	require.Error(t, err)
+
+	// MV indexes always use the slow checker, even when fast checking is enabled.
+	tk.MustExec("create table t_partial(a json, flag set('a','b'), index idx((cast(a as signed array))) where flag = 1)")
+	for _, withRows := range []bool{false, true} {
+		if withRows {
+			tk.MustExec("insert into t_partial values ('[1,2]', 'a'), ('[3,4]', 'b'), ('[5]', null)")
+		}
+		for _, fastCheck := range []string{"off", "on"} {
+			tk.MustExec("set tidb_enable_fast_table_check = " + fastCheck)
+			tk.MustGetErrCode("admin check table t_partial", mysql.ErrCheckPartialIndexWithoutFastCheck)
+			tk.MustGetErrCode("admin check index t_partial idx", mysql.ErrCheckPartialIndexWithoutFastCheck)
+		}
+	}
 }
 
 func TestAdminCheckPartitionTableFailed(t *testing.T) {

@@ -16,6 +16,7 @@ package util
 
 import (
 	"cmp"
+	"encoding/json"
 	"slices"
 
 	"github.com/pingcap/tipb/go-tipb"
@@ -53,7 +54,13 @@ type JSONColumn struct {
 	CMSketch  *tipb.CMSketch  `json:"cm_sketch"`
 	FMSketch  *tipb.FMSketch  `json:"fm_sketch"`
 	// StatsVer is a pointer here since the old version json file would not contain version information.
-	StatsVer          *int64  `json:"stats_ver"`
+	StatsVer *int64 `json:"stats_ver"`
+	// SampledFMSketch holds the binary sketch and the row, sample, and NULL
+	// counts needed to restore sampled NDV after a stats dump and load.
+	// FMSketch alone cannot store these counts. MarshalJSON writes this envelope
+	// as a string under fm_sketch, which makes older readers reject it instead
+	// of treating a sampled sketch as an ordinary sketch.
+	SampledFMSketch   []byte  `json:"-"`
 	NullCount         int64   `json:"null_count"`
 	TotColSize        int64   `json:"tot_col_size"`
 	LastUpdateVersion uint64  `json:"last_update_version"`
@@ -71,7 +78,47 @@ func (col *JSONColumn) TotalMemoryUsage() (size int64) {
 	if col.FMSketch != nil {
 		size += int64(col.FMSketch.Size())
 	}
-	return size
+	return size + int64(len(col.SampledFMSketch))
+}
+
+// MarshalJSON preserves the legacy object format unless a sampled sketch is present.
+func (col *JSONColumn) MarshalJSON() ([]byte, error) {
+	type plain JSONColumn
+	if col.SampledFMSketch == nil {
+		return json.Marshal((*plain)(col))
+	}
+	// plain avoids recursive MarshalJSON calls. The outer field overrides
+	// fm_sketch with a base64 string while preserving the other JSON fields.
+	return json.Marshal(struct {
+		*plain
+		FMSketch []byte `json:"fm_sketch"`
+	}{(*plain)(col), col.SampledFMSketch})
+}
+
+// UnmarshalJSON reads both object and binary sketch forms.
+func (col *JSONColumn) UnmarshalJSON(data []byte) error {
+	type plain JSONColumn
+	var decoded plain
+	value := struct {
+		*plain
+		FMSketch json.RawMessage `json:"fm_sketch"`
+	}{plain: &decoded}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	if len(value.FMSketch) > 0 {
+		// A JSON string contains the base64-encoded sampled sketch envelope.
+		// Legacy sketches are objects or null and decode into FMSketch.
+		if value.FMSketch[0] == '"' {
+			if err := json.Unmarshal(value.FMSketch, &decoded.SampledFMSketch); err != nil {
+				return err
+			}
+		} else if err := json.Unmarshal(value.FMSketch, &decoded.FMSketch); err != nil {
+			return err
+		}
+	}
+	*col = JSONColumn(decoded)
+	return nil
 }
 
 // JSONPredicateColumn contains the information of the columns used in the predicate.

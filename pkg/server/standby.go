@@ -29,10 +29,20 @@ type StandbyController interface {
 
 	// OnConnActive is called when a new connection is established or a connection successfully executes a command.
 	OnConnActive()
+	// PrepareForActivation makes the server ready to accept client connections and
+	// only then lets the activation API report success, avoiding a race where the
+	// activation caller connects before the listener is bound. It is called after
+	// the server is created and before the activation request is acknowledged.
+	PrepareForActivation(svr StandbyReadyServer) error
 	// OnServerCreated is called when the server is created.
 	OnServerCreated(svr *Server)
 	// OnServerShutdown is called when the server is going to shut down.
 	OnServerShutdown(svr StandbyShutdownServer)
+}
+
+// StandbyReadyServer is the server capability used before reporting activation success.
+type StandbyReadyServer interface {
+	InitTiDBListener() error
 }
 
 // StandbyShutdownServer is the server capability used by standby shutdown control.

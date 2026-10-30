@@ -19,25 +19,45 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"go.uber.org/zap"
 )
+
+var errIndexInfoNotFound = errors.New("index info not found")
+
+func isIndexInfoNotFoundErr(err error) bool {
+	return errors.Cause(err) == errIndexInfoNotFound
+}
 
 // Version constants for BackfillTaskMeta.
 const (
 	BackfillTaskMetaVersion0 = iota
 	BackfillTaskMetaVersion1
 )
+
+// BackfillTaskSummary is the execution summary of a backfill task.
+type BackfillTaskSummary struct {
+	// IndexKVSize is currently collected only for global-sort backfills and is
+	// primarily used for NextGen resource accounting.
+	IndexKVSize uint64 `json:"index_kv_size,omitempty"`
+	// MergeTempIndexTxnKVSize is the total size of the transactions committed
+	// while merging the temporary index. The merge writes through transactions
+	// instead of ingest, so it is accounted separately from IndexKVSize. It is
+	// collected on a best-effort basis, see mergeTempIndexExecutor.RunSubtask.
+	MergeTempIndexTxnKVSize uint64 `json:"merge_temp_index_txn_kv_size,omitempty"`
+}
 
 // BackfillTaskMeta is the dist task meta for backfilling index.
 type BackfillTaskMeta struct {
@@ -51,6 +71,8 @@ type BackfillTaskMeta struct {
 	CloudStorageURI string `json:"cloud_storage_uri"`
 	EstimateRowSize int    `json:"estimate_row_size"`
 	MergeTempIndex  bool   `json:"merge_temp_index"`
+
+	Summary *BackfillTaskSummary `json:"summary,omitempty"`
 
 	Version int `json:"version,omitempty"`
 }
@@ -130,22 +152,12 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 	jobMeta := &s.taskMeta.Job
 	ddlObj := s.d
 
-	store := s.TaskStore
-	sessPool := ddlObj.sessPool
-	taskKS := s.task.Keyspace
-	if ddlObj.store.GetKeyspace() != taskKS {
-		if err := s.GetTaskTable().WithNewSession(func(se sessionctx.Context) error {
-			svr := se.GetSQLServer()
-			sp, err := svr.GetKSSessPool(taskKS)
-			sessPool = sess.NewSessionPool(sp)
-			return err
-		}); err != nil {
-			return nil, err
-		}
-	}
-	// TODO getTableByTxn is using DDL ctx which is never cancelled except when shutdown.
+	store := s.TaskRuntime.Store()
+	sessPool := sess.NewSessionPool(s.TaskRuntime.SysSessionPool())
+	// TODO This is using DDL ctx which is never cancelled except when shutdown.
 	// we should move this operation out of GetStepExecutor, and put into Init.
-	_, tblIface, err := getTableByTxn(ddlObj.ctx, store, jobMeta.SchemaID, jobMeta.TableID)
+	failpoint.InjectCall("beforeGetUserTableForBackfillStep", jobMeta)
+	tblIface, err := getUserTableFromTaskStore(ddlObj.ctx, store, jobMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +170,9 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 			logutil.DDLIngestLogger().Warn("index info not found",
 				zap.Int64("table ID", tbl.Meta().ID),
 				zap.Int64("index ID", eid))
-			return nil, errors.Errorf("index info not found: %d", eid)
+			return nil, errors.Annotatef(errIndexInfoNotFound,
+				"eid: %d, table ID: %d, job ID: %d",
+				eid, tbl.Meta().ID, jobMeta.ID)
 		}
 		indexInfos = append(indexInfos, indexInfo)
 	}
@@ -170,7 +184,9 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.attachTopProfilingInfo(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(store, sessPool, ddlObj.etcdCli, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
+		return newReadIndexExecutor(
+			store, sessPool, ddlObj.etcdCli, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize,
+			s.GetExecID(), s.GetTaskBase().GetRuntimeSlots())
 	case proto.BackfillStepMergeSort:
 		return newMergeSortExecutor(&s.task.TaskBase, store, jobMeta.ID, indexInfos, tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
@@ -240,6 +256,13 @@ func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 }
 
 func (*backfillDistExecutor) IsRetryableError(err error) bool {
+	if isIndexInfoNotFoundErr(err) {
+		return false
+	}
+	// Retry in DXF so NextGen can continue after storage capacity is expanded.
+	if kerneltype.IsNextGen() && errdef.IsKVDiskFullError(err) {
+		return true
+	}
 	return common.IsRetryableError(err) || isRetryableError(err, true)
 }
 

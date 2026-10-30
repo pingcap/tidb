@@ -1,0 +1,30 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "bdr",
+    srcs = ["bdr.go"],
+    importpath = "github.com/pingcap/tidb/pkg/ddl/bdr",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/types",
+    ],
+)
+
+go_test(
+    name = "bdr_test",
+    timeout = "short",
+    srcs = ["bdr_test.go"],
+    embed = [":bdr"],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/types",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -27,6 +27,7 @@ go_library(
         "//pkg/lightning/log",
         "//pkg/meta/autoid",
         "//pkg/meta/model",
+        "//pkg/objstore/ossstore",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",

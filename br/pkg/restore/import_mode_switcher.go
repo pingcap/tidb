@@ -206,14 +206,10 @@ func FineGrainedRestorePreWork(
 	mgr *conn.Mgr,
 	switcher *ImportModeSwitcher,
 	keyRange [][2]kv.Key,
-	isOnline bool,
 	switchToImport bool,
 ) (pdutil.UndoFunc, *pdutil.ClusterConfig, error) {
-	if isOnline {
-		return pdutil.Nop, nil, nil
-	}
-
 	if switchToImport {
+		log.Info("switch to import mode for offline restore")
 		// Switch TiKV cluster to import mode (adjust rocksdb configuration).
 		err := switcher.GoSwitchToImportMode(ctx)
 		if err != nil {
@@ -248,17 +244,15 @@ func RestorePostWork(
 	restoreSchedulers pdutil.UndoFunc,
 	isOnline bool,
 ) {
-	if isOnline {
-		return
-	}
-
 	if ctx.Err() != nil {
 		log.Warn("context canceled, try shutdown")
 		ctx = context.Background()
 	}
 
-	if err := switcher.SwitchToNormalMode(ctx); err != nil {
-		log.Warn("fail to switch to normal mode", zap.Error(err))
+	if !isOnline {
+		if err := switcher.SwitchToNormalMode(ctx); err != nil {
+			log.Warn("fail to switch to normal mode", zap.Error(err))
+		}
 	}
 	if err := restoreSchedulers(ctx); err != nil {
 		log.Warn("failed to restore PD schedulers", zap.Error(err))

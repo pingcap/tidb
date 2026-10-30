@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -270,6 +271,42 @@ func testReadMetaBetweenTSWithVersion(t *testing.T, m metaMaker) {
 func TestReadMetaBetweenTS(t *testing.T) {
 	t.Run("MetaV1", func(t *testing.T) { testReadMetaBetweenTSWithVersion(t, m) })
 	t.Run("MetaV2", func(t *testing.T) { testReadMetaBetweenTSWithVersion(t, m2) })
+}
+
+func TestLogFileManagerSkipsEmptyMetaByName(t *testing.T) {
+	ctx := context.Background()
+	loc, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+
+	normalMeta := m2(wr(10, 20, 5))
+	normalPayload, err := normalMeta.Marshal()
+	require.NoError(t, err)
+	normalPath := fmt.Sprintf(
+		"%s/%016X%016X-d%016Xl%016Xu%016Xp%016X.meta",
+		stream.GetStreamBackupMetaPrefix(), uint64(30), uint64(normalMeta.StoreId), uint64(5), uint64(10), uint64(20), uint64(0),
+	)
+	emptyPath := fmt.Sprintf(
+		"%s/%016X%016X-d%016Xl%016Xu%016Xp%016X.meta",
+		stream.GetStreamBackupMetaPrefix(), uint64(40), uint64(999), uint64(0), uint64(0), uint64(0), uint64(2),
+	)
+	require.NoError(t, loc.WriteFile(ctx, normalPath, normalPayload))
+	require.NoError(t, loc.WriteFile(ctx, emptyPath, []byte("invalid empty meta payload")))
+
+	fm, err := logclient.CreateLogFileManager(ctx, logclient.LogFileManagerInit{
+		StartTS:                   1,
+		RestoreTS:                 100,
+		Storage:                   loc,
+		MigrationsBuilder:         logclient.NewMigrationBuilder(0, 1, 100),
+		Migrations:                emptyMigrations(),
+		MetadataDownloadBatchSize: 32,
+	})
+	require.NoError(t, err)
+
+	metas, err := fm.ReadStreamMeta(ctx)
+	require.NoError(t, err)
+	require.Len(t, metas, 1)
+	require.Equal(t, normalMeta.StoreId, metas[0].Meta().StoreId)
+	require.NotEmpty(t, emptyPath)
 }
 
 func testReadFromMetadataWithVersion(t *testing.T, m metaMaker) {
@@ -642,6 +679,7 @@ func generateKvDataWith(encode func(prefix string, ts uint64, emptyV bool) []byt
 		Sha256:      sha256[:],
 		RangeOffset: rangeOffset,
 		RangeLength: rangeLength,
+		Length:      rangeLength,
 	}
 }
 
@@ -1052,5 +1090,28 @@ func TestReadAllEntries(t *testing.T) {
 			encodekvEntryWithTS("mDDL", 50),
 			encodekvEntryWithTS("mDDL", 65),
 		}, nextKvEntries)
+	}
+	{
+		data, file := generateKvData()
+		readGate := make(chan struct{})
+		helper := &logclient.FakeStreamMetadataHelper{Data: data, ReadGate: readGate}
+		fm := logclient.TEST_NewLogFileManager(35, 75, 25, helper)
+		file.Cf = consts.DefaultCF
+		errCh := make(chan error, 4)
+		for range 4 {
+			go func() {
+				_, _, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 50)
+				errCh <- err
+			}()
+		}
+		require.Eventually(t, func() bool {
+			return helper.ActiveReadCount() == 4
+		}, time.Second, 10*time.Millisecond)
+		require.Equal(t, int32(4), helper.MaxActiveReadCount())
+		close(readGate)
+		for range 4 {
+			require.NoError(t, <-errCh)
+		}
+		require.Equal(t, int32(4), helper.MaxActiveReadCount())
 	}
 }

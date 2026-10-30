@@ -32,8 +32,15 @@ case "${GOVERSION}" in
 		gosrc_md5+=("src/internal/abi/map.go 4e5fb78cb88f2edc634fa040f99dcacc")
 		gosrc_md5+=("src/internal/abi/type.go 3bd3a7cef23f68f1bc98b8a40551a425")
 		;;
+	go1.27.*)
+		# Patch releases are accepted only while every ABI source checksum matches.
+		gosrc_md5+=("src/internal/runtime/maps/map.go 6090f219f484a55f27e90c03b60e7772")
+		gosrc_md5+=("src/internal/runtime/maps/table.go add944889d7fdee7504bc970f19d11ff")
+		gosrc_md5+=("src/internal/abi/map.go cb52c8e2b3886c7836b126553133e912")
+		gosrc_md5+=("src/internal/abi/type.go 5556ff6ba40688042dba3bbb31217594")
+		;;
 	*)
-		echo "Unsupported Go version for ABI check: ${GOVERSION}. Expected go1.25.x or go1.26.x."
+		echo "Unsupported Go version for ABI check: ${GOVERSION}. Expected go1.25.x, go1.26.x, or go1.27.x."
 		exit 1
 		;;
 esac
@@ -51,6 +58,7 @@ for x in "${gosrc_md5[@]}"; do
 	actual_md5=$(md5sum "${src_path}" | cut -d' ' -f1)
 	if [ "${actual_md5}" != "${md5}" ]; then
 		echo "Unexpected checksum for ${src}: expected ${md5}, got ${actual_md5}"
+		echo "Verify the runtime map ABI layout before updating the source MD5 checksums for a new Go patch release."
 		exit 1
 	fi
 done
