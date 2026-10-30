@@ -51,7 +51,11 @@ import (
 // to avoid polluting the global scope of current package.
 type extractHelper struct {
 	enableScalarPushDown bool
-	pushedDownFuncs      map[string]func(string) string
+	// Statement summary time pruning may resolve execution-bound constants.
+	enableDeferredConst bool
+	// Statement summary coarse pruning must preserve all exact SQL matches.
+	conservativeTimeRange bool
+	pushedDownFuncs       map[string]func(string) string
 
 	// Store whether the extracted strings for a specific column are converted to lower case
 	extractLowerString map[string]bool
@@ -215,10 +219,24 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(
 	// SELECT * FROM t1 WHERE c='rhs'
 	// SELECT * FROM t1 WHERE 'lhs'=c
 	constant, ok := args[1-colIdx].(*expression.Constant)
-	if !ok || constant.DeferredExpr != nil {
+	if !ok {
 		return "", nil, false
 	}
 	v := constant.Value
+	if constant.DeferredExpr != nil {
+		if !helper.enableDeferredConst || !expression.IsRuntimeConstExpr(constant.DeferredExpr) ||
+			expression.IsMutableEffectsExpr(constant.DeferredExpr) {
+			return "", nil, false
+		}
+		var err error
+		v, err = constant.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+		if err != nil {
+			return "", nil, false
+		}
+		// The extracted range belongs to this execution's bindings. Even an
+		// empty-range plan must not cache it for the next execution.
+		ctx.GetExprCtx().SetSkipPlanCache("statement summary time range depends on deferred constants")
+	}
 	if constant.ParamMarker != nil {
 		var err error
 		v, err = constant.ParamMarker.GetUserVar(ctx.GetExprCtx().GetEvalCtx())
@@ -639,7 +657,7 @@ func (helper extractHelper) extractTimeRange(
 			}
 
 			mysqlTime := timeDatum.GetMysqlTime()
-			timestamp := time.Date(mysqlTime.Year(),
+			localTime := time.Date(mysqlTime.Year(),
 				time.Month(mysqlTime.Month()),
 				mysqlTime.Day(),
 				mysqlTime.Hour(),
@@ -647,7 +665,25 @@ func (helper extractHelper) extractTimeRange(
 				mysqlTime.Second(),
 				mysqlTime.Microsecond()*1000,
 				timezone,
-			).UnixNano()
+			)
+			if helper.conservativeTimeRange {
+				// SQL datetime bounds can exceed UnixNano's range or identify more
+				// than one instant. Neither conversion is safe for coarse pruning.
+				if localTime.Before(time.Unix(0, math.MinInt64)) || localTime.After(time.Unix(0, math.MaxInt64)) ||
+					!isUniqueLocalTime(localTime, mysqlTime.CoreTime()) {
+					remained = append(remained, expr)
+					continue
+				}
+				// Retained SQL predicates enforce strictness. Inclusive coarse
+				// bounds avoid millisecond adjustments that can invert or overflow.
+				switch fnName {
+				case ast.GT:
+					fnName = ast.GE
+				case ast.LT:
+					fnName = ast.LE
+				}
+			}
+			timestamp := localTime.UnixNano()
 
 			switch fnName {
 			case ast.EQ:
@@ -682,6 +718,30 @@ func (helper extractHelper) extractTimeRange(
 		}
 	}
 	return
+}
+
+// isUniqueLocalTime rejects nonexistent wall-clock times and repeated times
+// whose SQL comparison can match records on either side of a zone transition.
+func isUniqueLocalTime(localTime time.Time, civil types.CoreTime) bool {
+	if types.FromGoTime(localTime) != civil {
+		return false
+	}
+	_, offset := localTime.Zone()
+	start, end := localTime.ZoneBounds()
+	for i, boundary := range []time.Time{start, end} {
+		if boundary.IsZero() {
+			continue
+		}
+		if i == 0 {
+			boundary = boundary.Add(-time.Nanosecond)
+		}
+		_, adjacentOffset := boundary.Zone()
+		if adjacentOffset != offset &&
+			types.FromGoTime(localTime.Add(time.Duration(offset-adjacentOffset)*time.Second)) == civil {
+			return false
+		}
+	}
+	return true
 }
 
 func (extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 {
@@ -1640,8 +1700,9 @@ func (e *StatementsSummaryExtractor) Extract(sctx base.PlanContext,
 	}
 
 	if tr.StartTime.After(tr.EndTime) {
-		e.SkipRequest = true
-		return nil
+		// These bounds constrain different columns. A window spanning both
+		// bounds can still match, so inversion does not imply an empty result.
+		return remained
 	}
 	e.CoarseTimeRange = tr
 	return remained
@@ -1691,8 +1752,14 @@ func (e *StatementsSummaryExtractor) findCoarseTimeRange(
 	predicates []expression.Expression,
 ) *TimeRange {
 	tz := sctx.GetSessionVars().StmtCtx.TimeZone()
-	_, _, endTime := e.extractTimeRange(sctx, schema, names, predicates, "summary_begin_time", tz)
-	_, startTime, _ := e.extractTimeRange(sctx, schema, names, predicates, "summary_end_time", tz)
+	// FROM_UNIXTIME(?) remains a deferred constant while planning prepared
+	// queries. Resolve it only for this coarse prefilter; retain the original
+	// predicates for the exact SQL comparison and the nonpersistent reader.
+	helper := e.extractHelper
+	helper.enableDeferredConst = true
+	helper.conservativeTimeRange = true
+	_, _, endTime := helper.extractTimeRange(sctx, schema, names, predicates, "summary_begin_time", tz)
+	_, startTime, _ := helper.extractTimeRange(sctx, schema, names, predicates, "summary_end_time", tz)
 	return e.buildTimeRange(startTime, endTime)
 }
 
