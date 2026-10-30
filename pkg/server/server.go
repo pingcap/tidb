@@ -32,6 +32,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"maps"
@@ -695,6 +696,11 @@ func (s *Server) closeListener() {
 		err := s.socket.Close()
 		terror.Log(errors.Trace(err))
 		s.socket = nil
+	}
+	if s.statusListener != nil {
+		if err := s.statusListener.Close(); err != nil && !stderrors.Is(err, net.ErrClosed) {
+			terror.Log(errors.Trace(err))
+		}
 	}
 	if statusServer := s.statusServer.Load(); statusServer != nil {
 		err := statusServer.Close()
