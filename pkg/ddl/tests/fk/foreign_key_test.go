@@ -473,6 +473,58 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
+func TestRenameReferredTableToAnotherDatabaseWithSameName(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("create database db0")
+	tk.MustExec("create database db1")
+	tk.MustExec("use db0")
+	tk.MustExec("create table parent (id int primary key)")
+	tk.MustExec("create table child (id int, constraint fk0 foreign key (id) references parent(id))")
+	tk.MustExec("insert into parent values (1)")
+	tk.MustExec("rename table parent to db1.parent")
+
+	childInfo := getTableInfo(t, dom, "db0", "child")
+	require.Equal(t, 1, len(childInfo.ForeignKeys))
+	require.Equal(t, "db1", childInfo.ForeignKeys[0].RefSchema.L)
+	require.Equal(t, "parent", childInfo.ForeignKeys[0].RefTable.L)
+	tk.MustQuery("select unique_constraint_schema, referenced_table_name from information_schema.referential_constraints " +
+		"where constraint_schema = 'db0' and constraint_name = 'fk0'").Check(testkit.Rows("db1 parent"))
+	require.Equal(t, 1, len(getTableInfoReferredForeignKeys(t, dom, "db1", "parent")))
+	require.Equal(t, 0, len(getTableInfoReferredForeignKeys(t, dom, "db0", "parent")))
+
+	tk.MustExec("insert into child values (1)")
+	tk.MustGetDBError("insert into child values (2)", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("delete from db1.parent where id = 1", plannererrors.ErrRowIsReferenced2)
+
+	tk.MustExec("create table db1.other (id int)")
+	tk.MustExec("rename table db1.parent to db0.parent, db1.other to db0.other")
+	childInfo = getTableInfo(t, dom, "db0", "child")
+	require.Equal(t, "db0", childInfo.ForeignKeys[0].RefSchema.L)
+	tk.MustGetDBError("insert into child values (2)", plannererrors.ErrNoReferencedRow2)
+}
+
+func TestRenameReferredTableInSameDatabase(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table parent (id int primary key)")
+	tk.MustExec("create table child (id int, constraint fk0 foreign key (id) references parent(id))")
+	tk.MustExec("insert into parent values (1)")
+	tk.MustExec("rename table parent to parent2")
+
+	childInfo := getTableInfo(t, dom, "test", "child")
+	require.Equal(t, "test", childInfo.ForeignKeys[0].RefSchema.L)
+	require.Equal(t, "parent2", childInfo.ForeignKeys[0].RefTable.L)
+	require.Equal(t, 1, len(getTableInfoReferredForeignKeys(t, dom, "test", "parent2")))
+	tk.MustExec("insert into child values (1)")
+	tk.MustGetDBError("insert into child values (2)", plannererrors.ErrNoReferencedRow2)
+}
+
 func TestCreateTableWithForeignKeyError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
