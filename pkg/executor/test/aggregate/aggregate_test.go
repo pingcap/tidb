@@ -171,6 +171,33 @@ func TestParallelStreamAggGroupConcat(t *testing.T) {
 	}
 }
 
+func TestGroupConcatTruncatedSortTies(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table gc (id int, c varchar(10))")
+	values := []string{"aaa", "a", "aaa", "ab", "x", "a", "x"}
+	for shift := range len(values) {
+		tk.MustExec("truncate table gc")
+		for i := range len(values) {
+			tk.MustExec("insert into gc values (?, ?)", i, values[(i+shift)%len(values)])
+		}
+		for _, order := range []string{"asc", "desc"} {
+			for _, distinct := range []string{"", "distinct "} {
+				for _, sep := range []string{",", "---", ""} {
+					sql := "select group_concat(" + distinct + "c order by c " + order + " separator '" + sep + "') from gc"
+					tk.MustExec("set group_concat_max_len = 1024")
+					full := tk.MustQuery(sql).Rows()[0][0].(string)
+					for limit := 4; limit <= len(full); limit++ {
+						tk.MustExec(fmt.Sprintf("set group_concat_max_len = %d", limit))
+						tk.MustQuery(sql).Check(testkit.Rows(full[:limit]))
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestIssue20658(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

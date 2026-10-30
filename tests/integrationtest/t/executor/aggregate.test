@@ -1120,3 +1120,16 @@ WHERE `f` >= 1753632000
   AND `f` <= 1753718399
   AND `g` = 0
 GROUP BY `a`, left(FROM_UNIXTIME(e), 10);
+# Truncated GROUP_CONCAT rows must remain at the end of tied sort keys.
+create table gc_truncated_ties (id int, c varchar(10));
+insert into gc_truncated_ties values (3,'aaa'),(1,'a'),(0,'aaa'),(5,'ab'),(4,'x'),(2,'a'),(6,'x');
+set session group_concat_max_len = 7;
+select group_concat(c order by c separator ',') from gc_truncated_ties;
+truncate table gc_truncated_ties;
+insert into gc_truncated_ties select n, case when n%6<3 then 'aaa' when n%6=3 then 'a' else 'b' end
+from (with recursive s(n) as (select 1 union all select n+1 from s where n<600) select n from s) x;
+set session group_concat_max_len = 65535;
+set @full_gc = (select group_concat(c order by c separator ',') from gc_truncated_ties);
+set session group_concat_max_len = default;
+select group_concat(c order by c separator ',') = left(@full_gc, @@group_concat_max_len) as correct_prefix from gc_truncated_ties;
+drop table gc_truncated_ties;
