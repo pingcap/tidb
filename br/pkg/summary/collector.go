@@ -67,6 +67,7 @@ var collector = NewLogCollector(log.Info)
 func InitCollector( // revive:disable-line:flag-parameter
 	hasLogFile bool,
 ) {
+	observedErrors.reset()
 	logF := log.L().Info
 	if hasLogFile {
 		conf := new(log.Config)

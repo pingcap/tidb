@@ -25,6 +25,49 @@
 
 [Restore SQL Statement](https://docs.pingcap.com/tidb/stable/sql-statement-restore)
 
+## Failure diagnostics
+
+When a command fails, BR emits a `br failure summary` with an `error-category`,
+the error message, and its existing `error-code` when available. The summary is
+also printed when `--log-file` is set. Use `--log-format=json` for JSON log files.
+Failures continue to exit with status 1; classification does not change retries.
+Error messages and samples redact storage URL credentials; ambiguous URL text is
+suppressed. The original error returned by BR is unchanged.
+
+Categories are `tikv_memory_pressure`, `unavailable`, `disk_full`,
+`storage_permission`, `configuration`, `checksum_mismatch`, `gc_safepoint`,
+`canceled`, `deadline_exceeded`, `resource_exhausted`, and `unknown`.
+
+The summary also includes `observed-errors` for TiKV backup, SST download, and
+SST ingest errors seen during retries. Each entry contains the category,
+component, operation, store ID, occurrence count, first error sample, and error
+code when available. These observations remain visible if the command later
+fails with cancellation; an earlier retried error is not necessarily the final
+cause. For example, an abbreviated JSON summary can contain:
+
+```json
+{
+  "error-category": "canceled",
+  "error": "context canceled",
+  "observed-errors": [{
+    "category": "tikv_memory_pressure",
+    "component": "tikv",
+    "operation": "download_sst",
+    "store-id": 7,
+    "error-code": "BR:KV:ErrKVDownloadFailed",
+    "count": 3,
+    "sample-error": "resource is not enough Memory usage too high, ..."
+  }]
+}
+```
+
+`tikv_memory_pressure` requires TiKV's explicit memory-guard response. A lost
+connection or generic resource-exhaustion response cannot establish an OOM kill.
+The summary does not read TiKV logs or Kubernetes pod status. Observations are
+limited to 64 category/component/operation/store combinations. Error samples
+are truncated after 4096 bytes; `omitted-error-observations` counts additional
+observations that could not be retained.
+
 ## Building
 
 To build binary and run test:
