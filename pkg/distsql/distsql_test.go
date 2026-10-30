@@ -20,13 +20,8 @@ import (
 	"testing"
 	"time"
 
-<<<<<<< HEAD
-=======
 	pingcaperrors "github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/config"
-	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
->>>>>>> d880d7fabe5 (*: redact keys, values and SQL in diagnostic logs (#71922))
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -46,13 +41,19 @@ import (
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
-<<<<<<< HEAD
-=======
-	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
->>>>>>> d880d7fabe5 (*: redact keys, values and SQL in diagnostic logs (#71922))
 )
+
+type lockEventTestClient struct {
+	kv.Client
+	option *kv.ClientSendOption
+}
+
+func (c *lockEventTestClient) Send(ctx context.Context, req *kv.Request, vars any, option *kv.ClientSendOption) kv.Response {
+	c.option = option
+	return c.Client.Send(ctx, req, vars, option)
+}
 
 func TestSelectLockEventSQLRedaction(t *testing.T) {
 	const (
@@ -107,10 +108,10 @@ func TestSelectLockEventSQLRedaction(t *testing.T) {
 				sctx.GetSessionVars().StmtCtx.OriginalSQL = originalSQL
 				sctx.GetSessionVars().EnableRedactLog = sessionMode
 				dctx := sctx.GetDistSQLCtx()
-				client := &analyzeTestClient{response: &analyzeTestResponse{}}
+				client := &lockEventTestClient{Client: sctx.GetClient()}
 				dctx.Client = client
 				core, recorded := observer.New(zap.DebugLevel)
-				ctx := logutil.WithLogger(context.Background(), zap.New(core))
+				ctx := context.WithValue(context.Background(), logutil.CtxLogKey, zap.New(core))
 				response, err := Select(ctx, dctx, &kv.Request{StartTs: 42}, nil)
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, response.Close()) })

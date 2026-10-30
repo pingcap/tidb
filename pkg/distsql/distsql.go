@@ -26,12 +26,8 @@ import (
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-=======
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
->>>>>>> d880d7fabe5 (*: redact keys, values and SQL in diagnostic logs (#71922))
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/redact"

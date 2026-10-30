@@ -26,17 +26,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/parser"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
->>>>>>> d880d7fabe5 (*: redact keys, values and SQL in diagnostic logs (#71922))
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -469,7 +464,7 @@ type compilePanicStmt struct {
 	ast.StmtNode
 }
 
-func (*compilePanicStmt) AcceptInPlace(ast.InPlaceVisitor) bool {
+func (*compilePanicStmt) Accept(ast.Visitor) (ast.Node, bool) {
 	panic(exeerrors.ErrMemoryExceedForQuery)
 }
 
@@ -489,7 +484,7 @@ func TestCompilePanicSQLRedaction(t *testing.T) {
 			sctx := mock.NewContext()
 			sctx.GetSessionVars().EnableRedactLog = tc.mode
 			core, recorded := observer.New(zap.ErrorLevel)
-			ctx := logutil.WithLogger(context.Background(), zap.New(core))
+			ctx := context.WithValue(context.Background(), logutil.CtxLogKey, zap.New(core))
 			compiler := executor.Compiler{Ctx: sctx}
 
 			// Raise a handled panic while preprocessing, so the real recovery log runs.

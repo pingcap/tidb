@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/paging"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
@@ -1461,13 +1462,8 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 		backoffTypes := strings.ReplaceAll(fmt.Sprintf("%v", bo.TiKVBackoffer().GetTypes()), " ", ",")
 		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.GetTotalSleep(), backoffTypes)
 	}
-<<<<<<< HEAD
 	if regionErr := resp.GetRegionError(); regionErr != nil {
-		logStr += fmt.Sprintf(" region_err:%s", regionErr.String())
-=======
-	if regionErr := getRegionError(bo.GetCtx(), resp); regionErr != nil {
 		logStr += fmt.Sprintf(" region_err:%s", redact.RegionError(regionErr))
->>>>>>> d880d7fabe5 (*: redact keys, values and SQL in diagnostic logs (#71922))
 	}
 	// resp might be nil, but it is safe to call resp.GetXXX here.
 	detailV2 := resp.GetExecDetailsV2()
@@ -1742,11 +1738,6 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				// TODO: add bucket version in log
 				//zap.Uint64("latestBucketsVer", batchResp.GetLatestBucketsVersion()),
 				zap.Int("rangeNums", task.ranges.Len()),
-<<<<<<< HEAD
-=======
-				keyField("firstRangeStartKey", firstRangeStartKey),
-				keyField("lastRangeEndKey", lastRangeEndKey),
->>>>>>> d880d7fabe5 (*: redact keys, values and SQL in diagnostic logs (#71922))
 				zap.String("storeAddr", task.storeAddr),
 				zap.Error(err),
 			}
@@ -1754,8 +1745,8 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			// guard At(0)/At(Len-1) to avoid a nil dereference.
 			if task.ranges.Len() > 0 {
 				otherErrFields = append(otherErrFields,
-					zap.ByteString("firstRangeStartKey", task.ranges.At(0).StartKey),
-					zap.ByteString("lastRangeEndKey", task.ranges.At(task.ranges.Len()-1).EndKey),
+					zap.String("firstRangeStartKey", redact.Key(task.ranges.At(0).StartKey)),
+					zap.String("lastRangeEndKey", redact.Key(task.ranges.At(task.ranges.Len()-1).EndKey)),
 				)
 			}
 			logutil.Logger(bo.GetCtx()).Warn("other error", otherErrFields...)
@@ -1783,23 +1774,17 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				zap.Uint64("regionConfVer", task.region.GetConfVer()),
 				zap.Uint64("bucketsVer", task.bucketsVer),
 				zap.Int("rangeNums", task.ranges.Len()),
-<<<<<<< HEAD
 				zap.String("storeAddr", task.storeAddr),
 			}
 			// A rangeless task (e.g. a BroadcastQuery request) has no ranges, so
 			// guard At(0)/At(Len-1) to avoid a nil dereference.
 			if task.ranges.Len() > 0 {
 				missingFields = append(missingFields,
-					zap.ByteString("firstRangeStartKey", task.ranges.At(0).StartKey),
-					zap.ByteString("lastRangeEndKey", task.ranges.At(task.ranges.Len()-1).EndKey),
+					zap.String("firstRangeStartKey", redact.Key(task.ranges.At(0).StartKey)),
+					zap.String("lastRangeEndKey", redact.Key(task.ranges.At(task.ranges.Len()-1).EndKey)),
 				)
 			}
 			logutil.Logger(bo.GetCtx()).Error("response of batched task missing", missingFields...)
-=======
-				keyField("firstRangeStartKey", firstRangeStartKey),
-				keyField("lastRangeEndKey", lastRangeEndKey),
-				zap.String("storeAddr", task.storeAddr))
->>>>>>> d880d7fabe5 (*: redact keys, values and SQL in diagnostic logs (#71922))
 		}
 		appendRemainTasks(t.task)
 	}

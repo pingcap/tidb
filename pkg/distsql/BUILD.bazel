@@ -69,11 +69,7 @@ go_test(
     embed = [":distsql"],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 32,
-=======
-    shard_count = 40,
->>>>>>> d880d7fabe5 (*: redact keys, values and SQL in diagnostic logs (#71922))
+    shard_count = 33,
     deps = [
         "//pkg/distsql/context",
         "//pkg/errctx",

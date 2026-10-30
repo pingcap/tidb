@@ -20,8 +20,6 @@ import (
 	"strings"
 	"testing"
 
-<<<<<<< HEAD
-=======
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
@@ -29,7 +27,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
->>>>>>> d880d7fabe5 (*: redact keys, values and SQL in diagnostic logs (#71922))
 	"github.com/stretchr/testify/require"
 )
 
@@ -98,8 +95,6 @@ func TestRedactInitAndValueAndKey(t *testing.T) {
 	require.Equal(t, Value(secret), redacted)
 	require.Equal(t, Key([]byte(secret)), redacted)
 }
-<<<<<<< HEAD
-=======
 
 func TestRedactLockInfo(t *testing.T) {
 	previousMode := errors.RedactLogEnabled.Load()
@@ -209,13 +204,7 @@ func TestRedactRegionError(t *testing.T) {
 		ServerIsBusy:          &errorpb.ServerIsBusy{Reason: "raftstore is busy", BackoffMs: 10, EstimatedWaitMs: 20, AppliedIndex: 30},
 		ReadIndexNotReady:     &errorpb.ReadIndexNotReady{Reason: "read index not ready", RegionId: 6},
 		DiskFull:              &errorpb.DiskFull{StoreId: []uint64{23, 24}, Reason: "disk is full"},
-		UndeterminedResult:    &errorpb.UndeterminedResult{Message: "result is undetermined"},
-		IncompatibleRequest: &errorpb.IncompatibleRequest{
-			Reason:  errorpb.IncompatibleRequestReason_IncompatibleRequestReasonTxnProtocolVersionOutOfRange,
-			Message: "transaction protocol version is incompatible", ProvidedTxnProtocolVersion: 3,
-			MinCompatibleTxnProtocolVersion: 1, MaxCompatibleTxnProtocolVersion: 2,
-		},
-		DataIsNotReady: &errorpb.DataIsNotReady{RegionId: 7, PeerId: 13, SafeTs: 42},
+		DataIsNotReady:        &errorpb.DataIsNotReady{RegionId: 7, PeerId: 13, SafeTs: 42},
 	}
 	original := proto.Clone(regionErr)
 
@@ -252,8 +241,6 @@ func TestRedactRegionError(t *testing.T) {
 				"server_is_busy":           regionErr.ServerIsBusy,
 				"read_index_not_ready":     regionErr.ReadIndexNotReady,
 				"disk_full":                regionErr.DiskFull,
-				"undetermined_result":      regionErr.UndeterminedResult,
-				"incompatible_request":     regionErr.IncompatibleRequest,
 				"data_is_not_ready":        regionErr.DataIsNotReady,
 			} {
 				require.Contains(t, formatted, field+":<"+detail.String()+">", field)
@@ -268,9 +255,8 @@ func TestRedactRegionError(t *testing.T) {
 
 func TestTaskInfoS3CredentialsRedacted(t *testing.T) {
 	s3 := &backup.S3{
-		Bucket:                  "backup-bucket",
-		SessionToken:            "session-token-value",
-		SseKmsEncryptionContext: "eyJ0ZW5hbnQiOiJjb250ZXh0LXZhbHVlIn0=",
+		Bucket:       "backup-bucket",
+		SessionToken: "session-token-value",
 	}
 	info := &backup.StreamBackupTaskInfo{
 		Name:    "backup-task",
@@ -279,9 +265,7 @@ func TestTaskInfoS3CredentialsRedacted(t *testing.T) {
 	original := info.String()
 	redacted := (TaskInfoRedacted{Info: info}).String()
 	require.NotContains(t, redacted, s3.SessionToken)
-	require.NotContains(t, redacted, s3.SseKmsEncryptionContext)
 	require.Contains(t, redacted, s3.Bucket)
 	require.Contains(t, redacted, info.Name)
 	require.Equal(t, original, info.String())
 }
->>>>>>> d880d7fabe5 (*: redact keys, values and SQL in diagnostic logs (#71922))
