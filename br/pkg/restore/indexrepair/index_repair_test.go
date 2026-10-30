@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package restore_test
+package indexrepair_test
 
 import (
 	"context"
@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
-	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/indexrepair"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -115,12 +115,12 @@ func TestRepairGlobalIndexes(t *testing.T) {
 			require.NoError(t, err)
 			defer meta.Close()
 			require.NoError(t, meta.SaveCheckpointMetadata(ctx, nil))
-			const failBeforeCreate = "github.com/pingcap/tidb/br/pkg/restore/failed-before-create-ingest-index"
+			const failBeforeCreate = "github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-before-create-ingest-index"
 			require.NoError(t, failpoint.Enable(failBeforeCreate, "return(true)"))
 			t.Cleanup(func() { require.NoError(t, failpoint.Disable(failBeforeCreate)) })
-			require.ErrorContains(t, restore.RepairIndexes(ctx, s.Mock.Domain, recorder, meta, g, nil), "failed before create ingest index")
+			require.ErrorContains(t, indexrepair.RepairIndexes(ctx, s.Mock.Domain, recorder, meta, g, nil), "failed before create ingest index")
 			require.NoError(t, failpoint.Disable(failBeforeCreate))
-			require.NoError(t, restore.RepairIndexes(ctx, s.Mock.Domain, nil, meta, g, nil))
+			require.NoError(t, indexrepair.RepairIndexes(ctx, s.Mock.Domain, nil, meta, g, nil))
 			tk.MustExec("ADMIN CHECK TABLE test.t")
 			if tc.name == "global_primary" {
 				tk.MustQuery("SELECT id,a,b FROM test.t FORCE INDEX(idx) ORDER BY id").Check(testkit.Rows("1 1 one", "11 2 two"))
@@ -144,14 +144,14 @@ func TestRepairGlobalIndexes(t *testing.T) {
 			for _, idx := range after.Meta().Indices {
 				if idx.Global {
 					idx.State = model.StateWriteReorganization
-					repairErr := restore.RepairIndexes(ctx, s.Mock.Domain, nil, meta, g, nil)
+					repairErr := indexrepair.RepairIndexes(ctx, s.Mock.Domain, nil, meta, g, nil)
 					idx.State = model.StatePublic
 					require.ErrorContains(t, repairErr, "is still being rebuilt")
 					break
 				}
 			}
 			// A second invocation must resume persisted SQLs without dropping rebuilt indexes.
-			require.NoError(t, restore.RepairIndexes(ctx, s.Mock.Domain, nil, meta, g, nil))
+			require.NoError(t, indexrepair.RepairIndexes(ctx, s.Mock.Domain, nil, meta, g, nil))
 			tk.MustExec("ADMIN CHECK TABLE test.t")
 		})
 	}

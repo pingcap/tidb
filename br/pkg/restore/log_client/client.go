@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/indexrepair"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	"github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
@@ -1962,7 +1963,7 @@ func (rc *LogClient) RepairIngestIndex(
 	if !rc.useCheckpoint {
 		logCheckpointMetaManager = nil
 	}
-	return restore.RepairIndexes(ctx, rc.dom, ingestRecorder, logCheckpointMetaManager, g, addIndexSQLStorage)
+	return indexrepair.RepairIndexes(ctx, rc.dom, ingestRecorder, logCheckpointMetaManager, g, addIndexSQLStorage)
 }
 
 func (rc *LogClient) RecordDeleteRange(sql *stream.PreDelRangeQuery) {

@@ -3467,9 +3467,9 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 		childTableIndexI1 := childTableInfo.Indices[0]
 		parentTableIndexI2 := parentTableInfo.Indices[0]
 
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/failed-before-repair-ingest-index", `return(true)`))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-before-repair-ingest-index", `return(true)`))
 		defer func() {
-			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/failed-before-repair-ingest-index"))
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-before-repair-ingest-index"))
 		}()
 		ingestRecorder := ingestrec.New()
 		require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
@@ -3481,19 +3481,19 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", parentTableIndexI2.ID)),
 		), false))
 		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/failed-before-repair-ingest-index"))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/failed-before-create-ingest-index", `return(true)`))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-before-repair-ingest-index"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-before-create-ingest-index", `return(true)`))
 		defer func() {
-			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/failed-before-create-ingest-index")
+			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-before-create-ingest-index")
 		}()
 		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/failed-before-create-ingest-index"))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/failed-after-repair-ingest-index", `return(true)`))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-before-create-ingest-index"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-after-repair-ingest-index", `return(true)`))
 		defer func() {
-			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/failed-after-repair-ingest-index")
+			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-after-repair-ingest-index")
 		}()
 		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/failed-after-repair-ingest-index"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/indexrepair/failed-after-repair-ingest-index"))
 		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
 
 		infoSchema = s.Mock.InfoSchema()

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/indexrepair"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	"github.com/pingcap/tidb/br/pkg/restore/nameroute"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
@@ -1878,7 +1879,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			return errors.Trace(err)
 		}
 		if repairStarted {
-			if err := restore.RepairIndexes(ctx, mgr.GetDomain(), nil, cfg.snapshotCheckpointMetaManager, g, nil); err != nil {
+			if err := indexrepair.RepairIndexes(ctx, mgr.GetDomain(), nil, cfg.snapshotCheckpointMetaManager, g, nil); err != nil {
 				return errors.Trace(err)
 			}
 			canRestoreSchedulers = true
@@ -2133,7 +2134,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if cfg.UseCheckpoint {
 			repairCheckpoint = cfg.snapshotCheckpointMetaManager
 		}
-		if err := restore.RepairIndexes(ctx, mgr.GetDomain(), recorder, repairCheckpoint, g, nil); err != nil {
+		if err := indexrepair.RepairIndexes(ctx, mgr.GetDomain(), recorder, repairCheckpoint, g, nil); err != nil {
 			return errors.Annotate(err, "failed to rebuild global indexes")
 		}
 	}
