@@ -3623,6 +3623,13 @@ func (b *executorBuilder) chooseNDVRate(task plannercore.AnalyzeColumnsTask, opt
 	if samples := opts[ast.AnalyzeOptNumSamples]; samples > 0 {
 		needed = min(1, float64(samples)/rows)
 	}
+	reason := "TopN and histograms sample only the rows selected for NDV"
+	if minBlocks := vardef.AnalyzeMinSampledBlocks.Load(); minBlocks > 0 {
+		if blockRate := blockSampleNDVRate(rows, tikvWriteCFRowOverhead, minBlocks); blockRate > needed {
+			needed = blockRate
+			reason = fmt.Sprintf("TopN and histograms of a block sample need about %d data blocks", minBlocks)
+		}
+	}
 	if rate >= needed {
 		return rate, false
 	}
@@ -3633,9 +3640,33 @@ func (b *executorBuilder) chooseNDVRate(task plannercore.AnalyzeColumnsTask, opt
 		table += "'s partition " + task.PartitionName
 	}
 	b.sctx.GetSessionVars().StmtCtx.AppendNote(errors.NewNoStackErrorf(
-		"Analyze raised the NDV rate from %g to %g for table %s, because TopN and histograms sample only the rows selected for NDV",
-		rate, needed, table))
+		"Analyze raised the NDV rate from %g to %g for table %s, because %s",
+		rate, needed, table, reason))
 	return needed, true
+}
+
+const (
+	// tikvWriteCFBlockSize is the default size of a TiKV write CF data block.
+	tikvWriteCFBlockSize = 32 * 1024
+	// tikvWriteCFRowOverhead is the size of a row with an integer handle in the
+	// TiKV write CF without its value: the key, the timestamp and the write
+	// record after prefix compression. Rows whose values were in CF_DEFAULT
+	// took 37.7 bytes each. A value short enough to stay in the write CF makes
+	// the row larger, so taking only the overhead can only underestimate the
+	// blocks and raise the rate: by 13-20% for two BIGINT columns.
+	tikvWriteCFRowOverhead = 38
+)
+
+// blockSampleNDVRate returns the NDV rate at which TiKV block sampling reads
+// about minBlocks write CF data blocks of a table with rows rows. Rows of one
+// block are alike when values follow the key order, so the TopN and histograms
+// of a block sample depend on the number of blocks, not of rows.
+func blockSampleNDVRate(rows, rowBytes float64, minBlocks int64) float64 {
+	if minBlocks <= 0 || rows <= 0 {
+		return 0
+	}
+	blocks := max(1, rows*rowBytes/tikvWriteCFBlockSize)
+	return min(1, float64(minBlocks)/blocks)
 }
 
 // getAdjustedSampleRate calculate the sample rate by the table size. If we cannot get the table size. We use the 0.001 as the default sample rate.
