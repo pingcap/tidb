@@ -2111,6 +2111,7 @@ func (do *Domain) UpdateTableStatsLoop() error {
 	// Otherwise, we may start the auto analyze worker before the stats cache is initialized.
 	do.wg.Run(func() { waitStartTask(do, do.autoAnalyzeWorker) }, "autoAnalyzeWorker")
 	do.wg.Run(func() { waitStartTask(do, do.analyzeJobsCleanupWorker) }, "analyzeJobsCleanupWorker")
+	do.wg.Run(func() { waitStartTask(do, do.autoAnalyzeTableFailuresWorker) }, "autoAnalyzeTableFailuresWorker")
 	return nil
 }
 
@@ -2358,6 +2359,55 @@ func (do *Domain) gcStatsWorker() {
 			statsHandle.UpdateStatsHealthyMetrics()
 		}
 	}
+}
+
+const (
+	// autoAnalyzeTableFailuresWindow is the window over which failed auto analyze jobs of one table are counted.
+	autoAnalyzeTableFailuresWindow = 24 * time.Hour
+	// autoAnalyzeTableFailuresInterval is how often the stats owner refreshes the metric.
+	autoAnalyzeTableFailuresInterval = 30 * time.Minute
+	// autoAnalyzeTableFailuresQueryTimeout bounds the query on mysql.analyze_jobs.
+	autoAnalyzeTableFailuresQueryTimeout = time.Minute
+)
+
+// autoAnalyzeTableFailuresWorker reports the largest number of failed auto analyze jobs of a single
+// table in the last 24 hours. It reads mysql.analyze_jobs, so it also counts jobs whose TiDB instance
+// was killed, which the in-memory auto analyze counter misses. It runs in its own goroutine so a slow
+// query does not delay the other stats owner work.
+func (do *Domain) autoAnalyzeTableFailuresWorker() {
+	defer util.Recover(metrics.LabelDomain, "autoAnalyzeTableFailuresWorker", nil, false)
+	ticker := time.NewTicker(autoAnalyzeTableFailuresInterval)
+	defer func() {
+		ticker.Stop()
+		logutil.BgLogger().Info("autoAnalyzeTableFailuresWorker exited.")
+	}()
+	for {
+		select {
+		case <-do.exit:
+			return
+		case <-ticker.C:
+			do.updateAutoAnalyzeTableFailuresMetric()
+		}
+	}
+}
+
+func (do *Domain) updateAutoAnalyzeTableFailuresMetric() {
+	if !do.statsOwner.IsOwner() {
+		// Only the stats owner reports it, so a former owner must not keep a stale value.
+		metrics.AutoAnalyzeTableFailures.Set(0)
+		metrics.AutoAnalyzeTableFailuresUpdateTime.Set(0)
+		return
+	}
+	ctx, cancel := context.WithTimeout(handleutil.StatsCtx, autoAnalyzeTableFailuresQueryTimeout)
+	defer cancel()
+	maxFailures, err := do.StatsHandle().MaxAutoAnalyzeFailuresPerTable(ctx, time.Now().Add(-autoAnalyzeTableFailuresWindow))
+	if err != nil {
+		// Keep the last value. The update time stops moving, so alerts can tell the value is stale.
+		logutil.BgLogger().Warn("get auto analyze failures per table failed", zap.Error(err))
+		return
+	}
+	metrics.AutoAnalyzeTableFailures.Set(float64(maxFailures))
+	metrics.AutoAnalyzeTableFailuresUpdateTime.Set(float64(time.Now().Unix()))
 }
 
 func (do *Domain) dumpColStatsUsageWorker() {

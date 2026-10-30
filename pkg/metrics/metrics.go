@@ -146,6 +146,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(AutoAnalyzeCounter)
 	prometheus.MustRegister(ManualAnalyzeCounter)
 	prometheus.MustRegister(AutoAnalyzeHistogram)
+	prometheus.MustRegister(AutoAnalyzeTableFailures)
+	prometheus.MustRegister(AutoAnalyzeTableFailuresUpdateTime)
 	prometheus.MustRegister(AutoIDHistogram)
 	prometheus.MustRegister(BatchAddIdxHistogram)
 	prometheus.MustRegister(CampaignOwnerCounter)

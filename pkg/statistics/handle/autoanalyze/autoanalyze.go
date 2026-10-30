@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -138,6 +139,48 @@ func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnDeadInstances() error {
 	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return CleanupCorruptedAnalyzeJobsOnDeadInstances(sctx)
 	}, statsutil.FlagWrapTxn)
+}
+
+// MaxAutoAnalyzeFailuresPerTable returns the largest number of failed auto analyze jobs
+// for a single table (or partition) whose update time is not earlier than since.
+func (sa *statsAnalyze) MaxAutoAnalyzeFailuresPerTable(ctx context.Context, since time.Time) (maxFailures int64, err error) {
+	err = statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		maxFailures, err = MaxAutoAnalyzeFailuresPerTable(ctx, sctx, since)
+		return err
+	})
+	return maxFailures, err
+}
+
+// selectMaxAutoAnalyzeFailuresPerTableSQL counts the failed auto analyze jobs per table and partition.
+// Jobs of TiDB instances that were killed during the analyze are marked as failed by
+// CleanupCorruptedAnalyzeJobsOnDeadInstances, so they are counted as well.
+const selectMaxAutoAnalyzeFailuresPerTableSQL = `SELECT COALESCE(MAX(cnt), 0)
+		FROM (
+			SELECT COUNT(*) AS cnt
+			FROM mysql.analyze_jobs
+			WHERE state = 'failed'
+			AND job_info LIKE 'auto %%'
+			AND update_time >= CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)
+			GROUP BY table_schema, table_name, partition_name
+		) AS t`
+
+// MaxAutoAnalyzeFailuresPerTable returns the largest number of failed auto analyze jobs
+// for a single table (or partition) whose update time is not earlier than since.
+// Exported for testing.
+func MaxAutoAnalyzeFailuresPerTable(ctx context.Context, sctx sessionctx.Context, since time.Time) (int64, error) {
+	rows, _, err := statsutil.ExecRowsWithCtx(
+		kv.WithInternalSourceType(ctx, kv.InternalTxnStats),
+		sctx,
+		selectMaxAutoAnalyzeFailuresPerTableSQL,
+		since.UTC().Format(types.TimeFormat),
+	)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if len(rows) == 0 || rows[0].IsNull(0) {
+		return 0, nil
+	}
+	return rows[0].GetInt64(0), nil
 }
 
 // SelectAnalyzeJobsOnCurrentInstanceSQL is the SQL to select the analyze jobs whose

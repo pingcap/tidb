@@ -613,3 +613,49 @@ func TestAutoAnalyzeWithVectorIndex(t *testing.T) {
 	// Vector Index can not trigger auto analyze.
 	require.False(t, h.HandleAutoAnalyze())
 }
+
+func TestMaxAutoAnalyzeFailuresPerTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	now := time.Now().UTC()
+	since := now.Add(-24 * time.Hour)
+
+	maxFailures, err := h.MaxAutoAnalyzeFailuresPerTable(context.Background(), since)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), maxFailures)
+
+	insertJob := func(table, partition, jobInfo, state string, updateTime time.Time) {
+		tk.MustExec(
+			"INSERT INTO mysql.analyze_jobs (table_schema, table_name, partition_name, job_info, state, instance, update_time) "+
+				"VALUES ('test', ?, ?, ?, ?, '127.0.0.1:4000', CONVERT_TZ(?, '+00:00', @@TIME_ZONE))",
+			table, partition, jobInfo, state, updateTime.Format(types.TimeFormat),
+		)
+	}
+	recent := now.Add(-time.Hour)
+	// Three recent auto analyze failures of t1 make it the worst table.
+	for range 3 {
+		insertJob("t1", "", "auto analyze table all columns with 256 buckets", "failed", recent)
+	}
+	// Successful, running and manual jobs are not counted.
+	insertJob("t1", "", "auto analyze table all columns with 256 buckets", "finished", recent)
+	insertJob("t1", "", "auto analyze table all columns with 256 buckets", "running", recent)
+	insertJob("t1", "", "analyze table all columns with 256 buckets", "failed", recent)
+	// Failures older than the window are not counted.
+	for range 5 {
+		insertJob("t2", "", "auto analyze table all columns with 256 buckets", "failed", now.Add(-48*time.Hour))
+	}
+	// Partitions are counted separately.
+	insertJob("t3", "p0", "auto analyze table all columns with 256 buckets", "failed", recent)
+	insertJob("t3", "p0", "auto analyze table all columns with 256 buckets", "failed", recent)
+	insertJob("t3", "p1", "auto analyze table all columns with 256 buckets", "failed", recent)
+
+	maxFailures, err = h.MaxAutoAnalyzeFailuresPerTable(context.Background(), since)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), maxFailures)
+
+	// A wider window also counts the old failures of t2.
+	maxFailures, err = h.MaxAutoAnalyzeFailuresPerTable(context.Background(), now.Add(-72*time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, int64(5), maxFailures)
+}
