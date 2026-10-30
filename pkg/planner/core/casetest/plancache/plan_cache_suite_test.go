@@ -328,6 +328,42 @@ func TestNonPreparedPlanCacheBasically(t *testing.T) {
 	}
 }
 
+func TestNonPreparedPlanCacheParserContext(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_context(a int primary key)")
+	tk.MustExec("insert into t_context values (1), (2)")
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=ON")
+	for _, mode := range []string{"", "NO_BACKSLASH_ESCAPES", ""} {
+		tk.MustExec("set sql_mode='" + mode + "'")
+		want := "610A"
+		if mode != "" {
+			want = "615C6E"
+		}
+		for _, id := range []string{"1", "2"} {
+			tk.MustQuery(`select hex('a\n'), a from t_context where a=` + id).Check(testkit.Rows(want + " " + id))
+		}
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	}
+	for _, charset := range []string{"gbk", "latin1", "gbk"} {
+		tk.MustExec("set character_set_client='" + charset + "'")
+		for _, id := range []string{"1", "2"} {
+			query := "select '" + string([]byte{0xc4, 0xe3}) + "', a from t_context where a=" + id
+			tk.MustExec("set tidb_enable_non_prepared_plan_cache=OFF")
+			want := tk.MustQuery(query).Rows()
+			if charset == "gbk" {
+				require.Equal(t, "你", want[0][0])
+			} else {
+				require.NotEqual(t, "你", want[0][0])
+			}
+			tk.MustExec("set tidb_enable_non_prepared_plan_cache=ON")
+			tk.MustQuery(query).Check(want)
+		}
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	}
+}
+
 func TestNonPreparedPlanCacheInternalSQL(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
