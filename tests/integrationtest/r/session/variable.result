@@ -231,3 +231,21 @@ set @@group_concat_max_len='hello';
 Error 1232 (42000): Incorrect argument type to variable 'group_concat_max_len'
 set global group_concat_max_len = default;
 set @@session.group_concat_max_len = default;
+SET SESSION sql_log_off = 1;
+SELECT @@SESSION.sql_log_off;
+@@SESSION.sql_log_off
+1
+SET SESSION sql_log_off = 0;
+SELECT @@SESSION.sql_log_off;
+@@SESSION.sql_log_off
+0
+SET SESSION sql_log_off = ON;
+SELECT @@SESSION.sql_log_off;
+@@SESSION.sql_log_off
+1
+SET SESSION sql_log_off = OFF;
+SELECT @@SESSION.sql_log_off;
+@@SESSION.sql_log_off
+0
+SET SESSION sql_log_off = 2;
+Error 1231 (42000): Variable 'sql_log_off' can't be set to the value of '2'

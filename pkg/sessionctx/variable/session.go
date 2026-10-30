@@ -904,6 +904,9 @@ type SessionVars struct {
 	// InRestrictedSQL indicates if the session is handling restricted SQL execution.
 	InRestrictedSQL bool
 
+	// SQLLogOff suppresses general query logging for this session.
+	SQLLogOff bool
+
 	// InExplainExplore indicates if this statement is under EXPLAIN EXPLORE.
 	InExplainExplore bool
 
