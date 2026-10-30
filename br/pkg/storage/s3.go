@@ -96,6 +96,11 @@ type S3Storage struct {
 	s3Compatible bool
 }
 
+// Features implements FeatureProvider.
+func (*S3Storage) Features() Features {
+	return FeatureStrongConsistency
+}
+
 func (*S3Storage) MarkStrongConsistency() {
 	// See https://aws.amazon.com/cn/s3/consistency/
 }

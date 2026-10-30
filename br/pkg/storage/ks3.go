@@ -792,3 +792,8 @@ func (rs *KS3Storage) CopyFrom(ctx context.Context, e ExternalStorage, spec Copy
 	}
 	return nil
 }
+
+// Features implements FeatureProvider.
+func (*KS3Storage) Features() Features {
+	return FeatureStrongConsistency
+}

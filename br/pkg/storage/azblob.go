@@ -908,3 +908,8 @@ func (u *azblobUploader) Close(ctx context.Context) error {
 	_, err := u.blobClient.CommitBlockList(ctx, u.blockIDList, options)
 	return errors.Trace(err)
 }
+
+// Features implements FeatureProvider.
+func (*AzureBlobStorage) Features() Features {
+	return FeatureStrongConsistency
+}

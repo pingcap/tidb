@@ -324,3 +324,8 @@ func NewLocalStorage(base string) (*LocalStorage, error) {
 	}
 	return &LocalStorage{base: base}, nil
 }
+
+// Features implements FeatureProvider.
+func (*LocalStorage) Features() Features {
+	return 0
+}

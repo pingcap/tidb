@@ -43,7 +43,7 @@ func initTestKit(t *testing.T) *testkit.TestKit {
 
 	cfg := config.GetGlobalConfig()
 	cfg.Store = "tikv"
-	cfg.Path = "127.0.0.1:2379"
+	cfg.Path = realtikvtest.CurrentPDAddr()
 	config.StoreGlobalConfig(cfg)
 
 	tk := testkit.NewTestKit(t, store)

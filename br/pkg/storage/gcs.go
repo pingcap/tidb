@@ -693,3 +693,8 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 func (r *gcsObjectReader) GetFileSize() (int64, error) {
 	return r.totalSize, nil
 }
+
+// Features implements FeatureProvider.
+func (*GCSStorage) Features() Features {
+	return FeatureStrongConsistency
+}

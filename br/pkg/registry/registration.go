@@ -178,6 +178,9 @@ const (
 type RegistrationInfo struct {
 	// filter patterns
 	FilterStrings []string
+	// FilterHashInput is the exact input hashed into filter_hash when looking up
+	// or creating registrations. It should already include any repo backup scope.
+	FilterHashInput string
 
 	// time range for restore
 	StartTS    uint64
@@ -196,6 +199,13 @@ type RegistrationInfo struct {
 type RegistrationInfoWithID struct {
 	RegistrationInfo
 	restoreID uint64
+}
+
+func registrationFilterHashInput(info RegistrationInfo) string {
+	if info.FilterHashInput != "" {
+		return info.FilterHashInput
+	}
+	return strings.Join(info.FilterStrings, FilterSeparator)
 }
 
 // Registry manages registrations of restore tasks
@@ -307,9 +317,11 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 	}
 
 	filterStrings := strings.Join(info.FilterStrings, FilterSeparator)
+	filterHashInput := registrationFilterHashInput(info)
 
 	log.Info("attempting to resume or create registration",
 		zap.String("filter_strings", filterStrings),
+		zap.String("filter_hash_input", filterHashInput),
 		zap.Uint64("start_ts", info.StartTS),
 		zap.Uint64("restored_ts", info.RestoredTS),
 		zap.Uint64("upstream_cluster_id", info.UpstreamClusterID),
@@ -324,7 +336,7 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 		// first look for an existing task with the same parameters
 		lookupSQL := fmt.Sprintf(lookupRegistrationSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
 		rows, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, lookupSQL,
-			filterStrings, info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd)
+			filterHashInput, info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd)
 		if err != nil {
 			return errors.Annotate(err, "failed to look up existing task")
 		}
@@ -375,7 +387,7 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 		currentTime := time.Now().UTC().Unix()
 		insertSQL := fmt.Sprintf(createNewTaskSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
 		_, _, err = execCtx.ExecRestrictedSQL(ctx, sessionOpts, insertSQL,
-			filterStrings, filterStrings, info.StartTS, info.RestoredTS,
+			filterStrings, filterHashInput, info.StartTS, info.RestoredTS,
 			info.UpstreamClusterID, info.WithSysTable, info.Cmd, currentTime, currentTime)
 		if err != nil {
 			return errors.Annotate(err, "failed to create new registration")
@@ -686,7 +698,7 @@ func (r *Registry) resolveRestoreTS(
 	info RegistrationInfo,
 	isRestoredTSUserSpecified bool,
 ) (uint64, error) {
-	filterStrings := strings.Join(info.FilterStrings, FilterSeparator)
+	filterHashInput := registrationFilterHashInput(info)
 
 	// look for tasks with same filter, startTS, cluster, sysTable, cmd
 	execCtx := r.se.GetSessionCtx().GetRestrictedSQLExecutor()
@@ -694,7 +706,7 @@ func (r *Registry) resolveRestoreTS(
 
 	checkSQL := fmt.Sprintf(selectConflictingTaskSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
 	rows, _, err := execCtx.ExecRestrictedSQL(ctx, nil, checkSQL,
-		filterStrings, info.StartTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd)
+		filterHashInput, info.StartTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd)
 	if err != nil {
 		return 0, errors.Annotate(err, "failed to check for existing tasks with same parameters")
 	}
@@ -990,9 +1002,11 @@ func (r *Registry) FindAndDeleteMatchingTask(ctx context.Context,
 	}
 
 	filterStrings := strings.Join(info.FilterStrings, FilterSeparator)
+	filterHashInput := registrationFilterHashInput(info)
 
 	log.Info("searching for matching task to delete",
 		zap.String("filter_strings", filterStrings),
+		zap.String("filter_hash_input", filterHashInput),
 		zap.Uint64("start_ts", info.StartTS),
 		zap.Uint64("restored_ts", info.RestoredTS),
 		zap.Uint64("upstream_cluster_id", info.UpstreamClusterID),
@@ -1007,7 +1021,7 @@ func (r *Registry) FindAndDeleteMatchingTask(ctx context.Context,
 		lookupSQL := fmt.Sprintf(lookupRegistrationSQLTemplate,
 			RestoreRegistryDBName, RestoreRegistryTableName)
 		rows, _, err := execCtx.ExecRestrictedSQL(ctx, sessionOpts, lookupSQL,
-			filterStrings, info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd)
+			filterHashInput, info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd)
 		if err != nil {
 			return errors.Annotate(err, "failed to lookup matching task")
 		}
