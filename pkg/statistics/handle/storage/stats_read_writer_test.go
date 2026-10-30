@@ -21,7 +21,9 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -82,6 +84,78 @@ func TestUpdateStatsMetaVersionForGC(t *testing.T) {
 		version,
 	).Rows()
 	require.Equal(t, 1, len(rows))
+}
+
+// A failed main transaction must report no persistence, while a later
+// bookkeeping error must not hide the histogram transaction's successful commit.
+func TestSaveColOrIdxStatsToStorageWithStatus(t *testing.T) {
+	testCases := []struct {
+		name          string
+		failCommit    bool
+		failSlowSave  bool
+		wantPersisted bool
+	}{
+		{name: "success", wantPersisted: true},
+		{name: "main transaction failed", failCommit: true},
+		{name: "post-commit error", failSlowSave: true, wantPersisted: true},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@session.tidb_analyze_version = 2")
+			tk.MustExec("create table t(a int)")
+			tk.MustExec("insert into t values (1), (1), (2)")
+			tk.MustExec("analyze table t all columns")
+			table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+			require.NoError(t, err)
+			info := table.Meta()
+			handle := dom.StatsHandle()
+			stored, err := handle.TableStatsFromStorage(info, info.ID, true, 0)
+			require.NoError(t, err)
+			col := stored.GetCol(info.Columns[0].ID)
+			require.NotNil(t, col)
+			require.Equal(t, int64(2), col.NDV)
+			hist := col.Histogram.Copy()
+			hist.NDV = 3
+
+			// Keep injected failures scoped to the save, so the independent
+			// storage read below can verify whether that transaction committed.
+			t.Run("save", func(t *testing.T) {
+				if testCase.failCommit {
+					testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/mockCommitError8942", "return(true)")
+				}
+				if testCase.failSlowSave {
+					const fp = "github.com/pingcap/tidb/pkg/statistics/handle/storage/"
+					testfailpoint.Enable(t, fp+"slowStatsSaving", "return(true)")
+					testfailpoint.Enable(t, fp+"failToSaveStats", "return(true)")
+				}
+				persisted, saveErr := handle.SaveColOrIdxStatsToStorageWithStatus(
+					info.ID, 3, 0, 0, hist, col.CMSketch, col.TopN, nil, 2, true, util.StatsMetaHistorySourceAnalyze,
+				)
+				require.Equal(t, testCase.wantPersisted, persisted)
+				if testCase.failCommit || testCase.failSlowSave {
+					require.Error(t, saveErr)
+					if testCase.failSlowSave {
+						require.ErrorContains(t, saveErr, "failed to update stats meta version")
+					}
+				} else {
+					require.NoError(t, saveErr)
+				}
+			})
+
+			stored, err = handle.TableStatsFromStorage(info, info.ID, true, 0)
+			require.NoError(t, err)
+			if testCase.wantPersisted {
+				require.Equal(t, int64(3), stored.GetCol(hist.ID).NDV)
+				require.Greater(t, stored.GetCol(hist.ID).LastUpdateVersion, col.LastUpdateVersion)
+			} else {
+				require.Equal(t, int64(2), stored.GetCol(hist.ID).NDV)
+				require.Equal(t, col.LastUpdateVersion, stored.GetCol(hist.ID).LastUpdateVersion)
+			}
+		})
+	}
 }
 
 func TestSlowStatsSaving(t *testing.T) {

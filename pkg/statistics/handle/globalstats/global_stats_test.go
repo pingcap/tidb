@@ -16,6 +16,7 @@ package globalstats_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/statistics"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -38,6 +40,73 @@ import (
 )
 
 const asyncMergeWarn = "Warning 1105 The 'tidb_enable_async_merge_global_stats' variable will always be enabled in a future release; changing it is discouraged."
+
+type statsSaveResult struct {
+	persisted bool
+	err       error
+}
+
+type saveResultStatsHandle struct {
+	// Embed methods outside the persistence operation exercised by this test.
+	types.StatsHandle
+	saveResults []statsSaveResult
+	saveCalls   int
+}
+
+func (h *saveResultStatsHandle) SaveColOrIdxStatsToStorageWithStatus(
+	_ int64,
+	_, _ int64,
+	_ int,
+	_ *statistics.Histogram,
+	_ *statistics.CMSketch,
+	_ *statistics.TopN,
+	_ *statistics.FMSketch,
+	_ int,
+	_ bool,
+	_ string,
+) (bool, error) {
+	result := h.saveResults[h.saveCalls]
+	h.saveCalls++
+	return result.persisted, result.err
+}
+
+// Persistence continues after errors and reports commits independently of errors,
+// including failures in bookkeeping after the histogram transaction commits.
+func TestWriteGlobalStatsToStoragePreservesFirstError(t *testing.T) {
+	firstErr := errors.New("first histogram write failed")
+	secondErr := errors.New("second histogram write failed")
+	testCases := []struct {
+		name    string
+		results []statsSaveResult
+		updated bool
+		err     error
+	}{
+		{name: "success", results: []statsSaveResult{{persisted: true}}, updated: true},
+		{name: "primary transaction failed", results: []statsSaveResult{{err: firstErr}}, err: firstErr},
+		{name: "partial write", results: []statsSaveResult{{err: firstErr}, {persisted: true}}, updated: true, err: firstErr},
+		{name: "post-commit error", results: []statsSaveResult{{persisted: true, err: firstErr}}, updated: true, err: firstErr},
+		{name: "preserve first error", results: []statsSaveResult{{err: firstErr}, {persisted: true, err: secondErr}}, updated: true, err: firstErr},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			handle := &saveResultStatsHandle{saveResults: testCase.results}
+			globalStats := &globalstats.GlobalStats{
+				Hg:   make([]*statistics.Histogram, len(testCase.results)),
+				Cms:  make([]*statistics.CMSketch, len(testCase.results)),
+				TopN: make([]*statistics.TopN, len(testCase.results)),
+				Num:  len(testCase.results),
+			}
+			for i := range globalStats.Hg {
+				globalStats.Hg[i] = &statistics.Histogram{ID: int64(i + 1)}
+			}
+
+			updated, err := globalstats.WriteGlobalStatsToStorage(handle, globalStats, &types.GlobalStatsInfo{}, 42)
+			require.Equal(t, testCase.updated, updated)
+			require.ErrorIs(t, err, testCase.err)
+			require.Equal(t, len(testCase.results), handle.saveCalls)
+		})
+	}
+}
 
 func TestShowGlobalStatsWithAsyncMergeGlobal(t *testing.T) {
 	testShowGlobalStats(t, true)

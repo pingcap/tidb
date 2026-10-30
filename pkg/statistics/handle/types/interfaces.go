@@ -226,6 +226,11 @@ type StatsCache interface {
 	// To work with auto-analyze's needs, we'll update all table's stats meta into memory.
 	Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error
 
+	// UpdateTableStatsMeta refreshes the count and modify count for the requested tables.
+	// It preserves cached histograms and pseudo state when the schema and histogram watermark are current.
+	// Otherwise, it initializes stats from storage.
+	UpdateTableStatsMeta(ctx context.Context, is infoschema.InfoSchema, tableIDs ...int64) error
+
 	// MemConsumed returns its memory usage.
 	MemConsumed() (size int64)
 
@@ -356,6 +361,11 @@ type StatsReadWriter interface {
 	SaveColOrIdxStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
 		cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, updateAnalyzeTime bool, source string) (err error)
 
+	// SaveColOrIdxStatsToStorageWithStatus also reports a known committed histogram
+	// transaction, even if subsequent slow-save bookkeeping returns an error.
+	SaveColOrIdxStatsToStorageWithStatus(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
+		cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, updateAnalyzeTime bool, source string) (persisted bool, err error)
+
 	// SaveAnalyzeResultToStorage saves the analyze result to the storage.
 	SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
 
@@ -470,11 +480,12 @@ type GlobalStatsInfo struct {
 // StatsGlobal is used to manage partition table global stats.
 type StatsGlobal interface {
 	// MergePartitionStats2GlobalStatsByTableID merges partition stats to global stats by table ID.
+	// The returned boolean reports whether at least one global stats record was persisted.
 	MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 		opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
 		info *GlobalStatsInfo,
 		physicalID int64,
-	) (err error)
+	) (updated bool, err error)
 }
 
 // DDL is used to handle ddl events.

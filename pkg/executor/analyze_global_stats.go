@@ -37,15 +37,17 @@ type globalStatsKey struct {
 // The meaning of value in map is some additional information needed to build global-level stats.
 type globalStatsMap map[globalStatsKey]statstypes.GlobalStatsInfo
 
-func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsMap globalStatsMap) error {
+func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsMap globalStatsMap) []int64 {
 	globalStatsTableIDs := make(map[int64]struct{}, len(globalStatsMap))
 	for globalStatsID := range globalStatsMap {
 		globalStatsTableIDs[globalStatsID.tableID] = struct{}{}
 	}
 
 	tableIDs := make(map[int64]struct{}, len(globalStatsTableIDs))
+	updatedTableIDs := make([]int64, 0, len(globalStatsTableIDs))
 	for tableID := range globalStatsTableIDs {
 		tableIDs[tableID] = struct{}{}
+		tableUpdated := false
 		for globalStatsID, info := range globalStatsMap {
 			if globalStatsID.tableID != tableID {
 				continue
@@ -58,14 +60,14 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 			AddNewAnalyzeJob(e.Ctx(), job)
 			statsHandle.StartAnalyzeJob(job)
 
-			mergeStatsErr := func() error {
+			globalStatsUpdated, mergeStatsErr := func() (bool, error) {
 				globalOpts := e.opts
 				if e.OptionsMap != nil {
 					if v2Options, ok := e.OptionsMap[globalStatsID.tableID]; ok {
 						globalOpts = v2Options.FilledOpts
 					}
 				}
-				err := statsHandle.MergePartitionStats2GlobalStatsByTableID(
+				updated, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(
 					e.Ctx(),
 					globalOpts, e.Ctx().GetInfoSchema().(infoschema.InfoSchema),
 					&info,
@@ -75,9 +77,15 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 					logutil.ErrVerboseLogger().Warn("merge global stats failed",
 						zap.String("info", job.JobInfo), zap.Error(err), zap.Int64("tableID", tableID))
 				}
-				return err
+				return updated, err
 			}()
+			// Column and index stats are persisted separately. Refresh the table
+			// when any merge wrote data, even if another merge failed.
+			tableUpdated = tableUpdated || globalStatsUpdated
 			statsHandle.FinishAnalyzeJob(job, mergeStatsErr, statistics.GlobalStatsMergeJob)
+		}
+		if tableUpdated {
+			updatedTableIDs = append(updatedTableIDs, tableID)
 		}
 	}
 
@@ -88,7 +96,7 @@ func (e *AnalyzeExec) handleGlobalStats(statsHandle *handle.Handle, globalStatsM
 		}
 	}
 
-	return nil
+	return updatedTableIDs
 }
 
 func (e *AnalyzeExec) newAnalyzeHandleGlobalStatsJob(key globalStatsKey) *statistics.AnalyzeJob {

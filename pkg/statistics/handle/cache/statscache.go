@@ -120,13 +120,25 @@ func newCacheOfBatchUpdate(batchSize int, op func(toUpdate []*statistics.Table, 
 
 // Update reads stats meta from store and updates the stats map.
 func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error {
+	return s.update(ctx, is, false, tableAndPartitionIDs...)
+}
+
+// UpdateTableStatsMeta refreshes table metadata, preserving cached histograms and pseudo state
+// when the schema and histogram watermark are current. Otherwise, it loads stats from storage.
+func (s *StatsCacheImpl) UpdateTableStatsMeta(ctx context.Context, is infoschema.InfoSchema, tableIDs ...int64) error {
+	if len(tableIDs) == 0 {
+		return nil
+	}
+	return s.update(ctx, is, true, tableIDs...)
+}
+
+func (s *StatsCacheImpl) update(ctx context.Context, is infoschema.InfoSchema, metaOnly bool, tableAndPartitionIDs ...int64) error {
 	onlyForAnalyzedTables := len(tableAndPartitionIDs) > 0
 	start := time.Now()
 	defer func() {
 		dur := time.Since(start)
 		tidbmetrics.StatsDeltaLoadHistogram.Observe(dur.Seconds())
 	}()
-	lastVersion := s.GetNextCheckVersionWithOffset()
 	var (
 		skipMoveForwardStatsCache bool
 		rows                      []chunk.Row
@@ -139,8 +151,8 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		} else {
 			query += " /*+ use_index(mysql.stats_meta, idx_ver) */"
 		}
-		query += " version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta where version > %? "
-		args := []any{lastVersion}
+		query += " version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta "
+		args := make([]any, 0, 2)
 
 		if onlyForAnalyzedTables {
 			// When updating specific tables, we skip incrementing the max stats version to avoid missing
@@ -154,8 +166,14 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 			for _, tableID := range tableAndPartitionIDs {
 				tableStringIDs = append(tableStringIDs, strconv.FormatInt(tableID, 10))
 			}
-			query += "and table_id in (%?) "
+			// A targeted update follows ANALYZE and must reload each persisted result even
+			// when an unrelated table has advanced the cache-wide version beyond it.
+			query += "where table_id in (%?) "
 			args = append(args, tableStringIDs)
+		} else {
+			lastVersion := s.GetNextCheckVersionWithOffset()
+			query += "where version > %? "
+			args = append(args, lastVersion)
 		}
 		query += "order by version"
 		rows, _, err = util.ExecRows(sctx, query, args...)
@@ -204,42 +222,56 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		// If the table is not updated, we can skip it.
 
 		oldTbl, ok := s.Get(physicalID)
-		if ok && oldTbl.Version >= version &&
-			tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
+		// Older writers can leave the histogram watermark NULL or zero.
+		// An unknown watermark cannot establish that cached histograms are current.
+		cachedStatsCurrent := ok && latestHistUpdateVersion > 0 &&
+			tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS &&
+			oldTbl.LastStatsHistVersion >= latestHistUpdateVersion
+		if cachedStatsCurrent && oldTbl.Version >= version {
 			continue
 		}
+		updateMetaOnly := metaOnly && cachedStatsCurrent
 		var tbl *statistics.Table
-		needLoadColAndIdxStats := true
-		// If the column/index stats has not been updated, we can reuse the old table stats.
-		// Only need to update the count and modify count.
-		if ok && latestHistUpdateVersion > 0 && oldTbl.LastStatsHistVersion >= latestHistUpdateVersion {
+		if updateMetaOnly {
+			// A partition ANALYZE always flushes the logical table's row count,
+			// but it may not persist a new global histogram. Preserve the cached
+			// histogram and pseudo state only if no schema or histogram update was missed.
 			tbl = oldTbl.CopyAs(statistics.MetaOnly)
-			// count and modify count is updated in finalProcess
-			needLoadColAndIdxStats = false
-		}
-		if needLoadColAndIdxStats {
-			tbl, err = s.statsHandle.TableStatsFromStorage(
-				tableInfo,
-				physicalID,
-				false,
-				0,
-			)
-			// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
-			if err != nil {
-				statslogutil.StatsLogger().Warn(
-					"error occurred when read table stats",
-					zap.String("table", tableInfo.Name.O),
-					zap.Error(err),
-				)
-				continue
+		} else {
+			needLoadColAndIdxStats := true
+			// If the column/index stats has not been updated, we can reuse the old table stats.
+			// Only need to update the count and modify count.
+			if !metaOnly && ok && latestHistUpdateVersion > 0 && oldTbl.LastStatsHistVersion >= latestHistUpdateVersion {
+				tbl = oldTbl.CopyAs(statistics.MetaOnly)
+				// count and modify count is updated in finalProcess
+				needLoadColAndIdxStats = false
 			}
-			if tbl == nil {
-				tblToUpdateOrDelete.addToDelete(physicalID)
-				continue
+			if needLoadColAndIdxStats {
+				tbl, err = s.statsHandle.TableStatsFromStorage(
+					tableInfo,
+					physicalID,
+					false,
+					0,
+				)
+				// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
+				if err != nil {
+					statslogutil.StatsLogger().Warn(
+						"error occurred when read table stats",
+						zap.String("table", tableInfo.Name.O),
+						zap.Error(err),
+					)
+					continue
+				}
+				if tbl == nil {
+					tblToUpdateOrDelete.addToDelete(physicalID)
+					continue
+				}
 			}
 		}
 		tbl.Version = version
-		tbl.LastStatsHistVersion = latestHistUpdateVersion
+		if !updateMetaOnly {
+			tbl.LastStatsHistVersion = latestHistUpdateVersion
+		}
 		tbl.RealtimeCount = count
 		tbl.ModifyCount = modifyCount
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
@@ -250,7 +282,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		// 2. LastAnalyzeVersion is 0 because it has never been loaded.
 		// In this case, we can initialize LastAnalyzeVersion to the snapshot,
 		//	otherwise auto-analyze will assume that the table has never been analyzed and try to analyze it again.
-		if tbl.LastAnalyzeVersion == 0 && snapshot != 0 {
+		if !updateMetaOnly && tbl.LastAnalyzeVersion == 0 && snapshot != 0 {
 			tbl.LastAnalyzeVersion = snapshot
 		}
 		tblToUpdateOrDelete.addToUpdate(tbl)
