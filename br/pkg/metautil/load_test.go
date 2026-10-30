@@ -37,6 +37,44 @@ func mockBackupMeta(mockSchemas []*backuppb.Schema, mockFiles []*backuppb.File) 
 	}
 }
 
+func TestLoadBackupMetaReadErrors(t *testing.T) {
+	store, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	cipher := &backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
+	missing := &backuppb.MetaFile{MetaFiles: []*backuppb.File{{Name: "missing.meta"}}}
+	files := make([]*backuppb.File, MaxBatchSize+1)
+	schemas := make([]*backuppb.Schema, MaxBatchSize+1)
+	db, err := json.Marshal(model.DBInfo{ID: 1, Name: ast.NewCIStr("test")})
+	require.NoError(t, err)
+	for i := range files {
+		files[i] = &backuppb.File{StartKey: tablecodec.EncodeRowKey(123, []byte("a"))}
+		schemas[i] = &backuppb.Schema{Db: db}
+	}
+	for _, tc := range []struct {
+		name string
+		meta *backuppb.BackupMeta
+	}{
+		{"schema", &backuppb.BackupMeta{SchemaIndex: missing}},
+		{"file", &backuppb.BackupMeta{FileIndex: missing}},
+		{"partial files", &backuppb.BackupMeta{Files: files, FileIndex: missing, Schemas: schemas}},
+		{"parse", &backuppb.BackupMeta{Schemas: []*backuppb.Schema{{Db: []byte("invalid json")}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for range 128 {
+				_, err := LoadBackupTables(context.Background(), NewMetaReader(tc.meta, store, cipher), false)
+				require.Error(t, err)
+				if tc.name != "parse" {
+					require.Contains(t, err.Error(), "missing.meta")
+				}
+			}
+		})
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = LoadBackupTables(ctx, NewMetaReader(&backuppb.BackupMeta{}, store, cipher), false)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
 func TestLoadBackupMeta(t *testing.T) {
 	testDir := t.TempDir()
 	store, err := objstore.NewLocalStorage(testDir)
