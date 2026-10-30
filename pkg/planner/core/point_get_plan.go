@@ -21,12 +21,14 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
@@ -78,6 +80,24 @@ type PointPlanVal struct {
 	Plan base.Plan
 }
 
+var pointGetVisitInfo4Test []visitInfo
+
+func setVisitInfo4Test(vs []visitInfo) {
+	failpoint.Inject("point-get-visit-info", func(val failpoint.Value) {
+		if val.(bool) {
+			pointGetVisitInfo4Test = vs
+		}
+	})
+}
+
+func appendVisitInfo4Test(vs []visitInfo) {
+	failpoint.Inject("point-get-visit-info", func(val failpoint.Value) {
+		if val.(bool) {
+			pointGetVisitInfo4Test = append(pointGetVisitInfo4Test, vs...)
+		}
+	})
+}
+
 // TryFastPlan tries to use the PointGetPlan for the query.
 func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 	if checkStableResultMode(ctx) || fixcontrol.GetBoolWithDefault(ctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix52592, false) {
@@ -88,6 +108,7 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 
 	ctx.GetSessionVars().PlanID.Store(0)
 	ctx.GetSessionVars().PlanColumnID.Store(0)
+	userName, hostName := auth.GetUserAndHostName(ctx.GetSessionVars().User)
 	switch x := node.Node.(type) {
 	case *ast.SelectStmt:
 		if x.SelectIntoOpt != nil {
@@ -103,8 +124,13 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
 		// `PhysicalUnionAll` which children are `PointGet` if exists an unique key (a, b, c) in table `t`
 		if fp := tryWhereIn2BatchPointGet(ctx, x, node.GetResolveContext()); fp != nil {
-			if checkFastPlanPrivilege(ctx, fp.DBName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
-				return
+			visitInfos, ok := getVisitInfo(userName, hostName, fp.DBName, fp.TblInfo.Name.L, fp.OutputNames(), fp.UnfoldFromWildCard, fp.ColsInWhereClause)
+			if !ok {
+				return nil
+			}
+			setVisitInfo4Test(visitInfos)
+			if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
+				return nil
 			}
 			if metadef.IsMemDB(fp.DBName) {
 				return nil
@@ -114,7 +140,12 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 			return
 		}
 		if fp := tryPointGetPlan(ctx, x, node.GetResolveContext(), isForUpdateReadSelectLock(x.LockInfo)); fp != nil {
-			if checkFastPlanPrivilege(ctx, fp.DBName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
+			visitInfos, ok := getVisitInfo(userName, hostName, fp.DBName, fp.TblInfo.Name.L, fp.OutputNames(), fp.UnfoldFromWildCard, fp.ColsInWhereClause)
+			if !ok {
+				return nil
+			}
+			setVisitInfo4Test(visitInfos)
+			if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
 				return nil
 			}
 			if metadef.IsMemDB(fp.DBName) {
@@ -137,6 +168,46 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 		return tryDeletePointPlan(ctx, x, node.GetResolveContext())
 	}
 	return nil
+}
+
+// getVisitInfo collects 2 source of visitInfos:
+//  1. output names. To distinguish between table-level and column-level privilege error report, unfoldFromWildCard is needed.
+//     If the PointPlan is inside UPDATE or DELETE statements, the checking of output names should be ignored.
+//  2. columns in WHERE clause.
+func getVisitInfo(user, host, db, tbl string, outputNames types.NameSlice, unfold []bool, colsInWhere []string) (res []visitInfo, ok bool) {
+	if len(outputNames) != len(unfold) {
+		if intest.InTest {
+			panic("outputNames and unfold should have the same length")
+		}
+		logutil.BgLogger().Error("outputNames length not equal to unfold length",
+			zap.Int("outputNames", len(outputNames)), zap.Int("unfold", len(unfold)), zap.Stack("stack"))
+		return nil, false
+	}
+	for i, name := range outputNames {
+		var authErr error
+		if !unfold[i] {
+			authErr = plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", user, host, name.OrigColName.L, tbl)
+		} else {
+			authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("SELECT", user, host, tbl)
+		}
+		res = append(res, visitInfo{
+			db:        db,
+			table:     tbl,
+			column:    name.OrigColName.L,
+			privilege: mysql.SelectPriv,
+			err:       authErr,
+		})
+	}
+	for _, col := range colsInWhere {
+		res = append(res, visitInfo{
+			db:        db,
+			table:     tbl,
+			column:    col,
+			privilege: mysql.SelectPriv,
+			err:       plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", user, host, col, tbl),
+		})
+	}
+	return res, true
 }
 
 func getLockWaitTime(ctx base.PlanContext, lockInfo *ast.SelectLockInfo) (lock bool, waitTime int64) {
@@ -437,7 +508,7 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 		}
 	}
 
-	schema, names := buildSchemaFromFields(tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
+	schema, names, unfold := buildSchemaFromFields(tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
 	if schema == nil {
 		return nil
 	}
@@ -505,7 +576,8 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 		return nil
 	}
 	p.DBName = dbName
-
+	p.UnfoldFromWildCard = unfold
+	p.ColsInWhereClause = whereColNames
 	return p
 }
 
@@ -516,7 +588,7 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 // 2. It must be a single table select.
 // 3. All the columns must be public and not generated.
 // 4. The condition is an access path that the range is a unique key.
-func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *resolve.Context, check bool) *physicalop.PointGetPlan {
+func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *resolve.Context, check bool) (p *physicalop.PointGetPlan) {
 	if selStmt.Having != nil || selStmt.OrderBy != nil {
 		return nil
 	} else if selStmt.Limit != nil {
@@ -550,7 +622,7 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 			pkColOffset = i
 		}
 	}
-	schema, names := buildSchemaFromFields(tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
+	schema, names, unfold := buildSchemaFromFields(tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
 	if schema == nil {
 		return nil
 	}
@@ -560,6 +632,13 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 	if pairs == nil && !isTableDual {
 		return nil
 	}
+
+	defer func() {
+		if p != nil {
+			p.ColsInWhereClause = pairsToColumnNames(pairs)
+			p.UnfoldFromWildCard = unfold
+		}
+	}()
 
 	handlePair, fieldType := findPKHandle(tbl, pairs)
 	dbName := getLowerDB(tblName.Schema, ctx.GetSessionVars())
@@ -591,6 +670,13 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 	}
 
 	return checkTblIndexForPointPlan(ctx, tnW, schema, tblAlias.L, selStmt.TableHints, names, pairs, isTableDual, check)
+}
+
+func pairsToColumnNames(pairs []nameValuePair) (res []string) {
+	for _, pair := range pairs {
+		res = append(res, pair.colName)
+	}
+	return
 }
 
 func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW, schema *expression.Schema,
@@ -766,26 +852,29 @@ func newPointGetPlan(ctx base.PlanContext, dbName string, schema *expression.Sch
 	return p
 }
 
-func checkFastPlanPrivilege(ctx base.PlanContext, dbName, tableName string, checkTypes ...mysql.PrivilegeType) error {
+// checkFastPlanPrivilege checks two types of privilege:
+// 1. user meets all visitInfos requirement
+// 2. all tables can pass the check in CheckTableLock
+func checkFastPlanPrivilege(ctx base.PlanContext, visitInfos ...visitInfo) error {
 	pm := privilege.GetPrivilegeManager(ctx)
-	visitInfos := make([]visitInfo, 0, len(checkTypes))
-	for _, checkType := range checkTypes {
-		if pm != nil && !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", checkType) {
-			return plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs(checkType.String())
+	lockVisitInfos := make([]visitInfo, 0, len(visitInfos))
+	for _, vs := range visitInfos {
+		if pm != nil && !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, vs.db, vs.table, vs.column, vs.privilege) {
+			if vs.err != nil {
+				return vs.err
+			}
+			return plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs(vs.privilege.String())
 		}
-		// This visitInfo is only for table lock check, so we do not need column field,
-		// just fill it empty string.
-		visitInfos = append(visitInfos, visitInfo{
-			privilege: checkType,
-			db:        dbName,
-			table:     tableName,
-			column:    "",
-			err:       nil,
+		// This visitInfo is only for table lock check, so we do not need to set column field.
+		lockVisitInfos = append(lockVisitInfos, visitInfo{
+			privilege: vs.privilege,
+			db:        vs.db,
+			table:     vs.table,
 		})
 	}
 
 	infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
-	return CheckTableLock(ctx, infoSchema, visitInfos)
+	return CheckTableLock(ctx, infoSchema, lockVisitInfos)
 }
 
 func buildSchemaFromFields(
@@ -794,43 +883,48 @@ func buildSchemaFromFields(
 	tblName ast.CIStr,
 	fields []*ast.SelectField,
 ) (
-	*expression.Schema,
-	[]*types.FieldName,
+	_ *expression.Schema,
+	names []*types.FieldName,
+	unfold []bool,
 ) {
 	columns := make([]*expression.Column, 0, len(tbl.Columns)+1)
-	names := make([]*types.FieldName, 0, len(tbl.Columns)+1)
+	names = make([]*types.FieldName, 0, len(tbl.Columns)+1)
+	unfold = make([]bool, 0, len(tbl.Columns)+1)
 	if len(fields) > 0 {
 		for _, field := range fields {
 			if field.WildCard != nil {
 				if field.WildCard.Table.L != "" && field.WildCard.Table.L != tblName.L {
-					return nil, nil
+					return nil, nil, nil
 				}
 				for _, col := range tbl.Columns {
 					names = append(names, &types.FieldName{
 						DBName:      dbName,
 						OrigTblName: tbl.Name,
 						TblName:     tblName,
+						OrigColName: col.Name,
 						ColName:     col.Name,
 					})
+					unfold = append(unfold, true)
 					columns = append(columns, colInfoToColumn(col, len(columns)))
 				}
 				continue
 			}
 			if name, column, ok := tryExtractRowChecksumColumn(field, len(columns)); ok {
 				names = append(names, name)
+				unfold = append(unfold, false)
 				columns = append(columns, column)
 				continue
 			}
 			colNameExpr, ok := field.Expr.(*ast.ColumnNameExpr)
 			if !ok {
-				return nil, nil
+				return nil, nil, nil
 			}
 			if colNameExpr.Name.Table.L != "" && colNameExpr.Name.Table.L != tblName.L {
-				return nil, nil
+				return nil, nil, nil
 			}
 			col := findCol(tbl, colNameExpr.Name)
 			if col == nil {
-				return nil, nil
+				return nil, nil, nil
 			}
 			asName := colNameExpr.Name.Name
 			if field.AsName.L != "" {
@@ -843,9 +937,10 @@ func buildSchemaFromFields(
 				OrigColName: col.Name,
 				ColName:     asName,
 			})
+			unfold = append(unfold, false)
 			columns = append(columns, colInfoToColumn(col, len(columns)))
 		}
-		return expression.NewSchema(columns...), names
+		return expression.NewSchema(columns...), names, unfold
 	}
 	// fields len is 0 for update and delete.
 	for _, col := range tbl.Columns {
@@ -853,13 +948,14 @@ func buildSchemaFromFields(
 			DBName:      dbName,
 			OrigTblName: tbl.Name,
 			TblName:     tblName,
+			OrigColName: col.Name,
 			ColName:     col.Name,
 		})
+		unfold = append(unfold, false)
 		column := colInfoToColumn(col, len(columns))
 		columns = append(columns, column)
 	}
-	schema := expression.NewSchema(columns...)
-	return schema, names
+	return expression.NewSchema(columns...), names, unfold
 }
 
 func tryExtractRowChecksumColumn(field *ast.SelectField, idx int) (*types.FieldName, *expression.Column, bool) {
@@ -936,6 +1032,10 @@ func getNameValuePairs(ctx expression.BuildContext, tbl *model.TableInfo, tblNam
 		}
 		return nvPairs, isTableDual
 	case opcode.EQ:
+		// Views' columns have no FieldType.
+		if tbl.IsView() {
+			return nil, false
+		}
 		var (
 			d       types.Datum
 			colName *ast.ColumnNameExpr
@@ -975,10 +1075,6 @@ func getNameValuePairs(ctx expression.BuildContext, tbl *model.TableInfo, tblNam
 			return nil, false
 		}
 		if d.IsNull() {
-			return nil, false
-		}
-		// Views' columns have no FieldType.
-		if tbl.IsView() {
 			return nil, false
 		}
 		if colName.Name.Table.L != "" && colName.Name.Table.L != tblName.L {
@@ -1175,8 +1271,14 @@ func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolv
 		OrderBy:    updateStmt.Order,
 		Limit:      updateStmt.Limit,
 	}
-	pointGet := tryPointGetPlan(ctx, selStmt, resolveCtx, true)
-	if pointGet != nil {
+	var (
+		pointPlan         base.PhysicalPlan
+		dbName            string
+		tbl               *model.TableInfo
+		colsInWhereClause []string
+	)
+	userName, hostName := auth.GetUserAndHostName(ctx.GetSessionVars().User)
+	if pointGet := tryPointGetPlan(ctx, selStmt, resolveCtx, true); pointGet != nil {
 		if pointGet.IsTableDual {
 			dual := physicalop.PhysicalTableDual{}.Init(ctx, &property.StatsInfo{}, 0)
 			dual.SetOutputNames(pointGet.OutputNames())
@@ -1185,24 +1287,48 @@ func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolv
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
-		return buildPointUpdatePlan(ctx, pointGet, pointGet.DBName, pointGet.TblInfo, updateStmt, resolveCtx)
-	}
-	batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt, resolveCtx)
-	if batchPointGet != nil {
+		pointPlan, dbName, tbl, colsInWhereClause = pointGet, pointGet.DBName, pointGet.TblInfo, pointGet.ColsInWhereClause
+	} else if batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt, resolveCtx); batchPointGet != nil {
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			batchPointGet.Lock, batchPointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
-		return buildPointUpdatePlan(ctx, batchPointGet, batchPointGet.DBName, batchPointGet.TblInfo, updateStmt, resolveCtx)
+		pointPlan, dbName, tbl, colsInWhereClause = batchPointGet, batchPointGet.DBName, batchPointGet.TblInfo, batchPointGet.ColsInWhereClause
+	}
+
+	if pointPlan != nil {
+		// We don't check the output names, since they are expended to all columns of the table.
+		// See the comment in buildSchemaFromFields
+		visitInfos, ok := getVisitInfo(userName, hostName, dbName, tbl.Name.L, nil, nil, colsInWhereClause)
+		if !ok {
+			return nil
+		}
+		setVisitInfo4Test(visitInfos)
+		if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
+			return nil
+		}
+		return buildPointUpdatePlan(ctx, pointPlan, dbName, tbl, updateStmt, resolveCtx)
 	}
 	return nil
 }
 
 func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbName string, tbl *model.TableInfo, updateStmt *ast.UpdateStmt, resolveCtx *resolve.Context) base.Plan {
-	if checkFastPlanPrivilege(ctx, dbName, tbl.Name.L, mysql.SelectPriv, mysql.UpdatePriv) != nil {
+	orderedList, selectVisitInfos, allAssignmentsAreConstant := buildOrderedList(ctx, pointPlan, updateStmt.List)
+	if orderedList == nil {
 		return nil
 	}
-	orderedList, allAssignmentsAreConstant := buildOrderedList(ctx, pointPlan, updateStmt.List)
-	if orderedList == nil {
+	userName, hostName := auth.GetUserAndHostName(ctx.GetSessionVars().User)
+	visitInfos := selectVisitInfos
+	for _, assign := range orderedList {
+		visitInfos = append(visitInfos, visitInfo{
+			db:        dbName,
+			table:     tbl.Name.L,
+			column:    assign.ColName.L,
+			privilege: mysql.UpdatePriv,
+			err:       plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", userName, hostName, assign.ColName.L, tbl.Name.L),
+		})
+	}
+	appendVisitInfo4Test(visitInfos)
+	if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
 		return nil
 	}
 	handleCols := buildHandleCols(dbName, tbl, pointPlan)
@@ -1255,13 +1381,13 @@ func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 }
 
 func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignment,
-) (orderedList []*expression.Assignment, allAssignmentsAreConstant bool) {
+) (orderedList []*expression.Assignment, visitInfos []visitInfo, allAssignmentsAreConstant bool) {
 	orderedList = make([]*expression.Assignment, 0, len(list))
 	allAssignmentsAreConstant = true
 	for _, assign := range list {
 		idx, err := expression.FindFieldName(plan.OutputNames(), assign.Column)
 		if idx == -1 || err != nil {
-			return nil, true
+			return nil, nil, true
 		}
 		col := plan.Schema().Columns[idx]
 		newAssign := &expression.Assignment{
@@ -1272,10 +1398,11 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 		if defaultExpr != nil {
 			defaultExpr.Name = assign.Column
 		}
-		expr, err := rewriteAstExprWithPlanCtx(ctx, assign.Expr, plan.Schema(), plan.OutputNames(), false)
+		expr, vs, err := rewriteAstExprWithPlanCtx(ctx, assign.Expr, plan.Schema(), plan.OutputNames(), false)
 		if err != nil {
-			return nil, true
+			return nil, nil, true
 		}
+		visitInfos = append(visitInfos, vs...)
 		castToTP := col.GetStaticType()
 		if castToTP.GetType() == mysql.TypeEnum && assign.Expr.GetType().EvalType() == types.ETInt {
 			castToTP.AddFlag(mysql.EnumSetAsIntFlag)
@@ -1288,11 +1415,11 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 
 		newAssign.Expr, err = expr.ResolveIndices(plan.Schema())
 		if err != nil {
-			return nil, true
+			return nil, nil, true
 		}
 		orderedList = append(orderedList, newAssign)
 	}
-	return orderedList, allAssignmentsAreConstant
+	return orderedList, visitInfos, allAssignmentsAreConstant
 }
 
 func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCtx *resolve.Context) base.Plan {
@@ -1307,6 +1434,13 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCt
 		OrderBy:    delStmt.Order,
 		Limit:      delStmt.Limit,
 	}
+	var (
+		pointPlan         base.PhysicalPlan
+		dbName            string
+		tbl               *model.TableInfo
+		colsInWhereClause []string
+	)
+	userName, hostName := auth.GetUserAndHostName(ctx.GetSessionVars().User)
 	if pointGet := tryPointGetPlan(ctx, selStmt, resolveCtx, true); pointGet != nil {
 		if pointGet.IsTableDual {
 			dual := physicalop.PhysicalTableDual{}.Init(ctx, &property.StatsInfo{}, 0)
@@ -1316,19 +1450,42 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCt
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
-		return buildPointDeletePlan(ctx, pointGet, pointGet.DBName, pointGet.TblInfo, delStmt.IgnoreErr)
-	}
-	if batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt, resolveCtx); batchPointGet != nil {
+		pointPlan, dbName, tbl, colsInWhereClause = pointGet, pointGet.DBName, pointGet.TblInfo, pointGet.ColsInWhereClause
+	} else if batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt, resolveCtx); batchPointGet != nil {
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			batchPointGet.Lock, batchPointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
-		return buildPointDeletePlan(ctx, batchPointGet, batchPointGet.DBName, batchPointGet.TblInfo, delStmt.IgnoreErr)
+		pointPlan, dbName, tbl, colsInWhereClause = batchPointGet, batchPointGet.DBName, batchPointGet.TblInfo, batchPointGet.ColsInWhereClause
 	}
+	if pointPlan != nil {
+		// We don't check the output names, since they are expended to all columns of the table.
+		// See the comment in buildSchemaFromFields
+		visitInfos, ok := getVisitInfo(userName, hostName, dbName, tbl.Name.L, nil, nil, colsInWhereClause)
+		if !ok {
+			return nil
+		}
+		setVisitInfo4Test(visitInfos)
+		if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
+			return nil
+		}
+		return buildPointDeletePlan(ctx, pointPlan, dbName, tbl, delStmt.IgnoreErr)
+	}
+
 	return nil
 }
 
 func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbName string, tbl *model.TableInfo, ignoreErr bool) base.Plan {
-	if checkFastPlanPrivilege(ctx, dbName, tbl.Name.L, mysql.SelectPriv, mysql.DeletePriv) != nil {
+	// There is no column-level DELETE privilege.
+	userName, hostName := auth.GetUserAndHostName(ctx.GetSessionVars().User)
+	visitInfos := []visitInfo{{
+		db:        dbName,
+		table:     tbl.Name.L,
+		column:    "",
+		privilege: mysql.DeletePriv,
+		err:       plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", userName, hostName, tbl.Name.L),
+	}}
+	appendVisitInfo4Test(visitInfos)
+	if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
 		return nil
 	}
 	handleCols := buildHandleCols(dbName, tbl, pointPlan)

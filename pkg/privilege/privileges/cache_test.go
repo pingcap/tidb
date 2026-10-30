@@ -17,6 +17,8 @@ package privileges_test
 import (
 	"context"
 	"fmt"
+	"math/rand"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
@@ -160,13 +163,44 @@ func TestLoadColumnsPrivTable(t *testing.T) {
 	se := tk.Session()
 	require.NoError(t, p.LoadColumnsPrivTable(se.GetSQLExecutor()))
 	columnsPriv := p.ColumnsPriv()
-	require.Equal(t, `%`, columnsPriv[0].Host)
+	require.Equal(t, `127.0.0.1`, columnsPriv[0].Host)
 	require.Equal(t, "db", columnsPriv[0].DB)
 	require.Equal(t, "user", columnsPriv[0].User)
 	require.Equal(t, "table", columnsPriv[0].TableName)
 	require.Equal(t, "column", columnsPriv[0].ColumnName)
-	require.Equal(t, mysql.InsertPriv|mysql.UpdatePriv, columnsPriv[0].ColumnPriv)
-	require.Equal(t, mysql.SelectPriv, columnsPriv[1].ColumnPriv)
+	require.Equal(t, mysql.SelectPriv, columnsPriv[0].ColumnPriv)
+	require.Equal(t, mysql.InsertPriv|mysql.UpdatePriv, columnsPriv[1].ColumnPriv)
+}
+
+func TestMatchColumns(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use mysql;")
+	tk.MustExec("truncate table columns_priv")
+	tk.MustExec(`INSERT INTO mysql.columns_priv VALUES ("%", "db", "user", "table", "c1", "2017-01-04 16:33:42.235831", "Insert,Update")`)
+	tk.MustExec(`INSERT INTO mysql.columns_priv VALUES ("%", "db", "user", "table", "c2", "2017-01-04 16:33:42.235831", "Select")`)
+
+	p := privileges.NewMySQLPrivilege()
+	se := tk.Session()
+	require.NoError(t, p.LoadColumnsPrivTable(se.GetSQLExecutor()))
+	col := p.MatchColumns("user", "%", "db", "table", "c1")
+	require.NotNil(t, col)
+	col = p.MatchColumns("user", "%", "db", "table", "*")
+	require.NotNil(t, col)
+
+	p = privileges.NewMySQLPrivilege()
+	tk.MustExec("truncate table columns_priv")
+	tk.MustExec("flush privileges")
+	tk.MustExec(`INSERT INTO mysql.columns_priv VALUES ("%", "db", "user", "table", "c1", "2017-01-04 16:33:42.235831", "Insert,Update")`)
+	tk.MustExec(`INSERT INTO mysql.columns_priv VALUES ("%", "db", "user", "table", "c2", "2017-01-04 16:33:42.235831", "References")`)
+	require.NoError(t, p.LoadColumnsPrivTable(se.GetSQLExecutor()))
+	col = p.MatchColumns("user", "%", "db", "table", "c1")
+	require.NotNil(t, col)
+	col = p.MatchColumns("user", "%", "db", "table", "c2")
+	require.NotNil(t, col)
+	col = p.MatchColumns("user", "%", "db", "table", "*")
+	require.Nil(t, col)
 }
 
 func TestLoadDefaultRoleTable(t *testing.T) {
@@ -397,12 +431,29 @@ func TestSortUserTable(t *testing.T) {
 	p := privileges.NewMySQLPrivilege()
 	p.SetUser([]privileges.UserRecord{
 		privileges.NewUserRecord(`%`, "root"),
+		privileges.NewUserRecord(`localhost`, "root"),
+		privileges.NewUserRecord("h1.example.net", "root"),
+		privileges.NewUserRecord("192.168.%", "root"),
+		privileges.NewUserRecord("192.168.199.%", "root"),
+	})
+	p.SortUserTable()
+	result := []privileges.UserRecord{
+		privileges.NewUserRecord("h1.example.net", "root"),
+		privileges.NewUserRecord(`localhost`, "root"),
+		privileges.NewUserRecord("192.168.199.%", "root"),
+		privileges.NewUserRecord("192.168.%", "root"),
+		privileges.NewUserRecord(`%`, "root"),
+	}
+	checkUserRecord(t, p.User(), result)
+
+	p.SetUser([]privileges.UserRecord{
+		privileges.NewUserRecord(`%`, "root"),
 		privileges.NewUserRecord(`%`, "jeffrey"),
 		privileges.NewUserRecord("localhost", "root"),
 		privileges.NewUserRecord("localhost", ""),
 	})
 	p.SortUserTable()
-	result := []privileges.UserRecord{
+	result = []privileges.UserRecord{
 		privileges.NewUserRecord("localhost", ""),
 		privileges.NewUserRecord("localhost", "root"),
 		privileges.NewUserRecord(`%`, "jeffrey"),
@@ -453,10 +504,24 @@ func TestGlobalPrivValueRequireStr(t *testing.T) {
 }
 
 func checkUserRecord(t *testing.T, x, y []privileges.UserRecord) {
-	require.Equal(t, len(x), len(y))
+	var sbX, sbY strings.Builder
+	for _, u := range x {
+		sbX.WriteString(u.User)
+		sbX.WriteString("@")
+		sbX.WriteString(u.Host)
+		sbX.WriteString("\n")
+	}
+	for _, u := range y {
+		sbY.WriteString(u.User)
+		sbY.WriteString("@")
+		sbY.WriteString(u.Host)
+		sbY.WriteString("\n")
+	}
+
+	require.Equal(t, len(x), len(y), "%s\n vs %s\n", sbX.String(), sbY.String())
 	for i := range x {
-		require.Equal(t, x[i].User, y[i].User)
-		require.Equal(t, x[i].Host, y[i].Host)
+		require.Equal(t, x[i].User, y[i].User, "%s\n vs %s\n", sbX.String(), sbY.String())
+		require.Equal(t, x[i].Host, y[i].Host, "%s\n vs %s\n", sbX.String(), sbY.String())
 	}
 }
 
@@ -522,4 +587,91 @@ func TestDBIsVisible(t *testing.T) {
 	isVisible = p.DBIsVisible("testvisdb9", "%", "visdb")
 	require.True(t, isVisible)
 	tk.MustExec("delete from mysql.user")
+}
+
+// A column-level grant on one column must not satisfy a check on another column of the same table.
+// mysql.tables_priv.Column_priv only summarises "some column of this table has this privilege",
+// so it must not be used to grant access to an arbitrary column.
+func TestColumnPrivNotGrantedByTableColumnPrivSummary(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use mysql;")
+	tk.MustExec("delete from tables_priv")
+	tk.MustExec("delete from columns_priv")
+	tk.MustExec(`INSERT INTO mysql.tables_priv VALUES ("%", "db", "user", "table", "grantor", "2017-01-04 16:33:42.235831", "", "Select")`)
+	tk.MustExec(`INSERT INTO mysql.columns_priv VALUES ("%", "db", "user", "table", "c1", "2017-01-04 16:33:42.235831", "Select")`)
+
+	p := privileges.NewMySQLPrivilege()
+	se := tk.Session()
+	require.NoError(t, p.LoadTablesPrivTable(se.GetSQLExecutor()))
+	require.NoError(t, p.LoadColumnsPrivTable(se.GetSQLExecutor()))
+
+	require.True(t, p.RequestVerification(nil, "user", "%", "db", "table", "c1", mysql.SelectPriv))
+	require.False(t, p.RequestVerification(nil, "user", "%", "db", "table", "c2", mysql.SelectPriv))
+}
+
+// This test case aims to make sure that no memory leak happens during building
+// privilege cache. When loading privilege table into cache, if we forget to 'clone'
+// a string from a chunk row into cache record, inconsistency between privilege
+// table and cache happens.
+func TestColumnPrivilegeCacheCorrectness(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database column_priv_test")
+	tk.MustExec("use column_priv_test")
+	tk.MustExec("set global tidb_accelerate_user_creation_update = on")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/privilege/privileges/forceResetChunkForLoadTable", "return(true)")
+
+	var seededRand *rand.Rand = rand.New(rand.NewSource(time.Now().UnixNano()))
+	const charset = "abcdefghijklmnopqrstuvwxyz"
+	generateRandomString := func(length int) string {
+		b := make([]byte, length)
+		for i := range b {
+			b[i] = charset[seededRand.Intn(len(charset))]
+		}
+		return string(b)
+	}
+
+	const colNum = 512
+	colNames := make([]string, 0, colNum)
+	for range colNum {
+		colNames = append(colNames, generateRandomString(5))
+	}
+	var sb strings.Builder
+	sb.WriteString("create table t(")
+	for i := range colNum {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(fmt.Sprintf("%s int", colNames[i]))
+	}
+	sb.WriteString(")")
+	tk.MustExec(sb.String())
+
+	const userNum = 3
+	userNames := make([]string, 0, userNum)
+	for range userNum {
+		userName := generateRandomString(5)
+		userNames = append(userNames, userName)
+		tk.MustExec(fmt.Sprintf("create user %s", userName))
+	}
+	for i := range userNum {
+		for j := range colNum {
+			tk.MustExec(fmt.Sprintf("grant select(%s) on t to %s", colNames[j], userNames[i]))
+		}
+	}
+	tk.MustQuery("select count(*) from mysql.columns_priv").Check(testkit.Rows(fmt.Sprintf("%d", colNum*userNum)))
+
+	tk.MustExec("set global tidb_accelerate_user_creation_update = off")
+	tk.MustExec("flush privileges")
+
+	for i := range userNum {
+		res1 := tk.MustQuery(fmt.Sprintf("select count(*) from mysql.columns_priv where user = '%s'", userNames[i]))
+		res2 := tk.MustQuery(fmt.Sprintf("select count(*) from information_schema.column_privileges where grantee = \"'%s'@'%%'\"", userNames[i]))
+
+		require.Equal(t, fmt.Sprintf("%d", colNum), res1.Rows()[0][0])
+		require.Equal(t, res1.Rows()[0][0], res2.Rows()[0][0])
+	}
 }

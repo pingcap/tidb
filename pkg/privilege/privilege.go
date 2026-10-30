@@ -48,6 +48,15 @@ type Manager interface {
 	// ShowGrants shows granted privileges for user.
 	ShowGrants(ctx context.Context, sctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) ([]string, error)
 
+	// FetchColumnPrivileges gets column privilege for user
+	FetchColumnPrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error)
+
+	// FetchTablePrivileges gets table privilege for user
+	FetchTablePrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error)
+
+	// FetchSchemaPrivileges gets schema privilege for user
+	FetchSchemaPrivileges(sctx sessionctx.Context, user *auth.UserIdentity) ([][]types.Datum, error)
+
 	// RequestVerification verifies user privilege for the request.
 	// If table is "", only check global/db scope privileges.
 	// If table is not "", check global/db/table scope privileges.
