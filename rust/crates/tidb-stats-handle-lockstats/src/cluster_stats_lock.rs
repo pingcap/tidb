@@ -32,66 +32,7 @@ const LOCK_TABLE: &str = "stats_table_locked";
 const META_TABLE: &str = "stats_meta";
 
 
-use crate::lock_target::{ClusterStatsLockStatement, StatsLockTarget};
 
-/// Parses a cluster-routed statistics lock statement.
-pub fn prepare_cluster_stats_lock(
-    sql: &str,
-    default_schema: &str,
-) -> Result<Option<ClusterStatsLockStatement>, ClusterStatsLockError> {
-    let Ok(statement) = tidb_parser::parse(sql) else {
-        return Ok(None);
-    };
-    prepare_cluster_stats_lock_parsed(&statement, default_schema)
-}
-
-/// [`prepare_cluster_stats_lock`] over a statement the caller already parsed.
-pub fn prepare_cluster_stats_lock_parsed(
-    statement: &tidb_ast::Stmt,
-    default_schema: &str,
-) -> Result<Option<ClusterStatsLockStatement>, ClusterStatsLockError> {
-    let tidb_ast::Stmt::Admin(admin) = statement else {
-        return Ok(None);
-    };
-    let (lock, statement) = match admin.as_ref() {
-        tidb_ast::AdminStmt::LockStats(statement) => (true, statement.as_ref()),
-        tidb_ast::AdminStmt::UnlockStats(statement) => (false, statement.as_ref()),
-        _ => return Ok(None),
-    };
-    let targets = statement
-        .tables
-        .iter()
-        .map(|target| {
-            let (schema, table) = match target.name.as_slice() {
-                [table] if !default_schema.is_empty() => (default_schema.to_owned(), table.clone()),
-                [_table] => {
-                    return Err(tidb_plannererrors::ERR_NO_DB
-                        .generate_with_stack_by_args(&[])
-                        .into())
-                }
-                [schema, table] => (schema.clone(), table.clone()),
-                _ => {
-                    return Err(ClusterStatsLockError::Invalid(
-                        "empty table name".to_owned(),
-                    ))
-                }
-            };
-            Ok(StatsLockTarget {
-                schema,
-                table,
-                partitions: target.partitions.clone(),
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(Some(ClusterStatsLockStatement { lock, targets }))
-}
-
-/// Separates target-resolution failures from the storage transaction used by
-/// the shared lockstats policy.
-pub(crate) enum ClusterStatsLockApplyError<E> {
-    Plan(ClusterStatsLockError),
-    Transaction(E),
-}
 
 /// Why a cluster lock operation could not be planned.
 #[derive(Debug)]
@@ -140,117 +81,62 @@ impl From<RowEncodeError> for ClusterStatsLockError {
     }
 }
 
-/// Resolves one statement's targets once, then drives Go's lockstats policy
-/// through the supplied transaction boundary.
-pub(crate) fn apply_cluster_stats_lock<T: StatsLockTransaction>(
+/// The tables a `LOCK STATS` / `UNLOCK STATS` statement resolved to: Go's
+/// `StatsHandle.LockTables(tables)` / `LockPartitions(tid, tableName,
+/// pidNames)` arguments (and their `Unlock` twins).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StatsLockRequest {
+    /// Whole tables, with their partitions (`LockTables` / `RemoveLockedTables`).
+    Tables {
+        /// `true` for LOCK, `false` for UNLOCK.
+        lock: bool,
+        /// The tables by physical id.
+        tables: BTreeMap<i64, StatsLockTable>,
+    },
+    /// Named partitions of one table (`LockPartitions` /
+    /// `RemoveLockedPartitions`).
+    Partitions {
+        /// `true` for LOCK, `false` for UNLOCK.
+        lock: bool,
+        /// The partitioned table's id.
+        table_id: i64,
+        /// The table's name as the warning displays it.
+        displayed: String,
+        /// The partitions by physical id, with their names.
+        partitions: BTreeMap<i64, String>,
+    },
+}
+
+/// Go `pkg/executor/lockstats`' half of a lock statement: resolving its
+/// tables against the catalog the stats transaction reads, into the handle's
+/// arguments.
+pub trait StatsLockResolver {
+    /// The request the statement resolves to under `catalog`.
+    ///
+    /// # Errors
+    ///
+    /// Go's statement errors (`ErrTableNotExists`, `ErrUnknownPartition`, an
+    /// empty target list, a non-partitioned table named with partitions).
+    fn resolve(&self, catalog: &ClusterCatalog) -> Result<StatsLockRequest, ClusterStatsLockError>;
+}
+
+/// Drives Go's lockstats policy (`lock_stats`) for a resolved request.
+pub(crate) fn apply_stats_lock_request<T: StatsLockTransaction>(
     transaction: &mut T,
-    catalog: &ClusterCatalog,
-    statement: &ClusterStatsLockStatement,
-) -> Result<String, ClusterStatsLockApplyError<T::Error>> {
-    if statement.targets.is_empty() {
-        return Err(ClusterStatsLockApplyError::Plan(
-            ClusterStatsLockError::Invalid(if statement.lock {
-                "Lock Stats: table should not empty".to_owned()
-            } else {
-                "Unlock Stats: table should not empty ".to_owned()
-            }),
-        ));
-    }
-    let only_partitions =
-        statement.targets.len() == 1 && !statement.targets[0].partitions.is_empty();
-    if only_partitions {
-        let target = &statement.targets[0];
-        let table = user_table(catalog, &target.schema, &target.table)
-            .map_err(ClusterStatsLockApplyError::Plan)?;
-        let Some(partition) = table.get_partition_info() else {
-            return Err(ClusterStatsLockApplyError::Plan(
-                ClusterStatsLockError::Invalid(format!(
-                    "table {}.{} is not a partition table",
-                    target.schema.go_to_lower(),
-                    target.table.go_to_lower()
-                )),
-            ));
-        };
-        let partition = partition.read();
-        let mut partitions = BTreeMap::new();
-        for written in &target.partitions {
-            let definition = partition
-                .definitions
-                .map_visible(|definition| {
-                    (definition.name.lowercase() == written.go_to_lower())
-                        .then(|| (definition.id, definition.name.original().to_owned()))
-                })
-                .into_iter()
-                .flatten()
-                .next()
-                .ok_or_else(|| {
-                    ClusterStatsLockApplyError::Plan(ClusterStatsLockError::from(
-                        tidb_table::table_errors::ERR_UNKNOWN_PARTITION
-                            .generate_with_stack_by_args(&[
-                                written.go_to_lower().into(),
-                                table.name.original().into(),
-                            ]),
-                    ))
-                })?;
-            partitions.insert(definition.0, written.go_to_lower());
+    request: &StatsLockRequest,
+) -> Result<String, T::Error> {
+    match request {
+        StatsLockRequest::Partitions { lock: true, table_id, displayed, partitions } => {
+            crate::lock_stats::add_locked_partitions(transaction, *table_id, displayed, partitions)
         }
-        let displayed = if statement.lock {
-            format!(
-                "{}.{}",
-                target.schema.go_to_lower(),
-                target.table.go_to_lower()
-            )
-        } else {
-            format!("{}.{}", target.schema, target.table)
-        };
-        if statement.lock {
-            crate::lock_stats::add_locked_partitions(transaction, table.id, &displayed, &partitions)
-                .map_err(ClusterStatsLockApplyError::Transaction)
-        } else {
-            crate::lock_stats::remove_locked_partitions(transaction, table.id, &displayed, &partitions)
-                .map_err(ClusterStatsLockApplyError::Transaction)
+        StatsLockRequest::Partitions { lock: false, table_id, displayed, partitions } => {
+            crate::lock_stats::remove_locked_partitions(transaction, *table_id, displayed, partitions)
         }
-    } else {
-        let mut tables = BTreeMap::new();
-        for target in &statement.targets {
-            let table = user_table(catalog, &target.schema, &target.table)
-                .map_err(ClusterStatsLockApplyError::Plan)?;
-            let partition_info = table.get_partition_info().map(|partition| {
-                partition
-                    .read()
-                    .definitions
-                    .map_visible(|definition| {
-                        (
-                            definition.id,
-                            format!(
-                                "{}.{} partition ({})",
-                                target.schema.go_to_lower(),
-                                target.table.go_to_lower(),
-                                definition.name.lowercase()
-                            ),
-                        )
-                    })
-                    .into_iter()
-                    .collect()
-            });
-            tables.insert(
-                table.id,
-                StatsLockTable {
-                    partition_info,
-                    full_name: format!(
-                        "{}.{}",
-                        target.schema.go_to_lower(),
-                        target.table.go_to_lower()
-                    ),
-                },
-            );
+        StatsLockRequest::Tables { lock: true, tables } => {
+            crate::lock_stats::add_locked_tables(transaction, tables)
         }
-        if statement.lock {
-            crate::lock_stats::add_locked_tables(transaction, &tables)
-                .map_err(ClusterStatsLockApplyError::Transaction)
-        } else {
-            crate::lock_stats::remove_locked_tables(transaction, &tables)
-                .map_err(ClusterStatsLockApplyError::Transaction)
+        StatsLockRequest::Tables { lock: false, tables } => {
+            crate::lock_stats::remove_locked_tables(transaction, tables)
         }
     }
 }

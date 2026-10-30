@@ -27,11 +27,10 @@ use tidb_store_driver_txn::transaction::{RealOptimisticTransactionOpener, StoreC
 
 use tidb_infoschema::cluster_catalog::load_cluster_catalog;
 use crate::cluster_stats_lock::{
-    apply_cluster_stats_lock, plan_cluster_delete_lock, plan_cluster_insert_lock,
+    apply_stats_lock_request, plan_cluster_delete_lock, plan_cluster_insert_lock,
     plan_cluster_update_meta_delta, plan_cluster_update_meta_version, query_cluster_lock_delta,
-    query_cluster_locked_tables, ClusterStatsLockApplyError, ClusterStatsLockError,
+    query_cluster_locked_tables, ClusterStatsLockError, StatsLockResolver,
 };
-use crate::lock_target::ClusterStatsLockStatement;
 use tidb_store_driver_txn::cluster_table_storage::{
     lock_pessimistic_statement, overlay_staged_mutations, PessimisticStatementTransactionError,
     SessionTransaction,
@@ -76,10 +75,11 @@ impl fmt::Display for ClusterStatsLockCommitError {
 impl std::error::Error for ClusterStatsLockCommitError {}
 
 /// Runs Go `pkg/statistics/handle/lockstats` against the cluster tables in one
-/// transaction independent of the caller's user transaction.
+/// transaction independent of the caller's user transaction. The statement's
+/// tables resolve (`resolver`) against the catalog that transaction reads.
 pub fn commit_cluster_stats_lock<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
-    statement: &ClusterStatsLockStatement,
+    resolver: &dyn StatsLockResolver,
     timeout: Duration,
 ) -> Result<ClusterStatsLockReport, ClusterStatsLockCommitError> {
     let transaction = SessionTransaction::begin_pessimistic(
@@ -98,18 +98,14 @@ pub fn commit_cluster_stats_lock<S: StoreClient>(
             load_cluster_catalog(&mut snapshot)
                 .map_err(|error| ClusterStatsLockCommitError::Other(error.to_string()))?
         };
+        let request = resolver.resolve(&catalog).map_err(ClusterStatsLockCommitError::Plan)?;
         let mut policy = PessimisticStatsLockTransaction {
             transaction: &transaction,
             staged: &staged,
             catalog: &catalog,
             now: utc_now_timestamp(),
         };
-        let warning = apply_cluster_stats_lock(&mut policy, &catalog, statement).map_err(
-            |error| match error {
-                ClusterStatsLockApplyError::Plan(error) => ClusterStatsLockCommitError::Plan(error),
-                ClusterStatsLockApplyError::Transaction(error) => error,
-            },
-        )?;
+        let warning = apply_stats_lock_request(&mut policy, &request)?;
         Ok(ClusterStatsLockReport { warning })
     })();
     match result {

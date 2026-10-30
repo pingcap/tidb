@@ -58,9 +58,17 @@ impl ClusterAnalyze for PanickingAnalyze {
     }
 }
 
-#[derive(Default)]
+/// Resolves the statement against the node's catalog, as the internal
+/// transaction does, and reports Go's skipped-target warning.
 struct WarningStatsLock {
     calls: AtomicUsize,
+    catalog: Arc<tidb_infoschema_issyncer::catalog_watch::SharedCatalog>,
+}
+
+impl WarningStatsLock {
+    fn on(node: &MockNode) -> Self {
+        Self { calls: AtomicUsize::new(0), catalog: Arc::clone(&node.catalog) }
+    }
 }
 
 #[test]
@@ -149,15 +157,27 @@ fn usage_workers_stop_before_the_shutdown_delta_flush() {
 impl tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock for WarningStatsLock {
     fn execute(
         &self,
-        statement: &tidb_stats_handle_lockstats::lock_target::ClusterStatsLockStatement,
+        resolver: &dyn tidb_stats_handle_lockstats::cluster_stats_lock::StatsLockResolver,
     ) -> Result<
         tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockReport,
         tidb_store_driver_error::sql_query_error::SqlQueryError,
     > {
-        assert!(statement.lock);
-        assert_eq!(statement.targets.len(), 1);
-        assert_eq!(statement.targets[0].schema, "app");
-        assert_eq!(statement.targets[0].table, "t");
+        let catalog = self.catalog.load();
+        let (_, table) = catalog.find_table("app", "t").expect("app.t");
+        assert_eq!(
+            resolver.resolve(&catalog).expect("LOCK STATS t resolves"),
+            tidb_stats_handle_lockstats::cluster_stats_lock::StatsLockRequest::Tables {
+                lock: true,
+                tables: [(
+                    table.id,
+                    tidb_stats_handle_types::StatsLockTable {
+                        partition_info: None,
+                        full_name: "app.t".to_owned(),
+                    },
+                )]
+                .into(),
+            }
+        );
         self.calls.fetch_add(1, Ordering::AcqRel);
         Ok(tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockReport {
             warning: "skip locking locked table: app.t".to_owned(),
@@ -168,7 +188,7 @@ impl tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock for 
 #[test]
 fn stats_lock_uses_the_internal_cluster_route_without_ending_the_user_transaction() {
     let node = MockNode::start();
-    let stats_lock = Arc::new(WarningStatsLock::default());
+    let stats_lock = Arc::new(WarningStatsLock::on(&node));
     let mut session = open_session_on_with_stats_lock(
         &node,
         Arc::clone(&stats_lock) as Arc<dyn tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock>,
@@ -202,7 +222,7 @@ fn stats_lock_checks_every_target_privilege_before_the_internal_transaction() {
     node.accounts
         .live
         .grant_db("low", "%", "app", tidb_mysql::CreateTMPTablePriv.mask());
-    let stats_lock = Arc::new(WarningStatsLock::default());
+    let stats_lock = Arc::new(WarningStatsLock::on(&node));
     let mut session = open_session_as_with_stats_lock(
         &node,
         "low",

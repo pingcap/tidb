@@ -25,6 +25,7 @@ tidb-executor-aggregate = { path = "../tidb-executor-aggregate" }
 tidb-executor-sortexec = { path = "../tidb-executor-sortexec" }
 tidb-executor-join = { path = "../tidb-executor-join" }
 tidb-executor-internal-exec = { path = "../tidb-executor-internal-exec" }
+tidb-executor-lockstats = { path = "../tidb-executor-lockstats" }
 tidb-planner-core-access = { path = "../tidb-planner-core-access" }
 tidb-planner-core-cost = { path = "../tidb-planner-core-cost" }
 tidb-planner-core-metrics = { path = "../tidb-planner-core-metrics" }

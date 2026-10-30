@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 use tidb_executor::cluster_analyze::AnalyzeStatement;
-use tidb_stats_handle_lockstats::lock_target::ClusterStatsLockStatement;
+use tidb_executor_lockstats::ClusterStatsLockStatement;
 use tidb_syssession::stats_table_rows::StatsWritePlan;
 use tidb_datatype::current_time::utc_now_timestamp;
 use tidb_executor::real_tikv_analyze::{AnalyzeJobKind, AnalyzeJobLifecycle, AnalyzeJobSpec};

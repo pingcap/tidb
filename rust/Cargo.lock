@@ -4512,6 +4512,7 @@ dependencies = [
  "tidb-executor-internal-vecgroupchecker",
  "tidb-executor-join",
  "tidb-executor-join-joinversion",
+ "tidb-executor-lockstats",
  "tidb-executor-sortexec",
  "tidb-executor-windows",
  "tidb-exeerrors",
@@ -4774,6 +4775,21 @@ name = "tidb-executor-join-joinversion"
 version = "0.0.0"
 dependencies = [
  "tidb-vardef",
+]
+
+[[package]]
+name = "tidb-executor-lockstats"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-hack",
+ "tidb-infoschema",
+ "tidb-model",
+ "tidb-parser",
+ "tidb-plannererrors",
+ "tidb-stats-handle-lockstats",
+ "tidb-stats-handle-types",
+ "tidb-table",
 ]
 
 [[package]]
@@ -6729,6 +6745,7 @@ dependencies = [
  "tidb-execdetails",
  "tidb-executor",
  "tidb-executor-internal-exec",
+ "tidb-executor-lockstats",
  "tidb-exeerrors",
  "tidb-expensivequery",
  "tidb-expr",
@@ -6803,6 +6820,7 @@ dependencies = [
  "tidb-stats-handle-metrics",
  "tidb-stats-handle-storage",
  "tidb-stats-handle-syncload",
+ "tidb-stats-handle-types",
  "tidb-stats-handle-usage",
  "tidb-stats-handle-usage-indexusage",
  "tidb-stats-handle-usage-predicatecolumn",
@@ -7279,15 +7297,12 @@ dependencies = [
 name = "tidb-stats-handle-lockstats"
 version = "0.0.0"
 dependencies = [
- "tidb-ast",
  "tidb-datatype",
  "tidb-hack",
  "tidb-infoschema",
  "tidb-infoschema-issyncer",
  "tidb-kv",
  "tidb-model",
- "tidb-parser",
- "tidb-plannererrors",
  "tidb-session",
  "tidb-stats-handle-storage",
  "tidb-stats-handle-types",

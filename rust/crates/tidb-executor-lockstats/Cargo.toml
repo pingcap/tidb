@@ -1,0 +1,22 @@
+[package]
+name = "tidb-executor-lockstats"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB LOCK/UNLOCK STATS executors: Go pkg/executor/lockstats (Rust rewrite)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-hack = { path = "../tidb-hack" }
+tidb-infoschema = { path = "../tidb-infoschema" }
+tidb-model = { path = "../tidb-model" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-plannererrors = { path = "../tidb-plannererrors" }
+tidb-stats-handle-lockstats = { path = "../tidb-stats-handle-lockstats" }
+tidb-stats-handle-types = { path = "../tidb-stats-handle-types" }
+tidb-table = { path = "../tidb-table" }

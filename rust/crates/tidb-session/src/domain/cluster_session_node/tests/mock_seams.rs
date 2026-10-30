@@ -718,7 +718,7 @@ pub(super) struct MockStatsLock;
 impl tidb_stats_handle_lockstats::cluster_stats_lock_seam::ClusterStatsLock for MockStatsLock {
     fn execute(
         &self,
-        _: &tidb_stats_handle_lockstats::lock_target::ClusterStatsLockStatement,
+        _: &dyn tidb_stats_handle_lockstats::cluster_stats_lock::StatsLockResolver,
     ) -> Result<tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockReport, SqlQueryError> {
         Ok(tidb_stats_handle_lockstats::real_tikv_stats_lock::ClusterStatsLockReport::default())
     }

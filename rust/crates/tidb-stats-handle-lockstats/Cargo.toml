@@ -8,21 +8,18 @@ repository.workspace = true
 description = "TiDB statistics locks: Go pkg/statistics/handle/lockstats (Rust rewrite)."
 
 [dependencies]
-tidb-plannererrors = { path = "../tidb-plannererrors" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-store-driver-error = { path = "../tidb-store-driver-error" }
 tikv-client.workspace = true
 tidb-table = { path = "../tidb-table" }
 tidb-stats-handle-types = { path = "../tidb-stats-handle-types" }
-tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-infoschema-issyncer = { path = "../tidb-infoschema-issyncer" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-model = { path = "../tidb-model" }
-tidb-parser = { path = "../tidb-parser" }
 tidb-syssession = { path = "../tidb-syssession" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 

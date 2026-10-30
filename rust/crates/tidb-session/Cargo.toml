@@ -16,6 +16,7 @@ tidb-param = { path = "../tidb-param" }
 tidb-ddl-jobsubmit = { path = "../tidb-ddl-jobsubmit" }
 tidb-ddl-systable = { path = "../tidb-ddl-systable" }
 tidb-executor-internal-exec = { path = "../tidb-executor-internal-exec" }
+tidb-executor-lockstats = { path = "../tidb-executor-lockstats" }
 tidb-planner-core-metrics = { path = "../tidb-planner-core-metrics" }
 tidb-exeerrors = { path = "../tidb-exeerrors" }
 tidb-stats-util = { path = "../tidb-stats-util" }
@@ -184,6 +185,7 @@ tidb-syssession = { path = "../tidb-syssession" }
 tidb-resolve = { path = "../tidb-resolve" }
 
 [dev-dependencies]
+tidb-stats-handle-types = { path = "../tidb-stats-handle-types" }
 tidb-stats-asyncload = { path = "../tidb-stats-asyncload" }
 tidb-ddl = { path = "../tidb-ddl", features = ["failpoints"] }
 tidb-expensivequery = { path = "../tidb-expensivequery" }
