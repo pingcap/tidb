@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
@@ -150,6 +151,36 @@ func TestSetTableFlashReplica(t *testing.T) {
 	tk.MustExec("drop table if exists t_flash;")
 	tk.MustExec("create table t_flash(a int, b int)")
 	tk.MustGetErrMsg("alter table t_flash set tiflash replica 2 location labels 'a','b';", "the tiflash replica count: 2 should be less than the total tiflash server count: 0")
+}
+
+func TestSetTiFlashReplicaZeroWarnsVectorIndexUnavailable(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(
+		t,
+		tiflashReplicaLease,
+		mockstore.WithMockTiFlash(2),
+	)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_vector (id int, v vector(3), vector index idx((vec_cosine_distance(v))) using hnsw)")
+	tk.MustExec("alter table t_vector set tiflash replica 0")
+
+	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.Len(t, warnings, 1)
+	require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
+	require.Contains(t, warnings[0].Err.Error(), "test.t_vector")
+	require.Contains(t, warnings[0].Err.Error(), "vector index")
+
+	tk.MustExec("create database db_vector")
+	tk.MustExec("create table db_vector.t_vector (id int, v vector(3), vector index idx((vec_cosine_distance(v))) using hnsw)")
+	tk.MustExec("create table db_vector.t_plain (id int)")
+	tk.MustExec("alter table db_vector.t_plain set tiflash replica 1")
+	tk.MustExec("alter database db_vector set tiflash replica 0")
+
+	warnings = tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.Len(t, warnings, 1)
+	require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
+	require.Contains(t, warnings[0].Err.Error(), "db_vector.t_vector")
+	require.Contains(t, warnings[0].Err.Error(), "vector index")
 }
 
 // setUpRPCService setup grpc server to handle cop request for test.
