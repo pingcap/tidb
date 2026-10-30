@@ -1,9 +1,12 @@
 Subject: [PATCH] backport Go 1.27 export-data V5 support
 
-The V5 reader and format definitions are copied unchanged from the released
-upstream golang.org/x/tools v0.50.0 (go.dev/issue/81188). Keep v0.47.0's Go 1.25
-minimum instead of upgrading to v0.50.0, which requires Go 1.26. This Bazel-only
-backport can be removed when the module/toolchain upgrade permits that release.
+The reader and format definitions are copied unchanged from the released
+upstream golang.org/x/tools v0.50.0 (go.dev/issue/81188). Keep v0.44.0 aligned
+with the root module and its Go 1.25 minimum instead of upgrading to v0.50.0,
+which requires Go 1.26. Include the generic-method importer prerequisites
+missing from v0.44.0; its V3/V4 format definitions are already present. This
+Bazel-only backport can be removed when the module/toolchain upgrade permits
+that release.
 
 Source: https://go.googlesource.com/tools/+/refs/tags/v0.50.0/internal/gcimporter/ureader.go
 Source: https://go.googlesource.com/tools/+/refs/tags/v0.50.0/internal/pkgbits/version.go
@@ -115,15 +118,53 @@ diff --git a/internal/pkgbits/pkgbits_test.go b/internal/pkgbits/pkgbits_test.go
 diff --git a/internal/gcimporter/ureader.go b/internal/gcimporter/ureader.go
 --- a/internal/gcimporter/ureader.go
 +++ b/internal/gcimporter/ureader.go
-@@ -629,11 +629,26 @@
+@@ -11,6 +11,7 @@
+ 	"go/token"
+ 	"go/types"
+ 	"sort"
++	"strings"
+ 
+ 	"golang.org/x/tools/internal/aliases"
+ 	"golang.org/x/tools/internal/pkgbits"
+@@ -523,6 +524,12 @@
+ 		return objPkg, objName
+ 	}
+ 
++	// TODO(mark): This, like the above splitVargenSuffix, is not ideal.
++	// Ignore generic methods promoted to global scope.
++	if strings.Contains(objName, ".") {
++		return objPkg, objName
++	}
++
+ 	if objPkg.Scope().Lookup(objName) == nil {
+ 		dict := pr.objDictIdx(idx)
+ 
+@@ -554,15 +561,11 @@
+ 
+ 		case pkgbits.ObjFunc:
+ 			pos := r.pos()
+-			var rtparams []*types.TypeParam
+-			var recv *types.Var
+-			if r.Version().Has(pkgbits.GenericMethods) && r.Bool() {
+-				r.selector()
+-				rtparams = r.typeParamNames(true)
+-				recv = r.param()
++			if r.Version().Has(pkgbits.GenericMethods) {
++				assert(!r.Bool()) // generic methods are read in their defining type
+ 			}
+ 			tparams := r.typeParamNames(false)
+-			sig := r.signature(recv, rtparams, tparams)
++			sig := r.signature(nil, nil, tparams)
+ 			declare(types.NewFunc(pos, objPkg, objName, sig))
+ 
+ 		case pkgbits.ObjType:
+@@ -626,8 +629,66 @@
  				})
  			}
  
 -			for i, n := 0, r.Len(); i < n; i++ {
 -				named.AddMethod(r.method())
--			}
--
- 			if r.Version().Has(pkgbits.GenericMethods) {
++			if r.Version().Has(pkgbits.GenericMethods) {
 +				// V4 (go1.27.0) emitted all non-generic methods
 +				// before all generic ones, discarding source
 +				// order: a bug (go.dev/issue/81188).
@@ -143,22 +184,28 @@ diff --git a/internal/gcimporter/ureader.go b/internal/gcimporter/ureader.go
 +				}
 +
 +				// generic methods
- 				for range r.Len() {
- 					// Careful: objIdx is used to read in package-scoped declarations, which
- 					// methods are not. Instead, decode it here. This makes it easier to
-@@ -648,11 +663,31 @@
- 					pkg, name := r.selector()
- 					rtparams := r.typeParamNames(true)
- 					recv := r.param()
++				for range r.Len() {
++					// Careful: objIdx is used to read in package-scoped declarations, which
++					// methods are not. Instead, decode it here. This makes it easier to
++					// associate it with the type and avoids the main objIdx loop.
++					idx := r.Reloc(pkgbits.RelocObj)
++
++					r := pr.tempReader(pkgbits.RelocObj, idx, pkgbits.SyncObject1)
++					r.dict = pr.objDictIdx(idx)
++
++					pos := r.pos()
++					assert(r.Bool()) // generic method
++					pkg, name := r.selector()
++					rtparams := r.typeParamNames(true)
++					recv := r.param()
 +					methodIdx := -1
 +					if r.Version().Has(pkgbits.PreserveMethodOrder) {
 +						methodIdx = r.Len()
 +					}
- 					tparams := r.typeParamNames(false)
- 					sig := r.signature(recv, rtparams, tparams)
- 
- 					pr.retireReader(r)
--					named.AddMethod(types.NewFunc(pos, pkg, name, sig))
++					tparams := r.typeParamNames(false)
++					sig := r.signature(recv, rtparams, tparams)
++
++					pr.retireReader(r)
 +					methods = append(methods, indexedMethod{methodIdx, types.NewFunc(pos, pkg, name, sig)})
 +				}
 +
@@ -176,10 +223,20 @@ diff --git a/internal/gcimporter/ureader.go b/internal/gcimporter/ureader.go
 +				for range r.Len() {
 +					_, m := r.method()
 +					named.AddMethod(m)
- 				}
++				}
  			}
  
-@@ -766,8 +801,12 @@
+ 		case pkgbits.ObjVar:
+@@ -653,7 +714,7 @@
+ 		}
+ 
+ 		nreceivers := 0
+-		if r.Version().Has(pkgbits.GenericMethods) && r.Bool() {
++		if r.Version().Has(pkgbits.GenericMethods) {
+ 			nreceivers = r.Len()
+ 		}
+ 		nexplicits := r.Len()
+@@ -740,8 +801,12 @@
  	return tparams
  }
  
@@ -193,7 +250,7 @@ diff --git a/internal/gcimporter/ureader.go b/internal/gcimporter/ureader.go
  	pos := r.pos()
  	pkg, name := r.selector()
  
-@@ -775,7 +814,7 @@
+@@ -749,7 +814,7 @@
  	sig := r.signature(r.param(), rparams, nil)
  
  	_ = r.pos() // TODO(mdempsky): Remove; this is a hacker for linker.go.
@@ -205,9 +262,9 @@ diff --git a/internal/gcimporter/ureader.go b/internal/gcimporter/ureader.go
 diff --git a/internal/gcimporter/gcimporter_test.go b/internal/gcimporter/gcimporter_test.go
 --- a/internal/gcimporter/gcimporter_test.go
 +++ b/internal/gcimporter/gcimporter_test.go
-@@ -1081,3 +1081,54 @@
- 	compilePkg(t, srcdir, "a.go", testoutdir, nil, apkg(testoutdir))
- 	compile(t, testoutdir, bpath, testoutdir, map[string]string{apkg(testoutdir): filepath.Join(testoutdir, "a.o")})
+@@ -1062,3 +1062,54 @@
+ 	}
+ 	wg.Wait()
  }
 +
 +// TestGo127MethodOrder checks real V5 export data, including the relative order
