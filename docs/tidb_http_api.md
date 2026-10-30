@@ -1290,3 +1290,79 @@ Example response:
  ]
 }
 ```
+
+### Region cache status and refresh
+
+These APIs let an operator inspect and refresh TiDB's local region cache for one TiKV store after leader eviction, while the old TiKV is still online. They are registered on the status port for both classic and TiDB-X. `GET` reads local cache state and may drop unresolved failures whose original key range is fully covered by cached regions that have already left the store. `POST` starts a background refresh for every in-process store/keyspace and returns a snapshot taken when each task starts or is reused; it does not wait for probes to finish. Concurrent `POST`s for the same store share one in-flight job. Each background job uses its own store lifecycle context and independent 2-minute deadline. Callers should issue one `POST`, then poll `GET` until every relevant store reports `ready=true`.
+
+`ready` is true only when no matching cache entries remain, no unresolved refresh failures remain, and no refresh is in progress. `GET` and `POST` return status counters without refresh error details; callers must inspect `ready` to determine completion. Cache entries that expire or are deleted during a failed probe are not treated as successfully refreshed. Region-cache TTL expiry is also not refresh success: if the operator times out, stop waiting for `ready`, wait the original region-cache TTL, then restart. Do not treat a later `ready=true` caused only by expiry as a completed refresh.
+
+Matching entries are cached working-leader routes to the target store. `ready=true` does not indicate that all traffic to the store has drained: follower or mixed reads and forwarding-proxy requests can still reach it. Restarting the store can therefore still cause request retries or timeouts. Readiness also does not establish global leader eviction or new-leader reachability.
+
+`observed_at` is a Unix timestamp. For multiple in-process stores it is the oldest store observation, not the last store in the loop. Each `stores[]` entry has its own `observed_at` when `detail=1`.
+
+For GET and POST startup snapshots, `in_progress` is true when any participating store/keyspace has a running refresh. The POST startup snapshot reports `in_progress=true` for tasks it starts or reuses, even if they finish before the response is sent. GET returns the current progress and completion state. A reset failure returns an error instead of a startup snapshot for that store.
+
+Leftover failures from that fallback stay until the original range is fully covered off-store, or until the next rolling posts `reset=1`. `reset=1` drops unresolved failures and the idle task, then runs a new refresh. If a refresh is already running for that store, reset does not cancel it and the POST returns `store cache refresh is in progress` so the caller can retry. It is not a success signal. Do not pass `reset=1` while polling the same rolling.
+
+`GET` does not reload missing or expired regions. The background refresh recovers missing range coverage in batches of at most 128 regions from PD, waiting 100 ms between consecutive batches of a range, and continues until the range is covered or the job context ends. Cancellation interrupts this wait. A long split chain therefore remains one refresh task; it does not require repeated `POST`s. If a job times out or fails, a later `POST` without `reset` starts or reuses a retry for the unresolved entries.
+
+Usage:
+
+```shell
+curl "http://{TiDBIP}:10080/regions/cache/status?store_id={id}"
+curl -X POST "http://{TiDBIP}:10080/regions/cache/refresh?store_id={id}"
+curl -X POST "http://{TiDBIP}:10080/regions/cache/refresh?store_id={id}&reset=1"
+```
+
+Parameters:
+
+- `store_id`: required positive integer. Missing, zero, or non-integer values return HTTP 400.
+- `reset`: optional on `POST` only. `1` or `true` clears leftover failures from a previous rolling or TTL fallback, then refreshes. If a refresh is in progress, the store is left running and the response is not ready. Omit it during an in-progress rolling.
+- `detail`: optional on either route. `1` or `true` includes per-store entries in `stores`; otherwise `stores` is omitted.
+
+The status route accepts only `GET`. The refresh route accepts only `POST`. Other methods return HTTP 405.
+
+Example `GET` response with `detail=1`:
+
+```json
+{
+  "failed": 0,
+  "remaining": 9,
+  "ready": false,
+  "observed_at": 1720000000,
+  "stores": [
+    {
+      "cluster_id": 123,
+      "failed": 0,
+      "remaining": 9,
+      "ready": false,
+      "observed_at": 1720000000
+    }
+  ]
+}
+```
+
+`stores` is one entry per in-process TiKV store (each keyspace / PD cluster). Top-level counters are the sum of those entries and are not labeled with a single keyspace.
+
+Example `POST` response with `detail=1`:
+
+```json
+{
+  "failed": 0,
+  "remaining": 9,
+  "ready": false,
+  "in_progress": true,
+  "observed_at": 1720000000,
+  "stores": [
+    {
+      "cluster_id": 123,
+      "failed": 0,
+      "remaining": 9,
+      "ready": false,
+      "in_progress": true,
+      "observed_at": 1720000000
+    }
+  ]
+}
+```
