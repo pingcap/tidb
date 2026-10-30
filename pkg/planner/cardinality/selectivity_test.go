@@ -683,6 +683,10 @@ func TestNewIndexWithoutStats(t *testing.T) {
 	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b > 5 and c > 5").CheckContain("idxab(a, b)")
 	// New index idxab should NOT win because idxca has the same number of equals and has statistics
 	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b > 5 and c = 5").CheckContain("idxca(c, a)")
+	// The missing-statistics rules do not depend on tidb_opt_prefer_range_scan.
+	testKit.MustExec("set @@tidb_opt_prefer_range_scan=0")
+	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b = 5").CheckContain("idxab(a, b)")
+	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b > 5 and c = 5").CheckContain("idxca(c, a)")
 }
 
 func TestIssue57948(t *testing.T) {
@@ -697,12 +701,158 @@ func TestIssue57948(t *testing.T) {
 	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	testKit.MustExec("insert into t values (1, 1, 1)")
 	testKit.MustExec("insert into t select mod(a,250), mod(a,10), mod(a,100) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 500) select a from x) as subquery")
-	testKit.MustExec("analyze table t")
+	// Leave column b without statistics, so the new index has no statistics to estimate from.
+	testKit.MustExec("analyze table t columns a, c")
 	testKit.MustExec("create index idxb on t(b)")
-	// Create index after ANALYZE. SkyLine pruning should ensure that idxb is chosen because it has statistics
+	// Create index after ANALYZE. SkyLine pruning should ensure that idxb is chosen even though it is missing statistics
 	testKit.MustQuery("explain format='brief' select * from t where b = 5").CheckContain("idxb(b)")
 }
 
+<<<<<<< HEAD
+=======
+func TestMissingStatsIndexUsesColumnStats(t *testing.T) {
+	// An index without statistics, whose access columns all have column statistics, is compared on its
+	// estimates instead of by the missing-statistics heuristics. It should behave as if it was analyzed.
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, c int, d int)")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	// a, b and c are fully correlated with 2 distinct values each. d is unique.
+	testKit.MustExec("insert into t select mod(a,2), mod(a,2), mod(a,2), a from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 1000) select a from x) as subquery")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("create index idx_abc on t(a, b, c)")
+	testKit.MustExec("create index idx_d on t(d)")
+	for _, preferRange := range []string{"0", "1"} {
+		testKit.MustExec("set @@tidb_opt_prefer_range_scan=" + preferRange)
+		// Half of the table matches. The extra equal predicates of idx_abc must not prune the full table scan.
+		testKit.MustQuery("explain format='brief' select * from t where a = 1 and b = 1 and c = 1").CheckContain("TableFullScan")
+		// A selective index is still chosen.
+		testKit.MustQuery("explain format='brief' select * from t where d = 5").CheckContain("idx_d(d)")
+	}
+}
+
+func TestVirtualColumnIndexEstimation(t *testing.T) {
+	// A composite index whose last column is a virtual generated column. Virtual
+	// columns have no column statistics, so the exponential backoff estimation
+	// would skip the most selective column and heavily over-estimate the row
+	// count. Verify that estimation falls back to the index statistics instead.
+	// See https://github.com/pingcap/tidb/issues/69134.
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	tk.MustExec("create table t(a int, b int, c int, d int as (c + 1) virtual, index iabd(a, b, d))")
+	// a and b are low-selectivity columns (5 distinct values each), d is highly selective.
+	tk.MustExec("insert into t(a, b, c) select mod(x.a, 5), mod(x.a, 5), x.a from (with recursive x as (select 1 as a union all select a + 1 from x where a < 500) select a from x) as x")
+	// Use few buckets so the multi-column histogram upper bound cannot mask the
+	// exponential backoff over-estimation. Pin analyze version 2 so the test
+	// always exercises the stats-v2 estimation path.
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("analyze table t with 8 buckets, 0 topn")
+	// Confirm index iabd statistics were actually built before relying on the
+	// row-count comparisons below.
+	require.NotEmpty(t, tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't' and column_name = 'iabd' and is_index = 1").Rows())
+	rows := tk.MustQuery("explain analyze format='brief' select * from t use index(iabd) where a = 1 and b = 1 and d > 447").Rows()
+	estRows, err := strconv.ParseFloat(rows[0][1].(string), 64)
+	require.NoError(t, err)
+	actRows, err := strconv.ParseFloat(rows[0][2].(string), 64)
+	require.NoError(t, err)
+	require.Equal(t, float64(10), actRows)
+	// Exponential backoff using only a and b would estimate ~45 rows.
+	require.Less(t, estRows, 25.0)
+
+	// Control case: identical data, but d is a real (non-virtual) column excluded
+	// from analyze, so it has no column stats. The exp-backoff estimate from the
+	// remaining columns (clamped by the index histogram upper bound to ~16 rows)
+	// must be kept, not abandoned for the raw index-stats estimate (~2 rows).
+	tk.MustExec("create table t2(a int, b int, c int, d int, index iabd(a, b, d))")
+	tk.MustExec("insert into t2 select a, b, c, d from t")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("analyze table t2 columns a, b with 8 buckets, 0 topn")
+	// Confirm index iabd statistics were actually built before relying on the
+	// row-count comparison below.
+	require.NotEmpty(t, tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't2' and column_name = 'iabd' and is_index = 1").Rows())
+	rows = tk.MustQuery("explain analyze format='brief' select * from t2 use index(iabd) where a = 1 and b = 1 and d > 447").Rows()
+	estRows, err = strconv.ParseFloat(rows[0][1].(string), 64)
+	require.NoError(t, err)
+	require.Greater(t, estRows, 10.0)
+
+	// A virtual column at the beginning of a composite index is mapped back to
+	// that index for single-column estimation. Verify that the recursive index
+	// estimate is propagated into exponential backoff instead of being dropped.
+	tk.MustExec(`create table t3(
+		txn_seq varchar(30) primary key,
+		status varchar(2),
+		flag varchar(1),
+		batch_num varchar(20),
+		txn_suffix varchar(1) as (substr(txn_seq, 30, 1)) virtual,
+		index idx_suffix_first(txn_suffix, status, flag, batch_num),
+		index idx_suffix_second(txn_suffix, status, batch_num, flag)
+	)`)
+	tk.MustExec(`insert into t3(txn_seq, status, flag, batch_num)
+		select concat(lpad(x.a, 29, '0'), mod(x.a, 10)),
+			if(mod(x.a, 10) = 9, '00', '01'), '1', 'batch'
+		from (with recursive x as (
+			select 1 as a union all select a + 1 from x where a < 500
+		) select a from x) as x`)
+	tk.MustExec("analyze table t3 all columns with 10 topn")
+	// Virtual columns have no column statistics, while both indexes have TopN.
+	require.Empty(t, tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't3' and column_name = 'txn_suffix' and is_index = 0").Rows())
+	require.NotEmpty(t, tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't3' and column_name = 'idx_suffix_first' and is_index = 1").Rows())
+	require.NotEmpty(t, tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't3' and column_name = 'idx_suffix_second' and is_index = 1").Rows())
+	tk.MustQuery("select count(*) from t3 where txn_suffix = '9' and status = '00'").Check(testkit.Rows("50"))
+
+	getIndexScanEstRows := func(sql string) float64 {
+		rows := tk.MustQuery("explain format='brief' " + sql).Rows()
+		for _, row := range rows {
+			if strings.Contains(row[0].(string), "IndexRangeScan") {
+				estRows, err := strconv.ParseFloat(row[1].(string), 64)
+				require.NoError(t, err)
+				return estRows
+			}
+		}
+		t.Fatalf("no IndexRangeScan in plan for %q", sql)
+		return 0
+	}
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t3"))
+	require.NoError(t, err)
+	firstCandidate := table.Meta().FindIndexByName("idx_suffix_first")
+	fallbackCandidate := table.Meta().FindIndexByName("idx_suffix_second")
+	require.NotNil(t, firstCandidate)
+	require.NotNil(t, fallbackCandidate)
+	require.Less(t, firstCandidate.ID, fallbackCandidate.ID)
+
+	func() {
+		var firstCandidateFailed, fallbackCandidateSucceeded bool
+		fpName := "github.com/pingcap/tidb/pkg/planner/cardinality/afterRecursiveIndexEstimation"
+		require.NoError(t, failpoint.EnableCall(fpName, func(idxID int64, countResult *statistics.RowEstimate, recursiveErr *error) {
+			switch idxID {
+			case firstCandidate.ID:
+				firstCandidateFailed = true
+				*countResult = statistics.RowEstimate{}
+				*recursiveErr = fmt.Errorf("injected recursive estimation error for index %d", idxID)
+			case fallbackCandidate.ID:
+				fallbackCandidateSucceeded = firstCandidateFailed && *recursiveErr == nil
+			}
+		}))
+		defer func() {
+			require.NoError(t, failpoint.Disable(fpName))
+		}()
+
+		estRows = getIndexScanEstRows("select * from t3 use index(idx_suffix_second) where txn_suffix = '9' and status = '00'")
+		require.True(t, firstCandidateFailed)
+		require.True(t, fallbackCandidateSucceeded)
+		require.InDelta(t, 50.0, estRows, 0.01)
+	}()
+
+	estRows = getIndexScanEstRows("select * from t3 use index(idx_suffix_first) where txn_suffix = '9' and status = '00'")
+	require.InDelta(t, 50.0, estRows, 0.01)
+}
+
+>>>>>>> 49ad4202780 (planner: estimate missing-stats indexes with exponential backoff and drop prefer-range gate (#72078))
 func TestNewIndexWithColumnStats(t *testing.T) {
 	// Test two identical tables where one has no statistics at all, and the other only has column statistics but no index statistics
 	// Test that we supplement index estimation with column stats if there are no index stats available
@@ -737,6 +887,82 @@ func TestNewIndexWithColumnStats(t *testing.T) {
 	rowCnt2, _ := strconv.ParseFloat(rows2[0][1].(string), 64)
 	require.InDelta(t, trueRowCnt, rowCnt1, 0.1)
 	require.NotEqual(t, rowCnt1, rowCnt2)
+}
+
+func TestNewIndexWithLowNDVColumnStats(t *testing.T) {
+	// An index without statistics, whose columns each have a low NDV, is estimated from column statistics.
+	// The columns are fully correlated, so assuming independence would underestimate badly. Exponential
+	// backoff must be used instead.
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, c int)")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("insert into t select mod(a,10), mod(a,10), mod(a,10) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 1000) select a from x) as subquery")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("create index idx_abc on t(a, b, c)")
+	rows := testKit.MustQuery("explain format='brief' select * from t use index(idx_abc) where a = 1 and b = 1 and c = 1").Rows()
+	var estRows float64
+	for _, row := range rows {
+		if strings.Contains(row[0].(string), "IndexRangeScan") {
+			var err error
+			estRows, err = strconv.ParseFloat(row[1].(string), 64)
+			require.NoError(t, err)
+		}
+	}
+	// Actual row count is 100. Independence would estimate 1000 * 0.1^3 = 1, while exponential
+	// backoff estimates 1000 * 0.1 * 0.1^(1/2) * 0.1^(1/4) ~= 17.8.
+	require.Greater(t, estRows, 10.0)
+}
+
+func TestMissingStatsIndexWithVirtualColumn(t *testing.T) {
+	// An index without statistics on a virtual column (which has no column statistics) and a column with
+	// statistics must still account for the virtual column, and report its statistics as missing.
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(int_col int, string_col varchar(255))")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec(`insert into t values (-1, "foo"), (1, "bar")`)
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("create index combined_index on t((int_col + int_col), string_col)")
+	testKit.MustQuery(`explain format='brief' select * from t where int_col + int_col = 2 and string_col = "bar"`).
+		CheckContain("stats:partial[combined_index:missing, _v$_combined_index_0:missing]")
+}
+
+func TestIssue71999(t *testing.T) {
+	// An index without statistics must not prune an index with statistics via the prefer-range
+	// skyline rule unless its access columns cover the other index's access columns.
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(id int not null, a int not null, b int not null, c int not null, key idx_id(id))")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("set @@tidb_opt_prefer_range_scan=1")
+	testKit.MustExec("insert into t select a, 1, 1, 1 from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 1000) select a from x) as subquery")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("create index idx_abc on t(a, b, c)")
+	// idx_abc has no statistics and its access columns (a, b, c) do not cover idx_id's (id),
+	// so it must not prune idx_id, which has statistics and is far more selective.
+	testKit.MustQuery("explain format='brief' select * from t where id = 1 and a = 1 and b = 1 and c = 1").CheckContain("idx_id(id)")
+	testKit.MustExec("set @@tidb_opt_prefer_range_scan=0")
+	testKit.MustQuery("explain format='brief' select * from t where id = 1 and a = 1 and b = 1 and c = 1").CheckContain("idx_id(id)")
+
+	// Same, but without column statistics on a, b and c, so idx_abc has nothing to estimate from.
+	testKit.MustExec("drop table t")
+	testKit.MustExec("create table t(id int not null, a int not null, b int not null, c int not null, key idx_id(id))")
+	testKit.MustExec("insert into t select a, 1, 1, 1 from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 1000) select a from x) as subquery")
+	testKit.MustExec("analyze table t columns id")
+	testKit.MustExec("create index idx_abc on t(a, b, c)")
+	for _, preferRange := range []string{"0", "1"} {
+		testKit.MustExec("set @@tidb_opt_prefer_range_scan=" + preferRange)
+		testKit.MustQuery("explain format='brief' select * from t where id = 1 and a = 1 and b = 1 and c = 1").CheckContain("idx_id(id)")
+	}
 }
 
 func TestEstimationUniqueKeyEqualConds(t *testing.T) {
