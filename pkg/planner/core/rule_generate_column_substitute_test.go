@@ -19,7 +19,9 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -29,6 +31,89 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
+
+// TestGcSubstituterDedupsDuplicateExpressionIndexes covers
+// https://github.com/pingcap/tidb/issues/70708: when two expression indexes
+// share the identical expression, each is backed by its own hidden generated
+// column with a structurally-equal but distinct VirtualExpr. Before the fix,
+// collectGenerateColumn added one ExprColumnMap entry per duplicate, and later
+// substitution picked among them via Go's randomized map iteration order,
+// making ORDER BY binding (and therefore access path selection) unstable
+// across otherwise identical query plannings. After the fix, only the first
+// hidden column seen for a given expression is kept, so the map always has a
+// single, deterministic entry for the shared expression.
+func TestGcSubstituterDedupsDuplicateExpressionIndexes(t *testing.T) {
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Experimental.AllowsExpressionIndex = true
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (ns int, status int, ct int, ct2 int, st int, run int)")
+	tk.MustExec("alter table t add index default_idx (ns, (coalesce(ct, ct2)), st, run)")
+	tk.MustExec("alter table t add index by_a (ns, status, (coalesce(ct, ct2)), st, run)")
+
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	ctx := context.Background()
+	sql := "select * from t where ns = 1 order by coalesce(ct, ct2), st, run"
+	// Reuses tk's session and domain, so it must not close them: testkit.NewTestKit
+	// already registers a t.Cleanup that closes the domain (and its stats handle)
+	// when the test ends.
+	s := coretestsdk.CreatePlannerSuite(tk.Session(), is)
+
+	// Rebuild and re-run GcSubstituter's Optimize from scratch many times.
+	// Before the fix, collectGenerateColumn produced one ExprColumnMap entry
+	// per duplicate expression index, and substitution picked among them via
+	// Go's randomized map iteration order: which hidden column ORDER BY got
+	// bound to (identified by its UniqueID) varied from run to run even
+	// though the SQL, schema, and stats never changed. After the fix, only
+	// one entry ever exists, so the bound column is always the same.
+	var firstUniqueID int64 = -1
+	const iterations = 200
+	for i := 0; i < iterations; i++ {
+		stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
+		require.NoError(t, err, sql)
+		nodeW := resolve.NewNodeW(stmt)
+		p, err := core.BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
+		require.NoError(t, err)
+		lp := p.(base.LogicalPlan)
+
+		gc := &core.GcSubstituter{}
+		lp, _, err = gc.Optimize(ctx, lp)
+		require.NoError(t, err)
+
+		sort := findLogicalSort(t, lp)
+		require.NotEmpty(t, sort.ByItems)
+		col, ok := sort.ByItems[0].Expr.(*expression.Column)
+		require.True(t, ok, "expected ORDER BY to be substituted with a generated column, got %T", sort.ByItems[0].Expr)
+
+		if firstUniqueID == -1 {
+			firstUniqueID = col.UniqueID
+		} else {
+			require.Equal(t, firstUniqueID, col.UniqueID,
+				"ORDER BY bound to a different hidden generated column on iteration %d; duplicate expression indexes must resolve deterministically", i)
+		}
+	}
+}
+
+func findLogicalSort(t *testing.T, lp base.LogicalPlan) *logicalop.LogicalSort {
+	if sort, ok := lp.(*logicalop.LogicalSort); ok {
+		return sort
+	}
+	for _, child := range lp.Children() {
+		if sort := findLogicalSort(t, child); sort != nil {
+			return sort
+		}
+	}
+	require.Fail(t, "no LogicalSort found in plan tree")
+	return nil
+}
 
 // ➜  core git:(master) ✗ go tool pprof m5.file
 // File: ___5BenchmarkSubstituteExpression_in_github_com_pingcap_tidb_planner_core.test

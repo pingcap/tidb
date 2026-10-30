@@ -15,6 +15,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -87,11 +88,34 @@ func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
 					if len(expression.ExtractColumns(col.VirtualExpr)) == 0 {
 						continue
 					}
-					exprToColumn[col.VirtualExpr] = col
+					// Multiple expression indexes can share the identical expression, each backed by its
+					// own hidden generated column. Map keys compare Expression by pointer identity, so
+					// without this check every duplicate would get its own entry and later lookups would
+					// pick one arbitrarily via Go's randomized map iteration, making plan selection
+					// (e.g. ORDER BY binding) unstable across otherwise identical query plannings. Keep
+					// the first column seen for a given expression so the choice is deterministic.
+					if !containsEqualExpr(exprToColumn, col.VirtualExpr) {
+						exprToColumn[col.VirtualExpr] = col
+					}
 				}
 			}
 		}
 	}
+}
+
+// containsEqualExpr reports whether exprToColumn already has a key structurally
+// equal to expr. Map lookup alone is insufficient because Expression keys of
+// dynamic type *ScalarFunction compare by pointer identity, not by value, so two
+// distinct hidden generated columns built from the identical expression text
+// would otherwise coexist as separate entries.
+func containsEqualExpr(exprToColumn ExprColumnMap, expr expression.Expression) bool {
+	hashCode := expr.HashCode()
+	for existing := range exprToColumn {
+		if bytes.Equal(existing.HashCode(), hashCode) {
+			return true
+		}
+	}
+	return false
 }
 
 func tryToSubstituteExpr(expr *expression.Expression, lp base.LogicalPlan, candidateExpr expression.Expression, tp types.EvalType, schema *expression.Schema, col *expression.Column) bool {
