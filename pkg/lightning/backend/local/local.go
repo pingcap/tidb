@@ -64,6 +64,7 @@ import (
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/pkg/retry"
+	sd "github.com/tikv/pd/client/servicediscovery"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -527,7 +528,7 @@ func NewBackend(
 	ctx context.Context,
 	tls *common.TLS,
 	config BackendConfig,
-	pdSvcDiscovery pd.ServiceDiscovery,
+	pdSvcDiscovery sd.ServiceDiscovery,
 ) (b *Backend, err error) {
 	var (
 		pdCli                pd.Client

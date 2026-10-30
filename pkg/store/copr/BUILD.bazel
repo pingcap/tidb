@@ -63,6 +63,7 @@ go_library(
         "@com_github_tikv_client_go_v2//txnkv/txnsnapshot",
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//opt",
         "@com_github_twmb_murmur3//:murmur3",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
