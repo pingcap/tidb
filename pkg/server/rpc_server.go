@@ -42,8 +42,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 )
 
 // NewRPCServer creates a new rpc server.
@@ -251,6 +253,16 @@ func (s *rpcServer) createSession() (sessionapi.Session, error) {
 
 // ReportMPPTaskStatus implements tikv server interface
 func (*rpcServer) ReportMPPTaskStatus(_ context.Context, req *mpp.ReportTaskStatusRequest) (resp *mpp.ReportTaskStatusResponse, err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			logutil.BgLogger().Warn("panic when RPC server handling ReportMPPTaskStatus", zap.Any("r", v),
+				zap.Stack("stack trace"))
+			err = status.Errorf(codes.Internal, "panic when RPC server handling ReportMPPTaskStatus: %v", v)
+		}
+	}()
+	if req.Meta == nil {
+		return nil, status.Error(codes.InvalidArgument, "meta is not set in ReportTaskStatusRequest")
+	}
 	resp = mppcoordmanager.InstanceMPPCoordinatorManager.ReportStatus(req)
 	return resp, nil
 }

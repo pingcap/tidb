@@ -1330,6 +1330,14 @@ func (s *Server) KillNonFlashbackClusterConn() {
 	for _, client := range s.clients {
 		if client.ctx.Session != nil {
 			processInfo := client.ctx.Session.ShowProcess()
+			if processInfo == nil {
+				// The connection is registered but no statement has been dispatched yet,
+				// so it has no process info. It cannot be running a FLASHBACK statement,
+				// kill it like any other connection. Neighbor readers guard the same way,
+				// see GetUserProcessList and GetStatusVars.
+				connIDs = append(connIDs, client.connectionID)
+				continue
+			}
 			ddl, ok := processInfo.StmtCtx.GetPlan().(*core.DDL)
 			if !ok {
 				connIDs = append(connIDs, client.connectionID)
