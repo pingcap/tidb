@@ -1459,7 +1459,7 @@ fn physical_operator_info(
         }
         PhysicalPlan::TableDual(dual) => dual.explain_info(),
         PhysicalPlan::TableSample(_) => String::new(),
-        PhysicalPlan::MemTable(scan) => scan.extractor.as_ref().map_or_else(String::new, |e| {
+        PhysicalPlan::MemTable(scan) => tidb_planner::memtable_predicate_extractor::extractor_of(scan).map_or_else(String::new, |e| {
             e.explain_info(&scan.table_name, &MemTableExplainSession { eval_ctx })
         }),
         PhysicalPlan::CTE(cte) => cte.operator_info(),

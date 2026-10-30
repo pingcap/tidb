@@ -1100,7 +1100,7 @@ pub fn exhaust_physical_plans_4_logical_sort(
 ///
 /// `ExplainInfo`'s partition-by rendering and `ToPB` follow the enum's
 /// standing narrowings; `attach2Task4PhysicalLimit`'s root arm lives in
-/// [`crate::task::attach2_task`].
+/// [`crate::task_attach::attach2_task`].
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalLimit {
     /// The shared physical base.
@@ -1370,7 +1370,7 @@ pub struct PhysicalMemTable {
     pub query_time_range: tidb_planner_core_operator_logicalop::mem_table::QueryTimeRange,
     /// Go `Extractor`, carried from the logical scan after it claimed its
     /// predicates.
-    pub extractor: Option<crate::memtable_predicate_extractor::MemTableExtractor>,
+    pub extractor: Option<Box<dyn tidb_planner_core_base::MemTablePredicateExtractor>>,
 }
 
 impl PhysicalTableScan {
@@ -1569,7 +1569,7 @@ pub fn find_best_task_4_logical_table_dual(
 /// file): the physical operator of maxOneRow — assert at most one child row.
 /// The struct is exactly its base; the file's other bodies land as
 /// [`exhaust_physical_plans_4_logical_max_one_row`] and the default
-/// `Attach2Task` arm in [`crate::task::attach2_task`]. `Clone` and
+/// `Attach2Task` arm in [`crate::task_attach::attach2_task`]. `Clone` and
 /// `MemoryUsage` follow the enum's standing narrowings (the copy impl and
 /// no memory accounting).
 #[derive(Clone, Debug, Default)]
@@ -2084,7 +2084,7 @@ pub fn exhaust_physical_plans_4_logical_partition_union_all(
 /// CTE producer, the last is the main query, and the sequence's schema is
 /// the LAST child's. `ExplainInfo` is the fixed string `Sequence Node`;
 /// `Attach2Task` lives in core/task.go and refuses by name in
-/// [`crate::task::attach2_task`].
+/// [`crate::task_attach::attach2_task`].
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalSequence {
     /// The shared physical base.
@@ -2157,7 +2157,7 @@ pub fn exhaust_physical_plans_4_logical_sequence(
 /// override: an `Apply` variant simply is not a join variant, which is the
 /// same fact stated structurally. `GetCost`/ver1/ver2 delegate to
 /// core-cost bodies (`utilfuncp`) and follow the enum's cost narrowings;
-/// `Attach2Task4PhysicalApply` lives in [`crate::task::attach2_task`]. Go's
+/// `Attach2Task4PhysicalApply` lives in [`crate::task_attach::attach2_task`]. Go's
 /// `ExtractCorrelatedCols` override is reproduced by [`PhysicalPlan`]: it is
 /// the hash join's extraction minus columns supplied by the outer child.
 #[derive(Clone, Debug, Default)]
@@ -4443,7 +4443,7 @@ impl PhysicalPlan {
     }
 
     // Go `Attach2Task(...Task) Task` (`<2nd>`) lives at
-    // [`crate::task::attach2_task`], beside the task representation it
+    // [`crate::task_attach::attach2_task`], beside the task representation it
     // composes onto.
 
     /// Go `ToPB(ctx, storeType)` (`<3rd>`). Go's base body is exactly this

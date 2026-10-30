@@ -131,7 +131,7 @@ impl MppTask {
 ///    offset, its child property `{RootTaskType, p.SortItems, MaxFloat64}`,
 ///    its `ByItems` copied from `p.SortItems`, `IsPartialSort` from
 ///    `p.IsSortItemAllForPartition()`, and attached via
-///    [`crate::task::attach2_task`]'s Sort arm.
+///    [`crate::task_attach::attach2_task`]'s Sort arm.
 pub fn enforce_property(
     prop: &PhysicalProperty,
     task: Task,
@@ -223,7 +223,7 @@ pub(crate) fn enforce_property_in(
         by_items,
         is_partial_sort: prop.is_sort_item_all_for_partition(),
     });
-    crate::task::attach2_task_in(
+    crate::task_attach::attach2_task_in(
         sort,
         vec![task],
         None,

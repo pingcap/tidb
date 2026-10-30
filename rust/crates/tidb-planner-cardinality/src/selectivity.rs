@@ -84,6 +84,35 @@ pub trait MvIndexFilters {
     fn column_lengths(&self, idx_cols: &[Column], declared_lengths: &[i64]) -> Vec<i64>;
 }
 
+/// An estimator with no multi-valued index matching registered: no filter
+/// accesses a multi-valued index, so such an index adds no estimate.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoMvIndexFilters;
+
+impl MvIndexFilters for NoMvIndexFilters {
+    fn collect_access_filters(
+        &self,
+        _evaluate: &ExpressionEvaluator<'_>,
+        _filters: &[Expression],
+        _idx_cols: &[Column],
+    ) -> Vec<Expression> {
+        Vec::new()
+    }
+
+    fn partial_access_filters(
+        &self,
+        _evaluate: &ExpressionEvaluator<'_>,
+        _access_filters: &[Expression],
+        _idx_cols: &[Column],
+    ) -> Result<Option<(Vec<Vec<Expression>>, bool)>, tidb_exprctx::EvalError> {
+        Ok(None)
+    }
+
+    fn column_lengths(&self, _idx_cols: &[Column], declared_lengths: &[i64]) -> Vec<i64> {
+        declared_lengths.to_vec()
+    }
+}
+
 /// Go `Selectivity`'s `filledPaths`, keyed as its `id2Paths`: each possible
 /// access path that carries an index, with the unique IDs of that path's
 /// `IdxCols` when the estimate runs. A common-handle table path carries its

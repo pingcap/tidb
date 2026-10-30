@@ -317,6 +317,7 @@ impl<'a> DispatchContext<'a> {
             },
             estimator_options: self.estimator_options.clone(),
             scale_ndv_skew_ratio: self.skew_ratio,
+            mv_index_filters: Some(&crate::access_path::mv_index::PlannerMvIndexFilters),
         }
     }
 
@@ -1751,15 +1752,7 @@ fn find_best_task_4_logical_mem_table(
         table_name: mem_table.table_name.clone(),
         columns: mem_table.columns.clone(),
         query_time_range: mem_table.query_time_range.clone(),
-        extractor: mem_table
-            .extractor
-            .as_deref()
-            .and_then(|extractor| {
-                extractor
-                    .as_any()
-                    .downcast_ref::<crate::memtable_predicate_extractor::MemTableExtractor>()
-            })
-            .cloned(),
+        extractor: mem_table.extractor.clone(),
     });
     let mut root = crate::task::RootTask::default();
     root.set_plan(physical);
@@ -5065,7 +5058,7 @@ fn enumerate_physical_plans_4_task(
                 ctx.limit_push_down_threshold,
                 &mut state,
             );
-            let mut cur_task = match crate::task::attach2_task_in(
+            let mut cur_task = match crate::task_attach::attach2_task_in(
                 pp.clone_shallow(),
                 child_tasks,
                 ctx.column_ids,

@@ -16,7 +16,8 @@
 use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalShuffle};
 use tidb_planner_property::PhysicalProperty;
 use tidb_planner_core_base::{PlanError, PlanIdAllocator};
-use crate::task::{attach_plan_to_task, Task};
+use crate::task::Task;
+use crate::task_attach::attach_plan_to_task;
 use tidb_expr::expression::Expression;
 
 /// Resolved session inputs for Go's shuffle rewrite.

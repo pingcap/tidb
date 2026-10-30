@@ -1621,7 +1621,7 @@ fn build_mem_table(
     // Go's reader requests only what they keep, so the whole materialized
     // table is filtered by them here.
     let column_names = table.column_names.clone();
-    let extractor = scan.extractor.clone();
+    let extractor = tidb_planner::memtable_predicate_extractor::extractor_of(scan).cloned();
     let shape = move |rows: &[Vec<tidb_datatype::Datum>]| {
         let names: Vec<&str> = column_names.iter().map(String::as_str).collect();
         rows.iter()
@@ -5995,7 +5995,7 @@ fn mem_table_read_of(plan: &PhysicalPlan) -> Option<crate::mem_table_retrieval::
                     .map(|column| column.name.clone())
                     .collect(),
                 Vec::new(),
-                scan.extractor.clone(),
+                tidb_planner::memtable_predicate_extractor::extractor_of(scan).cloned(),
                 scan.query_time_range.clone(),
                 false,
             ),

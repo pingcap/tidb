@@ -2265,7 +2265,17 @@ fn mem_table_extractors<'a>(
 ) {
     let mut scans = Vec::new();
     mem_table_scans(plan, table, &mut scans);
-    out.extend(scans.into_iter().map(|scan| scan.extractor.as_ref()));
+    out.extend(scans.into_iter().map(extractor_of));
+}
+
+/// The concrete extractor behind a memory-table scan's Go
+/// `base.MemTablePredicateExtractor` (Go's type assertion).
+#[must_use]
+pub fn extractor_of(scan: &crate::physical::PhysicalMemTable) -> Option<&MemTableExtractor> {
+    scan.extractor
+        .as_deref()?
+        .as_any()
+        .downcast_ref::<MemTableExtractor>()
 }
 
 /// What one memory-table scan hands its retriever: Go's
@@ -2287,7 +2297,7 @@ pub fn mem_table_scan_reads(plan: &PhysicalPlan) -> Vec<MemTableScanRead> {
         if let PhysicalPlan::MemTable(scan) = plan {
             out.push(MemTableScanRead {
                 table: scan.table_name.to_ascii_uppercase(),
-                extractor: scan.extractor.clone(),
+                extractor: extractor_of(scan).cloned(),
                 query_time_range: scan.query_time_range.clone(),
             });
         }
