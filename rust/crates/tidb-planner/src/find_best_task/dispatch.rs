@@ -157,7 +157,7 @@ pub struct DispatchContext<'a> {
     /// candidate by `NewPhysicalHashJoin`.
     pub hash_join_concurrency: usize,
     /// Resolved session settings for the shuffle rewrite.
-    pub shuffle_options: crate::physical::shuffle_optimize::ShuffleOptions,
+    pub shuffle_options: crate::shuffle_optimize::ShuffleOptions,
     /// Go `SessionVars.RiskGroupNDVSkewRatio` for cardinality estimates.
     pub group_ndv_skew_ratio: f64,
     /// Go `SessionVars.UseHashJoinV2`; see `CostSessionOpts::use_hash_join_v2`.
@@ -5120,7 +5120,7 @@ fn enumerate_physical_plans_4_task(
                 && !matches!(cur_task, Task::Mpp(_))
                 && prop.is_sort_item_empty()
             {
-                cur_task = crate::physical::shuffle_optimize::optimize_by_shuffle_in(
+                cur_task = crate::shuffle_optimize::optimize_by_shuffle_in(
                     cur_task,
                     ctx.shuffle_options,
                     ctx.allocator,

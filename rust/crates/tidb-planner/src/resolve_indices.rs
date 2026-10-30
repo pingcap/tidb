@@ -24,11 +24,29 @@ use tidb_expr::schema::{merge_schema, Schema};
 use tidb_expr::simple_expr::resolve_indices_in_place;
 use tidb_disjointset::SimpleIntSet;
 
-use super::{
+use crate::physical::{
     BasePhysicalPlan, PhysicalHashJoin, PhysicalIndexJoin, PhysicalMergeJoin, PhysicalPlan,
 };
 use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanError;
+
+/// Go `ResolveIndices()` (`base.PhysicalPlan`): bind every operator's
+/// expressions to their children's final schemas, children first. Go's
+/// bodies are core's (`resolve_indices.go`), reached from the operators
+/// through `utilfuncp.ResolveIndices4X`.
+pub trait ResolveIndices {
+    /// Resolves the whole tree.
+    ///
+    /// # Errors
+    ///
+    /// A column that no child schema carries.
+    fn resolve_indices(&mut self) -> Result<(), PlanError>;
+}
+
+/// Go `ResolveIndicesItself`: one operator's own expressions.
+trait ResolveIndicesItself {
+    fn resolve_indices_itself(&mut self) -> Result<(), PlanError>;
+}
 
 fn bind(expr: &mut Expression, schema: &Schema) -> Result<(), PlanError> {
     resolve_indices_in_place(expr, schema).map_err(|error| PlanError::internal(error.to_string()))
@@ -208,7 +226,7 @@ fn resolve_join_predicates_and_output(
     Ok(())
 }
 
-impl PhysicalHashJoin {
+impl ResolveIndicesItself for PhysicalHashJoin {
     fn resolve_indices_itself(&mut self) -> Result<(), PlanError> {
         let left = child_schema(&self.base, 0)?;
         let right = child_schema(&self.base, 1)?;
@@ -247,7 +265,7 @@ impl PhysicalHashJoin {
     }
 }
 
-impl PhysicalIndexJoin {
+impl ResolveIndicesItself for PhysicalIndexJoin {
     fn resolve_indices_itself(&mut self) -> Result<(), PlanError> {
         if self.inner_child_idx > 1 {
             return Err(PlanError::internal("invalid IndexJoin inner child index"));
@@ -307,7 +325,7 @@ impl PhysicalIndexJoin {
     }
 }
 
-impl PhysicalMergeJoin {
+impl ResolveIndicesItself for PhysicalMergeJoin {
     fn resolve_indices_itself(&mut self) -> Result<(), PlanError> {
         let join = &mut *self;
         let left = child_schema(&join.base, 0)?;
@@ -328,14 +346,14 @@ impl PhysicalMergeJoin {
     }
 }
 
-impl PhysicalPlan {
+impl ResolveIndices for PhysicalPlan {
     /// Go resolves children first, then binds expressions against their final schemas.
-    pub fn resolve_indices(&mut self) -> Result<(), PlanError> {
+    fn resolve_indices(&mut self) -> Result<(), PlanError> {
         enum Step {
             Enter(PhysicalPlan),
             Exit(PhysicalPlan, usize),
         }
-        let root = std::mem::replace(self, Self::TableDual(Default::default()));
+        let root = std::mem::replace(self, PhysicalPlan::TableDual(Default::default()));
         let mut work = vec![Step::Enter(root)];
         let mut resolved = Vec::new();
         let mut result = Ok(());
@@ -359,7 +377,9 @@ impl PhysicalPlan {
         *self = resolved.pop().expect("resolved root");
         result
     }
+}
 
+impl ResolveIndicesItself for PhysicalPlan {
     fn resolve_indices_itself(&mut self) -> Result<(), PlanError> {
         match self {
             Self::ShuffleReceiver(_) => {}

@@ -15,6 +15,7 @@
 //! Semantic tests for the physical plan tree. Written, not transcreated; see
 //! the note in `tidb_planner_core_operator_logicalop::tests`.
 
+use crate::resolve_indices::ResolveIndices;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
 use tidb_expr::constant::{Constant, ParamMarker};

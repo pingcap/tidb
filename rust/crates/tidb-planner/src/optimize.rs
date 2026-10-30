@@ -23,6 +23,7 @@
 //! [`OptimizeContext`] and [`OptimizeServices`], as Go's `base.PlanContext`
 //! and the statistics handle reach `pkg/planner/core`.
 
+use crate::resolve_indices::ResolveIndices;
 use tidb_planner_core_base::PlanCacheMarker;
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
@@ -499,7 +500,7 @@ pub fn optimize_physical<C: OptimizeContext>(
     // The projection re-injection restores the purposeful projections
     // (scalar aggregate arguments, scalar order-by items, expression
     // nominal sorts) that the elimination pass removed.
-    let mut physical = crate::physical::inject_extra_projection(physical, plan_ids, column_ids);
+    let mut physical = crate::inject_extra_projection::inject_extra_projection(physical, plan_ids, column_ids);
     // Go postOptimize: mergeContinuousSelections.
     crate::physical::merge_continuous_selections(&mut physical);
     // Go postOptimize: eliminateUnionScanAndLock (the UnionScan half).
@@ -511,7 +512,7 @@ pub fn optimize_physical<C: OptimizeContext>(
     }
     // Go postOptimize: disableReuseChunkIfNeeded.
     if ctx.is_chunk_alloc_valid()
-        && crate::physical::chunk_reuse::should_disable_reuse_chunk(
+        && crate::chunk_reuse::should_disable_reuse_chunk(
             &physical,
             ctx.max_chunk_size(),
             tidb_memory::mem_total().ok(),

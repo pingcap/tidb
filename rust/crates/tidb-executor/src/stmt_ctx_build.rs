@@ -331,7 +331,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .unwrap_or(tidb_vardef::defaults::DEF_OPT_CORRELATION_EXP_FACTOR),
             };
         env.session.hash_join_concurrency = resolved_concurrency("tidb_hash_join_concurrency");
-        env.session.shuffle_options = tidb_planner::physical::shuffle_optimize::ShuffleOptions {
+        env.session.shuffle_options = tidb_planner::shuffle_optimize::ShuffleOptions {
             window_concurrency: resolved_concurrency("tidb_window_concurrency") as usize,
             stream_agg_concurrency: resolved_concurrency("tidb_streamagg_concurrency") as usize,
             merge_join_concurrency: resolved_concurrency("tidb_merge_join_concurrency") as usize,

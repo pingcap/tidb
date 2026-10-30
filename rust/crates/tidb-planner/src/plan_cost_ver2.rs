@@ -275,7 +275,7 @@ pub struct CostSessionOpts {
     /// `PhysicalHashJoin` candidate when it is built.
     pub hash_join_concurrency: f64,
     /// Session inputs for shuffle planning alongside the cost settings.
-    pub shuffle_options: crate::physical::shuffle_optimize::ShuffleOptions,
+    pub shuffle_options: crate::shuffle_optimize::ShuffleOptions,
     /// Go `SessionVars.RiskGroupNDVSkewRatio`, shared by logical, physical,
     /// and cost cardinality estimates.
     pub group_ndv_skew_ratio: f64,

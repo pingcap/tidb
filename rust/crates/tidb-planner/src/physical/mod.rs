@@ -44,9 +44,7 @@ pub mod part_info;
 pub use part_info::PhysPlanPartInfo;
 use tidb_kv::store_type::StoreType;
 use tidb_planner_cardinality::derive_stats::StatsInfoScale;
-mod resolve_indices;
 pub mod shuffle;
-pub mod shuffle_optimize;
 pub use shuffle::{PhysicalShuffle, PhysicalShuffleReceiverStub};
 
 use tidb_expr::expression::Expression;
@@ -5569,11 +5567,8 @@ fn eliminate_projection_preserving_shuffle(
     projection.base.children_mut().remove(0)
 }
 
-pub mod chunk_reuse;
 pub mod expand;
-pub mod inject_extra_projection;
 
-pub use inject_extra_projection::inject_extra_projection;
 
 #[cfg(test)]
 mod tests;

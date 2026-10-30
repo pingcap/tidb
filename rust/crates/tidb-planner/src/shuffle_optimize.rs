@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! Go `core/plan.go` shuffle selection for window, stream aggregation and merge join.
-use super::{BasePhysicalPlan, PhysicalPlan, PhysicalShuffle};
+use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalShuffle};
 use tidb_planner_property::PhysicalProperty;
 use tidb_planner_core_base::{PlanError, PlanIdAllocator};
 use crate::task::{attach_plan_to_task, Task};
