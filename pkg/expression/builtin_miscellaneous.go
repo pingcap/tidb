@@ -1899,7 +1899,8 @@ func (c *binToUUIDFunctionClass) getFunction(ctx BuildContext, args []Expression
 	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
-	bf.tp.SetFlen(32)
+	// A UUID text form is 36 characters long: 32 hex digits plus 4 hyphens.
+	bf.tp.SetFlen(36)
 	bf.tp.SetDecimal(0)
 	sig := &builtinBinToUUIDSig{bf}
 	return sig, nil
