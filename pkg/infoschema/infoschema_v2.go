@@ -1106,11 +1106,17 @@ func retryOnFlashbackInProgress[T any](ctx context.Context, fn func() (T, error)
 // SchemaTableInfos implements MetaOnlyInfoSchema.
 func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema ast.CIStr) ([]*model.TableInfo, error) {
 	return retryOnFlashbackInProgress(ctx, func() ([]*model.TableInfo, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		var tableInfos []*model.TableInfo
 		if err := is.iterSchemaTableInfos(ctx, schema, func(tableInfo *model.TableInfo) error {
 			tableInfos = append(tableInfos, tableInfo)
 			return nil
 		}); err != nil {
+			return nil, err
+		}
+		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		return tableInfos, nil

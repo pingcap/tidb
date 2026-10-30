@@ -27,8 +27,77 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/stretchr/testify/require"
 )
+
+type cancelOnMetaTable struct {
+	table.Table
+	onMeta func()
+}
+
+func (t *cancelOnMetaTable) Meta() *model.TableInfo {
+	t.onMeta()
+	return &model.TableInfo{}
+}
+
+func TestSchemaTableInfosCancellation(t *testing.T) {
+	schema := ast.NewCIStr("information_schema")
+	for _, tc := range []struct {
+		name string
+		make func(*schemaTables) InfoSchema
+	}{
+		{"classic", func(tables *schemaTables) InfoSchema {
+			return &infoSchema{schemaMap: map[string]*schemaTables{schema.L: tables}}
+		}},
+		{"v2 special schema", func(tables *schemaTables) InfoSchema {
+			is := NewInfoSchemaV2(nil, nil, NewData())
+			is.Data.specials.Store(schema.L, tables)
+			return &is
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, scan := range []struct {
+				name      string
+				count     int
+				cancelled bool
+			}{
+				{"cancelled empty schema", 0, true},
+				{"cancelled before scan", 2, true},
+				{"cancelled on last table", 1, false},
+				{"cancelled during scan", 2, false},
+			} {
+				t.Run(scan.name, func(t *testing.T) {
+					ctx, cancel := context.WithCancel(context.Background())
+					defer cancel()
+					calls := 0
+					tables := &schemaTables{tables: make(map[string]table.Table)}
+					for _, name := range []string{"a", "b"}[:scan.count] {
+						tables.tables[name] = &cancelOnMetaTable{onMeta: func() {
+							calls++
+							cancel()
+						}}
+					}
+					if scan.cancelled {
+						cancel()
+					}
+					is := tc.make(tables)
+					infos, err := is.SchemaTableInfos(ctx, schema)
+					require.ErrorIs(t, err, context.Canceled)
+					require.Nil(t, infos)
+					if scan.cancelled {
+						require.Zero(t, calls)
+					} else {
+						require.Equal(t, 1, calls)
+					}
+					infos, err = is.SchemaTableInfos(context.Background(), schema)
+					require.NoError(t, err)
+					require.Len(t, infos, scan.count)
+				})
+			}
+		})
+	}
+}
 
 func TestV2Basic(t *testing.T) {
 	r := internal.CreateAutoIDRequirement(t)
