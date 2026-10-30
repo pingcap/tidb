@@ -6,6 +6,7 @@ go_library(
         "column.go",
         "logger.go",
         "reader.go",
+        "reader_projection.go",
         "record.go",
         "stmtsummary.go",
     ],
@@ -42,13 +43,18 @@ go_test(
     srcs = [
         "column_test.go",
         "main_test.go",
+        "reader_projection_test.go",
         "reader_test.go",
         "record_test.go",
         "stmtsummary_test.go",
     ],
     embed = [":stmtsummary"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 24,
+=======
+    shard_count = 31,
+>>>>>>> 427d7379682 (stmtsummary: decode only requested history text (#71820))
     deps = [
         "//pkg/config",
         "//pkg/meta/model",
@@ -59,6 +65,11 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util",
+<<<<<<< HEAD
+=======
+        "//pkg/util/chunk",
+        "//pkg/util/plancodec",
+>>>>>>> 427d7379682 (stmtsummary: decode only requested history text (#71820))
         "//pkg/util/set",
         "//pkg/util/stmtsummary",
         "@com_github_prometheus_client_golang//prometheus",
