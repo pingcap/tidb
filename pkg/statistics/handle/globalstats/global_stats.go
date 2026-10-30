@@ -353,24 +353,16 @@ func blockingMergePartitionStats2GlobalStats(
 	return
 }
 
-// isLocalUnique returns true for a unique column or index, i.e. a local
-// single-column unique index or its column. It is used for deciding if the
-// global NDV is the sum of the partition NDVs.
+// isLocalUnique returns true if UniqueBySchema accepts the column or index
+// without a global index. It is used for deciding if the global NDV is the
+// sum of the partition NDVs.
 //
 // A local unique index includes the partition columns, so a value always
 // belongs to the same partition. A global unique index does not: a row that
 // moves to another partition leaves its value in the stats of the old
 // partition until that partition is analyzed again.
 func isLocalUnique(tblInfo *model.TableInfo, isIndex bool, id int64) bool {
-	for _, idx := range tblInfo.Indices {
-		if idx.Global || !statistics.IsSingleColNonPrefixUniqueIndex(idx) {
-			continue
-		}
-		if (isIndex && idx.ID == id) || (!isIndex && tblInfo.Columns[idx.Columns[0].Offset].ID == id) {
-			return true
-		}
-	}
-	return false
+	return statistics.UniqueBySchema(tblInfo, isIndex, id, true)
 }
 
 // uniqueGlobalNDV returns the global NDV of a column or index that

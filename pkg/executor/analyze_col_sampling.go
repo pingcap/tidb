@@ -869,7 +869,7 @@ workLoop:
 				failpoint.InjectCall("analyzeSamplingBuildAfterReleaseCollectorMemory", collectorMemSize, e.memTracker.BytesConsumed())
 			}
 			numTopN := int(e.opts[ast.AnalyzeOptNumTopN])
-			if statistics.UniqueBySchema(e.tableInfo, !task.isColumn, task.id) {
+			if statistics.UniqueBySchema(e.tableInfo, !task.isColumn, task.id, false) {
 				// Distinct values have no frequent value for TopN, and their
 				// row count is their NDV.
 				numTopN = 0
