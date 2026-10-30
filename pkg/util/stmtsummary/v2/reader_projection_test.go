@@ -265,56 +265,8 @@ func fmtSize(size int) string {
 	return "32KiB"
 }
 
-// benchmarkHistoryProjectionRows compares narrow and all-text history queries
+// BenchmarkHistoryReaderProjection compares narrow and all-text history queries
 // without a digest predicate, independently of digest prefiltering.
-func benchmarkHistoryProjectionRows(b *testing.B, textSize int, allText bool) {
-	const recordCount = 200
-	defer config.RestoreFunc()()
-	filename := filepath.Join(b.TempDir(), "tidb-statements.log")
-	config.UpdateGlobal(func(conf *config.Config) { conf.Instance.StmtSummaryFilename = filename })
-	file, err := os.Create(filename)
-	require.NoError(b, err)
-	for i := 0; i < recordCount; i++ {
-		digest := fmt.Sprintf("digest_%06d", i)
-		record := stmtPersistedRecord{StmtRecord: StmtRecord{
-			Begin: 1672128520, End: 1672128580, Digest: digest, ExecCount: 10, StmtType: "Select",
-			NormalizedSQL: "select ? from t", SampleSQL: strings.Repeat("s", textSize), SampleBinaryPlan: strings.Repeat("p", textSize),
-		}}
-		line, err := json.Marshal(record)
-		require.NoError(b, err)
-		_, err = file.Write(append(line, '\n'))
-		require.NoError(b, err)
-	}
-	require.NoError(b, file.Close())
-	names := []string{DigestStr, ExecCountStr}
-	if allText {
-		names = append(names, DigestTextStr, BindingDigestTextStr, QuerySampleTextStr, PrevSampleTextStr,
-			PlanStr, BinaryPlan, PlanHint, PlanCacheUnqualifiedLastReasonStr)
-	}
-	columns := make([]*model.ColumnInfo, len(names))
-	for i, name := range names {
-		columns[i] = &model.ColumnInfo{Name: ast.NewCIStr(name)}
-	}
-	expected := recordCount
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		reader, err := NewHistoryReader(context.Background(), columns, "", time.UTC, nil, false, nil, nil, 2)
-		require.NoError(b, err)
-		count := 0
-		for {
-			rows, err := reader.Rows()
-			require.NoError(b, err)
-			if rows == nil {
-				break
-			}
-			count += len(rows)
-		}
-		require.NoError(b, reader.Close())
-		require.Equal(b, expected, count)
-	}
-}
-
 func BenchmarkHistoryReaderProjection(b *testing.B) {
 	for _, size := range []int{1024, 32768} {
 		for _, allText := range []bool{false, true} {
@@ -323,7 +275,7 @@ func BenchmarkHistoryReaderProjection(b *testing.B) {
 				columns = "all-text"
 			}
 			b.Run(fmt.Sprintf("%dB/%s", size, columns), func(b *testing.B) {
-				benchmarkHistoryProjectionRows(b, size, allText)
+				benchmarkHistoryReaderRows(b, 0, false, size, allText)
 			})
 		}
 	}
