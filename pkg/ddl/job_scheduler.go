@@ -277,6 +277,7 @@ func (s *jobScheduler) processJobDuringUpgrade(sess *sess.Session, job *model.Jo
 }
 
 func (s *jobScheduler) scheduleLoop() {
+	s.cleanupLeftoverGlobalIndexes()
 	const retryInterval = 3 * time.Second
 	for {
 		err := s.schedule()
