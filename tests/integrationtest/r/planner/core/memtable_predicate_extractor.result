@@ -20,6 +20,22 @@ abctime
 select TABLE_NAME, column_name from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and column_name like '%time';
 TABLE_NAME	column_name
 t	abctime
+create table newline_col (`a
+b` int);
+select hex(column_name), column_name like '%', column_name like 'a_b', column_name like 'a%b'
+from information_schema.columns where table_schema = 'planner__core__memtable_predicate_extractor' and table_name = 'newline_col';
+hex(column_name)	column_name like '%'	column_name like 'a_b'	column_name like 'a%b'
+610A62	1	1	1
+select count(*) from information_schema.columns where table_schema = 'planner__core__memtable_predicate_extractor' and table_name = 'newline_col' and column_name like '%';
+count(*)
+1
+select count(*) from information_schema.columns where table_schema = 'planner__core__memtable_predicate_extractor' and table_name = 'newline_col' and column_name like 'a_b';
+count(*)
+1
+select count(*) from information_schema.columns where table_schema = 'planner__core__memtable_predicate_extractor' and table_name = 'newline_col' and column_name like 'a%b';
+count(*)
+1
+drop table newline_col;
 describe t;
 Field	Type	Null	Key	Default	Extra
 id	int	YES		NULL	

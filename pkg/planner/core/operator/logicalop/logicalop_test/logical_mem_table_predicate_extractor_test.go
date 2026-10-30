@@ -554,13 +554,13 @@ func TestClusterLogTableExtractor(t *testing.T) {
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
 			startTime: timestamp(t, "2019-10-10 10:10:10"),
-			patterns:  []string{"^.*a.*$"},
+			patterns:  []string{"^(?s:.*)a(?s:.*)$"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where message like '%a%' and message regexp '^b'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			patterns:  []string{"^.*a.*$", "^b"},
+			patterns:  []string{"^(?s:.*)a(?s:.*)$", "^b"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where message='gc'",
@@ -584,13 +584,13 @@ func TestClusterLogTableExtractor(t *testing.T) {
 			nodeTypes: set.NewStringSet("tidb", "pd"),
 			instances: set.NewStringSet("123.1.1.5:1234", "123.1.1.4:1234"),
 			level:     set.NewStringSet("debug", "info", "error"),
-			patterns:  []string{"^.*coprocessor.*$", ".*txn=123.*"},
+			patterns:  []string{"^(?s:.*)coprocessor(?s:.*)$", ".*txn=123.*"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where (message regexp '.*pd.*' or message regexp '.*tidb.*' or message like '%tikv%')",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			patterns:  []string{".*pd.*|.*tidb.*|^.*tikv.*$"},
+			patterns:  []string{".*pd.*|.*tidb.*|^(?s:.*)tikv(?s:.*)$"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where (level = 'debug' or level = 'ERROR')",
@@ -608,14 +608,14 @@ func TestClusterLogTableExtractor(t *testing.T) {
 			sql:       "select * from information_schema.cluster_log where message ilike '%error%'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			patterns:  []string{"(?i:^.*error.*$)"},
+			patterns:  []string{"(?i:^(?s:.*)error(?s:.*)$)"},
 		},
 		{
 			// Same for an ILIKE carrying a non-default ESCAPE ('#%' is a literal '%').
 			sql:       "select * from information_schema.cluster_log where message ilike '%error#%%' escape '#'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			patterns:  []string{"(?i:^.*error%.*$)"},
+			patterns:  []string{"(?i:^(?s:.*)error%(?s:.*)$)"},
 		},
 		{
 			// In a DNF the scoped (?i:...) keeps the case-insensitive branch from
@@ -623,7 +623,7 @@ func TestClusterLogTableExtractor(t *testing.T) {
 			sql:       "select * from information_schema.cluster_log where (message ilike '%pd%' or message like '%tikv%')",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			patterns:  []string{"(?i:^.*pd.*$)|^.*tikv.*$"},
+			patterns:  []string{"(?i:^(?s:.*)pd(?s:.*)$)|^(?s:.*)tikv(?s:.*)$"},
 		},
 		{
 			// A case-sensitive LIKE still pushes down, honouring a custom ESCAPE
@@ -631,7 +631,7 @@ func TestClusterLogTableExtractor(t *testing.T) {
 			sql:       "select * from information_schema.cluster_log where message like '%a#%b%' escape '#'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			patterns:  []string{"^.*a%b.*$"},
+			patterns:  []string{"^(?s:.*)a%b(?s:.*)$"},
 		},
 	}
 	for _, ca := range cases {
