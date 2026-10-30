@@ -1796,6 +1796,15 @@ func TestColumns(t *testing.T) {
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name ilike 'T%';`,
 			columnNamePattern: []string{"t%"},
+			remained:          "[ilike(Column#4, T%, 92)]",
+		},
+		{
+			sql:      `select * from information_schema.COLUMNS where column_name ilike 'İ[%';`,
+			remained: "[ilike(Column#4, İ[%, 92)]",
+		},
+		{
+			sql:      `select * from information_schema.COLUMNS where column_name like 'İ[%';`,
+			remained: "[like(Column#4, İ[%, 92)]",
 		},
 	}
 	parser := parser.New()
@@ -1950,6 +1959,16 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			},
 		},
 		{
+			prepared: "select * from information_schema.COLUMNS where table_name ilike ?",
+			userVars: []any{`"É[%"`},
+			params:   []any{"É[%"},
+			filter:   true,
+			checker: func(extractor base.MemTablePredicateExtractor) {
+				rse := extractor.(*plannercore.InfoSchemaColumnsExtractor)
+				require.EqualValues(t, []string{"é[%"}, rse.LikePatterns["table_name"])
+			},
+		},
+		{
 			prepared: "select * from information_schema.tidb_hot_regions_history where update_time>=?",
 			userVars: []any{"cast('2019-10-10 10:10:10' as datetime)"},
 			params: []any{func() types.Time {
@@ -2025,6 +2044,50 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
+	t.Run("like_unicode_case_folding", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("create database like_unicode_repro")
+		defer tk.MustExec("drop database like_unicode_repro")
+		tk.MustExec("create table like_unicode_repro.`İ[foo]` (id int)")
+
+		tk.MustQuery("select table_name, table_name like 'İ[%' from information_schema.tables " +
+			"where table_schema = 'like_unicode_repro'").Check(testkit.Rows("İ[foo] 1"))
+		tk.MustQuery("select table_name from information_schema.tables " +
+			"where table_schema = 'like_unicode_repro' and table_name like 'İ[%'").Check(testkit.Rows("İ[foo]"))
+		// Selecting engine bypasses the name-only fast path. The general scan
+		// matches original names, so lowercasing İ to i would discard this table.
+		tk.MustQuery("select table_name, engine from information_schema.tables " +
+			"where table_schema = 'like_unicode_repro' and table_name like 'İ[%'").Check(testkit.Rows("İ[foo] InnoDB"))
+	})
+	t.Run("ilike_unicode_case_folding", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("create database ilike_unicode_repro")
+		defer tk.MustExec("drop database ilike_unicode_repro")
+		tk.MustExec("create table ilike_unicode_repro.`é[foo]` (`é[col]` int, `İ[col]` int, `K[col]` int)")
+
+		cases := []struct {
+			table   string
+			column  string
+			value   string
+			pattern string
+			matches string
+		}{
+			{"tables", "table_name", "é[foo]", "É[%", "0"},
+			{"tables", "table_name", "é[foo]", "é[%", "1"},
+			{"tables", "table_name", "é[foo]", "é[F%", "1"},
+			{"columns", "column_name", "é[col]", "É[%", "0"},
+			{"columns", "column_name", "é[col]", "é[C%", "1"},
+			// Unicode lowercasing changes İ to i, which regexp (?i) does not match back to İ.
+			{"columns", "column_name", "İ[col]", "İ[%", "1"},
+			// Even an ASCII pattern can over-match because regexp (?i) equates k with K.
+			{"columns", "column_name", "K[col]", "k[%", "0"},
+		}
+		for _, ca := range cases {
+			tk.MustQuery(fmt.Sprintf("select '%s' ilike '%s'", ca.value, ca.pattern)).Check(testkit.Rows(ca.matches))
+			tk.MustQuery(fmt.Sprintf("select count(*) from information_schema.%s where table_schema = 'ilike_unicode_repro' and %s ilike '%s'",
+				ca.table, ca.column, ca.pattern)).Check(testkit.Rows(ca.matches))
+		}
+	})
 	var cases = []struct {
 		sql           string
 		skipRequest   bool
@@ -2054,6 +2117,13 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 			sql:           `select * from information_schema.tables where table_name ilike 'T%';`,
 			colPredicates: map[string]set.StringSet{},
 			likePatterns:  []string{"t%"},
+			remained:      "[ilike(Column#3, T%, 92)]",
+		},
+		{
+			sql:           `select * from information_schema.tables where table_name ilike 'É[%';`,
+			colPredicates: map[string]set.StringSet{},
+			likePatterns:  []string{"é[%"},
+			remained:      "[ilike(Column#3, É[%, 92)]",
 		},
 		{
 			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_schema='test';`,
