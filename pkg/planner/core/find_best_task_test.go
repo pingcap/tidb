@@ -107,14 +107,15 @@ func testRangeCountSkyline(t *testing.T) {
 		}
 	}
 
-	// A missing-statistics index must not retain its extra equality/IN preference above the threshold.
+	// Missing statistics and equality/IN counts cannot break the tie between
+	// incomparable access conditions, regardless of the range-count threshold.
 	stats := &statistics.Table{ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMapWithoutSize()}
 	stats.ColAndIdxExistenceMap.InsertIndex(2, true)
 	lhs, rhs := newCandidate(1, 3, 1001, 10), newCandidate(2, 2, 1, 10)
 	for _, tc := range []struct {
 		threshold int64
 		want      int
-	}{{0, 1}, {1001, 1}, {1000, -1}} {
+	}{{0, 0}, {1001, 0}, {1000, 0}} {
 		ctx.GetSessionVars().RangeMaxCount = tc.threshold
 		result, _ := compareCandidates(ctx.GetPlanCtx(), stats, prop, lhs, rhs, true)
 		require.Equal(t, tc.want, result)
