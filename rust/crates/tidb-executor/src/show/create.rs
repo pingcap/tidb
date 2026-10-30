@@ -35,7 +35,7 @@ fn push_column_comment(clause: &mut String, column: &crate::KvColumn) {
 /// Go `stringutil.Escape`: double-quoted under `ANSI_QUOTES`, backtick-quoted
 /// otherwise, with the quote character doubled inside.
 fn escape_name(name: &str, ansi_quotes: bool) -> String {
-    crate::escape_identifier(name, ansi_quotes)
+    tidb_ddl_build::table_partition::escape_identifier(name, ansi_quotes)
 }
 
 /// Go `ConstructResultOfShowCreateView`.
@@ -574,7 +574,7 @@ pub fn show_create_table_text(
     // policy after the comment and BEFORE the cached marker, under the same
     // `/*T![placement] ... */` feature gate a partition's uses -- so a dump
     // carrying placement still loads on a parser that does not know it.
-    out.push_str(&crate::partition_placement_text(
+    out.push_str(&tidb_ddl_build::table_partition::partition_placement_text(
         table.placement_policy().as_ref(),
         ansi_quotes,
     ));
@@ -740,7 +740,7 @@ fn partition_clause_text(table: &crate::KvTable, ansi_quotes: bool) -> String {
         partition.expr_text
     );
     let defs = || {
-        crate::append_partition_defs(&partition.definitions, &partition.kind, ansi_quotes)
+        tidb_ddl_build::table_partition::append_partition_defs(&partition.definitions, &partition.kind, ansi_quotes)
     };
     // Go `writeColumnListToBuffer` escapes each partition column by the
     // session's sql_mode.

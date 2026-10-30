@@ -31,7 +31,7 @@ pub fn rows(
     if if_not_exists {
         text.push_str("IF NOT EXISTS ");
     }
-    text.push_str(&crate::escape_identifier(&database, ansi_quotes));
+    text.push_str(&tidb_ddl_build::table_partition::escape_identifier(&database, ansi_quotes));
     text.push_str(" /*!40100 DEFAULT CHARACTER SET ");
     text.push_str(charset.charset.name());
     if charset.collation != charset.charset.default_collation() {
@@ -42,7 +42,7 @@ pub fn rows(
     // Go appends the schema's placement reference.
     if let Some(policy) = placement_policy {
         text.push_str(" /*T![placement] PLACEMENT POLICY=");
-        text.push_str(&crate::escape_identifier(policy, ansi_quotes));
+        text.push_str(&tidb_ddl_build::table_partition::escape_identifier(policy, ansi_quotes));
         text.push_str(" */");
     }
     vec![vec![

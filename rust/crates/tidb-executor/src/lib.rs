@@ -203,7 +203,7 @@ pub mod union_scan;
 pub mod view;
 
 pub use apply::ApplyExec;
-pub use ddl::{append_partition_defs, escape_identifier, linear_partitioning_warning, partition_placement_text, run_create_table_on, run_create_table_on_with, CreateTableSettings};
+pub use ddl::run_create_table_on;
 use tidb_ddl_build::table_lifecycle::split_drop_table_targets;
 pub use ddl_sequence::show_create_sequence;
 #[cfg(test)]

@@ -195,25 +195,14 @@
 //!   no collation (matching Go), so no collation-mismatch error can arise
 //!   there even when TiDB's own planner would have rewritten the expression.
 
-#[allow(unused_imports)]
-use tidb_ddl_build::ttl_info_from_options;
-
 mod hypo_index;
 mod indexes;
 #[cfg(test)]
 mod tests_modify_column_type;
-use tidb_ddl_build::table_partition;
 #[cfg(test)]
 mod tests_table_partition;
 
-
-pub use table_partition::{append_partition_defs, build_partition_metadata, escape_identifier, linear_partitioning_warning, partition_placement_text, StoredPartitionMetadata};
-use tidb_table::partition_metadata::{partition_spec_from_metadata, StoredPartitionDefinition};
-
 pub use hypo_index::set_advisor_hypo_index;
-use tidb_sessionstates::HypoIndexMap;
-use tidb_variable::hypo_index::HypoIndexes;
-use tidb_variable::hypo_index::HypoTiFlashReplicas;
 pub use indexes::{index_backfill_error};
 
 
@@ -397,70 +386,12 @@ pub fn run_create_table_on_with(
     create_table_in_catalog(create, catalog, current_db, ctx, None)
 }
 
-/// Every session setting `CREATE TABLE` reads, as one named value.
-///
-/// These arrive together because they are one thing -- the state of the
-/// session issuing the statement -- and passing them as loose positional
-/// arguments made two unrelated `bool`s adjacent, where a swapped call site
-/// would compile and quietly build a different table. Naming them also puts
-/// the whole list in one place, so the next setting Go reads here is an
-/// added FIELD, which every construction site must supply, rather than an
-/// added parameter that a caller can be forgiven for defaulting.
-#[derive(Debug, Clone, Copy)]
-pub struct CreateTableSettings {
-    /// The session's scanner `sql_mode`: this entry RE-PARSES text the
-    /// session already parsed, so without it a double-quoted name would mean
-    /// one thing to the session and another here.
-    pub sql_mode: tidb_lexer::SqlMode,
-    /// The session's parser switches (Go `SessionVars.BuildParserConfig`),
-    /// for the same re-parse: `DOUBLE(10)` is a syntax error only under
-    /// `tidb_enable_strict_double_type_check`.
-    pub parser_config: tidb_parser::ParserConfig,
-    /// `@@foreign_key_checks`: with it off, Go stores a foreign key as
-    /// written instead of resolving it against the referenced table.
-    pub foreign_key_checks: bool,
-    /// `@@tidb_enable_check_constraint`, GLOBAL-scope and OFF by default;
-    /// see this function's doc for what OFF makes of a `CHECK`.
-    pub enable_check_constraint: bool,
-    /// The session's `@@tidb_enable_clustered_index`. Go reads it off
-    /// `SessionVars` in `metabuild.go` and hands it to `BuildTableInfo`; it
-    /// decides the table's ROW ENCODING and HANDLE SEMANTICS, not a plan, so
-    /// it has to be the session's own value and never a default assumed here.
-    pub clustered_index_mode: tidb_vardef::modes::ClusteredIndexDefMode,
-}
-
-impl Default for CreateTableSettings {
-    /// A stock session: `@@foreign_key_checks` ON,
-    /// `@@tidb_enable_check_constraint` OFF, and
-    /// `@@tidb_enable_clustered_index` at Go's
-    /// `DefTiDBEnableClusteredIndex` = `ClusteredIndexDefModeOn`
-    /// (`pkg/sessionctx/vardef/tidb_vars.go`), which is also the value
-    /// `sysvar.go` registers. A stock session clusters every primary key it
-    /// can, not only integer ones.
-    fn default() -> Self {
-        Self {
-            sql_mode: tidb_lexer::SqlMode::default(),
-            parser_config: tidb_parser::ParserConfig::default(),
-            foreign_key_checks: true,
-            enable_check_constraint: false,
-            clustered_index_mode: tidb_vardef::modes::ClusteredIndexDefMode(
-                tidb_vardef::defaults::DEF_TIDB_ENABLE_CLUSTERED_INDEX,
-            ),
-        }
-    }
-}
-
 /// The default schema an unqualified `CREATE TABLE` lands in.
 fn tidb_executor_default_database() -> &'static str {
     tidb_infoschema::DEFAULT_DATABASE
 }
 
 use tidb_ddl_build::metabuild::new_metabuild_context_with_sctx;
-
-/// Go `NewMetaBuildContextWithSctx`: the metadata-build context a DDL
-/// statement's builder runs under, from the statement's context.
-#[must_use]
-
 
 #[cfg(test)]
 mod tests {

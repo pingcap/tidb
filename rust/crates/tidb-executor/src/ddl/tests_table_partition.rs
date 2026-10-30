@@ -95,7 +95,7 @@ fn routes_the_same_way(sql: &str) {
         .collect::<Vec<_>>();
     let ctx = crate::StmtContext::for_query();
     let mut next = 100;
-    let built = build_partition_metadata(
+    let built = tidb_ddl_build::table_partition::build_partition_metadata(
         create,
         &names,
         &types,
