@@ -695,12 +695,12 @@ func benchmarkHistoryReaderRows(b *testing.B, matchPercent int, withDigestFilter
 	require.NoError(b, file.Close())
 	names := []string{DigestStr, ExecCountStr}
 	if allText {
-		names = append(names, DigestTextStr, BindingDigestTextStr, QuerySampleTextStr, PrevSampleTextStr,
+		names = append(names, DigestTextStr, QuerySampleTextStr, PrevSampleTextStr,
 			PlanStr, BinaryPlan, PlanHint, PlanCacheUnqualifiedLastReasonStr)
 	}
 	columns := make([]*model.ColumnInfo, len(names))
 	for i, name := range names {
-		columns[i] = &model.ColumnInfo{Name: ast.NewCIStr(name)}
+		columns[i] = &model.ColumnInfo{Name: pmodel.NewCIStr(name)}
 	}
 	var digests set.StringSet
 	expected := recordCount
