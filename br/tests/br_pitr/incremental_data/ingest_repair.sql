@@ -85,3 +85,8 @@ alter table test.pairs19 add unique index i1(pid) global;
 -- test patial index
 ALTER TABLE test.pairs20 ADD INDEX i1(pid1) WHERE id > 5;
 ALTER TABLE test.pairs20 ADD UNIQUE INDEX i2(pid2) WHERE id > 5;
+
+UPDATE test.global_index_restore SET a=100,b='updated' WHERE id=1;
+DELETE FROM test.global_index_restore WHERE id=11;
+INSERT INTO test.global_index_restore VALUES (21,200,'new');
+ALTER TABLE test.global_index_restore ADD INDEX added(b) GLOBAL;

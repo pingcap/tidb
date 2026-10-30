@@ -37,6 +37,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/indexrepair"
+	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	"github.com/pingcap/tidb/br/pkg/restore/nameroute"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	restoresplit "github.com/pingcap/tidb/br/pkg/restore/split"
@@ -1866,6 +1868,26 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}()
 	}
 
+	restoreDBConfig := tweakLocalConfForRestore()
+	defer restoreDBConfig()
+
+	// Repair SQLs are saved only after ingestion, checksum and system schema restore.
+	// Re-entering those stages after DROP/ADD INDEX would use obsolete index IDs.
+	if cfg.UseCheckpoint && !isPiTR {
+		repairStarted, err := cfg.snapshotCheckpointMetaManager.ExistsCheckpointIngestIndexRepairSQLs(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if repairStarted {
+			if err := indexrepair.RepairIndexes(ctx, mgr.GetDomain(), nil, cfg.snapshotCheckpointMetaManager, g, nil); err != nil {
+				return errors.Trace(err)
+			}
+			canRestoreSchedulers = true
+			summary.SetSuccessStatus(true)
+			return nil
+		}
+	}
+
 	err = client.InstallPiTRSupport(ctx, snapclient.PiTRCollDep{
 		PDCli:            mgr.GetPDClient(),
 		EtcdCli:          mgr.GetDomain().GetEtcdClient(),
@@ -1924,10 +1946,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	// pre-set TiDB config for restore
-	restoreDBConfig := tweakLocalConfForRestore()
-	defer restoreDBConfig()
 
 	if client.GetSupportPolicy() {
 		// create policy if backupMeta has policies.
@@ -2099,6 +2117,26 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	err = client.RestoreSystemSchemas(ctx, cfg.TableFilter, loadSysTablePhysical)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	// PITR must keep the original index IDs until all log KVs have been replayed.
+	if !isPiTR {
+		recorder := ingestrec.New()
+		for _, table := range createdTables {
+			for oldID, newID := range restoreutils.GetTableIDMap(table.Table, table.OldTable.Info) {
+				if oldID != newID {
+					recorder.AddGlobalIndexes(table.Table)
+					break
+				}
+			}
+		}
+		var repairCheckpoint checkpoint.IndexRepairMetaManager
+		if cfg.UseCheckpoint {
+			repairCheckpoint = cfg.snapshotCheckpointMetaManager
+		}
+		if err := indexrepair.RepairIndexes(ctx, mgr.GetDomain(), recorder, repairCheckpoint, g, nil); err != nil {
+			return errors.Annotate(err, "failed to rebuild global indexes")
+		}
 	}
 
 	failpoint.InjectCall("run-snapshot-restore-about-to-finish", &err)
