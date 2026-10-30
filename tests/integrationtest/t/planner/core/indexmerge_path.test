@@ -623,3 +623,9 @@ explain format='plan_tree' select /*+ use_index_merge(t, idx_a_j_c) */ * from t 
 explain format='plan_tree' select /*+ use_index_merge(t, idx_a_j_c) */ * from t where a > 1 and (1 member of (j)) and c = 5;
 explain format='plan_tree' select /*+ use_index_merge(t, idx_j_s) */ * from t where (1 member of (j)) and s > 'abc';
 explain format='plan_tree' select /*+ use_index_merge(t, idx_j_id) */ id from t where (1 member of (j)) and id > a;
+# A range on a column before the array column is not an access filter, so a point predicate on the same column still
+# gives an MV index path whatever the predicate order, for both the single-value and the intersection collectors.
+explain format='plan_tree' select /*+ use_index_merge(t, idx_a_j_c) */ * from t where a > 1 and a in (2,3) and (1 member of (j));
+explain format='plan_tree' select /*+ use_index_merge(t, idx_a_j_c) */ * from t where a in (2,3) and a > 1 and (1 member of (j));
+explain format='plan_tree' select /*+ use_index_merge(t, idx_a_j_c) */ * from t where a > 1 and a in (2,3) and (1 member of (j)) and (2 member of (j));
+explain format='plan_tree' select /*+ use_index_merge(t, idx_a_j_c) */ * from t where a in (2,3) and a > 1 and (1 member of (j)) and (2 member of (j));
