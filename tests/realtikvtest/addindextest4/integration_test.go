@@ -265,11 +265,11 @@ func TestAnalyzeTimeout(t *testing.T) {
 		ddl.DefaultAnalyzeCheckInterval = oldInterval
 	}()
 
-	analyzedNotify := make(chan struct{})
+	analyzedNotify := make(chan struct{}, 2)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterAnalyzeTable", func(*error) {
 		// wait an extra second because analyze start_time is compared at second granularity
 		time.Sleep(1 * time.Second)
-		close(analyzedNotify)
+		analyzedNotify <- struct{}{}
 	})
 
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAnalyzeTable", func() {
@@ -326,6 +326,15 @@ func TestAnalyzeTimeout(t *testing.T) {
 		rows := tk1.MustQuery("show stats_meta where table_name = 't_timeout'").Rows()
 		return len(rows) > 0
 	}, time.Minute, 200*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		select {
+		case <-analyzedNotify:
+			return true
+		default:
+			return false
+		}
+	}, 30*time.Second, 200*time.Millisecond)
 }
 
 func TestMultiSchemaChangeAnalyzeOnlyOnce(t *testing.T) {
