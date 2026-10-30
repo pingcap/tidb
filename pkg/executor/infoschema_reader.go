@@ -979,7 +979,7 @@ func (e *memtableRetriever) setDataFromCheckConstraints(ctx context.Context, sct
 		}
 		for _, table := range tables {
 			if len(table.Constraints) > 0 {
-				if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.SelectPriv) {
+				if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllTablePrivMask) {
 					continue
 				}
 				for _, constraint := range table.Constraints {
@@ -1024,7 +1024,7 @@ func (e *memtableRetriever) setDataFromTiDBCheckConstraints(ctx context.Context,
 	for i, table := range tables {
 		schema := schemas[i]
 		if len(table.Constraints) > 0 {
-			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.SelectPriv) {
+			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllTablePrivMask) {
 				continue
 			}
 			for _, constraint := range table.Constraints {
@@ -2344,7 +2344,7 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 		if !ex.HasConstraintSchema(schema.L) {
 			continue
 		}
-		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllTablePrivMask) {
 			continue
 		}
 
@@ -2404,6 +2404,25 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx context.Context, sct
 				schema.O,                  // TABLE_SCHEMA
 				tbl.Name.O,                // TABLE_NAME
 				infoschema.ForeignKeyType, // CONSTRAINT_TYPE
+			)
+			rows = append(rows, record)
+			e.recordMemoryConsume(record)
+		}
+		for _, constraint := range tbl.Constraints {
+			// information_schema.CHECK_CONSTRAINTS reports only public constraints.
+			if constraint.State != model.StatePublic {
+				continue
+			}
+			if !ex.HasConstraint(constraint.Name.L) {
+				continue
+			}
+			record := types.MakeDatums(
+				infoschema.CatalogVal, // CONSTRAINT_CATALOG
+				schema.O,              // CONSTRAINT_SCHEMA
+				constraint.Name.O,     // CONSTRAINT_NAME
+				schema.O,              // TABLE_SCHEMA
+				tbl.Name.O,            // TABLE_NAME
+				infoschema.CheckType,  // CONSTRAINT_TYPE
 			)
 			rows = append(rows, record)
 			e.recordMemoryConsume(record)
