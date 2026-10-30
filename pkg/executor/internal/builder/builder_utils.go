@@ -17,6 +17,7 @@ package builder
 import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -73,6 +74,14 @@ func ConstructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, s
 	if ctx.GetSessionVars().GetDivPrecisionIncrement() != vardef.DefDivPrecisionIncrement {
 		var divPrecIncr uint32 = uint32(ctx.GetSessionVars().GetDivPrecisionIncrement())
 		dagReq.DivPrecisionIncrement = &divPrecIncr
+	}
+	if storeType == kv.TiKV {
+		sqlMode := ctx.GetSessionVars().SQLMode
+		if sc.TypeFlags().IgnoreZeroInDate() {
+			sqlMode &^= mysql.ModeNoZeroInDate
+		}
+		pbSQLMode := uint64(sqlMode)
+		dagReq.SqlMode = &pbSQLMode
 	}
 	if storeType == kv.TiFlash {
 		var executors []*tipb.Executor
