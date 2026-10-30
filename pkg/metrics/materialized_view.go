@@ -19,12 +19,49 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// MVServiceRefreshScheduleDurationHistogram tracks the interval between
-// successful scheduled refreshes.
-var MVServiceRefreshScheduleDurationHistogram prometheus.Histogram
+const (
+	mvMetricLabelComponent = "component"
 
-// InitMVMetrics initializes materialized view refresh metrics.
+	mvMetricComponentService = "service"
+
+	mvMetricTaskStatusMVTotal        = "mv_total"
+	mvMetricTaskStatusMVLogTotal     = "mvlog_total"
+	mvMetricTaskStatusMVServicePanic = "panic"
+)
+
+// Metrics for materialized view service.
+var (
+	MVServiceTaskStatusGaugeVec *prometheus.GaugeVec
+
+	MVServiceOperationDurationHistogramVec    *prometheus.HistogramVec
+	MVServiceRefreshScheduleDurationHistogram prometheus.Histogram
+
+	MVServiceRunEventCounterVec *prometheus.CounterVec
+
+	MVServiceMVRefreshTotalGauge  prometheus.Gauge
+	MVServiceMVLogPurgeTotalGauge prometheus.Gauge
+	MVServicePanicGauge           prometheus.Gauge
+)
+
+// InitMVMetrics initializes metrics for materialized view service.
 func InitMVMetrics() {
+	MVServiceTaskStatusGaugeVec = metricscommon.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "mv",
+			Name:      "service_task_status",
+			Help:      "Number of MV service and task executor tasks by component and status type.",
+		}, []string{mvMetricLabelComponent, LblType})
+
+	MVServiceOperationDurationHistogramVec = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "mv",
+			Name:      "service_operation_duration_seconds",
+			Help:      "Bucketed histogram of MV service operation duration.",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
+		}, []string{LblType, LblResult})
+
 	MVServiceRefreshScheduleDurationHistogram = metricscommon.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -33,4 +70,16 @@ func InitMVMetrics() {
 			Help:      "Bucketed histogram of the interval between two successful MV service refreshes, excluding the current refresh duration.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 25), // 1s ~ 194d
 		})
+
+	MVServiceRunEventCounterVec = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "mv",
+			Name:      "service_run_event_total",
+			Help:      "Counter of MV service scheduler and task executor events by component and event type.",
+		}, []string{mvMetricLabelComponent, LblType})
+
+	MVServiceMVRefreshTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVTotal)
+	MVServiceMVLogPurgeTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVLogTotal)
+	MVServicePanicGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVServicePanic)
 }

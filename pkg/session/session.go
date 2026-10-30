@@ -4816,6 +4816,12 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		}
 	}
 
+	if !intest.InTest {
+		if err = dom.StartMVService(); err != nil {
+			return nil, err
+		}
+	}
+
 	// This only happens in testing, since the failure of loading or parsing sql file
 	// would panic the bootstrapping.
 	if intest.EnableInternalCheck && failToLoadOrParseSQLFile {
