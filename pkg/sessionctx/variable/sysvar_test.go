@@ -2578,6 +2578,43 @@ func TestMVServiceGlobalSysVars(t *testing.T) {
 	require.Equal(t, 8760*time.Hour, gotPurgeHist)
 }
 
+func TestMVServiceFloatSysVarsRejectNaN(t *testing.T) {
+	ctx := context.Background()
+	for _, tt := range []struct {
+		name   string
+		setter interface {
+			Load() *func(float64)
+			Store(*func(float64))
+		}
+	}{
+		{vardef.TiDBMViewTaskRefreshRatio, &SetMVServiceRefreshTaskConcurrencyRatio},
+		{vardef.TiDBMViewTaskThresholdCPU, &SetMVServiceTaskThresholdCPU},
+		{vardef.TiDBMViewTaskThresholdMemory, &SetMVServiceTaskThresholdMemory},
+		{vardef.TiDBMLogAutoAnalyzeRatio, nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := NewMockGlobalAccessor4Tests()
+			calls := 0
+			if tt.setter != nil {
+				old := tt.setter.Load()
+				t.Cleanup(func() { tt.setter.Store(old) })
+				setter := func(float64) { calls++ }
+				tt.setter.Store(&setter)
+			}
+
+			require.NoError(t, mock.SetGlobalSysVar(ctx, tt.name, "0.5"))
+			previousCalls := calls
+			for _, value := range []string{"NaN", "nan", "NAN"} {
+				require.ErrorContains(t, mock.SetGlobalSysVar(ctx, tt.name, value), tt.name)
+				stored, err := mock.GetGlobalSysVar(tt.name)
+				require.NoError(t, err)
+				require.Equal(t, "0.5", stored)
+				require.Equal(t, previousCalls, calls, "invalid value must not invoke the callback")
+			}
+		})
+	}
+}
+
 func TestTiDBMLogAutoAnalyzeRatio(t *testing.T) {
 	ctx := context.Background()
 	vars := NewSessionVars(nil)

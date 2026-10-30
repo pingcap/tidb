@@ -2671,7 +2671,7 @@ var defaultSysVars = []*SysVar{
 		if err != nil {
 			return "", err
 		}
-		if val <= 0 || val >= 1 {
+		if math.IsNaN(val) || val <= 0 || val >= 1 {
 			return "", ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBMViewTaskRefreshRatio, originalValue)
 		}
 		return normalizedValue, nil
@@ -2685,7 +2685,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBMViewTaskThresholdCPU, Value: strconv.FormatFloat(vardef.DefTiDBMViewTaskThresholdCPU, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBMViewTaskThresholdCPU, Value: strconv.FormatFloat(vardef.DefTiDBMViewTaskThresholdCPU, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, Validation: validateFloatNotNaN(vardef.TiDBMViewTaskThresholdCPU), SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
 		val, err := strconv.ParseFloat(s, 64)
 		if err != nil {
 			return err
@@ -2695,7 +2695,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBMViewTaskThresholdMemory, Value: strconv.FormatFloat(vardef.DefTiDBMViewTaskThresholdMemory, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBMViewTaskThresholdMemory, Value: strconv.FormatFloat(vardef.DefTiDBMViewTaskThresholdMemory, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, Validation: validateFloatNotNaN(vardef.TiDBMViewTaskThresholdMemory), SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
 		val, err := strconv.ParseFloat(s, 64)
 		if err != nil {
 			return err
@@ -4616,6 +4616,19 @@ func overrideSysVarWithConfig(tableContents map[string]string) {
 	}
 }
 
+func validateFloatNotNaN(varName string) func(*SessionVars, string, string, vardef.ScopeFlag) (string, error) {
+	return func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
+		value, err := strconv.ParseFloat(normalizedValue, 64)
+		if err != nil {
+			return "", err
+		}
+		if math.IsNaN(value) {
+			return "", ErrWrongValueForVar.GenWithStackByArgs(varName, originalValue)
+		}
+		return normalizedValue, nil
+	}
+}
+
 func validateAutoAnalyzeRatio(varName string) func(*SessionVars, string, string, vardef.ScopeFlag) (string, error) {
 	return func(_ *SessionVars, normalizedValue string, _ string, _ vardef.ScopeFlag) (string, error) {
 		ratio, err := strconv.ParseFloat(normalizedValue, 64)
@@ -4624,7 +4637,7 @@ func validateAutoAnalyzeRatio(varName string) func(*SessionVars, string, string,
 		}
 		const minRatio = 0.00001
 		const tolerance = 1e-9
-		if ratio < minRatio && math.Abs(ratio-minRatio) > tolerance {
+		if math.IsNaN(ratio) || (ratio < minRatio && math.Abs(ratio-minRatio) > tolerance) {
 			return "", errors.Errorf("the value of %s should be greater than or equal to %f", varName, minRatio)
 		}
 		return normalizedValue, nil
