@@ -39,9 +39,9 @@
 use crate::base_arms;
 use tidb_planner_core_base::PlanError;
 
-use super::fold::{fold_owned, Descend, OwnedRewrite};
-use super::plan_context::{LogicalOptRule, RuleContext};
-use super::LogicalPlan;
+use crate::logical::fold::{fold_owned, Descend, OwnedRewrite};
+use crate::logical::plan_context::{LogicalOptRule, RuleContext};
+use crate::logical::LogicalPlan;
 
 /// Go's `child.(*logicalop.LogicalSelection)` with `len(sel.Conditions) == 0`.
 fn is_empty_selection(node: &LogicalPlan) -> bool {

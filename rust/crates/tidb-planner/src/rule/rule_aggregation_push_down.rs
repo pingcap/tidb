@@ -43,11 +43,8 @@ use crate::final_mode_agg::{build_final_mode_aggregation, AggInfo};
 use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanError;
 
-use super::plan_context::{LogicalOptRule, RuleContext};
-use super::{
-    BaseLogicalPlan, LogicalAggregation, LogicalJoin, LogicalPlan, LogicalProjection,
-    LogicalUnionAll,
-};
+use crate::logical::plan_context::{LogicalOptRule, RuleContext};
+use crate::logical::{BaseLogicalPlan, LogicalAggregation, LogicalJoin, LogicalPlan, LogicalProjection, LogicalUnionAll};
 
 /// Go `isDecomposableWithJoin` (`rule_aggregation_push_down.go:44`).
 ///
@@ -948,7 +945,7 @@ fn push_down_over_join(
     // aggregations' own key info (their group-by columns are unique) is what
     // lets the join keep the other side's key, and with it the outer
     // aggregation's elimination below.
-    let mut join_plan = super::rewrite::build_key_info_portal_with_allocator(
+    let mut join_plan = crate::logical::rewrite::build_key_info_portal_with_allocator(
         LogicalPlan::Join(join),
         ctx.column_allocator,
     );
@@ -993,7 +990,7 @@ fn push_down_over_join(
     join_plan.set_children(vec![new_l, new_r]);
     if changed {
         // Go: join.SetChildren(lChild, rChild); BuildKeyInfoPortal(join).
-        join_plan = super::rewrite::build_key_info_portal_with_allocator(
+        join_plan = crate::logical::rewrite::build_key_info_portal_with_allocator(
             join_plan,
             ctx.column_allocator,
         );
@@ -1110,7 +1107,7 @@ impl LogicalOptRule for AggregationPushDownSolver {
 mod tests {
     use super::*;
     use crate::logical::data_source::DataSource;
-    use crate::logical::rule_tests::test_context;
+    use crate::rule::rule_tests::test_context;
     use crate::logical::LogicalPartitionUnionAll;
     use tidb_planner_core_base::PlanIdAllocator;
     use tidb_planner_property::stats_info::StatsInfo;

@@ -17,7 +17,7 @@
 //! context (Go `base.PlanContext` with the hooks `core` and the rule package
 //! fill -- `utilfuncp`'s, `ruleutil`'s), `base.LogicalOptRule`, and
 //! `logicalop.AddSelection` / `Conds2TableDual`. The rule list and the rules
-//! themselves are `super::rule`'s (Go `core` and `core/rule`).
+//! themselves are `crate::rule`'s (Go `core` and `core/rule`).
 
 use tidb_planner_core_base::PlanCacheMarker;
 use tidb_expr::expr_util::builder::FunctionBuilder;

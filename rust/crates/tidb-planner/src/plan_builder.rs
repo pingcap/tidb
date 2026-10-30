@@ -85,7 +85,7 @@
 //!
 //! Go accumulates `PlanBuilder.optFlag` as the clauses are built and hands it
 //! to `logicalOptimize` beside the plan. [`PlanBuilder::opt_flag`] is that
-//! `u64`, over [`crate::logical::rule::flags`]' already-ported bit values, and
+//! `u64`, over [`crate::rule::flags`]' already-ported bit values, and
 //! [`PlanBuilder::build_select`] returns `(LogicalPlan, u64)`.
 //!
 //! It is deliberately NOT a field on [`BasePlan`](tidb_planner_core_base::BasePlan):
@@ -96,7 +96,7 @@
 //! # 5. One error type
 //!
 //! [`PlanError`] is the crate's plan-side error and what
-//! [`crate::logical::rule`] already returns; [`RewriteError`] is the
+//! [`crate::rule`] already returns; [`RewriteError`] is the
 //! expression rewriter's. Rather than a third type, `PlanError: From<RewriteError>`
 //! (and `From<EvalError>`) lets every builder body use `?` over both. Rewrite
 //! failures remain message-only, while evaluation failures retain their typed
@@ -232,7 +232,7 @@ use crate::logical::data_source::{
 };
 use crate::logical::limit::LogicalLimit;
 use crate::logical::projection::LogicalProjection;
-use crate::logical::rule::flags;
+use crate::rule::flags;
 use crate::logical::selection::LogicalSelection;
 use crate::logical::sort::LogicalSort;
 use crate::logical::table_dual::LogicalTableDual;
@@ -4670,7 +4670,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // generated column the child produces, as its own expression, so
             // `GcSubstituter` can substitute an ORDER BY expression above.
             let mut candidates = Vec::new();
-            crate::logical::rule_generate_column_substitute::collect_candidates(
+            crate::rule::rule_generate_column_substitute::collect_candidates(
                 &plan,
                 &mut candidates,
                 self.enable_unsafe_substitute,

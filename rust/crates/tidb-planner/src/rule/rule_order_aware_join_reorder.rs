@@ -21,8 +21,9 @@ use tidb_expr::column::Column;
 use tidb_expr::expr_util::predicates::is_mutable_effects_expr;
 use tidb_expr::expression::Expression;
 
-use super::plan_context::{LogicalOptRule, RuleContext};
-use super::{LogicalPlan, PlanError};
+use crate::logical::plan_context::{LogicalOptRule, RuleContext};
+use crate::logical::{LogicalPlan};
+use tidb_planner_core_base::{PlanError};
 
 /// Go `OrderAwareJoinReorder`.
 pub struct OrderAwareJoinReorder;
@@ -300,7 +301,7 @@ fn same_ordering_columns(left: &[Column], right: &[Column]) -> bool {
 }
 
 fn rewrite_ordering_for_projection(
-    projection: &super::projection::LogicalProjection,
+    projection: &crate::logical::projection::LogicalProjection,
     order_columns: &[Column],
 ) -> Vec<Column> {
     let Some(schema) = projection.base.base.schema() else {
@@ -424,7 +425,7 @@ mod tests {
             1,
         ));
 
-        let mut context = crate::logical::rule_tests::test_context(&allocator);
+        let mut context = crate::rule::rule_tests::test_context(&allocator);
         context.join_reorder_threshold = 0;
         context.advanced_join_reorder = true;
         let (optimized, changed) = OrderAwareJoinReorder.optimize(&context, topn).unwrap();

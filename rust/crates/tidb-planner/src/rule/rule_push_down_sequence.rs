@@ -22,7 +22,7 @@
 //! nested `LogicalSequence` is MERGED into the carried one — its CTE producers
 //! are appended after the carried producers, which preserves Go's ordering
 //! contract that a producer may only reference producers before it (see
-//! [`super::sequence::LogicalSequence`]).
+//! [`crate::logical::sequence::LogicalSequence`]).
 //!
 //! # The carried sequence is a Vec, not a node
 //!
@@ -38,17 +38,17 @@
 //!
 //! Go's `default` branch with `len(lp.Children()) != 1` attaches the sequence
 //! above `lp` and returns WITHOUT recursing into `lp`. That is preserved
-//! exactly — [`super::fold::Descend::Stop`] is that refusal — even though
+//! exactly — [`crate::logical::fold::Descend::Stop`] is that refusal — even though
 //! recursing would find more sequences to push. Widening it would push
 //! sequences Go leaves in place.
 
 use crate::base_arms;
 use tidb_planner_core_base::PlanError;
 
-use super::fold::{fold_owned, Descend, OwnedRewrite};
-use super::plan_context::{LogicalOptRule, RuleContext};
-use super::sequence::LogicalSequence;
-use super::{BaseLogicalPlan, LogicalPlan};
+use crate::logical::fold::{fold_owned, Descend, OwnedRewrite};
+use crate::logical::plan_context::{LogicalOptRule, RuleContext};
+use crate::logical::sequence::LogicalSequence;
+use crate::logical::{BaseLogicalPlan, LogicalPlan};
 
 /// The `pushedSequence` Go threads through `recursiveOptimize`, as its CTE
 /// producers plus the base its `Init` allocated.
@@ -89,7 +89,7 @@ impl PushedSequence {
     }
 }
 
-/// What a node's `descend` left for its `ascend`; see [`super::rewrite`]'s
+/// What a node's `descend` left for its `ascend`; see [`crate::logical::rewrite`]'s
 /// stash discipline.
 enum Pending {
     /// Go's "return lp": the node keeps whatever its children became.

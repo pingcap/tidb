@@ -29,7 +29,7 @@
 //! `logical::rule::OPT_RULE_FLAGS`, with the raw masks under
 //! `logical::rule::flags` (cited to Go `rule/logical_rules.go:20-55`).
 
-use tidb_planner::logical::rule::{flags, OPT_RULE_FLAGS, OPT_RULE_LIST};
+use tidb_planner::rule::{flags, OPT_RULE_FLAGS, OPT_RULE_LIST};
 
 /// GO PORT of `pkg/planner/core/optimizer_test.go:650
 /// TestOptRuleListFlagAlignment`.

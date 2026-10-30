@@ -6411,7 +6411,7 @@ mod tests {
         let estimate = tidb_stats::RowEstimate::new(2.0, 1.0, 4.0);
         ds.derived_index_paths.entry(0).or_default().row_estimate = Some(estimate);
         let mut plan = LogicalPlan::DataSource(ds);
-        let context = crate::logical::rule_tests::test_context(&allocator);
+        let context = crate::rule::rule_tests::test_context(&allocator);
         plan.recursive_derive_stats_with_context(&[], &context)
             .unwrap();
         let LogicalPlan::DataSource(source) = &mut plan else {

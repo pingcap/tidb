@@ -44,12 +44,13 @@ use tidb_exprctx::NoColumns;
 
 use tidb_planner_core_base::LogicalJoinType;
 
-use super::aggregation::LogicalAggregation;
-use super::apply::LogicalApply;
-use super::projection::LogicalProjection;
-use super::plan_context::{LogicalOptRule, RuleContext};
-use super::BaseLogicalPlan;
-use super::{LogicalPlan, PlanError};
+use crate::logical::aggregation::LogicalAggregation;
+use crate::logical::apply::LogicalApply;
+use crate::logical::projection::LogicalProjection;
+use crate::logical::plan_context::{LogicalOptRule, RuleContext};
+use crate::logical::BaseLogicalPlan;
+use crate::logical::{LogicalPlan};
+use tidb_planner_core_base::{PlanError};
 
 /// Which aggregation arm fired.
 #[derive(Clone, Debug)]
@@ -123,7 +124,7 @@ impl DecorrelateSolver {
         {
             return None;
         }
-        let simplified = super::plan_context::apply_predicate_simplification(
+        let simplified = crate::logical::plan_context::apply_predicate_simplification(
             ctx,
             selection.conditions.clone(),
             true,

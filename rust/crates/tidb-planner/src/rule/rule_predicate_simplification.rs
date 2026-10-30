@@ -28,8 +28,8 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::{compose_cnf_condition, compose_dnf_condition};
 
-use super::plan_context::{LogicalOptRule, RuleContext};
-use super::LogicalPlan;
+use crate::logical::plan_context::{LogicalOptRule, RuleContext};
+use crate::logical::LogicalPlan;
 use tidb_planner_core_base::PlanError;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -661,7 +661,7 @@ pub fn apply_predicate_simplification_for_join(
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RulePredicateSimplifier;
 
-impl super::plan_context::PredicateSimplifier for RulePredicateSimplifier {
+impl crate::logical::plan_context::PredicateSimplifier for RulePredicateSimplifier {
     fn apply_predicate_simplification(
         &self,
         ctx: &RuleContext<'_>,
@@ -743,7 +743,7 @@ mod tests {
     use tidb_exprctx::NoColumns;
 
     use super::*;
-    use crate::logical::rule_tests::test_context;
+    use crate::rule::rule_tests::test_context;
     use tidb_planner_core_base::PlanIdAllocator;
 
     fn integer_type() -> FieldType {

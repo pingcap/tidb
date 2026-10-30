@@ -22,14 +22,14 @@
 //! Expand projects its child's whole output plus the grouping columns, so
 //! materialising it earlier would block column pruning underneath.
 //!
-//! The generation itself is [`super::expand::LogicalExpand::gen_level_projections`];
+//! The generation itself is [`crate::logical::expand::LogicalExpand::gen_level_projections`];
 //! all this rule adds is Go's traversal.
 
 use tidb_planner_core_base::PlanError;
 
-use super::fold::{fold_owned, Descend, OwnedRewrite};
-use super::plan_context::{LogicalOptRule, RuleContext};
-use super::LogicalPlan;
+use crate::logical::fold::{fold_owned, Descend, OwnedRewrite};
+use crate::logical::plan_context::{LogicalOptRule, RuleContext};
+use crate::logical::LogicalPlan;
 
 struct GenExpand;
 

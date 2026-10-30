@@ -21,8 +21,9 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::extract_columns;
 
-use super::plan_context::{LogicalOptRule, RuleContext};
-use super::{LogicalPlan, PlanError};
+use crate::logical::plan_context::{LogicalOptRule, RuleContext};
+use crate::logical::{LogicalPlan};
+use tidb_planner_core_base::{PlanError};
 
 /// Go `GcSubstituter`.
 pub struct GcSubstituter;
@@ -45,7 +46,7 @@ pub(crate) fn collect_candidates(
     let LogicalPlan::DataSource(source) = plan else {
         return;
     };
-    if source.prefer_store_type & super::data_source::PREFER_TIFLASH != 0 {
+    if source.prefer_store_type & crate::logical::data_source::PREFER_TIFLASH != 0 {
         return;
     }
     let Some(schema) = source.base.base.schema() else {
@@ -282,7 +283,7 @@ mod tests {
 
     use crate::logical::aggregation::LogicalAggregation;
     use crate::logical::projection::LogicalProjection;
-    use crate::logical::rule_tests::test_context;
+    use crate::rule::rule_tests::test_context;
     use crate::logical::selection::LogicalSelection;
     use crate::logical::sort::LogicalSort;
     use crate::logical::{BaseLogicalPlan, LogicalPlan};

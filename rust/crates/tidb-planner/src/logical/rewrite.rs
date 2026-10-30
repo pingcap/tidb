@@ -1842,7 +1842,7 @@ impl OwnedRewrite for PushDownTopN<'_> {
 #[must_use]
 pub(crate) fn push_down_topn(plan: LogicalPlan, topn: Option<LogicalTopN>) -> LogicalPlan {
     let allocator = tidb_planner_core_base::PlanIdAllocator::new();
-    push_down_topn_with_builder(&super::rule_tests::TEST_BUILDER, &allocator, plan, topn)
+    push_down_topn_with_builder(&crate::rule::rule_tests::TEST_BUILDER, &allocator, plan, topn)
 }
 
 /// Go `base.LogicalPlan.PushDownTopN(topN)` over a whole tree, Go rule #21's
@@ -2692,7 +2692,7 @@ mod access_path_context_tests {
         // ranges. These are estimates, not the inclusive row counts.
         for (values, expected) in [([3, 5], 2.0), ([3, 8], 5.0), ([8, 7], 1.0)] {
             let parameters = Parameters(values);
-            let mut context = super::super::rule_tests::test_context(&allocator);
+            let mut context = crate::rule::rule_tests::test_context(&allocator);
             context.eval_context = &parameters;
             let (_, result) = recursive_derive_stats_with_context(
                 LogicalPlan::DataSource(source.clone()),
@@ -2782,7 +2782,7 @@ mod access_path_context_tests {
             ]
         };
         let parameters = Parameters([3, 5]);
-        let mut context = super::super::rule_tests::test_context(&allocator);
+        let mut context = crate::rule::rule_tests::test_context(&allocator);
         context.eval_context = &parameters;
         let estimate = |predicates| {
             let mut source = super::super::data_source::DataSource {

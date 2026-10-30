@@ -31,11 +31,10 @@ use crate::expression_rewriter::{
 };
 use tidb_planner_core_base::LogicalJoinType;
 
-use super::plan_context::{LogicalOptRule, RuleContext};
-use super::window::{BoundType, FrameType};
-use super::{
-    BaseLogicalPlan, LogicalAggregation, LogicalJoin, LogicalPlan, LogicalProjection, PlanError,
-};
+use crate::logical::plan_context::{LogicalOptRule, RuleContext};
+use crate::logical::window::{BoundType, FrameType};
+use crate::logical::{BaseLogicalPlan, LogicalAggregation, LogicalJoin, LogicalPlan, LogicalProjection};
+use tidb_planner_core_base::{PlanError};
 
 /// Go `OuterJoinEliminator`.
 pub struct OuterJoinEliminator;

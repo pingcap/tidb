@@ -20,7 +20,7 @@ use std::collections::HashSet;
 
 use tidb_planner_util::path::PossiblePath;
 
-use super::data_source::DataSource;
+use crate::logical::data_source::DataSource;
 
 const DEFAULT_MAX_INDEXES: usize = 10;
 
@@ -130,7 +130,7 @@ fn score_index_path(
             .and_then(|state| state.is_single_scan)
             .unwrap_or_else(|| {
                 declared.is_some()
-                    && super::data_source::index_path_is_single_scan(source, metadata, false)
+                    && crate::logical::data_source::index_path_is_single_scan(source, metadata, false)
             }),
         columns: declared.map_or(0, Vec::len),
         index_id: metadata.id,
@@ -378,7 +378,7 @@ pub fn prune_data_source_with_options(
             .is_some_and(|state| state.declared_columns.is_some())
         {
             let single =
-                super::data_source::index_path_is_single_scan(source, index, prefix_single_scan);
+                crate::logical::data_source::index_path_is_single_scan(source, index, prefix_single_scan);
             source
                 .derived_index_paths
                 .get_mut(&index.id)
@@ -603,7 +603,7 @@ mod tests {
         let mut source = source();
         source.pk_is_handle = true;
         source.columns = (1..=3)
-            .map(|id| super::super::data_source::DataSourceColumn {
+            .map(|id| crate::logical::data_source::DataSourceColumn {
                 id,
                 name: format!("c{id}"),
                 is_primary_key: id == 3,

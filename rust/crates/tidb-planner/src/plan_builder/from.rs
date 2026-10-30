@@ -124,7 +124,7 @@ use crate::logical::join::LogicalJoin;
 use crate::logical::lock::{LogicalLock, SelectLockType};
 use crate::logical::mem_table::{LogicalMemTable, MemTableColumn};
 use crate::logical::projection::LogicalProjection;
-use crate::logical::rule::flags;
+use crate::rule::flags;
 use crate::logical::selection::LogicalSelection;
 use crate::logical::LogicalPlan;
 use tidb_planner_core_base::PlanError;

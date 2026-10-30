@@ -42,16 +42,16 @@ use tidb_planner_core_base::PlanIdAllocator;
 
 use tidb_planner_core_base::LogicalJoinType;
 
-use super::aggregation::{LogicalAggregation, AGG_FUNC_MAX};
-use super::cte::{CteClass, LogicalCTE};
-use super::data_source::DataSource;
-use super::expand::{LogicalExpand, RollupGroupingSet};
-use super::join::LogicalJoin;
-use super::limit::LogicalLimit;
-use super::projection::LogicalProjection;
-use super::rewrite::{prune_columns, push_down_topn};
-use super::plan_context::LogicalOptRule;
-use super::plan_context::RuleContext;
+use crate::logical::aggregation::{LogicalAggregation, AGG_FUNC_MAX};
+use crate::logical::cte::{CteClass, LogicalCTE};
+use crate::logical::data_source::DataSource;
+use crate::logical::expand::{LogicalExpand, RollupGroupingSet};
+use crate::logical::join::LogicalJoin;
+use crate::logical::limit::LogicalLimit;
+use crate::logical::projection::LogicalProjection;
+use crate::logical::rewrite::{prune_columns, push_down_topn};
+use crate::logical::plan_context::LogicalOptRule;
+use crate::logical::plan_context::RuleContext;
 use super::rule_aggregation_elimination::AggregationEliminator;
 use super::rule_derive_topn_from_window::derive_topn;
 use super::rule_eliminate_empty_selection::eliminate_empty_selection;
@@ -64,16 +64,16 @@ use super::rule_resolve_expand::gen_expand;
 use super::rule_result_reorder::result_reorder;
 use super::rule_semi_join_rewrite::SemiJoinRewriter;
 use super::rule_tests::test_context;
-use super::selection::LogicalSelection;
-use super::sequence::LogicalSequence;
-use super::sort::LogicalSort;
-use super::table_dual::LogicalTableDual;
-use super::topn::LogicalTopN;
-use super::union_all::LogicalUnionAll;
-use super::window::{BoundType, FrameBound, FrameType, LogicalWindow, WindowFrame};
-use super::{BaseLogicalPlan, LogicalPlan};
+use crate::logical::selection::LogicalSelection;
+use crate::logical::sequence::LogicalSequence;
+use crate::logical::sort::LogicalSort;
+use crate::logical::table_dual::LogicalTableDual;
+use crate::logical::topn::LogicalTopN;
+use crate::logical::union_all::LogicalUnionAll;
+use crate::logical::window::{BoundType, FrameBound, FrameType, LogicalWindow, WindowFrame};
+use crate::logical::{BaseLogicalPlan, LogicalPlan};
 
-/// A tree this deep would abort a recursive walk; see [`super::fold`].
+/// A tree this deep would abort a recursive walk; see [`crate::logical::fold`].
 const DEEP: usize = 20_000;
 
 fn int_type() -> FieldType {

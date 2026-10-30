@@ -41,28 +41,28 @@
 //! # Which rules actually run
 //!
 //! Go's list has 35 entries. Four rule bodies live in this file because their
-//! tree walks are [`super::rewrite`]'s:
+//! tree walks are [`crate::logical::rewrite`]'s:
 //! [`ColumnPruner`] (#1 and #29), [`BuildKeySolver`] (#3), [`PpdSolver`] (#13)
 //! and [`PushDownTopNOptimizer`] (#21). The remaining implemented bodies live
 //! in their owning `rule_*.rs` modules beside this one, including:
 //!
-//! * [`super::rule_result_reorder::ResultReorder`] (#2)
-//! * [`super::rule_aggregation_elimination::AggregationEliminator`] (#6)
-//! * [`super::rule_constant_propagation::ConstantPropagationSolver`] (#10)
-//! * [`super::rule_max_min_elimination::MaxMinEliminator`] (#12)
-//! * [`super::rule_join_key_type_cast::JoinKeyTypeCastRewriter`] (#14)
-//! * [`super::rule_partition_processor::PartitionProcessor`] (#16)
-//! * [`super::rule_collect_plan_stats::CollectPredicateColumnsPoint`] (#17)
-//! * [`super::rule_order_aware_join_reorder::OrderAwareJoinReorder`] (#22)
-//! * [`super::rule_collect_plan_stats::SyncWaitStatsLoadPoint`] (#24)
-//! * [`super::rule_join_reorder::JoinReOrderSolver`] (#26)
-//! * [`super::rule_outer_join_to_semi_join::OuterJoinToSemiJoin`] (#27)
-//! * [`super::rule_derive_topn_from_window::DeriveTopNFromWindow`] (#19)
-//! * [`super::rule_push_down_sequence::PushDownSequenceSolver`] (#30)
-//! * [`super::rule_eliminate_unionall_dual_item::EliminateUnionAllDualItem`]
+//! * [`rule_result_reorder::ResultReorder`] (#2)
+//! * [`rule_aggregation_elimination::AggregationEliminator`] (#6)
+//! * [`rule_constant_propagation::ConstantPropagationSolver`] (#10)
+//! * [`rule_max_min_elimination::MaxMinEliminator`] (#12)
+//! * [`rule_join_key_type_cast::JoinKeyTypeCastRewriter`] (#14)
+//! * [`rule_partition_processor::PartitionProcessor`] (#16)
+//! * [`rule_collect_plan_stats::CollectPredicateColumnsPoint`] (#17)
+//! * [`rule_order_aware_join_reorder::OrderAwareJoinReorder`] (#22)
+//! * [`rule_collect_plan_stats::SyncWaitStatsLoadPoint`] (#24)
+//! * [`rule_join_reorder::JoinReOrderSolver`] (#26)
+//! * [`rule_outer_join_to_semi_join::OuterJoinToSemiJoin`] (#27)
+//! * [`rule_derive_topn_from_window::DeriveTopNFromWindow`] (#19)
+//! * [`rule_push_down_sequence::PushDownSequenceSolver`] (#30)
+//! * [`rule_eliminate_unionall_dual_item::EliminateUnionAllDualItem`]
 //!   (#31)
-//! * [`super::rule_eliminate_empty_selection::EmptySelectionEliminator`] (#32)
-//! * [`super::rule_resolve_expand::ResolveExpand`] (#34)
+//! * [`rule_eliminate_empty_selection::EmptySelectionEliminator`] (#32)
+//! * [`rule_resolve_expand::ResolveExpand`] (#34)
 //!
 //! Entries whose [`RuleId::body`] is `None` are present as their name and flag
 //! but have no body yet. The table is still ported because its order is
@@ -90,8 +90,8 @@
 //! — the plan comes back on BOTH arms. That is the by-value equivalent of Go
 //! still holding its pointer, and it is what lets [`logical_optimize`] return
 //! the plan as it stood when the failing rule started. The rewrites themselves
-//! are infallible; see [`super::fold`] for why, and for the
-//! [`super::fold::RewriteFailure`] slot that carries Go's `error` out of a
+//! are infallible; see [`crate::logical::fold`] for why, and for the
+//! [`crate::logical::fold::RewriteFailure`] slot that carries Go's `error` out of a
 //! fold without unwinding it.
 //!
 //! # The arm-listing convention
@@ -105,7 +105,7 @@
 //! variants that take Go's BASE body into one [`base_arms!`] invocation. The
 //! macro expands its ident list into an or-pattern, so the base set costs one
 //! comma-separated line per few operators instead of one arm each, and the
-//! match stays exhaustive — adding a variant to [`super::LogicalPlan`] still
+//! match stays exhaustive — adding a variant to [`crate::logical::LogicalPlan`] still
 //! fails to compile until it is placed in some rule's explicit arm or its
 //! `base_arms!` list. Do NOT invent a second convention.
 
@@ -114,10 +114,40 @@ use tidb_expr::schema::Schema;
 
 use tidb_planner_core_base::PlanError;
 
-use super::LogicalPlan;
-use super::plan_context::{DisabledLogicalRules, LogicalOptRule, RuleContext};
+use crate::logical::LogicalPlan;
+use crate::logical::plan_context::{DisabledLogicalRules, LogicalOptRule, RuleContext};
 
-/// Expands an ident list of [`super::LogicalPlan`] variants into an
+pub mod rule_aggregation_elimination;
+pub mod rule_aggregation_push_down;
+pub mod rule_aggregation_skew_rewrite;
+pub mod rule_collect_plan_stats;
+pub mod rule_constant_propagation;
+pub mod rule_decorrelate;
+pub mod rule_derive_topn_from_window;
+pub mod rule_eliminate_empty_selection;
+pub mod rule_eliminate_unionall_dual_item;
+pub mod rule_generate_column_substitute;
+pub mod rule_join_elimination;
+pub mod rule_join_key_type_cast;
+pub mod rule_join_reorder;
+pub mod rule_max_min_elimination;
+pub mod rule_order_aware_join_reorder;
+pub mod rule_outer_join_to_semi_join;
+pub mod rule_outer_to_inner_join;
+pub mod rule_partition_processor;
+pub mod rule_predicate_simplification;
+pub mod rule_projection_elimination;
+pub mod rule_prune_indexes;
+pub mod rule_push_down_sequence;
+pub mod rule_resolve_expand;
+pub mod rule_result_reorder;
+pub mod rule_semi_join_rewrite;
+#[cfg(test)]
+pub(crate) mod rule_tail_tests;
+#[cfg(test)]
+pub(crate) mod rule_tests;
+
+/// Expands an ident list of [`crate::logical::LogicalPlan`] variants into an
 /// or-pattern binding nothing.
 ///
 /// See this module's header for why this exists and when to use it.
@@ -378,64 +408,64 @@ impl RuleId {
             Self::ColumnPruner | Self::ColumnPrunerAgain => Some(&ColumnPruner),
             Self::BuildKeySolver => Some(&BuildKeySolver),
             Self::AggregationEliminator => {
-                Some(&super::rule_aggregation_elimination::AggregationEliminator)
+                Some(&rule_aggregation_elimination::AggregationEliminator)
             }
             Self::ProjectionEliminator => {
-                Some(&super::rule_projection_elimination::ProjectionEliminator)
+                Some(&rule_projection_elimination::ProjectionEliminator)
             }
             Self::PpdSolver => Some(&PpdSolver),
             Self::JoinKeyTypeCastRewriter => {
-                Some(&super::rule_join_key_type_cast::JoinKeyTypeCastRewriter)
+                Some(&rule_join_key_type_cast::JoinKeyTypeCastRewriter)
             }
             Self::PushDownTopNOptimizer => Some(&PushDownTopNOptimizer),
-            Self::ResultReorder => Some(&super::rule_result_reorder::ResultReorder),
+            Self::ResultReorder => Some(&rule_result_reorder::ResultReorder),
             Self::DeriveTopNFromWindow => {
-                Some(&super::rule_derive_topn_from_window::DeriveTopNFromWindow)
+                Some(&rule_derive_topn_from_window::DeriveTopNFromWindow)
             }
             Self::PushDownSequenceSolver => {
-                Some(&super::rule_push_down_sequence::PushDownSequenceSolver)
+                Some(&rule_push_down_sequence::PushDownSequenceSolver)
             }
             Self::EliminateUnionAllDualItem => {
-                Some(&super::rule_eliminate_unionall_dual_item::EliminateUnionAllDualItem)
+                Some(&rule_eliminate_unionall_dual_item::EliminateUnionAllDualItem)
             }
             Self::EmptySelectionEliminator => {
-                Some(&super::rule_eliminate_empty_selection::EmptySelectionEliminator)
+                Some(&rule_eliminate_empty_selection::EmptySelectionEliminator)
             }
-            Self::ResolveExpand => Some(&super::rule_resolve_expand::ResolveExpand),
+            Self::ResolveExpand => Some(&rule_resolve_expand::ResolveExpand),
             Self::CollectPredicateColumnsPoint => {
-                Some(&super::rule_collect_plan_stats::CollectPredicateColumnsPoint)
+                Some(&rule_collect_plan_stats::CollectPredicateColumnsPoint)
             }
             Self::SyncWaitStatsLoadPoint => {
-                Some(&super::rule_collect_plan_stats::SyncWaitStatsLoadPoint)
+                Some(&rule_collect_plan_stats::SyncWaitStatsLoadPoint)
             }
-            Self::PartitionProcessor => Some(&super::rule_partition_processor::PartitionProcessor),
+            Self::PartitionProcessor => Some(&rule_partition_processor::PartitionProcessor),
             Self::ConstantPropagationSolver => {
-                Some(&super::rule_constant_propagation::ConstantPropagationSolver)
+                Some(&rule_constant_propagation::ConstantPropagationSolver)
             }
-            Self::MaxMinEliminator => Some(&super::rule_max_min_elimination::MaxMinEliminator),
+            Self::MaxMinEliminator => Some(&rule_max_min_elimination::MaxMinEliminator),
             Self::PredicateSimplification => {
-                Some(&super::rule_predicate_simplification::PredicateSimplification)
+                Some(&rule_predicate_simplification::PredicateSimplification)
             }
             Self::OrderAwareJoinReorder => {
-                Some(&super::rule_order_aware_join_reorder::OrderAwareJoinReorder)
+                Some(&rule_order_aware_join_reorder::OrderAwareJoinReorder)
             }
-            Self::JoinReOrderSolver => Some(&super::rule_join_reorder::JoinReOrderSolver),
+            Self::JoinReOrderSolver => Some(&rule_join_reorder::JoinReOrderSolver),
             Self::AggregationPushDownSolver => {
-                Some(&super::rule_aggregation_push_down::AggregationPushDownSolver)
+                Some(&rule_aggregation_push_down::AggregationPushDownSolver)
             }
             Self::OuterJoinToSemiJoin => {
-                Some(&super::rule_outer_join_to_semi_join::OuterJoinToSemiJoin)
+                Some(&rule_outer_join_to_semi_join::OuterJoinToSemiJoin)
             }
-            Self::GcSubstituter => Some(&super::rule_generate_column_substitute::GcSubstituter),
-            Self::SemiJoinRewriter => Some(&super::rule_semi_join_rewrite::SemiJoinRewriter),
+            Self::GcSubstituter => Some(&rule_generate_column_substitute::GcSubstituter),
+            Self::SemiJoinRewriter => Some(&rule_semi_join_rewrite::SemiJoinRewriter),
             Self::SkewDistinctAggRewriter => {
-                Some(&super::rule_aggregation_skew_rewrite::SkewDistinctAggRewriter)
+                Some(&rule_aggregation_skew_rewrite::SkewDistinctAggRewriter)
             }
             Self::ConvertOuterToInnerJoin => {
-                Some(&super::rule_outer_to_inner_join::ConvertOuterToInnerJoin)
+                Some(&rule_outer_to_inner_join::ConvertOuterToInnerJoin)
             }
-            Self::OuterJoinEliminator => Some(&super::rule_join_elimination::OuterJoinEliminator),
-            Self::DecorrelateSolver => Some(&super::rule_decorrelate::DecorrelateSolver),
+            Self::OuterJoinEliminator => Some(&rule_join_elimination::OuterJoinEliminator),
+            Self::DecorrelateSolver => Some(&rule_decorrelate::DecorrelateSolver),
             Self::FullTextIndexResolverWhere
             | Self::FullTextIndexResolverTopN
             | Self::FullTextIndexResolverProjection
@@ -689,7 +719,7 @@ impl LogicalOptRule for ColumnPruner {
             .schema()
             .map(|schema| schema.columns.clone())
             .unwrap_or_default();
-        let (plan, failure) = super::rewrite::prune_columns(ctx, plan, root_cols);
+        let (plan, failure) = crate::logical::rewrite::prune_columns(ctx, plan, root_cols);
         match failure {
             // Go's `planChanged` is hard-coded `false` in this rule.
             None => {
@@ -723,7 +753,7 @@ impl LogicalOptRule for BuildKeySolver {
         plan: LogicalPlan,
     ) -> Result<(LogicalPlan, bool), (LogicalPlan, PlanError)> {
         Ok((
-            super::rewrite::build_key_info_portal_with_allocator(plan, _ctx.column_allocator),
+            crate::logical::rewrite::build_key_info_portal_with_allocator(plan, _ctx.column_allocator),
             false,
         ))
     }
@@ -747,7 +777,7 @@ impl LogicalOptRule for PpdSolver {
         plan: LogicalPlan,
     ) -> Result<(LogicalPlan, bool), (LogicalPlan, PlanError)> {
         let (plan, _remaining, failure) =
-            super::rewrite::predicate_push_down(ctx, plan, Vec::new());
+            crate::logical::rewrite::predicate_push_down(ctx, plan, Vec::new());
         match failure {
             None => Ok((plan, false)),
             Some(error) => Err((plan, error)),
@@ -773,7 +803,7 @@ impl LogicalOptRule for PushDownTopNOptimizer {
         plan: LogicalPlan,
     ) -> Result<(LogicalPlan, bool), (LogicalPlan, PlanError)> {
         Ok((
-            super::rewrite::push_down_topn_with_builder(ctx.builder, ctx.allocator, plan, None),
+            crate::logical::rewrite::push_down_topn_with_builder(ctx.builder, ctx.allocator, plan, None),
             false,
         ))
     }

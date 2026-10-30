@@ -38,21 +38,22 @@ use tidb_expr::schema::Schema;
 use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanIdAllocator;
 
-use super::aggregation::{LogicalAggregation, AGG_FUNC_COUNT, AGG_FUNC_FIRST_ROW};
-use super::apply::LogicalApply;
-use super::data_source::DataSource;
-use super::fold::{fold_owned, Descend, OwnedRewrite};
-use super::join::LogicalJoin;
-use super::limit::LogicalLimit;
-use super::projection::LogicalProjection;
-use super::rule::{self, flags, logical_optimize, no_unexpected_zero_column_schema, BuildKeySolver, ColumnPruner, PpdSolver, PushDownTopNOptimizer, RuleId, OPT_RULE_FLAGS, OPT_RULE_LIST};
-use super::plan_context::{add_selection, DisabledLogicalRules, LogicalOptRule, RuleContext};
-use super::plan_context::PartitionPruning;
+use crate::logical::aggregation::{LogicalAggregation, AGG_FUNC_COUNT, AGG_FUNC_FIRST_ROW};
+use crate::logical::apply::LogicalApply;
+use crate::logical::data_source::DataSource;
+use crate::logical::fold::{fold_owned, Descend, OwnedRewrite};
+use crate::logical::join::LogicalJoin;
+use crate::logical::limit::LogicalLimit;
+use crate::logical::projection::LogicalProjection;
+use crate::rule;
+use super::{flags, logical_optimize, no_unexpected_zero_column_schema, BuildKeySolver, ColumnPruner, PpdSolver, PushDownTopNOptimizer, RuleId, OPT_RULE_FLAGS, OPT_RULE_LIST};
+use crate::logical::plan_context::{add_selection, DisabledLogicalRules, LogicalOptRule, RuleContext};
+use crate::logical::plan_context::PartitionPruning;
 use super::rule_partition_processor::PartitionProcessor;
-use super::selection::LogicalSelection;
-use super::sort::LogicalSort;
-use super::topn::LogicalTopN;
-use super::{BaseLogicalPlan, LogicalPartitionUnionAll, LogicalPlan, LogicalUnionScan};
+use crate::logical::selection::LogicalSelection;
+use crate::logical::sort::LogicalSort;
+use crate::logical::topn::LogicalTopN;
+use crate::logical::{BaseLogicalPlan, LogicalPartitionUnionAll, LogicalPlan, LogicalUnionScan};
 
 pub(crate) const TEST_BUILDER: PreservingFunctionBuilder = PreservingFunctionBuilder;
 
@@ -104,7 +105,7 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         used_stats_recorder: None,
         cte_optimizer: None,
         data_source_stats: &crate::stats::CoreDataSourceStats,
-        predicate_simplifier: &crate::logical::rule_predicate_simplification::RulePredicateSimplifier,
+        predicate_simplifier: &crate::rule::rule_predicate_simplification::RulePredicateSimplifier,
     }
 }
 
@@ -372,13 +373,13 @@ fn set_predicate_push_down_flag_only_sets_its_bit() {
 #[test]
 fn a_disabled_rule_is_skipped_by_name() {
     let disabled = DisabledLogicalRules::from_names(["predicate_push_down"]);
-    assert!(super::rule::is_logical_rule_disabled(&disabled, RuleId::PpdSolver));
-    assert!(!super::rule::is_logical_rule_disabled(&disabled, RuleId::BuildKeySolver));
+    assert!(crate::rule::is_logical_rule_disabled(&disabled, RuleId::PpdSolver));
+    assert!(!crate::rule::is_logical_rule_disabled(&disabled, RuleId::BuildKeySolver));
     // Go names both `ColumnPruner` entries identically, so disabling one
     // disables both.
     let disabled = DisabledLogicalRules::from_names(["column_prune"]);
-    assert!(super::rule::is_logical_rule_disabled(&disabled, RuleId::ColumnPruner));
-    assert!(super::rule::is_logical_rule_disabled(&disabled, RuleId::ColumnPrunerAgain));
+    assert!(crate::rule::is_logical_rule_disabled(&disabled, RuleId::ColumnPruner));
+    assert!(crate::rule::is_logical_rule_disabled(&disabled, RuleId::ColumnPrunerAgain));
 }
 
 #[test]
@@ -583,7 +584,7 @@ fn add_selection_collapses_a_constant_false_filter_to_a_table_dual() {
 fn add_selection_leaves_an_already_empty_dual_alone() {
     let allocator = PlanIdAllocator::new();
     let ctx = test_context(&allocator);
-    let dual = LogicalPlan::TableDual(super::table_dual::LogicalTableDual::new(
+    let dual = LogicalPlan::TableDual(crate::logical::table_dual::LogicalTableDual::new(
         base(&allocator, "TableDual", Some(schema_of(&[1]))),
         0,
     ));
@@ -823,7 +824,7 @@ fn convert_outer_to_inner_join_matches_go_promoted_apply_method() {
 // ***** predicate pushdown, per operator *****
 
 fn push(ctx: &RuleContext<'_>, plan: LogicalPlan) -> LogicalPlan {
-    let (plan, remaining, failure) = super::rewrite::predicate_push_down(ctx, plan, Vec::new());
+    let (plan, remaining, failure) = crate::logical::rewrite::predicate_push_down(ctx, plan, Vec::new());
     assert!(failure.is_none());
     assert!(
         remaining.is_empty(),
@@ -1263,7 +1264,7 @@ fn predicate_push_down_does_not_synthesize_a_transitive_join_key() {
 fn join_simplification_does_not_substitute_column_equalities() {
     let allocator = PlanIdAllocator::new();
     let ctx = test_context(&allocator);
-    let conditions = super::plan_context::apply_predicate_simplification_for_join(
+    let conditions = crate::logical::plan_context::apply_predicate_simplification_for_join(
         &ctx,
         vec![eq_cols(1, 2), eq_cols(1, 3)],
         &schema_of(&[1]),
@@ -1309,7 +1310,7 @@ fn join_key_retention_follows_the_session_variable() {
     let input = vec![eq_cols(1, 2), eq_const(1, 7)];
 
     let keep_context = test_context(&allocator);
-    let kept = super::plan_context::apply_predicate_simplification_for_join(
+    let kept = crate::logical::plan_context::apply_predicate_simplification_for_join(
         &keep_context,
         input.clone(),
         &left,
@@ -1321,7 +1322,7 @@ fn join_key_retention_follows_the_session_variable() {
 
     let mut drop_context = test_context(&allocator);
     drop_context.always_keep_join_key = false;
-    let dropped = super::plan_context::apply_predicate_simplification_for_join(
+    let dropped = crate::logical::plan_context::apply_predicate_simplification_for_join(
         &drop_context,
         input,
         &left,
@@ -1626,14 +1627,14 @@ fn partition_processor_normalizes_both_condition_lists_and_folds_false() {
 fn column_pruning_zero_column_schema_exemptions_match_go() {
     let allocator = PlanIdAllocator::new();
 
-    let empty_child = LogicalPlan::TableDual(super::table_dual::LogicalTableDual::new(
+    let empty_child = LogicalPlan::TableDual(crate::logical::table_dual::LogicalTableDual::new(
         base(&allocator, "TableDual", Some(Schema::default())),
         1,
     ));
     let inherited = selection_over(&allocator, Vec::new(), empty_child);
     assert!(no_unexpected_zero_column_schema(&inherited));
 
-    let dual = LogicalPlan::TableDual(super::table_dual::LogicalTableDual::new(
+    let dual = LogicalPlan::TableDual(crate::logical::table_dual::LogicalTableDual::new(
         base(&allocator, "TableDual", Some(Schema::default())),
         1,
     ));
@@ -1660,7 +1661,7 @@ fn column_pruning_drops_an_unused_data_source_column() {
     let allocator = PlanIdAllocator::new();
     let ctx = test_context(&allocator);
     let source = data_source(&allocator, &[1, 2, 3]);
-    let (plan, failure) = super::rewrite::prune_columns(&ctx, source, vec![column(2)]);
+    let (plan, failure) = crate::logical::rewrite::prune_columns(&ctx, source, vec![column(2)]);
     assert!(failure.is_none());
     assert_eq!(
         plan.schema()
@@ -1675,7 +1676,7 @@ fn column_pruning_keeps_a_column_a_selection_reads() {
     let ctx = test_context(&allocator);
     let source = data_source(&allocator, &[1, 2, 3]);
     let root = selection_over(&allocator, vec![eq_const(3, 7)], source);
-    let (plan, failure) = super::rewrite::prune_columns(&ctx, root, vec![column(2)]);
+    let (plan, failure) = crate::logical::rewrite::prune_columns(&ctx, root, vec![column(2)]);
     assert!(failure.is_none());
     let ids: Vec<i64> = plan.children()[0]
         .schema()
@@ -1715,7 +1716,7 @@ fn column_pruning_projects_condition_only_columns_below_a_partition_union() {
     ));
     union.union_all.base.set_children(vec![child(), child()]);
 
-    let (plan, failure) = super::rewrite::prune_columns(
+    let (plan, failure) = crate::logical::rewrite::prune_columns(
         &ctx,
         LogicalPlan::PartitionUnionAll(union),
         vec![column(1), column(3)],
@@ -1779,7 +1780,7 @@ fn column_pruning_repairs_an_aggregate_that_lost_every_function() {
     // The parent uses nothing, so the single `count` output is pruned and Go's
     // `count(1)` repair has to fire — an aggregate with no function would
     // return no rows where Go's returns one.
-    let (plan, failure) = super::rewrite::prune_columns(&ctx, agg, Vec::new());
+    let (plan, failure) = crate::logical::rewrite::prune_columns(&ctx, agg, Vec::new());
     assert!(failure.is_none());
     let LogicalPlan::Aggregation(agg) = &plan else {
         panic!("expected an Aggregation");
@@ -1803,7 +1804,7 @@ fn column_pruning_splits_a_join_used_set_by_side() {
     let mut join = LogicalPlan::Join(join);
     join.set_children(vec![left, right]);
 
-    let (plan, failure) = super::rewrite::prune_columns(&ctx, join, vec![column(1)]);
+    let (plan, failure) = crate::logical::rewrite::prune_columns(&ctx, join, vec![column(1)]);
     assert!(failure.is_none());
     let left_ids: Vec<i64> = plan.children()[0]
         .schema()
@@ -1855,7 +1856,7 @@ fn topn_push_down_absorbs_a_sort_below_a_topn() {
     ));
     topn.set_children(vec![sort]);
 
-    let out = super::rewrite::push_down_topn(topn, None);
+    let out = crate::logical::rewrite::push_down_topn(topn, None);
     // The Sort disappears into the TopN it feeds.
     assert!(out.plan_count() <= 3);
     out.dismantle();
@@ -1891,7 +1892,7 @@ fn topn_keeps_travelling_after_it_absorbs_a_sort() {
     ));
     limit.set_children(vec![sort]);
 
-    let out = super::rewrite::push_down_topn(limit, None);
+    let out = crate::logical::rewrite::push_down_topn(limit, None);
     let LogicalPlan::Projection(projection) = &out else {
         panic!("Projection should remain above the pushed TopN: {out:#?}");
     };
@@ -1920,7 +1921,7 @@ fn topn_push_down_substitutes_projection_columns() {
         5,
     );
 
-    let out = super::rewrite::push_down_topn(projection, Some(topn));
+    let out = crate::logical::rewrite::push_down_topn(projection, Some(topn));
     let LogicalPlan::Projection(projection) = &out else {
         panic!("Projection should remain above the pushed TopN: {out:#?}");
     };
@@ -1958,7 +1959,7 @@ fn topn_push_down_leaves_a_join_alone() {
     ));
     topn.set_children(vec![join]);
 
-    let out = super::rewrite::push_down_topn(topn, None);
+    let out = crate::logical::rewrite::push_down_topn(topn, None);
     assert!(matches!(out, LogicalPlan::TopN(_) | LogicalPlan::Limit(_)));
     assert_eq!(out.plan_count(), 4);
     out.dismantle();
@@ -2007,7 +2008,7 @@ fn topn_push_down_enters_a_left_join_whose_inner_side_is_unique() {
     ));
     topn.set_children(vec![join]);
 
-    let out = super::rewrite::push_down_topn(topn, None);
+    let out = crate::logical::rewrite::push_down_topn(topn, None);
     // The root limit is ELIMINATED; the join is what comes back.
     fn dump(plan: &LogicalPlan, depth: usize) -> String {
         let mut me = format!(
@@ -2065,7 +2066,7 @@ fn topn_push_down_keeps_the_limit_above_a_left_join_with_a_wide_inner_side() {
     ));
     limit.set_children(vec![join]);
 
-    let out = super::rewrite::push_down_topn(limit, None);
+    let out = crate::logical::rewrite::push_down_topn(limit, None);
     // The original limit stays ABOVE the join...
     let LogicalPlan::Limit(root) = &out else {
         panic!(
@@ -2112,7 +2113,7 @@ fn topn_push_down_over_an_inner_join_takes_the_base_body() {
     ));
     topn.set_children(vec![join]);
 
-    let out = super::rewrite::push_down_topn(topn, None);
+    let out = crate::logical::rewrite::push_down_topn(topn, None);
     // The TopN stays above the join (as the limit it becomes on attach).
     assert!(matches!(out, LogicalPlan::TopN(_) | LogicalPlan::Limit(_)));
     out.dismantle();
@@ -2128,13 +2129,13 @@ fn build_key_info_portal_runs_bottom_up_over_the_whole_tree() {
     let mut source = DataSource::new(base(&allocator, "DataSource", Some(source_schema)), 1, "t");
     source.pk_is_handle = true;
     source.columns = vec![
-        super::data_source::DataSourceColumn {
+        crate::logical::data_source::DataSourceColumn {
             id: 1,
             name: "a".to_owned(),
             is_primary_key: true,
             is_not_null: true,
         },
-        super::data_source::DataSourceColumn {
+        crate::logical::data_source::DataSourceColumn {
             id: 2,
             name: "b".to_owned(),
             is_primary_key: false,
@@ -2150,7 +2151,7 @@ fn build_key_info_portal_runs_bottom_up_over_the_whole_tree() {
     ));
     limit.set_children(vec![source]);
 
-    let out = super::rewrite::build_key_info_portal(limit);
+    let out = crate::logical::rewrite::build_key_info_portal(limit);
     assert!(
         out.max_one_row(),
         "Go's LogicalLimit.BuildKeyInfo marks `LIMIT 1` as at most one row"

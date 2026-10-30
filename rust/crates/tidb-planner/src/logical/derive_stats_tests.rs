@@ -134,7 +134,7 @@ fn derive_with_group_ndv_skew_ratio(
     ratio: f64,
     allocator: &PlanIdAllocator,
 ) -> Result<(StatsInfo, bool), tidb_planner_core_base::PlanError> {
-    let mut context = super::rule_tests::test_context(allocator);
+    let mut context = crate::rule::rule_tests::test_context(allocator);
     context.group_ndv_skew_ratio = ratio;
     plan.recursive_derive_stats_with_context(&[], &context)
 }
@@ -619,7 +619,7 @@ fn pseudo_column_range_quota_changes_statistics_cover() {
             Expression::ScalarFunction(comparison_condition_to_constant("le", 1, 3)),
         ];
         attach_pseudo_collection(op);
-        let mut context = super::rule_tests::test_context(&allocator);
+        let mut context = crate::rule::rule_tests::test_context(&allocator);
         context.range_max_size = quota;
         let (stats, _) = source
             .recursive_derive_stats_with_context(&[], &context)
@@ -676,7 +676,7 @@ fn partial_dnf_index_range_preserves_logical_statistics_cover() {
     attach_pseudo_collection(op);
     for (factor, expected) in [(0.8, 16.0), (0.25, 5.0)] {
         let mut plan = source.clone();
-        let mut context = super::rule_tests::test_context(&allocator);
+        let mut context = crate::rule::rule_tests::test_context(&allocator);
         context.selectivity_factor = factor;
         let (stats, _) = plan
             .recursive_derive_stats_with_context(&[], &context)
@@ -724,7 +724,7 @@ fn deriving_a_data_source_fills_each_index_path_row_count_from_its_collection() 
     op.derived_index_paths.entry(8).or_default().row_estimate =
         Some(tidb_stats::default_row_est(1.0));
     attach_pseudo_collection(op);
-    let context = super::rule_tests::test_context(&allocator);
+    let context = crate::rule::rule_tests::test_context(&allocator);
     let (plan, result) =
         super::rewrite::recursive_derive_stats_with_context(source, Vec::new(), &context);
     result.expect("derives");
@@ -789,7 +789,7 @@ fn deriving_an_index_path_records_the_index_in_the_used_stats_ledger() {
             .collect();
         attach_pseudo_collection(op);
         let recorder = Recorder::default();
-        let mut context = super::rule_tests::test_context(&allocator);
+        let mut context = crate::rule::rule_tests::test_context(&allocator);
         context.used_stats_recorder = Some(&recorder);
         let (_, result) =
             super::rewrite::recursive_derive_stats_with_context(source, Vec::new(), &context);

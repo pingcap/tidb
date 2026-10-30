@@ -28,10 +28,10 @@ use tidb_expr::expression::Expression;
 use tidb_expr::simple_expr::extract_columns;
 use tidb_model::TableItemID;
 
-use super::LogicalPlan;
-use super::data_source::DataSource;
-use super::fold::{Descend, OwnedRewrite, fold_owned};
-use super::plan_context::{LogicalOptRule, RuleContext};
+use crate::logical::LogicalPlan;
+use crate::logical::data_source::DataSource;
+use crate::logical::fold::{Descend, OwnedRewrite, fold_owned};
+use crate::logical::plan_context::{LogicalOptRule, RuleContext};
 use super::rule_prune_indexes::prune_data_source_with_options;
 use tidb_planner_core_base::PlanError;
 
@@ -231,7 +231,7 @@ impl InterestingColumnPruner {
                 for function in &aggregation.agg_funcs {
                     if matches!(
                         function.name(),
-                        super::aggregation::AGG_FUNC_MIN | super::aggregation::AGG_FUNC_MAX
+                        crate::logical::aggregation::AGG_FUNC_MIN | crate::logical::aggregation::AGG_FUNC_MAX
                     ) {
                         for argument in function.args() {
                             down.ordering_columns.extend(extract_columns(argument));
@@ -460,7 +460,7 @@ impl Collector {
         self.add_expressions(&source.pushed_down_conds, true);
     }
 
-    fn collect_join(&mut self, join: &super::join::LogicalJoin) {
+    fn collect_join(&mut self, join: &crate::logical::join::LogicalJoin) {
         let mut expressions = join
             .equal_conditions
             .iter()
@@ -692,7 +692,7 @@ mod tests {
     use crate::logical::data_source::DataSourceColumn;
     use crate::logical::join::LogicalJoin;
     use crate::logical::projection::LogicalProjection;
-    use crate::logical::rule_tests::{test_context, TEST_BUILDER};
+    use crate::rule::rule_tests::{test_context, TEST_BUILDER};
     use crate::logical::selection::LogicalSelection;
     use crate::logical::BaseLogicalPlan;
     use tidb_planner_core_base::PlanIdAllocator;

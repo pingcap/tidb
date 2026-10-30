@@ -351,32 +351,6 @@ pub mod rewrite;
 pub mod data_source_paths;
 pub mod plan_context;
 pub mod tikv_scan_spec;
-pub mod rule;
-pub mod rule_aggregation_elimination;
-pub mod rule_aggregation_push_down;
-pub mod rule_aggregation_skew_rewrite;
-pub mod rule_collect_plan_stats;
-pub mod rule_constant_propagation;
-pub mod rule_decorrelate;
-pub mod rule_derive_topn_from_window;
-pub mod rule_eliminate_empty_selection;
-pub mod rule_eliminate_unionall_dual_item;
-pub mod rule_generate_column_substitute;
-pub mod rule_join_elimination;
-pub mod rule_join_key_type_cast;
-pub mod rule_join_reorder;
-pub mod rule_max_min_elimination;
-pub mod rule_order_aware_join_reorder;
-pub mod rule_outer_join_to_semi_join;
-pub mod rule_outer_to_inner_join;
-pub mod rule_partition_processor;
-pub mod rule_predicate_simplification;
-pub mod rule_projection_elimination;
-pub mod rule_prune_indexes;
-pub mod rule_push_down_sequence;
-pub mod rule_resolve_expand;
-pub mod rule_result_reorder;
-pub mod rule_semi_join_rewrite;
 pub mod schema_producer;
 pub mod selection;
 pub mod sequence;
@@ -881,7 +855,7 @@ impl LogicalPlan {
         allocator: &tidb_planner_core_base::PlanIdAllocator,
         topn: Option<LogicalTopN>,
     ) -> Self {
-        self.push_down_topn_with(&crate::logical::rule_tests::TEST_BUILDER, allocator, topn)
+        self.push_down_topn_with(&crate::rule::rule_tests::TEST_BUILDER, allocator, topn)
     }
 
     /// Go `DeriveTopN()` (`<5th>`), gated on `AllowDeriveTopN`.
@@ -1495,9 +1469,5 @@ impl LogicalPlan {
 mod derive_stats_tests;
 #[cfg(test)]
 mod operator_tests;
-#[cfg(test)]
-pub(crate) mod rule_tail_tests;
-#[cfg(test)]
-pub(crate) mod rule_tests;
 #[cfg(test)]
 mod tests;

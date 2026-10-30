@@ -2819,7 +2819,7 @@ mod tests {
         };
 
         let allocator = tidb_planner_core_base::PlanIdAllocator::new();
-        let context = crate::logical::rule_tests::test_context(&allocator);
+        let context = crate::rule::rule_tests::test_context(&allocator);
         let mut detector = ConflictDetector::default();
         let nodes = detector.build(&group, &context).unwrap();
         assert_eq!(nodes.len(), 4);
@@ -2889,7 +2889,7 @@ mod tests {
         };
 
         let allocator = tidb_planner_core_base::PlanIdAllocator::new();
-        let context = crate::logical::rule_tests::test_context(&allocator);
+        let context = crate::rule::rule_tests::test_context(&allocator);
         let mut detector = ConflictDetector::default();
         let nodes = detector.build(&group, &context).unwrap();
         assert_eq!(nodes.len(), 2);
@@ -2902,7 +2902,7 @@ mod tests {
         assert!(!connection.no_equal_edge());
 
         let allocator = tidb_planner_core_base::PlanIdAllocator::new();
-        let context = crate::logical::rule_tests::test_context(&allocator);
+        let context = crate::rule::rule_tests::test_context(&allocator);
         let mut greedy_detector = ConflictDetector::default();
         let greedy_nodes = greedy_detector.build(&group, &context).unwrap();
         let greedy = optimize_greedy(&context, &mut greedy_detector, greedy_nodes, &group)

@@ -32,10 +32,10 @@ use tidb_expr::expr_util::builder::tiny_int_type;
 use tidb_expr::expression::Expression;
 use tidb_expr::simple_expr::compose_dnf_condition;
 
-use super::fold::{fold_owned, Descend, OwnedRewrite, RewriteFailure};
-use super::projection::LogicalProjection;
-use super::plan_context::{LogicalOptRule, RuleContext};
-use super::{BaseLogicalPlan, LogicalAggregation, LogicalPlan};
+use crate::logical::fold::{fold_owned, Descend, OwnedRewrite, RewriteFailure};
+use crate::logical::projection::LogicalProjection;
+use crate::logical::plan_context::{LogicalOptRule, RuleContext};
+use crate::logical::{BaseLogicalPlan, LogicalAggregation, LogicalPlan};
 
 fn covers_key(columns: &[tidb_expr::column::Column], key: &[tidb_expr::column::Column]) -> bool {
     key.iter().all(|key_column| {

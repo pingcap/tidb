@@ -26,10 +26,11 @@ use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::{merge_schema, Schema};
 use tidb_expr::simple_expr::extract_columns;
 
-use super::projection::LogicalProjection;
-use super::plan_context::{LogicalOptRule, RuleContext};
-use super::selection::LogicalSelection;
-use super::{BaseLogicalPlan, LogicalPlan, PlanError};
+use crate::logical::projection::LogicalProjection;
+use crate::logical::plan_context::{LogicalOptRule, RuleContext};
+use crate::logical::selection::LogicalSelection;
+use crate::logical::{BaseLogicalPlan, LogicalPlan};
+use tidb_planner_core_base::{PlanError};
 use tidb_planner_core_base::LogicalJoinType;
 use crate::joinorder::JoinMethodHint;
 
@@ -227,7 +228,7 @@ fn without_projection_inline<'a>(context: &RuleContext<'a>) -> RuleContext<'a> {
         used_stats_recorder: context.used_stats_recorder,
         cte_optimizer: context.cte_optimizer,
         data_source_stats: &crate::stats::CoreDataSourceStats,
-        predicate_simplifier: &crate::logical::rule_predicate_simplification::RulePredicateSimplifier,
+        predicate_simplifier: &crate::rule::rule_predicate_simplification::RulePredicateSimplifier,
     }
 }
 
@@ -1589,7 +1590,7 @@ mod tests {
     #[test]
     fn legacy_dp_builds_the_pinned_bushy_tree_for_all_cartesian_components() {
         let allocator = PlanIdAllocator::new();
-        let mut context = crate::logical::rule_tests::test_context(&allocator);
+        let mut context = crate::rule::rule_tests::test_context(&allocator);
         context.advanced_join_reorder = false;
         context.join_reorder_threshold = 10;
         let a = data_source(&allocator, 1, "a", 100.0);
@@ -1608,7 +1609,7 @@ mod tests {
     #[test]
     fn projection_inline_uses_real_leaf_local_expressions_and_rejects_cross_leaf_ones() {
         let allocator = PlanIdAllocator::new();
-        let mut context = crate::logical::rule_tests::test_context(&allocator);
+        let mut context = crate::rule::rule_tests::test_context(&allocator);
         context.join_reorder_through_proj = true;
         let left = data_source(&allocator, 1, "a", 10.0);
         let right = data_source(&allocator, 2, "b", 10.0);
@@ -1653,7 +1654,7 @@ mod tests {
     #[test]
     fn legacy_injection_reuses_only_deterministic_equivalent_expressions() {
         let allocator = PlanIdAllocator::new();
-        let context = crate::logical::rule_tests::test_context(&allocator);
+        let context = crate::rule::rule_tests::test_context(&allocator);
         let mut solver = LegacyGroupSolver::new(&context, BasicJoinGroupInfo::default(), true);
         let plan = data_source(&allocator, 1, "t", 1.0);
         let deterministic = Expression::ScalarFunction(ScalarFunction::new(

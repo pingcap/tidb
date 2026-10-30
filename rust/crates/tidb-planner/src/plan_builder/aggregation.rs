@@ -133,7 +133,7 @@ use super::{
 };
 use crate::expression_rewriter::ClauseCode;
 use crate::logical::aggregation::LogicalAggregation;
-use crate::logical::rule::flags;
+use crate::rule::flags;
 use crate::logical::LogicalPlan;
 use tidb_planner_core_base::PlanError;
 

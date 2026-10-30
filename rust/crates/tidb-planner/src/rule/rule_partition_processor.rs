@@ -20,7 +20,7 @@ use crate::logical::{
 };
 use tidb_planner_core_base::PlanError;
 
-use super::plan_context::{conds_to_table_dual, LogicalOptRule, RuleContext};
+use crate::logical::plan_context::{conds_to_table_dual, LogicalOptRule, RuleContext};
 use super::rule_predicate_simplification::apply_predicate_simplification;
 
 // Go `resolveOptimizeHint` keeps a hint for a partition when one of its
@@ -183,7 +183,7 @@ fn warn_for_unknown_storage_partitions(
 /// Go `appendWarnForUnknownPartitions`: `SetHintWarningFromError` of a
 /// `fmt.Errorf`, so the warning is ErrUnknown (1105).
 fn append_warn_for_unknown_partitions(
-    sink: &dyn super::plan_context::HintWarningSink,
+    sink: &dyn crate::logical::plan_context::HintWarningSink,
     hint_name: &str,
     unknown_partitions: &[String],
 ) {
@@ -511,7 +511,7 @@ mod tests {
     fn storage_hints_are_resolved_per_static_partition() {
         use crate::logical::data_source::{PREFER_TIFLASH, PREFER_TIKV};
         let allocator = tidb_planner_core_base::PlanIdAllocator::new();
-        let ctx = crate::logical::rule_tests::test_context(&allocator);
+        let ctx = crate::rule::rule_tests::test_context(&allocator);
         let source = DataSource {
             prefer_store_type: PREFER_TIKV,
             prefer_partitions: std::collections::BTreeMap::from([(

@@ -19,7 +19,7 @@ use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
 use tidb_expr::expression::Expression;
 use tidb_planner::logical::projection::LogicalProjection;
-use tidb_planner::logical::rule::RuleId;
+use tidb_planner::rule::RuleId;
 use tidb_planner::logical::BaseLogicalPlan;
 
 fn column(unique_id: i64) -> Expression {

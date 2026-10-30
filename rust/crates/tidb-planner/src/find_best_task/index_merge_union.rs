@@ -1332,7 +1332,7 @@ mod tests {
             .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(2.0, [])));
         logical_source.index_merge_hints = vec![Default::default()];
         let mut logical = crate::logical::LogicalPlan::DataSource(logical_source);
-        let rule_context = crate::logical::rule_tests::test_context(&allocator);
+        let rule_context = crate::rule::rule_tests::test_context(&allocator);
         logical
             .recursive_derive_stats_with_context(&[], &rule_context)
             .unwrap();

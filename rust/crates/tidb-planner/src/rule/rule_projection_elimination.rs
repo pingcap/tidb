@@ -27,9 +27,9 @@ use crate::base_arms;
 use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanError;
 
-use super::fold::{fold_owned, Descend, OwnedRewrite};
-use super::plan_context::{LogicalOptRule, RuleContext};
-use super::LogicalPlan;
+use crate::logical::fold::{fold_owned, Descend, OwnedRewrite};
+use crate::logical::plan_context::{LogicalOptRule, RuleContext};
+use crate::logical::LogicalPlan;
 
 type ColumnReplacements = BTreeMap<Vec<u8>, Column>;
 
@@ -184,7 +184,7 @@ fn replace_operator_expressions(plan: &mut LogicalPlan, replace: &ColumnReplacem
     }
 }
 
-fn replace_join_expressions(join: &mut super::LogicalJoin, replace: &ColumnReplacements) {
+fn replace_join_expressions(join: &mut crate::logical::LogicalJoin, replace: &ColumnReplacements) {
     for condition in &mut join.equal_conditions {
         *condition = resolve_scalar_function(condition.clone(), replace);
     }
@@ -284,9 +284,9 @@ fn preserve_not_null_flag(source: &Expression, target: &mut Expression) {
 }
 
 fn merge_adjacent_projections(
-    mut projection: super::LogicalProjection,
+    mut projection: crate::logical::LogicalProjection,
     builder: &dyn tidb_expr::expr_util::builder::FunctionBuilder,
-) -> super::LogicalProjection {
+) -> crate::logical::LogicalProjection {
     let mut children = projection.base.take_children();
     let Some(child_plan) = children.pop() else {
         projection.base.set_children(children);
@@ -503,7 +503,7 @@ mod tests {
         ));
 
         let LogicalPlan::Aggregation(aggregate) =
-            eliminate_projections(aggregate, &crate::logical::rule_tests::TEST_BUILDER)
+            eliminate_projections(aggregate, &crate::rule::rule_tests::TEST_BUILDER)
         else {
             panic!("the aggregate remains the root")
         };
@@ -529,7 +529,7 @@ mod tests {
         let union = LogicalPlan::UnionAll(LogicalUnionAll::new(union_base));
 
         let LogicalPlan::UnionAll(union) =
-            eliminate_projections(union, &crate::logical::rule_tests::TEST_BUILDER)
+            eliminate_projections(union, &crate::rule::rule_tests::TEST_BUILDER)
         else {
             panic!("the union remains the root")
         };
@@ -543,7 +543,7 @@ mod tests {
     fn root_projection_is_not_eliminated() {
         let root = projection(2, 2, Expression::Column(column(1)), dual(1, 1));
         assert!(matches!(
-            eliminate_projections(root, &crate::logical::rule_tests::TEST_BUILDER),
+            eliminate_projections(root, &crate::rule::rule_tests::TEST_BUILDER),
             LogicalPlan::Projection(_)
         ));
     }
@@ -558,7 +558,7 @@ mod tests {
         let root = projection(3, 3, Expression::Column(column(2)), child);
 
         let LogicalPlan::Projection(root) =
-            eliminate_projections(root, &crate::logical::rule_tests::TEST_BUILDER)
+            eliminate_projections(root, &crate::rule::rule_tests::TEST_BUILDER)
         else {
             panic!("the root projection is retained")
         };

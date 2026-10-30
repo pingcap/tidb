@@ -134,7 +134,7 @@ use tidb_infoschema::table_source::TableSource;
 use super::marker::{self, MarkerKind, PlanMarker};
 use super::{snapshot_schema_and_names, ClauseCode, PlanBuilder, PlanError, ProjectionField};
 use crate::logical::projection::LogicalProjection;
-use crate::logical::rule::flags;
+use crate::rule::flags;
 use crate::logical::window::{BoundType, FrameBound, FrameType, LogicalWindow, WindowFrame};
 use crate::logical::LogicalPlan;
 

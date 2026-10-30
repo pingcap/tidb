@@ -37,7 +37,7 @@
 //! versus not-Sort. Go's third outcome — `completeSort` returning true because
 //! a keeper ran out of children — is the branch that does nothing at all.
 //!
-//! The walk is the ONE spine from the root: [`super::fold::Descend::Stop`]
+//! The walk is the ONE spine from the root: [`crate::logical::fold::Descend::Stop`]
 //! ends it at the terminal node, and a keeper hands the carried bit to its
 //! FIRST child only, so no other subtree is entered. That is Go, which only
 //! ever indexes `Children()[0]`.
@@ -58,10 +58,10 @@ use tidb_expr::expression::Expression;
 use crate::base_arms;
 use tidb_planner_core_base::PlanError;
 
-use super::fold::{fold_owned, Descend, OwnedRewrite};
-use super::plan_context::{LogicalOptRule, RuleContext};
-use super::sort::LogicalSort;
-use super::{BaseLogicalPlan, LogicalPlan};
+use crate::logical::fold::{fold_owned, Descend, OwnedRewrite};
+use crate::logical::plan_context::{LogicalOptRule, RuleContext};
+use crate::logical::sort::LogicalSort;
+use crate::logical::{BaseLogicalPlan, LogicalPlan};
 
 /// Go `(*ResultReorder).isInputOrderKeeper(lp)`
 /// (`rule_result_reorder.go:100`).
@@ -87,7 +87,7 @@ fn is_input_order_keeper(node: &LogicalPlan) -> bool {
 ///
 /// Go's `DataSource` arm refuses a common-handle table
 /// (`x.TableInfo.IsCommonHandle`, "deliberately don't support common handle
-/// case for simplicity"). [`super::DataSource`] does not carry
+/// case for simplicity"). [`crate::logical::DataSource`] does not carry
 /// `model.TableInfo`; its `common_handle_cols` is non-empty exactly for such a
 /// table, and that is what is tested. The direction is the refusing one: a
 /// table with common-handle columns yields no handle, so the rule falls back

@@ -22,12 +22,9 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::{merge_schema, Schema};
 use tidb_expr::simple_expr::extract_columns;
 
-use super::aggregation::{AGG_FUNC_MAX, AGG_FUNC_MIN};
-use super::plan_context::{LogicalOptRule, RuleContext};
-use super::{
-    BaseLogicalPlan, LogicalAggregation, LogicalJoin, LogicalLimit, LogicalPlan, LogicalSelection,
-    LogicalSort,
-};
+use crate::logical::aggregation::{AGG_FUNC_MAX, AGG_FUNC_MIN};
+use crate::logical::plan_context::{LogicalOptRule, RuleContext};
+use crate::logical::{BaseLogicalPlan, LogicalAggregation, LogicalJoin, LogicalLimit, LogicalPlan, LogicalSelection, LogicalSort};
 use crate::logical::data_source_paths::{AccessPathStore, DataSourceAccessPath};
 use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanError;
@@ -470,7 +467,7 @@ mod tests {
     use tidb_expr::schema::Schema;
 
     use super::*;
-    use crate::logical::rule_tests::test_context;
+    use crate::rule::rule_tests::test_context;
     use crate::logical::DataSource;
     use tidb_planner_core_base::PlanIdAllocator;
 

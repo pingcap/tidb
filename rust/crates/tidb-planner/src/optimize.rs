@@ -31,7 +31,7 @@ use tidb_planner_core_base::ColumnIdAllocator;
 use crate::find_best_task::coster::{CostEnv, Ver2Coster};
 use crate::find_best_task::dispatch::{find_best_task, DispatchContext, MppWarningSink};
 use tidb_fixcontrol::OptimizerFixControl;
-use crate::logical::rule::{flags, logical_optimize};
+use crate::rule::{flags, logical_optimize};
 use crate::logical::plan_context::{CteOptimizer, DisabledLogicalRules, HintWarningSink, RuleContext, UsedStatsRecorder};
 use crate::logical::plan_context::StatisticsLoadRequester;
 use crate::logical::plan_context::PartitionPruning;
@@ -204,7 +204,7 @@ pub fn optimize_logical<C: OptimizeContext>(
     } else {
         flags & !flags::PARTITION_PROCESSOR
     };
-    let flags = crate::logical::rule::add_second_column_prune(flags);
+    let flags = crate::rule::add_second_column_prune(flags);
     let flags = adjust_optimization_flags(flags, ctx);
     let function_builder = tidb_expr::expr_util::RealFunctionBuilder::new(ctx);
     let optimizer_cost_env = ctx.optimizer_cost_env();
@@ -219,7 +219,7 @@ pub fn optimize_logical<C: OptimizeContext>(
         allow_derive_topn: ctx.allow_derive_topn(),
         expr_pushdown_blacklist: ctx.expr_pushdown_blacklist().clone(),
         disabled_rules: DisabledLogicalRules::from_names(
-            crate::logical::rule::OPT_RULE_LIST
+            crate::rule::OPT_RULE_LIST
                 .iter()
                 .map(|rule| rule.name())
                 .filter(|name| ctx.logical_rule_disabled(name)),
@@ -256,7 +256,7 @@ pub fn optimize_logical<C: OptimizeContext>(
         used_stats_recorder: Some(services.used_stats_recorder),
         cte_optimizer: Some(services.cte_optimizer),
         data_source_stats: &crate::stats::CoreDataSourceStats,
-        predicate_simplifier: &crate::logical::rule_predicate_simplification::RulePredicateSimplifier,
+        predicate_simplifier: &crate::rule::rule_predicate_simplification::RulePredicateSimplifier,
     };
     // Go DataSource.InitStats is available to logical rules themselves;
     // join reorder derives candidate statistics while logical optimization
