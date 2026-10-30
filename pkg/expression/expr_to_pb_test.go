@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -2014,6 +2015,22 @@ func TestPushCollationDown(t *testing.T) {
 		_, eColl := expr.CharsetAndCollation()
 		require.Equal(t, coll, eColl)
 	}
+}
+
+func TestPushBinaryCastCollationDown(t *testing.T) {
+	ctx := mock.NewContext()
+	col := columnCollation(genColumn(mysql.TypeVarchar, 0), "utf8mb4", "utf8mb4_general_ci")
+	tp := types.NewFieldType(mysql.TypeVarString)
+	tp.SetCharset(charset.CharsetBin)
+	tp.SetCollate(charset.CollationBin)
+	tp.AddFlag(mysql.BinaryFlag)
+	cast := BuildCastFunction(ctx, col, tp)
+	_, coll := cast.CharsetAndCollation()
+	require.Equal(t, charset.CollationBin, coll)
+
+	pbExprs, err := ExpressionsToPBList(ctx, []Expression{cast}, new(mock.Client))
+	require.NoError(t, err)
+	require.Equal(t, collate.CollationToProto(charset.CollationBin), pbExprs[0].FieldType.Collate)
 }
 
 func columnCollation(c *Column, chs, coll string) *Column {
