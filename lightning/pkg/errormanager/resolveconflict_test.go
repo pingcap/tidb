@@ -32,8 +32,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	_ "github.com/pingcap/tidb/pkg/planner/core" // to setup expression.EvalAstExpr
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -216,7 +218,7 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 	fnDeleteKeyCount := atomic.NewInt32(0)
 	pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
 	err = em.ReplaceConflictKeys(
-		ctx, tbl, "a", pool,
+		ctx, tbl, "a", &sessionOpts, pool,
 		func(ctx context.Context, key []byte) ([]byte, error) {
 			fnGetLatestCount.Add(1)
 			switch {
@@ -397,7 +399,7 @@ func TestReplaceConflictOneKeyNonclusteredPk(t *testing.T) {
 	fnDeleteKeyCount := atomic.NewInt32(0)
 	pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
 	err = em.ReplaceConflictKeys(
-		ctx, tbl, "a", pool,
+		ctx, tbl, "a", &sessionOpts, pool,
 		func(ctx context.Context, key []byte) ([]byte, error) {
 			fnGetLatestCount.Add(1)
 			switch {
@@ -587,7 +589,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 	fnDeleteKeyCount := atomic.NewInt32(0)
 	pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
 	err = em.ReplaceConflictKeys(
-		ctx, tbl, "a", pool,
+		ctx, tbl, "a", &sessionOpts, pool,
 		func(ctx context.Context, key []byte) ([]byte, error) {
 			fnGetLatestCount.Add(1)
 			switch {
@@ -794,7 +796,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 	fnDeleteKeyCount := atomic.NewInt32(0)
 	pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
 	err = em.ReplaceConflictKeys(
-		ctx, tbl, "a", pool,
+		ctx, tbl, "a", &sessionOpts, pool,
 		func(ctx context.Context, key []byte) ([]byte, error) {
 			fnGetLatestCount.Add(1)
 			switch {
@@ -845,4 +847,223 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 	require.Equal(t, int32(5), fnDeleteKeyCount.Load())
 	err = mockDB.ExpectationsWereMet()
 	require.NoError(t, err)
+}
+
+func TestReplaceConflictOneUniqueKeyOnVirtualColumn(t *testing.T) {
+	ts := types.NewTimeDatum(types.NewTime(types.FromDate(2026, 1, 1, 0, 0, 0, 0), mysql.TypeTimestamp, 0))
+	for _, tc := range []struct {
+		createSQL string
+		sysVars   map[string]string
+		row1      types.Datum
+		row2      types.Datum
+	}{
+		{
+			createSQL: "create table a (id int primary key clustered, email varchar(64) not null, unique key uk((lower(email))));",
+			row1:      types.NewStringDatum("Alice@example.com"),
+			row2:      types.NewStringDatum("alice@example.com"),
+		},
+		{
+			createSQL: "create table a (id int primary key clustered, email varchar(64) not null, v varchar(64) as (lower(email)) virtual, unique key uk(v));",
+			row1:      types.NewStringDatum("Alice@example.com"),
+			row2:      types.NewStringDatum("alice@example.com"),
+		},
+		{
+			createSQL: "create table a (id int primary key clustered, ts timestamp not null, v varchar(32) as (cast(ts as char)) virtual, unique key uk(v));",
+			sysVars:   map[string]string{"time_zone": "-11:00"},
+			row1:      ts,
+			row2:      ts,
+		},
+	} {
+		t.Run(tc.createSQL, func(t *testing.T) {
+			p := parser.New()
+			node, _, err := p.ParseSQL(tc.createSQL)
+			require.NoError(t, err)
+			info, err := ddl.MockTableInfo(mock.NewContext(), node[0].(*ast.CreateTableStmt), 109)
+			require.NoError(t, err)
+			info.State = model.StatePublic
+			require.True(t, info.PKIsHandle)
+			tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(info.SepAutoInc()), info)
+			require.NoError(t, err)
+			require.Len(t, tbl.Cols(), 3)
+			require.True(t, tbl.Cols()[2].IsVirtualGenerated())
+
+			sessionOpts := encode.SessionOptions{
+				SQLMode:   mysql.ModeStrictAllTables,
+				Timestamp: 1234567890,
+				SysVars:   tc.sysVars,
+			}
+			encoder, err := tidbkv.NewBaseKVEncoder(&encode.EncodingConfig{
+				Table:          tbl,
+				SessionOptions: sessionOpts,
+				Logger:         log.L(),
+			})
+			require.NoError(t, err)
+			encoder.SessionCtx.GetTableCtx().GetRowEncodingConfig().RowEncoder.Enable = true
+
+			encodeRow := func(id int64, base types.Datum) (rowKey, rowValue, indexKey, indexValue []byte) {
+				record := []types.Datum{
+					types.NewIntDatum(id),
+					base,
+					types.GetMinValue(&tbl.Cols()[2].FieldType),
+				}
+				_, err := encoder.EvalGeneratedColumns(record, encoder.Columns)
+				require.NoError(t, err)
+				_, err = encoder.AddRecord(record)
+				require.NoError(t, err)
+				pairs := encoder.SessionCtx.TakeKvPairs().Pairs
+				require.Len(t, pairs, 2)
+				for _, pair := range pairs {
+					if tablecodec.IsRecordKey(pair.Key) {
+						rowKey, rowValue = pair.Key, pair.Val
+					} else {
+						indexKey, indexValue = pair.Key, pair.Val
+					}
+				}
+				return
+			}
+			row1Key, row1Value, indexKey, index1Value := encodeRow(1, tc.row1)
+			row2Key, row2Value, indexKey2, index2Value := encodeRow(2, tc.row2)
+			require.Equal(t, indexKey, indexKey2)
+
+			db, mockDB, err := sqlmock.New()
+			require.NoError(t, err)
+			defer func() {
+				_ = db.Close()
+			}()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			mockDB.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_task_info`").
+				WillReturnResult(sqlmock.NewResult(1, 1))
+			mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v4.*").
+				WillReturnResult(sqlmock.NewResult(2, 1))
+			mockDB.ExpectExec("CREATE OR REPLACE VIEW `lightning_task_info`\\.conflict_view.*").
+				WillReturnResult(sqlmock.NewResult(3, 1))
+			mockDB.ExpectQuery("\\QSELECT id, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type = 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
+				WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "index_name", "raw_value", "raw_handle"}).
+					AddRow(1, indexKey, "uk", index1Value, row1Key).
+					AddRow(2, indexKey, "uk", index2Value, row2Key))
+			mockDB.ExpectBegin()
+			mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v4.*").
+				WithArgs(0, "a", nil, nil, row1Key, row1Value, 2).
+				WillReturnResult(driver.ResultNoRows)
+			mockDB.ExpectCommit()
+			for range 2 {
+				mockDB.ExpectQuery("\\QSELECT id, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type = 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
+					WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "index_name", "raw_value", "raw_handle"}))
+			}
+			mockDB.ExpectQuery("\\QSELECT id, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type <> 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
+				WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "raw_value"}))
+			mockDB.ExpectBegin()
+			mockDB.ExpectExec("DELETE FROM `lightning_task_info`\\.conflict_error_v4.*").
+				WillReturnResult(sqlmock.NewResult(0, 0))
+			mockDB.ExpectCommit()
+
+			cfg := config.NewConfig()
+			cfg.Conflict.Strategy = config.ReplaceOnDup
+			cfg.TikvImporter.Backend = config.BackendLocal
+			cfg.App.TaskInfoSchemaName = "lightning_task_info"
+			em := errormanager.New(db, cfg, log.L())
+			require.NoError(t, em.Init(ctx))
+
+			var deletedKeys [][]byte
+			pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
+			err = em.ReplaceConflictKeys(
+				ctx, tbl, "a", &sessionOpts, pool,
+				func(ctx context.Context, key []byte) ([]byte, error) {
+					switch {
+					case bytes.Equal(key, indexKey):
+						return index2Value, nil
+					case bytes.Equal(key, row1Key):
+						return row1Value, nil
+					case bytes.Equal(key, row2Key):
+						return row2Value, nil
+					default:
+						return nil, fmt.Errorf("key %v is not expected", key)
+					}
+				},
+				func(ctx context.Context, keys [][]byte) error {
+					deletedKeys = append(deletedKeys, keys...)
+					return nil
+				},
+			)
+			require.NoError(t, err)
+			require.Equal(t, [][]byte{row1Key}, deletedKeys)
+			require.NoError(t, mockDB.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestReplaceConflictFailsOnAnUndecodableRow(t *testing.T) {
+	node, _, err := parser.New().ParseSQL("create table a (id int primary key clustered, email varchar(64) not null, unique key uk(email));")
+	require.NoError(t, err)
+	info, err := ddl.MockTableInfo(mock.NewContext(), node[0].(*ast.CreateTableStmt), 109)
+	require.NoError(t, err)
+	info.State = model.StatePublic
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(info.SepAutoInc()), info)
+	require.NoError(t, err)
+
+	sessionOpts := encode.SessionOptions{SQLMode: mysql.ModeStrictAllTables, Timestamp: 1234567890}
+	encoder, err := tidbkv.NewBaseKVEncoder(&encode.EncodingConfig{Table: tbl, SessionOptions: sessionOpts, Logger: log.L()})
+	require.NoError(t, err)
+	encoder.SessionCtx.GetTableCtx().GetRowEncodingConfig().RowEncoder.Enable = true
+	encodeRow := func(id int64, email string) (rowKey, indexKey, indexValue []byte) {
+		_, err := encoder.AddRecord([]types.Datum{types.NewIntDatum(id), types.NewStringDatum(email)})
+		require.NoError(t, err)
+		for _, pair := range encoder.SessionCtx.TakeKvPairs().Pairs {
+			if tablecodec.IsRecordKey(pair.Key) {
+				rowKey = pair.Key
+			} else {
+				indexKey, indexValue = pair.Key, pair.Val
+			}
+		}
+		return
+	}
+	row1Key, indexKey, index1Value := encodeRow(1, "a@example.com")
+	_, _, index2Value := encodeRow(2, "a@example.com")
+
+	db, mockDB, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		_ = db.Close()
+	}()
+	mockDB.MatchExpectationsInOrder(false)
+	mockDB.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_task_info`").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v4.*").
+		WillReturnResult(sqlmock.NewResult(2, 1))
+	mockDB.ExpectExec("CREATE OR REPLACE VIEW `lightning_task_info`\\.conflict_view.*").
+		WillReturnResult(sqlmock.NewResult(3, 1))
+	mockDB.ExpectQuery("\\QSELECT id, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type = 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "index_name", "raw_value", "raw_handle"}).
+			AddRow(1, indexKey, "uk", index1Value, row1Key))
+
+	cfg := config.NewConfig()
+	cfg.Conflict.Strategy = config.ReplaceOnDup
+	cfg.TikvImporter.Backend = config.BackendLocal
+	cfg.App.TaskInfoSchemaName = "lightning_task_info"
+	em := errormanager.New(db, cfg, log.L())
+	ctx := context.Background()
+	require.NoError(t, em.Init(ctx))
+
+	var deletedKeys [][]byte
+	err = em.ReplaceConflictKeys(
+		ctx, tbl, "a", &sessionOpts, util.NewWorkerPool(16, "resolve duplicate rows by replace"),
+		func(ctx context.Context, key []byte) ([]byte, error) {
+			switch {
+			case bytes.Equal(key, indexKey):
+				return index2Value, nil
+			case bytes.Equal(key, row1Key):
+				return []byte{0xff}, nil
+			default:
+				return nil, fmt.Errorf("key %v is not expected", key)
+			}
+		},
+		func(ctx context.Context, keys [][]byte) error {
+			deletedKeys = append(deletedKeys, keys...)
+			return nil
+		},
+	)
+	require.ErrorContains(t, err, "invalid encoded key flag")
+	require.Empty(t, deletedKeys)
 }

@@ -1114,7 +1114,11 @@ func (tr *TableImporter) postProcess(
 			hasDupe = hasDupe || hasRemoteDupe
 
 			if hasDupe {
-				if err = dupeController.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.Conflict.Strategy); err != nil {
+				encodeOpts := &encode.SessionOptions{
+					SQLMode: rc.cfg.TiDB.SQLMode,
+					SysVars: rc.sysVars,
+				}
+				if err = dupeController.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, encodeOpts, rc.cfg.Conflict.Strategy); err != nil {
 					tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
 					return false, errors.Trace(err)
 				}

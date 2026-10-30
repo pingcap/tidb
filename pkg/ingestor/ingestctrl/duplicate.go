@@ -1190,7 +1190,8 @@ func (local *DupeController) CollectRemoteDuplicateRows(
 
 // ResolveDuplicateRows resolves duplicated rows by deleting/inserting data
 // according to the required algorithm.
-func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) (err error) {
+// opts must be the session options the rows were encoded with.
+func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *encode.SessionOptions, algorithm config.DuplicateResolutionAlgorithm) (err error) {
 	logger := log.Wrap(tidblogutil.Logger(ctx)).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[resolve-dupe] resolve duplicate rows")
 	defer func() {
 		logger.End(zap.ErrorLevel, err)
@@ -1215,7 +1216,7 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 		zap.ByteString("tblInfo", tblInfo))
 
 	err = local.errorMgr.ReplaceConflictKeys(
-		ctx, tbl, tableName, pool,
+		ctx, tbl, tableName, opts, pool,
 		func(ctx context.Context, key []byte) ([]byte, error) {
 			value, err := local.getLatestValue(ctx, logger, key)
 			if err != nil {
