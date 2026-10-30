@@ -24,7 +24,12 @@ use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
 
-use super::*;
+use crate::physical::*;
+use tidb_kv::store_type::StoreType;
+use tidb_planner_core_base::{BasePlan, LogicalJoinType, PlanIdAllocator};
+use tidb_planner_costusage::PlanCostOption;
+use tidb_planner_property::stats_info::StatsInfo;
+use tidb_planner_property::{MppPartitionType, PhysicalProperty, TaskType};
 
 fn scan(id: i32, columns: &[i64]) -> PhysicalPlan {
     let mut base = BasePhysicalPlan::with_id(id, "TableFullScan", 0);
@@ -1313,7 +1318,7 @@ fn mpp_hash_agg_enumeration_matches_go_run_modes() {
         let blacklist = std::collections::HashMap::from([(
             "count".into(), tidb_expr::infer_pushdown::blacklist_store_mask(store),
         )]);
-        let candidates = super::get_hash_aggs_with_mpp_options(
+        let candidates = crate::physical::get_hash_aggs_with_mpp_options(
             &aggregation, &root, &allocator, 1.0, true, false, true, false,
             tidb_vardef::defaults::DEF_TIFLASH_PRE_AGG_MODE, &blacklist,
         );
@@ -2254,9 +2259,9 @@ fn shuffle_keeps_source_projection_alive_across_post_optimization() {
     for _ in 0..103 {
         ids.alloc();
     }
-    super::shuffle::install_receivers(&mut plan, &ids).unwrap();
+    crate::physical::shuffle::install_receivers(&mut plan, &ids).unwrap();
     assert_eq!(ids.current(), 104);
-    super::shuffle::install_receivers(&mut plan, &ids).unwrap();
+    crate::physical::shuffle::install_receivers(&mut plan, &ids).unwrap();
     assert_eq!(ids.current(), 104, "preparation must be idempotent");
     let PhysicalPlan::Shuffle(shuffle) = plan else {
         unreachable!()

@@ -5319,8 +5319,6 @@ pub fn rebind_correlated_columns_by_schema_4_physical_plan(
 
 pub mod expand;
 
-#[cfg(test)]
-mod tests;
 
 /// Clone eligibility for an independently owned Apply worker executor tree.
 pub fn supports_apply_worker_clone(plan: &PhysicalPlan) -> bool {
