@@ -45,6 +45,7 @@ type MViewExecutionSessionVars struct {
 	ImportDiskQuota              string
 	TrackAggregateMemoryUsage    bool
 	EnableParallelHashaggSpill   bool
+	DivPrecisionIncrement        int
 }
 
 // MViewExecutionSessionVarsApplyConfig describes how MV execution vars should be applied onto a
@@ -87,6 +88,7 @@ func CaptureMViewExecutionSessionVars(sessVars *SessionVars) MViewExecutionSessi
 		ImportDiskQuota:              sessVars.MViewMaintainImportDiskQuota,
 		TrackAggregateMemoryUsage:    sessVars.TrackAggregateMemoryUsage,
 		EnableParallelHashaggSpill:   sessVars.EnableParallelHashaggSpill,
+		DivPrecisionIncrement:        sessVars.DivPrecisionIncrement,
 	}
 }
 
@@ -112,6 +114,7 @@ func CaptureAppliedMViewExecutionSessionVars(sessVars *SessionVars) MViewExecuti
 		ImportDiskQuota:              sessVars.MViewMaintainImportDiskQuota,
 		TrackAggregateMemoryUsage:    sessVars.TrackAggregateMemoryUsage,
 		EnableParallelHashaggSpill:   sessVars.EnableParallelHashaggSpill,
+		DivPrecisionIncrement:        sessVars.DivPrecisionIncrement,
 	}
 }
 
@@ -274,6 +277,11 @@ func buildMViewExecutionSessionVarAssignments(
 			name:           vardef.TiDBEnableParallelHashaggSpill,
 			value:          BoolToOnOff(target.EnableParallelHashaggSpill),
 			failureMessage: "mv execution: failed to apply tidb_enable_parallel_hashagg_spill",
+		},
+		{
+			name:           vardef.DivPrecisionIncrement,
+			value:          strconv.Itoa(target.DivPrecisionIncrement),
+			failureMessage: "mv execution: failed to apply div_precision_increment",
 		},
 	}
 }

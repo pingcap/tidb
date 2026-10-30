@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"context"
-	"strconv"
 	"strings"
 	"time"
 
@@ -30,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"go.uber.org/zap"
@@ -593,27 +591,13 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 		restore(sessCtx)
 		return nil, errors.Trace(err)
 	}
+	if mviewTableInfo != nil && mviewTableInfo.MaterializedView != nil {
+		target.DivPrecisionIncrement = mviewTableInfo.MaterializedView.DefinitionDivPrecisionIncrement
+	}
 	restoreExecution, err := ApplyMViewExecutionSessionVars(sessVars, target)
 	if err != nil {
 		restore(sessCtx)
 		return nil, errors.Trace(err)
-	}
-	restoreDivPrecision := func() {}
-	if mviewTableInfo != nil && mviewTableInfo.MaterializedView != nil {
-		// Take the original value from the field, which internal code may set
-		// without the session variable.
-		original := strconv.Itoa(sessVars.DivPrecisionIncrement)
-		divPrecision := strconv.Itoa(mviewTableInfo.MaterializedView.DefinitionDivPrecisionIncrement)
-		if err := sessVars.SetSystemVar(vardef.DivPrecisionIncrement, divPrecision); err != nil {
-			restoreExecution()
-			restore(sessCtx)
-			return nil, errors.Trace(err)
-		}
-		restoreDivPrecision = func() {
-			if err := sessVars.SetSystemVar(vardef.DivPrecisionIncrement, original); err != nil {
-				logutil.DDLLogger().Warn("create materialized view: restore div_precision_increment", zap.Error(err))
-			}
-		}
 	}
 	sessVars.CurrentDB = currentDB
 	sessVars.InMViewMaintenance = true
@@ -638,7 +622,6 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 		sessVars.MViewMaintainImportDiskQuota,
 	)
 	return func() {
-		restoreDivPrecision()
 		restoreExecution()
 		restore(sessCtx)
 		sessVars.InMViewMaintenance = originalMaintenance
