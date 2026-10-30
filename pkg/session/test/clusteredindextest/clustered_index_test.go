@@ -15,8 +15,6 @@
 package clusteredindextest
 
 import (
-	"fmt"
-	"math/rand"
 	"strings"
 	"testing"
 
@@ -135,26 +133,33 @@ func TestPartitionTable(t *testing.T) {
 						partition p3 values less than (10000))`)
 	tk.MustExec(`create table tnormal (a int, b int, c varchar(32), primary key(a, b))`)
 
-	vals := make([]string, 0, 400)
-	existedPK := make(map[string]struct{}, 400)
-	for i := 0; i < 400; {
-		a := rand.Intn(10000)
-		b := rand.Intn(10000)
-		pk := fmt.Sprintf("%v, %v", a, b)
-		if _, ok := existedPK[pk]; ok {
-			continue
-		}
-		existedPK[pk] = struct{}{}
-		i++
-		vals = append(vals, fmt.Sprintf(`(%v, %v, '%v')`, a, b, rand.Intn(10000)))
+	vals := []string{
+		"(0, 5, 'p0_hash_0')",
+		"(1, 6, 'p0_hash_1')",
+		"(2, 7, 'p0_hash_2')",
+		"(3, 8, 'p0_hash_3')",
+		"(2999, 20, 'p0_edge')",
+		"(3000, 30, 'p1_start')",
+		"(4500, 90, 'p1_mid')",
+		"(5999, 40, 'p1_edge')",
+		"(6000, 50, 'p2_start')",
+		"(8999, 60, 'p2_edge')",
+		"(9000, 70, 'p3_start')",
+		"(9999, 80, 'p3_edge')",
 	}
 
 	tk.MustExec("insert into thash values " + strings.Join(vals, ", "))
 	tk.MustExec("insert into trange values " + strings.Join(vals, ", "))
 	tk.MustExec("insert into tnormal values " + strings.Join(vals, ", "))
 
-	for range 20 {
-		cond := fmt.Sprintf("where a in (%v, %v, %v) and b < %v", rand.Intn(10000), rand.Intn(10000), rand.Intn(10000), rand.Intn(10000))
+	conditions := []string{
+		"where a in (0, 1, 2, 3) and b < 10",
+		"where a in (2999, 3000, 5999, 6000) and b < 55",
+		"where a in (8999, 9000, 9999) and b < 75",
+		"where a in (42, 4500, 9999) and b < 100",
+		"where a in (0, 3000, 9000) and b < 1",
+	}
+	for _, cond := range conditions {
 		result := tk.MustQuery("select * from tnormal " + cond).Sort().Rows()
 		tk.MustQuery("select * from thash use index(primary) " + cond).Sort().Check(result)
 		tk.MustQuery("select * from trange use index(primary) " + cond).Sort().Check(result)
