@@ -16,6 +16,7 @@ package lfu
 
 import (
 	"math/rand/v2"
+	"runtime"
 	"sync"
 	"sync/atomic"
 
@@ -43,6 +44,11 @@ type LFU struct {
 	cost         atomic.Int64
 	closed       atomic.Bool
 	closeOnce    sync.Once
+	// waiting counts the WaitForAsyncUpdates calls that are inside Ristretto. Ristretto's Close
+	// stops the background goroutine that serves Wait before it marks the cache closed, so a wait
+	// that is queued at that moment never returns. Close therefore lets in-flight waits finish
+	// before it stops Ristretto, and waits that start afterwards see closed and return at once.
+	waiting atomic.Int64
 }
 
 // NewLFU creates a new LFU cache.
@@ -251,7 +257,20 @@ func (s *LFU) SetCapacity(maxCost int64) {
 
 // WaitForAsyncUpdates blocks until all buffered writes have been applied. This ensures a call to
 // Put is visible to future calls to Get.
+//
+// It returns without that guarantee only when the cache is being closed concurrently.
 func (s *LFU) WaitForAsyncUpdates() {
+	// Callers that arrive after Close started must not touch the counter, otherwise a steady
+	// stream of them could keep Close spinning. The second check, after the increment, is the
+	// one that pairs with the store in Close.
+	if s.closed.Load() {
+		return
+	}
+	s.waiting.Add(1)
+	defer s.waiting.Add(-1)
+	if s.closed.Load() {
+		return
+	}
 	s.cache.Wait()
 }
 
@@ -263,6 +282,11 @@ func (s *LFU) metrics() *ristretto.Metrics {
 func (s *LFU) Close() {
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
+		// See the comment on waiting. A wait in flight finishes as soon as the still running
+		// background goroutine reaches its sentinel.
+		for s.waiting.Load() > 0 {
+			runtime.Gosched()
+		}
 		s.Clear()
 		s.cache.Close()
 		s.cache.Wait()

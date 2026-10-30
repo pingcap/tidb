@@ -175,6 +175,11 @@ func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64, ski
 		metrics.DelCounter.Inc()
 		sc.c.Del(id)
 	}
+	// LFU/Ristretto admits a non-resident key asynchronously, and it rejects a later Put of the
+	// same key that arrives before the admission finishes, which keeps the stale table resident.
+	// Callers such as sync stats loading read-modify-write a table right after it is added here,
+	// so make the writes above visible before returning to prevent losing those updates.
+	sc.c.WaitForAsyncUpdates()
 
 	if !skipMoveForwardStatsCache {
 		// update the maxTblStatsVer
