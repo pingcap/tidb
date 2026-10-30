@@ -137,8 +137,6 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::{CorrelatedColumn, Expression};
 use tidb_expr::schema::Schema;
 
-use crate::physical::PhysicalPlan;
-use tidb_planner_property::PhysicalProperty;
 use tidb_kv::store_type::StoreType;
 use tidb_planner_core_base::{BasePlan, PlanError, PlanIdAllocator, PossiblePropertiesInfo};
 use tidb_planner_property::stats_info::StatsInfo;
@@ -1366,23 +1364,6 @@ impl LogicalPlan {
             right.stats_info(),
             left.schema(),
             right.schema(),
-        ))
-    }
-
-    /// Go `ExhaustPhysicalPlans(prop)`
-    /// (`pkg/planner/core/exhaust_physical_plans.go`): the physical
-    /// alternatives for this operator under `prop`, plus whether the
-    /// statement's join hint could be honoured.
-    ///
-    /// A `todo` here by design: [`crate::find_best_task`] already models the
-    /// `LogicalJoin` arm of this enumeration against its own node type, and
-    /// merging the two is a later batch rather than a second answer now.
-    pub fn exhaust_physical_plans(
-        &self,
-        _prop: &PhysicalProperty,
-    ) -> Result<(Vec<PhysicalPlan>, bool), PlanError> {
-        Err(PlanError::internal(
-            "todo: LogicalPlan::exhaust_physical_plans, see crate::find_best_task",
         ))
     }
 

@@ -91,9 +91,9 @@ pub struct CteClass {
     pub recursive_part_logical_plan: Option<Box<LogicalPlan>>,
     /// Go `SeedPartPhysicalPlan`, filled once by the optimizer and shared by
     /// every reference to this CTE.
-    pub seed_part_physical_plan: Option<Box<crate::physical::PhysicalPlan>>,
+    pub seed_part_physical_plan: Option<Box<dyn tidb_planner_core_base::PhysicalPlanHandle>>,
     /// Go `RecursivePartPhysicalPlan`; absent for a non-recursive CTE.
-    pub recursive_part_physical_plan: Option<Box<crate::physical::PhysicalPlan>>,
+    pub recursive_part_physical_plan: Option<Box<dyn tidb_planner_core_base::PhysicalPlanHandle>>,
     /// Go `IDForStorage`.
     pub id_for_storage: i32,
     /// Go `OptFlag`: the optimiser flag set for the whole CTE.

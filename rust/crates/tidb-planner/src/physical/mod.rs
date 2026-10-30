@@ -1697,6 +1697,7 @@ pub fn find_best_task_4_logical_cte(
     let seed_plan = class
         .seed_part_physical_plan
         .as_deref()
+        .and_then(|plan| plan.as_any().downcast_ref::<PhysicalPlan>())
         .ok_or_else(|| PlanError::internal("findBestTask4LogicalCTE: seed physical plan is nil"))?;
     // Go master `physical_cte.go:60` names the CTE scan node with
     // `plancodec.TypeCTE`, which master defines as "CTEFullScan"
@@ -1716,6 +1717,7 @@ pub fn find_best_task_4_logical_cte(
         recursive_plan: class
             .recursive_part_physical_plan
             .as_deref()
+            .and_then(|plan| plan.as_any().downcast_ref::<PhysicalPlan>())
             .map(PhysicalPlan::deep_clone)
             .map(Box::new),
         id_for_storage: class.id_for_storage,
@@ -4098,6 +4100,16 @@ pub enum PhysicalPlan {
     Window(PhysicalWindow),
     /// Go `physicalop.PhysicalUnionScan`.
     UnionScan(PhysicalUnionScan),
+}
+
+impl tidb_planner_core_base::PhysicalPlanHandle for PhysicalPlan {
+    fn stats_info(&self) -> Option<&StatsInfo> {
+        PhysicalPlan::stats_info(self)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 impl PhysicalPlan {

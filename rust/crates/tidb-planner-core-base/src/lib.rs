@@ -660,6 +660,18 @@ impl From<EvalError> for PlanError {
     }
 }
 
+/// Go `base.PhysicalPlan` as a logical operator holds one: a CTE class keeps
+/// its seed and recursive parts' physical plans, whose statistics
+/// `LogicalCTE.DeriveStats` reads; the planner that built them reads them back
+/// as its own plan type (Go's type assertion).
+pub trait PhysicalPlanHandle: std::fmt::Debug {
+    /// Go `StatsInfo()`.
+    fn stats_info(&self) -> Option<&StatsInfo>;
+
+    /// The concrete plan, for the planner's own type assertion.
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
 /// Go `PlanContext.SetSkipPlanCache`: the session side effect the expression
 /// and rule simplifiers and the estimator perform.
 pub trait PlanCacheMarker {
