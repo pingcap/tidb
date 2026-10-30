@@ -848,3 +848,21 @@ set sql_mode='';
 select cast(compress('b') as char);
 --disable_warnings
 set sql_mode=DEFAULT;
+
+# Explicit COLLATE must survive materializing expression join keys.
+CREATE DATABASE issue70860;
+CREATE TABLE issue70860.x(c VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin);
+CREATE TABLE issue70860.y(c VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci);
+INSERT INTO issue70860.x VALUES ('a');
+INSERT INTO issue70860.y VALUES ('A');
+SELECT COUNT(*) FROM issue70860.x x JOIN issue70860.y y ON CONVERT(x.c USING utf8mb4) COLLATE utf8mb4_unicode_ci = y.c;
+SELECT COUNT(*) FROM issue70860.x x JOIN issue70860.y y ON CONCAT(x.c,'') COLLATE utf8mb4_unicode_ci = y.c;
+SELECT COUNT(*) FROM issue70860.x x JOIN issue70860.y y ON SUBSTRING(x.c,1) COLLATE utf8mb4_unicode_ci = y.c;
+SELECT COUNT(*) FROM issue70860.x x JOIN issue70860.y y ON IFNULL(x.c,'') COLLATE utf8mb4_unicode_ci = y.c;
+SELECT COUNT(*) FROM issue70860.x x JOIN issue70860.y y ON LOWER(x.c) COLLATE utf8mb4_unicode_ci = y.c;
+SELECT COUNT(*) FROM issue70860.x x JOIN issue70860.y y ON x.c COLLATE utf8mb4_unicode_ci = y.c;
+SELECT COUNT(*) FROM issue70860.x x JOIN issue70860.y y ON CONVERT(x.c USING utf8mb4) COLLATE utf8mb4_unicode_ci = y.c COLLATE utf8mb4_unicode_ci;
+SELECT COUNT(*) FROM issue70860.x WHERE CONVERT(c USING utf8mb4) COLLATE utf8mb4_unicode_ci = 'A';
+SELECT COUNT(*) FROM issue70860.x x JOIN issue70860.y y ON LOWER(x.c) COLLATE utf8mb4_bin = y.c;
+SELECT COUNT(*) FROM issue70860.x x JOIN issue70860.y y ON LOWER(x.c) = y.c;
+DROP DATABASE issue70860;

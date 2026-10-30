@@ -690,18 +690,31 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 		if substituted {
 			var newFunc Expression
 			var err error
+			init := defaultScalarFunctionCheck
+			if v.Coercibility() == CoercibilityExplicit {
+				// Rebuilding derives metadata from the arguments, but an explicit
+				// COLLATE belongs to the expression itself. Restore it before folding.
+				init = func(sf *ScalarFunction) (*ScalarFunction, error) {
+					chs, coll := v.CharsetAndCollation()
+					sf.RetType.SetCharset(chs)
+					sf.RetType.SetCollate(coll)
+					sf.SetCharsetAndCollation(chs, coll)
+					sf.SetCoercibility(CoercibilityExplicit)
+					return defaultScalarFunctionCheck(sf)
+				}
+			}
 			switch v.FuncName.L {
 			case ast.EQ:
 				// keep order as col=value to avoid flaky test.
 				args := refExprArr.Result()
 				switch args[0].(type) {
 				case *Constant:
-					newFunc, err = NewFunction(ctx, v.FuncName.L, v.RetType, args[1], args[0])
+					newFunc, err = NewFunctionWithInit(ctx, v.FuncName.L, v.RetType, init, args[1], args[0])
 				default:
-					newFunc, err = NewFunction(ctx, v.FuncName.L, v.RetType, args[0], args[1])
+					newFunc, err = NewFunctionWithInit(ctx, v.FuncName.L, v.RetType, init, args[0], args[1])
 				}
 			default:
-				newFunc, err = NewFunction(ctx, v.FuncName.L, v.RetType, refExprArr.Result()...)
+				newFunc, err = NewFunctionWithInit(ctx, v.FuncName.L, v.RetType, init, refExprArr.Result()...)
 			}
 			if err != nil {
 				return true, true, v
