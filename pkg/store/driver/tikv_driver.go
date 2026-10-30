@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/metrics"
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -295,6 +296,31 @@ func newSafePointKV(
 
 func (d *TiKVDriver) pdClientOptions() []opt.ClientOption {
 	opts := []opt.ClientOption{
+		opt.ClientOption(func(o *opt.Option) {
+			interval := time.Duration(float64(time.Millisecond) * vardef.DefTiDBTSOClientBatchMaxWaitTime)
+			if err := o.SetMaxTSOBatchWaitInterval(interval); err != nil {
+				panic(fmt.Sprintf("invalid default %s: %v", vardef.TiDBTSOClientBatchMaxWaitTime, err))
+			}
+		}),
+		opt.ClientOption(func(o *opt.Option) {
+			o.SetEnableTSOFollowerProxy(vardef.DefTiDBEnableTSOFollowerProxy)
+		}),
+		opt.WithEnableFollowerHandle(vardef.DefPDEnableFollowerHandleRegion),
+		opt.ClientOption(func(o *opt.Option) {
+			var concurrency int
+			switch vardef.DefTiDBTSOClientRPCMode {
+			case vardef.TSOClientRPCModeDefault:
+				concurrency = 1
+			case vardef.TSOClientRPCModeParallel:
+				concurrency = 2
+			case vardef.TSOClientRPCModeParallelFast:
+				concurrency = 4
+			default:
+				panic(fmt.Sprintf("invalid default %s: %s", vardef.TiDBTSOClientRPCMode, vardef.DefTiDBTSOClientRPCMode))
+			}
+			o.SetTSOClientRPCConcurrency(concurrency)
+		}),
+		opt.WithEnableRouterClient(vardef.DefTiDBEnableBatchQueryRegion),
 		opt.WithGRPCDialOptions(
 			// keep the same with etcd, see
 			// https://github.com/etcd-io/etcd/blob/5704c6148d798ea444db26a966394406d8c10526/server/etcdserver/api/v3rpc/grpc.go#L34

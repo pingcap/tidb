@@ -16,8 +16,10 @@ package driver
 
 import (
 	"testing"
+	"time"
 
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/pd/client/opt"
@@ -46,4 +48,9 @@ func TestSetDefaultAndOptions(t *testing.T) {
 		apply(pdOpt)
 	}
 	require.Equal(t, metricscommon.GetConstLabels(), pdOpt.MetricsLabels)
+	require.Equal(t, time.Duration(float64(time.Millisecond)*vardef.DefTiDBTSOClientBatchMaxWaitTime), pdOpt.GetMaxTSOBatchWaitInterval())
+	require.Equal(t, vardef.DefTiDBEnableTSOFollowerProxy, pdOpt.GetEnableTSOFollowerProxy())
+	require.Equal(t, vardef.DefPDEnableFollowerHandleRegion, pdOpt.GetEnableFollowerHandle())
+	require.Equal(t, 1, pdOpt.GetTSOClientRPCConcurrency())
+	require.Equal(t, vardef.DefTiDBEnableBatchQueryRegion, pdOpt.GetEnableRouterClient())
 }
