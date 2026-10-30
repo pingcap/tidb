@@ -148,3 +148,67 @@ func TestDistSQLSharedKVRequestRace(t *testing.T) {
 		}
 	}
 }
+
+func TestIndexReaderLimitConcurrencyWithUniqueKeyPoints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t_no_uk")
+	// Like a secondary-index table: a non-unique index on (listing_id, object_id) for ordering, plus a
+	// unique index on listing_id that bounds every listing_id point to at most one row.
+	tk.MustExec(`create table t (
+		object_id bigint primary key clustered,
+		listing_id bigint default null,
+		key idx_lo (listing_id, object_id),
+		unique key uk_l (listing_id))`)
+	tk.MustExec(`create table t_no_uk (
+		object_id bigint primary key clustered,
+		listing_id bigint default null,
+		key idx_lo (listing_id, object_id))`)
+	for i := range 200 {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i*10))
+		tk.MustExec(fmt.Sprintf("insert into t_no_uk values (%d, %d)", i, i*10))
+	}
+
+	inList := func(n int) string {
+		ids := make([]string, 0, n)
+		for i := range n {
+			ids = append(ids, fmt.Sprintf("%d", i*10))
+		}
+		return strings.Join(ids, ",")
+	}
+	expectConcurrency := func(expected int) context.Context {
+		return context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
+			require.Equal(t, expected, req.Concurrency)
+		})
+	}
+
+	// 35 unique points can never reach LIMIT 100, so the Scan -> Limit request keeps the default concurrency.
+	query := "select listing_id, object_id from %s force index(idx_lo) where listing_id in (%s) " +
+		"order by listing_id, object_id limit 100"
+	q := fmt.Sprintf(query, "t", inList(35))
+	// The request must be a Scan -> Limit DAG under an IndexReader: columns are id, estRows, task, access object,
+	// operator info.
+	var hasReader, hasCopLimit bool
+	for _, row := range tk.MustQuery("explain format='brief' " + q).Rows() {
+		id, task, info := row[0].(string), row[2].(string), row[4].(string)
+		hasReader = hasReader || strings.Contains(id, "IndexReader")
+		hasCopLimit = hasCopLimit || (strings.Contains(id, "Limit") && task == "cop[tikv]" && info == "offset:0, count:100")
+	}
+	require.True(t, hasReader)
+	require.True(t, hasCopLimit)
+	require.Len(t, tk.MustQueryWithContext(expectConcurrency(vardef.DefDistSQLScanConcurrency), q).Rows(), 35)
+
+	// More unique points than the limit: the limit may stop the scan early, keep the minimal concurrency.
+	q = fmt.Sprintf(query, "t", inList(101))
+	require.Len(t, tk.MustQueryWithContext(expectConcurrency(1), q).Rows(), 100)
+
+	// Without a unique key on listing_id, a point may match many rows.
+	q = fmt.Sprintf(query, "t_no_uk", inList(35))
+	require.Len(t, tk.MustQueryWithContext(expectConcurrency(1), q).Rows(), 35)
+
+	// A unique index allows duplicated NULLs.
+	q = "select listing_id, object_id from t force index(idx_lo) where listing_id is null " +
+		"order by listing_id, object_id limit 100"
+	require.Len(t, tk.MustQueryWithContext(expectConcurrency(1), q).Rows(), 0)
+}

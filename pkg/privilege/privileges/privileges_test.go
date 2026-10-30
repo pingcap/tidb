@@ -798,6 +798,124 @@ func TestShowCreateTable(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 }
 
+func TestExchangePartitionChecksTargetTablePrivileges(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE DATABASE exchange_src`)
+	rootTk.MustExec(`CREATE DATABASE exchange_dst`)
+	rootTk.MustExec(`CREATE TABLE exchange_src.pt (a int primary key) PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (100),
+		PARTITION p1 VALUES LESS THAN (200)
+	)`)
+	rootTk.MustExec(`CREATE TABLE exchange_dst.nt (a int primary key)`)
+	rootTk.MustExec(`CREATE USER 'exchange_low'@'%'`)
+	rootTk.MustExec(`GRANT ALTER, DROP ON exchange_src.* TO 'exchange_low'@'%'`)
+
+	tk := testkit.NewTestKit(t, store)
+	authLow := func() {
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
+			Username: "exchange_low", Hostname: "%", AuthUsername: "exchange_low", AuthHostname: "%",
+		}, nil, nil, nil))
+	}
+	exchange := func() error {
+		authLow()
+		return tk.ExecToErr(`ALTER TABLE exchange_src.pt EXCHANGE PARTITION p0 WITH TABLE exchange_dst.nt`)
+	}
+
+	// EXCHANGE PARTITION swaps the data of both tables, so to match MySQL it requires
+	// ALTER, INSERT, CREATE and DROP on BOTH the partitioned table (pt) and the
+	// non-partitioned table (nt). Grant them one missing privilege at a time and assert
+	// each is enforced; in particular DROP on nt guards against destroying/replacing nt's
+	// existing data without the DROP privilege.
+
+	// Missing CREATE on the target table nt.
+	err := exchange()
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+	require.Contains(t, err.Error(), "CREATE command denied")
+	require.Contains(t, err.Error(), "'nt'")
+
+	// nt now has CREATE+INSERT, but the partitioned table pt still lacks INSERT.
+	rootTk.MustExec(`GRANT CREATE, INSERT ON exchange_dst.* TO 'exchange_low'@'%'`)
+	err = exchange()
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+	require.Contains(t, err.Error(), "INSERT command denied")
+	require.Contains(t, err.Error(), "'pt'")
+
+	// pt now has INSERT+CREATE, but the target table nt still lacks ALTER.
+	rootTk.MustExec(`GRANT INSERT, CREATE ON exchange_src.* TO 'exchange_low'@'%'`)
+	err = exchange()
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+	require.Contains(t, err.Error(), "ALTER command denied")
+	require.Contains(t, err.Error(), "'nt'")
+
+	// nt now has ALTER, but still lacks DROP: exchanging replaces nt's existing data, which
+	// MySQL gates behind DROP on nt. Without DROP the statement must still be denied.
+	rootTk.MustExec(`GRANT ALTER ON exchange_dst.* TO 'exchange_low'@'%'`)
+	err = exchange()
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+	require.Contains(t, err.Error(), "DROP command denied")
+	require.Contains(t, err.Error(), "'nt'")
+
+	// Full MySQL-aligned privilege set on both tables -> allowed.
+	rootTk.MustExec(`GRANT DROP ON exchange_dst.* TO 'exchange_low'@'%'`)
+	authLow()
+	tk.MustExec(`ALTER TABLE exchange_src.pt EXCHANGE PARTITION p0 WITH TABLE exchange_dst.nt`)
+}
+
+func TestExchangePartitionRejectsReservedSystemTableTarget(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`CREATE DATABASE exchange_reserved`)
+	tk.MustExec(`CREATE TABLE exchange_reserved.pt (a int primary key) PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (100),
+		PARTITION p1 VALUES LESS THAN (200)
+	)`)
+
+	err := tk.ExecToErr(`ALTER TABLE exchange_reserved.pt EXCHANGE PARTITION p0 WITH TABLE mysql.tidb_ddl_job`)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Exchange partition on system table 'mysql.tidb_ddl_job'")
+}
+
+func TestRenameTablesChecksAllPairsPrivileges(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE DATABASE rename_priv_atk`)
+	rootTk.MustExec(`CREATE DATABASE rename_priv_vic`)
+	rootTk.MustExec(`CREATE USER 'rename_low'@'%'`)
+	rootTk.MustExec(`GRANT ALL PRIVILEGES ON rename_priv_atk.* TO 'rename_low'@'%'`)
+	rootTk.MustExec(`CREATE TABLE rename_priv_atk.pair0a (id INT)`)
+	rootTk.MustExec(`CREATE TABLE rename_priv_atk.pair0b (id INT)`)
+	rootTk.MustExec(`CREATE TABLE rename_priv_vic.secret (id INT)`)
+
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
+		Username:     "rename_low",
+		Hostname:     "localhost",
+		AuthUsername: "rename_low",
+		AuthHostname: "%",
+	}, nil, nil, nil))
+
+	tk.MustGetErrCode(`RENAME TABLE rename_priv_atk.pair0a TO rename_priv_atk.pair0a_tmp,
+		rename_priv_vic.secret TO rename_priv_atk.secret_stolen`, errno.ErrTableaccessDenied)
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'pair0a'`).Check(testkit.Rows("pair0a"))
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'pair0a_tmp'`).Check(testkit.Rows())
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_vic LIKE 'secret'`).Check(testkit.Rows("secret"))
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'secret_stolen'`).Check(testkit.Rows())
+
+	tk.MustGetErrCode(`RENAME TABLE rename_priv_atk.pair0a TO rename_priv_atk.pair0a_tmp,
+		rename_priv_atk.pair0b TO rename_priv_vic.pair0b_tmp`, errno.ErrTableaccessDenied)
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'pair0a'`).Check(testkit.Rows("pair0a"))
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'pair0a_tmp'`).Check(testkit.Rows())
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'pair0b'`).Check(testkit.Rows("pair0b"))
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_vic LIKE 'pair0b_tmp'`).Check(testkit.Rows())
+
+	tk.MustExec(`RENAME TABLE rename_priv_atk.pair0a TO rename_priv_atk.pair0a_tmp,
+		rename_priv_atk.pair0b TO rename_priv_atk.pair0b_tmp`)
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'pair0a_tmp'`).Check(testkit.Rows("pair0a_tmp"))
+	rootTk.MustQuery(`SHOW TABLES FROM rename_priv_atk LIKE 'pair0b_tmp'`).Check(testkit.Rows("pair0b_tmp"))
+}
+
 func TestAnalyzeTable(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 
@@ -2496,4 +2614,39 @@ func testProtectUserAndRoleWithRestrictedPrivileges(t *testing.T, semVer string)
 func TestProtectUserAndRoleWithRestrictedPrivileges(t *testing.T) {
 	testProtectUserAndRoleWithRestrictedPrivileges(t, sem.V1)
 	testProtectUserAndRoleWithRestrictedPrivileges(t, sem.V2)
+}
+
+func TestInsertValuesSubqueryChecksSelectPrivilege(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE DATABASE insert_subq_secret`)
+	rootTk.MustExec(`CREATE TABLE insert_subq_secret.victim (id INT PRIMARY KEY, secret VARCHAR(32))`)
+	rootTk.MustExec(`INSERT INTO insert_subq_secret.victim VALUES (1, 'topsecret')`)
+	rootTk.MustExec(`CREATE DATABASE insert_subq_atk`)
+	rootTk.MustExec(`CREATE TABLE insert_subq_atk.exfil (id INT, v VARCHAR(64))`)
+	rootTk.MustExec(`CREATE USER 'insert_subq_low'@'%'`)
+	// Only the attacker's own schema is granted; the victim schema is off limits.
+	rootTk.MustExec(`GRANT SELECT, INSERT ON insert_subq_atk.* TO 'insert_subq_low'@'%'`)
+
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "insert_subq_low", Hostname: "%", AuthUsername: "insert_subq_low", AuthHostname: "%",
+	}, nil, nil, nil))
+
+	// A scalar subquery in the VALUES list must require SELECT on the source table,
+	// exactly like `INSERT ... SELECT` does.
+	err := tk.ExecToErr(`INSERT INTO insert_subq_atk.exfil VALUES (1, (SELECT secret FROM insert_subq_secret.victim WHERE id = 1))`)
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied), "unexpected error: %v", err)
+	require.Contains(t, err.Error(), "SELECT command denied")
+	require.Contains(t, err.Error(), "'victim'")
+
+	// The same read through INSERT ... SELECT is already checked.
+	err = tk.ExecToErr(`INSERT INTO insert_subq_atk.exfil SELECT id, secret FROM insert_subq_secret.victim`)
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
+
+	// Once SELECT is granted the statement is allowed and the value is written.
+	rootTk.MustExec(`GRANT SELECT ON insert_subq_secret.* TO 'insert_subq_low'@'%'`)
+	tk.MustExec(`INSERT INTO insert_subq_atk.exfil VALUES (2, (SELECT secret FROM insert_subq_secret.victim WHERE id = 1))`)
+	rootTk.MustQuery(`SELECT v FROM insert_subq_atk.exfil WHERE id = 2`).Check(testkit.Rows("topsecret"))
 }

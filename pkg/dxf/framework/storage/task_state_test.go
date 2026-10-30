@@ -139,10 +139,15 @@ func TestTaskState(t *testing.T) {
 	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 	checkTaskStateStep(t, task, proto.TaskStateRunning, proto.StepOne)
-	require.NoError(t, gm.SucceedTask(ctx, id))
+	// SucceedTask persists the task meta so schedulers can record a summary
+	// collected when the task finishes.
+	newMeta := []byte(`{"summary":{"merge_temp_index_txn_kv_size":42}}`)
+	task.Meta = newMeta
+	require.NoError(t, gm.SucceedTask(ctx, task))
 	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 	checkTaskStateStep(t, task, proto.TaskStateSucceed, proto.StepDone)
+	require.JSONEq(t, string(newMeta), string(task.Meta))
 }
 
 func TestWithNewTxnRollbackOnCanceledCtx(t *testing.T) {

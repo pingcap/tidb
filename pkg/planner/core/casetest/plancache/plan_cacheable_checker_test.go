@@ -484,6 +484,29 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		require.True(t, ok)
 	}
 
+	t.Run("CoalesceWithoutSchema", func(t *testing.T) {
+		vars := sctx.GetSessionVars()
+		previous := vars.EnableNonPreparedPlanCacheForDML
+		vars.EnableNonPreparedPlanCacheForDML = true
+		defer func() { vars.EnableNonPreparedPlanCacheForDML = previous }()
+		for _, sql := range []string{
+			"update test.t set a=coalesce(1,a)",
+			"update test.t set a=coalesce(1,b)",
+		} {
+			stmt, err := p.ParseOneStmt(sql, charset, collation)
+			require.NoError(t, err)
+			require.NotPanics(t, func() {
+				ok, reason := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, nil)
+				require.False(t, ok)
+				require.Equal(t, "query has un-cacheable functions", reason)
+			}, sql)
+			// Missing metadata must not disable the supported path when the
+			// same checker is reused with a valid schema.
+			ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
+			require.True(t, ok)
+		}
+	})
+
 	// issue:46760
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t (a int)`)

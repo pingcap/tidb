@@ -322,27 +322,41 @@ func TestNetworkBytesAccumulation(t *testing.T) {
 // TestOnExecutionBeginFinishRU verifies one begin/finish pair emits exactly
 // one RU key with the expected exec-count, RU total, and duration.
 func TestOnExecutionBeginFinishRU(t *testing.T) {
-	stats := CreateStatementStats()
-	stats.OnExecutionBegin([]byte("sql1"), []byte("plan1"), &ExecBeginInfo{
-		User:         "user1",
-		TopRUEnabled: true,
-	})
-	ru := util.NewRUDetailsWith(10.0, 20.0, time.Millisecond)
-	stats.OnExecutionFinished([]byte("sql1"), []byte("plan1"), &ExecFinishInfo{
-		User:         "user1",
-		TopRUEnabled: true,
-		RUDetails:    ru,
-		ExecDuration: time.Second,
-	})
+	for _, tc := range []struct {
+		name       string
+		version    rmclient.RUVersion
+		expectedRU float64
+	}{
+		{"v1", rmclient.RUVersionV1, 30},
+		{"v2", rmclient.RUVersionV2, 42},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stats := CreateStatementStats()
+			t.Cleanup(stats.SetFinished)
+			stats.OnExecutionBegin([]byte("sql1"), []byte("plan1"), &ExecBeginInfo{
+				User:         "user1",
+				TopRUEnabled: true,
+				RUVersion:    tc.version,
+			})
+			ru := util.NewRUDetailsWith(10.0, 20.0, time.Millisecond)
+			stats.OnExecutionFinished([]byte("sql1"), []byte("plan1"), &ExecFinishInfo{
+				User:         "user1",
+				TopRUEnabled: true,
+				RUDetails:    ru,
+				TotalRUV2:    42,
+				ExecDuration: time.Second,
+			})
 
-	m := stats.MergeRUInto()
-	require.Len(t, m, 1)
-	key := RUKey{User: "user1", SQLDigest: BinaryDigest("sql1"), PlanDigest: BinaryDigest("plan1")}
-	incr, ok := m[key]
-	require.True(t, ok)
-	require.Equal(t, uint64(1), incr.ExecCount)
-	require.Equal(t, 30.0, incr.TotalRU)
-	require.Equal(t, uint64(time.Second.Nanoseconds()), incr.ExecDuration)
+			m := stats.MergeRUInto()
+			require.Len(t, m, 1)
+			key := RUKey{User: "user1", SQLDigest: BinaryDigest("sql1"), PlanDigest: BinaryDigest("plan1")}
+			incr, ok := m[key]
+			require.True(t, ok)
+			require.Equal(t, uint64(1), incr.ExecCount)
+			require.Equal(t, tc.expectedRU, incr.TotalRU)
+			require.Equal(t, uint64(time.Second.Nanoseconds()), incr.ExecDuration)
+		})
+	}
 }
 
 // TestMergeRUIntoInFlightSamplingAndFinishDedup verifies tick sampling plus

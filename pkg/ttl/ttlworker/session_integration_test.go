@@ -22,15 +22,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
+	rumetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session/syssession"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
+	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -451,4 +458,108 @@ func TestNewScanSession(t *testing.T) {
 		// internal should be closed because restore failed
 		require.True(t, sysSe.IsInternalClosed())
 	}
+}
+
+func TestTTLJobRUAttribution(t *testing.T) {
+	original := config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
+	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(true)
+	t.Cleanup(func() { config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(original) })
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create table test.ttl_ru_data(id int primary key, ts datetime) ttl=ts+interval 1 day")
+	tblInfo, err := dom.InfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("ttl_ru_data"))
+	require.NoError(t, err)
+	tbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tblInfo, ast.CIStr{})
+	require.NoError(t, err)
+	se, closeSe := sessionFactory(t, dom)()
+	defer closeSe()
+	vars := se.GetSessionVars()
+	ctx := context.Background()
+	manager := ttlworker.NewJobManager("ttl-ru-owner", nil, store, nil, nil)
+	manager.InfoSchemaCache().Tables[tbl.ID] = tbl
+
+	const jobID = "ttl-ru-job"
+	globalCounts, globalRefreshes, jobCommits := 0, 0, 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/observeStatementRUOwnerInstallForTest", func(stmt *executor.ExecStmt) {
+		if stmt.Ctx.GetSessionVars() != vars {
+			return
+		}
+		sql := stmt.GetTextToLog(false)
+		if strings.HasPrefix(sql, "SELECT LOW_PRIORITY ") && strings.HasSuffix(sql, " FROM mysql.tidb_ttl_table_status") {
+			require.Empty(t, vars.TTLJobID, sql)
+			globalRefreshes++
+			return
+		}
+		if strings.EqualFold(sql, "SELECT count(1) FROM mysql.tidb_ttl_task WHERE status = 'running'") {
+			require.Empty(t, vars.TTLJobID, sql)
+			globalCounts++
+			return
+		}
+		require.Empty(t, vars.TTLJobID, sql)
+		if strings.EqualFold(sql, "COMMIT") {
+			jobCommits++
+		}
+	})
+
+	before := testutil.ToFloat64(rumetrics.RUV2TTLTotal)
+	// These maintenance queries run without a user job and remain uncharged.
+	for range 2 {
+		_, err = se.ExecuteSQL(ctx, "select * from mysql.tidb_ttl_table_status")
+		require.NoError(t, err)
+		_, err = se.ExecuteSQL(ctx, "select count(*) from mysql.tidb_ttl_task")
+		require.NoError(t, err)
+	}
+	require.Equal(t, before, testutil.ToFloat64(rumetrics.RUV2TTLTotal))
+
+	now := se.Now()
+	job, err := manager.LockJob(ctx, se, tbl, now, jobID, false)
+	require.NoError(t, err)
+	require.Equal(t, 1, globalRefreshes, "job creation refreshes the global table-status cache")
+	require.NoError(t, manager.UpdateHeartBeatForJob(ctx, se, now.Add(time.Minute), job))
+	taskManager := ttlworker.NewTaskManager(ctx, nil, manager.InfoSchemaCache(), "ttl-ru-owner", store)
+	task, err := taskManager.LockScanTask(se, &cache.TTLTask{JobID: jobID, ScanID: 0, TableID: tbl.ID}, se.Now())
+	require.NoError(t, err)
+	require.NoError(t, taskManager.UpdateHeartBeatForTask(ctx, se, now.Add(time.Minute), task))
+	task.SetResult(nil)
+	require.NoError(t, taskManager.ReportTaskFinished(se, se.Now(), task))
+	// Taking over an expired owner is also metadata work.
+	takeoverManager := ttlworker.NewJobManager("ttl-ru-takeover", nil, store, nil, nil)
+	job, err = takeoverManager.LockJob(ctx, se, tbl, now.Add(time.Hour), "", false)
+	require.NoError(t, err)
+	require.Equal(t, 2, globalRefreshes, "takeover also refreshes the global table-status cache")
+	require.NoError(t, job.Finish(se, se.Now(), &ttlworker.TTLSummary{}))
+	require.Equal(t, 1, globalCounts)
+	require.Equal(t, 4, jobCommits, "creation, task claim, takeover and job completion")
+	require.Equal(t, before, testutil.ToFloat64(rumetrics.RUV2TTLTotal))
+	require.Empty(t, vars.TTLJobID)
+
+	before = testutil.ToFloat64(rumetrics.RUV2TTLTotal)
+	_, err = se.ExecuteSQL(ctx, "select * from mysql.tidb_ttl_job_history")
+	require.NoError(t, err)
+	require.Equal(t, before, testutil.ToFloat64(rumetrics.RUV2TTLTotal))
+}
+
+func TestWithSessionUnderSEMv2(t *testing.T) {
+	require.NoError(t, semv2.EnableBy(&semv2.Config{
+		Version:     "1.0",
+		TiDBVersion: "v0.0.0",
+		RestrictedVariables: []semv2.VariableRestriction{
+			{Name: vardef.TiDBEnable1PC, Readonly: true},
+			{Name: vardef.TiDBEnableAsyncCommit, Readonly: true},
+		},
+	}))
+	t.Cleanup(semv2.Disable)
+
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
+
+	// The TTL worker takes its session from an internal session pool, so the
+	// session has no privilege manager bound. Preparing the session sets some
+	// variables which may be read-only under SEM, and that used to panic with a
+	// nil pointer dereference, which left the TTL job manager unable to run.
+	require.NoError(t, ttlworker.WithSessionForTest(dom.AdvancedSysSessionPool(), func(se session.Session) error {
+		require.NotNil(t, se)
+		return nil
+	}))
 }

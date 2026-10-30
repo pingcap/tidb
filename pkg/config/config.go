@@ -38,6 +38,7 @@ import (
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config/configtypes"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
@@ -143,7 +144,6 @@ const (
 	maxOfMaxAllowedPacket = 1 << 30
 	// DefMaxAllowedPacket is the default value of max_allowed_packet.
 	DefMaxAllowedPacket = 64 << 20
-	UnavailableIP       = "<nil>"
 )
 
 // Valid config maps
@@ -256,11 +256,17 @@ type Config struct {
 	IndexLimit                 int                     `toml:"index-limit" json:"index-limit"`
 	TableColumnCountLimit      uint32                  `toml:"table-column-count-limit" json:"table-column-count-limit"`
 	GracefulWaitBeforeShutdown int                     `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
+	// GracefulCloseConnectionsTimeout is the number of seconds the server waits during shutdown for running
+	// statements and open transactions to finish before it kills the remaining connections.
+	GracefulCloseConnectionsTimeout int `toml:"graceful-close-connections-timeout" json:"graceful-close-connections-timeout"`
 	// AlterPrimaryKey is used to control alter primary key feature.
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
 	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
+	// EnableStorageClass permits storage-class DDL and exposes transition status queries.
+	// It defaults to false. Existing data and transition policies are unaffected when disabled.
+	EnableStorageClass bool `toml:"enable-storage-class" json:"enable-storage-class"`
 	// EnableTableLock indicate whether enable table lock.
 	// TODO: remove this after table lock features stable.
 	EnableTableLock     bool   `toml:"enable-table-lock" json:"enable-table-lock"`
@@ -632,8 +638,11 @@ type Log struct {
 	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
 	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 
-	// Make tidb panic if write log operation hang in `Timeout` seconds
+	// Timeout is the maximum seconds allowed for a log write/sync operation.
 	Timeout int `toml:"timeout" json:"timeout"`
+	// TimeoutAction controls the action when log write/sync timeout occurs.
+	// Valid values: panic, discard.
+	TimeoutAction string `toml:"timeout-action" json:"timeout-action"`
 }
 
 // Instance is the section of instance scope system variables.
@@ -1180,6 +1189,7 @@ var defaultConf = Config{
 		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
 		EnableSlowLog:       *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
+		TimeoutAction:       zaplog.LogTimeoutActionPanic,
 	},
 	Instance: Instance{
 		TiDBGeneralLog:              false,
@@ -1289,6 +1299,7 @@ var defaultConf = Config{
 	HostedEmbedding:            HostedEmbedding{Enabled: false},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            false,
+	EnableStorageClass:         false,
 	Labels:                     make(map[string]string),
 	EnableGlobalIndex:          false,
 	Security: Security{
@@ -1320,6 +1331,7 @@ var defaultConf = Config{
 	TiDBEnableExitCheck:                  false,
 	InMemSlowQueryTopNNum:                30,
 	InMemSlowQueryRecentNum:              500,
+	GracefulCloseConnectionsTimeout:      15,
 	CSE: CSE{
 		ColumnarStoreType:      "tiflash",
 		ColumnarCollectTimeout: 5 * time.Second,
@@ -1731,8 +1743,14 @@ func (c *Config) Valid() error {
 		// if two options conflict, we will use the value of EnableTimestamp
 		c.Log.DisableTimestamp = nbUnset
 	}
-	if c.Security.SkipGrantTable && !hasRootPrivilege() {
-		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
+	if c.Security.SkipGrantTable {
+		if diagnosticmode.Enabled() {
+			if c.Socket == "" || (c.Host != "" && c.Port != 0) {
+				return fmt.Errorf("diagnostic mode with skip-grant-table requires a Unix socket and no MySQL TCP listener")
+			}
+		} else if !hasRootPrivilege() {
+			return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
+		}
 	}
 	if len(c.ErrorMessageExtensions) > 0 && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("error-msg-extension can only be configured when deploy-mode is starter")
@@ -1791,8 +1809,19 @@ func (c *Config) Valid() error {
 	if c.IndexLimit < DefIndexLimit || c.IndexLimit > DefMaxOfIndexLimit {
 		return fmt.Errorf("index-limit should be [%d, %d]", DefIndexLimit, DefMaxOfIndexLimit)
 	}
+	if c.GracefulCloseConnectionsTimeout < 0 {
+		return fmt.Errorf("graceful-close-connections-timeout should not be negative")
+	}
 	if c.Log.File.MaxSize > MaxLogFileSize {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
+	}
+	switch strings.ToLower(c.Log.TimeoutAction) {
+	case "", zaplog.LogTimeoutActionPanic:
+		c.Log.TimeoutAction = zaplog.LogTimeoutActionPanic
+	case zaplog.LogTimeoutActionDiscard:
+		c.Log.TimeoutAction = zaplog.LogTimeoutActionDiscard
+	default:
+		return fmt.Errorf("log.timeout-action should be one of [%s, %s]", zaplog.LogTimeoutActionPanic, zaplog.LogTimeoutActionDiscard)
 	}
 	if c.TableColumnCountLimit < DefTableColumnCountLimit || c.TableColumnCountLimit > DefMaxOfTableColumnCountLimit {
 		return fmt.Errorf("table-column-limit should be [%d, %d]", DefIndexLimit, DefMaxOfTableColumnCountLimit)
@@ -1918,6 +1947,7 @@ func (l *Log) ToLogConfig() *logutil.LogConfig {
 	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.GeneralLogFile, l.File, l.getDisableTimestamp(),
 		func(config *zaplog.Config) { config.DisableErrorVerbose = l.getDisableErrorStack() },
 		func(config *zaplog.Config) { config.Timeout = l.Timeout },
+		func(config *zaplog.Config) { config.TimeoutAction = l.TimeoutAction },
 	)
 }
 

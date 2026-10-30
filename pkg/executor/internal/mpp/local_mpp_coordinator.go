@@ -208,11 +208,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(
 	for i := range pf.Sink.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
-	if !pf.IsRoot {
-		dagReq.EncodeType = tipb.EncodeType_TypeCHBlock
-	} else {
-		dagReq.EncodeType = tipb.EncodeType_TypeChunk
-	}
+	setMPPEncodeType(c.sessionCtx, dagReq, pf.IsRoot)
 	zoneHelper := taskZoneInfoHelper{}
 	zoneHelper.init(allTiFlashStoreInfo)
 	tasks := pf.Sink.GetSelfTasks()
@@ -979,4 +975,12 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 // GetNodeCnt returns the node count that involved in the mpp computation.
 func (c *localMppCoordinator) GetNodeCnt() int {
 	return c.nodeCnt
+}
+
+func setMPPEncodeType(sctx sessionctx.Context, dagReq *tipb.DAGRequest, isRoot bool) {
+	if !isRoot {
+		dagReq.EncodeType = tipb.EncodeType_TypeCHBlock
+		return
+	}
+	distsql.SetEncodeType(sctx.GetDistSQLCtx(), dagReq)
 }

@@ -48,6 +48,7 @@ go_test(
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_client_go_v2//tikvrpc/interceptor",
+        "@com_github_tikv_client_go_v2//txnkv/txnlock",
         "@io_opencensus_go//stats/view",
     ],
 )

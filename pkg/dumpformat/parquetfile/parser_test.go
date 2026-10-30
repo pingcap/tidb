@@ -37,6 +37,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/pkg/dumpformat/parsedef"
 	"github.com/pingcap/tidb/pkg/dumpformat/testutils"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
@@ -2150,4 +2151,37 @@ func TestTrackingAllocatorReallocateZeroLengthAndGrow(t *testing.T) {
 
 	allocator.Free(grown)
 	require.Equal(t, int64(0), allocator.currentAllocation.Load())
+}
+
+func TestParquetParserTooLargeRow(t *testing.T) {
+	bak := maxRowSize
+	t.Cleanup(func() {
+		maxRowSize = bak
+	})
+	maxRowSize = 1024
+
+	pc := []testutils.ParquetColumn{
+		{
+			Name:      "s",
+			Type:      parquet.Types.ByteArray,
+			Converted: schema.ConvertedTypes.UTF8,
+			Gen: func(numRows int) (any, []int16) {
+				data := make([]parquet.ByteArray, numRows)
+				defLevel := make([]int16, numRows)
+				for i := range numRows {
+					data[i] = parquet.ByteArray(strings.Repeat("d", maxRowSize*2))
+					defLevel[i] = 1
+				}
+				return data, defLevel
+			},
+		},
+	}
+
+	dir := t.TempDir()
+	name := "too-large-row.parquet"
+	require.NoError(t, testutils.WriteParquetFile(dir, name, pc, 1))
+
+	reader := newParquetParserForTest(context.Background(), t, dir, name, 0, FileMeta{})
+	err := reader.ReadRow()
+	require.ErrorIs(t, err, parsedef.ErrRowTooLarge)
 }

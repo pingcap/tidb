@@ -141,6 +141,41 @@ func TestIntegration(t *testing.T) {
 	defer etcd.Server.Stop()
 	metaCli := streamhelper.MetaDataClient{Client: cli}
 	t.Run("TestBasic", func(t *testing.T) { testBasic(t, metaCli, etcd) })
+	t.Run("TestS3EncryptionContext", func(t *testing.T) {
+		ctx := context.Background()
+		for _, input := range []struct {
+			name    string
+			query   string
+			encoded string
+		}{
+			{name: "omitted"},
+			{
+				name:    "configured",
+				query:   "?sse=aws:kms&sse-kms-context=%7B%22tenant%22%3A%22tenant-a%22%7D",
+				encoded: "eyJ0ZW5hbnQiOiJ0ZW5hbnQtYSJ9",
+			},
+		} {
+			t.Run(input.name, func(t *testing.T) {
+				backend, err := objstore.ParseBackend("s3://backup-bucket/prefix"+input.query, nil)
+				require.NoError(t, err)
+				task := simpleTask("s3_context_"+input.name, 1)
+				task.PBInfo.Storage = backend
+				require.NoError(t, metaCli.PutTask(ctx, task))
+				t.Cleanup(func() { require.NoError(t, metaCli.DeleteTask(ctx, task.PBInfo.Name)) })
+
+				// A new metadata client must recover the context from the persisted task.
+				reloaded := streamhelper.NewMetaDataClient(cli)
+				remoteTask, err := reloaded.GetTask(ctx, task.PBInfo.Name)
+				require.NoError(t, err)
+				require.Equal(t, input.encoded, remoteTask.Info.Storage.GetS3().GetSseKmsEncryptionContext())
+				require.NoError(t, reloaded.PauseTask(ctx, task.PBInfo.Name))
+				require.NoError(t, reloaded.ResumeTask(ctx, task.PBInfo.Name))
+				remoteTask, err = reloaded.GetTask(ctx, task.PBInfo.Name)
+				require.NoError(t, err)
+				require.Equal(t, input.encoded, remoteTask.Info.Storage.GetS3().GetSseKmsEncryptionContext())
+			})
+		}
+	})
 	t.Run("testGetStorageCheckpoint", func(t *testing.T) { testGetStorageCheckpoint(t, metaCli) })
 	t.Run("testGetGlobalCheckPointTS", func(t *testing.T) { testGetGlobalCheckPointTS(t, metaCli) })
 	t.Run("TestStreamListening", func(t *testing.T) { testStreamListening(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
@@ -301,8 +336,21 @@ func testGetGlobalCheckPointTS(t *testing.T, metaCli streamhelper.MetaDataClient
 	require.Equal(t, globalTS, uint64(1003))
 }
 
+// receiveTaskEvent waits up to 10 seconds for the next stream task event.
+func receiveTaskEvent(t *testing.T, ch <-chan streamhelper.TaskEvent) (streamhelper.TaskEvent, bool) {
+	t.Helper()
+	select {
+	case event, ok := <-ch:
+		return event, ok
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for stream task event")
+	}
+	return streamhelper.TaskEvent{}, false
+}
+
 func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	taskName := "simple"
 	taskInfo := simpleTask(taskName, 4)
 
@@ -314,28 +362,32 @@ func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	taskName2 := "simple2"
 	taskInfo2 := simpleTask(taskName2, 4)
 	require.NoError(t, metaCli.PutTask(ctx, taskInfo2))
-	require.NoError(t, metaCli.DeleteTask(ctx, taskName2))
 
-	first := <-ch
+	first, ok := receiveTaskEvent(t, ch)
+	require.True(t, ok)
 	require.Equal(t, first.Type, streamhelper.EventAdd)
 	require.Equal(t, first.Name, taskName)
 	require.ElementsMatch(t, first.Ranges, simpleRanges(4))
-	second := <-ch
+	second, ok := receiveTaskEvent(t, ch)
+	require.True(t, ok)
 	require.Equal(t, second.Type, streamhelper.EventDel)
 	require.Equal(t, second.Name, taskName)
-	third := <-ch
+	third, ok := receiveTaskEvent(t, ch)
+	require.True(t, ok)
 	require.Equal(t, third.Type, streamhelper.EventAdd)
 	require.Equal(t, third.Name, taskName2)
-	require.ElementsMatch(t, first.Ranges, simpleRanges(4))
-	forth := <-ch
+	require.ElementsMatch(t, third.Ranges, simpleRanges(4))
+	require.NoError(t, metaCli.DeleteTask(ctx, taskName2))
+	forth, ok := receiveTaskEvent(t, ch)
+	require.True(t, ok)
 	require.Equal(t, forth.Type, streamhelper.EventDel)
 	require.Equal(t, forth.Name, taskName2)
 	cancel()
-	fifth, ok := <-ch
+	fifth, ok := receiveTaskEvent(t, ch)
 	require.True(t, ok)
 	require.Equal(t, fifth.Type, streamhelper.EventErr)
 	require.ErrorIs(t, fifth.Err, context.Canceled)
-	item, ok := <-ch
+	item, ok := receiveTaskEvent(t, ch)
 	require.False(t, ok, "%v", item)
 }
 

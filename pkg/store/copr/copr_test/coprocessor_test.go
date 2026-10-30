@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -502,6 +503,41 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	// The byte budget is kept for TiKV DAG requests.
 	require.Equal(t, uint64(4*1024*1024), req.Paging.PagingSizeBytes)
 
+	// A byte budget bounds a page but is not a read-size prediction, so RPCs
+	// sent before any page is observed carry no pre-charge hint. Cancel at the
+	// pre-send hook so this does not depend on a TiKV response.
+	req = &kv.Request{
+		Tp:          kv.ReqTypeDAG,
+		StoreType:   kv.TiKV,
+		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(copr.BuildKeyRanges("a", "c"), nil),
+		Concurrency: 15,
+	}
+	req.Paging.PagingSizeBytes = uint64(4 * 1024 * 1024)
+	func() {
+		predictedReadBytes := make(chan uint64, 1)
+		hintCtx, cancelHint := context.WithTimeout(ctx, 5*time.Second)
+		defer cancelHint()
+		// Disable explicitly: the same failpoint is enabled again below with a test cleanup.
+		require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx", func(rpcReq *tikvrpc.Request) {
+			if _, ok := rpcReq.Req.(*coprocessor.Request); !ok {
+				return
+			}
+			select {
+			case predictedReadBytes <- rpcReq.PredictedReadBytes:
+			default:
+			}
+			cancelHint()
+		}))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx"))
+		}()
+		hintResp := copClient.Send(hintCtx, req, vars, opt)
+		_, err := hintResp.Next(hintCtx)
+		require.ErrorIs(t, err, context.Canceled)
+		require.NoError(t, hintResp.Close())
+		require.Zero(t, <-predictedReadBytes)
+	}()
+
 	// byte-budget paging only applies to TiKV DAG requests; a non-DAG request
 	// drops the budget so req.Paging.PagingSizeBytes is the single source of truth.
 	req = &kv.Request{
@@ -705,24 +741,74 @@ func TestQueryWithConcurrentSmallCop(t *testing.T) {
 	tk.MustExec("insert into t2 values (1,1), (18446744073709551615,2)")
 	tk.MustExec("set @@tidb_distsql_scan_concurrency=15")
 	tk.MustExec("set @@tidb_executor_concurrency=15")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop", `return(100)`))
+	tk.MustExec("set @@tidb_session_alias = 'concurrent_small_cop'")
+	assertCopWaves := func(sql string, indexRequests, tableRequests int) {
+		t.Helper()
+		waves := []struct {
+			scan     tipb.ExecType
+			expected int
+			arrived  atomic.Int32
+			ready    chan struct{}
+		}{
+			{scan: tipb.ExecType_TypeIndexScan, expected: indexRequests, ready: make(chan struct{})},
+			{scan: tipb.ExecType_TypeTableScan, expected: tableRequests, ready: make(chan struct{})},
+		}
+		// The deadline bounds a broken concurrency invariant, rather than
+		// imposing a latency requirement on a normally scheduled query.
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		const hook = "github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx"
+		require.NoError(t, failpoint.EnableCall(hook, func(req *tikvrpc.Request) {
+			copReq, ok := req.Req.(*coprocessor.Request)
+			if !ok || copReq.ConnectionAlias != "concurrent_small_cop" {
+				return
+			}
+			var dag tipb.DAGRequest
+			if err := dag.Unmarshal(copReq.Data); err != nil || len(dag.Executors) == 0 {
+				t.Errorf("invalid Cop DAG request: %v", err)
+				return
+			}
+			for i := range waves {
+				wave := &waves[i]
+				if dag.Executors[0].Tp != wave.scan {
+					continue
+				}
+				arrived := int(wave.arrived.Add(1))
+				if arrived > wave.expected {
+					t.Errorf("unexpected extra %s request: %s", wave.scan, sql)
+					return
+				}
+				if arrived == wave.expected {
+					close(wave.ready)
+				}
+				// No request in this wave may finish until all have reached the hook.
+				select {
+				case <-wave.ready:
+				case <-ctx.Done():
+					t.Errorf("only %d of %d %s requests overlapped: %s", wave.arrived.Load(), wave.expected, wave.scan, sql)
+				}
+				return
+			}
+			t.Errorf("unexpected Cop scan type %s: %s", dag.Executors[0].Tp, sql)
+		}))
+		defer func() { require.NoError(t, failpoint.Disable(hook)) }()
+		// Cancel before disabling the hook so a failed query releases blocked requests.
+		defer cancel()
+		tk.MustQueryWithContext(ctx, sql)
+		require.NoError(t, ctx.Err(), sql)
+		for i := range waves {
+			require.EqualValues(t, waves[i].expected, waves[i].arrived.Load(), sql)
+		}
+	}
+	// The index lookup needs one wave for all ten partition index scans,
+	// followed by one wave for all ten table lookups.
 	// Test for https://github.com/pingcap/tidb/pull/57522#discussion_r1875515863
-	start := time.Now()
-	tk.MustQuery("select sum(c) from t1 use index (idx_b) where b < 10;")
-	require.Less(t, time.Since(start), time.Millisecond*250)
-	// Test for index reader with partition table
-	start = time.Now()
-	tk.MustQuery("select id, b from t1 use index (idx_b) where b < 10;")
-	require.Less(t, time.Since(start), time.Millisecond*150)
-	// Test for table reader with partition table.
-	start = time.Now()
-	tk.MustQuery("select * from t1 where c < 10;")
-	require.Less(t, time.Since(start), time.Millisecond*150)
-	// 	// Test for table reader with 2 parts ranges.
-	start = time.Now()
-	tk.MustQuery("select * from t2 where id >= 1 and id <= 18446744073709551615 order by id;")
-	require.Less(t, time.Since(start), time.Millisecond*150)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop"))
+	assertCopWaves("select sum(c) from t1 use index (idx_b) where b < 10;", 10, 10)
+	// The covering index reader batches all ten partition ranges into one request.
+	assertCopWaves("select id, b from t1 use index (idx_b) where b < 10;", 1, 0)
+	// The table reader must scan all ten partitions in one wave.
+	assertCopWaves("select * from t1 where c < 10;", 0, 10)
+	// The ordered unsigned handle scan must read its two ranges in one wave.
+	assertCopWaves("select * from t2 where id >= 1 and id <= 18446744073709551615 order by id;", 0, 2)
 }
 
 func TestDMLWithLiteCopWorker(t *testing.T) {

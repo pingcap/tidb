@@ -55,9 +55,16 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, se sessionct
 }
 
 // CheckRequirementsBeforeInitDataFiles checks requirements that don't depend on
-// discovered data files, and is used by async-prepare submit path.
+// discovered data files and verifies source access. It is used by the
+// async-prepare submit path.
 func (e *LoadDataController) CheckRequirementsBeforeInitDataFiles(ctx context.Context, se sessionctx.Context) error {
-	return e.checkRequirements(ctx, se, false)
+	if err := e.checkRequirements(ctx, se, false); err != nil {
+		return err
+	}
+	if e.DataSourceType == DataSourceTypeFile {
+		return e.CheckDataSourceAccess(ctx)
+	}
+	return nil
 }
 
 func (e *LoadDataController) checkRequirements(ctx context.Context, se sessionctx.Context, checkTotalFileSize bool) error {

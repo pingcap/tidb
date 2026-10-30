@@ -111,6 +111,7 @@ func stageReorgResultRU(jobCtx *jobContext, result reorgFnResult) {
 func accountPendingReorgRU(jobCtx *jobContext, job *model.Job, transitionErr error) {
 	ru := jobCtx.pendingReorgRU
 	jobCtx.pendingReorgRU = 0
+	failpoint.InjectCall("accountPendingReorgRU", job.ID, ru, transitionErr == nil)
 	if transitionErr == nil {
 		job.RU += ru
 	}
@@ -340,6 +341,13 @@ func (rc *reorgCtx) getSnapshotVer() uint64 {
 
 func (rc *reorgCtx) setRU(ru float64) {
 	rc.ru.Store(ru)
+}
+
+// increaseRU adds the RU collected by one unit of reorganization work, such as
+// a committed backfill transaction. It is additive because a reorganization can
+// span many transactions and DDL rounds, while setRU overwrites the value.
+func (rc *reorgCtx) increaseRU(ru float64) {
+	rc.ru.Add(ru)
 }
 
 func (rc *reorgCtx) getRU() float64 {

@@ -19,6 +19,7 @@ import (
 	gluemock "github.com/pingcap/tidb/br/pkg/gluetidb/mock"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -177,6 +178,17 @@ func TestPreCheckTableClusterIndex(t *testing.T) {
 	err = task.PreCheckTableClusterIndex(tables, nil, m.Domain)
 	require.Error(t, err)
 	require.Regexp(t, `.*@@tidb_enable_clustered_index should be ON \(backup table = true, created table = false\).*`, err.Error())
+
+	// A routed restore checks the target name. An incompatible table at the
+	// source name must not block restoring a copy to a new target name.
+	routedTable := &metautil.Table{
+		DB: &model.DBInfo{Name: ast.NewCIStr("target")},
+		Info: &model.TableInfo{
+			Name:           ast.NewCIStr("copy"),
+			IsCommonHandle: true,
+		},
+	}
+	require.NoError(t, task.PreCheckTableClusterIndex([]*metautil.Table{routedTable}, nil, m.Domain))
 
 	// exist different DDLs
 	jobs := []*model.Job{{
@@ -960,6 +972,29 @@ func TestHash(t *testing.T) {
 			name: "toggle_system_tables",
 			modifyFunc: func(cfg *task.RestoreConfig) {
 				cfg.WithSysTable = !cfg.WithSysTable
+			},
+			expectEqual: false,
+		},
+		{
+			name: "explicit_legacy_layout_keeps_hash",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.Layout = repo.LayoutLegacy
+			},
+			expectEqual: true,
+		},
+		{
+			name: "repo_v1_layout_changes_hash",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.Layout = repo.LayoutRepo
+				cfg.BackupID = repo.BackupID(0x1234)
+			},
+			expectEqual: false,
+		},
+		{
+			name: "repo_v1_backup_id_changes_hash",
+			modifyFunc: func(cfg *task.RestoreConfig) {
+				cfg.Layout = repo.LayoutRepo
+				cfg.BackupID = repo.BackupID(0x5678)
 			},
 			expectEqual: false,
 		},

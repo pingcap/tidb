@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -176,4 +177,22 @@ func TestZoneHelperTryQuickFill(t *testing.T) {
 	quickFill, sameZoneFlags = helper.tryQuickFillWithUncertainZones(receiver, slots, sameZoneFlags)
 	require.False(t, quickFill)
 	require.Equal(t, 0, len(sameZoneFlags))
+}
+
+func TestSetMPPEncodeTypeRespectsChunkRPCSetting(t *testing.T) {
+	sctx := mock.NewContext()
+	for _, enabled := range []bool{false, true} {
+		sctx.GetSessionVars().EnableChunkRPC = enabled
+		root := &tipb.DAGRequest{}
+		setMPPEncodeType(sctx, root, true)
+		if enabled {
+			require.Equal(t, tipb.EncodeType_TypeChunk, root.EncodeType)
+		} else {
+			require.Equal(t, tipb.EncodeType_TypeDefault, root.EncodeType)
+		}
+
+		intermediate := &tipb.DAGRequest{}
+		setMPPEncodeType(sctx, intermediate, false)
+		require.Equal(t, tipb.EncodeType_TypeCHBlock, intermediate.EncodeType)
+	}
 }

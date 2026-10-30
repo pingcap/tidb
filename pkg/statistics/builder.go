@@ -399,7 +399,8 @@ func BuildHistAndTopN(
 	count := collector.Count
 	ndv := collector.FMSketch.NDV()
 	nullCount := collector.NullCount
-	if ndv > count {
+	// Unique values occur once per row, and no estimate exceeds the rows.
+	if collector.Unique || ndv > count {
 		ndv = count
 	}
 	if count == 0 || len(collector.Samples) == 0 || ndv == 0 {

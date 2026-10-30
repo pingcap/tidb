@@ -2,6 +2,31 @@
 
 `TiDBIP` is the ip of the TiDB server. `10080` is the default status port, and you can edit it in tidb.toml when starting the TiDB server.
 
+## Diagnostic mode availability
+
+When TiDB starts with `--diagnostic-mode` and `status.report-status` is enabled,
+the status listener exposes only the following GET endpoints:
+
+| Endpoint | Purpose and parameters | Example |
+| --- | --- | --- |
+| `/status` | Local readiness, connection count, version and statistics initialization status. No parameters. | `curl http://127.0.0.1:10080/status` |
+| `/metrics` | Local Prometheus metrics. No parameters. | `curl http://127.0.0.1:10080/metrics` |
+| `/debug/pprof/` | Index of available local runtime profiles. | `curl http://127.0.0.1:10080/debug/pprof/` |
+| `/debug/pprof/cmdline` | Process command line. No parameters. | `curl http://127.0.0.1:10080/debug/pprof/cmdline` |
+| `/debug/pprof/profile` | CPU profile; optional `seconds` controls collection duration. | `curl -o cpu.pprof 'http://127.0.0.1:10080/debug/pprof/profile?seconds=5'` |
+| `/debug/pprof/symbol` | Resolve program counters supplied in the query string. GET only. | `curl http://127.0.0.1:10080/debug/pprof/symbol` |
+| `/debug/pprof/trace` | Runtime trace; optional `seconds` controls collection duration. | `curl -o trace.out 'http://127.0.0.1:10080/debug/pprof/trace?seconds=1'` |
+| `/debug/pprof/{profile}` | Named runtime profile, such as `goroutine` or `heap`; optional `debug` selects text output. | `curl 'http://127.0.0.1:10080/debug/pprof/goroutine?debug=1'` |
+
+Other management endpoints described below, including `/info` and `/settings`,
+are unavailable in this mode and return HTTP 404. The diagnostic listener does
+not serve gRPC/MPP services. Requests using unsupported methods are rejected.
+Cluster TLS and certificate verification settings also apply to this listener;
+TLS advertises HTTP/1.1 only. Disabling `status.report-status` disables the
+listener entirely. Normal-mode HTTP API availability is unchanged.
+
+## HTTP endpoints
+
 1. Get the current status of TiDB, including the connections, version, and `git_hash`.
 
     ```shell
@@ -26,7 +51,11 @@
     curl http://{TiDBIP}:10080/metrics
     ```
 
+    In Starter deployment mode, every exported metric includes a `keyspace_id` label, including Go runtime and process metrics. Starter obtains the ID from the initialized storage codec; metric registration does not query PD for the ID. Its value is an empty string until storage initialization provides an ID, or when no keyspace is configured. Existing per-metric keyspace IDs are preserved. Starter metrics sent to Pushgateway include the same label, although pushes before storage initialization use an empty value. Classic, Premium, and Premium Reserved retain their existing metric labels. Standalone BR is outside this Starter-specific change: it retains its existing constant labels, and its Go/process and other collectors are not automatically given `keyspace_id`.
+
 3. Get the metadata of all regions
+
+    If PD cannot find a requested region, TiDB returns an error containing its decimal ID, such as `region not found for regionID 123`.
 
     ```shell
     curl http://{TiDBIP}:10080/regions/meta
@@ -768,6 +797,18 @@ timezone.*
 
      `can_disable` is true only when `table_count` is 0. `tidb_columnar_storage_enabled` is always present as `ON` or `OFF` on HTTP 200; if the sysvar cannot be read, the API returns HTTP 5xx instead of omitting the field. `columnar_store_type` is this TiDB's `cse.columnar-store-type` (`tiflash`, `columnar`, or `both`). `reloaded` reports whether this request synced schema first. If schema reload fails, the API also returns HTTP 5xx instead of an empty success body. Old kernels do not serve this endpoint.
 
+## Standby activation
+
+`POST /tidb-pool/activate` activates a TiDB process running in standby mode. Send the request to its status port. The response waits until the server is ready to accept connections.
+
+```shell
+curl -X POST "http://{TiDBIP}:10080/tidb-pool/activate" \
+  -H 'Content-Type: application/json' \
+  -d '{"keyspace_name":"ks"}'
+```
+
+`keyspace_name` is required. Starter obtains the metric `keyspace_id` from the initialized storage codec, so the activation request does not need to supply it. Activation fields such as `metadata`, `export_id`, `max_idle_seconds`, `run_auto_analyze`, and `tidb_enable_ddl` are also supported.
+
 ## Test-only APIs (enableTestAPI failpoint)
 
 These APIs are only registered when the `enableTestAPI` failpoint is enabled.
@@ -798,7 +839,45 @@ curl -X POST "http://{TiDBIP}:10080/test/delete/indexkey/{db}/{table}/{index}?ha
 curl -X POST "http://{TiDBIP}:10080/test/delete/indexkey/{db}/{table}/{index}?{idxCol}={idxVal}[&{idxCol2}={idxVal2}...]"
 ```
 
-## APIs unique to TiDB-X
+## APIs unique to TiDB X
+
+### Get global system variables
+
+`GET /variables/global` returns global system variables for operator inspection. It is available only in NextGen (TiDB X), on the status port of both SYSTEM-keyspace and tenant-keyspace TiDB instances. It reports the current keyspace of the TiDB process handling the request, not an aggregation across keyspaces.
+
+Method: `GET` only. Parameters: none.
+
+```shell
+curl http://{TiDBIP}:10080/variables/global
+```
+
+The response is a JSON object mapping variable names to string values. Example response excerpt:
+
+```json
+{
+ "autocommit": "ON",
+ "max_connections": "0",
+ "tidb_cloud_storage_uri": "s3://bucket/path?access-key=xxxxxx&secret-access-key=xxxxxx",
+ "tidb_exp_embed_openai_api_key": "******",
+ "validate_password.length": "8"
+}
+```
+
+Variable scope and no-op selection follow `SHOW GLOBAL VARIABLES`, including read-only and instance-scoped variables, but excluding session-only variables and disabled no-op variables. This operator-facing API does not apply Security Enhanced Mode (SEM v1 or v2) visibility filtering: variables hidden by SEM are included, with sensitive values masked as described below.
+
+Values are read through the existing global-variable getters. For every included variable marked `SysVar.IsSensitive`, a non-empty value is replaced with the literal `******`; an empty value remains an empty string. This includes:
+
+- Embedding API keys: `tidb_exp_embed_jina_ai_api_key`, `tidb_exp_embed_openai_api_key`, `tidb_exp_embed_cohere_api_key`, `tidb_exp_embed_huggingface_api_key`, `tidb_exp_embed_nvidia_nim_api_key`, and `tidb_exp_embed_gemini_api_key`.
+- LDAP bind passwords: `authentication_ldap_sasl_bind_root_pwd` and `authentication_ldap_simple_bind_root_pwd`.
+- The entire non-empty values of `tidb_config`, `tidb_trace_event`, `init_connect`, `init_slave` (when no-op variables are enabled), and `validate_password.dictionary`.
+
+`tidb_cloud_storage_uri` uses its existing getter's `ast.RedactURL` behavior instead of whole-value masking: an empty URI remains empty, while configured URIs retain the bucket, path, and non-secret options. Recognized sensitive query parameters are replaced with `xxxxxx`: `access-key`, `secret-access-key`, and `session-token` for S3/KS3/OSS; `account-key`, `encryption-key`, `sas-token`, and `endpoint` for Azure/Azblob. The entire Azure endpoint is masked because its URL can contain a SAS token used directly by the storage client. This follows the existing SQL getter's redaction rules, not a general-purpose sanitizer for arbitrary URL content.
+
+There is no option to return raw sensitive values, and `tidb_redact_log` does not affect this masking. Ordinary password-policy settings, such as `validate_password.length`, remain visible. Sensitivity is opt-in metadata: authors of any variable containing secrets, whether built-in or extension-registered, must set `SysVar.IsSensitive`; unannotated variables are not guaranteed to be masked.
+
+The request context has a 10-second timeout, but this is not a hard bound on response time: the GC-variable getters read `mysql.tidb` through `GetTiDBTableValue`, which currently uses `context.TODO()` and does not inherit the request deadline or client-disconnect cancellation. When all five `mysql.tidb`-backed GC variables are visible, each request performs five restricted SQL reads of `mysql.tidb`, or six when GC concurrency is not automatic, in addition to remote I/O from other getters such as `tidb_external_ts`. These reads may require TiKV/PD round trips; the response is not cached, so repeated scrapes repeat this work.
+
+Responses include `Cache-Control: no-store`. If reading a variable fails, the API returns HTTP 500 with a generic error instead of a partial result. The server log records the underlying error and, for a getter failure, the variable name. The endpoint inherits the status port's trusted access controls and does not authenticate SQL users; restrict status-port access to trusted operators.
 
 ### Run ADMIN CHECK for an index
 ```shell
@@ -812,11 +891,11 @@ curl -X POST "http://{TiDBIP}:10080/test/delete/indexkey/{db}/{table}/{index}?{i
 }
 ```
 
-## APIs unique to TiDB-X SYSTEM keyspace
+## APIs unique to TiDB X SYSTEM keyspace
 
-These APIs are registered only on TiDB instances running in the TiDB-X SYSTEM keyspace. All examples in this section assume `{TiDBIP}:10080` belongs to a TiDB process in that SYSTEM keyspace.
+These APIs are registered only on TiDB instances running in the TiDB X SYSTEM keyspace. All examples in this section assume `{TiDBIP}:10080` belongs to a TiDB process in that SYSTEM keyspace.
 
-The `/dxf/...` APIs are for DXF (Distributed eXecution Framework) operator observability and emergency runtime tuning. In TiDB-X, DXF runs as a shared SYSTEM-keyspace service for resource-intensive work such as IMPORT INTO and distributed add index, so some APIs are called on a SYSTEM-keyspace TiDB process but target a user keyspace parameter.
+The `/dxf/...` APIs are for DXF (Distributed eXecution Framework) operator observability and emergency runtime tuning. In TiDB X, DXF runs as a shared SYSTEM-keyspace service for resource-intensive work such as IMPORT INTO and distributed add index, so some APIs are called on a SYSTEM-keyspace TiDB process but target a user keyspace parameter.
 
 ### List DXF nodes
 
@@ -833,7 +912,7 @@ Parameters: none.
 Response fields:
 
 - `host`: The TiDB execution ID in `IP:PORT` form.
-- `role`: The node's configured TiDB service scope. `dxf_service` is the normal value for TiDB-X DXF nodes; `background`, an empty string, or another configured scope can also appear.
+- `role`: The node's configured TiDB service scope. `dxf_service` is the normal value for TiDB X DXF nodes; `background`, an empty string, or another configured scope can also appear.
 - `cpu_count`: The number of CPU slots available to DXF on the node.
 
 Example response:
@@ -1209,5 +1288,81 @@ Example response:
   "post-process",
   "encode"
  ]
+}
+```
+
+### Region cache status and refresh
+
+These APIs let an operator inspect and refresh TiDB's local region cache for one TiKV store after leader eviction, while the old TiKV is still online. They are registered on the status port for both classic and TiDB-X. `GET` reads local cache state and may drop unresolved failures whose original key range is fully covered by cached regions that have already left the store. `POST` starts a background refresh for every in-process store/keyspace and returns a snapshot taken when each task starts or is reused; it does not wait for probes to finish. Concurrent `POST`s for the same store share one in-flight job. Each background job uses its own store lifecycle context and independent 2-minute deadline. Callers should issue one `POST`, then poll `GET` until every relevant store reports `ready=true`.
+
+`ready` is true only when no matching cache entries remain, no unresolved refresh failures remain, and no refresh is in progress. `GET` and `POST` return status counters without refresh error details; callers must inspect `ready` to determine completion. Cache entries that expire or are deleted during a failed probe are not treated as successfully refreshed. Region-cache TTL expiry is also not refresh success: if the operator times out, stop waiting for `ready`, wait the original region-cache TTL, then restart. Do not treat a later `ready=true` caused only by expiry as a completed refresh.
+
+Matching entries are cached working-leader routes to the target store. `ready=true` does not indicate that all traffic to the store has drained: follower or mixed reads and forwarding-proxy requests can still reach it. Restarting the store can therefore still cause request retries or timeouts. Readiness also does not establish global leader eviction or new-leader reachability.
+
+`observed_at` is a Unix timestamp. For multiple in-process stores it is the oldest store observation, not the last store in the loop. Each `stores[]` entry has its own `observed_at` when `detail=1`.
+
+For GET and POST startup snapshots, `in_progress` is true when any participating store/keyspace has a running refresh. The POST startup snapshot reports `in_progress=true` for tasks it starts or reuses, even if they finish before the response is sent. GET returns the current progress and completion state. A reset failure returns an error instead of a startup snapshot for that store.
+
+Leftover failures from that fallback stay until the original range is fully covered off-store, or until the next rolling posts `reset=1`. `reset=1` drops unresolved failures and the idle task, then runs a new refresh. If a refresh is already running for that store, reset does not cancel it and the POST returns `store cache refresh is in progress` so the caller can retry. It is not a success signal. Do not pass `reset=1` while polling the same rolling.
+
+`GET` does not reload missing or expired regions. The background refresh recovers missing range coverage in batches of at most 128 regions from PD, waiting 100 ms between consecutive batches of a range, and continues until the range is covered or the job context ends. Cancellation interrupts this wait. A long split chain therefore remains one refresh task; it does not require repeated `POST`s. If a job times out or fails, a later `POST` without `reset` starts or reuses a retry for the unresolved entries.
+
+Usage:
+
+```shell
+curl "http://{TiDBIP}:10080/regions/cache/status?store_id={id}"
+curl -X POST "http://{TiDBIP}:10080/regions/cache/refresh?store_id={id}"
+curl -X POST "http://{TiDBIP}:10080/regions/cache/refresh?store_id={id}&reset=1"
+```
+
+Parameters:
+
+- `store_id`: required positive integer. Missing, zero, or non-integer values return HTTP 400.
+- `reset`: optional on `POST` only. `1` or `true` clears leftover failures from a previous rolling or TTL fallback, then refreshes. If a refresh is in progress, the store is left running and the response is not ready. Omit it during an in-progress rolling.
+- `detail`: optional on either route. `1` or `true` includes per-store entries in `stores`; otherwise `stores` is omitted.
+
+The status route accepts only `GET`. The refresh route accepts only `POST`. Other methods return HTTP 405.
+
+Example `GET` response with `detail=1`:
+
+```json
+{
+  "failed": 0,
+  "remaining": 9,
+  "ready": false,
+  "observed_at": 1720000000,
+  "stores": [
+    {
+      "cluster_id": 123,
+      "failed": 0,
+      "remaining": 9,
+      "ready": false,
+      "observed_at": 1720000000
+    }
+  ]
+}
+```
+
+`stores` is one entry per in-process TiKV store (each keyspace / PD cluster). Top-level counters are the sum of those entries and are not labeled with a single keyspace.
+
+Example `POST` response with `detail=1`:
+
+```json
+{
+  "failed": 0,
+  "remaining": 9,
+  "ready": false,
+  "in_progress": true,
+  "observed_at": 1720000000,
+  "stores": [
+    {
+      "cluster_id": 123,
+      "failed": 0,
+      "remaining": 9,
+      "ready": false,
+      "in_progress": true,
+      "observed_at": 1720000000
+    }
+  ]
 }
 ```

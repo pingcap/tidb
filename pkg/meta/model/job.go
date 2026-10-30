@@ -132,6 +132,9 @@ const (
 	ActionAlterMaterializedViewRefresh          ActionType = 89
 	ActionAlterMaterializedViewLogPurge         ActionType = 90
 	ActionAlterMaterializedViewAttributes       ActionType = 91
+	ActionMViewRefreshOutOfPlaceCutover         ActionType = 92
+	ActionCreateMaterializedViewShadow          ActionType = 93
+	ActionDropMaterializedViewShadow            ActionType = 94
 
 	// range [200, 256) is reserved for a downstream fork
 )
@@ -224,6 +227,9 @@ var ActionMap = map[ActionType]string{
 	ActionAlterMaterializedViewRefresh:          "alter materialized view refresh",
 	ActionAlterMaterializedViewLogPurge:         "alter materialized view log purge",
 	ActionAlterMaterializedViewAttributes:       "alter materialized view attributes",
+	ActionMViewRefreshOutOfPlaceCutover:         "refresh materialized view complete out-of-place cutover",
+	ActionCreateMaterializedViewShadow:          "create materialized view shadow table",
+	ActionDropMaterializedViewShadow:            "drop materialized view shadow table",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -906,12 +912,12 @@ func (job *Job) IsRollbackable() bool {
 	case ActionAddTablePartition:
 		return job.SchemaState == StateNone || job.SchemaState == StateReplicaOnly
 	case ActionDropColumn, ActionDropSchema, ActionDropTable, ActionDropSequence,
-		ActionDropMaterializedView, ActionDropMaterializedViewLog,
+		ActionDropMaterializedView, ActionDropMaterializedViewLog, ActionDropMaterializedViewShadow,
 		ActionDropForeignKey, ActionDropTablePartition:
 		return job.SchemaState == StatePublic
 	case ActionTruncateTablePartition:
 		return job.SchemaState == StatePublic || job.SchemaState == StateWriteOnly
-	case ActionRebaseAutoID, ActionShardRowID,
+	case ActionRebaseAutoID, ActionShardRowID, ActionMViewRefreshOutOfPlaceCutover,
 		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable, ActionRenameTables,
 		ActionModifyTableCharsetAndCollate,
 		ActionModifySchemaCharsetAndCollate, ActionRepairTable,

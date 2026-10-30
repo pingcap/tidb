@@ -79,15 +79,18 @@ func TestStatementRUMPPUnits(t *testing.T) {
 	}
 	require.Equal(t, finalized.units, reportUnits)
 	weights := ruv2.DefaultWeights()
+	// Compare raw-unit results without the TiFlash RU multiplier.
+	unscaledResult, valid := ruv2.Calculate(finalized.units, weights)
+	require.True(t, valid)
 	weights.CrossAZNetByte = 2
 	result, valid := ruv2.Calculate(finalized.units, weights)
 	require.True(t, valid)
-	require.InDelta(t, finalized.result.TotalRU+120, result.TotalRU, 1e-9)
+	require.InDelta(t, unscaledResult.TotalRU+120, result.TotalRU, 1e-9)
 
 	// Missing stats still produce a best-effort value.
 	partial, ok := calculateStatementRU(flat, nil, nil, statementRUWriteSnapshot{}, statementRUCalculationSetup{}, true)
 	require.True(t, ok)
-	require.Equal(t, float64(4), partial.result.TotalRU)
+	require.Equal(t, float64(31), partial.result.TotalRU) // 1 TiDB operator + 3 TiFlash operators * 10
 	require.Equal(t, statementRUCalibrationIncomplete, partial.calibrationState)
 	_, ok = calculateStatementRU(flat, stats, nil, statementRUWriteSnapshot{}, statementRUCalculationSetup{}, false)
 	require.False(t, ok)
@@ -181,13 +184,20 @@ func TestStatementRUMPPPublication(t *testing.T) {
 	finalized, operators, ok := calculateStatementRUWithOperators(flat, sc.RuntimeStatsColl, ctx.GetSessionVars().RUV2Metrics, statementRUWriteSnapshot{}, fixture.owner.calculationSetup, true)
 	require.True(t, ok)
 	require.Equal(t, float64(19), finalized.units.CPUWork)
+	// Without candidate-pair evidence, MPP retains input-based residual work.
+	join.OtherConditions = make(expression.CNFExprs, 2)
+	withResidual, ok := calculateStatementRU(flat, sc.RuntimeStatsColl, ctx.GetSessionVars().RUV2Metrics, statementRUWriteSnapshot{}, fixture.owner.calculationSetup, true)
+	require.True(t, ok)
+	require.Equal(t, float64(19*3), withResidual.units.CPUWork)
+	require.Equal(t, float64(9), withResidual.units.JoinOutputRows)
+	join.OtherConditions = nil
 	require.Equal(t, float64(300), finalized.units.ScanBytes)
 	require.Equal(t, float64(50), finalized.units.NetBytes)
 	require.Equal(t, float64(30), finalized.units.CrossAZNetBytes)
 	require.Equal(t, float64(9), finalized.units.JoinOutputRows)
 	require.Equal(t, float64(8), finalized.units.HashStateRows)
 	require.Equal(t, float64(40), finalized.engineRU.TiKV)
-	require.Equal(t, float64(402), finalized.engineRU.TiFlash) // 19+300+60+9+8+6
+	require.Equal(t, float64(4020), finalized.engineRU.TiFlash) // (19+300+60+9+8+6)*10
 	requireStatementRUReportConservation(t, finalized)
 	require.InDelta(t, finalized.result.TotalRU, operators.TotalRU, 1e-9)
 	require.InDelta(t, finalized.result.TotalRU, operators.Main[0].CumRU, 1e-9)

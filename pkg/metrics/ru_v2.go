@@ -38,6 +38,7 @@ var (
 	ruv2Commit       prometheus.Counter
 	ruv2Analyze      prometheus.Counter
 	ruv2Other        prometheus.Counter
+	RUV2TTLTotal     prometheus.Counter
 )
 
 // RUV2 unit label constants define the label name and values for RU v2 raw unit metrics.
@@ -59,6 +60,15 @@ const (
 
 // InitRUV2Metrics initializes RUv2 metrics.
 func InitRUV2Metrics() {
+	RUV2TTLTotal = metricscommon.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "ruv2",
+			Name:      "ttl_ru_total",
+			Help: "Counter of RU v2 consumption from TTL user-table scans and deletes, including their commits; " +
+				"included in ru_total.",
+		},
+	)
 	RUV2Total = metricscommon.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",

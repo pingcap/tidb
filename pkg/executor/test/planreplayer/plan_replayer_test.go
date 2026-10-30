@@ -529,3 +529,76 @@ func TestPlanReplayerDumpMultiple(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanReplayerLoadIgnoresLowResolutionTSO(t *testing.T) {
+	tempDir := t.TempDir()
+	ctx := context.Background()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_load_low_res_tso(a int, b int, index idx_a(a))")
+	// The dumping session reads with a low resolution TSO, so the dumped
+	// variables.toml carries tidb_low_resolution_tso = "ON".
+	tk.MustExec("set @@tidb_low_resolution_tso = 1")
+	res := tk.MustQuery("plan replayer dump explain select * from t_load_low_res_tso where a = 1")
+	fileName := requirePlanReplayerFileToken(t, res.Rows())
+	filePath := filepath.Join(replayer.GetPlanReplayerDirName(), fileName)
+
+	fileReader, err := storage.Open(ctx, filePath, nil)
+	require.NoError(t, err)
+	content, err := io.ReadAll(fileReader)
+	require.NoError(t, err)
+	require.NoError(t, fileReader.Close())
+	requireZipFileContains(t, content, "variables.toml", `tidb_low_resolution_tso = "ON"`)
+
+	// Loading applies the dumped variables before creating the schema. DDL is
+	// rejected under tidb_low_resolution_tso, so the variable must be ignored or
+	// the load fails on `use` with "Unknown database".
+	loadStore := testkit.CreateMockStore(t)
+	loadTK := testkit.NewTestKit(t, loadStore)
+	loadTK.MustExec(fmt.Sprintf("plan replayer load '%s'", strings.ReplaceAll(filepath.Join(tempDir, filePath), "'", "''")))
+	loadInfo, ok := loadTK.Session().Value(executor.PlanReplayerLoadVarKey).(*executor.PlanReplayerLoadInfo)
+	require.True(t, ok)
+	defer loadTK.Session().ClearValue(executor.PlanReplayerLoadVarKey)
+	require.NoError(t, loadInfo.Update(content))
+
+	loadTK.MustQuery("select @@tidb_low_resolution_tso").Check(testkit.Rows("0"))
+	loadTK.MustExec("use test")
+	loadTK.MustQuery("select count(*) from information_schema.tables where table_schema = 'test' and table_name = 't_load_low_res_tso'").Check(testkit.Rows("1"))
+	loadTK.MustQuery("explain format='brief' select * from t_load_low_res_tso where a = 1").CheckContain("idx_a")
+}
+
+func TestPlanReplayerLoadReportsCreateDatabaseError(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create("schema/bad_db.t.schema.txt")
+	require.NoError(t, err)
+	_, err = w.Write([]byte("create database if not exists bad_db; use bad_db; create table t(a int);"))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("plan replayer load 'bad_db.zip'")
+	loadInfo, ok := tk.Session().Value(executor.PlanReplayerLoadVarKey).(*executor.PlanReplayerLoadInfo)
+	require.True(t, ok)
+	defer tk.Session().ClearValue(executor.PlanReplayerLoadVarKey)
+	// The zip has no variables.toml, so the loading session keeps its own
+	// settings. DDL is rejected under tidb_low_resolution_tso.
+	tk.MustExec("set @@tidb_low_resolution_tso = 1")
+	err = loadInfo.Update(buf.Bytes())
+	require.Error(t, err)
+	// The create-database failure itself is reported, not the follow-on
+	// "Unknown database" from the `use` statement.
+	require.ErrorContains(t, err, "plan replayer: failed to create database")
+	require.ErrorContains(t, err, "tidb_low_resolution_tso")
+	require.NotContains(t, err.Error(), "Unknown database")
+}

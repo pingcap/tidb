@@ -24,7 +24,6 @@ aliases:
     - cfzjywxk
   sig-approvers-autoid-service:
     - bb7133
-    - tiancaiamao
   sig-approvers-br:
     - BornChanger
     - 3pointer
@@ -56,27 +55,22 @@ aliases:
     - bb7133
     - D3Hunter
     - gmhdbjd
-    - OliverS929
     - joechenrh
   sig-approvers-domain:
     - D3Hunter
     - gmhdbjd
     - wjhuang2016
-    - fzzf678
+    - joechenrh
     - bb7133
     - djshow832
-    - xhebox
-    - tiancaiamao
     - YangKeao
   sig-approvers-ddl:
     - bb7133
     - wjhuang2016
     - D3Hunter
     - gmhdbjd
-    - fzzf678
+    - joechenrh
     - djshow832
-    - xhebox
-    - tiancaiamao
     - YangKeao
   sig-approvers-dxf:
     - bb7133
@@ -94,29 +88,23 @@ aliases:
     - D3Hunter
     - bb7133
     - gmhdbjd
-    - fzzf678
+    - joechenrh
     - djshow832
-    - xhebox
-    - tiancaiamao
     - YangKeao
   sig-approvers-meta:
     - bb7133
     - gmhdbjd
     - wjhuang2016
     - D3Hunter
-    - fzzf678
+    - joechenrh
     - djshow832
-    - xhebox
-    - tiancaiamao
     - YangKeao
   sig-approvers-owner:
     - bb7133
     - wjhuang2016
     - D3Hunter
-    - fzzf678
+    - joechenrh
     - djshow832
-    - xhebox
-    - tiancaiamao
     - YangKeao
   sig-approvers-parser:
     - bb7133
@@ -136,10 +124,8 @@ aliases:
     - cfzjywxk
     - gmhdbjd
     - wjhuang2016
-    - fzzf678
+    - joechenrh
     - djshow832
-    - xhebox
-    - tiancaiamao
     - YangKeao
   sig-approvers-lock:
     - bb7133

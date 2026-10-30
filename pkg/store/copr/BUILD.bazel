@@ -104,6 +104,7 @@ go_test(
         "//pkg/kv",
         "//pkg/resourcegroup",
         "//pkg/store/driver/backoff",
+        "//pkg/store/driver/error",
         "//pkg/testkit/testsetup",
         "//pkg/util/logutil",
         "//pkg/util/paging",

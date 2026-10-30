@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
@@ -339,11 +340,16 @@ func TestCheckMViewUpdatable(t *testing.T) {
 		Name:                ast.NewCIStr("$mlog$t"),
 		MaterializedViewLog: &model.MaterializedViewLogInfo{},
 	}
+	shadow := &model.TableInfo{
+		Name:                   ast.NewCIStr("__mv_shadow_1"),
+		MaterializedViewShadow: &model.MaterializedViewShadowInfo{SourceMViewID: 100},
+	}
 	base := &model.TableInfo{Name: ast.NewCIStr("t")}
 
 	require.NoError(t, CheckMViewUpdatable(vars, base, "", "INSERT"))
 	require.Error(t, CheckMViewUpdatable(vars, mv, "", "INSERT"))
 	require.Error(t, CheckMViewUpdatable(vars, mlog, "", "INSERT"))
+	require.Error(t, CheckMViewUpdatable(vars, shadow, "", "INSERT"))
 
 	// Maintenance SQL must be restricted; otherwise this is an internal error.
 	vars.InMViewMaintenance = true
@@ -356,4 +362,38 @@ func TestCheckMViewUpdatable(t *testing.T) {
 	vars.InRestrictedSQL = true
 	require.NoError(t, CheckMViewUpdatable(vars, mv, "", "INSERT"))
 	require.NoError(t, CheckMViewUpdatable(vars, mlog, "", "INSERT"))
+
+	vars.InMViewMaintenance = true
+	vars.InRestrictedSQL = false
+	err = CheckMViewUpdatable(vars, shadow, "", "INSERT")
+	require.ErrorContains(t, err, "materialized view maintenance should only run in restricted SQL mode")
+
+	vars.InRestrictedSQL = true
+	require.NoError(t, CheckMViewUpdatable(vars, shadow, "", "INSERT"))
+}
+
+func TestCheckMViewReadableShadow(t *testing.T) {
+	vars := variable.NewSessionVars(nil)
+	vars.User = &auth.UserIdentity{AuthUsername: "u", AuthHostname: "%"}
+	shadow := &model.TableInfo{
+		Name:                   ast.NewCIStr("__mv_shadow_1"),
+		MaterializedViewShadow: &model.MaterializedViewShadowInfo{SourceMViewID: 100},
+	}
+	mv := &model.TableInfo{
+		Name:             ast.NewCIStr("mv_building"),
+		MaterializedView: &model.MaterializedViewInfo{InitBuildState: model.MViewInitBuildBuilding},
+	}
+	base := &model.TableInfo{Name: ast.NewCIStr("t")}
+
+	require.NoError(t, CheckMViewReadable(vars, base, ""))
+	require.ErrorContains(t, CheckMViewReadable(vars, shadow, ""), "SELECT command denied")
+	require.ErrorContains(t, CheckMViewReadable(vars, mv, ""), "initial build is in progress")
+
+	vars.InMViewMaintenance = true
+	vars.InRestrictedSQL = false
+	require.ErrorContains(t, CheckMViewReadable(vars, shadow, ""), "materialized view maintenance should only run in restricted SQL mode")
+
+	vars.InRestrictedSQL = true
+	require.NoError(t, CheckMViewReadable(vars, shadow, ""))
+	require.NoError(t, CheckMViewReadable(vars, mv, ""))
 }

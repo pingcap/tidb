@@ -467,6 +467,11 @@ var (
 	ErrUnsupportedTTLReferencedByFK = ClassDDL.NewStd(mysql.ErrUnsupportedTTLReferencedByFK)
 	// ErrUnsupportedPrimaryKeyTypeWithTTL returns when create or alter a table with TTL options but the primary key is not supported
 	ErrUnsupportedPrimaryKeyTypeWithTTL = ClassDDL.NewStd(mysql.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	// ErrUnsupportedTTLJobIntervalInStarter returns when a Starter TTL job interval is unsupported.
+	ErrUnsupportedTTLJobIntervalInStarter = ClassDDL.NewStdErr(
+		mysql.ErrUnsupportedDDLOperation,
+		parser_mysql.Message("TTL_JOB_INTERVAL other than '%s' is not supported in starter deployment mode", nil),
+	)
 
 	// ErrNotSupportedYet returns when tidb does not support this feature.
 	ErrNotSupportedYet = ClassDDL.NewStd(mysql.ErrNotSupportedYet)

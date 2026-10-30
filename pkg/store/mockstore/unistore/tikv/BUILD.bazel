@@ -17,6 +17,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/kv",
         "//pkg/store/mockstore/unistore/client",
         "//pkg/store/mockstore/unistore/config",
@@ -70,12 +71,14 @@ go_test(
         "main_test.go",
         "mock_pd_test.go",
         "mvcc_test.go",
+        "server_test.go",
         "util_test.go",
     ],
     embed = [":tikv"],
     flaky = True,
-    shard_count = 32,
+    shard_count = 33,
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/store/mockstore/unistore/config",
         "//pkg/store/mockstore/unistore/lockstore",
         "//pkg/store/mockstore/unistore/tikv/kverrors",

@@ -74,9 +74,15 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		!isStmtNode ||
 		stmtCtx.InRestrictedSQL || // is internal SQL
 		isExplain || // explain external
-		!sctx.GetSessionVars().DisableTxnAutoRetry || // txn-auto-retry
-		sctx.GetSessionVars().InMultiStmts { // in multi-stmt
+		!sctx.GetSessionVars().DisableTxnAutoRetry { // txn-auto-retry
 		return nil, nil, false, nil
+	}
+	if sctx.GetSessionVars().InMultiStmts {
+		// Prebuilt plans contain literal values and must not be cached under a
+		// parameterized SQL key. A nil plan leaves normal planning available.
+		if fp, ok := sctx.Value(core.PointPlanKey).(core.PointPlanVal); ok && fp.Plan != nil {
+			return nil, nil, false, nil
+		}
 	}
 	if sctx.GetSessionVars().PlanCacheStrategy == vardef.TiDBPlanCacheStrategyHintOnly &&
 		!containUsePlanCacheHintInSQLOrBinding(sctx, stmt) {

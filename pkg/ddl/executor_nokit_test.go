@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -429,5 +430,37 @@ func TestMaterializedViewPartitionDependencyConstraints(t *testing.T) {
 			"partitioned table",
 		)
 		require.ErrorContains(t, err, "EXCHANGE PARTITION on partitioned table with materialized view dependencies")
+
+		shadowTable := &model.TableInfo{
+			MaterializedViewShadow: &model.MaterializedViewShadowInfo{SourceMViewID: 42},
+		}
+		err = checkExchangePartitionMaterializedViewConstraints(shadowTable, "partitioned table")
+		require.ErrorContains(t, err, "EXCHANGE PARTITION on partitioned table materialized view shadow table")
+		err = checkTableMaterializedViewConstraints(nil, shadowTable, "DROP TABLE")
+		require.ErrorContains(t, err, "DROP TABLE on materialized view shadow table")
+		baseWithMLog := &model.TableInfo{
+			MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: 7},
+		}
+		err = checkTableMaterializedViewConstraints(nil, baseWithMLog, "DROP TABLE")
+		require.ErrorContains(t, err, "DROP TABLE on base table with materialized view log")
+		err = checkTableMaterializedViewConstraints(nil, baseWithMLog, "TRUNCATE TABLE")
+		require.ErrorContains(t, err, "TRUNCATE TABLE on base table with materialized view log")
+		err = CheckIndexOperationMaterializedViewConstraints(nil, shadowTable, "DROP INDEX", false)
+		require.ErrorContains(t, err, "DROP INDEX on materialized view shadow table")
+
+		likeInfo, err := BuildTableInfoWithLike(
+			ast.Ident{Name: ast.NewCIStr("shadow_copy")},
+			shadowTable,
+			&ast.CreateTableStmt{},
+		)
+		require.NoError(t, err)
+		require.Nil(t, likeInfo.MaterializedViewShadow)
+
+		maintenanceVars := &variable.SessionVars{
+			InMViewMaintenance: true,
+			InRestrictedSQL:    true,
+		}
+		require.NoError(t, checkTableMaterializedViewConstraints(maintenanceVars, shadowTable, "DROP TABLE"))
+		require.NoError(t, CheckIndexOperationMaterializedViewConstraints(maintenanceVars, shadowTable, "DROP INDEX", false))
 	})
 }

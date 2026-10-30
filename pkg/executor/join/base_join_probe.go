@@ -55,6 +55,7 @@ func (hCtx *HashJoinCtxV2) hasOtherCondition() bool {
 
 // ProbeV2 is the interface used to do probe in hash join v2
 type ProbeV2 interface {
+	joinedRowsCollector
 	// SetChunkForProbe will do some pre-work when start probing a chunk
 	SetChunkForProbe(chunk *chunk.Chunk) error
 	// SetRestoredChunkForProbe will do some pre-work for a chunk resoted from disk
@@ -102,6 +103,7 @@ type posAndHashValue struct {
 }
 
 type baseJoinProbe struct {
+	joinRowCounter
 	ctx    *HashJoinCtxV2
 	workID uint
 

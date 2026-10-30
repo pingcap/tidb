@@ -228,3 +228,20 @@ drop table if exists t;
 create table t (a decimal(62,2) not null, key idx (a), primary key (a) clustered);
 select a from t tablesample regions() order by a;
 a
+set @@tidb_partition_prune_mode='dynamic';
+drop table if exists ts_p, ts_q, ts_dst;
+create table ts_p (a int) partition by hash(a) partitions 1;
+create table ts_q (a int) partition by hash(a) partitions 1;
+create table ts_dst (a int, b int);
+insert into ts_p values (7);
+insert into ts_dst values ((select count(*) from ts_p), (select count(*) from ts_q tablesample regions()));
+select * from ts_dst order by a, b;
+a	b
+1	0
+insert into ts_dst values ((select count(*) from ts_p), (select count(*) from ts_p tablesample regions()));
+select * from ts_dst order by a, b;
+a	b
+1	0
+1	1
+drop table if exists ts_p, ts_q, ts_dst;
+set @@tidb_partition_prune_mode=default;

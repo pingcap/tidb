@@ -29,6 +29,7 @@ func main() {
 
 	rootCmd.AddCommand(
 		NewDebugCommand(),
+		NewRepoCommand(),
 		NewBackupCommand(),
 		NewRestoreCommand(),
 		NewStreamCommand(),

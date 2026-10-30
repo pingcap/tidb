@@ -128,21 +128,26 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		semEnabled := sem.IsEnabled()
 		pm := privilege.GetPrivilegeManager(e.Ctx())
 		privs := sysVar.RequireDynamicPrivileges(v.IsGlobal, semEnabled)
-		for _, priv := range privs {
-			if !pm.RequestDynamicVerification(sessionVars.ActiveRoles, priv, false) {
-				msg := priv
-				if !semEnabled {
-					msg = "SUPER or " + msg
+		if pm != nil {
+			for _, priv := range privs {
+				if !pm.RequestDynamicVerification(sessionVars.ActiveRoles, priv, false) {
+					msg := priv
+					if !semEnabled {
+						msg = "SUPER or " + msg
+					}
+					return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs(msg)
 				}
-				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs(msg)
 			}
 		}
 	}
 
 	// Check read-only system variables in SEM mode.
 	if semv2.IsEnabled() && semv2.IsReadOnlyVariable(v.Name) {
+		// Internal sessions (for example the sessions of the TTL job manager)
+		// have no privilege manager bound. They must not be blocked here, and
+		// the missing manager must not be dereferenced.
 		pm := privilege.GetPrivilegeManager(e.Ctx())
-		if !pm.RequestDynamicVerification(sessionVars.ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
+		if pm != nil && !pm.RequestDynamicVerification(sessionVars.ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
 			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_VARIABLES_ADMIN")
 		}
 	}

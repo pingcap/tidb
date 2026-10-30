@@ -748,6 +748,54 @@ func TestComputeTiFlashStatus(t *testing.T) {
 	}
 }
 
+func TestCollectColumnarStatusCancelsPendingRequest(t *testing.T) {
+	// requestStarted is closed when the mock handler first sees the HTTP request.
+	// requestCanceled is closed after the handler observes request-context cancellation.
+	requestStarted := make(chan struct{})
+	requestCanceled := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestStarted)
+		<-r.Context().Done()
+		close(requestCanceled)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := helper.CollectColumnarStatusWithCtx(ctx, strings.TrimPrefix(server.URL, "http://"), 7, 9, nil)
+		errCh <- err
+	}()
+
+	// Wait until the request has entered the handler before canceling.
+	// Otherwise cancel may race ahead of dial/accept and the handler never runs.
+	select {
+	case <-requestStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected columnar status request to start")
+	}
+
+	// Trigger the cancellation of the request.
+	cancel()
+
+	// Must return an error due to context cancellation.
+	select {
+	case err := <-errCh:
+		require.Error(t, err)
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected columnar status request to return after cancel")
+	}
+
+	select {
+	case <-requestCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("expected pending columnar status request to be canceled")
+	}
+}
+
 func TestCollectColumnarStatusFTSIndexReady(t *testing.T) {
 	testCases := []struct {
 		name             string
