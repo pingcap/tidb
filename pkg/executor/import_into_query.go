@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
 func init() { importer.RunImportQuery = runImportQuery }
@@ -42,6 +43,11 @@ func runImportQuery(
 	if err != nil {
 		return err
 	}
+	// Some executors only stop on the kill signal of the session.
+	stop := context.AfterFunc(ctx, func() {
+		sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	})
+	defer stop()
 	defer func() {
 		if closeErr := exec.Close(e); err == nil {
 			err = closeErr

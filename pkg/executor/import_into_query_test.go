@@ -19,13 +19,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -162,6 +165,25 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		// The submitter's transaction does not carry over to the worker.
 		require.False(t, se.GetSessionVars().InTxn())
 		require.True(t, se.GetSessionVars().IsAutocommit())
+	})
+	t.Run("statement time by default", func(t *testing.T) {
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
+		sql := "import into unused_target from select unix_timestamp(now())"
+		require.NoError(t, importer.PlanImportQueryForTest(tk.Session(), sql))
+		q, err := importer.CaptureQuerySource(tk.Session(), sql)
+		require.NoError(t, err)
+		captured, err := strconv.ParseFloat(q.SessionStates.SystemVars[vardef.Timestamp], 64)
+		require.NoError(t, err)
+		// The worker runs the query later, but still at the time of the statement.
+		time.Sleep(1100 * time.Millisecond)
+		se, err := session.CreateSession4Test(store)
+		require.NoError(t, err)
+		defer se.Close()
+		output := make(chan importer.QueryChunk, 1)
+		require.NoError(t, importer.RunImportQuery(context.Background(), se, q, sql, 1<<20, output))
+		close(output)
+		result := <-output
+		require.EqualValues(t, int64(captured), result.Chk.GetRow(0).GetInt64(0))
 	})
 	t.Run("source tables at read ts", func(t *testing.T) {
 		tk.MustExec("create resource group rg1 ru_per_sec=1000")
