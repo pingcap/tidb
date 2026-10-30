@@ -423,6 +423,7 @@ go_test(
         "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/testkit/external",
+        "//pkg/testkit/testenv",
         "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/testkit/testutil",
