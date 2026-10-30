@@ -3091,8 +3091,8 @@ def go_deps():
         name = "com_github_petermattis_goid",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/petermattis/goid",
-        sum = "h1:Dx7Ovyv/SFnMFw3fD4oEoeorXc6saIiQ23LrGLth0Gw=",
-        version = "v0.0.0-20240813172612-4fcff4a6cae7",
+        sum = "h1:vHpqOnPlnkba8iSxU4j/CvDSS9J4+F4473esQsYLGoE=",
+        version = "v0.0.0-20250813065127-a731cc31b4fe",
     )
     go_repository(
         name = "com_github_phayes_freeport",
@@ -3476,8 +3476,8 @@ def go_deps():
         name = "com_github_sasha_s_go_deadlock",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/sasha-s/go-deadlock",
-        sum = "h1:tNCOEEDG6tBqrNDOX35j/7hL5FcFViG6awUGROb2NsU=",
-        version = "v0.3.5",
+        sum = "h1:TR7sfOnZ7x00tWPfD397Peodt57KzMDo+9Ae9rMiUmw=",
+        version = "v0.3.6",
     )
     go_repository(
         name = "com_github_sashamelentyev_interfacebloat",
