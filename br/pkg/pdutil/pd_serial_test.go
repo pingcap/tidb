@@ -107,7 +107,7 @@ func TestPDResetTSCompatibility(t *testing.T) {
 }
 
 func TestPauseSchedulersByKeyRange(t *testing.T) {
-	const ttl = time.Second
+	const ttl = 3 * time.Second
 
 	labelExpires := make(map[string]time.Time)
 
