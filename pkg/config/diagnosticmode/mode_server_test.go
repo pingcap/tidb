@@ -41,6 +41,44 @@ func TestTiDBServerGoroutinesInDiagnosticMode(t *testing.T) {
 	if !intest.InTest {
 		t.Skip("diagnosticmode.SetForTest requires the intest build tag")
 	}
+	t.Run("runtime-exit-filter", func(t *testing.T) {
+		// Synthetic PCs make the exit-stack regression independent of process
+		// addresses and whether a snapshot happens to catch a goroutine exiting.
+		resolveFrame := func(pc uintptr) (runtime.Frame, bool) {
+			switch pc {
+			case 1:
+				return runtime.Frame{Function: "runtime.goexit"}, false
+			case 2:
+				return runtime.Frame{Function: "runtime.goexit1"}, false
+			case 3:
+				return runtime.Frame{Function: "unexpected.worker"}, false
+			case 4:
+				return runtime.Frame{Function: "runtime.goexit1"}, true
+			default:
+				return runtime.Frame{}, false
+			}
+		}
+		for _, group := range []string{
+			"1 @ 0x1",
+			"1 @ 0x2\n#\t0x1\truntime.goexit1+0x0\truntime/proc.go:1",
+			"1 @ 0x2 0x1\n#\t0x1\truntime.goexit1+0x0\truntime/proc.go:1",
+		} {
+			assertDiagnosticGoroutineAllowlist(t, []byte("goroutine profile: total 1\n"+group+"\n"), resolveFrame)
+		}
+		for _, header := range []string{
+			"1 @ 0x2 0x3", // Exit followed by a live worker.
+			"1 @ 0x3 0x2", // Live worker followed by exit.
+			"1 @ 0x2 0x0", // Unknown PC must not be skipped.
+			"1 @ 0x4",     // Additional frames must not be skipped.
+			"1 @ 0x2 bad", // Malformed PC must not be skipped.
+			"1 @",         // No PCs cannot establish an exit-only stack.
+		} {
+			require.False(t, isRuntimeGoexitGroup([]byte(header), resolveFrame), header)
+		}
+		var pcs [1]uintptr
+		require.Equal(t, 1, runtime.Callers(1, pcs[:]))
+		require.False(t, isRuntimeGoexitGroup([]byte(fmt.Sprintf("1 @ %#x", pcs[0])), runtimeFrameForPC))
+	})
 	testsetup.SetupForCommonTest()
 	restoreMode := diagnosticmode.SetForTest(false)
 	t.Cleanup(restoreMode)
@@ -73,11 +111,11 @@ func TestTiDBServerGoroutinesInDiagnosticMode(t *testing.T) {
 	require.Contains(t, dump, "goroutine ")
 	require.Contains(t, dump, "github.com/pingcap/tidb/pkg/server.(*Server).startNetworkListener")
 
-	assertDiagnosticGoroutineAllowlist(t, buf.Bytes())
+	assertDiagnosticGoroutineAllowlist(t, buf.Bytes(), runtimeFrameForPC)
 	t.Logf("TiDB goroutine dump in diagnostic mode:\n%s", dump)
 }
 
-func assertDiagnosticGoroutineAllowlist(t *testing.T, dump []byte) {
+func assertDiagnosticGoroutineAllowlist(t *testing.T, dump []byte, resolveFrame func(uintptr) (runtime.Frame, bool)) {
 	t.Helper()
 	// Outside the embedded storage fixture, each group must contain an explicitly
 	// allowed function. Match the worker rather than its changing leaf frame.
@@ -138,10 +176,11 @@ func assertDiagnosticGoroutineAllowlist(t *testing.T, dump []byte) {
 		require.Equal(t, "@", marker)
 		require.Positive(t, count)
 		checked += count
-		if !hasFrames {
-			// debug=1 suppresses runtime.goexit even when it is the only frame.
-			// Resolve the raw PCs so no other frameless stack escapes the allowlist.
-			require.True(t, isRuntimeGoexitGroup(groupHeader), "goroutine group has no frames: %s", group)
+		if !hasFrames || isRuntimeGoexitGroup(groupHeader, resolveFrame) {
+			// A goroutine can be sampled after its user function has returned,
+			// in runtime.goexit or runtime.goexit1. debug=1 hides runtime.goexit.
+			// Resolve every raw PC so only runtime exit stacks bypass the allowlist.
+			require.True(t, isRuntimeGoexitGroup(groupHeader, resolveFrame), "goroutine group has no frames: %s", group)
 			continue
 		}
 
@@ -162,7 +201,7 @@ func assertDiagnosticGoroutineAllowlist(t *testing.T, dump []byte) {
 	t.Logf("Checked %d goroutines in %d aggregated groups against the diagnostic allowlist", checked, len(groups))
 }
 
-func isRuntimeGoexitGroup(header []byte) bool {
+func isRuntimeGoexitGroup(header []byte, resolveFrame func(uintptr) (runtime.Frame, bool)) bool {
 	fields := bytes.Fields(header)
 	if len(fields) <= 2 {
 		return false
@@ -174,13 +213,17 @@ func isRuntimeGoexitGroup(header []byte) bool {
 		}
 		// Resolve each PC separately so an unknown PC cannot be skipped while
 		// expanding a stack containing known frames.
-		frames := runtime.CallersFrames([]uintptr{uintptr(pc)})
-		frame, more := frames.Next()
-		if frame.Function != "runtime.goexit" || more {
+		frame, more := resolveFrame(uintptr(pc))
+		if (frame.Function != "runtime.goexit" && frame.Function != "runtime.goexit1") || more {
 			return false
 		}
 	}
 	return true
+}
+
+func runtimeFrameForPC(pc uintptr) (runtime.Frame, bool) {
+	frames := runtime.CallersFrames([]uintptr{pc})
+	return frames.Next()
 }
 
 func startTiDBServer(t *testing.T) (*tidbserver.Server, *config.Config) {
