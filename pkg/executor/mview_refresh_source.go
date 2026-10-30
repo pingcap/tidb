@@ -31,11 +31,11 @@ import (
 func checkMVRefreshLogBaseline(sources []model.MViewRefreshSource, registered []int64) error {
 	for _, source := range sources {
 		if source.MLogID == 0 {
-			return exeerrors.ErrMVRefreshLogBaselineChanged.GenWithStack("refresh materialized view fast: source has no materialized view log; run COMPLETE refresh to rebuild the input log baseline")
+			return exeerrors.ErrMVRefreshLogBaselineChanged.FastGen("refresh materialized view fast: source has no materialized view log; run COMPLETE refresh to rebuild the input log baseline")
 		}
 	}
 	if !slices.Equal(mviewutil.RefreshSourceLogIDs(sources), registered) {
-		return exeerrors.ErrMVRefreshLogBaselineChanged.GenWithStackByArgs()
+		return exeerrors.ErrMVRefreshLogBaselineChanged.FastGenByArgs()
 	}
 	return nil
 }

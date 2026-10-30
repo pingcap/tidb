@@ -2415,7 +2415,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	advisoryLockName := mviewutil.PurgeAdvisoryLockName(mlogID)
 	if err := purgeSctx.GetAdvisoryLock(advisoryLockName, 1); err != nil {
 		if storeerr.ErrLockWaitTimeout.Equal(err) {
-			return exeerrors.ErrMVAdvisoryLockConflict.GenWithStackByArgs(fmt.Sprintf(
+			return exeerrors.ErrMVAdvisoryLockConflict.FastGenByArgs(fmt.Sprintf(
 				"another purge or materialized view cutover is running for materialized view log on %s.%s, please retry later",
 				schemaName.O, s.Table.Name.O))
 		}
@@ -5629,7 +5629,7 @@ func acquireMVRefreshAdvisoryLock(
 	lockName := mviewutil.RefreshAdvisoryLockName(tblInfo.DBID, tblInfo.ID)
 	if err := refreshSctx.GetAdvisoryLock(lockName, mvRefreshAdvisoryLockTimeoutSec); err != nil {
 		if storeerr.ErrLockWaitTimeout.Equal(err) {
-			return lockName, exeerrors.ErrMVAdvisoryLockConflict.GenWithStackByArgs(fmt.Sprintf(
+			return lockName, exeerrors.ErrMVAdvisoryLockConflict.FastGenByArgs(fmt.Sprintf(
 				"another refresh or materialized view log creation is running for materialized view %s.%s, please retry later",
 				schemaName.O,
 				tblInfo.Name.O,

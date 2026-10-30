@@ -320,7 +320,7 @@ func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job)
 				// Do not retry this job while retaining its DDL scheduling claim:
 				// an OOP refresh holds the lock while waiting for its cutover DDL.
 				job.State = model.JobStateCancelled
-				return ver, exeerrors.ErrMVAdvisoryLockConflict.GenWithStackByArgs(fmt.Sprintf(
+				return ver, exeerrors.ErrMVAdvisoryLockConflict.FastGenByArgs(fmt.Sprintf(
 					"cannot create materialized view log on %s.%s: materialized view refresh is running, please retry later", job.SchemaName, baseTblInfo.Name.O))
 			}
 			return ver, errors.Trace(err)

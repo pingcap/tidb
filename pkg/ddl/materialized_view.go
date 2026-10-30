@@ -67,7 +67,7 @@ func (w *worker) acquireMLogPurgeAdvisoryLockForCutover(jobCtx *jobContext, mlog
 	ctx, cancel := context.WithTimeoutCause(
 		kv.WithInternalSourceType(jobCtx.stepCtx, kv.InternalTxnDDL),
 		timeout,
-		exeerrors.ErrMVAdvisoryLockConflict.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: timed out waiting for materialized view log purge; retry refresh"),
+		exeerrors.ErrMVAdvisoryLockConflict.FastGenByArgs("refresh materialized view complete OUT OF PLACE cutover: timed out waiting for materialized view log purge; retry refresh"),
 	)
 	defer func() {
 		// Advisory lock acquisition has its own context. Recheck the budget on
