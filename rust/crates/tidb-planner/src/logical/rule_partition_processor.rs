@@ -14,7 +14,6 @@
 
 //! Go `pkg/planner/core/rule/rule_partition_processor.go`.
 
-use super::plan_context::PartitionPruning;
 use crate::logical::{
     BaseLogicalPlan, DataSource, LogicalPartitionUnionAll, LogicalPlan, LogicalTableDual,
     LogicalUnionScan,

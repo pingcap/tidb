@@ -20,7 +20,6 @@
 //! `true` means the histogram payload is required; `false` means metadata such
 //! as NDV is sufficient.
 
-use super::plan_context::StatisticsLoadRequester;
 use std::collections::{HashMap, HashSet};
 
 use tidb_expr::column::Column;
@@ -688,6 +687,7 @@ mod tests {
     use tidb_expr::schema::Schema;
 
     use super::*;
+    use crate::logical::plan_context::StatisticsLoadRequester;
     use tidb_planner_util::path::PossiblePath;
     use crate::logical::data_source::DataSourceColumn;
     use crate::logical::join::LogicalJoin;
