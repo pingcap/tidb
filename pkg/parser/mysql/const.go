@@ -15,7 +15,6 @@ package mysql
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/coreos/go-semver/semver"
@@ -574,18 +573,6 @@ func FormatSQLModeStr(s string) string {
 		}
 	}
 	return strings.Join(nonEmptyParts, ",")
-}
-
-// FormatSQLMode formats the value of the SQLMode to string.
-func FormatSQLMode(mode SQLMode) string {
-	names := make([]string, 0, len(Str2SQLMode))
-	for name, m := range Str2SQLMode {
-		if mode&m != 0 {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	return strings.Join(names, ",")
 }
 
 // GetSQLMode gets the sql mode for string literal. SQL_mode is a list of different modes separated by commas.

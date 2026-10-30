@@ -127,13 +127,3 @@ func TestNormalizeTiDBReleaseVersionForNextGen(t *testing.T) {
 	require.Equal(t, tidbXPlaceholderReleaseVersion, NormalizeTiDBReleaseVersionForNextGen(legacyTiDBReleaseVersionPlaceholder))
 	require.Equal(t, "v26.3.0", NormalizeTiDBReleaseVersionForNextGen("v26.3.0"))
 }
-
-func TestFormatSQLMode(t *testing.T) {
-	for _, s := range []string{"", DefaultSQLMode, "ANSI", "TRADITIONAL", "PAD_CHAR_TO_FULL_LENGTH,NO_BACKSLASH_ESCAPES"} {
-		mode, err := GetSQLMode(FormatSQLModeStr(s))
-		require.NoError(t, err)
-		got, err := GetSQLMode(FormatSQLMode(mode))
-		require.NoError(t, err)
-		require.Equal(t, mode, got, s)
-	}
-}
