@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/planner"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
@@ -237,7 +239,8 @@ func TestGenerateMergeSortSpecs(t *testing.T) {
 	}
 	p := &LogicalPlan{
 		Plan: importer.Plan{
-			DBName: "db",
+			CloudStorageURI: "noop://sort",
+			DBName:          "db",
 			TableInfo: &model.TableInfo{
 				Name:  ast.NewCIStr("tb"),
 				State: model.StatePublic,
@@ -346,7 +349,7 @@ func TestGetSortedKVMetas(t *testing.T) {
 			proto.ImportStepMergeSort:     mergeStepMetas,
 		},
 		ThreadCnt: 16,
-	}, &LogicalPlan{}, nil)
+	}, &LogicalPlan{Plan: importer.Plan{CloudStorageURI: "noop://sort"}}, nil)
 	require.NoError(t, err)
 	require.Len(t, allKVMetas, 2)
 	require.Equal(t, []byte("x_0_a"), allKVMetas["data"].StartKey)
@@ -411,4 +414,60 @@ func TestSplitForOneSubtask(t *testing.T) {
 		expectedRangeSplitKeys = [][]byte{[]byte("00000"), []byte("00139\x00")}
 	}
 	require.Equal(t, expectedRangeSplitKeys, writeSpec.RangeSplitKeys)
+}
+
+func TestPlanReadsQueryStepMetas(t *testing.T) {
+	ctx := context.Background()
+	queryMetas := genEncodeStepMetas(t, 1)
+	var sourceMeta ImportStepMeta
+	require.NoError(t, json.Unmarshal(queryMetas[0], &sourceMeta))
+	sourceMeta.Checksum = map[int64]Checksum{-1: {Sum: 42, KVs: 3, Size: 90}}
+	sourceMeta.MaxIDs = map[autoid.AllocatorType]int64{autoid.RowIDAllocType: 123}
+	sourceMeta.RecordedConflictKVCount = 2
+	sourceMeta.SortedDataMeta.ConflictInfo = engineapi.ConflictInfo{Count: 2, Files: []string{"query-conflicts"}}
+	bs, err := json.Marshal(sourceMeta)
+	require.NoError(t, err)
+	queryMetas[0] = bs
+	planCtx := planner.PlanCtx{
+		Ctx: ctx, GlobalSort: true, ThreadCnt: 16,
+		PreviousSubtaskMetas: map[proto.Step][][]byte{
+			proto.ImportStepQuery: queryMetas,
+			// The query step, not the encode step, holds the source metas.
+			proto.ImportStepEncodeAndSort: {[]byte("unexpected encode metadata")},
+		},
+	}
+	p := &LogicalPlan{Plan: importer.Plan{QuerySource: &importer.QuerySource{}, CloudStorageURI: "noop://sort"}}
+
+	specs, err := generateMergeSortSpecs(planCtx, p)
+	require.NoError(t, err)
+	require.Empty(t, specs)
+	kvs, err := getSortedKVMetasForIngest(planCtx, p, nil)
+	require.NoError(t, err)
+	require.Len(t, kvs, 2)
+	require.Equal(t, []byte("d_0_a"), kvs[globalsort.DataKVGroup].StartKey)
+	require.Equal(t, []byte("i1_0_a"), kvs["1"].StartKey)
+
+	// Merge only the data group.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/forceMergeSort", `return("data")`)
+	specs, err = generateMergeSortSpecs(planCtx, p)
+	require.NoError(t, err)
+	require.Len(t, specs, 1)
+	require.Equal(t, []string{"d_0_/1"}, specs[0].(*MergeSortSpec).DataFiles)
+	planCtx.PreviousSubtaskMetas[proto.ImportStepMergeSort] = genMergeStepMetas(t, 1)
+	kvs, err = getSortedKVMetasForIngest(planCtx, p, nil)
+	require.NoError(t, err)
+	require.Len(t, kvs, 2)
+	require.Equal(t, []byte("x_0_a"), kvs[globalsort.DataKVGroup].StartKey)
+	require.Equal(t, []byte("i1_0_a"), kvs["1"].StartKey)
+
+	conflicts, err := collectConflictInfos(ctx, nil, planCtx, getStepOfEncode(&p.Plan))
+	require.NoError(t, err)
+	require.Equal(t, &sourceMeta.SortedDataMeta.ConflictInfo, conflicts.ConflictInfos[globalsort.DataKVGroup])
+	post := &PostProcessSpec{encodeStep: getStepOfEncode(&p.Plan)}
+	bs, err = post.ToSubtaskMeta(planCtx)
+	require.NoError(t, err)
+	var result PostProcessStepMeta
+	require.NoError(t, json.Unmarshal(bs, &result))
+	require.Equal(t, sourceMeta.Checksum, result.Checksum)
+	require.Equal(t, sourceMeta.MaxIDs, result.MaxIDs)
 }
