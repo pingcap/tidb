@@ -91,6 +91,16 @@ func TestInitCreateMaterializedViewBuildSessionAppliesDefinitionDivPrecisionIncr
 		require.Equal(t, before[name], sessionVar(name))
 	}
 
+	// The session variable takes the definition even if the field already does.
+	sessCtx = mock.NewContext()
+	sessVars = sessCtx.GetSessionVars()
+	require.NoError(t, sessVars.SetSystemVar(vardef.DivPrecisionIncrement, "4"))
+	sessVars.DivPrecisionIncrement = 9
+	restore, err = initCreateMaterializedViewBuildSession(sessCtx, &model.Job{ReorgMeta: job.ReorgMeta}, mviewTableInfo, "test")
+	require.NoError(t, err)
+	require.Equal(t, "9", sessionVar(vardef.DivPrecisionIncrement))
+	restore()
+
 	// The variables are restored even if the session has not read them before.
 	sessCtx = mock.NewContext()
 	sessVars = sessCtx.GetSessionVars()

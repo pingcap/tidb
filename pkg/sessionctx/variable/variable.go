@@ -157,11 +157,9 @@ func ApplyMViewExecutionSessionVarsWithConfig(
 		maintainIsolationReadEnginesVarName = vardef.TiDBMViewMaintainIsolationReadEngines
 	}
 
+	// Set the variables even if the fields already hold the target values, so
+	// that the session variables, which the session states take, agree with them.
 	origin := captureApplied(sessVars)
-	if origin == target {
-		return func() {}, nil
-	}
-
 	for _, assignment := range buildMViewExecutionSessionVarAssignments(target, maintainMemQuotaVarName, maintainIsolationReadEnginesVarName) {
 		err := error(nil)
 		if cfg.InjectApplyError != nil {
