@@ -12,6 +12,7 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-errno = { path = "../tidb-errno" }

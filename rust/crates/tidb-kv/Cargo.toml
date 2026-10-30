@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Go pkg/kv for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-exeerrors = { path = "../tidb-exeerrors" }
 tidb-errno = { path = "../tidb-errno" }
 tidb-terror = { path = "../tidb-terror" }

@@ -3433,6 +3433,7 @@ dependencies = [
 name = "tidb-autoid"
 version = "0.0.0"
 dependencies = [
+ "tidb-dbterror",
  "tidb-errno",
  "tidb-meta",
  "tidb-model",
@@ -3811,6 +3812,7 @@ dependencies = [
  "smallvec",
  "tidb-charset",
  "tidb-context",
+ "tidb-dbterror",
  "tidb-errno",
  "tidb-goruntime",
  "tidb-hack",
@@ -4190,6 +4192,7 @@ dependencies = [
  "tidb-config-deploymode",
  "tidb-config-kerneltype",
  "tidb-datatype",
+ "tidb-dbterror",
  "tidb-domain-serverinfo",
  "tidb-errno",
  "tidb-fixcontrol",
@@ -4325,6 +4328,7 @@ dependencies = [
  "serde_json",
  "tidb-ast",
  "tidb-config-kerneltype",
+ "tidb-dbterror",
  "tidb-ddl-label",
  "tidb-domain-affinity",
  "tidb-errno",
@@ -4880,6 +4884,7 @@ dependencies = [
  "tidb-codec",
  "tidb-context",
  "tidb-datatype",
+ "tidb-dbterror",
  "tidb-encrypt",
  "tidb-errctx",
  "tidb-errno",
@@ -5149,6 +5154,7 @@ version = "0.0.0"
 dependencies = [
  "tidb-ast",
  "tidb-datatype",
+ "tidb-dbterror",
  "tidb-errno",
  "tidb-model",
  "tidb-mysql",
@@ -5169,6 +5175,7 @@ dependencies = [
  "tidb-codec",
  "tidb-config",
  "tidb-datatype",
+ "tidb-dbterror",
  "tidb-driver-error",
  "tidb-errno",
  "tidb-expr",
@@ -5287,6 +5294,7 @@ name = "tidb-kv"
 version = "0.0.0"
 dependencies = [
  "smallvec",
+ "tidb-dbterror",
  "tidb-errno",
  "tidb-exeerrors",
  "tidb-terror",
@@ -5518,6 +5526,7 @@ dependencies = [
  "tidb-codec",
  "tidb-config",
  "tidb-config-kerneltype",
+ "tidb-dbterror",
  "tidb-dxf",
  "tidb-errno",
  "tidb-kv",
@@ -6154,6 +6163,7 @@ dependencies = [
 name = "tidb-plannererrors"
 version = "0.0.0"
 dependencies = [
+ "tidb-dbterror",
  "tidb-mysql",
  "tidb-terror",
 ]
@@ -6531,6 +6541,7 @@ dependencies = [
  "tidb-copr",
  "tidb-cpu",
  "tidb-datatype",
+ "tidb-dbterror",
  "tidb-ddl",
  "tidb-ddl-serverstate",
  "tidb-ddl-systable",
@@ -6642,6 +6653,7 @@ dependencies = [
 name = "tidb-server-err"
 version = "0.0.0"
 dependencies = [
+ "tidb-dbterror",
  "tidb-errno",
  "tidb-terror",
 ]
@@ -6945,6 +6957,7 @@ dependencies = [
  "tidb-config-deploymode",
  "tidb-context",
  "tidb-datatype",
+ "tidb-dbterror",
  "tidb-errno",
  "tidb-log",
  "tidb-model",
@@ -7067,6 +7080,7 @@ dependencies = [
  "tidb-chunk",
  "tidb-codec",
  "tidb-datatype",
+ "tidb-dbterror",
  "tidb-errno",
  "tidb-fastrand",
  "tidb-generic",
@@ -7592,6 +7606,7 @@ name = "tidb-structure"
 version = "0.0.0"
 dependencies = [
  "tidb-codec",
+ "tidb-dbterror",
  "tidb-errno",
  "tidb-kv",
  "tidb-meta",
@@ -7756,6 +7771,7 @@ dependencies = [
  "tidb-charset",
  "tidb-codec",
  "tidb-datatype",
+ "tidb-dbterror",
  "tidb-errno",
  "tidb-proto",
  "tidb-rowcodec",
@@ -7800,7 +7816,6 @@ version = "0.0.0"
 dependencies = [
  "serde",
  "serde_json",
- "tidb-errno",
  "tidb-mysql",
  "tidb-terror-identity",
  "tracing",
@@ -7837,6 +7852,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tidb-config",
+ "tidb-dbterror",
  "tidb-errno",
  "tidb-log",
  "tidb-terror",
@@ -8032,6 +8048,7 @@ dependencies = [
  "serde_json",
  "tidb-codec",
  "tidb-datatype",
+ "tidb-dbterror",
  "tidb-errno",
  "tidb-go-time-layout",
  "tidb-hack",
@@ -8163,6 +8180,7 @@ name = "tidb-util"
 version = "0.0.0"
 dependencies = [
  "tidb-datatype",
+ "tidb-dbterror",
  "tidb-errno",
  "tidb-hack",
  "tidb-parser",
@@ -8272,6 +8290,7 @@ dependencies = [
  "chrono-tz",
  "tidb-config",
  "tidb-datatype",
+ "tidb-dbterror",
  "tidb-domain",
  "tidb-domain-core",
  "tidb-errno",

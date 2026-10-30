@@ -195,7 +195,7 @@ fn complete_func_index_error(
         .to_owned();
     let completed = |code: u16, args: &[FormatArg]| {
         tidb_exprctx::EvalError::Conversion(
-            TerrorError::registered_std(TerrorClass::Expression, TerrorCode::new(code as isize))
+            tidb_dbterror::ErrClass(TerrorClass::Expression).new_std(code)
                 .generate_with_stack_by_args(args),
         )
     };

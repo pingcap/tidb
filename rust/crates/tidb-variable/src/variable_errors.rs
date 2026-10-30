@@ -22,7 +22,7 @@
 
 use std::sync::LazyLock;
 
-use tidb_terror::catalog_support::{plain_err, std_err, Class};
+use tidb_dbterror::catalog_support::{plain_err, std_err, Class};
 use tidb_terror::TerrorError;
 use tidb_errno::errcode;
 

@@ -136,8 +136,8 @@ impl SequenceSchema for NoSequences {
         schema: &str,
         sequence: &str,
     ) -> Result<&dyn SequenceTable, tidb_terror::TerrorError> {
-        Err(tidb_terror::catalog_support::std_err(
-            tidb_terror::catalog_support::Class::Schema,
+        Err(tidb_dbterror::catalog_support::std_err(
+            tidb_dbterror::catalog_support::Class::Schema,
             tidb_errno::errcode::ErrNoSuchTable,
         )
         .generate_with_stack_by_args(&[schema.into(), sequence.into()]))

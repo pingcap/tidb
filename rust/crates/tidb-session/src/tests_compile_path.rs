@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The checks Go's `session.ExecuteStmt` makes before `Compile`
-//! (`rust/docs/compile-path-execplan.md`).
+//! The checks Go's `session.ExecuteStmt` makes before `Compile`.
 
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::Session;

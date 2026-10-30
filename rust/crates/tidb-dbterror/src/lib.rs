@@ -30,6 +30,7 @@
 //! `fmt.Sprintf`-composed template and cross-code definition is checked
 //! byte-for-byte rather than re-derived by hand.
 
+pub mod catalog_support;
 mod ddl_errors;
 
 pub use ddl_errors::*;
@@ -114,8 +115,97 @@ impl ErrClass {
     }
 }
 
+/// The codes `ClassTiKV` registers (`pkg/store/driver/error/error.go`,
+/// `pkg/kv/error.go`): the only ones a coprocessor error keeps.
+const CLASS_TIKV_CODES: &[u16] = {
+    use tidb_errno::errcode::*;
+    &[
+        ErrSharedLockLost,
+        ErrLockExpire,
+        ErrAssertionFailed,
+        ErrTiKVStoreLimit,
+        ErrTiKVServerTimeout,
+        ErrTiFlashServerTimeout,
+        ErrTxnAbortedByGC,
+        ErrTiKVStaleCommand,
+        ErrQueryInterrupted,
+        ErrTiKVMaxTimestampNotSynced,
+        ErrLockAcquireFailAndNoWaitSet,
+        ErrResolveLockTimeout,
+        ErrLockWaitTimeout,
+        ErrTiKVServerBusy,
+        ErrTiFlashServerBusy,
+        ErrPDServerTimeout,
+        ErrRegionUnavailable,
+        ErrResourceGroupNotExists,
+        ErrResourceGroupConfigUnavailable,
+        ErrResourceGroupThrottled,
+        ErrUnknown,
+        ErrDataOutOfRange,
+        ErrTruncatedWrongValue,
+        ErrDivisionByZero,
+    ]
+};
+
+impl ErrClass {
+    /// Go `ClassTiKV.Synthesize(code, msg)`: how TiDB re-raises an error a
+    /// coprocessor / TiKV answered in a `SelectResponse`. A code `ClassTiKV`
+    /// registers keeps its number on the wire, any other reaches the client
+    /// as 1105; `Error()` prints `[tikv:<code>]` either way.
+    #[must_use]
+    pub fn synthesize_tikv(code: u16, message: impl Into<String>) -> tidb_terror::MysqlError {
+        let identity = tidb_terror::TerrorIdentity::new(TerrorClass::TiKv, TerrorCode::new(code as isize));
+        let message = message.into();
+        let wire = if CLASS_TIKV_CODES.contains(&code) {
+            tidb_terror::MysqlError::sql_error(code, message)
+        } else {
+            tidb_terror::MysqlError::unknown(message)
+        };
+        wire.with_identity(identity)
+    }
+
+    /// An error a coprocessor answered in a `SelectResponse`: a code
+    /// `ClassTiKV` registers is that class's error (`[tikv:<code>]`); any
+    /// other keeps its own number and has no class here. Go would answer the
+    /// latter as `ClassTiKV.Synthesize` (1105) only for errors a real TiKV
+    /// raised -- this tier's coprocessor also reports errors Go raises on the
+    /// TiDB side (`tidb_max_keys_read`, ...) in the same slot, whose wire code
+    /// must survive.
+    #[must_use]
+    pub fn tikv_select_response_error(code: u16, message: impl Into<String>) -> tidb_terror::MysqlError {
+        if CLASS_TIKV_CODES.contains(&code) {
+            tidb_terror::MysqlError::sql_error(code, message).with_identity(
+                tidb_terror::TerrorIdentity::new(TerrorClass::TiKv, TerrorCode::new(code as isize)),
+            )
+        } else {
+            tidb_terror::MysqlError::sql_error(code, message)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    /// Go `dbterror.ErrClass.NewStd` reads `errno.MySQLErrName`, which wins
+    /// over `parser/mysql`'s message for a code both define, and resolves
+    /// TiDB-only codes the parser catalog lacks.
+    #[test]
+    fn new_std_reads_the_errno_catalog() {
+        for (code, expected) in [
+            (
+                3143,
+                "Invalid JSON path expression. The error is around character position %d.",
+            ),
+            (1243, "Unknown prepared statement handler (%.*s) given to %s"),
+            (
+                1820,
+                "You must reset your password using ALTER USER statement before executing this statement",
+            ),
+        ] {
+            assert_eq!(CLASS_EXECUTOR.new_std(code).message(), expected, "code {code}");
+        }
+        assert_eq!(CLASS_OPTIMIZER.new_std(8110).code().value(), 8110);
+    }
+
     use super::*;
     use tidb_mysql::errors::{set_redaction_mode, FormatArg, RedactionMode};
     use tidb_errno::errcode;

@@ -11,5 +11,6 @@ description = "TiDB pkg/server/err: the server's error prototypes (Rust)."
 workspace = true
 
 [dependencies]
+tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-errno = { path = "../tidb-errno" }
 tidb-terror = { path = "../tidb-terror" }

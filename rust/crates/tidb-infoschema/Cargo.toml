@@ -9,6 +9,7 @@ description = "TiDB infoschema: the schema image (Go pkg/infoschema) (Rust rewri
 
 
 [dependencies]
+tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-charset = { path = "../tidb-charset" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-infoschema-context = { path = "../tidb-infoschema-context" }

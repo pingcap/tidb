@@ -11,6 +11,7 @@ description = "Go `pkg/domain/infosync`: the PD-facing label, resource-manager a
 workspace = true
 
 [dependencies]
+tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-log = { path = "../tidb-log" }
 tidb-logutil = { path = "../tidb-logutil" }

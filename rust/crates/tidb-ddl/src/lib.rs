@@ -19,8 +19,7 @@
 //! (a unit test's `testkit` session included) runs on a store that already
 //! hosts both. The Rust node grew the other way round, with the worker living
 //! in `tidb-server` beside the connection layer, so no session below the
-//! server could ever have one (`rust/docs/structural-alignment-execplan.md`,
-//! Milestone 3b).
+//! server could ever have one.
 //!
 //! * [`worker`] is `RealClusterDdl`: `DoDDLJob` for the submitting side, the
 //!   owner-elected scheduler that steps persisted jobs, the schema-version

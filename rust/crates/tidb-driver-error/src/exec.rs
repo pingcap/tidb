@@ -66,7 +66,7 @@ pub fn coprocessor_evaluation_error(error: EvalError) -> ExecError {
     // `ClassTiKV.Synthesize(code, msg)` keeps the TiKV class whatever the code:
     // a registered one answers under its own number, any other under 1105 --
     // `Error()` prints `[tikv:<code>]` either way.
-    ExecError::Mysql(MysqlError::synthesize_tikv(mysql.code, mysql.message))
+    ExecError::Mysql(tidb_dbterror::ErrClass::synthesize_tikv(mysql.code, mysql.message))
 }
 
 #[cfg(test)]
@@ -255,7 +255,7 @@ use tidb_exprctx::SequenceEvalError;
         let ExecError::Mysql(pushed) = pushed else { panic!("{pushed:?}") };
         assert_eq!(
             pushed,
-            MysqlError::synthesize_tikv(1365, "Division by 0")
+            tidb_dbterror::ErrClass::synthesize_tikv(1365, "Division by 0")
         );
     }
 

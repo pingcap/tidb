@@ -165,41 +165,6 @@ impl MysqlError {
         }
     }
 
-    /// Go `dbterror.ClassTiKV.Synthesize(code, msg)`: how TiDB re-raises an
-    /// error a coprocessor / TiKV answered in a `SelectResponse`. A code
-    /// `ClassTiKV` registers keeps its number on the wire, any other reaches
-    /// the client as 1105; `Error()` prints `[tikv:<code>]` either way.
-    pub fn synthesize_tikv(code: u16, message: impl Into<String>) -> Self {
-        let identity = TerrorIdentity::new(
-            TerrorClass::TiKv,
-            TerrorCode::new(code as isize),
-        );
-        let wire = if CLASS_TIKV_CODES.contains(&code) {
-            Self::sql_error(code, message)
-        } else {
-            Self::unknown(message)
-        };
-        wire.with_identity(identity)
-    }
-
-    /// An error a coprocessor answered in a `SelectResponse`: a code
-    /// `ClassTiKV` registers is that class's error (`[tikv:<code>]`); any
-    /// other keeps its own number and has no class here. Go would answer the
-    /// latter as `ClassTiKV.Synthesize` (1105) only for errors a real TiKV
-    /// raised -- this tier's coprocessor also reports errors Go raises on the
-    /// TiDB side (`tidb_max_keys_read`, ...) in the same slot, whose wire code
-    /// must survive.
-    pub fn from_select_response(code: u16, message: impl Into<String>) -> Self {
-        if CLASS_TIKV_CODES.contains(&code) {
-            Self::sql_error(code, message).with_identity(TerrorIdentity::new(
-                TerrorClass::TiKv,
-                TerrorCode::new(code as isize),
-            ))
-        } else {
-            Self::sql_error(code, message)
-        }
-    }
-
     /// Keeps the Go identity a wire-level carrier (`SqlQueryError`,
     /// `LockSqlError`) brought across a crate boundary.
     #[must_use]
@@ -259,34 +224,3 @@ impl From<&str> for MysqlError {
     }
 }
 
-/// The codes `ClassTiKV` registers (`pkg/store/driver/error/error.go`,
-/// `pkg/kv/error.go`): the only ones a coprocessor error keeps.
-const CLASS_TIKV_CODES: &[u16] = {
-    use tidb_errno::errcode::*;
-    &[
-        ErrSharedLockLost,
-        ErrLockExpire,
-        ErrAssertionFailed,
-        ErrTiKVStoreLimit,
-        ErrTiKVServerTimeout,
-        ErrTiFlashServerTimeout,
-        ErrTxnAbortedByGC,
-        ErrTiKVStaleCommand,
-        ErrQueryInterrupted,
-        ErrTiKVMaxTimestampNotSynced,
-        ErrLockAcquireFailAndNoWaitSet,
-        ErrResolveLockTimeout,
-        ErrLockWaitTimeout,
-        ErrTiKVServerBusy,
-        ErrTiFlashServerBusy,
-        ErrPDServerTimeout,
-        ErrRegionUnavailable,
-        ErrResourceGroupNotExists,
-        ErrResourceGroupConfigUnavailable,
-        ErrResourceGroupThrottled,
-        ErrUnknown,
-        ErrDataOutOfRange,
-        ErrTruncatedWrongValue,
-        ErrDivisionByZero,
-    ]
-};

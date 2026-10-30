@@ -115,26 +115,6 @@ impl TerrorError {
         Self::registered_standard(class, code, message)
     }
 
-    /// Source `NewStd` resolving from the full error registry: the TiDB
-    /// (`pkg/errno`) catalog first, then the parser/MySQL catalog.
-    ///
-    /// Go's global `MySQLErrName` map is populated from the TiDB `errno`
-    /// catalogue, with parser/mysql entries as its fallback for codes that
-    /// are not TiDB-specific. Overlapping entries therefore use the TiDB
-    /// message, exactly as `Class.NewStd` does;
-    /// [`registered_from_catalog`](Self::registered_from_catalog) covers only
-    /// the MySQL half and panics on a TiDB code. This is the faithful `NewStd`
-    /// for the many error-catalog packages (plannererrors, ...) whose codes
-    /// span both halves.
-    pub fn registered_std(class: TerrorClass, code: TerrorCode) -> Self {
-        let protocol_code = u16::try_from(code.value())
-            .expect("NewStd error code must fit the uint16 catalog domain");
-        let message = tidb_errno::message_by_code(protocol_code)
-            .or_else(|| tidb_mysql::errors::message_by_code(protocol_code))
-            .copied()
-            .expect("NewStd error code must exist in the MySQL or TiDB catalog");
-        Self::registered_standard(class, code, message)
-    }
 
     /// Source `Synthesize`: creates an identity without registering its code
     /// for protocol conversion.
@@ -493,43 +473,8 @@ pub fn root_cause<'a>(mut error: &'a (dyn Error + 'static)) -> &'a (dyn Error + 
 #[cfg(test)]
 mod registered_std_tests {
     use super::TerrorClass;
-    use super::TerrorCode;
     use super::TerrorError;
 
-    // registered_std resolves codes from both catalogs, preferring the TiDB
-    // errno message for overlaps -- Go's NewStd behavior.
-    #[test]
-    fn resolves_both_catalogs() {
-        // A MySQL-catalog code (ErrUnknown = 1105).
-        let e = TerrorError::registered_std(TerrorClass::Optimizer, TerrorCode::new(1105));
-        assert_eq!(e.code().value(), 1105);
-        // A TiDB-only optimizer code (ErrCartesianProductUnsupported = 8110);
-        // registered_from_catalog would panic on this, registered_std resolves it.
-        let e = TerrorError::registered_std(TerrorClass::Optimizer, TerrorCode::new(8110));
-        assert_eq!(e.code().value(), 8110);
-    }
-
-    #[test]
-    fn prefers_tidb_errno_messages_for_overlapping_codes() {
-        // Go's errno.MySQLErrName wins over parser/mysql for shared codes.
-        for (code, expected) in [
-            (
-                3143,
-                "Invalid JSON path expression. The error is around character position %d.",
-            ),
-            (
-                1243,
-                "Unknown prepared statement handler (%.*s) given to %s",
-            ),
-            (
-                1820,
-                "You must reset your password using ALTER USER statement before executing this statement",
-            ),
-        ] {
-            let error = TerrorError::registered_std(TerrorClass::Executor, TerrorCode::new(code));
-            assert_eq!(error.message(), expected, "code {code}");
-        }
-    }
 
     #[test]
     fn compatible_json_accepts_defaults_and_unknown_fields() {

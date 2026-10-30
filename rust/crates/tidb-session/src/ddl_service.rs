@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The session's one DDL orchestration (Milestone 3a of
-//! `rust/docs/structural-alignment-execplan.md`).
+//! The session's one DDL orchestration.
 //!
 //! Go has a single DDL path: the executor checks privileges, commits the open
 //! transaction, builds a job, hands it to the `ddl` package and then copies the

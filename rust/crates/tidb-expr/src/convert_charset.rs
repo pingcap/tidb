@@ -190,10 +190,7 @@ pub fn from_binary(
     if error.is_none() {
         return Ok(retag(decoded, target_charset));
     }
-    let error = tidb_terror::TerrorError::registered_std(
-        tidb_terror::TerrorClass::Expression,
-        tidb_terror::TerrorCode::new(3854),
-    )
+    let error = tidb_dbterror::ErrClass(tidb_terror::TerrorClass::Expression).new_std(3854)
     .fast_generate(
         tidb_errno::errname::ErrCannotConvertString.raw,
         &[

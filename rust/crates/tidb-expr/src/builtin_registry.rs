@@ -518,7 +518,7 @@ pub(crate) fn unresolved_error(name: &str, current_database: Option<String>) -> 
             // Go `ErrNotSupportedYet`: `ClassExpression.NewStd(1235)`.
             static ERR_NOT_SUPPORTED_YET: std::sync::LazyLock<TerrorError> =
                 std::sync::LazyLock::new(|| {
-                    TerrorError::registered_std(TerrorClass::Expression, TerrorCode::new(1235))
+                    tidb_dbterror::ErrClass(TerrorClass::Expression).new_std(1235)
                 });
             return crate::EvalError::Conversion(ERR_NOT_SUPPORTED_YET.generate_with_stack(
                 "FUNCTION tidb_row_checksum can only be used as a select field in a fast point \

@@ -997,7 +997,7 @@ impl CopRowStream {
                 .next_chunk_with_required_rows(required_rows.max(1))
                 .map_err(|error| match error {
                     tidb_copr::response_channel::ResponseChannelError::SelectResponse { code, message } => {
-                        StorageError::Sql(crate::MysqlError::from_select_response(
+                        StorageError::Sql(tidb_dbterror::ErrClass::tikv_select_response_error(
                             code as u16,
                             message,
                         ))

@@ -12,7 +12,7 @@ The Rust tree has two:
 - `ngaut/client-rust`, vendored at `rust/third_party/tikv-client-rs`, is the Rust client-go (owner direction).
 - `tidb-txnkv` is a second client-go-like stack. The embedded node (`tidb-unistore`) runs on it, and client-rust cannot reach that node.
 
-That is why Go's store-backed GC worker tests cannot run, and it is one of the open structural mismatches in `structural-alignment-execplan.md`.
+That is why Go's store-backed GC worker tests cannot run.
 
 After this plan, client-rust builds a `KvStore` over any PD client and TiKV client, as client-go does, and `tidb-unistore` implements client-rust's `PdClient` and `KvClient` as Go's unistore implements client-go's. The GC worker then runs over the embedded store in tests, and Go's store-backed GC tests are ported onto it. TiDB paths that run on `tidb-txnkv` can afterwards move to client-rust one at a time.
 

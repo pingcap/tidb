@@ -15,7 +15,7 @@
 //! What Go's executors reach through the session's `Domain`
 //! (`domain.GetDomain(sctx)`): the DDL owner that runs a job, the privilege
 //! tables and their cache, the global variables, the analyzer and the
-//! statistics handle (`rust/docs/compile-path-execplan.md`). A cluster node
+//! statistics handle. A cluster node
 //! installs them on every session it opens; an in-process session has none,
 //! its own catalog being the whole world.
 

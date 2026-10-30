@@ -590,10 +590,7 @@ fn array_element_json(value: Datum) -> Result<tidb_datatype::BinaryJSONValue, Ev
 /// index name: the DML that evaluated the expression names the index
 /// (`completeError`).
 pub fn invalid_json_for_func_index() -> EvalError {
-    EvalError::Conversion(tidb_terror::TerrorError::registered_std(
-        tidb_terror::TerrorClass::Expression,
-        tidb_terror::TerrorCode::new(3903),
-    ))
+    EvalError::Conversion(tidb_dbterror::ErrClass(tidb_terror::TerrorClass::Expression).new_std(3903))
 }
 
 fn json_eval_error(_: tidb_datatype::BinaryJSONError) -> EvalError {

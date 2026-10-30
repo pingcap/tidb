@@ -11,5 +11,6 @@ description = "TiDB pkg/util/dbterror/plannererrors: the planner's error prototy
 workspace = true
 
 [dependencies]
+tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-mysql = { path = "../tidb-mysql" }

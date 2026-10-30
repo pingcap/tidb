@@ -12,22 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The constructors the generated per-package error prototype catalogs use.
+//! The constructors the generated error prototype catalogs of the parser
+//! module use: Go `terror.ErrClass.NewStd` / `NewStdErr`, whose standard
+//! messages are `parser/mysql`'s (`mysql.MySQLErrName`). The main module's
+//! catalogs use `tidb_dbterror::catalog_support`, Go `dbterror.ErrClass`
+//! over `pkg/errno`'s messages.
 
 use crate::{TerrorClass, TerrorCode, TerrorError};
 use tidb_mysql::errors::ErrMessage;
 
-/// Alias keeping the generated tables short.
 /// `ErrClass`, as the generated prototype catalogs spell it.
 pub type Class = TerrorClass;
 
-/// `Class.NewStd(code)`: the catalog message under the same code.
-/// Go `ErrClass.NewStd(code)`: the catalog message under the same code.
+/// Go `terror.ErrClass.NewStd(code)`: the `parser/mysql` catalog message
+/// under the same code.
 pub fn std_err(class: Class, code: u16) -> TerrorError {
-    TerrorError::registered_std(class, TerrorCode::new(code as isize))
+    TerrorError::registered_from_catalog(class, TerrorCode::new(code as isize))
 }
 
-/// `Class.NewStdErr(code, mysql.Message(raw, nil))`.
 /// Go `ErrClass.NewStdErr(code, mysql.Message(raw, nil))`.
 pub fn plain_err(class: Class, code: u16, raw: &'static str) -> TerrorError {
     TerrorError::registered_standard(
@@ -40,19 +42,17 @@ pub fn plain_err(class: Class, code: u16, raw: &'static str) -> TerrorError {
     )
 }
 
-/// `Class.NewStdErr(code, Message(MySQLErrName[message_code].Raw+suffix,
-/// MySQLErrName[message_code].RedactArgPos))`.
-/// Go `ErrClass.NewStdErr(code, Message(MySQLErrName[message_code].Raw+suffix, ...))`.
+/// Go `ErrClass.NewStdErr(code, Message(mysql.MySQLErrName[message_code].Raw
+/// + suffix, ...RedactArgPos))`.
 pub fn std_err_msg(
     class: Class,
     code: u16,
     message_code: u16,
     suffix: &'static str,
 ) -> TerrorError {
-    let catalog = tidb_errno::message_by_code(message_code)
-        .or_else(|| tidb_mysql::errors::message_by_code(message_code))
+    let catalog = tidb_mysql::errors::message_by_code(message_code)
         .copied()
-        .expect("NewStdErr message code must exist in the MySQL or TiDB catalog");
+        .expect("NewStdErr message code must exist in the parser/mysql catalog");
     let raw: &'static str = if suffix.is_empty() {
         catalog.raw
     } else {

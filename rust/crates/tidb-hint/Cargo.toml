@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB optimizer-hint interpretation and AST hint binding."
 
 [dependencies]
+tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-errno = { path = "../tidb-errno" }
 tidb-plannererrors = { path = "../tidb-plannererrors" }
 tidb-terror = { path = "../tidb-terror" }

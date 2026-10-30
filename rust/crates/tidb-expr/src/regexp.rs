@@ -92,7 +92,7 @@ pub(crate) fn err_regexp(message: &str) -> EvalError {
     use tidb_mysql::errors::FormatArg;
     use tidb_terror::{TerrorClass, TerrorCode, TerrorError};
     static ERR_REGEXP: std::sync::LazyLock<TerrorError> = std::sync::LazyLock::new(|| {
-        TerrorError::registered_std(TerrorClass::Expression, TerrorCode::new(1139))
+        tidb_dbterror::ErrClass(TerrorClass::Expression).new_std(1139)
     });
     EvalError::Conversion(ERR_REGEXP.generate_with_stack_by_args(&[FormatArg::from(message)]))
 }
@@ -105,7 +105,7 @@ pub(crate) fn err_regexp_wrapping_error(message: &str) -> EvalError {
     use tidb_mysql::errors::FormatArg;
     use tidb_terror::{TerrorClass, TerrorCode, TerrorError};
     static ERR_REGEXP: std::sync::LazyLock<TerrorError> = std::sync::LazyLock::new(|| {
-        TerrorError::registered_std(TerrorClass::Expression, TerrorCode::new(1139))
+        tidb_dbterror::ErrClass(TerrorClass::Expression).new_std(1139)
     });
     EvalError::Conversion(ERR_REGEXP.generate_with_stack_by_args(&[FormatArg::new(
         message,

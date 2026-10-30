@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go's one statement path on this node (`rust/docs/compile-path-execplan.md`):
+//! Go's one statement path on this node:
 //! `Compile` -- the preprocessor, `PlanBuilder.Build` and `CheckPrivilege`
 //! over its visit infos -- answers before any executor runs, and the
 //! executors that commit the user's transaction (`DDLExec`, `GrantExec`,
