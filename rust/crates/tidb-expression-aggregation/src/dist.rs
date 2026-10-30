@@ -311,8 +311,8 @@ fn calculate_sum(
         let (sum, error) = left.add_mysql(right);
         if let Some(error) = error {
             return Err(EvalError::Conversion(match error {
-                DecimalCodecWarning::Overflow => tidb_parser_types::parser_types_errors::ERR_OVERFLOW.clone(),
-                DecimalCodecWarning::Truncated => tidb_parser_types::parser_types_errors::ERR_TRUNCATED.clone(),
+                DecimalCodecWarning::Overflow => tidb_datatype::types_errors::ERR_OVERFLOW.clone(),
+                DecimalCodecWarning::Truncated => tidb_datatype::types_errors::ERR_TRUNCATED.clone(),
             })
             .into());
         }
@@ -351,7 +351,7 @@ impl std::fmt::Display for DistAggregateError {
             Self::Expression(error) => write!(f, "{error:?}"),
             Self::Datum(error) => error.fmt(f),
             Self::Arithmetic(tidb_datatype::DatumArithmeticError::Overflow(error)) => {
-                tidb_parser_types::parser_types_errors::ERR_OVERFLOW
+                tidb_datatype::types_errors::ERR_OVERFLOW
                     .generate(error.to_string())
                     .fmt(f)
             }

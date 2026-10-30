@@ -747,7 +747,7 @@ pub(super) fn date_arithmetic_overflow(ctx: &dyn Columns) -> Result<Datum, EvalE
         ),
         ErrorLevel::Error => {
             return Err(EvalError::Conversion(
-                tidb_parser_types::parser_types_errors::ERR_DATETIME_FUNCTION_OVERFLOW.generate(MESSAGE),
+                tidb_datatype::types_errors::ERR_DATETIME_FUNCTION_OVERFLOW.generate(MESSAGE),
             ));
         }
     }

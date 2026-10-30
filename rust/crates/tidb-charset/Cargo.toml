@@ -8,7 +8,6 @@ repository.workspace = true
 description = "TiDB character sets and encodings: Go pkg/parser/charset (Rust rewrite)."
 
 [dependencies]
-tidb-errno = { path = "../tidb-errno" }
 tidb-terror = { path = "../tidb-terror" }
 encoding_rs.workspace = true
 tidb-mysql = { path = "../tidb-mysql" }

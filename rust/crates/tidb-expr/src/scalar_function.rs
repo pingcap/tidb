@@ -4151,7 +4151,7 @@ fn cast_numeric_argument_in_mode(
         match error {
             Some(tidb_datatype::DecimalError::Overflow) => {
                 if ctx.truncate_level() == tidb_exprctx::context::ErrorLevel::Error {
-                    return Err(EvalError::Conversion(tidb_parser_types::parser_types_errors::ERR_OVERFLOW.clone()));
+                    return Err(EvalError::Conversion(tidb_datatype::types_errors::ERR_OVERFLOW.clone()));
                 }
                 crate::expression_errors::handle_truncate(ctx, &format!(
                     "Truncated incorrect DECIMAL value: '{}'",
@@ -4160,7 +4160,7 @@ fn cast_numeric_argument_in_mode(
                 ))?;
             }
             Some(tidb_datatype::DecimalError::Truncated) | None => {}
-            Some(_) => return Err(EvalError::Conversion(tidb_parser_types::parser_types_errors::ERR_BAD_NUMBER.clone())),
+            Some(_) => return Err(EvalError::Conversion(tidb_datatype::types_errors::ERR_BAD_NUMBER.clone())),
         }
         Datum::Decimal(tidb_datatype::Decimal::from_my_decimal(&decimal))
     } else {
@@ -4206,9 +4206,9 @@ fn cast_string_numeric_argument(
             crate::expression_errors::handle_truncate(ctx, &format!("Truncated incorrect DECIMAL value: '{text}'"))?;
         } else {
             let error = match error {
-                DecimalError::Truncated => tidb_parser_types::parser_types_errors::ERR_TRUNCATED.clone(),
-                DecimalError::Overflow => tidb_parser_types::parser_types_errors::ERR_OVERFLOW.clone(),
-                _ => tidb_parser_types::parser_types_errors::ERR_BAD_NUMBER.clone(),
+                DecimalError::Truncated => tidb_datatype::types_errors::ERR_TRUNCATED.clone(),
+                DecimalError::Overflow => tidb_datatype::types_errors::ERR_OVERFLOW.clone(),
+                _ => tidb_datatype::types_errors::ERR_BAD_NUMBER.clone(),
             };
             match ctx.truncate_level() {
                 crate::ErrorLevel::Error => return Err(EvalError::Conversion(error)),
@@ -5074,10 +5074,10 @@ mod tests {
                         expression.eval(&ctx, chunk.get_row(0))
                     };
                     let error = match case {
-                        3 | 6 => EvalError::Conversion(tidb_parser_types::parser_types_errors::ERR_OVERFLOW.clone()),
-                        5 => EvalError::Conversion(tidb_parser_types::parser_types_errors::ERR_BAD_NUMBER.clone()),
+                        3 | 6 => EvalError::Conversion(tidb_datatype::types_errors::ERR_OVERFLOW.clone()),
+                        5 => EvalError::Conversion(tidb_datatype::types_errors::ERR_BAD_NUMBER.clone()),
                         2 | 4 if vectorized => {
-                            EvalError::Conversion(tidb_parser_types::parser_types_errors::ERR_TRUNCATED.clone())
+                            EvalError::Conversion(tidb_datatype::types_errors::ERR_TRUNCATED.clone())
                         }
                         _ => EvalError::TruncatedWrongValue(format!(
                             "Truncated incorrect DECIMAL value: '{}'",
@@ -5209,7 +5209,7 @@ mod tests {
                     let message = |value| format!("Truncated incorrect {class} value: '{value}'");
                     let mut expected = if mode == "error" {
                         if name == "intdiv" && vectorized {
-                            Err(EvalError::Conversion(tidb_parser_types::parser_types_errors::ERR_TRUNCATED.clone()))
+                            Err(EvalError::Conversion(tidb_datatype::types_errors::ERR_TRUNCATED.clone()))
                         } else {
                             Err(EvalError::TruncatedWrongValue(message(
                                 if vectorized || selected { "2y" } else { "3z" },

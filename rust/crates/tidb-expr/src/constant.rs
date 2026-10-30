@@ -457,9 +457,9 @@ impl Constant {
 fn constant_decimal_error(error: tidb_datatype::DecimalError) -> EvalError {
     use tidb_datatype::DecimalError;
     EvalError::Conversion(match error {
-        DecimalError::Truncated => tidb_parser_types::parser_types_errors::ERR_TRUNCATED.clone(),
-        DecimalError::Overflow => tidb_parser_types::parser_types_errors::ERR_OVERFLOW.clone(),
-        DecimalError::BadNumber => tidb_parser_types::parser_types_errors::ERR_BAD_NUMBER.clone(),
+        DecimalError::Truncated => tidb_datatype::types_errors::ERR_TRUNCATED.clone(),
+        DecimalError::Overflow => tidb_datatype::types_errors::ERR_OVERFLOW.clone(),
+        DecimalError::BadNumber => tidb_datatype::types_errors::ERR_BAD_NUMBER.clone(),
         DecimalError::TruncatedWrongValue => tidb_parser_types::parser_types_errors::ERR_TRUNCATED_WRONG_VALUE.clone(),
     })
 }

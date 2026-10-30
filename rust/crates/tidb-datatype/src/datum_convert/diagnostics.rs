@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use tidb_parser_types::parser_types_errors::{ERR_OVERFLOW, ERR_TRUNCATED_WRONG_VALUE};
+use tidb_parser_types::parser_types_errors::ERR_TRUNCATED_WRONG_VALUE;
+use crate::types_errors::ERR_OVERFLOW;
 use crate::{ConversionContext, Datum, ScalarConversionError, ScalarConversionEvent};
 use tidb_terror::TerrorError;
 

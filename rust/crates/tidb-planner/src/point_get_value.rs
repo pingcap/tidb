@@ -175,7 +175,7 @@ pub fn name_value_pair_value(
         return NameValuePairValue::Decline;
     };
     if let Some(error) = &converted.error {
-        if tidb_parser_types::parser_types_errors::ERR_OVERFLOW.equal(Some(error)) {
+        if tidb_datatype::types_errors::ERR_OVERFLOW.equal(Some(error)) {
             return NameValuePairValue::TableDual;
         }
         // "Some scenarios cast to int with error, but we may use this value

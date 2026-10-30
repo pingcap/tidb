@@ -3418,7 +3418,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tidb-charset",
- "tidb-errno",
  "tidb-goruntime",
  "tidb-lexer",
  "tidb-mysql",
@@ -3590,7 +3589,6 @@ name = "tidb-charset"
 version = "0.0.0"
 dependencies = [
  "encoding_rs",
- "tidb-errno",
  "tidb-mysql",
  "tidb-terror",
 ]
@@ -5644,7 +5642,6 @@ dependencies = [
  "subtle",
  "tidb-ast",
  "tidb-charset",
- "tidb-errno",
  "tidb-hack",
  "tidb-lexer",
  "tidb-mysql",
@@ -5679,7 +5676,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tidb-charset",
- "tidb-errno",
  "tidb-goruntime",
  "tidb-mysql",
  "tidb-parser-format",

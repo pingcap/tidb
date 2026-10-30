@@ -8,7 +8,6 @@ repository.workspace = true
 description = "TiDB column types: Go pkg/parser/types (Rust rewrite)."
 
 [dependencies]
-tidb-errno = { path = "../tidb-errno" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-mysql = { path = "../tidb-mysql" }
 serde.workspace = true

@@ -25,9 +25,8 @@ use crate::encoding_base::TransformResult;
 use crate::EncodingResult;
 
 pub(crate) mod diagnostics;
-use tidb_parser_types::parser_types_errors::{
-    ERR_DATA_TOO_LONG, ERR_OVERFLOW, ERR_TRUNCATED, ERR_TRUNCATED_WRONG_VALUE,
-};
+use tidb_parser_types::parser_types_errors::ERR_TRUNCATED_WRONG_VALUE;
+use crate::types_errors::{ERR_DATA_TOO_LONG, ERR_OVERFLOW, ERR_TRUNCATED};
 pub use diagnostics::DatumConversion;
 use diagnostics::Diagnostics;
 
@@ -760,13 +759,13 @@ impl Datum {
                     return Err(DatumValueError::IncorrectTemporal(fallback));
                 }
                 diagnostics.error(|| {
-                    tidb_parser_types::parser_types_errors::ERR_WRONG_VALUE
+                    crate::types_errors::ERR_WRONG_VALUE
                         .generate(format!("Incorrect {label} value: '{text}'"))
                 });
                 finish(fallback, Some(ScalarConversionEvent::Truncated))
             };
         let dst = |text: &str| {
-            tidb_parser_types::parser_types_errors::ERR_TIMESTAMP_IN_DST_TRANSITION
+            crate::types_errors::ERR_TIMESTAMP_IN_DST_TRANSITION
                 .fast_generate_by_args(&[text.into(), zone.dag_zone().0.into()])
         };
         if let Self::Time(value) = self {
@@ -952,7 +951,7 @@ impl Datum {
                     || number.value < -MAX_DURATION
                 {
                     diagnostics.error(|| {
-                        tidb_parser_types::parser_types_errors::ERR_WRONG_VALUE
+                        crate::types_errors::ERR_WRONG_VALUE
                             .generate(format!("Incorrect time value: '{text}'"))
                     });
                     return Ok(Converted {
@@ -1033,7 +1032,7 @@ impl Datum {
                     )
                     .map_err(conversion_error)?;
                 if converted.event.is_some() {
-                    diagnostics.error(|| tidb_parser_types::parser_types_errors::ERR_WARN_DATA_OUT_OF_RANGE.clone());
+                    diagnostics.error(|| crate::types_errors::ERR_WARN_DATA_OUT_OF_RANGE.clone());
                 }
                 return Ok(map_converted(Self::Int)(converted));
             }
@@ -1075,7 +1074,7 @@ impl Datum {
         };
         let adjusted = crate::time_parse::adjust_year_with_event(year, adjust_zero);
         if adjusted.event.is_some() {
-            diagnostics.error(|| tidb_parser_types::parser_types_errors::ERR_WARN_DATA_OUT_OF_RANGE.clone());
+            diagnostics.error(|| crate::types_errors::ERR_WARN_DATA_OUT_OF_RANGE.clone());
         }
         Ok(Converted {
             value: Self::Int(adjusted.value),
@@ -1296,7 +1295,7 @@ fn produce_decimal_reported(
     if target.flen() != UNSPECIFIED_LENGTH && target.decimal() != UNSPECIFIED_LENGTH {
         if target.flen() < target.decimal() {
             diagnostics.error(|| {
-                tidb_parser_types::parser_types_errors::ERR_M_BIGGER_THAN_D.generate(
+                crate::types_errors::ERR_M_BIGGER_THAN_D.generate(
                     "For float(M,D), double(M,D) or decimal(M,D), M must be >= D".to_owned(),
                 )
             });

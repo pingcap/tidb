@@ -279,7 +279,7 @@ fn convert_refinement_constant(
     );
     let converted = value.convert_to_in_context(target, &context, &zone).ok()?;
     let exceptional = if let Some(error) = converted.error {
-        if !tidb_parser_types::parser_types_errors::ERR_OVERFLOW.equal(Some(&error)) {
+        if !tidb_datatype::types_errors::ERR_OVERFLOW.equal(Some(&error)) {
             return None;
         }
         true

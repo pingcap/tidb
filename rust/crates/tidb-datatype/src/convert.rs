@@ -781,7 +781,7 @@ pub(crate) fn str_to_uint_reported(
             Ok(value) => value,
             Err((value, error)) => {
                 diagnostics.error(|| {
-                    tidb_parser_types::parser_types_errors::ERR_OVERFLOW
+                    crate::types_errors::ERR_OVERFLOW
                         .generate(format!("BIGINT value is out of range in '{input}'"))
                 });
                 prefix_error = Some(ScalarConversionEvent::Overflow(error));
@@ -793,7 +793,7 @@ pub(crate) fn str_to_uint_reported(
     if let Some(magnitude) = unsigned.strip_prefix('-') {
         if magnitude.bytes().any(|byte| byte != b'0') {
             diagnostics.replace_error(|| {
-                tidb_parser_types::parser_types_errors::ERR_OVERFLOW.generate(format!(
+                crate::types_errors::ERR_OVERFLOW.generate(format!(
                     "BIGINT UNSIGNED value is out of range in '{integer}'"
                 ))
             });
@@ -824,7 +824,7 @@ pub(crate) fn str_to_uint_reported(
         },
         Err(error) => {
             diagnostics.replace_error(|| {
-                tidb_parser_types::parser_types_errors::ERR_OVERFLOW.generate(format!(
+                crate::types_errors::ERR_OVERFLOW.generate(format!(
                     "BIGINT UNSIGNED value is out of range in '{unsigned}'"
                 ))
             });
@@ -1293,9 +1293,9 @@ pub(crate) fn decimal_conversion_error(
     input: &[u8],
 ) -> tidb_terror::TerrorError {
     match error {
-        crate::DecimalError::Truncated => tidb_parser_types::parser_types_errors::ERR_TRUNCATED.clone(),
-        crate::DecimalError::Overflow => tidb_parser_types::parser_types_errors::ERR_OVERFLOW.clone(),
-        crate::DecimalError::BadNumber => tidb_parser_types::parser_types_errors::ERR_BAD_NUMBER.clone(),
+        crate::DecimalError::Truncated => crate::types_errors::ERR_TRUNCATED.clone(),
+        crate::DecimalError::Overflow => crate::types_errors::ERR_OVERFLOW.clone(),
+        crate::DecimalError::BadNumber => crate::types_errors::ERR_BAD_NUMBER.clone(),
         crate::DecimalError::TruncatedWrongValue => {
             let input = &input[input
                 .iter()

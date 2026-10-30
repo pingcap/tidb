@@ -610,7 +610,7 @@ pub(crate) fn timestamp_add(vals: &[Datum], cols: &dyn Columns) -> Result<Datum,
                 }
                 Err(_) if core.adjusted_datetime(&zone).is_ok() => {
                     return Err(EvalError::Conversion(
-                        tidb_parser_types::parser_types_errors::ERR_TIMESTAMP_IN_DST_TRANSITION.generate(format!(
+                        tidb_datatype::types_errors::ERR_TIMESTAMP_IN_DST_TRANSITION.generate(format!(
                             "Timestamp is not valid, since it is in Daylight Saving Time transition '{core:?}' for time zone '{}'",
                             zone.dag_zone().0
                         )),

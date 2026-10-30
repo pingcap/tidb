@@ -24,7 +24,7 @@ use std::sync::LazyLock;
 
 use tidb_terror::catalog_support::{std_err, Class};
 use tidb_terror::TerrorError;
-use tidb_errno::errcode;
+use tidb_mysql::errors::errcode;
 
 /// Source `parser/charset.ErrInvalidCharacterString` (`pkg/parser/charset/encoding_base.go:29`).
 pub static ERR_INVALID_CHARACTER_STRING: LazyLock<TerrorError> =
@@ -38,7 +38,7 @@ pub static ERR_COLLATION_CHARSET_MISMATCH: LazyLock<TerrorError> =
 
 #[cfg(test)]
 mod go_class_code_tests {
-    use tidb_errno::errcode;
+    use tidb_mysql::errors::errcode;
     use tidb_terror::TerrorClass;
 
     /// Each prototype carries the class and code of the Go definition it

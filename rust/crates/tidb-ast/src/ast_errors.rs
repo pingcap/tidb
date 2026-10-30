@@ -24,7 +24,7 @@ use std::sync::LazyLock;
 
 use tidb_terror::catalog_support::{std_err, Class};
 use tidb_terror::TerrorError;
-use tidb_errno::errcode;
+use tidb_mysql::errors::errcode;
 
 /// Source `parser/ast.ErrNoParts` (`pkg/parser/ast/ddl.go:4418`).
 pub static ERR_NO_PARTS: LazyLock<TerrorError> =
@@ -74,7 +74,7 @@ pub static ERR_WRONG_USAGE: LazyLock<TerrorError> =
 
 #[cfg(test)]
 mod go_class_code_tests {
-    use tidb_errno::errcode;
+    use tidb_mysql::errors::errcode;
     use tidb_terror::TerrorClass;
 
     /// Each prototype carries the class and code of the Go definition it

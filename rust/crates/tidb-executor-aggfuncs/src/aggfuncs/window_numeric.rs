@@ -192,8 +192,8 @@ fn check_decimal(warning: Option<tidb_datatype::DecimalCodecWarning>) -> Result<
     use tidb_datatype::DecimalCodecWarning;
     let error = match warning {
         None => return Ok(()),
-        Some(DecimalCodecWarning::Overflow) => (*tidb_parser_types::parser_types_errors::ERR_OVERFLOW).clone(),
-        Some(DecimalCodecWarning::Truncated) => (*tidb_parser_types::parser_types_errors::ERR_TRUNCATED).clone(),
+        Some(DecimalCodecWarning::Overflow) => (*tidb_datatype::types_errors::ERR_OVERFLOW).clone(),
+        Some(DecimalCodecWarning::Truncated) => (*tidb_datatype::types_errors::ERR_TRUNCATED).clone(),
     };
     Err(ExecError::Eval(tidb_exprctx::EvalError::Conversion(error)))
 }

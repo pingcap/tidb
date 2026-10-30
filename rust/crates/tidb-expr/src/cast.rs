@@ -141,8 +141,8 @@ pub(crate) fn eval_numeric_cast_with_type(
                 let error = error.map(|error| match error {
                     DecimalError::Truncated => tidb_parser_types::parser_types_errors::ERR_TRUNCATED_WRONG_VALUE
                         .generate(format!("Truncated incorrect DECIMAL value: '{text}'")),
-                    DecimalError::Overflow => tidb_parser_types::parser_types_errors::ERR_OVERFLOW.clone(),
-                    DecimalError::BadNumber => tidb_parser_types::parser_types_errors::ERR_BAD_NUMBER.clone(),
+                    DecimalError::Overflow => tidb_datatype::types_errors::ERR_OVERFLOW.clone(),
+                    DecimalError::BadNumber => tidb_datatype::types_errors::ERR_BAD_NUMBER.clone(),
                     DecimalError::TruncatedWrongValue => tidb_parser_types::parser_types_errors::ERR_TRUNCATED_WRONG_VALUE
                         .generate(format!("Truncated incorrect DECIMAL value: '{text}'")),
                 });
@@ -155,7 +155,7 @@ pub(crate) fn eval_numeric_cast_with_type(
                     None | Some(DecimalError::Truncated) => {}
                     Some(DecimalError::Overflow) => match ctx.truncate_level() {
                         crate::ErrorLevel::Error => {
-                            return Err(EvalError::Conversion(tidb_parser_types::parser_types_errors::ERR_OVERFLOW.clone()))
+                            return Err(EvalError::Conversion(tidb_datatype::types_errors::ERR_OVERFLOW.clone()))
                         }
                         crate::ErrorLevel::Warn => ctx.append_go_warning(
                             &tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL,
@@ -166,7 +166,7 @@ pub(crate) fn eval_numeric_cast_with_type(
                                 crate::ErrorLevel::Ignore => {}
                                 },
                                 Some(_) => {
-                                return Err(EvalError::Conversion(tidb_parser_types::parser_types_errors::ERR_BAD_NUMBER.clone()))
+                                return Err(EvalError::Conversion(tidb_datatype::types_errors::ERR_BAD_NUMBER.clone()))
                                 }
                                 }
                                 Decimal::from_my_decimal(&decimal)
@@ -248,7 +248,7 @@ pub(crate) fn eval_numeric_cast_with_type(
                                 match result {
                                 Ok(value) => Ok(integer(value)),
                                 Err((converted, _error)) => {
-                                handle(Some(tidb_parser_types::parser_types_errors::ERR_OVERFLOW.generate(format!(
+                                handle(Some(tidb_datatype::types_errors::ERR_OVERFLOW.generate(format!(
                                 "constant {} overflows bigint",
                                 tidb_datatype::format_float_g_shortest(tidb_datatype::round_float(
                                 value
@@ -267,7 +267,7 @@ pub(crate) fn eval_numeric_cast_with_type(
                                 rounded.to_i64_trunc()
                                 };
                                 if error.is_some() {
-                                let error = tidb_parser_types::parser_types_errors::ERR_OVERFLOW.clone();
+                                let error = tidb_datatype::types_errors::ERR_OVERFLOW.clone();
                                 match ctx.truncate_level() {
                                 crate::ErrorLevel::Error => return Err(EvalError::Conversion(error)),
                                 crate::ErrorLevel::Warn => ctx.append_go_warning(
@@ -388,7 +388,7 @@ pub fn convert_json_to_type(
             let produced = tidb_datatype::produce_string_with_type(text, target, false)
                 .map_err(|_| EvalError::Unsupported("a multi-valued string element did not convert"))?;
             if produced.event.is_some() {
-                return Err(EvalError::Conversion(tidb_parser_types::parser_types_errors::ERR_DATA_TOO_LONG.clone()));
+                return Err(EvalError::Conversion(tidb_datatype::types_errors::ERR_DATA_TOO_LONG.clone()));
             }
             Ok(Datum::new_string(produced.value))
         }
@@ -409,7 +409,7 @@ pub fn convert_json_to_type(
                 Some(tidb_datatype::ScalarConversionEvent::Overflow(
                     tidb_datatype::ScalarConversionError::Overflow { value, target },
                 )) => {
-                    return Err(EvalError::Conversion(tidb_parser_types::parser_types_errors::ERR_OVERFLOW.generate(
+                    return Err(EvalError::Conversion(tidb_datatype::types_errors::ERR_OVERFLOW.generate(
                         format!(
                             "constant {value} overflows {}",
                             tidb_datatype::type_str(target)
@@ -417,7 +417,7 @@ pub fn convert_json_to_type(
                     )));
                 }
                 Some(_) => {
-                    return Err(EvalError::Conversion(tidb_parser_types::parser_types_errors::ERR_OVERFLOW.clone()));
+                    return Err(EvalError::Conversion(tidb_datatype::types_errors::ERR_OVERFLOW.clone()));
                 }
             }
             Ok(if unsigned {
@@ -435,7 +435,7 @@ pub fn convert_json_to_type(
             }
             let converted = tidb_datatype::json_to_float(item);
             if converted.event.is_some() {
-                return Err(EvalError::Conversion(tidb_parser_types::parser_types_errors::ERR_OVERFLOW.clone()));
+                return Err(EvalError::Conversion(tidb_datatype::types_errors::ERR_OVERFLOW.clone()));
             }
             Ok(Datum::Real(converted.value))
         }
@@ -1942,7 +1942,7 @@ fn cast_to_time_value(
         // handleInvalidTimeError does not downgrade the DST error. Unlike
         // Time.Convert's warning, ParseTime's returned error fails this cast.
         return Err(EvalError::Conversion(
-            tidb_parser_types::parser_types_errors::ERR_TIMESTAMP_IN_DST_TRANSITION
+            tidb_datatype::types_errors::ERR_TIMESTAMP_IN_DST_TRANSITION
                 .fast_generate_by_args(&[s.into(), ctx.time_zone().dag_zone().0.into()]),
         ));
     }
@@ -2418,7 +2418,7 @@ fn handle_invalid_time_error(
             if code == tidb_errno::errcode::ErrIncorrectDatetimeValue =>
         {
             Err(EvalError::Conversion(
-                tidb_parser_types::parser_types_errors::ERR_INCORRECT_DATETIME_VALUE.generate(message.to_owned()),
+                tidb_datatype::types_errors::ERR_INCORRECT_DATETIME_VALUE.generate(message.to_owned()),
             ))
         }
         crate::ErrorLevel::Error => Err(EvalError::TruncatedWrongValue(message.to_owned())),

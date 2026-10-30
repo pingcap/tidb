@@ -104,7 +104,7 @@ impl EnumParseError {
     pub fn message_bytes(&self) -> Vec<u8> {
         let mut message = self.context.as_bytes().to_vec();
         message.extend_from_slice(b": ");
-        message.extend_from_slice((*tidb_parser_types::parser_types_errors::ERR_TRUNCATED).to_string().as_bytes());
+        message.extend_from_slice((*crate::types_errors::ERR_TRUNCATED).to_string().as_bytes());
         message
     }
 
@@ -116,13 +116,13 @@ impl EnumParseError {
 
 impl fmt::Display for EnumParseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}: {}", self.context, *tidb_parser_types::parser_types_errors::ERR_TRUNCATED)
+        write!(formatter, "{}: {}", self.context, *crate::types_errors::ERR_TRUNCATED)
     }
 }
 
 impl Error for EnumParseError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
-        Some(&*tidb_parser_types::parser_types_errors::ERR_TRUNCATED)
+        Some(&*crate::types_errors::ERR_TRUNCATED)
     }
 }
 
