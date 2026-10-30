@@ -2393,3 +2393,64 @@ func TestGetDDLStatus(t *testing.T) {
 	require.Equal(t, model.JobStateRunning, status.state)
 	require.Equal(t, int64(123)+int64(456), status.rowCount)
 }
+
+func TestPostProcessWithChecksumAndAnalyzeOffStillRunsLocalBackendWork(t *testing.T) {
+	type options struct {
+		backend       string
+		strategy      config.DuplicateResolutionAlgorithm
+		addIndexBySQL bool
+		checksum      config.PostOpLevel
+		analyze       config.PostOpLevel
+	}
+	postProcess := func(o options) (bool, []checkpoints.CheckpointStatus) {
+		cfg := config.NewConfig()
+		cfg.TikvImporter.Backend = o.backend
+		cfg.Conflict.Strategy = o.strategy
+		cfg.TikvImporter.AddIndexBySQL = o.addIndexBySQL
+		cfg.PostRestore.Checksum = o.checksum
+		cfg.PostRestore.Analyze = o.analyze
+		cfg.PostRestore.PostProcessAtLast = true
+
+		backendObj := mock.NewMockBackend(gomock.NewController(t))
+		backendObj.EXPECT().ShouldPostProcess().Return(true)
+		saveCpCh := make(chan saveCp)
+		var saved []checkpoints.CheckpointStatus
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for cp := range saveCpCh {
+				saved = append(saved, cp.merger.(*checkpoints.StatusCheckpointMerger).Status)
+				cp.waitCh <- nil
+			}
+		}()
+		rc := &Controller{cfg: cfg, backend: backendObj, saveCpCh: saveCpCh}
+		tr := &TableImporter{tableName: "`db`.`tbl`", logger: log.L()}
+
+		deferred, err := tr.postProcess(context.Background(), rc,
+			&checkpoints.TableCheckpoint{Status: checkpoints.CheckpointStatusAlteredAutoInc}, false, nil)
+		require.NoError(t, err)
+		close(saveCpCh)
+		<-done
+		return deferred, saved
+	}
+	skipped := []checkpoints.CheckpointStatus{checkpoints.CheckpointStatusAnalyzeSkipped}
+
+	for _, o := range []options{
+		{backend: config.BackendTiDB, strategy: config.ReplaceOnDup},
+		{backend: config.BackendLocal, strategy: config.NoneOnDup},
+	} {
+		deferred, saved := postProcess(o)
+		require.False(t, deferred, "%+v", o)
+		require.Equal(t, skipped, saved, "%+v", o)
+	}
+	for _, o := range []options{
+		{backend: config.BackendLocal, strategy: config.ReplaceOnDup},
+		{backend: config.BackendLocal, strategy: config.NoneOnDup, addIndexBySQL: true},
+		{backend: config.BackendLocal, strategy: config.NoneOnDup, checksum: config.OpLevelRequired},
+		{backend: config.BackendLocal, strategy: config.NoneOnDup, analyze: config.OpLevelRequired},
+	} {
+		deferred, saved := postProcess(o)
+		require.True(t, deferred, "%+v", o)
+		require.Empty(t, saved, "%+v", o)
+	}
+}
