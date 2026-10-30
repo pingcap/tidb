@@ -14,7 +14,9 @@
 
 //! The session as Go `temptable.TemporaryTableDDL`'s `sctx`: its LOCAL
 //! temporary tables (`SessionVars.LocalTemporaryTables`, an
-//! `infoschema.SessionTables`) and its catalog's id allocator.
+//! `infoschema.SessionTables`) and its catalog's id allocator; and the
+//! primitives `DDLExec`'s cases over them read
+//! ([`tidb_executor::ddl_exec::TemporaryTableDdlExec`]).
 
 use tidb_infoschema::session_tables::{self, SessionTables};
 
@@ -58,5 +60,25 @@ impl Session {
             [schema, table] => self.is_local_temporary_table(schema, table),
             _ => false,
         }
+    }
+}
+
+impl tidb_executor::ddl_exec::TemporaryTableDdlExec for Session {
+    fn has_local_temporary_table(&self, schema: &str, name: &str) -> bool {
+        Session::is_local_temporary_table(self, schema, name)
+    }
+
+    fn session_info_schema(
+        &self,
+    ) -> Option<std::sync::Arc<tidb_infoschema::cluster_catalog::ClusterCatalog>> {
+        self.info_schema.clone()
+    }
+
+    fn append_suppressed(&mut self, error: DriverError) {
+        Session::append_suppressed(self, error);
+    }
+
+    fn drain_eval_warnings(&mut self, ctx: &tidb_sessionctx::StmtContext) {
+        Session::drain_eval_warnings(self, ctx);
     }
 }

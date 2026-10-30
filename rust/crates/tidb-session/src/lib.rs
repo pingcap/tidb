@@ -1107,7 +1107,6 @@ use tidb_executor::blacklist;
 mod bootstrap;
 mod classify;
 pub mod session_errors;
-mod ddl_exec;
 mod ddl_jobs;
 pub mod ddl_service;
 pub mod domain_services;

@@ -1,46 +1,14 @@
-//! Go's ADMIN executors and the `SimpleExec` arms that touch no user table.
-//!
-//! `ADMIN CHECK TABLE` / `ADMIN CHECK INDEX`: the `AdminStmt::AdminCheck` arm
-//! of the session's ADMIN dispatch.
-//!
-//! The check itself lives in `crate::admin_check` (which mirrors Go
-//! `pkg/executor/check_table_index.go`); this file is only the statement
-//! seam -- name resolution, the output SHAPE, and the refusals.
-//!
-//! # The shapes, from TiDB's own recording
-//!
-//! From `tests/integrationtest/r/util/admin.result` and
-//! `tests/integrationtest/r/executor/admin.result`, which are TiDB's oracle
-//! and are only ever read here:
-//!
-//! - `admin check table t;` -- NO output at all: Go's `CheckTable` plan has
-//!   an EMPTY schema, so the server sends an OK packet, not a zero-column
-//!   result set (see [`admin_check_passed`]). Producing nothing is the whole
-//!   success contract, which is exactly why the check underneath must be
-//!   real: an `Ok` returned without reading a byte is indistinguishable from
-//!   a passing check, and would be a success return that is not one.
-//! - `admin check index t idx;` -- also no output; the same consistency
-//!   check, narrowed to one index.
-//! - `admin check index t idx (2, 4);` -- a RESULT SET: the indexed columns
-//!   followed by `extra_handle`, in index order, for the rows whose handle
-//!   falls in a half-open interval.
-//!
-//! # What this refuses, by name
-//!
-//! A table whose rows are not stored as index-bearing bytes has no index
-//! entries to check against, so `ADMIN CHECK` over one is REFUSED rather than
-//! answered OK. Same for the multi-table `ADMIN CHECK TABLE t1, t2` form,
-//! which Go's own planner rejects.
-
 //! Go `pkg/executor/ddl.go`: `DDLExec.Next` over the connection that runs
 //! it. The DDL executor's checks against the catalog, the statement lowered
 //! to the job(s) the cluster runs (`ddlExecutor.DoDDLJob`), the DDL a session
 //! answers itself, and `ModifySchemaSetTiFlashReplica`. The session state and
 //! the store-side steps it reaches are [`DdlExec`]'s primitives.
+//! [`TemporaryTableDdlExec`] is `Next`'s cases over the session's LOCAL
+//! temporary tables, which it answers before (or instead of) a job.
 
 use std::sync::Arc;
 
-use tidb_ast::Stmt;
+use tidb_ast::{DdlStmt, Stmt};
 use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_ddl::cluster_ddl::DdlStatement;
@@ -685,4 +653,287 @@ pub trait DdlExec {
             )),
         }
     }
+}
+
+/// Go `DDLExec.Next`'s cases over the session's LOCAL temporary tables
+/// (`SessionVars.LocalTemporaryTables`): the statements it answers without
+/// a job (a LOCAL temporary CREATE, DROP or TRUNCATE) and the DDL it
+/// refuses on one, judged before the job path (`getLocalTemporaryTable`).
+pub trait TemporaryTableDdlExec:
+    crate::stmt_ctx_build::ResetContextOfStmt + tidb_temptable::TemporaryTableContext
+{
+    /// Whether `schema`.`name` is one of the session's LOCAL temporary
+    /// tables (Go `SessionTables.TableByName`).
+    fn has_local_temporary_table(&self, schema: &str, name: &str) -> bool;
+
+    /// The session's infoschema (Go `sctx.GetInfoSchema()`).
+    fn session_info_schema(
+        &self,
+    ) -> Option<std::sync::Arc<tidb_infoschema::cluster_catalog::ClusterCatalog>>;
+
+    /// An `IF [NOT] EXISTS` refusal, kept as the statement's note.
+    fn append_suppressed(&mut self, error: DriverError);
+
+    /// The warnings `ctx` collected while the table was built.
+    fn drain_eval_warnings(&mut self, ctx: &crate::StmtContext);
+
+    /// [`Self::has_local_temporary_table`] for a written name path, an
+    /// unqualified one in the current database.
+    fn local_temporary_path(&self, path: &[String]) -> bool {
+        match path {
+            [table] => self.has_local_temporary_table(&self.session_vars().current_db, table),
+            [schema, table] => self.has_local_temporary_table(schema, table),
+            _ => false,
+        }
+    }
+
+    /// Go `DDLExec.Next`'s statement switch: where it takes `ddl`, judged
+    /// against the session's LOCAL temporary tables (`getLocalTemporaryTable`).
+    fn ddl_exec_next<'a>(&self, ddl: &'a DdlStmt) -> DdlExecNext<'a> {
+        let refuse = |path: &[String], statement| {
+            self.local_temporary_path(path)
+                .then_some(DdlExecNext::UnsupportedLocalTempTableDdl(statement))
+        };
+        let next = match ddl {
+            DdlStmt::CreateTable(create)
+                if create.temporary == tidb_ast::CreateTableTemporary::Local =>
+            {
+                Some(DdlExecNext::CreateSessionTemporaryTable(create))
+            }
+            DdlStmt::DropTable(drop) => Some(self.drop_table_next(drop)),
+            DdlStmt::TruncateTable(path) => self
+                .local_temporary_path(path)
+                .then_some(DdlExecNext::TruncateLocalTemporaryTable(path)),
+            DdlStmt::AlterTable(alter) => refuse(&alter.name, "ALTER TABLE"),
+            DdlStmt::CreateIndex(create) => refuse(&create.table, "CREATE INDEX"),
+            DdlStmt::DropIndex(drop) => refuse(&drop.table, "DROP INDEX"),
+            // `executeRenameTable` checks every source before any job.
+            DdlStmt::RenameTable(rename) => rename
+                .pairs
+                .iter()
+                .find_map(|(from, _)| refuse(from, "RENAME TABLE")),
+            _ => None,
+        };
+        next.unwrap_or(DdlExecNext::Job)
+    }
+
+    /// Go `DDLExec.Next`'s `DropTableStmt` case: the LOCAL temporary tables
+    /// come out of the statement, walked backwards so the rest keep their
+    /// order; `DROP TEMPORARY TABLE` must name nothing else; a DROP left
+    /// naming nothing returns without a job.
+    fn drop_table_next<'a>(&self, drop: &tidb_ast::DropTableStmt) -> DdlExecNext<'a> {
+        let (persistent, local) = tidb_ddl_build::table_lifecycle::split_drop_table_targets(drop, |path| {
+            self.local_temporary_path(path)
+        });
+        if drop.temporary == tidb_ast::DropTemporary::Local && !persistent.names.is_empty() {
+            return DdlExecNext::DropTemporaryNonLocal {
+                names: persistent.names,
+                if_exists: drop.if_exists,
+            };
+        }
+        if persistent.names.is_empty() {
+            return DdlExecNext::DropLocalTemporaryTables(local);
+        }
+        if local.is_empty() {
+            return DdlExecNext::Job;
+        }
+        DdlExecNext::DropTableJob { persistent, local }
+    }
+
+    /// Whether Go `DDLExec.Next` returns before `sessiontxn.NewTxnInStmt`
+    /// for `stmt`, keeping the user's transaction: a LOCAL temporary CREATE,
+    /// any `DROP TEMPORARY TABLE`, and a DROP of LOCAL temporary tables only.
+    fn ddl_preserves_transaction(&self, stmt: &Stmt) -> bool {
+        matches!(stmt, Stmt::Ddl(ddl) if self.ddl_exec_next(ddl).returns_before_new_txn())
+    }
+
+    /// Go `DDLExec.Next` for the DDL the session answers: a LOCAL temporary
+    /// table's and the refusals of the DDL one cannot take. `None` for a job, which the session's node
+    /// runs. The caller has already ended the transaction where `Next`
+    /// calls `NewTxnInStmt` (see [`Self::ddl_preserves_transaction`]).
+    fn ddl_exec(&mut self, stmt: &Stmt) -> Result<Option<crate::StmtOutput>, DriverError> {
+        let Stmt::Ddl(ddl) = stmt else {
+            return Ok(None);
+        };
+        match self.ddl_exec_next(ddl) {
+            DdlExecNext::CreateSessionTemporaryTable(create) => {
+                self.create_session_temporary_table(create)?;
+            }
+            DdlExecNext::DropTemporaryNonLocal { names, if_exists } => {
+                let current_db = self.session_vars().current_db.clone();
+                let names = names
+                    .iter()
+                    .map(|path| {
+                        tidb_infoschema::split_table_path_pub(path, &current_db)
+                            .map(|(schema, name)| format!("{schema}.{name}"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let error = DriverError::from(
+                    tidb_infoschema::infoschema_errors::ERR_TABLE_DROP_EXISTS
+                        .generate_with_stack_by_args(&[(names.join(",")).into()]),
+                );
+                if !if_exists {
+                    return Err(error);
+                }
+                self.append_suppressed(error);
+            }
+            DdlExecNext::DropLocalTemporaryTables(local) => {
+                self.drop_local_temporary_tables(&local)?;
+            }
+            DdlExecNext::TruncateLocalTemporaryTable(path) => {
+                let current_db = self.session_vars().current_db.clone();
+                let (schema, table) =
+                    tidb_infoschema::split_table_path_pub(path, &current_db)?;
+                tidb_temptable::get_temporary_table_ddl(self)
+                    .truncate_local_temporary_table(schema, table)?;
+            }
+            DdlExecNext::UnsupportedLocalTempTableDdl(statement) => {
+                return Err(DriverError::from(
+                    tidb_dbterror::ERR_UNSUPPORTED_LOCAL_TEMP_TABLE_DDL
+                        .generate_with_stack_by_args(&[(statement).into()]),
+                ));
+            }
+            DdlExecNext::DropTableJob { .. } => return Ok(None),
+            DdlExecNext::Job => return Ok(None),
+        }
+        Ok(Some(crate::StmtOutput::Affected(0)))
+    }
+
+    /// Go `DDLExec.dropLocalTemporaryTables`.
+    fn drop_local_temporary_tables(
+        &mut self,
+        local: &[Vec<String>],
+    ) -> Result<(), DriverError> {
+        let current_db = self.session_vars().current_db.clone();
+        for path in local {
+            let (schema, name) = tidb_infoschema::split_table_path_pub(path, &current_db)?;
+            tidb_temptable::get_temporary_table_ddl(self)
+                .drop_local_temporary_table(schema, name)?;
+        }
+        Ok(())
+    }
+
+    /// Go `DDLExec.createSessionTemporaryTable`.
+    fn create_session_temporary_table(
+        &mut self,
+        create: &tidb_ast::CreateTableStmt,
+    ) -> Result<(), DriverError> {
+        let current_db = self.session_vars().current_db.clone();
+        let (schema, table) =
+            tidb_infoschema::split_table_path_pub(&create.name, &current_db)?;
+        let info_schema = self.session_info_schema().ok_or_else(|| {
+            DriverError::unsupported("a LOCAL temporary table needs the session's infoschema")
+        })?;
+        // Go's preprocessor resolves the LIKE source first.
+        let like = match &create.like_table {
+            Some(source) => {
+                let (source_schema, source_table) =
+                    tidb_infoschema::split_table_path_pub(source, &current_db)?;
+                let source = tidb_ddl::cluster_ddl::create_object::resolve_like_source(
+                    &info_schema,
+                    source_schema,
+                    source_table,
+                    create.temporary,
+                )
+                .map_err(|error| temporary_table_ddl_error(&error))?;
+                Some((source_schema, source))
+            }
+            None => None,
+        };
+        let Some((database, _)) = info_schema.schema_by_name(schema) else {
+            return Err(DriverError::from(
+                tidb_infoschema::infoschema_errors::ERR_DATABASE_NOT_EXISTS
+                    .generate_with_stack_by_args(&[(schema.to_owned()).into()]),
+            ));
+        };
+        if self.has_local_temporary_table(schema, table) {
+            let exists = DriverError::from(
+                tidb_infoschema::infoschema_errors::ERR_TABLE_EXISTS
+                    .generate_with_stack_by_args(&[(format!("{schema}.{table}")).into()]),
+            );
+            if create.if_not_exists {
+                self.append_suppressed(exists);
+                return Ok(());
+            }
+            return Err(exists);
+        }
+        let ctx = self.ddl_statement_context();
+        let mut warnings = Vec::new();
+        let built = tidb_ddl::cluster_ddl::create_object::build_session_temporary_table_info(
+            database,
+            create,
+            table,
+            like,
+            &ctx,
+            &mut warnings,
+        );
+        // What the build warned about (a discarded CHECK, a LINEAR
+        // partitioning, a truncated key part), in the order it filed them.
+        self.drain_eval_warnings(&ctx);
+        let info = built.map_err(|error| temporary_table_ddl_error(&error))?;
+        for warning in warnings {
+            self.append_sql_warning(warning);
+        }
+        tidb_temptable::get_temporary_table_ddl(self)
+            .create_local_temporary_table(database, info)
+    }
+}
+
+/// Where Go `DDLExec.Next` takes one DDL statement.
+pub enum DdlExecNext<'a> {
+    /// Before `NewTxnInStmt`: `createSessionTemporaryTable`.
+    CreateSessionTemporaryTable(&'a tidb_ast::CreateTableStmt),
+    /// Before `NewTxnInStmt`: a `DROP TEMPORARY TABLE` that names tables
+    /// which are not the session's LOCAL temporary ones. They are one
+    /// `ErrTableDropExists` (a Note under `IF EXISTS`), and nothing is
+    /// dropped.
+    DropTemporaryNonLocal {
+        /// The tables the statement names, as written.
+        names: Vec<Vec<String>>,
+        /// `IF EXISTS`.
+        if_exists: bool,
+    },
+    /// Before `NewTxnInStmt`: a DROP naming only LOCAL temporary tables,
+    /// which `dropLocalTemporaryTables` drops without a job.
+    DropLocalTemporaryTables(Vec<Vec<String>>),
+    /// After `NewTxnInStmt`: `executeTruncateTable` of a LOCAL temporary
+    /// table, `TruncateLocalTemporaryTable`.
+    TruncateLocalTemporaryTable(&'a [String]),
+    /// After `NewTxnInStmt`: `ErrUnsupportedLocalTempTableDDL` naming the
+    /// statement (`executeAlterTable`, `executeCreateIndex`,
+    /// `executeDropIndex`, `executeRenameTable`).
+    UnsupportedLocalTempTableDdl(&'static str),
+    /// After `NewTxnInStmt`: the job drops `persistent` (the DROP without
+    /// its LOCAL temporary tables), and once it succeeds
+    /// `dropLocalTemporaryTables` drops `local`.
+    DropTableJob {
+        /// The DROP the job runs.
+        persistent: tidb_ast::DropTableStmt,
+        /// The LOCAL temporary tables dropped after it.
+        local: Vec<Vec<String>>,
+    },
+    /// After `NewTxnInStmt`: the DDL executor's, which runs the statement's
+    /// job or changes the session's hypothetical indexes and TiFlash
+    /// replicas.
+    Job,
+}
+
+impl DdlExecNext<'_> {
+    /// Whether `Next` returns before `sessiontxn.NewTxnInStmt`, which keeps
+    /// the user's transaction open.
+    pub fn returns_before_new_txn(&self) -> bool {
+        matches!(
+            self,
+            Self::CreateSessionTemporaryTable(_)
+                | Self::DropTemporaryNonLocal { .. }
+                | Self::DropLocalTemporaryTables(_)
+        )
+    }
+}
+
+/// A DDL package error as the statement's error.
+fn temporary_table_ddl_error(error: &tidb_ddl_build::plan_error::DdlPlanError) -> DriverError {
+    DriverError::Mysql(tidb_terror::MysqlError::from_sql_error(
+        error.to_sql_error(),
+    ))
 }

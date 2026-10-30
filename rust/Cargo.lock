@@ -4618,6 +4618,7 @@ dependencies = [
  "tidb-table",
  "tidb-tablecodec",
  "tidb-tblctx",
+ "tidb-temptable",
  "tidb-terror",
  "tidb-tiflash",
  "tidb-tiflashcompute",

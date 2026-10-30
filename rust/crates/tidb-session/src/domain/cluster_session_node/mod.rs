@@ -166,6 +166,7 @@
 //! [`StatementSnapshot`]: tidb_store_driver_txn::cluster_table_storage::StatementSnapshot
 //! [`SessionTransaction`]: tidb_store_driver_txn::cluster_table_storage::SessionTransaction
 
+use tidb_executor::ddl_exec::TemporaryTableDdlExec;
 use crate::statement_lifecycle::CatalogFollowing as _;
 use crate::store_session::{sql_query_error, StoreTxnOps};
 use std::sync::{Arc, Mutex, Weak};
@@ -1183,8 +1184,8 @@ impl<'s> ClusterServerSession<'s> {
             // ([`Self::run_ddl_exec`]).
             CompiledExecutor::Ddl => match stmt {
                 Stmt::Ddl(ddl) => match self.session.ddl_exec_next(ddl) {
-                    crate::ddl_exec::DdlExecNext::Job
-                    | crate::ddl_exec::DdlExecNext::DropTableJob { .. } => {
+                    tidb_executor::ddl_exec::DdlExecNext::Job
+                    | tidb_executor::ddl_exec::DdlExecNext::DropTableJob { .. } => {
                         Ok(StatementRoute::DdlExec)
                     }
                     _ => Ok(StatementRoute::SessionDdl),
@@ -2023,7 +2024,7 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
         ddl: &tidb_ast::DdlStmt,
     ) -> Option<(tidb_ast::DropTableStmt, Vec<Vec<String>>)> {
         match self.session.ddl_exec_next(ddl) {
-            crate::ddl_exec::DdlExecNext::DropTableJob { persistent, local } => {
+            tidb_executor::ddl_exec::DdlExecNext::DropTableJob { persistent, local } => {
                 Some((persistent, local))
             }
             _ => None,
