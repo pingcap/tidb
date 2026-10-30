@@ -2434,6 +2434,21 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 		return columns, nil, nil
 	case ast.ColumnList:
 		colSet := getColumnSetFromSpecifiedCols(specifiedCols)
+		// Some specified columns are virtual generated columns so we also need to add the columns that make up those generated columns.
+		if slices.ContainsFunc(specifiedCols, func(col *model.ColumnInfo) bool { return col.IsVirtualGenerated() }) {
+			err := b.addColumnsWithVirtualExprs(tbl, &calcOnceMap{data: colSet}, func(columns []*expression.Column) []expression.Expression {
+				virtualExprs := make([]expression.Expression, 0, len(specifiedCols))
+				for _, colInfo := range specifiedCols {
+					if expr := columns[colInfo.Offset].VirtualExpr; expr != nil {
+						virtualExprs = append(virtualExprs, expr)
+					}
+				}
+				return virtualExprs
+			})
+			if err != nil {
+				return nil, nil, err
+			}
+		}
 		mustAnalyzed, err := b.getMustAnalyzedColumns(tbl, mustAnalyzedCols)
 		if err != nil {
 			return nil, nil, err

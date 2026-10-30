@@ -2374,3 +2374,29 @@ func TestAnalyzeNDVRate(t *testing.T) {
 	tk.MustQuery("show warnings").CheckNotContain("raised the NDV rate")
 	tk.MustQuery(lastJob).CheckNotContain("ndvrate")
 }
+
+// TestAnalyzeColumnsWithVirtualColumnOnUnlistedColumn verifies that ANALYZE TABLE ... COLUMNS also analyzes
+// the columns that a listed virtual generated column depends on. See https://github.com/pingcap/tidb/issues/72161.
+func TestAnalyzeColumnsWithVirtualColumnOnUnlistedColumn(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE t1 (id INT PRIMARY KEY, a INT, b INT AS (a + 1) VIRTUAL, c INT AS (b + 1) VIRTUAL)")
+	tk.MustExec("INSERT INTO t1 (id, a) VALUES (1, 1), (2, 2)")
+	tk.MustExec("ANALYZE TABLE t1 COLUMNS c")
+
+	tk.MustExec("CREATE TABLE t2 (id INT PRIMARY KEY, j JSON, a INT, b INT AS (JSON_EXTRACT(j, '$.x')) VIRTUAL)")
+	tk.MustExec(`INSERT INTO t2 (id, j, a) VALUES (1, '{"x": 1}', 1), (2, '{"x": 2}', 2)`)
+	tk.MustExec("ANALYZE TABLE t2 COLUMNS a, b")
+
+	tk.MustExec("CREATE TABLE t3 (id INT PRIMARY KEY, s INT, a INT, b INT AS (s + 1) VIRTUAL)")
+	tk.MustExec("INSERT INTO t3 (id, s, a) VALUES (1, 1, 10), (2, 2, 20)")
+	tk.MustExec("ANALYZE TABLE t3 COLUMNS a, b")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t3"))
+	require.NoError(t, err)
+	tblStats := dom.StatsHandle().GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	// The column s, which b depends on, is analyzed too.
+	require.True(t, tblStats.GetCol(tbl.Meta().Columns[1].ID).IsAnalyzed())
+	require.True(t, tblStats.GetCol(tbl.Meta().Columns[2].ID).IsAnalyzed())
+}
