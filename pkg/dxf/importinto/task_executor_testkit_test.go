@@ -312,20 +312,6 @@ func TestImportQueryStep(t *testing.T) {
 		tk.MustQuery("select count(*) from query_dst").Check(testkit.Rows("0"))
 	})
 
-	t.Run("encode failure", func(t *testing.T) {
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/errorWhenSortChunk", `return(true)`)
-		runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		subtask := newQuerySubtask(t, sortStore, 2)
-		inputMeta := append([]byte(nil), subtask.Meta...)
-		require.ErrorContains(t, step.RunSubtask(runCtx, subtask), "occur an error when sort chunk")
-		// A failed subtask keeps its input meta and writes no output meta.
-		require.Equal(t, inputMeta, subtask.Meta)
-		exists, err := sortStore.FileExists(ctx, globalsort.SubtaskMetaPath(queryStepTaskID, subtask.ID))
-		require.NoError(t, err)
-		require.False(t, exists)
-	})
-
 	t.Run("query failure", func(t *testing.T) {
 		// The SELECT fails only when the worker runs it, after the capture.
 		tk.MustExec("create table query_bad(g bigint not null, j varchar(16))")
@@ -397,6 +383,7 @@ func TestImportQueryStep(t *testing.T) {
 		// sending until the pipeline is canceled.
 		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/errorWhenSortChunk", `return(true)`)
 		subtask := newQuerySubtask(t, manyStore, 6)
+		inputMeta := append([]byte(nil), subtask.Meta...)
 		done := make(chan error, 1)
 		go func() { done <- manyStep.RunSubtask(ctx, subtask) }()
 		select {
@@ -405,5 +392,10 @@ func TestImportQueryStep(t *testing.T) {
 		case <-time.After(10 * time.Second):
 			require.FailNow(t, "the query step does not stop after the encoders fail")
 		}
+		// A failed subtask keeps its input meta and writes no output meta.
+		require.Equal(t, inputMeta, subtask.Meta)
+		exists, err := manyStore.FileExists(ctx, globalsort.SubtaskMetaPath(queryStepTaskID, subtask.ID))
+		require.NoError(t, err)
+		require.False(t, exists)
 	})
 }
