@@ -40,10 +40,12 @@ package packetio
 import (
 	"bufio"
 	"bytes"
-	"compress/zlib"
+	goerrors "errors"
 	"io"
+	"sync"
 	"time"
 
+	"github.com/klauspost/compress/zlib"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
@@ -318,22 +320,20 @@ func (p *PacketIO) Flush() error {
 
 func newCompressedWriter(w io.Writer, ca int, seq *uint8) *compressedWriter {
 	return &compressedWriter{
-		compressorBuffer{nil, nil, nil},
 		w,
 		new(bytes.Buffer),
 		seq,
-		nil,
+		new(bytes.Buffer),
 		ca,
 		3,
 	}
 }
 
 type compressedWriter struct {
-	compressorBuffer     compressorBuffer
 	w                    io.Writer
 	buf                  *bytes.Buffer
 	compressedSequence   *uint8
-	compressedPacket     *bytes.Buffer
+	packet               *bytes.Buffer
 	compressionAlgorithm int
 	zstdLevel            zstd.EncoderLevel
 }
@@ -367,110 +367,116 @@ func (cw *compressedWriter) Write(data []byte) (n int, err error) {
 }
 
 func (cw *compressedWriter) Flush() error {
-	var w io.WriteCloser
-	var err error
-	if cw.compressorBuffer.payload == nil {
-		cw.compressorBuffer.payload = new(bytes.Buffer)
-	}
-	if cw.compressedPacket == nil {
-		cw.compressedPacket = new(bytes.Buffer)
-	}
-
-	// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_compression_packet.html
-	// suggests a MIN_COMPRESS_LENGTH of 50.
-	minCompressLength := 50
 	data := cw.buf.Bytes()
 	cw.buf.Reset()
+	packet := cw.packet
+	packet.Reset()
+	packet.Write(compressedHeaderPlaceholder[:])
+	uncompressedLength := 0
+	if len(data) > minCompressLength {
+		if err := cw.compress(packet, data); err != nil {
+			return errors.Trace(err)
+		}
+		uncompressedLength = len(data)
+	} else {
+		packet.Write(data)
+	}
+	header := packet.Bytes()
+	putUint24(header[0:3], packet.Len()-len(compressedHeaderPlaceholder))
+	header[3] = *cw.compressedSequence
+	putUint24(header[4:7], uncompressedLength)
+	*cw.compressedSequence++
+	_, err := cw.w.Write(packet.Bytes())
+	return errors.Trace(err)
+}
 
+func (cw *compressedWriter) compress(dst *bytes.Buffer, data []byte) error {
 	switch cw.compressionAlgorithm {
 	case mysql.CompressionZlib:
-		if cw.compressorBuffer.zlibWriter == nil {
-			cw.compressorBuffer.zlibWriter, err = zlib.NewWriterLevel(cw.compressorBuffer.payload, mysql.ZlibCompressDefaultLevel)
-		}
-		w = cw.compressorBuffer.zlibWriter
+		return deflateInto(dst, data)
 	case mysql.CompressionZstd:
-		if cw.compressorBuffer.zstdWriter == nil {
-			cw.compressorBuffer.zstdWriter, err = zstd.NewWriter(cw.compressorBuffer.payload, zstd.WithEncoderLevel(cw.zstdLevel))
-		}
-		w = cw.compressorBuffer.zstdWriter
-	default:
-		return errors.New("Unknown compression algorithm")
+		return zstdInto(dst, data, cw.zstdLevel)
 	}
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// always reset the compressed packet buffer.
-	defer cw.compressedPacket.Reset()
+	return errors.New("Unknown compression algorithm")
+}
 
-	uncompressedLength := 0
-	compressedHeader := make([]byte, 7)
+func deflateInto(dst *bytes.Buffer, data []byte) error {
+	zw := zlibWriterPool.Get().(*zlib.Writer)
+	defer zlibWriterPool.Put(zw)
+	zw.Reset(dst)
+	_, err := zw.Write(data)
+	if err == nil {
+		err = zw.Close()
+	}
+	zw.Reset(nil)
+	return err
+}
 
-	needCompress := len(data) > minCompressLength
-	if needCompress {
-		// only reset the payload buffer if we are compressing.
-		defer cw.compressorBuffer.Reset()
-		uncompressedLength = len(data)
-		_, err := w.Write(data)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = w.Close()
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	var compressedLength int
-	if needCompress {
-		compressedLength = len(cw.compressorBuffer.payload.Bytes())
-	} else {
-		compressedLength = len(data)
-	}
-	compressedHeader[0] = byte(compressedLength)
-	compressedHeader[1] = byte(compressedLength >> 8)
-	compressedHeader[2] = byte(compressedLength >> 16)
-	compressedHeader[3] = *cw.compressedSequence
-	compressedHeader[4] = byte(uncompressedLength)
-	compressedHeader[5] = byte(uncompressedLength >> 8)
-	compressedHeader[6] = byte(uncompressedLength >> 16)
-	_, err = cw.compressedPacket.Write(compressedHeader)
+func zstdInto(dst *bytes.Buffer, data []byte, level zstd.EncoderLevel) error {
+	pool, err := zstdEncoderPool(level)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	*cw.compressedSequence++
-
-	if needCompress {
-		_, err = cw.compressedPacket.Write(cw.compressorBuffer.payload.Bytes())
-	} else {
-		_, err = cw.compressedPacket.Write(data)
+	encoder, _ := pool.Get().(*zstd.Encoder)
+	if encoder == nil {
+		return errors.Errorf("cannot create a zstd encoder at level %d", level)
 	}
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, err = cw.w.Write(cw.compressedPacket.Bytes())
-	if err != nil {
-		return errors.Trace(err)
-	}
+	dst.Write(encoder.EncodeAll(data, dst.AvailableBuffer()))
+	pool.Put(encoder)
 	return nil
 }
 
-type compressorBuffer struct {
-	payload    *bytes.Buffer
-	zlibWriter *zlib.Writer
-	zstdWriter *zstd.Encoder
+var compressedHeaderPlaceholder [7]byte
+
+func putUint24(b []byte, v int) {
+	_ = b[2] // bounds check hint to compiler; see golang.org/issue/14808
+	b[0], b[1], b[2] = byte(v), byte(v>>8), byte(v>>16)
 }
 
-func (c *compressorBuffer) Reset() {
-	if c.payload != nil {
-		c.payload.Reset()
+func uint24(b []byte) int {
+	_ = b[2] // bounds check hint to compiler; see golang.org/issue/14808
+	return int(b[0]) | int(b[1])<<8 | int(b[2])<<16
+}
+
+// Packets up to this size are sent uncompressed; MySQL itself uses 50 bytes.
+// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_compression_packet.html
+const minCompressLength = 512
+
+// Shared by all connections: each writer holds a few hundred KiB of encoder state.
+var zlibWriterPool = sync.Pool{
+	New: func() any {
+		w, _ := zlib.NewWriterLevel(nil, mysql.ZlibCompressDefaultLevel)
+		return w
+	},
+}
+
+// Shared by all connections, one pool per level: an encoder holds from a few to tens of MiB of
+// tables, so they follow the number of concurrent flushes rather than the number of connections.
+var zstdEncoderPools [zstd.SpeedBestCompression + 1]sync.Pool
+
+func zstdEncoderPool(level zstd.EncoderLevel) (*sync.Pool, error) {
+	if level < zstd.SpeedFastest || level > zstd.SpeedBestCompression {
+		return nil, errors.Errorf("unknown zstd encoder level %d", level)
 	}
-	if c.zlibWriter != nil {
-		c.zlibWriter.Reset(c.payload)
-	}
-	if c.zstdWriter != nil {
-		c.zstdWriter.Reset(c.payload)
+	return &zstdEncoderPools[level], nil
+}
+
+func init() {
+	for level := zstd.SpeedFastest; level <= zstd.SpeedBestCompression; level++ {
+		zstdEncoderPools[level].New = func() any {
+			encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(level), zstd.WithEncoderConcurrency(1))
+			if err != nil {
+				return nil
+			}
+			return encoder
+		}
 	}
 }
+
+// DecodeAll is safe for concurrent use and the decoder keeps little state, so one is shared.
+var sharedZstdDecoder = sync.OnceValues(func() (*zstd.Decoder, error) {
+	return zstd.NewReader(nil, zstd.WithDecoderMaxMemory(mysql.MaxPayloadLen), zstd.WithDecodeAllCapLimit(true))
+})
 
 func newCompressedReader(r io.Reader, ca int, seq *uint8) *compressedReader {
 	return &compressedReader{
@@ -489,71 +495,108 @@ type compressedReader struct {
 	data                 []byte
 	compressionAlgorithm int
 	zstdLevel            zstd.EncoderLevel
-	pos                  uint64
+	pos                  int
 }
 
-func (cr *compressedReader) Read(data []byte) (n int, err error) {
+func (cr *compressedReader) Read(data []byte) (int, error) {
 	if cr.data == nil {
-		var compressedHeader [7]byte
-		if _, err = io.ReadFull(cr.r, compressedHeader[:]); err != nil {
-			return
+		packet, err := cr.readPacket()
+		if err != nil {
+			return 0, err
 		}
-
-		compressedLength := int(uint32(compressedHeader[0]) | uint32(compressedHeader[1])<<8 | uint32(compressedHeader[2])<<16)
-		compressedSequence := compressedHeader[3]
-		uncompressedLength := int(uint32(compressedHeader[4]) | uint32(compressedHeader[5])<<8 | uint32(compressedHeader[6])<<16)
-
-		if compressedSequence != *cr.compressedSequence {
-			return n, server_err.ErrInvalidSequence.GenWithStack(
-				"invalid compressed sequence, received %d while expecting %d", compressedSequence, cr.compressedSequence)
-		}
-		*cr.compressedSequence++
-
-		r := io.NopCloser(cr.r)
-		if uncompressedLength > 0 {
-			switch cr.compressionAlgorithm {
-			case mysql.CompressionZlib:
-				var err error
-				lr := io.LimitReader(cr.r, int64(compressedLength))
-				r, err = zlib.NewReader(lr)
-				if err != nil {
-					return n, errors.Trace(err)
-				}
-			case mysql.CompressionZstd:
-				zstdReader, err := zstd.NewReader(cr.r, zstd.WithDecoderConcurrency(1))
-				if err != nil {
-					return n, errors.Trace(err)
-				}
-				r = zstdReader.IOReadCloser()
-			default:
-				return n, errors.New("Unknown compression algorithm")
-			}
-			cr.data = make([]byte, uncompressedLength)
-			if _, err := io.ReadFull(r, cr.data); err != nil {
-				return n, errors.Trace(err)
-			}
-			n = copy(data, cr.data)
-		} else {
-			cr.data = make([]byte, compressedLength)
-			if _, err := io.ReadFull(r, cr.data); err != nil {
-				return n, errors.Trace(err)
-			}
-			n = copy(data, cr.data)
-		}
-	} else {
-		if cr.pos > uint64(len(cr.data)) {
-			return n, io.EOF
-		}
-		n = copy(data, cr.data[cr.pos:])
+		cr.data = packet
 	}
-	cr.pos += uint64(n)
-	if cr.pos == uint64(len(cr.data)) {
+	n := copy(data, cr.data[cr.pos:])
+	cr.pos += n
+	if cr.pos == len(cr.data) {
 		cr.pos = 0
 		cr.data = nil
 	}
-	return
+	return n, nil
+}
+
+func (cr *compressedReader) readPacket() ([]byte, error) {
+	var header [7]byte
+	if _, err := io.ReadFull(cr.r, header[:]); err != nil {
+		return nil, err
+	}
+	compressedLength, sequence, uncompressedLength := uint24(header[0:3]), header[3], uint24(header[4:7])
+	if sequence != *cr.compressedSequence {
+		return nil, server_err.ErrInvalidSequence.GenWithStack(
+			"invalid compressed sequence, received %d while expecting %d", sequence, *cr.compressedSequence)
+	}
+	*cr.compressedSequence++
+	if uncompressedLength == 0 {
+		return readPayload(cr.r, compressedLength)
+	}
+	switch cr.compressionAlgorithm {
+	case mysql.CompressionZlib:
+		return readZlibPayload(cr.r, compressedLength, uncompressedLength)
+	case mysql.CompressionZstd:
+		return readZstdPayload(cr.r, compressedLength, uncompressedLength)
+	}
+	return nil, errors.New("Unknown compression algorithm")
+}
+
+func readPayload(r io.Reader, length int) ([]byte, error) {
+	data := make([]byte, length)
+	if _, err := io.ReadFull(r, data); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return data, nil
+}
+
+// readZlibPayload reads exactly one compressed payload and checks that its stream, checksum
+// included, ends where the header says.
+func readZlibPayload(r io.Reader, compressedLength, uncompressedLength int) ([]byte, error) {
+	compressed, err := readPayload(r, compressedLength)
+	if err != nil {
+		return nil, err
+	}
+	in := bytes.NewReader(compressed)
+	zr, err := zlib.NewReader(in)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	data, err := readPayload(zr, uncompressedLength)
+	if err != nil {
+		return nil, err
+	}
+	var extra [1]byte
+	if n, err := zr.Read(extra[:]); n > 0 {
+		return nil, errors.Errorf("zlib payload is larger than the header says %d", uncompressedLength)
+	} else if err != io.EOF {
+		return nil, errors.Trace(err)
+	}
+	if in.Len() > 0 {
+		return nil, errors.Errorf("zlib payload has %d bytes after the end of its stream", in.Len())
+	}
+	return data, nil
 }
 
 func (*compressedReader) Close() error {
 	return nil
+}
+
+// readZstdPayload reads exactly one compressed payload and checks its length against the header.
+func readZstdPayload(r io.Reader, compressedLength, uncompressedLength int) ([]byte, error) {
+	decoder, err := sharedZstdDecoder()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	compressed, err := readPayload(r, compressedLength)
+	if err != nil {
+		return nil, err
+	}
+	data, err := decoder.DecodeAll(compressed, make([]byte, 0, uncompressedLength))
+	if goerrors.Is(err, zstd.ErrDecoderSizeExceeded) {
+		return nil, errors.Errorf("zstd payload is larger than the header says %d", uncompressedLength)
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(data) != uncompressedLength {
+		return nil, errors.Errorf("zstd payload is %d bytes, the header says %d", len(data), uncompressedLength)
+	}
+	return data, nil
 }

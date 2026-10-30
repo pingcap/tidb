@@ -712,8 +712,10 @@ const (
 	CursorTypeScrollable
 )
 
-// ZlibCompressDefaultLevel is the zlib compression level for the compressed protocol
-const ZlibCompressDefaultLevel = 6
+// ZlibCompressDefaultLevel is the zlib compression level for the compressed protocol (BestSpeed).
+// MySQL always uses 6, which is not configurable there:
+// https://github.com/mysql/mysql-server/blob/06bcb0eb0ad281e08dd2b4d81b99ad25491433e7/mysys/my_compress.cc#L355
+const ZlibCompressDefaultLevel = 1
 
 const (
 	// CompressionNone is no compression in use
