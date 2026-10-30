@@ -102,15 +102,28 @@ func TestMergeJoinInDisk(t *testing.T) {
 	dom.ExpensiveQueryHandle().SetSessionManager(sm)
 
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
+	tk.MustExec("set @@tidb_max_chunk_size=32;")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t(c1 int, c2 int)")
 	tk.MustExec("create table t1(c1 int, c2 int)")
-	tk.MustExec("insert into t values(1,1)")
+	var innerRows bytes.Buffer
+	innerRows.WriteString("insert into t values ")
+	for i := range 33 {
+		if i > 0 {
+			innerRows.WriteString(",")
+		}
+		innerRows.WriteString("(1,1)")
+	}
+	tk.MustExec(innerRows.String())
 	tk.MustExec("insert into t1 values(1,3),(4,4)")
 
 	result := checkMergeAndRun(tk, t, "select /*+ TIDB_SMJ(t) */ * from t1 left outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
-	result.Check(testkit.Rows("1 3 1 1"))
+	expectedRows := make([]string, 0, 33)
+	for range 33 {
+		expectedRows = append(expectedRows, "1 3 1 1")
+	}
+	result.Check(testkit.Rows(expectedRows...))
 	require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed())
 	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), int64(0))
 	require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.DiskTracker.BytesConsumed())
