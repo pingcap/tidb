@@ -1098,7 +1098,12 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 	}
 	_, err = is.TableByName(e.ctx, schemaName, mlogNameCIStr)
 	if err == nil {
-		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: mlogNameCIStr})
+		err = infoschema.ErrTableExists.FastGenByArgs(ast.Ident{Schema: schemaName, Name: mlogNameCIStr})
+		if s.IfNotExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return err
 	}
 	if !infoschema.ErrTableNotExists.Equal(err) {
 		return err
@@ -1225,6 +1230,11 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	jobW := NewJobWrapperWithArgs(job, &model.CreateMaterializedViewLogArgs{TableInfo: mlogTableInfo}, false)
 	if err := e.DoDDLJobWrapper(ctx, jobW); err != nil {
+		// A concurrent creator may have won after the existence precheck.
+		if s.IfNotExists && infoschema.ErrTableExists.Equal(err) {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
 		return errors.Trace(err)
 	}
 
