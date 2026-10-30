@@ -701,6 +701,13 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction) {
 				for _, argCode := range childArgsHashCode {
 					sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
 				}
+			default:
+				// No comparison to fold the NOT into, e.g. not(isnull(a)): keep the NOT and its argument,
+				// otherwise every such expression would share the same (empty) canonical hashcode.
+				sf.canonicalhashcode = codec.EncodeCompactBytes(sf.canonicalhashcode, hack.Slice(sf.FuncName.L))
+				for _, argCode := range argsHashCode {
+					sf.canonicalhashcode = append(sf.canonicalhashcode, argCode...)
+				}
 			}
 		}
 	default:
