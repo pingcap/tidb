@@ -1038,7 +1038,8 @@ func PrepareIdxColsAndUnwrapArrayType(
 // Ranges on a non-array column (`z1>1`, `z1>1 and z1<10`) are only taken as the last access filters, the same way ranger
 // stops building ranges after the first non-point column of a normal index: for idx(x, cast(a as array), z1, z2),
 // `x=1 and (2 member of a) and z1>1 and z2=1` is split to accessFilters: `x=1 and (2 member of a) and z1>1`,
-// remaining: `z2=1`.
+// remaining: `z2=1`. A range on a column before the array column is never an access filter, since the path could not
+// reach the array column: `x>0 and x in (1,2) and (2 member of a)` still uses `x in (1,2)` and keeps `x>0` remaining.
 func collectFilters4MVIndex(
 	sctx planctx.PlanContext,
 	filters []expression.Expression,
@@ -1047,6 +1048,7 @@ func collectFilters4MVIndex(
 ) (accessFilters, remainingFilters []expression.Expression, accessTp int) {
 	accessTp = unspecifiedFilterTp
 	usedAsAccess := make([]bool, len(filters))
+	mvColIdx := arrayColOffset(sctx, idxCols)
 	for z, col := range idxCols {
 		found := false
 		stop := false
@@ -1056,7 +1058,7 @@ func collectFilters4MVIndex(
 			}
 			if ok, tp := checkAccessFilter4IdxCol(sctx, f, col); ok {
 				if tp == rangeOnNonMVColTp {
-					if isPrefixIdxCol(idxInfo, z, col) {
+					if z < mvColIdx || isPrefixIdxCol(idxInfo, z, col) {
 						continue
 					}
 					stop = true
@@ -1133,6 +1135,7 @@ func CollectFilters4MVIndexMutations(sctx base.PlanContext, filters []expression
 	//                    +----> it may have several substitutions in mvFilterMutations if it's json col.
 	mvFilterMutations = make([]expression.Expression, 0, 1)
 	mvColOffset = -1
+	mvColIdx := arrayColOffset(sctx, idxCols)
 	for z, col := range idxCols {
 		found := false
 		stop := false
@@ -1156,7 +1159,7 @@ func CollectFilters4MVIndexMutations(sctx base.PlanContext, filters []expression
 					continue
 				}
 				if tp == rangeOnNonMVColTp {
-					if isPrefixIdxCol(idxInfo, z, col) {
+					if z < mvColIdx || isPrefixIdxCol(idxInfo, z, col) {
 						continue
 					}
 					// ranges can only be the last access filters, see collectFilters4MVIndex.
@@ -1180,6 +1183,16 @@ func CollectFilters4MVIndexMutations(sctx base.PlanContext, filters []expression
 		}
 	}
 	return accessFilters, remainingFilters, mvColOffset, mvFilterMutations
+}
+
+// arrayColOffset returns the position of the array column in idxCols, or len(idxCols) if there is none.
+func arrayColOffset(sctx planctx.PlanContext, idxCols []*expression.Column) int {
+	for z, col := range idxCols {
+		if col.VirtualExpr != nil && col.VirtualExpr.GetType(sctx.GetExprCtx().GetEvalCtx()).IsArray() {
+			return z
+		}
+	}
+	return len(idxCols)
 }
 
 // isPrefixIdxCol reports whether the i-th column of idxInfo is a prefix index column. A range on a prefix column cannot

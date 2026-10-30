@@ -1468,3 +1468,31 @@ Projection	root		planner__core__indexmerge_path.t.id
   ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx_j_id(cast(`j` as signed array), id)	range:[1,1], keep order:false, stats:pseudo
   └─Selection(Probe)	cop[tikv]		gt(planner__core__indexmerge_path.t.id, planner__core__indexmerge_path.t.a)
     └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select /*+ use_index_merge(t, idx_a_j_c) */ * from t where a > 1 and a in (2,3) and (1 member of (j));
+id	task	access object	operator info
+IndexMerge	root		type: union
+├─Selection(Build)	cop[tikv]		gt(planner__core__indexmerge_path.t.a, 1)
+│ └─IndexRangeScan	cop[tikv]	table:t, index:idx_a_j_c(a, cast(`j` as signed array), c)	range:[2 1,2 1], [3 1,3 1], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select /*+ use_index_merge(t, idx_a_j_c) */ * from t where a in (2,3) and a > 1 and (1 member of (j));
+id	task	access object	operator info
+IndexMerge	root		type: union
+├─Selection(Build)	cop[tikv]		gt(planner__core__indexmerge_path.t.a, 1)
+│ └─IndexRangeScan	cop[tikv]	table:t, index:idx_a_j_c(a, cast(`j` as signed array), c)	range:[2 1,2 1], [3 1,3 1], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select /*+ use_index_merge(t, idx_a_j_c) */ * from t where a > 1 and a in (2,3) and (1 member of (j)) and (2 member of (j));
+id	task	access object	operator info
+IndexMerge	root		type: intersection
+├─Selection(Build)	cop[tikv]		gt(planner__core__indexmerge_path.t.a, 1)
+│ └─IndexRangeScan	cop[tikv]	table:t, index:idx_a_j_c(a, cast(`j` as signed array), c)	range:[2 1,2 1], [3 1,3 1], keep order:false, stats:pseudo
+├─Selection(Build)	cop[tikv]		gt(planner__core__indexmerge_path.t.a, 1)
+│ └─IndexRangeScan	cop[tikv]	table:t, index:idx_a_j_c(a, cast(`j` as signed array), c)	range:[2 2,2 2], [3 2,3 2], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='plan_tree' select /*+ use_index_merge(t, idx_a_j_c) */ * from t where a in (2,3) and a > 1 and (1 member of (j)) and (2 member of (j));
+id	task	access object	operator info
+IndexMerge	root		type: intersection
+├─Selection(Build)	cop[tikv]		gt(planner__core__indexmerge_path.t.a, 1)
+│ └─IndexRangeScan	cop[tikv]	table:t, index:idx_a_j_c(a, cast(`j` as signed array), c)	range:[2 1,2 1], [3 1,3 1], keep order:false, stats:pseudo
+├─Selection(Build)	cop[tikv]		gt(planner__core__indexmerge_path.t.a, 1)
+│ └─IndexRangeScan	cop[tikv]	table:t, index:idx_a_j_c(a, cast(`j` as signed array), c)	range:[2 2,2 2], [3 2,3 2], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
