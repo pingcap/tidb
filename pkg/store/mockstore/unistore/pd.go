@@ -162,6 +162,11 @@ func (c *mockPDServiceClient) IsConnectedToLeader() bool {
 }
 
 type mockPDServiceDiscovery struct {
+	// Embed the SDK's mock ServiceDiscovery to supply the interface methods whose
+	// parameter types are unexported (e.g. AddLeaderSwitchedCallback) and thus
+	// cannot be implemented outside the servicediscovery package. The hand-written
+	// methods below override the rest to keep the existing mock behavior.
+	sd.ServiceDiscovery
 	addrs []string
 	clis  []sd.ServiceClient
 }

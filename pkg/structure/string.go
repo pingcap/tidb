@@ -34,7 +34,7 @@ func (t *TxStructure) Set(key []byte, value []byte) error {
 // Get gets the string value of a key.
 func (t *TxStructure) Get(key []byte) ([]byte, error) {
 	ek := t.EncodeStringDataKey(key)
-	value, err := t.reader.Get(context.TODO(), ek)
+	value, err := kv.GetValue(context.TODO(), t.reader, ek)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 	}
