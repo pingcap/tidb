@@ -2656,6 +2656,84 @@ var defaultSysVars = []*SysVar{
 		s.MLogPurgeDeleteTiFlashThreads = TidbOptInt64(val, vardef.DefTiDBMLogPurgeDeleteTiFlashThreads)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBMViewTaskMax, Value: strconv.Itoa(vardef.DefTiDBMViewTaskMax), Type: vardef.TypeInt, MinValue: 0, MaxValue: 256, SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
+		val, err := strconv.Atoi(s)
+		if err != nil {
+			return err
+		}
+		if setter := SetMVServiceTaskMaxConcurrency.Load(); setter != nil {
+			(*setter)(val)
+		}
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBMViewTaskRefreshRatio, Value: strconv.FormatFloat(vardef.DefTiDBMViewTaskRefreshRatio, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+		val, err := strconv.ParseFloat(normalizedValue, 64)
+		if err != nil {
+			return "", err
+		}
+		if math.IsNaN(val) || val <= 0 || val >= 1 {
+			return "", ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBMViewTaskRefreshRatio, originalValue)
+		}
+		return normalizedValue, nil
+	}, SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
+		val, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			return err
+		}
+		if setter := SetMVServiceRefreshTaskConcurrencyRatio.Load(); setter != nil {
+			(*setter)(val)
+		}
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBMViewTaskThresholdCPU, Value: strconv.FormatFloat(vardef.DefTiDBMViewTaskThresholdCPU, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, Validation: validateFloatNotNaN(vardef.TiDBMViewTaskThresholdCPU), SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
+		val, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			return err
+		}
+		if setter := SetMVServiceTaskThresholdCPU.Load(); setter != nil {
+			(*setter)(val)
+		}
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBMViewTaskThresholdMemory, Value: strconv.FormatFloat(vardef.DefTiDBMViewTaskThresholdMemory, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, Validation: validateFloatNotNaN(vardef.TiDBMViewTaskThresholdMemory), SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
+		val, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			return err
+		}
+		if setter := SetMVServiceTaskThresholdMemory.Load(); setter != nil {
+			(*setter)(val)
+		}
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBMViewRefreshHistTime, Value: strconv.Itoa(vardef.DefTiDBMViewRefreshHistTime), Type: vardef.TypeInt, MinValue: 1, MaxValue: 8760, SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
+		val, err := strconv.Atoi(s)
+		if err != nil {
+			return err
+		}
+		if setter := SetMVServiceMViewRefreshHistRetention.Load(); setter != nil {
+			(*setter)(time.Duration(val) * time.Hour)
+		}
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBMLogPurgeHistTime, Value: strconv.Itoa(vardef.DefTiDBMLogPurgeHistTime), Type: vardef.TypeInt, MinValue: 1, MaxValue: 8760, SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
+		val, err := strconv.Atoi(s)
+		if err != nil {
+			return err
+		}
+		if setter := SetMVServiceMLogPurgeHistRetention.Load(); setter != nil {
+			(*setter)(time.Duration(val) * time.Hour)
+		}
+		return nil
+	}},
+	{
+		Scope:      vardef.ScopeGlobal,
+		Name:       vardef.TiDBMLogAutoAnalyzeRatio,
+		Value:      strconv.FormatFloat(vardef.DefMLogAutoAnalyzeRatio, 'f', -1, 64),
+		Type:       vardef.TypeFloat,
+		MinValue:   0,
+		MaxValue:   math.MaxUint64,
+		Validation: validateAutoAnalyzeRatio(vardef.TiDBMLogAutoAnalyzeRatio),
+	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBMLogLogSlowPurge, Value: BoolToOnOff(vardef.DefTiDBMLogLogSlowPurge), Type: vardef.TypeBool,
 		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
 			vardef.MLogLogSlowPurge.Store(TiDBOptOn(val))
@@ -4535,5 +4613,33 @@ func SysVarCacheValues(tableContents map[string]string) (session, global map[str
 func overrideSysVarWithConfig(tableContents map[string]string) {
 	if _, ok := tableContents[vardef.MaxAllowedPacket]; ok {
 		tableContents[vardef.MaxAllowedPacket] = strconv.FormatUint(config.GetMaxAllowedPacket(), 10)
+	}
+}
+
+func validateFloatNotNaN(varName string) func(*SessionVars, string, string, vardef.ScopeFlag) (string, error) {
+	return func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
+		value, err := strconv.ParseFloat(normalizedValue, 64)
+		if err != nil {
+			return "", err
+		}
+		if math.IsNaN(value) {
+			return "", ErrWrongValueForVar.GenWithStackByArgs(varName, originalValue)
+		}
+		return normalizedValue, nil
+	}
+}
+
+func validateAutoAnalyzeRatio(varName string) func(*SessionVars, string, string, vardef.ScopeFlag) (string, error) {
+	return func(_ *SessionVars, normalizedValue string, _ string, _ vardef.ScopeFlag) (string, error) {
+		ratio, err := strconv.ParseFloat(normalizedValue, 64)
+		if err != nil {
+			return "", err
+		}
+		const minRatio = 0.00001
+		const tolerance = 1e-9
+		if math.IsNaN(ratio) || (ratio < minRatio && math.Abs(ratio-minRatio) > tolerance) {
+			return "", errors.Errorf("the value of %s should be greater than or equal to %f", varName, minRatio)
+		}
+		return normalizedValue, nil
 	}
 }
