@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTTLStatusCache(t *testing.T) {
@@ -32,6 +33,21 @@ func TestTTLStatusCache(t *testing.T) {
 	sv := server.CreateMockServer(t, store)
 	sv.SetDomain(dom)
 	defer sv.Close()
+
+	// Stop the TTL job manager so its background GC cannot delete the rows inserted
+	// below: JobManager.DoGC runs `DELETE FROM mysql.tidb_ttl_table_status WHERE
+	// current_job_status IS NULL AND table_id NOT IN (real table ids)` when the manager
+	// acquires leadership (and every 10 minutes). The rows inserted by this test have
+	// fake table IDs and NULL current_job_status, so if the GC fires mid-test the
+	// accumulated len(isc.Tables) assertions become flaky. Same rationale and pattern
+	// as waitAndStopTTLManager in pkg/ttl/ttlworker/job_manager_integration_test.go.
+	for i := 0; i < 300 && dom.TTLJobManager() == nil; i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if jm := dom.TTLJobManager(); jm != nil {
+		jm.Stop()
+		require.NoError(t, jm.WaitStopped(context.Background(), 10*time.Second))
+	}
 
 	conn := server.CreateMockConn(t, sv)
 	sctx := conn.Context().Session
