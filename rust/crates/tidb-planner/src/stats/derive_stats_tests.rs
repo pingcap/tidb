@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Tests for [`super::rewrite::recursive_derive_stats`], Go's
+//! Tests for [`crate::logical::rewrite::recursive_derive_stats`], Go's
 //! `RecursiveDeriveStats` driver over the per-operator `DeriveStats` bodies.
 //!
 //! All WRITTEN: Go's coverage of stats derivation is testkit- and
@@ -32,14 +32,14 @@ use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanIdAllocator;
 use tidb_planner_property::stats_info::StatsInfo;
 
-use super::apply::LogicalApply;
-use super::aggregation::LogicalAggregation;
-use super::data_source::DataSource;
-use super::join::LogicalJoin;
-use super::projection::LogicalProjection;
-use super::sort::LogicalSort;
-use super::topn::LogicalTopN;
-use super::{BaseLogicalPlan, LogicalPlan};
+use crate::logical::apply::LogicalApply;
+use crate::logical::aggregation::LogicalAggregation;
+use crate::logical::data_source::DataSource;
+use crate::logical::join::LogicalJoin;
+use crate::logical::projection::LogicalProjection;
+use crate::logical::sort::LogicalSort;
+use crate::logical::topn::LogicalTopN;
+use crate::logical::{BaseLogicalPlan, LogicalPlan};
 
 fn column(id: i64) -> Column {
     let mut col = Column::default();
@@ -159,7 +159,7 @@ fn a_selection_scales_its_source_by_gos_flat_factor() {
     // profile is its (pre-scaled) table stats.
     let allocator = PlanIdAllocator::new();
     let source = stated_source(&allocator, &[1, 2], 100.0, &[(1, 10.0), (2, 50.0)]);
-    let mut selection = LogicalPlan::Selection(super::selection::LogicalSelection::new(
+    let mut selection = LogicalPlan::Selection(crate::logical::selection::LogicalSelection::new(
         base(&allocator, "Selection", None),
         Vec::new(),
     ));
@@ -220,7 +220,7 @@ fn an_unported_override_still_refuses_by_its_go_name() {
     // The scan overrides remain refused: they bottom out in
     // `deriveStatsByFilter` + the ranger, which is access-path work.
     let allocator = PlanIdAllocator::new();
-    let mut scan = LogicalPlan::TableScan(super::table_scan::LogicalTableScan::new(base(
+    let mut scan = LogicalPlan::TableScan(crate::logical::table_scan::LogicalTableScan::new(base(
         &allocator,
         "TableScan",
         None,
@@ -482,7 +482,7 @@ fn depth_costs_no_host_stack() {
     // detach one level at a time so each drop is shallow.
     let mut cursor = plan;
     loop {
-        let dummy = LogicalPlan::TableDual(super::table_dual::LogicalTableDual::default());
+        let dummy = LogicalPlan::TableDual(crate::logical::table_dual::LogicalTableDual::default());
         if cursor.children().is_empty() {
             break;
         }
@@ -521,7 +521,7 @@ fn a_pushed_equality_charges_gos_pseudo_rate() {
         unreachable!()
     };
     op.table_scan_penalty.pseudo_stats = true;
-    op.columns = vec![super::data_source::DataSourceColumn {
+    op.columns = vec![crate::logical::data_source::DataSourceColumn {
         id: 1,
         name: "a".to_owned(),
         is_primary_key: false,
@@ -549,7 +549,7 @@ fn two_pseudo_bounds_form_one_column_range() {
         unreachable!()
     };
     op.table_scan_penalty.pseudo_stats = true;
-    op.columns = vec![super::data_source::DataSourceColumn {
+    op.columns = vec![crate::logical::data_source::DataSourceColumn {
         id: 1,
         name: "a".to_owned(),
         is_primary_key: false,
@@ -608,7 +608,7 @@ fn pseudo_column_range_quota_changes_statistics_cover() {
             unreachable!()
         };
         op.table_scan_penalty.pseudo_stats = true;
-        op.columns = vec![super::data_source::DataSourceColumn {
+        op.columns = vec![crate::logical::data_source::DataSourceColumn {
             id: 1,
             name: "a".to_owned(),
             is_primary_key: false,
@@ -639,7 +639,7 @@ fn partial_dnf_index_range_preserves_logical_statistics_cover() {
     op.columns = ["a", "b"]
         .iter()
         .enumerate()
-        .map(|(i, name)| super::data_source::DataSourceColumn {
+        .map(|(i, name)| crate::logical::data_source::DataSourceColumn {
             id: i as i64 + 1,
             name: (*name).to_owned(),
             is_primary_key: false,
@@ -701,7 +701,7 @@ fn deriving_a_data_source_fills_each_index_path_row_count_from_its_collection() 
         unreachable!()
     };
     op.table_scan_penalty.pseudo_stats = true;
-    op.columns = vec![super::data_source::DataSourceColumn {
+    op.columns = vec![crate::logical::data_source::DataSourceColumn {
         id: 1,
         name: "a".to_owned(),
         is_primary_key: false,
@@ -726,7 +726,7 @@ fn deriving_a_data_source_fills_each_index_path_row_count_from_its_collection() 
     attach_pseudo_collection(op);
     let context = crate::rule::rule_tests::test_context(&allocator);
     let (plan, result) =
-        super::rewrite::recursive_derive_stats_with_context(source, Vec::new(), &context);
+        crate::logical::rewrite::recursive_derive_stats_with_context(source, Vec::new(), &context);
     result.expect("derives");
     let LogicalPlan::DataSource(op) = plan else {
         unreachable!()
@@ -744,7 +744,7 @@ fn deriving_an_index_path_records_the_index_in_the_used_stats_ledger() {
     // condition on it.
     #[derive(Default)]
     struct Recorder(std::cell::RefCell<Vec<(i64, i64, bool, bool)>>);
-    impl super::plan_context::UsedStatsRecorder for Recorder {
+    impl crate::logical::plan_context::UsedStatsRecorder for Recorder {
         fn record_used_item(
             &self,
             physical_table_id: i64,
@@ -764,7 +764,7 @@ fn deriving_an_index_path_records_the_index_in_the_used_stats_ledger() {
         let LogicalPlan::DataSource(op) = &mut source else {
             unreachable!()
         };
-        op.columns = vec![super::data_source::DataSourceColumn {
+        op.columns = vec![crate::logical::data_source::DataSourceColumn {
             id: 1,
             name: "a".to_owned(),
             is_primary_key: false,
@@ -792,7 +792,7 @@ fn deriving_an_index_path_records_the_index_in_the_used_stats_ledger() {
         let mut context = crate::rule::rule_tests::test_context(&allocator);
         context.used_stats_recorder = Some(&recorder);
         let (_, result) =
-            super::rewrite::recursive_derive_stats_with_context(source, Vec::new(), &context);
+            crate::logical::rewrite::recursive_derive_stats_with_context(source, Vec::new(), &context);
         result.expect("derives");
         let physical_id = recorder.0.borrow().first().map(|record| record.0);
         assert!(

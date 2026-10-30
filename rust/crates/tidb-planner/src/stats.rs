@@ -18,6 +18,10 @@
 //! `cardinality.Selectivity` wrappers it estimates with.
 
 pub mod init_stats;
+#[cfg(test)]
+mod access_path_context_tests;
+#[cfg(test)]
+mod derive_stats_tests;
 
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;

@@ -2163,3 +2163,25 @@ fn build_key_info_portal_runs_bottom_up_over_the_whole_tree() {
     );
     out.dismantle();
 }
+
+/// A leaf takes Go's base `PredicatePushDown` body: nothing is pushed.
+#[test]
+fn predicate_push_down_returns_the_predicates_unpushed_at_a_leaf() {
+    let allocator = tidb_planner_core_base::PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let mut base = BaseLogicalPlan::with_id(1, "DataSource", 0);
+    base.base.set_schema(Some(tidb_expr::schema::Schema::new(vec![
+        tidb_expr::column::Column::new(1, tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)),
+    ])));
+    let leaf = LogicalPlan::DataSource(crate::logical::data_source::DataSource {
+        base,
+        table_id: 1,
+        ..crate::logical::data_source::DataSource::default()
+    });
+    let (rest, root) = leaf
+        .predicate_push_down(&ctx, Vec::new())
+        .map_err(|(_, error)| error)
+        .expect("the childless arm is Go's base body");
+    assert!(rest.is_empty());
+    assert_eq!(root.id(), 1);
+}

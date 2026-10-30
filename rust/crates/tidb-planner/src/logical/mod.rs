@@ -855,7 +855,7 @@ impl LogicalPlan {
         allocator: &tidb_planner_core_base::PlanIdAllocator,
         topn: Option<LogicalTopN>,
     ) -> Self {
-        self.push_down_topn_with(&crate::rule::rule_tests::TEST_BUILDER, allocator, topn)
+        self.push_down_topn_with(&tidb_expr::expr_util::builder::PreservingFunctionBuilder, allocator, topn)
     }
 
     /// Go `DeriveTopN()` (`<5th>`), gated on `AllowDeriveTopN`.
@@ -1465,8 +1465,6 @@ impl LogicalPlan {
     }
 }
 
-#[cfg(test)]
-mod derive_stats_tests;
 #[cfg(test)]
 mod operator_tests;
 #[cfg(test)]

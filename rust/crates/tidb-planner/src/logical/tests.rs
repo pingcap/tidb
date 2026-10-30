@@ -317,19 +317,6 @@ fn flags_and_plan_ids_hash_round_trip() {
 }
 
 #[test]
-fn predicate_push_down_returns_the_predicates_unpushed_at_a_leaf() {
-    let allocator = tidb_planner_core_base::PlanIdAllocator::new();
-    let ctx = crate::rule::rule_tests::test_context(&allocator);
-    let leaf = source(1, &[1]);
-    let (rest, root) = leaf
-        .predicate_push_down(&ctx, Vec::new())
-        .map_err(|(_, error)| error)
-        .expect("the childless arm is Go's base body");
-    assert!(rest.is_empty());
-    assert_eq!(root.id(), 1);
-}
-
-#[test]
 fn join_child_stats_and_schema_only_answers_for_a_join() {
     let mut left = source(1, &[1]);
     left.set_stats(Some(StatsInfo::new(3.0, [])));
