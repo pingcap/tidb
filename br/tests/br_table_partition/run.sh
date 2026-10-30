@@ -47,7 +47,7 @@ run_sql "DROP DATABASE $DB;"
 
 # restore full
 echo "restore start..."
-export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index=return(true)'
+export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/restore/failed-before-create-ingest-index=return(true)'
 if run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR > "$TEST_DIR/global-index-interrupted.log" 2>&1; then
     echo "expected global index repair to be interrupted"
     exit 1
