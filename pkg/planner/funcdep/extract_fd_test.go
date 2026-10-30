@@ -52,11 +52,13 @@ func TestFDSet_ExtractFD(t *testing.T) {
 	tk.MustExec("create table t2(m int key, n int, p int, unique(m,n))")
 	tk.MustExec("create table x1(a int not null primary key, b int not null, c int default null, d int not null, unique key I_b_c (b,c), unique key I_b_d (b,d))")
 	tk.MustExec("create table x2(a int not null primary key, b int not null, c int default null, d int not null, unique key I_b_c (b,c), unique key I_b_d (b,d))")
+	tk.MustExec("create table x3(a int not null primary key, b int not null, c int default null, d int not null, unique key I_b_c (b,c))")
 
 	tests := []struct {
 		sql  string
 		best string
 		fd   string
+		err  string
 	}{
 		{
 			sql:  "select a from t1",
@@ -213,6 +215,10 @@ func TestFDSet_ExtractFD(t *testing.T) {
 			best: "Apply{DataScan(t1)->DataScan(t2)->Projection->MaxOneRow}->Projection",
 			fd:   "{(1)-->(2-4,13), (2,3)~~>(1,4), (13)~~>(1)} >>> {}",
 		},
+		{
+			sql: "select a from x3 where c = 1 or d = 1 group by b, c",
+			err: "contains nonaggregated column 'test.x3.a'",
+		},
 	}
 
 	ctx := context.TODO()
@@ -233,6 +239,10 @@ func TestFDSet_ExtractFD(t *testing.T) {
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), is, hint.NewQBHintHandler(nil))
 		// extract FD to every OP
 		p, err := builder.Build(ctx, nodeW)
+		if tt.err != "" {
+			require.ErrorContains(t, err, tt.err, comment)
+			continue
+		}
 		require.NoError(t, err)
 		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), p.(base.LogicalPlan))
 		require.NoError(t, err)

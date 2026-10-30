@@ -24,6 +24,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	gmysql "github.com/go-sql-driver/mysql"
+	"github.com/pingcap/tidb/lightning/pkg/errormanager"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -41,12 +42,23 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGetHashOrKeyPartitionColumnNameUsesProvidedTable(t *testing.T) {
+	tblInfo := coretestsdk.MockHashPartitionTable()
+	snapshotTbl, err := table.TableFromMeta(autoid.NewAllocators(false), tblInfo)
+	require.NoError(t, err)
+
+	hashPartColName := getHashOrKeyPartitionColumnName(snapshotTbl)
+	require.NotNil(t, hashPartColName)
+	require.Equal(t, "ptn", hashPartColName.L)
+}
 
 func TestPredicatePushDown(t *testing.T) {
 	var input, output []string
@@ -61,7 +73,7 @@ func TestPredicatePushDown(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		p, err := BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
 		require.NoError(t, err)
-		p, err = logicalOptimize(context.TODO(), rule.FlagConvertOuterToInnerJoin|rule.FlagPredicatePushDown|rule.FlagDecorrelate|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain|rule.FlagPredicateSimplification, p.(base.LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), rule.FlagPredicatePushDown|rule.FlagDecorrelate|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain|rule.FlagPredicateSimplification, p.(base.LogicalPlan))
 		require.NoError(t, err)
 		testdata.OnRecord(func() {
 			output[ith] = ToString(p)
@@ -219,7 +231,7 @@ func TestSimplifyOuterJoin(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		p, err := BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
 		require.NoError(t, err, comment)
-		p, err = logicalOptimize(context.TODO(), rule.FlagPredicatePushDown|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain|rule.FlagConvertOuterToInnerJoin, p.(base.LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), rule.FlagPredicatePushDown|rule.FlagPruneColumns|rule.FlagPruneColumnsAgain, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
 		planString := ToString(p)
 		testdata.OnRecord(func() {
@@ -415,11 +427,58 @@ func TestDupRandJoinCondsPushDown(t *testing.T) {
 	require.True(t, ok, comment)
 	join, ok := proj.Children()[0].(*logicalop.LogicalJoin)
 	require.True(t, ok, comment)
-	leftPlan, ok := join.Children()[0].(*logicalop.LogicalSelection)
+	_, ok = join.Children()[0].(*logicalop.LogicalSelection)
+	require.False(t, ok, comment)
+	otherCond := expression.StringifyExpressionsWithCtx(s.GetCtx().GetExprCtx().GetEvalCtx(), join.OtherConditions)
+	require.Equal(t, "[gt(cast(test.t.a, double BINARY), rand()) gt(cast(test.t.a, double BINARY), rand())]", otherCond, comment)
+
+	sql = "select * from t as t1 join t t2 on t1.a = t2.a where t1.a = rand()"
+	comment = fmt.Sprintf("for %s", sql)
+	stmt, err = s.GetParser().ParseOneStmt(sql, "", "")
+	require.NoError(t, err, comment)
+	nodeW = resolve.NewNodeW(stmt)
+	p, err = BuildLogicalPlanForTest(context.Background(), s.GetSCtx(), nodeW, s.GetIS())
+	require.NoError(t, err, comment)
+	p, err = logicalOptimize(context.TODO(), rule.FlagPredicatePushDown, p.(base.LogicalPlan))
+	require.NoError(t, err, comment)
+	proj, ok = p.(*logicalop.LogicalProjection)
 	require.True(t, ok, comment)
-	leftCond := expression.StringifyExpressionsWithCtx(s.GetCtx().GetExprCtx().GetEvalCtx(), leftPlan.Conditions)
-	// Condition with mutable function cannot be de-duplicated when push down join conds.
-	require.Equal(t, "[gt(cast(test.t.a, double BINARY), rand()) gt(cast(test.t.a, double BINARY), rand())]", leftCond, comment)
+	join, ok = proj.Children()[0].(*logicalop.LogicalJoin)
+	require.True(t, ok, comment)
+	_, ok = join.Children()[0].(*logicalop.LogicalSelection)
+	require.False(t, ok, comment)
+	leftProj, ok := join.Children()[0].(*logicalop.LogicalProjection)
+	require.True(t, ok, comment)
+	rightProj, ok := join.Children()[1].(*logicalop.LogicalProjection)
+	require.True(t, ok, comment)
+	require.Len(t, join.OtherConditions, 1, comment)
+	require.Len(t, join.EqualConditions, 1, comment)
+	otherFn, ok := join.OtherConditions[0].(*expression.ScalarFunction)
+	require.True(t, ok, comment)
+	require.Equal(t, ast.EQ, otherFn.FuncName.L, comment)
+	require.Same(t, leftProj.Schema().Columns[len(leftProj.Schema().Columns)-1], otherFn.GetArgs()[0], comment)
+	require.Same(t, rightProj.Schema().Columns[len(rightProj.Schema().Columns)-1], otherFn.GetArgs()[1], comment)
+	require.Equal(t, "[cast(test.t.a, double BINARY)]", expression.StringifyExpressionsWithCtx(s.GetCtx().GetExprCtx().GetEvalCtx(), []expression.Expression{leftProj.Exprs[len(leftProj.Exprs)-1]}), comment)
+	require.Equal(t, "[rand()]", expression.StringifyExpressionsWithCtx(s.GetCtx().GetExprCtx().GetEvalCtx(), []expression.Expression{rightProj.Exprs[len(rightProj.Exprs)-1]}), comment)
+
+	sql = "select * from t as t1 left join t t2 on t1.a = t2.a and t2.a < @var1"
+	comment = fmt.Sprintf("for %s", sql)
+	stmt, err = s.GetParser().ParseOneStmt(sql, "", "")
+	require.NoError(t, err, comment)
+	nodeW = resolve.NewNodeW(stmt)
+	p, err = BuildLogicalPlanForTest(context.Background(), s.GetSCtx(), nodeW, s.GetIS())
+	require.NoError(t, err, comment)
+	p, err = logicalOptimize(context.TODO(), rule.FlagPredicatePushDown, p.(base.LogicalPlan))
+	require.NoError(t, err, comment)
+	if proj, isProj := p.(*logicalop.LogicalProjection); isProj {
+		p = proj.Children()[0]
+	}
+	join, ok = p.(*logicalop.LogicalJoin)
+	require.True(t, ok, comment)
+	_, ok = join.Children()[1].(*logicalop.LogicalSelection)
+	require.False(t, ok, comment)
+	require.Empty(t, join.RightConditions, comment)
+	require.Equal(t, "[lt(cast(test.t.a, double BINARY), cast(getvar(var1), double BINARY))]", expression.StringifyExpressionsWithCtx(s.GetCtx().GetExprCtx().GetEvalCtx(), join.OtherConditions), comment)
 }
 
 func TestTablePartition(t *testing.T) {
@@ -1186,6 +1245,7 @@ func TestVisitInfo(t *testing.T) {
 				{mysql.IndexPriv, "test", "", "", nil, false, nil, false},
 				{mysql.CreateViewPriv, "test", "", "", nil, false, nil, false},
 				{mysql.ShowViewPriv, "test", "", "", nil, false, nil, false},
+				{mysql.OperateViewPriv, "test", "", "", nil, false, nil, false},
 				{mysql.TriggerPriv, "test", "", "", nil, false, nil, false},
 			},
 		},
@@ -1210,6 +1270,7 @@ func TestVisitInfo(t *testing.T) {
 				{mysql.TriggerPriv, "", "", "", nil, false, nil, false},
 				{mysql.CreateViewPriv, "", "", "", nil, false, nil, false},
 				{mysql.ShowViewPriv, "", "", "", nil, false, nil, false},
+				{mysql.OperateViewPriv, "", "", "", nil, false, nil, false},
 				{mysql.CreateRolePriv, "", "", "", nil, false, nil, false},
 				{mysql.DropRolePriv, "", "", "", nil, false, nil, false},
 				{mysql.CreateTMPTablePriv, "", "", "", nil, false, nil, false},
@@ -1261,6 +1322,7 @@ func TestVisitInfo(t *testing.T) {
 				{mysql.IndexPriv, "test", "", "", nil, false, nil, false},
 				{mysql.CreateViewPriv, "test", "", "", nil, false, nil, false},
 				{mysql.ShowViewPriv, "test", "", "", nil, false, nil, false},
+				{mysql.OperateViewPriv, "test", "", "", nil, false, nil, false},
 				{mysql.TriggerPriv, "test", "", "", nil, false, nil, false},
 			},
 		},
@@ -1299,6 +1361,7 @@ func TestVisitInfo(t *testing.T) {
 				{mysql.TriggerPriv, "", "", "", nil, false, nil, false},
 				{mysql.CreateViewPriv, "", "", "", nil, false, nil, false},
 				{mysql.ShowViewPriv, "", "", "", nil, false, nil, false},
+				{mysql.OperateViewPriv, "", "", "", nil, false, nil, false},
 				{mysql.CreateRolePriv, "", "", "", nil, false, nil, false},
 				{mysql.DropRolePriv, "", "", "", nil, false, nil, false},
 				{mysql.CreateTMPTablePriv, "", "", "", nil, false, nil, false},
@@ -1360,6 +1423,30 @@ func TestVisitInfo(t *testing.T) {
 			sql: "flush privileges",
 			ans: []visitInfo{
 				{mysql.ReloadPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, nil, false},
+			},
+		},
+		{
+			sql: "flush stats_delta ttt",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "ttt", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: "flush stats_delta test.ttt, test.*",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: "flush stats_delta test.*",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: "flush stats_delta *.*",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "", "", "", plannererrors.ErrPrivilegeCheckFail, false, nil, false},
 			},
 		},
 		{

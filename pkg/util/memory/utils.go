@@ -16,11 +16,14 @@ package memory
 
 import (
 	"container/list"
+	"encoding/binary"
 	"math/bits"
 	"runtime"
 	"runtime/metrics"
+	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/cpu"
 )
@@ -169,14 +172,61 @@ func (n *Notifer) WeakWake() {
 	n.wake()
 }
 
-// HashStr hashes a string to a uint64 value
-func HashStr(key string) uint64 {
-	hashKey := initHashKey
-	for _, c := range key {
-		hashKey *= prime64
-		hashKey ^= uint64(c)
+// InvalidDigestID disables digest profile lookup and update.
+const InvalidDigestID uint64 = 0
+
+// DigestIDBuilder incrementally builds a digest profile ID without allocating
+// a composite key string.
+type DigestIDBuilder struct {
+	hash uint64
+}
+
+// NewDigestIDBuilder creates a DigestIDBuilder.
+func NewDigestIDBuilder() DigestIDBuilder {
+	return DigestIDBuilder{hash: initHashKey}
+}
+
+// AddString adds a string to hash builder
+func (b *DigestIDBuilder) AddString(s string) {
+	n := len(s)
+	h := b.hash*prime64 ^ uint64(n)
+
+	if n == 0 {
+		b.hash = h
+		return
 	}
-	return hashKey
+
+	data := unsafe.Slice(unsafe.StringData(s), n)
+
+	for len(data) >= 8 {
+		h = h*prime64 ^ binary.LittleEndian.Uint64(data[:8])
+		data = data[8:]
+	}
+
+	if len(data) > 0 {
+		var tail uint64
+		for i, v := range data {
+			tail |= uint64(v) << (i * 8)
+		}
+		h = h*prime64 ^ tail
+	}
+
+	b.hash = h
+}
+
+// Sum64 returns the digest profile ID.
+func (b *DigestIDBuilder) Sum64() uint64 {
+	h := b.hash
+	h ^= h >> 33
+	h *= 0xff51afd7ed558ccd
+	h ^= h >> 33
+	h *= 0xc4ceb9fe1a85ec53
+	h ^= h >> 33
+
+	if h == InvalidDigestID {
+		return 1
+	}
+	return h
 }
 
 // HashEvenNum hashes a uint64 even number to a uint64 value
@@ -258,9 +308,12 @@ type RuntimeMemStats struct {
 	HeapAlloc, HeapInuse, TotalFree, MemOffHeap, NumGC uint64
 }
 
+type runtimeMemStatsSample [7]metrics.Sample
+
 var gcTracker struct {
-	lastGCTime atomic.Int64 // approximate time of last GC in unix nano
-	lastNumGC  atomic.Uint64
+	memStatsPool sync.Pool    // use sync pool to reduce heap allocation by `metrics.Read`
+	lastGCTime   atomic.Int64 // approximate time of last GC in unix nano
+	lastNumGC    atomic.Uint64
 }
 
 func approxLastGCTime() int64 {
@@ -269,20 +322,8 @@ func approxLastGCTime() int64 {
 
 // SampleRuntimeMemStats samples the runtime memory statistics efficiently without STW
 func SampleRuntimeMemStats() (s RuntimeMemStats) {
-	heapSample := [7]metrics.Sample{
-		// heap alloc
-		{Name: "/memory/classes/heap/objects:bytes"},
-		// heap available
-		{Name: "/memory/classes/heap/unused:bytes"}, // unused
-		{Name: "/memory/classes/heap/free:bytes"},
-		{Name: "/memory/classes/heap/released:bytes"},
-		// memory total
-		{Name: "/memory/classes/total:bytes"},
-		// total free
-		{Name: "/gc/heap/frees:bytes"},
-		// total GC cycles
-		{Name: "/gc/cycles/total:gc-cycles"},
-	}
+	heapSample := gcTracker.memStatsPool.Get().(*runtimeMemStatsSample)
+
 	metrics.Read(heapSample[:])
 	s = RuntimeMemStats{
 		HeapAlloc: heapSample[0].Value.Uint64(),
@@ -302,6 +343,7 @@ func SampleRuntimeMemStats() (s RuntimeMemStats) {
 		gcTracker.lastNumGC.Store(s.NumGC)
 	}
 
+	gcTracker.memStatsPool.Put(heapSample)
 	return s
 }
 
@@ -313,5 +355,26 @@ func IntoRuntimeMemStats(s *runtime.MemStats) RuntimeMemStats {
 		TotalFree:  s.TotalAlloc - s.Alloc,
 		MemOffHeap: s.Sys - s.HeapSys,
 		NumGC:      uint64(s.NumGC),
+	}
+}
+
+func init() {
+	gcTracker.memStatsPool = sync.Pool{
+		New: func() any {
+			return &runtimeMemStatsSample{
+				// heap alloc
+				{Name: "/memory/classes/heap/objects:bytes"},
+				// heap available
+				{Name: "/memory/classes/heap/unused:bytes"}, // unused
+				{Name: "/memory/classes/heap/free:bytes"},
+				{Name: "/memory/classes/heap/released:bytes"},
+				// memory total
+				{Name: "/memory/classes/total:bytes"},
+				// total free
+				{Name: "/gc/heap/frees:bytes"},
+				// total GC cycles
+				{Name: "/gc/cycles/total:gc-cycles"},
+			}
+		},
 	}
 }

@@ -46,6 +46,7 @@ func validatePartialIndexExists(t *testing.T, dom *domain.Domain, tableName stri
 func TestPartialIndexDDL(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 
 	t.Run("TestCreatePartialIndex", func(t *testing.T) {
 		tk.MustExec("use test")

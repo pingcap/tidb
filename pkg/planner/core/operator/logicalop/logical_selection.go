@@ -240,7 +240,12 @@ func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, _ *expr
 // ExtractColGroups inherits BaseLogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (*LogicalSelection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (p *LogicalSelection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	if len(childrenProperties) == 0 || childrenProperties[0] == nil {
+		p.hasTiFlash = false
+		return &base.PossiblePropertiesInfo{}
+	}
+	p.hasTiFlash = childrenProperties[0].HasTiFlash
 	return childrenProperties[0]
 }
 
@@ -307,16 +312,6 @@ func (p *LogicalSelection) ExtractFD() *fd.FDSet {
 }
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.<23rd> implementation.
-
-// ConvertOuterToInnerJoin implements base.LogicalPlan.<24th> interface.
-func (p *LogicalSelection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	s := p.Self().(*LogicalSelection)
-	combinedCond := append(predicates, s.Conditions...)
-	child := s.Children()[0]
-	child = child.ConvertOuterToInnerJoin(combinedCond)
-	s.SetChildren(child)
-	return s
-}
 
 // *************************** end implementation of logicalPlan interface ***************************
 

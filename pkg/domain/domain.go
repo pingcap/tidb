@@ -49,28 +49,32 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/crossks"
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
-	disthandle "github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/extworkload"
+	"github.com/pingcap/tidb/pkg/inference"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	lcom "github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/mvservice"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -116,6 +120,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -158,6 +163,8 @@ type Domain struct {
 	isSyncer        *issyncer.Syncer
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
 	schemaLease     time.Duration
+
+	serverInfoSyncerOptions []serverinfo.SyncerOption
 	// advancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect
 	// some misuse of the session to avoid potential bugs.
 	// It is recommended to use this pool instead of `sysSessionPool`.
@@ -223,16 +230,26 @@ type Domain struct {
 
 	sysProcesses SysProcesses
 
+	mvService struct {
+		*mvservice.MVService
+		ddlNotify chan struct{}
+	}
+
 	stopAutoAnalyze   atomicutil.Bool
 	minJobIDRefresher *systable.MinJobIDRefresher
 
 	instancePlanCache sessionctx.InstancePlanCache // the instance level plan cache
+	embedFn           atomic.Pointer[inference.EmbedFn]
 
 	statsOwner owner.Manager
 
 	// only used for nextgen
 	crossKSSessMgr           *crossks.Manager
 	crossKSSessFactoryGetter func(string, validatorapi.Validator) pools.Factory
+
+	// extWorkloadMgr coordinates background workloads such as TTL with the
+	// external workload controller in Starter deployments.
+	extWorkloadMgr extworkload.Manager
 }
 
 var _ sqlsvrapi.Server = (*Domain)(nil)
@@ -298,6 +315,20 @@ func (do *Domain) DDLExecutor() ddl.Executor {
 // GetDDLOwnerMgr implements the sqlsvrapi.Server interface.
 func (do *Domain) GetDDLOwnerMgr() owner.Manager {
 	return do.DDL().OwnerManager()
+}
+
+// GetRuntime implements sqlsvrapi.Server.
+func (do *Domain) GetRuntime() sqlsvrapi.Runtime {
+	return do
+}
+
+// AcquireKSRuntime implements the sqlsvrapi.Server interface.
+func (do *Domain) AcquireKSRuntime(targetKS string, holderID string) (sqlsvrapi.KSRuntimeHandle, error) {
+	hdl, err := do.crossKSSessMgr.Acquire(targetKS, holderID, do.crossKSSessFactoryGetter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return hdl, nil
 }
 
 // SetDDL sets DDL to domain, it's only used in tests.
@@ -485,6 +516,7 @@ func (do *Domain) Close() {
 	if do.brOwnerMgr != nil {
 		do.brOwnerMgr.Close()
 	}
+	do.closeInferenceProviders()
 
 	do.runawayManager.Stop()
 
@@ -552,19 +584,21 @@ func NewDomainWithEtcdClient(
 	crossKSSessFactoryGetter func(targetKS string, validator validatorapi.Validator) pools.Factory,
 	etcdClient *clientv3.Client,
 	schemaFilter issyncer.Filter,
+	serverInfoSyncerOptions ...serverinfo.SyncerOption,
 ) *Domain {
 	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
 	do := &Domain{
 		store:             store,
 		exit:              make(chan struct{}),
-		sysSessionPool:    createInternelSessionPool(systemSessionPoolSize, factory),
-		dxfSessionPool:    createInternelSessionPool(dxfSessionPoolSize, factory),
+		sysSessionPool:    createInternalSessionPool(systemSessionPoolSize, factory),
+		dxfSessionPool:    createInternalSessionPool(dxfSessionPoolSize, factory),
 		statsLease:        statsLease,
 		schemaLease:       schemaLease,
 		slowQuery:         newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
 		dumpFileGcChecker: &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
 
 		crossKSSessFactoryGetter: crossKSSessFactoryGetter,
+		serverInfoSyncerOptions:  serverInfoSyncerOptions,
 	}
 
 	do.advancedSysSessionPool = syssession.NewAdvancedSessionPool(systemSessionPoolSize, func() (syssession.SessionContext, error) {
@@ -603,7 +637,7 @@ func NewDomainWithEtcdClient(
 	return do
 }
 
-func createInternelSessionPool(capacity int, factory pools.Factory) util.DestroyableSessionPool {
+func createInternalSessionPool(capacity int, factory pools.Factory) util.DestroyableSessionPool {
 	return util.NewSessionPool(
 		capacity, factory,
 		func(r pools.Resource) {
@@ -673,6 +707,19 @@ func (do *Domain) Init(
 	)
 	// TODO(lance6716): find a more representative place for subscriber
 	failpoint.InjectCall("afterDDLNotifierCreated", do.ddlNotifier)
+	// Register MVS DDL handler before DDLNotifier may start.
+	do.mvService.ddlNotify = make(chan struct{}, 1)
+	do.mvService.MVService = mvservice.RegisterMVService(
+		do.ctx,
+		do.ddlNotifier.RegisterHandler,
+		do.sysSessionPool,
+		func() {
+			select {
+			case do.mvService.ddlNotify <- struct{}{}:
+			default:
+			}
+		},
+	)
 
 	d := do.ddl
 	eBak := do.ddlExecutor
@@ -685,6 +732,7 @@ func (do *Domain) Init(
 		ddl.WithLease(do.schemaLease),
 		ddl.WithSchemaLoader(do.isSyncer),
 		ddl.WithEventPublishStore(ddlNotifierStore),
+		ddl.WithExternalWorkloadManager(do.extWorkloadMgr),
 	)
 
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
@@ -706,7 +754,7 @@ func (do *Domain) Init(
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
 		do.etcdClient, do.unprefixedEtcdCli, pdCli, pdHTTPCli,
-		do.Store().GetCodec(), skipRegisterToDashboard, do.infoCache)
+		do.Store().GetCodec(), skipRegisterToDashboard, do.infoCache, do.serverInfoSyncerOptions...)
 	if err != nil {
 		return err
 	}
@@ -839,22 +887,37 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 			return err
 		}
 	}
+	// Only the SYSTEM keyspace domain runs this GC loop: user-keyspace domains
+	// only access the long-lived SYSTEM keyspace runtime, which is never evicted
+	// here.
+	// there are still calls to GetKSInfoCache/GetKSStore without holder ID, but
+	// they are only used in the path of creating session when the runtime is
+	// Acquired with a holder ID, so it's ok. we cannot remove those calls now
+	// as explained in the comments of GetKSStore.
+	if kv.IsSystemKS(do.store) {
+		do.wg.Run(func() {
+			do.crossKSSessMgr.RunSystemKSGCLoop(do.ctx)
+		}, "crossKSSessMgrGCLoop")
+	}
+	do.initInferenceProviders()
 
 	return nil
 }
 
-// TODO: we should sync the system keyspace info schema, not just load it,
-// currently, we assume there is no upgrade, so we only load the info schema of
-// system keyspace once, and it will not change during the lifetime of the domain,
-// it's not right, but it's enough to push subtasks which depends on it forward,
-// we will fix it in the future.
 func (do *Domain) loadSysKSInfoSchema() error {
 	logutil.BgLogger().Info("loading system keyspace info schema")
+	// it will trigger the creation of system keyspace session manager,
+	// which will load the info schema cache.
 	_, err := do.GetKSStore(keyspace.System)
 	return err
 }
 
 // GetKSStore returns the kv.Storage for the given keyspace.
+// we should forbid direct access cross KS component through Domain. we should
+// use AcquireKSRuntime to manage their lifecycle.
+// but Session dependents on Domain, to create a session pool we need to access the
+// GetKSStore/GetKSInfoCache inside Session where we don't know the runtime holder.
+// and trying to refactor that part can cause import cycle easily.
 func (do *Domain) GetKSStore(targetKS string) (store kv.Storage, err error) {
 	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
 	if err != nil {
@@ -864,6 +927,7 @@ func (do *Domain) GetKSStore(targetKS string) (store kv.Storage, err error) {
 }
 
 // GetKSInfoCache returns the system keyspace info cache.
+// see comments of GetKSStore too.
 func (do *Domain) GetKSInfoCache(targetKS string) (*infoschema.InfoCache, error) {
 	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
 	if err != nil {
@@ -872,19 +936,23 @@ func (do *Domain) GetKSInfoCache(targetKS string) (*infoschema.InfoCache, error)
 	return mgr.InfoCache(), nil
 }
 
+// GetKSGlobalVarAccessor returns the global variable accessor of the sessions
+// of the runtime of the given keyspace.
+func (do *Domain) GetKSGlobalVarAccessor(targetKS string) (variable.GlobalVarAccessor, error) {
+	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return mgr.GlobalVarAccessor(), nil
+}
+
 // GetKSSessPool returns the session pool for the given keyspace.
 func (do *Domain) GetKSSessPool(targetKS string) (util.DestroyableSessionPool, error) {
 	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return mgr.SessPool(), nil
-}
-
-// CloseKSSessMgr closes the session manager for the given keyspace.
-// it's exported for test only.
-func (do *Domain) CloseKSSessMgr(targetKS string) {
-	do.crossKSSessMgr.CloseKS(targetKS)
+	return mgr.SysSessionPool(), nil
 }
 
 // GetCrossKSMgr returns the cross keyspace session manager.
@@ -911,6 +979,17 @@ func (do *Domain) InitInfo4Test() {
 // SetOnClose used to set do.onClose func.
 func (do *Domain) SetOnClose(onClose func()) {
 	do.onClose = onClose
+}
+
+// SetExternalWorkloadManager installs the external workload manager used by
+// background components that coordinate work with an external controller.
+func (do *Domain) SetExternalWorkloadManager(manager extworkload.Manager) {
+	do.extWorkloadMgr = manager
+}
+
+// ExternalWorkloadManager returns the external workload manager for this domain.
+func (do *Domain) ExternalWorkloadManager() extworkload.Manager {
+	return do.extWorkloadMgr
 }
 
 func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
@@ -1127,7 +1206,7 @@ func (do *Domain) InitDistTaskLoop() error {
 	if err != nil {
 		return err
 	}
-	disthandle.SetNodeResource(nodeRes)
+	storage.SetNodeResource(nodeRes)
 	executorManager, err := taskexecutor.NewManager(managerCtx, do.store, serverID, taskManager, nodeRes)
 	if err != nil {
 		return err
@@ -1147,7 +1226,7 @@ func (do *Domain) InitDistTaskLoop() error {
 	if err := kv.RunInNewTxn(ctx, do.store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
 		logger := logutil.BgLogger()
-		return local.InitializeRateLimiterParam(m, logger)
+		return ingestctrl.InitializeRateLimiterParam(m, logger)
 	}); err != nil {
 		logutil.BgLogger().Error("initialize global max batch split ranges failed", zap.Error(err))
 	}
@@ -1175,11 +1254,16 @@ func calculateNodeResource() (*proto.NodeResource, error) {
 	} else {
 		totalDisk = sz.Capacity
 	}
+	nodeRes := proto.NewNodeResource(totalCPU, int64(totalMem), totalDisk)
+	dxfNodeRes := nodeRes.LimitDXFResource(cfg.DXFResourceLimit)
 	logger.Info("initialize node resource",
 		zap.Int("total-cpu", totalCPU),
 		zap.String("total-mem", units.BytesSize(float64(totalMem))),
+		zap.Int("dxf-resource-limit", cfg.DXFResourceLimit),
+		zap.Int("dxf-usable-cpu", dxfNodeRes.TotalCPU),
+		zap.String("dxf-usable-mem", units.BytesSize(float64(dxfNodeRes.TotalMem))),
 		zap.String("total-disk", units.BytesSize(float64(totalDisk))))
-	return proto.NewNodeResource(totalCPU, int64(totalMem), totalDisk), nil
+	return dxfNodeRes, nil
 }
 
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, executorManager *taskexecutor.Manager, serverID string, nodeRes *proto.NodeResource) {
@@ -1233,6 +1317,16 @@ func (do *Domain) SysSessionPool() util.DestroyableSessionPool {
 	return do.sysSessionPool
 }
 
+// AlterTableMode implements sqlsvrapi.Runtime.
+func (do *Domain) AlterTableMode(_ context.Context, target model.AlterTableModeTarget) error {
+	se, err := do.sysSessionPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer do.sysSessionPool.Put(se)
+	return ddl.AlterTableMode(do.ddlExecutor, se.(sessionctx.Context), target.TargetMode, target.SchemaID, target.TableID)
+}
+
 // AdvancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect
 // some misuse of the session to avoid potential bugs.
 // It is recommended to use this pool instead of `sysSessionPool`.
@@ -1263,7 +1357,7 @@ func (do *Domain) AutoIDClient() *autoid.ClientDiscover {
 // GetPDClient returns the PD client.
 func (do *Domain) GetPDClient() pd.Client {
 	if store, ok := do.store.(kv.StorageWithPD); ok {
-		return store.GetPDClient()
+		return store.GetPDClient().WithCallerComponent(caller.GetComponent(1))
 	}
 	return nil
 }
@@ -1430,7 +1524,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 	var watchCh clientv3.WatchChan
 	duration := 30 * time.Second
 	if do.etcdClient != nil {
-		watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
+		watchCh = do.etcdClient.Watch(context.Background(), ddlutil.SysVarCacheKey)
 	}
 
 	do.wg.Run(func() {
@@ -1463,7 +1557,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 
 			if !ok {
 				logutil.BgLogger().Warn("LoadSysVarCacheLoop loop watch channel closed")
-				watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
+				watchCh = do.etcdClient.Watch(context.Background(), ddlutil.SysVarCacheKey)
 				count++
 				if count > 10 {
 					time.Sleep(time.Duration(count) * time.Second)
@@ -1555,8 +1649,7 @@ func (do *Domain) BindingHandle() bindinfo.BindingHandle {
 // InitBindingHandle create a goroutine loads BindInfo in a loop, it should
 // be called only once in BootstrapSession.
 func (do *Domain) InitBindingHandle() error {
-	do.bindHandle.Store(bindinfo.NewBindingHandle(do.sysSessionPool))
-	err := do.BindingHandle().LoadFromStorageToCache(true, false)
+	err := do.LoadBindingHandle()
 	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
@@ -1568,6 +1661,42 @@ func (do *Domain) InitBindingHandle() error {
 		return err
 	}
 	do.globalBindHandleWorkerLoop(owner)
+	return nil
+}
+
+// LoadBindingHandle loads existing bindings without starting binding maintenance.
+func (do *Domain) LoadBindingHandle() error {
+	do.bindHandle.Store(bindinfo.NewBindingHandle(do.sysSessionPool))
+	return do.BindingHandle().LoadFromStorageToCache(true, false)
+}
+
+// LoadBindingLoop loads bindings and periodically refreshes the cache. It only
+// starts the LoadFromStorageToCache path; unlike InitBindingHandle, it does not
+// start binding ownership, GC, or usage persistence.
+func (do *Domain) LoadBindingLoop() error {
+	if err := do.LoadBindingHandle(); err != nil {
+		return err
+	}
+	if bindinfo.Lease == 0 {
+		return nil
+	}
+
+	do.wg.Run(func() {
+		defer util.Recover(metrics.LabelDomain, "loadBindingLoop", nil, false)
+		ticker := time.NewTicker(bindinfo.Lease)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-do.exit:
+				do.BindingHandle().Close()
+				return
+			case <-ticker.C:
+				if err := do.BindingHandle().LoadFromStorageToCache(false, false); err != nil {
+					logutil.BgLogger().Warn("update bindinfo failed", zap.Error(err))
+				}
+			}
+		}
+	}, "loadBindingLoop")
 	return nil
 }
 
@@ -1596,7 +1725,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				bindHandle := do.BindingHandle()
 				err := bindHandle.LoadFromStorageToCache(false, false)
 				if err != nil {
-					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
+					logutil.BgLogger().Warn("update bindinfo failed", zap.Error(err))
 				}
 			case <-gcBindTicker.C:
 				if !owner.IsOwner() {
@@ -1667,7 +1796,7 @@ func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
 
 // SetupPlanReplayerHandle setup plan replayer handle
 func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, workersSctxs []sessionctx.Context) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	do.planReplayerHandle = &planReplayerHandle{}
 	do.planReplayerHandle.planReplayerTaskCollectorHandle = &planReplayerTaskCollectorHandle{
 		ctx:  ctx,
@@ -1707,6 +1836,15 @@ func (do *Domain) ResourceGroupsController() *rmclient.ResourceGroupsController 
 // SetResourceGroupsController is only used in test.
 func (do *Domain) SetResourceGroupsController(controller *rmclient.ResourceGroupsController) {
 	do.resourceGroupsController.Store(controller)
+}
+
+// GetRUVersion returns the current RU calculation version for this keyspace.
+// Returns DefaultRUVersion (v1) if the resource groups controller is not available.
+func (do *Domain) GetRUVersion() rmclient.RUVersion {
+	if rgCtl := do.ResourceGroupsController(); rgCtl != nil {
+		return rgCtl.GetRUVersion()
+	}
+	return rmclient.DefaultRUVersion
 }
 
 // SetupHistoricalStatsWorker setups worker
@@ -1819,7 +1957,7 @@ func (do *Domain) DumpFileGcCheckerLoop() {
 			case <-do.exit:
 				return
 			case <-gcTicker.C:
-				do.dumpFileGcChecker.GCDumpFiles(do.ctx, time.Hour, time.Hour*24*7)
+				do.dumpFileGcChecker.GCDumpFiles(do.ctx, vardef.GetPlanReplayerFileRetentionTime(), time.Hour*24*7)
 			}
 		}
 	}, "dumpFileGcChecker")
@@ -2043,7 +2181,7 @@ func (do *Domain) initStats(ctx context.Context) {
 	liteInitStats := config.GetGlobalConfig().Performance.LiteInitStats
 	var err error
 	if liteInitStats {
-		err = statsHandle.InitStatsLite(ctx)
+		err = statsHandle.InitStatsLite(ctx, do.InfoSchema())
 	} else {
 		err = statsHandle.InitStats(ctx, do.InfoSchema())
 	}
@@ -2411,7 +2549,6 @@ func (do *Domain) ServerMemoryLimitHandle() *servermemorylimit.Handle {
 
 const (
 	privilegeKey          = "/tidb/privilege"
-	sysVarCacheKey        = "/tidb/sysvars"
 	tiflashComputeNodeKey = "/tiflash/new_tiflash_compute_nodes"
 )
 
@@ -2469,7 +2606,7 @@ func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 // synchronously so that the effect is immediate.
 func (do *Domain) NotifyUpdateSysVarCache(updateLocal bool) {
 	if do.etcdClient != nil {
-		err := ddlutil.PutKVToEtcd(context.Background(), do.etcdClient, etcd.KeyOpDefaultRetryCnt, sysVarCacheKey, "")
+		err := ddlutil.PutKVToEtcd(context.Background(), do.etcdClient, etcd.KeyOpDefaultRetryCnt, ddlutil.SysVarCacheKey, "")
 		if err != nil {
 			logutil.BgLogger().Warn("notify update sysvar cache failed", zap.Error(err))
 		}
@@ -2495,7 +2632,7 @@ func (do *Domain) LoadSigningCertLoop(signingCert, signingKey string) {
 
 		for {
 			select {
-			case <-time.After(sessionstates.LoadCertInterval):
+			case <-time.After(sessionstates.GetLoadCertInterval()):
 				sessionstates.ReloadSigningCert()
 			case <-do.exit:
 				return
@@ -2825,11 +2962,50 @@ func (do *Domain) serverIDKeeper() {
 	}
 }
 
-// StartTTLJobManager creates and starts the ttl job manager
+// StartTTLJobManager creates and starts the ttl job manager when this domain
+// should run it; otherwise it returns without storing a manager instance.
 func (do *Domain) StartTTLJobManager() {
-	ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.advancedSysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner)
+	failpoint.Inject("skipStartTTLJobManager", func() {
+		failpoint.Return()
+	})
+	role, configured := do.ttlExternalWorkloadRole()
+	if !do.shouldStartTTLJobManager() {
+		fields := make([]zap.Field, 0, 1)
+		if configured {
+			fields = append(fields, zap.String("role", string(role)))
+		}
+		logutil.BgLogger().Info("don't run ttl job manager", fields...)
+		return
+	}
+	ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.advancedSysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner, ttlworker.WithExternalWorkloadManager(do.extWorkloadMgr))
 	do.ttlJobManager.Store(ttlJobManager)
 	ttlJobManager.Start()
+}
+
+func (do *Domain) ttlExternalWorkloadRole() (config.ExternalWorkloadRole, bool) {
+	if do.extWorkloadMgr != nil {
+		return do.extWorkloadMgr.Role(), true
+	}
+	cfg := config.GetGlobalConfig().ExternalWorkload
+	if !cfg.Enable {
+		return "", false
+	}
+	if cfg.Role == "" {
+		return config.RoleMaster, true
+	}
+	return cfg.Role, true
+}
+
+func (do *Domain) shouldStartTTLJobManager() bool {
+	// Once external workload is configured, TTL jobs must run only on the
+	// dedicated TTL task worker with a live controller manager. Falling back to
+	// local TTL scheduling when controller coordination is unavailable can cause
+	// split-brain ownership with externally assigned TTL tasks.
+	role, configured := do.ttlExternalWorkloadRole()
+	if !configured {
+		return true
+	}
+	return do.extWorkloadMgr != nil && role == config.RoleTTLTaskWorker
 }
 
 // TTLJobManager returns the ttl job manager on this domain
@@ -3020,3 +3196,83 @@ func (s *SysProcesses) KillSysProcess(id uint64) {
 		proc.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}
 }
+
+// StartMVService starts background MV maintenance and cross-server DDL notifications.
+func (do *Domain) StartMVService() error {
+	if do.GetMVService() == nil {
+		return errors.New("failed to register MV service")
+	}
+	runMVServiceLoopWithRecover := func(loopName string, loop func()) {
+		do.wg.RunWithRecover(loop, func(r any) {
+			if r == nil {
+				return
+			}
+			logutil.BgLogger().Error("panic in MVService domain loop",
+				zap.String("loop", loopName),
+				zap.Any("panic", r),
+				zap.Stack("stack"),
+			)
+			metrics.PanicCounter.WithLabelValues(metrics.LabelDomain).Inc()
+			metrics.MVServicePanicGauge.Inc()
+		}, loopName)
+	}
+	runMVServiceLoopWithRecover("mvService", do.mvService.Run)
+	runMVServiceLoopWithRecover("mvServiceNotify", do.notifyMVSMetadataChange)
+	runMVServiceLoopWithRecover("watchMVSMetaChange", do.watchMVSMetaChange)
+	return nil
+}
+
+// GetMVService returns the materialized view maintenance service.
+func (do *Domain) GetMVService() *mvservice.MVService {
+	return do.mvService.MVService
+}
+
+// watchMVSMetaChange reloads service metadata after DDL notifications from any server.
+func (do *Domain) watchMVSMetaChange() {
+	if do.etcdClient == nil {
+		return
+	}
+
+	watchCh := do.etcdClient.Watch(do.ctx, mvsDDLNotifyKey)
+	count := 0
+	for {
+		ok := true
+		select {
+		case <-do.exit:
+			return
+		case _, ok = <-watchCh:
+		}
+		if !ok {
+			logutil.BgLogger().Warn("watch MVS metadata change loop watch channel closed")
+			watchCh = do.etcdClient.Watch(do.ctx, mvsDDLNotifyKey)
+			count++
+			if count > 10 {
+				time.Sleep(time.Duration(count) * time.Second)
+			}
+			continue
+		}
+		count = 0
+		do.mvService.NotifyDDLChange()
+	}
+}
+
+// notifyMVSMetadataChange broadcasts local MV DDL notifications to other servers.
+func (do *Domain) notifyMVSMetadataChange() {
+	if do.etcdClient == nil {
+		return
+	}
+	client := do.etcdClient.KV
+	for {
+		select {
+		case <-do.exit:
+			return
+		case <-do.mvService.ddlNotify:
+			_, err := client.Put(do.ctx, mvsDDLNotifyKey, "")
+			if err != nil && !errors.ErrorEqual(err, context.Canceled) {
+				logutil.BgLogger().Warn("notify mvservice metadata change failed", zap.Error(err))
+			}
+		}
+	}
+}
+
+const mvsDDLNotifyKey = "/tidb/mvservice/ddl"

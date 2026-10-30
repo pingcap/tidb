@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -115,6 +116,19 @@ func (pi *PhysPlanPartInfo) CloneForPlanCache() *PhysPlanPartInfo {
 	cloned.PartitionNames = pi.PartitionNames
 	cloned.Columns = utilfuncp.CloneColumnsForPlanCache(pi.Columns, nil)
 	cloned.ColumnNames = pi.ColumnNames
+	return cloned
+}
+
+// Clone clones the PhysPlanPartInfo.
+func (pi *PhysPlanPartInfo) Clone() *PhysPlanPartInfo {
+	if pi == nil {
+		return nil
+	}
+	cloned := new(PhysPlanPartInfo)
+	cloned.PruningConds = plannerutil.CloneExprs(pi.PruningConds)
+	cloned.PartitionNames = append([]ast.CIStr(nil), pi.PartitionNames...)
+	cloned.Columns = plannerutil.CloneCols(pi.Columns)
+	cloned.ColumnNames = types.NameSlice(plannerutil.CloneFieldNames(pi.ColumnNames))
 	return cloned
 }
 
@@ -251,7 +265,7 @@ func (rf *RuntimeFilter) Assign(targetNode *PhysicalTableScan,
 }
 
 // ExplainInfo explain info of runtime filter
-func (rf *RuntimeFilter) ExplainInfo(isBuildNode bool) string {
+func (rf *RuntimeFilter) ExplainInfo(isBuildNode bool, ctx expression.EvalContext) string {
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "%d[%s]", rf.id, rf.rfType)
 	if isBuildNode {
@@ -260,7 +274,7 @@ func (rf *RuntimeFilter) ExplainInfo(isBuildNode bool) string {
 			if i != 0 {
 				fmt.Fprintf(&builder, ",")
 			}
-			fmt.Fprintf(&builder, "%s", srcExpr.String())
+			fmt.Fprintf(&builder, "%s", srcExpr.ExplainInfo(ctx))
 		}
 	} else {
 		fmt.Fprintf(&builder, " -> ")
@@ -268,7 +282,7 @@ func (rf *RuntimeFilter) ExplainInfo(isBuildNode bool) string {
 			if i != 0 {
 				fmt.Fprintf(&builder, ",")
 			}
-			fmt.Fprintf(&builder, "%s", targetExpr.String())
+			fmt.Fprintf(&builder, "%s", targetExpr.ExplainInfo(ctx))
 		}
 	}
 	return builder.String()

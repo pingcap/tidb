@@ -15,21 +15,83 @@
 package objstore
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
+
+func TestS3SSEKMSContextURL(t *testing.T) {
+	const contextJSON = `{"kk":"¾","tenant":"租户😀","value":"a+b / = & ?"}`
+	const normalized = `{"kk":"¾","tenant":"租户😀","value":"a+b / = \u0026 ?"}`
+	encoded := base64.StdEncoding.EncodeToString([]byte(normalized))
+	require.Contains(t, encoded, "+")
+	// ParseRawURL preserves literal plus signs for existing storage parameters.
+	query := strings.ReplaceAll(url.QueryEscape(contextJSON), "+", "%20")
+	for _, key := range []string{"sse-kms-context", "SSE_KMS_CONTEXT"} {
+		t.Run(key, func(t *testing.T) {
+			options := &BackendOptions{}
+			require.NoError(t, json.Unmarshal([]byte(`{"sse":"aws:kms","sse-kms-context":"{\"tenant\":\"from-options\"}"}`), &options.S3))
+			backend, err := ParseBackend("s3://bucket/prefix?"+key+"="+query, options)
+			require.NoError(t, err)
+			require.Equal(t, encoded, backend.GetS3().GetSseKmsEncryptionContext())
+			require.Equal(t, "aws:kms", backend.GetS3().Sse)
+			require.Empty(t, backend.GetS3().SseKmsKeyId)
+
+			// Parsing a URL overrides options for this backend, without mutating them.
+			fromOptions, err := ParseBackend("s3://bucket/prefix", options)
+			require.NoError(t, err)
+			require.Equal(t, base64.StdEncoding.EncodeToString([]byte(`{"tenant":"from-options"}`)), fromOptions.GetS3().GetSseKmsEncryptionContext())
+			unset, err := ParseBackend("s3://bucket/prefix?"+key+"=", options)
+			require.NoError(t, err)
+			require.Empty(t, unset.GetS3().GetSseKmsEncryptionContext())
+
+			parsedURL, err := url.Parse("s3://bucket/prefix?" + key + "=" + query)
+			require.NoError(t, err)
+			fromURL, err := ParseBackendFromURL(parsedURL, options)
+			require.NoError(t, err)
+			require.Equal(t, encoded, fromURL.GetS3().GetSseKmsEncryptionContext())
+		})
+	}
+
+	// The encoded value survives snapshot request serialization.
+	backend, err := ParseBackend("s3://bucket/prefix?sse=aws:kms&sse-kms-context="+query, nil)
+	require.NoError(t, err)
+	request := &backuppb.BackupRequest{StorageBackend: backend}
+	data, err := request.Marshal()
+	require.NoError(t, err)
+	var restoredRequest backuppb.BackupRequest
+	require.NoError(t, restoredRequest.Unmarshal(data))
+	require.Equal(t, encoded, restoredRequest.GetStorageBackend().GetS3().GetSseKmsEncryptionContext())
+
+	for _, input := range []string{`{"tenant":null}`, `{"tenant":"private-context","tenant":"other"}`, encoded} {
+		_, err := ParseBackend("s3://bucket/prefix?sse-kms-context="+url.QueryEscape(input), nil)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "sse-kms-context")
+		require.NotContains(t, err.Error(), "private-context")
+	}
+
+	// A query that cannot be fully decoded must not silently lose the context.
+	for _, rawQuery := range []string{`{"tenant":"a;private-context"}`, `{"tenant":"private-context%zz"}`} {
+		_, err := ParseBackend("s3://bucket/prefix?sse=aws:kms&sse-kms-context="+rawQuery, nil)
+		require.ErrorContains(t, err, "parse storage URL query failed")
+		require.NotContains(t, err.Error(), "private-context")
+	}
+}
 
 func TestCreateStorage(t *testing.T) {
 	_, err := ParseBackend("1invalid:", nil)
 	require.Error(t, err)
-	require.Regexp(t, "parse (.*)1invalid:(.*): first path segment in URL cannot contain colon", err.Error())
+	require.Regexp(t, "parse storage URL failed: invalid format", err.Error())
 
 	_, err = ParseBackend("net:storage", nil)
 	require.Error(t, err)
@@ -51,9 +113,12 @@ func TestCreateStorage(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "hdfs://127.0.0.1:1231/backup", s.GetHdfs().GetRemote())
 
-	_, err = ParseBackend("s3:///bucket/more/prefix/", &BackendOptions{})
+	_, err = ParseBackend("s3:///bucket/more/prefix/?access-key=secret-id&secret-access-key=secret-key&session-token=secret-token", &BackendOptions{})
 	require.Error(t, err)
-	require.Regexp(t, `please specify the bucket for s3 in s3:///bucket/more/prefix/.*`, err.Error())
+	require.Contains(t, err.Error(), "please specify the bucket for s3 in s3:///bucket/more/prefix/?access-key=xxxxxx&secret-access-key=xxxxxx&session-token=xxxxxx")
+	require.NotContains(t, err.Error(), "secret-id")
+	require.NotContains(t, err.Error(), "secret-key")
+	require.NotContains(t, err.Error(), "secret-token")
 
 	s3opt := &BackendOptions{
 		S3: s3like.S3BackendOptions{
@@ -210,16 +275,42 @@ func TestFormatBackendURL(t *testing.T) {
 	})
 	require.Equal(t, "noop:///", backendURL.String())
 
-	backendURL = FormatBackendURL(&backuppb.StorageBackend{
-		Backend: &backuppb.StorageBackend_S3{
-			S3: &backuppb.S3{
-				Bucket:   "bucket",
-				Prefix:   "/some prefix/",
-				Endpoint: "https://s3.example.com/",
-			},
-		},
-	})
-	require.Equal(t, "s3://bucket/some%20prefix/", backendURL.String())
+	for _, tc := range []struct {
+		name           string
+		provider       string
+		scheme         string
+		parsedProvider string
+	}{
+		{name: "s3", scheme: "s3"},
+		{name: "s3-compatible", provider: "aws", scheme: "s3"},
+		{name: "unknown-provider", provider: "unknown", scheme: "s3"},
+		{name: "oss", provider: s3like.OSSProvider, scheme: "oss", parsedProvider: s3like.OSSProvider},
+		{name: "ks3", provider: s3like.KS3SDKProvider, scheme: "ks3", parsedProvider: s3like.KS3SDKProvider},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backendURL := FormatBackendURL(&backuppb.StorageBackend{
+				Backend: &backuppb.StorageBackend_S3{
+					S3: &backuppb.S3{
+						Bucket:          "bucket",
+						Prefix:          "/some prefix/",
+						Endpoint:        "https://s3.example.com/",
+						Provider:        tc.provider,
+						AccessKey:       "secret-id",
+						SecretAccessKey: "secret-key",
+						SessionToken:    "secret-token",
+					},
+				},
+			})
+			require.Equal(t, tc.scheme+"://bucket/some%20prefix/", backendURL.String())
+
+			backend, err := ParseBackend(backendURL.String(), nil)
+			require.NoError(t, err)
+			require.NotNil(t, backend.GetS3())
+			require.Equal(t, "bucket", backend.GetS3().Bucket)
+			require.Equal(t, "some prefix", backend.GetS3().Prefix)
+			require.Equal(t, tc.parsedProvider, backend.GetS3().Provider)
+		})
+	}
 
 	backendURL = FormatBackendURL(&backuppb.StorageBackend{
 		Backend: &backuppb.StorageBackend_Gcs{
@@ -565,4 +656,94 @@ func TestS3DefaultForceStylePath(t *testing.T) {
 	s, err = ParseBackend(`s3://bucket3/prefix/path?force-path-style=true`, nil)
 	require.NoError(t, err)
 	require.True(t, s.GetS3().ForcePathStyle)
+}
+
+func TestBackendOptionsRedacted(t *testing.T) {
+	opts := BackendOptions{}
+	opts.S3.AccessKey = "AKID"
+	opts.S3.SecretAccessKey = "SKEY"
+	opts.S3.SessionToken = "TOKEN"
+	opts.S3.SseKmsContext = `{"tenant":"context-value"}`
+	opts.S3.Region = "us-east-1"
+	opts.Azblob.AccountKey = "AZKEY"
+	opts.Azblob.SASToken = "SAS"
+	opts.Azblob.EncryptionKey = "ENC"
+	opts.Azblob.AccountName = "account"
+	opts.Azblob.Endpoint = "https://account.blob.core.windows.net/?sig=SAS"
+	opts.S3.Endpoint = "https://AKID:SKEY@s3.example.com"
+
+	redacted := opts.Redacted()
+	require.Equal(t, ast.RedactedValue, redacted.S3.AccessKey)
+	require.Equal(t, ast.RedactedValue, redacted.S3.SecretAccessKey)
+	require.Equal(t, ast.RedactedValue, redacted.S3.SessionToken)
+	require.Equal(t, ast.RedactedValue, redacted.S3.SseKmsContext)
+	require.Equal(t, `{"tenant":"context-value"}`, opts.S3.SseKmsContext)
+	require.Equal(t, ast.RedactedValue, redacted.Azblob.AccountKey)
+	require.Equal(t, ast.RedactedValue, redacted.Azblob.SASToken)
+	require.Equal(t, ast.RedactedValue, redacted.Azblob.EncryptionKey)
+	require.Equal(t, "us-east-1", redacted.S3.Region)
+	require.Equal(t, "account", redacted.Azblob.AccountName)
+	require.Equal(t, "https://account.blob.core.windows.net/", redacted.Azblob.Endpoint)
+	require.Equal(t, "https://s3.example.com", redacted.S3.Endpoint)
+	require.Equal(t, "AKID", opts.S3.AccessKey)
+	require.Equal(t, BackendOptions{}.Redacted(), BackendOptions{})
+}
+
+func TestRedactURL(t *testing.T) {
+	cases := []struct {
+		raw      string
+		expected string
+	}{
+		{"/local/path", "/local/path"},
+		{"/local/path#name", "/local/path#name"},
+		{"/data/my files/100%off", "/data/my files/100%off"},
+		{"s3://bucket/prefix", "s3://bucket/prefix"},
+		{"s3://bucket/prefix?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D", "s3://bucket/prefix?sse-kms-context=xxxxxx"},
+		{`s3://bucket/prefix?sse-kms-context={"tenant":"#context-value"}`, "s3://bucket/prefix"},
+		{`s3://bucket/prefix?sse=aws:kms&sse-kms-context={"tenant":"a&private-context-value"}`, "s3://bucket/prefix"},
+		{`s3://bucket/prefix?sse=aws:kms&sse-kms-context={"tenant":"a;x&private-context-value"}`, "s3://bucket/prefix"},
+		{`s3://bucket/prefix?sse=aws:kms&sse-kms-context={"tenant":"a%zz&private-context-value"}`, "s3://bucket/prefix"},
+		{"s3://bucket/prefix?access-key=AKID&secret-access-key=SKEY&region=us", "s3://bucket/prefix?access-key=xxxxxx&region=us&secret-access-key=xxxxxx"},
+		{"azure://bucket/prefix?sas-token=SAS", "azure://bucket/prefix?sas-token=xxxxxx"},
+		{"s3://bucket:port/prefix?access-key=AKID&secret-access-key=SKEY", InvalidURLPlaceholder},
+		{"s3://bucket%zz/prefix?access-key=AKID&secret-access-key=SKEY", InvalidURLPlaceholder},
+		{"s3a://bucket/prefix?access-key=AKID&secret-access-key=SKEY", "s3a://bucket/prefix"},
+		{"s3://AKID:SKEY@bucket/prefix?access-key=AKID", "s3://bucket/prefix?access-key=xxxxxx"},
+		{"s3a://AKID:SKEY@bucket/prefix", "s3a://bucket/prefix"},
+		{"https://account.blob.core.windows.net/?sv=2022&sig=SAS", "https://account.blob.core.windows.net/"},
+	}
+	for _, c := range cases {
+		require.Equal(t, c.expected, RedactURL(c.raw), c.raw)
+	}
+}
+
+func TestParseRawURLErrorDoesNotLeakURL(t *testing.T) {
+	for _, raw := range []string{
+		"s3://bucket:port/prefix?access-key=AKID&secret-access-key=SKEY",
+		"s3://bucket%zz/prefix?access-key=AKID&secret-access-key=SKEY",
+		"s3://AKID:SKEY/bucket/prefix",
+	} {
+		_, err := ParseRawURL(raw)
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "AKID")
+		require.NotContains(t, err.Error(), "SKEY")
+
+		_, err = ParseBackend(raw, nil)
+		require.Error(t, err)
+		require.NotContains(t, err.Error(), "AKID")
+		require.NotContains(t, err.Error(), "SKEY")
+	}
+}
+
+func TestParseBackendMissingBucketDoesNotLeakUserinfo(t *testing.T) {
+	for _, raw := range []string{
+		"s3://AKID:SKEY@/prefix",
+		"gcs://AKID:SKEY@/prefix",
+		"azblob://AKID:SKEY@/prefix",
+	} {
+		_, err := ParseBackend(raw, nil)
+		require.ErrorContains(t, err, "please specify the bucket")
+		require.NotContains(t, err.Error(), "AKID")
+		require.NotContains(t, err.Error(), "SKEY")
+	}
 }

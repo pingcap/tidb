@@ -6,13 +6,17 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/store/driver",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config/diagnosticmode",
         "//pkg/kv",
+        "//pkg/metaservice",
         "//pkg/metrics",
+        "//pkg/metrics/common",
         "//pkg/sessionctx/variable",
         "//pkg/store/copr",
         "//pkg/store/driver/error",
         "//pkg/store/driver/txn",
         "//pkg/store/gcworker",
+        "//pkg/util/diagclient",
         "//pkg/util/logutil",
         "//pkg/util/traceevent",
         "//pkg/util/tracing",
@@ -49,6 +53,7 @@ go_test(
     shard_count = 8,
     deps = [
         "//pkg/kv",
+        "//pkg/metrics/common",
         "//pkg/session",
         "//pkg/store/mockstore",
         "//pkg/testkit",
@@ -64,6 +69,7 @@ go_test(
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
+        "@com_github_tikv_pd_client//opt",
         "@org_uber_go_goleak//:goleak",
     ],
 )

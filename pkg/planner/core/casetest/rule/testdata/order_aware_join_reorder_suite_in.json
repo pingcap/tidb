@@ -1,0 +1,36 @@
+[
+  {
+    "name": "TestOrderAwareCDCJoinReorder",
+    "cases": [
+      "SELECT t6.id, t7.payload, t8.payload FROM t7 JOIN t8 ON t7.id = t8.id JOIN t6 ON t6.id = t7.id WHERE t6.category = 'hot' ORDER BY t6.id LIMIT 2",
+      "SELECT /*+ LEADING(t7, t8, t6) */ t6.id, t7.payload, t8.payload FROM t7 JOIN t8 ON t7.id = t8.id JOIN t6 ON t6.id = t7.id WHERE t6.category = 'hot' ORDER BY t6.id LIMIT 2",
+      "SELECT /*+ TIDB_INLJ(t7, t8, t9) */ t6.id, t7.payload, t8.payload, t9.payload FROM t7 JOIN t8 ON t7.id = t8.id JOIN t9 ON t8.id = t9.id JOIN t6 ON t6.id = t7.id WHERE t6.category = 'hot' ORDER BY t6.id LIMIT 2",
+      "SELECT /*+ TIDB_INLJ(t7, t8, t9) LEADING(t7, t8, t9, t6) */ t6.id, t7.payload, t8.payload, t9.payload FROM t7 JOIN t8 ON t7.id = t8.id JOIN t9 ON t8.id = t9.id JOIN t6 ON t6.id = t7.id WHERE t6.category = 'hot' ORDER BY t6.id LIMIT 2"
+    ]
+  },
+  {
+    "name": "TestOrderAwareJoinReorderPushSelection",
+    "cases": [
+      "set @@tidb_opt_enable_alternative_logical_plans = 0",
+      "explain format = 'plan_tree' select t6.id, t7.payload, t8.payload, t9.payload from t7 join t8 on t7.id = t8.id join t9 on t8.id = t9.id join t6 on t6.id = t7.id where t6.category = 'hot' and t9.payload = 1 order by t6.id limit 2",
+      "set @@tidb_opt_enable_alternative_logical_plans = 1",
+      "explain format = 'plan_tree' select t6.id, t7.payload, t8.payload, t9.payload from t7 join t8 on t7.id = t8.id join t9 on t8.id = t9.id join t6 on t6.id = t7.id where t6.category = 'hot' and t9.payload = 1 order by t6.id limit 2"
+    ]
+  },
+  {
+    "name": "TestOrderAwareJoinReorderAlternativeRound",
+    "cases": [
+      "set @@tidb_opt_join_reorder_through_sel = 1",
+      "set @@tidb_opt_enable_alternative_logical_plans = 1",
+      "explain format = 'plan_tree' select oa_order_t1.created_at, oa_order_t4.payload from oa_order_t2 join oa_order_t3 on oa_order_t3.t2_id = oa_order_t2.id join oa_order_t1 on oa_order_t1.id = oa_order_t2.t1_id join oa_order_t4 on oa_order_t4.t3_id = oa_order_t3.id where oa_order_t1.category = 'hot' and oa_order_t4.payload = 1 order by oa_order_t1.created_at limit 2",
+      "set @@tidb_opt_enable_alternative_logical_plans = 0",
+      "explain format = 'plan_tree' select oa_order_t1.created_at, oa_order_t4.payload from oa_order_t2 join oa_order_t3 on oa_order_t3.t2_id = oa_order_t2.id join oa_order_t1 on oa_order_t1.id = oa_order_t2.t1_id join oa_order_t4 on oa_order_t4.t3_id = oa_order_t3.id where oa_order_t1.category = 'hot' and oa_order_t4.payload = 1 order by oa_order_t1.created_at limit 2",
+      "set @@tidb_opt_enable_alternative_logical_plans = 1",
+      "explain format = 'plan_tree' select /*+ LEADING(oa_order_t1, oa_order_t2, oa_order_t3, oa_order_t4) TIDB_INLJ(oa_order_t2, oa_order_t3, oa_order_t4) */ oa_order_t1.created_at, oa_order_t4.payload from oa_order_t2 join oa_order_t3 on oa_order_t3.t2_id = oa_order_t2.id join oa_order_t1 on oa_order_t1.id = oa_order_t2.t1_id join oa_order_t4 on oa_order_t4.t3_id = oa_order_t3.id where oa_order_t1.category = 'hot' and oa_order_t4.payload = 1 order by oa_order_t1.created_at limit 2",
+      "set @@tidb_opt_enable_alternative_logical_plans = 0",
+      "explain format = 'plan_tree' select o.txt_val, o.label from obj o join relationship r on o.id = r.ref_ojb_id join obj o1 on o1.id = r.obj_id where o1.type_id = 1 order by o.label limit 1",
+      "set @@tidb_opt_enable_alternative_logical_plans = 1",
+      "explain format = 'plan_tree' select o.txt_val, o.label from obj o join relationship r on o.id = r.ref_ojb_id join obj o1 on o1.id = r.obj_id where o1.type_id = 1 order by o.label limit 1"
+    ]
+  }
+]

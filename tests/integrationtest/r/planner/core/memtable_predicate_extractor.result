@@ -6,10 +6,8 @@ TABLE_NAME
 t
 select TABLE_NAME from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and column_name like 'I%';
 TABLE_NAME
-t
 select TABLE_NAME from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and column_name like 'ID';
 TABLE_NAME
-t
 select TABLE_NAME from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and column_name like 'id';
 TABLE_NAME
 t

@@ -36,8 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -46,11 +46,11 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -108,13 +108,9 @@ func NewAddIndexIngestPipeline(
 	concurrency int,
 	collector execute.Collector,
 ) (*operator.AsyncPipeline, error) {
-	indexes := make([]table.Index, 0, len(idxInfos))
-	for _, idxInfo := range idxInfos {
-		index, err := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
-		if err != nil {
-			return nil, err
-		}
-		indexes = append(indexes, index)
+	indexes, err := indexesForBackfill(tbl, idxInfos)
+	if err != nil {
+		return nil, err
 	}
 	reqSrc := getDDLRequestSource(model.ActionAddIndex)
 	copCtx, err := NewReorgCopContext(reorgMeta, tbl.Meta(), idxInfos, reqSrc)
@@ -158,7 +154,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	tbl table.PhysicalTable,
 	idxInfos []*model.IndexInfo,
 	startKey, endKey kv.Key,
-	onClose external.OnWriterCloseFunc,
+	onClose simplesst.OnWriterCloseFunc,
 	reorgMeta *model.DDLReorgMeta,
 	avgRowSize int,
 	concurrency int,
@@ -166,13 +162,9 @@ func NewWriteIndexToExternalStoragePipeline(
 	collector execute.Collector,
 	tikvCodec tikv.Codec,
 ) (*operator.AsyncPipeline, error) {
-	indexes := make([]table.Index, 0, len(idxInfos))
-	for _, idxInfo := range idxInfos {
-		index, err := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
-		if err != nil {
-			return nil, err
-		}
-		indexes = append(indexes, index)
+	indexes, err := indexesForBackfill(tbl, idxInfos)
+	if err != nil {
+		return nil, err
 	}
 	reqSrc := getDDLRequestSource(model.ActionAddIndex)
 	copCtx, err := NewReorgCopContext(reorgMeta, tbl.Meta(), idxInfos, reqSrc)
@@ -216,6 +208,23 @@ func NewWriteIndexToExternalStoragePipeline(
 	return operator.NewAsyncPipeline(
 		srcOp, scanOp, writeOp, sinkOp,
 	), nil
+}
+
+func indexesForBackfill(tbl table.PhysicalTable, idxInfos []*model.IndexInfo) ([]table.Index, error) {
+	indexesByID := make(map[int64]table.Index, len(tbl.Indices()))
+	for _, idx := range tbl.Indices() {
+		indexesByID[idx.Meta().ID] = idx
+	}
+
+	indexes := make([]table.Index, 0, len(idxInfos))
+	for _, idxInfo := range idxInfos {
+		idx, ok := indexesByID[idxInfo.ID]
+		if !ok {
+			return nil, errors.Errorf("index ID %d not found in physical table %d", idxInfo.ID, tbl.GetPhysicalID())
+		}
+		indexes = append(indexes, idx)
+	}
+	return indexes, nil
 }
 
 func createChunkPool(copCtx copr.CopContext, reorgMeta *model.DDLReorgMeta) *sync.Pool {
@@ -532,6 +541,18 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		idxResults  []IndexRecordChunk
 		execDetails kvutil.ExecDetails
 	)
+
+	// Local ingest may trigger partial import/reset while the scan transaction is
+	// still open, so only the global-sort path can stream results immediately.
+	enableStreaming := w.reorgMeta.UseCloudStorage
+	failpoint.InjectCall("checkEnableStreaming", enableStreaming)
+	sendResult := func(idxResult IndexRecordChunk) {
+		sender(idxResult)
+		if w.cpOp != nil {
+			w.cpOp.UpdateChunk(task.ID, int(idxResult.tableScanRowCount), idxResult.Done)
+		}
+		w.totalCount.Add(idxResult.tableScanRowCount)
+	}
 	var scanCtx context.Context = w.ctx
 	if scanCtx.Value(kvutil.ExecDetailsKey) == nil {
 		scanCtx = context.WithValue(w.ctx, kvutil.ExecDetailsKey, &execDetails)
@@ -565,28 +586,35 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 			failpoint.InjectCall("beforeGetChunk")
 			srcChk := w.getChunk()
 			done, err = fetchTableScanResult(scanCtx, w.copCtx.GetBase(), rs, srcChk)
+			failpoint.Inject("mockScanRecordPartialError", func(val failpoint.Value) {
+				if shouldFail, _ := val.(bool); shouldFail {
+					err = errors.New("mock partial scan error")
+				}
+			})
 			if err != nil || scanCtx.Err() != nil {
 				w.recycleChunk(srcChk)
 				terror.Call(rs.Close)
 				return err
 			}
-			w.collector.Accepted(execDetails.UnpackedBytesReceivedKVTotal)
+			w.collector.Accepted(execdetails.LoadTiKVExecDetails(&execDetails).UnpackedBytesReceivedKVTotal)
 			execDetails = kvutil.ExecDetails{}
 
 			_, tableScanRowCount := distsqlCtx.RuntimeStatsColl.GetCopCountAndRows(tableScanCopID)
-			idxResults = append(idxResults, IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, tableScanRowCount: tableScanRowCount - lastTableScanRowCount, conditionPushed: conditionPushed})
+			idxResult := IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, tableScanRowCount: tableScanRowCount - lastTableScanRowCount, conditionPushed: conditionPushed}
 			lastTableScanRowCount = tableScanRowCount
+			if enableStreaming {
+				sendResult(idxResult)
+			} else {
+				idxResults = append(idxResults, idxResult)
+			}
 		}
 		return rs.Close()
 	})
 
-	for i, idxResult := range idxResults {
-		sender(idxResult)
-		if w.cpOp != nil {
-			done := i == len(idxResults)-1
-			w.cpOp.UpdateChunk(task.ID, int(idxResult.tableScanRowCount), done)
+	if !enableStreaming {
+		for _, idxResult := range idxResults {
+			sendResult(idxResult)
 		}
-		w.totalCount.Add(idxResult.tableScanRowCount)
 	}
 
 	return err
@@ -629,7 +657,7 @@ func NewWriteExternalStoreOperator(
 	store storeapi.Storage,
 	srcChunkPool *sync.Pool,
 	concurrency int,
-	onClose external.OnWriterCloseFunc,
+	onClose simplesst.OnWriterCloseFunc,
 	memoryQuota uint64,
 	reorgMeta *model.DDLReorgMeta,
 	tikvCodec tikv.Codec,
@@ -641,7 +669,7 @@ func NewWriteExternalStoreOperator(
 	})
 
 	totalCount := new(atomic.Int64)
-	blockSize := external.GetAdjustedBlockSize(memoryQuota, external.DefaultBlockSize)
+	blockSize := simplesst.GetAdjustedBlockSize(memoryQuota, simplesst.DefaultBlockSize)
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
@@ -649,7 +677,7 @@ func NewWriteExternalStoreOperator(
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
 			writers := make([]ingest.Writer, 0, len(indexes))
 			for i := range indexes {
-				builder := external.NewWriterBuilder().
+				builder := simplesst.NewWriterBuilder().
 					SetOnCloseFunc(onClose).
 					SetMemorySizeLimit(memoryQuota).
 					SetTiKVCodec(tikvCodec).
@@ -861,7 +889,7 @@ func (w *indexIngestWorker) Close() error {
 	var gerr error
 
 	for i, writer := range w.writers {
-		ew, ok := writer.(*external.Writer)
+		ew, ok := writer.(*simplesst.Writer)
 		if !ok {
 			break
 		}
@@ -894,7 +922,8 @@ func (w *indexIngestWorker) WriteChunk(rs *IndexRecordChunk) (count int, bytes i
 		// skip running the checker in TiDB side.
 		indexConditionCheckers = nil
 	}
-	cnt, kvBytes, err := writeChunk(w.ctx, w.writers, w.indexes, indexConditionCheckers, w.copCtx, sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk, w.tbl.Meta())
+	cnt, kvBytes, err := writeChunk(w.ctx, w.writers, w.indexes, indexConditionCheckers, w.copCtx,
+		sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk, w.tbl.Meta())
 	if err != nil || cnt == 0 {
 		return 0, 0, err
 	}
@@ -1207,6 +1236,12 @@ func (w *mergeTempIndexWorker) HandleTask(task tempIndexScanTask, sender func(te
 			return err
 		}
 		sender(rs)
+		// Test hook: fail the subtask after a range has been committed, so the
+		// retry path resets the subtask summary and only the remaining ranges are
+		// accounted again. It exercises the best-effort merge RU accounting.
+		failpoint.Inject("mockMergeTempIndexFailAfterRange", func() {
+			failpoint.Return(errors.New("mock failure after a committed merge temp index range"))
+		})
 		done = rs.done
 		start = rs.nextKey
 	}
@@ -1278,6 +1313,9 @@ func (w *mergeTempIndexWorker) handleOneRange(
 
 				result.addCount++
 			}
+			// Record the committed transaction size so the merge task can account
+			// RU from it, mirroring the transactional backfill workers.
+			result.writtenBytes = txn.Size()
 			return nil
 		})
 		if err != nil {
@@ -1353,7 +1391,7 @@ func (s *tempIndexResultSink) collectResult() error {
 			if !ok {
 				return nil
 			}
-			s.collector.Processed(0, int64(rs.addCount))
+			s.collector.Processed(int64(rs.writtenBytes), int64(rs.addCount))
 		}
 	}
 }

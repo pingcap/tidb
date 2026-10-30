@@ -15,12 +15,16 @@
 package s3store
 
 import (
+	"bytes"
 	"context"
+	"io"
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
@@ -28,9 +32,221 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
+
+func TestClientEncryptionContextRequests(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		context string
+	}{
+		{name: "unset"},
+		{name: "configured", context: "eyJ0ZW5hbnQiOiJ0ZW5hbnQtYSJ9"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := CreateS3Suite(t)
+			cli := &s3Client{
+				svc:          s.MockS3,
+				BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+				options: &backuppb.S3{
+					Bucket:                  "bucket",
+					Sse:                     "aws:kms",
+					SseKmsKeyId:             "key-id",
+					Acl:                     "private",
+					StorageClass:            "STANDARD_IA",
+					SseKmsEncryptionContext: tc.context,
+				},
+			}
+			var expected *string
+			if tc.context != "" {
+				expected = aws.String(tc.context)
+			}
+			ctx := context.Background()
+			s.MockS3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+				func(_ context.Context, input *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+					require.Equal(t, expected, input.SSEKMSEncryptionContext)
+					require.Equal(t, types.ServerSideEncryptionAwsKms, input.ServerSideEncryption)
+					require.Equal(t, "key-id", aws.ToString(input.SSEKMSKeyId))
+					require.Equal(t, types.ObjectCannedACLPrivate, input.ACL)
+					require.Equal(t, types.StorageClassStandardIa, input.StorageClass)
+					return &s3.PutObjectOutput{}, nil
+				})
+			require.NoError(t, cli.PutObject(ctx, "object", []byte("data")))
+
+			s.MockS3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+				func(_ context.Context, input *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+					require.Equal(t, expected, input.SSEKMSEncryptionContext)
+					require.Equal(t, types.ServerSideEncryptionAwsKms, input.ServerSideEncryption)
+					require.Equal(t, "key-id", aws.ToString(input.SSEKMSKeyId))
+					require.Empty(t, input.ACL)
+					return &s3.PutObjectOutput{}, nil
+				})
+			s.MockS3.EXPECT().DeleteObject(gomock.Any(), gomock.Any()).Return(&s3.DeleteObjectOutput{}, nil)
+			require.NoError(t, cli.CheckPutAndDeleteObject(ctx))
+
+			s.MockS3.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any()).DoAndReturn(
+				func(_ context.Context, input *s3.CreateMultipartUploadInput, _ ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error) {
+					require.Equal(t, expected, input.SSEKMSEncryptionContext)
+					require.Equal(t, types.ServerSideEncryptionAwsKms, input.ServerSideEncryption)
+					require.Equal(t, "key-id", aws.ToString(input.SSEKMSKeyId))
+					require.Equal(t, types.ObjectCannedACLPrivate, input.ACL)
+					require.Equal(t, types.StorageClassStandardIa, input.StorageClass)
+					return &s3.CreateMultipartUploadOutput{}, nil
+				})
+			_, err := cli.MultipartWriter(ctx, "object")
+			require.NoError(t, err)
+
+			s.MockS3.EXPECT().CopyObject(gomock.Any(), gomock.Any()).DoAndReturn(
+				func(_ context.Context, input *s3.CopyObjectInput, _ ...func(*s3.Options)) (*s3.CopyObjectOutput, error) {
+					require.Equal(t, expected, input.SSEKMSEncryptionContext)
+					require.Equal(t, "source/source-prefix/object", aws.ToString(input.CopySource))
+					require.Equal(t, "bucket", aws.ToString(input.Bucket))
+					require.Equal(t, types.ServerSideEncryptionAwsKms, input.ServerSideEncryption)
+					require.Equal(t, "key-id", aws.ToString(input.SSEKMSKeyId))
+					require.Empty(t, input.ACL)
+					return &s3.CopyObjectOutput{}, nil
+				})
+			require.NoError(t, cli.CopyObject(ctx, &s3like.CopyInput{
+				FromLoc: storeapi.NewBucketPrefix("source", "source-prefix/"),
+				FromKey: "object",
+				ToKey:   "copy",
+			}))
+		})
+	}
+}
+
+func TestCopyObjectEncryptionContextHeader(t *testing.T) {
+	for _, encryptionContext := range []string{"", "eyJ0ZW5hbnQiOiJ0ZW5hbnQtYSJ9"} {
+		t.Run(encryptionContext, func(t *testing.T) {
+			var request *http.Request
+			client := s3.New(s3.Options{
+				Region:      "us-east-1",
+				Credentials: aws.AnonymousCredentials{},
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					request = req
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     make(http.Header),
+						Body:       io.NopCloser(strings.NewReader(`<CopyObjectResult><ETag>etag</ETag></CopyObjectResult>`)),
+						Request:    req,
+					}, nil
+				})},
+			})
+			cli := &s3Client{
+				svc:          client,
+				BucketPrefix: storeapi.NewBucketPrefix("destination", "prefix/"),
+				options: &backuppb.S3{
+					Sse:                     "aws:kms",
+					SseKmsKeyId:             "destination-key-id",
+					SseKmsEncryptionContext: encryptionContext,
+				},
+			}
+			require.NoError(t, cli.CopyObject(context.Background(), &s3like.CopyInput{
+				FromLoc: storeapi.NewBucketPrefix("source", "source-prefix/"),
+				FromKey: "object",
+				ToKey:   "copy",
+			}))
+			require.NotNil(t, request)
+			header := request.Header.Values("X-Amz-Server-Side-Encryption-Context")
+			if encryptionContext == "" {
+				require.Empty(t, header)
+			} else {
+				require.Equal(t, []string{encryptionContext}, header)
+			}
+			// The destination must use the configured key, not the bucket default.
+			require.Equal(t, "aws:kms", request.Header.Get("X-Amz-Server-Side-Encryption"))
+			require.Equal(t, "destination-key-id", request.Header.Get("X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id"))
+			require.Equal(t, "source/source-prefix/object", request.Header.Get("X-Amz-Copy-Source"))
+		})
+	}
+}
+
+func TestMultipartUploaderEncryptionContext(t *testing.T) {
+	for _, encryptionContext := range []string{"", "eyJ0ZW5hbnQiOiJ0ZW5hbnQtYSJ9"} {
+		for _, tc := range []struct {
+			name string
+			size int64
+		}{
+			{name: "single", size: 32},
+			{name: "multipart", size: manager.MinUploadPartSize + 1},
+		} {
+			t.Run(tc.name+"/"+encryptionContext, func(t *testing.T) {
+				requests := make(chan *http.Request, 8)
+				client := s3.New(s3.Options{
+					Region:      "us-east-1",
+					Credentials: aws.AnonymousCredentials{},
+					HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+						requests <- req
+						if req.Body != nil {
+							if _, err := io.Copy(io.Discard, req.Body); err != nil {
+								return nil, err
+							}
+						}
+						body := ""
+						if req.URL.Query().Has("uploads") {
+							body = `<InitiateMultipartUploadResult><Bucket>bucket</Bucket><Key>prefix/object</Key><UploadId>upload-id</UploadId></InitiateMultipartUploadResult>`
+						} else if req.Method == http.MethodPost {
+							body = `<CompleteMultipartUploadResult><ETag>etag</ETag></CompleteMultipartUploadResult>`
+						}
+						return &http.Response{
+							StatusCode: http.StatusOK,
+							Header:     http.Header{"Etag": []string{"etag"}},
+							Body:       io.NopCloser(strings.NewReader(body)),
+							Request:    req,
+						}, nil
+					})},
+				})
+				cli := &s3Client{
+					svc:          client,
+					BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+					options: &backuppb.S3{
+						Sse:                     "aws:kms",
+						SseKmsKeyId:             "key-id",
+						SseKmsEncryptionContext: encryptionContext,
+					},
+				}
+				uploader := cli.MultipartUploader("object", manager.MinUploadPartSize, 2)
+				require.NoError(t, uploader.Upload(context.Background(), bytes.NewReader(make([]byte, tc.size))))
+				close(requests)
+				counts := make(map[string]int)
+				for req := range requests {
+					operation := "put"
+					writesObject := true
+					switch {
+					case req.URL.Query().Has("uploads"):
+						operation = "create"
+					case req.URL.Query().Has("partNumber"):
+						operation, writesObject = "part", false
+					case req.Method == http.MethodPost:
+						operation, writesObject = "complete", false
+					}
+					counts[operation]++
+					header := req.Header.Values("X-Amz-Server-Side-Encryption-Context")
+					if !writesObject {
+						require.Empty(t, header, operation)
+						require.Empty(t, req.Header.Get("X-Amz-Server-Side-Encryption"), operation)
+						require.Empty(t, req.Header.Get("X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id"), operation)
+						continue
+					}
+					if encryptionContext == "" {
+						require.Empty(t, header, operation)
+					} else {
+						require.Equal(t, []string{encryptionContext}, header, operation)
+					}
+					require.Equal(t, "aws:kms", req.Header.Get("X-Amz-Server-Side-Encryption"), operation)
+					require.Equal(t, "key-id", req.Header.Get("X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id"), operation)
+				}
+				if tc.name == "single" {
+					require.Equal(t, map[string]int{"put": 1}, counts)
+				} else {
+					require.Equal(t, map[string]int{"create": 1, "part": 2, "complete": 1}, counts)
+				}
+			})
+		}
+	}
+}
 
 func TestClientPermission(t *testing.T) {
 	s := CreateS3Suite(t)
@@ -157,6 +373,10 @@ func TestClientIsObjectExists(t *testing.T) {
 		svc:          s.MockS3,
 		BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
 	}
+	metricBefore := promtest.ToFloat64(s3like.S3APICallCounter.WithLabelValues(
+		s3like.BackendS3,
+		s3like.APICallHeadObjects,
+	))
 	for _, mockErr := range []error{
 		&types.NotFound{},
 		&types.NoSuchKey{},
@@ -180,6 +400,10 @@ func TestClientIsObjectExists(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, exists)
 	require.True(t, s.Controller.Satisfied())
+	require.Equal(t, metricBefore+5, promtest.ToFloat64(s3like.S3APICallCounter.WithLabelValues(
+		s3like.BackendS3,
+		s3like.APICallHeadObjects,
+	)))
 }
 
 func TestClientListObjects(t *testing.T) {
@@ -189,6 +413,10 @@ func TestClientListObjects(t *testing.T) {
 		svc:          s.MockS3,
 		BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
 	}
+	metricBefore := promtest.ToFloat64(s3like.S3APICallCounter.WithLabelValues(
+		s3like.BackendS3,
+		s3like.APICallListObjects,
+	))
 
 	s.MockS3.EXPECT().ListObjectsV2(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, input *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
@@ -221,6 +449,10 @@ func TestClientListObjects(t *testing.T) {
 	_, err = cli.ListObjects(ctx, "target", "", nil, 100)
 	require.ErrorContains(t, err, "mock list error")
 	require.True(t, s.Controller.Satisfied())
+	require.Equal(t, metricBefore+2, promtest.ToFloat64(s3like.S3APICallCounter.WithLabelValues(
+		s3like.BackendS3,
+		s3like.APICallListObjects,
+	)))
 }
 
 func assertContentMD5Option(t *testing.T, optFns []func(*s3.Options), expect bool) {
@@ -252,6 +484,10 @@ func TestContentMD5OptionForS3Compatible(t *testing.T) {
 					options:      &backuppb.S3{Bucket: "bucket"},
 					s3Compatible: tc.s3Compatible,
 				}
+				metricBefore := promtest.ToFloat64(s3like.S3APICallCounter.WithLabelValues(
+					s3like.BackendS3,
+					s3like.APICallPutObject,
+				))
 
 				s.MockS3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).
 					DoAndReturn(func(_ context.Context, input *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
@@ -263,6 +499,10 @@ func TestContentMD5OptionForS3Compatible(t *testing.T) {
 
 				require.NoError(t, cli.PutObject(ctx, "object", []byte("data")))
 				require.True(t, s.Controller.Satisfied())
+				require.Equal(t, metricBefore+1, promtest.ToFloat64(s3like.S3APICallCounter.WithLabelValues(
+					s3like.BackendS3,
+					s3like.APICallPutObject,
+				)))
 			})
 		}
 	})

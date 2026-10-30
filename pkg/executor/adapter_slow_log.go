@@ -244,7 +244,11 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	items.TxnTS = txnTS
 	items.KeyspaceName = keyspaceName
 	items.KeyspaceID = keyspaceID
-	items.SQL = FormatSQL(a.GetTextToLog(true)).String()
+	sqlText := a.GetTextToLog(true)
+	if len(sqlText) == 0 {
+		sqlText = restoreStmtTextForSlowLogWhenEmptySQL(a.StmtNode)
+	}
+	items.SQL = FormatSQL(sqlText).String()
 	items.IndexNames = indexNames
 	items.Plan = getPlanTree(stmtCtx)
 	items.BinaryPlan = binaryPlan
@@ -264,6 +268,9 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	items.StorageKV = stmtCtx.IsTiKV.Load()
 	items.StorageMPP = stmtCtx.IsTiFlash.Load()
 	items.MemArbitration = stmtCtx.MemTracker.MemArbitration().Seconds()
+	if sessVars.ConnectionInfo != nil && len(sessVars.ConnectionInfo.Attributes) > 0 {
+		items.SessionConnectAttrs = sessVars.ConnectionInfo.Attributes
+	}
 
 	if a.retryCount > 0 {
 		items.ExecRetryTime = items.TimeTotal - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)

@@ -18,10 +18,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/bdr"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -40,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	parser_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
@@ -49,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
+	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
@@ -59,6 +63,25 @@ func hasModifyFlag(col *model.ColumnInfo) bool {
 
 func isNullToNotNullChange(oldCol, newCol *model.ColumnInfo) bool {
 	return !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(newCol.GetFlag())
+}
+
+func isColumnCommentOnlyChange(oldCol, newCol *model.ColumnInfo) bool {
+	if oldCol == nil || newCol == nil {
+		return false
+	}
+	oldClone := oldCol.Clone()
+	newClone := newCol.Clone()
+	newClone.Comment = oldClone.Comment
+	return reflect.DeepEqual(oldClone, newClone)
+}
+
+// clearModifyColumnTempFlags removes in-progress modify-column markers from col.
+func clearModifyColumnTempFlags(col *model.ColumnInfo) {
+	if !hasModifyFlag(col) {
+		return
+	}
+	col.DelFlag(mysql.PreventNullInsertFlag)
+	col.ChangingFieldType = nil
 }
 
 func isIntegerChange(from, to *model.ColumnInfo) bool {
@@ -346,7 +369,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	}
 
 	if job.SchemaState == model.StateNone {
-		err = postCheckPartitionModifiableColumn(w, tblInfo, oldCol, args.Column)
+		err = reCheckPartitionModifiableColumn(w, tblInfo, oldCol, args.Column)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
@@ -388,12 +411,7 @@ func rollbackModifyColumnJob(
 	jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job,
 	newCol, oldCol *model.ColumnInfo) (ver int64, err error) {
 	if oldCol.ID == newCol.ID {
-		// Clean the flag info in oldCol.
-		if hasModifyFlag(tblInfo.Columns[oldCol.Offset]) {
-			tblInfo.Columns[oldCol.Offset].DelFlag(mysql.PreventNullInsertFlag)
-			tblInfo.Columns[oldCol.Offset].DelFlag(mysql.NotNullFlag)
-			tblInfo.Columns[oldCol.Offset].ChangingFieldType = nil
-		}
+		clearModifyColumnTempFlags(tblInfo.Columns[oldCol.Offset])
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -410,12 +428,7 @@ func rollbackModifyColumnJob(
 func rollbackModifyColumnJobWithReorg(
 	jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job,
 	oldCol *model.ColumnInfo, args *model.ModifyColumnArgs) (ver int64, err error) {
-	// Clean the flag info in oldCol.
-	if hasModifyFlag(tblInfo.Columns[oldCol.Offset]) {
-		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.PreventNullInsertFlag)
-		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.NotNullFlag)
-		tblInfo.Columns[oldCol.Offset].ChangingFieldType = nil
-	}
+	clearModifyColumnTempFlags(tblInfo.Columns[oldCol.Offset])
 
 	var changingIdxIDs []int64
 	if args.ChangingColumn != nil {
@@ -440,12 +453,7 @@ func rollbackModifyColumnJobWithReorg(
 func rollbackModifyColumnJobWithIndexReorg(
 	jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job,
 	oldCol *model.ColumnInfo, args *model.ModifyColumnArgs) (ver int64, err error) {
-	// Clean the flag info in oldCol.
-	if hasModifyFlag(tblInfo.Columns[oldCol.Offset]) {
-		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.PreventNullInsertFlag)
-		tblInfo.Columns[oldCol.Offset].DelFlag(mysql.NotNullFlag)
-		tblInfo.Columns[oldCol.Offset].ChangingFieldType = nil
-	}
+	clearModifyColumnTempFlags(tblInfo.Columns[oldCol.Offset])
 
 	allIdxs := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 	changingIdxInfos := make([]*model.IndexInfo, 0, len(allIdxs)/2)
@@ -515,7 +523,7 @@ func getModifyColumnInfo(
 	return dbInfo, tblInfo, oldCol, errors.Trace(err)
 }
 
-func finishModifyColumnWithoutReorg(
+func (w *worker) finishModifyColumnWithoutReorg(
 	jobCtx *jobContext,
 	job *model.Job,
 	tblInfo *model.TableInfo,
@@ -526,12 +534,22 @@ func finishModifyColumnWithoutReorg(
 		job.State = model.JobStateRollingback
 		return ver, errors.Trace(err)
 	}
+	if err := w.syncMaskingPolicyForModifiedColumn(jobCtx, tblInfo, oldCol, newCol); err != nil {
+		job.State = model.JobStateRollingback
+		return ver, errors.Trace(err)
+	}
 
 	childTableInfos, err := adjustForeignKeyChildTableInfoAfterModifyColumn(jobCtx.infoCache, jobCtx.metaMut, job, tblInfo, newCol, oldCol)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true, childTableInfos...)
+	mvRelatedInfos, err := buildMaterializedViewRelatedTableInfoForModifyColumn(jobCtx, tblInfo, oldCol, newCol)
+	if err != nil {
+		job.State = model.JobStateRollingback
+		return ver, errors.Trace(err)
+	}
+	multiInfos := append(childTableInfos, mvRelatedInfos...)
+	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true, multiInfos...)
 	if err != nil {
 		// Modified the type definition of 'null' to 'not null' before this, so rollBack the job when an error occurs.
 		job.State = model.JobStateRollingback
@@ -544,8 +562,312 @@ func finishModifyColumnWithoutReorg(
 	return ver, nil
 }
 
+func buildMaterializedViewRelatedTableInfoForModifyColumn(
+	jobCtx *jobContext,
+	baseTblInfo *model.TableInfo,
+	oldCol *model.ColumnInfo,
+	newCol *model.ColumnInfo,
+) ([]schemaIDAndTableInfo, error) {
+	baseInfo := baseTblInfo.MaterializedViewBase
+	if baseInfo == nil || isColumnCommentOnlyChange(oldCol, newCol) {
+		return nil, nil
+	}
+
+	is := jobCtx.infoCache.GetLatest()
+	var relatedInfos []schemaIDAndTableInfo
+	if baseInfo.MLogID != 0 {
+		mlogInfoFromIS, ok := is.TableInfoByID(baseInfo.MLogID)
+		if !ok {
+			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: materialized view log table not found")
+		}
+		mlogDB, ok := infoschema.SchemaByTable(is, mlogInfoFromIS)
+		if !ok {
+			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: materialized view log schema not found")
+		}
+		mlogTableInfo, err := getTableInfo(jobCtx.metaMut, baseInfo.MLogID, mlogDB.ID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if err := validateMaterializedViewLogInfoForModifyColumn(baseTblInfo, mlogTableInfo); err != nil {
+			return nil, err
+		}
+		mlogCol, tracked, err := trackedMaterializedViewLogColumnForModifyColumn(mlogTableInfo, oldCol.Name.L)
+		if err != nil {
+			return nil, err
+		}
+		if tracked {
+			newFieldType, err := validateMaterializedViewLogColumnTypeForModifyColumn("MODIFY COLUMN", mlogTableInfo, mlogCol, newCol)
+			if err != nil {
+				return nil, err
+			}
+			mlogCol.FieldType = newFieldType
+			relatedInfos = append(relatedInfos, schemaIDAndTableInfo{schemaID: mlogDB.ID, tblInfo: mlogTableInfo})
+		}
+	}
+
+	for _, mviewID := range baseInfo.MViewIDs {
+		mviewInfoFromIS, ok := is.TableInfoByID(mviewID)
+		if !ok {
+			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: dependent materialized view table not found")
+		}
+		mviewDB, ok := infoschema.SchemaByTable(is, mviewInfoFromIS)
+		if !ok {
+			return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: dependent materialized view schema not found")
+		}
+		mviewTableInfo, err := getTableInfo(jobCtx.metaMut, mviewID, mviewDB.ID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		usage, err := validateDependentMaterializedViewModifyColumn("MODIFY COLUMN", baseTblInfo, mviewTableInfo, oldCol, newCol)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, off := range usage.directOutputOffsets {
+			mviewTableInfo.Columns[off].FieldType = fieldTypeForMVRelatedColumn(mviewTableInfo.Columns[off], newCol)
+		}
+		if len(usage.directOutputOffsets) > 0 {
+			relatedInfos = append(relatedInfos, schemaIDAndTableInfo{schemaID: mviewDB.ID, tblInfo: mviewTableInfo})
+		}
+	}
+	return relatedInfos, nil
+}
+
+func validateMaterializedViewLogInfoForModifyColumn(baseTblInfo, mlogTableInfo *model.TableInfo) error {
+	if mlogTableInfo == nil || mlogTableInfo.MaterializedViewLog == nil || mlogTableInfo.MaterializedViewLog.BaseTableID != baseTblInfo.ID {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: invalid materialized view log metadata")
+	}
+	return nil
+}
+
+func trackedMaterializedViewLogColumnForModifyColumn(mlogTableInfo *model.TableInfo, colNameL string) (*model.ColumnInfo, bool, error) {
+	for _, c := range mlogTableInfo.MaterializedViewLog.Columns {
+		if c.L == colNameL {
+			mlogCol := model.FindColumnInfo(mlogTableInfo.Columns, colNameL)
+			if mlogCol == nil {
+				return nil, true, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: materialized view log column not found")
+			}
+			return mlogCol, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+func validateMaterializedViewLogColumnTypeForModifyColumn(
+	op string,
+	mlogTableInfo *model.TableInfo,
+	mlogCol *model.ColumnInfo,
+	newCol *model.ColumnInfo,
+) (parser_types.FieldType, error) {
+	newFieldType := fieldTypeForMVRelatedColumn(mlogCol, newCol)
+	mlogNewCol := mlogCol.Clone()
+	mlogNewCol.FieldType = newFieldType
+	if !noReorgDataStrict(mlogTableInfo, mlogCol, mlogNewCol) {
+		return newFieldType, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("%s on base table with materialized view log only supports no-reorg compatible type changes", op),
+		)
+	}
+	return newFieldType, nil
+}
+
+func validateDependentMaterializedViewModifyColumn(
+	op string,
+	baseTblInfo *model.TableInfo,
+	mviewTableInfo *model.TableInfo,
+	oldCol *model.ColumnInfo,
+	newCol *model.ColumnInfo,
+) (*mvColumnUsage, error) {
+	if mviewTableInfo == nil || mviewTableInfo.MaterializedView == nil || len(mviewTableInfo.MaterializedView.SQLContent) == 0 {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: invalid materialized view metadata")
+	}
+	if len(mviewTableInfo.MaterializedView.BaseTableIDs) != 1 || mviewTableInfo.MaterializedView.BaseTableIDs[0] != baseTblInfo.ID {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: dependent materialized view base table mismatch")
+	}
+	mviewSelect, err := parseSelectFromSQL(mviewTableInfo.MaterializedView.SQLContent)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	usage, err := analyzeMVColumnUsage(mviewSelect, oldCol.Name.L)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if usage.unsupportedReason != "" {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("%s on base table with materialized view dependencies does not support modifying columns used in %s", op, usage.unsupportedReason),
+		)
+	}
+	if len(usage.directOutputOffsets) == 0 {
+		if usage.isGroupKey {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				fmt.Sprintf("%s on base table with materialized view dependencies does not support modifying columns used only as group keys", op),
+			)
+		}
+		return usage, nil
+	}
+	if mviewSelect.Fields == nil || len(mviewTableInfo.Columns) != len(mviewSelect.Fields.Fields) {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: materialized view output schema mismatch")
+	}
+	if usage.isGroupKey && (oldCol.FieldType.GetCharset() != newCol.FieldType.GetCharset() ||
+		oldCol.FieldType.GetCollate() != newCol.FieldType.GetCollate() ||
+		mysql.HasNotNullFlag(oldCol.GetFlag()) != mysql.HasNotNullFlag(newCol.GetFlag())) {
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("%s on base table with materialized view dependencies does not support changing charset/collation/nullability of group keys", op),
+		)
+	}
+	for _, off := range usage.directOutputOffsets {
+		mviewOldCol := mviewTableInfo.Columns[off]
+		mviewNewCol := mviewOldCol.Clone()
+		mviewNewCol.FieldType = fieldTypeForMVRelatedColumn(mviewOldCol, newCol)
+		if !noReorgDataStrict(mviewTableInfo, mviewOldCol, mviewNewCol) {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				fmt.Sprintf("%s on base table with materialized view dependencies only supports no-reorg compatible type changes for direct output columns", op),
+			)
+		}
+	}
+	return usage, nil
+}
+
+type mvColumnUsage struct {
+	directOutputOffsets []int
+	isGroupKey          bool
+	unsupportedReason   string
+}
+
+func fieldTypeForMVRelatedColumn(oldRelatedCol *model.ColumnInfo, baseNewCol *model.ColumnInfo) parser_types.FieldType {
+	newFieldType := baseNewCol.FieldType
+	keyFlags := oldRelatedCol.FieldType.GetFlag() & (mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag)
+	newFieldType.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag |
+		mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag | mysql.PreventNullInsertFlag | mysql.GeneratedColumnFlag)
+	newFieldType.AddFlag(keyFlags)
+	return newFieldType
+}
+
+func parseSelectFromSQL(sql string) (*ast.SelectStmt, error) {
+	stmts, _, err := parser.New().ParseSQL(sql)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(stmts) != 1 {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: invalid materialized view select sql")
+	}
+	sel, ok := stmts[0].(*ast.SelectStmt)
+	if !ok {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: materialized view definition is not a SELECT statement")
+	}
+	return sel, nil
+}
+
+func analyzeMVColumnUsage(sel *ast.SelectStmt, colNameL string) (*mvColumnUsage, error) {
+	usage := &mvColumnUsage{}
+	if sel == nil || sel.Fields == nil {
+		return usage, nil
+	}
+	directOutputSet := make(map[int]struct{})
+	aliasToOffset := make(map[string]int)
+	for i, f := range sel.Fields.Fields {
+		if f == nil {
+			continue
+		}
+		if f.AsName.L != "" {
+			if _, ok := aliasToOffset[f.AsName.L]; !ok {
+				aliasToOffset[f.AsName.L] = i
+			}
+		}
+		if f.WildCard != nil {
+			usage.unsupportedReason = "SELECT *"
+			return usage, nil
+		}
+		if f.Expr == nil {
+			continue
+		}
+		if colExpr, ok := f.Expr.(*ast.ColumnNameExpr); ok && colExpr.Name != nil && colExpr.Name.Name.L == colNameL {
+			usage.directOutputOffsets = append(usage.directOutputOffsets, i)
+			directOutputSet[i] = struct{}{}
+			continue
+		}
+		if exprContainsColumnRef(f.Expr, colNameL) {
+			usage.unsupportedReason = "non-direct SELECT expressions"
+			return usage, nil
+		}
+	}
+	if sel.Where != nil && exprContainsColumnRef(sel.Where, colNameL) {
+		usage.unsupportedReason = "WHERE clause"
+		return usage, nil
+	}
+	if sel.Having != nil && sel.Having.Expr != nil && exprContainsColumnRef(sel.Having.Expr, colNameL) {
+		usage.unsupportedReason = "HAVING clause"
+		return usage, nil
+	}
+	if sel.OrderBy != nil {
+		for _, item := range sel.OrderBy.Items {
+			if item != nil && item.Expr != nil && exprContainsColumnRef(item.Expr, colNameL) {
+				usage.unsupportedReason = "ORDER BY clause"
+				return usage, nil
+			}
+		}
+	}
+	if sel.GroupBy != nil {
+		for _, item := range sel.GroupBy.Items {
+			if item == nil || item.Expr == nil {
+				continue
+			}
+			if expr, ok := item.Expr.(*ast.PositionExpr); ok && expr.N > 0 {
+				if _, ok := directOutputSet[expr.N-1]; ok {
+					usage.isGroupKey = true
+					continue
+				}
+			}
+			if colExpr, ok := item.Expr.(*ast.ColumnNameExpr); ok && colExpr.Name != nil && colExpr.Name.Name.L == colNameL {
+				usage.isGroupKey = true
+				continue
+			}
+			if colExpr, ok := item.Expr.(*ast.ColumnNameExpr); ok && colExpr.Name != nil && colExpr.Name.Schema.L == "" && colExpr.Name.Table.L == "" {
+				if off, ok := aliasToOffset[colExpr.Name.Name.L]; ok {
+					if _, ok := directOutputSet[off]; ok {
+						usage.isGroupKey = true
+						continue
+					}
+				}
+			}
+			if exprContainsColumnRef(item.Expr, colNameL) {
+				usage.unsupportedReason = "GROUP BY expressions"
+				return usage, nil
+			}
+		}
+	}
+	return usage, nil
+}
+
+type columnNameExprFinder struct {
+	colNameL string
+	found    bool
+}
+
+func (v *columnNameExprFinder) Enter(n ast.Node) (ast.Node, bool) {
+	if v.found {
+		return n, true
+	}
+	if expr, ok := n.(*ast.ColumnNameExpr); ok && expr.Name != nil && expr.Name.Name.L == v.colNameL {
+		v.found = true
+		return n, true
+	}
+	return n, false
+}
+
+func (v *columnNameExprFinder) Leave(n ast.Node) (ast.Node, bool) {
+	return n, !v.found
+}
+
+func exprContainsColumnRef(expr ast.ExprNode, colNameL string) bool {
+	if expr == nil {
+		return false
+	}
+	finder := &columnNameExprFinder{colNameL: colNameL}
+	_, _ = expr.Accept(finder)
+	return finder.found
+}
+
 // doModifyColumnNoCheck updates the column information and reorders all columns. It does not support modifying column data.
-func (*worker) doModifyColumnNoCheck(
+func (w *worker) doModifyColumnNoCheck(
 	jobCtx *jobContext,
 	job *model.Job,
 	tblInfo *model.TableInfo,
@@ -563,7 +885,7 @@ func (*worker) doModifyColumnNoCheck(
 		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
 	}
 
-	return finishModifyColumnWithoutReorg(jobCtx, job, tblInfo, newCol, oldCol, pos)
+	return w.finishModifyColumnWithoutReorg(jobCtx, job, tblInfo, newCol, oldCol, pos)
 }
 
 // precheckForVarcharToChar updates the column information and reorders all columns with data check.
@@ -683,7 +1005,7 @@ func (w *worker) doModifyColumnWithCheck(
 		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, false)
 	}
 
-	return finishModifyColumnWithoutReorg(jobCtx, job, tblInfo, newCol, oldCol, pos)
+	return w.finishModifyColumnWithoutReorg(jobCtx, job, tblInfo, newCol, oldCol, pos)
 }
 
 func adjustTableInfoAfterModifyColumn(
@@ -974,7 +1296,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Make sure job args change after `updateVersionAndTableInfoWithCheck`, otherwise, the job args will
 		// be updated in `updateDDLJob` even if it meets an error in `updateVersionAndTableInfoWithCheck`.
 		job.SchemaState = model.StateDeleteOnly
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String(), args.OldColumnName.O).Set(0)
+		getBackfillProgressByTableID(tblInfo.ID, metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String(), args.OldColumnName.O).Set(0)
 		args.ChangingColumn = changingCol
 		args.ChangingIdxs = changingIdxs
 		failpoint.InjectCall("modifyColumnTypeWithData", job, args)
@@ -1026,6 +1348,9 @@ func (w *worker) doModifyColumnTypeWithData(
 				if !done {
 					return ver, err
 				}
+				// The row reorg persists only a job-stage change, so account the
+				// RU staged by its backfill transactions here.
+				accountPendingReorgRU(jobCtx, job, err)
 				if len(changingIdxs) > 0 {
 					job.SnapshotVer = 0
 					job.ReorgMeta.Stage = model.ReorgStageModifyColumnRecreateIndex
@@ -1091,6 +1416,9 @@ func (w *worker) doModifyColumnTypeWithData(
 		case model.StateDeleteOnly:
 			removedIdxIDs := removeOldObjects(tblInfo, oldCol, oldIdxInfos)
 			removedIdxIDs = append(removedIdxIDs, getIngestTempIndexIDs(job, changingIdxs)...)
+			if err := w.syncMaskingPolicyForModifiedColumn(jobCtx, tblInfo, oldCol, targetCol); err != nil {
+				return ver, errors.Trace(err)
+			}
 			analyzed := job.ReorgMeta.AnalyzeState == model.AnalyzeStateDone
 			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol}, analyzed)
 			err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, noSubJob, w.sess)
@@ -1179,7 +1507,9 @@ func (w *worker) doModifyColumnIndexReorg(
 
 	switch job.SchemaState {
 	case model.StateNone:
-		oldCol.AddFlag(mysql.PreventNullInsertFlag)
+		if isNullToNotNullChange(oldCol, args.Column) {
+			oldCol.AddFlag(mysql.PreventNullInsertFlag)
+		}
 		oldCol.ChangingFieldType = &args.Column.FieldType
 		// none -> delete only
 		updateObjectState(nil, changingIdxInfos, model.StateDeleteOnly)
@@ -1194,7 +1524,7 @@ func (w *worker) doModifyColumnIndexReorg(
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateDeleteOnly
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String(), args.OldColumnName.O).Set(0)
+		getBackfillProgressByTableID(tblInfo.ID, metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String(), args.OldColumnName.O).Set(0)
 		args.ChangingIdxs = changingIdxInfos
 		failpoint.InjectCall("modifyColumnTypeWithData", job, args)
 		job.FillArgs(args)
@@ -1380,6 +1710,9 @@ func doReorgWorkForModifyColumn(
 		if kv.IsTxnRetryableError(err) || dbterror.ErrNotOwner.Equal(err) {
 			return false, ver, errors.Trace(err)
 		}
+		if isRetryableModifyColumnReorgJobError(err, job.ErrorCount) {
+			return false, ver, errors.Trace(err)
+		}
 		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 			logutil.DDLLogger().Warn("run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
 				zap.String("job", job.String()), zap.Error(err1))
@@ -1389,6 +1722,15 @@ func doReorgWorkForModifyColumn(
 		return false, ver, errors.Trace(err)
 	}
 	return true, ver, nil
+}
+
+func isRetryableModifyColumnReorgJobError(err error, jobErrCnt int64) bool {
+	if jobErrCnt+1 >= vardef.GetDDLErrorCountLimit() {
+		return false
+	}
+	// Modify column reorg can return deterministic data conversion errors. Retrying unknown errors may
+	// cause long retry loops and block the job from rolling back.
+	return isRetryableError(err, false)
 }
 
 func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, oldColName ast.CIStr) error {
@@ -1410,55 +1752,47 @@ func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, ol
 }
 
 func preCheckPartitionModifiableColumn(sctx sessionctx.Context, t table.Table, col, newCol *table.Column) error {
-	// Check that the column change does not affect the partitioning column
-	// It must keep the same type, int [unsigned], [var]char, date[time]
-	if t.Meta().Partition != nil {
-		pt, ok := t.(table.PartitionedTable)
-		if !ok {
-			// Should never happen!
-			return dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
-		}
-		for _, name := range pt.GetPartitionColumnNames() {
-			if strings.EqualFold(name.L, col.Name.L) {
-				return checkPartitionColumnModifiable(sctx, t.Meta(), col.ColumnInfo, newCol.ColumnInfo)
-			}
-		}
-	}
-	return nil
+	return checkPartitionModifiableColumn(sctx, t.Meta(), col.ColumnInfo, newCol.ColumnInfo)
 }
 
-func postCheckPartitionModifiableColumn(w *worker, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
+func reCheckPartitionModifiableColumn(w *worker, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
+	if tblInfo.Partition == nil {
+		return nil
+	}
+	sctx, err := w.sessPool.Get()
+	if err != nil {
+		return err
+	}
+	defer w.sessPool.Put(sctx)
+	return checkPartitionModifiableColumn(sctx, tblInfo, col, newCol)
+}
+
+func checkPartitionModifiableColumn(
+	sctx sessionctx.Context,
+	tblInfo *model.TableInfo,
+	col, newCol *model.ColumnInfo,
+) error {
 	// Check that the column change does not affect the partitioning column
 	// It must keep the same type, int [unsigned], [var]char, date[time]
-	if tblInfo.Partition != nil {
-		sctx, err := w.sessPool.Get()
-		if err != nil {
-			return err
-		}
-		defer w.sessPool.Put(sctx)
-		if len(tblInfo.Partition.Columns) > 0 {
-			for _, pc := range tblInfo.Partition.Columns {
-				if strings.EqualFold(pc.L, col.Name.L) {
-					err := checkPartitionColumnModifiable(sctx, tblInfo, col, newCol)
-					if err != nil {
-						return errors.Trace(err)
-					}
-				}
-			}
-			return nil
-		}
-		partCols, err := extractPartitionColumns(tblInfo.Partition.Expr, tblInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		var partCol *model.ColumnInfo
-		for _, pc := range partCols {
-			if strings.EqualFold(pc.Name.L, col.Name.L) {
-				partCol = pc
-				break
+	if tblInfo.Partition == nil {
+		return nil
+	}
+
+	if len(tblInfo.Partition.Columns) > 0 {
+		for _, pc := range tblInfo.Partition.Columns {
+			if strings.EqualFold(pc.L, col.Name.L) {
+				return checkPartitionColumnModifiable(sctx, tblInfo, col, newCol)
 			}
 		}
-		if partCol != nil {
+		return nil
+	}
+
+	partCols, err := extractPartitionColumns(tblInfo.Partition.Expr, tblInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, pc := range partCols {
+		if strings.EqualFold(pc.Name.L, col.Name.L) {
 			return checkPartitionColumnModifiable(sctx, tblInfo, col, newCol)
 		}
 	}
@@ -1472,25 +1806,14 @@ func checkPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.Tabl
 	if !isColTypeAllowedAsPartitioningCol(tblInfo.Partition.Type, newCol.FieldType) {
 		return dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
 	}
-	pi := tblInfo.GetPartitionInfo()
-	if len(pi.Columns) == 0 {
-		// non COLUMNS partitioning, only checks INTs, not their actual range
-		// There are many edge cases, like when truncating SQL Mode is allowed
-		// which will change the partitioning expression value resulting in a
-		// different partition. Better be safe and not allow decreasing of length.
-		// TODO: Should we allow it in strict mode? Wait for a use case / request.
-		if newCol.FieldType.GetFlen() < col.FieldType.GetFlen() {
-			return dbterror.ErrUnsupportedModifyColumn.GenWithStack("Unsupported modify column, decreasing length of int may result in truncation and change of partition")
-		}
-	}
-	// Basically only allow changes of the length/decimals for the column
-	// Note that enum is not allowed, so elems are not checked
-	// TODO: support partition by ENUM
 	if newCol.FieldType.EvalType() != col.FieldType.EvalType() ||
-		newCol.FieldType.GetFlag() != col.FieldType.GetFlag() ||
+		!isAllowedPartitionColumnFlagChange(col.FieldType.GetFlag(), newCol.FieldType.GetFlag()) ||
 		newCol.FieldType.GetCollate() != col.FieldType.GetCollate() ||
 		newCol.FieldType.GetCharset() != col.FieldType.GetCharset() {
-		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't change the partitioning column, since it would require reorganize all partitions")
+		return partitionTypeChangeNotAllowedErr()
+	}
+	if err := checkPartitionColumnTypeChangeAllowlist(tblInfo, col, newCol); err != nil {
+		return err
 	}
 	// Generate a new PartitionInfo and validate it together with the new column definition
 	// Checks if all partition definition values are compatible.
@@ -1531,6 +1854,259 @@ func checkPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.Tabl
 		return dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())
 	}
 	return nil
+}
+
+func isAllowedPartitionColumnFlagChange(oldFlag, newFlag uint) bool {
+	if oldFlag == newFlag {
+		return true
+	}
+	// Allow default-only change (NoDefaultValueFlag), and allow NOT NULL -> NULL.
+	allowedChangedFlags := mysql.NoDefaultValueFlag
+	if mysql.HasNotNullFlag(oldFlag) && !mysql.HasNotNullFlag(newFlag) {
+		allowedChangedFlags |= mysql.NotNullFlag
+	}
+	return oldFlag&^allowedChangedFlags == newFlag&^allowedChangedFlags
+}
+
+type partitionExprColumnUsageKind byte
+
+const (
+	partitionExprColumnUsageKindNoFunc partitionExprColumnUsageKind = iota
+	partitionExprColumnUsageKindToDays
+	partitionExprColumnUsageKindExtract
+	partitionExprColumnUsageKindUnsupported
+)
+
+func checkPartitionColumnTypeChangeAllowlist(tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil || !isPartitionColumnTypeChanged(col, newCol) {
+		return nil
+	}
+
+	switch pi.Type {
+	case ast.PartitionTypeKey:
+		if isAllowedTypeChangeForKeyPartition(col, newCol) {
+			return nil
+		}
+	case ast.PartitionTypeRange, ast.PartitionTypeList, ast.PartitionTypeHash:
+		if len(pi.Columns) > 0 {
+			if pi.Type == ast.PartitionTypeHash {
+				return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("unexpected HASH partition metadata with column list")
+			}
+			if isAllowedTypeChangeForRangeListColumnsPartition(col, newCol) {
+				return nil
+			}
+			return partitionTypeChangeNotAllowedErr()
+		}
+		return checkTypeChangeForExprBasedPartition(pi.Expr, col, newCol)
+	}
+	return partitionTypeChangeNotAllowedErr()
+}
+
+func checkTypeChangeForExprBasedPartition(partExpr string, col, newCol *model.ColumnInfo) error {
+	usageKinds := collectPartitionExprColumnUsageKinds(partExpr, col.Name.L)
+	if usageKinds == nil {
+		return partitionTypeChangeNotAllowedErr()
+	}
+	if _, hasUnsupported := usageKinds[partitionExprColumnUsageKindUnsupported]; hasUnsupported {
+		return partitionTypeChangeNotAllowedErr()
+	}
+	if _, hasNoFunc := usageKinds[partitionExprColumnUsageKindNoFunc]; hasNoFunc {
+		if !isAllowedTypeChangeForNoFuncExprPartition(col, newCol) {
+			return partitionTypeChangeNotAllowedErr()
+		}
+	}
+	if _, hasToDays := usageKinds[partitionExprColumnUsageKindToDays]; hasToDays {
+		if !isAllowedTypeChangeForToDaysExprPartition(col, newCol) {
+			return partitionTypeChangeNotAllowedErr()
+		}
+	}
+	if _, hasExtract := usageKinds[partitionExprColumnUsageKindExtract]; hasExtract {
+		if !isAllowedTypeChangeForExtractExprPartition(col, newCol) {
+			return partitionTypeChangeNotAllowedErr()
+		}
+	}
+	return nil
+}
+
+func classifyPartitionExprFuncUsage(fc *ast.FuncCallExpr) partitionExprColumnUsageKind {
+	// Known funcs use fixed kinds.
+	// Other funcs are unsupported now.
+	switch fc.FnName.L {
+	case ast.ToDays:
+		return partitionExprColumnUsageKindToDays
+	case ast.Extract:
+		return partitionExprColumnUsageKindExtract
+	default:
+		return partitionExprColumnUsageKindUnsupported
+	}
+}
+
+func collectPartitionExprColumnUsageKinds(partExpr, targetColumn string) map[partitionExprColumnUsageKind]struct{} {
+	expr, err := generatedexpr.ParseExpression(partExpr)
+	if err != nil {
+		return nil
+	}
+	usageKinds := make(map[partitionExprColumnUsageKind]struct{})
+	collectPartitionExprColumnUsageKindsFromExpr(expr, targetColumn, partitionExprColumnUsageKindNoFunc, usageKinds)
+	if len(usageKinds) == 0 {
+		return nil
+	}
+	return usageKinds
+}
+
+func collectPartitionExprColumnUsageKindsFromExpr(
+	expr ast.ExprNode,
+	targetColumn string,
+	currentKind partitionExprColumnUsageKind,
+	usageKinds map[partitionExprColumnUsageKind]struct{},
+) {
+	// Walk the partition expr tree with recursion.
+	switch v := expr.(type) {
+	case *ast.ColumnNameExpr:
+		// Record this use only when the column name matches targetColumn.
+		// Example that matches this if:
+		// partExpr: "TO_DAYS(part_a_col) + 1", targetColumn: "part_a_col".
+		if v.Name.Name.L == targetColumn {
+			usageKinds[currentKind] = struct{}{}
+		}
+	case *ast.FuncCallExpr:
+		// Any unsupported func on the path keeps this path unsupported.
+		innerKind := mergePartitionExprUsageKind(currentKind, classifyPartitionExprFuncUsage(v))
+		for _, arg := range v.Args {
+			collectPartitionExprColumnUsageKindsFromExpr(arg, targetColumn, innerKind, usageKinds)
+		}
+	case *ast.ParenthesesExpr:
+		// For "(x)", keep the same kind.
+		// Example: "(TO_DAYS(a))" keeps kind "to_days" for "a".
+		collectPartitionExprColumnUsageKindsFromExpr(v.Expr, targetColumn, currentKind, usageKinds)
+	case *ast.BinaryOperationExpr:
+		// Visit both sides for exprs like "a + b".
+		collectPartitionExprColumnUsageKindsFromExpr(v.L, targetColumn, currentKind, usageKinds)
+		collectPartitionExprColumnUsageKindsFromExpr(v.R, targetColumn, currentKind, usageKinds)
+	case *ast.UnaryOperationExpr:
+		// Visit unary expr like "-a".
+		collectPartitionExprColumnUsageKindsFromExpr(v.V, targetColumn, currentKind, usageKinds)
+	case ast.ValueExpr, *ast.TimeUnitExpr:
+		// Literal values and EXTRACT units do not use partition columns.
+		return
+	default:
+		usageKinds[partitionExprColumnUsageKindUnsupported] = struct{}{}
+	}
+}
+
+func mergePartitionExprUsageKind(parentKind, funcKind partitionExprColumnUsageKind) partitionExprColumnUsageKind {
+	// Keep unsupported once it appears in parent path or current func.
+	// Example: FLOOR(TO_DAYS(a)) -> "a" stays unsupported.
+	if parentKind == partitionExprColumnUsageKindUnsupported {
+		return parentKind
+	}
+	return funcKind
+}
+
+func isAllowedTypeChangeForKeyPartition(col, newCol *model.ColumnInfo) bool {
+	if isIntegerTypeWidening(col, newCol) {
+		return true
+	}
+	if isStringLengthExtension(col, newCol) {
+		return true
+	}
+	return isEnumSetTailAppend(col, newCol)
+}
+
+func isAllowedTypeChangeForRangeListColumnsPartition(col, newCol *model.ColumnInfo) bool {
+	if isIntegerTypeWidening(col, newCol) {
+		return true
+	}
+	if isTimeFspExtended(col, newCol) && (col.GetType() == mysql.TypeDuration || col.GetType() == mysql.TypeDatetime) {
+		return true
+	}
+	if isStringLengthExtension(col, newCol) {
+		return true
+	}
+	return false
+}
+
+func isAllowedTypeChangeForNoFuncExprPartition(col, newCol *model.ColumnInfo) bool {
+	return isIntegerTypeWidening(col, newCol)
+}
+
+func isAllowedTypeChangeForToDaysExprPartition(col, newCol *model.ColumnInfo) bool {
+	return isTimeFspExtended(col, newCol) && col.GetType() == mysql.TypeDatetime
+}
+
+func isAllowedTypeChangeForExtractExprPartition(col, newCol *model.ColumnInfo) bool {
+	return isTimeFspExtended(col, newCol) &&
+		(col.GetType() == mysql.TypeDuration || col.GetType() == mysql.TypeDatetime)
+}
+
+func isPartitionColumnTypeChanged(col, newCol *model.ColumnInfo) bool {
+	if col.GetType() != newCol.GetType() {
+		return true
+	}
+	if !mysql.IsIntegerType(col.GetType()) && col.GetFlen() != newCol.GetFlen() {
+		return true
+	}
+	if col.GetDecimal() != newCol.GetDecimal() {
+		return true
+	}
+	oldElems := col.GetElems()
+	newElems := newCol.GetElems()
+	if len(oldElems) != len(newElems) {
+		return true
+	}
+	for i, oldElem := range oldElems {
+		if oldElem != newElems[i] {
+			return true
+		}
+	}
+	return false
+}
+
+func isIntegerTypeWidening(col, newCol *model.ColumnInfo) bool {
+	return mysql.IsIntegerType(col.GetType()) &&
+		mysql.IsIntegerType(newCol.GetType()) &&
+		mysql.DefaultLengthOfMysqlTypes[newCol.GetType()] > mysql.DefaultLengthOfMysqlTypes[col.GetType()]
+}
+
+func isStringLengthExtension(col, newCol *model.ColumnInfo) bool {
+	oldTp := col.GetType()
+	newTp := newCol.GetType()
+	switch {
+	case oldTp == mysql.TypeString && newTp == mysql.TypeString:
+		if types.IsBinaryStr(&col.FieldType) || types.IsBinaryStr(&newCol.FieldType) {
+			return false
+		}
+	case oldTp == newTp && (oldTp == mysql.TypeVarchar || oldTp == mysql.TypeVarString):
+	default:
+		return false
+	}
+	return newCol.GetFlen() > col.GetFlen()
+}
+
+func isTimeFspExtended(col, newCol *model.ColumnInfo) bool {
+	if col.GetType() != newCol.GetType() {
+		return false
+	}
+	if col.GetType() != mysql.TypeDuration &&
+		col.GetType() != mysql.TypeDatetime {
+		return false
+	}
+	return newCol.GetDecimal() > col.GetDecimal()
+}
+
+func isEnumSetTailAppend(col, newCol *model.ColumnInfo) bool {
+	switch col.GetType() {
+	case mysql.TypeEnum, mysql.TypeSet:
+		return col.GetType() == newCol.GetType() &&
+			!IsElemsChangedToModifyColumn(col.GetElems(), newCol.GetElems())
+	default:
+		return false
+	}
+}
+
+func partitionTypeChangeNotAllowedErr() error {
+	return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't change the partitioning column, since it would require reorganize all partitions")
 }
 
 var colStateOrd = map[model.SchemaState]int{
@@ -1674,6 +2250,9 @@ func GetModifiableColumnJob(
 		return nil, errors.Trace(err)
 	}
 	mayNeedChangeColData := !noReorgDataStrict(t.Meta(), col.ColumnInfo, newCol.ColumnInfo)
+	if err := validateMaterializedViewBaseModifyColumn(ctx, is, t, col.ColumnInfo, newCol.ColumnInfo, spec, mayNeedChangeColData); err != nil {
+		return nil, errors.Trace(err)
+	}
 	if mayNeedChangeColData {
 		if err = isGeneratedRelatedColumn(t.Meta(), newCol.ColumnInfo, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
@@ -1751,8 +2330,8 @@ func GetModifiableColumnJob(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if bdrRole == string(ast.BDRRolePrimary) &&
-		deniedByBDRWhenModifyColumn(newCol.FieldType, col.FieldType, specNewColumn.Options) && !filter.IsSystemSchema(schema.Name.L) {
+	if bdr.IsModifyColumnDenied(ast.BDRRole(bdrRole), newCol.FieldType, col.FieldType, specNewColumn.Options) &&
+		!filter.IsSystemSchema(schema.Name.L) {
 		return nil, dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 	}
 
@@ -1769,6 +2348,9 @@ func GetModifiableColumnJob(
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]string),
 	}
+	if involving := buildInvolvingSchemaInfoForMaterializedViewBaseModifyColumn(is, schema, t.Meta()); len(involving) > 0 {
+		job.InvolvingSchemaInfo = involving
+	}
 	err = initJobReorgMetaFromVariables(ctx, job, t, sctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1781,6 +2363,132 @@ func GetModifiableColumnJob(
 		NewShardBits:  newAutoRandBits,
 	}
 	return NewJobWrapperWithArgs(job, args, false), nil
+}
+
+func buildInvolvingSchemaInfoForMaterializedViewBaseModifyColumn(
+	is infoschema.InfoSchema,
+	schema *model.DBInfo,
+	baseTblInfo *model.TableInfo,
+) []model.InvolvingSchemaInfo {
+	if is == nil || baseTblInfo == nil || schema == nil || baseTblInfo.MaterializedViewBase == nil {
+		return nil
+	}
+	baseInfo := baseTblInfo.MaterializedViewBase
+	if baseInfo.MLogID == 0 && len(baseInfo.MViewIDs) == 0 {
+		return nil
+	}
+	involving := make([]model.InvolvingSchemaInfo, 0, 2+len(baseInfo.MViewIDs))
+	seen := make(map[string]struct{}, 2+len(baseInfo.MViewIDs))
+	addTable := func(dbName, tableName string) {
+		if dbName == "" || tableName == "" {
+			return
+		}
+		key := dbName + "\x00" + tableName
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		involving = append(involving, model.InvolvingSchemaInfo{Database: dbName, Table: tableName})
+	}
+	addTable(schema.Name.L, baseTblInfo.Name.L)
+	if baseInfo.MLogID != 0 {
+		if mlogMeta, ok := is.TableInfoByID(baseInfo.MLogID); ok {
+			if mlogDB, ok := infoschema.SchemaByTable(is, mlogMeta); ok {
+				addTable(mlogDB.Name.L, mlogMeta.Name.L)
+			}
+		}
+	}
+	for _, mviewID := range baseInfo.MViewIDs {
+		if mviewMeta, ok := is.TableInfoByID(mviewID); ok {
+			if mviewDB, ok := infoschema.SchemaByTable(is, mviewMeta); ok {
+				addTable(mviewDB.Name.L, mviewMeta.Name.L)
+			}
+		}
+	}
+	return involving
+}
+
+func validateMaterializedViewBaseModifyColumn(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+	baseTbl table.Table,
+	oldCol *model.ColumnInfo,
+	newCol *model.ColumnInfo,
+	spec *ast.AlterTableSpec,
+	mayNeedChangeColData bool,
+) error {
+	if is == nil || baseTbl == nil || baseTbl.Meta().MaterializedViewBase == nil {
+		return nil
+	}
+	baseInfo := baseTbl.Meta().MaterializedViewBase
+	hasDependentMV := len(baseInfo.MViewIDs) > 0
+	hasMLog := baseInfo.MLogID != 0
+	if !hasDependentMV && !hasMLog || isColumnCommentOnlyChange(oldCol, newCol) {
+		return nil
+	}
+	op := "ALTER TABLE"
+	if spec.Tp == ast.AlterTableModifyColumn {
+		op = "MODIFY COLUMN"
+	} else if spec.Tp == ast.AlterTableChangeColumn {
+		op = "CHANGE COLUMN"
+	}
+	var mlogTableInfo *model.TableInfo
+	var mlogCol *model.ColumnInfo
+	tracked := false
+	if hasMLog {
+		mlogTable, ok := is.TableByID(ctx, baseInfo.MLogID)
+		if !ok {
+			return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: materialized view log table not found")
+		}
+		mlogTableInfo = mlogTable.Meta()
+		if err := validateMaterializedViewLogInfoForModifyColumn(baseTbl.Meta(), mlogTableInfo); err != nil {
+			return err
+		}
+		var err error
+		mlogCol, tracked, err = trackedMaterializedViewLogColumnForModifyColumn(mlogTableInfo, oldCol.Name.L)
+		if err != nil {
+			return err
+		}
+	}
+	if oldCol.Name.L != newCol.Name.L {
+		if hasDependentMV || tracked {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("CHANGE COLUMN on base table with materialized view dependencies does not support renaming")
+		}
+		return nil
+	}
+	if tracked && isNullToNotNullChange(oldCol, newCol) {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			fmt.Sprintf("%s on base table with materialized view log does not support changing tracked columns from NULL to NOT NULL", op),
+		)
+	}
+	if mayNeedChangeColData {
+		if hasDependentMV {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				fmt.Sprintf("%s on base table with materialized view dependencies only supports no-reorg compatible type changes", op),
+			)
+		}
+		if tracked {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				fmt.Sprintf("%s on base table with materialized view log only supports no-reorg compatible type changes for tracked columns", op),
+			)
+		}
+		return nil
+	}
+	if tracked {
+		if _, err := validateMaterializedViewLogColumnTypeForModifyColumn(op, mlogTableInfo, mlogCol, newCol); err != nil {
+			return err
+		}
+	}
+	for _, mviewID := range baseInfo.MViewIDs {
+		mviewTable, ok := is.TableByID(ctx, mviewID)
+		if !ok {
+			return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("modify column: dependent materialized view table not found")
+		}
+		if _, err := validateDependentMaterializedViewModifyColumn(op, baseTbl.Meta(), mviewTable.Meta(), oldCol, newCol); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 // noReorgDataStrict is a strong check to decide whether we need to change the column data.
@@ -2042,7 +2750,7 @@ func checkModifyTypes(from, to *model.ColumnInfo, needRewriteCollationData bool)
 func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutSchemaName
+		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutTableName
 	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 
 	var hasDefaultValue, setOnUpdateNow bool

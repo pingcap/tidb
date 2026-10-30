@@ -354,18 +354,17 @@ insert into tt2 (c_int, c_str, c_datetime, c_decimal) values (6, 'beautiful joli
 explain format='plan_tree'  select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;
 id	task	access object	operator info
 Sort	root		planner__core__casetest__index__index.t2.c1
-└─Projection	root		planner__core__casetest__index__index.t2.c1, planner__core__casetest__index__index.t2.c2, planner__core__casetest__index__index.t2.c3
-  └─Apply	root		CARTESIAN inner join, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column), if(ne(Column, 0), NULL, 1)), or(eq(Column, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
-    ├─TableReader(Build)	root		data:TableFullScan
-    │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-    └─StreamAgg(Probe)	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column, funcs:sum(0)->Column, funcs:count(1)->Column
-      └─IndexMerge	root		type: union
-        ├─Selection(Build)	cop[tikv]		eq(planner__core__casetest__index__index.t2.c3, 10)
-        │ └─TableRangeScan	cop[tikv]	table:t1	range:[10,10], keep order:false, stats:pseudo
-        ├─Selection(Build)	cop[tikv]		eq(planner__core__casetest__index__index.t2.c3, 1)
-        │ └─IndexRangeScan	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
-        └─Selection(Probe)	cop[tikv]		or(and(eq(planner__core__casetest__index__index.t1.c1, 10), eq(planner__core__casetest__index__index.t2.c3, 10)), and(eq(planner__core__casetest__index__index.t1.c2, 1), eq(planner__core__casetest__index__index.t2.c3, 1))), substring(cast(planner__core__casetest__index__index.t1.c3, var_string(20)), 10)
-          └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Apply	root		CARTESIAN semi join, left side:TableReader, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column), if(ne(Column, 0), NULL, 1)), or(eq(Column, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─StreamAgg(Probe)	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column, funcs:sum(0)->Column, funcs:count(1)->Column
+    └─IndexMerge	root		type: union
+      ├─Selection(Build)	cop[tikv]		eq(planner__core__casetest__index__index.t2.c3, 10)
+      │ └─TableRangeScan	cop[tikv]	table:t1	range:[10,10], keep order:false, stats:pseudo
+      ├─Selection(Build)	cop[tikv]		eq(planner__core__casetest__index__index.t2.c3, 1)
+      │ └─IndexRangeScan	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
+      └─Selection(Probe)	cop[tikv]		or(and(eq(planner__core__casetest__index__index.t1.c1, 10), eq(planner__core__casetest__index__index.t2.c3, 10)), and(eq(planner__core__casetest__index__index.t1.c2, 1), eq(planner__core__casetest__index__index.t2.c3, 1))), substring(cast(planner__core__casetest__index__index.t1.c3, var_string(20)), 10)
+        └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;
 c1	c2	c3
 1	1	1
@@ -373,36 +372,34 @@ c1	c2	c3
 explain format='plan_tree'  select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and reverse(c3)) order by c1;
 id	task	access object	operator info
 Sort	root		planner__core__casetest__index__index.t2.c1
-└─Projection	root		planner__core__casetest__index__index.t2.c1, planner__core__casetest__index__index.t2.c2, planner__core__casetest__index__index.t2.c3
-  └─Apply	root		CARTESIAN inner join, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column), if(ne(Column, 0), NULL, 1)), or(eq(Column, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
-    ├─TableReader(Build)	root		data:TableFullScan
-    │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-    └─StreamAgg(Probe)	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column, funcs:sum(0)->Column, funcs:count(1)->Column
-      └─IndexMerge	root		type: union
-        ├─Selection(Build)	cop[tikv]		eq(planner__core__casetest__index__index.t2.c3, 10)
-        │ └─TableRangeScan	cop[tikv]	table:t1	range:[10,10], keep order:false, stats:pseudo
-        ├─Selection(Build)	cop[tikv]		eq(planner__core__casetest__index__index.t2.c3, 1)
-        │ └─IndexRangeScan	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
-        └─Selection(Probe)	cop[tikv]		or(and(eq(planner__core__casetest__index__index.t1.c1, 10), eq(planner__core__casetest__index__index.t2.c3, 10)), and(eq(planner__core__casetest__index__index.t1.c2, 1), eq(planner__core__casetest__index__index.t2.c3, 1))), reverse(cast(planner__core__casetest__index__index.t1.c3, var_string(20)))
-          └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Apply	root		CARTESIAN semi join, left side:TableReader, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column), if(ne(Column, 0), NULL, 1)), or(eq(Column, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─StreamAgg(Probe)	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column, funcs:sum(0)->Column, funcs:count(1)->Column
+    └─IndexMerge	root		type: union
+      ├─Selection(Build)	cop[tikv]		eq(planner__core__casetest__index__index.t2.c3, 10)
+      │ └─TableRangeScan	cop[tikv]	table:t1	range:[10,10], keep order:false, stats:pseudo
+      ├─Selection(Build)	cop[tikv]		eq(planner__core__casetest__index__index.t2.c3, 1)
+      │ └─IndexRangeScan	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
+      └─Selection(Probe)	cop[tikv]		or(and(eq(planner__core__casetest__index__index.t1.c1, 10), eq(planner__core__casetest__index__index.t2.c3, 10)), and(eq(planner__core__casetest__index__index.t1.c2, 1), eq(planner__core__casetest__index__index.t2.c3, 1))), reverse(cast(planner__core__casetest__index__index.t1.c3, var_string(20)))
+        └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and reverse(c3)) order by c1;
 c1	c2	c3
 2	2	2
 explain format='plan_tree'  select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 >= 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;
 id	task	access object	operator info
 Sort	root		planner__core__casetest__index__index.t2.c1
-└─Projection	root		planner__core__casetest__index__index.t2.c1, planner__core__casetest__index__index.t2.c2, planner__core__casetest__index__index.t2.c3
-  └─Apply	root		CARTESIAN inner join, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column), if(ne(Column, 0), NULL, 1)), or(eq(Column, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
-    ├─TableReader(Build)	root		data:TableFullScan
-    │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-    └─StreamAgg(Probe)	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column, funcs:sum(0)->Column, funcs:count(1)->Column
-      └─IndexMerge	root		type: union
-        ├─Selection(Build)	cop[tikv]		eq(planner__core__casetest__index__index.t1.c1, planner__core__casetest__index__index.t2.c3)
-        │ └─TableRangeScan	cop[tikv]	table:t1	range:[10,+inf], keep order:false, stats:pseudo
-        ├─Selection(Build)	cop[tikv]		eq(planner__core__casetest__index__index.t2.c3, 1)
-        │ └─IndexRangeScan	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
-        └─Selection(Probe)	cop[tikv]		or(and(ge(planner__core__casetest__index__index.t1.c1, 10), eq(planner__core__casetest__index__index.t1.c1, planner__core__casetest__index__index.t2.c3)), and(eq(planner__core__casetest__index__index.t1.c2, 1), eq(planner__core__casetest__index__index.t2.c3, 1))), substring(cast(planner__core__casetest__index__index.t1.c3, var_string(20)), 10)
-          └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Apply	root		CARTESIAN semi join, left side:TableReader, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column), if(ne(Column, 0), NULL, 1)), or(eq(Column, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─StreamAgg(Probe)	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column, funcs:sum(0)->Column, funcs:count(1)->Column
+    └─IndexMerge	root		type: union
+      ├─Selection(Build)	cop[tikv]		eq(planner__core__casetest__index__index.t1.c1, planner__core__casetest__index__index.t2.c3)
+      │ └─TableRangeScan	cop[tikv]	table:t1	range:[10,+inf], keep order:false, stats:pseudo
+      ├─Selection(Build)	cop[tikv]		eq(planner__core__casetest__index__index.t2.c3, 1)
+      │ └─IndexRangeScan	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
+      └─Selection(Probe)	cop[tikv]		or(and(ge(planner__core__casetest__index__index.t1.c1, 10), eq(planner__core__casetest__index__index.t1.c1, planner__core__casetest__index__index.t2.c3)), and(eq(planner__core__casetest__index__index.t1.c2, 1), eq(planner__core__casetest__index__index.t2.c3, 1))), substring(cast(planner__core__casetest__index__index.t1.c3, var_string(20)), 10)
+        └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 >= 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;
 c1	c2	c3
 1	1	1
@@ -410,7 +407,7 @@ c1	c2	c3
 explain format='plan_tree'  select c_int from tt1 where c_decimal < all (select /*+ use_index_merge(tt2) */ c_decimal from tt2 where tt1.c_int = tt2.c_int and tt1.c_datetime > tt2.c_datetime and tt2.c_decimal = 9.060 or tt2.c_str <= 'interesting shtern' and tt1.c_int = tt2.c_int) order by 1;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__index__index.tt1.c_int
-└─Apply	root		CARTESIAN inner join, other cond:or(and(lt(planner__core__casetest__index__index.tt1.c_decimal, Column), if(ne(Column, 0), NULL, 1)), or(eq(Column, 0), if(isnull(planner__core__casetest__index__index.tt1.c_decimal), NULL, 0)))
+└─Apply	root		CARTESIAN semi join, left side:TableReader, other cond:or(and(lt(planner__core__casetest__index__index.tt1.c_decimal, Column), if(ne(Column, 0), NULL, 1)), or(eq(Column, 0), if(isnull(planner__core__casetest__index__index.tt1.c_decimal), NULL, 0)))
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:tt1	keep order:true, stats:pseudo
   └─StreamAgg(Probe)	root		funcs:min(Column)->Column, funcs:sum(Column)->Column, funcs:count(1)->Column
@@ -430,7 +427,7 @@ c_int
 explain format='plan_tree'  select c_int from tt1 where c_decimal > all (select /*+ use_index_merge(tt2) */ c_decimal from tt2 where tt2.c_int = 7 and tt2.c_int < tt1.c_decimal or tt2.c_str >= 'zzzzzzzzzzzzzzzzzzz' and tt1.c_int = tt2.c_int) order by 1;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__index__index.tt1.c_int
-└─Apply	root		CARTESIAN inner join, other cond:or(and(gt(planner__core__casetest__index__index.tt1.c_decimal, Column), if(ne(Column, 0), NULL, 1)), or(eq(Column, 0), if(isnull(planner__core__casetest__index__index.tt1.c_decimal), NULL, 0)))
+└─Apply	root		CARTESIAN semi join, left side:TableReader, other cond:or(and(gt(planner__core__casetest__index__index.tt1.c_decimal, Column), if(ne(Column, 0), NULL, 1)), or(eq(Column, 0), if(isnull(planner__core__casetest__index__index.tt1.c_decimal), NULL, 0)))
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:tt1	keep order:true, stats:pseudo
   └─StreamAgg(Probe)	root		funcs:max(Column)->Column, funcs:sum(Column)->Column, funcs:count(1)->Column

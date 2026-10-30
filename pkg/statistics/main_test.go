@@ -71,6 +71,7 @@ func TestStatistics(t *testing.T) {
 	t.Run("SubTestSketch", SubTestSketch())
 	t.Run("SubTestSketchProtoConversion", SubTestSketchProtoConversion())
 	t.Run("SubTestFMSketchCoding", SubTestFMSketchCoding())
+	t.Run("SubTestSampledNDV", SubTestSampledNDV())
 
 	// statistics_test.go
 	t.Run("SubTestColumnRange", SubTestColumnRange())
@@ -88,7 +89,7 @@ func createTestStatisticsSamples(t *testing.T) *testStatisticsSamples {
 	s.count = 100000
 	samples := make([]*SampleItem, 10000)
 	for i := range samples {
-		samples[i] = &SampleItem{Value: &types.Datum{}}
+		samples[i] = &SampleItem{Value: types.Datum{}}
 	}
 	start := 1000
 	samples[0].Value.SetInt64(0)

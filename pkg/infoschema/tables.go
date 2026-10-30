@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -148,6 +149,8 @@ const (
 	TableClusterSystemInfo = "CLUSTER_SYSTEMINFO"
 	// TableTiFlashReplica is the string constant of tiflash replica table.
 	TableTiFlashReplica = "TIFLASH_REPLICA"
+	// TableStorageClassTransitions is the string constant of the active storage class transitions table.
+	TableStorageClassTransitions = "TIKV_STORAGE_CLASS_TRANSITIONS"
 	// TableInspectionResult is the string constant of inspection result table.
 	TableInspectionResult = "INSPECTION_RESULT"
 	// TableMetricTables is a table that contains all metrics table definition.
@@ -216,6 +219,12 @@ const (
 	TableTiDBCheckConstraints = "TIDB_CHECK_CONSTRAINTS"
 	// TableKeywords is the list of keywords.
 	TableKeywords = "KEYWORDS"
+	// TableTiDBMViews is a table to show the metadata of materialized views in the current instance.
+	TableTiDBMViews = "TIDB_MVIEWS"
+	// TableTiDBMLogs is a table to show the metadata of materialized view logs in the current instance.
+	TableTiDBMLogs = "TIDB_MLOGS"
+	// TableTiDBTableMViewDependencies is a table to show dependencies between base tables, mlog and materialized views.
+	TableTiDBTableMViewDependencies = "TIDB_TABLE_MVIEW_DEPENDENCIES"
 	// TableTiDBIndexUsage is a table to show the usage stats of indexes in the current instance.
 	TableTiDBIndexUsage = "TIDB_INDEX_USAGE"
 	// TableTiDBPlanCache is the plan cache table.
@@ -354,6 +363,10 @@ var tableIDMap = map[string]int64{
 	ClusterTableTiDBStatementsStats:      autoid.InformationSchemaDBID + 99,
 	TableKeyspaceMeta:                    autoid.InformationSchemaDBID + 100,
 	TableSchemataExtensions:              autoid.InformationSchemaDBID + 101,
+	TableStorageClassTransitions:         autoid.InformationSchemaDBID + 102,
+	TableTiDBMViews:                      autoid.InformationSchemaDBID + 103,
+	TableTiDBMLogs:                       autoid.InformationSchemaDBID + 104,
+	TableTiDBTableMViewDependencies:      autoid.InformationSchemaDBID + 105,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -486,6 +499,7 @@ var tablesCols = []columnInfo{
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_TABLE_MODE", tp: mysql.TypeVarchar, size: 16},
 	{name: "TIDB_AFFINITY", tp: mysql.TypeVarchar, size: 128},
+	{name: "TIDB_STORAGE_CLASS", tp: mysql.TypeVarchar, size: 32},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/information-schema-columns-table.html
@@ -655,6 +669,7 @@ var partitionsCols = []columnInfo{
 	{name: "TIDB_PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_AFFINITY", tp: mysql.TypeVarchar, size: 128},
+	{name: "TIDB_STORAGE_CLASS", tp: mysql.TypeVarchar, size: 32},
 }
 
 var tableConstraintsCols = []columnInfo{
@@ -745,6 +760,47 @@ var tableViewsCols = []columnInfo{
 	{name: "SECURITY_TYPE", tp: mysql.TypeVarchar, size: 7, flag: mysql.NotNullFlag},
 	{name: "CHARACTER_SET_CLIENT", tp: mysql.TypeVarchar, size: 32, flag: mysql.NotNullFlag},
 	{name: "COLLATION_CONNECTION", tp: mysql.TypeVarchar, size: 32, flag: mysql.NotNullFlag},
+}
+
+var tableTiDBMViewsCols = []columnInfo{
+	{name: "TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
+	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MVIEW_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "MVIEW_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MVIEW_SQL_CONTENT", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "MVIEW_COMMENT", tp: mysql.TypeVarchar, size: 128},
+	{name: "MVIEW_MODIFY_TIME", tp: mysql.TypeDatetime, flag: mysql.NotNullFlag},
+	{name: "REFRESH_METHOD", tp: mysql.TypeVarchar, size: 32},
+	{name: "REFRESH_START", tp: mysql.TypeVarchar, size: 128},
+	{name: "REFRESH_NEXT", tp: mysql.TypeVarchar, size: 128},
+}
+
+var tableTiDBMLogsCols = []columnInfo{
+	{name: "TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
+	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MLOG_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "MLOG_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MLOG_COLUMNS", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "BASE_TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
+	{name: "BASE_TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "BASE_TABLE_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "BASE_TABLE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "PURGE_METHOD", tp: mysql.TypeVarchar, size: 32},
+	{name: "PURGE_START", tp: mysql.TypeVarchar, size: 128},
+	{name: "PURGE_NEXT", tp: mysql.TypeVarchar, size: 128},
+}
+
+var tableTiDBTableMViewDependenciesCols = []columnInfo{
+	{name: "TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
+	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MLOG_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "MLOG_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MVIEW_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
+	{name: "MVIEW_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MVIEW_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "MVIEW_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 }
 
 var tableRoutinesCols = []columnInfo{
@@ -933,6 +989,10 @@ var slowQueryCols = []columnInfo{
 	{name: execdetails.RocksdbBlockCacheHitCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: execdetails.RocksdbBlockReadCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: execdetails.RocksdbBlockReadByteStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: execdetails.IARemoteReadSegmentCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: execdetails.IARemoteReadSegmentSizeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: execdetails.IARemoteReadSegmentWaitTimeStr, tp: mysql.TypeDouble, size: 22},
+	{name: execdetails.ReadPoolTaskDetailsStr, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogDBStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogIndexNamesStr, tp: mysql.TypeVarchar, size: 100},
 	{name: variable.SlowLogIsInternalStr, tp: mysql.TypeTiny, size: 1},
@@ -983,6 +1043,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogPlanDigest, tp: mysql.TypeVarchar, size: 128},
 	{name: variable.SlowLogBinaryPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPrevStmt, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
+	{name: variable.SlowLogSessionConnectAttrs, tp: mysql.TypeJSON, size: types.UnspecifiedLength},
 	{name: variable.SlowLogQuerySQLStr, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 }
 
@@ -1226,6 +1287,27 @@ var tableTableTiFlashReplicaCols = []columnInfo{
 	{name: "PROGRESS", tp: mysql.TypeDouble, size: 22},
 }
 
+var tableStorageClassTransitionsCols = []columnInfo{
+	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "PARTITION_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "DIRECTION", tp: mysql.TypeVarchar, size: 16},
+	{name: "TOTAL_REPLICAS", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "COMPLETED_REPLICAS", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "PROGRESS", tp: mysql.TypeDouble, size: 22},
+	{name: "START_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
+	{name: "DURATION", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
+	{name: "LAST_UPDATE_TIME", tp: mysql.TypeDatetime, size: 26, decimal: 6},
+}
+
+// GetStorageClassTransitionsTableColumns returns fresh column metadata for
+// INFORMATION_SCHEMA.TIKV_STORAGE_CLASS_TRANSITIONS.
+func GetStorageClassTransitionsTableColumns() []*model.ColumnInfo {
+	return buildTableMeta(TableStorageClassTransitions, tableStorageClassTransitionsCols).Columns
+}
+
 var tableInspectionResultCols = []columnInfo{
 	{name: "RULE", tp: mysql.TypeVarchar, size: 64},
 	{name: "ITEM", tp: mysql.TypeVarchar, size: 64},
@@ -1362,6 +1444,13 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.MaxRocksdbBlockReadCountStr, tp: mysql.TypeLong, size: 11, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of rocksdb block read count"},
 	{name: stmtsummary.AvgRocksdbBlockReadByteStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of rocksdb block read byte"},
 	{name: stmtsummary.MaxRocksdbBlockReadByteStr, tp: mysql.TypeLong, size: 11, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of rocksdb block read byte"},
+	{name: stmtsummary.IAExecCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Count of executions that read IA remote segments"},
+	{name: stmtsummary.AvgIARemoteReadSegmentCountStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of IA remote segments read"},
+	{name: stmtsummary.MaxIARemoteReadSegmentCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of IA remote segments read"},
+	{name: stmtsummary.AvgIARemoteReadSegmentSizeStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of bytes returned from IA remote segment reads"},
+	{name: stmtsummary.MaxIARemoteReadSegmentSizeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of bytes returned from IA remote segment reads"},
+	{name: stmtsummary.AvgIARemoteReadSegmentWaitTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time spent waiting for IA remote segment reads"},
+	{name: stmtsummary.MaxIARemoteReadSegmentWaitTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max time spent waiting for IA remote segment reads"},
 	{name: stmtsummary.AvgPrewriteTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of prewrite phase"},
 	{name: stmtsummary.MaxPrewriteTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max time of prewrite phase"},
 	{name: stmtsummary.AvgCommitTimeStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of commit phase"},
@@ -2039,6 +2128,11 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	}
 	var servers = make([]ServerInfo, 0, len(tidbNodes))
 	for _, node := range tidbNodes {
+		// Skip processes that register server info but cannot receive TiDB RPC,
+		// such as standalone BR. Their address is not a cluster endpoint.
+		if node.IsDisableRPC() {
+			continue
+		}
 		servers = append(servers, ServerInfo{
 			ServerType:     "tidb",
 			Address:        net.JoinHostPort(node.IP, strconv.Itoa(int(node.Port))),
@@ -2234,7 +2328,7 @@ func getEtcdMembers(ctx sessionctx.Context) ([]string, error) {
 	if !ok {
 		return nil, errors.Errorf("%T not an etcd backend", store)
 	}
-	members, err := etcd.EtcdAddrs()
+	members, err := etcd.GetPDAddrs()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2498,6 +2592,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClusterLog:                         tableClusterLogCols,
 	TableClusterLoad:                        tableClusterLoadCols,
 	TableTiFlashReplica:                     tableTableTiFlashReplicaCols,
+	TableStorageClassTransitions:            tableStorageClassTransitionsCols,
 	TableClusterHardware:                    tableClusterHardwareCols,
 	TableClusterSystemInfo:                  tableClusterSystemInfoCols,
 	TableInspectionResult:                   tableInspectionResultCols,
@@ -2533,6 +2628,9 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableRunawayWatches:                     tableRunawayWatchListCols,
 	TableCheckConstraints:                   tableCheckConstraintsCols,
 	TableTiDBCheckConstraints:               tableTiDBCheckConstraintsCols,
+	TableTiDBMViews:                         tableTiDBMViewsCols,
+	TableTiDBMLogs:                          tableTiDBMLogsCols,
+	TableTiDBTableMViewDependencies:         tableTiDBTableMViewDependenciesCols,
 	TableKeywords:                           tableKeywords,
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
 	TableTiDBPlanCache:                      tablePlanCache,
@@ -2642,6 +2740,12 @@ func (it *infoschemaTable) Meta() *model.TableInfo {
 	return it.meta
 }
 
+// UseNewCollate implements table.Table UseNewCollate interface. Info schema
+// tables are not persisted user tables, so they use the current process default.
+func (it *infoschemaTable) UseNewCollate() bool {
+	return collate.NewCollationEnabled()
+}
+
 // GetPhysicalID implements table.Table GetPhysicalID interface.
 func (it *infoschemaTable) GetPhysicalID() int64 {
 	return it.meta.ID
@@ -2740,6 +2844,12 @@ func (vt *VirtualTable) Meta() *model.TableInfo {
 	return nil
 }
 
+// UseNewCollate implements table.Table UseNewCollate interface. Virtual tables
+// are not persisted user tables, so they use the current process default.
+func (vt *VirtualTable) UseNewCollate() bool {
+	return collate.NewCollationEnabled()
+}
+
 // GetPhysicalID implements table.Table GetPhysicalID interface.
 func (vt *VirtualTable) GetPhysicalID() int64 {
 	return 0
@@ -2763,17 +2873,18 @@ func GetTiFlashServerInfo(store kv.Storage) ([]ServerInfo, error) {
 	return serversInfo, nil
 }
 
+// ServerInfoResult contains server info results
+type ServerInfoResult struct {
+	Idx  int
+	Rows [][]types.Datum
+	Err  error
+}
+
 // FetchClusterServerInfoWithoutPrivilegeCheck fetches cluster server information
-func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, vars *variable.SessionVars, serversInfo []ServerInfo, serverInfoType diagnosticspb.ServerInfoType, recordWarningInStmtCtx bool) ([][]types.Datum, error) {
-	type result struct {
-		idx  int
-		rows [][]types.Datum
-		err  error
-	}
+func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, vars *variable.SessionVars, serversInfo []ServerInfo, serverInfoType diagnosticspb.ServerInfoType, recordWarningInStmtCtx bool) []ServerInfoResult {
 	wg := sync.WaitGroup{}
-	ch := make(chan result, len(serversInfo))
+	ch := make(chan ServerInfoResult, len(serversInfo))
 	infoTp := serverInfoType
-	finalRows := make([][]types.Datum, 0, len(serversInfo)*10)
 	for i, srv := range serversInfo {
 		address := srv.Address
 		remote := address
@@ -2786,34 +2897,31 @@ func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, vars *vari
 				defer wg.Done()
 				items, err := getServerInfoByGRPC(ctx, remote, infoTp)
 				if err != nil {
-					ch <- result{idx: index, err: err}
+					ch <- ServerInfoResult{Idx: index, Err: err}
 					return
 				}
 				partRows := serverInfoItemToRows(items, serverTP, address)
-				ch <- result{idx: index, rows: partRows}
+				ch <- ServerInfoResult{Idx: index, Rows: partRows}
 			}, nil)
 		}(i, remote, address, srv.ServerType)
 	}
 	wg.Wait()
 	close(ch)
 	// Keep the original order to make the result more stable
-	var results []result //nolint: prealloc
+	var results []ServerInfoResult //nolint: prealloc
 	for result := range ch {
-		if result.err != nil {
+		if result.Err != nil {
 			if recordWarningInStmtCtx {
-				vars.StmtCtx.AppendWarning(result.err)
+				vars.StmtCtx.AppendWarning(result.Err)
 			} else {
-				log.Warn(result.err.Error())
+				log.Warn(result.Err.Error())
 			}
 			continue
 		}
 		results = append(results, result)
 	}
-	slices.SortFunc(results, func(i, j result) int { return cmp.Compare(i.idx, j.idx) })
-	for _, result := range results {
-		finalRows = append(finalRows, result.rows...)
-	}
-	return finalRows, nil
+	slices.SortFunc(results, func(i, j ServerInfoResult) int { return cmp.Compare(i.Idx, j.Idx) })
+	return results
 }
 
 func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string) [][]types.Datum {

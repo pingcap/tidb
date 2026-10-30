@@ -241,7 +241,7 @@ func (s *rpcServer) createSession() (sessionapi.Session, error) {
 		action := &memory.PanicOnExceed{Killer: &vars.SQLKiller}
 		vars.MemTracker.SetActionOnExceed(action)
 	}
-	if err = vars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(vardef.DefMaxAllowedPacket, 10)); err != nil {
+	if err = vars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(config.GetMaxAllowedPacket(), 10)); err != nil {
 		return nil, err
 	}
 	se.SetExtensions(extensions.NewSessionExtensions())

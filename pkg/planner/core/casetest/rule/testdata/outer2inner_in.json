@@ -54,5 +54,13 @@
     "cases": [
       "with cte_0 AS (select 1 as c1, case when ref_0.c_jbb then inet6_aton(ref_0.c_foveoe) else ref_4.c_cz end as c5 from t1 as ref_0 join (t1 as ref_4 right outer join t2 as ref_5 on ref_5.c_g7eofzlxn != 1)), cte_4 as (select 1 as c1 from t2) select ref_34.c1 as c5 from  cte_0 as ref_34 where exists (select 1 from cte_4 as ref_35 where ref_34.c1 <= case when ref_34.c5 then cast(1 as char) else ref_34.c5 end)"
     ]
+  },
+  {
+    "name": "TestOuter2InnerLateralSelection",
+    "cases": [
+      "select * from t1, lateral (select * from t2 where t2.b2 = t1.a1) as dt where dt.a2 is not null -- LATERAL with null-filtering Selection",
+      "select * from t1, lateral (select * from t2 where t2.b2 = t1.a1) as dt where dt.b2 > 0 -- LATERAL with range-filtering Selection",
+      "select * from t1, lateral (select t2.a2, count(*) as cnt from t2 where t2.b2 = t1.a1 group by t2.a2) as dt where dt.cnt > 0 -- LATERAL with aggregate: Apply must not be converted to Join"
+    ]
   }
 ]

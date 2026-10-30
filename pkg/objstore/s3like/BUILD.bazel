@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "interface.go",
         "io.go",
+        "metrics.go",
         "permission.go",
         "retry.go",
         "store.go",
@@ -15,6 +16,7 @@ go_library(
         "//br/pkg/errors",
         "//br/pkg/logutil",
         "//pkg/metrics",
+        "//pkg/metrics/common",
         "//pkg/objstore/compressedio",
         "//pkg/objstore/objectio",
         "//pkg/objstore/recording",
@@ -27,6 +29,7 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_log//:log",
+        "@com_github_prometheus_client_golang//prometheus",
         "@com_github_spf13_pflag//:pflag",
         "@org_uber_go_zap//:zap",
     ],

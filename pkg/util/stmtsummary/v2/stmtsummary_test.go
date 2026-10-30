@@ -15,11 +15,37 @@
 package stmtsummary
 
 import (
+	"bytes"
 	"encoding/json"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
+
+func readGaugeValue(t *testing.T, gauge prometheus.Gauge) float64 {
+	t.Helper()
+	m := &dto.Metric{}
+	require.NoError(t, gauge.Write(m))
+	return m.GetGauge().GetValue()
+}
+
+func readCounterValue(t *testing.T, counter prometheus.Counter) float64 {
+	t.Helper()
+	m := &dto.Metric{}
+	require.NoError(t, counter.Write(m))
+	return m.GetCounter().GetValue()
+}
 
 func TestStmtWindow(t *testing.T) {
 	ss := NewStmtSummary4Test(5)
@@ -36,12 +62,95 @@ func TestStmtWindow(t *testing.T) {
 	require.Equal(t, 5, ss.window.lru.Size())
 	require.Equal(t, 2, ss.window.evicted.count())
 	require.Equal(t, int64(4), ss.window.evicted.other.ExecCount) // digest1 digest1 digest2 digest2
+	require.Equal(t, int64(2), ss.window.evictedCount.Load())
 	_, err := json.Marshal(ss.window.evicted.other)
 	require.NoError(t, err)
 	ss.Clear()
 	require.Equal(t, 0, ss.window.lru.Size())
 	require.Equal(t, 0, ss.window.evicted.count())
 	require.Equal(t, int64(0), ss.window.evicted.other.ExecCount)
+	require.Equal(t, int64(0), ss.window.evictedCount.Load())
+
+	t.Run("disabling internal query preserves LRU order", func(t *testing.T) {
+		ss := NewStmtSummary4Test(6)
+		defer ss.Close()
+		require.NoError(t, ss.SetEnableInternalQuery(true))
+
+		for _, digest := range []string{"digest_0", "digest_1", "digest_2", "digest_3"} {
+			ss.Add(GenerateStmtExecInfo4Test(digest))
+		}
+		pureInternal := GenerateStmtExecInfo4Test("pure_internal_digest")
+		pureInternal.IsInternal = true
+		ss.Add(pureInternal)
+
+		mixedInternal := GenerateStmtExecInfo4Test("mixed_digest")
+		mixedInternal.IsInternal = true
+		ss.Add(mixedInternal)
+		ss.Add(GenerateStmtExecInfo4Test(mixedInternal.Digest))
+
+		for _, digest := range []string{"digest_0", "digest_1"} {
+			ss.Add(GenerateStmtExecInfo4Test(digest))
+		}
+
+		lruDigests := func() []string {
+			values := ss.window.lru.Values()
+			digests := make([]string, 0, len(values))
+			for _, value := range values {
+				digests = append(digests, value.(*lockedStmtRecord).Digest)
+			}
+			return digests
+		}
+
+		require.Equal(t, []string{"digest_1", "digest_0", "mixed_digest", "pure_internal_digest", "digest_3", "digest_2"}, lruDigests())
+		require.NoError(t, ss.SetEnableInternalQuery(false))
+		require.Equal(t, []string{"digest_1", "digest_0", "mixed_digest", "digest_3", "digest_2"}, lruDigests())
+
+		for _, digest := range []string{"new_digest_0", "new_digest_1", "new_digest_2"} {
+			ss.Add(GenerateStmtExecInfo4Test(digest))
+		}
+
+		require.Equal(t, []string{"new_digest_2", "new_digest_1", "new_digest_0", "digest_1", "digest_0", "mixed_digest"}, lruDigests())
+		require.Equal(t, 2, ss.window.evicted.count())
+		require.Equal(t, int64(2), ss.window.evicted.other.ExecCount)
+	})
+
+	t.Run("internal cleanup waits for record update", func(t *testing.T) {
+		ss := NewStmtSummary4Test(1)
+		defer ss.Close()
+
+		internal := GenerateStmtExecInfo4Test("internal_digest")
+		internal.IsInternal = true
+		ss.Add(internal)
+
+		values := ss.window.lru.Values()
+		require.Len(t, values, 1)
+		record := values[0].(*lockedStmtRecord)
+		clearDone := make(chan struct{})
+		func() {
+			record.Lock()
+			defer record.Unlock()
+			go func() {
+				ss.ClearInternal()
+				close(clearDone)
+			}()
+			require.Never(t, func() bool {
+				select {
+				case <-clearDone:
+					return true
+				default:
+					return false
+				}
+			}, 100*time.Millisecond, time.Millisecond)
+		}()
+
+		select {
+		case <-clearDone:
+		case <-time.After(time.Second):
+			t.Fatal("ClearInternal did not finish")
+		}
+
+		require.Equal(t, 0, ss.window.lru.Size())
+	})
 }
 
 func TestStmtSummary(t *testing.T) {
@@ -67,6 +176,200 @@ func TestStmtSummary(t *testing.T) {
 
 	ss.Clear()
 	require.Equal(t, 0, w.lru.Size())
+}
+
+func TestStmtSummaryPersistEvicted(t *testing.T) {
+	begin := time.Date(2026, 5, 25, 10, 0, 0, 0, time.UTC)
+	evictAt := begin.Add(42 * time.Second)
+	now := begin
+	oldTimeNow := timeNow
+	timeNow = func() time.Time {
+		return now
+	}
+	t.Cleanup(func() {
+		timeNow = oldTimeNow
+	})
+
+	storage := &mockStmtStorage{}
+	ss := NewStmtSummary4Test(2)
+	ss.storage = storage
+	defer ss.Close()
+	require.NoError(t, ss.SetPersistEvicted(true))
+
+	// With capacity 2, the 3rd and later distinct digests evict older entries
+	// and should each land in storage.evicted.
+	ss.Add(GenerateStmtExecInfo4Test("digest1"))
+	ss.Add(GenerateStmtExecInfo4Test("digest2"))
+	now = evictAt
+	ss.Add(GenerateStmtExecInfo4Test("digest3")) // evicts digest1
+	ss.Add(GenerateStmtExecInfo4Test("digest4")) // evicts digest2
+
+	// The log is async; wait briefly for drain.
+	require.Eventually(t, func() bool {
+		storage.Lock()
+		defer storage.Unlock()
+		return len(storage.evicted) == 2
+	}, time.Second, 10*time.Millisecond, "expected 2 evicted records to be logged")
+
+	storage.Lock()
+	digests := []string{storage.evicted[0].Digest, storage.evicted[1].Digest}
+	for _, record := range storage.evicted {
+		require.Equal(t, begin.Unix(), record.Begin)
+		require.Equal(t, evictAt.Unix(), record.End)
+	}
+	storage.Unlock()
+	require.ElementsMatch(t, []string{"digest1", "digest2"}, digests)
+
+	// Disable and verify no further log writes.
+	require.NoError(t, ss.SetPersistEvicted(false))
+	ss.Add(GenerateStmtExecInfo4Test("digest5")) // evicts digest3
+	require.Never(t, func() bool {
+		storage.Lock()
+		defer storage.Unlock()
+		return len(storage.evicted) != 2
+	}, 100*time.Millisecond, 10*time.Millisecond, "evicted count should remain 2 after disabling")
+}
+
+func TestStmtSummaryPersistEvictedDoesNotPersistLoggedRecordsAsAggregate(t *testing.T) {
+	var logBuf bytes.Buffer
+	storage := &stmtLogStorage{
+		logger: zap.New(zapcore.NewCore(&stmtLogEncoder{}, zapcore.AddSync(&logBuf), zapcore.InfoLevel)),
+	}
+
+	ss := NewStmtSummary4Test(2)
+	ss.storage = storage
+	require.NoError(t, ss.SetPersistEvicted(true))
+
+	ss.Add(GenerateStmtExecInfo4Test("digest1"))
+	ss.Add(GenerateStmtExecInfo4Test("digest2"))
+	ss.Add(GenerateStmtExecInfo4Test("digest3")) // evicts digest1
+	ss.Add(GenerateStmtExecInfo4Test("digest4")) // evicts digest2
+	persistedBefore := readCounterValue(t, metrics.StmtSummaryEvictedLogCounter.WithLabelValues(
+		metrics.StmtSummaryTypeV2,
+		metrics.StmtSummaryEvictedLogResultPersisted,
+	))
+	ss.Close()
+	persistedAfter := readCounterValue(t, metrics.StmtSummaryEvictedLogCounter.WithLabelValues(
+		metrics.StmtSummaryTypeV2,
+		metrics.StmtSummaryEvictedLogResultPersisted,
+	))
+	require.Equal(t, 2.0, persistedAfter-persistedBefore)
+
+	type loggedRecord struct {
+		Digest    string `json:"digest"`
+		ExecCount int64  `json:"exec_count"`
+		Evicted   bool   `json:"evicted"`
+	}
+
+	var totalExecCount int64
+	evictedDigests := make([]string, 0, 2)
+	for _, line := range strings.Split(strings.TrimSpace(logBuf.String()), "\n") {
+		var record loggedRecord
+		require.NoError(t, json.Unmarshal([]byte(line), &record))
+		totalExecCount += record.ExecCount
+		if record.Evicted {
+			evictedDigests = append(evictedDigests, record.Digest)
+			continue
+		}
+		require.NotEmpty(t, record.Digest, "logged evicted records should not also be persisted as the aggregate row")
+	}
+
+	require.ElementsMatch(t, []string{"digest1", "digest2"}, evictedDigests)
+	require.Equal(t, int64(4), totalExecCount)
+}
+
+func TestStmtSummaryGroupByUser(t *testing.T) {
+	ss := NewStmtSummary4Test(100)
+	defer ss.Close()
+
+	// Two statements, same digest, different users: without the flag they
+	// should merge into one record.
+	ss.Add(stmtExecInfoWithUser("digest1", "alice"))
+	ss.Add(stmtExecInfoWithUser("digest1", "bob"))
+	require.Equal(t, 1, ss.window.lru.Size())
+
+	// Switching the flag on clears the window. Re-emitting produces two rows.
+	require.NoError(t, ss.SetGroupByUser(true))
+	require.Equal(t, 0, ss.window.lru.Size())
+	ss.Add(stmtExecInfoWithUser("digest1", "alice"))
+	ss.Add(stmtExecInfoWithUser("digest1", "bob"))
+	ss.Add(stmtExecInfoWithUser("digest1", "alice"))
+	require.Equal(t, 2, ss.window.lru.Size())
+
+	// When grouping by user, each record's AuthUsers must hold exactly one
+	// user — the one that groups it — so SAMPLE_USER naturally reflects the
+	// grouping dimension without a dedicated column.
+	users := map[string]int64{}
+	for _, v := range ss.window.lru.Values() {
+		r := v.(*lockedStmtRecord)
+		require.Len(t, r.AuthUsers, 1)
+		for u := range r.AuthUsers {
+			users[u] = r.ExecCount
+		}
+	}
+	require.Equal(t, int64(2), users["alice"])
+	require.Equal(t, int64(1), users["bob"])
+
+	// Turning the flag off again clears and reverts to single-record merging.
+	require.NoError(t, ss.SetGroupByUser(false))
+	ss.Add(stmtExecInfoWithUser("digest1", "alice"))
+	ss.Add(stmtExecInfoWithUser("digest1", "bob"))
+	require.Equal(t, 1, ss.window.lru.Size())
+	for _, v := range ss.window.lru.Values() {
+		r := v.(*lockedStmtRecord)
+		require.Len(t, r.AuthUsers, 2) // both users merged when grouping is off
+	}
+}
+
+// stmtExecInfoWithUser returns a StmtExecInfo whose digest and User fields are
+// set; everything else is the generic test fixture.
+func stmtExecInfoWithUser(digest, user string) *stmtsummary.StmtExecInfo {
+	info := GenerateStmtExecInfo4Test(digest)
+	info.User = user
+	return info
+}
+
+func TestWindowEvictedCountResetOnRotate(t *testing.T) {
+	ss := NewStmtSummary4Test(2)
+	defer ss.Close()
+	require.NoError(t, ss.SetMaxStmtCount(2))
+	metrics.SetStmtSummaryWindowMetrics(metrics.StmtSummaryTypeV2, 0, 0)
+	t.Cleanup(func() {
+		metrics.SetStmtSummaryWindowMetrics(metrics.StmtSummaryTypeV2, 0, 0)
+	})
+
+	// Fill the LRU cache and trigger evictions.
+	ss.Add(GenerateStmtExecInfo4Test("digest1"))
+	ss.Add(GenerateStmtExecInfo4Test("digest2"))
+	ss.Add(GenerateStmtExecInfo4Test("digest3")) // evicts digest1
+	ss.Add(GenerateStmtExecInfo4Test("digest4")) // evicts digest2
+	require.Equal(t, 2, ss.window.lru.Size())
+	require.Equal(t, int64(2), ss.window.evictedCount.Load())
+	ss.windowLock.Lock()
+	ss.updateMetrics()
+	ss.windowLock.Unlock()
+	require.Equal(t, 2.0, readGaugeValue(t, metrics.StmtSummaryWindowRecordCount.WithLabelValues(metrics.StmtSummaryTypeV2)))
+	require.Equal(t, 2.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV2)))
+
+	// Rotate creates a new window with a fresh counter.
+	ss.rotate(timeNow())
+	require.Equal(t, int64(0), ss.window.evictedCount.Load())
+	ss.windowLock.Lock()
+	ss.updateMetrics()
+	ss.windowLock.Unlock()
+	require.Equal(t, 0.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV2)))
+
+	// Add more records in the new window.
+	ss.Add(GenerateStmtExecInfo4Test("digest5"))
+	ss.Add(GenerateStmtExecInfo4Test("digest6"))
+	ss.Add(GenerateStmtExecInfo4Test("digest7")) // evicts digest5
+	require.Equal(t, int64(1), ss.window.evictedCount.Load())
+	require.Equal(t, 2, ss.window.lru.Size())
+	ss.windowLock.Lock()
+	ss.updateMetrics()
+	ss.windowLock.Unlock()
+	require.Equal(t, 2.0, readGaugeValue(t, metrics.StmtSummaryWindowRecordCount.WithLabelValues(metrics.StmtSummaryTypeV2)))
+	require.Equal(t, 1.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV2)))
 }
 
 func TestStmtSummaryFlush(t *testing.T) {
@@ -95,4 +398,133 @@ func TestStmtSummaryFlush(t *testing.T) {
 	storage.Lock()
 	require.Equal(t, 3, len(storage.windows))
 	storage.Unlock()
+}
+
+func TestDefaultConfig(t *testing.T) {
+	cfg := &Config{
+		Filename: filepath.Join(t.TempDir(), "test.log"),
+	}
+	ss, err := NewStmtSummary(cfg)
+	require.NoError(t, err)
+	defer ss.Close()
+
+	// Verify RefreshInterval (should be 1800 = 30 min)
+	require.Equal(t, uint32(1800), ss.RefreshInterval())
+}
+
+// TestNewStmtSummaryLoggerInitError closes V2-11 in the statement-summary
+// audit: when the configured stmt log file cannot be opened,
+// log.InitLogger returns an error and NewStmtSummary must surface that error
+// instead of silently degrading to a no-op logger. A no-op fallback would make
+// persistent mode look enabled while silently dropping every rotated window.
+//
+// We trigger the error by pointing Filename at an existing directory, which
+// `log.InitLogger` rejects with "can't use directory as log file name" without
+// relying on filesystem permission differences between platforms.
+func TestNewStmtSummaryLoggerInitError(t *testing.T) {
+	dir := t.TempDir()
+	ss, err := NewStmtSummary(&Config{Filename: dir})
+	require.Error(t, err)
+	require.Nil(t, ss)
+}
+
+// TestSetupDisablesPersistentOnLoggerInitError exercises the *startup call
+// chain* that produces the V2-11 nil-panic regression pointed out in review.
+//
+// When NewStmtSummary fails, publishing its nil result while the cluster
+// config still has `tidb_stmt_summary_enable_persistent = true` lets every
+// public proxy in this package (Add, Enabled, ...) dereference nil.
+// On the buggy code the very first SQL call would dereference a nil
+// pointer and the server would crash again; the logger init error had traded
+// silent data loss for a hard boot-loop. Now Setup must remedy the half-
+// constructed state by explicitly disabling persistent mode so the wrappers
+// fall back to the in-memory v1 aggregation (stmtsummary.StmtSummaryByDigestMap).
+//
+// The test goes end-to-end through:
+//   - the public Setup entrypoint (the same one cmd/tidb-server calls);
+//   - the post-Setup invariant that StmtSummaryEnablePersistent flipped off;
+//   - an actual Add() probe, which used to be the line that panicked.
+func TestSetupDisablesPersistentOnLoggerInitError(t *testing.T) {
+	// Preserve the global v2 instance and install a sentinel to verify that a
+	// failed setup does not publish a nil result over an existing instance.
+	prev := GlobalStmtSummary
+	t.Cleanup(func() { GlobalStmtSummary = prev })
+	existing := &StmtSummary{}
+	GlobalStmtSummary = existing
+
+	// Preserve the cluster config too; Setup mutates it on the fix branch.
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+
+	// Mirror the operator's intent: allocate persistent mode but point the log
+	// file at an *existing directory*. log.InitLogger refuses this with
+	// "can't use directory as log file name" deterministically across
+	// darwin/linux, so the chosen failure trigger does not depend on permission
+	// quirks of the CI container.
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.StmtSummaryEnablePersistent = true
+		conf.Instance.StmtSummaryFilename = t.TempDir()
+	})
+
+	// Simulate the startup call: cmd/tidb-server/main.go#setupStmtSummary.
+	err := Setup(&Config{
+		Filename: config.GetGlobalConfig().Instance.StmtSummaryFilename,
+	})
+	require.Error(t, err, "Setup must surface the logger init error")
+	require.ErrorContains(t, err, "stmtsummary v2 persistent mode disabled; falling back to v1 in-memory aggregation")
+
+	// NewStmtSummary returned (nil, error), so Setup must not publish that nil
+	// result over the previously installed instance.
+	require.Same(t, existing, GlobalStmtSummary)
+
+	// This is the invariant the reviewer asked for: persistent mode MUST be
+	// flipped off so the v2 proxy functions become no-ops and the v1 path
+	// (StmtSummaryByDigestMap, which is always available) absorbs traffic
+	// instead of dereferencing a nil GlobalStmtSummary.
+	require.False(t,
+		config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent,
+		"V2-11 follow-up: Setup must disable persistent mode on init failure to avoid nil deref in Add/Enabled wrappers")
+
+	// Direct evidence that the runtime no longer crashes: the Add() proxy is
+	// the line that panicked under the original (return-nil) fix. With the
+	// persistent flag flipped off it must route to v1 without panicking.
+	require.NotPanics(t, func() {
+		Add(GenerateStmtExecInfo4Test("digest_setup_fallback_does_not_panic"))
+	})
+}
+
+// TestEvictedConcurrentWithRotate verifies that Evicted() is safe to call
+// concurrently with rotate (V2-25 data race fix).
+func TestEvictedConcurrentWithRotate(t *testing.T) {
+	ss := NewStmtSummary4Test(2)
+	defer ss.Close()
+
+	ss.Add(GenerateStmtExecInfo4Test("digest1"))
+	ss.Add(GenerateStmtExecInfo4Test("digest2"))
+	ss.Add(GenerateStmtExecInfo4Test("digest3"))
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			_ = ss.Evicted()
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			ss.windowLock.Lock()
+			ss.rotate(timeNow())
+			ss.windowLock.Unlock()
+			ss.Add(GenerateStmtExecInfo4Test("digest_new"))
+			ss.Add(GenerateStmtExecInfo4Test("digest_new2"))
+			ss.Add(GenerateStmtExecInfo4Test("digest_new3"))
+		}
+	}()
+
+	wg.Wait()
 }

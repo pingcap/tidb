@@ -1216,13 +1216,13 @@ FIND_IN_SET('a','b,A,c,d' collate utf8mb4_bin)
 0
 select FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_bin);
 FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_bin)
-2
+0
 select FIND_IN_SET('a','b,A,c,d' collate utf8mb4_general_ci);
 FIND_IN_SET('a','b,A,c,d' collate utf8mb4_general_ci)
 2
 select FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_general_ci);
 FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_general_ci)
-2
+0
 set names utf8mb4 collate utf8mb4_general_ci;
 select collation(cast('a' as char));
 collation(cast('a' as char))
@@ -1241,7 +1241,7 @@ FIND_IN_SET('a','b,A,c,d' collate utf8mb4_unicode_ci)
 2
 select FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_unicode_ci);
 FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_unicode_ci)
-2
+0
 select concat('a' collate utf8mb4_bin, 'b' collate utf8mb4_bin);
 concat('a' collate utf8mb4_bin, 'b' collate utf8mb4_bin)
 ab

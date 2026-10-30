@@ -76,7 +76,7 @@ make failpoint-enable && (
 
 Build system note (Bazel):
 
-- If you add/remove/move Go files (including new `_test.go`), run `make bazel_prepare` and include generated `*.bazel/*.bzl` changes.
+- If you add/remove/move Go files (including new `_test.go`) or change an existing Go file import section, run `make bazel_prepare` and include generated `*.bazel/*.bzl` changes.
 
 ## 4) Debugging and observability tips
 

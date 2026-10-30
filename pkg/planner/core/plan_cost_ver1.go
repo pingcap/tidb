@@ -874,8 +874,9 @@ func getCost4PhysicalHashJoin(pp base.PhysicalPlan, lCnt, rCnt float64, costFlag
 	probeCost /= float64(p.Concurrency)
 	// Cost of additional concurrent goroutines.
 	cpuCost += probeCost + float64(p.Concurrency+1)*concurrencyFactor
-	// Cost of traveling the hash table to resolve missing matched cases when building the hash table from the outer table
-	if p.UseOuterToBuild {
+	// Cost of traveling the hash table to resolve missing matched cases after probing.
+	// Full outer join always needs this tail scan to emit unmatched build-side rows.
+	if p.UseOuterToBuild || p.JoinType == base.FullOuterJoin {
 		if spill {
 			// It runs in sequence when build data is on disk. See handleUnmatchedRowsFromHashTableInDisk
 			cpuCost += buildCnt * cpuFactor
@@ -1146,6 +1147,11 @@ func getPlanCostVer14PhysicalUnionAll(pp base.PhysicalPlan, taskType property.Ta
 		childMaxCost = math.Max(childMaxCost, childCost)
 	}
 	p.PlanCost = childMaxCost + float64(1+len(p.Children()))*p.SCtx().GetSessionVars().GetConcurrencyFactor()
+	if p.Mpp && p.SCtx().GetSessionVars().IsMPPEnforced() &&
+		!hasCostFlag(costFlag, costusage.CostFlagRecalculate) { // show the real cost in explain-statements
+		// Keep enforced MPP UnionAll comparable through cost instead of bypassing the normal plan comparison path.
+		p.PlanCost /= 1000000000
+	}
 	p.PlanCostInit = true
 	return p.PlanCost, nil
 }

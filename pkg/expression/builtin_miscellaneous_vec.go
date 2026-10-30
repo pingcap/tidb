@@ -365,6 +365,15 @@ func (b *builtinIntAnyValueSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 	return b.args[0].VecEvalInt(ctx, input, result)
 }
 
+// Non-hybrid integer results should keep the default string fallback. Hybrid return fields
+// delegate to the argument to preserve its binary/string representation in string contexts.
+func (b *builtinIntAnyValueSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	if !b.tp.Hybrid() {
+		return b.baseBuiltinFunc.vecEvalString(ctx, input, result)
+	}
+	return b.args[0].VecEvalString(ctx, input, result)
+}
+
 func (b *builtinIsIPv4CompatSig) vectorized() bool {
 	return true
 }
@@ -491,7 +500,10 @@ func doSleep(secs float64, sessVars *variable.SessionVars) (isKilled bool) {
 			// MySQL 8.0 sleep: https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_sleep
 			// Regular kill or Killed because of max execution time
 			if err := sessVars.SQLKiller.HandleSignal(); err != nil {
-				if len(sessVars.StmtCtx.TableIDs) == 0 {
+				if len(sessVars.StmtCtx.TableIDs) == 0 &&
+					!sessVars.StmtCtx.InInsertStmt &&
+					!sessVars.StmtCtx.InUpdateStmt &&
+					!sessVars.StmtCtx.InDeleteStmt {
 					sessVars.SQLKiller.Reset()
 				}
 				timer.Stop()

@@ -15,8 +15,10 @@ package ast
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -59,6 +61,11 @@ var (
 	_ StmtNode = &HelpStmt{}
 	_ StmtNode = &PlanReplayerStmt{}
 	_ StmtNode = &CompactTableStmt{}
+	_ StmtNode = &PurgeMaterializedViewLogStmt{}
+	_ StmtNode = &CancelMaterializedViewJobStmt{}
+	_ StmtNode = &CompareMaterializedViewStmt{}
+	_ StmtNode = &RefreshMaterializedViewStmt{}
+	_ StmtNode = &RefreshMaterializedViewImplementStmt{}
 	_ StmtNode = &SetResourceGroupStmt{}
 	_ StmtNode = &TrafficStmt{}
 	_ StmtNode = &RecommendIndexStmt{}
@@ -217,6 +224,8 @@ type ExplainStmt struct {
 	Explore bool
 	// SQLDigest to explain, used in `EXPLAIN EXPLORE <sql_digest>`.
 	SQLDigest string
+	// ReplayerFile to load, used in `EXPLAIN EXPLORE REPLAYER <replayer_file_path>`.
+	ReplayerFile string
 	// PlanDigest to explain, used in `EXPLAIN [ANALYZE] <plan_digest>`.
 	PlanDigest string
 }
@@ -242,7 +251,10 @@ func (n *ExplainStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	if n.Explore {
 		ctx.WriteKeyWord("EXPLORE ")
-		if n.SQLDigest != "" {
+		if n.ReplayerFile != "" {
+			ctx.WriteKeyWord("REPLAYER ")
+			ctx.WriteString(n.ReplayerFile)
+		} else if n.SQLDigest != "" {
 			ctx.WriteString(n.SQLDigest)
 		}
 	} else if !n.Analyze || strings.ToLower(n.Format) != "row" {
@@ -647,6 +659,299 @@ func (n *CompactTableStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// PurgeMaterializedViewLogStmt is a statement to purge a materialized view log on a base table.
+type PurgeMaterializedViewLogStmt struct {
+	stmtNode
+
+	Table *TableName
+}
+
+// CancelMaterializedViewJobType identifies the materialized-view job targeted by CANCEL.
+type CancelMaterializedViewJobType uint8
+
+const (
+	// CancelMaterializedViewJobTypeLogPurge targets materialized view log purge jobs.
+	CancelMaterializedViewJobTypeLogPurge CancelMaterializedViewJobType = iota + 1
+	// CancelMaterializedViewJobTypeRefresh targets materialized view refresh jobs.
+	CancelMaterializedViewJobTypeRefresh
+)
+
+// CancelMaterializedViewJobStmt represents CANCEL MATERIALIZED VIEW JOB, include materialized view log purge and materialized view refresh jobs.
+type CancelMaterializedViewJobStmt struct {
+	stmtNode
+
+	Tp    CancelMaterializedViewJobType
+	JobID int64
+}
+
+// Restore implements Node interface.
+func (n *CancelMaterializedViewJobStmt) Restore(ctx *format.RestoreCtx) error {
+	switch n.Tp {
+	case CancelMaterializedViewJobTypeRefresh:
+		ctx.WriteKeyWord(CancelMaterializedViewRefreshJobCommand + " ")
+	case CancelMaterializedViewJobTypeLogPurge:
+		ctx.WriteKeyWord("CANCEL MATERIALIZED VIEW LOG PURGE JOB ")
+	default:
+		return errors.Errorf("invalid materialized view job cancel type: %d", n.Tp)
+	}
+	ctx.WritePlainf("%d", n.JobID)
+	return nil
+}
+
+// Accept implements Node interface.
+func (n *CancelMaterializedViewJobStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	return v.Leave(newNode)
+}
+
+// Restore implements Node interface.
+func (n *PurgeMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("PURGE MATERIALIZED VIEW LOG ON ")
+	return n.Table.Restore(ctx)
+}
+
+// Accept implements Node interface.
+func (n *PurgeMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*PurgeMaterializedViewLogStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
+	return v.Leave(n)
+}
+
+// RefreshMaterializedViewStmt is a statement to trigger a refresh on a materialized view.
+type RefreshMaterializedViewStmt struct {
+	stmtNode
+
+	ViewName      *TableName
+	WithAsyncMode bool
+	Type          RefreshMaterializedViewType
+	CompleteType  RefreshMaterializedViewCompleteType
+	ObserveType   RefreshMaterializedViewObserveType
+	AsOf          *AsOfClause
+}
+
+// RefreshMaterializedViewImplementStmt is an internal-only statement used by refresh planning.
+type RefreshMaterializedViewImplementStmt struct {
+	stmtNode
+
+	RefreshStmt                  *RefreshMaterializedViewStmt
+	LastSuccessfulRefreshReadTSO uint64
+	TargetRefreshReadTSO         uint64
+	MLogRetainedLowerTSO         uint64
+}
+
+// Restore implements Node interface.
+func (n *RefreshMaterializedViewImplementStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("IMPLEMENT FOR ")
+	if n.RefreshStmt == nil {
+		return errors.New("RefreshMaterializedViewImplementStmt: missing RefreshStmt")
+	}
+	if err := n.RefreshStmt.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore RefreshMaterializedViewImplementStmt.RefreshStmt")
+	}
+	ctx.WriteKeyWord(" USING TIMESTAMP ")
+	ctx.WritePlain(strconv.FormatUint(n.LastSuccessfulRefreshReadTSO, 10))
+	if n.TargetRefreshReadTSO > 0 {
+		ctx.WriteKeyWord(" UP TO TIMESTAMP ")
+		ctx.WritePlain(strconv.FormatUint(n.TargetRefreshReadTSO, 10))
+	}
+	if n.MLogRetainedLowerTSO > 0 {
+		ctx.WriteKeyWord(" MLOG RETAINED LOWER TIMESTAMP ")
+		ctx.WritePlain(strconv.FormatUint(n.MLogRetainedLowerTSO, 10))
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *RefreshMaterializedViewImplementStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RefreshMaterializedViewImplementStmt)
+	if n.RefreshStmt != nil {
+		node, ok := n.RefreshStmt.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.RefreshStmt = node.(*RefreshMaterializedViewStmt)
+	}
+	return v.Leave(n)
+}
+
+// RefreshMaterializedViewType identifies the refresh strategy.
+type RefreshMaterializedViewType int
+
+const (
+	// RefreshMaterializedViewTypeFast uses materialized-view logs to apply changes.
+	RefreshMaterializedViewTypeFast RefreshMaterializedViewType = iota
+	// RefreshMaterializedViewTypeComplete rebuilds the materialized view.
+	RefreshMaterializedViewTypeComplete
+)
+
+func (t RefreshMaterializedViewType) String() string {
+	switch t {
+	case RefreshMaterializedViewTypeFast:
+		return "FAST"
+	case RefreshMaterializedViewTypeComplete:
+		return "COMPLETE"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// RefreshMaterializedViewCompleteType identifies a complete refresh implementation.
+type RefreshMaterializedViewCompleteType int
+
+const (
+	_ RefreshMaterializedViewCompleteType = iota
+	RefreshMaterializedViewCompleteTypeInPlace
+	RefreshMaterializedViewCompleteTypeOutOfPlace
+	RefreshMaterializedViewCompleteTypeDeltaApply
+)
+
+func (t RefreshMaterializedViewCompleteType) String() string {
+	switch t {
+	case RefreshMaterializedViewCompleteTypeInPlace:
+		return "IN PLACE"
+	case RefreshMaterializedViewCompleteTypeOutOfPlace:
+		return "OUT OF PLACE"
+	case RefreshMaterializedViewCompleteTypeDeltaApply:
+		return "DELTA APPLY"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// RefreshMaterializedViewMode is the concrete refresh execution mode.
+type RefreshMaterializedViewMode int
+
+const (
+	RefreshMaterializedViewModeFast RefreshMaterializedViewMode = iota
+	RefreshMaterializedViewModeCompleteInPlace
+	RefreshMaterializedViewModeCompleteOutOfPlace
+	RefreshMaterializedViewModeCompleteDeltaApply
+)
+
+func (m RefreshMaterializedViewMode) String() string {
+	switch m {
+	case RefreshMaterializedViewModeFast:
+		return "FAST"
+	case RefreshMaterializedViewModeCompleteInPlace:
+		return "COMPLETE IN PLACE"
+	case RefreshMaterializedViewModeCompleteOutOfPlace:
+		return "COMPLETE OUT OF PLACE"
+	case RefreshMaterializedViewModeCompleteDeltaApply:
+		return "COMPLETE DELTA APPLY"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// Mode derives the concrete refresh execution mode.
+func (n *RefreshMaterializedViewStmt) Mode() (RefreshMaterializedViewMode, error) {
+	if n == nil {
+		return 0, errors.New("RefreshMaterializedViewStmt: nil statement")
+	}
+	switch n.Type {
+	case RefreshMaterializedViewTypeFast:
+		return RefreshMaterializedViewModeFast, nil
+	case RefreshMaterializedViewTypeComplete:
+		switch n.CompleteType {
+		case RefreshMaterializedViewCompleteTypeInPlace:
+			return RefreshMaterializedViewModeCompleteInPlace, nil
+		case RefreshMaterializedViewCompleteTypeOutOfPlace:
+			return RefreshMaterializedViewModeCompleteOutOfPlace, nil
+		case RefreshMaterializedViewCompleteTypeDeltaApply:
+			return RefreshMaterializedViewModeCompleteDeltaApply, nil
+		default:
+			return 0, errors.New("RefreshMaterializedViewStmt: COMPLETE refresh mode must be specified explicitly")
+		}
+	default:
+		return 0, errors.New("RefreshMaterializedViewStmt: unknown REFRESH MATERIALIZED VIEW type")
+	}
+}
+
+// RefreshMaterializedViewObserveType identifies an optional statement output mode.
+type RefreshMaterializedViewObserveType int
+
+const (
+	RefreshMaterializedViewObserveNone RefreshMaterializedViewObserveType = iota
+	RefreshMaterializedViewObserveDryRun
+	RefreshMaterializedViewObserveProfile
+)
+
+// Restore implements Node interface.
+func (n *RefreshMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("REFRESH MATERIALIZED VIEW ")
+	if err := n.ViewName.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore RefreshMaterializedViewStmt.ViewName")
+	}
+	if n.WithAsyncMode {
+		ctx.WriteKeyWord(" WITH ASYNC MODE")
+	}
+	ctx.WritePlain(" ")
+	ctx.WriteKeyWord(n.Type.String())
+	if n.Type == RefreshMaterializedViewTypeComplete {
+		switch n.CompleteType {
+		case RefreshMaterializedViewCompleteTypeInPlace:
+			ctx.WriteKeyWord(" IN PLACE")
+		case RefreshMaterializedViewCompleteTypeOutOfPlace:
+			ctx.WriteKeyWord(" OUT OF PLACE")
+		case RefreshMaterializedViewCompleteTypeDeltaApply:
+			ctx.WriteKeyWord(" DELTA APPLY")
+		default:
+			return errors.New("RefreshMaterializedViewStmt: COMPLETE refresh mode must be specified explicitly")
+		}
+	}
+	if n.AsOf != nil {
+		ctx.WritePlain(" ")
+		if err := n.AsOf.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore RefreshMaterializedViewStmt.AsOf")
+		}
+	}
+	switch n.ObserveType {
+	case RefreshMaterializedViewObserveDryRun:
+		ctx.WriteKeyWord(" DRY RUN")
+	case RefreshMaterializedViewObserveProfile:
+		ctx.WriteKeyWord(" WITH PROFILE")
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *RefreshMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RefreshMaterializedViewStmt)
+	if n.ViewName != nil {
+		node, ok := n.ViewName.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ViewName = node.(*TableName)
+	}
+	if n.AsOf != nil {
+		node, ok := n.AsOf.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.AsOf = node.(*AsOfClause)
+	}
+	return v.Leave(n)
+}
+
 // PrepareStmt is a statement to prepares a SQL statement which contains placeholders,
 // and it is executed with ExecuteStmt and released with DeallocateStmt.
 // See https://dev.mysql.com/doc/refman/5.7/en/prepare.html
@@ -1011,7 +1316,11 @@ func (n *VariableAssignment) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(n.Name)
 		ctx.WritePlain("=")
 	}
-	if n.Name == TiDBCloudStorageURI {
+	if n.IsSystem && isEmbeddingAPIKeySysVar(n.Name) {
+		// API keys must not be exposed through statement restoration used by
+		// processlist, statement logging, and audit paths.
+		ctx.WriteString("******")
+	} else if n.Name == TiDBCloudStorageURI {
 		// need to redact the url for safety when `show processlist;`
 		ctx.WritePlain(RedactURL(n.Value.(ValueExpr).GetString()))
 	} else if err := n.Value.Restore(ctx); err != nil {
@@ -1024,6 +1333,20 @@ func (n *VariableAssignment) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 	return nil
+}
+
+func isEmbeddingAPIKeySysVar(name string) bool {
+	_, ok := embeddingAPIKeySysVars[strings.ToLower(name)]
+	return ok
+}
+
+var embeddingAPIKeySysVars = map[string]struct{}{
+	"tidb_exp_embed_jina_ai_api_key":     {},
+	"tidb_exp_embed_openai_api_key":      {},
+	"tidb_exp_embed_cohere_api_key":      {},
+	"tidb_exp_embed_huggingface_api_key": {},
+	"tidb_exp_embed_nvidia_nim_api_key":  {},
+	"tidb_exp_embed_gemini_api_key":      {},
 }
 
 // Accept implements Node interface.
@@ -1079,7 +1402,8 @@ type FlushStmt struct {
 	Tables          []*TableName // For FlushTableStmt, if Tables is empty, it means flush all tables.
 	ReadLock        bool
 	Plugins         []string
-	IsCluster       bool // For FlushStatsDelta, whether to flush cluster-wide stats delta
+	IsCluster       bool           // For FlushStatsDelta, whether to flush cluster-wide stats delta
+	FlushObjects    []*StatsObject // For FlushStatsDelta, scoped objects (db.tbl, db.*, *.*). Always non-empty.
 }
 
 // Restore implements Node interface.
@@ -1141,6 +1465,16 @@ func (n *FlushStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("CLIENT_ERRORS_SUMMARY")
 	case FlushStatsDelta:
 		ctx.WriteKeyWord("STATS_DELTA")
+		for i, obj := range n.FlushObjects {
+			if i == 0 {
+				ctx.WritePlain(" ")
+			} else {
+				ctx.WritePlain(", ")
+			}
+			if err := obj.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore FlushStmt.FlushObjects[%d]", i)
+			}
+		}
 		if n.IsCluster {
 			ctx.WritePlain(" ")
 			ctx.WriteKeyWord("CLUSTER")
@@ -1308,7 +1642,7 @@ func (n *SetStmt) Accept(v Visitor) (Node, bool) {
 }
 
 // SecureText implements SensitiveStatement interface.
-// need to redact the tidb_cloud_storage_url for safety when `show processlist;`
+// Sensitive variable values are redacted by VariableAssignment.Restore.
 func (n *SetStmt) SecureText() string {
 	redactedStmt := *n
 	var sb strings.Builder
@@ -1401,8 +1735,9 @@ func (n *SetCharsetStmt) Accept(v Visitor) (Node, bool) {
 type SetPwdStmt struct {
 	stmtNode
 
-	User     *auth.UserIdentity
-	Password string
+	User                  *auth.UserIdentity
+	Password              string
+	RetainCurrentPassword bool
 }
 
 // Restore implements Node interface.
@@ -1416,12 +1751,24 @@ func (n *SetPwdStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WritePlain("=")
 	ctx.WriteString(n.Password)
+	if n.RetainCurrentPassword {
+		ctx.WriteKeyWord(" RETAIN CURRENT PASSWORD")
+	}
 	return nil
 }
 
 // SecureText implements SensitiveStatement interface.
 func (n *SetPwdStmt) SecureText() string {
-	return fmt.Sprintf("set password for user %s", n.User)
+	// n.User can be nil for the current-user form (`SET PASSWORD = '...'`),
+	// matching Restore's handling. Avoid leaking `<nil>` into redacted SQL.
+	base := "set password"
+	if n.User != nil {
+		base = fmt.Sprintf("set password for user %s", n.User)
+	}
+	if n.RetainCurrentPassword {
+		return base + " RETAIN CURRENT PASSWORD"
+	}
+	return base
 }
 
 // Accept implements Node Accept interface.
@@ -1541,9 +1888,10 @@ func (n *SetDefaultRoleStmt) Accept(v Visitor) (Node, bool) {
 
 // UserSpec is used for parsing create user statement.
 type UserSpec struct {
-	User    *auth.UserIdentity
-	AuthOpt *AuthOption
-	IsRole  bool
+	User               *auth.UserIdentity
+	AuthOpt            *AuthOption
+	DualPasswordOption DualPasswordOptionType
+	IsRole             bool
 }
 
 // Restore implements Node interface.
@@ -1557,10 +1905,19 @@ func (n *UserSpec) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotate(err, "An error occurred while restore UserSpec.AuthOpt")
 		}
 	}
+	if n.DualPasswordOption != 0 {
+		ctx.WritePlain(" ")
+		if err := n.DualPasswordOption.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore UserSpec.DualPasswordOption")
+		}
+	}
 	return nil
 }
 
-// SecurityString formats the UserSpec without password information.
+// SecurityString formats the UserSpec without password information. The
+// dual-password clause (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD) is
+// non-secret and is surfaced verbatim so the redacted output preserves the
+// fact that the statement targets the secondary-password slot.
 func (n *UserSpec) SecurityString() string {
 	withPassword := false
 	if opt := n.AuthOpt; opt != nil {
@@ -1568,8 +1925,18 @@ func (n *UserSpec) SecurityString() string {
 			withPassword = true
 		}
 	}
+	dualClause := ""
+	switch n.DualPasswordOption {
+	case DualPasswordRetainCurrent:
+		dualClause = " RETAIN CURRENT PASSWORD"
+	case DualPasswordDiscardOld:
+		dualClause = " DISCARD OLD PASSWORD"
+	}
 	if withPassword {
-		return fmt.Sprintf("{%s password = ***}", n.User)
+		return fmt.Sprintf("{%s password = ***%s}", n.User, dualClause)
+	}
+	if dualClause != "" {
+		return fmt.Sprintf("{%s%s}", n.User, dualClause)
 	}
 	return n.User.String()
 }
@@ -1693,6 +2060,36 @@ const (
 
 	UserResourceGroupName
 )
+
+// DualPasswordOptionType identifies the per-UserSpec MySQL 8.0 dual-password
+// clause (RETAIN CURRENT PASSWORD or DISCARD OLD PASSWORD). The grammar
+// attaches it to the UserSpec rather than to AlterUserStmt because MySQL
+// allows different dual-password actions per spec inside a multi-user ALTER
+// USER statement. Dedicated to dual-password semantics so the AST does not
+// conflate it with PasswordOrLockOption (account lock, expiration,
+// failed-login policy, etc.) which has different per-statement scoping rules.
+// The zero value means "no dual-password clause".
+type DualPasswordOptionType int
+
+const (
+	// DualPasswordRetainCurrent corresponds to RETAIN CURRENT PASSWORD.
+	DualPasswordRetainCurrent DualPasswordOptionType = iota + 1
+	// DualPasswordDiscardOld corresponds to DISCARD OLD PASSWORD.
+	DualPasswordDiscardOld
+)
+
+// Restore implements Node interface.
+func (t DualPasswordOptionType) Restore(ctx *format.RestoreCtx) error {
+	switch t {
+	case DualPasswordRetainCurrent:
+		ctx.WriteKeyWord("RETAIN CURRENT PASSWORD")
+	case DualPasswordDiscardOld:
+		ctx.WriteKeyWord("DISCARD OLD PASSWORD")
+	default:
+		return errors.Errorf("Unsupported DualPasswordOptionType %d", t)
+	}
+	return nil
+}
 
 type PasswordOrLockOption struct {
 	Type  int
@@ -1872,14 +2269,20 @@ func (n *CreateUserStmt) SecureText() string {
 type AlterUserStmt struct {
 	stmtNode
 
-	IfExists                 bool
-	CurrentAuth              *AuthOption
-	Specs                    []*UserSpec
-	AuthTokenOrTLSOptions    []*AuthTokenOrTLSOption
-	ResourceOptions          []*ResourceOption
-	PasswordOrLockOptions    []*PasswordOrLockOption
-	CommentOrAttributeOption *CommentOrAttributeOption
-	ResourceGroupNameOption  *ResourceGroupNameOption
+	IfExists    bool
+	CurrentAuth *AuthOption
+	// CurrentDualPasswordOption carries the dual-password clause attached to the
+	// `ALTER USER USER() ...` (current-user) form. The named-user form stores
+	// its dual-password clause on the per-UserSpec DualPasswordOption instead.
+	// The executor must propagate this into the synthetic UserSpec it builds
+	// from CurrentAuth so downstream code paths only need to inspect Specs.
+	CurrentDualPasswordOption DualPasswordOptionType
+	Specs                     []*UserSpec
+	AuthTokenOrTLSOptions     []*AuthTokenOrTLSOption
+	ResourceOptions           []*ResourceOption
+	PasswordOrLockOptions     []*PasswordOrLockOption
+	CommentOrAttributeOption  *CommentOrAttributeOption
+	ResourceGroupNameOption   *ResourceGroupNameOption
 }
 
 // Restore implements Node interface.
@@ -1893,6 +2296,19 @@ func (n *AlterUserStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain("() ")
 		if err := n.CurrentAuth.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore AlterUserStmt.CurrentAuth")
+		}
+		if n.CurrentDualPasswordOption != 0 {
+			ctx.WritePlain(" ")
+			if err := n.CurrentDualPasswordOption.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore AlterUserStmt.CurrentDualPasswordOption")
+			}
+		}
+	} else if n.CurrentDualPasswordOption != 0 {
+		// Standalone DISCARD OLD PASSWORD on the current-user form (no IDENTIFIED BY).
+		ctx.WriteKeyWord("USER")
+		ctx.WritePlain("() ")
+		if err := n.CurrentDualPasswordOption.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AlterUserStmt.CurrentDualPasswordOption")
 		}
 	}
 	for i, v := range n.Specs {
@@ -2111,6 +2527,20 @@ type RecommendIndexOption struct {
 	Value  ValueExpr
 }
 
+// RecommendIndex actions.
+const (
+	RecommendIndexActionRun    = "run"
+	RecommendIndexActionReturn = "return"
+	RecommendIndexActionSet    = "set"
+	RecommendIndexActionShow   = "show"
+	RecommendIndexActionApply  = "apply"
+	RecommendIndexActionIgnore = "ignore"
+)
+
+// RecommendIndexStmtLabel is the statement label used while analyzing a
+// RECOMMEND INDEX workload.
+const RecommendIndexStmtLabel = "RecommendIndex"
+
 // RecommendIndexStmt is a statement to recommend index.
 type RecommendIndexStmt struct {
 	stmtNode
@@ -2124,9 +2554,13 @@ type RecommendIndexStmt struct {
 func (n *RecommendIndexStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("RECOMMEND INDEX")
 	switch n.Action {
-	case "run":
-		ctx.WriteKeyWord(" RUN")
-		if n.SQL != "" {
+	case RecommendIndexActionRun, RecommendIndexActionReturn:
+		if n.Action == RecommendIndexActionReturn {
+			ctx.WriteKeyWord(" RETURN RESULT")
+		} else {
+			ctx.WriteKeyWord(" RUN")
+		}
+		if n.SQL != "" || n.Action == RecommendIndexActionReturn {
 			ctx.WriteKeyWord(" FOR ")
 			ctx.WriteString(n.SQL)
 		}
@@ -2143,15 +2577,15 @@ func (n *RecommendIndexStmt) Restore(ctx *format.RestoreCtx) error {
 				}
 			}
 		}
-	case "show":
+	case RecommendIndexActionShow:
 		ctx.WriteKeyWord(" SHOW OPTION")
-	case "apply":
+	case RecommendIndexActionApply:
 		ctx.WriteKeyWord(" APPLY ")
 		ctx.WriteKeyWord(fmt.Sprintf("%d", n.ID))
-	case "ignore":
+	case RecommendIndexActionIgnore:
 		ctx.WriteKeyWord(" IGNORE ")
 		ctx.WriteKeyWord(fmt.Sprintf("%d", n.ID))
-	case "set":
+	case RecommendIndexActionSet:
 		ctx.WriteKeyWord(" SET ")
 		for i, opt := range n.Options {
 			if i != 0 {
@@ -3817,14 +4251,26 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// RedactURL redacts the secret tokens in the URL. only S3 url need redaction for now.
-// if the url is not a valid url, return the original string.
+// RedactedValue replaces a secret in redacted output.
+const RedactedValue = "xxxxxx"
+
+// InvalidURLPlaceholder replaces a value that cannot be parsed as a URL in
+// redacted output, because such a value cannot be reliably masked. The value
+// is not necessarily a storage URL; it may also be an endpoint or a local path.
+const InvalidURLPlaceholder = "(invalid URL)"
+
+// RedactURL removes userinfo, and in supported storage URLs redacts sensitive query parameters and removes fragments.
+// Plain local paths are unchanged; an invalid URL is replaced by InvalidURLPlaceholder.
 func RedactURL(str string) string {
 	// FIXME: this solution is not scalable, and duplicates some logic from BR.
-	u, err := url.Parse(str)
-	if err != nil {
+	if !strings.Contains(str, "://") && !strings.Contains(str, "?") {
 		return str
 	}
+	u, err := url.Parse(str)
+	if err != nil {
+		return InvalidURLPlaceholder
+	}
+	u.User = nil
 	scheme := u.Scheme
 	failpoint.Inject("forceRedactURL", func() {
 		scheme = "s3"
@@ -3837,21 +4283,43 @@ func RedactURL(str string) string {
 			"access-key":        {},
 			"secret-access-key": {},
 			"session-token":     {},
+			"sse-kms-context":   {},
 		}
 	case "azure", "azblob":
 		redactKeys = map[string]struct{}{
-			"sas-token": {},
+			"account-key":    {},
+			"encryption-key": {},
+			"sas-token":      {},
+			// Azure endpoints can contain SAS tokens used directly by the storage
+			// client, so masking only the separate sas-token parameter is insufficient.
+			"endpoint": {},
 		}
 	}
 
 	if len(redactKeys) > 0 {
-		values := u.Query()
-		for k := range values {
+		// An unescaped '#' in a secret query value starts a fragment.
+		u.Fragment = ""
+		u.RawFragment = ""
+		// URL.Query skips undecodable pairs, which may hide a split context.
+		values, err := url.ParseQuery(u.RawQuery)
+		if err != nil {
+			u.RawQuery = ""
+			return u.String()
+		}
+		for k, vs := range values {
 			// see below on why we normalize key
 			// https://github.com/pingcap/tidb/blob/a7c0d95f16ea2582bb569278c3f829403e6c3a7e/br/pkg/storage/parse.go#L163
 			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
 			if _, ok := redactKeys[normalizedKey]; ok {
-				values[k] = []string{"xxxxxx"}
+				// An unescaped '&' in a raw JSON context splits it, and the rest
+				// becomes a parameter that cannot be identified as secret.
+				if normalizedKey == "sse-kms-context" && slices.ContainsFunc(vs, func(v string) bool {
+					return !json.Valid([]byte(v))
+				}) {
+					u.RawQuery = ""
+					return u.String()
+				}
+				values[k] = []string{RedactedValue}
 			}
 		}
 		// In go1.25.5, url.Values.Encode() will sort the keys.
@@ -4109,7 +4577,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	}
 	// Hints without args except query block.
 	switch n.HintName.L {
-	case "mpp_1phase_agg", "mpp_2phase_agg", "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "ignore_plan_cache", "limit_to_cop", "straight_join", "merge", "no_decorrelate":
+	case "mpp_1phase_agg", "mpp_2phase_agg", "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "ignore_plan_cache", "use_plan_cache", "limit_to_cop", "straight_join", "merge", "no_decorrelate":
 		ctx.WritePlain(")")
 		return nil
 	}
@@ -4159,6 +4627,12 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 				ctx.WritePlain(", ")
 			}
 			ctx.WriteName(index.String())
+		}
+	case "tiflash_lm_filter":
+		n.Tables[0].Restore(ctx)
+		for _, column := range n.Indexes {
+			ctx.WritePlain(", ")
+			ctx.WriteName(column.String())
 		}
 	case "qb_name":
 		if len(n.Tables) > 0 {
@@ -4581,6 +5055,66 @@ func (n *QueryWatchTextOption) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.PatternExpr = node.(ExprNode)
+	}
+	return v.Leave(n)
+}
+
+// CompareMaterializedViewStmt is a statement to compare a materialized view with its source query snapshot.
+type CompareMaterializedViewStmt struct {
+	stmtNode
+	ViewName    *TableName
+	AsOf        *AsOfClause
+	OutputTable *TableName
+}
+
+// Restore implements Node interface.
+func (n *CompareMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("COMPARE MATERIALIZED VIEW ")
+	if err := n.ViewName.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CompareMaterializedViewStmt.ViewName")
+	}
+	if n.AsOf != nil {
+		ctx.WritePlain(" ")
+		if err := n.AsOf.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CompareMaterializedViewStmt.AsOf")
+		}
+	}
+	if n.OutputTable != nil {
+		ctx.WriteKeyWord(" OUTPUT INTO TABLE ")
+		if err := n.OutputTable.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CompareMaterializedViewStmt.OutputTable")
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CompareMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CompareMaterializedViewStmt)
+	if n.ViewName != nil {
+		node, ok := n.ViewName.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ViewName = node.(*TableName)
+	}
+	if n.AsOf != nil {
+		node, ok := n.AsOf.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.AsOf = node.(*AsOfClause)
+	}
+	if n.OutputTable != nil {
+		node, ok := n.OutputTable.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.OutputTable = node.(*TableName)
 	}
 	return v.Leave(n)
 }

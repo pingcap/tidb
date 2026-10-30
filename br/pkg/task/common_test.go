@@ -5,16 +5,25 @@ package task
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	kvconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/gc"
+	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/operation"
+	"github.com/pingcap/tidb/br/pkg/repo"
+	"github.com/pingcap/tidb/br/pkg/restore/nameroute"
+	restoresplit "github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
@@ -31,6 +40,14 @@ func (f fakeValue) Set(string) error {
 
 func (f fakeValue) Type() string {
 	panic("implement me")
+}
+
+type fakeRestoreFileClient struct {
+	dbs []*metautil.Database
+}
+
+func (c fakeRestoreFileClient) GetDatabases() []*metautil.Database {
+	return c.dbs
 }
 
 func TestUrlNoQuery(t *testing.T) {
@@ -53,10 +70,34 @@ func TestUrlNoQuery(t *testing.T) {
 			expectedValue: "s3://some/what",
 		},
 		{
+			inputName:     flagStorage,
+			expectedName:  "storage",
+			inputValue:    `s3://bucket/prefix?sse-kms-context={"tenant":"#context-value"}`,
+			expectedValue: "s3://bucket/prefix",
+		},
+		{
 			inputName:     FlagStreamFullBackupStorage,
 			expectedName:  "full-backup-storage",
 			inputValue:    "s3://bucket/prefix/?access-key=1&secret-key=2",
 			expectedValue: "s3://bucket/prefix/",
+		},
+		{
+			inputName:     FlagPiTRAddIndexSQLStorage,
+			expectedName:  "pitr-add-index-sql-storage",
+			inputValue:    "s3://bucket/pitr/add-index?access-key=1&secret-key=2",
+			expectedValue: "s3://bucket/pitr/add-index",
+		},
+		{
+			inputName:     "upstream-storage",
+			expectedName:  "upstream-storage",
+			inputValue:    "s3://bucket/prefix?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D",
+			expectedValue: "s3://bucket/prefix",
+		},
+		{
+			inputName:     "downstream-storage",
+			expectedName:  "downstream-storage",
+			inputValue:    "s3://bucket/prefix?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D",
+			expectedValue: "s3://bucket/prefix",
 		},
 		{
 			inputName:     flagFullBackupCipherKey,
@@ -74,6 +115,12 @@ func TestUrlNoQuery(t *testing.T) {
 			inputName:     "azblob.encryption-key",
 			expectedName:  "azblob.encryption-key",
 			inputValue:    "SUPERSECRET_AZURE_ENCRYPTION_KEY",
+			expectedValue: "<redacted>",
+		},
+		{
+			inputName:     "s3.sse-kms-context",
+			expectedName:  "s3.sse-kms-context",
+			inputValue:    `{"tenant":"context-value"}`,
 			expectedValue: "<redacted>",
 		},
 		{
@@ -99,12 +146,139 @@ func TestUrlNoQuery(t *testing.T) {
 	}
 }
 
+func TestParseStreamRestoreFlagsPiTRAddIndexSQLStorage(t *testing.T) {
+	command := &cobra.Command{}
+	DefineStreamRestoreFlags(command)
+	require.NoError(t, command.Flags().Set(FlagPiTRAddIndexSQLStorage, "local:///tmp/pitr-add-index"))
+
+	cfg := RestoreConfig{}
+	require.NoError(t, cfg.ParseStreamRestoreFlags(command.Flags()))
+	require.Equal(t, "local:///tmp/pitr-add-index", cfg.PiTRAddIndexSQLStorage)
+}
+
+func TestFilterRestoreFilesSkipsMaterializedObjects(t *testing.T) {
+	dbInfo := &model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}
+	baseTable := &metautil.Table{
+		DB: dbInfo,
+		Info: &model.TableInfo{
+			ID:   11,
+			Name: ast.NewCIStr("base_table"),
+			MaterializedViewBase: &model.MaterializedViewBaseInfo{
+				MLogID:   12,
+				MViewIDs: []int64{13},
+			},
+		},
+		FilesOfPhysicals: map[int64][]*backup.File{
+			11: {{Name: "base_table_write.sst"}},
+		},
+	}
+	database := &metautil.Database{
+		Info: dbInfo,
+		Tables: []*metautil.Table{
+			baseTable,
+			{
+				DB:   dbInfo,
+				Info: &model.TableInfo{ID: 12, Name: ast.NewCIStr("$mlog$base_table"), MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: 11}},
+				FilesOfPhysicals: map[int64][]*backup.File{
+					12: {{Name: "mlog_write.sst"}},
+				},
+			},
+			{
+				DB:   dbInfo,
+				Info: &model.TableInfo{ID: 13, Name: ast.NewCIStr("mv_table"), MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{11}}},
+				FilesOfPhysicals: map[int64][]*backup.File{
+					13: {{Name: "mv_write.sst"}},
+				},
+			},
+			{
+				DB:   dbInfo,
+				Info: &model.TableInfo{ID: 14, Name: ast.NewCIStr("_mv_shadow"), MaterializedViewShadow: &model.MaterializedViewShadowInfo{SourceMViewID: 13}},
+				FilesOfPhysicals: map[int64][]*backup.File{
+					14: {{Name: "shadow_write.sst"}},
+				},
+			},
+		},
+	}
+	cfg := &RestoreConfig{
+		Config: Config{
+			TableFilter: filter.CaseInsensitive(must(filter.Parse([]string{"*.*"}))),
+		},
+	}
+
+	tableMap, dbMap, err := filterRestoreFiles(fakeRestoreFileClient{dbs: []*metautil.Database{database}}, cfg, false)
+
+	require.NoError(t, err)
+	require.Len(t, dbMap, 1)
+	require.Same(t, database, dbMap[1])
+	require.Len(t, tableMap, 1)
+	require.Same(t, baseTable, tableMap[11])
+	require.NotContains(t, tableMap, int64(12))
+	require.NotContains(t, tableMap, int64(13))
+	require.NotContains(t, tableMap, int64(14))
+	require.Nil(t, baseTable.Info.MaterializedViewBase)
+	require.Equal(t, map[int64][]*backup.File{
+		11: {{Name: "base_table_write.sst"}},
+	}, tableMap[11].FilesOfPhysicals)
+}
+
 func TestTiDBConfigUnchanged(t *testing.T) {
 	cfg := config.GetGlobalConfig()
 	restoreConfig := tweakLocalConfForRestore()
 	require.NotEqual(t, config.GetGlobalConfig(), cfg)
 	restoreConfig()
 	require.Equal(t, config.GetGlobalConfig(), cfg)
+}
+
+func TestEnsureOperationContext(t *testing.T) {
+	t.Run("creates command boundary identity", func(t *testing.T) {
+		var cfg Config
+
+		require.NoError(t, cfg.EnsureOperationContext("log-restore"))
+
+		require.NotEmpty(t, cfg.OperationContext.OperationID)
+		require.False(t, cfg.OperationContext.StartedAt.IsZero())
+	})
+
+	t.Run("keeps existing identity snapshot", func(t *testing.T) {
+		startedAt := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+		cfg := Config{
+			OperationContext: operation.Context{
+				OperationID: "operation-id",
+				StartedAt:   startedAt,
+			},
+		}
+
+		require.NoError(t, cfg.EnsureOperationContext("log-restore"))
+
+		require.Equal(t, "operation-id", cfg.OperationContext.OperationID)
+		require.Equal(t, startedAt, cfg.OperationContext.StartedAt)
+	})
+
+	t.Run("rejects incomplete identity snapshot", func(t *testing.T) {
+		cfg := Config{
+			OperationContext: operation.Context{
+				OperationID: "operation-id",
+			},
+		}
+
+		err := cfg.EnsureOperationContext("log-restore")
+
+		require.Error(t, err)
+		require.ErrorContains(t, err, "operation started time")
+	})
+
+	t.Run("rejects started time without operation ID", func(t *testing.T) {
+		cfg := Config{
+			OperationContext: operation.Context{
+				StartedAt: time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC),
+			},
+		}
+
+		err := cfg.EnsureOperationContext("log-restore")
+
+		require.Error(t, err)
+		require.ErrorContains(t, err, "operation ID")
+	})
 }
 
 func TestStripingPDURL(t *testing.T) {
@@ -298,12 +472,19 @@ func expectedDefaultBackupConfig() BackupConfig {
 		IgnoreStats:      true,
 		UseBackupMetaV2:  true,
 		UseCheckpoint:    true,
+		Layout:           repo.LayoutLegacy,
 		TableConcurrency: 64,
 	}
 }
 
 func expectedDefaultRestoreConfig() RestoreConfig {
 	defaultConfig := expectedDefaultConfig()
+	// ParseFromFlags validates and caches the (empty) name router, and the flag
+	// parser materializes Rename as an empty slice, so mirror both here.
+	emptyRouter, err := nameroute.Parse([]string{})
+	if err != nil {
+		panic(err)
+	}
 	return RestoreConfig{
 		Config: defaultConfig,
 		RestoreCommonConfig: RestoreCommonConfig{
@@ -314,8 +495,10 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 			MergeSmallRegionKeyCount:  kvconfig.ConfigTerm[uint64]{Value: 0xea600},
 			WithSysTable:              true,
 			ResetSysUsers:             []string{"cloud_admin", "root"},
+			SysCheckCollation:         true,
 		},
 		NoSchema:                 false,
+		Rename:                   []string{},
 		LoadStats:                true,
 		FastLoadSysTables:        true,
 		PDConcurrency:            0x1,
@@ -323,9 +506,13 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 		BatchFlushInterval:       16000000000,
 		DdlBatchSize:             0x80,
 		RegionScanConcurrency:    256,
+		SplitRegionIndexStep:     restoresplit.DefaultRegionIndexStep,
 		WithPlacementPolicy:      "STRICT",
+		Layout:                   repo.LayoutLegacy,
 		UseCheckpoint:            true,
 		AllowPITRFromIncremental: true,
+		nameRouter:               emptyRouter,
+		nameRouterRules:          []string{},
 	}
 }
 
@@ -333,6 +520,32 @@ func TestDefault(t *testing.T) {
 	def := DefaultConfig()
 	defaultConfig := expectedDefaultConfig()
 	require.Equal(t, defaultConfig, def)
+
+	t.Run("ParseKeyspaceName", func(t *testing.T) {
+		flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+		DefineCommonFlags(flags)
+		flags.String(FlagKeyspaceName, "", "")
+		require.NoError(t, flags.Set(FlagKeyspaceName, "restore-keyspace"))
+
+		var cfg Config
+		require.NoError(t, cfg.ParseFromFlags(flags))
+		require.Equal(t, "restore-keyspace", cfg.KeyspaceName)
+	})
+
+	t.Run("ParseRawBackupKeyspaceName", func(t *testing.T) {
+		flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+		DefineCommonFlags(flags)
+		DefineBackupFlags(flags)
+		flags.String(flagKeyFormat, "hex", "")
+		flags.String(flagTiKVColumnFamily, "default", "")
+		flags.String(flagStartKey, "", "")
+		flags.String(flagEndKey, "", "")
+		require.NoError(t, flags.Set(flagKeyspaceName, "backup-keyspace"))
+
+		var cfg RawKvConfig
+		require.NoError(t, cfg.ParseBackupConfigFromFlags(flags))
+		require.Equal(t, "backup-keyspace", cfg.KeyspaceName)
+	})
 }
 
 func TestDefaultBackup(t *testing.T) {

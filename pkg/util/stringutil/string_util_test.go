@@ -116,6 +116,9 @@ func TestCompileLike2Regexp(t *testing.T) {
 		{``, `^$`},
 		{`a`, `^a$`},
 		{`aA`, `^aA$`},
+		{`$a$%`, `^\$a\$.*$`},
+		{`a.b%`, `^a\.b.*$`},
+		{`a+b`, `^a\+b$`},
 		{`_`, `^.$`},
 		{`__`, `^..$`},
 		{`%`, `^.*$`},
@@ -124,13 +127,13 @@ func TestCompileLike2Regexp(t *testing.T) {
 		{`a%`, `^a.*$`},
 		{`\%a`, `^%a$`},
 		{`\_a`, `^_a$`},
-		{`\\_a`, `^\.a$`},
+		{`\\_a`, `^\\.a$`},
 		{`\a\b`, `^ab$`},
 		{`%%_`, `^..*$`},
 		{`%_%_aA`, "^...*aA$"},
 	}
 	for _, v := range tbl {
-		result := CompileLike2Regexp(v.pattern)
+		result := CompileLike2Regexp(v.pattern, '\\')
 		require.Equalf(t, v.regexp, result, "source %v", v)
 	}
 }

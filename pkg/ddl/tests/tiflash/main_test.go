@@ -25,10 +25,15 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
+	intest.InTest = true
+	intest.EnableAssert = true
+	intest.EnableInternalCheck = true
+
 	testsetup.SetupForCommonTest()
 
 	config.UpdateGlobal(func(conf *config.Config) {

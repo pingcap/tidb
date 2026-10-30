@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	clientutil "github.com/tikv/client-go/v2/util"
 )
 
 // ResultSet is the result set of an query.
@@ -54,15 +56,70 @@ func New(recordSet sqlexec.RecordSet, preparedStmt *core.PlanCacheStmt) ResultSe
 type tidbResultSet struct {
 	recordSet    sqlexec.RecordSet
 	preparedStmt *core.PlanCacheStmt
+	cursorRUV2   *CursorRUV2Tracker
 	columns      []*column.Info
-	closed       int32
-	// finishLock is a mutex used to synchronize access to the `Next`,`Finish` and `Close` functions of the adapter.
-	// It ensures that only one goroutine can access the `Next`,`Finish` and `Close` functions at a time, preventing race conditions.
+	// finishLock is a mutex used to synchronize access to the `NewChunk`, `Next`, `Finish` and `Close` functions of the adapter.
+	// It ensures that only one goroutine can access the result set lifecycle at a time, preventing race conditions.
 	// When we terminate the current SQL externally (e.g., kill query), an additional goroutine would be used to call the `Finish` function.
 	finishLock sync.Mutex
+	closed     int32
+}
+
+// CursorRUV2Tracker synchronizes cursor response bytes used by RU v3.
+type CursorRUV2Tracker struct {
+	metrics   *execdetails.RUV2Metrics
+	ruDetails *clientutil.RUDetails
+	mu        sync.Mutex
+}
+
+// NewCursorRUV2Tracker creates a tracker for cursor response bytes.
+func NewCursorRUV2Tracker(
+	metrics *execdetails.RUV2Metrics,
+	ruDetails *clientutil.RUDetails,
+) *CursorRUV2Tracker {
+	if metrics == nil || ruDetails == nil || metrics.Bypass() {
+		return nil
+	}
+	tracker := &CursorRUV2Tracker{
+		metrics:   metrics,
+		ruDetails: ruDetails,
+	}
+	execdetails.SyncRUV2MetricsFromRUDetails(tracker.metrics, tracker.ruDetails)
+	return tracker
+}
+
+func (t *CursorRUV2Tracker) reportDelta() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	execdetails.SyncRUV2MetricsFromRUDetails(t.metrics, t.ruDetails)
+}
+
+type cursorRUV2Trackable interface {
+	setCursorRUV2Tracker(*CursorRUV2Tracker)
+	reportCursorRUV2Delta()
+}
+
+// AttachCursorRUV2Tracker binds a cursor tracker to the result set if supported.
+func AttachCursorRUV2Tracker(rs ResultSet, tracker *CursorRUV2Tracker) {
+	if trackable, ok := rs.(cursorRUV2Trackable); ok {
+		trackable.setCursorRUV2Tracker(tracker)
+	}
+}
+
+// ReportCursorRUV2Delta synchronizes pending cursor response bytes for RU v3 if supported.
+func ReportCursorRUV2Delta(rs ResultSet) {
+	if trackable, ok := rs.(cursorRUV2Trackable); ok {
+		trackable.reportCursorRUV2Delta()
+	}
 }
 
 func (trs *tidbResultSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
+	trs.finishLock.Lock()
+	defer trs.finishLock.Unlock()
 	return trs.recordSet.NewChunk(alloc)
 }
 
@@ -101,6 +158,16 @@ func (trs *tidbResultSet) IsClosed() bool {
 func (trs *tidbResultSet) OnFetchReturned() {
 	if cl, ok := trs.recordSet.(FetchNotifier); ok {
 		cl.OnFetchReturned()
+	}
+}
+
+func (trs *tidbResultSet) setCursorRUV2Tracker(tracker *CursorRUV2Tracker) {
+	trs.cursorRUV2 = tracker
+}
+
+func (trs *tidbResultSet) reportCursorRUV2Delta() {
+	if trs.cursorRUV2 != nil {
+		trs.cursorRUV2.reportDelta()
 	}
 }
 

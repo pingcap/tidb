@@ -99,6 +99,10 @@ func (p *Pool) acquire() []byte {
 	if p.limiter != nil {
 		p.limiter.Acquire(p.blockSize)
 	}
+	return p.takeBlock()
+}
+
+func (p *Pool) takeBlock() []byte {
 	select {
 	case b := <-p.blockCache:
 		return b
@@ -259,6 +263,17 @@ func (b *Buffer) AllocBytes(n int) []byte {
 	return bs
 }
 
+// TryAllocBytes is like AllocBytes, but returns ErrCannotAcquireMemory instead
+// of blocking when the pool memory limiter has no immediately available quota.
+// If it returns an error, the buffer state is unchanged.
+func (b *Buffer) TryAllocBytes(n int) ([]byte, error) {
+	if n > b.pool.blockSize {
+		return make([]byte, n), nil
+	}
+
+	return b.tryAllocBytes(n)
+}
+
 // SliceLocation is like a reflect.SliceHeader, but it's associated with a
 // Buffer. The advantage is that it's smaller than a slice, and it doesn't
 // contain a pointer thus more GC-friendly.
@@ -290,6 +305,43 @@ func (b *Buffer) allocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 	return b.curBlock[idx:b.curIdx:b.curIdx], loc
 }
 
+func (b *Buffer) tryAllocBytes(n int) ([]byte, error) {
+	needBlock := b.curIdx+n > len(b.curBlock)
+	if needBlock {
+		if b.blockCntLimit >= 0 && b.curBlockIdx+1 >= b.blockCntLimit {
+			return nil, nil
+		}
+	}
+
+	if b.pool.limiter != nil {
+		needBytes := 0
+		if needBlock && b.curBlockIdx >= len(b.blocks)-1 {
+			needBytes += b.pool.blockSize
+		}
+		if sizeOfSlice > b.smallObjOverheadCache {
+			needBytes += smallObjOverheadBatch
+		}
+		if needBytes > 0 && !b.pool.limiter.TryAcquire(needBytes) {
+			return nil, ErrCannotAcquireMemory
+		}
+
+		if needBlock {
+			b.addBlockWithReservedLimiterQuota()
+		}
+		if sizeOfSlice > b.smallObjOverheadCache {
+			b.smallObjOverheadCache += smallObjOverheadBatch
+			b.smallObjOverhead += smallObjOverheadBatch
+		}
+		b.smallObjOverheadCache -= sizeOfSlice
+	} else if needBlock {
+		b.addBlock()
+	}
+
+	idx := b.curIdx
+	b.curIdx += n
+	return b.curBlock[idx:b.curIdx:b.curIdx], nil
+}
+
 // AllocBytesWithSliceLocation is like AllocBytes, but it must allocate the
 // buffer in the pool rather from go's runtime. The expected usage is after
 // writing data into returned slice **we do not store the slice**, but only the
@@ -305,16 +357,33 @@ func (b *Buffer) AllocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 }
 
 func (b *Buffer) addBlock() {
+	if b.switchToNextBlock() {
+		return
+	}
+	b.appendBlock(b.pool.acquire())
+}
+
+func (b *Buffer) addBlockWithReservedLimiterQuota() {
+	if b.switchToNextBlock() {
+		return
+	}
+	b.appendBlock(b.pool.takeBlock())
+}
+
+func (b *Buffer) switchToNextBlock() bool {
 	if b.curBlockIdx < len(b.blocks)-1 {
 		b.curBlockIdx++
 		b.curBlock = b.blocks[b.curBlockIdx]
-	} else {
-		block := b.pool.acquire()
-		b.blocks = append(b.blocks, block)
-		b.curBlock = block
-		b.curBlockIdx = len(b.blocks) - 1
+		b.curIdx = 0
+		return true
 	}
+	return false
+}
 
+func (b *Buffer) appendBlock(block []byte) {
+	b.blocks = append(b.blocks, block)
+	b.curBlock = block
+	b.curBlockIdx = len(b.blocks) - 1
 	b.curIdx = 0
 }
 
@@ -328,4 +397,15 @@ func (b *Buffer) AddBytes(bytes []byte) []byte {
 	buf := b.AllocBytes(len(bytes))
 	copy(buf, bytes)
 	return buf
+}
+
+// TryAddBytes is like AddBytes, but returns ErrCannotAcquireMemory instead of
+// blocking when the pool memory limiter has no immediately available quota.
+func (b *Buffer) TryAddBytes(bytes []byte) ([]byte, error) {
+	buf, err := b.TryAllocBytes(len(bytes))
+	if err != nil {
+		return nil, err
+	}
+	copy(buf, bytes)
+	return buf, nil
 }

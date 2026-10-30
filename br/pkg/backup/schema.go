@@ -5,7 +5,6 @@ package backup
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"maps"
 	"slices"
 	"time"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -170,7 +170,7 @@ func (ss *Schemas) BackupSchemas(
 					}
 				}
 				// Check merge option allowed (network I/O)
-				isMergeOptionAllowed, partitionMergeOptionAllowed, err := schema.checkMergeOptionAllowed(ectx)
+				isMergeOptionAllowed, partitionMergeOptionAllowed, err := schema.checkMergeOptionAllowed(ectx, store.GetCodec())
 				if err != nil {
 					logger.Warn("failed to check merge_option for table", logutil.ShortError(err))
 				} else {
@@ -325,20 +325,20 @@ func (s *schemaInfo) encodeToSchema() (*backuppb.Schema, error) {
 // Returns:
 //   - tableMergeOptionAllowed: whether merge_option=allow is set for the table itself
 //   - partitionMergeOptionAllowed: a map from partition name to whether merge_option=allow is set for that partition
-func (s *schemaInfo) checkMergeOptionAllowed(ctx context.Context) (bool, map[string]bool, error) {
+func (s *schemaInfo) checkMergeOptionAllowed(ctx context.Context, codec tikv.Codec) (bool, map[string]bool, error) {
 	partitionMergeOptionAllowed := make(map[string]bool)
 
 	// Construct the rule ID for this table using the same format as ddl/label
 	// Use .L (lowercase) to match DDL behavior for case-insensitive matching
 	dbName := s.dbInfo.Name.L
 	tableName := s.tableInfo.Name.L
-	ruleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, dbName, tableName)
+	ruleID := label.NewRuleID(codec, dbName, tableName, "")
 
 	// Collect all rule IDs to check (table + partitions if any)
 	ruleIDs := []string{ruleID}
 	if s.tableInfo.Partition != nil && len(s.tableInfo.Partition.Definitions) > 0 {
 		for _, def := range s.tableInfo.Partition.Definitions {
-			partitionRuleID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, dbName, tableName, def.Name.L)
+			partitionRuleID := label.NewRuleID(codec, dbName, tableName, def.Name.L)
 			ruleIDs = append(ruleIDs, partitionRuleID)
 		}
 	}
@@ -370,7 +370,7 @@ func (s *schemaInfo) checkMergeOptionAllowed(ctx context.Context) (bool, map[str
 	// Check partition rules if this is a partitioned table
 	if s.tableInfo.Partition != nil && len(s.tableInfo.Partition.Definitions) > 0 {
 		for _, def := range s.tableInfo.Partition.Definitions {
-			partitionRuleID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, dbName, tableName, def.Name.L)
+			partitionRuleID := label.NewRuleID(codec, dbName, tableName, def.Name.L)
 			if rule, exists := rules[partitionRuleID]; exists {
 				for _, label := range rule.Labels {
 					if label.Key == "merge_option" && label.Value == "allow" {

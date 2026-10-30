@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/domainmisc"
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -42,8 +43,16 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
+
+// FTSPushDown is the logical full-text search metadata extracted from
+// FTS_MATCH_WORD() before physical access path selection.
+type FTSPushDown struct {
+	IndexInfo *model.IndexInfo
+	QueryInfo *tipb.FTSQueryInfo
+}
 
 // DataSource represents a tableScan without condition push down.
 type DataSource struct {
@@ -64,6 +73,8 @@ type DataSource struct {
 	IndexMergeHints []h.HintedIndex
 	// PushedDownConds are the conditions that will be pushed down to coprocessor.
 	PushedDownConds []expression.Expression `hash64-equals:"true"`
+	// TiFlashLMFilterColumnIDs are columns forced as TiFlash late-materialization filter columns by hints.
+	TiFlashLMFilterColumnIDs []int64 `hash64-equals:"true"`
 	// AllConds contains all the filters on this table. For now it's maintained
 	// in predicate push down and used in partition pruning/index merge.
 	AllConds []expression.Expression `hash64-equals:"true"`
@@ -136,6 +147,10 @@ type DataSource struct {
 	// NOTE: This list does not distinguish between the type of predicate or usage. It is used in
 	// index pruning early in the planning phase - which is an approximate heuristic.
 	InterestingColumns []*expression.Column
+
+	// FtsPushDown stores extracted FTS query metadata, when FTS_MATCH_WORD() can
+	// be planned as a TiFlash full-text search scan.
+	FtsPushDown *FTSPushDown
 }
 
 // Init initializes DataSource.
@@ -193,6 +208,10 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 	originSchemaColumns := ds.Schema().Columns
 	originColumns := ds.Columns
 
+	// Later single-scan/index-covering checks should use columns required by
+	// the DataSource output, not all columns in ds.Schema(). ds.Schema() may
+	// also include columns kept only because ds.AllConds references them, so
+	// build ColsRequiringFullLen from `used` here.
 	ds.ColsRequiringFullLen = make([]*expression.Column, 0, len(used))
 	for i, col := range ds.Schema().Columns {
 		if used[i] || (ds.ContainExprPrefixUk && expression.GcColumnExprIsTidbShard(col.VirtualExpr)) {
@@ -236,7 +255,8 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 	// in the output schema. Even if they are not needed by DataSource's parent operator. Thus add a projection here to prune useless columns
 	// Limit to MPP tasks, because TiKV can't benefit from this now(projection can't be pushed down to TiKV now).
 	// If the parent operator need no columns from the DataSource, we return the smallest column. Don't add the empty proj.
-	if !addOneHandle && ds.Schema().Len() > len(parentUsedCols) && len(parentUsedCols) > 0 && ds.SCtx().GetSessionVars().IsMPPEnforced() && ds.TableInfo.TiFlashReplica != nil {
+	if !addOneHandle && ds.Schema().Len() > len(parentUsedCols) && len(parentUsedCols) > 0 && ds.SCtx().GetSessionVars().IsMPPEnforced() &&
+		(ds.TableInfo.TiFlashReplica != nil || UsedHypoTiFlashReplicas(ds.SCtx().GetSessionVars(), ds.DBName, ds.TableInfo)) {
 		proj := LogicalProjection{
 			Exprs: expression.Column2Exprs(parentUsedCols),
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
@@ -246,6 +266,14 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 		return proj, nil
 	}
 	return ds, nil
+}
+
+// HasTiFlash checks whether the table has TiFlash replicas (real or hypothetical).
+// It does not include MPP gating; callers should check IsMPPAllowed() separately when needed.
+func (ds *DataSource) HasTiFlash() bool {
+	return (ds.TableInfo.TiFlashReplica != nil && ds.TableInfo.TiFlashReplica.Available &&
+		ds.TableInfo.TiFlashReplica.Count > 0) ||
+		UsedHypoTiFlashReplicas(ds.SCtx().GetSessionVars(), ds.DBName, ds.TableInfo)
 }
 
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.
@@ -314,7 +342,7 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
 	result := make([][]*expression.Column, 0, len(ds.AllPossibleAccessPaths))
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsIntHandlePath {
@@ -335,7 +363,14 @@ func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*
 			copy(result[len(result)-1], path.IdxCols[i+1:])
 		}
 	}
-	return result
+	_, tiflashInIsolationRead := ds.SCtx().GetSessionVars().GetIsolationReadEngines()[kv.TiFlash]
+	preferTiKVOnly := ds.PreferStoreType&h.PreferTiKV != 0 && ds.PreferStoreType&h.PreferTiFlash == 0
+	hasTiFlashReplica := ds.HasTiFlash()
+	ds.hasTiFlash = tiflashInIsolationRead && !preferTiKVOnly && hasTiFlashReplica && ds.SCtx().GetSessionVars().IsMPPAllowed()
+	return &base.PossiblePropertiesInfo{
+		Orders:     result,
+		HasTiFlash: ds.hasTiFlash,
+	}
 }
 
 // ExhaustPhysicalPlans inherits BaseLogicalPlan.LogicalPlan.<14th> implementation.
@@ -485,8 +520,6 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
 
-// ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
-
 // *************************** end implementation of logicalPlan interface ***************************
 
 func (ds *DataSource) buildTableGather() base.LogicalPlan {
@@ -565,6 +598,84 @@ func getPKIsHandleColFromSchema(cols []*model.ColumnInfo, schema *expression.Sch
 // GetPKIsHandleCol gets the handle column if the PKIsHandle is true, otherwise, returns the ExtraHandleColumn.
 func (ds *DataSource) GetPKIsHandleCol() *expression.Column {
 	return getPKIsHandleColFromSchema(ds.Columns, ds.Schema(), ds.TableInfo.PKIsHandle)
+}
+
+// HasV0NewCollationStringHandle reports whether ds has CommonHandleVersion == 0
+// with new collation enabled and at least one non-binary string column in the
+// handle. In this combination the handle bytes stored in the index are collation
+// sortKey weights, not original values, so collation-aware comparison on those
+// bytes during merge-sort would be incorrect.
+func (ds *DataSource) HasV0NewCollationStringHandle() bool {
+	if ds.TableInfo.CommonHandleVersion != 0 || !collate.NewCollationEnabled() {
+		return false
+	}
+	for _, col := range ds.CommonHandleCols {
+		if col != nil && col.RetType.EvalType() == types.ETString &&
+			!mysql.HasBinaryFlag(col.RetType.GetFlag()) {
+			return true
+		}
+	}
+	return false
+}
+
+// HandleColsToAppend returns the clustered-handle columns (and their lengths) that TiKV
+// physically appends to a non-unique secondary index's key beyond its declared columns,
+// or nil when no append applies. declaredCols are the declared index columns (the result
+// of util.IndexInfo2Cols for this index); nil entries mark unresolved columns and
+// suppress the append.
+//
+// This is the single source of truth for that layout, shared by fillIndexPath — which
+// mutates the path so ranger turns predicates on these columns into scan ranges — and by
+// index pruning, which runs before fillIndexPath and needs the same layout to score access
+// conditions. Keeping both on this one method ensures scoring never credits an access
+// condition the ranger cannot realize. The append is skipped entirely (rather than
+// partially) when any handle column already appears among the declared columns, because
+// repeating a column in the physical key breaks range building.
+func (ds *DataSource) HandleColsToAppend(path *util.AccessPath, declaredCols []*expression.Column) ([]*expression.Column, []int) {
+	if path.Index == nil || path.Index.Unique || path.Index.Primary ||
+		len(path.Index.Columns) != len(declaredCols) {
+		return nil, nil
+	}
+	// A nil entry means an index column could not be resolved to a schema column
+	// (util.IndexInfo2FullCols leaves such placeholders). The physical key layout past
+	// that point is unknowable, so no append applies.
+	if slices.Contains(declaredCols, nil) {
+		return nil, nil
+	}
+	if ds.TableInfo != nil && ds.TableInfo.IsCommonHandle {
+		if len(ds.CommonHandleCols) == 0 || len(ds.CommonHandleLens) != len(ds.CommonHandleCols) {
+			return nil, nil
+		}
+		// Global indexes (V1+) encode the partition ID between the index columns and the
+		// handle, and MV/columnar indexes build their ranges specially, so appended columns
+		// would not align with the physical key layout. V0-new-collation string handles are
+		// stored as sortKey bytes without restored data and cannot be ranged over.
+		if path.Index.Global || path.Index.MVIndex || path.Index.IsColumnarIndex() ||
+			ds.HasV0NewCollationStringHandle() {
+			return nil, nil
+		}
+		for _, handleCol := range ds.CommonHandleCols {
+			if handleCol == nil {
+				return nil, nil
+			}
+			for _, col := range declaredCols {
+				if col.EqualColumn(handleCol) {
+					return nil, nil
+				}
+			}
+		}
+		return ds.CommonHandleCols, ds.CommonHandleLens
+	}
+	handleCol := ds.GetPKIsHandleCol()
+	if handleCol == nil || mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
+		return nil, nil
+	}
+	for _, col := range declaredCols {
+		if col.ID == model.ExtraHandleID || col.EqualColumn(handleCol) {
+			return nil, nil
+		}
+	}
+	return []*expression.Column{handleCol}, []int{types.UnspecifiedLength}
 }
 
 // NewExtraHandleSchemaCol creates a new column for extra handle.
@@ -827,4 +938,17 @@ func (ds *DataSource) CheckPartialIndexes() {
 			return checkIndex(path, false)
 		})
 	}
+}
+
+// UsedHypoTiFlashReplicas checks whether the table uses hypothetical TiFlash replicas.
+func UsedHypoTiFlashReplicas(ctx *variable.SessionVars, dbName ast.CIStr, tblInfo *model.TableInfo) bool {
+	if ctx.StmtCtx.InExplainStmt && ctx.HypoTiFlashReplicas != nil {
+		hypoReplicas := ctx.HypoTiFlashReplicas
+		originalTableName := tblInfo.Name.L
+		if hypoReplicas[dbName.L] != nil {
+			_, ok := hypoReplicas[dbName.L][originalTableName]
+			return ok
+		}
+	}
+	return false
 }

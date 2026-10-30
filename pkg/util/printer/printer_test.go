@@ -18,6 +18,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
@@ -71,6 +73,9 @@ func TestGetTiDBInfo(t *testing.T) {
 }
 
 func TestPrintTiDBInfo(t *testing.T) {
+	restoreMode := diagnosticmode.SetForTest(true)
+	defer restoreMode()
+
 	core, recorded := observer.New(zap.InfoLevel)
 	restore := log.ReplaceGlobals(
 		zap.New(core),
@@ -85,10 +90,14 @@ func TestPrintTiDBInfo(t *testing.T) {
 	entries := recorded.FilterMessage("Welcome to TiDB.").All()
 	require.Len(t, entries, 1)
 	fields := entries[0].ContextMap()
+	require.Equal(t, true, fields["Diagnostic Mode"])
 	if kerneltype.IsNextGen() {
 		require.Equal(t, mysql.NormalizeTiDBReleaseVersionForNextGen(mysql.TiDBReleaseVersion), fields["TiDB Component Version"])
+		require.Equal(t, deploymode.Get().String(), fields["Deploy Mode"])
 	} else {
 		_, ok := fields["TiDB Component Version"]
+		require.False(t, ok)
+		_, ok = fields["Deploy Mode"]
 		require.False(t, ok)
 	}
 }

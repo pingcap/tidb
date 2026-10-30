@@ -16,6 +16,8 @@ package s3like
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net/url"
 	"regexp"
@@ -23,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -45,19 +48,31 @@ import (
 var HardcodedChunkSize = 5 * 1024 * 1024
 
 const (
+	// S3AccessKey is the key for the access key used in S3 operations.
+	S3AccessKey = "access-key"
+	// S3SecretAccessKey is the key for the secret access key used in S3 operations.
+	S3SecretAccessKey = "secret-access-key"
+	// S3RoleARN is the key for the role ARN used in S3 operations.
+	S3RoleARN = "role-arn"
 	// S3ExternalID is the key for the external ID used in S3 operations.
 	S3ExternalID = "external-id"
 
-	s3EndpointOption     = "s3.endpoint"
-	s3RegionOption       = "s3.region"
-	s3StorageClassOption = "s3.storage-class"
-	s3SseOption          = "s3.sse"
-	s3SseKmsKeyIDOption  = "s3.sse-kms-key-id"
-	s3ACLOption          = "s3.acl"
-	s3ProviderOption     = "s3.provider"
-	s3RoleARNOption      = "s3.role-arn"
-	s3ExternalIDOption   = "s3." + S3ExternalID
-	s3ProfileOption      = "s3.profile"
+	s3EndpointOption      = "s3.endpoint"
+	s3RegionOption        = "s3.region"
+	s3StorageClassOption  = "s3.storage-class"
+	s3SseOption           = "s3.sse"
+	s3SseKmsKeyIDOption   = "s3.sse-kms-key-id"
+	s3SseKmsContextOption = "s3.sse-kms-context"
+	s3ACLOption           = "s3.acl"
+	s3ProviderOption      = "s3.provider"
+	s3RoleARNOption       = "s3.role-arn"
+	s3ExternalIDOption    = "s3." + S3ExternalID
+	s3ProfileOption       = "s3.profile"
+
+	// SSE-KMS modes that accept an encryption context on AWS S3.
+	sseAWSKMS     = "aws:kms"
+	sseAWSKMSDSSE = "aws:kms:dsse"
+
 	// max number of retries when meets error
 	maxErrorRetries = 3
 	// the maximum number of byte to read for seek.
@@ -95,9 +110,9 @@ func NewStorage(
 	}
 }
 
-// MarkStrongConsistency implements the Storage interface.
-func (*Storage) MarkStrongConsistency() {
-	// See https://aws.amazon.com/cn/s3/consistency/
+// Features implements FeatureProvider.
+func (*Storage) Features() storeapi.Features {
+	return storeapi.FeatureStrongConsistency | storeapi.FeatureSupportsStartAfter
 }
 
 // GetOptions gets the external storage operations for the S3.
@@ -134,6 +149,7 @@ type S3BackendOptions struct {
 	StorageClass          string `json:"storage-class" toml:"storage-class"`
 	Sse                   string `json:"sse" toml:"sse"`
 	SseKmsKeyID           string `json:"sse-kms-key-id" toml:"sse-kms-key-id"`
+	SseKmsContext         string `json:"sse-kms-context" toml:"sse-kms-context"` // Raw JSON; Apply encodes it for the protocol.
 	ACL                   string `json:"acl" toml:"acl"`
 	AccessKey             string `json:"access-key" toml:"access-key"`
 	SecretAccessKey       string `json:"secret-access-key" toml:"secret-access-key"`
@@ -172,12 +188,25 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 		}
 	}
 
+	encryptionContext, err := encodeSSEKMSContext(options.SseKmsContext)
+	if err != nil {
+		return err
+	}
+	// AWS rejects a context header unless the request explicitly selects
+	// SSE-KMS, even when the bucket default is SSE-KMS.
+	if encryptionContext != "" && (options.Provider == "" || options.Provider == "aws") &&
+		options.Sse != sseAWSKMS && options.Sse != sseAWSKMSDSSE {
+		return errors.Annotatef(berrors.ErrStorageInvalidConfig,
+			"sse-kms-context requires sse=%s or sse=%s", sseAWSKMS, sseAWSKMSDSSE)
+	}
+
 	s3.Endpoint = strings.TrimSuffix(options.Endpoint, "/")
 	s3.Region = options.Region
 	// StorageClass, SSE and ACL are acceptable to be empty
 	s3.StorageClass = options.StorageClass
 	s3.Sse = options.Sse
 	s3.SseKmsKeyId = options.SseKmsKeyID
+	s3.SseKmsEncryptionContext = encryptionContext
 	s3.Acl = options.ACL
 	s3.AccessKey = options.AccessKey
 	s3.SecretAccessKey = options.SecretAccessKey
@@ -189,6 +218,52 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 	s3.Profile = options.Profile
 
 	return nil
+}
+
+// encodeSSEKMSContext converts user input once, before the backend is persisted or
+// sent to TiKV. Writers must pass the resulting value to S3 without re-encoding.
+func encodeSSEKMSContext(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	// Do not include the input or decoder errors: either may reveal user values.
+	invalid := errors.Annotate(berrors.ErrStorageInvalidConfig,
+		"sse-kms-context must be a UTF-8 JSON object with unique keys and string values")
+	if !utf8.ValidString(raw) || !json.Valid([]byte(raw)) {
+		return "", invalid
+	}
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	start, err := decoder.Token()
+	if err != nil || start != json.Delim('{') {
+		return "", invalid
+	}
+	values := make(map[string]string)
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return "", invalid
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return "", invalid
+		}
+		if _, exists := values[key]; exists {
+			return "", invalid
+		}
+		valueToken, err := decoder.Token()
+		if err != nil {
+			return "", invalid
+		}
+		value, ok := valueToken.(string)
+		if !ok {
+			return "", invalid
+		}
+		values[key] = value
+	}
+	// json.Valid has already checked the closing delimiter and trailing input.
+	// A map of strings contains no unsupported JSON values.
+	normalized, _ := json.Marshal(values)
+	return base64.StdEncoding.EncodeToString(normalized), nil
 }
 
 // SetForcePathStyle only set ForcePathStyle to False, which means use virtual-hosted-style path.
@@ -222,6 +297,7 @@ func DefineS3Flags(flags *pflag.FlagSet) {
 	flags.String(s3SseOption, "", "Set S3 server-side encryption, e.g. aws:kms")
 	flags.String(s3SseKmsKeyIDOption, "", "KMS CMK key id to use with S3 server-side encryption."+
 		"Leave empty to use S3 owned key.")
+	flags.String(s3SseKmsContextOption, "", "S3 SSE-KMS encryption context as a JSON object of string key-value pairs; BR encodes it as Base64. On AWS S3, requires --s3.sse aws:kms or aws:kms:dsse")
 	flags.String(s3ACLOption, "", "(experimental) Set the S3 canned ACLs, e.g. authenticated-read")
 	flags.String(s3ProviderOption, "", "(experimental) Set the S3 provider, e.g. aws, alibaba, ceph")
 	flags.String(s3RoleARNOption, "", "(experimental) Set the ARN of the IAM role to assume when accessing AWS S3")
@@ -247,6 +323,10 @@ func (options *S3BackendOptions) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	options.SseKmsKeyID, err = flags.GetString(s3SseKmsKeyIDOption)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	options.SseKmsContext, err = flags.GetString(s3SseKmsContextOption)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -387,6 +467,27 @@ func (rs *Storage) DeleteFiles(ctx context.Context, files []string) error {
 // FileExists check if file exists on s3 storage.
 func (rs *Storage) FileExists(ctx context.Context, file string) (bool, error) {
 	return rs.s3Cli.IsObjectExists(ctx, file)
+}
+
+// FileSynced reports whether the object has completed source-side replication.
+func (rs *Storage) FileSynced(ctx context.Context, file string) (bool, error) {
+	head, err := rs.s3Cli.HeadObject(ctx, file)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	status := head.ReplicationStatus
+	switch status {
+	case "COMPLETE", "COMPLETED", "REPLICA":
+		return true, nil
+	case "PENDING":
+		return false, nil
+	case "FAILED":
+		return false, errors.Errorf("upstream replication status for %s is FAILED", file)
+	case "":
+		return false, errors.Errorf("upstream replication status for %s is empty", file)
+	default:
+		return false, errors.Errorf("upstream replication status for %s is %q", file, status)
+	}
 }
 
 // WalkDir traverse all the files in a dir.
@@ -640,6 +741,9 @@ type presignableClient interface {
 
 // PresignFile implements storeapi.Storage interface.
 func (rs *Storage) PresignFile(ctx context.Context, fileName string, expire time.Duration) (string, error) {
+	if expire <= 0 {
+		return "", errors.New("presign expiration must be positive")
+	}
 	if pc, ok := rs.s3Cli.(presignableClient); ok {
 		return pc.PresignObject(ctx, fileName, expire)
 	}

@@ -200,6 +200,11 @@ func convertBytesToScalar(value []byte) float64 {
 	}
 }
 
+// calcFraction4Datums returns the fraction of the interval [lower, upper]
+// that lies within [lower, value], using the continuous-value (uniform-
+// within-bucket) assumption. Used by the global-stats merge to split an
+// input bucket's count proportionally when the bucket straddles a chosen
+// global-bucket boundary.
 func calcFraction4Datums(lower, upper, value *types.Datum) float64 {
 	switch value.Kind() {
 	case types.KindFloat32:

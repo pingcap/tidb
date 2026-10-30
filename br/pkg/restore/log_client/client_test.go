@@ -16,24 +16,29 @@ package logclient_test
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	rawclient "github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
@@ -47,9 +52,12 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -60,6 +68,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/rawkv"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -72,14 +82,14 @@ var deleteRangeQueryList = []*stream.PreDelRangeQuery{
 			{
 				JobID:    1,
 				ElemID:   1,
-				StartKey: "a",
-				EndKey:   "b",
+				StartKey: hex.EncodeToString(tablecodec.EncodeTablePrefix(123456)),
+				EndKey:   hex.EncodeToString(tablecodec.EncodeTablePrefix(123457)),
 			},
 			{
 				JobID:    1,
 				ElemID:   2,
-				StartKey: "b",
-				EndKey:   "c",
+				StartKey: hex.EncodeToString(tablecodec.EncodeTableIndexPrefix(123456, 2)),
+				EndKey:   hex.EncodeToString(tablecodec.EncodeTableIndexPrefix(123456, 3)),
 			},
 		},
 	},
@@ -90,8 +100,8 @@ var deleteRangeQueryList = []*stream.PreDelRangeQuery{
 			{
 				JobID:    2,
 				ElemID:   1,
-				StartKey: "a",
-				EndKey:   "b",
+				StartKey: hex.EncodeToString(tablecodec.EncodeTablePrefix(234567)),
+				EndKey:   hex.EncodeToString(tablecodec.EncodeTablePrefix(234568)),
 			},
 		},
 	},
@@ -102,22 +112,111 @@ var deleteRangeQueryList = []*stream.PreDelRangeQuery{
 	},
 }
 
+func requireLockMetaInStorage(
+	ctx context.Context,
+	t *testing.T,
+	storage storeapi.Storage,
+	pathPrefix string,
+	resource operation.LockResourceType,
+) objstore.LockMeta {
+	t.Helper()
+
+	var metas []objstore.LockMeta
+	err := storage.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
+		if !strings.HasPrefix(path, pathPrefix) {
+			return nil
+		}
+		content, err := storage.ReadFile(ctx, path)
+		if err != nil {
+			return err
+		}
+		var meta objstore.LockMeta
+		if err := json.Unmarshal(content, &meta); err != nil {
+			if strings.Contains(path, ".INTENT.") {
+				return nil
+			}
+			return errors.Annotatef(err, "failed to parse lock metadata from %s", path)
+		}
+		if meta.LockType == string(resource) {
+			metas = append(metas, meta)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.Len(t, metas, 1)
+	return metas[0]
+}
+
+func TestGetLockedMigrationsWritesOperationMetadata(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.ToSlash(t.TempDir())
+	backend, err := objstore.ParseBackend("local://"+path, nil)
+	require.NoError(t, err)
+	stg, err := objstore.New(ctx, backend, nil)
+	require.NoError(t, err)
+
+	appendOpCtx, err := operation.NewContext("test append migration")
+	require.NoError(t, err)
+	appendOpCtx.SetHintField("restore_id", "123")
+	_, err = stream.MigrationExtension(stg).WithOperationContext(appendOpCtx).AppendMigration(ctx, stream.NewMigration())
+	require.NoError(t, err)
+
+	opCtx, err := operation.NewContext("test log restore")
+	require.NoError(t, err)
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
+	require.NoError(t, client.SetStorage(ctx, backend, nil))
+	client.SetRestoreID(456)
+	client.SetOperationContext(opCtx)
+
+	migs, err := client.GetLockedMigrations(ctx)
+	require.NoError(t, err)
+	defer migs.ReadLock.UnlockOnCleanUp(ctx)
+
+	meta := requireLockMetaInStorage(ctx, t, stg, "v1/LOCK", operation.LockResourceMigrationRead)
+	require.Equal(t, opCtx.OperationID, meta.OwnerID)
+	require.Contains(t, meta.Hint, "operation_started_at="+opCtx.StartedAt.Format(time.RFC3339))
+	require.Contains(t, meta.Hint, "restore_id=456")
+}
+
 func TestDeleteRangeQueryExec(t *testing.T) {
 	ctx := context.Background()
 	m := mc
 	g := gluetidb.New()
-	client := logclient.NewLogClient(
-		split.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
-	err := client.Init(ctx, g, m.Storage)
-	require.NoError(t, err)
+	originalMode := errors.RedactLogEnabled.Load()
+	t.Cleanup(func() { errors.RedactLogEnabled.Store(originalMode) })
+	for _, mode := range []string{"OFF", "ON", "MARKER"} {
+		t.Run(mode, func(t *testing.T) {
+			errors.RedactLogEnabled.Store(mode)
+			core, recorded := observer.New(zap.InfoLevel)
+			restoreLogger := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{
+				Core:  core,
+				Level: zap.NewAtomicLevelAt(zap.InfoLevel),
+			})
+			t.Cleanup(restoreLogger)
 
-	client.RunGCRowsLoader(ctx)
+			client := logclient.NewLogClient(
+				split.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
+			require.NoError(t, client.Init(ctx, g, m.Storage))
+			t.Cleanup(func() { client.Close(ctx) })
+			client.RunGCRowsLoader(ctx)
+			for _, query := range deleteRangeQueryList {
+				client.RecordDeleteRange(query)
+			}
+			require.NoError(t, client.InsertGCRows(ctx))
 
-	for _, query := range deleteRangeQueryList {
-		client.RecordDeleteRange(query)
+			entries := recorded.FilterMessage("insert into the delete range").All()
+			require.Len(t, entries, 3)
+			entryIndex := 0
+			for _, query := range deleteRangeQueryList {
+				for _, params := range query.ParamsList {
+					fields := entries[entryIndex].ContextMap()
+					require.Equal(t, params.StartKey, fields["startKey"])
+					require.Equal(t, params.EndKey, fields["endKey"])
+					entryIndex++
+				}
+			}
+		})
 	}
-
-	require.NoError(t, client.InsertGCRows(ctx))
 }
 
 func TestDeleteRangeQuery(t *testing.T) {
@@ -771,6 +870,34 @@ func TestSortMetaKVFiles(t *testing.T) {
 	require.Equal(t, files[2].Path, "f3")
 	require.Equal(t, files[3].Path, "f4")
 	require.Equal(t, files[4].Path, "f5")
+
+	files = []*backuppb.DataFileInfo{
+		{
+			Path: "write-put",
+			Cf:   consts.WriteCF,
+			Type: backuppb.FileType_Put,
+		},
+		{
+			Path: "write-delete",
+			Cf:   consts.WriteCF,
+			Type: backuppb.FileType_Delete,
+		},
+		{
+			Path: "default-put",
+			Cf:   consts.DefaultCF,
+			Type: backuppb.FileType_Put,
+		},
+		{
+			Path: "default-delete",
+			Cf:   consts.DefaultCF,
+			Type: backuppb.FileType_Delete,
+		},
+	}
+	defaultFiles, writeFiles := logclient.SeparateAndSortFilesByCF(files)
+	require.Len(t, defaultFiles, 1)
+	require.Equal(t, "default-put", defaultFiles[0].Path)
+	require.Len(t, writeFiles, 2)
+	require.Equal(t, 3, logclient.TEST_CountReadableMetaKVFiles(files))
 }
 
 func toLogDataFileInfoIter(logIter iter.TryNextor[*backuppb.DataFileInfo]) logclient.LogIter {
@@ -1297,7 +1424,7 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 	w := restore.PipelineRestorerWrapper[*logclient.LogDataFileInfo]{
 		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(split.NewFakeSplitClient(), 144*1024*1024, 1440000),
 	}
-	s, err := logclient.NewLogSplitStrategy(ctx, false, nil, rewriteRulesMap, func(uint64, uint64) {})
+	s, err := logclient.NewLogSplitStrategy(ctx, false, nil, rewriteRulesMap, func(uint64, uint64) {}, logclient.SplitFileThresholdDefault)
 	require.NoError(t, err)
 	logIter := w.WithSplit(context.Background(), mockIter, s)
 	next := 0
@@ -1332,6 +1459,17 @@ func (fse fakeSQLExecutor) ExecRestrictedSQL(_ context.Context, _ []sqlexec.Opti
 	return nil, nil, errors.Errorf("name: %s, %v", query, args)
 }
 
+type recordingSession struct {
+	glue.Session
+	refreshArgs []*model.RefreshMetaArgs
+}
+
+func (s *recordingSession) RefreshMeta(_ context.Context, args *model.RefreshMetaArgs) error {
+	cloned := *args
+	s.refreshArgs = append(s.refreshArgs, &cloned)
+	return nil
+}
+
 func TestInitSchemasReplaceForDDL(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.ToSlash(t.TempDir())
@@ -1343,26 +1481,26 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 	{
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
 		client.SetStorage(ctx, backend, nil)
-		err := stg.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 2), []byte(""))
+		err := stg.WriteFile(ctx, logclient.PitrIDMapsFilenameForTask(123, 1, 2, 0), []byte(""))
 		require.NoError(t, err)
-		err = stg.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 1), []byte("123"))
+		err = stg.WriteFile(ctx, logclient.PitrIDMapsFilenameForTask(123, 1, 1, 0), []byte("123"))
 		require.NoError(t, err)
-		err = client.GetBaseIDMapAndMerge(ctx, false, false, nil, stream.NewTableMappingManager())
+		err = client.GetBaseIDMapAndMerge(ctx, false, false, nil, stream.NewTableMappingManager(), "")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "proto: wrong")
-		err = stg.DeleteFile(ctx, logclient.PitrIDMapsFilename(123, 1))
+		err = stg.DeleteFile(ctx, logclient.PitrIDMapsFilenameForTask(123, 1, 1, 0))
 		require.NoError(t, err)
 	}
 
 	{
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
 		client.SetStorage(ctx, backend, nil)
-		err := stg.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 2), []byte("123"))
+		err := stg.WriteFile(ctx, logclient.PitrIDMapsFilenameForTask(123, 1, 2, 0), []byte("123"))
 		require.NoError(t, err)
-		err = client.GetBaseIDMapAndMerge(ctx, false, true, nil, stream.NewTableMappingManager())
+		err = client.GetBaseIDMapAndMerge(ctx, false, true, nil, stream.NewTableMappingManager(), "")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "proto: wrong")
-		err = stg.DeleteFile(ctx, logclient.PitrIDMapsFilename(123, 2))
+		err = stg.DeleteFile(ctx, logclient.PitrIDMapsFilenameForTask(123, 1, 2, 0))
 		require.NoError(t, err)
 	}
 
@@ -1374,9 +1512,319 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		se, err := g.CreateSession(s.Mock.Storage)
 		require.NoError(t, err)
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
-		err = client.GetBaseIDMapAndMerge(ctx, false, true, nil, stream.NewTableMappingManager())
+		err = client.GetBaseIDMapAndMerge(ctx, false, true, nil, stream.NewTableMappingManager(), "")
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "no base id map found from saved id or last restored PiTR")
+		require.Contains(t, err.Error(), "saved PiTR ID map is missing")
+
+		ids, err := client.GenGlobalIDs(ctx, 1)
+		require.NoError(t, err)
+		manager := stream.NewTableMappingManager()
+		manager.DBReplaceMap[10] = &stream.DBReplace{
+			Name:         "source_db",
+			DbID:         110,
+			SourceDBInfo: &model.DBInfo{ID: 10, Name: ast.NewCIStr("source_db"), Charset: "utf8mb4", Collate: "utf8mb4_bin"},
+			TableMap: map[stream.UpstreamID]*stream.TableReplace{
+				20: {
+					Name:         "log_created_table",
+					TableID:      120,
+					TargetDBName: "log_only_target",
+					TargetDBID:   ids[0],
+				},
+			},
+		}
+		manager.DBReplaceMap[30] = &stream.DBReplace{
+			Name:        "LOG_ONLY_TARGET",
+			DbID:        ids[0],
+			TableMap:    map[stream.UpstreamID]*stream.TableReplace{},
+			FilteredOut: true,
+		}
+		require.NoError(t, client.TEST_saveIDMap(ctx, manager, nil))
+		dbInfo, exists := s.Mock.Domain.InfoSchema().SchemaByName(ast.NewCIStr("log_only_target"))
+		require.True(t, exists)
+		require.NotEqual(t, ids[0], dbInfo.ID)
+		require.Equal(t, dbInfo.ID, manager.DBReplaceMap[10].TableMap[20].TargetDBID)
+		require.Equal(t, dbInfo.ID, manager.DBReplaceMap[30].DbID)
+		require.NoError(t, client.ValidateTableRouteTargetDatabases(ctx, manager))
+
+		tk.MustExec("DROP DATABASE log_only_target")
+		err = client.ValidateTableRouteTargetDatabases(ctx, manager)
+		require.ErrorContains(t, err, "persisted table-route target database log_only_target is missing")
+		_, exists = s.Mock.Domain.InfoSchema().SchemaByName(ast.NewCIStr("log_only_target"))
+		require.False(t, exists)
+	}
+
+	t.Run("refresh table metadata in its routed target database", func(t *testing.T) {
+		session := &recordingSession{}
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, nil, session)
+		schemasReplace := &stream.SchemasReplace{
+			DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{
+				10: {
+					Name: "source_db",
+					DbID: 110,
+					TableMap: map[stream.UpstreamID]*stream.TableReplace{
+						20: {
+							Name:         "target_table",
+							TableID:      120,
+							TargetDBName: "target_db",
+							TargetDBID:   210,
+						},
+					},
+				},
+			},
+		}
+
+		require.NoError(t, client.RefreshMetaForTables(ctx, schemasReplace))
+		require.Len(t, session.refreshArgs, 1)
+		require.Equal(t, int64(210), session.refreshArgs[0].SchemaID)
+		require.Equal(t, int64(120), session.refreshArgs[0].TableID)
+		require.Equal(t, "target_db", session.refreshArgs[0].InvolvedDB)
+	})
+
+	t.Run("skip database refresh when every table is routed to another schema", func(t *testing.T) {
+		session := &recordingSession{}
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, nil, session)
+		schemasReplace := stream.NewSchemasReplace(map[stream.UpstreamID]*stream.DBReplace{
+			10: {
+				Name: "source_db",
+				DbID: 110,
+				TableMap: map[stream.UpstreamID]*stream.TableReplace{
+					20: {
+						Name:         "target_table",
+						TableID:      120,
+						TargetDBName: "target_db",
+						TargetDBID:   210,
+					},
+				},
+			},
+		}, false, nil, 0, nil, false)
+		// A deleted table under a fully routed-out source schema is observed, but
+		// that must not trigger a DB-level refresh of the source schema itself.
+		schemasReplace.GetDeletedTables()[10] = map[stream.UpstreamID]struct{}{20: {}}
+
+		require.NoError(t, client.RefreshMetaForTables(ctx, schemasReplace))
+		require.Len(t, session.refreshArgs, 1)
+		require.Equal(t, int64(120), session.refreshArgs[0].TableID)
+		require.Equal(t, "target_db", session.refreshArgs[0].InvolvedDB)
+	})
+
+	t.Run("reject missing target database settings", func(t *testing.T) {
+		s := utiltest.CreateRestoreSchemaSuite(t)
+		tk := testkit.NewTestKit(t, s.Mock.Storage)
+		g := gluetidb.New()
+		se, err := g.CreateSession(s.Mock.Storage)
+		require.NoError(t, err)
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
+		manager := stream.NewTableMappingManager()
+		manager.DBReplaceMap[10] = &stream.DBReplace{
+			Name: "source", SourceName: "source", DbID: 110,
+			TableMap: map[stream.UpstreamID]*stream.TableReplace{
+				20: {Name: "copy", TableID: 120, TargetDBName: "missing_settings_target", TargetDBID: 900},
+			},
+		}
+		manager.DBReplaceMap[30] = &stream.DBReplace{
+			Name: "known", SourceName: "known", DbID: 130,
+			SourceDBInfo: &model.DBInfo{ID: 30, Name: ast.NewCIStr("known"), Charset: "utf8mb4", Collate: "utf8mb4_bin"},
+			TableMap: map[stream.UpstreamID]*stream.TableReplace{
+				40: {Name: "copy", TableID: 140, TargetDBName: "aaa_known_settings_target", TargetDBID: 910},
+			},
+		}
+		require.ErrorContains(t, client.EnsureTableRouteTargetDatabases(ctx, manager), "source database settings are unavailable")
+		_, created := s.Mock.Domain.InfoSchema().SchemaByName(ast.NewCIStr("aaa_known_settings_target"))
+		require.False(t, created, "validate every target before creating the first schema")
+		_, exists := s.Mock.Domain.InfoSchema().SchemaByName(ast.NewCIStr("missing_settings_target"))
+		require.False(t, exists)
+		tk.MustExec("CREATE DATABASE missing_settings_target")
+		info, _ := s.Mock.Domain.InfoSchema().SchemaByName(ast.NewCIStr("missing_settings_target"))
+		manager.DBReplaceMap[10].TableMap[20].TargetDBID = info.ID
+		require.NoError(t, client.EnsureTableRouteTargetDatabases(ctx, manager))
+	})
+
+	t.Run("create table-route target database with source schema metadata", func(t *testing.T) {
+		s := utiltest.CreateRestoreSchemaSuite(t)
+		g := gluetidb.New()
+		se, err := g.CreateSession(s.Mock.Storage)
+		require.NoError(t, err)
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
+
+		manager := stream.NewTableMappingManager()
+		manager.DBReplaceMap[10] = &stream.DBReplace{
+			Name: "source_db",
+			DbID: 110,
+			SourceDBInfo: &model.DBInfo{
+				ID:      10,
+				Name:    ast.NewCIStr("source_db"),
+				Charset: "latin1",
+				Collate: "latin1_bin",
+			},
+			TableMap: map[stream.UpstreamID]*stream.TableReplace{
+				20: {
+					Name:         "t",
+					TableID:      120,
+					TargetDBName: "routed_target",
+					TargetDBID:   900,
+				},
+			},
+		}
+		require.NoError(t, client.EnsureTableRouteTargetDatabases(ctx, manager))
+		dbInfo, exists := s.Mock.Domain.InfoSchema().SchemaByName(ast.NewCIStr("routed_target"))
+		require.True(t, exists)
+		require.Equal(t, "latin1", dbInfo.Charset)
+		require.Equal(t, "latin1_bin", dbInfo.Collate)
+		require.Equal(t, dbInfo.ID, manager.DBReplaceMap[10].TableMap[20].TargetDBID)
+	})
+
+	t.Run("reject routed target table that already exists with a different id", func(t *testing.T) {
+		s := utiltest.CreateRestoreSchemaSuite(t)
+		tk := testkit.NewTestKit(t, s.Mock.Storage)
+		tk.MustExec("create database existing_db")
+		tk.MustExec("create table existing_db.t (id int)")
+		g := gluetidb.New()
+		se, err := g.CreateSession(s.Mock.Storage)
+		require.NoError(t, err)
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
+
+		existing, err := s.Mock.Domain.InfoSchema().TableByName(ctx, ast.NewCIStr("existing_db"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+
+		manager := stream.NewTableMappingManager()
+		manager.DBReplaceMap[10] = &stream.DBReplace{
+			Name: "source_db",
+			DbID: 110,
+			TableMap: map[stream.UpstreamID]*stream.TableReplace{
+				20: {
+					Name:         "t",
+					TableID:      existing.Meta().ID + 1,
+					TargetDBName: "existing_db",
+					TargetDBID:   existing.Meta().DBID,
+				},
+			},
+		}
+		err = client.ValidateTargetTableExistence(ctx, manager)
+		require.ErrorContains(t, err, "already exists with table ID")
+
+		// The same ID is a legitimate continuation of a previous PiTR run.
+		manager.DBReplaceMap[10].TableMap[20].TableID = existing.Meta().ID
+		require.NoError(t, client.ValidateTargetTableExistence(ctx, manager))
+
+		// A target that does not exist yet is allowed.
+		manager.DBReplaceMap[10].TableMap[20].Name = "not_created_yet"
+		manager.DBReplaceMap[10].TableMap[20].TableID = 999
+		require.NoError(t, client.ValidateTargetTableExistence(ctx, manager))
+	})
+
+	t.Run("allow a table owned by a previous run that this interval replaces", func(t *testing.T) {
+		s := utiltest.CreateRestoreSchemaSuite(t)
+		tk := testkit.NewTestKit(t, s.Mock.Storage)
+		tk.MustExec("create database existing_db")
+		tk.MustExec("create table existing_db.t (id int)")
+		g := gluetidb.New()
+		se, err := g.CreateSession(s.Mock.Storage)
+		require.NoError(t, err)
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
+
+		existing, err := s.Mock.Domain.InfoSchema().TableByName(ctx, ast.NewCIStr("existing_db"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+
+		// A previous run of this restore created existing_db.t. The current
+		// interval truncates/recreates the source table, so the new upstream ID
+		// still carries a temporary downstream ID. The existing table is owned by
+		// this restore and is replaced by the log replay, so it is not a conflict.
+		manager := stream.NewTableMappingManager()
+		manager.DBReplaceMap[10] = &stream.DBReplace{
+			Name: "existing_db",
+			DbID: 110,
+			TableMap: map[stream.UpstreamID]*stream.TableReplace{
+				20: {Name: "t", TableID: existing.Meta().ID, TargetDBName: "existing_db", TargetDBID: existing.Meta().DBID},
+				21: {Name: "t", TableID: -13, TargetDBName: "existing_db", TargetDBID: existing.Meta().DBID},
+			},
+		}
+		require.NoError(t, client.ValidateTargetTableExistence(ctx, manager))
+
+		// The same temporary ID without an owning entry is still rejected.
+		delete(manager.DBReplaceMap[10].TableMap, 20)
+		require.ErrorContains(t, client.ValidateTargetTableExistence(ctx, manager), "already exists with table ID")
+	})
+
+	for _, tc := range []struct {
+		name           string
+		crossSchema    bool
+		omitOldOwner   bool
+		filterOwner    bool
+		expectConflict bool
+	}{
+		{name: "allow owned snapshot tables before name reuse is replayed"},
+		{name: "allow historical ownership before cross schema rename is replayed", crossSchema: true},
+		{name: "reject ownership in another schema without a historical location", crossSchema: true, omitOldOwner: true, expectConflict: true},
+		{name: "reject ownership from a filtered table", filterOwner: true, expectConflict: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := utiltest.CreateRestoreSchemaSuite(t)
+			tk := testkit.NewTestKit(t, s.Mock.Storage)
+			tk.MustExec("create database rename_src")
+			tk.MustExec("create database rename_dst")
+			tk.MustExec("create table rename_src.a (id int)")
+			secondDB := "rename_src"
+			if tc.crossSchema {
+				secondDB = "rename_dst"
+			}
+			tk.MustExec("create table " + secondDB + ".b (id int)")
+			g := gluetidb.New()
+			se, err := g.CreateSession(s.Mock.Storage)
+			require.NoError(t, err)
+			client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
+			infoSchema := s.Mock.Domain.InfoSchema()
+			first, err := infoSchema.TableByName(ctx, ast.NewCIStr("rename_src"), ast.NewCIStr("a"))
+			require.NoError(t, err)
+			second, err := infoSchema.TableByName(ctx, ast.NewCIStr(secondDB), ast.NewCIStr("b"))
+			require.NoError(t, err)
+
+			// Snapshot ownership uses the original locations. The scan already
+			// carries the final names for a -> c, b -> a, before replay starts.
+			base := map[stream.UpstreamID]*stream.DBReplace{
+				10: {Name: "rename_src", DbID: first.Meta().DBID, TableMap: map[stream.UpstreamID]*stream.TableReplace{
+					20: {Name: "a", TableID: first.Meta().ID},
+				}},
+			}
+			manager := stream.NewTableMappingManager()
+			manager.DBReplaceMap[10] = &stream.DBReplace{
+				Name: "rename_src", DbID: -10,
+				TableMap: map[stream.UpstreamID]*stream.TableReplace{
+					20: {Name: "c", TableID: -20},
+					21: {Name: "a", TableID: -21},
+				},
+			}
+			if tc.crossSchema {
+				base[11] = &stream.DBReplace{
+					Name: "rename_dst", DbID: second.Meta().DBID,
+					TableMap: map[stream.UpstreamID]*stream.TableReplace{
+						21: {Name: "b", TableID: second.Meta().ID},
+					},
+				}
+				// Cross-schema RENAME leaves historical locations in both buckets.
+				manager.DBReplaceMap[11] = &stream.DBReplace{
+					Name: "rename_dst", DbID: -11,
+					TableMap: map[stream.UpstreamID]*stream.TableReplace{
+						20: {Name: "c", TableID: -20},
+						21: {Name: "a", TableID: -21},
+					},
+				}
+			} else {
+				base[10].TableMap[21] = &stream.TableReplace{Name: "b", TableID: second.Meta().ID}
+			}
+			manager.MergeBaseDBReplace(base)
+			if tc.omitOldOwner {
+				delete(manager.DBReplaceMap[10].TableMap, 20)
+			}
+			if tc.filterOwner {
+				manager.DBReplaceMap[10].TableMap[20].FilteredOut = true
+			}
+			err = client.ValidateTargetTableExistence(ctx, manager)
+			if tc.expectConflict {
+				require.ErrorContains(t, err, "already exists with table ID")
+			} else {
+				require.NoError(t, err)
+			}
+		})
 	}
 }
 
@@ -1435,6 +1883,22 @@ func getDBMap() map[int64]*stream.DBReplace {
 	return replaces
 }
 
+func mustMarshalPITRIDMapBackupMeta(t *testing.T, schemaVersion uint32) []byte {
+	t.Helper()
+
+	backupMeta := &backuppb.BackupMeta{
+		BackupSchemaVersion: schemaVersion,
+		ClusterVersion:      "8.5.6",
+		BrVersion:           "v8.5.6",
+		DbMaps: (&stream.TableMappingManager{
+			DBReplaceMap: getDBMap(),
+		}).ToProto(),
+	}
+	data, err := proto.Marshal(backupMeta)
+	require.NoError(t, err)
+	return data
+}
+
 func TestPITRIDMap(t *testing.T) {
 	ctx := context.Background()
 	s := utiltest.CreateRestoreSchemaSuite(t)
@@ -1479,6 +1943,70 @@ func TestPITRIDMap(t *testing.T) {
 			}
 		}
 	}
+
+	t.Run("independent task loads the predecessor map", func(t *testing.T) {
+		previous := logclient.TEST_NewLogClient(123, 1, 10, 3, s.Mock.Domain, se)
+		previous.SetRestoreID(101)
+		require.NoError(t, previous.TEST_saveIDMap(ctx, baseTableMappingManager, nil))
+		next := logclient.TEST_NewLogClient(123, 10, 20, 3, s.Mock.Domain, se)
+		next.SetRestoreID(102)
+		mapping := stream.NewTableMappingManager()
+		require.NoError(t, next.GetBaseIDMapAndMerge(ctx, false, false, nil, mapping, ""))
+		require.Equal(t, baseTableMappingManager.DBReplaceMap[1].DbID, mapping.DBReplaceMap[1].DbID)
+	})
+
+	t.Run("missing checkpoint map cannot use the predecessor", func(t *testing.T) {
+		previous := logclient.TEST_NewLogClient(123, 1, 30, 3, s.Mock.Domain, se)
+		previous.SetRestoreID(103)
+		require.NoError(t, previous.TEST_saveIDMap(ctx, baseTableMappingManager, nil))
+		next := logclient.TEST_NewLogClient(123, 30, 40, 3, s.Mock.Domain, se)
+		next.SetRestoreID(103)
+		err := next.GetBaseIDMapAndMerge(ctx, false, true, nil, stream.NewTableMappingManager(), "")
+		require.ErrorContains(t, err, "saved PiTR ID map is missing")
+	})
+
+	t.Run("an existing empty checkpoint map is valid", func(t *testing.T) {
+		client := logclient.TEST_NewLogClient(123, 1, 70, 3, s.Mock.Domain, se)
+		client.SetRestoreID(107)
+		require.NoError(t, client.TEST_saveIDMap(ctx, stream.NewTableMappingManager(), nil))
+		require.NoError(t, client.GetBaseIDMapAndMerge(ctx, false, true, nil, stream.NewTableMappingManager(), ""))
+	})
+
+	t.Run("ambiguous predecessor tasks are rejected", func(t *testing.T) {
+		for _, restoreID := range []uint64{104, 105} {
+			previous := logclient.TEST_NewLogClient(123, 1, 50, 3, s.Mock.Domain, se)
+			previous.SetRestoreID(restoreID)
+			require.NoError(t, previous.TEST_saveIDMap(ctx, baseTableMappingManager, nil))
+		}
+		next := logclient.TEST_NewLogClient(123, 50, 60, 3, s.Mock.Domain, se)
+		next.SetRestoreID(106)
+		err := next.GetBaseIDMapAndMerge(ctx, false, false, nil, stream.NewTableMappingManager(), "")
+		require.ErrorContains(t, err, "multiple PiTR ID maps")
+		// Current-task loading must retain restore_id isolation even at an
+		// endpoint for which several independent maps exist.
+		owner := logclient.TEST_NewLogClient(123, 1, 50, 3, s.Mock.Domain, se)
+		owner.SetRestoreID(104)
+		require.NoError(t, owner.GetBaseIDMapAndMerge(ctx, false, true, nil, stream.NewTableMappingManager(), ""))
+	})
+
+	t.Run("reject newer backup schema version", func(t *testing.T) {
+		data := mustMarshalPITRIDMapBackupMeta(t, backuppb.BackupSchemaVersion+1)
+		err = se.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restore_id = %? and restored_ts = %? and upstream_cluster_id = %?;",
+			uint64(0), uint64(2), uint64(3))
+		require.NoError(t, err)
+		for startIdx, segmentID := 0, 0; startIdx < len(data); segmentID += 1 {
+			endIdx := min(startIdx+logclient.PITRIdMapBlockSize, len(data))
+			err = se.ExecuteInternal(ctx,
+				"REPLACE INTO mysql.tidb_pitr_id_map (restore_id, restored_ts, upstream_cluster_id, segment_id, id_map) VALUES (%?, %?, %?, %?, %?);",
+				uint64(0), uint64(2), uint64(3), segmentID, data[startIdx:endIdx],
+			)
+			require.NoError(t, err)
+			startIdx = endIdx
+		}
+
+		_, err = client.TEST_initSchemasMap(ctx, 2, nil)
+		require.ErrorContains(t, err, "requires schema version")
+	})
 }
 
 func TestPITRIDMapOnStorage(t *testing.T) {
@@ -1536,9 +2064,178 @@ func TestPITRIDMapOnStorage(t *testing.T) {
 			}
 		}
 	}
+
+	t.Run("reject newer backup schema version", func(t *testing.T) {
+		client := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, se)
+		backend, err := objstore.ParseBackend("local://"+filepath.ToSlash(t.TempDir()), nil)
+		require.NoError(t, err)
+		storage, err := objstore.New(ctx, backend, nil)
+		require.NoError(t, err)
+		err = client.SetStorage(ctx, backend, nil)
+		require.NoError(t, err)
+		data := mustMarshalPITRIDMapBackupMeta(t, backuppb.BackupSchemaVersion+1)
+		require.NoError(t, storage.WriteFile(ctx, logclient.PitrIDMapsFilenameForTask(123, 3, 2, 0), data))
+
+		_, err = client.TEST_initSchemasMap(ctx, 2, nil)
+		require.ErrorContains(t, err, "requires schema version")
+	})
+}
+
+func TestPITRIDMapRouteFingerprintContinuity(t *testing.T) {
+	ctx := context.Background()
+	t.Run("routed resume keeps saved filters and allocated identities", func(t *testing.T) {
+		dom := domain.NewMockDomain()
+		backend, err := objstore.ParseBackend("local://"+filepath.ToSlash(t.TempDir()), nil)
+		require.NoError(t, err)
+		client := logclient.TEST_NewLogClient(123, 1, 2, 3, dom, fakeSession{})
+		require.NoError(t, client.SetStorage(ctx, backend, nil))
+		saved := stream.NewTableMappingManager()
+		saved.DBReplaceMap[1] = &stream.DBReplace{
+			Name: "x", SourceName: "s", DbID: 800, FilteredOut: true, SchemaRouted: true,
+			TableMap: map[stream.UpstreamID]*stream.TableReplace{
+				11: {Name: "copy", TableID: 901, TargetDBName: "y", TargetDBID: 900, FilteredOut: true},
+			},
+		}
+		require.NoError(t, client.TEST_saveIDMap(ctx, saved, nil, "route"))
+		scan := stream.NewTableMappingManager()
+		scan.DBReplaceMap[1] = &stream.DBReplace{
+			Name: "s", SourceName: "s", DbID: -1,
+			TableMap: map[stream.UpstreamID]*stream.TableReplace{11: {Name: "t", TableID: -2}},
+		}
+		require.NoError(t, client.GetBaseIDMapAndMerge(ctx, false, true, nil, scan, "route"))
+		require.Equal(t, "x", scan.DBReplaceMap[1].Name)
+		require.Equal(t, "s", scan.DBReplaceMap[1].SourceName)
+		require.Equal(t, int64(800), scan.DBReplaceMap[1].DbID)
+		require.True(t, scan.DBReplaceMap[1].FilteredOut)
+		require.True(t, scan.DBReplaceMap[1].TableMap[11].FilteredOut)
+		require.Equal(t, "copy", scan.DBReplaceMap[1].TableMap[11].Name)
+		require.Equal(t, int64(901), scan.DBReplaceMap[1].TableMap[11].TableID)
+		require.Equal(t, int64(900), scan.DBReplaceMap[1].TableMap[11].TargetDBID)
+	})
+
+	testCases := []struct {
+		name                 string
+		persistedFingerprint string
+		currentFingerprint   string
+		wantErr              bool
+	}{
+		{
+			name:                 "same rules",
+			persistedFingerprint: "route-target-a",
+			currentFingerprint:   "route-target-a",
+		},
+		{
+			name:                 "legacy no rename",
+			persistedFingerprint: "",
+			currentFingerprint:   "",
+		},
+		{
+			name:                 "rename to none",
+			persistedFingerprint: "route-target-a",
+			currentFingerprint:   "",
+			wantErr:              true,
+		},
+		{
+			name:                 "none to rename",
+			persistedFingerprint: "",
+			currentFingerprint:   "route-target-a",
+			wantErr:              true,
+		},
+		{
+			name:                 "target A to target B",
+			persistedFingerprint: "route-target-a",
+			currentFingerprint:   "route-target-b",
+			wantErr:              true,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			dom := domain.NewMockDomain()
+			backend, err := objstore.ParseBackend("local://"+filepath.ToSlash(t.TempDir()), nil)
+			require.NoError(t, err)
+
+			previousTaskClient := logclient.TEST_NewLogClient(123, 0, 1, 3, dom, fakeSession{})
+			require.NoError(t, previousTaskClient.SetStorage(ctx, backend, nil))
+			baseManager := &stream.TableMappingManager{DBReplaceMap: getDBMap()}
+			require.NoError(t, previousTaskClient.TEST_saveIDMap(
+				ctx, baseManager, nil, testCase.persistedFingerprint,
+			))
+
+			currentTaskClient := logclient.TEST_NewLogClient(123, 1, 2, 3, dom, fakeSession{})
+			require.NoError(t, currentTaskClient.SetStorage(ctx, backend, nil))
+			mergedManager := stream.NewTableMappingManager()
+			err = currentTaskClient.GetBaseIDMapAndMerge(
+				ctx, false, false, nil, mergedManager, testCase.currentFingerprint,
+			)
+			if testCase.wantErr {
+				require.ErrorContains(t, err, "restore rename rules do not match the previous PiTR ID map")
+				require.Empty(t, mergedManager.DBReplaceMap)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Len(t, mergedManager.DBReplaceMap, len(baseManager.DBReplaceMap))
+		})
+	}
 }
 
 func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
+	t.Run("storage maps retain task ownership at a shared boundary", func(t *testing.T) {
+		ctx := context.Background()
+		s := utiltest.CreateRestoreSchemaSuite(t)
+		g := gluetidb.New()
+		se, err := g.CreateSession(s.Mock.Storage)
+		require.NoError(t, err)
+		storage, err := objstore.NewLocalStorage(t.TempDir())
+		require.NoError(t, err)
+		manager := checkpoint.NewLogStorageMetaManager(storage, nil, 123, "test", 101)
+		first := logclient.TEST_NewLogClient(123, 1, 50, 3, s.Mock.Domain, se)
+		first.SetRestoreID(101)
+		first.SetUseCheckpoint()
+		firstMap := stream.NewTableMappingManager()
+		firstMap.DBReplaceMap[1] = &stream.DBReplace{Name: "first", SourceName: "first", DbID: 800, TableMap: map[stream.UpstreamID]*stream.TableReplace{}}
+		require.NoError(t, first.TEST_saveIDMap(ctx, firstMap, manager, "same-routes"))
+		next := logclient.TEST_NewLogClient(123, 50, 60, 3, s.Mock.Domain, se)
+		next.SetRestoreID(103)
+		next.SetUseCheckpoint()
+		merged := stream.NewTableMappingManager()
+		require.NoError(t, next.GetBaseIDMapAndMerge(ctx, false, false, manager, merged, "same-routes"))
+		require.Equal(t, "first", merged.DBReplaceMap[1].Name)
+		second := logclient.TEST_NewLogClient(123, 1, 50, 3, s.Mock.Domain, se)
+		second.SetRestoreID(102)
+		second.SetUseCheckpoint()
+		secondMap := stream.NewTableMappingManager()
+		secondMap.DBReplaceMap[1] = &stream.DBReplace{Name: "second", SourceName: "second", DbID: 900, TableMap: map[stream.UpstreamID]*stream.TableReplace{}}
+		require.NoError(t, second.TEST_saveIDMap(ctx, secondMap, manager, "same-routes"))
+		loaded, err := first.TEST_initSchemasMap(ctx, 50, manager)
+		require.NoError(t, err)
+		require.Equal(t, "first", loaded[0].Name)
+		require.ErrorContains(t, next.GetBaseIDMapAndMerge(ctx, false, false, manager, stream.NewTableMappingManager(), "same-routes"), "multiple PiTR ID maps")
+		missing := logclient.TEST_NewLogClient(123, 1, 50, 3, s.Mock.Domain, se)
+		missing.SetRestoreID(103)
+		missing.SetUseCheckpoint()
+		require.ErrorContains(t, missing.GetBaseIDMapAndMerge(ctx, false, true, manager, stream.NewTableMappingManager(), "same-routes"), "saved PiTR ID map is missing")
+		upstream := logclient.TEST_NewLogClient(123, 1, 50, 4, s.Mock.Domain, se)
+		upstream.SetRestoreID(101)
+		upstream.SetUseCheckpoint()
+		require.NoError(t, upstream.TEST_saveIDMap(ctx, secondMap, manager, "same-routes"))
+		loaded, err = first.TEST_initSchemasMap(ctx, 50, manager)
+		require.NoError(t, err)
+		require.Equal(t, "first", loaded[0].Name)
+		otherNext := logclient.TEST_NewLogClient(123, 50, 60, 4, s.Mock.Domain, se)
+		otherNext.SetRestoreID(103)
+		otherNext.SetUseCheckpoint()
+		require.NoError(t, otherNext.GetBaseIDMapAndMerge(ctx, false, false, manager, stream.NewTableMappingManager(), "same-routes"))
+		legacy, err := proto.Marshal(&backuppb.BackupMeta{DbMaps: firstMap.ToProto(), BackupSchemaVersion: backuppb.BackupSchemaVersion})
+		require.NoError(t, err)
+		require.NoError(t, storage.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 80), legacy))
+		legacyNext := logclient.TEST_NewLogClient(123, 80, 90, 3, s.Mock.Domain, se)
+		legacyNext.SetRestoreID(105)
+		legacyNext.SetUseCheckpoint()
+		require.ErrorContains(t, legacyNext.GetBaseIDMapAndMerge(ctx, false, false, manager, stream.NewTableMappingManager(), "same-routes"), "has no task owner")
+	})
+
 	ctx := context.Background()
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
@@ -1593,6 +2290,126 @@ func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestLogRestoreCheckpointRouteFingerprint(t *testing.T) {
+	ctx := context.Background()
+	newManager := func(t *testing.T) checkpoint.LogMetaManagerT {
+		storage, err := objstore.NewLocalStorage(t.TempDir())
+		require.NoError(t, err)
+		manager := checkpoint.NewLogStorageMetaManager(storage, nil, 123, "test", 1)
+		t.Cleanup(manager.Close)
+		return manager
+	}
+	newClient := func(t *testing.T) *logclient.LogClient {
+		client := logclient.TEST_NewLogClient(123, 1, 2, 3, nil, nil)
+		require.NoError(t, client.SetCurrentTS(4))
+		return client
+	}
+	loadOrCreate := func(t *testing.T, client *logclient.LogClient, manager checkpoint.LogMetaManagerT, fingerprint string) error {
+		_, _, _, err := client.LoadOrCreateCheckpointMetadataForLogRestore(
+			ctx, 5, 1, 2, "1.1", "8", nil, manager, 6, fingerprint)
+		return err
+	}
+
+	t.Run("same fingerprint resumes and changed fingerprint is rejected", func(t *testing.T) {
+		manager := newManager(t)
+		client := newClient(t)
+		require.NoError(t, loadOrCreate(t, client, manager, "route-a"))
+		require.NoError(t, loadOrCreate(t, client, manager, "route-a"))
+		require.ErrorContains(t, loadOrCreate(t, client, manager, "route-b"),
+			"restore rename rules do not match the log restore checkpoint")
+	})
+
+	t.Run("legacy empty fingerprint accepts only no rename", func(t *testing.T) {
+		manager := newManager(t)
+		client := newClient(t)
+		require.NoError(t, loadOrCreate(t, client, manager, ""))
+		require.NoError(t, loadOrCreate(t, client, manager, ""))
+		require.ErrorContains(t, loadOrCreate(t, client, manager, "route-a"),
+			"restore rename rules do not match the log restore checkpoint")
+	})
+}
+
+// TestRebaseAutoIncrementIDForSepAutoIncTables is a regression test for
+// https://github.com/pingcap/tidb/issues/69485: after PiTR log replay bumps the
+// persisted auto-increment counter of an AUTO_ID_CACHE=1 table directly in TiKV,
+// the autoid service's in-memory cache is stale and would hand out already-used
+// IDs. RebaseAutoIncrementIDForSepAutoIncTables must sync the service back to the
+// persisted value so the next allocation is persistedBase+1.
+func TestRebaseAutoIncrementIDForSepAutoIncTables(t *testing.T) {
+	ctx := context.Background()
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id bigint primary key auto_increment, data bigint) auto_id_cache=1")
+	// The first insert primes the autoid service's in-memory cache (a non-zero
+	// base with a reserved range) exactly like a snapshot restore would.
+	tk.MustExec("insert into t (data) values (0)")
+
+	tbl, err := s.Mock.Domain.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.True(t, tbl.Meta().SepAutoInc())
+	dbID := tbl.Meta().DBID
+	tableID := tbl.Meta().ID
+
+	alloc := tbl.Allocators(nil).Get(autoid.AutoIncrementType)
+	require.NotNil(t, alloc)
+
+	// Simulate PiTR log replay writing a higher auto-increment counter straight
+	// to TiKV, bypassing the autoid service. Choose a target well above the
+	// service's reserved range so the in-memory cache is guaranteed to be stale.
+	var target int64
+	require.NoError(t, kv.RunInNewTxn(ctx, s.Mock.Storage, false, func(_ context.Context, txn kv.Transaction) error {
+		acc := meta.NewMutator(txn).GetAutoIDAccessors(dbID, tableID).IncrementID(model.TableInfoVersion5)
+		cur, err1 := acc.Get()
+		if err1 != nil {
+			return err1
+		}
+		target = cur + 1000000
+		_, err1 = acc.Inc(target - cur)
+		return err1
+	}))
+
+	// Before the fix: the service still allocates from its stale cache, not from
+	// the persisted value, which is the bug that causes duplicate-key errors.
+	staleNext, err := alloc.NextGlobalAutoID()
+	require.NoError(t, err)
+	require.Less(t, staleNext, target, "expected stale in-memory allocation before rebase")
+
+	client := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, nil)
+	schemasReplace := &stream.SchemasReplace{
+		DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{
+			dbID + 1000: {
+				Name: "source_db",
+				DbID: dbID + 1000,
+				TableMap: map[stream.UpstreamID]*stream.TableReplace{
+					tableID: {
+						Name:         "t",
+						TableID:      tableID,
+						TargetDBName: "test",
+						TargetDBID:   dbID,
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, client.RebaseAutoIncrementIDForSepAutoIncTables(ctx, schemasReplace))
+
+	// After the fix: the service is synced to the persisted value, so the next
+	// allocation is target+1 and no longer collides with restored rows.
+	fixedNext, err := alloc.NextGlobalAutoID()
+	require.NoError(t, err)
+	require.Equal(t, target+1, fixedNext)
+
+	modeSession, err := gluetidb.New().CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
+	require.NoError(t, modeSession.AlterTableMode(ctx, dbID, tableID, model.TableModeRestore))
+	client = logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, modeSession)
+	require.NoError(t, client.SetTableModeToNormal(ctx, schemasReplace))
+	restoredTable, exists := s.Mock.Domain.InfoSchema().TableByID(ctx, tableID)
+	require.True(t, exists)
+	require.Equal(t, model.TableModeNormal, restoredTable.Meta().Mode)
 }
 
 type mockLogStrategy struct {
@@ -1667,7 +2484,7 @@ func TestLogSplitStrategy(t *testing.T) {
 	}
 
 	// Create a log split strategy with the given rewrite rules.
-	strategy, err := logclient.NewLogSplitStrategy(ctx, false, nil, rules, func(u1, u2 uint64) {})
+	strategy, err := logclient.NewLogSplitStrategy(ctx, false, nil, rules, func(u1, u2 uint64) {}, logclient.SplitFileThresholdDefault)
 	require.NoError(t, err)
 
 	// Set up a mock strategy to control split behavior.
@@ -1716,6 +2533,129 @@ type mockCompactedStrategy struct {
 
 func (m *mockCompactedStrategy) ShouldSplit() bool {
 	return m.AccumulateCount%m.expectSplitCount == 0
+}
+
+func TestCollectSSTFileSets(t *testing.T) {
+	ctx := context.Background()
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, nil, nil)
+	rules := map[int64]*utils.RewriteRules{
+		1: {
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(1),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(100),
+				},
+			},
+		},
+	}
+
+	t.Run("skips ssts without rewrite rule", func(t *testing.T) {
+		fileSets, totalKVs, err := client.CollectSSTFileSets(ctx, iter.FromSlice([]logclient.SSTs{
+			fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
+			fakeSubCompactionWithOneSst(3, 100, 16*units.MiB, 300),
+		}), rules)
+		require.NoError(t, err)
+		require.Equal(t, int64(100), totalKVs)
+		require.Len(t, fileSets, 1)
+		require.Equal(t, int64(1), fileSets[0].TableID)
+		require.Len(t, fileSets[0].SSTFiles, 1)
+	})
+
+	t.Run("counts only ssts that still need restore", func(t *testing.T) {
+		var skippedKVs uint64
+		strategy := logclient.NewCompactedFileSplitStrategy(rules, map[string]struct{}{
+			"1:200": {},
+		}, func(kvCount, _ uint64) {
+			skippedKVs += kvCount
+		})
+		ssts := fakeSubCompactionWithMultiSsts(1, 200, 32*units.MiB, 200)
+		require.False(t, strategy.ShouldSkip(ssts))
+
+		fileSets, totalKVs, err := client.CollectSSTFileSets(ctx, iter.FromSlice([]logclient.SSTs{ssts}), rules)
+		require.NoError(t, err)
+		require.Equal(t, uint64(200), skippedKVs)
+		require.Equal(t, int64(200), totalKVs)
+		require.Len(t, fileSets, 1)
+		require.Len(t, fileSets[0].SSTFiles, 1)
+		require.Equal(t, "1:201", fileSets[0].SSTFiles[0].Name)
+	})
+}
+
+func TestEstimateCompactedSSTFlowControl(t *testing.T) {
+	fileSets := restore.BatchBackupFileSet{
+		{
+			TableID: 1,
+			SSTFiles: []*backuppb.File{
+				{
+					Name:  "file-1",
+					Size_: 16 * units.MiB,
+				},
+				{
+					Name:       "file-2",
+					TotalBytes: 8 * units.MiB,
+				},
+			},
+		},
+	}
+
+	snapshotBytes, compactedSSTBytes, l6BytesPerStore, l5BytesPerStore, pendingBytes :=
+		logclient.TEST_EstimateCompactedSSTFlowControl(fileSets, 5, 3, 120*units.MiB, 6*units.MiB)
+	require.Equal(t, uint64(120*units.MiB), snapshotBytes)
+	require.Equal(t, uint64(30*units.MiB), compactedSSTBytes)
+	require.Equal(t, uint64(72*units.MiB), l6BytesPerStore)
+	require.Equal(t, uint64(18*units.MiB), l5BytesPerStore)
+	require.InDelta(t, 54*float64(units.MiB), float64(pendingBytes), float64(units.KiB))
+
+	require.Equal(t, uint(2), logclient.TEST_LiveTiKVStoreCount([]*metapb.Store{
+		{State: metapb.StoreState_Up},
+		{State: metapb.StoreState_Offline},
+		{State: metapb.StoreState_Up},
+		{State: metapb.StoreState_Tombstone},
+	}))
+}
+
+func TestEstimatePendingCompactionBytes(t *testing.T) {
+	require.Equal(t, uint64(0), logclient.TEST_EstimatePendingCompactionBytes(11*units.TiB, units.TiB))
+	pendingBytes := logclient.TEST_EstimatePendingCompactionBytes(units.TiB, 512*units.GiB)
+	expectedPendingBytes := (512*float64(units.GiB) - float64(units.TiB)/10) * 3
+	require.InDelta(t, expectedPendingBytes, float64(pendingBytes), float64(units.MiB))
+}
+
+func TestCompactedSSTFlowControlTarget(t *testing.T) {
+	soft, hard := logclient.TEST_CompactedSSTFlowControlTarget(
+		[]string{"192GiB"},
+		[]string{"256GiB"},
+		512*units.GiB,
+	)
+	require.Equal(t, uint64(units.TiB), soft)
+	require.Equal(t, uint64(2*units.TiB), hard)
+
+	soft, hard = logclient.TEST_CompactedSSTFlowControlTarget(
+		[]string{"192GiB"},
+		[]string{"256GiB"},
+		3*units.TiB,
+	)
+	require.Equal(t, uint64(3840*units.GiB), soft)
+	require.Equal(t, uint64(7680*units.GiB), hard)
+
+	soft, hard = logclient.TEST_CompactedSSTFlowControlTarget(
+		[]string{"4TiB"},
+		[]string{"9TiB"},
+		512*units.GiB,
+	)
+	require.Equal(t, uint64(4*units.TiB), soft)
+	require.Equal(t, uint64(9*units.TiB), hard)
+
+	require.False(t, logclient.TEST_AllTiKVConfigsAtLeast([]string{"4TiB", "192GiB"}, 4*units.TiB))
+	require.True(t, logclient.TEST_AllTiKVConfigsAtLeast([]string{"4TiB", "5TiB"}, 4*units.TiB))
+	require.Equal(t, "1TiB", logclient.TEST_FormatBytes(units.TiB))
+	require.Equal(t, "1536GiB", logclient.TEST_FormatBytes(1536*units.GiB))
+
+	require.Equal(t, uint(5), logclient.TEST_MaxReplicaFromReplicateConfig(map[string]any{"max-replicas": float64(5)}, nil))
+	require.Equal(t, uint(3), logclient.TEST_MaxReplicaFromReplicateConfig(nil, errors.New("pd unavailable")))
+	require.Equal(t, uint(3), logclient.TEST_MaxReplicaFromReplicateConfig(map[string]any{}, nil))
+	require.Equal(t, uint(3), logclient.TEST_MaxReplicaFromReplicateConfig(map[string]any{"max-replicas": "bad"}, nil))
+	require.Equal(t, uint(3), logclient.TEST_MaxReplicaFromReplicateConfig(map[string]any{"max-replicas": float64(0)}, nil))
 }
 
 func TestCompactedSplitStrategy(t *testing.T) {
@@ -2213,7 +3153,7 @@ func TestRepairIngestIndex(t *testing.T) {
 			"test", "repair_index_t1", tableInfo.ID, indexIDi2, "i2", "a",
 			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", indexIDi2)),
 		), false))
-		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, nil, g))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, nil, g, nil))
 		infoschema = s.Mock.InfoSchema()
 		table2, err := infoschema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_t1"))
 		require.NoError(t, err)
@@ -2231,6 +3171,107 @@ func TestRepairIngestIndex(t *testing.T) {
 		}
 		require.Equal(t, 2, existsCount)
 	}
+}
+
+func TestRepairIngestIndexOutputAddIndexSQL(t *testing.T) {
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.MustExec("CREATE TABLE test.repair_index_export_t(id int, a int, b int, key i1(id), unique key i2(a));")
+	g := gluetidb.New()
+	ctx := context.Background()
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, fakeSession{})
+	client.SetUseCheckpoint()
+
+	fakeJob := func(
+		schemaName string,
+		tableName string,
+		tableID int64,
+		indexID int64,
+		indexName string,
+		columnName string,
+		args json.RawMessage,
+	) *model.Job {
+		return &model.Job{
+			Version:    model.JobVersion1,
+			SchemaName: schemaName,
+			TableName:  tableName,
+			TableID:    tableID,
+			Type:       model.ActionAddIndex,
+			State:      model.JobStateSynced,
+			RowCount:   100,
+			RawArgs:    args,
+			ReorgMeta: &model.DDLReorgMeta{
+				ReorgTp: model.ReorgTypeIngest,
+			},
+			BinlogInfo: &model.HistoryInfo{
+				TableInfo: &model.TableInfo{
+					Indices: []*model.IndexInfo{
+						{
+							ID:   indexID,
+							Name: ast.NewCIStr(indexName),
+							Columns: []*model.IndexColumn{{
+								Name: ast.NewCIStr(columnName),
+							}},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	infoSchema := s.Mock.InfoSchema()
+	table, err := infoSchema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_export_t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	var indexIDi1, indexIDi2 int64
+	for _, indexInfo := range tableInfo.Indices {
+		switch indexInfo.Name.L {
+		case "i1":
+			indexIDi1 = indexInfo.ID
+		case "i2":
+			indexIDi2 = indexInfo.ID
+		}
+	}
+	require.NotZero(t, indexIDi1)
+	require.NotZero(t, indexIDi2)
+
+	ingestRecorder := ingestrec.New()
+	require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+		"test", "repair_index_export_t", tableInfo.ID, indexIDi1, "i1", "id",
+		json.RawMessage(fmt.Sprintf("[%d, false, [], false]", indexIDi1)),
+	), false))
+	require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+		"test", "repair_index_export_t", tableInfo.ID, indexIDi2, "i2", "a",
+		json.RawMessage(fmt.Sprintf("[%d, false, [], false]", indexIDi2)),
+	), false))
+
+	checkpointStorage, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	logStorageMetaManager := checkpoint.NewLogStorageMetaManager(checkpointStorage, nil, 123, "test", 1)
+	defer logStorageMetaManager.Close()
+	sqlStorage, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, sqlStorage))
+
+	repairSQLs, err := logStorageMetaManager.LoadCheckpointIngestIndexRepairSQLs(ctx)
+	require.NoError(t, err)
+	require.Len(t, repairSQLs.SQLs, 2)
+
+	infoSchema = s.Mock.InfoSchema()
+	table, err = infoSchema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_export_t"))
+	require.NoError(t, err)
+	indexNames := make(map[string]struct{})
+	for _, indexInfo := range table.Meta().Indices {
+		indexNames[indexInfo.Name.L] = struct{}{}
+	}
+	require.NotContains(t, indexNames, "i1")
+	require.NotContains(t, indexNames, "i2")
+
+	data, err := sqlStorage.ReadFile(ctx, "add-index.sql")
+	require.NoError(t, err)
+	sqlText := string(data)
+	require.Contains(t, sqlText, "ALTER TABLE `test`.`repair_index_export_t` ADD INDEX `i1`(`id`) USING BTREE VISIBLE LOCAL;")
+	require.Contains(t, sqlText, "ALTER TABLE `test`.`repair_index_export_t` ADD UNIQUE KEY `i2`(`a`) USING BTREE VISIBLE LOCAL;")
 }
 
 func TestRepairIngestIndexFromCheckpoint(t *testing.T) {
@@ -2303,7 +3344,7 @@ func TestRepairIngestIndexFromCheckpoint(t *testing.T) {
 		},
 	}))
 	ingestRecorder := ingestrec.New()
-	require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logCheckpointMetaManager, g))
+	require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logCheckpointMetaManager, g, nil))
 	infoschema = s.Mock.InfoSchema()
 	table2, err := infoschema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_t1"))
 	require.NoError(t, err)
@@ -2393,7 +3434,7 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 			"test", "parent", parentTableInfo.ID, parentTableIndexI2.ID, "i2", "id",
 			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", parentTableIndexI2.ID)),
 		), false))
-		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
 		infoSchema = s.Mock.InfoSchema()
 		newChildTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
 		require.NoError(t, err)
@@ -2430,7 +3471,7 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 		parentTableIndexI2 := parentTableInfo.Indices[0]
 
 		ingestRecorder := ingestrec.New()
-		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
 		infoSchema = s.Mock.InfoSchema()
 		newChildTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
 		require.NoError(t, err)
@@ -2466,21 +3507,21 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 			"test", "parent", parentTableInfo.ID, parentTableIndexI2.ID, "i2", "id",
 			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", parentTableIndexI2.ID)),
 		), false))
-		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-repair-ingest-index"))
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index", `return(true)`))
 		defer func() {
 			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index")
 		}()
-		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index"))
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index", `return(true)`))
 		defer func() {
 			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index")
 		}()
-		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index"))
-		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
 
 		infoSchema = s.Mock.InfoSchema()
 		newChildTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
@@ -2514,4 +3555,30 @@ func (m *mockBatchProcessor) ProcessBatch(
 	cf string,
 ) ([]*logclient.KvEntryWithTS, error) {
 	return m.processFunc(ctx, files, entries, filterTS, cf)
+}
+
+func TestGetLockedMigrationsReleasesReadLockOnLoadError(t *testing.T) {
+	ctx := context.Background()
+	stg, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+
+	// Inject a malformed migration file so ext.Load()'s migIdOf parser fails.
+	// migIdOf takes the first 8 chars of the filename as an integer; "badfile."
+	// is not parseable, so Load() returns an error and exercises the error path
+	// in GetLockedMigrations.
+	require.NoError(t, stg.WriteFile(ctx, "v1/migrations/badfile.mgrt", []byte("garbage")))
+
+	client := logclient.TEST_NewLogClientWithStorage(stg)
+	_, err = client.GetLockedMigrations(ctx)
+	require.Error(t, err, "expected Load() to fail on malformed migration file")
+
+	var lingering []string
+	require.NoError(t, stg.WalkDir(ctx, &storeapi.WalkOption{
+		SubDir:    "v1",
+		ObjPrefix: "LOCK",
+	}, func(p string, _ int64) error {
+		lingering = append(lingering, p)
+		return nil
+	}))
+	require.Emptyf(t, lingering, "readLock was not released after Load error; lingering files: %v", lingering)
 }

@@ -81,6 +81,12 @@ func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
 				s := ds.Schema().Columns
 				col := expression.ColInfo2Col(s, colInfo)
 				if col != nil && col.GetType(ectx).PartialEqual(col.VirtualExpr.GetType(ectx), lp.SCtx().GetSessionVars().EnableUnsafeSubstitute) {
+					// Replacing a literal with a generated column that is itself a pure constant is not
+					// semantically neutral across outer joins, because null-augmentation can turn the
+					// generated column into NULL while the original literal stays constant.
+					if len(expression.ExtractColumns(col.VirtualExpr)) == 0 {
+						continue
+					}
 					exprToColumn[col.VirtualExpr] = col
 				}
 			}
@@ -93,6 +99,9 @@ func tryToSubstituteExpr(expr *expression.Expression, lp base.LogicalPlan, candi
 	ectx := lp.SCtx().GetExprCtx().GetEvalCtx()
 	if (*expr).Equal(ectx, candidateExpr) && candidateExpr.GetType(ectx).EvalType() == tp &&
 		schema.ColumnIndex(col) != -1 {
+		if expression.MaybeOverOptimized4PlanCache(lp.SCtx().GetExprCtx(), *expr) {
+			lp.SCtx().GetExprCtx().SetSkipPlanCache("generated column substitution with mutable constants can affect index selection")
+		}
 		*expr = col
 		changed = true
 	}
@@ -191,20 +200,14 @@ func (gc *GcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, ex
 			for i := range aggFunc.Args {
 				tp = aggFunc.Args[i].GetType(ectx).EvalType()
 				for candidateExpr, column := range exprToColumn {
-					if aggFunc.Args[i].Equal(ectx, candidateExpr) && candidateExpr.GetType(ectx).EvalType() == tp &&
-						x.Schema().ColumnIndex(column) != -1 {
-						aggFunc.Args[i] = column
-					}
+					tryToSubstituteExpr(&aggFunc.Args[i], lp, candidateExpr, tp, x.Schema(), column)
 				}
 			}
 		}
 		for i := range x.GroupByItems {
 			tp = x.GroupByItems[i].GetType(ectx).EvalType()
 			for candidateExpr, column := range exprToColumn {
-				if x.GroupByItems[i].Equal(ectx, candidateExpr) && candidateExpr.GetType(ectx).EvalType() == tp &&
-					x.Schema().ColumnIndex(column) != -1 {
-					x.GroupByItems[i] = column
-				}
+				tryToSubstituteExpr(&x.GroupByItems[i], lp, candidateExpr, tp, x.Schema(), column)
 			}
 		}
 	}

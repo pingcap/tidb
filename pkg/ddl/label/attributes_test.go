@@ -17,6 +17,7 @@ package label
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client/http"
 )
@@ -200,6 +201,8 @@ func TestRestoreLabels(t *testing.T) {
 	require.NoError(t, err)
 	input5, err := NewLabel("partition=p1")
 	require.NoError(t, err)
+	input6, err := NewLabel("keyspace=42")
+	require.NoError(t, err)
 
 	tests := []TestCase{
 		{
@@ -229,5 +232,17 @@ func TestRestoreLabels(t *testing.T) {
 			output := RestoreRegionLabels(&test.input)
 			require.Equal(t, test.output, output)
 		})
+	}
+
+	if kerneltype.IsNextGen() {
+		output := RestoreRegionLabels(&[]pd.RegionLabel{input1, input6})
+		require.Equal(t, `"merge_option=allow"`, output)
+		output = RestoreRegionLabels(&[]pd.RegionLabel{input6, input1})
+		require.Equal(t, `"merge_option=allow"`, output)
+	} else {
+		output := RestoreRegionLabels(&[]pd.RegionLabel{input1, input6})
+		require.Equal(t, `"merge_option=allow","keyspace=42"`, output)
+		output = RestoreRegionLabels(&[]pd.RegionLabel{input6, input1})
+		require.Equal(t, `"keyspace=42","merge_option=allow"`, output)
 	}
 }

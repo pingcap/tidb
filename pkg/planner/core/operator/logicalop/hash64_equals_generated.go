@@ -156,18 +156,7 @@ func (op *LogicalAggregation) Hash64(h base.Hasher) {
 			one.Hash64(h)
 		}
 	}
-	if op.PossibleProperties == nil {
-		h.HashByte(base.NilFlag)
-	} else {
-		h.HashByte(base.NotNilFlag)
-		h.HashInt(len(op.PossibleProperties))
-		for _, one := range op.PossibleProperties {
-			h.HashInt(len(one))
-			for _, onee := range one {
-				onee.Hash64(h)
-			}
-		}
-	}
+	op.PossibleProperties.Hash64(h)
 }
 
 // Equals implements the Hash64Equals interface, only receive *LogicalAggregation pointer.
@@ -201,18 +190,8 @@ func (op *LogicalAggregation) Equals(other any) bool {
 			return false
 		}
 	}
-	if (op.PossibleProperties == nil && op2.PossibleProperties != nil) || (op.PossibleProperties != nil && op2.PossibleProperties == nil) || len(op.PossibleProperties) != len(op2.PossibleProperties) {
+	if !op.PossibleProperties.Equals(&op2.PossibleProperties) {
 		return false
-	}
-	for i, one := range op.PossibleProperties {
-		if (one == nil && op2.PossibleProperties[i] != nil) || (one != nil && op2.PossibleProperties[i] == nil) || len(one) != len(op2.PossibleProperties[i]) {
-			return false
-		}
-		for ii, onee := range one {
-			if !onee.Equals(op2.PossibleProperties[i][ii]) {
-				return false
-			}
-		}
 	}
 	return true
 }
@@ -231,6 +210,7 @@ func (op *LogicalApply) Hash64(h base.Hasher) {
 		}
 	}
 	h.HashBool(op.NoDecorrelate)
+	h.HashBool(op.IsLateral)
 }
 
 // Equals implements the Hash64Equals interface, only receive *LogicalApply pointer.
@@ -257,6 +237,9 @@ func (op *LogicalApply) Equals(other any) bool {
 		}
 	}
 	if op.NoDecorrelate != op2.NoDecorrelate {
+		return false
+	}
+	if op.IsLateral != op2.IsLateral {
 		return false
 	}
 	return true
@@ -498,6 +481,15 @@ func (op *DataSource) Hash64(h base.Hasher) {
 			one.Hash64(h)
 		}
 	}
+	if op.TiFlashLMFilterColumnIDs == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(op.TiFlashLMFilterColumnIDs))
+		for _, one := range op.TiFlashLMFilterColumnIDs {
+			h.HashInt64(int64(one))
+		}
+	}
 	if op.AllConds == nil {
 		h.HashByte(base.NilFlag)
 	} else {
@@ -538,6 +530,14 @@ func (op *DataSource) Equals(other any) bool {
 	}
 	for i, one := range op.PushedDownConds {
 		if !one.Equals(op2.PushedDownConds[i]) {
+			return false
+		}
+	}
+	if (op.TiFlashLMFilterColumnIDs == nil && op2.TiFlashLMFilterColumnIDs != nil) || (op.TiFlashLMFilterColumnIDs != nil && op2.TiFlashLMFilterColumnIDs == nil) || len(op.TiFlashLMFilterColumnIDs) != len(op2.TiFlashLMFilterColumnIDs) {
+		return false
+	}
+	for i, one := range op.TiFlashLMFilterColumnIDs {
+		if one != op2.TiFlashLMFilterColumnIDs[i] {
 			return false
 		}
 	}

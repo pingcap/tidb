@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -45,13 +46,17 @@ type HashAggFinalWorker struct {
 	outputCh            chan *AfFinalResult
 	finalResultHolderCh chan *chunk.Chunk
 
-	spillHelper *parallelHashAggSpillHelper
+	spillHelper    *parallelHashAggSpillHelper
+	hashStateStats *execdetails.HashStateRuntimeStats
 
 	restoredAggResultMapperMem int64
 }
 
 func (w *HashAggFinalWorker) getInputFromDisk(sctx sessionctx.Context) (ret aggfuncs.AggPartialResultMapper, restoredMem int64, err error) {
 	ret, restoredMem, err = w.spillHelper.restoreOnePartition(sctx)
+	if w.hashStateStats != nil && ret != nil {
+		w.hashStateStats.AddRows(uint64(len(ret.M)))
+	}
 	w.intestDuringFinalWorkerRun(&err)
 	return ret, restoredMem, err
 }
@@ -71,6 +76,12 @@ func (w *HashAggFinalWorker) getPartialInput() (input aggfuncs.AggPartialResultM
 }
 
 func (w *HashAggFinalWorker) mergeInputIntoResultMap(sctx sessionctx.Context, input aggfuncs.AggPartialResultMapper) error {
+	if w.hashStateStats != nil {
+		before := len(w.partialResultMap.M)
+		// Publishing output may be skipped after LIMIT; construction is chargeable
+		// as soon as the groups have been admitted to this worker's result map.
+		defer func() { w.hashStateStats.AddRows(uint64(len(w.partialResultMap.M) - before)) }()
+	}
 	// As the w.partialResultMap is empty when we get the first input.
 	// So it's better to directly assign the input to w.partialResultMap
 	if len(w.partialResultMap.M) == 0 {

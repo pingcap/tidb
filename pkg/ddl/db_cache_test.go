@@ -111,6 +111,43 @@ func TestAlterTableCache(t *testing.T) {
 	checkTableCacheStatus(t, tk, "test", "t3", model.TableCacheStatusDisable)
 }
 
+// TestAlterTableNoCacheRemovesTableCacheMeta verifies that ALTER TABLE NOCACHE
+// removes the record from mysql.table_cache_meta (fix for issue #66042).
+func TestAlterTableNoCacheRemovesTableCacheMeta(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	dom.SetStatsUpdating(true)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists cache_test")
+	defer tk.MustExec("drop table if exists cache_test")
+
+	tk.MustExec("create table cache_test (id int primary key)")
+	tk.MustExec("alter table cache_test cache")
+
+	// Get table ID from information_schema
+	idRows := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA = database() and TABLE_NAME = 'cache_test'").Rows()
+	require.Len(t, idRows, 1, "table should exist")
+	tableID := idRows[0][0].(string)
+
+	// SELECT triggers READ lock (as in issue #66042)
+	tk.MustQuery("select * from cache_test")
+
+	// Record should exist in mysql.table_cache_meta with expected columns
+	rows := tk.MustQuery("select tid, lock_type, lease, oldReadLease from mysql.table_cache_meta where tid = ?", tableID).Rows()
+	require.Len(t, rows, 1, "record should exist before NOCACHE")
+	require.Equal(t, tableID, rows[0][0], "tid should match")
+	require.Contains(t, []string{"NONE", "READ"}, rows[0][1], "lock_type should be NONE or READ after SELECT")
+
+	// ALTER TABLE NOCACHE should remove the record
+	tk.MustExec("alter table cache_test nocache")
+
+	// Record should be deleted from mysql.table_cache_meta
+	rows = tk.MustQuery("select tid, lock_type, lease, oldReadLease from mysql.table_cache_meta where tid = ?", tableID).Rows()
+	require.Len(t, rows, 0, "record should be deleted after NOCACHE")
+	checkTableCacheStatus(t, tk, "test", "cache_test", model.TableCacheStatusDisable)
+}
+
 func TestCacheTableSizeLimit(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

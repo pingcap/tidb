@@ -99,7 +99,11 @@ func optionVal(opt string, val ast.ValueExpr) (string, error) {
 		}
 		v = strconv.Itoa(x)
 	case OptTimeout:
-		v = val.GetValue().(string)
+		var ok bool
+		v, ok = val.GetValue().(string)
+		if !ok {
+			return "", errors.Errorf("invalid value type %T for %s, expected a duration string", val.GetValue(), opt)
+		}
 		d, err := time.ParseDuration(v)
 		if err != nil {
 			return "", err

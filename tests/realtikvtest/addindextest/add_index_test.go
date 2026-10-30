@@ -17,6 +17,7 @@ package addindextest
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -35,7 +36,21 @@ func init() {
 	})
 }
 
+func enableFastAddIndexFailpoints(t *testing.T) {
+	t.Helper()
+	// by split all the time, we can nearly avoid all region job re-queues caused
+	// by EpochNotMatch or other errors, and can make those cases faster.
+	// we also reduce the retry backoff to make the test faster when region job
+	// is re-queued, as CI ENV might be slow and cause more re-queues.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/forceSplitRegion", "return(true)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/adjustRegionJobRetryBackoff",
+		func(backoff *time.Duration) {
+			*backoff = time.Second
+		})
+}
+
 func TestCreateNonUniqueIndex(t *testing.T) {
+	enableFastAddIndexFailpoints(t)
 	testutil.ReduceCheckInterval(t)
 	var colIDs = [][]int{
 		{1, 4, 7, 10, 13, 16, 19, 22, 25},
@@ -47,6 +62,7 @@ func TestCreateNonUniqueIndex(t *testing.T) {
 }
 
 func TestCreateUniqueIndex(t *testing.T) {
+	enableFastAddIndexFailpoints(t)
 	testutil.ReduceCheckInterval(t)
 	var colIDs [][]int = [][]int{
 		{1, 6, 7, 8, 11, 13, 15, 16, 18, 19, 22, 26},
@@ -58,18 +74,21 @@ func TestCreateUniqueIndex(t *testing.T) {
 }
 
 func TestCreatePrimaryKey(t *testing.T) {
+	enableFastAddIndexFailpoints(t)
 	testutil.ReduceCheckInterval(t)
 	ctx := testutils.InitTest(t)
 	testutils.TestOneIndexFrame(ctx, 0, testutils.AddIndexPK)
 }
 
 func TestCreateGenColIndex(t *testing.T) {
+	enableFastAddIndexFailpoints(t)
 	testutil.ReduceCheckInterval(t)
 	ctx := testutils.InitTest(t)
 	testutils.TestOneIndexFrame(ctx, 29, testutils.AddIndexGenCol)
 }
 
 func TestCreateMultiColsIndex(t *testing.T) {
+	enableFastAddIndexFailpoints(t)
 	testutil.ReduceCheckInterval(t)
 	var coliIDs = [][]int{
 		{1, 4, 7},
@@ -102,6 +121,7 @@ func TestAddForeignKeyWithAutoCreateIndex(t *testing.T) {
 	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists fk_index;")
 	tk.MustExec("create database fk_index;")
 	tk.MustExec("use fk_index;")
@@ -130,6 +150,7 @@ func TestAddForeignKeyWithAutoCreateIndex(t *testing.T) {
 func TestIssue51162(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("use test")
 	tk.MustExec("set global tidb_enable_fast_table_check=0")
 	tk.MustExec(`CREATE TABLE tl (
@@ -153,6 +174,7 @@ func TestIssue51162(t *testing.T) {
 func TestAddUKWithSmallIntHandles(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists small;")
 	tk.MustExec("create database small;")
 	tk.MustExec("use small;")
@@ -165,6 +187,9 @@ func TestAddUKWithSmallIntHandles(t *testing.T) {
 }
 
 func TestAddUniqueDuplicateIndexes(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("this test injects the local-backend-only ingest/beforeBackendIngest failpoint")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)

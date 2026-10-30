@@ -107,25 +107,27 @@ func testRunInterruptedJob(t *testing.T, store kv.Storage, d *domain.Domain, job
 }
 
 func TestSchemaResume(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	t.Run("resume schema job", func(t *testing.T) {
+		store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
-	require.True(t, dom.DDL().OwnerManager().IsOwner())
+		require.True(t, dom.DDL().OwnerManager().IsOwner())
 
-	dbInfo, err := testSchemaInfo(store, "test_restart")
-	require.NoError(t, err)
-	job := &model.Job{
-		Version:    model.GetJobVerInUse(),
-		SchemaID:   dbInfo.ID,
-		SchemaName: dbInfo.Name.L,
-		Type:       model.ActionCreateSchema,
-		BinlogInfo: &model.HistoryInfo{},
-	}
-	testRunInterruptedJob(t, store, dom, job, &model.CreateSchemaArgs{DBInfo: dbInfo})
-	testCheckSchemaState(t, store, dbInfo, model.StatePublic)
+		dbInfo, err := testSchemaInfo(store, "test_restart")
+		require.NoError(t, err)
+		job := &model.Job{
+			Version:    model.GetJobVerInUse(),
+			SchemaID:   dbInfo.ID,
+			SchemaName: dbInfo.Name.L,
+			Type:       model.ActionCreateSchema,
+			BinlogInfo: &model.HistoryInfo{},
+		}
+		testRunInterruptedJob(t, store, dom, job, &model.CreateSchemaArgs{DBInfo: dbInfo})
+		testCheckSchemaState(t, store, dbInfo, model.StatePublic)
 
-	job = buildDropSchemaJob(dbInfo)
-	testRunInterruptedJob(t, store, dom, job, &model.DropSchemaArgs{FKCheck: true})
-	testCheckSchemaState(t, store, dbInfo, model.StateNone)
+		job = buildDropSchemaJob(dbInfo)
+		testRunInterruptedJob(t, store, dom, job, &model.DropSchemaArgs{FKCheck: true})
+		testCheckSchemaState(t, store, dbInfo, model.StateNone)
+	})
 }
 
 func TestStat(t *testing.T) {

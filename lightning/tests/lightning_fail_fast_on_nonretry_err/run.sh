@@ -19,7 +19,7 @@ set -eu
 run_sql 'DROP DATABASE IF EXISTS csv'
 
 out_file_name="$TEST_DIR/sql_res.$TEST_NAME.txt"
-export GO_FAILPOINTS="github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace=return(true)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/pkg/ingestor/ingestctrl/WriteToTiKVNotEnoughDiskSpace=return(true)"
 start_time=$(date +'%s')
 run_lightning --backend local > $out_file_name 2>&1 || true
 export GO_FAILPOINTS=""

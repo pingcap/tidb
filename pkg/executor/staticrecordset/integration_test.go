@@ -16,6 +16,7 @@ package staticrecordset_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -241,12 +242,24 @@ func TestFinishStmtError(t *testing.T) {
 	require.NoError(t, err)
 	drs := rs.(sqlexec.DetachableRecordSet)
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/session/finishStmtError", "return")
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/session/finishStmtError")
+	const finishStmtErrFpName = "github.com/pingcap/tidb/pkg/session/finishStmtError"
+	connID := tk.Session().GetSessionVars().ConnectionID
+	if err := failpoint.Enable(finishStmtErrFpName, fmt.Sprintf("return(%d)", connID)); err != nil {
+		t.Skipf("skip because failpoint is not enabled: %v", err)
+	}
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable(finishStmtErrFpName))
+	})
 	// Then `TryDetach` should return `true`, because the original record set is detached and cannot be used anymore.
 	_, ok, err := drs.TryDetach()
 	require.True(t, ok)
 	require.Error(t, err)
+
+	// The cursor created for the detached record set should also be cleaned up on the error path.
+	tk.Session().GetCursorTracker().RangeCursor(func(_ cursor.Handle) bool {
+		require.Fail(t, "cursor should be closed when TryDetach fails after creating it")
+		return false
+	})
 }
 
 func TestDDLInsideTXNNotBlockMinStartTS(t *testing.T) {

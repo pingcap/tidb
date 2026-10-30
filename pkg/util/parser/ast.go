@@ -26,7 +26,7 @@ import (
 // GetDefaultDB checks if all tables in the AST have explicit DBName. If not, return specified DBName.
 func GetDefaultDB(sel ast.StmtNode, dbName string) string {
 	implicitDB := &implicitDatabase{}
-	sel.Accept(implicitDB)
+	ast.Walk(sel, implicitDB)
 	if implicitDB.hasImplicit {
 		return dbName
 	}
@@ -37,20 +37,20 @@ type implicitDatabase struct {
 	hasImplicit bool
 }
 
-func (i *implicitDatabase) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+func (i *implicitDatabase) Enter(in ast.Node) (skipChildren bool) {
 	switch x := in.(type) {
 	case *ast.TableName:
 		if x.Schema.L == "" {
 			i.hasImplicit = true
 		}
-		return in, true
+		return true
 	default:
-		return in, i.hasImplicit
+		return i.hasImplicit
 	}
 }
 
-func (*implicitDatabase) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, true
+func (*implicitDatabase) Leave(ast.Node) bool {
+	return true
 }
 
 func findTablePos(s, t string) int {
@@ -118,12 +118,16 @@ func SimpleCases(node ast.StmtNode, defaultDB, origin string) (s string, ok bool
 	return builder.String(), true
 }
 
-// Three flags for restore with default DB:
+// Flags for restore with default DB:
 // 1. RestoreStringSingleQuotes specifies to use single quotes to surround the string;
 // 2. RestoreSpacesAroundBinaryOperation specifies to add space around binary operation;
 // 3. RestoreStringWithoutCharset specifies to not print charset before string;
 // 4. RestoreNameBackQuotes specifies to use back quotes to surround the name;
 const defaultRestoreFlag = format.RestoreStringSingleQuotes | format.RestoreSpacesAroundBinaryOperation | format.RestoreStringWithoutCharset | format.RestoreNameBackQuotes
+
+// bindingRestoreFlag skips redundant expression parentheses only for binding
+// normalization, leaving general SQL restore behavior unchanged.
+const bindingRestoreFlag = defaultRestoreFlag | format.RestoreSkipRedundantParentheses
 
 // RestoreWithDefaultDB returns restore strings for StmtNode with defaultDB
 // This function is customized for SQL bind usage.
@@ -132,7 +136,7 @@ func RestoreWithDefaultDB(node ast.StmtNode, defaultDB, origin string) string {
 		return s
 	}
 	var sb strings.Builder
-	ctx := format.NewRestoreCtx(defaultRestoreFlag, &sb)
+	ctx := format.NewRestoreCtx(bindingRestoreFlag, &sb)
 	ctx.DefaultDB = defaultDB
 	if err := node.Restore(ctx); err != nil {
 		logutil.BgLogger().Debug("restore SQL failed", zap.String("category", "sql-bind"), zap.Error(err))
@@ -145,7 +149,7 @@ func RestoreWithDefaultDB(node ast.StmtNode, defaultDB, origin string) string {
 // This function is customized for universal SQL binding.
 func RestoreWithoutDB(node ast.StmtNode) string {
 	var sb strings.Builder
-	ctx := format.NewRestoreCtx(defaultRestoreFlag|format.RestoreWithoutSchemaName, &sb)
+	ctx := format.NewRestoreCtx(bindingRestoreFlag|format.RestoreWithoutSchemaName, &sb)
 	if err := node.Restore(ctx); err != nil {
 		logutil.BgLogger().Debug("restore SQL failed", zap.String("category", "sql-bind"), zap.Error(err))
 		return ""

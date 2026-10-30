@@ -49,11 +49,12 @@ type PreparedStmtInfo struct {
 
 // QueryInfo represents the information of last executed query. It's used to expose information for test purpose.
 type QueryInfo struct {
-	TxnScope      string  `json:"txn_scope"`
-	StartTS       uint64  `json:"start_ts"`
-	ForUpdateTS   uint64  `json:"for_update_ts"`
-	RUConsumption float64 `json:"ru_consumption"`
-	ErrMsg        string  `json:"error,omitempty"`
+	TxnScope        string  `json:"txn_scope"`
+	StartTS         uint64  `json:"start_ts"`
+	ForUpdateTS     uint64  `json:"for_update_ts"`
+	RUConsumption   float64 `json:"ru_consumption"`
+	RUV2Consumption float64 `json:"ru_v2_consumption"`
+	ErrMsg          string  `json:"error,omitempty"`
 }
 
 // LastDDLInfo represents the information of last DDL. It's used to expose information for test purpose.

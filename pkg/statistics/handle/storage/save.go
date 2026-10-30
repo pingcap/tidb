@@ -322,6 +322,7 @@ func SaveColOrIdxStatsToStorage(
 	hg *statistics.Histogram,
 	cms *statistics.CMSketch,
 	topN *statistics.TopN,
+	fms *statistics.FMSketch,
 	statsVersion int,
 	updateAnalyzeTime bool,
 ) (statsVer uint64, err error) {
@@ -344,6 +345,10 @@ func SaveColOrIdxStatsToStorage(
 	if err != nil {
 		return 0, err
 	}
+	fmSketch, err := statistics.EncodeFMSketch(fms)
+	if err != nil {
+		return 0, err
+	}
 	// Delete outdated data
 	if _, err = util.Exec(sctx, "delete from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
 		return 0, err
@@ -353,6 +358,11 @@ func SaveColOrIdxStatsToStorage(
 	}
 	if _, err := util.Exec(sctx, "delete from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
 		return 0, err
+	}
+	if fmSketch != nil {
+		if _, err = util.Exec(sctx, "insert into mysql.stats_fm_sketch (table_id, is_index, hist_id, value) values (%?, %?, %?, %?)", tableID, isIndex, hg.ID, fmSketch); err != nil {
+			return 0, err
+		}
 	}
 	if _, err = util.Exec(sctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation) values (%?, %?, %?, %?, %?, %?, %?, GREATEST(%?, 0), %?, %?)",
 		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, cmSketch, hg.TotColSize, statsVersion, hg.Correlation); err != nil {
@@ -439,6 +449,27 @@ func InsertColStats2KV(
 	count := req.GetRow(0).GetInt64(0)
 	hasStatsUpdate := false
 	for _, colInfo := range colInfos {
+		if colInfo.IsVirtualGenerated() {
+			// Virtual generated columns do not have column stats. Keep the
+			// same zero placeholder shape as the create-table stats path.
+			// Analyze-skipped columns are real stored columns, so their
+			// default/null handling needs a separate decision.
+			// TODO: define add-column stats behavior for analyze-skipped columns.
+			if _, err = util.ExecWithCtx(
+				ctx, sctx,
+				`insert ignore into mysql.stats_histograms
+					(version, table_id, is_index, hist_id, distinct_count, null_count)
+				values (%?, %?, 0, %?, 0, 0)`,
+				startTS, physicalID, colInfo.ID,
+			); err != nil {
+				return 0, errors.Trace(err)
+			}
+			if sctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
+				hasStatsUpdate = true
+			}
+			continue
+		}
+
 		value, err := table.GetColOriginDefaultValue(sctx.GetExprCtx(), colInfo)
 		if err != nil {
 			return 0, errors.Trace(err)

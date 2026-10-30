@@ -25,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -52,6 +54,14 @@ import (
  ************************************************************************************/
 var (
 	_ exec.Executor = (*GrantExec)(nil)
+
+	materializedViewTablePrivs = mysql.Privileges{
+		mysql.SelectPriv,
+		mysql.ShowViewPriv,
+		mysql.AlterPriv,
+		mysql.DropPriv,
+		mysql.OperateViewPriv,
+	}
 )
 
 // GrantExec executes GrantStmt.
@@ -67,6 +77,11 @@ type GrantExec struct {
 	is        infoschema.InfoSchema
 	WithGrant bool
 	done      bool
+
+	// Reuse the permanent target validated in Next for persistent table grants.
+	// Session-local temporary tables must not affect the target or its privileges.
+	targetTable  table.Table
+	targetDBName string
 }
 
 // Next implements the Executor Next interface.
@@ -80,6 +95,9 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.Ctx().GetSessionVars().CurrentDB
+	}
+	if e.Level.Level == ast.GrantLevelDB {
+		dbName = getTargetSchemaName(e.Ctx(), dbName, e.is)
 	}
 
 	// For table & column level, check whether table exists and privilege is valid
@@ -119,13 +137,28 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		if tbl != nil && tbl.Meta().Name.L != strings.ToLower(e.Level.TableName) {
 			return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
 		}
+		if tbl != nil {
+			// Use the real table name from schema metadata.
+			// This makes `t` and `T` write to the same privilege row.
+			e.Level.TableName = tbl.Meta().Name.O
+		}
+		db, succ := schema.SchemaByName(dbNameStr)
+		if succ {
+			dbName = db.Name.O
+		}
 		if len(e.Level.DBName) > 0 {
 			// The database name should also match.
-			db, succ := schema.SchemaByName(dbNameStr)
 			if !succ || db.Name.L != dbNameStr.L {
 				return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
 			}
 		}
+		if tbl != nil {
+			if err := validateGrantOnSpecialMViewObject(tbl.Meta(), e.Privs); err != nil {
+				return err
+			}
+		}
+		e.targetTable = tbl
+		e.targetDBName = dbName
 	}
 
 	// Commit the old transaction, like DDL.
@@ -166,13 +199,16 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			user.User.Username = e.Ctx().GetSessionVars().User.AuthUsername
 			user.User.Hostname = e.Ctx().GetSessionVars().User.AuthHostname
 		}
-		exists, err := userExists(ctx, e.Ctx(), user.User.Username, user.User.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &user.User.Username, user.User.Hostname)
 		if err != nil {
 			return err
 		}
 		if !exists {
 			if e.Ctx().GetSessionVars().SQLMode.HasNoAutoCreateUserMode() {
 				return exeerrors.ErrCantCreateUserWithGrant
+			}
+			if err := keyspace.GetUsernamePolicy().ValidateUsername(user.User.Username); err != nil {
+				return err
 			}
 			// This code path only applies if mode NO_AUTO_CREATE_USER is unset.
 			// It is required for compatibility with 5.7 but removed from 8.0
@@ -539,6 +575,7 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 	if len(dbName) == 0 {
 		dbName = e.Ctx().GetSessionVars().CurrentDB
 	}
+	dbName = getTargetSchemaName(e.Ctx(), dbName, e.is)
 
 	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.DBTable)
@@ -555,22 +592,17 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 
 // grantTableLevel manipulates mysql.tables_priv table.
 func (e *GrantExec) grantTableLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
-	dbName := e.Level.DBName
-	if len(dbName) == 0 {
-		dbName = e.Ctx().GetSessionVars().CurrentDB
-	}
-	tblName := e.Level.TableName
-
+	dbName, tblName := e.targetDBName, e.Level.TableName
 	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.TablePrivTable)
-	err := composeTablePrivUpdateForGrant(internalSession, sql, priv.Priv, user.User.Username, user.User.Hostname, dbName, tblName)
+	err := composeTablePrivUpdateForGrant(internalSession, sql, priv.Priv, user.User.Username, user.User.Hostname, dbName, tblName, e.targetTable)
 	if err != nil {
 		return err
 	}
 	sqlescape.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?", user.User.Username, user.User.Hostname, dbName, tblName)
 
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	_, err = internalSession.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	_, err = internalSession.GetSQLExecutor().ExecuteInternal(internalCtx, sql.String())
 	return err
 }
 
@@ -643,7 +675,7 @@ func composeDBPrivUpdate(sql *strings.Builder, priv mysql.PrivilegeType, value s
 }
 
 // composeTablePrivUpdateForGrant composes update stmt assignment list for table scope privilege update.
-func composeTablePrivUpdateForGrant(ctx sessionctx.Context, sql *strings.Builder, priv mysql.PrivilegeType, name string, host string, db string, tbl string) error {
+func composeTablePrivUpdateForGrant(ctx sessionctx.Context, sql *strings.Builder, priv mysql.PrivilegeType, name string, host string, db string, tbl string, target table.Table) error {
 	var newTablePriv, newColumnPriv []string
 	if priv != mysql.AllPriv {
 		currTablePriv, currColumnPriv, err := getTablePriv(ctx, name, host, db, tbl)
@@ -658,11 +690,12 @@ func composeTablePrivUpdateForGrant(ctx sessionctx.Context, sql *strings.Builder
 			newColumnPriv = addToSet(newColumnPriv, priv.SetString())
 		}
 	} else {
-		for _, p := range mysql.AllTablePrivs {
+		tablePrivs, columnPrivs := tablePrivsForGrantTarget(target)
+		for _, p := range tablePrivs {
 			newTablePriv = addToSet(newTablePriv, p.SetString())
 		}
 
-		for _, p := range mysql.AllColumnPrivs {
+		for _, p := range columnPrivs {
 			newColumnPriv = addToSet(newColumnPriv, p.SetString())
 		}
 	}
@@ -775,6 +808,22 @@ func getColumnPriv(sctx sessionctx.Context, name string, host string, db string,
 	return cPriv, nil
 }
 
+// getTargetSchemaName returns the real schema name from infoschema when it exists.
+// Keep the original input for non-existent schemas so GRANT/REVOKE on them preserves
+// the current behavior.
+func getTargetSchemaName(sctx sessionctx.Context, dbName string, is infoschema.InfoSchema) string {
+	if len(dbName) == 0 {
+		dbName = sctx.GetSessionVars().CurrentDB
+	}
+	if len(dbName) == 0 {
+		return ""
+	}
+	if db, ok := is.SchemaByName(ast.NewCIStr(dbName)); ok {
+		return db.Name.O
+	}
+	return dbName
+}
+
 // getTargetSchemaAndTable finds the schema and table by dbName and tableName.
 func getTargetSchemaAndTable(ctx context.Context, sctx sessionctx.Context, dbName, tableName string, is infoschema.InfoSchema) (string, table.Table, error) {
 	if len(dbName) == 0 {
@@ -783,6 +832,7 @@ func getTargetSchemaAndTable(ctx context.Context, sctx sessionctx.Context, dbNam
 			return "", nil, errors.New("miss DB name for grant privilege")
 		}
 	}
+	dbName = getTargetSchemaName(sctx, dbName, is)
 	name := ast.NewCIStr(tableName)
 	tbl, err := is.TableByName(ctx, ast.NewCIStr(dbName), name)
 	if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
@@ -823,5 +873,53 @@ func getRowFromRecordSet(ctx context.Context, se sessionctx.Context, rs sqlexec.
 			rows = append(rows, r)
 		}
 		req = chunk.Renew(req, se.GetSessionVars().MaxChunkSize)
+	}
+}
+
+func validateGrantOnSpecialMViewObject(tblInfo *model.TableInfo, privs []*ast.PrivElem) error {
+	if tblInfo.MaterializedView == nil && tblInfo.MaterializedViewLog == nil && tblInfo.MaterializedViewShadow == nil {
+		return nil
+	}
+	if tblInfo.MaterializedViewShadow != nil {
+		return errors.Errorf("cannot grant privileges on materialized view shadow table %s", tblInfo.Name.O)
+	}
+
+	objectType := "materialized view"
+	if tblInfo.MaterializedViewLog != nil {
+		objectType = "materialized view log"
+	}
+	for _, priv := range privs {
+		if len(priv.Cols) > 0 && priv.Priv != mysql.SelectPriv && priv.Priv != mysql.UsagePriv {
+			return errors.Errorf("cannot grant %s column privilege on %s %s", priv.Priv.String(), objectType, tblInfo.Name.O)
+		}
+		if len(priv.Cols) == 0 && !isSafeMViewObjectGrantPriv(priv.Priv) {
+			return errors.Errorf("cannot grant %s privilege on %s %s", priv.Priv.String(), objectType, tblInfo.Name.O)
+		}
+	}
+	return nil
+}
+
+func isSafeMViewObjectGrantPriv(priv mysql.PrivilegeType) bool {
+	switch priv {
+	case mysql.AllPriv, mysql.UsagePriv, mysql.GrantPriv:
+		return true
+	default:
+		return materializedViewTablePrivs.Has(priv)
+	}
+}
+
+func tablePrivsForGrantTarget(target table.Table) (tablePrivs, columnPrivs mysql.Privileges) {
+	if target == nil {
+		return mysql.AllTablePrivs, mysql.AllColumnPrivs
+	}
+
+	meta := target.Meta()
+	switch {
+	case meta.MaterializedView != nil || meta.MaterializedViewLog != nil:
+		return materializedViewTablePrivs, nil
+	case meta.MaterializedViewShadow != nil:
+		return nil, nil
+	default:
+		return mysql.AllTablePrivs, mysql.AllColumnPrivs
 	}
 }

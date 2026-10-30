@@ -218,6 +218,7 @@ func checkIndexKeys(
 	indexIDToRowColInfos map[int64][]rowcodec.ColInfo,
 	extraIndexesLayout table.IndexesLayout,
 ) error {
+	useNewCollate := t.encoder.UseNewCollate()
 	var indexData []types.Datum
 	for _, m := range indexMutations {
 		var value []byte
@@ -251,11 +252,12 @@ func checkIndexKeys(
 		}
 
 		// when we cannot decode the key to get the original value
-		if len(value) == 0 && NeedRestoredData(indexInfo.Columns, t.Meta().Columns) {
+		if len(value) == 0 && NeedRestoredData(useNewCollate, indexInfo.Columns, t.Meta().Columns) {
 			continue
 		}
 
-		decodedIndexValues, err := tablecodec.DecodeIndexKV(
+		decodedIndexValues, err := tablecodec.DecodeIndexKVWithCollate(
+			useNewCollate,
 			m.key, value, len(indexInfo.Columns), tablecodec.HandleNotNeeded, rowColInfos,
 		)
 		if err != nil {
@@ -281,9 +283,9 @@ func checkIndexKeys(
 
 		// When it is in add index new backfill state.
 		if len(value) == 0 || isTmpIdxValAndDeleted {
-			err = compareIndexData(tc, t.Columns, indexData, rowToRemove, indexInfo, t.Meta(), extraIndexesLayout.GetIndexLayout(idxID))
+			err = compareIndexData(useNewCollate, tc, t.Columns, indexData, rowToRemove, indexInfo, t.Meta(), extraIndexesLayout.GetIndexLayout(idxID))
 		} else {
-			err = compareIndexData(tc, t.Columns, indexData, rowToInsert, indexInfo, t.Meta(), extraIndexesLayout.GetIndexLayout(idxID))
+			err = compareIndexData(useNewCollate, tc, t.Columns, indexData, rowToInsert, indexInfo, t.Meta(), extraIndexesLayout.GetIndexLayout(idxID))
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -366,6 +368,7 @@ func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer
 // compareIndexData compares the decoded index data with the input data.
 // Returns error if the index data is not a subset of the input data.
 func compareIndexData(
+	useNewCollate bool,
 	tc types.Context, cols []*table.Column, indexData, input []types.Datum, indexInfo *model.IndexInfo,
 	tableInfo *model.TableInfo,
 	extraIndexLayout table.IndexRowLayoutOption,
@@ -389,7 +392,7 @@ func compareIndexData(
 		)
 
 		comparison, err := CompareIndexAndVal(tc, expectedDatum, decodedMutationDatum,
-			collate.GetCollator(decodedMutationDatum.Collation()),
+			collate.GetCollatorWithCollate(useNewCollate, decodedMutationDatum.Collation()),
 			cols[offsetInTable].ColumnInfo.FieldType.IsArray() && expectedDatum.Kind() == types.KindMysqlJSON)
 		if err != nil {
 			return errors.Trace(err)

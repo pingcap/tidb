@@ -1062,18 +1062,18 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 	return t
 }
 
-// ResolveAnalyzeVersionOnTable returns the requested analyze version and whether the existing
-// analyzed stats on tbl already match it. Auto-analyze still writes with the requested version
-// for now, and callers use versionMatches to record legacy rewrites when needed.
-func ResolveAnalyzeVersionOnTable(tbl *Table, requestedVersion int) (resolvedVersion int, versionMatches bool) {
+// AnalyzeVersionMatchesForTableStats reports whether the existing analyzed stats on tblStats
+// already match the requested analyze version. Auto-analyze still writes with the requested
+// version for now, and callers use the mismatch to record legacy rewrites when needed.
+func AnalyzeVersionMatchesForTableStats(tblStats *Table, requestedVersion int) bool {
 	intest.Assert(requestedVersion == Version2, "requested analyze version should be 2")
-	if tbl == nil || tbl.Pseudo {
-		return requestedVersion, true
+	if tblStats == nil || tblStats.Pseudo {
+		return true
 	}
-	if IsAnalyzed(int64(tbl.StatsVer)) && tbl.StatsVer != requestedVersion {
-		return requestedVersion, false
+	if IsAnalyzed(int64(tblStats.StatsVer)) && tblStats.StatsVer != requestedVersion {
+		return false
 	}
-	return requestedVersion, true
+	return true
 }
 
 // PrepareCols4MVIndex helps to identify the columns of an MV index. We need this information for estimation.

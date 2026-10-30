@@ -29,6 +29,7 @@ Before touching `pkg/ddl/`, answer these explicitly (write them down in the PR/i
 7. What is the **expected online behavior** (MDL / blocking, write conflicts, phase boundaries)?
 8. What is the **minimal regression test** (unit/integration), and which failpoints can make it deterministic?
 
+
 ## Index (by task)
 
 - Understand end-to-end call chain: `docs/agents/ddl/01-execution-flow.md`
@@ -88,6 +89,26 @@ sequenceDiagram
   W-->>E: close jobDone channel / notify
   E-->>S: return result
 ```
+
+## Diagnostic schema loading
+
+Diagnostic mode continues to use the ordinary Etcd schema syncer. The Domain
+schema-sync loop and InfoSchema reloads remain active so a diagnostic instance
+can load the existing schema, while MDL checking is skipped. Diagnostic startup
+requires an already bootstrapped keyspace and reads persisted startup settings
+without writing them back.
+
+`serverinfo.Syncer` does not register or refresh server and topology records in
+diagnostic mode; the independent Domain server-ID lease remains active. Its
+server-info sync loop returns immediately, also skipping that loop's
+min-start-ts reporting.
+
+Diagnostic session bootstrap calls `Domain.StartDiagnostic` instead of
+`Domain.Start`, bypassing `DDL.Start` and its execution resources. `DDL.Start`,
+`EnableDDL`, and `DisableDDL` themselves have no diagnostic-mode guard;
+`SwitchMDL` returns `diagnosticmode.ErrDDLNotAllowed`. Cross-keyspace runtimes
+skip server-info, MDL, and min-job-ID refresher background loops in diagnostic
+mode.
 
 ## Code map (where to look first)
 

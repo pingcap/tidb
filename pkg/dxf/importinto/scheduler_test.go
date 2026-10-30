@@ -19,15 +19,25 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
+	"github.com/pingcap/tidb/pkg/dxf/framework/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/kv"
 	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/mock/gomock"
 )
 
 type importIntoSuite struct {
@@ -36,6 +46,39 @@ type importIntoSuite struct {
 
 func TestImportInto(t *testing.T) {
 	suite.Run(t, &importIntoSuite{})
+}
+
+func newMockRuntime(
+	ctrl *gomock.Controller,
+	store kv.Storage,
+	sePool tidbutil.DestroyableSessionPool,
+) *sqlsvrapimock.MockRuntime {
+	runtime := sqlsvrapimock.NewMockRuntime(ctrl)
+	runtime.EXPECT().Store().Return(store).AnyTimes()
+	runtime.EXPECT().SysSessionPool().Return(sePool).AnyTimes()
+	return runtime
+}
+
+func newSchedulerParamForTest(
+	t *testing.T,
+	taskMgr scheduler.TaskManager,
+	store kv.Storage,
+	sePool tidbutil.DestroyableSessionPool,
+) scheduler.Param {
+	t.Helper()
+
+	ctrl := gomock.NewController(t)
+	if sePool == nil {
+		sePool = tidbutil.NewSessionPool(1, func() (pools.Resource, error) {
+			se := utilmock.NewContext()
+			se.Store = store
+			return se, nil
+		}, nil, nil, nil)
+		t.Cleanup(sePool.Close)
+	}
+
+	param := scheduler.NewParamForTest(taskMgr, newMockRuntime(ctrl, store, sePool))
+	return param
 }
 
 func (s *importIntoSuite) enableFailPoint(path, term string) {
@@ -88,6 +131,56 @@ func (s *importIntoSuite) TestUpdateCurrentTask() {
 	require.True(s.T(), sch.disableTiKVImportMode.Load())
 }
 
+type closeTrackedTaskRegister struct {
+	utils.TaskRegister
+	closeCalled bool
+}
+
+func (r *closeTrackedTaskRegister) Close(context.Context) error {
+	r.closeCalled = true
+	return nil
+}
+
+func (s *importIntoSuite) TestSchedulerClose() {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.T().Cleanup(cancel)
+	sch := NewImportScheduler(ctx, &proto.Task{
+		TaskBase: proto.TaskBase{ID: 1},
+	}, scheduler.Param{}).(*importScheduler)
+	clients := make([]*clientv3.Client, 0, 2)
+	registrations := make([]*closeTrackedTaskRegister, 0, 2)
+	for _, taskID := range []int64{1, 2} {
+		client := clientv3.NewCtxClient(context.Background())
+		s.T().Cleanup(func() { _ = client.Close() })
+		clients = append(clients, client)
+		registration := &closeTrackedTaskRegister{}
+		registrations = append(registrations, registration)
+		sch.taskInfoMap.Store(taskID, &taskInfo{
+			taskID:     taskID,
+			etcdClient: client,
+			// Closing the scheduler must not revoke a registration lease that
+			// the next owner may already have adopted.
+			taskRegister: registration,
+			logger:       sch.GetLogger(),
+		})
+	}
+
+	// Owner loss cancels scheduling before the active task reaches a terminal state.
+	cancel()
+	sch.Close()
+	for _, client := range clients {
+		s.ErrorIs(client.Ctx().Err(), context.Canceled)
+	}
+	for _, registration := range registrations {
+		s.False(registration.closeCalled, "scheduler shutdown must preserve the task registration lease")
+	}
+	sch.taskInfoMap.Range(func(_, _ any) bool {
+		s.Fail("closed scheduler must not retain task registrations")
+		return true
+	})
+	sch.Close()
+}
+
 func (s *importIntoSuite) TestSchedulerInit() {
 	meta := TaskMeta{
 		Plan: importer.Plan{
@@ -104,7 +197,7 @@ func (s *importIntoSuite) TestSchedulerInit() {
 		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
 			TaskBase: proto.TaskBase{Keyspace: taskKS},
 			Meta:     bytes,
-		}, scheduler.Param{TaskStore: &StoreWithKS{ks: taskKS}}),
+		}, newSchedulerParamForTest(s.T(), nil, &StoreWithKS{ks: taskKS}, nil)),
 	}
 	s.NoError(sch.Init())
 	s.False(sch.Extension.(*importScheduler).GlobalSort)
@@ -116,7 +209,7 @@ func (s *importIntoSuite) TestSchedulerInit() {
 		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
 			TaskBase: proto.TaskBase{Keyspace: taskKS},
 			Meta:     bytes,
-		}, scheduler.Param{TaskStore: &StoreWithKS{ks: taskKS}}),
+		}, newSchedulerParamForTest(s.T(), nil, &StoreWithKS{ks: taskKS}, nil)),
 	}
 	s.NoError(sch.Init())
 	s.True(sch.Extension.(*importScheduler).GlobalSort)
@@ -126,10 +219,37 @@ func (s *importIntoSuite) TestSchedulerInit() {
 			BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
 				TaskBase: proto.TaskBase{Keyspace: taskKS},
 				Meta:     bytes,
-			}, scheduler.Param{TaskStore: &StoreWithKS{}}),
+			}, newSchedulerParamForTest(s.T(), nil, &StoreWithKS{}, nil)),
 		}
 		s.ErrorContains(sch.Init(), "store keyspace mismatch with task")
 	}
+}
+
+func (s *importIntoSuite) TestGetTaskMgrForAccessingImportJobUsesTaskRuntime() {
+	if !kerneltype.IsNextGen() {
+		s.T().Skip("TaskRuntime is used only for nextgen user keyspace tasks")
+	}
+	ctrl := gomock.NewController(s.T())
+	defer ctrl.Finish()
+	taskMgr := mock.NewMockTaskManager(ctrl)
+
+	sessPool := tidbutil.NewSessionPool(1, func() (pools.Resource, error) {
+		return nil, errors.New("unexpected session pool use")
+	}, nil, nil, nil)
+	s.T().Cleanup(sessPool.Close)
+
+	taskKS := "user_keyspace"
+	param := newSchedulerParamForTest(s.T(), taskMgr, &StoreWithKS{ks: taskKS}, sessPool)
+	sch := importScheduler{
+		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
+			TaskBase: proto.TaskBase{Keyspace: taskKS},
+		}, param),
+	}
+
+	got, err := sch.getTaskMgrForAccessingImportJob()
+	require.NoError(s.T(), err)
+	require.NotNil(s.T(), got)
+	require.Same(s.T(), got, sch.taskKSTaskMgr)
 }
 
 func (s *importIntoSuite) TestGetNextStep() {
@@ -159,6 +279,7 @@ func (s *importIntoSuite) TestIsRetryable() {
 	ext := &importScheduler{}
 	require.True(s.T(), ext.IsRetryableErr(drivererr.ErrRegionUnavailable))
 	require.True(s.T(), ext.IsRetryableErr(errors.Annotatef(errGetCrossKSSessionPool, "test")))
+	require.False(s.T(), ext.IsRetryableErr(exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("target table is not empty")))
 }
 
 func TestIsImporting2TiKV(t *testing.T) {

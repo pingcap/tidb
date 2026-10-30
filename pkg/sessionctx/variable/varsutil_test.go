@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -53,10 +54,13 @@ func TestTiDBOptOn(t *testing.T) {
 func TestNewSessionVars(t *testing.T) {
 	vars := NewSessionVars(nil)
 
+	require.Same(t, &vars.SQLKiller, vars.KVVars.KillSignalHandler)
 	require.Equal(t, vardef.DefIndexJoinBatchSize, vars.IndexJoinBatchSize)
 	require.Equal(t, vardef.DefIndexLookupSize, vars.IndexLookupSize)
 	require.Equal(t, vardef.ConcurrencyUnset, vars.indexLookupConcurrency)
 	require.Equal(t, vardef.ConcurrencyUnset, vars.indexLookupJoinConcurrency)
+	require.False(t, vardef.DefTiDBEnableAdaptiveLimitScan)
+	require.False(t, vars.EnableAdaptiveLimitScan)
 	require.Equal(t, vardef.DefTiDBHashJoinConcurrency, vars.hashJoinConcurrency)
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.IndexLookupConcurrency())
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.IndexLookupJoinConcurrency())
@@ -80,6 +84,7 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.ExecutorConcurrency)
 	require.Equal(t, vardef.DefMaxChunkSize, vars.MaxChunkSize)
 	require.Equal(t, vardef.DefDMLBatchSize, vars.DMLBatchSize)
+	require.Equal(t, vardef.DefTiDBMLogPurgeBatchSize, vars.MLogPurgeBatchSize)
 	require.Equal(t, int64(vardef.DefTiDBMemQuotaApplyCache), vars.MemQuotaApplyCache)
 	require.Equal(t, vardef.DefOptWriteRowID, vars.AllowWriteRowID)
 	require.Equal(t, vardef.DefTiDBOptJoinReorderThreshold, vars.TiDBOptJoinReorderThreshold)
@@ -91,6 +96,8 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, vardef.DefTiDBAnalyzeVersion, vars.AnalyzeVersion)
 	require.Equal(t, vardef.DefCTEMaxRecursionDepth, vars.CTEMaxRecursionDepth)
 	require.Equal(t, int64(vardef.DefTiDBTmpTableMaxSize), vars.TMPTableSize)
+	require.Equal(t, vardef.DefOptEnableAlternativeLogicalPlans, vars.EnableAlternativeLogicalPlans)
+	require.Equal(t, vardef.DefTiDBEnableSharedLockUpgrade, vars.EnableSharedLockUpgrade)
 
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.BatchSize))
@@ -156,7 +163,7 @@ func TestVarsutil(t *testing.T) {
 		err          error
 	}{
 		{"Europe/Helsinki", "Europe/Helsinki", true, -2 * time.Hour, nil},
-		{"US/Eastern", "US/Eastern", true, 5 * time.Hour, nil},
+		{"America/New_York", "America/New_York", true, 5 * time.Hour, nil},
 		// TODO: Check it out and reopen this case.
 		// {"SYSTEM", "Local", false, 0},
 		{"+10:00", "", true, -10 * time.Hour, nil},
@@ -209,6 +216,11 @@ func TestVarsutil(t *testing.T) {
 	err = v.SetSystemVar(vardef.TiDBBatchInsert, "1")
 	require.NoError(t, err)
 	require.True(t, v.BatchInsert)
+
+	require.False(t, v.EnableAlternativeLogicalPlans)
+	err = v.SetSystemVar(vardef.TiDBOptEnableAlternativeLogicalPlans, "1")
+	require.NoError(t, err)
+	require.True(t, v.EnableAlternativeLogicalPlans)
 
 	require.Equal(t, 32, v.InitChunkSize)
 	require.Equal(t, 1024, v.MaxChunkSize)
@@ -374,11 +386,16 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, 5.0, v.GetConcurrencyFactor())
 
 	err = v.SetSystemVar(vardef.TiDBReplicaRead, "follower")
-	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBReplicaRead)
-	require.NoError(t, err)
-	require.Equal(t, "follower", val)
-	require.Equal(t, kv.ReplicaReadFollower, v.replicaRead)
+	if kerneltype.IsNextGen() {
+		require.Error(t, err)
+		require.True(t, ErrNotSupportedInNextGen.Equal(err))
+	} else {
+		require.NoError(t, err)
+		val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBReplicaRead)
+		require.NoError(t, err)
+		require.Equal(t, "follower", val)
+		require.Equal(t, kv.ReplicaReadFollower, v.replicaRead)
+	}
 	err = v.SetSystemVar(vardef.TiDBReplicaRead, "leader")
 	require.NoError(t, err)
 	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBReplicaRead)
@@ -386,11 +403,16 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, "leader", val)
 	require.Equal(t, kv.ReplicaReadLeader, v.replicaRead)
 	err = v.SetSystemVar(vardef.TiDBReplicaRead, "leader-and-follower")
-	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBReplicaRead)
-	require.NoError(t, err)
-	require.Equal(t, "leader-and-follower", val)
-	require.Equal(t, kv.ReplicaReadMixed, v.replicaRead)
+	if kerneltype.IsNextGen() {
+		require.Error(t, err)
+		require.True(t, ErrNotSupportedInNextGen.Equal(err))
+	} else {
+		require.NoError(t, err)
+		val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBReplicaRead)
+		require.NoError(t, err)
+		require.Equal(t, "leader-and-follower", val)
+		require.Equal(t, kv.ReplicaReadMixed, v.replicaRead)
+	}
 
 	for _, c := range []struct {
 		a string
@@ -531,6 +553,14 @@ func TestValidate(t *testing.T) {
 		{vardef.TiDBAllowFallbackToTiKV, "tikv", true},
 		{vardef.TiDBAllowFallbackToTiKV, "tidb", true},
 		{vardef.TiDBAllowFallbackToTiKV, "tiflash,tikv,tidb", true},
+		{vardef.TiDBMLogPurgeMinRate, "0", true},
+		{vardef.TiDBMLogPurgeMinRate, "1", false},
+		{vardef.TiDBMLogPurgeRateBudgetRatio, "0", true},
+		{vardef.TiDBMLogPurgeRateBudgetRatio, "0.5", false},
+		{vardef.TiDBMLogPurgeRateBudgetRatio, "1.1", true},
+		{vardef.TiDBMLogPurgeDeleteTiFlashThreads, "-1", true},
+		{vardef.TiDBMLogPurgeDeleteTiFlashThreads, "0", false},
+		{vardef.TiDBMLogPurgeDeleteTiFlashThreads, "1", false},
 	}
 
 	for _, tc := range testCases {
@@ -554,6 +584,14 @@ func TestValidate(t *testing.T) {
 		{vardef.TiDBIsolationReadEngines, "tikv", false},
 		{vardef.TiDBIsolationReadEngines, "TiKV,tiflash", false},
 		{vardef.TiDBIsolationReadEngines, "   tikv,   tiflash  ", false},
+		{vardef.TiDBMLogPurgeMinRate, "0", true},
+		{vardef.TiDBMLogPurgeMinRate, "1", false},
+		{vardef.TiDBMLogPurgeRateBudgetRatio, "0", true},
+		{vardef.TiDBMLogPurgeRateBudgetRatio, "0.5", false},
+		{vardef.TiDBMLogPurgeRateBudgetRatio, "1.1", true},
+		{vardef.TiDBMLogPurgeDeleteTiFlashThreads, "-1", true},
+		{vardef.TiDBMLogPurgeDeleteTiFlashThreads, "0", false},
+		{vardef.TiDBMLogPurgeDeleteTiFlashThreads, "1", false},
 	}
 
 	for _, tc := range testCases {
@@ -666,6 +704,68 @@ func TestHelperFuncs(t *testing.T) {
 }
 
 func TestSessionStatesSystemVar(t *testing.T) {
+	t.Run("snapshot readback", func(t *testing.T) {
+		vars := NewSessionVars(nil)
+		require.NoError(t, vars.SetSystemVar(vardef.TimeZone, "+08:00"))
+		const snapshot = "2020-01-02 03:04:05.123456"
+		require.NoError(t, vars.SetSystemVar(vardef.TiDBSnapshot, snapshot))
+		value, keep, err := vars.GetSessionStatesSystemVar(vardef.TiDBSnapshot)
+		require.NoError(t, err)
+		require.True(t, keep)
+		require.Equal(t, snapshot, value)
+	})
+	t.Run("ambiguous read timestamp", func(t *testing.T) {
+		vars := NewSessionVars(nil)
+		require.NoError(t, vars.SetSystemVar(vardef.TimeZone, "+00:00"))
+		// This is the second occurrence of 01:30 during the DST rollback.
+		require.NoError(t, vars.SetSystemVar(vardef.TiDBTxnReadTS, "2020-11-01 06:30:00"))
+		require.NoError(t, vars.SetSystemVar(vardef.TimeZone, "America/New_York"))
+		_, _, err := vars.GetSessionStatesSystemVar(vardef.TiDBTxnReadTS)
+		require.ErrorContains(t, err, "tx_read_ts cannot be represented")
+	})
+	t.Run("read timestamps", func(t *testing.T) {
+		for _, tt := range []struct {
+			name string
+			sets [][2]string
+		}{
+			{"snapshot timezone changed", [][2]string{{vardef.TiDBSnapshot, "2020-01-02 03:04:05.123456"}, {vardef.TimeZone, "+00:00"}}},
+			{"numeric snapshot", [][2]string{{vardef.TiDBSnapshot, "420000000000000123"}}},
+			{"read timestamp timezone changed", [][2]string{{vardef.TiDBTxnReadTS, "2020-01-02 03:04:05.123456"}, {vardef.TimeZone, "+00:00"}}},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				source := NewSessionVars(nil)
+				require.NoError(t, source.SetSystemVar(vardef.TimeZone, "+08:00"))
+				for _, setting := range tt.sets {
+					require.NoError(t, source.SetSystemVar(setting[0], setting[1]))
+				}
+				states := make(map[string]string)
+				for _, name := range []string{vardef.TimeZone, vardef.TiDBSnapshot, vardef.TiDBTxnReadTS} {
+					value, keep, err := source.GetSessionStatesSystemVar(name)
+					require.NoError(t, err)
+					if keep {
+						states[name] = value
+					}
+				}
+				if source.SnapshotTS != 0 {
+					require.Equal(t, strconv.FormatUint(source.SnapshotTS, 10), states[vardef.TiDBSnapshot])
+				} else {
+					require.Empty(t, states[vardef.TiDBSnapshot])
+				}
+				if source.TxnReadTS.PeakTxnReadTS() == 0 {
+					require.Empty(t, states[vardef.TiDBTxnReadTS])
+				}
+				for range 20 {
+					dest := NewSessionVars(nil)
+					require.NoError(t, dest.SetSystemVar(vardef.TimeZone, "-07:00"))
+					for _, name := range OrderByDependency(states) {
+						require.NoError(t, dest.SetSystemVar(name, states[name]))
+					}
+					require.Equal(t, source.SnapshotTS, dest.SnapshotTS)
+					require.Equal(t, source.TxnReadTS.PeakTxnReadTS(), dest.TxnReadTS.PeakTxnReadTS())
+				}
+			})
+		}
+	})
 	vars := NewSessionVars(nil)
 	err := vars.SetSystemVar("autocommit", "1")
 	require.NoError(t, err)

@@ -494,7 +494,7 @@ func TestMultiSchemaPartitionByGlobalIndex(t *testing.T) {
 			tkNO.MustQuery(`select * from t where a = 5`).Sort().Check(testkit.Rows("5 5 5"))
 			tkO.MustQuery(`select * from t where a = 6`).Sort().Check(testkit.Rows("6 6 6"))
 		case model.StateWriteReorganization.String():
-			// It will go through StateWriteReorg more than once.
+			// It will go through StateWriteReorganization more than once.
 			if doneStateWriteReorganize {
 				break
 			}
@@ -617,9 +617,9 @@ func TestMultiSchemaModifyColumn(t *testing.T) {
 		schemaState := res.Rows()[0][0].(string)
 		switch schemaState {
 		case model.StateDeleteOnly.String():
-			// we are only interested in StateWriteReorganization
+			// No checks are needed in this intermediate state.
 		case model.StateWriteOnly.String():
-			// we are only interested in StateDeleteReorganization->StatePublic
+			// No checks are needed in this intermediate state.
 		case model.StateWriteReorganization.String():
 		case model.StatePublic.String():
 			if !firstTimeToPublic {
@@ -1010,22 +1010,30 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 		// Waiting for the next State change to be done (i.e. blocking the state after)
 		releaseHook := true
 		var job *model.Job
+		ddlDone := false
 		for {
 			select {
 			case job = <-hookChan:
 			case err := <-alterChan:
 				require.NoError(t, err)
 				releaseHook = false
+				ddlDone = true
 				logutil.BgLogger().Info("XXXXXXXXXXX release hook")
-				break
 			}
 			domOwner.Reload()
 			if domNonOwner.InfoSchema().SchemaMetaVersion() == domOwner.InfoSchema().SchemaMetaVersion() {
+				if ddlDone {
+					break
+				}
 				// looping over reorganize data/indexes
 				logutil.BgLogger().Info("XXXXXXXXXXX Schema Version has not changed")
 				hookChan <- nil
 				continue
 			}
+			break
+		}
+		if !releaseHook && domNonOwner.InfoSchema().SchemaMetaVersion() == domOwner.InfoSchema().SchemaMetaVersion() {
+			// DDL finished after the non-owner domain caught up, so there is no held hook to release.
 			break
 		}
 		logutil.BgLogger().Info("XXXXXXXXXXX states loop", zap.Int64("verCurr", verCurr), zap.Int64("NonOwner ver", domNonOwner.InfoSchema().SchemaMetaVersion()), zap.Int64("Owner ver", domOwner.InfoSchema().SchemaMetaVersion()))
@@ -2163,8 +2171,10 @@ func TestIssue58692(t *testing.T) {
 	})
 	tk.MustExec("alter table t remove partitioning")
 	<-done
+	tk.MustExec("begin")
 	rsIndex := tk.MustQuery("select *,_tidb_rowid from t use index(idx)").Sort()
 	rsTable := tk.MustQuery("select *,_tidb_rowid from t use index()").Sort()
+	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t where b = 20").Check(testkit.Rows("9 20"))
 	tk.MustQuery("select * from t use index(idx) where a = 9").Check(testkit.Rows("9 20"))

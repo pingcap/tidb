@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -114,6 +115,65 @@ func TestScalarFunction(t *testing.T) {
 	require.Equal(t, sf.Repertoire(), newSf.Repertoire())
 	_, ok = newSf.Function.(*builtinValuesIntSig)
 	require.True(t, ok)
+}
+
+func TestScalarFunctionEqualAfterCleanHashCode(t *testing.T) {
+	ctx := mock.NewContext()
+	a := &Column{
+		UniqueID: 1,
+		RetType:  types.NewFieldType(mysql.TypeDouble),
+	}
+
+	sf0, _ := newFunctionWithMockCtx(ast.LT, a, NewZero()).(*ScalarFunction)
+	sf1, _ := newFunctionWithMockCtx(ast.LT, a, NewOne()).(*ScalarFunction)
+	require.False(t, sf0.Equal(ctx, sf1))
+
+	// Compute hash codes then clear them; Equal must not treat "cleared" hashcodes as valid.
+	_ = sf0.HashCode()
+	_ = sf1.HashCode()
+	sf0.CleanHashCode()
+	sf1.CleanHashCode()
+	require.False(t, sf0.Equal(ctx, sf1))
+}
+
+func TestColumnSubstituteGroupingCleansHashCode(t *testing.T) {
+	ctx := mock.NewContext()
+
+	col0 := &Column{
+		UniqueID: 1,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	col1 := &Column{
+		UniqueID: 2,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	schema := NewSchema(col0)
+
+	initGroupingMeta := func(sf *ScalarFunction) (*ScalarFunction, error) {
+		err := sf.Function.(*BuiltinGroupingImplSig).SetMetadata(
+			tipb.GroupingMode_ModeBitAnd,
+			[]map[uint64]struct{}{
+				{1: {}},
+			},
+		)
+		return sf, err
+	}
+
+	// Prime the cached canonical hashcode so Clone() copies it.
+	orig, err := NewFunctionWithInit(ctx, ast.Grouping, types.NewFieldType(mysql.TypeLonglong), initGroupingMeta, col0)
+	require.NoError(t, err)
+	origSF := orig.(*ScalarFunction)
+	_ = orig.CanonicalHashCode()
+
+	changed, _, substituted := ColumnSubstituteImpl(ctx, origSF, schema, []Expression{col1}, false)
+	require.True(t, changed)
+
+	got := substituted.(*ScalarFunction)
+	wantExpr, err := NewFunctionWithInit(ctx, ast.Grouping, types.NewFieldType(mysql.TypeLonglong), initGroupingMeta, col1)
+	require.NoError(t, err)
+	want := wantExpr.(*ScalarFunction)
+	require.True(t, ExpressionsSemanticEqual(got, want))
+	require.False(t, ExpressionsSemanticEqual(origSF, got))
 }
 
 func TestIssue23309(t *testing.T) {

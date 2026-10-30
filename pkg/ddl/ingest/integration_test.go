@@ -38,7 +38,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// skipMockIngestOnNextGen skips tests that drive ADD INDEX / MODIFY COLUMN
+// through the mock local-ingest backend. The NextGen kernel only supports
+// global sort for these statements, so the mock local-sort path is unavailable.
+func skipMockIngestOnNextGen(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("local sort with the mock ingest backend is not supported on the nextgen kernel")
+	}
+}
+
 func TestAddIndexIngestGeneratedColumns(t *testing.T) {
+	skipMockIngestOnNextGen(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -200,6 +210,7 @@ func TestAddIndexSetInternalSessions(t *testing.T) {
 }
 
 func TestAddIndexIngestCancel(t *testing.T) {
+	skipMockIngestOnNextGen(t)
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -234,6 +245,7 @@ func TestAddIndexIngestCancel(t *testing.T) {
 }
 
 func TestAddIndexGetChunkCancel(t *testing.T) {
+	skipMockIngestOnNextGen(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -264,6 +276,7 @@ func TestAddIndexGetChunkCancel(t *testing.T) {
 }
 
 func TestIngestPartitionRowCount(t *testing.T) {
+	skipMockIngestOnNextGen(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -285,6 +298,7 @@ func TestIngestPartitionRowCount(t *testing.T) {
 }
 
 func TestAddIndexIngestClientError(t *testing.T) {
+	skipMockIngestOnNextGen(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -319,6 +333,7 @@ func TestAddIndexCancelOnNoneState(t *testing.T) {
 }
 
 func TestAddIndexIngestTimezone(t *testing.T) {
+	skipMockIngestOnNextGen(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -341,6 +356,7 @@ func TestAddIndexIngestTimezone(t *testing.T) {
 }
 
 func TestAddIndexIngestMultiSchemaChange(t *testing.T) {
+	skipMockIngestOnNextGen(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -372,6 +388,7 @@ func TestAddIndexIngestMultiSchemaChange(t *testing.T) {
 }
 
 func TestAddIndexDuplicateMessage(t *testing.T) {
+	skipMockIngestOnNextGen(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -398,6 +415,7 @@ func TestAddIndexDuplicateMessage(t *testing.T) {
 }
 
 func TestMultiSchemaAddIndexMerge(t *testing.T) {
+	skipMockIngestOnNextGen(t)
 	store := testkit.CreateMockStore(t)
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
@@ -512,6 +530,7 @@ func TestAddIndexIngestPartitionCheckpoint(t *testing.T) {
 }
 
 func TestAddGlobalIndexInIngest(t *testing.T) {
+	skipMockIngestOnNextGen(t)
 	store := testkit.CreateMockStore(t)
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
@@ -567,6 +586,7 @@ func TestAddGlobalIndexInIngest(t *testing.T) {
 }
 
 func TestAddGlobalIndexInIngestWithUpdate(t *testing.T) {
+	skipMockIngestOnNextGen(t)
 	store := testkit.CreateMockStore(t)
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
@@ -596,6 +616,7 @@ func TestAddGlobalIndexInIngestWithUpdate(t *testing.T) {
 }
 
 func TestAddIndexValidateRangesFailed(t *testing.T) {
+	skipMockIngestOnNextGen(t)
 	store := testkit.CreateMockStore(t)
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
@@ -610,6 +631,7 @@ func TestAddIndexValidateRangesFailed(t *testing.T) {
 }
 
 func TestIndexChangeWithModifyColumn(t *testing.T) {
+	skipMockIngestOnNextGen(t)
 	store := testkit.CreateMockStore(t)
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
@@ -650,6 +672,7 @@ func TestIndexChangeWithModifyColumn(t *testing.T) {
 }
 
 func TestModifyColumnWithMultipleIndex(t *testing.T) {
+	skipMockIngestOnNextGen(t)
 	store := testkit.CreateMockStore(t)
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
@@ -943,6 +966,7 @@ func TestAddIndexWithEmptyPartitions(t *testing.T) {
 }
 
 func TestModifyColumnWithIndexWithDefaultValue(t *testing.T) {
+	skipMockIngestOnNextGen(t)
 	store := testkit.CreateMockStore(t)
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)

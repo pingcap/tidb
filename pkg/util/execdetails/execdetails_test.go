@@ -15,8 +15,10 @@
 package execdetails
 
 import (
+	"math"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -229,8 +231,56 @@ func TestString(t *testing.T) {
 		"1 Prewrite_region: 1 Txn_retry: 1 Process_keys: 10 Total_keys: 100 Rocksdb_delete_skipped_count: 1 Rocksdb_key_skipped_count: " +
 		"1 Rocksdb_block_cache_hit_count: 1 Rocksdb_block_read_count: 1 Rocksdb_block_read_byte: 100 Rocksdb_block_read_time: 0.001"
 	require.Equal(t, expected, detail.String())
+	poolTaskDetails := &util.PoolTaskDetails{
+		TaskCount:        1,
+		PollCount:        1,
+		MaxPollCount:     1,
+		MinPollCount:     1,
+		DispatchCount:    1,
+		MaxDispatchCount: 1,
+		MinDispatchCount: 1,
+	}
+	detail.ReadPoolTaskDetails = poolTaskDetails
+	require.Contains(t, detail.String(), "Read_pool_task_details: {tasks:1,")
+
+	var syncedDetails SyncExecDetails
+	syncedDetails.MergeReadPoolTaskDetails(poolTaskDetails)
+	mergedDetails := syncedDetails.GetExecDetails()
+	require.Equal(t, poolTaskDetails, mergedDetails.ReadPoolTaskDetails)
+	require.Zero(t, mergedDetails.RequestCount)
+
 	detail = &ExecDetails{}
 	require.Equal(t, "", detail.String())
+
+	t.Run("load tikv exec details snapshot", func(t *testing.T) {
+		tikvExecDetail := &util.ExecDetails{}
+		atomic.StoreInt64(&tikvExecDetail.BackoffCount, 2)
+		atomic.StoreInt64(&tikvExecDetail.BackoffDuration, int64(3*time.Second))
+		atomic.StoreInt64(&tikvExecDetail.WaitKVRespDuration, int64(4*time.Second))
+		atomic.StoreInt64(&tikvExecDetail.WaitPDRespDuration, int64(5*time.Second))
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesSentKVTotal, 11)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesReceivedKVTotal, 12)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesSentKVCrossZone, 13)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesReceivedKVCrossZone, 14)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesSentMPPTotal, 15)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesReceivedMPPTotal, 16)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesSentMPPCrossZone, 17)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesReceivedMPPCrossZone, 18)
+
+		snapshot := LoadTiKVExecDetails(tikvExecDetail)
+		require.Equal(t, int64(2), snapshot.BackoffCount)
+		require.Equal(t, int64(3*time.Second), snapshot.BackoffDuration)
+		require.Equal(t, int64(4*time.Second), snapshot.WaitKVRespDuration)
+		require.Equal(t, int64(5*time.Second), snapshot.WaitPDRespDuration)
+		require.Equal(t, int64(11), snapshot.UnpackedBytesSentKVTotal)
+		require.Equal(t, int64(12), snapshot.UnpackedBytesReceivedKVTotal)
+		require.Equal(t, int64(13), snapshot.UnpackedBytesSentKVCrossZone)
+		require.Equal(t, int64(14), snapshot.UnpackedBytesReceivedKVCrossZone)
+		require.Equal(t, int64(15), snapshot.UnpackedBytesSentMPPTotal)
+		require.Equal(t, int64(16), snapshot.UnpackedBytesReceivedMPPTotal)
+		require.Equal(t, int64(17), snapshot.UnpackedBytesSentMPPCrossZone)
+		require.Equal(t, int64(18), snapshot.UnpackedBytesReceivedMPPCrossZone)
+	})
 }
 
 func mockExecutorExecutionSummary(TimeProcessedNs, NumProducedRows, NumIterations uint64) *tipb.ExecutorExecutionSummary {
@@ -266,6 +316,38 @@ func mockExecutorExecutionSummaryForTiFlash(TimeProcessedNs, NumProducedRows, Nu
 		NumIterations: &NumIterations, Concurrency: &Concurrency, ExecutorId: &ExecutorID, DetailInfo: &tipb.ExecutorExecutionSummary_TiflashScanContext{TiflashScanContext: &tiflashScanContext}, TiflashWaitSummary: &tiflashWaitSummary, TiflashNetworkSummary: &tiflashNetworkSummary}
 }
 
+func mockExecutorExecutionSummaryForTiFlashColumnar(TimeProcessedNs, NumProducedRows, NumIterations, Concurrency, regions, readTasks, physicalTables, columns, userReadBytes, mvccInputRows, mvccInputBytes, mvccOutputRows, totalReadBlockMs, totalSerializeBlockMs, totalInitReaderMs, totalPrefetchMs, roughCheckTotalPacks, roughCheckSelectedPacks, roughCheckSkippedPacks, roughCheckUnknownPacks, remoteSegments, totalSegments, totalDeserializeBlockMs uint64, ExecutorID string) *tipb.ExecutorExecutionSummary {
+	columnarScanContext := tipb.ColumnarScanContext{
+		Regions:                 &regions,
+		ReadTasks:               &readTasks,
+		PhysicalTables:          &physicalTables,
+		Columns:                 &columns,
+		UserReadBytes:           &userReadBytes,
+		MvccInputRows:           &mvccInputRows,
+		MvccInputBytes:          &mvccInputBytes,
+		MvccOutputRows:          &mvccOutputRows,
+		TotalReadBlockMs:        &totalReadBlockMs,
+		TotalSerializeBlockMs:   &totalSerializeBlockMs,
+		TotalInitReaderMs:       &totalInitReaderMs,
+		TotalPrefetchMs:         &totalPrefetchMs,
+		RoughCheckTotalPacks:    &roughCheckTotalPacks,
+		RoughCheckSelectedPacks: &roughCheckSelectedPacks,
+		RoughCheckSkippedPacks:  &roughCheckSkippedPacks,
+		RoughCheckUnknownPacks:  &roughCheckUnknownPacks,
+		RemoteSegments:          &remoteSegments,
+		TotalSegments:           &totalSegments,
+		TotalDeserializeBlockMs: &totalDeserializeBlockMs,
+	}
+	return &tipb.ExecutorExecutionSummary{
+		TimeProcessedNs: &TimeProcessedNs,
+		NumProducedRows: &NumProducedRows,
+		NumIterations:   &NumIterations,
+		Concurrency:     &Concurrency,
+		ExecutorId:      &ExecutorID,
+		DetailInfo:      &tipb.ExecutorExecutionSummary_ColumnarScanContext{ColumnarScanContext: &columnarScanContext},
+	}
+}
+
 func TestCopRuntimeStats(t *testing.T) {
 	stats := NewRuntimeStatsColl(nil)
 	tableScanID := 1
@@ -277,6 +359,7 @@ func TestCopRuntimeStats(t *testing.T) {
 	stats.RecordOneCopTask(aggID, kv.TiKV, mockExecutorExecutionSummary(4, 4, 4))
 	scanDetail := &util.ScanDetail{
 		TotalKeys:                 15,
+		TotalKeysSize:             123,
 		ProcessedKeys:             10,
 		ProcessedKeysSize:         10,
 		RocksdbDeleteSkippedCount: 5,
@@ -285,8 +368,17 @@ func TestCopRuntimeStats(t *testing.T) {
 		RocksdbBlockReadCount:     20,
 		RocksdbBlockReadByte:      100,
 	}
-	stats.RecordCopStats(tableScanID, kv.TiKV, scanDetail, util.TimeDetail{}, nil)
+	stats.RecordCopStats(tableScanID, kv.TiKV, scanDetail, util.TimeDetail{}, nil, nil)
 	require.True(t, stats.ExistsCopStats(tableScanID))
+	scanSnapshot, ok := stats.GetCopScanDetail(tableScanID)
+	require.True(t, ok)
+	require.Equal(t, *scanDetail, scanSnapshot)
+	scanSnapshot.TotalKeys = 0
+	scanSnapshot, ok = stats.GetCopScanDetail(tableScanID)
+	require.True(t, ok)
+	require.Equal(t, int64(15), scanSnapshot.TotalKeys)
+	_, ok = stats.GetCopScanDetail(999)
+	require.False(t, ok)
 
 	cop := stats.GetCopStats(tableScanID)
 	expected := "tikv_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2}, " +
@@ -308,11 +400,78 @@ func TestCopRuntimeStats(t *testing.T) {
 	// Print all fields even though the value of some fields is 0.
 	str := "tikv_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2}, scan_detail: {total_keys: 15, rocksdb: {delete_skipped_count: 5, block: {cache_hit_count: 10, read_byte: 100 Bytes}}}"
 	require.Equal(t, str, cop.String())
+	readPoolTaskDetails := &util.PoolTaskDetails{
+		TaskCount:        1,
+		PollCount:        1,
+		MaxPollCount:     1,
+		MinPollCount:     1,
+		DispatchCount:    1,
+		MaxDispatchCount: 1,
+		MinDispatchCount: 1,
+	}
+	stats.RecordCopStats(tableScanID, kv.TiKV, nil, util.TimeDetail{}, readPoolTaskDetails, nil)
+	cop = stats.GetCopStats(tableScanID)
+	require.Contains(t, cop.String(), "read_pool:{tasks:1,")
+	require.NotContains(t, cop.String(), "read_pool_task:")
 	zeroScanDetail := util.ScanDetail{}
 	zeroCopStats := CopRuntimeStats{}
 	require.Equal(t, "", zeroScanDetail.String())
 	require.Equal(t, "", zeroTimeDetail.String())
 	require.Equal(t, "", zeroCopStats.String())
+
+	t.Run("checked summary rows and coverage", func(t *testing.T) {
+		coverage := NewRuntimeStatsColl(nil)
+		coverage.RecordExpectedCopResponseSummaries([]int{aggID})
+		coverage.RecordExpectedCopResponseSummaries([]int{aggID})
+		require.False(t, coverage.GetCopRowsSnapshot(aggID).Observed())
+		zeroRows := mockExecutorExecutionSummary(1, 0, 1)
+		coverage.RecordOneCopTask(aggID, kv.TiKV, zeroRows)
+		snapshot := coverage.GetCopRowsSnapshot(aggID)
+		require.Equal(t, uint64(1), snapshot.ObservedSummaries)
+		require.Equal(t, uint64(2), snapshot.ExpectedSummaries)
+		require.True(t, snapshot.Observed())
+		require.False(t, snapshot.Complete())
+
+		coverage.RecordOneCopTask(aggID, kv.TiKV, mockExecutorExecutionSummary(1, 0, 1))
+		snapshot = coverage.GetCopRowsSnapshot(aggID)
+		require.True(t, snapshot.Observed())
+		require.True(t, snapshot.Complete())
+		require.Zero(t, snapshot.Rows)
+
+		coverage.RecordExpectedCopResponseSummaries([]int{aggID})
+		coverage.RecordOneCopTask(aggID, kv.TiKV, mockExecutorExecutionSummary(1, 7, 1))
+		snapshot = coverage.GetCopRowsSnapshot(aggID)
+		require.True(t, snapshot.Complete())
+		require.Equal(t, int64(7), snapshot.Rows)
+		require.Equal(t, uint64(3), snapshot.ObservedSummaries)
+	})
+
+	t.Run("reported scan bytes", func(t *testing.T) {
+		for _, counts := range [][3]int64{{10, 2, 6}, {10, 0, 0}, {0, 0, 0}} {
+			size, ok := EstimateScanBytes(counts[0], counts[1], counts[2], 123)
+			require.True(t, ok)
+			require.Equal(t, float64(123), size)
+		}
+		_, ok := EstimateScanBytes(10, 2, 6, -1)
+		require.False(t, ok)
+	})
+
+	firstEstimate, ok := EstimateScanBytes(10, 1, 100, 0)
+	require.True(t, ok)
+	secondEstimate, ok := EstimateScanBytes(9, 9, 9, 0)
+	require.True(t, ok)
+	zeroEstimate, ok := EstimateScanBytes(10, 0, 0, 0)
+	require.True(t, ok)
+	require.Zero(t, zeroEstimate)
+	_, ok = EstimateScanBytes(10, 0, 1, 0)
+	require.False(t, ok)
+	stats.RecordAnalyzeScanBytes(tableReaderID, firstEstimate)
+	stats.RecordAnalyzeScanBytes(tableReaderID, secondEstimate)
+	totalEstimate, ok := stats.GetAnalyzeScanBytes(tableReaderID)
+	require.True(t, ok)
+	require.InDelta(t, 1009, totalEstimate, 1e-9)
+	_, ok = stats.GetAnalyzeScanBytes(999)
+	require.False(t, ok)
 }
 
 func TestCopRuntimeStatsForTiFlash(t *testing.T) {
@@ -333,7 +492,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 		RocksdbBlockReadCount:     10,
 		RocksdbBlockReadByte:      100,
 	}
-	stats.RecordCopStats(tableScanID, kv.TiFlash, scanDetail, util.TimeDetail{}, nil)
+	stats.RecordCopStats(tableScanID, kv.TiFlash, scanDetail, util.TimeDetail{}, nil, nil)
 	require.True(t, stats.ExistsCopStats(tableScanID))
 
 	cop := stats.GetCopStats(tableScanID)
@@ -367,6 +526,46 @@ func TestVectorSearchStats(t *testing.T) {
 	stats.RecordOneCopTask(1, kv.TiFlash, execSummary)
 	s := stats.GetCopStats(1)
 	require.Equal(t, "tiflash_task:{time:0s, loops:0, threads:0}, vector_idx:{load:{total:0ms,from_s3:1,from_disk:0,from_cache:0},search:{total:0ms,visited_nodes:0,discarded_nodes:0},read:{vec_total:0ms,others_total:0ms}}, tiflash_scan:{mvcc_input_rows:0, mvcc_input_bytes:0, mvcc_output_rows:0, local_regions:0, remote_regions:0, tot_learner_read:0ms, region_balance:none, delta_rows:0, delta_bytes:0, segments:0, stale_read_regions:0, tot_build_snapshot:0ms, tot_build_bitmap:0ms, tot_build_inputstream:0ms, min_local_stream:0ms, max_local_stream:0ms, dtfile:{data_scanned_rows:0, data_skipped_rows:0, mvcc_scanned_rows:0, mvcc_skipped_rows:0, lm_filter_scanned_rows:0, lm_filter_skipped_rows:0, tot_rs_index_check:0ms, tot_read:0ms}}", s.String())
+}
+
+func TestColumnarScanContextStats(t *testing.T) {
+	stats := NewRuntimeStatsColl(nil)
+	execSummary := mockExecutorExecutionSummaryForTiFlashColumnar(
+		1, 10, 2, 1,
+		2, 4, 3, 5, 2048,
+		100, 4096, 80,
+		7, 8, 9, 10,
+		11, 12, 13, 14,
+		15, 16, 17,
+		"tablescan_1",
+	)
+	stats.RecordOneCopTask(1, kv.TiFlash, execSummary)
+	stats.RecordOneCopTask(1, kv.TiFlash, mockExecutorExecutionSummaryForTiFlashColumnar(
+		2, 20, 3, 2,
+		4, 6, 2, 4, 1024,
+		10, 2048, 8,
+		1, 2, 3, 4,
+		5, 6, 7, 8,
+		9, 10, 11,
+		"tablescan_1",
+	))
+	s := stats.GetCopStats(1)
+	require.Equal(t, "tiflash_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:5, tasks:2, threads:3}, columnar_scan:{mvcc_input_rows:110, mvcc_input_bytes:6144, mvcc_output_rows:88, regions:6, read_tasks:10, physical_tables:3, columns:5, user_read_bytes:3072, read_block:8ms, serialize_block:10ms, init_reader:12ms, prefetch:14ms, deserialize_block:28ms, rough_check:{total:16, selected:18, skipped:20, unknown:22}, remote_segments:24, total_segments:26}", s.String())
+
+	zeroStats := NewRuntimeStatsColl(nil)
+	zeroExecSummary := mockExecutorExecutionSummaryForTiFlashColumnar(
+		1, 0, 1, 1,
+		0, 0, 0, 0, 0,
+		0, 0, 0,
+		0, 0, 0, 0,
+		0, 0, 0, 0,
+		0, 0, 0,
+		"tablescan_1",
+	)
+	zeroStats.RecordOneCopTask(1, kv.TiFlash, zeroExecSummary)
+	zeroString := zeroStats.GetCopStats(1).String()
+	require.Contains(t, zeroString, "columnar_scan:{")
+	require.NotContains(t, zeroString, "tiflash_scan:{")
 }
 
 func TestRuntimeStatsWithCommit(t *testing.T) {
@@ -551,6 +750,38 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 }
 
 func TestRootRuntimeStats(t *testing.T) {
+	t.Run("write CPU work snapshot", func(t *testing.T) {
+		coll := NewRuntimeStatsColl(nil)
+		_, found := coll.GetRootWriteCPUWork(99)
+		require.False(t, found)
+		stats := &WriteRuntimeStats{}
+		coll.RegisterStats(99, stats)
+		work, found := coll.GetRootWriteCPUWork(99)
+		require.True(t, found)
+		require.Zero(t, work)
+		cloned := stats.Clone().(*WriteRuntimeStats)
+		cloned.CPUWork = 6
+		require.Zero(t, stats.CPUWork)
+		coll.RegisterStats(99, cloned)
+		coll.RegisterStats(99, &WriteRuntimeStats{CPUWork: 3})
+		work, found = coll.GetRootWriteCPUWork(99)
+		require.True(t, found)
+		require.Equal(t, float64(9), work)
+		require.Empty(t, stats.String())
+	})
+	t.Run("non-creating root lookup", func(t *testing.T) {
+		coll := NewRuntimeStatsColl(nil)
+		root, ok := coll.GetRootStatsIfExists(1)
+		require.False(t, ok)
+		require.Nil(t, root)
+		require.False(t, coll.ExistsRootStats(1))
+
+		created := coll.GetRootStats(1)
+		root, ok = coll.GetRootStatsIfExists(1)
+		require.True(t, ok)
+		require.Same(t, created, root)
+	})
+
 	pid := 1
 	stmtStats := NewRuntimeStatsColl(nil)
 	basic1 := stmtStats.GetBasicRuntimeStats(pid, true)
@@ -577,6 +808,101 @@ func TestRootRuntimeStats(t *testing.T) {
 	stats := stmtStats.GetRootStats(1)
 	expect := "total_time:3.11s, total_open:10ms, total_close:100ms, loops:2, worker:15, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
 	require.Equal(t, expect, stats.String())
+
+	rows := stmtStats.GetRootRowsSnapshot(pid)
+	require.True(t, rows.Observed())
+	require.Equal(t, int64(50), rows.Rows)
+
+	t.Run("zero versus missing root rows", func(t *testing.T) {
+		coll := NewRuntimeStatsColl(nil)
+		basic := coll.GetBasicRuntimeStats(99, true)
+		require.False(t, coll.GetRootRowsSnapshot(99).Observed())
+		basic.SetRowNum(0)
+		require.False(t, coll.GetRootRowsSnapshot(99).Observed())
+		basic.Record(0, 0)
+		zeroRows := coll.GetRootRowsSnapshot(99)
+		require.True(t, zeroRows.Observed())
+		require.Zero(t, zeroRows.Rows)
+	})
+
+	t.Run("joined rows across workers and opens", func(t *testing.T) {
+		coll := NewRuntimeStatsColl(nil)
+		_, found := coll.GetRootJoinedRows(1)
+		require.False(t, found)
+		first := &JoinedRowsRuntimeStats{}
+		coll.RegisterStats(1, first)
+		rows, found := coll.GetRootJoinedRows(1)
+		require.True(t, found)
+		require.Zero(t, rows)
+		second := &JoinedRowsRuntimeStats{}
+		second.AddRows(3)
+		cloned := second.Clone().(*JoinedRowsRuntimeStats)
+		second.AddRows(2)
+		require.Equal(t, int64(3), cloned.Rows)
+		coll.RegisterStats(1, second)
+		coll.RegisterStats(1, cloned)
+		coll.RegisterStats(1, &JoinedRowsRuntimeStats{})
+		rows, found = coll.GetRootJoinedRows(1)
+		require.True(t, found)
+		require.Equal(t, int64(8), rows)
+		require.Empty(t, first.String())
+		require.NotEqual(t, first.Tp(), (&HashStateRuntimeStats{}).Tp())
+
+		overflow := &JoinedRowsRuntimeStats{Rows: math.MaxInt64}
+		overflow.AddRows(1)
+		overflow.AddRows(1)
+		require.Equal(t, int64(-1), overflow.Rows)
+		coll.RegisterStats(1, overflow)
+		coll.RegisterStats(1, &JoinedRowsRuntimeStats{Rows: 1})
+		rows, _ = coll.GetRootJoinedRows(1)
+		require.Equal(t, int64(-1), rows)
+	})
+
+	t.Run("accumulated hash construction", func(t *testing.T) {
+		state := NewHashStateRuntimeStats()
+		require.False(t, state.HashStateRowsSnapshot().Invalid())
+		require.Zero(t, state.HashStateRowsSnapshot().Rows)
+		require.Empty(t, state.String())
+
+		merged := state.Clone().(*HashStateRuntimeStats)
+		second := NewHashStateRuntimeStats()
+		second.AddRows(3)
+		second.AddRows(2)
+		merged.Merge(second)
+		require.Equal(t, int64(5), merged.HashStateRowsSnapshot().Rows)
+		require.Zero(t, state.HashStateRowsSnapshot().Rows, "Clone must not share the counter")
+
+		// A later execution that builds nothing must retain earlier work.
+		merged.Merge(NewHashStateRuntimeStats())
+		require.Equal(t, int64(5), merged.HashStateRowsSnapshot().Rows)
+		require.False(t, merged.HashStateRowsSnapshot().Invalid())
+
+		concurrent := NewHashStateRuntimeStats()
+		var wg sync.WaitGroup
+		for range 32 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				concurrent.AddRows(1)
+			}()
+		}
+		wg.Wait()
+		require.Equal(t, int64(32), concurrent.HashStateRowsSnapshot().Rows)
+
+		// Overflow must stay invalid through further additions and merges.
+		concurrent.AddRows(1 << 63)
+		concurrent.AddRows(^uint64(0))
+		require.True(t, concurrent.HashStateRowsSnapshot().Invalid())
+		merged.Merge(concurrent)
+		merged.Merge(second)
+		require.True(t, merged.HashStateRowsSnapshot().Invalid())
+
+		maxRows := NewHashStateRuntimeStats()
+		maxRows.AddRows(1<<63 - 1)
+		require.False(t, maxRows.HashStateRowsSnapshot().Invalid())
+		maxRows.AddRows(1)
+		require.True(t, maxRows.HashStateRowsSnapshot().Invalid())
+	})
 }
 
 func TestFormatDurationForExplain(t *testing.T) {
@@ -646,9 +972,9 @@ func TestCopRuntimeStats2(t *testing.T) {
 		KvReadWallTime:   5 * time.Millisecond,
 		TotalRPCWallTime: 50 * time.Millisecond,
 	}
-	stats.RecordCopStats(tableScanID, kv.TiKV, scanDetail, util.TimeDetail{}, nil)
+	stats.RecordCopStats(tableScanID, kv.TiKV, scanDetail, util.TimeDetail{}, nil, nil)
 	for range 1005 {
-		stats.RecordCopStats(tableScanID, kv.TiKV, scanDetail, timeDetail, mockExecutorExecutionSummary(2, 2, 2))
+		stats.RecordCopStats(tableScanID, kv.TiKV, scanDetail, timeDetail, nil, mockExecutorExecutionSummary(2, 2, 2))
 	}
 
 	cop := stats.GetCopStats(tableScanID)
@@ -660,4 +986,34 @@ func TestCopRuntimeStats2(t *testing.T) {
 		"total_kv_read_wall_time: 5.03s, tikv_wall_time: 50.3s}"
 	require.Equal(t, expected, cop.String())
 	require.Equal(t, expected, cop.String())
+}
+
+func TestRURuntimeStatsStringV1(t *testing.T) {
+	stats := &RURuntimeStats{
+		RUDetails: util.NewRUDetailsWith(10.5, 20.3, 0),
+	}
+	// v1: shows RRU + WRU
+	require.Equal(t, "RU:30.80", stats.String())
+}
+
+func TestRURuntimeStatsStringV1NilDetails(t *testing.T) {
+	stats := &RURuntimeStats{}
+	// v1 with nil RUDetails returns empty
+	require.Equal(t, "", stats.String())
+}
+
+func TestGetIARemoteReadSegmentStats(t *testing.T) {
+	stats := GetIARemoteReadSegmentStats(&util.ScanDetail{
+		IaRemoteReadSegmentCount:    3,
+		IaRemoteReadSegmentBytes:    4096,
+		IaRemoteReadSegmentDuration: 5 * time.Millisecond,
+	})
+	require.Equal(t, IARemoteReadSegmentStats{
+		Count:    3,
+		Bytes:    4096,
+		WaitTime: 5 * time.Millisecond,
+	}, stats)
+
+	require.Equal(t, IARemoteReadSegmentStats{}, GetIARemoteReadSegmentStats(&util.ScanDetail{}))
+	require.Equal(t, IARemoteReadSegmentStats{}, GetIARemoteReadSegmentStats(nil))
 }

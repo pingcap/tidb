@@ -107,7 +107,7 @@ func GetMockSchedulerExt(ctrl *gomock.Controller, schedulerInfo SchedulerInfo) s
 				if i > 0 {
 					sb.WriteString(",")
 				}
-				sb.WriteString(fmt.Sprintf("%s=%d", m.Type, m.To))
+				fmt.Fprintf(&sb, "%s=%d", m.Type, m.To)
 			}
 			return []byte(sb.String()), nil
 		},

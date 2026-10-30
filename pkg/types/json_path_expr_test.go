@@ -57,6 +57,14 @@ func TestValidatePathExpr(t *testing.T) {
 		{`$[1 to last]`, true, 1},
 		{`$[1to3]`, false, 1},
 		{`$[last - 5 to last - 10]`, false, 1},
+		{`$[last to last]`, true, 1},
+		{`$[last ]`, true, 1},
+		{`$[last `, false, 0},
+		{`$[last  `, false, 0},
+		{"$[last\tto last]", true, 1},
+		{`$[last to]`, false, 0},
+		{`$[1 to]`, false, 0},
+		{`$[1 tox]`, false, 0},
 
 		{`$.\"escaped quotes\"[3][*].*.key3`, false, 0},
 		{`$.hello \"escaped quotes\" world[3][*].*.key3`, false, 0},
@@ -76,9 +84,29 @@ func TestValidatePathExpr(t *testing.T) {
 		{`$.ѿ`, false, 0},
 		{`$."ѿ"`, true, 1},
 		{"$.\"\\0\\", false, 0},
-		{`$.Ѡ`, false, 0}, // This test case is special, because Ѡ is 0xD1 0xA0 in UTF-8, and 0xA0 is a space character.
+		{`$.Ѡ`, false, 0}, // Ѡ is U+0460, and its lowest byte 0x60 is not a letter in MySQL.
 		{`$."Ѡ"`, true, 1},
 		{`$.µ`, true, 1},
+		// The expected results below are the same as MySQL 8.0, which checks
+		// letters and digits by the lowest byte of the code point.
+		{`$.é`, true, 1},
+		{`$.ß`, true, 1},
+		{`$.α`, true, 1},
+		{`$.с`, true, 1},
+		{`$.aб`, true, 1},
+		{`$.б`, false, 0},
+		{`$.ÿ`, false, 0},
+		{`$.Ā`, false, 0},
+		{`$.你`, false, 0},
+		{`$."你"`, true, 1},
+		// MySQL only treats ASCII whitespace as whitespace in a JSON path, so
+		// U+00A0 and U+0085 are part of the key, and U+3000 is not a letter.
+		{"$.a\u00a0b", true, 1},
+		{"$.a\u0085b", true, 1},
+		{"$.a\u00a0.b", true, 2},
+		{"$.a\u3000b", false, 0},
+		{"$.\xff", false, 0},
+		{"$.\"\xff\"", false, 0},
 	}
 
 	for _, test := range tests {
@@ -91,6 +119,18 @@ func TestValidatePathExpr(t *testing.T) {
 				require.Error(t, err)
 			}
 		})
+	}
+}
+
+func TestPathKeyRoundTrip(t *testing.T) {
+	// The path built from a key by quoteJSONString, like the result of
+	// JSON_SEARCH, should be parsed back to the same key.
+	keys := []string{"a", "a b", "é", "你", "a\u00a0b", "a\u0085b", "a\u1680b", "a\u3000b", "a.b", "a\"b"}
+	for _, key := range keys {
+		pe, err := ParseJSONPathExpr("$." + quoteJSONString(key))
+		require.NoError(t, err, key)
+		require.Len(t, pe.legs, 1)
+		require.Equal(t, key, pe.legs[0].dotKey)
 	}
 }
 

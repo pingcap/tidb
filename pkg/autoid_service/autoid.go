@@ -388,6 +388,11 @@ func (s *Service) Close() {
 	}
 }
 
+// IsOwner returns whether this service is the current auto ID owner.
+func (s *Service) IsOwner() bool {
+	return s.leaderShip != nil && s.leaderShip.IsOwner()
+}
+
 // seekToFirstAutoIDSigned seeks to the next valid signed position.
 func seekToFirstAutoIDSigned(base, increment, offset int64) int64 {
 	nr := (base + increment - offset) / increment
@@ -424,8 +429,9 @@ const batch = 4000
 // AllocAutoID implements gRPC AutoIDAlloc interface.
 func (s *Service) AllocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
 	serviceKeyspaceID := uint32(s.store.GetCodec().GetKeyspaceID())
-	if req.KeyspaceID != serviceKeyspaceID {
-		logutil.BgLogger().Info("Current service is not request keyspace leader.", zap.Uint32("req-keyspace-id", req.KeyspaceID), zap.Uint32("service-keyspace-id", serviceKeyspaceID))
+	requestKeyspaceID := req.GetKeyspaceID()
+	if requestKeyspaceID != serviceKeyspaceID {
+		logutil.BgLogger().Info("Current service is not request keyspace leader.", zap.Uint32("req-keyspace-id", requestKeyspaceID), zap.Uint32("service-keyspace-id", serviceKeyspaceID))
 		return nil, errors.Trace(errors.New("not leader"))
 	}
 	var res *autoid.AutoIDResponse

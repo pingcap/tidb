@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/zap"
@@ -58,6 +57,14 @@ const (
 	TableSchema      = "table_schema"
 	TableName        = "table_name"
 	TidbTableID      = "tidb_table_id"
+	MViewSchema      = "mview_schema"
+	MViewName        = "mview_name"
+	MViewID          = "mview_id"
+	MLogName         = "mlog_name"
+	MLogID           = "mlog_id"
+	BaseTableSchema  = "base_table_schema"
+	BaseTableName    = "base_table_name"
+	BaseTableID      = "base_table_id"
 	PartitionName    = "partition_name"
 	TidbPartitionID  = "tidb_partition_id"
 	IndexName        = "index_name"
@@ -77,6 +84,13 @@ const (
 var patternMatchable = map[string]struct{}{
 	TableSchema:      {},
 	TableName:        {},
+	MViewSchema:      {},
+	MViewName:        {},
+	MViewID:          {},
+	MLogName:         {},
+	BaseTableSchema:  {},
+	BaseTableName:    {},
+	BaseTableID:      {},
 	IndexName:        {},
 	SchemaName:       {},
 	ConstraintSchema: {},
@@ -489,6 +503,16 @@ func (e *InfoSchemaPartitionsExtractor) HasPartitionPred() bool {
 	return len(e.ColPredicates[PartitionName]) > 0
 }
 
+// HasPartitionID returns true if partition ID matches the one in predicates.
+func (e *InfoSchemaPartitionsExtractor) HasPartitionID(partID int64) bool {
+	return !e.filter(TidbPartitionID, strconv.FormatInt(partID, 10))
+}
+
+// HasPartitionIDPred returns true if partition ID is specified in predicates.
+func (e *InfoSchemaPartitionsExtractor) HasPartitionIDPred() bool {
+	return len(e.ColPredicates[TidbPartitionID]) > 0
+}
+
 // InfoSchemaStatisticsExtractor is the predicate extractor for  information_schema.statistics.
 type InfoSchemaStatisticsExtractor struct {
 	InfoSchemaBaseExtractor
@@ -752,10 +776,13 @@ func findSchemasForTables(
 	schemaSlice := make([]ast.CIStr, 0, len(tableSlice))
 	for i, tbl := range tableSlice {
 		dbInfo, ok := is.SchemaByID(tbl.DBID)
-		intest.Assert(ok)
 		if !ok {
 			logutil.BgLogger().Warn("schema not found for table info",
 				zap.Int64("tableID", tbl.ID), zap.Int64("dbID", tbl.DBID))
+			// Drop this table so schemaSlice and the compacted tableSlice stay
+			// the same length; leaving it in would desync the parallel slices
+			// and make every consumer index out of range.
+			tableSlice[i] = nil
 			continue
 		}
 		if unspecified { // all schemas should be included.
@@ -776,22 +803,34 @@ func findSchemasForTables(
 		}
 	}
 	// Remove nil elements in tableSlice.
-	remains := tableSlice[:0]
-	for _, tbl := range tableSlice {
-		if tbl != nil {
-			remains = append(remains, tbl)
-		}
-	}
-	sort.Slice(schemaSlice, func(i, j int) bool {
-		iSchema, jSchema := schemaSlice[i].L, schemaSlice[j].L
-		less := iSchema < jSchema ||
-			(iSchema == jSchema && remains[i].Name.L < remains[j].Name.L)
-		if less {
-			remains[i], remains[j] = remains[j], remains[i]
-		}
-		return less
-	})
+	remains := slices.DeleteFunc(tableSlice, func(tbl *model.TableInfo) bool { return tbl == nil })
+	// Sort schema/table pairs together, keeping the two slices aligned. The
+	// comparator must stay side-effect free, so swap both slices via sort.Sort
+	// rather than mutating inside a sort.Slice less func.
+	sort.Sort(&schemaTableSorter{schemas: schemaSlice, tables: remains})
 	return schemaSlice, remains, nil
+}
+
+// schemaTableSorter sorts a parallel pair of schema names and table infos
+// together, ordering by schema name and then table name, so that
+// schemas[i] stays paired with tables[i] after sorting.
+type schemaTableSorter struct {
+	schemas []ast.CIStr
+	tables  []*model.TableInfo
+}
+
+func (s *schemaTableSorter) Len() int { return len(s.schemas) }
+
+func (s *schemaTableSorter) Less(i, j int) bool {
+	if s.schemas[i].L != s.schemas[j].L {
+		return s.schemas[i].L < s.schemas[j].L
+	}
+	return s.tables[i].Name.L < s.tables[j].Name.L
+}
+
+func (s *schemaTableSorter) Swap(i, j int) {
+	s.schemas[i], s.schemas[j] = s.schemas[j], s.schemas[i]
+	s.tables[i], s.tables[j] = s.tables[j], s.tables[i]
 }
 
 func parseIDs(ids []ast.CIStr) []int64 {
@@ -967,6 +1006,345 @@ func NewInfoSchemaTiDBIndexUsageExtractor() *InfoSchemaTiDBIndexUsageExtractor {
 	}
 	e.colNames = []string{TableSchema, TableName, IndexName}
 	return e
+}
+
+// InfoSchemaTiDBMViewsExtractor is the predicate extractor for information_schema.tidb_mviews.
+type InfoSchemaTiDBMViewsExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
+// NewInfoSchemaTiDBMViewsExtractor creates a new InfoSchemaTiDBMViewsExtractor.
+func NewInfoSchemaTiDBMViewsExtractor() *InfoSchemaTiDBMViewsExtractor {
+	e := &InfoSchemaTiDBMViewsExtractor{}
+	e.extractableColumns = extractableCols{
+		schema:  TableSchema,
+		table:   MViewName,
+		tableID: MViewID,
+	}
+	e.colNames = []string{TableSchema, MViewName, MViewID}
+	return e
+}
+
+// InfoSchemaTiDBMLogsExtractor is the predicate extractor for information_schema.tidb_mlogs.
+type InfoSchemaTiDBMLogsExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
+// NewInfoSchemaTiDBMLogsExtractor creates a new InfoSchemaTiDBMLogsExtractor.
+func NewInfoSchemaTiDBMLogsExtractor() *InfoSchemaTiDBMLogsExtractor {
+	e := &InfoSchemaTiDBMLogsExtractor{}
+	e.extractableColumns = extractableCols{
+		schema:  TableSchema,
+		table:   MLogName,
+		tableID: MLogID,
+	}
+	e.colNames = []string{TableSchema, MLogName, MLogID, BaseTableSchema, BaseTableName, BaseTableID}
+	return e
+}
+
+// HasMLogPredicates returns true if predicates are extracted for the mlog column set.
+func (e *InfoSchemaTiDBMLogsExtractor) HasMLogPredicates() bool {
+	return e.hasPredicates(TableSchema, MLogName, MLogID)
+}
+
+// HasBaseTablePredicates returns true if predicates are extracted for the base-table column set.
+func (e *InfoSchemaTiDBMLogsExtractor) HasBaseTablePredicates() bool {
+	return e.hasPredicates(BaseTableSchema, BaseTableName, BaseTableID)
+}
+
+func (e *InfoSchemaTiDBMLogsExtractor) hasPredicates(colNames ...string) bool {
+	for _, colName := range colNames {
+		if len(e.ColPredicates[colName]) > 0 || len(e.colsRegexp[colName]) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// ListSchemasAndTablesByBase lists candidate mlog tables by base-table predicates.
+// The returned base schema/table slices are aligned with the returned mlog schema/table slices.
+func (e *InfoSchemaTiDBMLogsExtractor) ListSchemasAndTablesByBase(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+) ([]ast.CIStr, []*model.TableInfo, []ast.CIStr, []*model.TableInfo, error) {
+	baseExtractor := &InfoSchemaBaseExtractor{
+		extractHelper: e.extractHelper,
+		SkipRequest:   e.SkipRequest,
+		ColPredicates: e.ColPredicates,
+		colsRegexp:    e.colsRegexp,
+		LikePatterns:  e.LikePatterns,
+		colNames:      []string{BaseTableSchema, BaseTableName, BaseTableID},
+		extractableColumns: extractableCols{
+			schema:  BaseTableSchema,
+			table:   BaseTableName,
+			tableID: BaseTableID,
+		},
+	}
+	candidateBaseSchemas, candidateBaseTables, err := baseExtractor.ListSchemasAndTables(ctx, is)
+	if err != nil {
+		return nil, nil, nil, nil, errors.Trace(err)
+	}
+	if len(candidateBaseTables) == 0 {
+		return nil, nil, nil, nil, nil
+	}
+
+	type schemaAndTable struct {
+		schema     ast.CIStr
+		table      *model.TableInfo
+		baseSchema ast.CIStr
+		baseTable  *model.TableInfo
+	}
+
+	schemaAndTbls := make([]schemaAndTable, 0, len(candidateBaseTables))
+	seenMLogIDs := make(map[int64]struct{}, len(candidateBaseTables))
+	for i, baseTable := range candidateBaseTables {
+		baseInfo := baseTable.MaterializedViewBase
+		if baseInfo == nil || baseInfo.MLogID == 0 {
+			continue
+		}
+		if _, ok := seenMLogIDs[baseInfo.MLogID]; ok {
+			continue
+		}
+		mlogTable, ok := is.TableByID(ctx, baseInfo.MLogID)
+		if !ok {
+			continue
+		}
+		mlogMeta := mlogTable.Meta()
+		if mlogMeta.MaterializedViewLog == nil {
+			continue
+		}
+		mlogSchema, ok := infoschema.SchemaByTable(is, mlogMeta)
+		if !ok {
+			continue
+		}
+		seenMLogIDs[baseInfo.MLogID] = struct{}{}
+		schemaAndTbls = append(schemaAndTbls, schemaAndTable{
+			schema:     mlogSchema.Name,
+			table:      mlogMeta,
+			baseSchema: candidateBaseSchemas[i],
+			baseTable:  baseTable,
+		})
+	}
+
+	slices.SortFunc(schemaAndTbls, func(a, b schemaAndTable) int {
+		if a.schema.L == b.schema.L {
+			return strings.Compare(a.table.Name.L, b.table.Name.L)
+		}
+		return strings.Compare(a.schema.L, b.schema.L)
+	})
+
+	schemas := make([]ast.CIStr, 0, len(schemaAndTbls))
+	tables := make([]*model.TableInfo, 0, len(schemaAndTbls))
+	baseSchemas := make([]ast.CIStr, 0, len(schemaAndTbls))
+	baseTables := make([]*model.TableInfo, 0, len(schemaAndTbls))
+	for _, st := range schemaAndTbls {
+		schemas = append(schemas, st.schema)
+		tables = append(tables, st.table)
+		baseSchemas = append(baseSchemas, st.baseSchema)
+		baseTables = append(baseTables, st.baseTable)
+	}
+	return schemas, tables, baseSchemas, baseTables, nil
+}
+
+// Filter reports whether the given row value should be filtered out by the extractor predicates.
+func (e *InfoSchemaTiDBMLogsExtractor) Filter(colName, val string) bool {
+	return e.filter(colName, val)
+}
+
+// InfoSchemaTiDBTableMViewDependenciesExtractor is the predicate extractor for
+// information_schema.tidb_table_mview_dependencies.
+type InfoSchemaTiDBTableMViewDependenciesExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
+// NewInfoSchemaTiDBTableMViewDependenciesExtractor creates a new InfoSchemaTiDBTableMViewDependenciesExtractor.
+func NewInfoSchemaTiDBTableMViewDependenciesExtractor() *InfoSchemaTiDBTableMViewDependenciesExtractor {
+	e := &InfoSchemaTiDBTableMViewDependenciesExtractor{}
+	e.extractableColumns = extractableCols{
+		schema:  TableSchema,
+		table:   TableName,
+		tableID: TableID,
+	}
+	e.colNames = []string{TableSchema, TableName, TableID, MLogName, MLogID, MViewSchema, MViewName, MViewID}
+	return e
+}
+
+// HasTablePredicates returns true if predicates are extracted for the base-table column set.
+func (e *InfoSchemaTiDBTableMViewDependenciesExtractor) HasTablePredicates() bool {
+	return e.hasPredicates(TableSchema, TableName, TableID)
+}
+
+// HasMLogPredicates returns true if predicates are extracted for the mlog column set.
+func (e *InfoSchemaTiDBTableMViewDependenciesExtractor) HasMLogPredicates() bool {
+	return e.hasPredicates(MLogName, MLogID)
+}
+
+// HasMViewPredicates returns true if predicates are extracted for the mview column set.
+func (e *InfoSchemaTiDBTableMViewDependenciesExtractor) HasMViewPredicates() bool {
+	return e.hasPredicates(MViewSchema, MViewName, MViewID)
+}
+
+func (e *InfoSchemaTiDBTableMViewDependenciesExtractor) hasPredicates(colNames ...string) bool {
+	for _, colName := range colNames {
+		if len(e.ColPredicates[colName]) > 0 || len(e.colsRegexp[colName]) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// ListSchemasAndTablesByMLog lists candidate base tables by mlog predicates.
+func (e *InfoSchemaTiDBTableMViewDependenciesExtractor) ListSchemasAndTablesByMLog(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+) ([]ast.CIStr, []*model.TableInfo, error) {
+	mlogExtractor := &InfoSchemaBaseExtractor{
+		extractHelper: e.extractHelper,
+		SkipRequest:   e.SkipRequest,
+		ColPredicates: e.ColPredicates,
+		colsRegexp:    e.colsRegexp,
+		LikePatterns:  e.LikePatterns,
+		colNames:      []string{MLogName, MLogID},
+		extractableColumns: extractableCols{
+			table:   MLogName,
+			tableID: MLogID,
+		},
+	}
+	_, mlogTables, err := mlogExtractor.ListSchemasAndTables(ctx, is)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	if len(mlogTables) == 0 {
+		return nil, nil, nil
+	}
+
+	type schemaAndTable struct {
+		schema ast.CIStr
+		table  *model.TableInfo
+	}
+
+	schemaAndTbls := make([]schemaAndTable, 0, len(mlogTables))
+	seenBaseTableIDs := make(map[int64]struct{}, len(mlogTables))
+	for _, mlogTable := range mlogTables {
+		mlogInfo := mlogTable.MaterializedViewLog
+		if mlogInfo == nil || mlogInfo.BaseTableID == 0 {
+			continue
+		}
+		if _, ok := seenBaseTableIDs[mlogInfo.BaseTableID]; ok {
+			continue
+		}
+		baseTbl, ok := is.TableByID(ctx, mlogInfo.BaseTableID)
+		if !ok {
+			continue
+		}
+		baseMeta := baseTbl.Meta()
+		baseInfo := baseMeta.MaterializedViewBase
+		if baseInfo == nil || len(baseInfo.MViewIDs) == 0 {
+			continue
+		}
+		baseSchema, ok := infoschema.SchemaByTable(is, baseMeta)
+		if !ok {
+			continue
+		}
+		seenBaseTableIDs[mlogInfo.BaseTableID] = struct{}{}
+		schemaAndTbls = append(schemaAndTbls, schemaAndTable{schema: baseSchema.Name, table: baseMeta})
+	}
+
+	slices.SortFunc(schemaAndTbls, func(a, b schemaAndTable) int {
+		if a.schema.L == b.schema.L {
+			return strings.Compare(a.table.Name.L, b.table.Name.L)
+		}
+		return strings.Compare(a.schema.L, b.schema.L)
+	})
+
+	schemas := make([]ast.CIStr, 0, len(schemaAndTbls))
+	tables := make([]*model.TableInfo, 0, len(schemaAndTbls))
+	for _, st := range schemaAndTbls {
+		schemas = append(schemas, st.schema)
+		tables = append(tables, st.table)
+	}
+	return schemas, tables, nil
+}
+
+// ListSchemasAndTablesByMView lists candidate base tables by mview predicates.
+func (e *InfoSchemaTiDBTableMViewDependenciesExtractor) ListSchemasAndTablesByMView(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+) ([]ast.CIStr, []*model.TableInfo, error) {
+	mviewExtractor := &InfoSchemaBaseExtractor{
+		extractHelper: e.extractHelper,
+		SkipRequest:   e.SkipRequest,
+		ColPredicates: e.ColPredicates,
+		colsRegexp:    e.colsRegexp,
+		LikePatterns:  e.LikePatterns,
+		colNames:      []string{MViewSchema, MViewName, MViewID},
+		extractableColumns: extractableCols{
+			schema:  MViewSchema,
+			table:   MViewName,
+			tableID: MViewID,
+		},
+	}
+	_, mviewTables, err := mviewExtractor.ListSchemasAndTables(ctx, is)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	if len(mviewTables) == 0 {
+		return nil, nil, nil
+	}
+
+	type schemaAndTable struct {
+		schema ast.CIStr
+		table  *model.TableInfo
+	}
+
+	schemaAndTbls := make([]schemaAndTable, 0, len(mviewTables))
+	seenBaseTableIDs := make(map[int64]struct{}, len(mviewTables))
+	for _, mviewTable := range mviewTables {
+		mviewInfo := mviewTable.MaterializedView
+		if mviewInfo == nil {
+			continue
+		}
+		for _, baseTableID := range mviewInfo.BaseTableIDs {
+			baseTbl, ok := is.TableByID(ctx, baseTableID)
+			if !ok {
+				continue
+			}
+			baseMeta := baseTbl.Meta()
+			baseInfo := baseMeta.MaterializedViewBase
+			if baseInfo == nil || len(baseInfo.MViewIDs) == 0 {
+				continue
+			}
+			if _, ok := seenBaseTableIDs[baseMeta.ID]; ok {
+				continue
+			}
+			baseSchema, ok := infoschema.SchemaByTable(is, baseMeta)
+			if !ok {
+				continue
+			}
+			seenBaseTableIDs[baseMeta.ID] = struct{}{}
+			schemaAndTbls = append(schemaAndTbls, schemaAndTable{schema: baseSchema.Name, table: baseMeta})
+		}
+	}
+
+	slices.SortFunc(schemaAndTbls, func(a, b schemaAndTable) int {
+		if a.schema.L == b.schema.L {
+			return strings.Compare(a.table.Name.L, b.table.Name.L)
+		}
+		return strings.Compare(a.schema.L, b.schema.L)
+	})
+
+	schemas := make([]ast.CIStr, 0, len(schemaAndTbls))
+	tables := make([]*model.TableInfo, 0, len(schemaAndTbls))
+	for _, st := range schemaAndTbls {
+		schemas = append(schemas, st.schema)
+		tables = append(tables, st.table)
+	}
+	return schemas, tables, nil
+}
+
+// Filter reports whether the given row value should be filtered out by the extractor predicates.
+func (e *InfoSchemaTiDBTableMViewDependenciesExtractor) Filter(colName, val string) bool {
+	return e.filter(colName, val)
 }
 
 // ListIndexes lists related indexes for given table from predicate.

@@ -6,6 +6,7 @@ go_library(
         "action.go",
         "arbitrator.go",
         "global_arbitrator.go",
+        "heap_profile.go",
         "meminfo.go",
         "memstats.go",
         "pool.go",
@@ -35,10 +36,11 @@ go_library(
 
 go_test(
     name = "memory_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "arbitrator_test.go",
         "bench_test.go",
+        "heap_profile_test.go",
         "main_test.go",
         "pool_test.go",
         "tracker_test.go",
@@ -52,6 +54,5 @@ go_test(
         "//pkg/util/sqlkiller",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
-        "@org_uber_go_zap//:zap",
     ],
 )

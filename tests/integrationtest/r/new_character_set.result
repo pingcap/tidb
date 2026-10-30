@@ -88,7 +88,7 @@ set names utf8mb4;
 set @@character_set_client=gbk;
 set @@character_set_connection=gbk;
 select hex('一a'), '一a';
-hex('涓?')	涓?
+hex(0xe4b88061)	涓?
 E4B83F	涓?
 set @@sql_mode=default;
 set @@character_set_client=default;
@@ -124,6 +124,8 @@ select * from t61085 where a = cast(0x41414180424242 as char charset gbk);
 a
 AAA
 DROP TABLE t61085;
+set character_set_results = default;
+set SESSION sql_mode = default;
 create table a (id bigint primary key, name varchar(10) collate utf8mb4_general_ci, key(name));
 insert into a values (1, 'A�B');
 select hex(weight_string(name)) from a;

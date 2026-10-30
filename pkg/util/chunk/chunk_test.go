@@ -579,6 +579,8 @@ func TestChunkMemoryUsage(t *testing.T) {
 	}
 	// empty chunk with initial capactiy
 	require.Equal(t, int64(expectedUsage), chk.MemoryUsage())
+	initialUsedMemory := chk.UsedMemoryUsage()
+	require.Less(t, initialUsedMemory, chk.MemoryUsage())
 
 	jsonObj, err := types.ParseBinaryJSONFromString("1")
 	require.NoError(t, err)
@@ -608,6 +610,12 @@ func TestChunkMemoryUsage(t *testing.T) {
 		expectedUsage += colUsage[i] + int(unsafe.Sizeof(*chk.columns[i]))
 	}
 	require.Equal(t, int64(expectedUsage), chk.MemoryUsage())
+	require.Greater(t, chk.UsedMemoryUsage(), initialUsedMemory)
+
+	allocatedMemory := chk.MemoryUsage()
+	chk.Reset()
+	require.Equal(t, initialUsedMemory, chk.UsedMemoryUsage())
+	require.Equal(t, allocatedMemory, chk.MemoryUsage())
 }
 
 func TestSwapColumn(t *testing.T) {

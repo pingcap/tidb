@@ -7,119 +7,145 @@ aliases:
     - time-and-fate
     - terry1purcell
     - henrybw
-    - wddevries
-    - fixdb
   sig-critical-approvers-tidb-server:
     - yudongusa
-    - BenMeadowcroft
+    - terry1purcell
+    - likidu
   sig-critical-approvers-tidb-lightning:
     - yudongusa
-    - BenMeadowcroft
+    - terry1purcell
+    - likidu
   sig-critical-approvers-parser:
     - yudongusa
-    - BenMeadowcroft
+    - terry1purcell
+    - likidu
   sig-critical-approvers-dep:
     - bb7133
     - cfzjywxk
   sig-approvers-autoid-service:
     - bb7133
-    - tiancaiamao
   sig-approvers-br:
     - BornChanger
     - 3pointer
     - YuJuncen
     - Leavrth
+    - v01dstar
   sig-approvers-distsql:
     - windtalker
     - XuHuaiyu
     - zanmato1984
     - cfzjywxk
-    - Benjamin2037
+    - bb7133
   sig-approvers-executor:
     - windtalker
     - XuHuaiyu
     - zanmato1984
+    - gengliqi
   sig-approvers-executor-import:
     - D3Hunter
     - gmhdbjd
-    - Benjamin2037
+    - bb7133
+    - joechenrh
   sig-approvers-expression:
     - windtalker
     - XuHuaiyu
     - zanmato1984
+    - gengliqi
   sig-approvers-lightning:
-    - Benjamin2037
+    - bb7133
     - D3Hunter
     - gmhdbjd
-    - OliverS929
+    - joechenrh
   sig-approvers-domain:
     - D3Hunter
     - gmhdbjd
     - wjhuang2016
+    - joechenrh
+    - bb7133
+    - djshow832
+    - YangKeao
   sig-approvers-ddl:
-    - Benjamin2037
+    - bb7133
     - wjhuang2016
     - D3Hunter
     - gmhdbjd
-  sig-approvers-disttask:
-    - Benjamin2037
+    - joechenrh
+    - djshow832
+    - YangKeao
+  sig-approvers-dxf:
+    - bb7133
     - D3Hunter
     - gmhdbjd
     - wjhuang2016
+    - joechenrh
   sig-approvers-dumpling:
-    - Benjamin2037
+    - bb7133
     - gmhdbjd
     - D3Hunter
+    - joechenrh
   sig-approvers-infoschema:
     - wjhuang2016
     - D3Hunter
-    - Benjamin2037
+    - bb7133
     - gmhdbjd
+    - joechenrh
+    - djshow832
+    - YangKeao
   sig-approvers-meta:
-    - Benjamin2037
+    - bb7133
     - gmhdbjd
     - wjhuang2016
     - D3Hunter
+    - joechenrh
+    - djshow832
+    - YangKeao
   sig-approvers-owner:
-    - Benjamin2037
+    - bb7133
     - wjhuang2016
     - D3Hunter
+    - joechenrh
+    - djshow832
+    - YangKeao
   sig-approvers-parser:
     - bb7133
-    - Benjamin2037
     - BornChanger
     - D3Hunter
+    - winoros
+    - time-and-fate
+    - AilinKid
+    - qw4990
   sig-approvers-resourcemanager:
-    - Benjamin2037
+    - bb7133
     - D3Hunter
     - gmhdbjd
     - wjhuang2016
   sig-approvers-table:
-    - Benjamin2037
+    - bb7133
     - cfzjywxk
     - gmhdbjd
     - wjhuang2016
+    - joechenrh
+    - djshow832
+    - YangKeao
   sig-approvers-lock:
-    - Benjamin2037
+    - bb7133
     - wjhuang2016
   sig-approvers-tidb-binlog:
-    - Benjamin2037
+    - bb7133
     - gmhdbjd
   sig-approvers-planner:
     - AilinKid
     - 0xPoe
     - elsa0520
-    - fixdb
     - hawkingrei
     - qw4990
     - time-and-fate
     - winoros
     - terry1purcell
-    - ghazalfamilyusa
     - henrybw
-    - wddevries
     - King-Dylan
     - guo-shaoge
+    - Reminiscent
   sig-approvers-metrics:
     - XuHuaiyu
     - zimulala
@@ -140,9 +166,9 @@ aliases:
     - bobotu
     - charleszheng44
     - dhysum
+    - expxiaoli
     - fengou1
     - fzzf678
-    - gengliqi
     - ghazalfamilyusa
     - henrybw
     - iamxy
@@ -155,6 +181,7 @@ aliases:
     - nongfushanquan
     - pingyu
     - shihongzhi
+    - solotzg
     - spongedu
     - tangwz
     - tsthght
@@ -220,6 +247,7 @@ aliases:
     - fixdb
     - francis0407
     - fzhedu
+    - gengliqi
     - glorv
     - gozssky
     - guo-shaoge

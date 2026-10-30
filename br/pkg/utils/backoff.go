@@ -5,6 +5,7 @@ package utils
 import (
 	"context"
 	"database/sql"
+	stderrs "errors"
 	"io"
 	"math"
 	"time"
@@ -149,6 +150,7 @@ type backoffStrategyImpl struct {
 	errContext        *ErrorContext
 	isRetryErr        func(error) bool
 	isNonRetryErr     func(error) bool
+	retryGRPCCanceled bool
 }
 
 // BackoffOption defines a function type for configuring backoffStrategyImpl
@@ -196,6 +198,15 @@ func WithNonRetryErrorFunc(isNonRetryErr func(error) bool) BackoffOption {
 	}
 }
 
+// WithRetryableGRPCCanceled allows retrying gRPC Canceled errors even when
+// their message contains "context canceled". A real context.Canceled remains
+// non-retryable.
+func WithRetryableGRPCCanceled() BackoffOption {
+	return func(b *backoffStrategyImpl) {
+		b.retryGRPCCanceled = true
+	}
+}
+
 // NewBackoffStrategy creates a new backoff strategy with custom retry logic
 func NewBackoffStrategy(opts ...BackoffOption) BackoffStrategy {
 	// Default values
@@ -239,8 +250,13 @@ func NewBackoffRetryAllExceptStrategy(remainingAttempts int, delayTime, maxDelay
 	)
 }
 
-func NewTiKVStoreBackoffStrategy(maxRetry int, delayTime, maxDelayTime time.Duration,
-	errContext *ErrorContext) BackoffStrategy {
+func NewTiKVStoreBackoffStrategy(
+	maxRetry int,
+	delayTime,
+	maxDelayTime time.Duration,
+	errContext *ErrorContext,
+	opts ...BackoffOption,
+) BackoffStrategy {
 	retryErrs := map[error]struct{}{
 		berrors.ErrKVEpochNotMatch:  {},
 		berrors.ErrKVDownloadFailed: {},
@@ -264,14 +280,16 @@ func NewTiKVStoreBackoffStrategy(maxRetry int, delayTime, maxDelayTime time.Dura
 	isRetryErrFunc := buildIsRetryErrFunc(retryErrs, grpcRetryCodes)
 	isNonRetryErrFunc := buildIsNonRetryErrFunc(nonRetryErrs)
 
-	return NewBackoffStrategy(
+	backoffOpts := []BackoffOption{
 		WithRemainingAttempts(maxRetry),
 		WithDelayTime(delayTime),
 		WithMaxDelayTime(maxDelayTime),
 		WithErrorContext(errContext),
 		WithRetryErrorFunc(isRetryErrFunc),
 		WithNonRetryErrorFunc(isNonRetryErrFunc),
-	)
+	}
+	backoffOpts = append(backoffOpts, opts...)
+	return NewBackoffStrategy(backoffOpts...)
 }
 
 func NewImportSSTBackoffStrategy() BackoffStrategy {
@@ -283,6 +301,17 @@ func NewDownloadSSTBackoffStrategy() BackoffStrategy {
 	errContext := NewErrorContext("download sst", 3)
 	return NewTiKVStoreBackoffStrategy(downloadSSTRetryTimes, downloadSSTWaitInterval, downloadSSTMaxWaitInterval,
 		errContext)
+}
+
+func NewPeerDownloadSSTBackoffStrategy() BackoffStrategy {
+	errContext := NewErrorContext("peer download sst", 3)
+	return NewTiKVStoreBackoffStrategy(
+		downloadSSTRetryTimes,
+		downloadSSTWaitInterval,
+		downloadSSTMaxWaitInterval,
+		errContext,
+		WithRetryableGRPCCanceled(),
+	)
 }
 
 func NewBackupSSTBackoffStrategy() BackoffStrategy {
@@ -403,8 +432,13 @@ func (bo *backoffStrategyImpl) NextBackoff(err error) time.Duration {
 	if res.Strategy == StrategyRetry {
 		bo.doBackoff()
 	} else if res.Reason == contextCancelledMsg {
-		// have to hack here due to complex context.cancel/grpc cancel
-		bo.stopBackoff()
+		e := errors.Cause(lastErr)
+		if bo.retryGRPCCanceled && !stderrs.Is(e, context.Canceled) && status.Code(e) == codes.Canceled {
+			bo.doBackoff()
+		} else {
+			// have to hack here due to complex context.cancel/grpc cancel
+			bo.stopBackoff()
+		}
 	} else {
 		e := errors.Cause(lastErr)
 		if bo.isNonRetryErr(e) {

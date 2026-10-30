@@ -16,6 +16,7 @@ package stmtsummary
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -27,6 +28,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -189,7 +191,7 @@ func NewHistoryReader(
 	timeRanges []*StmtTimeRange,
 	concurrent int,
 ) (*HistoryReader, error) {
-	files, err := newStmtFiles(ctx, timeRanges)
+	files, err := newStmtFiles(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +260,6 @@ func (r *HistoryReader) Rows() ([][]types.Datum, error) {
 
 // Close ends reading and closes all files.
 func (r *HistoryReader) Close() error {
-	r.files.close()
 	if r.cancel != nil {
 		r.cancel()
 	}
@@ -297,6 +298,7 @@ func (r *HistoryReader) scheduleTasks(
 		close(rowsCh)
 		return
 	}
+	defer r.files.close()
 
 	ctx, cancel := context.WithCancel(r.ctx)
 	defer cancel()
@@ -315,7 +317,8 @@ func (r *HistoryReader) scheduleTasks(
 	}
 
 	concurrent := r.concurrent
-	filesCh := make(chan *os.File, concurrent)
+	// Keep this channel unbuffered so the manager cannot accumulate open file handles.
+	filesCh := make(chan *stmtFile)
 	linesCh := make(chan [][]byte, concurrent)
 	innerErrCh := make(chan error, concurrent)
 
@@ -355,10 +358,42 @@ func (r *HistoryReader) scheduleTasks(
 		defer mgrWg.Done()
 
 		func() {
-			for _, file := range r.files.files {
+			for _, candidate := range r.files.files {
+				if isCtxDone(ctx) {
+					return
+				}
+				file := candidate
+				if file.file == nil {
+					var err error
+					file, err = openStmtFile(candidate.path)
+					if err != nil {
+						logutil.BgLogger().Warn("failed to open or parse statements file", zap.Error(err), zap.String("path", candidate.path))
+						continue
+					}
+					if r.files.currentFileInfo != nil {
+						fileInfo, err := file.file.Stat()
+						if err != nil {
+							file.closeAndLogError()
+							select {
+							case innerErrCh <- err:
+							case <-ctx.Done():
+							}
+							return
+						}
+						if os.SameFile(r.files.currentFileInfo, fileInfo) {
+							file.closeAndLogError()
+							continue
+						}
+					}
+				}
+				if !r.checker.isTimeValid(file.begin, file.end) {
+					file.closeAndLogError()
+					continue
+				}
 				select {
-				case filesCh <- file.file:
+				case filesCh <- file:
 				case <-ctx.Done():
+					file.closeAndLogError()
 					return
 				}
 			}
@@ -448,7 +483,169 @@ type stmtTinyRecord struct {
 	End   int64 `json:"end"`
 }
 
+// extractDigest returns the digest value of a persisted JSON line exactly as the
+// full decode would see it: top-level keys are walked in order and the last unescaped
+// digest key wins, including case-insensitive matches, just like encoding/json. Only keys
+// are examined — every other value is skipped byte-wise without decoding or
+// allocation. Escaped keys/values and invalid UTF-8 digest values fall back to
+// the standard decoder. This is not a JSON validator: matching and unrecognized
+// lines still pass through the standard decoder before a row can be returned.
+func extractDigest(line []byte) (digest string, ok bool) {
+	i := skipJSONSpace(line, 0)
+	if i >= len(line) || line[i] != '{' {
+		return "", false
+	}
+	i = skipJSONSpace(line, i+1)
+	found := false
+	var value string
+	for {
+		if i >= len(line) {
+			return "", false
+		}
+		if line[i] == '}' {
+			if found {
+				return value, true
+			}
+			// End of the object and no plain digest key was seen.
+			return "", false
+		}
+		key, next, okKey := scanJSONString(line, i)
+		if !okKey || hasJSONEscape(key) {
+			// Escaped keys can't be compared cheaply; defer to the full decode.
+			return "", false
+		}
+		i = skipJSONSpace(line, next)
+		if i >= len(line) || line[i] != ':' {
+			return "", false
+		}
+		i = skipJSONSpace(line, i+1)
+		if bytes.EqualFold(key, []byte("digest")) {
+			v, next, okValue := scanJSONString(line, i)
+			if !okValue || hasJSONEscape(v) || !utf8.Valid(v) {
+				return "", false
+			}
+			value, found = string(v), true
+			i = next
+		} else {
+			next, okValue := skipJSONValue(line, i)
+			if !okValue {
+				return "", false
+			}
+			i = next
+		}
+		i = skipJSONSpace(line, i)
+		if i >= len(line) {
+			return "", false
+		}
+		if line[i] == ',' {
+			i = skipJSONSpace(line, i+1)
+		} else if line[i] != '}' {
+			return "", false
+		}
+	}
+}
+
+func skipJSONSpace(line []byte, i int) int {
+	for i < len(line) {
+		switch line[i] {
+		case ' ', '\t', '\n', '\r':
+			i++
+		default:
+			return i
+		}
+	}
+	return i
+}
+
+// scanJSONString reads a JSON string starting at the opening quote line[i]. It
+// returns the raw content between the quotes with escapes left as-is, the position
+// after the closing quote, and whether a closing quote was found.
+func scanJSONString(line []byte, i int) (content []byte, next int, ok bool) {
+	if i >= len(line) || line[i] != '"' {
+		return nil, 0, false
+	}
+	i++
+	start := i
+	for i < len(line) {
+		switch line[i] {
+		case '\\':
+			i += 2
+		case '"':
+			return line[start:i], i + 1, true
+		default:
+			i++
+		}
+	}
+	return nil, 0, false
+}
+
+func hasJSONEscape(content []byte) bool {
+	for _, c := range content {
+		if c == '\\' {
+			return true
+		}
+	}
+	return false
+}
+
+// skipJSONValue skips one JSON value (string, number, literal, or a balanced
+// container with strings honored) and reports the position after it.
+func skipJSONValue(line []byte, i int) (next int, ok bool) {
+	if i >= len(line) {
+		return 0, false
+	}
+	switch line[i] {
+	case '"':
+		_, next, ok = scanJSONString(line, i)
+		return next, ok
+	case '{', '[':
+		opening := line[i]
+		closing := byte('}')
+		if opening == '[' {
+			closing = ']'
+		}
+		depth := 0
+		for i < len(line) {
+			c := line[i]
+			if c == '"' {
+				_, next, ok = scanJSONString(line, i)
+				if !ok {
+					return 0, false
+				}
+				i = next
+				continue
+			}
+			if c == opening {
+				depth++
+			} else if c == closing {
+				depth--
+				if depth == 0 {
+					return i + 1, true
+				}
+			}
+			i++
+		}
+		return 0, false
+	default:
+		start := i
+		for i < len(line) {
+			switch line[i] {
+			case ',', '}', ']', ' ', '\t', '\n', '\r':
+				return i, i > start
+			}
+			i++
+		}
+		return i, i > start
+	}
+}
+
+type stmtPersistedRecord struct {
+	StmtRecord
+	Evicted bool `json:"evicted"`
+}
+
 type stmtFile struct {
+	path  string
 	file  *os.File
 	begin int64
 	end   int64
@@ -473,6 +670,7 @@ func openStmtFile(path string) (*stmtFile, error) {
 	}
 
 	return &stmtFile{
+		path:  path,
 		file:  file,
 		begin: begin,
 		end:   end,
@@ -504,15 +702,16 @@ func parseBeginTsAndReseek(file *os.File) (int64, error) {
 }
 
 func parseEndTs(file *os.File) (int64, error) {
-	// tidb-statements.log
-	filename := config.GetGlobalConfig().Instance.StmtSummaryFilename
+	// The rotated filename is compared by basename, so derive its prefix from
+	// the configured basename as well when the configured path is absolute.
+	configured := filepath.Base(config.GetGlobalConfig().Instance.StmtSummaryFilename)
 	// .log
-	ext := filepath.Ext(filename)
+	ext := filepath.Ext(configured)
 	// tidb-statements
-	prefix := filename[:len(filename)-len(ext)]
+	prefix := configured[:len(configured)-len(ext)]
 
 	// tidb-statements-2022-12-27T16-21-20.245.log
-	filename = filepath.Base(file.Name())
+	filename := filepath.Base(file.Name())
 	// .log
 	ext = filepath.Ext(file.Name())
 	// tidb-statements-2022-12-27T16-21-20.245
@@ -532,22 +731,78 @@ func parseEndTs(file *os.File) (int64, error) {
 
 func (f *stmtFile) close() error {
 	if f.file != nil {
-		return f.file.Close()
+		err := f.file.Close()
+		f.file = nil
+		return err
 	}
 	return nil
 }
 
-type stmtFiles struct {
-	files []*stmtFile
+func (f *stmtFile) closeAndLogError() {
+	if err := f.close(); err != nil {
+		logutil.BgLogger().Warn("failed to close statements file", zap.Error(err), zap.String("path", f.path))
+	}
 }
 
-func newStmtFiles(ctx context.Context, timeRanges []*StmtTimeRange) (*stmtFiles, error) {
+type stmtFiles struct {
+	files           []*stmtFile
+	currentFileInfo os.FileInfo
+}
+
+func (f *stmtFiles) close() {
+	for _, file := range f.files {
+		file.closeAndLogError()
+	}
+}
+
+func newStmtFiles(ctx context.Context) (*stmtFiles, error) {
+	return newStmtFilesWithReadDir(ctx, os.ReadDir)
+}
+
+func newStmtFilesWithReadDir(
+	ctx context.Context,
+	readDir func(string) ([]os.DirEntry, error),
+) (*stmtFiles, error) {
 	filename := config.GetGlobalConfig().Instance.StmtSummaryFilename
 	ext := filepath.Ext(filename)
 	prefix := filename[:len(filename)-len(ext)]
+
+	if isCtxDone(ctx) {
+		return nil, ctx.Err()
+	}
+	// Pin the active inode before enumerating rotated files. If rotation happens
+	// during enumeration, the directory entry for this inode is deduplicated below.
+	currentFile, err := openStmtFile(filename)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			logutil.BgLogger().Warn("failed to snapshot current statements file", zap.Error(err), zap.String("path", filename))
+		}
+		currentFile = nil
+	}
+
 	var files []*stmtFile
-	walkFn := func(path string, info os.DirEntry) error {
-		if info.IsDir() {
+	var currentFileInfo os.FileInfo
+	if currentFile != nil {
+		currentFileInfo, err = currentFile.file.Stat()
+		if err != nil {
+			currentFile.closeAndLogError()
+			return nil, err
+		}
+		files = append(files, currentFile)
+	}
+
+	dir := filepath.Dir(filename)
+	entries, err := readDir(dir)
+	if err != nil {
+		(&stmtFiles{files: files}).close()
+		return nil, err
+	}
+	if isCtxDone(ctx) {
+		(&stmtFiles{files: files}).close()
+		return nil, ctx.Err()
+	}
+	walkFn := func(path string, entry os.DirEntry) error {
+		if entry.IsDir() {
 			return nil
 		}
 		if !strings.HasPrefix(path, prefix) {
@@ -556,47 +811,33 @@ func newStmtFiles(ctx context.Context, timeRanges []*StmtTimeRange) (*stmtFiles,
 		if isCtxDone(ctx) {
 			return ctx.Err()
 		}
-		file, err := openStmtFile(path)
-		if err != nil {
-			logutil.BgLogger().Warn("failed to open or parse statements file", zap.Error(err), zap.String("path", path))
+		if path == filename {
+			if currentFile == nil {
+				files = append(files, &stmtFile{path: path})
+			}
 			return nil
 		}
-		if len(timeRanges) == 0 {
-			files = append(files, file)
-			return nil
-		}
-		for _, tr := range timeRanges {
-			if timeRangeOverlap(file.begin, file.end, tr.Begin, tr.End) {
-				files = append(files, file)
+		if currentFileInfo != nil {
+			fileInfo, infoErr := entry.Info()
+			if infoErr == nil && os.SameFile(currentFileInfo, fileInfo) {
 				return nil
 			}
+			// If Info fails, keep the path and deduplicate the opened inode later.
 		}
+		files = append(files, &stmtFile{path: path})
 		return nil
 	}
 
-	dir := filepath.Dir(filename)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
 	for _, entry := range entries {
 		if err := walkFn(filepath.Join(dir, entry.Name()), entry); err != nil {
-			for _, f := range files {
-				_ = f.close()
-			}
+			(&stmtFiles{files: files}).close()
 			return nil, err
 		}
 	}
 	slices.SortFunc(files, func(i, j *stmtFile) int {
-		return cmp.Compare(i.begin, j.begin)
+		return cmp.Compare(i.path, j.path)
 	})
-	return &stmtFiles{files: files}, nil
-}
-
-func (f *stmtFiles) close() {
-	for _, f := range f.files {
-		_ = f.close()
-	}
+	return &stmtFiles{files: files, currentFileInfo: currentFileInfo}, nil
 }
 
 type stmtScanWorker struct {
@@ -606,7 +847,7 @@ type stmtScanWorker struct {
 }
 
 func (w *stmtScanWorker) run(
-	fileCh <-chan *os.File,
+	fileCh <-chan *stmtFile,
 	linesCh chan<- [][]byte,
 	errCh chan<- error,
 ) {
@@ -624,15 +865,16 @@ func (w *stmtScanWorker) run(
 }
 
 func (w *stmtScanWorker) handleFile(
-	file *os.File,
+	file *stmtFile,
 	linesCh chan<- [][]byte,
 	errCh chan<- error,
 ) {
-	if file == nil {
+	if file == nil || file.file == nil {
 		return
 	}
+	defer file.closeAndLogError()
 
-	reader := bufio.NewReader(file)
+	reader := bufio.NewReader(file.file)
 	for {
 		if isCtxDone(w.ctx) {
 			return
@@ -757,9 +999,21 @@ func (w *stmtParseWorker) handleLines(
 
 	rows := make([][]types.Datum, 0, len(lines))
 	for _, line := range lines {
-		record, err := w.parse(line)
+		if w.checker.digests != nil {
+			// Cheap digest pre-filter: records whose digest cannot match skip the full
+			// unmarshal. Only keys are walked — values are skipped byte-wise — and the
+			// last case-insensitive digest key wins, matching the full decode; anything not
+			// cheaply skippable falls back to the full decode.
+			if digest, ok := extractDigest(line); ok && !w.checker.isDigestValid(digest) {
+				continue
+			}
+		}
+		record, skipped, err := w.parse(line)
 		if err != nil {
 			// ignore invalid lines
+			continue
+		}
+		if skipped {
 			continue
 		}
 
@@ -790,12 +1044,15 @@ func (w *stmtParseWorker) putRows(
 	}
 }
 
-func (*stmtParseWorker) parse(raw []byte) (*StmtRecord, error) {
-	var record StmtRecord
+func (*stmtParseWorker) parse(raw []byte) (*StmtRecord, bool, error) {
+	var record stmtPersistedRecord
 	if err := json.Unmarshal(raw, &record); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return &record, nil
+	if record.Evicted {
+		return nil, true, nil
+	}
+	return &record.StmtRecord, false, nil
 }
 
 func (w *stmtParseWorker) needStop(record *StmtRecord) bool {

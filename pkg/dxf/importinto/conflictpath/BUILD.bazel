@@ -1,0 +1,9 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "conflictpath",
+    srcs = ["path.go"],
+    importpath = "github.com/pingcap/tidb/pkg/dxf/importinto/conflictpath",
+    visibility = ["//visibility:public"],
+    deps = ["@com_github_google_uuid//:uuid"],
+)

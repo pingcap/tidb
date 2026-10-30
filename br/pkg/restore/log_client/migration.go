@@ -16,8 +16,12 @@ package logclient
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
 
+	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -143,6 +147,183 @@ func (builder *WithMigrationsBuilder) coarseGrainedFilter(mig *backuppb.Migratio
 		}
 	}
 	return false
+}
+
+type compactLogBackupCommentShard struct {
+	Index uint64 `json:"index"`
+	Total uint64 `json:"total"`
+}
+
+type compactLogBackupCommentConfig struct {
+	FromTS                *uint64                       `json:"from-ts"`
+	UntilTS               *uint64                       `json:"until-ts"`
+	CalShiftTS            *bool                         `json:"cal-shift-ts"`
+	MinimalCompactionSize *uint64                       `json:"minimal-compaction-size"`
+	Shard                 *compactLogBackupCommentShard `json:"shard"`
+}
+
+type compactLogBackupComment struct {
+	Config *compactLogBackupCommentConfig `json:"config"`
+}
+
+type retainLatestMVCCCompactionInterval struct {
+	from       uint64
+	until      uint64
+	shardIndex uint64
+	shardTotal uint64
+}
+
+func compactLogBackupCompactionIntervalForRetainLatestMVCC(
+	compaction *backuppb.LogFileCompaction,
+) (retainLatestMVCCCompactionInterval, bool, error) {
+	comments := compaction.GetComments()
+	if comments == "" {
+		return retainLatestMVCCCompactionInterval{}, false, nil
+	}
+
+	var comment compactLogBackupComment
+	if err := json.Unmarshal([]byte(comments), &comment); err != nil {
+		return retainLatestMVCCCompactionInterval{}, false, errors.Annotatef(
+			berrors.ErrInvalidArgument,
+			"failed to parse compact-log-backup compaction comments: %s",
+			err,
+		)
+	}
+	if comment.Config == nil {
+		return retainLatestMVCCCompactionInterval{}, false, nil
+	}
+	config := comment.Config
+
+	if config.CalShiftTS == nil || !*config.CalShiftTS {
+		return retainLatestMVCCCompactionInterval{}, false, nil
+	}
+	if config.MinimalCompactionSize == nil || *config.MinimalCompactionSize != 0 {
+		return retainLatestMVCCCompactionInterval{}, false, nil
+	}
+
+	var fromTS uint64
+	if config.FromTS != nil {
+		fromTS = *config.FromTS
+	} else {
+		fromTS = compaction.GetCompactionFromTs()
+	}
+	var untilTS uint64
+	if config.UntilTS != nil {
+		untilTS = *config.UntilTS
+	} else {
+		untilTS = compaction.GetCompactionUntilTs()
+	}
+	if fromTS > untilTS {
+		return retainLatestMVCCCompactionInterval{}, false, errors.Annotatef(
+			berrors.ErrInvalidArgument,
+			"compact-log-backup compaction comments have invalid TS range [%d, %d]",
+			fromTS,
+			untilTS,
+		)
+	}
+
+	shard := config.Shard
+	if shard == nil {
+		return retainLatestMVCCCompactionInterval{
+			from:       fromTS,
+			until:      untilTS,
+			shardIndex: 1,
+			shardTotal: 1,
+		}, true, nil
+	}
+
+	if shard.Index == 0 || shard.Total == 0 || shard.Index > shard.Total {
+		return retainLatestMVCCCompactionInterval{}, false, errors.Annotatef(
+			berrors.ErrInvalidArgument,
+			"compact-log-backup compaction comments have invalid shard %d/%d",
+			shard.Index,
+			shard.Total,
+		)
+	}
+	return retainLatestMVCCCompactionInterval{
+		from:       fromTS,
+		until:      untilTS,
+		shardIndex: shard.Index,
+		shardTotal: shard.Total,
+	}, true, nil
+}
+
+func hasCompleteShardCoverage(intervals []retainLatestMVCCCompactionInterval, from, until uint64) bool {
+	shardsByTotal := make(map[uint64]map[uint64]struct{})
+	for _, interval := range intervals {
+		if interval.from <= from && interval.until >= until {
+			shards, ok := shardsByTotal[interval.shardTotal]
+			if !ok {
+				shards = make(map[uint64]struct{}, interval.shardTotal)
+				shardsByTotal[interval.shardTotal] = shards
+			}
+			shards[interval.shardIndex] = struct{}{}
+		}
+	}
+	for total, shards := range shardsByTotal {
+		if uint64(len(shards)) == total {
+			return true
+		}
+	}
+	return false
+}
+
+func retainLatestMVCCCompactionsCover(intervals []retainLatestMVCCCompactionInterval, startTS, restoredTS uint64) bool {
+	if startTS >= restoredTS {
+		return true
+	}
+
+	boundaries := []uint64{startTS, restoredTS}
+	for _, interval := range intervals {
+		if interval.until < startTS || interval.from > restoredTS {
+			continue
+		}
+		from := max(interval.from, startTS)
+		until := min(interval.until, restoredTS)
+		boundaries = append(boundaries, from, until)
+	}
+	slices.Sort(boundaries)
+	boundaries = slices.Compact(boundaries)
+	if len(boundaries) == 1 {
+		return hasCompleteShardCoverage(intervals, startTS, restoredTS)
+	}
+	for i := range len(boundaries) - 1 {
+		if boundaries[i] == boundaries[i+1] {
+			continue
+		}
+		if !hasCompleteShardCoverage(intervals, boundaries[i], boundaries[i+1]) {
+			return false
+		}
+	}
+	return true
+}
+
+func (builder *WithMigrationsBuilder) ValidateRetainLatestMVCCCompactionCoverage(migs []*backuppb.Migration) error {
+	intervals := make([]retainLatestMVCCCompactionInterval, 0, 8)
+	for _, mig := range migs {
+		for _, compaction := range mig.Compactions {
+			interval, ok, err := compactLogBackupCompactionIntervalForRetainLatestMVCC(compaction)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if ok {
+				intervals = append(intervals, interval)
+			}
+		}
+	}
+	if retainLatestMVCCCompactionsCover(intervals, builder.startTS, builder.restoredTS) {
+		return nil
+	}
+	return errors.Annotatef(
+		berrors.ErrInvalidArgument,
+		"retain-latest-mvcc-version requires compact-log-backup compactions with cal-shift-ts enabled, minimal-compaction-size=0, complete TS coverage over [%d, %d], and complete shards",
+		builder.startTS,
+		builder.restoredTS,
+	)
+}
+
+func (lm *LogFileManager) ValidateRetainLatestMVCCCompactionCoverage(migs []*backuppb.Migration) error {
+	return lm.withMigrationBuilder.ValidateRetainLatestMVCCCompactionCoverage(migs)
 }
 
 // Create the wrapper by migrations.

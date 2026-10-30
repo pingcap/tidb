@@ -419,6 +419,7 @@ update tdm set c12 = 0 where id = 1;
 select c12+0 from tdm;
 update tdm set c12 = '0' where id = 1;
 select c12+0 from tdm;
+set @@sql_mode = default;
 
 # TestCTEInvalidUsage
 drop table if exists t;

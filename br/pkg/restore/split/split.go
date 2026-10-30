@@ -5,7 +5,6 @@ package split
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	goerrors "errors"
 	"time"
 
@@ -36,18 +35,42 @@ const (
 	ScatterWaitUpperInterval = 30 * time.Minute
 
 	ScanRegionPaginationLimit = 128
+
+	// DefaultRegionIndexStep is the default number of split-key indexes between two rough split keys.
+	DefaultRegionIndexStep uint = 128
 )
+
+// NormalizeRegionIndexStep returns the default rough split step when the configured value is unset.
+func NormalizeRegionIndexStep(regionIndexStep uint) uint {
+	if regionIndexStep == 0 {
+		return DefaultRegionIndexStep
+	}
+	return regionIndexStep
+}
 
 // RegionSplitter is a executor of region split by rules.
 type RegionSplitter struct {
-	client SplitClient
+	client          SplitClient
+	regionIndexStep uint
+	coarseScatter   bool
 }
 
 // NewRegionSplitter returns a new RegionSplitter.
 func NewRegionSplitter(client SplitClient) *RegionSplitter {
+	return NewRegionSplitterWithRegionIndexStep(client, DefaultRegionIndexStep)
+}
+
+// NewRegionSplitterWithRegionIndexStep returns a new RegionSplitter with the configured rough split step.
+func NewRegionSplitterWithRegionIndexStep(client SplitClient, regionIndexStep uint) *RegionSplitter {
 	return &RegionSplitter{
-		client: client,
+		client:          client,
+		regionIndexStep: NormalizeRegionIndexStep(regionIndexStep),
 	}
+}
+
+// SetCoarseScatter makes only rough split regions scattered.
+func (rs *RegionSplitter) SetCoarseScatter(coarseScatter bool) {
+	rs.coarseScatter = coarseScatter
 }
 
 // ExecuteSortedKeysOnRegion expose the function `SplitWaitAndScatter` of split client.
@@ -80,22 +103,24 @@ func (rs *RegionSplitter) executeSplitByRanges(
 ) error {
 	startTime := time.Now()
 	// Choose the rough region split keys,
-	// each splited region contains 128 regions to be splitted.
-	const regionIndexStep = 128
-
-	roughSortedSplitKeys := make([][]byte, 0, len(sortedKeys)/regionIndexStep+1)
-	for curRegionIndex := regionIndexStep; curRegionIndex < len(sortedKeys); curRegionIndex += regionIndexStep {
-		roughSortedSplitKeys = append(roughSortedSplitKeys, sortedKeys[curRegionIndex])
+	// each split region contains regionIndexStep regions to be split.
+	var roughSortedSplitKeys [][]byte
+	if rs.regionIndexStep < uint(len(sortedKeys)) {
+		regionIndexStep := int(rs.regionIndexStep)
+		roughSortedSplitKeys = make([][]byte, 0, len(sortedKeys)/regionIndexStep+1)
+		for curRegionIndex := regionIndexStep; curRegionIndex < len(sortedKeys); curRegionIndex += regionIndexStep {
+			roughSortedSplitKeys = append(roughSortedSplitKeys, sortedKeys[curRegionIndex])
+		}
 	}
 	if len(roughSortedSplitKeys) > 0 {
-		if err := rs.executeSplitByKeys(ctx, roughSortedSplitKeys); err != nil {
+		if err := rs.executeSplitByKeys(ctx, roughSortedSplitKeys, true); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	log.Info("finish spliting regions roughly", zap.Duration("take", time.Since(startTime)))
 
 	// Then send split requests to each TiKV.
-	if err := rs.executeSplitByKeys(ctx, sortedKeys); err != nil {
+	if err := rs.executeSplitByKeys(ctx, sortedKeys, !rs.coarseScatter); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -110,9 +135,10 @@ func (rs *RegionSplitter) executeSplitByRanges(
 func (rs *RegionSplitter) executeSplitByKeys(
 	ctx context.Context,
 	sortedKeys [][]byte,
+	scatter bool,
 ) error {
 	startTime := time.Now()
-	scatterRegions, err := rs.client.SplitKeysAndScatter(ctx, sortedKeys)
+	scatterRegions, err := rs.splitKeys(ctx, sortedKeys, scatter)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -124,6 +150,13 @@ func (rs *RegionSplitter) executeSplitByKeys(
 		log.Info("finish splitting regions.", zap.Duration("take", time.Since(startTime)))
 	}
 	return nil
+}
+
+func (rs *RegionSplitter) splitKeys(ctx context.Context, sortedKeys [][]byte, scatter bool) ([]*RegionInfo, error) {
+	if scatter {
+		return rs.client.SplitKeysAndScatter(ctx, sortedKeys)
+	}
+	return rs.client.SplitKeys(ctx, sortedKeys)
 }
 
 // waitRegionsScattered try to wait mutilple regions scatterd in 3 minutes.
@@ -236,6 +269,48 @@ func scanRegionsLimitWithRetry(
 	return batch, mustLeader, err
 }
 
+// PaginateScanRegionWithCodecAware scans a logical KV range. Callers pass
+// logical start and end keys, and this helper converts them to PD scan keys
+// before scanning. Without a CodecPDClient it uses codec.EncodeBytes and
+// returns PD-encoded region boundary keys. With a CodecPDClient it decodes the
+// input range before scanning and re-encodes returned region boundaries through
+// the active codec.
+func PaginateScanRegionWithCodecAware(
+	ctx context.Context, client SplitClient, startKey, endKey []byte, limit int,
+) ([]*RegionInfo, error) {
+	var encodeRegionRange func([]byte, []byte) ([]byte, []byte)
+	if codecCli := client.GetCodecPDClient(); codecCli != nil {
+		var err error
+		cd := codecCli.GetCodec()
+		encodeRegionRange = cd.EncodeRegionRange
+		startKey, endKey, err = cd.DecodeRange(startKey, endKey)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		startKey = codec.EncodeBytes(nil, startKey)
+		endKey = codec.EncodeBytes(nil, endKey)
+	}
+	regions, err := PaginateScanRegion(ctx, client, startKey, endKey, limit)
+	if err != nil {
+		return nil, err
+	}
+	if encodeRegionRange != nil {
+		// codec PD client will return the region with keys after decode.
+		encodeRegionKeys(regions, encodeRegionRange)
+	}
+	return regions, nil
+}
+
+func encodeRegionKeys(regions []*RegionInfo, encodeRegionRange func([]byte, []byte) ([]byte, []byte)) {
+	for _, region := range regions {
+		if region == nil || region.Region == nil {
+			continue
+		}
+		region.Region.StartKey, region.Region.EndKey = encodeRegionRange(region.Region.StartKey, region.Region.EndKey)
+	}
+}
+
 // PaginateScanRegion scan regions with a limit pagination and return all regions
 // at once. The returned regions are continuous and cover the key range. If not,
 // or meet errors, it will retry internally.
@@ -244,7 +319,7 @@ func PaginateScanRegion(
 ) ([]*RegionInfo, error) {
 	if len(endKey) != 0 && bytes.Compare(startKey, endKey) > 0 {
 		return nil, errors.Annotatef(berrors.ErrInvalidRange, "startKey > endKey, startKey: %s, endkey: %s",
-			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
+			redact.Key(startKey), redact.Key(endKey))
 	}
 
 	var (
@@ -329,7 +404,7 @@ func ScanRegionsWithRetry(
 ) ([]*RegionInfo, error) {
 	if len(endKey) != 0 && bytes.Compare(startKey, endKey) > 0 {
 		return nil, errors.Annotatef(berrors.ErrInvalidRange, "startKey > endKey, startKey: %s, endkey: %s",
-			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
+			redact.Key(startKey), redact.Key(endKey))
 	}
 
 	var regions []*RegionInfo
@@ -496,10 +571,10 @@ func getSplitKeysOfRegions(
 	endOfLastRegion := sortedRegions[len(sortedRegions)-1].Region.GetEndKey()
 	if !bytes.Equal(lastKey, endOfLastRegion) {
 		log.Error("in getSplitKeysOfRegions, regions don't cover all keys",
-			zap.String("firstKey", hex.EncodeToString(sortedKeys[0])),
-			zap.String("lastKey", hex.EncodeToString(lastKey)),
-			zap.String("firstRegionStartKey", hex.EncodeToString(sortedRegions[0].Region.GetStartKey())),
-			zap.String("lastRegionEndKey", hex.EncodeToString(endOfLastRegion)),
+			logutil.Key("firstKey", sortedKeys[0]),
+			logutil.Key("lastKey", lastKey),
+			logutil.Key("firstRegionStartKey", sortedRegions[0].Region.GetStartKey()),
+			logutil.Key("lastRegionEndKey", endOfLastRegion),
 		)
 	}
 	return splitKeyMap

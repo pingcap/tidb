@@ -123,6 +123,26 @@ func (*aggregationEliminateChecker) tryToEliminateDistinct(agg *logicalop.Logica
 	}
 }
 
+// canEliminateSemiJoinInnerDistinct reports whether agg is a duplicate-elimination
+// aggregation that can be removed from the inner side of a semi-style Apply.
+//
+// For semi/anti-semi Apply, the outer row only depends on whether any inner row
+// exists (plus NULL tracking handled by the joiner). A top-level DISTINCT/GROUP BY
+// implemented as first_row aggregations does not change that existence result, so it
+// only delays the Limit-1 short-circuit path. We keep LIMIT-sensitive plans intact,
+// because removing DISTINCT below a LIMIT can change which values survive.
+func (*aggregationEliminateChecker) canEliminateSemiJoinInnerDistinct(agg *logicalop.LogicalAggregation) bool {
+	if agg == nil || len(agg.GroupByItems) == 0 || len(agg.Children()) != 1 || hasLimit(agg.Children()[0]) {
+		return false
+	}
+	for _, aggFunc := range agg.AggFuncs {
+		if aggFunc.Name != ast.AggFuncFirstRow || aggFunc.HasDistinct || len(aggFunc.OrderByItems) > 0 || len(aggFunc.Args) != 1 {
+			return false
+		}
+	}
+	return true
+}
+
 // CheckCanConvertAggToProj check whether a special old aggregation (which has already been pushed down) to projection.
 // link: issue#44795
 func CheckCanConvertAggToProj(agg *logicalop.LogicalAggregation) bool {
@@ -177,7 +197,14 @@ func rewriteExpr(ctx expression.BuildContext, aggFunc *aggregation.AggFuncDesc) 
 			return true, wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
 		}
 		return true, rewriteCount(ctx, aggFunc.Args, aggFunc.RetTp)
-	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncGroupConcat:
+	case ast.AggFuncMax, ast.AggFuncMin:
+		// MAX/MIN over binary literals preserve string-like aggregation semantics.
+		// Rewriting them to a projection changes downstream cast and warning behavior.
+		if expression.IsBinaryLiteral(aggFunc.Args[0]) {
+			return false, nil
+		}
+		return true, wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
+	case ast.AggFuncSum, ast.AggFuncSumInt, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncGroupConcat:
 		return true, wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		return true, rewriteBitFunc(ctx, aggFunc.Name, aggFunc.Args[0], aggFunc.RetTp)
@@ -238,6 +265,13 @@ func (a *AggregationEliminator) Optimize(ctx context.Context, p base.LogicalPlan
 		newChildren = append(newChildren, newChild)
 	}
 	p.SetChildren(newChildren...)
+	if apply, ok := p.(*logicalop.LogicalApply); ok && apply.JoinType.IsSemiJoin() {
+		agg, ok := apply.Children()[1].(*logicalop.LogicalAggregation)
+		if ok && a.canEliminateSemiJoinInnerDistinct(agg) {
+			apply.SetChildren(apply.Children()[0], agg.Children()[0])
+			return apply, true, nil
+		}
+	}
 	agg, ok := p.(*logicalop.LogicalAggregation)
 	if !ok {
 		return p, planChanged, nil

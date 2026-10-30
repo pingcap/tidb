@@ -22,9 +22,9 @@ import (
 	"math/bits"
 	"slices"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
-	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
-	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -52,11 +51,15 @@ type LogicalJoin struct {
 	StraightJoin bool
 
 	// HintInfo stores the join algorithm hint information specified by client.
-	HintInfo            *utilhint.PlanHints
-	PreferJoinType      uint
-	PreferJoinOrder     bool
-	LeftPreferJoinType  uint
-	RightPreferJoinType uint
+	HintInfo *utilhint.PlanHints
+	// InternalHintInfo stores a synthesized LEADING preference used only by the
+	// order-aware reorder rule. It must not be treated as a user hint.
+	InternalHintInfo        *utilhint.PlanHints
+	PreferJoinType          uint
+	PreferJoinOrder         bool
+	InternalPreferJoinOrder bool
+	LeftPreferJoinType      uint
+	RightPreferJoinType     uint
 
 	EqualConditions []*expression.ScalarFunction `hash64-equals:"true" shallow-ref:"true"`
 	// NAEQConditions means null aware equal conditions, which is used for null aware semi joins.
@@ -95,11 +98,21 @@ type LogicalJoin struct {
 	// It is built once during join construction and then treated as immutable.
 	RedundantColsToOutputIdx map[int64]int
 
+	// PreferCorrelate is set to true when this SemiJoin originated from a non-correlated
+	// IN subquery during the correlate alternative round, indicating that the CorrelateSolver
+	// should convert it back to a correlated Apply with index lookups.
+	PreferCorrelate bool
+
 	// EqualCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	EqualCondOutCnt float64
 
 	// allJoinLeaf is used to identify the table where the column is located during constant propagation.
 	allJoinLeaf []*expression.Schema
+
+	// FromDecorrelatedApply marks joins that come from decorrelating an Apply in the
+	// first logical round. It is only used to decide whether an equivalent same-order
+	// PhysicalIndexJoin candidate has already been generated.
+	FromDecorrelatedApply bool
 }
 
 // Init initializes LogicalJoin.
@@ -221,6 +234,17 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		p.LeftConditions = nil
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, leftPushCond...)
+	case base.FullOuterJoin:
+		// Both children are preserved sides for full outer join. Keep filters
+		// above the join and avoid turning one-side ON conditions into child
+		// selections.
+		predicates = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), predicates)
+		predicates = expression.PropagateConstant(p.SCtx().GetExprCtx(), nil, predicates...)
+		dual := Conds2TableDual(p, predicates)
+		if dual != nil {
+			return ret, dual, nil
+		}
+		ret = append(ret, predicates...)
 	case base.SemiJoin, base.InnerJoin:
 		tempCond := make([]expression.Expression, 0, len(p.LeftConditions)+len(p.RightConditions)+len(p.EqualConditions)+len(p.OtherConditions)+len(predicates))
 		tempCond = append(tempCond, p.LeftConditions...)
@@ -289,9 +313,13 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	return ret, newnChild, err
 }
 
-// simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.
+// simplifyOuterJoin transforms outer joins to simpler join types when predicates are null-rejected.
 func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
-	if p.JoinType != base.LeftOuterJoin && p.JoinType != base.RightOuterJoin && p.JoinType != base.InnerJoin {
+	if p.JoinType != base.LeftOuterJoin && p.JoinType != base.RightOuterJoin && p.JoinType != base.FullOuterJoin && p.JoinType != base.InnerJoin {
+		return
+	}
+	if p.JoinType == base.FullOuterJoin {
+		p.JoinType = simplifyFullOuterJoin(p, predicates)
 		return
 	}
 
@@ -311,7 +339,7 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 		if expression.ExprFromSchema(expr, outerTable.Schema()) {
 			continue
 		}
-		isOk := isNullRejected(p.SCtx(), innerTable.Schema(), expr)
+		isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr)
 		if isOk {
 			canBeSimplified = true
 			break
@@ -322,79 +350,31 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 	}
 }
 
-// isNullRejected check whether a condition is null-rejected
-// A condition would be null-rejected in one of following cases:
-// If it is a predicate containing a reference to an inner table that evaluates to UNKNOWN or FALSE when one of its arguments is NULL.
-// If it is a conjunction containing a null-rejected condition as a conjunct.
-// If it is a disjunction of null-rejected conditions.
-func isNullRejected(ctx planctx.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
-	exprCtx := exprctx.WithNullRejectCheck(ctx.GetExprCtx())
-	expr = expression.PushDownNot(exprCtx, expr)
-	if expression.ContainOuterNot(expr) {
-		return false
-	}
-	sc := ctx.GetSessionVars().StmtCtx
-	for _, cond := range expression.SplitCNFItems(expr) {
-		if isNullRejectedSpecially(ctx, schema, expr) {
-			return true
+// simplifyFullOuterJoin tries to reduce full outer join based on null-rejected predicates.
+// - reject left-null rows  => remove unmatched-right rows => LeftOuterJoin
+// - reject right-null rows => remove unmatched-left rows  => RightOuterJoin
+// - reject both sides      => InnerJoin
+func simplifyFullOuterJoin(p *LogicalJoin, predicates []expression.Expression) base.JoinType {
+	leftNullRejected, rightNullRejected := false, false
+	leftSchema, rightSchema := p.children[0].Schema(), p.children[1].Schema()
+	for _, expr := range predicates {
+		if !leftNullRejected && util.IsNullRejected(p.SCtx(), leftSchema, expr) {
+			leftNullRejected = true
 		}
-
-		result, err := expression.EvaluateExprWithNull(exprCtx, schema, cond, true)
-		if err != nil {
-			return false
+		if !rightNullRejected && util.IsNullRejected(p.SCtx(), rightSchema, expr) {
+			rightNullRejected = true
 		}
-		x, ok := result.(*expression.Constant)
-		if !ok {
-			continue
-		}
-		if x.Value.IsNull() {
-			return true
-		} else if isTrue, err := x.Value.ToBool(sc.TypeCtxOrDefault()); err == nil && isTrue == 0 {
-			return true
+		if leftNullRejected && rightNullRejected {
+			return base.InnerJoin
 		}
 	}
-	return false
-}
-
-// isNullRejectedSpecially handles some null-rejected cases specially, since the current in
-// EvaluateExprWithNull is too strict for some cases, e.g. #49616.
-func isNullRejectedSpecially(ctx planctx.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
-	return specialNullRejectedCase1(ctx, schema, expr) // only 1 case now
-}
-
-// specialNullRejectedCase1 is mainly for #49616.
-// Case1 specially handles `null-rejected OR (null-rejected AND {others})`, then no matter what the result
-// of `{others}` is (True, False or Null), the result of this predicate is null, so this predicate is null-rejected.
-func specialNullRejectedCase1(ctx planctx.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
-	isFunc := func(e expression.Expression, lowerFuncName string) *expression.ScalarFunction {
-		f, ok := e.(*expression.ScalarFunction)
-		if !ok {
-			return nil
-		}
-		if f.FuncName.L == lowerFuncName {
-			return f
-		}
-		return nil
+	if leftNullRejected {
+		return base.LeftOuterJoin
 	}
-	orFunc := isFunc(expr, ast.LogicOr)
-	if orFunc == nil {
-		return false
+	if rightNullRejected {
+		return base.RightOuterJoin
 	}
-	for i := range 2 {
-		andFunc := isFunc(orFunc.GetArgs()[i], ast.LogicAnd)
-		if andFunc == nil {
-			continue
-		}
-		if !isNullRejected(ctx, schema, orFunc.GetArgs()[1-i]) {
-			continue // the other side should be null-rejected: null-rejected OR (... AND ...)
-		}
-		for _, andItem := range expression.SplitCNFItems(andFunc) {
-			if isNullRejected(ctx, schema, andItem) {
-				return true // hit the case in the comment: null-rejected OR (null-rejected AND ...)
-			}
-		}
-	}
-	return false
+	return base.FullOuterJoin
 }
 
 // PruneColumns implements the base.LogicalPlan.<2nd> interface.
@@ -662,6 +642,9 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		count = math.Max(count, leftProfile.RowCount)
 	} else if p.JoinType == base.RightOuterJoin {
 		count = math.Max(count, rightProfile.RowCount)
+	} else if p.JoinType == base.FullOuterJoin {
+		count = math.Max(count, leftProfile.RowCount)
+		count = math.Max(count, rightProfile.RowCount)
 	}
 	colNDVs := make(map[int64]float64, selfSchema.Len())
 	for id, c := range leftProfile.ColNDVs {
@@ -705,9 +688,10 @@ func (p *LogicalJoin) ExtractColGroups(colGroups [][]*expression.Column) [][]*ex
 }
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
-	leftProperties := childrenProperties[0]
-	rightProperties := childrenProperties[1]
+func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	leftProperties := childrenProperties[0].Orders
+	rightProperties := childrenProperties[1].Orders
+	p.hasTiFlash = childrenProperties[0].HasTiFlash && childrenProperties[1].HasTiFlash
 	// TODO: We should consider properties propagation.
 	p.LeftProperties = leftProperties
 	p.RightProperties = rightProperties
@@ -715,6 +699,9 @@ func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenPr
 		rightProperties = nil
 	} else if p.JoinType == base.RightOuterJoin {
 		leftProperties = nil
+	} else if p.JoinType == base.FullOuterJoin {
+		leftProperties = nil
+		rightProperties = nil
 	}
 	resultProperties := make([][]*expression.Column, len(leftProperties)+len(rightProperties))
 	for i, cols := range leftProperties {
@@ -726,7 +713,10 @@ func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenPr
 		resultProperties[leftLen+i] = make([]*expression.Column, len(cols))
 		copy(resultProperties[leftLen+i], cols)
 	}
-	return resultProperties
+	return &base.PossiblePropertiesInfo{
+		Orders:     resultProperties,
+		HasTiFlash: p.hasTiFlash,
+	}
 }
 
 // ExtractCorrelatedCols implements the base.LogicalPlan.<15th> interface.
@@ -774,60 +764,6 @@ func (p *LogicalJoin) ExtractFD() *funcdep.FDSet {
 }
 
 // GetBaseLogicalPlan inherits the BaseLogicalPlan.LogicalPlan.<23th> implementation.
-
-// ConvertOuterToInnerJoin implements base.LogicalPlan.<24th> interface.
-func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
-	innerTable := p.Children()[0]
-	outerTable := p.Children()[1]
-	switchChild := false
-
-	if p.JoinType == base.LeftOuterJoin {
-		innerTable, outerTable = outerTable, innerTable
-		switchChild = true
-	}
-
-	// First, simplify this join
-	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
-		canBeSimplified := false
-		for _, expr := range predicates {
-			isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr, true)
-			if isOk {
-				canBeSimplified = true
-				break
-			}
-		}
-		if canBeSimplified {
-			p.JoinType = base.InnerJoin
-		}
-	}
-
-	// Next simplify join children
-
-	combinedCond := mergeOnClausePredicates(p, predicates)
-	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
-		innerTable = innerTable.ConvertOuterToInnerJoin(combinedCond)
-		outerTable = outerTable.ConvertOuterToInnerJoin(predicates)
-	} else if p.JoinType == base.InnerJoin || p.JoinType == base.SemiJoin {
-		innerTable = innerTable.ConvertOuterToInnerJoin(combinedCond)
-		outerTable = outerTable.ConvertOuterToInnerJoin(combinedCond)
-	} else if p.JoinType == base.AntiSemiJoin {
-		innerTable = innerTable.ConvertOuterToInnerJoin(predicates)
-		outerTable = outerTable.ConvertOuterToInnerJoin(combinedCond)
-	} else {
-		innerTable = innerTable.ConvertOuterToInnerJoin(predicates)
-		outerTable = outerTable.ConvertOuterToInnerJoin(predicates)
-	}
-
-	if switchChild {
-		p.SetChild(0, outerTable)
-		p.SetChild(1, innerTable)
-	} else {
-		p.SetChild(0, innerTable)
-		p.SetChild(1, outerTable)
-	}
-
-	return p
-}
 
 // GetJoinChildStatsAndSchema gets the stats and schema of join children.
 func (p *LogicalJoin) GetJoinChildStatsAndSchema() (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema) {
@@ -1534,13 +1470,13 @@ func (p *LogicalJoin) ExtractOnCondition(
 				}
 				if leftCol != nil && rightCol != nil {
 					if deriveLeft {
-						if util.IsNullRejected(ctx, leftSchema, expr, true) && !mysql.HasNotNullFlag(leftCol.RetType.GetFlag()) {
+						if util.IsNullRejected(ctx, leftSchema, expr) && !mysql.HasNotNullFlag(leftCol.RetType.GetFlag()) {
 							notNullExpr := expression.BuildNotNullExpr(ctx.GetExprCtx(), leftCol)
 							leftCond = append(leftCond, notNullExpr)
 						}
 					}
 					if deriveRight {
-						if util.IsNullRejected(ctx, rightSchema, expr, true) && !mysql.HasNotNullFlag(rightCol.RetType.GetFlag()) {
+						if util.IsNullRejected(ctx, rightSchema, expr) && !mysql.HasNotNullFlag(rightCol.RetType.GetFlag()) {
 							notNullExpr := expression.BuildNotNullExpr(ctx.GetExprCtx(), rightCol)
 							rightCond = append(rightCond, notNullExpr)
 						}
@@ -1561,13 +1497,15 @@ func (p *LogicalJoin) ExtractOnCondition(
 			// The IsMutableEffectsExpr check is primarily designed to prevent mutable expressions
 			// like rand() > 0.5 from being pushed down; instead, such expressions should remain
 			// in other conditions.
-			// Checking len(columns) == 0 first is to let filter like rand() > tbl.col
-			// to be able pushdown as left or right condition
 			if expression.IsMutableEffectsExpr(expr) {
 				otherCond = append(otherCond, expr)
 				continue
 			}
 			leftCond, rightCond = p.pushDownConstExpr(expr, leftCond, rightCond, deriveLeft || deriveRight)
+			continue
+		}
+		if expression.IsMutableEffectsExpr(expr) {
+			otherCond = append(otherCond, expr)
 			continue
 		}
 		allFromLeft, allFromRight := true, true
@@ -1627,6 +1565,10 @@ func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []e
 		} else {
 			leftCond = append(leftCond, expr)
 		}
+	case base.FullOuterJoin:
+		// Keep constant predicates as join filters on both sides.
+		leftCond = append(leftCond, expr)
+		rightCond = append(rightCond, expr)
 	case base.SemiJoin, base.InnerJoin:
 		leftCond = append(leftCond, expr)
 		rightCond = append(rightCond, expr)
@@ -1860,6 +1802,12 @@ func (p *LogicalJoin) updateEQCond() {
 			}
 			for i := range leftKeys {
 				lKey, rKey := leftKeys[i], rightKeys[i]
+				keepAsOtherCond := expression.IsMutableEffectsExpr(lKey) || expression.IsMutableEffectsExpr(rKey)
+				lCastCol, lCasted := extractCastSourceColumn(lKey)
+				rCastCol, rCasted := extractCastSourceColumn(rKey)
+				if lCasted && rCasted {
+					p.appendImplicitJoinKeyConversionWarning(lCastCol, rCastCol)
+				}
 				if lProj != nil {
 					lKey = lProj.AppendExpr(lKey)
 				}
@@ -1869,6 +1817,12 @@ func (p *LogicalJoin) updateEQCond() {
 				eqCond := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
 				eqSf := eqCond.(*expression.ScalarFunction)
 				if _, _, isColOpCol := expression.IsColOpCol(eqSf); !isColOpCol {
+					origLCol, lIsCol := lKey.(*expression.Column)
+					origRCol, rIsCol := rKey.(*expression.Column)
+					if lIsCol && rIsCol &&
+						(isCastWrappedJoinKey(eqSf.GetArgs()[0], origLCol) || isCastWrappedJoinKey(eqSf.GetArgs()[1], origRCol)) {
+						p.appendImplicitJoinKeyConversionWarning(origLCol, origRCol)
+					}
 					// Join reorder and several join implementations assume each EqualCondition
 					// is strictly `col = col`. However, NewFunctionInternal may inject implicit
 					// casts (for example tinyint = bit/bool from a view), turning one side into
@@ -1895,6 +1849,10 @@ func (p *LogicalJoin) updateEQCond() {
 					}
 					eqCond = expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
 					eqSf = eqCond.(*expression.ScalarFunction)
+				}
+				if keepAsOtherCond {
+					p.OtherConditions = append(p.OtherConditions, eqSf)
+					continue
 				}
 				if isNA {
 					p.NAEQConditions = append(p.NAEQConditions, eqSf)
@@ -1934,6 +1892,40 @@ func (p *LogicalJoin) updateEQCond() {
 		// here is for cases like: select (a+1, b*3) not in (select a,b from t2) from t1.
 		adjustKeyForm(lNAKeys, rNAKeys, true)
 	}
+}
+
+func isCastWrappedJoinKey(expr expression.Expression, originalCol *expression.Column) bool {
+	castExpr, ok := expr.(*expression.ScalarFunction)
+	if !ok || castExpr.FuncName.L != ast.Cast {
+		return false
+	}
+	castArg, ok := castExpr.GetArgs()[0].(*expression.Column)
+	if !ok {
+		return false
+	}
+	return castArg.EqualColumn(originalCol)
+}
+
+func extractCastSourceColumn(expr expression.Expression) (*expression.Column, bool) {
+	castExpr, ok := expr.(*expression.ScalarFunction)
+	if !ok || castExpr.FuncName.L != ast.Cast {
+		return nil, false
+	}
+	castArg, ok := castExpr.GetArgs()[0].(*expression.Column)
+	if !ok {
+		return nil, false
+	}
+	return castArg, true
+}
+
+func (p *LogicalJoin) appendImplicitJoinKeyConversionWarning(leftCol, rightCol *expression.Column) {
+	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+	warn := errors.NewNoStackErrorf(
+		"Implicit type or collation conversion on join keys (%s = %s) may make indexes unusable",
+		leftCol.StringWithCtx(evalCtx, errors.RedactLogDisable),
+		rightCol.StringWithCtx(evalCtx, errors.RedactLogDisable),
+	)
+	p.SCtx().GetSessionVars().StmtCtx.AppendWarning(warn)
 }
 
 func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
@@ -1980,19 +1972,6 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression, vai
 		innerTableSchema, p.SCtx().GetSessionVars().AlwaysKeepJoinKey, nullSensitive, vaildExprFunc)
 	p.AttachOnConds(joinConds)
 	return predicates
-}
-
-func mergeOnClausePredicates(p *LogicalJoin, predicates []expression.Expression) []expression.Expression {
-	combinedCond := make([]expression.Expression, 0,
-		len(p.LeftConditions)+len(p.RightConditions)+
-			len(p.EqualConditions)+len(p.OtherConditions)+
-			len(predicates))
-	combinedCond = append(combinedCond, p.LeftConditions...)
-	combinedCond = append(combinedCond, p.RightConditions...)
-	combinedCond = append(combinedCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
-	combinedCond = append(combinedCond, p.OtherConditions...)
-	combinedCond = append(combinedCond, predicates...)
-	return combinedCond
 }
 
 // SemiJoinRewrite rewrites semi join to inner join with aggregation.
@@ -2069,11 +2048,13 @@ func (p *LogicalJoin) SemiJoinRewrite() (base.LogicalPlan, error) {
 	subAgg.SetSchema(expression.NewSchema(aggOutputCols...))
 	subAgg.BuildSelfKeyInfo(subAgg.Schema())
 	innerJoin := LogicalJoin{
-		JoinType:        base.InnerJoin,
-		HintInfo:        p.HintInfo,
-		PreferJoinType:  p.PreferJoinType,
-		PreferJoinOrder: p.PreferJoinOrder,
-		EqualConditions: make([]*expression.ScalarFunction, 0, len(p.EqualConditions)),
+		JoinType:                base.InnerJoin,
+		HintInfo:                p.HintInfo,
+		InternalHintInfo:        p.InternalHintInfo,
+		PreferJoinType:          p.PreferJoinType,
+		PreferJoinOrder:         p.PreferJoinOrder,
+		InternalPreferJoinOrder: p.InternalPreferJoinOrder,
+		EqualConditions:         make([]*expression.ScalarFunction, 0, len(p.EqualConditions)),
 	}.Init(p.SCtx(), p.QueryBlockOffset())
 	innerJoin.SetChildren(p.Children()[0], subAgg)
 	innerJoin.SetSchema(expression.MergeSchema(p.Children()[0].Schema().Clone(), subAgg.Schema().Clone()))
@@ -2185,6 +2166,9 @@ func DeriveOtherConditions(
 	ctx := p.SCtx()
 	exprCtx := ctx.GetExprCtx()
 	for _, expr := range p.OtherConditions {
+		if expression.IsMutableEffectsExpr(expr) {
+			continue
+		}
 		if deriveLeft {
 			leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(exprCtx, expr, leftSchema)
 			if leftRelaxedCond != nil {
@@ -2235,7 +2219,7 @@ func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema 
 	if childCol == nil {
 		childCol = schema.RetrieveColumn(arg1)
 	}
-	if util.IsNullRejected(ctx, schema, expr, true) && !mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
+	if util.IsNullRejected(ctx, schema, expr) && !mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
 		return expression.BuildNotNullExpr(ctx.GetExprCtx(), childCol)
 	}
 	return nil
@@ -2257,6 +2241,8 @@ func BuildLogicalJoinSchema(joinType base.JoinType, join base.LogicalPlan) *expr
 		util.ResetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
 	} else if joinType == base.RightOuterJoin {
 		util.ResetNotNullFlag(newSchema, 0, leftSchema.Len())
+	} else if joinType == base.FullOuterJoin {
+		util.ResetNotNullFlag(newSchema, 0, newSchema.Len())
 	}
 	return newSchema
 }

@@ -24,9 +24,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -144,8 +144,8 @@ func LoadSchemaInfo(
 	ctx context.Context,
 	schemas []*mydump.MDDatabaseMeta,
 	getTables func(context.Context, string) ([]*model.TableInfo, error),
-) (map[string]*checkpoints.TidbDBInfo, error) {
-	result := make(map[string]*checkpoints.TidbDBInfo, len(schemas))
+) (map[string]*importdef.DBInfo, error) {
+	result := make(map[string]*importdef.DBInfo, len(schemas))
 	for _, schema := range schemas {
 		tables, err := getTables(ctx, schema.Name)
 		if err != nil {
@@ -157,9 +157,9 @@ func LoadSchemaInfo(
 			tableMap[tbl.Name.L] = tbl
 		}
 
-		dbInfo := &checkpoints.TidbDBInfo{
+		dbInfo := &importdef.DBInfo{
 			Name:   schema.Name,
-			Tables: make(map[string]*checkpoints.TidbTableInfo),
+			Tables: make(map[string]*importdef.TableInfo),
 		}
 
 		for _, tbl := range schema.Tables {
@@ -180,7 +180,7 @@ func LoadSchemaInfo(
 			}
 			// Table names are case-sensitive in mydump.MDTableMeta.
 			// We should always use the original tbl.Name in checkpoints.
-			tableInfo := &checkpoints.TidbTableInfo{
+			tableInfo := &importdef.TableInfo{
 				ID:      tblInfo.ID,
 				DB:      schema.Name,
 				Name:    tbl.Name,

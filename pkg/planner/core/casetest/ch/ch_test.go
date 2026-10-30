@@ -25,6 +25,7 @@ import (
 func TestQ2(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec("create database tpcc")
+		tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8;")
 		tk.MustExec("use tpcc")
 		createItem(t, tk, dom)
 		createNation(t, tk, dom)

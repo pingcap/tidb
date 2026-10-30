@@ -7,6 +7,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/config/deploymode",
+        "//pkg/config/diagnosticmode",
         "//pkg/config/kerneltype",
         "//pkg/parser/mysql",
         "//pkg/util/israce",
@@ -26,6 +28,8 @@ go_test(
     embed = [":printer"],
     flaky = True,
     deps = [
+        "//pkg/config/deploymode",
+        "//pkg/config/diagnosticmode",
         "//pkg/config/kerneltype",
         "//pkg/parser/mysql",
         "//pkg/testkit/testsetup",

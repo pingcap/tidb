@@ -17,17 +17,25 @@ package executor
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
+	clientutil "github.com/tikv/client-go/v2/util"
 )
 
 var (
@@ -38,6 +46,16 @@ type mockErrorOperator struct {
 	exec.BaseExecutor
 	toPanic bool
 	closed  bool
+}
+
+type mockEmptyOperator struct {
+	exec.BaseExecutor
+}
+
+type mockExecDetailsObserver struct {
+	exec.BaseExecutor
+	seenMetrics   *execdetails.RUV2Metrics
+	seenRUDetails *clientutil.RUDetails
 }
 
 func (e *mockErrorOperator) Open(_ context.Context) error {
@@ -54,6 +72,34 @@ func (e *mockErrorOperator) Next(_ context.Context, _ *chunk.Chunk) error {
 func (e *mockErrorOperator) Close() error {
 	e.closed = true
 	return errors.New("close error")
+}
+
+func (e *mockEmptyOperator) Open(_ context.Context) error {
+	return nil
+}
+
+func (e *mockEmptyOperator) Next(_ context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	return nil
+}
+
+func (e *mockEmptyOperator) Close() error {
+	return nil
+}
+
+func (e *mockExecDetailsObserver) Open(_ context.Context) error {
+	return nil
+}
+
+func (e *mockExecDetailsObserver) Next(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	e.seenMetrics = execdetails.RUV2MetricsFromContext(ctx)
+	e.seenRUDetails, _ = ctx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
+	return nil
+}
+
+func (e *mockExecDetailsObserver) Close() error {
+	return nil
 }
 
 func getColumns() []*expression.Column {
@@ -93,4 +139,83 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 	_, err = explainExec.generateExplainInfo(tmpCtx)
 	require.EqualError(t, err, "next panic, close error")
 	require.True(t, mockOpr.closed)
+
+	t.Run("RU format snapshots committed writes before normal finalization", func(t *testing.T) {
+		ctx := mock.NewContext()
+		coll := execdetails.NewRuntimeStatsColl(nil)
+		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = coll
+		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		ruMetrics := execdetails.RUV2MetricsFromContext(goCtx)
+		ctx.GetSessionVars().RUV2Metrics = ruMetrics
+		targetPlan := physicalop.Insert{}.Init(ctx)
+		coll.RegisterStats(targetPlan.ID(), &execdetails.WriteRuntimeStats{CPUWork: 6})
+		ctx.GetSessionVars().StmtCtx.MergeExecDetails(&clientutil.CommitDetails{WriteKeys: 2, WriteSize: 100})
+		explainExec := &ExplainExec{
+			BaseExecutor: exec.NewBaseExecutor(ctx, expression.NewSchema(getColumns()...), 0),
+			explain:      &core.Explain{Analyze: true, Format: "ru", TargetPlan: targetPlan, RuntimeStatsColl: coll},
+			analyzeExec:  &mockEmptyOperator{BaseExecutor: exec.NewBaseExecutor(ctx, expression.NewSchema(), targetPlan.ID())},
+		}
+		wantResult, valid := ruv2.Calculate(ruv2.StmtUnits{
+			CPUWork: 6, WriteStatement: 1, OperatorNum: 1, WriteKeys: 2, WriteBytes: 100,
+		}, ruv2.DefaultWeights())
+		require.True(t, valid)
+		wantRU := wantResult.TotalRU
+		for range 2 {
+			require.NoError(t, explainExec.executeAnalyzeExec(goCtx))
+			require.NoError(t, explainExec.explain.RenderResult())
+			require.Len(t, explainExec.explain.Rows, 1)
+			require.Equal(t, strconv.FormatFloat(wantRU, 'f', 2, 64), explainExec.explain.Rows[0][3])
+		}
+	})
+
+	t.Run("explain analyze drains pending raw ruv2 before snapshot", func(t *testing.T) {
+		ctx := mock.NewContext()
+		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+
+		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		ctx.GetSessionVars().RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)
+		require.NotNil(t, ctx.GetSessionVars().RUV2Metrics)
+
+		ruDetails := goCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
+		ruDetails.AddRUV2(&kvrpcpb.RUV2{
+			CoprocessorResponseBytes: 5,
+		})
+
+		analyzeExec := &mockEmptyOperator{
+			BaseExecutor: exec.NewBaseExecutor(ctx, expression.NewSchema(), 1),
+		}
+		targetPlan := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, &property.StatsInfo{RowCount: 1}, 0)
+		explainExec := &ExplainExec{
+			BaseExecutor: exec.NewBaseExecutor(ctx, expression.NewSchema(getColumns()...), 0),
+			explain: &core.Explain{
+				Analyze:    true,
+				TargetPlan: targetPlan,
+			},
+			analyzeExec: analyzeExec,
+		}
+
+		require.NoError(t, explainExec.executeAnalyzeExec(goCtx))
+
+		require.Equal(t, int64(5), ctx.GetSessionVars().RUV2Metrics.TiKVCoprocessorResponseBytes())
+	})
+
+	t.Run("detached static recordset inherits statement ru context", func(t *testing.T) {
+		ctx := mock.NewContext()
+		observer := &mockExecDetailsObserver{
+			BaseExecutor: exec.NewBaseExecutor(ctx, expression.NewSchema(), 0),
+		}
+
+		sourceCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		sourceMetrics := execdetails.RUV2MetricsFromContext(sourceCtx)
+		sourceRUDetails := sourceCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
+		rs := staticrecordset.New(nil, observer, "select 1", sourceCtx)
+
+		fetchCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		require.NotSame(t, sourceMetrics, execdetails.RUV2MetricsFromContext(fetchCtx))
+		require.NotSame(t, sourceRUDetails, fetchCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails))
+
+		require.NoError(t, rs.Next(fetchCtx, rs.NewChunk(nil)))
+		require.Same(t, sourceMetrics, observer.seenMetrics)
+		require.Same(t, sourceRUDetails, observer.seenRUDetails)
+	})
 }

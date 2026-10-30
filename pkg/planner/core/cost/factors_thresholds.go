@@ -34,10 +34,13 @@ const (
 var AggFuncFactor = map[string]float64{
 	ast.AggFuncCount:       1.0,
 	ast.AggFuncSum:         1.0,
+	ast.AggFuncSumInt:      1.0,
 	ast.AggFuncAvg:         2.0,
 	ast.AggFuncFirstRow:    0.1,
 	ast.AggFuncMax:         1.0,
 	ast.AggFuncMin:         1.0,
+	ast.AggFuncMaxCount:    1.0,
+	ast.AggFuncMinCount:    1.0,
 	ast.AggFuncGroupConcat: 1.0,
 	ast.AggFuncBitOr:       0.9,
 	ast.AggFuncBitXor:      0.9,

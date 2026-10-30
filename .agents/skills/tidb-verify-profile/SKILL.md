@@ -1,20 +1,20 @@
 ---
 name: tidb-verify-profile
-description: Use when choosing local validation scope in TiDB work, especially to separate fast coding-loop checks from completion checks and avoid unnecessary slow commands.
+description: Choose validation for TiDB changes during iteration and delivery, using the checks required for each change type.
 ---
 
 # TiDB Verification Profiles
 
 ## Overview
 
-Use this skill to decide how much local validation to run before and after code changes.
+Use this skill to select validation for repository changes, including code, formatting, documentation, testdata, and build configuration. Read-only analysis does not require build/test checks.
 Policy requirements still come from `AGENTS.md`; this skill is the execution guide.
 
 ## Profiles
 
 ### `WIP` (coding loop)
 
-Use while still iterating and not claiming the task is complete.
+Use while iterating on a change.
 
 - Run only the smallest scoped checks that validate the changed behavior.
 - Prefer targeted unit tests (`go test -run <TestName> -tags=intest,deadlock`).
@@ -22,13 +22,14 @@ Use while still iterating and not claiming the task is complete.
 
 ### `Ready` (completion gate)
 
-Use when claiming task completion or PR readiness.
-Mandatory trigger phrases are defined in `AGENTS.md` -> `Quick Decision Matrix`.
+Use when delivering changes or preparing a PR, as defined in `AGENTS.md` -> `Quick Decision Matrix`. Select checks from the actual change type; status wording neither adds nor waives checks.
 
-1. Map changed paths to required test surfaces via `AGENTS.md` -> `Task -> Validation Matrix`.
-2. Run minimum required targeted tests for those surfaces.
+1. Map changed paths and change types to `AGENTS.md` -> `Task -> Validation Matrix` and the applicable special cases in `Quick Decision Matrix`.
+2. Run the required checks for those changes. Preserve regression evidence for bug fixes, documentation review for agent instructions/skills, and scoped checks for testdata or build configuration. Formatting-only changes do not require RealTiKV tests.
 3. If code changed, run `make lint`.
 4. Follow `AGENTS.md` -> `Agent Output Contract` for final reporting.
+
+Reuse completed checks that still cover the delivered changes. Rerun affected checks when relevant changes or new failures invalidate the results, not merely because another status update is due.
 
 ### `Heavy` (explicitly required)
 

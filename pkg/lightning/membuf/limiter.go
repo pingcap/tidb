@@ -15,11 +15,16 @@
 package membuf
 
 import (
+	"errors"
 	"sync"
 
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
+
+// ErrCannotAcquireMemory is returned when a non-blocking memory acquire cannot
+// be satisfied immediately.
+var ErrCannotAcquireMemory = errors.New("cannot acquire memory from membuf limiter")
 
 // Limiter will block on Acquire if the number it has acquired and not released
 // exceeds the limit.
@@ -54,6 +59,18 @@ func (l *Limiter) Acquire(n int) {
 	l.mu.Unlock()
 
 	<-waitCh
+}
+
+// TryAcquire acquires n tokens from the limiter without blocking.
+func (l *Limiter) TryAcquire(n int) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if len(l.waitNums) > 0 || l.limit < n {
+		return false
+	}
+	l.limit -= n
+	return true
 }
 
 // Release releases tokens to the limiter. If there are goroutines waiting for

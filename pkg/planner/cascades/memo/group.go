@@ -16,7 +16,7 @@ package memo
 
 import (
 	"container/list"
-	"fmt"
+	"strconv"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
@@ -205,7 +205,8 @@ func (g *Group) SetExplored() {
 
 // String implements fmt.Stringer interface.
 func (g *Group) String(w util.StrBufferWriter) {
-	w.WriteString(fmt.Sprintf("GID:%d", int(g.groupID)))
+	w.WriteString("GID:")
+	w.WriteString(strconv.Itoa(int(g.groupID)))
 }
 
 // ForEachGE traverse the inside group expression with f call on them each.

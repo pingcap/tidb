@@ -44,6 +44,40 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestReverseExpressionSortNullableColumn(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	tk.MustExec("create table reverse_sort (id int primary key, c double, key i(c))")
+	tk.MustExec("insert into reverse_sort values (1,null),(2,0.3),(3,0.7),(4,0.8)")
+	for _, expr := range []string{"-c", "0-c", "-(c+1)"} {
+		tk.MustQuery(fmt.Sprintf("select id from reverse_sort use index(i) order by %s desc,id", expr)).Check(testkit.Rows("2", "3", "4", "1"))
+		tk.MustQuery(fmt.Sprintf("select id from reverse_sort use index(i) order by %s,id", expr)).Check(testkit.Rows("1", "4", "3", "2"))
+	}
+	// An even number of reversals preserves both value order and NULL order.
+	tk.MustQuery("select id from reverse_sort order by -(-c) desc,id").Check(testkit.Rows("4", "3", "2", "1"))
+	tk.MustExec("delete from reverse_sort where c is null")
+	tk.MustExec("alter table reverse_sort modify c double not null")
+	tk.MustQuery("select id from reverse_sort order by -c desc,id").Check(testkit.Rows("2", "3", "4"))
+	plan := tk.MustQuery("explain format='brief' select id from reverse_sort use index(i) order by -c desc,id").Rows()
+	require.NotContains(t, fmt.Sprint(plan), "Sort")
+}
+
+func TestBinaryLiteralMinMaxHaving(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	for _, key := range []string{" primary key", ""} {
+		tk.MustExec("create table binary_having(a int" + key + ")")
+		tk.MustExec("insert into binary_having values(1),(2)")
+		tk.MustQuery("select abs(min(b'101010')) c2,1 c3 from binary_having group by a having any_value(c2)").Check(testkit.Rows())
+		tk.MustQuery("select a from binary_having group by a having max(x'31')=49").Check(testkit.Rows())
+		tk.MustQuery("select a from binary_having group by a having max(x'31')=1 order by a").Check(testkit.Rows("1", "2"))
+		tk.MustQuery("select a from binary_having group by a having min(49)=49 order by a").Check(testkit.Rows("1", "2"))
+		tk.MustQuery("select a from binary_having group by a having min('1')=1 order by a").Check(testkit.Rows("1", "2"))
+		tk.MustExec("drop table binary_having")
+	}
+}
+
 func TestNoneAccessPathsFoundByIsolationRead(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
@@ -53,9 +87,9 @@ func TestNoneAccessPathsFoundByIsolationRead(t *testing.T) {
 		testKit.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 
 		// Don't filter mysql.SystemDB by isolation read.
-		testKit.MustQuery("explain format = 'brief' select * from mysql.stats_meta").Check(testkit.Rows(
-			"TableReader 10000.00 root  data:TableFullScan",
-			"└─TableFullScan 10000.00 cop[tikv] table:stats_meta keep order:false, stats:pseudo"))
+		testKit.MustQuery("explain format = 'plan_tree' select * from mysql.stats_meta").Check(testkit.Rows(
+			"TableReader root  data:TableFullScan",
+			"└─TableFullScan cop[tikv] table:stats_meta keep order:false, stats:pseudo"))
 
 		_, err := testKit.Exec("select * from t")
 		require.EqualError(t, err, "[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash', valid values can be 'tikv'. Please check tiflash replica.")
@@ -90,18 +124,18 @@ func TestAggPushDownEngine(t *testing.T) {
 
 		testKit.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 
-		testKit.MustQuery("explain format = 'brief' select approx_count_distinct(a) from t").Check(testkit.Rows(
-			"StreamAgg 1.00 root  funcs:approx_count_distinct(Column#6)->Column#4",
-			"└─TableReader 1.00 root  data:StreamAgg",
-			"  └─StreamAgg 1.00 batchCop[tiflash]  funcs:approx_count_distinct(test.t.a)->Column#6",
-			"    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"))
+		testKit.MustQuery("explain format = 'plan_tree' select approx_count_distinct(a) from t").Check(testkit.Rows(
+			"StreamAgg root  funcs:approx_count_distinct(Column)->Column",
+			"└─TableReader root  data:StreamAgg",
+			"  └─StreamAgg batchCop[tiflash]  funcs:approx_count_distinct(test.t.a)->Column",
+			"    └─TableFullScan batchCop[tiflash] table:t keep order:false, stats:pseudo"))
 
 		testKit.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
 
-		testKit.MustQuery("explain format = 'brief' select approx_count_distinct(a) from t").Check(testkit.Rows(
-			"HashAgg 1.00 root  funcs:approx_count_distinct(test.t.a)->Column#4",
-			"└─TableReader 10000.00 root  data:TableFullScan",
-			"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+		testKit.MustQuery("explain format = 'plan_tree' select approx_count_distinct(a) from t").Check(testkit.Rows(
+			"HashAgg root  funcs:approx_count_distinct(test.t.a)->Column",
+			"└─TableReader root  data:TableFullScan",
+			"  └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo"))
 	})
 }
 
@@ -176,12 +210,12 @@ func TestTimeToSecPushDownToTiFlash(t *testing.T) {
 		}
 
 		rows := [][]any{
-			{"TableReader", "10000.00", "root", " MppVersion: 3, data:ExchangeSender"},
-			{"└─ExchangeSender", "10000.00", "mpp[tiflash]", " ExchangeType: PassThrough"},
-			{"  └─Projection", "10000.00", "mpp[tiflash]", " time_to_sec(test.t.a)->Column#4"},
-			{"    └─TableFullScan", "10000.00", "mpp[tiflash]", "table:t", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", " MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", " ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", " time_to_sec(test.t.a)->Column"},
+			{"    └─TableFullScan", "mpp[tiflash]", "table:t", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain format = 'brief' select time_to_sec(a) from t;").Check(rows)
+		testKit.MustQuery("explain format = 'plan_tree' select time_to_sec(a) from t;").Check(rows)
 	})
 }
 
@@ -207,10 +241,10 @@ func TestRightShiftPushDownToTiFlash(t *testing.T) {
 		rows := [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "rightshift(test.t.a, test.t.b)->Column#5"},
+			{"  └─Projection", "mpp[tiflash]", "rightshift(test.t.a, test.t.b)->Column"},
 			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain format = 'brief' select a >> b from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'plan_tree' select a >> b from t;").CheckAt([]int{0, 1, 3}, rows)
 	})
 }
 
@@ -649,11 +683,11 @@ func TestReverseUTF8PushDownToTiFlash(t *testing.T) {
 		rows := [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "reverse(test.t.a)->Column#4"},
+			{"  └─Projection", "mpp[tiflash]", "reverse(test.t.a)->Column"},
 			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
 
-		testKit.MustQuery("explain format = 'brief' select reverse(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'plan_tree' select reverse(a) from t;").CheckAt([]int{0, 1, 3}, rows)
 	})
 }
 
@@ -678,11 +712,11 @@ func TestReversePushDownToTiFlash(t *testing.T) {
 		rows := [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "reverse(test.t.a)->Column#4"},
+			{"  └─Projection", "mpp[tiflash]", "reverse(test.t.a)->Column"},
 			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
 
-		testKit.MustQuery("explain format = 'brief' select reverse(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'plan_tree' select reverse(a) from t;").CheckAt([]int{0, 1, 3}, rows)
 	})
 }
 
@@ -707,11 +741,11 @@ func TestSpacePushDownToTiFlash(t *testing.T) {
 		rows := [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "space(test.t.a)->Column#4"},
+			{"  └─Projection", "mpp[tiflash]", "space(test.t.a)->Column"},
 			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
 
-		testKit.MustQuery("explain format = 'brief' select space(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'plan_tree' select space(a) from t;").CheckAt([]int{0, 1, 3}, rows)
 	})
 }
 
@@ -885,12 +919,12 @@ func TestAggPushToCopForCachedTable(t *testing.T) {
 		testKit.MustExec("insert into t32157 values ('GDEP0071', '05', '0', '0000', '2016-06-01 00:00:00', 'D')")
 		testKit.MustExec("alter table t32157 cache")
 
-		testKit.MustQuery("explain format = 'brief' select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows(
-			"StreamAgg 1.00 root  funcs:count(1)->Column#9]\n" +
-				"[└─UnionScan 10.00 root  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
-				"[  └─TableReader 10.00 root  data:Selection]\n" +
-				"[    └─Selection 10.00 cop[tikv]  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
-				"[      └─TableFullScan 10000.00 cop[tikv] table:t32157 keep order:false, stats:pseudo"))
+		testKit.MustQuery("explain format = 'plan_tree' select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows(
+			"StreamAgg root  funcs:count(1)->Column",
+			"└─UnionScan root  eq(test.t32157.process_code, \"GDEP0071\")",
+			"  └─TableReader root  data:Selection",
+			"    └─Selection cop[tikv]  eq(test.t32157.process_code, \"GDEP0071\")",
+			"      └─TableFullScan cop[tikv] table:t32157 keep order:false, stats:pseudo"))
 
 		require.Eventually(t, func() bool {
 			testKit.MustQuery("select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows("2"))
@@ -992,10 +1026,10 @@ func TestRepeatPushDownToTiFlash(t *testing.T) {
 		rows := [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "repeat(cast(test.t.a, var_string(20)), test.t.b)->Column#5"},
+			{"  └─Projection", "mpp[tiflash]", "repeat(cast(test.t.a, var_string(20)), test.t.b)->Column"},
 			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain format = 'brief' select repeat(a,b) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'plan_tree' select repeat(a,b) from t;").CheckAt([]int{0, 1, 3}, rows)
 	})
 }
 
@@ -1012,11 +1046,11 @@ func TestGetFormatPushDownToTiFlash(t *testing.T) {
 		// Set the hacked TiFlash replica for explain tests.
 		tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
-		testKit.MustQuery("explain format = 'brief' select GET_FORMAT(DATE, location) from t;").Check(testkit.Rows(
-			"TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
-			"└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-			"  └─Projection 10000.00 mpp[tiflash]  get_format(DATE, test.t.location)->Column#4",
-			"    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"))
+		testKit.MustQuery("explain format = 'plan_tree' select GET_FORMAT(DATE, location) from t;").Check(testkit.Rows(
+			"TableReader root  MppVersion: 3, data:ExchangeSender",
+			"└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+			"  └─Projection mpp[tiflash]  get_format(DATE, test.t.location)->Column",
+			"    └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"))
 	})
 }
 
@@ -1040,28 +1074,28 @@ func TestAggWithJsonPushDownToTiFlash(t *testing.T) {
 		}
 
 		rows := [][]any{
-			{"HashAgg", "root", "funcs:avg(Column#5)->Column#4"},
-			{"└─Projection", "root", "cast(test.t.a, double BINARY)->Column#5"},
+			{"HashAgg", "root", "funcs:avg(Column)->Column"},
+			{"└─Projection", "root", "cast(test.t.a, double BINARY)->Column"},
 			{"  └─TableReader", "root", "data:TableFullScan"},
 			{"    └─TableFullScan", "cop[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain format = 'brief' select avg(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'plan_tree' select avg(a) from t;").CheckAt([]int{0, 1, 3}, rows)
 
 		rows = [][]any{
-			{"HashAgg", "root", "funcs:sum(Column#5)->Column#4"},
-			{"└─Projection", "root", "cast(test.t.a, double BINARY)->Column#5"},
+			{"HashAgg", "root", "funcs:sum(Column)->Column"},
+			{"└─Projection", "root", "cast(test.t.a, double BINARY)->Column"},
 			{"  └─TableReader", "root", "data:TableFullScan"},
 			{"    └─TableFullScan", "cop[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain format = 'brief' select sum(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'plan_tree' select sum(a) from t;").CheckAt([]int{0, 1, 3}, rows)
 
 		rows = [][]any{
-			{"HashAgg", "root", "funcs:group_concat(Column#5 separator \",\")->Column#4"},
-			{"└─Projection", "root", "cast(test.t.a, var_string(4294967295))->Column#5"},
+			{"HashAgg", "root", "funcs:group_concat(Column separator \",\")->Column"},
+			{"└─Projection", "root", "cast(test.t.a, var_string(4294967295))->Column"},
 			{"  └─TableReader", "root", "data:TableFullScan"},
 			{"    └─TableFullScan", "cop[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain format = 'brief' select /*+ hash_agg() */  group_concat(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'plan_tree' select /*+ hash_agg() */  group_concat(a) from t;").CheckAt([]int{0, 1, 3}, rows)
 	})
 }
 
@@ -1087,10 +1121,10 @@ func TestLeftShiftPushDownToTiFlash(t *testing.T) {
 		rows := [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "leftshift(test.t.a, test.t.b)->Column#5"},
+			{"  └─Projection", "mpp[tiflash]", "leftshift(test.t.a, test.t.b)->Column"},
 			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain format = 'brief' select a << b from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'plan_tree' select a << b from t;").CheckAt([]int{0, 1, 3}, rows)
 	})
 }
 
@@ -1111,18 +1145,18 @@ func TestHexIntOrStrPushDownToTiFlash(t *testing.T) {
 		rows := [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "hex(test.t.a)->Column#5"},
+			{"  └─Projection", "mpp[tiflash]", "hex(test.t.a)->Column"},
 			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain format = 'brief' select hex(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'plan_tree' select hex(a) from t;").CheckAt([]int{0, 1, 3}, rows)
 
 		rows = [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "hex(test.t.b)->Column#5"},
+			{"  └─Projection", "mpp[tiflash]", "hex(test.t.b)->Column"},
 			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain format = 'brief' select hex(b) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'plan_tree' select hex(b) from t;").CheckAt([]int{0, 1, 3}, rows)
 	})
 }
 
@@ -1143,10 +1177,10 @@ func TestBinPushDownToTiFlash(t *testing.T) {
 		rows := [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "bin(test.t.a)->Column#4"},
+			{"  └─Projection", "mpp[tiflash]", "bin(test.t.a)->Column"},
 			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain format = 'brief' select bin(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'plan_tree' select bin(a) from t;").CheckAt([]int{0, 1, 3}, rows)
 	})
 }
 
@@ -1172,10 +1206,10 @@ func TestEltPushDownToTiFlash(t *testing.T) {
 		rows := [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "elt(test.t.a, test.t.b)->Column#5"},
+			{"  └─Projection", "mpp[tiflash]", "elt(test.t.a, test.t.b)->Column"},
 			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain format = 'brief' select elt(a, b) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'plan_tree' select elt(a, b) from t;").CheckAt([]int{0, 1, 3}, rows)
 	})
 }
 
@@ -1200,10 +1234,10 @@ func TestRegexpInstrPushDownToTiFlash(t *testing.T) {
 		rows := [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "regexp_instr(test.t.expr, test.t.pattern, 1, 1, 0, test.t.match_type)->Column#9"},
+			{"  └─Projection", "mpp[tiflash]", "regexp_instr(test.t.expr, test.t.pattern, 1, 1, 0, test.t.match_type)->Column"},
 			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain format = 'brief' select regexp_instr(expr, pattern, 1, 1, 0, match_type) as res from test.t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'plan_tree' select regexp_instr(expr, pattern, 1, 1, 0, match_type) as res from test.t;").CheckAt([]int{0, 1, 3}, rows)
 	})
 }
 
@@ -1227,10 +1261,10 @@ func TestRegexpSubstrPushDownToTiFlash(t *testing.T) {
 		rows := [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "regexp_substr(test.t.expr, test.t.pattern, 1, 1, test.t.match_type)->Column#8"},
+			{"  └─Projection", "mpp[tiflash]", "regexp_substr(test.t.expr, test.t.pattern, 1, 1, test.t.match_type)->Column"},
 			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain format = 'brief' select regexp_substr(expr, pattern, 1, 1, match_type) as res from test.t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'plan_tree' select regexp_substr(expr, pattern, 1, 1, match_type) as res from test.t;").CheckAt([]int{0, 1, 3}, rows)
 	})
 }
 
@@ -1255,10 +1289,10 @@ func TestRegexpReplacePushDownToTiFlash(t *testing.T) {
 		rows := [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "regexp_replace(test.t.expr, test.t.pattern, test.t.repl, 1, 1, test.t.match_type)->Column#9"},
+			{"  └─Projection", "mpp[tiflash]", "regexp_replace(test.t.expr, test.t.pattern, test.t.repl, 1, 1, test.t.match_type)->Column"},
 			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain format = 'brief' select regexp_replace(expr, pattern, repl, 1, 1, match_type) as res from test.t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'plan_tree' select regexp_replace(expr, pattern, repl, 1, 1, match_type) as res from test.t;").CheckAt([]int{0, 1, 3}, rows)
 	})
 }
 
@@ -1288,10 +1322,10 @@ func TestCastTimeAsDurationToTiFlash(t *testing.T) {
 		rows := [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "cast(test.t.a, time BINARY)->Column#5, cast(test.t.b, time BINARY)->Column#6"},
+			{"  └─Projection", "mpp[tiflash]", "cast(test.t.a, time BINARY)->Column, cast(test.t.b, time BINARY)->Column"},
 			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain format = 'brief' select cast(a as time), cast(b as time) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'plan_tree' select cast(a as time), cast(b as time) from t;").CheckAt([]int{0, 1, 3}, rows)
 	})
 }
 
@@ -1312,18 +1346,18 @@ func TestUnhexPushDownToTiFlash(t *testing.T) {
 		rows := [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "unhex(cast(test.t.a, var_string(20)))->Column#5"},
+			{"  └─Projection", "mpp[tiflash]", "unhex(cast(test.t.a, var_string(20)))->Column"},
 			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain format = 'brief' select unhex(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'plan_tree' select unhex(a) from t;").CheckAt([]int{0, 1, 3}, rows)
 
 		rows = [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "unhex(test.t.b)->Column#5"},
+			{"  └─Projection", "mpp[tiflash]", "unhex(test.t.b)->Column"},
 			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain format = 'brief' select unhex(b) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'plan_tree' select unhex(b) from t;").CheckAt([]int{0, 1, 3}, rows)
 	})
 }
 
@@ -1344,18 +1378,18 @@ func TestLeastGretestStringPushDownToTiFlash(t *testing.T) {
 		rows := [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "least(test.t.a, test.t.b)->Column#5"},
+			{"  └─Projection", "mpp[tiflash]", "least(test.t.a, test.t.b)->Column"},
 			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain format = 'brief' select least(a, b) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'plan_tree' select least(a, b) from t;").CheckAt([]int{0, 1, 3}, rows)
 
 		rows = [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "greatest(test.t.a, test.t.b)->Column#5"},
+			{"  └─Projection", "mpp[tiflash]", "greatest(test.t.a, test.t.b)->Column"},
 			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain format = 'brief' select greatest(a, b) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'plan_tree' select greatest(a, b) from t;").CheckAt([]int{0, 1, 3}, rows)
 	})
 }
 
@@ -1441,6 +1475,25 @@ func TestTiFlashReadForWriteStmt(t *testing.T) {
 			testKit.MustQuery("show warnings").Check(testkit.Rows(
 				"Warning 1105 MPP mode may be blocked because operator `SelectLock` is not supported now."))
 		}
+
+		testKit.MustExec("drop table if exists t3")
+		testKit.MustExec("create table t3(a int, b int, c int, primary key(a))")
+		testKit.MustExec("insert into t3 values(1, 2, 3), (4, 5, 6)")
+		testKit.MustExec("drop table if exists t4")
+		testKit.MustExec("create table t4(a int, b int)")
+		tbl3, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t3", L: "t3"})
+		require.NoError(t, err)
+		tbl3.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+		testKit.MustExec("set @@sql_mode = ''")
+		testKit.MustExec("set @@tidb_enforce_mpp=1")
+		testKit.MustExec("set @@tidb_isolation_read_engines = 'tidb, tikv'")
+		rs := testKit.MustQuery("explain insert into t4 select a, b from t3 where a in (1, 2)").Rows()
+		require.NotEmpty(t, rs)
+		for _, row := range rs {
+			require.NotEqual(t, "mpp[tiflash]", row[2])
+		}
+		testKit.MustQuery("show warnings").Check(testkit.Rows(
+			"Warning 1105 MPP mode may be blocked because 'tidb_isolation_read_engines'(value: 'tidb,tikv') not match, need 'tiflash'."))
 	})
 }
 
@@ -1494,10 +1547,10 @@ func TestPlanCacheForIndexRangeFallback(t *testing.T) {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t (a varchar(10), b varchar(10), c varchar(10), index idx_a_b(a, b))")
 		tk.MustExec("set @@tidb_opt_range_max_size=1330") // 1330 is the memory usage of ["aa","aa"], ["bb","bb"], ["cc","cc"], ["dd","dd"], ["ee","ee"].
-		rows := tk.MustQuery("explain format='brief' select * from t where a in ('aa', 'bb', 'cc', 'dd', 'ee')").Rows()
+		rows := tk.MustQuery("explain format='plan_tree' select * from t where a in ('aa', 'bb', 'cc', 'dd', 'ee')").Rows()
 		require.True(t, strings.Contains(rows[1][0].(string), "IndexRangeScan"))
-		require.True(t, strings.Contains(rows[1][4].(string), "range:[\"aa\",\"aa\"], [\"bb\",\"bb\"], [\"cc\",\"cc\"], [\"dd\",\"dd\"], [\"ee\",\"ee\"]"))
-		rows = tk.MustQuery("explain format='brief' select * from t where a in ('aaaaaaaaaa', 'bbbbbbbbbb', 'cccccccccc', 'dddddddddd', 'eeeeeeeeee')").Rows()
+		require.True(t, strings.Contains(rows[1][3].(string), "range:[\"aa\",\"aa\"], [\"bb\",\"bb\"], [\"cc\",\"cc\"], [\"dd\",\"dd\"], [\"ee\",\"ee\"]"))
+		rows = tk.MustQuery("explain format='plan_tree' select * from t where a in ('aaaaaaaaaa', 'bbbbbbbbbb', 'cccccccccc', 'dddddddddd', 'eeeeeeeeee')").Rows()
 		// 1330 is not enough for ["aaaaaaaaaa","aaaaaaaaaa"], ["bbbbbbbbbb","bbbbbbbbbb"], ["cccccccccc","cccccccccc"], ["dddddddddd","dddddddddd"], ["eeeeeeeeee","eeeeeeeeee"].
 		// So it falls back to table full scan.
 		require.True(t, strings.Contains(rows[2][0].(string), "TableFullScan"))
@@ -1532,6 +1585,58 @@ func TestPlanCacheForIndexRangeFallback(t *testing.T) {
 	})
 }
 
+func TestRangeCountThreshold(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_range_count")
+		tk.MustExec("create table t_range_count (a int, b int, c int, index idx(a, b, c))")
+		tk.MustExec("insert into t_range_count values (10,40,70), (20,50,75), (30,60,80), (10,99,70)")
+		tk.MustExec("set @@tidb_opt_range_max_size=0")
+		tk.MustQuery("select @@tidb_opt_range_max_count").Check(testkit.Rows("1000"))
+		query := "select /*+ use_index(t_range_count, idx) */ * from t_range_count where a in (10,20,30) and b in (40,50,60) and c between 70 and 80"
+		tk.MustExec("set @@tidb_opt_range_max_count=0")
+		unlimitedPlan := tk.MustQuery("explain format='plan_tree' " + query).Rows()
+		require.Contains(t, fmt.Sprint(unlimitedPlan), "range:[10 40 70,10 40 80]")
+		require.Contains(t, fmt.Sprint(unlimitedPlan), "[30 60 70,30 60 80]")
+
+		// The threshold only affects candidate comparison; all nine ranges can still be built.
+		tk.MustExec("set @@tidb_opt_range_max_count=4")
+		tk.MustQuery("explain format='plan_tree' " + query).Check(unlimitedPlan)
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery(query + " order by a").Check(testkit.Rows("10 40 70", "20 50 75", "30 60 80"))
+		singleIN := "select /*+ use_index(t_range_count, idx) */ * from t_range_count where a in (10,20,30,40,50,60)"
+		plan := fmt.Sprint(tk.MustQuery("explain format='plan_tree' " + singleIN).Rows())
+		require.Contains(t, plan, "IndexRangeScan")
+		require.Contains(t, plan, "[60,60]")
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		tk.MustExec("drop table if exists t_range_count_pk")
+		tk.MustExec("create table t_range_count_pk (a int, b int, primary key(a,b) clustered)")
+		plan = fmt.Sprint(tk.MustQuery("explain format='plan_tree' select * from t_range_count_pk where a in (10,20,30,40,50,60)").Rows())
+		require.Contains(t, plan, "TableRangeScan")
+		require.Contains(t, plan, "[60,60]")
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		tk.MustQuery("select /*+ set_var(tidb_opt_range_max_count=1) */ @@tidb_opt_range_max_count").Check(testkit.Rows("1"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("select @@tidb_opt_range_max_count").Check(testkit.Rows("4"))
+
+		// Exceeding the threshold must not disable prepared-plan caching or range rebuilds.
+		tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
+		tk.MustExec("prepare stmt from 'select /*+ use_index(t_range_count, idx) */ * from t_range_count where a in (?,?,?) and b in (?,?,?) and c between ? and ? order by a,b'")
+		tk.MustExec("set @a=10, @b=20, @c=30, @d=40, @e=50, @f=60, @g=70, @h=80")
+		for i := range 2 {
+			tk.MustQuery("execute stmt using @a,@b,@c,@d,@e,@f,@g,@h").Check(testkit.Rows("10 40 70", "20 50 75", "30 60 80"))
+			require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(strconv.Itoa(i)))
+		}
+		tk.MustExec("set @c=70, @e=99")
+		tk.MustQuery("execute stmt using @a,@b,@c,@d,@e,@f,@g,@h").Check(testkit.Rows("10 40 70", "10 99 70"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		tk.MustExec("deallocate prepare stmt")
+	})
+}
+
 func TestCorColRangeWithRangeMaxSize(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
@@ -1551,14 +1656,14 @@ func TestCorColRangeWithRangeMaxSize(t *testing.T) {
 
 		// Correlated column in index range.
 		tk.MustExec("set @@tidb_opt_range_max_size=1000")
-		rows := tk.MustQuery("explain format='brief' select * from t1 where exists (select * from t2 where t2.a in (1, 3, 5) and b >= 2 and t2.b = t1.a)").Rows()
+		rows := tk.MustQuery("explain format='plan_tree' select * from t1 where exists (select * from t2 where t2.a in (1, 3, 5) and b >= 2 and t2.b = t1.a)").Rows()
 		// 1000 is not enough for [1 2,1 +inf], [3 2,3 +inf], [5 2,5 +inf]. So b >= 2 is not used to build ranges.
 		require.True(t, strings.Contains(rows[4][0].(string), "Selection"))
-		require.True(t, strings.Contains(rows[4][4].(string), "ge(test.t2.b, 2)"))
+		require.True(t, strings.Contains(rows[4][3].(string), "ge(test.t2.b, 2)"))
 		// 1000 is not enough for [1 ?,1 ?], [3 ?,3 ?], [5 ?,5 ?] but we don't restrict range mem usage when appending col = cor_col
 		// conditions to access conditions in SplitCorColAccessCondFromFilters.
 		require.True(t, strings.Contains(rows[5][0].(string), "IndexRangeScan"))
-		require.True(t, strings.Contains(rows[5][4].(string), "range: decided by [in(test.t2.a, 1, 3, 5) eq(test.t2.b, test.t1.a)]"))
+		require.True(t, strings.Contains(rows[5][3].(string), "range: decided by [in(test.t2.a, 1, 3, 5) eq(test.t2.b, test.t1.a)]"))
 		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 1000 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
 		// We need to rebuild index ranges each time the value of correlated column test.t1.a changes. We don't restrict range
 		// mem usage when rebuilding index ranges, otherwise range fallback would happen when rebuilding index ranges, causing
@@ -1567,10 +1672,10 @@ func TestCorColRangeWithRangeMaxSize(t *testing.T) {
 
 		// Correlated column in table range.
 		tk.MustExec("set @@tidb_opt_range_max_size=1")
-		rows = tk.MustQuery("explain format='brief' select * from t1 where exists (select * from t3 where t3.a = t1.a)").Rows()
+		rows = tk.MustQuery("explain format='plan_tree' select * from t1 where exists (select * from t3 where t3.a = t1.a)").Rows()
 		// 1 is not enough for [?,?] but we don't restrict range mem usage when adding col = cor_col to access conditions.
 		require.True(t, strings.Contains(rows[4][0].(string), "TableRangeScan"))
-		require.True(t, strings.Contains(rows[4][4].(string), "range: decided by [eq(test.t3.a, test.t1.a)]"))
+		require.True(t, strings.Contains(rows[4][3].(string), "range: decided by [eq(test.t3.a, test.t1.a)]"))
 		tk.MustQuery("show warnings").Check(testkit.Rows())
 		// We need to rebuild table ranges each time the value of correlated column test.t1.a changes. We don't restrict range
 		// mem usage when rebuilding table ranges, otherwise range fallback would happen when rebuilding table ranges, causing
@@ -1598,11 +1703,11 @@ func TestCorColRangePredicateAccess(t *testing.T) {
 		// LT with correlated column on PK (appended to secondary index ib(b)).
 		// The index is effectively (b, a) on a clustered table, so t1b.a < t1a.a
 		// should appear as an access condition in "decided by".
-		rows := tk.MustQuery("explain format='brief' select * from t1 t1a where exists " +
+		rows := tk.MustQuery("explain format='plan_tree' select * from t1 t1a where exists " +
 			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a < t1a.a)").Rows()
 		foundRangeAccess := false
 		for _, row := range rows {
-			info := fmt.Sprintf("%v", row[4])
+			info := fmt.Sprintf("%v", row[3])
 			if strings.Contains(info, "decided by") && strings.Contains(info, "lt(test.t1.a, test.t1.a)") {
 				foundRangeAccess = true
 				break
@@ -1628,11 +1733,11 @@ func TestCorColRangePredicateAccess(t *testing.T) {
 			Check(testkit.Rows("10 1", "20 2"))
 
 		// GT with correlated column.
-		rows = tk.MustQuery("explain format='brief' select * from t1 t1a where exists " +
+		rows = tk.MustQuery("explain format='plan_tree' select * from t1 t1a where exists " +
 			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a > t1a.a)").Rows()
 		foundRangeAccess = false
 		for _, row := range rows {
-			info := fmt.Sprintf("%v", row[4])
+			info := fmt.Sprintf("%v", row[3])
 			if strings.Contains(info, "decided by") && strings.Contains(info, "gt(test.t1.a, test.t1.a)") {
 				foundRangeAccess = true
 				break
@@ -1650,11 +1755,11 @@ func TestCorColRangePredicateAccess(t *testing.T) {
 			Check(testkit.Rows("1 1", "2 2"))
 
 		// LE with correlated column.
-		rows = tk.MustQuery("explain format='brief' select * from t1 t1a where exists " +
+		rows = tk.MustQuery("explain format='plan_tree' select * from t1 t1a where exists " +
 			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a <= t1a.a)").Rows()
 		foundRangeAccess = false
 		for _, row := range rows {
-			info := fmt.Sprintf("%v", row[4])
+			info := fmt.Sprintf("%v", row[3])
 			if strings.Contains(info, "decided by") && strings.Contains(info, "le(test.t1.a, test.t1.a)") {
 				foundRangeAccess = true
 				break
@@ -1675,11 +1780,11 @@ func TestCorColRangePredicateAccess(t *testing.T) {
 			Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "10 1", "20 2"))
 
 		// GE with correlated column.
-		rows = tk.MustQuery("explain format='brief' select * from t1 t1a where exists " +
+		rows = tk.MustQuery("explain format='plan_tree' select * from t1 t1a where exists " +
 			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1b.a >= t1a.a)").Rows()
 		foundRangeAccess = false
 		for _, row := range rows {
-			info := fmt.Sprintf("%v", row[4])
+			info := fmt.Sprintf("%v", row[3])
 			if strings.Contains(info, "decided by") && strings.Contains(info, "ge(test.t1.a, test.t1.a)") {
 				foundRangeAccess = true
 				break
@@ -1702,11 +1807,11 @@ func TestCorColRangePredicateAccess(t *testing.T) {
 		// Reversed argument order: correlated column on the left side of
 		// the comparison (t1a.a < t1b.a instead of t1b.a > t1a.a) must
 		// also be recognised as an index access condition.
-		rows = tk.MustQuery("explain format='brief' select * from t1 t1a where exists " +
+		rows = tk.MustQuery("explain format='plan_tree' select * from t1 t1a where exists " +
 			"(select /*+ NO_DECORRELATE() */ 1 from t1 t1b where t1b.b = t1a.b and t1a.a < t1b.a)").Rows()
 		foundRangeAccess = false
 		for _, row := range rows {
-			info := fmt.Sprintf("%v", row[4])
+			info := fmt.Sprintf("%v", row[3])
 			if strings.Contains(info, "decided by") && strings.Contains(info, "lt(test.t1.a, test.t1.a)") {
 				foundRangeAccess = true
 				break
@@ -1747,6 +1852,255 @@ func TestCorColRangePredicateAccess(t *testing.T) {
 	})
 }
 
+// TestLateralJoinCardinality verifies the row count estimated for a LATERAL join. The derived table
+// runs once per outer row and its stats already account for the correlated predicates, so the join
+// produces the product of the two sides. The estimate must not be scaled down by the NDV of the
+// correlated columns, which would apply their selectivity a second time.
+func TestLateralJoinCardinality(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tl_inner (k1 int not null, k2 int not null, primary key (k1, k2) clustered)")
+	tk.MustExec("create table tl_outer (id int primary key, k1 int not null, key ik (k1))")
+	var inner, outer strings.Builder
+	for group := range 30 {
+		for i := range 50 {
+			if inner.Len() > 0 {
+				inner.WriteString(",")
+			}
+			fmt.Fprintf(&inner, "(%d,%d)", group, group*1000+i)
+		}
+	}
+	// 600 outer rows over the same 30 distinct keys, so each key drives 20 executions.
+	for i := range 600 {
+		if outer.Len() > 0 {
+			outer.WriteString(",")
+		}
+		fmt.Fprintf(&outer, "(%d,%d)", i, i%30)
+	}
+	tk.MustExec("insert into tl_inner values " + inner.String())
+	tk.MustExec("insert into tl_outer values " + outer.String())
+	tk.MustExec("analyze table tl_inner all columns")
+	tk.MustExec("analyze table tl_outer all columns")
+
+	// applyRowCounts returns the estimated and actual row counts of the Apply operator.
+	applyRowCounts := func(sql string) (float64, float64) {
+		t.Helper()
+		for _, row := range tk.MustQuery("explain analyze " + sql).Rows() {
+			if !strings.Contains(fmt.Sprintf("%v", row[0]), "Apply") {
+				continue
+			}
+			est, err := strconv.ParseFloat(fmt.Sprintf("%v", row[1]), 64)
+			require.NoError(t, err)
+			act, err := strconv.ParseFloat(fmt.Sprintf("%v", row[2]), 64)
+			require.NoError(t, err)
+			return est, act
+		}
+		require.FailNow(t, "no Apply in plan", sql)
+		return 0, 0
+	}
+
+	// A scalar aggregate returns exactly one row per outer row.
+	est, act := applyRowCounts("select o.k1, f.m from tl_outer o inner join lateral " +
+		"(select /*+ NO_DECORRELATE() */ min(t2.k2) as m from tl_inner t2 where t2.k1 = o.k1) f")
+	require.Equal(t, float64(600), act)
+	require.Equal(t, act, est, "a lateral scalar aggregate produces one row per outer row")
+
+	// LIMIT 3 returns three rows per outer row, since every key has more than three matches.
+	est, act = applyRowCounts("select o.k1, f.k2 from tl_outer o inner join lateral " +
+		"(select /*+ NO_DECORRELATE() */ t2.k2 from tl_inner t2 where t2.k1 = o.k1 " +
+		"order by t2.k2 limit 3) f")
+	require.Equal(t, float64(1800), act)
+	require.Equal(t, act, est, "a lateral LIMIT n produces n rows per outer row")
+
+	// An unbounded inner plan is not special either: grouping by k2 yields one row per matching
+	// row of tl_inner, so the join returns every matched row.
+	est, act = applyRowCounts("select o.k1, f.k2 from tl_outer o inner join lateral " +
+		"(select /*+ NO_DECORRELATE() */ t2.k2, count(*) c from tl_inner t2 " +
+		"where t2.k1 = o.k1 group by t2.k2) f")
+	require.Equal(t, float64(30000), act)
+	require.Equal(t, act, est, "a lateral GROUP BY produces one row per group per outer row")
+}
+
+// TestApplyCacheEnabledByOuterRowCount checks that the Apply cache is enabled from how often the
+// correlated values repeat across outer rows, which is what decides whether a lookup can hit. A
+// LATERAL join may emit several rows per outer row, and those extra rows must not be mistaken for
+// extra chances to hit the cache.
+func TestApplyCacheEnabledByOuterRowCount(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tac_inner (k1 int not null, k2 int not null, primary key (k1, k2) clustered)")
+	tk.MustExec("create table tac_uniq (id int primary key, k1 int not null)")
+	tk.MustExec("create table tac_rep (id int primary key, k1 int not null)")
+	var inner, uniq, rep strings.Builder
+	for key := range 50 {
+		for i := range 40 {
+			if inner.Len() > 0 {
+				inner.WriteString(",")
+			}
+			fmt.Fprintf(&inner, "(%d,%d)", key, key*1000+i)
+		}
+	}
+	// One outer row per key, so no lookup can ever hit.
+	for i := range 50 {
+		if uniq.Len() > 0 {
+			uniq.WriteString(",")
+		}
+		fmt.Fprintf(&uniq, "(%d,%d)", i, i)
+	}
+	// Ten outer rows per key, so nine lookups in ten can hit.
+	for i := range 500 {
+		if rep.Len() > 0 {
+			rep.WriteString(",")
+		}
+		fmt.Fprintf(&rep, "(%d,%d)", i, i%50)
+	}
+	tk.MustExec("insert into tac_inner values " + inner.String())
+	tk.MustExec("insert into tac_uniq values " + uniq.String())
+	tk.MustExec("insert into tac_rep values " + rep.String())
+	for _, table := range []string{"tac_inner", "tac_uniq", "tac_rep"} {
+		tk.MustExec("analyze table " + table + " all columns")
+	}
+	// Keep the subquery correlated so that it is executed as an Apply.
+	tk.MustExec(`insert into mysql.opt_rule_blacklist value("decorrelate")`)
+	tk.MustExec("admin reload opt_rule_blacklist")
+	defer func() {
+		tk.MustExec(`delete from mysql.opt_rule_blacklist where name = "decorrelate"`)
+		tk.MustExec("admin reload opt_rule_blacklist")
+	}()
+
+	// applyCacheInfo returns the execution info of the Apply operator.
+	applyCacheInfo := func(sql string) string {
+		t.Helper()
+		for _, row := range tk.MustQuery("explain analyze " + sql).Rows() {
+			if strings.Contains(fmt.Sprintf("%v", row[0]), "Apply") {
+				return fmt.Sprintf("%v", row[5])
+			}
+		}
+		require.FailNow(t, "no Apply in plan", sql)
+		return ""
+	}
+
+	// The lateral derived table returns 40 rows per outer row either way, so the row count of
+	// the Apply cannot be what the decision is taken from.
+	lateral := "inner join lateral (select t2.k2 from tac_inner t2 where t2.k1 = o.k1) f"
+	info := applyCacheInfo("select o.k1, f.k2 from tac_uniq o " + lateral)
+	require.Contains(t, info, "cache:OFF", "every outer row has its own key, so the cache cannot hit")
+
+	info = applyCacheInfo("select o.k1, f.k2 from tac_rep o " + lateral)
+	require.Contains(t, info, "cache:ON", "each key repeats over ten outer rows")
+
+	// A key that is unique in its own table still repeats once an upstream join duplicates it,
+	// so what matters is the rows reaching the Apply, not the uniqueness of the column.
+	tk.MustExec("create table tac_fan (id int primary key, k1 int not null, key ik (k1))")
+	var fan strings.Builder
+	for i := range 500 {
+		if fan.Len() > 0 {
+			fan.WriteString(",")
+		}
+		fmt.Fprintf(&fan, "(%d,%d)", i, i%50)
+	}
+	tk.MustExec("insert into tac_fan values " + fan.String())
+	tk.MustExec("analyze table tac_fan all columns")
+	// tac_uniq.k1 is a primary key, but joining it to tac_fan repeats every value ten times.
+	info = applyCacheInfo("select o.k1, f.k2 from tac_uniq o join tac_fan on tac_fan.k1 = o.k1 " + lateral)
+	require.Contains(t, info, "cache:ON", "a unique key duplicated by a join can still hit the cache")
+}
+
+// TestCorColEqProvidesIndexOrder verifies that an `index_col = correlated_col` access condition
+// pins that column to a single value per execution, so the index columns after it can satisfy an
+// ORDER BY. The inner subquery of the correlated scalar aggregate should then read one row with a
+// Limit over an ordered scan instead of sorting the whole range with a TopN.
+func TestCorColEqProvidesIndexOrder(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tc")
+	tk.MustExec(`create table tc (
+		k1 bigint unsigned not null,
+		k2 bigint unsigned not null,
+		v int not null,
+		primary key (k1, k2) clustered,
+		key ik (k1, v, k2))`)
+	tk.MustExec("insert into tc values (1,10,1),(1,20,1),(2,30,1),(2,40,0),(3,50,0)")
+
+	// explainOf returns the operator name, task and operator info of each explain row.
+	explainOf := func(sql string) []string {
+		rows := tk.MustQuery("explain format='plan_tree' " + sql).Rows()
+		infos := make([]string, 0, len(rows))
+		for _, row := range rows {
+			infos = append(infos, fmt.Sprintf("%v %v %v", row[0], row[1], row[3]))
+		}
+		return infos
+	}
+	// hasOperator reports whether any explain row matches all the given substrings.
+	hasOperator := func(infos []string, substrs ...string) bool {
+		for _, row := range infos {
+			matched := true
+			for _, substr := range substrs {
+				if !strings.Contains(row, substr) {
+					matched = false
+					break
+				}
+			}
+			if matched {
+				return true
+			}
+		}
+		return false
+	}
+	// requireEarlyStopPlan asserts the subquery reads a single row from an ordered scan rather
+	// than sorting the whole matched range. Keeping order is not enough on its own: an
+	// aggregate over an ordered full-range scan also has no TopN, so the Limit that stops the
+	// read after one row must be there too, both in the coprocessor and at the root.
+	requireEarlyStopPlan := func(infos []string, scanOp string) {
+		t.Helper()
+		require.True(t, hasOperator(infos, scanOp, "keep order:true"),
+			"%s should keep order: %v", scanOp, infos)
+		require.True(t, hasOperator(infos, "Limit", "cop[tikv]", "count:1"),
+			"the coprocessor read should stop after one row: %v", infos)
+		require.True(t, hasOperator(infos, "Limit", "root", "count:1"),
+			"the plan should keep a root Limit of one row: %v", infos)
+		require.False(t, hasOperator(infos, "TopN"), "the sort should be eliminated: %v", infos)
+	}
+
+	// MIN over the clustered primary key (k1, k2). The correlated equality on k1 makes the
+	// rebuilt range a single point on k1, so the scan already returns k2 in order.
+	minOverPK := "select (select /*+ NO_DECORRELATE() */ min(t2.k2) from tc t2 use index (`primary`) " +
+		"where t1.k1 = t2.k1) from tc t1"
+	infos := explainOf(minOverPK)
+	requireEarlyStopPlan(infos, "TableRangeScan")
+	tk.MustQuery(minOverPK + " order by 1").Check(testkit.Rows("10", "10", "30", "30", "50"))
+
+	// Same for a secondary index ik(k1, v, k2), where k1 is pinned by the correlated equality
+	// and v by a literal equality.
+	minOverIdx := "select (select /*+ NO_DECORRELATE() */ min(t2.k2) from tc t2 use index (ik) " +
+		"where t1.k1 = t2.k1 and t2.v = 1) from tc t1"
+	infos = explainOf(minOverIdx)
+	requireEarlyStopPlan(infos, "IndexRangeScan")
+	tk.MustQuery(minOverIdx + " order by 1").Check(testkit.Rows("<nil>", "10", "10", "30", "30"))
+
+	// An explicit ORDER BY ... LIMIT inside the correlated subquery benefits the same way.
+	limitOverPK := "select (select /*+ NO_DECORRELATE() */ t2.k2 from tc t2 use index (`primary`) " +
+		"where t1.k1 = t2.k1 order by t2.k2 limit 1) from tc t1"
+	infos = explainOf(limitOverPK)
+	requireEarlyStopPlan(infos, "TableRangeScan")
+	tk.MustQuery(limitOverPK + " order by 1").Check(testkit.Rows("10", "10", "30", "30", "50"))
+
+	// A correlated *range* predicate does not pin its column to a single value, so the columns
+	// after it are not ordered and the TopN must be kept.
+	tk.MustExec("drop table if exists tr")
+	tk.MustExec("create table tr (a int, b int, c int, d int, key idx (b, c, d))")
+	tk.MustExec("insert into tr values (1,1,1,4),(2,1,2,3),(3,1,3,2),(4,2,1,1)")
+	minAfterRange := "select (select /*+ NO_DECORRELATE() */ min(t2.d) from tr t2 use index (idx) " +
+		"where t2.b = t1.b and t2.c < t1.c) from tr t1"
+	infos = explainOf(minAfterRange)
+	require.True(t, hasOperator(infos, "TopN"),
+		"a correlated range predicate must not claim order on later columns: %v", infos)
+	tk.MustQuery(minAfterRange + " order by 1").Check(testkit.Rows("<nil>", "<nil>", "3", "4"))
+}
+
 // TestExplainAnalyzeDMLCommit covers the issue #37373.
 func TestExplainAnalyzeDMLCommit(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
@@ -1778,11 +2132,11 @@ func TestPlanCacheForIndexJoinRangeFallback(t *testing.T) {
 		tk.MustExec("create table t2(d int)")
 		tk.MustExec("set @@tidb_opt_range_max_size=1260")
 		// 1260 is enough for [? a,? a], [? b,? b], [? c,? c] but is not enough for [? aaaaaa,? aaaaaa], [? bbbbbb,? bbbbbb], [? cccccc,? cccccc].
-		rows := tk.MustQuery("explain format='brief' select /*+ inl_join(t1) */ * from  t1 join t2 on t1.a = t2.d where t1.b in ('a', 'b', 'c')").Rows()
-		require.True(t, strings.Contains(rows[6][4].(string), "range: decided by [eq(test.t1.a, test.t2.d) in(test.t1.b, a, b, c)]"))
+		rows := tk.MustQuery("explain format='plan_tree' select /*+ inl_join(t1) */ * from  t1 join t2 on t1.a = t2.d where t1.b in ('a', 'b', 'c')").Rows()
+		require.True(t, strings.Contains(rows[6][3].(string), "range: decided by [eq(test.t1.a, test.t2.d) in(test.t1.b, a, b, c)]"))
 		tk.MustQuery("show warnings").Check(testkit.Rows())
-		rows = tk.MustQuery("explain format='brief' select /*+ inl_join(t1) */ * from  t1 join t2 on t1.a = t2.d where t1.b in ('aaaaaa', 'bbbbbb', 'cccccc');").Rows()
-		require.Contains(t, rows[6][4].(string), "range: decided by [eq(test.t1.a, test.t2.d)]")
+		rows = tk.MustQuery("explain format='plan_tree' select /*+ inl_join(t1) */ * from  t1 join t2 on t1.a = t2.d where t1.b in ('aaaaaa', 'bbbbbb', 'cccccc');").Rows()
+		require.Contains(t, rows[6][3].(string), "range: decided by [eq(test.t1.a, test.t2.d)]")
 		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Memory capacity of 1260 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen"))
 
 		tk.MustExec("prepare stmt1 from 'select /*+ inl_join(t1) */ * from  t1 join t2 on t1.a = t2.d where t1.b in (?, ?, ?)'")
@@ -1835,10 +2189,10 @@ func TestIsIPv4ToTiFlash(t *testing.T) {
 		rows := [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "is_ipv4(test.t.v4)->Column#5"},
+			{"  └─Projection", "mpp[tiflash]", "is_ipv4(test.t.v4)->Column"},
 			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		tk.MustQuery("explain format = 'brief' select is_ipv4(v4) from t;").CheckAt([]int{0, 2, 4}, rows)
+		tk.MustQuery("explain format = 'plan_tree' select is_ipv4(v4) from t;").CheckAt([]int{0, 1, 3}, rows)
 	})
 }
 
@@ -1865,10 +2219,10 @@ func TestIsIPv6ToTiFlash(t *testing.T) {
 		rows := [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "is_ipv6(test.t.v6)->Column#5"},
+			{"  └─Projection", "mpp[tiflash]", "is_ipv6(test.t.v6)->Column"},
 			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		tk.MustQuery("explain format = 'brief' select is_ipv6(v6) from t;").CheckAt([]int{0, 2, 4}, rows)
+		tk.MustQuery("explain format = 'plan_tree' select is_ipv6(v6) from t;").CheckAt([]int{0, 1, 3}, rows)
 	})
 }
 
@@ -1890,16 +2244,16 @@ func TestVirtualExprPushDown(t *testing.T) {
 			{"└─TableReader", "root", "data:TableFullScan"},
 			{"  └─TableFullScan", "cop[tikv]", "keep order:false, stats:pseudo"},
 		}
-		tk.MustQuery("explain format='brief' select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
+		tk.MustQuery("explain format='plan_tree' select * from t order by c2 limit 2;").CheckAt([]int{0, 1, 3}, rows)
 
 		// Projection to tikv.
 		rows = [][]any{
-			{"Projection", "root", "plus(test.t.c1, test.t.c2)->Column#5"},
+			{"Projection", "root", "plus(test.t.c1, test.t.c2)->Column"},
 			{"└─TableReader", "root", "data:TableFullScan"},
 			{"  └─TableFullScan", "cop[tikv]", "keep order:false, stats:pseudo"},
 		}
 		tk.MustExec("set session tidb_opt_projection_push_down='ON';")
-		tk.MustQuery("explain format = 'brief' select c1 + c2 from t;").CheckAt([]int{0, 2, 4}, rows)
+		tk.MustQuery("explain format = 'plan_tree' select c1 + c2 from t;").CheckAt([]int{0, 1, 3}, rows)
 		tk.MustExec("set session tidb_opt_projection_push_down='OFF';")
 
 		// Selection to tikv.
@@ -1908,7 +2262,43 @@ func TestVirtualExprPushDown(t *testing.T) {
 			{"└─TableReader", "root", "data:TableFullScan"},
 			{"  └─TableFullScan", "cop[tikv]", "keep order:false, stats:pseudo"},
 		}
-		tk.MustQuery("explain format = 'brief' select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
+		tk.MustQuery("explain format = 'plan_tree' select * from t where c2 > 1;").CheckAt([]int{0, 1, 3}, rows)
+
+		tk.MustExec("drop table if exists t_force_idx;")
+		tk.MustExec(`create table t_force_idx (
+			i bigint,
+			g bigint generated always as (i + 1) virtual,
+			key idx_g (g),
+			key idx_exp_i ((i + 1))
+		)`)
+		tk.MustExec("insert into t_force_idx (i) values (1);")
+		plan := tk.MustQuery("explain format='brief' select g from t_force_idx force index (idx_exp_i) where (i + 1) >= 1 order by g limit 1;").Rows()
+		require.NotEmpty(t, plan)
+		tk.MustQuery("select g from t_force_idx force index (idx_exp_i) where (i + 1) >= 1 order by g limit 1;").Check(testkit.Rows("2"))
+
+		tk.MustExec("drop table if exists t_bug")
+		tk.MustExec(`create table t_bug (
+			id bigint primary key auto_increment,
+			s varchar(20),
+			g varchar(20) generated always as (lower(s)) virtual,
+			key(g),
+			key idx_exp_lower ((lower(s)))
+		)`)
+		tk.MustExec("insert into t_bug(s) values ('B'),('a')")
+		tk.MustQuery("explain format='plan_tree' select /* issue:67981 */ * from t_bug force index (idx_exp_lower) where lower(s) >= 'a' order by g limit 1;").Check(testkit.Rows(
+			"Projection root  test.t_bug.id, test.t_bug.s, test.t_bug.g",
+			"└─TopN root  test.t_bug.g, offset:0, count:1",
+			"  └─IndexLookUp root  ",
+			"    ├─IndexRangeScan(Build) cop[tikv] table:t_bug, index:idx_exp_lower(lower(`s`)) range:[\"a\",+inf], keep order:false, stats:pseudo",
+			"    └─TableRowIDScan(Probe) cop[tikv] table:t_bug keep order:false, stats:pseudo"))
+		tk.MustQuery("select /* issue:67981 */ * from t_bug force index (idx_exp_lower) where lower(s) >= 'a' order by g limit 1;").Check(testkit.Rows("2 a a"))
+		tk.MustQuery("explain format='plan_tree' select /* issue:67981 */ * from t_bug force index (g) where lower(s) >= 'a' order by g limit 1;").Check(testkit.Rows(
+			"Projection root  test.t_bug.id, test.t_bug.s, test.t_bug.g",
+			"└─IndexLookUp root  limit embedded(offset:0, count:1)",
+			"  ├─Limit(Build) cop[tikv]  offset:0, count:1",
+			"  │ └─IndexRangeScan cop[tikv] table:t_bug, index:g(g) range:[\"a\",+inf], keep order:true, stats:pseudo",
+			"  └─TableRowIDScan(Probe) cop[tikv] table:t_bug keep order:false, stats:pseudo"))
+		tk.MustQuery("select /* issue:67981 */ * from t_bug force index (g) where lower(s) >= 'a' order by g limit 1;").Check(testkit.Rows("2 a a"))
 
 		tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
 		tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
@@ -1926,16 +2316,16 @@ func TestVirtualExprPushDown(t *testing.T) {
 			{"└─TableReader", "root", "data:TableFullScan"},
 			{"  └─TableFullScan", "cop[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		tk.MustQuery("explain format='brief' select * from t order by c2 limit 2;").CheckAt([]int{0, 2, 4}, rows)
+		tk.MustQuery("explain format='plan_tree' select * from t order by c2 limit 2;").CheckAt([]int{0, 1, 3}, rows)
 
 		// Projection to tiflash.
 		rows = [][]any{
-			{"Projection", "root", "plus(test.t.c1, test.t.c2)->Column#5"},
+			{"Projection", "root", "plus(test.t.c1, test.t.c2)->Column"},
 			{"└─TableReader", "root", "data:TableFullScan"},
 			{"  └─TableFullScan", "cop[tiflash]", "keep order:false, stats:pseudo"},
 		}
 		tk.MustExec("set session tidb_opt_projection_push_down='ON';")
-		tk.MustQuery("explain format = 'brief' select c1 + c2 from t;").CheckAt([]int{0, 2, 4}, rows)
+		tk.MustQuery("explain format = 'plan_tree' select c1 + c2 from t;").CheckAt([]int{0, 1, 3}, rows)
 		tk.MustExec("set session tidb_opt_projection_push_down='OFF';")
 
 		// Selection to tiflash.
@@ -1944,7 +2334,7 @@ func TestVirtualExprPushDown(t *testing.T) {
 			{"└─TableReader", "root", "data:TableFullScan"},
 			{"  └─TableFullScan", "cop[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		tk.MustQuery("explain format = 'brief' select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
+		tk.MustQuery("explain format = 'plan_tree' select * from t where c2 > 1;").CheckAt([]int{0, 1, 3}, rows)
 	})
 }
 
@@ -1968,50 +2358,50 @@ func TestWindowRangeFramePushDownTiflash(t *testing.T) {
 
 		tk.MustExec(`set @@tidb_max_tiflash_threads=20`)
 
-		tk.MustQuery("explain format = 'brief' select *, first_value(v) over (partition by p order by o range between 3 preceding and 0 following) as a from test.first_range;").Check(testkit.Rows(
-			"TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
-			"└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-			"  └─Window 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#9 over(partition by test.first_range.p order by test.first_range.o range between 3 preceding and 0 following), stream_count: 20",
-			"    └─Sort 10000.00 mpp[tiflash]  test.first_range.p, test.first_range.o, stream_count: 20",
-			"      └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 20",
-			"        └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range.p, collate: binary], stream_count: 20",
-			"          └─TableFullScan 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
+		tk.MustQuery("explain format = 'plan_tree' select *, first_value(v) over (partition by p order by o range between 3 preceding and 0 following) as a from test.first_range;").Check(testkit.Rows(
+			"TableReader root  MppVersion: 3, data:ExchangeSender",
+			"└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+			"  └─Window mpp[tiflash]  first_value(test.first_range.v)->Column over(partition by test.first_range.p order by test.first_range.o range between 3 preceding and 0 following), stream_count: 20",
+			"    └─Sort mpp[tiflash]  test.first_range.p, test.first_range.o, stream_count: 20",
+			"      └─ExchangeReceiver mpp[tiflash]  stream_count: 20",
+			"        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range.p, collate: binary], stream_count: 20",
+			"          └─TableFullScan mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
 
-		tk.MustQuery("explain format = 'brief' select *, first_value(v) over (partition by p order by o range between 3 preceding and 2.9E0 following) as a from test.first_range;").Check(testkit.Rows(
-			"TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
-			"└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-			"  └─Window 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#9 over(partition by test.first_range.p order by test.first_range.o range between 3 preceding and 2.9 following), stream_count: 20",
-			"    └─Sort 10000.00 mpp[tiflash]  test.first_range.p, test.first_range.o, stream_count: 20",
-			"      └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 20",
-			"        └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range.p, collate: binary], stream_count: 20",
-			"          └─TableFullScan 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
+		tk.MustQuery("explain format = 'plan_tree' select *, first_value(v) over (partition by p order by o range between 3 preceding and 2.9E0 following) as a from test.first_range;").Check(testkit.Rows(
+			"TableReader root  MppVersion: 3, data:ExchangeSender",
+			"└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+			"  └─Window mpp[tiflash]  first_value(test.first_range.v)->Column over(partition by test.first_range.p order by test.first_range.o range between 3 preceding and 2.9 following), stream_count: 20",
+			"    └─Sort mpp[tiflash]  test.first_range.p, test.first_range.o, stream_count: 20",
+			"      └─ExchangeReceiver mpp[tiflash]  stream_count: 20",
+			"        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range.p, collate: binary], stream_count: 20",
+			"          └─TableFullScan mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
 
-		tk.MustQuery("explain format = 'brief' select *, first_value(v) over (partition by p order by o range between 2.3 preceding and 0 following) as a from test.first_range_d64;").Check(testkit.Rows(
-			"TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
-			"└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-			"  └─Window 10000.00 mpp[tiflash]  first_value(test.first_range_d64.v)->Column#7 over(partition by test.first_range_d64.p order by test.first_range_d64.o range between 2.3 preceding and 0 following), stream_count: 20",
-			"    └─Sort 10000.00 mpp[tiflash]  test.first_range_d64.p, test.first_range_d64.o, stream_count: 20",
-			"      └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 20",
-			"        └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range_d64.p, collate: binary], stream_count: 20",
-			"          └─TableFullScan 10000.00 mpp[tiflash] table:first_range_d64 keep order:false, stats:pseudo"))
+		tk.MustQuery("explain format = 'plan_tree' select *, first_value(v) over (partition by p order by o range between 2.3 preceding and 0 following) as a from test.first_range_d64;").Check(testkit.Rows(
+			"TableReader root  MppVersion: 3, data:ExchangeSender",
+			"└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+			"  └─Window mpp[tiflash]  first_value(test.first_range_d64.v)->Column over(partition by test.first_range_d64.p order by test.first_range_d64.o range between 2.3 preceding and 0 following), stream_count: 20",
+			"    └─Sort mpp[tiflash]  test.first_range_d64.p, test.first_range_d64.o, stream_count: 20",
+			"      └─ExchangeReceiver mpp[tiflash]  stream_count: 20",
+			"        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range_d64.p, collate: binary], stream_count: 20",
+			"          └─TableFullScan mpp[tiflash] table:first_range_d64 keep order:false, stats:pseudo"))
 
-		tk.MustQuery("explain select *, first_value(v) over (partition by p order by o_datetime range between interval 1 day preceding and interval 1 day following) as a from test.first_range;").Check(testkit.Rows(
-			"TableReader_23 10000.00 root  MppVersion: 3, data:ExchangeSender_22",
-			"└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-			"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#9 over(partition by test.first_range.p order by test.first_range.o_datetime range between interval 1 \"DAY\" preceding and interval 1 \"DAY\" following), stream_count: 20",
-			"    └─Sort_13 10000.00 mpp[tiflash]  test.first_range.p, test.first_range.o_datetime, stream_count: 20",
-			"      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  stream_count: 20",
-			"        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range.p, collate: binary], stream_count: 20",
-			"          └─TableFullScan_10 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
+		tk.MustQuery("explain format = 'plan_tree' select *, first_value(v) over (partition by p order by o_datetime range between interval 1 day preceding and interval 1 day following) as a from test.first_range;").Check(testkit.Rows(
+			"TableReader root  MppVersion: 3, data:ExchangeSender",
+			"└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+			"  └─Window mpp[tiflash]  first_value(test.first_range.v)->Column over(partition by test.first_range.p order by test.first_range.o_datetime range between interval 1 \"DAY\" preceding and interval 1 \"DAY\" following), stream_count: 20",
+			"    └─Sort mpp[tiflash]  test.first_range.p, test.first_range.o_datetime, stream_count: 20",
+			"      └─ExchangeReceiver mpp[tiflash]  stream_count: 20",
+			"        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range.p, collate: binary], stream_count: 20",
+			"          └─TableFullScan mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
 
-		tk.MustQuery("explain select *, first_value(v) over (partition by p order by o_time range between interval 1 day preceding and interval 1 day following) as a from test.first_range;").Check(testkit.Rows(
-			"Shuffle_13 10000.00 root  execution info: concurrency:5, data sources:[TableReader_11]",
-			"└─Window_8 10000.00 root  first_value(test.first_range.v)->Column#9 over(partition by test.first_range.p order by test.first_range.o_time range between interval 1 \"DAY\" preceding and interval 1 \"DAY\" following)",
-			"  └─Sort_12 10000.00 root  test.first_range.p, test.first_range.o_time",
-			"    └─ShuffleReceiver_14 10000.00 root  ",
-			"      └─TableReader_11 10000.00 root  MppVersion: 3, data:ExchangeSender_10",
-			"        └─ExchangeSender_10 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-			"          └─TableFullScan_9 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
+		tk.MustQuery("explain format = 'plan_tree' select *, first_value(v) over (partition by p order by o_time range between interval 1 day preceding and interval 1 day following) as a from test.first_range;").Check(testkit.Rows(
+			"Shuffle root  execution info: concurrency:5, data sources:[TableReader]",
+			"└─Window root  first_value(test.first_range.v)->Column over(partition by test.first_range.p order by test.first_range.o_time range between interval 1 \"DAY\" preceding and interval 1 \"DAY\" following)",
+			"  └─Sort root  test.first_range.p, test.first_range.o_time",
+			"    └─ShuffleReceiver root  ",
+			"      └─TableReader root  MppVersion: 3, data:ExchangeSender",
+			"        └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+			"          └─TableFullScan mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
 	})
 }
 
@@ -2071,7 +2461,7 @@ func TestIssue48257(t *testing.T) {
 		tk.MustExec("create table t(a int)")
 		testutil.HandleNextDDLEventWithTxn(h)
 		tk.MustExec("insert into t value(1)")
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		tk.MustExec("analyze table t all columns")
 		tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
@@ -2079,7 +2469,7 @@ func TestIssue48257(t *testing.T) {
 			"└─TableFullScan 1.00 cop[tikv] table:t keep order:false",
 		))
 		tk.MustExec("insert into t value(1)")
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
 			"TableReader 2.00 root  data:TableFullScan",
@@ -2097,7 +2487,7 @@ func TestIssue48257(t *testing.T) {
 		tk.MustExec("create table t1(a int)")
 		testutil.HandleNextDDLEventWithTxn(h)
 		tk.MustExec("insert into t1 value(1)")
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		tk.MustExec("analyze table t1 all columns")
 		tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
@@ -2105,7 +2495,7 @@ func TestIssue48257(t *testing.T) {
 			"└─TableFullScan 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 		))
 		tk.MustExec("insert into t1 value(1)")
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
 			"TableReader 2.00 root  data:TableFullScan",
@@ -2134,12 +2524,12 @@ func TestIssue54213(t *testing.T) {
   c bigint(20) ,
   PRIMARY KEY (object_id),
   KEY ab (a,b))`)
-		tk.MustQuery(`explain format='brief' select count(1) from (select /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) a`).Check(
-			testkit.Rows("StreamAgg 1.00 root  funcs:count(1)->Column#7",
-				"└─Limit 1.00 root  offset:0, count:100",
-				"  └─IndexReader 1.25 root  index:Limit",
-				"    └─Limit 1.25 cop[tikv]  offset:0, count:100",
-				"      └─IndexRangeScan 1.25 cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
+		tk.MustQuery(`explain format='plan_tree' select count(1) from (select /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) a`).Check(
+			testkit.Rows("StreamAgg root  funcs:count(1)->Column",
+				"└─Limit root  offset:0, count:100",
+				"  └─IndexReader root  index:Limit",
+				"    └─Limit cop[tikv]  offset:0, count:100",
+				"      └─IndexRangeScan cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
 	})
 }
 
@@ -2242,14 +2632,14 @@ func TestAggregationInWindowFunctionPushDownToTiFlash(t *testing.T) {
 		rows := [][]any{
 			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
 			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection", "mpp[tiflash]", "Column#11->Column#16, Column#12->Column#17, Column#13->Column#18, Column#14->Column#19, Column#15->Column#20, stream_count: 8"},
-			{"    └─Window", "mpp[tiflash]", "sum(cast(test.t.v, decimal(10,0) BINARY))->Column#11, count(test.t.v)->Column#12, avg(cast(test.t.v, decimal(10,0) BINARY))->Column#13, min(test.t.v)->Column#14, max(test.t.v)->Column#15 over(partition by test.t.p order by test.t.o range between unbounded preceding and current row), stream_count: 8"},
+			{"  └─Projection", "mpp[tiflash]", "Column, Column, Column, Column, Column, stream_count: 8"},
+			{"    └─Window", "mpp[tiflash]", "sum(cast(test.t.v, decimal(10,0) BINARY))->Column, count(test.t.v)->Column, avg(cast(test.t.v, decimal(10,0) BINARY))->Column, min(test.t.v)->Column, max(test.t.v)->Column over(partition by test.t.p order by test.t.o range between unbounded preceding and current row), stream_count: 8"},
 			{"      └─Sort", "mpp[tiflash]", "test.t.p, test.t.o, stream_count: 8"},
 			{"        └─ExchangeReceiver", "mpp[tiflash]", "stream_count: 8"},
 			{"          └─ExchangeSender", "mpp[tiflash]", "ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.p, collate: binary], stream_count: 8"},
 			{"            └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		tk.MustQuery("explain format = 'brief' select sum(v) over w as res1, count(v) over w as res2, avg(v) over w as res3, min(v) over w as res4, max(v) over w as res5 from t window w as (partition by p order by o);").CheckAt([]int{0, 2, 4}, rows)
+		tk.MustQuery("explain format = 'plan_tree' select sum(v) over w as res1, count(v) over w as res2, avg(v) over w as res3, min(v) over w as res4, max(v) over w as res5 from t window w as (partition by p order by o);").CheckAt([]int{0, 1, 3}, rows)
 	})
 }
 
@@ -2301,4 +2691,187 @@ func TestIssue66619(t *testing.T) {
 
 	tk.MustQuery("select a, (select count(1) from t2 where t2.a = t1.a) from t1 order by a").
 		Check(testkit.Rows("1 1", "2 1", "3 0", "4 0"))
+
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0(c0 text(383) not null)")
+	tk.MustExec("insert into t0 values ('')")
+	tk.MustExec("replace into t0 values (' ')")
+
+	tk.MustQuery("select /* issue:66947 direct-having */ hex(t0.c0) from t0 group by t0.c0 having sum(t0.c0) > -1 and char_length(t0.c0)").
+		Check(testkit.Rows("20"))
+	tk.MustQuery("select /* issue:66947 derived-filter */ hex(ref0) from (select t0.c0 as ref0, (sum(t0.c0) > -1 and char_length(t0.c0)) as ref1 from t0 group by t0.c0) as s where ref1").
+		Check(testkit.Rows("20"))
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 decimal not null)")
+	tk.MustExec("insert into t1 values (-1000000000)")
+	tk.MustQuery("select /* issue:67237 not-null */ c1 from t1 where ifnull(c1, '') = c1").
+		Check(testkit.Rows("-1000000000"))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 decimal)")
+	tk.MustExec("insert into t1 values (-1000000000)")
+	tk.MustQuery("select /* issue:67237 nullable */ c1 from t1 where ifnull(c1, '') = c1").
+		Check(testkit.Rows("-1000000000"))
+
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0(c0 float unique, c1 numeric zerofill, c2 text(192))")
+	tk.MustExec("insert into t0(c0, c1, c2) values (1.074197572E9, 0, '⋧h')")
+
+	tk.MustQuery(`select /* issue:66922-direct */ t0.c1, t0.c0, t0.c2
+from t0
+group by t0.c1, t0.c0, t0.c2
+having (
+    (count(t0.c1) != -1)
+        and
+    (
+        (case t0.c1 when false then t0.c0 else true end)
+            like
+        t0.c0
+    )
+)`).Check(testkit.Rows())
+
+	tk.MustQuery(`select /* issue:66922-derived */ ref0, ref1, ref2
+from (
+    select t0.c1 as ref0, t0.c0 as ref1, t0.c2 as ref2,
+           (
+               (count(t0.c1) != -1)
+                   and
+               (
+                   (case t0.c1 when false then t0.c0 else true end)
+                       like
+                   t0.c0
+               )
+           ) as ref3
+    from t0
+    group by t0.c1, t0.c0, t0.c2
+) as s where ref3`).Check(testkit.Rows())
+}
+
+func TestIndexScanSeekCost(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Pruning needs fully loaded index stats; don't let a slow sync load fall back to partial stats.
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000")
+	tk.MustExec("create table t (a int, b int, c int, d int, key idx_abcd(a, b, c, d))")
+	// Each value of `a` has only 25 rows, so most (a, b, c) point ranges are nearly empty and a
+	// seek per range costs more than scanning and filtering every row under `a`.
+	tk.MustExec("set @@cte_max_recursion_depth = 100000")
+	tk.MustExec(`insert into t with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 50000)
+		select n % 2000, n % 7 + 1, n % 11 + 1, n from cte`)
+	// Flush the insert deltas before analyze. Otherwise a late flush raises the modify count
+	// and the table falls back to pseudo stats, which disables pruning.
+	dom := domain.GetDomain(tk.Session())
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t")
+	tk.MustExec("set @@tidb_cost_model_version = 2")
+
+	// The IN-lists cover only part of the values of `b` and `c`, so the residual filters on a
+	// pruned scan must reject rows.
+	const where = "a = 1 and b in (1,2,3,4,5,6) and c in (1,2,3,4,5,6,7,8,9,10)"
+
+	// Without an ordering requirement the seek cost of 60 (a, b, c) ranges outweighs scanning the
+	// extra rows, so `c` is pruned from the ranges and applied as a filter, leaving 6 (a, b) ranges.
+	tk.MustQuery("explain format='brief' select a, b, c, d from t where " + where).Check(testkit.Rows(
+		"IndexReader 278.05 root  index:Selection",
+		"└─Selection 278.05 cop[tikv]  in(test.t.c, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)",
+		"  └─IndexRangeScan 278.05 cop[tikv] table:t, index:idx_abcd(a, b, c, d) range:[1 1,1 1], [1 2,1 2], [1 3,1 3], [1 4,1 4], [1 5,1 5], [1 6,1 6], keep order:false"))
+
+	// With ORDER BY d the full point ranges satisfy the order through a per-range merge sort,
+	// so pruning must not be chosen: it would force a Sort on top of the pruned scan.
+	fullRanges := make([]string, 0, 60)
+	for b := 1; b <= 6; b++ {
+		for c := 1; c <= 10; c++ {
+			fullRanges = append(fullRanges, fmt.Sprintf("[1 %d %d,1 %d %d]", b, c, b, c))
+		}
+	}
+	tk.MustQuery("explain format='brief' select a, b, c, d from t where " + where + " order by d limit 5").Check(testkit.Rows(
+		"Limit 5.00 root  offset:0, count:5",
+		"└─IndexReader 5.00 root  index:Limit",
+		"  └─Limit 5.00 cop[tikv]  offset:0, count:5",
+		"    └─IndexRangeScan 5.00 cop[tikv] table:t, index:idx_abcd(a, b, c, d) range:"+strings.Join(fullRanges, ", ")+", keep order:true"))
+
+	// Compare against a full table scan, which applies every predicate as a filter.
+	tk.MustQuery("select a, b, c, d from t where " + where).Sort().Check(
+		tk.MustQuery("select a, b, c, d from t ignore index(idx_abcd) where " + where).Sort().Rows())
+	// Check the ordered result without sorting it, so a misordered keep-order scan is caught.
+	tk.MustQuery("select a, b, c, d from t where " + where + " order by d limit 5").Check(
+		tk.MustQuery("select a, b, c, d from t ignore index(idx_abcd) where " + where + " order by d limit 5").Rows())
+
+	// Many IN-lists ahead of a selective equality: 12*4*3*9 = 1296 ranges for a lookup that
+	// returns nothing. Dropping columns also drops the equality on `e` from the ranges, but each
+	// shorter prefix scans only a few rows per seek it saves, so pruning is allowed.
+	tk.MustExec("create table t2 (a int, b int, c int, d int, e int, f int, key idx(a, b, c, d, e, f))")
+	tk.MustExec(`insert into t2 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 100000)
+		select n % 1000, n % 5, n % 4, n % 10, n, n from cte`)
+	// The leading column has only 2 values, so a shorter prefix would scan far more rows per saved
+	// seek than the guard allows, and the full ranges must be kept.
+	tk.MustExec("create table t3 (a int, b int, c int, d int, e int, f int, key idx(a, b, c, d, e, f))")
+	tk.MustExec(`insert into t3 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 100000)
+		select n % 2, n % 10, n % 1000, n, n, n from cte`)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table t3")
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+
+	const where2 = "a in (1,2,3,4,5,6,7,8,9,10,11,12) and b in (1,2,3,4) and c in (1,2,3) and d in (1,2,3,4,5,6,7,8,9) and e = -1"
+	tk.MustQuery("explain format='brief' select * from t2 where " + where2).Check(testkit.Rows(
+		"IndexReader 1296.00 root  index:Selection",
+		"└─Selection 1296.00 cop[tikv]  eq(test.t2.e, -1), in(test.t2.b, 1, 2, 3, 4), in(test.t2.c, 1, 2, 3), in(test.t2.d, 1, 2, 3, 4, 5, 6, 7, 8, 9)",
+		"  └─IndexRangeScan 1296.00 cop[tikv] table:t2, index:idx(a, b, c, d, e, f) range:[1,1], [2,2], [3,3], [4,4], [5,5], [6,6], [7,7], [8,8], [9,9], [10,10], [11,11], [12,12], keep order:false"))
+	tk.MustQuery("select * from t2 where " + where2).Check(testkit.Rows())
+
+	const where3 = "a = 1 and b in (1,2,3,4,5,6,7,8,9) and c in (1,3,5,7,9,11,13,15,17,19,21)"
+	t3Ranges := make([]string, 0, 99)
+	for b := 1; b <= 9; b++ {
+		for c := 1; c <= 21; c += 2 {
+			t3Ranges = append(t3Ranges, fmt.Sprintf("[1 %d %d,1 %d %d]", b, c, b, c))
+		}
+	}
+	// Only the operators and ranges are checked: the row estimate for t3 depends on analyze
+	// sampling and varies between runs.
+	tk.MustQuery("explain format='brief' select * from t3 where "+where3).CheckAt([]int{0, 4}, [][]any{
+		{"IndexReader", "index:IndexRangeScan"},
+		{"└─IndexRangeScan", "range:" + strings.Join(t3Ranges, ", ") + ", keep order:false"},
+	})
+	tk.MustQuery("select * from t3 where " + where3).Sort().Check(
+		tk.MustQuery("select * from t3 ignore index(idx) where " + where3).Sort().Rows())
+
+	// For a non-unique index on a clustered composite handle, IdxCols has the handle columns
+	// appended, so a cutoff can extend past the index definition. Row estimation must project
+	// those ranges onto the index columns. The 1200 (a,b,c,d) ranges prune to 6 (a,b) ranges.
+	tk.MustExec("create table t4 (a int, b int, c int, d int, e int, primary key(c, d) clustered, key idx(a, b))")
+	tk.MustExec(`insert into t4 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 20000)
+		select n % 1000, n % 7, n % 13, n, n from cte`)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t4")
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	const where4 = "a = 1 and b in (1,2,3,4,5,6) and c in (1,2,3,4,5,6,7,8,9,10) and d in (1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20)"
+	tk.MustQuery("explain format='brief' select * from t4 use index(idx) where "+where4).CheckAt([]int{0, 4}, [][]any{
+		{"IndexLookUp", ""},
+		{"├─Selection(Build)", "in(test.t4.c, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10), in(test.t4.d, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20)"},
+		{"│ └─IndexRangeScan", "range:[1 1,1 1], [1 2,1 2], [1 3,1 3], [1 4,1 4], [1 5,1 5], [1 6,1 6], keep order:false"},
+		{"└─TableRowIDScan(Probe)", "keep order:false"},
+	})
+	tk.MustQuery("select * from t4 use index(idx) where " + where4).Sort().Check(
+		tk.MustQuery("select * from t4 ignore index(idx) where " + where4).Sort().Rows())
+
+	// An IndexJoin inner scan's seeks are charged once per build row by the join
+	// (indexJoinSeekingCostVer2), so the scan itself must not charge them again.
+	ijRows := tk.MustQuery("explain format='cost_trace' select /*+ inl_join(t3) */ * from t2 join t3 on t2.a = t3.a where t3.b in (1,2,3)").Rows()
+	foundInnerScan := false
+	for _, row := range ijRows {
+		if strings.Contains(row[0].(string), "IndexRangeScan") {
+			foundInnerScan = true
+			require.NotContains(t, row[3].(string), "rangeSeek")
+		}
+	}
+	require.True(t, foundInnerScan)
+	require.Contains(t, tk.MustQuery("explain format='cost_trace' select * from t3 where a = 1 and b in (1,2,3)").Rows()[1][3].(string), "rangeSeek")
+	// Multi-range table scans are charged the same way, so they don't look cheaper than an
+	// equivalent multi-range index scan.
+	tsRows := tk.MustQuery("explain format='cost_trace' select * from t4 where c in (1,2,3) and d > 5").Rows()
+	require.Contains(t, tsRows[len(tsRows)-1][0].(string), "TableRangeScan")
+	require.Contains(t, tsRows[len(tsRows)-1][3].(string), "rangeSeek")
 }

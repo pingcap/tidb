@@ -9,6 +9,9 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/encrypt"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 const (
@@ -57,6 +61,185 @@ const (
 	// MetaV2 represents the new version of backupmeta.
 	MetaV2
 )
+
+type protobufFieldInfo struct {
+	isMessage  bool
+	messageTyp reflect.Type
+}
+
+var (
+	protoMsgIfaceType = reflect.TypeOf((*proto.Message)(nil)).Elem()
+	protoFieldCache   sync.Map // map[reflect.Type]map[protowire.Number]protobufFieldInfo
+)
+
+func checkBackupMetaUnknownFieldsFromBytes(
+	backupMetaBytes []byte,
+	backupMeta *backuppb.BackupMeta,
+) error {
+	if len(backupMetaBytes) == 0 {
+		return errors.Annotate(
+			berrors.ErrInvalidArgument,
+			"backupmeta bytes are required for compatibility check",
+		)
+	}
+	hasUnknownFields, err := detectUnknownProtobufFields(backupMetaBytes, reflect.TypeOf(backuppb.BackupMeta{}))
+	if err != nil {
+		return errors.Annotate(err, "failed to detect unknown fields in backupmeta")
+	}
+	if !hasUnknownFields {
+		return nil
+	}
+	return errors.Annotatef(
+		berrors.ErrVersionMismatch,
+		"backupmeta contains unknown protobuf fields. restoring with an older BR may silently ignore "+
+			"newer backup metadata. backup cluster version: %s, backup BR version: %s. use "+
+			"--check-requirements=false to skip this check",
+		backupMeta.GetClusterVersion(),
+		backupMeta.GetBrVersion(),
+	)
+}
+
+func detectUnknownProtobufFields(data []byte, messageTyp reflect.Type) (bool, error) {
+	fields := getProtobufFieldInfo(messageTyp)
+	for len(data) > 0 {
+		fieldNumber, wireType, n := protowire.ConsumeTag(data)
+		if n < 0 {
+			return false, errors.Trace(protowire.ParseError(n))
+		}
+		data = data[n:]
+
+		fieldInfo, ok := fields[fieldNumber]
+		payload, consumed, err := consumeProtobufFieldValue(data, fieldNumber, wireType)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return true, nil
+		}
+		if fieldInfo.isMessage && wireType == protowire.BytesType {
+			hasUnknown, err := detectUnknownProtobufFields(payload, fieldInfo.messageTyp)
+			if err != nil {
+				return false, err
+			}
+			if hasUnknown {
+				return true, nil
+			}
+		}
+		data = data[consumed:]
+	}
+	return false, nil
+}
+
+func consumeProtobufFieldValue(
+	data []byte,
+	fieldNumber protowire.Number,
+	wireType protowire.Type,
+) (payload []byte, consumed int, err error) {
+	switch wireType {
+	case protowire.VarintType:
+		_, consumed = protowire.ConsumeVarint(data)
+	case protowire.Fixed32Type:
+		_, consumed = protowire.ConsumeFixed32(data)
+	case protowire.Fixed64Type:
+		_, consumed = protowire.ConsumeFixed64(data)
+	case protowire.BytesType:
+		payload, consumed = protowire.ConsumeBytes(data)
+	case protowire.StartGroupType:
+		_, consumed = protowire.ConsumeGroup(fieldNumber, data)
+	case protowire.EndGroupType:
+		return nil, 0, errors.New("unexpected end-group wire type in backupmeta")
+	default:
+		return nil, 0, errors.Errorf("unsupported protobuf wire type %d in backupmeta", wireType)
+	}
+	if consumed < 0 {
+		return nil, 0, errors.Trace(protowire.ParseError(consumed))
+	}
+	return payload, consumed, nil
+}
+
+func getProtobufFieldInfo(messageTyp reflect.Type) map[protowire.Number]protobufFieldInfo {
+	if messageTyp.Kind() == reflect.Ptr {
+		messageTyp = messageTyp.Elem()
+	}
+	if cached, ok := protoFieldCache.Load(messageTyp); ok {
+		return cached.(map[protowire.Number]protobufFieldInfo)
+	}
+
+	result := make(map[protowire.Number]protobufFieldInfo)
+	for i := range messageTyp.NumField() {
+		field := messageTyp.Field(i)
+		protobufTag := field.Tag.Get("protobuf")
+		fieldNumber, ok := parseProtobufFieldNumber(protobufTag)
+		if !ok {
+			continue
+		}
+		nestedMessageType, isMessage := getNestedMessageType(field.Type)
+		result[fieldNumber] = protobufFieldInfo{
+			isMessage:  isMessage,
+			messageTyp: nestedMessageType,
+		}
+	}
+	protoFieldCache.Store(messageTyp, result)
+	return result
+}
+
+func parseProtobufFieldNumber(protobufTag string) (protowire.Number, bool) {
+	if protobufTag == "" {
+		return 0, false
+	}
+	parts := strings.Split(protobufTag, ",")
+	if len(parts) < 2 {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(parts[1], 10, 32)
+	if err != nil {
+		return 0, false
+	}
+	return protowire.Number(n), true
+}
+
+func getNestedMessageType(fieldTyp reflect.Type) (reflect.Type, bool) {
+	switch fieldTyp.Kind() {
+	case reflect.Ptr:
+		if fieldTyp.Implements(protoMsgIfaceType) {
+			return fieldTyp.Elem(), true
+		}
+	case reflect.Slice:
+		if fieldTyp.Elem().Kind() == reflect.Uint8 {
+			return nil, false
+		}
+		elemTyp := fieldTyp.Elem()
+		if elemTyp.Kind() == reflect.Ptr && elemTyp.Implements(protoMsgIfaceType) {
+			return elemTyp.Elem(), true
+		}
+		if elemTyp.Kind() == reflect.Struct && reflect.PointerTo(elemTyp).Implements(protoMsgIfaceType) {
+			return elemTyp, true
+		}
+	}
+	return nil, false
+}
+
+// CheckBackupMetaCompatibilityFromBytes blocks restore when backup metadata
+// requires a newer metadata schema reader or contains protobuf fields the
+// current BR binary does not recognize.
+func CheckBackupMetaCompatibilityFromBytes(
+	backupMetaBytes []byte,
+	backupMeta *backuppb.BackupMeta,
+) error {
+	if backupMeta.GetBackupSchemaVersion() > backuppb.BackupSchemaVersion {
+		return errors.Annotatef(
+			berrors.ErrVersionMismatch,
+			"backupmeta requires schema version %d, current BR supports up to %d. restoring with an older BR "+
+				"may silently ignore newer backup metadata semantics. backup cluster version: %s, backup BR "+
+				"version: %s. use --check-requirements=false to skip this check",
+			backupMeta.GetBackupSchemaVersion(),
+			backuppb.BackupSchemaVersion,
+			backupMeta.GetClusterVersion(),
+			backupMeta.GetBrVersion(),
+		)
+	}
+	return checkBackupMetaUnknownFieldsFromBytes(backupMetaBytes, backupMeta)
+}
 
 // Encrypt encrypts the content according to CipherInfo.
 func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv []byte, err error) {
@@ -212,7 +395,10 @@ func (reader *MetaReader) readSchemas(ctx context.Context, output func(*backuppb
 	return walkLeafMetaFile(ctx, reader.storage, reader.backupMeta.SchemaIndex, reader.cipher, outputFn)
 }
 
-func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*backuppb.File)) error {
+func (reader *MetaReader) walkDataFiles(
+	ctx context.Context,
+	output func(*backuppb.File),
+) error {
 	// Read backupmeta v1 data files.
 	for _, f := range reader.backupMeta.Files {
 		output(f)
@@ -345,6 +531,12 @@ func (reader *MetaReader) GetBasic() backuppb.BackupMeta {
 	return *reader.backupMeta
 }
 
+// ReadDataFiles reads the physical data files from the backupmeta.
+// This function is compatible with the old backupmeta.
+func (reader *MetaReader) ReadDataFiles(ctx context.Context, output func(*backuppb.File)) error {
+	return reader.walkDataFiles(ctx, output)
+}
+
 // ReadSchemasFiles reads the schema and datafiles from the backupmeta.
 // This function is compatible with the old backupmeta.
 func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *Table, opts ...ReadSchemaOption) error {
@@ -417,7 +609,7 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 		fileMap = make(map[int64][]*backuppb.File)
 		go func() {
 			defer close(fileCh)
-			err := reader.readDataFiles(cctx, func(file *backuppb.File) {
+			err := reader.walkDataFiles(cctx, func(file *backuppb.File) {
 				select {
 				case <-cctx.Done():
 				case fileCh <- file:
@@ -705,7 +897,7 @@ func NewMetaWriter(
 		useV2Meta:         useV2Meta,
 		// keep the compatibility for old backupmeta.Ddls
 		// old version: Ddls, _ := json.Marshal(make([]*model.Job, 0))
-		backupMeta:     &backuppb.BackupMeta{Ddls: []byte("[]")},
+		backupMeta:     &backuppb.BackupMeta{Ddls: []byte("[]"), BackupSchemaVersion: backuppb.BackupSchemaVersion},
 		metafileSizes:  make(map[string]int),
 		metafiles:      NewSizedMetaFile(metafileSizeLimit),
 		metafileSeqNum: make(map[string]int),
@@ -814,12 +1006,13 @@ func (writer *MetaWriter) FinishWriteMetas(ctx context.Context, op AppendOp) err
 
 // FlushBackupMeta flush the `backupMeta` to `Storage`
 func (writer *MetaWriter) FlushBackupMeta(ctx context.Context) error {
-	// Set schema version
+	// Set backupmeta layout version.
 	if writer.useV2Meta {
 		writer.backupMeta.Version = MetaV2
 	} else {
 		writer.backupMeta.Version = MetaV1
 	}
+	writer.backupMeta.BackupSchemaVersion = max(writer.backupMeta.BackupSchemaVersion, backuppb.BackupSchemaVersion)
 
 	// update the total size of backup files (include data files and meta files)
 	writer.backupMeta.BackupSize = writer.MetaFilesSize() + writer.ArchiveSize() + uint64(writer.backupMeta.Size())

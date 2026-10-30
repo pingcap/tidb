@@ -374,13 +374,6 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		for _, task := range x.TargetTasks {
 			str += fmt.Sprintf("%d, ", task.ID)
 		}
-		for _, tasks := range x.TargetCTEReaderTasks {
-			str += "("
-			for _, task := range tasks {
-				str += fmt.Sprintf("%d, ", task.ID)
-			}
-			str += ")"
-		}
 		str += ")"
 	case *physicalop.PhysicalCTE:
 		str = "CTEReader("

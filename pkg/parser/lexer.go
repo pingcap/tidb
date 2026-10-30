@@ -23,9 +23,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	tidbfeature "github.com/pingcap/tidb/pkg/parser/tidb"
+	"github.com/pingcap/tidb/pkg/parser/util"
 )
 
 var _ = yyLexer(&Scanner{})
+
+// maxParenthesesDepth bounds user-controlled nesting before it can build an
+// AST that is too deep for recursive visitors.
+const maxParenthesesDepth = 10000
 
 // Pos represents the position of a token.
 type Pos struct {
@@ -83,6 +88,8 @@ type Scanner struct {
 
 	// keepHint, if true, Scanner will keep hint when normalizing .
 	keepHint bool
+
+	parenDepth int
 }
 
 // Errors returns the errors and warns during a scan.
@@ -102,6 +109,7 @@ func (s *Scanner) reset(sql string) {
 	s.inBangComment = false
 	s.lastKeyword = 0
 	s.identifierDot = false
+	s.parenDepth = 0
 }
 
 func (s *Scanner) stmtText() string {
@@ -226,9 +234,14 @@ func (s *Scanner) getNextTwoTokens() (tok1 int, tok2 int) {
 // 0 and invalid are special token id this function would return:
 // return 0 tells parser that scanner meets EOF,
 // return invalid tells parser that scanner meets illegal character.
-func (s *Scanner) Lex(v *yySymType) int {
-	tok, pos, lit := s.scan()
+func (s *Scanner) Lex(v *yySymType) (tok int) {
+	var pos Pos
+	var lit string
+	tok, pos, lit = s.scan()
 	s.lastScanOffset = pos.Offset
+	if !s.updateParenthesesDepth(tok) {
+		return invalid
+	}
 	s.lastKeyword3 = s.lastKeyword2
 	s.lastKeyword2 = s.lastKeyword
 	s.lastKeyword = 0
@@ -243,6 +256,23 @@ func (s *Scanner) Lex(v *yySymType) int {
 			s.lastKeyword = tok1
 		}
 	}
+
+	// `FULL OUTER JOIN` needs special handling because `FULL` is an unreserved keyword,
+	// and it can also be used as a table alias / identifier (e.g. `t AS full` or `FROM full`).
+	// If we rely on grammar only, `t1 full outer join t2` would be reduced as `t1 AS full`
+	// first, and then fail to parse at `OUTER`. To avoid the ambiguity, the lexer returns
+	// a dedicated token `fullJoinType` when `FULL` is followed by `OUTER JOIN`.
+	//
+	// Note: we intentionally do NOT treat `FULL JOIN` as a shorthand for `FULL OUTER JOIN`,
+	// so `t1 full join t2` will keep the MySQL-compatible meaning: `t1 AS full JOIN t2`.
+	if tok == full {
+		tok1, tok2 := s.getNextTwoTokens()
+		if tok1 == outer && tok2 == join {
+			tok = fullJoinType
+			s.lastKeyword = fullJoinType
+		}
+	}
+
 	if s.sqlMode.HasANSIQuotesMode() &&
 		tok == stringLit &&
 		s.r.s[v.offset] == '"' {
@@ -327,6 +357,19 @@ func (s *Scanner) Lex(v *yySymType) int {
 	}
 
 	return tok
+}
+
+func (s *Scanner) updateParenthesesDepth(tok int) bool {
+	if tok == int('(') {
+		s.parenDepth++
+		if s.parenDepth > maxParenthesesDepth {
+			s.AppendError(newParserDepthLimitError("parentheses nesting depth exceeds maximum", maxParenthesesDepth))
+			return false
+		}
+	} else if tok == int(')') && s.parenDepth > 0 {
+		s.parenDepth--
+	}
+	return true
 }
 
 // LexLiteral returns the value of the converted literal
@@ -788,32 +831,12 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 
 // handleEscape handles the case in scanString when previous char is '\'.
 func (*Scanner) handleEscape(b byte, buf *bytes.Buffer) {
-	var ch0 byte
 	/*
 		\" \' \\ \n \0 \b \Z \r \t ==> escape to one char
 		\% \_ ==> preserve both char
 		other ==> remove \
 	*/
-	switch b {
-	case 'n':
-		ch0 = '\n'
-	case '0':
-		ch0 = 0
-	case 'b':
-		ch0 = 8
-	case 'Z':
-		ch0 = 26
-	case 'r':
-		ch0 = '\r'
-	case 't':
-		ch0 = '\t'
-	case '%', '_':
-		buf.WriteByte('\\')
-		ch0 = b
-	default:
-		ch0 = b
-	}
-	buf.WriteByte(ch0)
+	buf.Write(util.UnescapeChar(b))
 }
 
 func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
@@ -1019,8 +1042,38 @@ func (s *Scanner) lastErrorAsWarn() {
 	if len(s.errs) == 0 {
 		return
 	}
+	if isParserDepthLimitError(s.errs[len(s.errs)-1]) {
+		return
+	}
 	s.warns = append(s.warns, s.errs[len(s.errs)-1])
 	s.errs = s.errs[:len(s.errs)-1]
+}
+
+type parserDepthLimitError struct {
+	err error
+}
+
+func newParserDepthLimitError(message string, maxDepth int) error {
+	return &parserDepthLimitError{
+		err: ErrParse.GenWithStackByArgs(message, strconv.Itoa(maxDepth)),
+	}
+}
+
+func (e *parserDepthLimitError) Error() string {
+	return e.err.Error()
+}
+
+func (e *parserDepthLimitError) Cause() error {
+	return e.err
+}
+
+func (e *parserDepthLimitError) Unwrap() error {
+	return e.err
+}
+
+func isParserDepthLimitError(err error) bool {
+	_, ok := err.(*parserDepthLimitError)
+	return ok
 }
 
 type reader struct {
