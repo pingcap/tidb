@@ -19,9 +19,7 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_expr::{constant::Constant, expression::Expression};
 use tidb_planner_property::PhysicalProperty;
 use tidb_planner_core_base::PlanIdAllocator;
-use tidb_planner::{
-    physical::{exhaust_physical_plans_4_logical_selection, PhysicalPlan},
-};
+use tidb_planner_core_operator_physicalop::{exhaust_physical_plans_4_logical_selection, PhysicalPlan};
 use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalSelection};
 
 #[test]

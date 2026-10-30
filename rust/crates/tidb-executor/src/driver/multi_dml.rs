@@ -159,13 +159,13 @@ pub(crate) fn run_multi_update(
     update: &tidb_ast::UpdateStmt,
     catalog: &mut Catalog,
     ctx: &crate::StmtContext,
-    physical_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
     layout: (
-        &[tidb_planner::physical::UpdateTablePos],
-        &[tidb_planner::physical::UpdateAssign],
+        &[tidb_planner_core_operator_physicalop::UpdateTablePos],
+        &[tidb_planner_core_operator_physicalop::UpdateAssign],
     ),
     expressions: &[Option<Expression>],
-    fk_triggers: &[tidb_planner::physical::FkTriggerNode],
+    fk_triggers: &[tidb_planner_core_operator_physicalop::FkTriggerNode],
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
     let (tables, assigns) = layout;
@@ -194,7 +194,7 @@ pub(crate) fn run_multi_update(
                 "a multi-table UPDATE target is not a base table",
             ));
         };
-        let heap = matches!(table.handle, tidb_planner::physical::DeleteHandle::Extra(_));
+        let heap = matches!(table.handle, tidb_planner_core_operator_physicalop::DeleteHandle::Extra(_));
         updated.push(UpdatedTable {
             columns: entry.column_list(),
             default_meta: super::dml::column_metadata(entry),
@@ -238,9 +238,9 @@ pub(crate) fn run_multi_update(
                 .ok_or_else(|| DriverError::unsupported("a multi-table read column has no type"))
         })
         .collect::<Result<_, _>>()?;
-    let delete_layout: Vec<tidb_planner::physical::DeleteTablePos> = tables
+    let delete_layout: Vec<tidb_planner_core_operator_physicalop::DeleteTablePos> = tables
         .iter()
-        .map(|table| tidb_planner::physical::DeleteTablePos {
+        .map(|table| tidb_planner_core_operator_physicalop::DeleteTablePos {
             table_id: table.table_id,
             database: table.database.clone(),
             table: table.table.clone(),
@@ -436,8 +436,8 @@ pub(crate) fn run_multi_update(
 /// of them (MySQL's `ER_MULTI_UPDATE_KEY_CONFLICT`). Aliases are visited in
 /// join order, and the error names the first alias and the conflicting one.
 fn check_update_list(
-    tables: &[tidb_planner::physical::UpdateTablePos],
-    assigns: &[tidb_planner::physical::UpdateAssign],
+    tables: &[tidb_planner_core_operator_physicalop::UpdateTablePos],
+    assigns: &[tidb_planner_core_operator_physicalop::UpdateAssign],
     updated: &[UpdatedTable],
     catalog: &Catalog,
 ) -> Result<(), DriverError> {
@@ -511,9 +511,9 @@ pub(crate) fn run_multi_delete(
     delete: &tidb_ast::DeleteStmt,
     catalog: &mut Catalog,
     ctx: &crate::StmtContext,
-    physical_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
-    tables: &[tidb_planner::physical::DeleteTablePos],
-    fk_triggers: &[tidb_planner::physical::FkTriggerNode],
+    physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
+    tables: &[tidb_planner_core_operator_physicalop::DeleteTablePos],
+    fk_triggers: &[tidb_planner_core_operator_physicalop::FkTriggerNode],
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
     if tables.is_empty() {
@@ -577,15 +577,15 @@ struct DeleteSourceRow {
 /// Runs the planned read under a multi-table DELETE and splits each row by
 /// the table layouts the planner decided (`logical_plan_builder.go:6200`).
 fn delete_source_rows(
-    tables: &[tidb_planner::physical::DeleteTablePos],
-    plan: &mut tidb_planner::physical::PhysicalPlan,
+    tables: &[tidb_planner_core_operator_physicalop::DeleteTablePos],
+    plan: &mut tidb_planner_core_operator_physicalop::PhysicalPlan,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
     memory_label: i64,
     keep_raw: bool,
 ) -> Result<Vec<DeleteSourceRow>, DriverError> {
-    use tidb_planner::physical::DeleteHandle;
+    use tidb_planner_core_operator_physicalop::DeleteHandle;
     let kv_tables = tables
         .iter()
         .map(|table| match catalog.get_in(&table.database, &table.table) {
@@ -688,7 +688,7 @@ pub(crate) fn multi_dml_physical_plan(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
+) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
     use super::fk_trigger_plan::FkPlanSpec;
     let mut specs: BTreeMap<(i64, String, String), FkPlanSpec> = BTreeMap::new();
     let mut add_target = |database: String, table: String, column: Option<String>| {
@@ -808,7 +808,7 @@ pub(crate) fn multi_dml_explain_plan(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<Option<tidb_planner::physical::PhysicalPlan>, DriverError> {
+) -> Result<Option<tidb_planner_core_operator_physicalop::PhysicalPlan>, DriverError> {
     match dml {
         MultiDmlRef::Update(update) => {
             let tidb_ast::UpdateKind::Multi { .. } = &update.kind else {

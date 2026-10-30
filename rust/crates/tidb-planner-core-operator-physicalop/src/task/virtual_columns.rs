@@ -9,7 +9,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::physical::PhysicalPlan;
+use crate::PhysicalPlan;
 use tidb_planner_core_base::PlanError;
 
 /// Go ExpandVirtualColumn at the cop-to-root boundary. Pass-through nodes
@@ -107,7 +107,7 @@ mod tests {
         intermediate.virtual_expr = Some(Box::new(Expression::Column(base)));
         let mut generated = column(3);
         generated.virtual_expr = Some(Box::new(Expression::Column(intermediate.clone())));
-        let mut scan = crate::physical::PhysicalTableScan::default();
+        let mut scan = crate::PhysicalTableScan::default();
         scan.base.base.set_schema(Some(Schema::new(vec![
             intermediate,
             generated,

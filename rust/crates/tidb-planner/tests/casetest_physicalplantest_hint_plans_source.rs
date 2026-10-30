@@ -16,7 +16,7 @@
 //! Removed empty entries and their original contracts are indexed in
 //! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
-use tidb_planner::physical::{PhysicalApply, PhysicalHashJoin, PhysicalPlan};
+use tidb_planner_core_operator_physicalop::{PhysicalApply, PhysicalHashJoin, PhysicalPlan};
 
 /// GO PORT of `physical_plan_test.go:1537 TestPhysicalApplyIsNotPhysicalJoin`.
 ///

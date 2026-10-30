@@ -1146,7 +1146,7 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
         let (columns, rows) = self.with_catalog_mut(|catalog| {
             crate::explain_connection_plan(
                 &plan
-                    .get::<tidb_planner::physical::PhysicalPlan>()
+                    .get::<tidb_planner_core_operator_physicalop::PhysicalPlan>()
                     .expect("a stored plan is the planner's"),
                 catalog,
                 &ctx,

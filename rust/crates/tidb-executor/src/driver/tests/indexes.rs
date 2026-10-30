@@ -202,9 +202,9 @@ fn a_unique_index_entry_points_at_its_row() {
 
 #[test]
 fn index_lookup_pushdown_hint_reaches_the_shared_physical_reader() {
-    use tidb_planner::physical::PhysicalPlan;
+    use tidb_planner_core_operator_physicalop::PhysicalPlan;
 
-    fn lookup(plan: &PhysicalPlan) -> Option<&tidb_planner::physical::PhysicalIndexLookUpReader> {
+    fn lookup(plan: &PhysicalPlan) -> Option<&tidb_planner_core_operator_physicalop::PhysicalIndexLookUpReader> {
         match plan {
             PhysicalPlan::IndexLookUpReader(reader) => Some(reader),
             _ => plan.children().iter().find_map(lookup),

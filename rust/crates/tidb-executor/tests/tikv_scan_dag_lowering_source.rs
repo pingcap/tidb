@@ -28,8 +28,8 @@ use tidb_planner_cardinality::{
 use tidb_planner::{
     logical_data_source::LogicalDataSource,
     logical_data_source_task::IndexTaskProperty,
-    physical::{PhysicalIndexScan, PhysicalTableScan},
 };
+use tidb_planner_core_operator_physicalop::{PhysicalIndexScan, PhysicalTableScan};
 use tidb_planner_core_operator_logicalop::data_source_paths::{DataSourceAccessPath, IndexAccessPath, PointGetAdmission};
 use tidb_planner_core_operator_logicalop::tikv_scan_spec::{
         check_cover_index, IndexPushdownMetadataError, ResolvedIndexDescriptor, ScanColumnInfo,

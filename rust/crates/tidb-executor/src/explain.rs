@@ -30,7 +30,7 @@ use tidb_planner::explain::{
     Explain as PlannerExplain, ExplainContext as PlannerExplainContext,
     ExplainFormat as PlannerExplainFormat, ExplainOperator, ExplainTask,
 };
-use tidb_planner::physical::{PhysicalPlan, RedactMode};
+use tidb_planner_core_operator_physicalop::{PhysicalPlan, RedactMode};
 use tidb_proto::tipb::{ExplainData, ExplainOperator as PbExplainOperator, OperatorLabel};
 
 use tidb_planner::find_best_task::coster::Ver2Coster;
@@ -90,7 +90,7 @@ fn expression_string_text(
 /// Go appends `stats:pseudo` only when a scan's `StatsInfo.StatsVersion` is
 /// `statistics.PseudoVersion` (and no statement-specific `UsedStatsInfo`
 /// replaces it).
-fn scan_uses_pseudo_statistics(base: &tidb_planner::physical::BasePhysicalPlan) -> bool {
+fn scan_uses_pseudo_statistics(base: &tidb_planner_core_operator_physicalop::BasePhysicalPlan) -> bool {
     base.base
         .stats_info()
         .is_none_or(|stats| stats.stats_version() == tidb_stats::PSEUDO_VERSION)
@@ -102,7 +102,7 @@ fn scan_uses_pseudo_statistics(base: &tidb_planner::physical::BasePhysicalPlan) 
 fn used_stats_suffix_for_scan(
     context: &crate::StmtContext,
     physical_table_id: i64,
-    base: &tidb_planner::physical::BasePhysicalPlan,
+    base: &tidb_planner_core_operator_physicalop::BasePhysicalPlan,
     catalog: &Catalog,
     selected_index_id: Option<i64>,
 ) -> Option<String> {
@@ -224,7 +224,7 @@ fn by_items_text(
 /// Go `PhysicalTopN.ExplainInfo` (`physical_topn.go:134`): the partition
 /// columns, `order by` only after a partition, the by-items, then the
 /// partial-order prefix column a prefix index supplies.
-fn topn_info(eval_ctx: &dyn tidb_exprctx::Columns, topn: &tidb_planner::physical::PhysicalTopN) -> String {
+fn topn_info(eval_ctx: &dyn tidb_exprctx::Columns, topn: &tidb_planner_core_operator_physicalop::PhysicalTopN) -> String {
     let column_text = |column: &tidb_expr::column::Column| {
         expression_text(eval_ctx, &tidb_expr::expression::Expression::Column(column.clone()))
     };
@@ -522,7 +522,7 @@ fn agg_func_text(
 /// `over(partition by ... order by ... <frame>)`.
 fn window_info(
     eval_ctx: &dyn tidb_exprctx::Columns,
-    window: &tidb_planner::physical::PhysicalWindow,
+    window: &tidb_planner_core_operator_physicalop::PhysicalWindow,
 ) -> String {
     use tidb_expr::expression::Expression;
     let schema = window.base.base.schema();
@@ -1034,9 +1034,9 @@ fn physical_operator_name(
         PhysicalPlan::HashJoin(_) => "HashJoin".to_owned(),
         PhysicalPlan::MergeJoin(_) => "MergeJoin".to_owned(),
         PhysicalPlan::IndexJoin(join) => match join.kind {
-            tidb_planner::physical::IndexJoinKind::IndexJoin => "IndexJoin",
-            tidb_planner::physical::IndexJoinKind::IndexHashJoin => "IndexHashJoin",
-            tidb_planner::physical::IndexJoinKind::IndexMergeJoin => "IndexMergeJoin",
+            tidb_planner_core_operator_physicalop::IndexJoinKind::IndexJoin => "IndexJoin",
+            tidb_planner_core_operator_physicalop::IndexJoinKind::IndexHashJoin => "IndexHashJoin",
+            tidb_planner_core_operator_physicalop::IndexJoinKind::IndexMergeJoin => "IndexMergeJoin",
         }
         .to_owned(),
         _ => plan.tp().to_owned(),
@@ -1340,7 +1340,7 @@ fn physical_operator_info(
                 ));
             }
             if !join.outer_hash_keys.is_empty()
-                && join.kind != tidb_planner::physical::IndexJoinKind::IndexMergeJoin
+                && join.kind != tidb_planner_core_operator_physicalop::IndexJoinKind::IndexMergeJoin
             {
                 let mut equal = join
                     .outer_hash_keys
@@ -1466,14 +1466,14 @@ fn physical_operator_info(
         PhysicalPlan::CTETable(table) => table.explain_info(),
         PhysicalPlan::Lock(lock) => lock.explain_info(),
         PhysicalPlan::Sequence(_) => {
-            tidb_planner::physical::PhysicalSequence::explain_info().to_owned()
+            tidb_planner_core_operator_physicalop::PhysicalSequence::explain_info().to_owned()
         }
         // Go `PhysicalTableReader.ExplainInfo`: the table plan's ExplainID,
         // which names a scan with runtime or correlated ranges
         // `TableRangeScan` exactly as the scan's own row does.
         PhysicalPlan::TableReader(reader) => match reader.table_plan.as_deref() {
             Some(scan @ PhysicalPlan::TableScan(_))
-                if reader.read_req_type != tidb_planner::physical_table_reader::ReadReqType::Mpp =>
+                if reader.read_req_type != tidb_planner_core_operator_physicalop::physical_table_reader::ReadReqType::Mpp =>
             {
                 let name = physical_operator_name(scan, index_join_context);
                 if ignore_explain_id_suffix {
@@ -1750,13 +1750,13 @@ fn physical_explain_operator(
                 // the fragment `mpp[tiflash]`; everything else so far is a
                 // plain cop request.
                 let task = match reader.read_req_type {
-                    tidb_planner::physical_table_reader::ReadReqType::Mpp => ExplainTask::Cop {
+                    tidb_planner_core_operator_physicalop::physical_table_reader::ReadReqType::Mpp => ExplainTask::Cop {
                         request: "mpp".to_owned(),
                         store: "tiflash".to_owned(),
                     },
-                    tidb_planner::physical_table_reader::ReadReqType::BatchCop
-                    | tidb_planner::physical_table_reader::ReadReqType::Cop
-                    | tidb_planner::physical_table_reader::ReadReqType::Unknown(_) => {
+                    tidb_planner_core_operator_physicalop::physical_table_reader::ReadReqType::BatchCop
+                    | tidb_planner_core_operator_physicalop::physical_table_reader::ReadReqType::Cop
+                    | tidb_planner_core_operator_physicalop::physical_table_reader::ReadReqType::Unknown(_) => {
                         ExplainTask::Cop {
                             request: "cop".to_owned(),
                             store: match reader.store_type {
@@ -2491,7 +2491,7 @@ fn binary_plan_from_roots(
     tidb_plancodec::compress(&data.encode_to_vec())
 }
 
-fn first_table_scan(plan: &PhysicalPlan) -> Option<&tidb_planner::physical::PhysicalTableScan> {
+fn first_table_scan(plan: &PhysicalPlan) -> Option<&tidb_planner_core_operator_physicalop::PhysicalTableScan> {
     match plan {
         PhysicalPlan::ShuffleReceiver(receiver) => first_table_scan(&receiver.data_source),
         PhysicalPlan::TableScan(scan) => Some(scan),
@@ -2509,7 +2509,7 @@ fn first_table_scan(plan: &PhysicalPlan) -> Option<&tidb_planner::physical::Phys
     }
 }
 
-fn first_index_scan(plan: &PhysicalPlan) -> Option<&tidb_planner::physical::PhysicalIndexScan> {
+fn first_index_scan(plan: &PhysicalPlan) -> Option<&tidb_planner_core_operator_physicalop::PhysicalIndexScan> {
     match plan {
         PhysicalPlan::ShuffleReceiver(receiver) => first_index_scan(&receiver.data_source),
         PhysicalPlan::IndexScan(scan) => Some(scan),
@@ -2535,7 +2535,7 @@ fn logical_table_id(catalog: &Catalog, physical_id: i64) -> i64 {
 
 fn index_process_name(
     catalog: &Catalog,
-    scan: &tidb_planner::physical::PhysicalIndexScan,
+    scan: &tidb_planner_core_operator_physicalop::PhysicalIndexScan,
 ) -> String {
     format!(
         "{}:{}",
@@ -2739,7 +2739,7 @@ fn reader_store_code(store: tidb_kv::store_type::StoreType) -> u8 {
 /// The context Go's index join hands the probe side of its inner child (see
 /// `physical_explain_operator`'s `_` arm): the join's own keys and ranges.
 fn index_join_child_context(
-    join: &tidb_planner::physical::PhysicalIndexJoin,
+    join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
 ) -> Option<IndexJoinExplainContext<'_>> {
     join.inner_access_table_id
         .map(|table_id| IndexJoinExplainContext {
@@ -2788,7 +2788,7 @@ fn normalized_left_side(
 /// Go `PhysicalHashJoin.explainInfo(true)` (`physical_hash_join.go:221`).
 fn hash_join_normalized_info(
     statement_context: &crate::StmtContext,
-    join: &tidb_planner::physical::PhysicalHashJoin,
+    join: &tidb_planner_core_operator_physicalop::PhysicalHashJoin,
 ) -> String {
     let _ = statement_context;
     let mut text = String::new();
@@ -2838,7 +2838,7 @@ fn hash_join_normalized_info(
 /// Go `PhysicalMergeJoin.explainInfo(true)` (`physical_merge_join.go:292`).
 fn merge_join_normalized_info(
     eval_ctx: &dyn tidb_exprctx::Columns,
-    join: &tidb_planner::physical::PhysicalMergeJoin,
+    join: &tidb_planner_core_operator_physicalop::PhysicalMergeJoin,
 ) -> String {
     let mut text = join_type_text(join.join_type).to_owned();
     if let Some(side) = normalized_left_side(join.join_type, join.base.children().first()) {
@@ -2876,7 +2876,7 @@ fn merge_join_normalized_info(
 /// (`physical_index_join.go:147`).
 fn index_join_normalized_info(
     eval_ctx: &dyn tidb_exprctx::Columns,
-    join: &tidb_planner::physical::PhysicalIndexJoin,
+    join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
 ) -> String {
     let mut parts = vec![join_type_text(join.join_type).to_owned()];
     if let Some(inner) = join.base.children().get(join.inner_child_idx) {
@@ -2898,7 +2898,7 @@ fn index_join_normalized_info(
         ));
     }
     if !join.outer_hash_keys.is_empty()
-        && join.kind != tidb_planner::physical::IndexJoinKind::IndexMergeJoin
+        && join.kind != tidb_planner_core_operator_physicalop::IndexJoinKind::IndexMergeJoin
     {
         let mut equal = join
             .outer_hash_keys
@@ -2966,7 +2966,7 @@ fn aggregate_normalized_info(
 }
 
 /// Go `PhysicalTopN.ExplainNormalizedInfo` (`physical_topn.go:173`).
-fn topn_normalized_info(topn: &tidb_planner::physical::PhysicalTopN) -> String {
+fn topn_normalized_info(topn: &tidb_planner_core_operator_physicalop::PhysicalTopN) -> String {
     let mut text = String::new();
     if !topn.partition_by.is_empty() {
         text.push_str("partition by ");
@@ -3315,7 +3315,7 @@ fn plan_encodings(
 /// the brief binary plan only when this statement publishes one.
 pub fn publish_physical_process_info(
     ctx: &crate::StmtContext,
-    physical: &tidb_planner::physical::PhysicalPlan,
+    physical: &tidb_planner_core_operator_physicalop::PhysicalPlan,
     catalog: &tidb_infoschema::Catalog,
 ) {
     let Some(execution_started) = ctx.begin_physical_process_info() else {
@@ -4235,7 +4235,7 @@ mod tests {
 
     #[test]
     fn dynamic_partitions_belong_to_readers_not_scans() {
-        use tidb_planner::physical::*;
+        use tidb_planner_core_operator_physicalop::*;
         let catalog = tidb_infoschema_perfschema::mock_catalog();
         for (all_partitions, names, expected) in [
             (true, Vec::new(), "partition:all"),
@@ -4309,18 +4309,18 @@ mod tests {
             "MergeJoin"
         );
 
-        let mut index = tidb_planner::physical::PhysicalIndexJoin::default();
+        let mut index = tidb_planner_core_operator_physicalop::PhysicalIndexJoin::default();
         for (kind, expected) in [
             (
-                tidb_planner::physical::IndexJoinKind::IndexJoin,
+                tidb_planner_core_operator_physicalop::IndexJoinKind::IndexJoin,
                 "IndexJoin",
             ),
             (
-                tidb_planner::physical::IndexJoinKind::IndexHashJoin,
+                tidb_planner_core_operator_physicalop::IndexJoinKind::IndexHashJoin,
                 "IndexHashJoin",
             ),
             (
-                tidb_planner::physical::IndexJoinKind::IndexMergeJoin,
+                tidb_planner_core_operator_physicalop::IndexJoinKind::IndexMergeJoin,
                 "IndexMergeJoin",
             ),
         ] {
@@ -4344,12 +4344,12 @@ mod tests {
     /// directly instead, trusting the stored (generic) name.
     #[test]
     fn index_join_inner_field_names_its_child_like_go_regardless_of_the_childs_stored_base_type() {
-        use tidb_planner::physical::{BasePhysicalPlan, PhysicalIndexJoin};
+        use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, PhysicalIndexJoin};
         use tidb_planner_core_base::BasePlan;
 
         let mut inner_base = BasePhysicalPlan::default();
         inner_base.base = BasePlan::with_id(7, "Join", 0);
-        let inner = PhysicalPlan::HashJoin(tidb_planner::physical::PhysicalHashJoin {
+        let inner = PhysicalPlan::HashJoin(tidb_planner_core_operator_physicalop::PhysicalHashJoin {
             base: inner_base,
             ..Default::default()
         });
@@ -4389,7 +4389,7 @@ mod tests {
     fn physical_index_join_explain_uses_null_safe_equal_condition() {
         let column =
             |id| tidb_expr::column::Column::new(id, FieldType::new(FieldTypeCode::LongLong));
-        let mut index = tidb_planner::physical::PhysicalIndexJoin::default();
+        let mut index = tidb_planner_core_operator_physicalop::PhysicalIndexJoin::default();
         index.outer_hash_keys = vec![column(1), column(2)];
         index.inner_hash_keys = vec![column(3), column(4)];
         index.is_null_eq = vec![true, false];
@@ -4406,7 +4406,7 @@ mod tests {
 
     #[test]
     fn index_join_range_info_uses_the_go_spelling_for_the_chosen_probe() {
-        use tidb_planner::physical::PhysicalTableScan;
+        use tidb_planner_core_operator_physicalop::PhysicalTableScan;
 
         let column =
             |id| tidb_expr::column::Column::new(id, FieldType::new(FieldTypeCode::LongLong));
@@ -4454,7 +4454,7 @@ mod tests {
                 ),
             )
         };
-        let mut merge = tidb_planner::physical::PhysicalMergeJoin::default();
+        let mut merge = tidb_planner_core_operator_physicalop::PhysicalMergeJoin::default();
         merge.join_type = tidb_planner_core_base::LogicalJoinType::Inner;
         merge.left_join_keys = vec![column(1), column(2)];
         merge.right_join_keys = vec![column(3), column(4)];
@@ -4480,9 +4480,9 @@ mod tests {
     fn a_non_inner_join_explains_its_left_side_like_go() {
         let column =
             |id| tidb_expr::column::Column::new(id, FieldType::new(FieldTypeCode::LongLong));
-        let child = || PhysicalPlan::HashJoin(tidb_planner::physical::PhysicalHashJoin::default());
+        let child = || PhysicalPlan::HashJoin(tidb_planner_core_operator_physicalop::PhysicalHashJoin::default());
 
-        let mut outer = tidb_planner::physical::PhysicalHashJoin::default();
+        let mut outer = tidb_planner_core_operator_physicalop::PhysicalHashJoin::default();
         outer.join_type = tidb_planner_core_base::LogicalJoinType::LeftOuterSemi;
         outer.left_join_keys = vec![column(1)];
         outer.right_join_keys = vec![column(2)];
@@ -4503,7 +4503,7 @@ mod tests {
         );
 
         // Go's `explainJoinLeftSide` writes nothing for an INNER join.
-        let mut inner = tidb_planner::physical::PhysicalHashJoin::default();
+        let mut inner = tidb_planner_core_operator_physicalop::PhysicalHashJoin::default();
         inner.join_type = tidb_planner_core_base::LogicalJoinType::Inner;
         inner.left_join_keys = vec![column(1)];
         inner.right_join_keys = vec![column(2)];
@@ -4524,7 +4524,7 @@ mod tests {
 
     #[test]
     fn hash_join_without_equality_explains_as_cartesian() {
-        let mut join = tidb_planner::physical::PhysicalHashJoin::default();
+        let mut join = tidb_planner_core_operator_physicalop::PhysicalHashJoin::default();
         join.join_type = tidb_planner_core_base::LogicalJoinType::Inner;
         assert_eq!(
             physical_operator_info(
@@ -4543,13 +4543,13 @@ mod tests {
     fn a_null_safe_join_key_explains_as_nulleq() {
         let column =
             |id| tidb_expr::column::Column::new(id, FieldType::new(FieldTypeCode::LongLong));
-        let mut join = tidb_planner::physical::PhysicalHashJoin::default();
+        let mut join = tidb_planner_core_operator_physicalop::PhysicalHashJoin::default();
         join.join_type = tidb_planner_core_base::LogicalJoinType::Semi;
         join.left_join_keys = vec![column(1), column(2)];
         join.right_join_keys = vec![column(3), column(4)];
         join.is_null_eq = vec![true, false];
         join.base.set_children(vec![PhysicalPlan::HashJoin(
-            tidb_planner::physical::PhysicalHashJoin::default(),
+            tidb_planner_core_operator_physicalop::PhysicalHashJoin::default(),
         )]);
         let info = physical_operator_info(
             &crate::StmtContext::default(),
@@ -4573,7 +4573,7 @@ mod tests {
             tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
         );
         parameter.param_marker = Some(tidb_expr::constant::ParamMarker { order: 0 });
-        let plan = PhysicalPlan::Selection(tidb_planner::physical::PhysicalSelection {
+        let plan = PhysicalPlan::Selection(tidb_planner_core_operator_physicalop::PhysicalSelection {
             conditions: vec![tidb_expr::expression::Expression::Constant(parameter)],
             ..Default::default()
         });

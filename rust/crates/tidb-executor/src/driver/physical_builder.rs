@@ -77,7 +77,7 @@ use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
 use tidb_hack::GoCaseCompare;
 use tidb_planner_core_base::LogicalJoinType;
-use tidb_planner::physical::{
+use tidb_planner_core_operator_physicalop::{
     PhysicalBatchPointGet, PhysicalIndexScan, PhysicalMemTable, PhysicalPlan, PhysicalPointGet,
     PhysicalTableSample, PhysicalTableScan,
 };
@@ -1859,7 +1859,7 @@ fn build_aggregation_over_child(
 /// window executor over the child that delivers `PARTITION BY ++ ORDER BY`.
 fn build_window(
     plan: &PhysicalPlan,
-    window: &tidb_planner::physical::PhysicalWindow,
+    window: &tidb_planner_core_operator_physicalop::PhysicalWindow,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
@@ -2308,7 +2308,7 @@ fn embedded_index_limit(plan: &PhysicalPlan) -> Option<(u64, u64)> {
 
 fn embedded_index_prefix_limit(
     plan: &PhysicalPlan,
-) -> Option<&tidb_planner::physical::PhysicalLimit> {
+) -> Option<&tidb_planner_core_operator_physicalop::PhysicalLimit> {
     match plan {
         PhysicalPlan::Limit(limit) if limit.prefix_col.is_some() => Some(limit),
         _ => plan.children().iter().find_map(embedded_index_prefix_limit),
@@ -2565,7 +2565,7 @@ fn build_index_reader(
     table_plan: Option<&PhysicalPlan>,
     covering: bool,
     keep_order: bool,
-    pushed_limit: Option<tidb_planner::physical::PushedDownLimit>,
+    pushed_limit: Option<tidb_planner_core_operator_physicalop::PushedDownLimit>,
     expect_cnt: Option<u64>,
     lookup_pushdown: bool,
     scan_limit: Option<u64>,
@@ -3027,7 +3027,7 @@ fn index_inner_output_offsets(
 }
 
 fn index_join_probe_shape(
-    join: &tidb_planner::physical::PhysicalIndexJoin,
+    join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
 ) -> Result<(Vec<usize>, Vec<LookupProbePart>), DriverError> {
     let mut dynamic = join
         .key_off2_idx_off
@@ -3106,7 +3106,7 @@ fn index_join_probe_shape(
 
 /// Whether Go's template ranges end in a static next-column range
 /// (`nextColRange`) rather than a point.
-fn index_join_template_has_tail(join: &tidb_planner::physical::PhysicalIndexJoin) -> bool {
+fn index_join_template_has_tail(join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin) -> bool {
     join.compare_filters.is_none()
         && join.ranges.iter().any(|range| {
             range.low_exclude
@@ -3116,7 +3116,7 @@ fn index_join_template_has_tail(join: &tidb_planner::physical::PhysicalIndexJoin
 }
 
 /// The static next-column range of every template, in template order.
-fn index_join_probe_tails(join: &tidb_planner::physical::PhysicalIndexJoin) -> Vec<LookupProbeTail> {
+fn index_join_probe_tails(join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin) -> Vec<LookupProbeTail> {
     if !index_join_template_has_tail(join) {
         return Vec::new();
     }
@@ -3134,7 +3134,7 @@ fn index_join_probe_tails(join: &tidb_planner::physical::PhysicalIndexJoin) -> V
 }
 
 fn index_join_probe_key_domains(
-    join: &tidb_planner::physical::PhysicalIndexJoin,
+    join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
     probe_parts: &[LookupProbePart],
     catalog: &Catalog,
 ) -> Result<Vec<IndexProbeKeyDomain>, DriverError> {
@@ -3237,13 +3237,13 @@ fn index_join_probe_key_domains(
 }
 
 const fn lookup_probe_bound_op(
-    op: tidb_planner::physical::IndexJoinCompareOp,
+    op: tidb_planner_core_operator_physicalop::IndexJoinCompareOp,
 ) -> LookupProbeBoundOp {
     match op {
-        tidb_planner::physical::IndexJoinCompareOp::Ge => LookupProbeBoundOp::Ge,
-        tidb_planner::physical::IndexJoinCompareOp::Gt => LookupProbeBoundOp::Gt,
-        tidb_planner::physical::IndexJoinCompareOp::Lt => LookupProbeBoundOp::Lt,
-        tidb_planner::physical::IndexJoinCompareOp::Le => LookupProbeBoundOp::Le,
+        tidb_planner_core_operator_physicalop::IndexJoinCompareOp::Ge => LookupProbeBoundOp::Ge,
+        tidb_planner_core_operator_physicalop::IndexJoinCompareOp::Gt => LookupProbeBoundOp::Gt,
+        tidb_planner_core_operator_physicalop::IndexJoinCompareOp::Lt => LookupProbeBoundOp::Lt,
+        tidb_planner_core_operator_physicalop::IndexJoinCompareOp::Le => LookupProbeBoundOp::Le,
     }
 }
 
@@ -3325,7 +3325,7 @@ fn index_join_lookup_child_idx(plan: &PhysicalPlan, keys: &[Column]) -> Option<u
 
 fn build_index_inner_reader(
     plan: &PhysicalPlan,
-    join: &tidb_planner::physical::PhysicalIndexJoin,
+    join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
     probe_parts: &[LookupProbePart],
     shared: Option<&std::sync::Arc<std::sync::Mutex<SharedIndexJoinProbes>>>,
     catalog: &Catalog,
@@ -3452,7 +3452,7 @@ fn build_index_inner_reader(
 
 fn build_index_inner_subtree(
     plan: &PhysicalPlan,
-    join: &tidb_planner::physical::PhysicalIndexJoin,
+    join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
     probe_parts: &[LookupProbePart],
     shared: &std::sync::Arc<std::sync::Mutex<SharedIndexJoinProbes>>,
     catalog: &Catalog,
@@ -3676,7 +3676,7 @@ fn build_index_inner_subtree(
 
 fn build_index_lookup_source(
     inner: &PhysicalPlan,
-    join: &tidb_planner::physical::PhysicalIndexJoin,
+    join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
     probe_parts: &[LookupProbePart],
     catalog: &Catalog,
     ctx: &crate::StmtContext,
@@ -3703,7 +3703,7 @@ fn build_index_lookup_source(
 
 fn build_index_join(
     plan: &PhysicalPlan,
-    join: &tidb_planner::physical::PhysicalIndexJoin,
+    join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
@@ -3870,7 +3870,7 @@ fn build_index_join(
     );
     executor.set_index_join_batch_size(ctx.index_join_batch_size());
     executor.set_vectorized_expression(ctx.enable_vectorized_expression());
-    if join.kind == tidb_planner::physical::IndexJoinKind::IndexHashJoin {
+    if join.kind == tidb_planner_core_operator_physicalop::IndexJoinKind::IndexHashJoin {
         executor.set_index_hash_join(join.keep_outer_order);
     }
     executor
@@ -4037,7 +4037,7 @@ fn build_join_over_children(
 }
 
 /// Go `PhysicalHashJoin.CanUseHashJoinV2`: capability, not query size or workload.
-fn can_use_hash_join_v2(join: &tidb_planner::physical::PhysicalHashJoin) -> bool {
+fn can_use_hash_join_v2(join: &tidb_planner_core_operator_physicalop::PhysicalHashJoin) -> bool {
     !join.left_join_keys.is_empty()
         && join.na_equal_conditions.is_empty()
         && !join.is_null_eq.iter().any(|&null_eq| null_eq)
@@ -4052,7 +4052,7 @@ fn can_use_hash_join_v2(join: &tidb_planner::physical::PhysicalHashJoin) -> bool
 }
 
 /// Go `physicalop.IsGAForHashJoinV2`.
-fn is_ga_for_hash_join_v2(join: &tidb_planner::physical::PhysicalHashJoin) -> bool {
+fn is_ga_for_hash_join_v2(join: &tidb_planner_core_operator_physicalop::PhysicalHashJoin) -> bool {
     join.na_equal_conditions.is_empty()
         && !join.left_join_keys.is_empty()
         && !join.is_null_eq.iter().any(|&null_eq| null_eq)
@@ -4070,7 +4070,7 @@ fn is_ga_for_hash_join_v2(join: &tidb_planner::physical::PhysicalHashJoin) -> bo
 /// keys using the equality expression's collation and the logical key flags.
 fn build_hash_join_v2(
     plan: &PhysicalPlan,
-    join: &tidb_planner::physical::PhysicalHashJoin,
+    join: &tidb_planner_core_operator_physicalop::PhysicalHashJoin,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
@@ -4259,7 +4259,7 @@ fn build_hash_join_v2(
 
 fn build_apply(
     plan: &PhysicalPlan,
-    apply: &tidb_planner::physical::PhysicalApply,
+    apply: &tidb_planner_core_operator_physicalop::PhysicalApply,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
@@ -4342,7 +4342,7 @@ fn build_apply(
         } else {
             right_plan
         };
-        if tidb_planner::physical::supports_apply_worker_clone(inner_plan) {
+        if tidb_planner_core_operator_physicalop::supports_apply_worker_clone(inner_plan) {
             let worker_ctx = ctx.clone().with_coprocessor_worker_scope();
             let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let mut workers = Vec::with_capacity(apply.concurrency);
@@ -4354,9 +4354,9 @@ fn build_apply(
                 }
             }
             for _ in 0..apply.concurrency {
-                let mut cloned = tidb_planner::physical::clone_for_apply_worker(inner_plan);
+                let mut cloned = tidb_planner_core_operator_physicalop::clone_for_apply_worker(inner_plan);
                 let columns =
-                    tidb_planner::physical::rebind_correlated_columns_by_schema_4_physical_plan(
+                    tidb_planner_core_operator_physicalop::rebind_correlated_columns_by_schema_4_physical_plan(
                         &mut cloned,
                         outer.schema(),
                     );
@@ -4390,11 +4390,11 @@ fn build_apply(
                 );
                 let mut worker_conditions = worker_conditions.clone();
                 let mut worker_inner_filter = inner_filter.clone();
-                tidb_planner::physical::rebind_apply_worker_expressions(
+                tidb_planner_core_operator_physicalop::rebind_apply_worker_expressions(
                     &mut worker_conditions,
                     &columns,
                 );
-                tidb_planner::physical::rebind_apply_worker_expressions(
+                tidb_planner_core_operator_physicalop::rebind_apply_worker_expressions(
                     &mut worker_inner_filter,
                     &columns,
                 );
@@ -4767,7 +4767,7 @@ fn point_partition_id(
         let values = match &point.range_rebuild {
             // Original values, not collation sort keys, are the partition
             // expression's inputs.
-            Some(tidb_planner::physical::range_rebuild::PointRangeRebuild::Index(rebuild)) => {
+            Some(tidb_planner_core_operator_physicalop::range_rebuild::PointRangeRebuild::Index(rebuild)) => {
                 let result =
                     tidb_ranger::detacher::detach_cond_and_build_range_for_partition_in(
                         &rebuild.access_conditions,
@@ -4817,7 +4817,7 @@ fn point_partition_id(
     } else {
         // Go PointGetPlan.PrunePartitions rebuilds original values: a common
         // handle's collation sort keys are not SQL partition expression inputs.
-        let Some(tidb_planner::physical::range_rebuild::PointRangeRebuild::Table(rebuild)) =
+        let Some(tidb_planner_core_operator_physicalop::range_rebuild::PointRangeRebuild::Table(rebuild)) =
             &point.range_rebuild
         else {
             return Err(DriverError::unsupported(
@@ -4882,7 +4882,7 @@ fn partition_ids_named(table: &tidb_table::kv_table::KvTable, names: &[String]) 
 /// The lock is a no-op outside one, and a shared lock stays one unless the
 /// session promotes it.
 fn select_lock_executor(
-    lock: &tidb_planner::physical::PhysicalLock,
+    lock: &tidb_planner_core_operator_physicalop::PhysicalLock,
     child: Box<dyn Executor>,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
@@ -5071,8 +5071,8 @@ fn with_select_lock(
         .base
         .set_schema(Some(widened.clone()));
     let child = build(&widened_plan)?;
-    let lock = tidb_planner::physical::PhysicalLock {
-        base: tidb_planner::physical::BasePhysicalPlan::default(),
+    let lock = tidb_planner_core_operator_physicalop::PhysicalLock {
+        base: tidb_planner_core_operator_physicalop::BasePhysicalPlan::default(),
         lock_type,
         wait_sec,
         tbl_id_to_handle_cols: std::collections::BTreeMap::from([(table_id, handle_columns)]),
@@ -5556,7 +5556,7 @@ impl PartialHandleSource for IndexPartialHandleSource {
 
 fn build_index_merge_reader(
     plan: &PhysicalPlan,
-    reader: &tidb_planner::physical::PhysicalIndexMergeReader,
+    reader: &tidb_planner_core_operator_physicalop::PhysicalIndexMergeReader,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
@@ -6088,7 +6088,7 @@ fn prepare_execution_plan_node(
         };
         let outer_schema = plan_schema(outer)?;
         apply.outer_schema =
-            tidb_planner::physical::rebind_correlated_columns_by_schema_4_physical_plan(
+            tidb_planner_core_operator_physicalop::rebind_correlated_columns_by_schema_4_physical_plan(
                 inner,
                 &outer_schema,
             );
@@ -6145,7 +6145,7 @@ fn prepare_execution_plan_node(
 
 fn cte_reader(
     plan: &PhysicalPlan,
-    cte: &tidb_planner::physical::PhysicalCTE,
+    cte: &tidb_planner_core_operator_physicalop::PhysicalCTE,
     producer: SharedCteProducer,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -6160,7 +6160,7 @@ fn cte_reader(
 
 fn build_cte(
     plan: &PhysicalPlan,
-    cte: &tidb_planner::physical::PhysicalCTE,
+    cte: &tidb_planner_core_operator_physicalop::PhysicalCTE,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
@@ -6180,7 +6180,7 @@ fn build_cte(
         )));
     }
 
-    let mut cor_cols = tidb_planner::physical::extract_outer_apply_correlated_cols(&cte.seed_plan);
+    let mut cor_cols = tidb_planner_core_operator_physicalop::extract_outer_apply_correlated_cols(&cte.seed_plan);
     let seed = build_with_state(&cte.seed_plan, catalog, ctx, state)?;
     let output_types = seed.ret_field_types().to_vec();
     let mut result_storage = tidb_cteutil::CteStorage::new(
@@ -6220,7 +6220,7 @@ fn build_cte(
         None => None,
     };
     if let Some(recursive) = cte.recursive_plan.as_deref() {
-        cor_cols.extend(tidb_planner::physical::extract_outer_apply_correlated_cols(recursive));
+        cor_cols.extend(tidb_planner_core_operator_physicalop::extract_outer_apply_correlated_cols(recursive));
     }
     let slot = state
         .cte_slots
@@ -6251,7 +6251,7 @@ fn build_cte(
 
 fn build_cte_table(
     plan: &PhysicalPlan,
-    table: &tidb_planner::physical::PhysicalCTETable,
+    table: &tidb_planner_core_operator_physicalop::PhysicalCTETable,
     state: &BuildState,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -6270,7 +6270,7 @@ fn build_cte_table(
 /// Recursively instantiates one retained physical operator tree.
 fn build_shuffle(
     plan: &PhysicalPlan,
-    shuffle: &tidb_planner::physical::PhysicalShuffle,
+    shuffle: &tidb_planner_core_operator_physicalop::PhysicalShuffle,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
@@ -6279,7 +6279,7 @@ fn build_shuffle(
         FinishFlag, InboxHandle, PartitionHashSplitter, PartitionRangeSplitter, PartitionSplitter,
         ShuffleExec, ShuffleReceiver, ShuffleWorker,
     };
-    use tidb_planner::physical::shuffle::PartitionSplitterType;
+    use tidb_planner_core_operator_physicalop::shuffle::PartitionSplitterType;
     let mut sources = Vec::with_capacity(shuffle.data_sources.len());
     let mut splitters: Vec<Box<dyn PartitionSplitter<crate::StmtContext>>> = Vec::new();
     let mut source_plans = Vec::new();
@@ -7389,7 +7389,7 @@ impl crate::mem_reader::MemRowsIter for ReaderMemRowsIter {
 /// no arm for.
 fn build_union_scan(
     plan: &PhysicalPlan,
-    union_scan: &tidb_planner::physical::PhysicalUnionScan,
+    union_scan: &tidb_planner_core_operator_physicalop::PhysicalUnionScan,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
@@ -7946,7 +7946,7 @@ mod tests {
     use crate::KvTableDdl;
 use super::*;
     use tidb_datatype::Datum;
-    use tidb_planner::physical::{BasePhysicalPlan, PhysicalBatchPointGet, PhysicalCTE, PhysicalCTETable, PhysicalIndexMergeReader, PhysicalMaxOneRow, PhysicalPointGet, PhysicalSelection, PhysicalTableDual, PhysicalTableReader, PhysicalUnionAll};
+    use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, PhysicalBatchPointGet, PhysicalCTE, PhysicalCTETable, PhysicalIndexMergeReader, PhysicalMaxOneRow, PhysicalPointGet, PhysicalSelection, PhysicalTableDual, PhysicalTableReader, PhysicalUnionAll};
 
     /// Go `LimitExec.Close`: a close that takes over a millisecond records
     /// `limitExec.Close` from when the close began, under the span the
@@ -8389,11 +8389,11 @@ use super::*;
 
     #[test]
     fn physical_shuffle_builds_worker_receivers_and_reads_each_source_once() {
-        use tidb_planner::physical::PhysicalShuffle;
+        use tidb_planner_core_operator_physicalop::PhysicalShuffle;
         let mut projection_base = BasePhysicalPlan::with_id(7, "Projection", 0);
         projection_base.base.set_schema(Some(empty_schema()));
         projection_base.set_children(vec![dual(1, 1)]);
-        let projected = PhysicalPlan::Projection(tidb_planner::physical::PhysicalProjection {
+        let projected = PhysicalPlan::Projection(tidb_planner_core_operator_physicalop::PhysicalProjection {
             base: projection_base,
             ..Default::default()
         });
@@ -8422,7 +8422,7 @@ use super::*;
         for _ in 0..7 {
             ids.alloc();
         }
-        tidb_planner::physical::shuffle::install_receivers(&mut plan, &ids).unwrap();
+        tidb_planner_core_operator_physicalop::shuffle::install_receivers(&mut plan, &ids).unwrap();
         let mut exec = build(&plan, &tidb_infoschema_perfschema::mock_catalog(), &crate::StmtContext::default()).unwrap();
         for _ in 0..2 {
             exec.open().unwrap();
@@ -8633,7 +8633,7 @@ use super::*;
 
     #[test]
     fn index_probe_hash_join_distinguishes_aliases_of_one_table() {
-        use tidb_planner::physical::{PhysicalHashJoin, PhysicalIndexJoin};
+        use tidb_planner_core_operator_physicalop::{PhysicalHashJoin, PhysicalIndexJoin};
         for right_table in [40, 41] {
             let mut catalog = tidb_infoschema_perfschema::mock_catalog();
             catalog.register_kv(
@@ -8723,7 +8723,7 @@ use super::*;
             table_plan: Some(Box::new(scan)),
             store_type: tidb_kv::store_type::StoreType::TiKv,
             is_common_handle: false,
-            read_req_type: tidb_planner::physical_table_reader::ReadReqType::Cop,
+            read_req_type: tidb_planner_core_operator_physicalop::physical_table_reader::ReadReqType::Cop,
             plan_part_info: None,
         });
 
@@ -9298,7 +9298,7 @@ use super::*;
                 } else {
                     vec![]
                 },
-                pushed_limit: Some(tidb_planner::physical::PushedDownLimit {
+                pushed_limit: Some(tidb_planner_core_operator_physicalop::PushedDownLimit {
                     offset: 3,
                     count: 2,
                 }),
@@ -9379,7 +9379,7 @@ use super::*;
         let mut base = BasePhysicalPlan::with_id(31, "Limit", 0);
         base.base.set_schema(Some(two_long_schema()));
         base.set_children(vec![merge]);
-        let plan = PhysicalPlan::Limit(tidb_planner::physical::PhysicalLimit {
+        let plan = PhysicalPlan::Limit(tidb_planner_core_operator_physicalop::PhysicalLimit {
             base,
             count: 1,
             ..Default::default()
@@ -9438,7 +9438,7 @@ use super::*;
                     let limit = if topn {
                         let mut value = two_long_schema().columns[1].clone();
                         value.index = 1;
-                        PhysicalPlan::TopN(tidb_planner::physical::PhysicalTopN {
+                        PhysicalPlan::TopN(tidb_planner_core_operator_physicalop::PhysicalTopN {
                             base,
                             offset: 1,
                             count: 2,
@@ -9449,7 +9449,7 @@ use super::*;
                             ..Default::default()
                         })
                     } else {
-                        PhysicalPlan::Limit(tidb_planner::physical::PhysicalLimit {
+                        PhysicalPlan::Limit(tidb_planner_core_operator_physicalop::PhysicalLimit {
                             base,
                             offset: 0,
                             count: 2,

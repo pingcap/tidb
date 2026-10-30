@@ -17,7 +17,7 @@
 //! plans/hinted warning matrices) remain tracked in the batch repair receipt;
 //! these tests assert the common eligibility boundary, not full family parity.
 use tidb_planner::post_optimize::enable_parallel_apply;
-use tidb_planner::physical::*;
+use tidb_planner_core_operator_physicalop::*;
 
 fn leaf() -> PhysicalPlan {
     PhysicalPlan::TableDual(Default::default())

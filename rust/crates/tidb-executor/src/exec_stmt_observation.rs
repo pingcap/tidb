@@ -417,7 +417,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
         let (storage_kv, storage_mpp) = match &plan.plan {
             Some(stored) if !observation.routed => {
                 let (tikv, tiflash) = stored
-                    .get::<tidb_planner::physical::PhysicalPlan>()
+                    .get::<tidb_planner_core_operator_physicalop::PhysicalPlan>()
                     .map_or((false, false), |plan| plan_storage_flags(&plan));
                 (tikv, tiflash || plan.is_tiflash)
             }
@@ -817,8 +817,8 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
 /// TiKV table reader, an index reader, index lookup or index merge reader, a
 /// point or batch point get, or a table sample reads TiKV; a TiFlash table
 /// reader reads TiFlash.
-fn plan_storage_flags(plan: &tidb_planner::physical::PhysicalPlan) -> (bool, bool) {
-    use tidb_planner::physical::PhysicalPlan;
+fn plan_storage_flags(plan: &tidb_planner_core_operator_physicalop::PhysicalPlan) -> (bool, bool) {
+    use tidb_planner_core_operator_physicalop::PhysicalPlan;
     use tidb_kv::store_type::StoreType;
     let (mut tikv, mut tiflash) = (false, false);
     let mut stack = vec![plan];

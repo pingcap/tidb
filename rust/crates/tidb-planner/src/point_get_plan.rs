@@ -114,7 +114,7 @@ pub fn try_fast_point_physical_plan(
     catalog: &Catalog,
     current_db: &str,
     ctx: &tidb_sessionctx::StmtContext,
-) -> Result<Option<crate::physical::PhysicalPlan>, DriverError> {
+) -> Result<Option<tidb_planner_core_operator_physicalop::PhysicalPlan>, DriverError> {
     let plan = try_fast_point_physical_plan_with_allocator(
         select,
         catalog,
@@ -145,7 +145,7 @@ pub fn try_fast_point_physical_plan_with_allocator(
     current_db: &str,
     ctx: &tidb_sessionctx::StmtContext,
     plan_ids: &tidb_planner_core_base::PlanIdAllocator,
-) -> Result<Option<crate::physical::PhysicalPlan>, DriverError> {
+) -> Result<Option<tidb_planner_core_operator_physicalop::PhysicalPlan>, DriverError> {
     try_fast_point_physical_plan_with_allocator_mode(
         select, catalog, current_db, ctx, plan_ids, false,
     )
@@ -160,7 +160,7 @@ pub fn try_fast_dml_point_physical_plan_with_allocator(
     current_db: &str,
     ctx: &tidb_sessionctx::StmtContext,
     plan_ids: &tidb_planner_core_base::PlanIdAllocator,
-) -> Result<Option<crate::physical::PhysicalPlan>, DriverError> {
+) -> Result<Option<tidb_planner_core_operator_physicalop::PhysicalPlan>, DriverError> {
     try_fast_point_physical_plan_with_allocator_mode(
         select, catalog, current_db, ctx, plan_ids, true,
     )
@@ -215,7 +215,7 @@ fn try_fast_point_physical_plan_with_allocator_mode(
     ctx: &tidb_sessionctx::StmtContext,
     plan_ids: &tidb_planner_core_base::PlanIdAllocator,
     dml_source: bool,
-) -> Result<Option<crate::physical::PhysicalPlan>, DriverError> {
+) -> Result<Option<tidb_planner_core_operator_physicalop::PhysicalPlan>, DriverError> {
     let Some(of_warnings) = fast_point_lock_of_warnings(select, current_db) else {
         return Ok(None);
     };
@@ -236,7 +236,7 @@ fn build_fast_point_physical_plan(
     ctx: &tidb_sessionctx::StmtContext,
     plan_ids: &tidb_planner_core_base::PlanIdAllocator,
     dml_source: bool,
-) -> Result<Option<crate::physical::PhysicalPlan>, DriverError> {
+) -> Result<Option<tidb_planner_core_operator_physicalop::PhysicalPlan>, DriverError> {
     if ctx.stable_result_mode()
         || ctx
             .optimizer_fix_control()
@@ -421,16 +421,16 @@ fn build_fast_point_physical_plan(
             None
         };
         if batch.key_values.is_empty() {
-            let mut base = crate::physical::BasePhysicalPlan::new(plan_ids, "TableDual", 0);
+            let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(plan_ids, "TableDual", 0);
             base.base
                 .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(0.0, [])));
             base.base.set_schema(Some(schema));
-            return Ok(Some(crate::physical::PhysicalPlan::TableDual(
-                crate::physical::PhysicalTableDual::new(base, 0),
+            return Ok(Some(tidb_planner_core_operator_physicalop::PhysicalPlan::TableDual(
+                tidb_planner_core_operator_physicalop::PhysicalTableDual::new(base, 0),
             )));
         }
         let mut base =
-            crate::physical::BasePhysicalPlan::new(plan_ids, "Batch_Point_Get", 0);
+            tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(plan_ids, "Batch_Point_Get", 0);
         base.base
             .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(
                 batch.plan_rows as f64,
@@ -438,8 +438,8 @@ fn build_fast_point_physical_plan(
             )));
         base.base.set_schema(Some(schema));
         let ranges = closed_point_ranges(&batch.key_values);
-        return Ok(Some(crate::physical::PhysicalPlan::BatchPointGet(
-            crate::physical::PhysicalBatchPointGet {
+        return Ok(Some(tidb_planner_core_operator_physicalop::PhysicalPlan::BatchPointGet(
+            tidb_planner_core_operator_physicalop::PhysicalBatchPointGet {
                 base,
                 table_id: table.table_id(),
                 index_id: batch.index.as_ref().map(|(id, _)| *id),
@@ -454,7 +454,7 @@ fn build_fast_point_physical_plan(
                 },
                 range_rebuild: batch
                     .constants
-                    .map(crate::physical::range_rebuild::PointRangeRebuild::Constants),
+                    .map(tidb_planner_core_operator_physicalop::range_rebuild::PointRangeRebuild::Constants),
                 keep_order: false,
                 desc: false,
                 lock: select_lock.is_some(),
@@ -487,12 +487,12 @@ fn build_fast_point_physical_plan(
         {
             // Go `tryPointGetPlan`'s `isTableDual` arm: the predicate can
             // equal no stored row, so the answer is empty and no read runs.
-            let mut base = crate::physical::BasePhysicalPlan::new(plan_ids, "TableDual", 0);
+            let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(plan_ids, "TableDual", 0);
             base.base
                 .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(0.0, [])));
             base.base.set_schema(Some(schema));
-            return Ok(Some(crate::physical::PhysicalPlan::TableDual(
-                crate::physical::PhysicalTableDual::new(base, 0),
+            return Ok(Some(tidb_planner_core_operator_physicalop::PhysicalPlan::TableDual(
+                tidb_planner_core_operator_physicalop::PhysicalTableDual::new(base, 0),
             )));
         }
         return Ok(None);
@@ -534,18 +534,18 @@ fn build_fast_point_physical_plan(
     ) {
         return Ok(None);
     }
-    let mut base = crate::physical::BasePhysicalPlan::new(plan_ids, "Point_Get", 0);
+    let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(plan_ids, "Point_Get", 0);
     base.base
         .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(1.0, [])));
     base.base.set_schema(Some(schema));
     // Go `PointGetPlan.HandleConstant` / `IndexConstants`.
-    let constants = crate::physical::range_rebuild::PointConstantsRebuild {
+    let constants = tidb_planner_core_operator_physicalop::range_rebuild::PointConstantsRebuild {
         rows: vec![point
             .key_markers
             .iter()
             .zip(&point.key_values)
             .map(
-                |(marker, value)| crate::physical::range_rebuild::PointKeyConstant {
+                |(marker, value)| tidb_planner_core_operator_physicalop::range_rebuild::PointKeyConstant {
                     marker: *marker,
                     value: value.clone(),
                 },
@@ -556,16 +556,16 @@ fn build_fast_point_physical_plan(
     };
     let range_rebuild = constants
         .has_parameters()
-        .then_some(crate::physical::range_rebuild::PointRangeRebuild::Constants(constants));
-    Ok(Some(crate::physical::PhysicalPlan::PointGet(
-        crate::physical::PhysicalPointGet {
+        .then_some(tidb_planner_core_operator_physicalop::range_rebuild::PointRangeRebuild::Constants(constants));
+    Ok(Some(tidb_planner_core_operator_physicalop::PhysicalPlan::PointGet(
+        tidb_planner_core_operator_physicalop::PhysicalPointGet {
             base,
             table_id: table.table_id(),
             // Go `PointGetPlan.PartitionNames`: a global index applies them
             // to the partition its entry records.
             partition: ((global_index && !table_ref.partitions.is_empty())
                 || (routed_int_handle && table.partition().is_some()))
-            .then(|| crate::physical::PointGetPartition {
+            .then(|| tidb_planner_core_operator_physicalop::PointGetPartition {
                 names: table_ref.partitions.clone(),
                 physical_table_id: None,
             }),
@@ -859,7 +859,7 @@ pub struct BatchPointLookup {
     key_values: Vec<Vec<Datum>>,
     /// Go `HandleParams` / `IndexValueParams`: every candidate key with the
     /// EXECUTE parameters it reads, present when any part is a parameter.
-    constants: Option<crate::physical::range_rebuild::PointConstantsRebuild>,
+    constants: Option<tidb_planner_core_operator_physicalop::range_rebuild::PointConstantsRebuild>,
 }
 
 /// One IN-list item a batch point plan keys by. Go's `newBatchPointGetPlan`
@@ -922,11 +922,11 @@ impl BatchPointLookup {
     /// reads an EXECUTE parameter.
     fn with_constants(
         mut self,
-        rows: Vec<Vec<crate::physical::range_rebuild::PointKeyConstant>>,
+        rows: Vec<Vec<tidb_planner_core_operator_physicalop::range_rebuild::PointKeyConstant>>,
         field_types: Vec<FieldType>,
         handle_batch: bool,
     ) -> Self {
-        let rebuild = crate::physical::range_rebuild::PointConstantsRebuild {
+        let rebuild = tidb_planner_core_operator_physicalop::range_rebuild::PointConstantsRebuild {
             rows,
             field_types,
             handle_batch,
@@ -1078,7 +1078,7 @@ pub fn try_batch_point_get_stmt(
                         else {
                             return Ok(None);
                         };
-                        constant_row.push(crate::physical::range_rebuild::PointKeyConstant {
+                        constant_row.push(tidb_planner_core_operator_physicalop::range_rebuild::PointKeyConstant {
                             marker,
                             value: value.clone(),
                         });
@@ -1155,7 +1155,7 @@ pub fn try_batch_point_get_stmt(
                     else {
                         return Ok(None);
                     };
-                    constant_row.push(crate::physical::range_rebuild::PointKeyConstant {
+                    constant_row.push(tidb_planner_core_operator_physicalop::range_rebuild::PointKeyConstant {
                         marker,
                         value: value.clone(),
                     });
@@ -1210,7 +1210,7 @@ pub fn try_batch_point_get_stmt(
                     Some(Datum::UInt(v)) => v as i64,
                     _ => return Ok(None),
                 };
-                constant_rows.push(vec![crate::physical::range_rebuild::PointKeyConstant {
+                constant_rows.push(vec![tidb_planner_core_operator_physicalop::range_rebuild::PointKeyConstant {
                     marker: *marker,
                     value: Datum::Int(handle),
                 }]);
@@ -1263,7 +1263,7 @@ pub fn try_batch_point_get_stmt(
             .iter()
             .zip(&markers)
             .map(|(value, marker)| {
-                vec![crate::physical::range_rebuild::PointKeyConstant {
+                vec![tidb_planner_core_operator_physicalop::range_rebuild::PointKeyConstant {
                     marker: *marker,
                     value: value.clone(),
                 }]

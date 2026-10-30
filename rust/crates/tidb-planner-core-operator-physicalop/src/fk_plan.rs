@@ -20,7 +20,7 @@
 
 use tidb_hack::{GoCaseCompare, GoToLower};
 
-use crate::physical::{FkTriggerKind, FkTriggerNode};
+use crate::{FkTriggerKind, FkTriggerNode};
 use tidb_planner_core_base::PlanIdAllocator;
 
 /// Go `model.ReferOptionType`, as a foreign key's `ON DELETE` / `ON UPDATE`
@@ -414,7 +414,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::physical::FkTriggerKind;
+    use crate::FkTriggerKind;
 
     /// `parent(id)` referenced by `child(pid)` with `fk_child (pid) REFERENCES
     /// parent (id)`, the child indexed on `pid`.

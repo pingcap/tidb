@@ -1591,7 +1591,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         )
         .unwrap()
         .and_then(|plan| match plan {
-            tidb_planner::physical::PhysicalPlan::BatchPointGet(plan) => Some((
+            tidb_planner_core_operator_physicalop::PhysicalPlan::BatchPointGet(plan) => Some((
                 plan.index_id.is_some(),
                 plan.ranges
                     .into_iter()

@@ -24,7 +24,7 @@ use tidb_expr::schema::{merge_schema, Schema};
 use tidb_expr::simple_expr::resolve_indices_in_place;
 use tidb_disjointset::SimpleIntSet;
 
-use crate::physical::{
+use tidb_planner_core_operator_physicalop::{
     BasePhysicalPlan, PhysicalHashJoin, PhysicalIndexJoin, PhysicalMergeJoin, PhysicalPlan,
 };
 use tidb_planner_core_base::LogicalJoinType;

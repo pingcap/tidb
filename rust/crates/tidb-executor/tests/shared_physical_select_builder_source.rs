@@ -20,10 +20,10 @@ use tidb_datatype::Datum;
 use tidb_executor::{build_prepared_select_plan, run_create_table_on, run_insert_on, run_select_meta_on, run_select_meta_stmt_with_physical, PreparedPlanCacheEnvironment};
 use tidb_infoschema::{Catalog, DEFAULT_DATABASE};
 
-fn has_index_join_compare_filters(plan: &tidb_planner::physical::PhysicalPlan) -> bool {
+fn has_index_join_compare_filters(plan: &tidb_planner_core_operator_physicalop::PhysicalPlan) -> bool {
     matches!(
         plan,
-        tidb_planner::physical::PhysicalPlan::IndexJoin(join)
+        tidb_planner_core_operator_physicalop::PhysicalPlan::IndexJoin(join)
             if join.compare_filters.is_some()
     ) || plan.children().iter().any(has_index_join_compare_filters)
 }

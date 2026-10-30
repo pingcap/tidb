@@ -22,7 +22,7 @@
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_expr::{column::Column, expression::Expression};
 use tidb_expression_aggregation::ByItems;
-use tidb_planner::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalTopN};
+use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, PhysicalPlan, PhysicalTopN};
 use tidb_planner_property::SortItem;
 
 fn column(id: i64) -> Expression {

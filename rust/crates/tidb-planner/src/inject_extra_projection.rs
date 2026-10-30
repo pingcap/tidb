@@ -53,7 +53,7 @@ use tidb_expr::schema::Schema;
 use tidb_exprctx::NoColumns;
 
 use tidb_planner_core_base::ColumnIdAllocator;
-use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalProjection};
+use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, PhysicalPlan, PhysicalProjection};
 use tidb_planner_core_base::PlanIdAllocator;
 use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 
@@ -116,7 +116,7 @@ fn inject(ctx: &InjectContext<'_>, plan: PhysicalPlan) -> PhysicalPlan {
 /// Go `injectProjBelowUnion` (`rule_inject_extra_projection.go:84`): only an
 /// MPP union casts its children's outputs; the narrow tier's unions always
 /// carry `mpp: false`, so Go's early return answers the union unchanged.
-fn inject_proj_below_union(union_all: crate::physical::PhysicalUnionAll) -> PhysicalPlan {
+fn inject_proj_below_union(union_all: tidb_planner_core_operator_physicalop::PhysicalUnionAll) -> PhysicalPlan {
     if !union_all.mpp {
         return PhysicalPlan::UnionAll(union_all);
     }
@@ -136,7 +136,7 @@ fn has_scalar_func(mut exprs: impl Iterator<Item = Expression>) -> bool {
 /// group-by item is a column or constant, the aggregate answers unchanged.
 fn inject_proj_below_agg(
     ctx: &InjectContext<'_>,
-    mut agg: crate::physical::PhysicalHashAgg,
+    mut agg: tidb_planner_core_operator_physicalop::PhysicalHashAgg,
 ) -> PhysicalPlan {
     // Go `coreusage.WrapCastForAggFuncs(exprCtx, aggFuncs)` — best-effort
     // argument casts, exactly as Go runs them unconditionally here.
@@ -260,9 +260,9 @@ fn inject_proj_below_agg(
 /// base — and therefore the operator type string — moves unchanged).
 fn inject_proj_below_stream_agg(
     ctx: &InjectContext<'_>,
-    agg: crate::physical::PhysicalStreamAgg,
+    agg: tidb_planner_core_operator_physicalop::PhysicalStreamAgg,
 ) -> PhysicalPlan {
-    let hash_like = crate::physical::PhysicalHashAgg {
+    let hash_like = tidb_planner_core_operator_physicalop::PhysicalHashAgg {
         base: agg.base,
         agg_funcs: agg.agg_funcs,
         group_by_items: agg.group_by_items,
@@ -270,7 +270,7 @@ fn inject_proj_below_stream_agg(
     };
     match inject_proj_below_agg(ctx, hash_like) {
         PhysicalPlan::HashAgg(rebuilt) => {
-            PhysicalPlan::StreamAgg(crate::physical::PhysicalStreamAgg {
+            PhysicalPlan::StreamAgg(tidb_planner_core_operator_physicalop::PhysicalStreamAgg {
                 base: rebuilt.base,
                 agg_funcs: rebuilt.agg_funcs,
                 group_by_items: rebuilt.group_by_items,
@@ -423,7 +423,7 @@ fn inject_proj_below_sort(ctx: &InjectContext<'_>, p: PhysicalPlan) -> PhysicalP
 /// Go `TurnNominalSortIntoProj` (`rule_inject_extra_projection.go:292`).
 fn turn_nominal_sort_into_proj(
     ctx: &InjectContext<'_>,
-    mut nominal: crate::physical::NominalSort,
+    mut nominal: tidb_planner_core_operator_physicalop::NominalSort,
 ) -> PhysicalPlan {
     if nominal.only_column {
         // The child already provides the written order; the nominal sort
@@ -606,7 +606,7 @@ impl DisjointSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::physical::{BasePhysicalPlan, PhysicalTableDual};
+    use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, PhysicalTableDual};
     use tidb_planner_core_base::PlanIdAllocator;
     use tidb_ast::CiString;
     use tidb_datatype::{FieldType, FieldTypeCode};
@@ -650,7 +650,7 @@ mod tests {
         base.set_children_req_props(vec![Some(
             tidb_planner_property::PhysicalProperty::default(),
         )]);
-        PhysicalPlan::HashAgg(crate::physical::PhysicalHashAgg {
+        PhysicalPlan::HashAgg(tidb_planner_core_operator_physicalop::PhysicalHashAgg {
             base,
             agg_funcs,
             group_by_items,
@@ -684,7 +684,7 @@ mod tests {
         base.set_children_req_props(vec![Some(
             tidb_planner_property::PhysicalProperty::default(),
         )]);
-        PhysicalPlan::Sort(crate::physical::PhysicalSort {
+        PhysicalPlan::Sort(tidb_planner_core_operator_physicalop::PhysicalSort {
             base,
             by_items,
             is_partial_sort: false,
@@ -830,7 +830,7 @@ mod tests {
         base.set_children_req_props(vec![Some(
             tidb_planner_property::PhysicalProperty::default(),
         )]);
-        let plan = PhysicalPlan::NominalSort(crate::physical::NominalSort {
+        let plan = PhysicalPlan::NominalSort(tidb_planner_core_operator_physicalop::NominalSort {
             base,
             by_items: vec![tidb_planner_property::SortItem::new(1, false)],
             only_column: true,
@@ -853,7 +853,7 @@ mod tests {
         base.set_children_req_props(vec![Some(
             tidb_planner_property::PhysicalProperty::default(),
         )]);
-        let plan = PhysicalPlan::NominalSort(crate::physical::NominalSort {
+        let plan = PhysicalPlan::NominalSort(tidb_planner_core_operator_physicalop::NominalSort {
             base,
             by_items: vec![tidb_planner_property::SortItem::new(1, false)],
             only_column: false,
@@ -873,7 +873,7 @@ mod tests {
         base.base
             .set_schema(Some(child.schema().cloned().unwrap_or_default()));
         base.set_children(vec![child.clone(), child]);
-        let plan = PhysicalPlan::UnionAll(crate::physical::PhysicalUnionAll { base, mpp: false });
+        let plan = PhysicalPlan::UnionAll(tidb_planner_core_operator_physicalop::PhysicalUnionAll { base, mpp: false });
 
         let injected = inject(&ctx, plan);
         assert_eq!(shape(&injected), "Union(2 children)");
@@ -891,7 +891,7 @@ mod tests {
         base.set_children_req_props(vec![Some(
             tidb_planner_property::PhysicalProperty::default(),
         )]);
-        let plan = PhysicalPlan::StreamAgg(crate::physical::PhysicalStreamAgg {
+        let plan = PhysicalPlan::StreamAgg(tidb_planner_core_operator_physicalop::PhysicalStreamAgg {
             base,
             agg_funcs: vec![sum(plus(1, 1))],
             group_by_items: Vec::new(),

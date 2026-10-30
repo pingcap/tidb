@@ -16,7 +16,7 @@
 //! Removed empty entries and their original contracts are indexed in
 //! rust/docs/parity/current-audit/empty-test-cleanup-obligations.json.
 
-use tidb_planner::physical::{BasePhysicalPlan, PhysicalLimit, RedactMode};
+use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, PhysicalLimit, RedactMode};
 
 fn limit(offset: u64, count: u64) -> PhysicalLimit {
     PhysicalLimit {

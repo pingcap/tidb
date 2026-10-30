@@ -12,7 +12,7 @@ use tidb_planner_cardinality::live_index_optimizer::{IndexPointStatistics, LiveI
 use tidb_planner::index_task::{CopIndexTask, IndexTask, IndexTaskRejection};
 use tidb_planner::logical_data_source::LogicalDataSource;
 use tidb_planner::logical_data_source_task::{IndexOrderingRequirement, IndexTaskProperty};
-use tidb_planner::physical::PhysicalIndexScan;
+use tidb_planner_core_operator_physicalop::PhysicalIndexScan;
 use tidb_planner_core_operator_logicalop::tikv_scan_spec::TiKvTableScanSpec;
 
 fn range(low: RangeBoundKind, high: RangeBoundKind) -> IndexRangeShape {

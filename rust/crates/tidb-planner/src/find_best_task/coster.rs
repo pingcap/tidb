@@ -41,7 +41,7 @@
 
 use tidb_planner_cardinality::row_size::RowSizeColumn;
 use tidb_planner_costusage::{CostVer2, PlanCostOption};
-use crate::physical::PhysicalPlan;
+use tidb_planner_core_operator_physicalop::PhysicalPlan;
 use tidb_planner_core_base::PlanError;
 use crate::plan_cost_ver2::{
     exchange_receiver_cost, filter_cost, hash_agg_cost, hash_join_cost, index_join_cost,
@@ -49,7 +49,7 @@ use crate::plan_cost_ver2::{
     CostFactorVars, CostSessionOpts, HashAggInput, HashJoinInput, IndexJoinInput, NetOwner,
     Ver2Factors,
 };
-use crate::task::Task;
+use tidb_planner_core_operator_physicalop::task::Task;
 use tidb_planner_property::task_type::TaskType;
 use tidb_expr::column::Column;
 
@@ -534,7 +534,7 @@ impl Ver2Coster {
                     matches!(
                         child,
                         PhysicalPlan::ExchangeSender(sender)
-                            if sender.exchange_type == crate::physical::ExchangeType::Broadcast
+                            if sender.exchange_type == tidb_planner_core_operator_physicalop::ExchangeType::Broadcast
                     )
                 });
                 exchange_receiver_cost(
@@ -1193,7 +1193,7 @@ fn plan_is_temporary(plan: &PhysicalPlan) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::physical::{
+    use tidb_planner_core_operator_physicalop::{
         BasePhysicalPlan, PhysicalCTE, PhysicalPlan, PhysicalPointGet, PhysicalTableDual,
         PhysicalUnionAll,
     };
@@ -1223,7 +1223,7 @@ mod tests {
     }
 
     fn root(plan: PhysicalPlan) -> Task {
-        let mut task = crate::task::RootTask::default();
+        let mut task = tidb_planner_core_operator_physicalop::task::RootTask::default();
         task.set_plan(plan);
         Task::Root(task)
     }
@@ -1235,11 +1235,11 @@ mod tests {
         base.base.set_schema(Some(Schema::new(vec![Column::new(
             1, FieldType::new(FieldTypeCode::LongLong),
         )])));
-        let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+        let scan = PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
             base,
             ..Default::default()
         });
-        let plan = PhysicalPlan::TableReader(crate::physical::PhysicalTableReader {
+        let plan = PhysicalPlan::TableReader(tidb_planner_core_operator_physicalop::PhysicalTableReader {
             table_plan: Some(Box::new(scan)),
             ..Default::default()
         });
@@ -1291,7 +1291,7 @@ mod tests {
         let partial_cost = coster.price(&partial, TaskType::CopSingleRead).value();
         let table_cost = coster.price(&table, TaskType::CopSingleRead).value();
         assert!(partial_cost > 0.0 && table_cost > 0.0);
-        let mut cop = crate::task::CopTask {
+        let mut cop = tidb_planner_core_operator_physicalop::task::CopTask {
             idx_merge_part_plans: vec![partial.clone(), partial],
             table_plan: Some(Box::new(table)),
             ..Default::default()
@@ -1371,15 +1371,15 @@ mod tests {
         let child = point(6, true);
         let mut sender_base = BasePhysicalPlan::new(&allocator, "ExchangeSender", 0);
         sender_base.set_children(vec![child]);
-        let sender = PhysicalPlan::ExchangeSender(crate::physical::PhysicalExchangeSender {
+        let sender = PhysicalPlan::ExchangeSender(tidb_planner_core_operator_physicalop::PhysicalExchangeSender {
             base: sender_base,
-            exchange_type: crate::physical::ExchangeType::Broadcast,
+            exchange_type: tidb_planner_core_operator_physicalop::ExchangeType::Broadcast,
             hash_cols: Vec::new(),
         });
         let mut receiver_base = BasePhysicalPlan::new(&allocator, "ExchangeReceiver", 0);
         receiver_base.base.set_stats(Some(StatsInfo::new(5.0, [])));
         receiver_base.set_children(vec![sender]);
-        let receiver = PhysicalPlan::ExchangeReceiver(crate::physical::PhysicalExchangeReceiver {
+        let receiver = PhysicalPlan::ExchangeReceiver(tidb_planner_core_operator_physicalop::PhysicalExchangeReceiver {
             base: receiver_base,
             tasks: Vec::new(),
         });

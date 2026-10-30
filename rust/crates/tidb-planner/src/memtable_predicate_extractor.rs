@@ -43,7 +43,7 @@ use tidb_exprctx::Columns;
 use tidb_hack::{go_to_lower, go_to_upper};
 
 pub use crate::memtable_infoschema_extractor::{InfoSchemaBaseExtractor, InfoSchemaExtractorKind};
-use crate::physical::PhysicalPlan;
+use tidb_planner_core_operator_physicalop::PhysicalPlan;
 
 /// Go `set.StringSet`, ordered so every rendering is deterministic.
 pub type StringSet = BTreeSet<String>;
@@ -2240,7 +2240,7 @@ impl ClusterTableFilter {
 fn mem_table_scans<'a>(
     plan: &'a PhysicalPlan,
     table: &str,
-    out: &mut Vec<&'a crate::physical::PhysicalMemTable>,
+    out: &mut Vec<&'a tidb_planner_core_operator_physicalop::PhysicalMemTable>,
 ) {
     if let PhysicalPlan::MemTable(scan) = plan {
         if scan.table_name.eq_ignore_ascii_case(table) {
@@ -2271,7 +2271,7 @@ fn mem_table_extractors<'a>(
 /// The concrete extractor behind a memory-table scan's Go
 /// `base.MemTablePredicateExtractor` (Go's type assertion).
 #[must_use]
-pub fn extractor_of(scan: &crate::physical::PhysicalMemTable) -> Option<&MemTableExtractor> {
+pub fn extractor_of(scan: &tidb_planner_core_operator_physicalop::PhysicalMemTable) -> Option<&MemTableExtractor> {
     scan.extractor
         .as_deref()?
         .as_any()

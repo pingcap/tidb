@@ -18,7 +18,7 @@
 //! `pkg/planner/core/casetest/mpp/mpp_test.go:446`.
 
 use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalUnionAll};
-use tidb_planner::physical::{exhaust_physical_plans_4_logical_union_all, PhysicalPlan};
+use tidb_planner_core_operator_physicalop::{exhaust_physical_plans_4_logical_union_all, PhysicalPlan};
 use tidb_planner_property::{PhysicalProperty, SortItem, TaskType};
 use tidb_planner_core_base::PlanIdAllocator;
 

@@ -1450,7 +1450,7 @@ impl Session {
     }
 
     /// The plan the last executed statement published (for `TRACE`).
-    pub fn published_plan(&self) -> Option<std::sync::Arc<tidb_planner::physical::PhysicalPlan>> {
+    pub fn published_plan(&self) -> Option<std::sync::Arc<tidb_planner_core_operator_physicalop::PhysicalPlan>> {
         let cell = self
             .process_plan_info
             .lock()

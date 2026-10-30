@@ -31,11 +31,11 @@ fn planner_index_path(
     )
     .ok()?;
     fn find_index_scan<'a>(
-        plan: &'a tidb_planner::physical::PhysicalPlan,
+        plan: &'a tidb_planner_core_operator_physicalop::PhysicalPlan,
         table_id: i64,
         visible: &str,
-    ) -> Option<&'a tidb_planner::physical::PhysicalIndexScan> {
-        use tidb_planner::physical::PhysicalPlan;
+    ) -> Option<&'a tidb_planner_core_operator_physicalop::PhysicalIndexScan> {
+        use tidb_planner_core_operator_physicalop::PhysicalPlan;
 
         match plan {
             PhysicalPlan::IndexScan(scan)

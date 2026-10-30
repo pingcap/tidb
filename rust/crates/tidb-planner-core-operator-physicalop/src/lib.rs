@@ -39,6 +39,13 @@
 //! * `MemoryUsage` returns a source-shaped estimate over the Rust layout; see
 //!   [`tidb_planner_core_base`].
 
+pub mod task;
+pub mod enforce;
+pub mod final_mode_agg;
+pub mod fk_plan;
+pub mod physical_table_reader;
+pub mod pushdown;
+
 mod memory;
 pub mod part_info;
 pub mod range_rebuild;
@@ -828,7 +835,7 @@ pub struct PhysicalIndexJoin {
     /// Go `PhysicalIndexJoin.CompareFilters`.
     pub compare_filters: Option<IndexJoinCompareFilters>,
     /// Parameter-dependent range metadata retained for cache rebuilding.
-    pub range_rebuild: Option<crate::physical::range_rebuild::PointRangeRebuild>,
+    pub range_rebuild: Option<crate::range_rebuild::PointRangeRebuild>,
     /// Which `RangeInfo` spelling master renders on the inner access scan:
     /// bare outer keys for the integer-handle probe, `eq(inner, outer)`
     /// pairs otherwise (`indexJoinIntPKRangeInfo` vs
@@ -1004,7 +1011,7 @@ pub fn exhaust_physical_plans_4_logical_sort(
 ///
 /// `ExplainInfo`'s partition-by rendering and `ToPB` follow the enum's
 /// standing narrowings; `attach2Task4PhysicalLimit`'s root arm lives in
-/// [`crate::task_attach::attach2_task`].
+/// core's `attach2Task` (`task_attach`).
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalLimit {
     /// The shared physical base.
@@ -1187,7 +1194,7 @@ pub struct PhysicalTableScan {
     pub by_items: Vec<tidb_expression_aggregation::ByItems>,
     /// Access conditions and handle metadata retained for execute-time plan
     /// cache range rebuild.
-    pub range_rebuild: Option<crate::physical::range_rebuild::TableRangeRebuild>,
+    pub range_rebuild: Option<crate::range_rebuild::TableRangeRebuild>,
     /// Go `getTableScanPenalty`'s table/session inputs.
     pub table_scan_penalty: tidb_planner_core_operator_logicalop::data_source::TableScanPenaltyInput,
     /// Schema-resolved fields consumed by the TiKV protobuf lowering path.
@@ -1297,7 +1304,7 @@ impl PhysicalTableScan {
 
     /// Builds the scan after the access path has validated table identity.
     #[must_use]
-    pub(crate) fn from_validated_pushdown(
+    pub fn from_validated_pushdown(
         plan_id: i32,
         query_block_offset: i32,
         pushdown: tidb_planner_core_operator_logicalop::data_source_paths::ValidatedTablePushdown,
@@ -1309,7 +1316,7 @@ impl PhysicalTableScan {
     }
 
     /// Installs Go `CountAfterAccess` as this physical operator's statistics.
-    pub(crate) fn try_with_source_estimated_rows(mut self, rows: f64) -> Option<Self> {
+    pub fn try_with_source_estimated_rows(mut self, rows: f64) -> Option<Self> {
         if !rows.is_finite() || rows < 0.0 {
             return None;
         }
@@ -1473,7 +1480,7 @@ pub fn find_best_task_4_logical_table_dual(
 /// file): the physical operator of maxOneRow — assert at most one child row.
 /// The struct is exactly its base; the file's other bodies land as
 /// [`exhaust_physical_plans_4_logical_max_one_row`] and the default
-/// `Attach2Task` arm in [`crate::task_attach::attach2_task`]. `Clone` and
+/// `Attach2Task` arm in core's `attach2Task` (`task_attach`). `Clone` and
 /// `MemoryUsage` follow the enum's standing narrowings (the copy impl and
 /// no memory accounting).
 #[derive(Clone, Debug, Default)]
@@ -1989,7 +1996,7 @@ pub fn exhaust_physical_plans_4_logical_partition_union_all(
 /// CTE producer, the last is the main query, and the sequence's schema is
 /// the LAST child's. `ExplainInfo` is the fixed string `Sequence Node`;
 /// `Attach2Task` lives in core/task.go and refuses by name in
-/// [`crate::task_attach::attach2_task`].
+/// core's `attach2Task` (`task_attach`).
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalSequence {
     /// The shared physical base.
@@ -2062,7 +2069,7 @@ pub fn exhaust_physical_plans_4_logical_sequence(
 /// override: an `Apply` variant simply is not a join variant, which is the
 /// same fact stated structurally. `GetCost`/ver1/ver2 delegate to
 /// core-cost bodies (`utilfuncp`) and follow the enum's cost narrowings;
-/// `Attach2Task4PhysicalApply` lives in [`crate::task_attach::attach2_task`]. Go's
+/// `Attach2Task4PhysicalApply` lives in core's `attach2Task` (`task_attach`). Go's
 /// `ExtractCorrelatedCols` override is reproduced by [`PhysicalPlan`]: it is
 /// the hash join's extraction minus columns supplied by the outer child.
 #[derive(Clone, Debug, Default)]
@@ -2436,7 +2443,7 @@ pub struct PhysicalIndexScan {
     pub by_items: Vec<tidb_expression_aggregation::ByItems>,
     /// Access conditions and index metadata retained for execute-time plan
     /// cache range rebuild.
-    pub range_rebuild: Option<crate::physical::range_rebuild::IndexRangeRebuild>,
+    pub range_rebuild: Option<crate::range_rebuild::IndexRangeRebuild>,
     /// Normalized source ranges used by the bounded `checkCoverIndex` bridge.
     /// They represent the same Go `Ranges` as [`Self::ranges`] until that
     /// cardinality adapter consumes the full ranger type.
@@ -2513,7 +2520,7 @@ impl PhysicalIndexScan {
 
     /// Attaches access-path metadata that was already validated.
     #[must_use]
-    pub(crate) fn with_validated_pushdown(
+    pub fn with_validated_pushdown(
         mut self,
         pushdown: tidb_planner_core_operator_logicalop::tikv_scan_spec::ValidatedIndexPushdown,
     ) -> Self {
@@ -2695,7 +2702,7 @@ pub struct PhysicalPointGet {
     /// The single point range represented by this plan.
     pub ranges: tidb_ranger::types::Ranges,
     /// Parameter-dependent range metadata retained for cache rebuilding.
-    pub range_rebuild: Option<crate::physical::range_rebuild::PointRangeRebuild>,
+    pub range_rebuild: Option<crate::range_rebuild::PointRangeRebuild>,
     /// Go `PointGetPlan.Lock`: the enclosing UPDATE/DELETE, or a locking
     /// SELECT inside a transaction, locks the row it reads; rendered as the
     /// `lock` operator detail.
@@ -2738,7 +2745,7 @@ pub struct PhysicalBatchPointGet {
     /// global index applies to the partition each entry records.
     pub partition_names: Vec<String>,
     /// Parameter-dependent range metadata retained for cache rebuilding.
-    pub range_rebuild: Option<crate::physical::range_rebuild::PointRangeRebuild>,
+    pub range_rebuild: Option<crate::range_rebuild::PointRangeRebuild>,
     /// Go `KeepOrder`.
     pub keep_order: bool,
     /// Go `Desc`.
@@ -4348,7 +4355,7 @@ impl PhysicalPlan {
     }
 
     // Go `Attach2Task(...Task) Task` (`<2nd>`) lives at
-    // [`crate::task_attach::attach2_task`], beside the task representation it
+    // core's `attach2Task` (`task_attach`), beside the task representation it
     // composes onto.
 
     /// Go `ToPB(ctx, storeType)` (`<3rd>`). Go's base body is exactly this

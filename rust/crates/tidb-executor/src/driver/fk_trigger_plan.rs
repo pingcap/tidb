@@ -12,21 +12,21 @@
 // limitations under the License.
 
 //! The in-process catalog as the planner's [`ForeignKeyCatalog`]: Go
-//! `physicalop/foreign_key.go` itself is `tidb_planner::fk_plan`.
+//! `physicalop/foreign_key.go` itself is `tidb_planner_core_operator_physicalop::fk_plan`.
 
 use tidb_infoschema::{Catalog, TableEntry};
 use crate::driver::DriverError;
 use tidb_table::kv_table::KvForeignKey;
 use tidb_table::kv_table::FkAction;
 use crate::StmtContext;
-use tidb_planner::fk_plan::{FkColumn, FkMeta, FkPlanError, FkTable, ForeignKeyCatalog};
-use tidb_planner::physical::FkTriggerNode;
+use tidb_planner_core_operator_physicalop::fk_plan::{FkColumn, FkMeta, FkPlanError, FkTable, ForeignKeyCatalog};
+use tidb_planner_core_operator_physicalop::FkTriggerNode;
 use tidb_planner_core_base::PlanIdAllocator;
 
-pub(crate) use tidb_planner::fk_plan::FkPlanSpec;
+pub(crate) use tidb_planner_core_operator_physicalop::fk_plan::FkPlanSpec;
 
-fn action(action: FkAction) -> tidb_planner::fk_plan::FkAction {
-    use tidb_planner::fk_plan::FkAction as Planned;
+fn action(action: FkAction) -> tidb_planner_core_operator_physicalop::fk_plan::FkAction {
+    use tidb_planner_core_operator_physicalop::fk_plan::FkAction as Planned;
     match action {
         FkAction::NoOption => Planned::NoOption,
         FkAction::Restrict => Planned::Restrict,
@@ -109,7 +109,7 @@ pub(crate) fn build_fk_triggers(
     spec: &FkPlanSpec,
     plan_ids: &PlanIdAllocator,
 ) -> Result<Vec<FkTriggerNode>, DriverError> {
-    tidb_planner::fk_plan::build_fk_triggers(
+    tidb_planner_core_operator_physicalop::fk_plan::build_fk_triggers(
         &CatalogForeignKeys(catalog),
         ctx.foreign_key_checks(),
         operator,

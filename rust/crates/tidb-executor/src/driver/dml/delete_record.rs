@@ -21,7 +21,7 @@ use crate::driver::{Catalog, DriverError, TableEntry};
 use crate::foreign_key::{self, ParentChange};
 use crate::StmtContext;
 use tidb_datatype::Datum;
-use tidb_planner::physical::FkTriggerNode;
+use tidb_planner_core_operator_physicalop::FkTriggerNode;
 
 pub(crate) struct DeleteRecords<'a> {
     triggers: &'a [FkTriggerNode],

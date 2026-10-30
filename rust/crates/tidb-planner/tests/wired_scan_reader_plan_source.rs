@@ -13,8 +13,8 @@ use tidb_planner_cardinality::{
 use tidb_planner::{
     logical_data_source::LogicalDataSource,
     logical_data_source_task::IndexTaskProperty,
-    physical::{PhysicalIndexScan, PhysicalPlan, PhysicalTableReader, PhysicalTableScan},
 };
+use tidb_planner_core_operator_physicalop::{PhysicalIndexScan, PhysicalPlan, PhysicalTableReader, PhysicalTableScan};
 use tidb_planner_core_operator_logicalop::data_source_paths::{
         DataSourceAccessPath, IndexAccessPath, PointGetAdmission, ResolvedTableDescriptor,
         ResolvedTableScanKind, TableAccessPath, TableScanExplainIdSuffix,

@@ -98,7 +98,7 @@ impl PhysicalShuffle {
                 .sum::<i64>()
     }
 
-    pub(crate) fn resolve_by_items(&mut self) -> Result<(), PlanError> {
+    pub fn resolve_by_items(&mut self) -> Result<(), PlanError> {
         for i in 0..self.by_item_arrays.len() {
             let source = *self
                 .data_sources

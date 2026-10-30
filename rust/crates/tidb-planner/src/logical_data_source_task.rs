@@ -31,7 +31,7 @@ use crate::index_task::{
         ScanReadTaskRejection, TableTaskRejection,
     };
 use crate::logical_data_source::LogicalDataSource;
-use crate::physical::{BasePhysicalPlan, PhysicalIndexScan, PhysicalTableDual, PhysicalTableScan};
+use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, PhysicalIndexScan, PhysicalTableDual, PhysicalTableScan};
 use tidb_planner_property::task_type::TaskType;
 
 /// Ordering refusal used only by this legacy bounded task builder.

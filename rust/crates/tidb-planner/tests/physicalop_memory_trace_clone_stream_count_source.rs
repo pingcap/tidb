@@ -19,7 +19,7 @@
 use tidb_expression_aggregation::ByItems;
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
-use tidb_planner::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
+use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
 use tidb_planner_property::{MppPartitionColumn, PhysicalProperty};
 
 /// GO PORT (Sort half) of `pkg/planner/core/physical_plan_test.go:677
@@ -28,7 +28,7 @@ use tidb_planner_property::{MppPartitionColumn, PhysicalProperty};
 /// Go builds a zero `physicalop.PhysicalSort`, records `MemoryUsage()`,
 /// appends one `&util.ByItems{}`, and requires the usage to grow. The same
 /// monotonic contract is documented on
-/// [`tidb_planner::physical::PhysicalSort::memory_usage`].
+/// [`tidb_planner_core_operator_physicalop::PhysicalSort::memory_usage`].
 #[test]
 fn physical_sort_memory_usage_grows_with_each_by_item() {
     let empty = PhysicalPlan::Sort(PhysicalSort {

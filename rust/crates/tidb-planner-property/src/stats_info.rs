@@ -527,7 +527,7 @@ pub struct StatsInfo {
 impl StatsInfo {
     // `derive_limit_stats`: its awaited Go caller arrived --
     // `attach2Task4PhysicalLimit`'s single-read push-down
-    // (`tidb_planner::task::attach2_task`'s Limit arm) derives the pushed partial
+    // (`tidb_planner_core_operator_physicalop::task::attach2_task`'s Limit arm) derives the pushed partial
     // limit's profile through it, exactly the `task.go:633` call site the
     // old verdict named. The TopN arms remain future callers. The live
     // tier's own limit costing stays `tidb_executor::access_cost`

@@ -20,7 +20,7 @@
 //! `EnforceExchangerImpl` (here as [`crate::task::MppTask::enforce_exchanger`]).
 //!
 //! This is the production body behind
-//! [`crate::find_best_task::dispatch::find_best_task`]: `findBestTask`'s
+//! core's `findBestTask` (`find_best_task::dispatch`): `findBestTask`'s
 //! enforcer branch prices `EnforceProperty(prop, task, ...)` against the
 //! un-enforced candidates, and until this file the crate had only the seam.
 //!
@@ -30,7 +30,7 @@
 //!   (`enforce.go:37`) is raised through the caller's
 //!   [`MppWarningSink`].
 
-use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
+use crate::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
 use tidb_planner_property::PhysicalProperty;
 use tidb_planner_core_base::{PlanError, PlanIdAllocator};
 use crate::task::{MppTask, Task};
@@ -70,14 +70,14 @@ impl MppTask {
             .deep_clone();
         let exchange_type = match required.mpp_partition_tp.exchange_kind() {
             tidb_planner_property::ExchangeKind::Broadcast => {
-                crate::physical::ExchangeType::Broadcast
+                crate::ExchangeType::Broadcast
             }
-            tidb_planner_property::ExchangeKind::Hash => crate::physical::ExchangeType::Hash,
+            tidb_planner_property::ExchangeKind::Hash => crate::ExchangeType::Hash,
             tidb_planner_property::ExchangeKind::PassThrough => {
-                crate::physical::ExchangeType::PassThrough
+                crate::ExchangeType::PassThrough
             }
         };
-        let mut sender_base = crate::physical::BasePhysicalPlan::new(
+        let mut sender_base = crate::BasePhysicalPlan::new(
             allocator,
             "ExchangeSender",
             child.query_block_offset(),
@@ -85,12 +85,12 @@ impl MppTask {
         sender_base.base.set_stats(child.stats_info().cloned());
         sender_base.base.set_schema(child.schema().cloned());
         sender_base.set_children(vec![child]);
-        let sender = PhysicalPlan::ExchangeSender(crate::physical::PhysicalExchangeSender {
+        let sender = PhysicalPlan::ExchangeSender(crate::PhysicalExchangeSender {
             base: sender_base,
             exchange_type,
             hash_cols: required.mpp_partition_cols.clone(),
         });
-        let mut receiver_base = crate::physical::BasePhysicalPlan::new(
+        let mut receiver_base = crate::BasePhysicalPlan::new(
             allocator,
             "ExchangeReceiver",
             sender.query_block_offset(),
@@ -98,7 +98,7 @@ impl MppTask {
         receiver_base.base.set_stats(sender.stats_info().cloned());
         receiver_base.base.set_schema(sender.schema().cloned());
         receiver_base.set_children(vec![sender]);
-        let receiver = PhysicalPlan::ExchangeReceiver(crate::physical::PhysicalExchangeReceiver {
+        let receiver = PhysicalPlan::ExchangeReceiver(crate::PhysicalExchangeReceiver {
             base: receiver_base,
             tasks: Vec::new(),
         });
@@ -148,7 +148,7 @@ pub fn enforce_property(
     )
 }
 
-pub(crate) fn enforce_property_in(
+pub fn enforce_property_in(
     prop: &PhysicalProperty,
     mut task: Task,
     allocator: &PlanIdAllocator,
@@ -229,10 +229,26 @@ pub(crate) fn enforce_property_in(
     attacher.attach2_task(sort, vec![task], allocator, evaluate)
 }
 
+
+/// The statement context is where Go's `RaiseWarningWhenMPPEnforced` writes.
+impl MppWarningSink for tidb_sessionctx::StmtContext {
+    fn raise_mpp_warning(&self, message: &str) {
+        tidb_sessionctx::StmtContext::append_mpp_warning(self, message);
+    }
+
+    fn set_hint_warning(&self, message: &str) {
+        self.append_warning_parts(1815, message);
+    }
+
+    fn append_planner_note(&self, message: &str) {
+        tidb_sessionctx::StmtContext::append_planner_note(self, message);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::physical::{BasePhysicalPlan, ExchangeType, PhysicalPlan, PhysicalTableDual};
+    use crate::{BasePhysicalPlan, ExchangeType, PhysicalPlan, PhysicalTableDual};
     use tidb_planner_property::{MppPartitionColumn, MppPartitionType};
     use tidb_planner_property::stats_info::StatsInfo;
 

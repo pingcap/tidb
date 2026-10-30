@@ -39,7 +39,7 @@
 //! * `StatsInfo.StatsVersion` is carried by the property profile; preserving
 //!   it through every task transition belongs to this task package.
 
-use crate::physical::PhysicalPlan;
+use crate::PhysicalPlan;
 use tidb_planner_property::MppPartitionType;
 use crate::physical_table_reader::ReadReqType;
 use tidb_kv::store_type::StoreType;
@@ -126,9 +126,9 @@ pub struct IndexJoinInfo {
     /// Retained as expressions for the executor renderer, not row evaluation.
     pub access_conditions: Vec<tidb_expr::expression::Expression>,
     /// Static template inputs for Go mutableIndexJoinRange on cache reuse.
-    pub range_rebuild: Option<crate::physical::range_rebuild::PointRangeRebuild>,
+    pub range_rebuild: Option<crate::range_rebuild::PointRangeRebuild>,
     /// Go `IndexJoinInfo.CompareFilters`.
-    pub compare_filters: Option<crate::physical::IndexJoinCompareFilters>,
+    pub compare_filters: Option<crate::IndexJoinCompareFilters>,
     /// Go `AccessPath.RangeInfo`'s spelling: `indexJoinIntPKRangeInfo` renders
     /// the bare outer join keys when the probe is the integer handle
     /// (`constructDS2TableScanTask`'s int-PK branch); every other probe
@@ -154,7 +154,7 @@ pub struct SqlWarn {
 /// warning slice, copied — never shared — between task instances.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SimpleWarnings {
-    pub(crate) warnings: Vec<SqlWarn>,
+    pub warnings: Vec<SqlWarn>,
 }
 
 impl SimpleWarnings {
@@ -278,9 +278,9 @@ impl RootTask {
 #[derive(Clone, Debug, Default)]
 pub struct MppTask {
     /// Go's private `p`.
-    pub(crate) plan: Option<Box<PhysicalPlan>>,
+    pub plan: Option<Box<PhysicalPlan>>,
     /// Go's private `partTp`.
-    pub(crate) part_tp: MppPartitionType,
+    pub part_tp: MppPartitionType,
     /// Go `HashCols`, retained so exchange enforcement can compare and carry
     /// the current partitioning contract.
     pub hash_cols: Vec<tidb_planner_property::MppPartitionColumn>,
@@ -399,7 +399,7 @@ impl MppTask {
             return Ok(Task::invalid_task());
         }
 
-        let mut sender_base = crate::physical::BasePhysicalPlan::new(
+        let mut sender_base = crate::BasePhysicalPlan::new(
             allocator,
             "ExchangeSender",
             plan.query_block_offset(),
@@ -407,20 +407,20 @@ impl MppTask {
         sender_base.base.set_stats(plan.stats_info().cloned());
         sender_base.base.set_schema(plan.schema().cloned());
         sender_base.set_children(vec![*plan]);
-        let sender = PhysicalPlan::ExchangeSender(crate::physical::PhysicalExchangeSender {
+        let sender = PhysicalPlan::ExchangeSender(crate::PhysicalExchangeSender {
             base: sender_base,
-            exchange_type: crate::physical::ExchangeType::PassThrough,
+            exchange_type: crate::ExchangeType::PassThrough,
             hash_cols: Vec::new(),
         });
 
-        let mut reader_base = crate::physical::BasePhysicalPlan::new(
+        let mut reader_base = crate::BasePhysicalPlan::new(
             allocator,
             "TableReader",
             sender.query_block_offset(),
         );
         reader_base.base.set_stats(sender.stats_info().cloned());
         reader_base.base.set_schema(sender.schema().cloned());
-        let reader = PhysicalPlan::TableReader(crate::physical::PhysicalTableReader {
+        let reader = PhysicalPlan::TableReader(crate::PhysicalTableReader {
             base: reader_base,
             table_plan: Some(Box::new(sender)),
             store_type: StoreType::TiFlash,
@@ -506,7 +506,7 @@ pub struct CopTask {
     pub partial_order_match_result: Option<tidb_planner_property::PartialOrderMatchResult>,
     /// Go `PhysPlanPartInfo`: shared with the table scan below and carried
     /// onto the reader this task becomes.
-    pub phys_plan_part_info: Option<std::sync::Arc<crate::physical::PhysPlanPartInfo>>,
+    pub phys_plan_part_info: Option<std::sync::Arc<crate::PhysPlanPartInfo>>,
     // boundary: `ExtraHandleCol`,
     // `TblColHists`, `TblCols`,
     /// Go `Warnings`.
@@ -668,7 +668,7 @@ impl CopTask {
                 )
             })
             .unwrap_or(tidb_planner_core_cost::SELECTION_FACTOR);
-        let mut base = crate::physical::BasePhysicalPlan::new(
+        let mut base = crate::BasePhysicalPlan::new(
             allocator,
             "Selection",
             plan.query_block_offset(),
@@ -679,7 +679,7 @@ impl CopTask {
         );
         base.base.set_schema(plan.schema().cloned());
         base.set_children(vec![plan]);
-        let selection = PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+        let selection = PhysicalPlan::Selection(crate::PhysicalSelection {
             base,
             conditions: conds,
             from_data_source: true,
@@ -710,7 +710,7 @@ impl CopTask {
             &*table_plan,
             PhysicalPlan::HashAgg(_) | PhysicalPlan::StreamAgg(_)
         );
-        let mut base = crate::physical::BasePhysicalPlan::new(
+        let mut base = crate::BasePhysicalPlan::new(
             allocator,
             "IndexLookUp",
             table_plan.query_block_offset(),
@@ -752,7 +752,7 @@ impl CopTask {
                 if matches!(table_subtree, PhysicalPlan::TableScan(_)) {
                     let stats = table_subtree.stats_info().cloned();
                     let schema = table_subtree.schema().cloned();
-                    let mut base = crate::physical::BasePhysicalPlan::new(
+                    let mut base = crate::BasePhysicalPlan::new(
                         allocator,
                         "LocalIndexLookUp",
                         query_block_offset,
@@ -761,7 +761,7 @@ impl CopTask {
                     base.base.set_schema(schema);
                     base.set_children(vec![index_subtree, table_subtree]);
                     return Ok(PhysicalPlan::LocalIndexLookUp(
-                        crate::physical::PhysicalLocalIndexLookUp {
+                        crate::PhysicalLocalIndexLookUp {
                             base,
                             index_handle_offsets,
                         },
@@ -835,10 +835,10 @@ impl CopTask {
                 index_lookup_push_down = false;
             }
         }
-        let table_plans = crate::physical::flatten_list_push_down_plan(&table_plan);
+        let table_plans = crate::flatten_list_push_down_plan(&table_plan);
         let (index_plans, index_plans_un_natural_orders) =
-            crate::physical::flatten_tree_push_down_plan(&index_plan);
-        let reader = PhysicalPlan::IndexLookUpReader(crate::physical::PhysicalIndexLookUpReader {
+            crate::flatten_tree_push_down_plan(&index_plan);
+        let reader = PhysicalPlan::IndexLookUpReader(crate::PhysicalIndexLookUpReader {
             base,
             index_plan: Some(index_plan),
             table_plan: Some(table_plan),
@@ -912,7 +912,7 @@ impl CopTask {
         let schema = schema.ok_or_else(|| {
             PlanError::internal("NeedExtraProj requires the cop task's OriginSchema")
         })?;
-        let mut base = crate::physical::BasePhysicalPlan::new(
+        let mut base = crate::BasePhysicalPlan::new(
             allocator,
             "Projection",
             plan.query_block_offset(),
@@ -921,7 +921,7 @@ impl CopTask {
         base.base.set_schema(Some(schema.clone()));
         base.set_children(vec![plan]);
         Ok(PhysicalPlan::Projection(
-            crate::physical::PhysicalProjection {
+            crate::PhysicalProjection {
                 base,
                 exprs: schema.columns.into_iter().map(Expression::Column).collect(),
                 calculate_no_delay: false,
@@ -941,7 +941,7 @@ impl CopTask {
             let first = partial_plans_raw
                 .first()
                 .expect("the index-merge branch requires a partial plan");
-            let mut base = crate::physical::BasePhysicalPlan::new(
+            let mut base = crate::BasePhysicalPlan::new(
                 allocator,
                 "IndexMerge",
                 first.query_block_offset(),
@@ -951,7 +951,7 @@ impl CopTask {
             base.base.set_stats(receipt.stats_info().cloned());
             base.base.set_schema(receipt.schema().cloned());
             let reader =
-                PhysicalPlan::IndexMergeReader(crate::physical::PhysicalIndexMergeReader {
+                PhysicalPlan::IndexMergeReader(crate::PhysicalIndexMergeReader {
                     base,
                     partial_plans_raw,
                     table_plan,
@@ -1008,7 +1008,7 @@ impl CopTask {
             // index plan in a PhysicalIndexReader carrying its stats, at its
             // query-block offset. The reader reuses the pushed plan's id —
             // the same named narrowing as the table branch.
-            let mut base = crate::physical::BasePhysicalPlan::new(
+            let mut base = crate::BasePhysicalPlan::new(
                 allocator,
                 "IndexReader",
                 index_plan.query_block_offset(),
@@ -1042,7 +1042,7 @@ impl CopTask {
             let output_columns = output_schema
                 .map(|schema| schema.columns.clone())
                 .unwrap_or_default();
-            let reader = PhysicalPlan::IndexReader(crate::physical::PhysicalIndexReader {
+            let reader = PhysicalPlan::IndexReader(crate::PhysicalIndexReader {
                 base,
                 index_plan: Some(index_plan),
                 output_columns,
@@ -1098,7 +1098,7 @@ impl CopTask {
         // planning stays a documented gap.
         let (table_plan, read_req_type) =
             if store_type == tidb_kv::store_type::StoreType::TiFlash {
-                let mut sender_base = crate::physical::BasePhysicalPlan::new(
+                let mut sender_base = crate::BasePhysicalPlan::new(
                     allocator,
                     "ExchangeSender",
                     table_plan.query_block_offset(),
@@ -1108,9 +1108,9 @@ impl CopTask {
                 sender_base.set_children(vec![*table_plan]);
                 (
                     Box::new(PhysicalPlan::ExchangeSender(
-                        crate::physical::PhysicalExchangeSender {
+                        crate::PhysicalExchangeSender {
                             base: sender_base,
-                            exchange_type: crate::physical::ExchangeType::PassThrough,
+                            exchange_type: crate::ExchangeType::PassThrough,
                             hash_cols: Vec::new(),
                         },
                     )),
@@ -1119,14 +1119,14 @@ impl CopTask {
             } else {
                 (table_plan, crate::physical_table_reader::ReadReqType::Cop)
             };
-        let mut base = crate::physical::BasePhysicalPlan::new(
+        let mut base = crate::BasePhysicalPlan::new(
             allocator,
             "TableReader",
             table_plan.query_block_offset(),
         );
         base.base.set_stats(table_plan.stats_info().cloned());
         base.base.set_schema(table_plan.schema().cloned());
-        let reader = PhysicalPlan::TableReader(crate::physical::PhysicalTableReader {
+        let reader = PhysicalPlan::TableReader(crate::PhysicalTableReader {
             base,
             table_plan: Some(table_plan),
             store_type,
@@ -1279,7 +1279,7 @@ impl Task {
     }
 
     /// Borrowed conversion using the current statement evaluator.
-    pub(crate) fn convert_to_root_task_in(
+    pub fn convert_to_root_task_in(
         &self,
         allocator: &tidb_planner_core_base::PlanIdAllocator,
         evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
@@ -1288,7 +1288,7 @@ impl Task {
     }
 
     /// Owned conversion using the current statement evaluator.
-    pub(crate) fn into_root_task_in(
+    pub fn into_root_task_in(
         self,
         allocator: &tidb_planner_core_base::PlanIdAllocator,
         evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,

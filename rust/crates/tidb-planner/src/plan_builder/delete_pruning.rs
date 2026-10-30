@@ -30,7 +30,7 @@ use tidb_hack::go_to_lower;
 
 use tidb_infoschema::table_source::TableSource;
 use super::PlanBuilder;
-use crate::physical::{DeleteColPos, DeleteHandle, DeleteTablePos};
+use tidb_planner_core_operator_physicalop::{DeleteColPos, DeleteHandle, DeleteTablePos};
 
 impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// The pruning decision for the single-table read of a DELETE (the

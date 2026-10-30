@@ -85,7 +85,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     let node = tidb_resolve::NodeW::new(query.clone());
                     if let Ok(plan) = self.build_query_node(&node, false) {
                         let (schema, names) = super::snapshot_schema_and_names(&plan);
-                        let output = crate::physical::InsertSelectOutput {
+                        let output = tidb_planner_core_operator_physicalop::InsertSelectOutput {
                             names,
                             actual_col_len,
                         };

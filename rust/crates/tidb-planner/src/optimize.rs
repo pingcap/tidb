@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 
 use tidb_planner_core_base::ColumnIdAllocator;
 use crate::find_best_task::coster::{CostEnv, Ver2Coster};
-use crate::enforce::MppWarningSink;
+use tidb_planner_core_operator_physicalop::enforce::MppWarningSink;
 use crate::find_best_task::dispatch::{find_best_task, DispatchContext};
 use tidb_fixcontrol::OptimizerFixControl;
 use crate::rule::{flags, logical_optimize};
@@ -38,7 +38,7 @@ use tidb_planner_core_operator_logicalop::plan_context::{CteOptimizer, DisabledL
 use tidb_planner_core_operator_logicalop::plan_context::StatisticsLoadRequester;
 use tidb_planner_core_operator_logicalop::plan_context::PartitionPruning;
 use tidb_planner_core_operator_logicalop::{prepare_possible_properties, LogicalPlan};
-use crate::physical::PhysicalPlan;
+use tidb_planner_core_operator_physicalop::PhysicalPlan;
 use tidb_planner_property::PhysicalProperty;
 use tidb_planner_core_base::{PlanError, PlanIdAllocator};
 
@@ -507,7 +507,7 @@ pub fn optimize_physical<C: OptimizeContext>(
     // Go postOptimize: eliminateUnionScanAndLock (the UnionScan half).
     let mut physical =
         crate::post_optimize::eliminate_union_scan_over_point_get(physical, ctx.in_transaction());
-    crate::physical::shuffle::install_receivers(&mut physical, plan_ids)?;
+    tidb_planner_core_operator_physicalop::shuffle::install_receivers(&mut physical, plan_ids)?;
     if ctx.enable_parallel_apply() {
         crate::post_optimize::enable_parallel_apply(&mut physical, ctx.executor_concurrency());
     }

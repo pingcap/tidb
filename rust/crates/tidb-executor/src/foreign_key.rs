@@ -98,7 +98,7 @@ use tidb_table::kv_table::RowDecodeContext;
 use tidb_table::kv_table::KvForeignKey;
 use tidb_table::kv_table::FkAction;
 use tidb_hack::{GoCaseCompare, GoToLower};
-use tidb_planner::physical::{FkTriggerKind, FkTriggerNode};
+use tidb_planner_core_operator_physicalop::{FkTriggerKind, FkTriggerNode};
 
 /// MySQL's `FK_MAX_CASCADE_DEL`: the deepest a cascade may recurse before Go
 /// raises `ErrFkExceedMaxDepth` (3008).

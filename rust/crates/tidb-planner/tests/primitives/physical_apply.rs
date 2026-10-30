@@ -17,7 +17,7 @@
 //! The Go anchor is `TestPhysicalApplyIsNotPhysicalJoin` at
 //! `pkg/planner/core/casetest/physicalplantest/physical_plan_test.go:1537`.
 
-use tidb_planner::physical::{BasePhysicalPlan, PhysicalApply, PhysicalPlan};
+use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, PhysicalApply, PhysicalPlan};
 
 fn apply(offset: i32) -> PhysicalPlan {
     let mut apply = PhysicalApply::default();

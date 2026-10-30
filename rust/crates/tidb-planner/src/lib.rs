@@ -80,11 +80,8 @@ pub mod table_statistics;
 pub mod access_path;
 pub mod configured_order_limit_contract;
 pub mod common_plans;
-pub mod enforce;
 pub mod explain;
 pub mod expression_rewriter;
-pub mod final_mode_agg;
-pub mod fk_plan;
 pub mod find_best_task;
 pub mod from_scope;
 pub mod point_get_key;
@@ -102,7 +99,6 @@ pub mod memtable_predicate_extractor;
 pub mod optimize;
 #[cfg(test)]
 mod partidx_tests;
-pub mod physical;
 pub mod post_optimize;
 #[cfg(test)]
 mod physical_tests;
@@ -111,7 +107,6 @@ pub mod resolve_indices;
 pub mod inject_extra_projection;
 pub mod shuffle_optimize;
 pub mod physical_plan_cache;
-pub mod physical_table_reader;
 pub mod plan_builder;
 pub mod plan_cache_lru;
 pub mod plan_cache_instance;
@@ -119,11 +114,9 @@ pub mod plan_cost_ver2;
 pub mod plan_hint;
 pub mod point_get_value;
 pub mod preprocess;
-pub mod pushdown;
 pub mod transaction_control;
 pub mod show_predicate_extractor;
 pub mod show_schema;
-pub mod task;
 pub mod task_attach;
 
 /// Typed Rust counterpart of Go `planner/util.SliceRecursiveFlattenIter`.

@@ -23,7 +23,7 @@
 //! `t2(a, b)` is ambiguous, while `VALUES(col)` reads the target's columns
 //! only.
 
-use crate::physical::InsertSelectOutput;
+use tidb_planner_core_operator_physicalop::InsertSelectOutput;
 use std::collections::BTreeMap;
 
 use tidb_ast::{Expr, InsertStmt, QueryStmt, SelectField, SelectStmt};

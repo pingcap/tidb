@@ -14,7 +14,7 @@
 
 //! Shared enums and errors for Go's physical table-reader operator.
 //!
-//! The operator itself is [`crate::physical::PhysicalTableReader`]. Keeping a
+//! The operator itself is [`crate::PhysicalTableReader`]. Keeping a
 //! second metadata-only `PhysicalTableReaderPlan` here caused bounded scans to
 //! bypass the real physical tree, so that facade has been removed.
 
@@ -69,7 +69,7 @@ impl TableScanCountError {
         self.actual
     }
 
-    pub(crate) const fn new(actual: usize) -> Self {
+    pub const fn new(actual: usize) -> Self {
         Self { actual }
     }
 }

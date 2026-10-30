@@ -32,7 +32,7 @@ use super::{
     EXTRA_COMMIT_TS_ID,
 };
 use tidb_planner_core_operator_logicalop::{LogicalPlan, LogicalProjection};
-use crate::physical::{DeleteHandle, UpdateAssign, UpdateTablePos};
+use tidb_planner_core_operator_physicalop::{DeleteHandle, UpdateAssign, UpdateTablePos};
 use tidb_planner_core_base::PlanError;
 
 /// Go's message for writing `_tidb_rowid` without `tidb_opt_write_row_id`,

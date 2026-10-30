@@ -18,9 +18,9 @@ use crate::access_path::index_merge::compare_alternatives;
 use tidb_planner_util::path::{Partial, UnionIndexMergePath};
 use crate::find_best_task::dispatch::DispatchContext;
 use tidb_planner_core_operator_logicalop::DataSource;
-use crate::physical::PhysicalPlan;
+use tidb_planner_core_operator_physicalop::PhysicalPlan;
 use tidb_planner_core_base::PlanError;
-use crate::task::Task;
+use tidb_planner_core_operator_physicalop::task::Task;
 use tidb_expr::expression::Expression;
 use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 
@@ -522,7 +522,7 @@ pub(super) fn build_converged_union_index_merge_task(
                 } else {
                     tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::Range
                 };
-                let mut base = crate::physical::BasePhysicalPlan::new(
+                let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                     ctx.allocator,
                     scan_kind.plan_type(),
                     ds.base.base.query_block_offset(),
@@ -540,7 +540,7 @@ pub(super) fn build_converged_union_index_merge_task(
                 base.base
                     .set_schema(Some(tidb_expr::schema::Schema::new(schema_columns)));
                 partial_plans_raw.push(PhysicalPlan::TableScan(
-                    crate::physical::PhysicalTableScan {
+                    tidb_planner_core_operator_physicalop::PhysicalTableScan {
                         by_items: Vec::new(),
                         group_by_col_idxs: groups.clone(),
                         base,
@@ -597,7 +597,7 @@ pub(super) fn build_converged_union_index_merge_task(
                 if filters.is_empty() {
                     partial_plans_raw.push(scan);
                 } else {
-                    let mut base = crate::physical::BasePhysicalPlan::new(
+                    let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                         ctx.allocator,
                         "Selection",
                         ds.base.base.query_block_offset(),
@@ -614,7 +614,7 @@ pub(super) fn build_converged_union_index_merge_task(
                     );
                     base.set_children(vec![scan]);
                     partial_plans_raw.push(PhysicalPlan::Selection(
-                        crate::physical::PhysicalSelection {
+                        tidb_planner_core_operator_physicalop::PhysicalSelection {
                             base,
                             conditions: filters,
                             from_data_source: true,
@@ -626,7 +626,7 @@ pub(super) fn build_converged_union_index_merge_task(
     }
 
     let table_plan = Some({
-        let mut base = crate::physical::BasePhysicalPlan::new(
+        let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
             ctx.allocator,
             "TableRowIDScan",
             ds.base.base.query_block_offset(),
@@ -641,7 +641,7 @@ pub(super) fn build_converged_union_index_merge_task(
                 .unwrap_or_default(),
         )));
         Box::new(PhysicalPlan::TableScan(
-            crate::physical::PhysicalTableScan {
+            tidb_planner_core_operator_physicalop::PhysicalTableScan {
                 by_items: Vec::new(),
                 group_by_col_idxs: Vec::new(),
                 base,
@@ -673,7 +673,7 @@ pub(super) fn build_converged_union_index_merge_task(
         ))
     });
 
-    let (pushed_filters, table_remaining) = crate::pushdown::split_index_merge_table_filters(
+    let (pushed_filters, table_remaining) = tidb_planner_core_operator_physicalop::pushdown::split_index_merge_table_filters(
         table_filters.clone(),
         &ctx.expr_pushdown_blacklist,
     );
@@ -691,7 +691,7 @@ pub(super) fn build_converged_union_index_merge_task(
     let index_plan_finished = !pushed_filters.is_empty();
     if !pushed_filters.is_empty() {
         let scan = table_plan.take().expect("union table probe exists");
-        let mut base = crate::physical::BasePhysicalPlan::new(
+        let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
             ctx.allocator,
             "Selection",
             ds.base.base.query_block_offset(),
@@ -708,7 +708,7 @@ pub(super) fn build_converged_union_index_merge_task(
         );
         base.set_children(vec![*scan]);
         table_plan = Some(Box::new(PhysicalPlan::Selection(
-            crate::physical::PhysicalSelection {
+            tidb_planner_core_operator_physicalop::PhysicalSelection {
                 base,
                 conditions: pushed_filters,
                 from_data_source: true,
@@ -716,8 +716,8 @@ pub(super) fn build_converged_union_index_merge_task(
         )));
     }
 
-    Ok(Task::Cop(crate::task::CopTask {
-        phys_plan_part_info: Some(crate::physical::PhysPlanPartInfo::from_data_source(ds)),
+    Ok(Task::Cop(tidb_planner_core_operator_physicalop::task::CopTask {
+        phys_plan_part_info: Some(tidb_planner_core_operator_physicalop::PhysPlanPartInfo::from_data_source(ds)),
         table_plan,
         idx_merge_part_plans: partial_plans_raw,
         keep_order: !by_items.is_empty(),
@@ -725,7 +725,7 @@ pub(super) fn build_converged_union_index_merge_task(
         origin_schema: extra_columns_added
             .then(|| ds.base.base.schema().cloned())
             .flatten(),
-        idx_merge_order: Some(crate::task::IndexMergeOrder {
+        idx_merge_order: Some(tidb_planner_core_operator_physicalop::task::IndexMergeOrder {
             advisory,
             partial_matches: partial_matches.clone(),
             by_items: by_items.clone(),
@@ -807,12 +807,12 @@ fn keeps_phys_tbl_id(ds: &DataSource) -> bool {
 /// merge partial, which `rebuildRange` re-detaches on a plan-cache hit.
 pub(crate) fn partial_index_range_rebuild(
     filled: &tidb_planner_util::path::FilledIndexPath,
-) -> Option<crate::physical::range_rebuild::IndexRangeRebuild> {
+) -> Option<tidb_planner_core_operator_physicalop::range_rebuild::IndexRangeRebuild> {
     if filled.detached.access_conds.is_empty() {
         return None;
     }
     let (columns, lengths) = filled.columns.iter().cloned().unzip();
-    Some(crate::physical::range_rebuild::IndexRangeRebuild::new(
+    Some(tidb_planner_core_operator_physicalop::range_rebuild::IndexRangeRebuild::new(
         filled.detached.access_conds.clone(),
         columns,
         lengths,
@@ -824,20 +824,20 @@ pub(crate) fn partial_index_range_rebuild(
 fn partial_table_range_rebuild(
     ds: &DataSource,
     filled: &tidb_planner_util::path::FilledTablePath,
-) -> Option<crate::physical::range_rebuild::TableRangeRebuild> {
+) -> Option<tidb_planner_core_operator_physicalop::range_rebuild::TableRangeRebuild> {
     let access_conds = &filled.detached.access_conds;
     if access_conds.is_empty() {
         return None;
     }
     Some(if ds.common_handle_cols.is_empty() {
-        crate::physical::range_rebuild::TableRangeRebuild::int_handle(
+        tidb_planner_core_operator_physicalop::range_rebuild::TableRangeRebuild::int_handle(
             access_conds.clone(),
             filled.handle_type.clone(),
             ds.pk_is_handle && filled.handle_type.is_unsigned(),
         )
     } else {
         let (columns, lengths) = filled.common_columns.iter().cloned().unzip();
-        crate::physical::range_rebuild::TableRangeRebuild::common_handle(
+        tidb_planner_core_operator_physicalop::range_rebuild::TableRangeRebuild::common_handle(
             access_conds.clone(),
             columns,
             lengths,
@@ -871,7 +871,7 @@ fn push_index_partial(
     }
     // Go GetScanRowSize prices the physical index schema once.
     let cost_columns = schema_columns.clone();
-    let mut base = crate::physical::BasePhysicalPlan::new(
+    let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
         ctx.allocator,
         "IndexRangeScan",
         ds.base.base.query_block_offset(),
@@ -879,7 +879,7 @@ fn push_index_partial(
     base.base.set_stats(Some(merge_scan_stats(ds, scan_rows, ctx)));
     base.base
         .set_schema(Some(tidb_expr::schema::Schema::new(schema_columns)));
-    partial_plans_raw.push(PhysicalPlan::IndexScan(crate::physical::PhysicalIndexScan {
+    partial_plans_raw.push(PhysicalPlan::IndexScan(tidb_planner_core_operator_physicalop::PhysicalIndexScan {
         by_items: Vec::new(),
         group_by_col_idxs: group_by_col_idxs.to_vec(),
         base,
@@ -913,7 +913,7 @@ fn push_index_partial(
     // built even when none can, and the rest return to the root task.
     let mut remaining = Vec::new();
     if !filled.index_filters.is_empty() || global_partition_filter.is_some() {
-        let (pushed, rest) = crate::pushdown::extract_filters_for_index_merge(
+        let (pushed, rest) = tidb_planner_core_operator_physicalop::pushdown::extract_filters_for_index_merge(
             filled
                 .index_filters
                 .iter()
@@ -926,7 +926,7 @@ fn push_index_partial(
         let scan = partial_plans_raw
             .pop()
             .expect("partial scan was just built");
-        let mut base = crate::physical::BasePhysicalPlan::new(
+        let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
             ctx.allocator,
             "Selection",
             ds.base.base.query_block_offset(),
@@ -942,7 +942,7 @@ fn push_index_partial(
                 .map(|stats| stats.scale(ratio, ctx.skew_ratio)),
         );
         base.set_children(vec![scan]);
-        partial_plans_raw.push(PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+        partial_plans_raw.push(PhysicalPlan::Selection(tidb_planner_core_operator_physicalop::PhysicalSelection {
             base,
             conditions: pushed,
             from_data_source: true,

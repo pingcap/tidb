@@ -14,7 +14,7 @@
 
 //! `pkg/planner.part14` ports of `pkg/planner/core/plan_test.go`'s
 //! `BuildFinalModeAggregation` items over the REAL transcreated split in
-//! [`tidb_planner::final_mode_agg`]:
+//! [`tidb_planner_core_operator_physicalop::final_mode_agg`]:
 //!
 //! * `plan_test.go:534 TestBuildFinalModeAggregation` — RUNS for real.
 //! * `plan_test.go:682 TestBuildFinalModeAggregationMaxMinCountSchema` —
@@ -31,7 +31,7 @@ use tidb_exprctx::ZonedNoColumns;
 use tidb_datatype::SessionTimeZone;
 
 use tidb_planner_core_base::ColumnIdAllocator;
-use tidb_planner::final_mode_agg::{build_final_mode_aggregation, AggInfo};
+use tidb_planner_core_operator_physicalop::final_mode_agg::{build_final_mode_aggregation, AggInfo};
 
 /// Go's expression context is consulted only for argument types during the
 /// split's `TypeInfer` calls, exactly as in the crate's own `final_mode_agg`
@@ -84,7 +84,7 @@ fn original_schema(agg_funcs: &[AggFuncDesc]) -> Schema {
 /// final half IS the original whose descriptors stay in `CompleteMode`.
 ///
 /// This port replays exactly that matrix over
-/// [`tidb_planner::final_mode_agg::build_final_mode_aggregation`], the
+/// [`tidb_planner_core_operator_physicalop::final_mode_agg::build_final_mode_aggregation`], the
 /// transcreated body whose module header cites `base_physical_agg.go:600`.
 #[test]
 fn build_final_mode_aggregation_splits_modes_across_cop_and_mpp_matrix() {

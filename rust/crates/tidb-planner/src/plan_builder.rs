@@ -695,7 +695,7 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub session_ctx: Option<&'a dyn stmt_build::SessionPlanContext>,
     /// Go `SessionVars.RaiseWarningWhenMPPEnforced`'s sink. `None` raises
     /// nothing, as a builder without a session.
-    pub mpp_warning_sink: Option<&'a dyn crate::enforce::MppWarningSink>,
+    pub mpp_warning_sink: Option<&'a dyn tidb_planner_core_operator_physicalop::enforce::MppWarningSink>,
     /// Go `StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode`.
     pub tiflash_engine_removed_due_to_strict_sql_mode: bool,
     /// Go `evalFieldDefaultValue`, installed by the executor. `None` keeps a
@@ -757,22 +757,22 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// point and leaves the root in [`Self::dml_root`].
     pub allocate_delete_root: bool,
     /// The root [`Self::allocate_delete_root`] drew.
-    pub dml_root: Option<crate::physical::BasePhysicalPlan>,
+    pub dml_root: Option<tidb_planner_core_operator_physicalop::BasePhysicalPlan>,
     /// Asks a single-table DELETE's build to prune its read as Go's
     /// `pruneAndBuildColPositionInfoForDelete` does; the value is whether any
     /// foreign key trigger exists (Go `hasFK`), which declines the pruning.
     pub delete_prune_has_fk: Option<bool>,
     /// The position information that pruning produced, for the `Delete` root.
-    pub delete_col_pos: Option<crate::physical::DeleteColPos>,
+    pub delete_col_pos: Option<tidb_planner_core_operator_physicalop::DeleteColPos>,
     /// Asks a multi-table DELETE's build to prune its read and to lay out its
     /// targets' rows (`pruneAndBuildColPositionInfoForDelete`).
     pub delete_multi: Option<delete_pruning::DeleteMultiInput>,
     /// The layouts [`Self::delete_multi`] produced, for the `Delete` root.
-    pub delete_tables: Vec<crate::physical::DeleteTablePos>,
+    pub delete_tables: Vec<tidb_planner_core_operator_physicalop::DeleteTablePos>,
     /// The layouts of a multi-table UPDATE's updated aliases.
-    pub update_tables: Vec<crate::physical::UpdateTablePos>,
+    pub update_tables: Vec<tidb_planner_core_operator_physicalop::UpdateTablePos>,
     /// A multi-table UPDATE's assignments.
-    pub update_assigns: Vec<crate::physical::UpdateAssign>,
+    pub update_assigns: Vec<tidb_planner_core_operator_physicalop::UpdateAssign>,
 
     /// Go `SessionVars`, narrowed exactly as the rewriter narrows it.
     pub flags: RewriterSessionFlags,
@@ -1705,7 +1705,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
     #[must_use]
     pub const fn with_mpp_warning_sink(
         mut self,
-        sink: &'a dyn crate::enforce::MppWarningSink,
+        sink: &'a dyn tidb_planner_core_operator_physicalop::enforce::MppWarningSink,
     ) -> Self {
         self.mpp_warning_sink = Some(sink);
         self
@@ -5264,7 +5264,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
 
         if self.allocate_delete_root {
-            self.dml_root = Some(crate::physical::BasePhysicalPlan::new(self.plan_ids, "Delete", 0));
+            self.dml_root = Some(tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(self.plan_ids, "Delete", 0));
         }
         // Go's UPDATE projection explicitly removes ExtraCommitTS. DELETE's
         // column-position projection reaches the same retained single-table

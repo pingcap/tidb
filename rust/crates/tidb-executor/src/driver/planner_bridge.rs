@@ -20,6 +20,7 @@
 //! and translates the aggregation property back to stable relation-qualified
 //! column identities understood by the executor's physical source builder.
 
+use tidb_planner::physical_plan_cache::RebuildPlanForCache;
 use tidb_stats_handle::catalog_statistics::CatalogStatistics;
 use crate::StatsStmtCtx as _;
 use tidb_planner::stmt_ctx::PlannerStmtCtx as _;
@@ -40,7 +41,7 @@ use tidb_planner_core_operator_logicalop::plan_context::{RuleContext};
 use tidb_planner_core_operator_logicalop::{
     BaseLogicalPlan, LogicalPlan, LogicalSelection, prepare_possible_properties,
 };
-use tidb_planner::physical::PhysicalPlan;
+use tidb_planner_core_operator_physicalop::PhysicalPlan;
 use tidb_planner_core_base::PlanIdAllocator;
 use tidb_planner::plan_builder::PlanBuilder;
 use tidb_infoschema::table_source::TableSource;
@@ -2377,7 +2378,7 @@ pub(crate) fn plan_insert_expressions(
     insert: &tidb_ast::InsertStmt,
     select: Option<(
         &tidb_expr::schema::Schema,
-        &tidb_planner::physical::InsertSelectOutput,
+        &tidb_planner_core_operator_physicalop::InsertSelectOutput,
     )>,
     catalog: &Catalog,
     current_database: &str,
@@ -2667,7 +2668,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     let root = builder
         .dml_root
         .take()
-        .unwrap_or_else(|| tidb_planner::physical::BasePhysicalPlan::new(plan_ids, operator, 0));
+        .unwrap_or_else(|| tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(plan_ids, operator, 0));
     // Go burns three logical plan ids AFTER buildUpdate's own ctor and
     // BEFORE the read plan is optimized: the conflict-detector's two join
     // rewrites and the join-order projection (`find_best_task` W52 ledger:
@@ -2681,17 +2682,17 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
         plan.children().iter().any(logical_contains_join)
     }
     if logical_contains_join(&plan) {
-        let _ = tidb_planner::physical::BasePhysicalPlan::new(
+        let _ = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
             plan_ids,
             tidb_planner_core_operator_logicalop::LogicalJoin::TYPE,
             0,
         );
-        let _ = tidb_planner::physical::BasePhysicalPlan::new(
+        let _ = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
             plan_ids,
             tidb_planner_core_operator_logicalop::LogicalJoin::TYPE,
             0,
         );
-        let _ = tidb_planner::physical::BasePhysicalPlan::new(
+        let _ = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
             plan_ids,
             tidb_planner_core_operator_logicalop::LogicalProjection::TYPE,
             0,
@@ -2752,15 +2753,15 @@ pub(crate) struct DmlSourcePlan {
     /// The UPDATE assignments' expressions, resolved against the read.
     pub update_expressions: Vec<Option<tidb_expr::expression::Expression>>,
     /// The allocated root base.
-    pub root: tidb_planner::physical::BasePhysicalPlan,
+    pub root: tidb_planner_core_operator_physicalop::BasePhysicalPlan,
     /// A pruned single-table DELETE's layout.
-    pub delete_col_pos: Option<tidb_planner::physical::DeleteColPos>,
+    pub delete_col_pos: Option<tidb_planner_core_operator_physicalop::DeleteColPos>,
     /// A multi-table DELETE's layouts.
-    pub delete_tables: Vec<tidb_planner::physical::DeleteTablePos>,
+    pub delete_tables: Vec<tidb_planner_core_operator_physicalop::DeleteTablePos>,
     /// A multi-table UPDATE's layouts.
-    pub update_tables: Vec<tidb_planner::physical::UpdateTablePos>,
+    pub update_tables: Vec<tidb_planner_core_operator_physicalop::UpdateTablePos>,
     /// A multi-table UPDATE's assignments.
-    pub update_assigns: Vec<tidb_planner::physical::UpdateAssign>,
+    pub update_assigns: Vec<tidb_planner_core_operator_physicalop::UpdateAssign>,
 }
 
 /// Go `buildOrderedList` for the fast point UPDATE (`tryUpdatePointPlan`): the

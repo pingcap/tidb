@@ -21,9 +21,9 @@ use tidb_ast::{Hint, HintKind, HintTable, LeadingElement};
 use tidb_hint::{generate_qb_name, remove_duplicated_hints, NodeType};
 
 use tidb_planner_core_base::LogicalJoinType;
-use crate::physical::PhysicalPlan;
+use tidb_planner_core_operator_physicalop::PhysicalPlan;
 use tidb_kv::store_type::StoreType;
-use crate::physical::IndexJoinKind;
+use tidb_planner_core_operator_physicalop::IndexJoinKind;
 
 /// Table identity the physical plan does not carry itself.
 pub trait HintCatalog {
@@ -124,7 +124,7 @@ fn flatten<'a>(
     plan: &'a PhysicalPlan,
     store: Store,
     out: &mut Vec<(&'a PhysicalPlan, Store)>,
-    ctes: &mut Vec<&'a crate::physical::PhysicalCTE>,
+    ctes: &mut Vec<&'a tidb_planner_core_operator_physicalop::PhysicalCTE>,
 ) {
     out.push((plan, store));
     match plan {

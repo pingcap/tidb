@@ -10,12 +10,10 @@ use tidb_planner_cardinality::{
         index_range_policy::{IndexRangeShape, RangeBoundKind},
         live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate},
 };
-use tidb_planner::{
-    index_task::{IndexTaskRejection, ScanReadTask, ScanReadTaskRejection, TableTaskRejection},
-    logical_data_source::LogicalDataSource,
-    logical_data_source_task::{IndexOrderingRequirement, IndexTaskProperty},
-    physical::{PhysicalTableReader, PhysicalTableScan},
-};
+use tidb_planner::index_task::{IndexTaskRejection, ScanReadTask, ScanReadTaskRejection, TableTaskRejection};
+use tidb_planner::logical_data_source::LogicalDataSource;
+use tidb_planner::logical_data_source_task::{IndexOrderingRequirement, IndexTaskProperty};
+use tidb_planner_core_operator_physicalop::{PhysicalTableReader, PhysicalTableScan};
 use tidb_planner_core_operator_logicalop::data_source_paths::{
         AccessPathStore, DataSourceAccessPath, IndexAccessPath, PointGetAdmission,
         ResolvedTableDescriptor, ResolvedTableScanKind, TableAccessPath, TableScanExplainIdSuffix,
@@ -196,7 +194,7 @@ fn source_admitted_table_path_becomes_one_root_table_reader() {
     assert_eq!(reader.query_block_offset(), -4);
     assert!(matches!(
         reader.table_plan.as_deref(),
-        Some(tidb_planner::physical::PhysicalPlan::TableScan(_))
+        Some(tidb_planner_core_operator_physicalop::PhysicalPlan::TableScan(_))
     ));
     assert_eq!(
         reader.table_plan_explain(false).as_deref(),

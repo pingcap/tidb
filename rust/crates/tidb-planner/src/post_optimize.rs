@@ -17,7 +17,7 @@
 //! `enableParallelApply` -- and the physical half of
 //! `rule_eliminate_projection.go` (`eliminatePhysicalProjection`).
 
-use crate::physical::*;
+use tidb_planner_core_operator_physicalop::*;
 
 /// Replaces every `PhysicalUnionScan` by its child (the reader below already
 /// merges the transaction's own rows, and a temporary table's).

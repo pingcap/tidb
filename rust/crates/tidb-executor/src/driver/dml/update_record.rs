@@ -20,7 +20,7 @@
 use super::*;
 
 pub(crate) struct UpdateRecords<'a> {
-    triggers: &'a [tidb_planner::physical::FkTriggerNode],
+    triggers: &'a [tidb_planner_core_operator_physicalop::FkTriggerNode],
     tables: Vec<UpdateTable>,
 }
 
@@ -63,7 +63,7 @@ impl UpdateOutcome {
 }
 
 impl<'a> UpdateRecords<'a> {
-    pub(crate) fn new(triggers: &'a [tidb_planner::physical::FkTriggerNode]) -> Self {
+    pub(crate) fn new(triggers: &'a [tidb_planner_core_operator_physicalop::FkTriggerNode]) -> Self {
         Self {
             triggers,
             tables: Vec::new(),
@@ -90,7 +90,7 @@ impl<'a> UpdateRecords<'a> {
         if self.triggers.iter().any(|trigger| {
             matches!(
                 trigger.kind,
-                tidb_planner::physical::FkTriggerKind::Cascade { .. }
+                tidb_planner_core_operator_physicalop::FkTriggerKind::Cascade { .. }
             )
         }) {
             ctx.mark_fk_cascades();

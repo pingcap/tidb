@@ -14,6 +14,7 @@ autotests = false
 test-util = ["tidb-sessmgr/test-util"]
 
 [dependencies]
+tidb-planner-core-operator-physicalop = { path = "../tidb-planner-core-operator-physicalop" }
 tidb-planner-core-operator-logicalop = { path = "../tidb-planner-core-operator-logicalop" }
 tidb-planner-cardinality = { path = "../tidb-planner-cardinality" }
 tidb-planner-core-base = { path = "../tidb-planner-core-base" }

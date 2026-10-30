@@ -39,7 +39,7 @@ use tidb_expr::schema::{merge_schema, Schema};
 use tidb_expr::simple_expr::extract_columns;
 use tidb_exprctx::NoColumns;
 
-use crate::final_mode_agg::{build_final_mode_aggregation, AggInfo};
+use tidb_planner_core_operator_physicalop::final_mode_agg::{build_final_mode_aggregation, AggInfo};
 use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_base::PlanError;
 

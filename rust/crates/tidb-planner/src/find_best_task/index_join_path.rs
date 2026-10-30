@@ -18,12 +18,12 @@
 //! for every outer row. The same build reruns on plan-cache reuse
 //! (`mutableIndexJoinRange.Rebuild`) without the range memory limit.
 
-use crate::physical::range_rebuild::IndexJoinPathRebuild;
+use tidb_planner_core_operator_physicalop::range_rebuild::IndexJoinPathRebuild;
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
-use crate::physical::{IndexJoinCompareFilters, IndexJoinCompareOp};
+use tidb_planner_core_operator_physicalop::{IndexJoinCompareFilters, IndexJoinCompareOp};
 use tidb_planner_core_base::PlanError;
 use tidb_ranger::points::ExpressionEvaluator;
 use tidb_ranger::types::{Range, Ranges};

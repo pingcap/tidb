@@ -14,9 +14,9 @@
 
 //! Typed task shapes for the dependency-closed index-only planner branch.
 
-use crate::{
-    physical::{PhysicalIndexScan, PhysicalTableDual, PhysicalTableReader, PhysicalTableScan},
-    physical_table_reader::MissingTableDescriptorError,
+use tidb_planner_core_operator_physicalop::physical_table_reader::MissingTableDescriptorError;
+use tidb_planner_core_operator_physicalop::{
+    PhysicalIndexScan, PhysicalTableDual, PhysicalTableReader, PhysicalTableScan,
 };
 use tidb_planner_core_operator_logicalop::tikv_scan_spec::UnsupportedScanFeature;
 

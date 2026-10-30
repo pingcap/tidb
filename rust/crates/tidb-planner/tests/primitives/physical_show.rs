@@ -17,7 +17,7 @@
 //! The Go anchor is `TestShow` at `pkg/planner/core/planbuilder_test.go:63`.
 
 use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalShow, LogicalShowDDLJobs, ShowContents};
-use tidb_planner::physical::{
+use tidb_planner_core_operator_physicalop::{
     find_best_task_4_logical_show, find_best_task_4_logical_show_ddl_jobs, PhysicalPlan,
 };
 use tidb_planner_property::{PhysicalProperty, SortItem};

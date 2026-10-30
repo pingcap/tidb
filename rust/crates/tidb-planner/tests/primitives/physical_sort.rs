@@ -22,7 +22,7 @@
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_expr::{column::Column, expression::Expression};
 use tidb_expression_aggregation::ByItems;
-use tidb_planner::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
+use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
 use tidb_planner_property::SortItem;
 
 fn sort(items: Vec<SortItem>, partial: bool, offset: i32, stream_count: u64) -> PhysicalSort {

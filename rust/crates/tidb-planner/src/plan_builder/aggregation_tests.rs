@@ -1262,7 +1262,7 @@ fn multi_table_delete_lays_out_each_target_in_the_pruned_read() {
     // sources are read whole, and each target's `DeleteTablePos` says where
     // its columns and handle sit in a row of the pruned read.
     use super::delete_pruning::{DeleteMultiInput, DeleteTarget};
-    use crate::physical::DeleteHandle;
+    use tidb_planner_core_operator_physicalop::DeleteHandle;
     let target = |visible: &str| DeleteTarget {
         database: "test".to_owned(),
         table: "t".to_owned(),
@@ -1467,7 +1467,7 @@ fn multi_table_update_keeps_updated_aliases_and_what_set_reads() {
     // Go `buildUpdate`: the read keeps every column of an updated alias and
     // only the columns the SET expressions read from the others;
     // `buildUpdateTblColPosInfos` says where each updated table's row sits.
-    use crate::physical::{DeleteHandle, UpdateAssign};
+    use tidb_planner_core_operator_physicalop::{DeleteHandle, UpdateAssign};
     let harness = Harness::new();
     let build = |sql: &str| {
         let statement = tidb_parser::parse(sql).expect("the UPDATE parses");

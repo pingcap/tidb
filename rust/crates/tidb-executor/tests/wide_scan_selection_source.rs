@@ -30,9 +30,7 @@ use tidb_executor_internal_exec::predicate_pushdown::{
     ScanColumnComparison, ScanComparison, ScanComparisonOp, ScanPredicate,
 };
 use tidb_expr::pushdown_catalog::{build_call, PbScalar};
-use tidb_planner::{
-    physical::PhysicalTableScan,
-};
+use tidb_planner_core_operator_physicalop::PhysicalTableScan;
 use tidb_planner_core_operator_logicalop::tikv_scan_spec::{ScanColumnInfo, TiKvTableScanSpec};
 use tidb_proto::tipb::{DagRequest, ExecType, Expr, ExprType, ScalarFuncSig};
 

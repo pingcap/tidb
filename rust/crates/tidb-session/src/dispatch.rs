@@ -241,7 +241,7 @@ pub(crate) fn filter_sem_restricted_hints(stmt: &mut Stmt) -> Vec<String> {
 /// `used` records whether the schema still matched while the catalog was
 /// locked; a moved schema falls through to ordinary physical planning.
 struct RetainedSelectPlan<'a> {
-    physical: &'a mut tidb_planner::physical::PhysicalPlan,
+    physical: &'a mut tidb_planner_core_operator_physicalop::PhysicalPlan,
     schema_version: u64,
     used: &'a mut bool,
 }
@@ -288,13 +288,13 @@ impl Drop for CompileDepth {
 }
 
 fn cached_dml_plan<'a>(
-    plan: Option<&'a mut tidb_planner::physical::PhysicalPlan>,
+    plan: Option<&'a mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
     operator: &str,
-) -> Result<Option<&'a mut tidb_planner::physical::PhysicalPlan>, DriverError> {
+) -> Result<Option<&'a mut tidb_planner_core_operator_physicalop::PhysicalPlan>, DriverError> {
     let Some(plan) = plan else {
         return Ok(None);
     };
-    let tidb_planner::physical::PhysicalPlan::Dml(dml) = &*plan else {
+    let tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(dml) = &*plan else {
         return Err(DriverError::unsupported(
             "prepared DML execution received a non-DML physical root",
         ));
@@ -1317,7 +1317,7 @@ impl Session {
         sql: &str,
         stmt: Stmt,
         prepared: Option<&[tidb_executor::table_privilege::TablePrivilegeRequest]>,
-        physical: &mut tidb_planner::physical::PhysicalPlan,
+        physical: &mut tidb_planner_core_operator_physicalop::PhysicalPlan,
     ) -> Result<StmtOutput, DriverError> {
         self.execute_parsed_statement_with_optional_physical_plan(
             sql,
@@ -1334,7 +1334,7 @@ impl Session {
         stmt: Stmt,
         prepared: Option<&[tidb_executor::table_privilege::TablePrivilegeRequest]>,
         select_plan: Option<RetainedSelectPlan<'_>>,
-        dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
+        dml_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
     ) -> Result<StmtOutput, DriverError> {
         self.prepare_parsed_statement_with_optional_physical_plan(
             sql,
@@ -1365,7 +1365,7 @@ impl Session {
         stmt: Stmt,
         prepared: Option<&[tidb_executor::table_privilege::TablePrivilegeRequest]>,
         select_plan: Option<RetainedSelectPlan<'_>>,
-        dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
+        dml_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
     ) -> Result<PendingExecution, DriverError> {
         // Go charges `SessionExecuteCompileDuration` for every statement whose
         // compile succeeds (`session.go:2624`); a failed compile returns
@@ -1435,7 +1435,7 @@ impl Session {
         mut stmt: Stmt,
         prepared: Option<&[tidb_executor::table_privilege::TablePrivilegeRequest]>,
         select_plan: Option<RetainedSelectPlan<'_>>,
-        dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
+        dml_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
     ) -> Result<PendingExecution, DriverError> {
         // A statement locks nothing until its preprocessing decides it does
         // (`record_mdl_related_tables`).
@@ -1642,7 +1642,7 @@ impl Session {
         mut stmt: Stmt,
         prepared: Option<&[tidb_executor::table_privilege::TablePrivilegeRequest]>,
         mut select_plan: Option<RetainedSelectPlan<'_>>,
-        dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
+        dml_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
     ) -> Result<PendingExecution, DriverError> {
         self.set_statement_arbitration_key(sql);
         // Go `ResetContextOfStmt` sets the `In*Stmt` bits before any

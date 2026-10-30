@@ -17,7 +17,7 @@
 //! The Go anchor is `TestPushDownProjectionForMPP` at
 //! `pkg/planner/core/casetest/mpp/mpp_test.go:710`.
 
-use tidb_planner::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalProjection};
+use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, PhysicalPlan, PhysicalProjection};
 
 #[test]
 fn projection_identity_and_stream_count_live_on_the_physical_tree() {

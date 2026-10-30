@@ -15,6 +15,7 @@
 //! Semantic tests for the physical plan tree. Written, not transcreated; see
 //! the note in `tidb_planner_core_operator_logicalop::tests`.
 
+use crate::physical_plan_cache::RebuildPlanForCache;
 use crate::post_optimize::{eliminate_physical_projection, eliminate_union_scan_over_point_get, remove_union_scans};
 use crate::resolve_indices::ResolveIndices;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -24,7 +25,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
 use tidb_expr::schema::Schema;
 
-use crate::physical::*;
+use tidb_planner_core_operator_physicalop::*;
 use tidb_kv::store_type::StoreType;
 use tidb_planner_core_base::{BasePlan, LogicalJoinType, PlanIdAllocator};
 use tidb_planner_costusage::PlanCostOption;
@@ -115,7 +116,7 @@ fn point_range(value: i64) -> tidb_ranger::types::Range {
 #[test]
 fn cached_plan_rebuilds_normal_and_reader_scan_trees_without_mutating_template() {
     use crate::physical_plan_cache::{CachedPlanRebuildContext};
-    use crate::physical::range_rebuild::{IndexRangeRebuild, TableRangeRebuild};
+    use tidb_planner_core_operator_physicalop::range_rebuild::{IndexRangeRebuild, TableRangeRebuild};
 
     let int_type = FieldType::new(FieldTypeCode::LongLong);
     let handle = Column::new(1, int_type.clone());
@@ -221,7 +222,7 @@ fn cached_plan_rebuilds_normal_and_reader_scan_trees_without_mutating_template()
 #[test]
 fn cached_index_lookup_rebuilds_only_gos_index_plan() {
     use crate::physical_plan_cache::{CachedPlanRebuildContext};
-    use crate::physical::range_rebuild::{TableRangeRebuild};
+    use tidb_planner_core_operator_physicalop::range_rebuild::{TableRangeRebuild};
 
     let invalid_table_side = PhysicalPlan::TableScan(PhysicalTableScan {
         base: BasePhysicalPlan::with_id(901, "TableRowIDScan", 0),
@@ -323,7 +324,7 @@ fn physical_plan_cache_reads_noncacheable_reason_and_size() {
 #[test]
 fn cached_plan_rebuilds_the_same_tree_for_consecutive_parameter_sets() {
     use crate::physical_plan_cache::{CachedPlanRebuildContext};
-    use crate::physical::range_rebuild::{TableRangeRebuild};
+    use tidb_planner_core_operator_physicalop::range_rebuild::{TableRangeRebuild};
 
     let int_type = FieldType::new(FieldTypeCode::LongLong);
     let handle = Column::new(1, int_type.clone());
@@ -358,7 +359,7 @@ fn cached_plan_rebuilds_the_same_tree_for_consecutive_parameter_sets() {
 #[test]
 fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
     use crate::physical_plan_cache::{CachedPlanRebuildContext};
-    use crate::physical::range_rebuild::{IndexRangeRebuild, PointRangeRebuild, TableRangeRebuild};
+    use tidb_planner_core_operator_physicalop::range_rebuild::{IndexRangeRebuild, PointRangeRebuild, TableRangeRebuild};
 
     let int_type = FieldType::new(FieldTypeCode::LongLong);
     let handle = Column::new(1, int_type.clone());
@@ -449,7 +450,7 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
 #[test]
 fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
     use crate::physical_plan_cache::{CachedPlanRebuildContext};
-    use crate::physical::range_rebuild::{IndexRangeRebuild, PointRangeRebuild, TableRangeRebuild};
+    use tidb_planner_core_operator_physicalop::range_rebuild::{IndexRangeRebuild, PointRangeRebuild, TableRangeRebuild};
 
     let int_type = FieldType::new(FieldTypeCode::LongLong);
     let first = Column::new(3, int_type.clone());
@@ -528,7 +529,7 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
 #[test]
 fn cached_point_plan_rebuilds_a_collated_string_key_as_its_sort_key() {
     use crate::physical_plan_cache::{CachedPlanRebuildContext};
-    use crate::physical::range_rebuild::{IndexRangeRebuild, PointRangeRebuild};
+    use tidb_planner_core_operator_physicalop::range_rebuild::{IndexRangeRebuild, PointRangeRebuild};
 
     let mut string_type = FieldType::new(FieldTypeCode::Varchar);
     string_type.set_flen(32);
@@ -606,7 +607,7 @@ fn cached_point_plan_rebuilds_a_collated_string_key_as_its_sort_key() {
 #[test]
 fn cached_batch_point_plan_rebuilds_dnf_equalities_as_unioned_points() {
     use crate::physical_plan_cache::{CachedPlanRebuildContext};
-    use crate::physical::range_rebuild::{IndexRangeRebuild, PointRangeRebuild};
+    use tidb_planner_core_operator_physicalop::range_rebuild::{IndexRangeRebuild, PointRangeRebuild};
 
     let int_type = FieldType::new(FieldTypeCode::LongLong);
     let first = Column::new(3, int_type.clone());
@@ -680,7 +681,7 @@ fn cached_batch_point_plan_rebuilds_dnf_equalities_as_unioned_points() {
 #[test]
 fn cached_plan_rebuilds_index_join_range_and_updates_inner_reader() {
     use crate::physical_plan_cache::{CachedPlanRebuildContext};
-    use crate::physical::range_rebuild::{IndexRangeRebuild, PointRangeRebuild};
+    use tidb_planner_core_operator_physicalop::range_rebuild::{IndexRangeRebuild, PointRangeRebuild};
 
     let index_column = Column::new(2, FieldType::new(FieldTypeCode::LongLong));
     let inner_scan = PhysicalPlan::IndexScan(PhysicalIndexScan {
@@ -1287,7 +1288,7 @@ fn max_one_row_and_hash_agg_preserve_the_no_cop_requirement() {
 #[test]
 fn mpp_hash_agg_enumeration_matches_go_run_modes() {
     use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalAggregation};
-    use crate::physical::{get_hash_aggs_with_mpp, AggMppRunMode, PhysicalPlan};
+    use tidb_planner_core_operator_physicalop::{get_hash_aggs_with_mpp, AggMppRunMode, PhysicalPlan};
     use tidb_planner_property::stats_info::StatsInfo;
     use tidb_expression_aggregation::{names, AggFuncDesc};
     use tidb_exprctx::ZonedNoColumns;
@@ -1318,7 +1319,7 @@ fn mpp_hash_agg_enumeration_matches_go_run_modes() {
         let blacklist = std::collections::HashMap::from([(
             "count".into(), tidb_expr::infer_pushdown::blacklist_store_mask(store),
         )]);
-        let candidates = crate::physical::get_hash_aggs_with_mpp_options(
+        let candidates = tidb_planner_core_operator_physicalop::get_hash_aggs_with_mpp_options(
             &aggregation, &root, &allocator, 1.0, true, false, true, false,
             tidb_vardef::defaults::DEF_TIFLASH_PRE_AGG_MODE, &blacklist,
         );
@@ -2259,9 +2260,9 @@ fn shuffle_keeps_source_projection_alive_across_post_optimization() {
     for _ in 0..103 {
         ids.alloc();
     }
-    crate::physical::shuffle::install_receivers(&mut plan, &ids).unwrap();
+    tidb_planner_core_operator_physicalop::shuffle::install_receivers(&mut plan, &ids).unwrap();
     assert_eq!(ids.current(), 104);
-    crate::physical::shuffle::install_receivers(&mut plan, &ids).unwrap();
+    tidb_planner_core_operator_physicalop::shuffle::install_receivers(&mut plan, &ids).unwrap();
     assert_eq!(ids.current(), 104, "preparation must be idempotent");
     let PhysicalPlan::Shuffle(shuffle) = plan else {
         unreachable!()

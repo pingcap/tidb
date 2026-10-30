@@ -20,12 +20,10 @@
 //!   `pkg/planner/core/planbuilder_test.go:312`
 
 use tidb_kv::store_type::StoreType;
-use tidb_planner::{
-    physical::{
+use tidb_planner_core_operator_physicalop::{
         BasePhysicalPlan, PhysicalHashJoin, PhysicalPlan, PhysicalTableReader, PhysicalTableScan,
-    },
-    physical_table_reader::ReadReqType,
-};
+    };
+use tidb_planner_core_operator_physicalop::physical_table_reader::ReadReqType;
 use tidb_planner_core_operator_logicalop::data_source_paths::{ResolvedTableDescriptor, ResolvedTableScanKind, TableScanExplainIdSuffix};
 use tidb_planner_core_operator_logicalop::tikv_scan_spec::TiKvTableScanSpec;
 

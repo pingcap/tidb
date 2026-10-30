@@ -15,15 +15,15 @@
 //! Go `core/task.go`: `attach2Task` -- how each physical operator composes
 //! onto its child task -- with the helpers it uses. Go's operators reach these
 //! bodies through `utilfuncp.Attach2Task4X`; the task types are
-//! `crate::task`'s (Go `physicalop/task_base.go`).
+//! `tidb_planner_core_operator_physicalop::task`'s (Go `physicalop/task_base.go`).
 
-use crate::physical::PhysicalPlan;
+use tidb_planner_core_operator_physicalop::PhysicalPlan;
 use tidb_planner_property::MppPartitionType;
 use tidb_kv::store_type::StoreType;
 use tidb_planner_core_base::PlanError;
 use tidb_expr::expression::Expression;
 use tidb_planner_cardinality::derive_stats::StatsInfoScale;
-use crate::task::*;
+use tidb_planner_core_operator_physicalop::task::*;
 
 // ---------------------------------------------------------------------------
 // Go `Attach2Task`: how a physical operator composes onto a child task.
@@ -172,18 +172,18 @@ fn attach_hash_agg_to_mpp(
     let enable_3_stage_multi_distinct_agg = hash_agg.enable_3_stage_multi_distinct_agg;
     let tiflash_pre_agg_mode = hash_agg.tiflash_pre_agg_mode.clone();
     let expr_ctx = tidb_exprctx::ZonedNoColumns(tidb_datatype::SessionTimeZone::utc());
-    let multi_distinct_grouping_sets = if mode == crate::physical::AggMppRunMode::MppScalar {
+    let multi_distinct_grouping_sets = if mode == tidb_planner_core_operator_physicalop::AggMppRunMode::MppScalar {
         let PhysicalPlan::HashAgg(hash_agg) = &mut plan else {
             unreachable!("MPP scalar aggregate is a HashAgg");
         };
-        let grouping_sets = crate::final_mode_agg::can_use_three_stage_multi_distinct(
+        let grouping_sets = tidb_planner_core_operator_physicalop::final_mode_agg::can_use_three_stage_multi_distinct(
             &hash_agg.agg_funcs,
             &hash_agg.group_by_items,
             enable_3_stage_distinct_agg,
             enable_3_stage_multi_distinct_agg,
         );
         if let Some(grouping_sets) = &grouping_sets {
-            if !crate::final_mode_agg::mark_three_stage_grouping_ids(
+            if !tidb_planner_core_operator_physicalop::final_mode_agg::mark_three_stage_grouping_ids(
                 &mut hash_agg.agg_funcs,
                 grouping_sets,
             ) {
@@ -197,18 +197,18 @@ fn attach_hash_agg_to_mpp(
     let mut avg_projection = None;
     if matches!(
         mode,
-        crate::physical::AggMppRunMode::Mpp1Phase
-            | crate::physical::AggMppRunMode::Mpp2Phase
-            | crate::physical::AggMppRunMode::MppScalar
+        tidb_planner_core_operator_physicalop::AggMppRunMode::Mpp1Phase
+            | tidb_planner_core_operator_physicalop::AggMppRunMode::Mpp2Phase
+            | tidb_planner_core_operator_physicalop::AggMppRunMode::MppScalar
     ) {
         if let Some(column_ids) = column_ids {
             avg_projection =
-                crate::final_mode_agg::convert_avg_for_mpp(&mut plan, column_ids, allocator)?;
+                tidb_planner_core_operator_physicalop::final_mode_agg::convert_avg_for_mpp(&mut plan, column_ids, allocator)?;
         }
     }
 
     match mode {
-        crate::physical::AggMppRunMode::NoMpp | crate::physical::AggMppRunMode::Mpp1Phase => {
+        tidb_planner_core_operator_physicalop::AggMppRunMode::NoMpp | tidb_planner_core_operator_physicalop::AggMppRunMode::Mpp1Phase => {
             let task = attach_plan_to_task(plan, Task::Mpp(mpp));
             if let Some(projection) = avg_projection.take() {
                 Ok(attach_plan_to_task(
@@ -219,13 +219,13 @@ fn attach_hash_agg_to_mpp(
                 Ok(task)
             }
         }
-        crate::physical::AggMppRunMode::Mpp2Phase => {
+        tidb_planner_core_operator_physicalop::AggMppRunMode::Mpp2Phase => {
             let Some(column_ids) = column_ids else {
                 return Err(PlanError::internal(
                     "MPP HashAgg partial construction needs a column allocator",
                 ));
             };
-            let (Some(partial), final_agg) = crate::final_mode_agg::new_partial_aggregate_mpp(
+            let (Some(partial), final_agg) = tidb_planner_core_operator_physicalop::final_mode_agg::new_partial_aggregate_mpp(
                 &expr_ctx,
                 column_ids,
                 plan,
@@ -292,13 +292,13 @@ fn attach_hash_agg_to_mpp(
                 Ok(task)
             }
         }
-        crate::physical::AggMppRunMode::MppTiDB => {
+        tidb_planner_core_operator_physicalop::AggMppRunMode::MppTiDB => {
             let Some(column_ids) = column_ids else {
                 return Err(PlanError::internal(
                     "MPP HashAgg partial construction needs a column allocator",
                 ));
             };
-            let (partial, final_agg) = crate::final_mode_agg::new_partial_aggregate_mpp_tidb(
+            let (partial, final_agg) = tidb_planner_core_operator_physicalop::final_mode_agg::new_partial_aggregate_mpp_tidb(
                 &expr_ctx,
                 column_ids,
                 plan,
@@ -321,10 +321,10 @@ fn attach_hash_agg_to_mpp(
                 Ok(task)
             }
         }
-        crate::physical::AggMppRunMode::MppScalar => {
+        tidb_planner_core_operator_physicalop::AggMppRunMode::MppScalar => {
             let can_use_three_stage_single = match &plan {
                 PhysicalPlan::HashAgg(hash_agg) => {
-                    crate::final_mode_agg::can_use_three_stage_single_distinct(
+                    tidb_planner_core_operator_physicalop::final_mode_agg::can_use_three_stage_single_distinct(
                         &hash_agg.agg_funcs,
                         &hash_agg.group_by_items,
                     )
@@ -360,7 +360,7 @@ fn attach_hash_agg_to_mpp(
                     "MPP HashAgg partial construction needs a column allocator",
                 ));
             };
-            let (partial, final_agg) = crate::final_mode_agg::new_partial_aggregate_mpp(
+            let (partial, final_agg) = tidb_planner_core_operator_physicalop::final_mode_agg::new_partial_aggregate_mpp(
                 &expr_ctx,
                 column_ids,
                 plan,
@@ -376,7 +376,7 @@ fn attach_hash_agg_to_mpp(
                         PlanError::internal("scalar MPP aggregate has no child plan")
                     })?;
                     let Some(split) =
-                        crate::final_mode_agg::adjust_three_stage_multi_distinct_with_group_ndv_skew_ratio(
+                        tidb_planner_core_operator_physicalop::final_mode_agg::adjust_three_stage_multi_distinct_with_group_ndv_skew_ratio(
                             partial,
                             final_agg,
                             child,
@@ -419,7 +419,7 @@ fn attach_hash_agg_to_mpp(
                         allocator,
                     );
                 }
-                let Some(split) = crate::final_mode_agg::adjust_three_stage_single_distinct(
+                let Some(split) = tidb_planner_core_operator_physicalop::final_mode_agg::adjust_three_stage_single_distinct(
                     partial, final_agg, column_ids, allocator,
                 )?
                 else {
@@ -476,7 +476,7 @@ fn attach_hash_agg_to_mpp(
 /// CASE/DIV projection; all other descriptors use this identity projection.
 fn finish_scalar_aggregate_output(
     task: Task,
-    avg_projection: Option<crate::physical::PhysicalProjection>,
+    avg_projection: Option<tidb_planner_core_operator_physicalop::PhysicalProjection>,
     original_schema: Option<&tidb_expr::schema::Schema>,
     allocator: &tidb_planner_core_base::PlanIdAllocator,
 ) -> Result<Task, PlanError> {
@@ -493,13 +493,13 @@ fn finish_scalar_aggregate_output(
         .plan()
         .ok_or_else(|| PlanError::internal("scalar MPP aggregate has no final plan"))?;
     let mut base =
-        crate::physical::BasePhysicalPlan::new(allocator, "Projection", child.query_block_offset());
+        tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(allocator, "Projection", child.query_block_offset());
     base.base.set_stats(child.stats_info().cloned());
     base.base.set_schema(Some(schema.clone()));
     base.set_children_req_props(vec![Some(
         tidb_planner_property::PhysicalProperty::default(),
     )]);
-    let projection = PhysicalPlan::Projection(crate::physical::PhysicalProjection {
+    let projection = PhysicalPlan::Projection(tidb_planner_core_operator_physicalop::PhysicalProjection {
         base,
         exprs: schema
             .columns
@@ -529,7 +529,7 @@ fn finish_scalar_aggregate_output(
 /// projection (issue 14428's inlined-Projection shape) compares schema
 /// LENGTHS; schemas absent on both sides compare equal.
 fn sink_into_index_look_up(
-    limit: &crate::physical::PhysicalLimit,
+    limit: &tidb_planner_core_operator_physicalop::PhysicalLimit,
     task: &mut Task,
     allocator: &tidb_planner_core_base::PlanIdAllocator,
 ) -> bool {
@@ -578,7 +578,7 @@ fn sink_into_index_look_up(
                     }
                 };
                 let reader_schema_len = reader.base.base.schema().map_or(0, |schema| schema.len());
-                reader.pushed_limit = Some(crate::physical::PushedDownLimit {
+                reader.pushed_limit = Some(tidb_planner_core_operator_physicalop::PushedDownLimit {
                     offset: limit.offset,
                     count: limit.count,
                 });
@@ -609,7 +609,7 @@ fn sink_into_index_look_up(
                 }
                 // The schema-mending projection above the reader.
                 if limit_schema_len != reader_schema_len {
-                    let mut base = crate::physical::BasePhysicalPlan::new(
+                    let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                         allocator,
                         "Projection",
                         limit.base.base.query_block_offset(),
@@ -625,7 +625,7 @@ fn sink_into_index_look_up(
                             .collect()
                     });
                     base.set_children(vec![plan]);
-                    plan = PhysicalPlan::Projection(crate::physical::PhysicalProjection {
+                    plan = PhysicalPlan::Projection(tidb_planner_core_operator_physicalop::PhysicalProjection {
                         base,
                         exprs,
                         avoid_column_evaluator: false,
@@ -643,7 +643,7 @@ fn sink_into_index_look_up(
 /// Go `sinkIntoIndexMerge`: limit handles only when the table probe is a
 /// bare scan. A root Selection or table filter must run before truncation.
 fn sink_into_index_merge(
-    limit: &crate::physical::PhysicalLimit,
+    limit: &tidb_planner_core_operator_physicalop::PhysicalLimit,
     task: &mut Task,
     allocator: &tidb_planner_core_base::PlanIdAllocator,
 ) -> bool {
@@ -664,7 +664,7 @@ fn sink_into_index_merge(
             reader.table_plan.as_deref(),
             Some(PhysicalPlan::TableScan(_))
         ) {
-            reader.pushed_limit = Some(crate::physical::PushedDownLimit {
+            reader.pushed_limit = Some(tidb_planner_core_operator_physicalop::PushedDownLimit {
                 offset: limit.offset,
                 count: limit.count,
             });
@@ -686,7 +686,7 @@ fn sink_into_index_merge(
                 .zip(actual.into_iter().flat_map(|schema| &schema.columns))
                 .any(|(left, right)| left.unique_id != right.unique_id);
         if need_projection {
-            let mut base = crate::physical::BasePhysicalPlan::new(
+            let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                 allocator,
                 "Projection",
                 limit.base.base.query_block_offset(),
@@ -700,7 +700,7 @@ fn sink_into_index_merge(
                 .map(Expression::Column)
                 .collect();
             base.set_children(vec![plan]);
-            plan = PhysicalPlan::Projection(crate::physical::PhysicalProjection {
+            plan = PhysicalPlan::Projection(tidb_planner_core_operator_physicalop::PhysicalProjection {
                 base,
                 exprs,
                 calculate_no_delay: false,
@@ -725,7 +725,7 @@ fn attach_limit_to_index_merge(
     };
     let push_limit = |child: PhysicalPlan| {
         let count = limit.offset.wrapping_add(limit.count);
-        let mut base = crate::physical::BasePhysicalPlan::new(
+        let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
             allocator,
             "Limit",
             limit.base.base.query_block_offset(),
@@ -737,7 +737,7 @@ fn attach_limit_to_index_merge(
         );
         base.base.set_schema(child.schema().cloned());
         base.set_children(vec![child]);
-        PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+        PhysicalPlan::Limit(tidb_planner_core_operator_physicalop::PhysicalLimit {
             base,
             partition_by: limit.partition_by.clone(),
             offset: 0,
@@ -768,7 +768,7 @@ fn attach_limit_to_index_merge(
 /// Go `handleAdvisorySortItemsForIndexMerge`: preserve each partial's property
 /// feedback until the parent TopN attaches to the unfinished cop task.
 fn attach_advisory_topn_to_index_merge(
-    topn: &crate::physical::PhysicalTopN,
+    topn: &tidb_planner_core_operator_physicalop::PhysicalTopN,
     mut cop: CopTask,
     allocator: &tidb_planner_core_base::PlanIdAllocator,
     evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
@@ -791,7 +791,7 @@ fn attach_advisory_topn_to_index_merge(
         .zip(&order.partial_matches)
     {
         if matched.matched() {
-            let mut base = crate::physical::BasePhysicalPlan::new(
+            let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                 allocator,
                 "Limit",
                 topn.base.base.query_block_offset(),
@@ -803,7 +803,7 @@ fn attach_advisory_topn_to_index_merge(
             );
             base.base.set_schema(child.schema().cloned());
             base.set_children(vec![child]);
-            partials.push(PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+            partials.push(PhysicalPlan::Limit(tidb_planner_core_operator_physicalop::PhysicalLimit {
                 base,
                 partition_by: topn.partition_by.clone(),
                 offset: 0,
@@ -834,13 +834,13 @@ fn attach_advisory_topn_to_index_merge(
 // Advisory order currently originates from column-only TopN items, so no
 // heavy-function projection split is needed on these partial plans.
 fn merge_partial_topn(
-    topn: &crate::physical::PhysicalTopN,
+    topn: &tidb_planner_core_operator_physicalop::PhysicalTopN,
     child: PhysicalPlan,
     allocator: &tidb_planner_core_base::PlanIdAllocator,
 ) -> PhysicalPlan {
     let count = topn.offset.wrapping_add(topn.count);
     let mut pushed = topn.clone();
-    pushed.base = crate::physical::BasePhysicalPlan::new(
+    pushed.base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
         allocator,
         "TopN",
         topn.base.base.query_block_offset(),
@@ -878,7 +878,7 @@ fn can_push_to_index_plan(
 /// the TopN sorts by exactly the table's handle column. Returns the finished
 /// task, or the untouched cop task back when the shape does not apply.
 fn push_limit_down_to_tidb_cop(
-    topn: &crate::physical::PhysicalTopN,
+    topn: &tidb_planner_core_operator_physicalop::PhysicalTopN,
     mut cop: CopTask,
     allocator: &tidb_planner_core_base::PlanIdAllocator,
     evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
@@ -906,7 +906,7 @@ fn push_limit_down_to_tidb_cop(
         if scan.table_name != "CLUSTER_SLOW_QUERY" {
             return Ok(Err(cop));
         }
-        let Some(sort_items) = crate::physical::get_prop_by_order_by_items(&topn.by_items) else {
+        let Some(sort_items) = tidb_planner_core_operator_physicalop::get_prop_by_order_by_items(&topn.by_items) else {
             return Ok(Err(cop));
         };
         // "For cluster tables, HandleCols may be nil."
@@ -948,7 +948,7 @@ fn push_limit_down_to_tidb_cop(
     let new_count = topn.offset.wrapping_add(topn.count);
     let child_profile = table_plan.stats_info().cloned();
     let mut base =
-        crate::physical::BasePhysicalPlan::new(allocator, "Limit", topn.base.base.query_block_offset());
+        tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(allocator, "Limit", topn.base.base.query_block_offset());
     base.base.set_stats(
         child_profile
             .as_ref()
@@ -985,7 +985,7 @@ fn push_limit_down_to_tidb_cop(
         rescale_scan(&mut table_plan, scaled_row_count, skew_ratio);
     }
     base.set_children(vec![table_plan]);
-    cop.table_plan = Some(Box::new(PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+    cop.table_plan = Some(Box::new(PhysicalPlan::Limit(tidb_planner_core_operator_physicalop::PhysicalLimit {
         base,
         partition_by: Vec::new(),
         offset: 0,
@@ -1020,9 +1020,9 @@ fn attach_agg_over_cop(
     let query_block_offset = plan.query_block_offset();
     // Go `NewPartialAggregate(cop.GetStoreType(), false)`.
     let (partial, final_plan) = if cop.get_store_type() == StoreType::TiDb {
-        crate::final_mode_agg::new_partial_aggregate_tidb(&ctx, column_ids, plan, allocator, blacklist)?
+        tidb_planner_core_operator_physicalop::final_mode_agg::new_partial_aggregate_tidb(&ctx, column_ids, plan, allocator, blacklist)?
     } else {
-        crate::final_mode_agg::new_partial_aggregate(&ctx, column_ids, plan, allocator, blacklist)?
+        tidb_planner_core_operator_physicalop::final_mode_agg::new_partial_aggregate(&ctx, column_ids, plan, allocator, blacklist)?
     };
     let Some(mut partial) = partial else {
         // Go `NewPartialAggregate` answers `(nil, p.Self)` when the split is
@@ -1070,7 +1070,7 @@ fn attach_agg_over_cop(
 /// retain only lookup-capable equalities as join keys, and move every unused
 /// equality into the residual condition list.
 fn complete_physical_index_join(
-    join: &mut crate::physical::PhysicalIndexJoin,
+    join: &mut tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
     info: IndexJoinInfo,
     inner_plan: &PhysicalPlan,
     outer_plan: &PhysicalPlan,
@@ -1114,7 +1114,7 @@ fn complete_physical_index_join(
     // `completePhysicalIndexJoin` at all -- its inner plan is already fixed
     // before `Attach2Task` runs, and the merge executor has no hash table to
     // key -- so `IndexMergeJoin` alone keeps skipping this extraction.
-    if join.kind != crate::physical::IndexJoinKind::IndexMergeJoin {
+    if join.kind != tidb_planner_core_operator_physicalop::IndexJoinKind::IndexMergeJoin {
         let outer_schema = outer_plan.schema().ok_or_else(|| {
             PlanError::internal("completePhysicalIndexJoin outer child has no schema")
         })?;
@@ -1225,15 +1225,15 @@ fn contains_heavy_topn_function(expression: &Expression) -> bool {
 /// a pushed TopN orders by those fresh columns, and a global TopN reuses the
 /// same columns after the task returns to TiDB.
 fn heavy_topn_split(
-    topn: &crate::physical::PhysicalTopN,
+    topn: &tidb_planner_core_operator_physicalop::PhysicalTopN,
     child_plan: &PhysicalPlan,
     store_type: StoreType,
     column_ids: Option<&tidb_planner_core_base::ColumnIdAllocator>,
     allocator: &tidb_planner_core_base::PlanIdAllocator,
 ) -> Option<(
-    crate::physical::PhysicalProjection,
-    crate::physical::PhysicalTopN,
-    crate::physical::PhysicalTopN,
+    tidb_planner_core_operator_physicalop::PhysicalProjection,
+    tidb_planner_core_operator_physicalop::PhysicalTopN,
+    tidb_planner_core_operator_physicalop::PhysicalTopN,
 )> {
     if !topn.heavy_function_optimize
         || (store_type == StoreType::TiKv && !topn.allow_projection_push_down)
@@ -1273,7 +1273,7 @@ fn heavy_topn_split(
     let new_count = topn.offset.wrapping_add(topn.count);
     let pushed_stats = child_stats.map(|stats| stats.derive_limit_stats(new_count as f64));
     let projection_schema = tidb_expr::schema::Schema::new(projection_columns);
-    let mut projection_base = crate::physical::BasePhysicalPlan::new(
+    let mut projection_base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
         allocator,
         "Projection",
         topn.base.base.query_block_offset(),
@@ -1282,7 +1282,7 @@ fn heavy_topn_split(
     projection_base
         .base
         .set_schema(Some(projection_schema.clone()));
-    let projection = crate::physical::PhysicalProjection {
+    let projection = tidb_planner_core_operator_physicalop::PhysicalProjection {
         base: projection_base,
         exprs: projection_exprs,
         ..Default::default()
@@ -1410,7 +1410,7 @@ pub(crate) fn attach2_task_in(
         // `attach2Task4PhysicalProjection` (`task.go:1506`): the cop arm
         // pushes the projection onto the cop task — staying a COP task —
         // when there are no root conds, no index-merge parts, and every
-        // expr passes the TiKV gate (`crate::pushdown`); an unfinished
+        // expr passes the TiKV gate (`tidb_planner_core_operator_physicalop::pushdown`); an unfinished
         // index half finishes first (the conservative arm of
         // `canPushToIndexPlan`'s column check). Otherwise, and for a root
         // child, convert-then-attach. The MPP arm uses the TiFlash admission
@@ -1488,7 +1488,7 @@ pub(crate) fn attach2_task_in(
                             .plan()
                             .and_then(PhysicalPlan::stats_info)
                             .map(|profile| profile.derive_limit_stats(new_count as f64));
-                        let mut base = crate::physical::BasePhysicalPlan::new(
+                        let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                             allocator,
                             "Limit",
                             plan.query_block_offset(),
@@ -1499,7 +1499,7 @@ pub(crate) fn attach2_task_in(
                         // the open half's schema.
                         base.base
                             .set_schema(cop.plan().and_then(PhysicalPlan::schema).cloned());
-                        let pushed = PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+                        let pushed = PhysicalPlan::Limit(tidb_planner_core_operator_physicalop::PhysicalLimit {
                             base,
                             partition_by: limit.partition_by.clone(),
                             offset: 0,
@@ -1528,7 +1528,7 @@ pub(crate) fn attach2_task_in(
                         .as_deref()
                         .and_then(PhysicalPlan::stats_info)
                         .map(|profile| profile.derive_limit_stats(new_count as f64));
-                    let mut base = crate::physical::BasePhysicalPlan::new(
+                    let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                         allocator,
                         "Limit",
                         plan.query_block_offset(),
@@ -1536,7 +1536,7 @@ pub(crate) fn attach2_task_in(
                     base.base.set_stats(stats);
                     base.base
                         .set_schema(mpp.plan.as_deref().and_then(PhysicalPlan::schema).cloned());
-                    let pushed = PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+                    let pushed = PhysicalPlan::Limit(tidb_planner_core_operator_physicalop::PhysicalLimit {
                         base,
                         partition_by: limit.partition_by.clone(),
                         offset: 0,
@@ -1683,7 +1683,7 @@ pub(crate) fn attach2_task_in(
                 PhysicalPlan::Apply(apply) => apply.hash_join.join_type,
                 _ => unreachable!("the arm matched Apply"),
             };
-            let schema = crate::physical::build_physical_join_schema(join_type, &plan);
+            let schema = tidb_planner_core_operator_physicalop::build_physical_join_schema(join_type, &plan);
             plan.base_mut().base.set_schema(schema);
             let mut root = RootTask::default();
             root.set_plan(plan);
@@ -1791,7 +1791,7 @@ pub(crate) fn attach2_task_in(
                         let stats = child
                             .stats_info()
                             .map(|profile| profile.derive_limit_stats(new_count as f64));
-                        let mut base = crate::physical::BasePhysicalPlan::new(
+                        let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                             allocator,
                             "Limit",
                             plan.query_block_offset(),
@@ -1800,7 +1800,7 @@ pub(crate) fn attach2_task_in(
                         base.base.set_schema(child.schema().cloned());
                         base.set_children(vec![*child]);
                         cop.index_plan = Some(Box::new(PhysicalPlan::Limit(
-                            crate::physical::PhysicalLimit {
+                            tidb_planner_core_operator_physicalop::PhysicalLimit {
                                 base,
                                 partition_by: Vec::new(),
                                 offset: 0,
@@ -1891,7 +1891,7 @@ pub(crate) fn attach2_task_in(
                             .plan()
                             .and_then(PhysicalPlan::stats_info)
                             .map(|profile| profile.derive_limit_stats(new_count as f64));
-                        let mut base = crate::physical::BasePhysicalPlan::new(
+                        let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                             allocator,
                             "TopN",
                             plan.query_block_offset(),
@@ -1899,7 +1899,7 @@ pub(crate) fn attach2_task_in(
                         base.base.set_stats(stats);
                         base.base
                             .set_schema(cop.plan().and_then(PhysicalPlan::schema).cloned());
-                        let pushed = PhysicalPlan::TopN(crate::physical::PhysicalTopN {
+                        let pushed = PhysicalPlan::TopN(tidb_planner_core_operator_physicalop::PhysicalTopN {
                             base,
                             by_items: topn.by_items.clone(),
                             partition_by: topn.partition_by.clone(),
@@ -1964,7 +1964,7 @@ pub(crate) fn attach2_task_in(
                             .as_deref()
                             .and_then(PhysicalPlan::stats_info)
                             .map(|profile| profile.derive_limit_stats(new_count as f64));
-                        let mut base = crate::physical::BasePhysicalPlan::new(
+                        let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                             allocator,
                             "TopN",
                             plan.query_block_offset(),
@@ -1973,7 +1973,7 @@ pub(crate) fn attach2_task_in(
                         base.base.set_schema(
                             mpp.plan.as_deref().and_then(PhysicalPlan::schema).cloned(),
                         );
-                        let pushed = PhysicalPlan::TopN(crate::physical::PhysicalTopN {
+                        let pushed = PhysicalPlan::TopN(tidb_planner_core_operator_physicalop::PhysicalTopN {
                             base,
                             by_items: topn.by_items.clone(),
                             partition_by: topn.partition_by.clone(),
@@ -2198,7 +2198,7 @@ pub(crate) fn attach2_task_in(
 #[cfg(test)]
 mod attach_tests {
     use super::*;
-    use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSelection, PhysicalSort};
+    use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, PhysicalPlan, PhysicalSelection, PhysicalSort};
     use tidb_planner_core_base::PlanIdAllocator;
     use tidb_planner_property::stats_info::StatsInfo;
     use tidb_expr::schema::Schema;
@@ -2216,7 +2216,7 @@ mod attach_tests {
     fn root_task_over(rows: f64) -> Task {
         let mut root = RootTask::default();
         root.set_plan(PhysicalPlan::TableDual(
-            crate::physical::PhysicalTableDual {
+            tidb_planner_core_operator_physicalop::PhysicalTableDual {
                 base: op_with_stats("Dual", rows),
                 row_count: 0,
             },
@@ -2226,7 +2226,7 @@ mod attach_tests {
 
     fn mpp_task_over(rows: f64) -> Task {
         Task::Mpp(MppTask::new(
-            PhysicalPlan::TableDual(crate::physical::PhysicalTableDual {
+            PhysicalPlan::TableDual(tidb_planner_core_operator_physicalop::PhysicalTableDual {
                 base: op_with_stats("Dual", rows),
                 row_count: 0,
             }),
@@ -2270,9 +2270,9 @@ mod attach_tests {
         assert!(matches!(converted, Task::Root(_)));
         assert!(matches!(converted.plan(), Some(PhysicalPlan::Selection(_))));
 
-        let projection = PhysicalPlan::Projection(crate::physical::PhysicalProjection {
+        let projection = PhysicalPlan::Projection(tidb_planner_core_operator_physicalop::PhysicalProjection {
             base: op_with_stats("Projection", 8.0),
-            ..crate::physical::PhysicalProjection::default()
+            ..tidb_planner_core_operator_physicalop::PhysicalProjection::default()
         });
         let projected = attach2_task(
             projection,
@@ -2290,11 +2290,11 @@ mod attach_tests {
 
     #[test]
     fn mpp_limit_and_topn_keep_the_partial_operator_inside_the_reader() {
-        let limit = PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+        let limit = PhysicalPlan::Limit(tidb_planner_core_operator_physicalop::PhysicalLimit {
             base: op_with_stats("Limit", 5.0),
             offset: 2,
             count: 3,
-            ..crate::physical::PhysicalLimit::default()
+            ..tidb_planner_core_operator_physicalop::PhysicalLimit::default()
         });
         let limited = attach2_task(
             limit,
@@ -2325,12 +2325,12 @@ mod attach_tests {
             )),
             false,
         );
-        let topn = PhysicalPlan::TopN(crate::physical::PhysicalTopN {
+        let topn = PhysicalPlan::TopN(tidb_planner_core_operator_physicalop::PhysicalTopN {
             base: op_with_stats("TopN", 5.0),
             by_items: vec![by_item],
             offset: 4,
             count: 6,
-            ..crate::physical::PhysicalTopN::default()
+            ..tidb_planner_core_operator_physicalop::PhysicalTopN::default()
         });
         let topned = attach2_task(
             topn,
@@ -2369,7 +2369,7 @@ mod attach_tests {
         let child_schema = Schema::new(vec![id.clone(), score.clone(), vector.clone()]);
         let mut child_base = op_with_stats("Dual", 20.0);
         child_base.base.set_schema(Some(child_schema));
-        let child = PhysicalPlan::TableDual(crate::physical::PhysicalTableDual {
+        let child = PhysicalPlan::TableDual(tidb_planner_core_operator_physicalop::PhysicalTableDual {
             base: child_base,
             row_count: 0,
         });
@@ -2390,7 +2390,7 @@ mod attach_tests {
         let topn_schema = Schema::new(vec![id.clone(), score.clone()]);
         let mut topn_base = op_with_stats("TopN", 10.0);
         topn_base.base.set_schema(Some(topn_schema));
-        let topn = PhysicalPlan::TopN(crate::physical::PhysicalTopN {
+        let topn = PhysicalPlan::TopN(tidb_planner_core_operator_physicalop::PhysicalTopN {
             base: topn_base,
             by_items: vec![
                 tidb_expression_aggregation::ByItems::new(Expression::Column(score), false),
@@ -2398,7 +2398,7 @@ mod attach_tests {
             ],
             offset: 4,
             count: 6,
-            ..crate::physical::PhysicalTopN::default()
+            ..tidb_planner_core_operator_physicalop::PhysicalTopN::default()
         });
         let PhysicalPlan::TopN(topn_ref) = &topn else {
             unreachable!();
@@ -2448,7 +2448,7 @@ mod attach_tests {
 
     #[test]
     fn mpp_union_sequence_and_stream_agg_preserve_go_task_shapes() {
-        let union = PhysicalPlan::UnionAll(crate::physical::PhysicalUnionAll {
+        let union = PhysicalPlan::UnionAll(tidb_planner_core_operator_physicalop::PhysicalUnionAll {
             base: op_with_stats("Union", 20.0),
             mpp: true,
         });
@@ -2462,7 +2462,7 @@ mod attach_tests {
         assert!(matches!(union_task, Task::Mpp(_)));
         assert_eq!(union_task.plan().expect("union plan").children().len(), 2);
 
-        let sequence = PhysicalPlan::Sequence(crate::physical::PhysicalSequence {
+        let sequence = PhysicalPlan::Sequence(tidb_planner_core_operator_physicalop::PhysicalSequence {
             base: op_with_stats("Sequence", 20.0),
         });
         let sequence_task = attach2_task(
@@ -2482,9 +2482,9 @@ mod attach_tests {
             2
         );
 
-        let stream_agg = PhysicalPlan::StreamAgg(crate::physical::PhysicalStreamAgg {
+        let stream_agg = PhysicalPlan::StreamAgg(tidb_planner_core_operator_physicalop::PhysicalStreamAgg {
             base: op_with_stats("StreamAgg", 2.0),
-            ..crate::physical::PhysicalStreamAgg::default()
+            ..tidb_planner_core_operator_physicalop::PhysicalStreamAgg::default()
         });
         let stream_task = attach2_task(
             stream_agg,
@@ -2503,7 +2503,7 @@ mod attach_tests {
     #[test]
     fn mpp_two_phase_hash_agg_attaches_partial_exchange_and_final() {
         use tidb_planner_core_base::ColumnIdAllocator;
-        use crate::physical::{AggMppRunMode, PhysicalHashAgg};
+        use tidb_planner_core_operator_physicalop::{AggMppRunMode, PhysicalHashAgg};
         use tidb_planner_property::MppPartitionColumn;
         use tidb_expression_aggregation::{names, AggFuncDesc};
         use tidb_exprctx::ZonedNoColumns;
@@ -2554,7 +2554,7 @@ mod attach_tests {
             ),
         ])));
         let child = Task::Mpp(MppTask::new(
-            PhysicalPlan::TableDual(crate::physical::PhysicalTableDual {
+            PhysicalPlan::TableDual(tidb_planner_core_operator_physicalop::PhysicalTableDual {
                 base: child_base,
                 row_count: 12,
             }),
@@ -2587,7 +2587,7 @@ mod attach_tests {
     #[test]
     fn mpp_scalar_single_distinct_builds_three_aggregation_stages() {
         use tidb_planner_core_base::ColumnIdAllocator;
-        use crate::physical::{AggMppRunMode, PhysicalHashAgg};
+        use tidb_planner_core_operator_physicalop::{AggMppRunMode, PhysicalHashAgg};
         use tidb_expression_aggregation::{names, AggFuncDesc};
         use tidb_exprctx::ZonedNoColumns;
         use tidb_datatype::SessionTimeZone;
@@ -2640,7 +2640,7 @@ mod attach_tests {
             .base
             .set_schema(Some(Schema::new(vec![distinct_col, ordinary_col])));
         let child = Task::Mpp(MppTask::new(
-            PhysicalPlan::TableDual(crate::physical::PhysicalTableDual {
+            PhysicalPlan::TableDual(tidb_planner_core_operator_physicalop::PhysicalTableDual {
                 base: child_base,
                 row_count: 12,
             }),
@@ -2697,7 +2697,7 @@ mod attach_tests {
     #[test]
     fn mpp_scalar_multi_distinct_builds_expand_and_three_aggregation_stages() {
         use tidb_planner_core_base::ColumnIdAllocator;
-        use crate::physical::{AggMppRunMode, PhysicalHashAgg};
+        use tidb_planner_core_operator_physicalop::{AggMppRunMode, PhysicalHashAgg};
         use tidb_expression_aggregation::{names, AggFuncDesc};
         use tidb_exprctx::ZonedNoColumns;
         use tidb_datatype::SessionTimeZone;
@@ -2771,7 +2771,7 @@ mod attach_tests {
             ordinary_c,
         ])));
         let child = Task::Mpp(MppTask::new(
-            PhysicalPlan::TableDual(crate::physical::PhysicalTableDual {
+            PhysicalPlan::TableDual(tidb_planner_core_operator_physicalop::PhysicalTableDual {
                 base: child_base,
                 row_count: 12,
             }),
@@ -2877,9 +2877,9 @@ mod attach_tests {
             table_id: 42,
             ..IndexJoinInfo::default()
         });
-        let projection = PhysicalPlan::Projection(crate::physical::PhysicalProjection {
+        let projection = PhysicalPlan::Projection(tidb_planner_core_operator_physicalop::PhysicalProjection {
             base: op_with_stats("Projection", 30_000.0),
-            ..crate::physical::PhysicalProjection::default()
+            ..tidb_planner_core_operator_physicalop::PhysicalProjection::default()
         });
 
         let task =
@@ -2920,11 +2920,11 @@ mod attach_tests {
         let child = |columns: Vec<Column>| {
             let mut base = op_with_stats("TableDual", 1.0);
             base.base.set_schema(Some(Schema::new(columns)));
-            PhysicalPlan::TableDual(crate::physical::PhysicalTableDual { base, row_count: 1 })
+            PhysicalPlan::TableDual(tidb_planner_core_operator_physicalop::PhysicalTableDual { base, row_count: 1 })
         };
         let outer = child(outer_keys.clone());
         let inner = child(inner_keys.clone());
-        let mut join = crate::physical::PhysicalIndexJoin {
+        let mut join = tidb_planner_core_operator_physicalop::PhysicalIndexJoin {
             inner_child_idx: 1,
             left_join_keys: outer_keys.clone(),
             right_join_keys: inner_keys.clone(),
@@ -2938,9 +2938,9 @@ mod attach_tests {
             // `PhysicalIndexJoin::default()`'s `kind` is the PLAIN
             // `IndexJoin` variant, not `IndexHashJoin` -- proving Go's
             // `extractOtherEQ=true` (`task.go:158,178`) applies to both.
-            ..crate::physical::PhysicalIndexJoin::default()
+            ..tidb_planner_core_operator_physicalop::PhysicalIndexJoin::default()
         };
-        assert_eq!(join.kind, crate::physical::IndexJoinKind::IndexJoin);
+        assert_eq!(join.kind, tidb_planner_core_operator_physicalop::IndexJoinKind::IndexJoin);
 
         complete_physical_index_join(
             &mut join,
@@ -3032,11 +3032,11 @@ mod attach_tests {
         let child = |columns: Vec<Column>| {
             let mut base = op_with_stats("TableDual", 1.0);
             base.base.set_schema(Some(Schema::new(columns)));
-            PhysicalPlan::TableDual(crate::physical::PhysicalTableDual { base, row_count: 1 })
+            PhysicalPlan::TableDual(tidb_planner_core_operator_physicalop::PhysicalTableDual { base, row_count: 1 })
         };
         let outer = child(outer_keys.clone());
         let inner = child(inner_keys.clone());
-        let mut join = crate::physical::PhysicalIndexJoin {
+        let mut join = tidb_planner_core_operator_physicalop::PhysicalIndexJoin {
             inner_child_idx: 1,
             left_join_keys: outer_keys.clone(),
             right_join_keys: inner_keys.clone(),
@@ -3044,7 +3044,7 @@ mod attach_tests {
             inner_join_keys: inner_keys.clone(),
             is_null_eq: vec![false],
             equal_conditions: vec![equality_against_constant],
-            ..crate::physical::PhysicalIndexJoin::default()
+            ..tidb_planner_core_operator_physicalop::PhysicalIndexJoin::default()
         };
 
         complete_physical_index_join(
@@ -3095,10 +3095,10 @@ mod attach_tests {
     fn an_only_column_nominal_sort_returns_the_child_task_itself() {
         // `attach2Task4NominalSort` (`task.go:853`): `if p.OnlyColumn {
         // return tasks[0] }` — the fake operator vanishes.
-        let nominal = PhysicalPlan::NominalSort(crate::physical::NominalSort {
+        let nominal = PhysicalPlan::NominalSort(tidb_planner_core_operator_physicalop::NominalSort {
             base: op_with_stats("Sort", 10.0),
             only_column: true,
-            ..crate::physical::NominalSort::default()
+            ..tidb_planner_core_operator_physicalop::NominalSort::default()
         });
         let task = attach2_task(
             nominal,
@@ -3116,10 +3116,10 @@ mod attach_tests {
     #[test]
     fn an_expression_nominal_sort_attaches_without_conversion() {
         // The non-only-column arm is copy-then-attach, exactly Sort's.
-        let nominal = PhysicalPlan::NominalSort(crate::physical::NominalSort {
+        let nominal = PhysicalPlan::NominalSort(tidb_planner_core_operator_physicalop::NominalSort {
             base: op_with_stats("Sort", 10.0),
             only_column: false,
-            ..crate::physical::NominalSort::default()
+            ..tidb_planner_core_operator_physicalop::NominalSort::default()
         });
         let task = attach2_task(
             nominal,
@@ -3138,7 +3138,7 @@ mod attach_tests {
         // `attach2Task4PhysicalUnionAll` (`task.go:1573`): each child task
         // converts to root and its plan becomes a child of the union, which
         // sits in a fresh RootTask.
-        let union = PhysicalPlan::UnionAll(crate::physical::PhysicalUnionAll {
+        let union = PhysicalPlan::UnionAll(tidb_planner_core_operator_physicalop::PhysicalUnionAll {
             base: op_with_stats("Union", 20.0),
             mpp: false,
         });
@@ -3160,11 +3160,11 @@ mod attach_tests {
         // base.InvalidTask immediately".
         let mut base = op_with_stats("Union", 20.0);
         base.base.set_tp("PartitionUnion");
-        let union = PhysicalPlan::UnionAll(crate::physical::PhysicalUnionAll { base, mpp: false });
+        let union = PhysicalPlan::UnionAll(tidb_planner_core_operator_physicalop::PhysicalUnionAll { base, mpp: false });
         let mpp_child = Task::Mpp(MppTask::new(
-            PhysicalPlan::TableDual(crate::physical::PhysicalTableDual {
+            PhysicalPlan::TableDual(tidb_planner_core_operator_physicalop::PhysicalTableDual {
                 base: op_with_stats("Dual", 1.0),
-                ..crate::physical::PhysicalTableDual::default()
+                ..tidb_planner_core_operator_physicalop::PhysicalTableDual::default()
             }),
             tidb_planner_property::MppPartitionType::Any,
             [],
@@ -3200,22 +3200,22 @@ mod attach_tests {
             let mut root = RootTask::default();
             root.warnings.append_warning(format!("w{col_id}"));
             root.set_plan(PhysicalPlan::TableDual(
-                crate::physical::PhysicalTableDual {
+                tidb_planner_core_operator_physicalop::PhysicalTableDual {
                     base,
-                    ..crate::physical::PhysicalTableDual::default()
+                    ..tidb_planner_core_operator_physicalop::PhysicalTableDual::default()
                 },
             ));
             Task::Root(root)
         };
 
-        let apply = PhysicalPlan::Apply(crate::physical::PhysicalApply {
-            hash_join: crate::physical::PhysicalHashJoin {
+        let apply = PhysicalPlan::Apply(tidb_planner_core_operator_physicalop::PhysicalApply {
+            hash_join: tidb_planner_core_operator_physicalop::PhysicalHashJoin {
                 base: op_with_stats("Apply", 5.0),
                 join_type: tidb_planner_core_base::LogicalJoinType::LeftOuter,
                 inner_child_idx: 1,
-                ..crate::physical::PhysicalHashJoin::default()
+                ..tidb_planner_core_operator_physicalop::PhysicalHashJoin::default()
             },
-            ..crate::physical::PhysicalApply::default()
+            ..tidb_planner_core_operator_physicalop::PhysicalApply::default()
         });
         let task = attach2_task(
             apply,
@@ -3254,7 +3254,7 @@ mod attach_tests {
         // `attach2Task4PhysicalSequence` (`task.go:2259`): any non-MPP child
         // returns tasks[len-1] UNCHANGED — the sequence plan and every
         // producer's task are discarded. Go's own body, reproduced.
-        let sequence = PhysicalPlan::Sequence(crate::physical::PhysicalSequence {
+        let sequence = PhysicalPlan::Sequence(tidb_planner_core_operator_physicalop::PhysicalSequence {
             base: op_with_stats("Sequence", 5.0),
         });
         let task = attach2_task(
@@ -3288,16 +3288,16 @@ mod attach_tests {
             let mut root = RootTask::default();
             root.warnings.append_warning(warning);
             root.set_plan(PhysicalPlan::TableDual(
-                crate::physical::PhysicalTableDual {
+                tidb_planner_core_operator_physicalop::PhysicalTableDual {
                     base: op_with_stats("Dual", rows),
-                    ..crate::physical::PhysicalTableDual::default()
+                    ..tidb_planner_core_operator_physicalop::PhysicalTableDual::default()
                 },
             ));
             Task::Root(root)
         };
-        let join = PhysicalPlan::HashJoin(crate::physical::PhysicalHashJoin {
+        let join = PhysicalPlan::HashJoin(tidb_planner_core_operator_physicalop::PhysicalHashJoin {
             base: op_with_stats("HashJoin", 5.0),
-            ..crate::physical::PhysicalHashJoin::default()
+            ..tidb_planner_core_operator_physicalop::PhysicalHashJoin::default()
         });
         let task = attach2_task(
             join,
@@ -3325,7 +3325,7 @@ mod attach_tests {
     fn a_max_one_row_converts_then_attaches() {
         // No Attach2Task override: `BasePhysicalPlan.Attach2Task`
         // (`base_physical_plan.go:202`) converts to root, then attaches.
-        let mor = PhysicalPlan::MaxOneRow(crate::physical::PhysicalMaxOneRow {
+        let mor = PhysicalPlan::MaxOneRow(tidb_planner_core_operator_physicalop::PhysicalMaxOneRow {
             base: op_with_stats("MaxOneRow", 1.0),
         });
         let task = attach2_task(
@@ -3343,7 +3343,7 @@ mod attach_tests {
         // The cop child's ConvertToRootTask builds readers
         // (`convertToRootTaskImpl`), which is refused — the default attach
         // body surfaces that refusal rather than skipping the conversion.
-        let mor = PhysicalPlan::MaxOneRow(crate::physical::PhysicalMaxOneRow {
+        let mor = PhysicalPlan::MaxOneRow(tidb_planner_core_operator_physicalop::PhysicalMaxOneRow {
             base: op_with_stats("MaxOneRow", 1.0),
         });
         let error = attach2_task(
@@ -3366,10 +3366,10 @@ mod attach_tests {
         // reader and the selection sits above it at root.
         let scan = {
             let allocator = PlanIdAllocator::new();
-            let mut base = crate::physical::BasePhysicalPlan::default();
+            let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::default();
             base.base = tidb_planner_core_base::BasePlan::new(&allocator, "TableScan", 0);
             base.base.set_stats(Some(StatsInfo::new(9.0, [])));
-            PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+            PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
                 base,
                 table_id: 1,
                 table_as_name: None,
@@ -3405,7 +3405,7 @@ mod attach_tests {
     fn merge_limit_attachment_respects_union_intersection_and_table_filters() {
         let allocator = PlanIdAllocator::new();
         let scan = || {
-            PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+            PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
                 base: op_with_stats("TableScan", 20.0),
                 table_id: 42,
                 ..Default::default()
@@ -3431,7 +3431,7 @@ mod attach_tests {
                         idx_merge_is_intersection: intersection,
                         ..Default::default()
                     };
-                    let limit = PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+                    let limit = PhysicalPlan::Limit(tidb_planner_core_operator_physicalop::PhysicalLimit {
                         base: op_with_stats("Limit", 3.0),
                         offset: 2,
                         count: 3,
@@ -3482,7 +3482,7 @@ mod attach_tests {
         let scan = || {
             let mut base = op_with_stats("TableScan", 20.0);
             base.base.set_schema(Some(Schema::new(columns.clone())));
-            PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+            PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
                 base,
                 table_id: 42,
                 ..Default::default()
@@ -3503,7 +3503,7 @@ mod attach_tests {
             let mut base = op_with_stats("Limit", 3.0);
             base.base
                 .set_schema(Some(Schema::new(columns.iter().rev().cloned().collect())));
-            let limit = PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+            let limit = PhysicalPlan::Limit(tidb_planner_core_operator_physicalop::PhysicalLimit {
                 base,
                 offset: 1,
                 count: 3,
@@ -3544,10 +3544,10 @@ mod attach_tests {
         let scan = |id: i32, rows: f64| {
             let mut base = op_with_stats("TableScan", rows);
             base.base.set_id(id);
-            PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+            PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
                 base,
                 table_id: 42,
-                ..crate::physical::PhysicalTableScan::default()
+                ..tidb_planner_core_operator_physicalop::PhysicalTableScan::default()
             })
         };
         let task = CopTask {
@@ -3596,9 +3596,9 @@ mod attach_tests {
 #[cfg(test)]
 mod task_tests {
     use super::*;
-    use crate::physical_table_reader::ReadReqType;
-    use crate::task::*;
-    use crate::physical::PhysicalPlan;
+    use tidb_planner_core_operator_physicalop::physical_table_reader::ReadReqType;
+    use tidb_planner_core_operator_physicalop::task::*;
+    use tidb_planner_core_operator_physicalop::PhysicalPlan;
     use tidb_planner_core_base::PlanIdAllocator;
     use tidb_planner_property::stats_info::StatsInfo;
     // All WRITTEN: Go's coverage of the task layer is exercised through
@@ -3607,7 +3607,7 @@ mod task_tests {
 
     fn dual_with_rows(rows: f64) -> PhysicalPlan {
         let allocator = PlanIdAllocator::new();
-        let mut base = crate::physical::BasePhysicalPlan::default();
+        let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::default();
         base.base =
             tidb_planner_core_base::BasePlan::new(&allocator, tidb_planner_core_operator_logicalop::LogicalTableDual::TYPE, 0);
         base.base.set_stats(Some(StatsInfo::new(rows, [])));
@@ -3618,7 +3618,7 @@ mod task_tests {
                     tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
                 ),
             ])));
-        PhysicalPlan::TableDual(crate::physical::PhysicalTableDual { base, row_count: 0 })
+        PhysicalPlan::TableDual(tidb_planner_core_operator_physicalop::PhysicalTableDual { base, row_count: 0 })
     }
 
     #[test]
@@ -3698,10 +3698,10 @@ mod task_tests {
             );
             assert!(matches!(converted.plan(), Some(PhysicalPlan::Selection(_))));
 
-            let mut base = crate::physical::BasePhysicalPlan::new(&allocator, "Selection", 0);
+            let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(&allocator, "Selection", 0);
             base.base
                 .set_stats(task.plan().and_then(PhysicalPlan::stats_info).cloned());
-            let parent = PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+            let parent = PhysicalPlan::Selection(tidb_planner_core_operator_physicalop::PhysicalSelection {
                 base,
                 conditions: vec![],
                 from_data_source: false,
@@ -3717,7 +3717,7 @@ mod task_tests {
                 ..Default::default()
             };
             let enforced =
-                crate::enforce::enforce_property_in(
+                tidb_planner_core_operator_physicalop::enforce::enforce_property_in(
                     &property,
                     task,
                     &allocator,
@@ -3734,10 +3734,10 @@ mod task_tests {
 
     fn table_scan_with_rows(rows: f64) -> PhysicalPlan {
         let allocator = PlanIdAllocator::new();
-        let mut base = crate::physical::BasePhysicalPlan::default();
+        let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::default();
         base.base = tidb_planner_core_base::BasePlan::new(&allocator, "TableScan", 0);
         base.base.set_stats(Some(StatsInfo::new(rows, [])));
-        PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+        PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
             base,
             table_id: 1,
             table_as_name: None,
@@ -3774,7 +3774,7 @@ mod task_tests {
         };
         assert_eq!(
             sender.exchange_type,
-            crate::physical::ExchangeType::PassThrough
+            tidb_planner_core_operator_physicalop::ExchangeType::PassThrough
         );
         assert!(sender.hash_cols.is_empty());
         assert!(matches!(
@@ -3796,7 +3796,7 @@ mod task_tests {
         ));
 
         let mut misplaced = MppTask::new(
-            PhysicalPlan::TableDual(crate::physical::PhysicalTableDual::default()),
+            PhysicalPlan::TableDual(tidb_planner_core_operator_physicalop::PhysicalTableDual::default()),
             MppPartitionType::Any,
             [],
         );
@@ -3822,21 +3822,21 @@ mod task_tests {
         schema: tidb_expr::schema::Schema,
         rows: f64,
     ) -> PhysicalPlan {
-        let mut base = crate::physical::BasePhysicalPlan::new(allocator, tp, 10);
+        let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(allocator, tp, 10);
         base.base.set_schema(Some(schema));
         base.base.set_stats(Some(StatsInfo::new(rows, [])));
         match tp {
-            "TableScan" => PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+            "TableScan" => PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
                 base,
                 table_id: 1,
                 store_type: tidb_kv::store_type::StoreType::TiKv,
-                ..crate::physical::PhysicalTableScan::default()
+                ..tidb_planner_core_operator_physicalop::PhysicalTableScan::default()
             }),
-            "IndexScan" => PhysicalPlan::IndexScan(crate::physical::PhysicalIndexScan {
+            "IndexScan" => PhysicalPlan::IndexScan(tidb_planner_core_operator_physicalop::PhysicalIndexScan {
                 base,
                 table_id: 1,
                 index_id: 1,
-                ..crate::physical::PhysicalIndexScan::default()
+                ..tidb_planner_core_operator_physicalop::PhysicalIndexScan::default()
             }),
             _ => unreachable!("only scan operators are built by this helper"),
         }
@@ -3844,7 +3844,7 @@ mod task_tests {
 
     #[test]
     fn index_lookup_pushdown_builds_and_flattens_the_go_plan_shape() {
-        fn check(reader: &crate::physical::PhysicalIndexLookUpReader, complex: bool) {
+        fn check(reader: &tidb_planner_core_operator_physicalop::PhysicalIndexLookUpReader, complex: bool) {
             assert!(reader.index_lookup_push_down);
             assert!(reader.table_plans.iter().all(|plan| {
                 plan.stats_info()
@@ -3979,19 +3979,19 @@ mod task_tests {
 
         let mut table_scan = scan_with_schema(&allocator, "TableScan", table_schema, 500.0);
         let mut selection_base =
-            crate::physical::BasePhysicalPlan::new(&allocator, "Selection", 10);
+            tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(&allocator, "Selection", 10);
         selection_base.base.set_schema(table_scan.schema().cloned());
         selection_base
             .base
             .set_stats(Some(StatsInfo::new(200.0, [])));
         selection_base.set_children(vec![table_scan]);
-        let selection = PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+        let selection = PhysicalPlan::Selection(tidb_planner_core_operator_physicalop::PhysicalSelection {
             base: selection_base,
             conditions: Vec::new(),
             from_data_source: true,
         });
         let mut projection_base =
-            crate::physical::BasePhysicalPlan::new(&allocator, "Projection", 10);
+            tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(&allocator, "Projection", 10);
         projection_base
             .base
             .set_schema(Some(tidb_expr::schema::Schema::new(vec![column_with_id(
@@ -4001,7 +4001,7 @@ mod task_tests {
             .base
             .set_stats(Some(StatsInfo::new(200.0, [])));
         projection_base.set_children(vec![selection]);
-        table_scan = PhysicalPlan::Projection(crate::physical::PhysicalProjection {
+        table_scan = PhysicalPlan::Projection(tidb_planner_core_operator_physicalop::PhysicalProjection {
             base: projection_base,
             exprs: Vec::new(),
             calculate_no_delay: false,
@@ -4009,13 +4009,13 @@ mod task_tests {
         });
 
         let index_scan = scan_with_schema(&allocator, "IndexScan", index_schema, 1_000.0);
-        let mut limit_base = crate::physical::BasePhysicalPlan::new(&allocator, "Limit", 10);
+        let mut limit_base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(&allocator, "Limit", 10);
         limit_base.base.set_schema(index_scan.schema().cloned());
         limit_base.base.set_stats(Some(StatsInfo::new(1_000.0, [])));
         limit_base.set_children(vec![index_scan]);
-        let limit = PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+        let limit = PhysicalPlan::Limit(tidb_planner_core_operator_physicalop::PhysicalLimit {
             base: limit_base,
-            ..crate::physical::PhysicalLimit::default()
+            ..tidb_planner_core_operator_physicalop::PhysicalLimit::default()
         });
         let complex = Task::Cop(CopTask {
             index_plan: Some(Box::new(limit)),
@@ -4038,10 +4038,10 @@ mod task_tests {
         // store type is read off the bottom scan, and the task's warnings
         // ride the deferred copy onto the fresh root task.
         let allocator = PlanIdAllocator::new();
-        let mut base = crate::physical::BasePhysicalPlan::default();
+        let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::default();
         base.base = tidb_planner_core_base::BasePlan::new(&allocator, "TableScan", 0);
         base.base.set_stats(Some(StatsInfo::new(42.0, [])));
-        let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+        let scan = PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
             base,
             table_id: 9,
             table_as_name: None,
@@ -4104,9 +4104,9 @@ mod task_tests {
                 index_plan_finished: true,
                 ..CopTask::default()
             });
-            let base = crate::physical::BasePhysicalPlan::with_id(9, "Limit", 0);
+            let base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::with_id(9, "Limit", 0);
             let plan = if is_topn {
-                PhysicalPlan::TopN(crate::physical::PhysicalTopN {
+                PhysicalPlan::TopN(tidb_planner_core_operator_physicalop::PhysicalTopN {
                     by_items: vec![tidb_expression_aggregation::ByItems::new(
                         Expression::Column(column_with_id(1)),
                         false,
@@ -4117,7 +4117,7 @@ mod task_tests {
                     ..Default::default()
                 })
             } else {
-                PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+                PhysicalPlan::Limit(tidb_planner_core_operator_physicalop::PhysicalLimit {
                     base,
                     offset: u64::MAX,
                     count: 8,
@@ -4166,10 +4166,10 @@ mod task_tests {
                 ),
                 ..CopTask::default()
             });
-            let mut topn_base = crate::physical::BasePhysicalPlan::new(&allocator, "TopN", 0);
+            let mut topn_base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(&allocator, "TopN", 0);
             topn_base.base.set_schema(Some(schema));
             topn_base.base.set_stats(Some(StatsInfo::new(5.0, [])));
-            let topn = PhysicalPlan::TopN(crate::physical::PhysicalTopN {
+            let topn = PhysicalPlan::TopN(tidb_planner_core_operator_physicalop::PhysicalTopN {
                 base: topn_base,
                 by_items: vec![tidb_expression_aggregation::ByItems::new(
                     Expression::Column(column_with_id(1)),
@@ -4226,10 +4226,10 @@ mod task_tests {
             keep_order: true,
             ..CopTask::default()
         });
-        let mut base = crate::physical::BasePhysicalPlan::with_id(9, "Limit", 0);
+        let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::with_id(9, "Limit", 0);
         base.base
             .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(5.0, [])));
-        let limit = PhysicalPlan::Limit(crate::physical::PhysicalLimit {
+        let limit = PhysicalPlan::Limit(tidb_planner_core_operator_physicalop::PhysicalLimit {
             base,
             partition_by: Vec::new(),
             offset: 2,
@@ -4324,7 +4324,7 @@ mod task_tests {
 
     #[test]
     fn need_extra_proj_does_not_replace_pushed_aggregate_schema() {
-        use crate::physical::{BasePhysicalPlan, PhysicalHashAgg, PhysicalStreamAgg};
+        use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, PhysicalHashAgg, PhysicalStreamAgg};
         use tidb_expr::schema::Schema;
         for double_read in [false, true] {
             for hash in [false, true] {

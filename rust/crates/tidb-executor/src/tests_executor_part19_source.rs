@@ -110,7 +110,7 @@ fn execute_prepared_dml(sql: &str, values: &[Datum], catalog: &mut Catalog) -> (
     let execution_context = ctx().with_prepared_params(values.to_vec().into());
     let affected = execution
         .with_plan(|statement, physical| {
-            let tidb_planner::physical::PhysicalPlan::Dml(_) = physical else {
+            let tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(_) = physical else {
                 panic!("prepared DML cache owns a DML root")
             };
             let tidb_ast::Stmt::Dml(dml) = statement else {

@@ -152,20 +152,6 @@ impl PlannerStmtCtxData for StmtContextData {
     }
 }
 
-impl crate::enforce::MppWarningSink for StmtContext {
-    fn raise_mpp_warning(&self, message: &str) {
-        StmtContext::append_mpp_warning(self, message);
-    }
-
-    fn set_hint_warning(&self, message: &str) {
-        self.append_warning_parts(1815, message);
-    }
-
-    fn append_planner_note(&self, message: &str) {
-        StmtContext::append_planner_note(self, message);
-    }
-}
-
 /// Go `base.PlanContext` as `pkg/planner/core`'s optimizer reads it.
 impl crate::optimize::OptimizeContext for StmtContext {
     fn session_zone(&self) -> tidb_datatype::SessionTimeZone {

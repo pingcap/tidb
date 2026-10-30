@@ -10,6 +10,7 @@ description = "Session lifecycle and state authority for the TiDB Rust rewrite."
 autotests = false
 
 [dependencies]
+tidb-planner-core-operator-physicalop = { path = "../tidb-planner-core-operator-physicalop" }
 tidb-planner-cardinality = { path = "../tidb-planner-cardinality" }
 tidb-param = { path = "../tidb-param" }
 tidb-ddl-jobsubmit = { path = "../tidb-ddl-jobsubmit" }

@@ -18,9 +18,9 @@
 use crate::find_best_task::dispatch::DispatchContext;
 use crate::find_best_task::index_merge_union::merge_scan_stats;
 use tidb_planner_core_operator_logicalop::DataSource;
-use crate::physical::PhysicalPlan;
+use tidb_planner_core_operator_physicalop::PhysicalPlan;
 use tidb_planner_core_base::PlanError;
-use crate::task::Task;
+use tidb_planner_core_operator_physicalop::task::Task;
 use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 
 /// Builds the IndexMerge of a finished path: one partial plan per partial
@@ -50,7 +50,7 @@ pub(super) fn build_prepared_index_merge_task(
             .unwrap_or(filled.detached.ranges.len() as f64);
         let schema_columns =
             crate::find_best_task::index_merge_union::partial_index_schema(ds, source_index, ctx)?;
-        let mut base = crate::physical::BasePhysicalPlan::new(
+        let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
             ctx.allocator,
             "IndexRangeScan",
             ds.base.base.query_block_offset(),
@@ -61,7 +61,7 @@ pub(super) fn build_prepared_index_merge_task(
         if let Some(reason) = &path.noncacheable_reason {
             base.base.set_noncacheable_reason(reason);
         }
-        let mut partial_plan = PhysicalPlan::IndexScan(crate::physical::PhysicalIndexScan {
+        let mut partial_plan = PhysicalPlan::IndexScan(tidb_planner_core_operator_physicalop::PhysicalIndexScan {
             by_items: Vec::new(),
             group_by_col_idxs: Vec::new(),
             base,
@@ -88,12 +88,12 @@ pub(super) fn build_prepared_index_merge_task(
         if !filled.index_filters.is_empty() {
             // Go `ConvertToPartialIndexScan`: only what TiKV can evaluate
             // stays on the partial; the Selection is kept even if empty.
-            let (pushed, rest) = crate::pushdown::extract_filters_for_index_merge(
+            let (pushed, rest) = tidb_planner_core_operator_physicalop::pushdown::extract_filters_for_index_merge(
                 filled.index_filters.clone(),
                 &ctx.expr_pushdown_blacklist,
             );
             partial_remaining.extend(rest);
-            let mut selection = crate::physical::BasePhysicalPlan::new(
+            let mut selection = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                 ctx.allocator,
                 "Selection",
                 ds.base.base.query_block_offset(),
@@ -108,7 +108,7 @@ pub(super) fn build_prepared_index_merge_task(
                     [],
                 )));
             selection.set_children(vec![partial_plan]);
-            partial_plan = PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+            partial_plan = PhysicalPlan::Selection(tidb_planner_core_operator_physicalop::PhysicalSelection {
                 base: selection,
                 conditions: pushed,
                 from_data_source: true,
@@ -118,7 +118,7 @@ pub(super) fn build_prepared_index_merge_task(
     }
 
     let schema = ds.base.base.schema().cloned().unwrap_or_default();
-    let mut table_scan_base = crate::physical::BasePhysicalPlan::new(
+    let mut table_scan_base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
         ctx.allocator,
         "TableRowIDScan",
         ds.base.base.query_block_offset(),
@@ -127,7 +127,7 @@ pub(super) fn build_prepared_index_merge_task(
         .base
         .set_stats(Some(merge_scan_stats(ds, output_rows, ctx)));
     table_scan_base.base.set_schema(Some(schema.clone()));
-    let table_scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+    let table_scan = PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
         by_items: Vec::new(),
         group_by_col_idxs: Vec::new(),
         base: table_scan_base,
@@ -158,7 +158,7 @@ pub(super) fn build_prepared_index_merge_task(
     });
     // Go `BuildIndexMergeTableScan` separates root conditions before sealing
     // the cop table phase.
-    let (table_filters, table_remaining) = crate::pushdown::split_index_merge_table_filters(
+    let (table_filters, table_remaining) = tidb_planner_core_operator_physicalop::pushdown::split_index_merge_table_filters(
         path.table_filters.clone(),
         &ctx.expr_pushdown_blacklist,
     );
@@ -167,7 +167,7 @@ pub(super) fn build_prepared_index_merge_task(
     let table_plan = if table_filters.is_empty() {
         table_scan
     } else {
-        let mut selection_base = crate::physical::BasePhysicalPlan::new(
+        let mut selection_base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
             ctx.allocator,
             "Selection",
             ds.base.base.query_block_offset(),
@@ -186,7 +186,7 @@ pub(super) fn build_prepared_index_merge_task(
         );
         selection_base.base.set_schema(Some(schema));
         selection_base.set_children(vec![table_scan]);
-        PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+        PhysicalPlan::Selection(tidb_planner_core_operator_physicalop::PhysicalSelection {
             base: selection_base,
             conditions: table_filters,
             from_data_source: true,
@@ -195,8 +195,8 @@ pub(super) fn build_prepared_index_merge_task(
 
     // Go seals the index phase when table-side filtering has begun.
     let index_plan_finished = !matches!(&table_plan, PhysicalPlan::TableScan(_));
-    Ok(Task::Cop(crate::task::CopTask {
-        phys_plan_part_info: Some(crate::physical::PhysPlanPartInfo::from_data_source(ds)),
+    Ok(Task::Cop(tidb_planner_core_operator_physicalop::task::CopTask {
+        phys_plan_part_info: Some(tidb_planner_core_operator_physicalop::PhysPlanPartInfo::from_data_source(ds)),
         table_plan: Some(Box::new(table_plan)),
         idx_merge_part_plans: partial_plans_raw,
         idx_merge_is_intersection: path.is_intersection,

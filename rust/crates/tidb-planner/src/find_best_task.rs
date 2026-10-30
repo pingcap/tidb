@@ -15,7 +15,7 @@
 //! Go's physical join enumeration under a required property.
 //!
 //! The production recursive search is [`dispatch::find_best_task`], which
-//! operates directly on the shared [`LogicalPlan`] and [`PhysicalPlan`](crate::physical::PhysicalPlan)
+//! operates directly on the shared [`LogicalPlan`] and [`PhysicalPlan`](tidb_planner_core_operator_physicalop::PhysicalPlan)
 //! trees. This parent module retains only the join candidate/property rules
 //! that dispatch consumes. The former reduced candidate tree, duplicate
 //! recursive cost search, and executor-facing decision tree were removed
@@ -54,7 +54,7 @@
 use tidb_planner_core_operator_logicalop::LogicalPlan;
 use tidb_planner_property::{PhysicalProperty, SortItem, TaskType};
 use tidb_planner_core_base::{LogicalJoinType, PlanError};
-use crate::physical::IndexJoinKind;
+use tidb_planner_core_operator_physicalop::IndexJoinKind;
 
 /// `tryToEnumerateIndexJoin`: which side may be the OUTER one.
 ///

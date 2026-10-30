@@ -1213,7 +1213,7 @@ impl PreparedSelectExecution {
 
     pub fn with_plan<R>(
         &self,
-        callback: impl FnOnce(&tidb_ast::Stmt, &mut tidb_planner::physical::PhysicalPlan) -> R,
+        callback: impl FnOnce(&tidb_ast::Stmt, &mut tidb_planner_core_operator_physicalop::PhysicalPlan) -> R,
     ) -> Option<R> {
         let mut cached = self.cached_plan.lock().ok()?;
         let (statement, physical) = cached.execution_mut(self.generation)?;

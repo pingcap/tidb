@@ -22,12 +22,12 @@
 //! `ExchangeType: PassThrough` on the sender
 //! (`physical_exchange_sender.go:107`).
 
-use tidb_planner::physical::{
+use tidb_planner_core_operator_physicalop::{
     BasePhysicalPlan, ExchangeType, PhysicalExchangeSender, PhysicalPlan, PhysicalTableReader,
     PhysicalTableScan,
 };
 use tidb_kv::store_type::StoreType;
-use tidb_planner::physical_table_reader::ReadReqType;
+use tidb_planner_core_operator_physicalop::physical_table_reader::ReadReqType;
 
 fn mpp_reader_over_sender(sender_id: i32) -> PhysicalTableReader {
     let scan_base = BasePhysicalPlan::with_id(8, "TableScan", 0);

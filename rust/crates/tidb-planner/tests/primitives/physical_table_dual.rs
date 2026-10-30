@@ -19,9 +19,7 @@
 
 use tidb_planner_property::{PhysicalProperty, SortItem};
 use tidb_planner_core_base::PlanIdAllocator;
-use tidb_planner::{
-    physical::{find_best_task_4_logical_table_dual, PhysicalPlan},
-};
+use tidb_planner_core_operator_physicalop::{find_best_task_4_logical_table_dual, PhysicalPlan};
 use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalTableDual};
 
 fn logical_dual(allocator: &PlanIdAllocator, row_count: usize, offset: i32) -> LogicalTableDual {

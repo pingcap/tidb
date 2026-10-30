@@ -13,10 +13,10 @@
 // limitations under the License.
 
 //! Go `core/plan.go` shuffle selection for window, stream aggregation and merge join.
-use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalShuffle};
+use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, PhysicalPlan, PhysicalShuffle};
 use tidb_planner_property::PhysicalProperty;
 use tidb_planner_core_base::{PlanError, PlanIdAllocator};
-use crate::task::Task;
+use tidb_planner_core_operator_physicalop::task::Task;
 use crate::task_attach::attach_plan_to_task;
 use tidb_expr::expression::Expression;
 
@@ -164,12 +164,12 @@ pub(crate) fn optimize_by_shuffle_in(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::physical::{
+    use tidb_planner_core_operator_physicalop::{
         PhysicalMergeJoin, PhysicalSort, PhysicalStreamAgg, PhysicalTableDual, PhysicalWindow,
     };
     use tidb_planner_property::ColumnSortItem;
     use tidb_planner_property::stats_info::StatsInfo;
-    use crate::task::RootTask;
+    use tidb_planner_core_operator_physicalop::task::RootTask;
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_expr::column::Column;
     use tidb_expr::schema::Schema;

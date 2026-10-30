@@ -12,6 +12,7 @@ autotests = false
 workspace = true
 
 [dependencies]
+tidb-planner-core-operator-physicalop = { path = "../tidb-planner-core-operator-physicalop" }
 tidb-planner-core-operator-logicalop = { path = "../tidb-planner-core-operator-logicalop" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-planner-core-partidx = { path = "../tidb-planner-core-partidx" }
@@ -45,7 +46,6 @@ tidb-go-regexp = { path = "../tidb-go-regexp" }
 tidb-intset = { path = "../tidb-intset" }
 tidb-memory = { path = "../tidb-memory" }
 tidb-paging = { path = "../tidb-paging" }
-tidb-plancodec = { path = "../tidb-plancodec" }
 tidb-printer = { path = "../tidb-printer" }
 tidb-sem-compat = { path = "../tidb-sem-compat" }
 tidb-sem-v2 = { path = "../tidb-sem-v2" }

@@ -28,13 +28,13 @@
 //! while the cached plan no longer carries the residual filter needed to make
 //! that widening safe.
 
-use crate::physical::range_rebuild::{PointConstantsRebuild, PointRangeRebuild, TableRangeRebuild};
+use tidb_planner_core_operator_physicalop::range_rebuild::{PointConstantsRebuild, PointRangeRebuild, TableRangeRebuild};
 use std::fmt;
 
 use tidb_datatype::Datum;
 use tidb_expr::expression::Expression;
 
-use crate::physical::{PhysicalPlan, PhysicalTableScan};
+use tidb_planner_core_operator_physicalop::{PhysicalPlan, PhysicalTableScan};
 use tidb_ranger::types::{has_full_range, Ranges};
 
 /// Session inputs read by Go's `isPlanCacheable` /
@@ -69,7 +69,7 @@ fn table_scan_is_full(scan: &PhysicalTableScan) -> bool {
         .all(|range| range.is_full_range(unsigned_int_handle))
 }
 
-fn index_scan_is_full(scan: &crate::physical::PhysicalIndexScan) -> bool {
+fn index_scan_is_full(scan: &tidb_planner_core_operator_physicalop::PhysicalIndexScan) -> bool {
     scan.ranges.iter().all(|range| range.is_full_range(false))
 }
 
@@ -699,7 +699,7 @@ fn rebuild_table_scan(
 }
 
 fn rebuild_index_scan(
-    scan: &mut crate::physical::PhysicalIndexScan,
+    scan: &mut tidb_planner_core_operator_physicalop::PhysicalIndexScan,
     context: &CachedPlanRebuildContext<'_>,
 ) -> Result<(), PlanCacheRebuildError> {
     let Some(rebuild) = scan.range_rebuild.as_mut() else {
@@ -1035,13 +1035,37 @@ pub fn rebuild_ranges_for_cached_plan(
     Ok(())
 }
 
-impl PhysicalPlan {
+/// Go `RebuildPlan4CachedPlan` (`plan_cache_rebuild.go`) over a retained
+/// cached physical tree: core's rebuild, written over the operators.
+pub trait RebuildPlanForCache: Sized {
+    /// Rebuilds this retained cached tree for the current execution.
+    ///
+    /// # Errors
+    ///
+    /// Why the cached plan cannot be reused.
+    fn rebuild_plan_for_cache_in_place(
+        &mut self,
+        context: &CachedPlanRebuildContext<'_>,
+    ) -> Result<(), PlanCacheRebuildError>;
+
+    /// Produces a privately rebuilt copy without changing this template.
+    ///
+    /// # Errors
+    ///
+    /// Why the cached plan cannot be reused.
+    fn rebuild_plan_for_cache(
+        &self,
+        context: &CachedPlanRebuildContext<'_>,
+    ) -> Result<Self, PlanCacheRebuildError>;
+}
+
+impl RebuildPlanForCache for PhysicalPlan {
     /// Rebuilds this retained cached tree for the current execution.
     ///
     /// The caller must serialize access to the tree. This is Go's
     /// `RebuildPlan4CachedPlan` ownership model: a session cache entry is
     /// reused and its parameter-derived state is refreshed in place.
-    pub fn rebuild_plan_for_cache_in_place(
+    fn rebuild_plan_for_cache_in_place(
         &mut self,
         context: &CachedPlanRebuildContext<'_>,
     ) -> Result<(), PlanCacheRebuildError> {
@@ -1060,7 +1084,7 @@ impl PhysicalPlan {
     ///
     /// This remains useful to callers that do not own a serialized cache
     /// entry. The prepared-plan cache uses the in-place method above.
-    pub fn rebuild_plan_for_cache(
+    fn rebuild_plan_for_cache(
         &self,
         context: &CachedPlanRebuildContext<'_>,
     ) -> Result<Self, PlanCacheRebuildError> {

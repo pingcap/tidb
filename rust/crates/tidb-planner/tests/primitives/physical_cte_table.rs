@@ -19,7 +19,7 @@
 //! tree includes `CTETable root Scan on CTE_0`.
 
 use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalCTETable};
-use tidb_planner::physical::{find_best_task_4_logical_cte_table, PhysicalPlan};
+use tidb_planner_core_operator_physicalop::{find_best_task_4_logical_cte_table, PhysicalPlan};
 use tidb_planner_property::{PhysicalProperty, SortItem};
 use tidb_planner_core_base::PlanIdAllocator;
 

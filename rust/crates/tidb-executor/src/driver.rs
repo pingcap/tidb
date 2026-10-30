@@ -329,7 +329,7 @@ pub(crate) fn optimize_query_stmt(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
+) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
     optimize_query_stmt_with_scalar_subqueries(query, catalog, current_db, ctx)
         .map(|(physical, _)| physical)
 }
@@ -345,7 +345,7 @@ pub(crate) fn optimize_query_stmt_with_scalar_subqueries(
     ctx: &crate::StmtContext,
 ) -> Result<
     (
-        tidb_planner::physical::PhysicalPlan,
+        tidb_planner_core_operator_physicalop::PhysicalPlan,
         Vec<planner_bridge::RegisteredScalarSubquery>,
     ),
     DriverError,
@@ -433,7 +433,7 @@ pub fn run_select_meta_stmt(
 /// cached plans both enter `executorBuilder.build`; this is that common seam.
 pub fn run_select_meta_stmt_with_physical(
     select: &tidb_ast::SelectStmt,
-    physical: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    physical: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
@@ -451,7 +451,7 @@ pub fn run_select_meta_stmt_with_physical(
 /// optionally consuming a cache-rebuilt tree selected by the planner.
 pub fn run_query_meta_stmt_with_physical(
     query: &QueryStmt,
-    physical: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    physical: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
@@ -463,7 +463,7 @@ pub fn run_query_meta_stmt_with_physical(
 /// statement owner retains its snapshot until this record set finishes.
 pub fn open_query_meta_stmt_with_physical(
     query: &QueryStmt,
-    physical: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    physical: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
@@ -486,7 +486,7 @@ pub fn open_query_meta_stmt_with_physical(
 /// and visitor walk on every cache hit.
 pub fn open_query_meta_stmt_with_physical_without_sequence_validation(
     query: &QueryStmt,
-    physical: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    physical: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
@@ -577,10 +577,10 @@ pub fn plan_set_stmt(
 /// [`crate::StmtContext::show_retrieval`] before [`open_show_plan`].
 #[must_use]
 pub fn physical_show_of(
-    plan: &tidb_planner::physical::PhysicalPlan,
-) -> Option<&tidb_planner::physical::PhysicalShow> {
+    plan: &tidb_planner_core_operator_physicalop::PhysicalPlan,
+) -> Option<&tidb_planner_core_operator_physicalop::PhysicalShow> {
     match plan {
-        tidb_planner::physical::PhysicalPlan::Show(show) => Some(show),
+        tidb_planner_core_operator_physicalop::PhysicalPlan::Show(show) => Some(show),
         other => other.children().iter().find_map(physical_show_of),
     }
 }
@@ -596,7 +596,7 @@ pub fn plan_admin_show_ddl_jobs(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
+) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
     planner_bridge::physical_admin_show_ddl_jobs_plan(
         job_number,
         where_clause,
@@ -611,10 +611,10 @@ pub fn plan_admin_show_ddl_jobs(
 /// the session supplies through [`crate::StmtContext::show_retrieval`].
 #[must_use]
 pub fn physical_show_ddl_jobs_of(
-    plan: &tidb_planner::physical::PhysicalPlan,
-) -> Option<&tidb_planner::physical::PhysicalShowDDLJobs> {
+    plan: &tidb_planner_core_operator_physicalop::PhysicalPlan,
+) -> Option<&tidb_planner_core_operator_physicalop::PhysicalShowDDLJobs> {
     match plan {
-        tidb_planner::physical::PhysicalPlan::ShowDDLJobs(show) => Some(show),
+        tidb_planner_core_operator_physicalop::PhysicalPlan::ShowDDLJobs(show) => Some(show),
         other => other.children().iter().find_map(physical_show_ddl_jobs_of),
     }
 }
@@ -626,7 +626,7 @@ pub fn physical_show_ddl_jobs_of(
 ///
 /// A build failure, including a `PhysicalShow` with no supplied rows.
 pub fn open_show_plan(
-    physical: &mut tidb_planner::physical::PhysicalPlan,
+    physical: &mut tidb_planner_core_operator_physicalop::PhysicalPlan,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<QueryRecordSet, DriverError> {
@@ -643,7 +643,7 @@ pub fn plan_query_meta_stmt(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
+) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
     validate_query_sequence_names(query, ctx)?;
     planner_bridge::physical_query_plan(query, catalog, current_db, ctx)
         .map_err(planner_error_to_driver)
@@ -660,8 +660,8 @@ pub fn plan_query_meta_stmt_with_subqueries(
     ctx: &crate::StmtContext,
 ) -> Result<
     (
-        tidb_planner::physical::PhysicalPlan,
-        Vec<tidb_planner::physical::PhysicalPlan>,
+        tidb_planner_core_operator_physicalop::PhysicalPlan,
+        Vec<tidb_planner_core_operator_physicalop::PhysicalPlan>,
     ),
     DriverError,
 > {

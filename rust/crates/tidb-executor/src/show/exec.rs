@@ -441,7 +441,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
     /// Only the kinds [`is_planned_show`] lists reach it.
     fn fetch_show(
         &mut self,
-        leaf: &tidb_planner::physical::PhysicalShow,
+        leaf: &tidb_planner_core_operator_physicalop::PhysicalShow,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         let stats_handle = self.stats_handle();
         use tidb_ast::ShowStmtType as T;
@@ -1805,7 +1805,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
 
 /// The `ShowBaseExtractor` `buildShow` installed on a planned SHOW.
 fn base_extractor(
-    leaf: &tidb_planner::physical::PhysicalShow,
+    leaf: &tidb_planner_core_operator_physicalop::PhysicalShow,
 ) -> Option<&tidb_planner::show_predicate_extractor::ShowBaseExtractor> {
     leaf.extractor
         .as_deref()?

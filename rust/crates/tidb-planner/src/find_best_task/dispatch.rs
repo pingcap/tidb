@@ -51,12 +51,12 @@
 use tidb_planner_core_operator_logicalop::data_source::{index_covers_condition, index_path_is_single_scan};
 use std::collections::{HashMap, HashSet};
 
-use crate::enforce::enforce_property_in;
+use tidb_planner_core_operator_physicalop::enforce::enforce_property_in;
 use tidb_planner_core_operator_logicalop::LogicalPlan;
-use crate::physical::{self, PhysicalPlan};
+use tidb_planner_core_operator_physicalop::{self, PhysicalPlan};
 use tidb_planner_property::PhysicalProperty;
 use tidb_planner_core_base::{PlanError, PlanIdAllocator};
-use crate::task::Task;
+use tidb_planner_core_operator_physicalop::task::Task;
 use tidb_planner_property::task_type::TaskType;
 use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 
@@ -176,7 +176,7 @@ pub struct DispatchContext<'a> {
     /// Go SessionVars.OptPrefixIndexSingleScan.
     pub opt_prefix_index_single_scan: bool,
     /// Statement-context sink for Go's enforced-MPP refusal warnings.
-    pub mpp_warning_sink: Option<&'a dyn crate::enforce::MppWarningSink>,
+    pub mpp_warning_sink: Option<&'a dyn tidb_planner_core_operator_physicalop::enforce::MppWarningSink>,
     /// DataSources whose heuristic-selection note was already raised: Go
     /// derives a DataSource's statistics, and so selects, only once.
     pub heuristic_noted: std::collections::HashSet<usize>,
@@ -308,8 +308,8 @@ impl<'a> DispatchContext<'a> {
         &self,
         source: &tidb_planner_core_operator_logicalop::DataSource,
         root_filters: &[tidb_expr::expression::Expression],
-    ) -> crate::task::TaskStatsContext {
-        crate::task::TaskStatsContext {
+    ) -> tidb_planner_core_operator_physicalop::task::TaskStatsContext {
+        tidb_planner_core_operator_physicalop::task::TaskStatsContext {
             root_filter_stats: if root_filters.is_empty() {
                 None
             } else {
@@ -546,7 +546,7 @@ impl<'a> DispatchContext<'a> {
     /// Attach the session statement-context sink used by physical refusal
     /// warnings. The planner remains usable without a session in unit tests.
     #[must_use]
-    pub const fn with_mpp_warning_sink(mut self, sink: &'a dyn crate::enforce::MppWarningSink) -> Self {
+    pub const fn with_mpp_warning_sink(mut self, sink: &'a dyn tidb_planner_core_operator_physicalop::enforce::MppWarningSink) -> Self {
         self.mpp_warning_sink = Some(sink);
         self
     }
@@ -630,7 +630,7 @@ fn exhaust_physical_plans(
     };
     match plan {
         LogicalPlan::Selection(op) => Ok(one(
-            physical::exhaust_physical_plans_4_logical_selection_with_mpp(
+            tidb_planner_core_operator_physicalop::exhaust_physical_plans_4_logical_selection_with_mpp(
                 op,
                 prop,
                 ctx.allocator,
@@ -640,7 +640,7 @@ fn exhaust_physical_plans(
             ),
         )),
         LogicalPlan::Projection(op) => Ok(one(
-            physical::exhaust_physical_plans_4_logical_projection_with_mpp(
+            tidb_planner_core_operator_physicalop::exhaust_physical_plans_4_logical_projection_with_mpp(
                 op,
                 prop,
                 ctx.allocator,
@@ -650,13 +650,13 @@ fn exhaust_physical_plans(
                 &ctx.expr_pushdown_blacklist,
             ),
         )),
-        LogicalPlan::Sort(op) => Ok(one(physical::exhaust_physical_plans_4_logical_sort(
+        LogicalPlan::Sort(op) => Ok(one(tidb_planner_core_operator_physicalop::exhaust_physical_plans_4_logical_sort(
             op,
             prop,
             ctx.allocator,
             ctx.skew_ratio,
         ))),
-        LogicalPlan::Limit(op) => Ok(one(physical::exhaust_physical_plans_4_logical_limit(
+        LogicalPlan::Limit(op) => Ok(one(tidb_planner_core_operator_physicalop::exhaust_physical_plans_4_logical_limit(
             op,
             prop,
             ctx.allocator,
@@ -672,13 +672,13 @@ fn exhaust_physical_plans(
                 }
                 return Ok((Vec::new(), true));
             }
-            Ok(one(physical::exhaust_physical_plans_4_logical_union_scan(
+            Ok(one(tidb_planner_core_operator_physicalop::exhaust_physical_plans_4_logical_union_scan(
                 op,
                 prop,
                 ctx.allocator,
             )))
         }
-        LogicalPlan::Lock(op) => Ok(one(physical::exhaust_physical_plans_4_logical_lock(
+        LogicalPlan::Lock(op) => Ok(one(tidb_planner_core_operator_physicalop::exhaust_physical_plans_4_logical_lock(
             op,
             prop,
             ctx.allocator,
@@ -692,13 +692,13 @@ fn exhaust_physical_plans(
                     );
                 }
             }
-            Ok(one(physical::exhaust_physical_plans_4_logical_max_one_row(
+            Ok(one(tidb_planner_core_operator_physicalop::exhaust_physical_plans_4_logical_max_one_row(
                 op,
                 prop,
                 ctx.allocator,
             )))
         }
-        LogicalPlan::UnionAll(op) => Ok(one(physical::exhaust_physical_plans_4_logical_union_all(
+        LogicalPlan::UnionAll(op) => Ok(one(tidb_planner_core_operator_physicalop::exhaust_physical_plans_4_logical_union_all(
             op,
             prop,
             ctx.allocator,
@@ -706,7 +706,7 @@ fn exhaust_physical_plans(
             ctx.mpp_allowed,
         ))),
         LogicalPlan::PartitionUnionAll(op) => Ok(one(
-            physical::exhaust_physical_plans_4_logical_partition_union_all(
+            tidb_planner_core_operator_physicalop::exhaust_physical_plans_4_logical_partition_union_all(
                 op,
                 prop,
                 ctx.allocator,
@@ -714,7 +714,7 @@ fn exhaust_physical_plans(
                 ctx.mpp_allowed,
             ),
         )),
-        LogicalPlan::Sequence(op) => Ok(one(physical::exhaust_physical_plans_4_logical_sequence(
+        LogicalPlan::Sequence(op) => Ok(one(tidb_planner_core_operator_physicalop::exhaust_physical_plans_4_logical_sequence(
             op,
             prop,
             ctx.allocator,
@@ -727,13 +727,13 @@ fn exhaust_physical_plans(
             // push-down machinery (`getPhysTopN`/`CanExprsPushDown`) and
             // refuses as an EMPTY slice here, named; the LIMIT half rides
             // the keep-order paths (`getPhysLimits`).
-            if !physical::match_items(prop, &op.by_items) {
+            if !tidb_planner_core_operator_physicalop::match_items(prop, &op.by_items) {
                 return Ok((Vec::new(), true));
             }
             // Go's two preference slices, in order: the TopN operators
             // (`getPhysTopN`), then the LIMIT half (`getPhysLimits`).
             let mut slices = Vec::with_capacity(2);
-            let topns = physical::get_phys_topn(
+            let topns = tidb_planner_core_operator_physicalop::get_phys_topn(
                 op,
                 prop,
                 ctx.allocator,
@@ -745,14 +745,14 @@ fn exhaust_physical_plans(
             if !topns.is_empty() {
                 slices.push(topns);
             }
-            let limits = physical::get_phys_limits(op, prop, ctx.allocator);
+            let limits = tidb_planner_core_operator_physicalop::get_phys_limits(op, prop, ctx.allocator);
             if !limits.is_empty() {
                 slices.push(limits);
             }
             Ok((slices, true))
         }
         LogicalPlan::Expand(op) => Ok((
-            vec![physical::expand::exhaust(
+            vec![tidb_planner_core_operator_physicalop::expand::exhaust(
                 op,
                 prop,
                 ctx.allocator,
@@ -761,7 +761,7 @@ fn exhaust_physical_plans(
             )],
             prop.sort_items.is_empty(),
         )),
-        LogicalPlan::Window(op) => Ok(one(physical::exhaust_physical_plans_4_logical_window(
+        LogicalPlan::Window(op) => Ok(one(tidb_planner_core_operator_physicalop::exhaust_physical_plans_4_logical_window(
             op,
             prop,
             ctx.allocator,
@@ -793,7 +793,7 @@ fn exhaust_physical_plans(
             let prefer_hash = prefer_agg_type & tidb_hint::PREFER_HASH_AGG != 0;
             let prefer_stream =
                 prefer_agg_type & tidb_hint::PREFER_STREAM_AGG != 0;
-            let mut hash_aggs = physical::get_hash_aggs_with_mpp_options(
+            let mut hash_aggs = tidb_planner_core_operator_physicalop::get_hash_aggs_with_mpp_options(
                 op,
                 prop,
                 ctx.allocator,
@@ -808,7 +808,7 @@ fn exhaust_physical_plans(
             if !hash_aggs.is_empty() && prefer_hash {
                 return Ok((vec![hash_aggs], true));
             }
-            let stream_aggs = physical::get_stream_aggs(
+            let stream_aggs = tidb_planner_core_operator_physicalop::get_stream_aggs(
                 op,
                 prop,
                 ctx.allocator,
@@ -892,7 +892,7 @@ fn exhaust_physical_plans(
                     // after the hash joins were constructed (ids spent).
                     JoinStrategy::Hash(_) => {
                         if !hash_hints.forced && hash_hints.skip {
-                            let _ = physical::BasePhysicalPlan::new(
+                            let _ = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                                 ctx.allocator,
                                 op.base.base.tp(),
                                 op.base.base.query_block_offset(),
@@ -904,13 +904,13 @@ fn exhaust_physical_plans(
                     // NO_MERGE_JOIN was applied by `exhaust_join`.
                     JoinStrategy::Merge { .. } => false,
                     JoinStrategy::Index { kind, .. } => match kind {
-                        crate::physical::IndexJoinKind::IndexJoin => {
+                        tidb_planner_core_operator_physicalop::IndexJoinKind::IndexJoin => {
                             op.prefer_any(&[join_hint_flags::NO_INDEX_JOIN])
                         }
-                        crate::physical::IndexJoinKind::IndexHashJoin => {
+                        tidb_planner_core_operator_physicalop::IndexJoinKind::IndexHashJoin => {
                             op.prefer_any(&[join_hint_flags::NO_INDEX_HASH_JOIN])
                         }
-                        crate::physical::IndexJoinKind::IndexMergeJoin => {
+                        tidb_planner_core_operator_physicalop::IndexJoinKind::IndexMergeJoin => {
                             op.prefer_any(&[join_hint_flags::NO_INDEX_MERGE_JOIN])
                         }
                     },
@@ -924,7 +924,7 @@ fn exhaust_physical_plans(
                 if candidate.discarded {
                     // Constructed, then dropped by the enumeration's early
                     // return: only the plan id remains.
-                    let _ = physical::BasePhysicalPlan::new(
+                    let _ = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                         ctx.allocator,
                         op.base.base.tp(),
                         op.base.base.query_block_offset(),
@@ -1032,17 +1032,17 @@ fn exhaust_physical_plans(
                 if matches!(
                     &strategy,
                     JoinStrategy::Index {
-                        kind: crate::physical::IndexJoinKind::IndexHashJoin,
+                        kind: tidb_planner_core_operator_physicalop::IndexJoinKind::IndexHashJoin,
                         ..
                     }
                 ) {
-                    let _embedded = physical::BasePhysicalPlan::new(
+                    let _embedded = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                         ctx.allocator,
                         "IndexJoin",
                         op.base.base.query_block_offset(),
                     );
                 }
-                let mut base = physical::BasePhysicalPlan::new(
+                let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                     ctx.allocator,
                     op.base.base.tp(),
                     op.base.base.query_block_offset(),
@@ -1066,7 +1066,7 @@ fn exhaust_physical_plans(
                 base.set_children_req_props(child_props.into_iter().map(Some).collect());
                 let physical = match strategy {
                     JoinStrategy::Hash(shape) => {
-                        PhysicalPlan::HashJoin(physical::PhysicalHashJoin {
+                        PhysicalPlan::HashJoin(tidb_planner_core_operator_physicalop::PhysicalHashJoin {
                             base,
                             concurrency: ctx.hash_join_concurrency,
                             join_type: op.join_type,
@@ -1114,7 +1114,7 @@ fn exhaust_physical_plans(
                                     .map(tidb_expr::expression::Expression::ScalarFunction),
                             );
                         }
-                        PhysicalPlan::MergeJoin(physical::PhysicalMergeJoin {
+                        PhysicalPlan::MergeJoin(tidb_planner_core_operator_physicalop::PhysicalMergeJoin {
                             base,
                             join_type: op.join_type,
                             left_join_keys,
@@ -1138,7 +1138,7 @@ fn exhaust_physical_plans(
                         } else {
                             (right_columns.clone(), left_columns.clone())
                         };
-                        PhysicalPlan::IndexJoin(physical::PhysicalIndexJoin {
+                        PhysicalPlan::IndexJoin(tidb_planner_core_operator_physicalop::PhysicalIndexJoin {
                             base,
                             join_type: op.join_type,
                             inner_child_idx: 1 - outer_idx,
@@ -1294,7 +1294,7 @@ fn exhaust_physical_plans(
             for _ in 0..hash_joins_built {
                 ctx.allocator.alloc();
             }
-            let mut base = physical::BasePhysicalPlan::new(
+            let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                 ctx.allocator,
                 tidb_planner_core_operator_logicalop::LogicalApply::TYPE,
                 op.base().base.query_block_offset(),
@@ -1304,8 +1304,8 @@ fn exhaust_physical_plans(
             );
             base.base.set_schema(op.base().base.schema().cloned());
             base.set_children_req_props(vec![Some(outer_prop), Some(inner_prop)]);
-            let apply = physical::PhysicalApply {
-                hash_join: physical::PhysicalHashJoin {
+            let apply = tidb_planner_core_operator_physicalop::PhysicalApply {
+                hash_join: tidb_planner_core_operator_physicalop::PhysicalHashJoin {
                     base,
                     concurrency: ctx.hash_join_concurrency,
                     join_type: op.join.join_type,
@@ -1508,10 +1508,10 @@ fn burn_index_join_candidate_ids(
         return;
     };
     let query_block_offset = join.base.base.query_block_offset();
-    if matches!(kind, crate::physical::IndexJoinKind::IndexHashJoin) {
-        let _ = physical::BasePhysicalPlan::new(ctx.allocator, "IndexJoin", query_block_offset);
+    if matches!(kind, tidb_planner_core_operator_physicalop::IndexJoinKind::IndexHashJoin) {
+        let _ = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(ctx.allocator, "IndexJoin", query_block_offset);
     }
-    let _ = physical::BasePhysicalPlan::new(ctx.allocator, join.base.base.tp(), query_block_offset);
+    let _ = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(ctx.allocator, join.base.base.tp(), query_block_offset);
 }
 
 /// Go `logicalop.CanSelfBeingPushedToCopImpl(lp, storeTp)` for the operators
@@ -1561,21 +1561,21 @@ fn find_best_task_uncached(
 ) -> Result<Task, PlanError> {
     match plan {
         LogicalPlan::TableDual(op) => {
-            return Ok(physical::find_best_task_4_logical_table_dual(
+            return Ok(tidb_planner_core_operator_physicalop::find_best_task_4_logical_table_dual(
                 op,
                 prop,
                 ctx.allocator,
             ));
         }
         LogicalPlan::CTETable(op) => {
-            return Ok(physical::find_best_task_4_logical_cte_table(
+            return Ok(tidb_planner_core_operator_physicalop::find_best_task_4_logical_cte_table(
                 op,
                 prop,
                 ctx.allocator,
             ));
         }
         LogicalPlan::CTE(op) if op.base.children().is_empty() => {
-            return physical::find_best_task_4_logical_cte(
+            return tidb_planner_core_operator_physicalop::find_best_task_4_logical_cte(
                 op,
                 prop,
                 ctx.allocator,
@@ -1583,14 +1583,14 @@ fn find_best_task_uncached(
             );
         }
         LogicalPlan::Show(op) => {
-            return Ok(physical::find_best_task_4_logical_show(
+            return Ok(tidb_planner_core_operator_physicalop::find_best_task_4_logical_show(
                 op,
                 prop,
                 ctx.allocator,
             ));
         }
         LogicalPlan::ShowDDLJobs(op) => {
-            return Ok(physical::find_best_task_4_logical_show_ddl_jobs(
+            return Ok(tidb_planner_core_operator_physicalop::find_best_task_4_logical_show_ddl_jobs(
                 op,
                 prop,
                 ctx.allocator,
@@ -1738,7 +1738,7 @@ fn find_best_task_4_logical_mem_table(
         return Ok(Task::invalid_task());
     }
 
-    let mut base = physical::BasePhysicalPlan::new(
+    let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
         ctx.allocator,
         tidb_planner_core_operator_logicalop::LogicalMemTable::TYPE,
         mem_table.base.base.query_block_offset(),
@@ -1752,7 +1752,7 @@ fn find_best_task_4_logical_mem_table(
     // synthetic `Column#N` headers instead of their declared columns.
     base.base
         .set_output_names(mem_table.base.base.output_names().to_vec());
-    let physical = PhysicalPlan::MemTable(physical::PhysicalMemTable {
+    let physical = PhysicalPlan::MemTable(tidb_planner_core_operator_physicalop::PhysicalMemTable {
         base,
         db_name: mem_table.db_name.clone(),
         table_name: mem_table.table_name.clone(),
@@ -1760,7 +1760,7 @@ fn find_best_task_4_logical_mem_table(
         query_time_range: mem_table.query_time_range.clone(),
         extractor: mem_table.extractor.clone(),
     });
-    let mut root = crate::task::RootTask::default();
+    let mut root = tidb_planner_core_operator_physicalop::task::RootTask::default();
     root.set_plan(physical);
     Ok(Task::Root(root))
 }
@@ -1799,15 +1799,15 @@ fn try_to_get_dual_task(
 /// converting the selected access path into a scan.  Keep the same shape for
 /// both constant-false predicates and ranger-proven empty ranges.
 fn empty_range_dual_task(ds: &tidb_planner_core_operator_logicalop::DataSource, ctx: &DispatchContext<'_>) -> Task {
-    let mut base = crate::physical::BasePhysicalPlan::new(
+    let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
         ctx.allocator,
         tidb_planner_core_operator_logicalop::LogicalTableDual::TYPE,
         ds.base.base.query_block_offset(),
     );
     base.base.set_stats(ds.base.base.stats_info().cloned());
     base.base.set_schema(ds.base.base.schema().cloned());
-    let dual = PhysicalPlan::TableDual(crate::physical::PhysicalTableDual { base, row_count: 0 });
-    let mut root = crate::task::RootTask::default();
+    let dual = PhysicalPlan::TableDual(tidb_planner_core_operator_physicalop::PhysicalTableDual { base, row_count: 0 });
+    let mut root = tidb_planner_core_operator_physicalop::task::RootTask::default();
     root.set_plan(dual);
     Task::Root(root)
 }
@@ -2225,7 +2225,7 @@ pub(super) struct IndexJoinPathResult {
     /// Go `indexJoinPathGetRangeInfoAndMaxOneRow`'s `maxOneRow`.
     max_one_row: bool,
     /// Go `mutableIndexJoinRange`, set when the accesses hold parameters.
-    rebuild: Option<crate::physical::range_rebuild::IndexJoinPathRebuild>,
+    rebuild: Option<tidb_planner_core_operator_physicalop::range_rebuild::IndexJoinPathRebuild>,
 }
 
 /// What building one inner path for an index join answers.
@@ -2536,7 +2536,7 @@ fn index_join_info_from_result(
     result: &IndexJoinPathResult,
     runtime: &tidb_planner_property::IndexJoinRuntimeProp,
     index_id: Option<i64>,
-) -> crate::task::IndexJoinInfo {
+) -> tidb_planner_core_operator_physicalop::task::IndexJoinInfo {
     // "reverse idxOff2KeyOff as keyOff2IdxOff"
     let mut key_off2_idx_off = vec![-1; runtime.inner_join_keys.len()];
     for (idx_off, key_off) in result.core.idx_off2_key_off.iter().enumerate() {
@@ -2544,7 +2544,7 @@ fn index_join_info_from_result(
             *slot = idx_off as i64;
         }
     }
-    crate::task::IndexJoinInfo {
+    tidb_planner_core_operator_physicalop::task::IndexJoinInfo {
         range_bare: false,
         table_id: ds.physical_table_id,
         index_id,
@@ -2555,7 +2555,7 @@ fn index_join_info_from_result(
         range_rebuild: result
             .rebuild
             .clone()
-            .map(|rebuild| crate::physical::range_rebuild::PointRangeRebuild::IndexJoin(Box::new(rebuild))),
+            .map(|rebuild| tidb_planner_core_operator_physicalop::range_rebuild::PointRangeRebuild::IndexJoin(Box::new(rebuild))),
         compare_filters: result.core.last_col_manager.clone(),
     }
 }
@@ -2566,14 +2566,14 @@ fn index_join_info_from_result(
 fn index_join_int_pk_info(
     ds: &tidb_planner_core_operator_logicalop::DataSource,
     runtime: &tidb_planner_property::IndexJoinRuntimeProp,
-) -> Option<crate::task::IndexJoinInfo> {
+) -> Option<tidb_planner_core_operator_physicalop::task::IndexJoinInfo> {
     let pk_col = ds.handle_cols.first()?;
     let key_off2_idx_off = runtime
         .inner_join_keys
         .iter()
         .map(|key| if key.unique_id == pk_col.unique_id { 0 } else { -1 })
         .collect::<Vec<i64>>();
-    key_off2_idx_off.contains(&0).then(|| crate::task::IndexJoinInfo {
+    key_off2_idx_off.contains(&0).then(|| tidb_planner_core_operator_physicalop::task::IndexJoinInfo {
         // `indexJoinIntPKRangeInfo` renders the bare outer join keys.
         range_bare: true,
         table_id: ds.physical_table_id,
@@ -2933,10 +2933,10 @@ mod cross_estimate_dispatch_tests {
             panic!("the single-read table path remains a cop task");
         };
         let mut node = cop.table_plan.as_deref().expect("table plan");
-        while !matches!(node, crate::physical::PhysicalPlan::TableScan(_)) {
+        while !matches!(node, tidb_planner_core_operator_physicalop::PhysicalPlan::TableScan(_)) {
             node = node.children().first().expect("table scan below selection");
         }
-        let crate::physical::PhysicalPlan::TableScan(scan) = node else {
+        let tidb_planner_core_operator_physicalop::PhysicalPlan::TableScan(scan) = node else {
             unreachable!();
         };
         let estimated_rows = scan.base.base.stats_info().expect("scan stats").row_count();
@@ -3005,7 +3005,7 @@ fn find_best_task_4_logical_data_source_paths(
         {
             return Ok(Task::invalid_task());
         }
-        let mut base = crate::physical::BasePhysicalPlan::new(
+        let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
             ctx.allocator,
             "TableSample",
             ds.base.base.query_block_offset(),
@@ -3013,9 +3013,9 @@ fn find_best_task_4_logical_data_source_paths(
         base.base.set_schema(ds.base.base.schema().cloned());
         base.base
             .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(1.0, [])));
-        let mut root = crate::task::RootTask::default();
+        let mut root = tidb_planner_core_operator_physicalop::task::RootTask::default();
         root.set_plan(PhysicalPlan::TableSample(
-            crate::physical::PhysicalTableSample {
+            tidb_planner_core_operator_physicalop::PhysicalTableSample {
                 base,
                 table_sample_info: sample_info.clone(),
                 physical_table_id: ds.physical_table_id,
@@ -3119,7 +3119,7 @@ fn find_best_task_4_logical_data_source_paths(
     });
     // Go `buildPhysPlanPartInfo(ds)`: one value shared by the cop task, its
     // table scan and the reader above (Go shares the pointer).
-    let phys_plan_part_info = crate::physical::PhysPlanPartInfo::from_data_source(ds);
+    let phys_plan_part_info = tidb_planner_core_operator_physicalop::PhysPlanPartInfo::from_data_source(ds);
     'paths: for (path_position, path) in ordinary_paths.iter().enumerate() {
         if (ds.prefer_store_type & tidb_planner_core_operator_logicalop::data_source::PREFER_TIFLASH != 0
             && !matches!(path, tidb_planner_util::path::PossiblePath::TiFlashTable))
@@ -3287,7 +3287,7 @@ fn find_best_task_4_logical_data_source_paths(
                 // `convertToTableScan` (`find_best_task.go:2247`); a winning
                 // point get never builds the scan, so the scan's plan id is
                 // drawn only once the point block below has passed.
-                let mut base = crate::physical::BasePhysicalPlan::with_id(
+                let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::with_id(
                     0,
                     "TableScan",
                     ds.base.base.query_block_offset(),
@@ -3445,14 +3445,14 @@ fn find_best_task_4_logical_data_source_paths(
                     None
                 } else if common_handle.is_some() {
                     Some(
-                        crate::physical::range_rebuild::TableRangeRebuild::common_handle(
+                        tidb_planner_core_operator_physicalop::range_rebuild::TableRangeRebuild::common_handle(
                             table_access_conds.clone(),
                             common_columns.clone(),
                             common_lengths.clone(),
                         ),
                     )
                 } else {
-                    Some(crate::physical::range_rebuild::TableRangeRebuild::int_handle(
+                    Some(tidb_planner_core_operator_physicalop::range_rebuild::TableRangeRebuild::int_handle(
                         table_access_conds.clone(),
                         handle_type.clone(),
                         handle_type.is_unsigned(),
@@ -3508,7 +3508,7 @@ fn find_best_task_4_logical_data_source_paths(
                         || explicit_physical_id.is_some()
                         || (ranges.len() == 1 && (ds.pk_is_handle || common_handle.is_some())))
                 {
-                    let mut point_base = crate::physical::BasePhysicalPlan::new(
+                    let mut point_base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                         ctx.allocator,
                         if ranges.len() == 1 {
                             "Point_Get"
@@ -3539,7 +3539,7 @@ fn find_best_task_4_logical_data_source_paths(
                         ranges.len(),
                     );
                     let mut point = if ranges.len() == 1 {
-                        PhysicalPlan::PointGet(crate::physical::PhysicalPointGet {
+                        PhysicalPlan::PointGet(tidb_planner_core_operator_physicalop::PhysicalPointGet {
                             base: point_base,
                             table_id: if ds.pk_is_handle || common_handle.is_some() {
                                 ds.physical_table_id
@@ -3549,7 +3549,7 @@ fn find_best_task_4_logical_data_source_paths(
                             partition: (!ds.partition_definition_ids.is_empty()
                                 && ds.physical_table_id == ds.table_id
                                 && (ds.pk_is_handle || common_handle.is_some()))
-                            .then(|| crate::physical::PointGetPartition {
+                            .then(|| tidb_planner_core_operator_physicalop::PointGetPartition {
                                 names: ds.partition_names.clone(),
                                 physical_table_id: None,
                             }),
@@ -3558,12 +3558,12 @@ fn find_best_task_4_logical_data_source_paths(
                             ranges,
                             range_rebuild: table_range_rebuild
                                 .clone()
-                                .map(crate::physical::range_rebuild::PointRangeRebuild::Table),
+                                .map(tidb_planner_core_operator_physicalop::range_rebuild::PointRangeRebuild::Table),
                             lock: false,
                             select_lock: None,
                         })
                     } else {
-                        PhysicalPlan::BatchPointGet(crate::physical::PhysicalBatchPointGet {
+                        PhysicalPlan::BatchPointGet(tidb_planner_core_operator_physicalop::PhysicalBatchPointGet {
                             base: point_base,
                             table_id: explicit_physical_id.unwrap_or(ds.physical_table_id),
                             index_id: None,
@@ -3574,7 +3574,7 @@ fn find_best_task_4_logical_data_source_paths(
                             partition_names: ds.partition_names.clone(),
                             range_rebuild: table_range_rebuild
                                 .clone()
-                                .map(crate::physical::range_rebuild::PointRangeRebuild::Table),
+                                .map(tidb_planner_core_operator_physicalop::range_rebuild::PointRangeRebuild::Table),
                             keep_order,
                             desc,
                             select_lock: None,
@@ -3582,7 +3582,7 @@ fn find_best_task_4_logical_data_source_paths(
                         })
                     };
                     if !table_filters.is_empty() {
-                        let mut selection_base = crate::physical::BasePhysicalPlan::new(
+                        let mut selection_base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                             ctx.allocator,
                             "Selection",
                             ds.base.base.query_block_offset(),
@@ -3598,18 +3598,18 @@ fn find_best_task_4_logical_data_source_paths(
                             }),
                         );
                         selection_base.set_children(vec![point]);
-                        point = PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+                        point = PhysicalPlan::Selection(tidb_planner_core_operator_physicalop::PhysicalSelection {
                             base: selection_base,
                             conditions: table_filters,
                             from_data_source: true,
                         });
                     }
-                    let mut root = crate::task::RootTask::default();
+                    let mut root = tidb_planner_core_operator_physicalop::task::RootTask::default();
                     root.set_plan(point);
                     return Ok(Task::Root(root));
                 }
                 base.base.set_id(ctx.allocator.alloc());
-                let (table_filters, root_task_conds) = crate::pushdown::split_scan_filters(
+                let (table_filters, root_task_conds) = tidb_planner_core_operator_physicalop::pushdown::split_scan_filters(
                     table_filters, tidb_kv::store_type::StoreType::TiKv,
                     &ctx.expr_pushdown_blacklist,
                 );
@@ -3640,7 +3640,7 @@ fn find_best_task_4_logical_data_source_paths(
                 } else {
                     tidb_planner_core_operator_logicalop::data_source_paths::ResolvedTableScanKind::Full
                 };
-                let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+                let scan = PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
                     base,
                     plan_part_info: Some(std::sync::Arc::clone(&phys_plan_part_info)),
                     filter_condition: table_filters.clone(),
@@ -3714,7 +3714,7 @@ fn find_best_task_4_logical_data_source_paths(
                     // Go `addPushedDownSelection`: access cardinality belongs
                     // to the scan; the DataSource's post-filter cardinality
                     // belongs to the Selection above it.
-                    let mut selection_base = crate::physical::BasePhysicalPlan::new(
+                    let mut selection_base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                         ctx.allocator,
                         "Selection",
                         ds.base.base.query_block_offset(),
@@ -3742,13 +3742,13 @@ fn find_best_task_4_logical_data_source_paths(
                             })
                         });
                     selection_base.set_children(vec![scan]);
-                    PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+                    PhysicalPlan::Selection(tidb_planner_core_operator_physicalop::PhysicalSelection {
                         base: selection_base,
                         conditions: table_filters,
                         from_data_source: true,
                     })
                 };
-                Task::Cop(crate::task::CopTask {
+                Task::Cop(tidb_planner_core_operator_physicalop::task::CopTask {
                     phys_plan_part_info: Some(std::sync::Arc::clone(&phys_plan_part_info)),
                     table_plan: Some(Box::new(table_plan)),
                     index_plan_finished: true,
@@ -3766,7 +3766,7 @@ fn find_best_task_4_logical_data_source_paths(
                         }),
                         None => None,
                     },
-                    ..crate::task::CopTask::default()
+                    ..tidb_planner_core_operator_physicalop::task::CopTask::default()
                 })
             }
             tidb_planner_util::path::PossiblePath::TiFlashTable => {
@@ -3777,7 +3777,7 @@ fn find_best_task_4_logical_data_source_paths(
                 if keep_order && !table_path_matches_order(ds, prop, None).matched() {
                     continue 'paths;
                 }
-                let mut base = crate::physical::BasePhysicalPlan::new(
+                let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                     ctx.allocator,
                     "TableScan",
                     ds.base.base.query_block_offset(),
@@ -3789,7 +3789,7 @@ fn find_best_task_4_logical_data_source_paths(
                         .or_else(|| ds.base.base.stats_info().cloned()),
                 );
                 let ranges = tidb_ranger::points::full_int_range(false);
-                let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+                let scan = PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
                     by_items: Vec::new(),
                     group_by_col_idxs: Vec::new(),
                     base,
@@ -3818,14 +3818,14 @@ fn find_best_task_4_logical_data_source_paths(
                         tidb_planner_core_operator_logicalop::data_source_paths::TableScanExplainIdSuffix::IncludePlanId,
                     )),
                 });
-                let (table_filters, root_task_conds) = crate::pushdown::split_scan_filters(
+                let (table_filters, root_task_conds) = tidb_planner_core_operator_physicalop::pushdown::split_scan_filters(
                     ds.pushed_down_conds.clone(), tidb_kv::store_type::StoreType::TiFlash,
                     &ctx.expr_pushdown_blacklist,
                 );
                 let table_plan = if table_filters.is_empty() {
                     scan
                 } else {
-                    let mut selection_base = crate::physical::BasePhysicalPlan::new(
+                    let mut selection_base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                         ctx.allocator,
                         "Selection",
                         ds.base.base.query_block_offset(),
@@ -3845,20 +3845,20 @@ fn find_best_task_4_logical_data_source_paths(
                         }) },
                     );
                     selection_base.set_children(vec![scan]);
-                    PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+                    PhysicalPlan::Selection(tidb_planner_core_operator_physicalop::PhysicalSelection {
                         base: selection_base,
                         conditions: table_filters,
                         from_data_source: true,
                     })
                 };
-                Task::Cop(crate::task::CopTask {
+                Task::Cop(tidb_planner_core_operator_physicalop::task::CopTask {
                     table_plan: Some(Box::new(table_plan)),
                     index_plan_finished: true,
                     keep_order,
                     expect_cnt: prop.expected_cnt as u64,
                     stats_context: ctx.task_stats_context(ds, &root_task_conds),
                     root_task_conds,
-                    ..crate::task::CopTask::default()
+                    ..tidb_planner_core_operator_physicalop::task::CopTask::default()
                 })
             }
             tidb_planner_util::path::PossiblePath::Index { index } => 'index_path: {
@@ -4053,7 +4053,7 @@ fn find_best_task_4_logical_data_source_paths(
                     .flatten()
                     .filter(|result| !result.access_conds.is_empty())
                     .map(|result| {
-                        crate::physical::range_rebuild::IndexRangeRebuild::new(
+                        tidb_planner_core_operator_physicalop::range_rebuild::IndexRangeRebuild::new(
                             result.access_conds.clone(),
                             index_cols.clone(),
                             index_lengths.clone(),
@@ -4072,7 +4072,7 @@ fn find_best_task_4_logical_data_source_paths(
                 }
                 // Go draws the scan's id in `GetOriginalPhysicalIndexScan`, after
                 // the point-get conversion below has declined.
-                let mut base = crate::physical::BasePhysicalPlan::with_id(
+                let mut base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::with_id(
                     0,
                     "IndexScan",
                     ds.base.base.query_block_offset(),
@@ -4125,7 +4125,7 @@ fn find_best_task_4_logical_data_source_paths(
                             && range.high_val.len() == source_index.columns.len()
                     })
                 {
-                    let mut point_base = crate::physical::BasePhysicalPlan::new(
+                    let mut point_base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                         ctx.allocator,
                         if ranges.len() == 1 {
                             "Point_Get"
@@ -4160,7 +4160,7 @@ fn find_best_task_4_logical_data_source_paths(
                         ranges.len(),
                     );
                     let mut point = if ranges.len() == 1 {
-                        PhysicalPlan::PointGet(crate::physical::PhysicalPointGet {
+                        PhysicalPlan::PointGet(tidb_planner_core_operator_physicalop::PhysicalPointGet {
                             base: point_base,
                             table_id: ds.physical_table_id,
                             // Go `PointGetPlan.PartitionNames`: a global index
@@ -4168,7 +4168,7 @@ fn find_best_task_4_logical_data_source_paths(
                             partition: (!ds.partition_names.is_empty()
                                 || (!ds.partition_definition_ids.is_empty()
                                     && ds.physical_table_id == ds.table_id))
-                                .then(|| crate::physical::PointGetPartition {
+                                .then(|| tidb_planner_core_operator_physicalop::PointGetPartition {
                                     names: ds.partition_names.clone(),
                                     physical_table_id: None,
                                 }),
@@ -4181,12 +4181,12 @@ fn find_best_task_4_logical_data_source_paths(
                             ranges: ranges.clone(),
                             range_rebuild: index_range_rebuild
                                 .clone()
-                                .map(crate::physical::range_rebuild::PointRangeRebuild::Index),
+                                .map(tidb_planner_core_operator_physicalop::range_rebuild::PointRangeRebuild::Index),
                             lock: false,
                             select_lock: None,
                         })
                     } else {
-                        PhysicalPlan::BatchPointGet(crate::physical::PhysicalBatchPointGet {
+                        PhysicalPlan::BatchPointGet(tidb_planner_core_operator_physicalop::PhysicalBatchPointGet {
                             base: point_base,
                             table_id: ds.physical_table_id,
                             index_id: Some(source_index.id),
@@ -4201,7 +4201,7 @@ fn find_best_task_4_logical_data_source_paths(
                             partition_names: ds.partition_names.clone(),
                             range_rebuild: index_range_rebuild
                                 .clone()
-                                .map(crate::physical::range_rebuild::PointRangeRebuild::Index),
+                                .map(tidb_planner_core_operator_physicalop::range_rebuild::PointRangeRebuild::Index),
                             keep_order,
                             desc,
                             select_lock: None,
@@ -4209,7 +4209,7 @@ fn find_best_task_4_logical_data_source_paths(
                         })
                     };
                     if !remained_conds.is_empty() {
-                        let mut selection_base = crate::physical::BasePhysicalPlan::new(
+                        let mut selection_base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                             ctx.allocator,
                             "Selection",
                             ds.base.base.query_block_offset(),
@@ -4223,13 +4223,13 @@ fn find_best_task_4_logical_data_source_paths(
                                 stats.scale_by_expect_cnt(prop.expected_cnt, ctx.skew_ratio)
                             }));
                         selection_base.set_children(vec![point]);
-                        point = PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+                        point = PhysicalPlan::Selection(tidb_planner_core_operator_physicalop::PhysicalSelection {
                             base: selection_base,
                             conditions: remained_conds,
                             from_data_source: true,
                         });
                     }
-                    let mut root = crate::task::RootTask::default();
+                    let mut root = tidb_planner_core_operator_physicalop::task::RootTask::default();
                     root.set_plan(point);
                     break 'index_path Task::Root(root);
                 }
@@ -4442,7 +4442,7 @@ fn find_best_task_4_logical_data_source_paths(
                     .schema()
                     .map(|schema| schema.columns.clone())
                     .unwrap_or_default();
-                let scan = PhysicalPlan::IndexScan(crate::physical::PhysicalIndexScan {
+                let scan = PhysicalPlan::IndexScan(tidb_planner_core_operator_physicalop::PhysicalIndexScan {
                     base,
                     table_id: ds.physical_table_id,
                     table_as_name: ds.table_as_name.clone(),
@@ -4482,7 +4482,7 @@ fn find_best_task_4_logical_data_source_paths(
                     pk_is_handle_col: ds.pk_is_handle.then(|| ds.handle_cols.first().cloned()).flatten(),
                 });
                 let (table_filters, mut virtual_table_filters) =
-                    crate::pushdown::split_virtual_column_filters(table_filters);
+                    tidb_planner_core_operator_physicalop::pushdown::split_virtual_column_filters(table_filters);
                 // Go `addPushedDownSelection4PhysicalIndexScan` splits only the
                 // TABLE filters by virtual column; the index filters go
                 // through `PushDownExprs` alone.
@@ -4493,7 +4493,7 @@ fn find_best_task_4_logical_data_source_paths(
                 let (table_filters, rejected_table_filters) = if single_scan {
                     (Vec::new(), table_filters)
                 } else {
-                    crate::pushdown::split_scan_filters(table_filters,
+                    tidb_planner_core_operator_physicalop::pushdown::split_scan_filters(table_filters,
                         tidb_kv::store_type::StoreType::TiKv, &ctx.expr_pushdown_blacklist)
                 };
                 let has_root_filters = !virtual_table_filters.is_empty()
@@ -4519,7 +4519,7 @@ fn find_best_task_4_logical_data_source_paths(
                 } else {
                     // Go `convertToIndexScan` builds the lookup's table side
                     // over the source's schema and stats.
-                    let mut table_base = crate::physical::BasePhysicalPlan::new(
+                    let mut table_base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                         ctx.allocator,
                         "TableScan",
                         ds.base.base.query_block_offset(),
@@ -4554,7 +4554,7 @@ fn find_best_task_4_logical_data_source_paths(
                             })
                         }));
                     table_base.base.set_schema(ds.base.base.schema().cloned());
-                    let table_scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+                    let table_scan = PhysicalPlan::TableScan(tidb_planner_core_operator_physicalop::PhysicalTableScan {
                         by_items: Vec::new(),
                         group_by_col_idxs: Vec::new(),
                         base: table_base,
@@ -4597,7 +4597,7 @@ fn find_best_task_4_logical_data_source_paths(
                 let index_plan = if index_filters.is_empty() && global_partition_filter.is_none() {
                     scan
                 } else {
-                    let mut selection_base = crate::physical::BasePhysicalPlan::new(
+                    let mut selection_base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                         ctx.allocator,
                         "Selection",
                         ds.base.base.query_block_offset(),
@@ -4663,7 +4663,7 @@ fn find_best_task_4_logical_data_source_paths(
                         },
                     );
                     selection_base.set_children(vec![scan]);
-                    PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+                    PhysicalPlan::Selection(tidb_planner_core_operator_physicalop::PhysicalSelection {
                         base: selection_base,
                         conditions: index_filters
                             .into_iter()
@@ -4751,7 +4751,7 @@ fn find_best_task_4_logical_data_source_paths(
                         }
                     }
                 }
-                let mut cop = crate::task::CopTask {
+                let mut cop = tidb_planner_core_operator_physicalop::task::CopTask {
                     phys_plan_part_info: Some(std::sync::Arc::clone(&phys_plan_part_info)),
                     index_plan: Some(Box::new(index_plan)),
                     table_plan: table_side,
@@ -4788,7 +4788,7 @@ fn find_best_task_4_logical_data_source_paths(
                         (None, _) => None,
                     },
                     partial_order_match_result: partial_order_match,
-                    ..crate::task::CopTask::default()
+                    ..tidb_planner_core_operator_physicalop::task::CopTask::default()
                 };
                 // Go finishes the index phase before building the table
                 // Selection: its input rows are the completed index plan's
@@ -4796,7 +4796,7 @@ fn find_best_task_4_logical_data_source_paths(
                 if !single_scan && !table_filters.is_empty() {
                     cop.finish_index_plan();
                     let table_scan = cop.table_plan.take().expect("lookup has a table scan");
-                    let mut selection_base = crate::physical::BasePhysicalPlan::new(
+                    let mut selection_base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
                         ctx.allocator, "Selection", ds.base.base.query_block_offset(),
                     );
                     selection_base.base.set_schema(table_scan.schema().cloned());
@@ -4811,7 +4811,7 @@ fn find_best_task_4_logical_data_source_paths(
                     });
                     selection_base.set_children(vec![*table_scan]);
                     cop.table_plan = Some(Box::new(PhysicalPlan::Selection(
-                        crate::physical::PhysicalSelection {
+                        tidb_planner_core_operator_physicalop::PhysicalSelection {
                             base: selection_base,
                             conditions: table_filters,
                             from_data_source: true,
@@ -5298,7 +5298,7 @@ fn normal_preference_applies(
 /// valid hinted tasks still compare by cost.
 fn logical_join_hint_applies(plan: &LogicalPlan, physical: &PhysicalPlan) -> bool {
     use tidb_hint::join_hint_flags as hint;
-    use crate::physical::IndexJoinKind;
+    use tidb_planner_core_operator_physicalop::IndexJoinKind;
 
     let LogicalPlan::Join(join) = plan else {
         return false;
@@ -5373,7 +5373,7 @@ mod tests {
 
     struct RecordingMppWarningSink(RefCell<Vec<String>>);
 
-    impl crate::enforce::MppWarningSink for RecordingMppWarningSink {
+    impl tidb_planner_core_operator_physicalop::enforce::MppWarningSink for RecordingMppWarningSink {
         fn raise_mpp_warning(&self, message: &str) {
             self.0.borrow_mut().push(message.to_owned());
         }
@@ -5681,7 +5681,7 @@ mod tests {
         outer_ndv: f64,
         apply_rows: f64,
         ordered: bool,
-    ) -> physical::PhysicalApply {
+    ) -> tidb_planner_core_operator_physicalop::PhysicalApply {
         let allocator = PlanIdAllocator::new();
         let coster = CountCoster;
         let ctx = DispatchContext::new(&allocator, &coster, 1.0)
@@ -5937,14 +5937,14 @@ mod tests {
         // (`GenerateRootMPPTasks`, `fragment.go:167`).
         assert_eq!(
             reader.read_req_type,
-            crate::physical_table_reader::ReadReqType::Mpp
+            tidb_planner_core_operator_physicalop::physical_table_reader::ReadReqType::Mpp
         );
         let Some(PhysicalPlan::ExchangeSender(sender)) = reader.table_plan.as_deref() else {
             panic!("the TiFlash fragment hangs off TablePlan");
         };
         assert_eq!(
             sender.exchange_type,
-            crate::physical::ExchangeType::PassThrough
+            tidb_planner_core_operator_physicalop::ExchangeType::PassThrough
         );
         let Some(PhysicalPlan::TableScan(scan)) = sender.base.children().first() else {
             panic!("the TiFlash scan hangs off the exchange sender");
