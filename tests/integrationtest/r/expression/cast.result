@@ -193,3 +193,54 @@ truncate table test;
 insert into test values(0xffffff);
 select a from test where false not like convert(a, char);
 Error 1105 (HY000): Cannot convert string '\xFF\xFF\xFF' from binary to utf8mb4
+drop table if exists u, t, s, b, n;
+create table u (a bigint unsigned primary key);
+create table t (a int);
+create table s (a int);
+create table b (a bit(64));
+create table n (a bigint);
+insert into u values (18446744073709551615);
+insert into t values (1);
+insert into s values (1);
+insert into b values (0xffffffffffffffff);
+insert into n values (-1);
+select case when (select count(*) from t where t.a <= all (select case when t.a is null then s.a else s.a end from s)) then max(a) else max(a) end from u union select max(a) from u;
+case when (select count(*) from t where t.a <= all (select case when t.a is null then s.a else s.a end from s)) then max(a) else max(a) end
+18446744073709551615
+select case when (select count(*) from t where t.a <= all (select case when t.a is null then s.a else s.a end from s)) then max(a) else max(a) end from u union all select max(a) from u;
+case when (select count(*) from t where t.a <= all (select case when t.a is null then s.a else s.a end from s)) then max(a) else max(a) end
+18446744073709551615
+18446744073709551615
+select cast(a as unsigned) from u union all select a from u;
+cast(a as unsigned)
+18446744073709551615
+18446744073709551615
+select a from b union all select a from u;
+a
+18446744073709551615
+18446744073709551615
+select a from u union all select a from b;
+a
+18446744073709551615
+18446744073709551615
+set @@tidb_enable_vectorized_expression = off;
+select cast(a as unsigned) from u union all select a from u;
+cast(a as unsigned)
+18446744073709551615
+18446744073709551615
+select a from b union all select a from u;
+a
+18446744073709551615
+18446744073709551615
+set @@tidb_enable_vectorized_expression = default;
+prepare stmt from 'select cast(a as unsigned) from u union all select a from u where a > ?';
+set @v = 0;
+execute stmt using @v;
+cast(a as unsigned)
+18446744073709551615
+18446744073709551615
+execute stmt using @v;
+cast(a as unsigned)
+18446744073709551615
+18446744073709551615
+drop table u, t, s, b, n;

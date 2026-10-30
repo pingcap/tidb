@@ -1534,6 +1534,59 @@ func TestCastIntAsIntVec(t *testing.T) {
 	}
 }
 
+// For issue https://github.com/pingcap/tidb/issues/72241 and https://github.com/pingcap/tidb/issues/72335.
+// In UNION, only a signed negative value is clamped to 0 when the result column is unsigned. An unsigned source
+// value >= 2^63 is stored as a negative int64 and must be kept.
+func TestCastIntAsUnsignedIntInUnion(t *testing.T) {
+	ctx := mock.NewContext()
+	maxUint := uint64(math.MaxUint64)
+	bigUint := uint64(math.MaxInt64) + 1
+	for _, srcUnsigned := range []bool{false, true} {
+		srcTp := types.NewFieldType(mysql.TypeLonglong)
+		if srcUnsigned {
+			srcTp.AddFlag(mysql.UnsignedFlag)
+		}
+		dstTp := types.NewFieldType(mysql.TypeLonglong)
+		dstTp.AddFlag(mysql.UnsignedFlag)
+		col := &Column{RetType: srcTp, Index: 0}
+		baseFunc, err := newBaseBuiltinFunc(ctx, "", []Expression{col}, dstTp)
+		require.NoError(t, err)
+		cast := &builtinCastIntAsIntSig{newBaseBuiltinCastFunc(baseFunc, true)}
+
+		inputs := []int64{-1, 0, 1, math.MaxInt64, math.MinInt64, int64(maxUint)}
+		expected := make([]int64, len(inputs))
+		for i, v := range inputs {
+			expected[i] = v
+			if !srcUnsigned && v < 0 {
+				expected[i] = 0
+			}
+		}
+		// An unsigned source keeps the bit pattern, e.g. -1 as int64 is 18446744073709551615 as uint64.
+		if srcUnsigned {
+			require.Equal(t, maxUint, uint64(expected[0]))
+			require.Equal(t, bigUint, uint64(expected[4]))
+		}
+
+		input := chunk.NewChunkWithCapacity([]*types.FieldType{srcTp}, len(inputs))
+		for _, v := range inputs {
+			input.AppendInt64(0, v)
+		}
+		result := chunk.NewColumn(dstTp, len(inputs))
+		require.NoError(t, cast.vecEvalInt(ctx, input, result))
+		require.Equal(t, expected, result.Int64s()[:len(inputs)], "vectorized, srcUnsigned=%v", srcUnsigned)
+
+		it := chunk.NewIterator4Chunk(input)
+		i := 0
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			v, isNull, err := cast.evalInt(ctx, row)
+			require.NoError(t, err)
+			require.False(t, isNull)
+			require.Equal(t, expected[i], v, "row-based, srcUnsigned=%v, input=%d", srcUnsigned, inputs[i])
+			i++
+		}
+	}
+}
+
 // for issue https://github.com/pingcap/tidb/issues/16825
 func TestCastStringAsDecimalSigWithUnsignedFlagInUnion(t *testing.T) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0}
