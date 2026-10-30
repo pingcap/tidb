@@ -442,3 +442,29 @@ func TestUpdateMaterializedViewBaseInfoOnDropMLogDependency(t *testing.T) {
 		runCase(t, true, true, true, true)
 	})
 }
+
+func TestCreateMaterializedViewBuildSessionTracksAggregateMemory(t *testing.T) {
+	// The submitting session has loaded the global variables, while the
+	// internal session that builds the MV has not.
+	submitter := mock.NewContext().GetSessionVars()
+	submitter.TrackAggregateMemoryUsage, submitter.EnableParallelHashaggSpill = true, true
+	job := &model.Job{ReorgMeta: &model.DDLReorgMeta{Location: &model.TimeZoneLocation{Name: "UTC"}}}
+	AddMViewExecutionSessionVarsToJob(job, submitter)
+	sessCtx := mock.NewContext()
+	sessVars := sessCtx.GetSessionVars()
+	sessVars.TrackAggregateMemoryUsage, sessVars.EnableParallelHashaggSpill = false, false
+
+	restore, err := initCreateMaterializedViewBuildSession(sessCtx, job, nil, "test")
+	require.NoError(t, err)
+	require.True(t, sessVars.TrackAggregateMemoryUsage)
+	require.True(t, sessVars.EnableParallelHashaggSpill)
+	// They are set as session variables, which the session states carry.
+	for _, name := range []string{vardef.TiDBTrackAggregateMemoryUsage, vardef.TiDBEnableParallelHashaggSpill} {
+		value, ok := sessVars.GetSystemVar(name)
+		require.True(t, ok)
+		require.Equal(t, vardef.On, value)
+	}
+	restore()
+	require.False(t, sessVars.TrackAggregateMemoryUsage)
+	require.False(t, sessVars.EnableParallelHashaggSpill)
+}
