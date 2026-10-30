@@ -891,12 +891,14 @@ func (m *Mutator) getTableVersion(key []byte) (int, error) {
 
 // CreateMySQLDatabaseIfNotExists creates mysql schema and return its DB ID.
 func (m *Mutator) CreateMySQLDatabaseIfNotExists() (int64, error) {
-	if kerneltype.IsNextGen() {
-		return metadef.SystemDatabaseID, m.CreateSysDatabaseByIDIfNotExists(mysql.SystemDB, metadef.SystemDatabaseID)
-	}
+	// A keyspace bootstrapped by Classic retains its mysql database ID after
+	// switching to a NextGen binary.
 	id, err := m.GetSystemDBID()
 	if id != 0 || err != nil {
 		return id, err
+	}
+	if kerneltype.IsNextGen() {
+		return metadef.SystemDatabaseID, m.CreateSysDatabaseByIDIfNotExists(mysql.SystemDB, metadef.SystemDatabaseID)
 	}
 
 	id, err = m.GenGlobalID()
