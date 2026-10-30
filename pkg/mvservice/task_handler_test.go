@@ -673,3 +673,181 @@ func TestMVServiceExecuteTaskSkipWhenDeleted(t *testing.T) {
 		svc.mlogPurgeMu.Unlock()
 	})
 }
+
+func TestMVServiceMaintenanceTimerTriggersHistoryGC(t *testing.T) {
+	module := installMockTimeForTest(t)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	helper := &mockMVServiceHelper{
+		currentTSO: 1 << 40,
+		fetchLogs:  map[int64]*mlogPurgeTask{},
+		fetchViews: map[int64]*mviewTask{},
+	}
+	cfg := DefaultMVServiceConfig()
+	cfg.BasicInterval = time.Second
+	cfg.FetchInterval = 24 * time.Hour
+	svc := NewMVService(ctx, mockSessionPool{}, helper, cfg)
+	svc.lastMetaFetchMillis.Store(mvsNow().UnixMilli())
+	svc.nextHistoryGCAtMillis.Store(mvsNow().Add(defaultMVHistoryGCInterval).UnixMilli())
+	runMVServiceForTest(t, svc, cancel)
+
+	require.Equal(t, int32(0), helper.historyGCCalls.Load())
+	require.Eventually(t, func() bool {
+		return helper.serverRefreshCalls.Load() > 0
+	}, testEventuallyWait, testEventuallyTick)
+
+	module.Advance(defaultMVHistoryGCInterval + cfg.BasicInterval)
+	require.Eventually(t, func() bool {
+		return helper.historyGCCalls.Load() > 0
+	}, testEventuallyWait, testEventuallyTick)
+	require.Equal(t, helper.currentTSO, helper.lastHistoryGCCurrentTSO.Load())
+	require.Equal(t, int64(defaultMVHistoryGCRetention), helper.lastMViewHistoryGCRetention.Load())
+	require.Equal(t, int64(defaultMVHistoryGCRetention), helper.lastMLogHistoryGCRetention.Load())
+	require.Equal(t, defaultMVHistoryGCMaxRecords, helper.lastMViewHistoryGCMaxRecords.Load())
+	require.Equal(t, defaultMVHistoryGCMaxRecords, helper.lastMLogHistoryGCMaxRecords.Load())
+	require.Eventually(t, func() bool {
+		return helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultSuccess) > 0
+	}, testEventuallyWait, testEventuallyTick)
+}
+
+func TestMVServiceMaybeGCMVHistorySkipsWhenNotOwner(t *testing.T) {
+	installMockTimeForTest(t)
+	helper := &mockMVServiceHelper{
+		currentTSO: 1 << 40,
+	}
+	cfg := DefaultMVServiceConfig()
+	cfg.ServerConsistentHashReplicas = 1
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+	svc.nextHistoryGCAtMillis.Store(0)
+	svc.historyGCRetryCount.Store(3)
+	setHistoryGCOwnerForTest(svc, 20)
+
+	svc.maybeGCOperationHistory(mvsNow())
+	require.Equal(t, int32(0), helper.historyGCCalls.Load())
+	require.Equal(t, 0, helper.runEventCount(mvRunEventGetTSOErr))
+	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultSuccess))
+	require.Equal(t, 0, helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultFailed))
+	require.Equal(t, int64(0), svc.historyGCRetryCount.Load())
+}
+
+func TestMVServiceMaybeGCMVHistoryReportsMetrics(t *testing.T) {
+	installMockTimeForTest(t)
+
+	t.Run("success", func(t *testing.T) {
+		helper := &mockMVServiceHelper{currentTSO: 1 << 40}
+		cfg := DefaultMVServiceConfig()
+		cfg.ServerConsistentHashReplicas = 1
+		svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+		setHistoryGCOwnerForTest(svc, 5)
+
+		svc.maybeGCOperationHistory(mvsNow())
+		require.Eventually(t, func() bool {
+			return helper.historyGCCalls.Load() == 1
+		}, testEventuallyWait, testEventuallyTick)
+		require.Eventually(t, func() bool {
+			return helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultSuccess) > 0
+		}, testEventuallyWait, testEventuallyTick)
+	})
+
+	t.Run("get_tso_error", func(t *testing.T) {
+		helper := &mockMVServiceHelper{currentTSOErr: errors.New("get tso failed")}
+		cfg := DefaultMVServiceConfig()
+		cfg.ServerConsistentHashReplicas = 1
+		svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+		setHistoryGCOwnerForTest(svc, 5)
+
+		svc.maybeGCOperationHistory(mvsNow())
+		require.Equal(t, int32(0), helper.historyGCCalls.Load())
+		require.Eventually(t, func() bool {
+			return helper.runEventCount(mvRunEventGetTSOErr) > 0
+		}, testEventuallyWait, testEventuallyTick)
+		require.Eventually(t, func() bool {
+			return helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultFailed) > 0
+		}, testEventuallyWait, testEventuallyTick)
+	})
+
+	t.Run("purge_error", func(t *testing.T) {
+		helper := &mockMVServiceHelper{
+			currentTSO:   1 << 40,
+			historyGCErr: errors.New("purge failed"),
+		}
+		cfg := DefaultMVServiceConfig()
+		cfg.ServerConsistentHashReplicas = 1
+		svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+		setHistoryGCOwnerForTest(svc, 5)
+
+		svc.maybeGCOperationHistory(mvsNow())
+		require.Eventually(t, func() bool {
+			return helper.historyGCCalls.Load() == 1
+		}, testEventuallyWait, testEventuallyTick)
+		require.Eventually(t, func() bool {
+			return helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultFailed) > 0
+		}, testEventuallyWait, testEventuallyTick)
+	})
+
+	t.Run("get_tso_error_retries_quickly", func(t *testing.T) {
+		helper := &mockMVServiceHelper{currentTSOErr: errors.New("get tso failed")}
+		cfg := DefaultMVServiceConfig()
+		cfg.ServerConsistentHashReplicas = 1
+		cfg.BasicInterval = 100 * time.Millisecond
+		svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+		setHistoryGCOwnerForTest(svc, 5)
+
+		startAt := mvsNow()
+		svc.maybeGCOperationHistory(startAt)
+		require.Equal(t, int32(0), helper.historyGCCalls.Load())
+		require.Eventually(t, func() bool {
+			return helper.runEventCount(mvRunEventGetTSOErr) > 0
+		}, testEventuallyWait, testEventuallyTick)
+
+		helper.currentTSOErr = nil
+		svc.maybeGCOperationHistory(startAt.Add(cfg.BasicInterval))
+		require.Eventually(t, func() bool {
+			return helper.historyGCCalls.Load() == 1
+		}, testEventuallyWait, testEventuallyTick)
+	})
+
+	t.Run("error_waits_for_basic_interval_retry", func(t *testing.T) {
+		helper := &mockMVServiceHelper{currentTSOErr: context.Canceled}
+		cfg := DefaultMVServiceConfig()
+		cfg.ServerConsistentHashReplicas = 1
+		cfg.BasicInterval = 100 * time.Millisecond
+		svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+		setHistoryGCOwnerForTest(svc, 5)
+
+		startAt := mvsNow()
+		svc.maybeGCOperationHistory(startAt)
+		require.Equal(t, int32(0), helper.historyGCCalls.Load())
+		require.Eventually(t, func() bool {
+			return helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultFailed) > 0
+		}, testEventuallyWait, testEventuallyTick)
+
+		helper.currentTSOErr = nil
+		svc.maybeGCOperationHistory(startAt.Add(cfg.BasicInterval / 2))
+		require.Equal(t, int32(0), helper.historyGCCalls.Load())
+
+		svc.maybeGCOperationHistory(startAt.Add(cfg.BasicInterval))
+		require.Eventually(t, func() bool {
+			return helper.historyGCCalls.Load() == 1
+		}, testEventuallyWait, testEventuallyTick)
+	})
+
+	t.Run("panic_in_history_gc_is_recovered", func(t *testing.T) {
+		helper := &mockMVServiceHelper{
+			currentTSO:     1 << 40,
+			historyGCPanic: true,
+		}
+		cfg := DefaultMVServiceConfig()
+		cfg.ServerConsistentHashReplicas = 1
+		svc := NewMVService(context.Background(), mockSessionPool{}, helper, cfg)
+		setHistoryGCOwnerForTest(svc, 5)
+
+		svc.maybeGCOperationHistory(mvsNow())
+		require.Eventually(t, func() bool {
+			return helper.taskDurationCount(mvTaskDurationTypeHistoryGC, mvDurationResultFailed) > 0
+		}, testEventuallyWait, testEventuallyTick)
+		require.Eventually(t, func() bool {
+			return !svc.historyGCRunning.Load()
+		}, testEventuallyWait, testEventuallyTick)
+	})
+}

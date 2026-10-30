@@ -54,6 +54,10 @@ func (do *Domain) initDomainSysVars() {
 	variable.SetMVServiceTaskThresholdCPU.Store(&setMVServiceTaskThresholdCPUFunc)
 	setMVServiceTaskThresholdMemoryFunc := do.setMVServiceTaskThresholdMemory
 	variable.SetMVServiceTaskThresholdMemory.Store(&setMVServiceTaskThresholdMemoryFunc)
+	setMVServiceMViewRefreshHistRetentionFunc := do.setMVServiceMViewRefreshHistRetention
+	variable.SetMVServiceMViewRefreshHistRetention.Store(&setMVServiceMViewRefreshHistRetentionFunc)
+	setMVServiceMLogPurgeHistRetentionFunc := do.setMVServiceMLogPurgeHistRetention
+	variable.SetMVServiceMLogPurgeHistRetention.Store(&setMVServiceMLogPurgeHistRetentionFunc)
 
 	variable.ChangeSchemaCacheSize = do.isSyncer.ChangeSchemaCacheSize
 
@@ -203,4 +207,18 @@ func (do *Domain) setMVServiceTaskThresholdMemory(threshold float64) {
 	cfg := do.mvService.GetTaskBackpressureConfig()
 	cfg.MemThreshold = threshold
 	_ = do.mvService.SetTaskBackpressureConfig(cfg)
+}
+
+func (do *Domain) setMVServiceMViewRefreshHistRetention(retention time.Duration) {
+	if do.GetMVService() == nil {
+		return
+	}
+	_ = do.mvService.SetMViewRefreshHistRetention(retention)
+}
+
+func (do *Domain) setMVServiceMLogPurgeHistRetention(retention time.Duration) {
+	if do.GetMVService() == nil {
+		return
+	}
+	_ = do.mvService.SetMLogPurgeHistRetention(retention)
 }
