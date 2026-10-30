@@ -3,6 +3,8 @@
 * Author: [zimulala](https://github.com/zimulala)
 * Tracking issue: https://github.com/pingcap/tidb/issues/55693
 
+For the current implementation path, see the [TiDB vector search execution path contributor guide](../vector-search-execution-path.md).
+
 ## **Introduction**
 
 Vector Index refers to constructing a time and space efficient data structure for vector data based on a certain mathematical quantization model, to efficiently retrieve several vectors that are as similar as possible to the target vector. Currently, we plan to support the HNSW series of vector indexing methods.
