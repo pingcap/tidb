@@ -668,6 +668,7 @@ pub fn unistore_cluster_session_stack_from(
         )),
     )
     .map_err(|error| engine(SqlQueryError::unknown(error)))?;
+    let ddl_session_pool = Arc::new(crate::ddl_session_pool::NodeDdlSessionPool::default());
     let cluster_ddl = Arc::new(
         RealClusterDdl::new(
             opener.clone(),
@@ -680,7 +681,7 @@ pub fn unistore_cluster_session_stack_from(
             None,
             Arc::clone(&schema_validator),
             config.run_ddl,
-            Arc::new(crate::ddl_session_pool::ExecutorDdlSessionPool),
+            Arc::clone(&ddl_session_pool) as _,
             Arc::clone(&node_auto_ids),
         )
         .map_err(|error| {
@@ -753,6 +754,7 @@ pub fn unistore_cluster_session_stack_from(
         None => factory,
     };
     let factory = factory.with_bindings(Arc::clone(&bindings));
+    ddl_session_pool.bind(&factory);
     crate::domain::cluster_session_node::NodeServices::new(analyze)
     .with_cluster_peer_client(Arc::new(tidb_executor::cluster_peer::ClusterPeerClient::new(
         peer_store,

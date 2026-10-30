@@ -314,7 +314,7 @@ pub(super) fn plan_persisted_add_foreign_key_job_step(
             if fk_check {
                 match checked_outcome(active, outcome) {
                     None => {
-                        let check = foreign_key_check(catalog, active, &schema, &info, &fk)?;
+                        let check = foreign_key_check(&schema, &info, &fk);
                         return Ok(check_request(active, &info, check));
                     }
                     Some(Some((code, message))) => {
@@ -355,49 +355,64 @@ pub(super) fn plan_persisted_add_foreign_key_job_step(
     }
 }
 
-/// Go `checkForeignKeyConstrain`'s question: the child's rows (the key as
-/// the table now holds it) against the parent.
+/// Go `checkForeignKeyConstrain`'s arguments: the job's schema, the child's
+/// name and the key, as the table now holds it.
 fn foreign_key_check(
-    catalog: &ClusterCatalog,
-    active: &tidb_ddl_systable::ddl_job_table::ActiveDdlJob,
     schema: &str,
     info: &TableInfo,
     fk: &GoShared<tidb_model::table::FKInfo>,
-) -> Result<ForeignKeyCheck, DdlPlanError> {
-    let fk = fk.read();
-    let self_reference = fk.ref_schema.lowercase() == schema.go_to_lower()
-        && fk.ref_table.lowercase() == info.name.lowercase();
-    let parent = if self_reference {
-        None
-    } else {
-        catalog
-            .find_table(fk.ref_schema.original(), fk.ref_table.original())
-            .map(|(database, parent)| {
-                (
-                    fk.ref_schema.original().to_owned(),
-                    database.id,
-                    Box::new(parent.clone_like_go()),
-                )
-            })
-    };
-    // Go checks the rows by a query, whatever state the key is in; the
-    // check reads the child with the key public.
-    let child = info.clone_like_go();
-    for key in child.foreign_keys.iter_deref() {
-        let mut key = key.write();
-        if key.name.lowercase() == fk.name.lowercase() {
-            key.state = SchemaState::PUBLIC;
-        }
-    }
-    Ok(ForeignKeyCheck {
+) -> ForeignKeyCheck {
+    ForeignKeyCheck {
         schema: schema.to_owned(),
-        schema_id: active.job.schema_id,
-        child: Box::new(child),
-        parent,
-        name: fk.name.original().to_owned(),
-        use_new_collation: tidb_datatype::new_collation_enabled(),
-        session_vars: tidb_ddl_build::session_pool::ReorgSessionVars::of_job(&active.job),
-    })
+        table: info.name.lowercase().to_owned(),
+        foreign_key: Box::new(fk.read().clone_like_go()),
+    }
+}
+
+/// Go `checkForeignKeyConstrain`: one restricted query for a child row whose
+/// key has no parent row.
+///
+/// # Errors
+///
+/// `ErrNoReferencedRow2` naming the key, or the query's own error.
+pub fn check_foreign_key_constrain(
+    pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
+    check: &ForeignKeyCheck,
+) -> Result<(), tidb_terror::MysqlError> {
+    use tidb_sqlescape::SqlArg;
+    let fk = &check.foreign_key;
+    let cols = fk.cols.snapshot();
+    let ref_cols = fk.ref_cols.snapshot();
+    let mut sql = String::from("select 1 from %n.%n where ");
+    let mut params = vec![
+        SqlArg::String(check.schema.as_bytes()),
+        SqlArg::String(check.table.as_bytes()),
+    ];
+    for (i, col) in cols.iter().enumerate() {
+        sql.push_str(if i == 0 { "%n is not null" } else { " and %n is not null" });
+        params.push(SqlArg::String(col.lowercase().as_bytes()));
+    }
+    sql.push_str(" and (");
+    for (i, col) in cols.iter().enumerate() {
+        sql.push_str(if i == 0 { "%n" } else { ",%n" });
+        params.push(SqlArg::String(col.lowercase().as_bytes()));
+    }
+    sql.push_str(") not in (select ");
+    for (i, col) in ref_cols.iter().enumerate() {
+        sql.push_str(if i == 0 { "%n" } else { ",%n" });
+        params.push(SqlArg::String(col.lowercase().as_bytes()));
+    }
+    sql.push_str(" from %n.%n ) limit 1");
+    params.push(SqlArg::String(fk.ref_schema.lowercase().as_bytes()));
+    params.push(SqlArg::String(fk.ref_table.lowercase().as_bytes()));
+    let rows = pool.exec_restricted_sql_with(&sql, &params)?;
+    if !rows.is_empty() {
+        return Err(tidb_terror::MysqlError::from_terror(
+            &tidb_dbterror::ERR_NO_REFERENCED_ROW2
+                .generate_with_stack_by_args(&[fk.string(&check.schema, &check.table).into()]),
+        ));
+    }
+    Ok(())
 }
 
 fn check_request(

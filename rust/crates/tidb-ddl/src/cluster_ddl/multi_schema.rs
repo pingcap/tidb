@@ -305,7 +305,7 @@ pub fn prepare_multi_schema_job_submission<S: MetaSnapshot>(
     min_job_id: i64,
     store_count: usize,
     tiflash_stores: &dyn Fn() -> Result<u64, String>,
-    has_null: &mut dyn FnMut(&TableInfo, i64) -> Result<bool, DdlPlanError>,
+    has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let DdlStatement::MultiSchemaChange {
         schema,

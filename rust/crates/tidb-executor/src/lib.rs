@@ -113,7 +113,6 @@ use tidb_executor_internal_exec::predicate_pushdown::PushedScanFilter;
 use tidb_executor_internal_exec::table_access::TableAccess;
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_distsql::select_response::CopResponseSink;
-pub use foreign_key::check_foreign_key_constrain;
 #[cfg(test)]
 mod tests_generated_column_ddl;
 use tidb_distsql::split_ranges_across_int64_boundary;

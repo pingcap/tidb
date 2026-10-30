@@ -12,14 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The `SHOW [FULL] PROCESSLIST` / `information_schema.PROCESSLIST` rows and
-//! `KILL`: the arms `AdminExec::admin_next` delegates to, plus the
-//! helpers `Session::retrieve_memory_table` (in `dispatch.rs`) calls to build the
-//! virtual `PROCESSLIST` table.
+//! What the executor's instance-wide memory-table readers read of this
+//! session (`viewer_state`: the process registry, the viewer's privileges,
+//! the node's cluster clients), and the SQL-digest text retriever -- the
+//! state Go's readers take from `sctx`.
 //!
 //! This is distinct from the `process` module, which owns the process
-//! registry and kill-target trait a server front end wires in; this file is
-//! the Session-side use of that registry.
+//! registry and kill-target trait a server front end wires in.
 
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use crate::*;

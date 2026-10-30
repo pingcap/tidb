@@ -238,7 +238,7 @@ pub fn prepare_add_index_job_submission<S: MetaSnapshot>(
     upgrading: bool,
     min_job_id: i64,
     store_count: usize,
-    has_null: &mut dyn FnMut(&TableInfo, i64) -> Result<bool, DdlPlanError>,
+    has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
     job_context: &dyn DdlSessionContext,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
@@ -263,7 +263,7 @@ pub fn prepare_add_index_job_submission<S: MetaSnapshot>(
 pub(super) fn check_added_primary_key_holds_no_null(
     catalog: &ClusterCatalog,
     statement: &DdlStatement,
-    has_null: &mut dyn FnMut(&TableInfo, i64) -> Result<bool, DdlPlanError>,
+    has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
 ) -> Result<(), DdlPlanError> {
     let DdlStatement::CreateIndex {
         schema,
@@ -296,7 +296,7 @@ pub(super) fn check_added_primary_key_holds_no_null(
                     .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL),
             )
         };
-        if nullable && has_null(stored, id)? {
+        if nullable && has_null(schema, stored, id)? {
             return Err(coded_refusal(
                 &tidb_dbterror::ERR_INVALID_USE_OF_NULL,
                 "Invalid use of NULL value",

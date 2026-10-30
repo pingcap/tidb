@@ -954,7 +954,7 @@ mod schema_sync_tests {
         KvTableIndexBackfiller::new(
             &(Arc::new(tidb_table::table_from_meta::LocalTableAutoIds::default())
                 as Arc<dyn tidb_table::table_from_meta::TableAutoIds>),
-            &(Arc::new(tidb_session::ddl_session_pool::ExecutorDdlSessionPool)
+            &(Arc::new(tidb_session::ddl_session_pool::NodeDdlSessionPool::default())
                 as Arc<dyn tidb_ddl_build::session_pool::DdlSessionPool>),
         )
     }
@@ -1002,13 +1002,7 @@ mod schema_sync_tests {
 
     #[test]
     fn check_validation_source_message() {
-        let error = check_constraint_validation_table_error(
-            tidb_table::kv_table::KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
-                &tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED
-                    .fast_generate_by_args(&["MixedCheck".into()]),
-            )),
-            "MixedCheck",
-        );
+        let error = check_constraint_violated("MixedCheck");
         let DdlPlanError::Source(source) = error else {
             panic!("CHECK validation must return its typed source error");
         };
@@ -2872,7 +2866,6 @@ struct DdlTransactionAutoIds {
 }
 
 use tidb_table::kv_table::TableAutoId;
-use tidb_expr::EvalErrorSql;
 
 impl tidb_table::table_from_meta::TableAutoIds for DdlTransactionAutoIds {
     fn allocator_for(&self, db_id: i64, table: &tidb_model::TableInfo) -> TableAutoId {
@@ -3008,41 +3001,25 @@ impl IndexBackfiller for KvTableIndexBackfiller {
     /// temporary entries onto them.
     fn has_null_value(
         &self,
+        schema: &str,
         table: &tidb_model::TableInfo,
         column_id: i64,
-        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
-        buffer: &MutationBuffer,
     ) -> Result<bool, LockSqlError> {
-        let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
-        let mut kv_table = cluster_table(table, &storage, &AutoIdSource::Unavailable)
-            .map_err(exchange_validation_internal)?;
-        let Some(offset) = kv_table
-            .columns()
-            .iter()
-            .position(|column| column.id == column_id)
+        let Some(column) = table
+            .columns
+            .iter_deref()
+            .find(|column| column.read().id == column_id)
         else {
             return Ok(false);
         };
-        // A NULL is what a NOT NULL copy of the column refuses.
-        let not_null = kv_table.columns()[offset]
-            .field_type
-            .clone()
-            .with_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
-        let found = self
-            .session_pool
-            .modify_column_data(
-                &mut kv_table,
-                offset,
-                &not_null,
-                false,
-                &tidb_tblctx::StaticMutateContext::new(),
-            )
-            .map_err(backfill_failure)?;
-        Ok(matches!(
-            found,
-            Some(tidb_table::kv_table::KvTableError::Mysql(error))
-                if error.equal(&tidb_dbterror::ERR_INVALID_USE_OF_NULL)
-        ))
+        let column = column.read().name.lowercase().to_owned();
+        crate::cluster_ddl::modify_column::has_null_value(
+            self.session_pool.as_ref(),
+            schema,
+            table.name.lowercase(),
+            &[column.as_str()],
+        )
+        .map_err(LockSqlError::from)
     }
 
     fn reorg_add_index(
@@ -3082,32 +3059,31 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 .map(AddIndexReorgAnswer::Batch)
                 .map_err(backfill_failure);
         }
-        // Go `checkModifyColumnData` reads the table as it stands.
+        // Go `checkModifyColumnData`: a restricted query on a pooled
+        // session; a found row is the change's error, any other failure the
+        // step's.
         if let AddIndexReorgWork::CheckColumn(check) = &work {
-            let mut table = cluster_table(&check.table, &storage, &AutoIdSource::Unavailable)
-                .map_err(exchange_validation_internal)?
-                .with_new_collation_mode(tidb_datatype::new_collation_enabled());
-            let offset = table
-                .columns()
-                .iter()
-                .position(|column| column.id == check.old_column_id)
+            let old_column = check
+                .table
+                .columns
+                .iter_deref()
+                .find(|column| column.read().id == check.old_column_id)
+                .map(|column| column.read().clone_like_go())
                 .ok_or_else(|| {
                     exchange_validation_internal("the modified column is absent".to_owned())
                 })?;
-            let found = self
-                .session_pool
-                .modify_column_data(
-                    &mut table,
-                    offset,
-                    &check.new_column.field_type,
-                    check.check_value_range,
-                    context,
-                )
-                .map_err(backfill_failure)?;
-            return Ok(AddIndexReorgAnswer::Checked(found.map(|error| {
-                let error = tidb_ddl_build::column_changes::modify_column_error(error);
-                LockSqlError::from(error)
-            })));
+            return match crate::cluster_ddl::modify_column::check_modify_column_data(
+                self.session_pool.as_ref(),
+                &check.schema,
+                check.table.name.original(),
+                &old_column,
+                &check.new_column,
+                check.check_value_range,
+            ) {
+                Ok(()) => Ok(AddIndexReorgAnswer::Checked(None)),
+                Err((true, error)) => Ok(AddIndexReorgAnswer::Checked(Some(LockSqlError::from(error)))),
+                Err((false, error)) => Err(LockSqlError::from(error)),
+            };
         }
         let info = reorg.table.clone_like_go();
         for index in info.indices.iter_deref() {
@@ -3271,19 +3247,16 @@ impl IndexBackfiller for KvTableIndexBackfiller {
         self.validate_exchange_partition(plan, snapshot, buffer)
     }
 
-    /// Go `checkForeignKeyConstrain`: the child's existing rows against its
-    /// parent, both read through the DDL transaction's snapshot and buffer,
-    /// by the same check the in-process `ADD FOREIGN KEY` runs.
+    /// Go `checkForeignKeyConstrain`: a restricted query on a pooled
+    /// session, reading committed rows.
     fn stage_foreign_key_check(
         &self,
         plan: &tidb_ddl_build::session_pool::ForeignKeyCheck,
-        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
-        buffer: &MutationBuffer,
+        _snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        _buffer: &MutationBuffer,
     ) -> Result<(), LockSqlError> {
-        let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
-        self.session_pool
-            .foreign_key(plan, &storage)
-            .map_err(|error| LockSqlError::from(error))
+        crate::cluster_ddl::foreign_key::check_foreign_key_constrain(self.session_pool.as_ref(), plan)
+            .map_err(LockSqlError::from)
     }
     fn stage_cache_table_check(
         &self,
@@ -3307,129 +3280,71 @@ impl IndexBackfiller for KvTableIndexBackfiller {
 }
 
 impl KvTableIndexBackfiller {
-    /// Go `checkExchangePartitionRecordValidation`: every standalone-table
-    /// row must route to the exchanged partition.
+    /// Go `checkExchangePartitionRecordValidation`: restricted queries on
+    /// pooled sessions, reading committed rows.
     fn validate_exchange_partition(
         &self,
         plan: &ExchangePartitionValidation,
-        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
-        buffer: &MutationBuffer,
+        _snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        _buffer: &MutationBuffer,
     ) -> Result<(), LockSqlError> {
-        // Go `checkExchangePartitionRecordValidation`'s partition-type switch
-        // refuses a KEY-partitioned table before any row is read.
-        if plan
-            .partitioned
-            .partition
-            .as_ref()
-            .is_some_and(|partition| {
-                partition.read().partition_type == tidb_ast::PartitionType::KEY
-            })
-        {
-            return Err(LockSqlError::from(
-                tidb_terror::MysqlError::from_terror(
-                    &tidb_dbterror::ERR_UNSUPPORTED_PARTITION_TYPE
-                        .generate_with_stack_by_args(&[plan.partitioned.name.original().into()]),
-                ),
-            ));
-        }
-        let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
-        let mut standalone = cluster_table(&plan.standalone, &storage, &AutoIdSource::Unavailable)
-            .map_err(exchange_validation_internal)?;
-        let mut partitioned =
-            cluster_table(&plan.partitioned, &storage, &AutoIdSource::Unavailable)
-                .map_err(exchange_validation_internal)?;
-        let ordinal = plan
-            .partitioned
-            .partition
-            .as_ref()
-            .and_then(|partition| {
-                partition
-                    .read()
-                    .definitions
-                    .snapshot()
-                    .iter()
-                    .position(|definition| definition.id == plan.partition_id)
-            })
-            .ok_or_else(|| {
-                exchange_validation_internal(format!(
-                    "partition {} is not in the partitioned table",
-                    plan.partition_id
-                ))
-            })?;
-        self.session_pool
-            .exchange_partition_rows(
-                &mut standalone,
-                &mut partitioned,
-                ordinal,
-                plan.partition_id,
-                plan.check_constraints,
-            )
-            .map_err(exchange_validation_table_error)
+        crate::cluster_ddl::exchange_partition::check_exchange_partition_record_validation(
+            self.session_pool.as_ref(),
+            plan,
+        )
+        .map_err(LockSqlError::from)
     }
 }
 
 impl CheckConstraintValidator for KvTableIndexBackfiller {
+    /// Go `verifyRemainRecordsForCheckConstraint`: one restricted query for a
+    /// stored row the constraint's own expression refuses.
     fn validate(
         &self,
         plan: &CheckConstraintValidation,
-        snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
-        buffer: &MutationBuffer,
+        _snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        _buffer: &MutationBuffer,
     ) -> Result<(), DdlPlanError> {
-        let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
-        let mut table = cluster_table(&plan.table, &storage, &AutoIdSource::Unavailable)
-            .map_err(DdlPlanError::Encode)?;
-        self.session_pool
-            .check_constraint_rows(&mut table)
-            .map_err(|error| check_constraint_validation_table_error(error, &plan.constraint_name))
+        use tidb_hack::GoToLower;
+        let constraint_name = plan.constraint_name.go_to_lower();
+        let expr_string = plan
+            .table
+            .constraints
+            .iter_deref()
+            .find(|constraint| constraint.read().name.lowercase() == constraint_name)
+            .map(|constraint| constraint.read().expr_string.clone())
+            .ok_or_else(|| {
+                DdlPlanError::Encode(format!("check constraint '{constraint_name}' is absent"))
+            })?;
+        let sql = format!(
+            "select 1 from `{}`.`{}` where not {} limit 1",
+            plan.schema.go_to_lower(),
+            plan.table.name.lowercase(),
+            expr_string
+        );
+        let rows = self
+            .session_pool
+            .exec_restricted_sql(&sql)
+            .map_err(|error| DdlPlanError::from(tidb_ddl_build::foreign_key::refusal(error)))?;
+        if !rows.is_empty() {
+            return Err(check_constraint_violated(&constraint_name));
+        }
+        Ok(())
     }
 }
 
-fn check_constraint_validation_table_error(
-    error: tidb_table::kv_table::KvTableError,
-    constraint_name: &str,
-) -> DdlPlanError {
-    match error {
-        tidb_table::kv_table::KvTableError::Mysql(error)
-            if error.equal(&tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED) =>
-        {
-            use tidb_hack::GoToLower;
-            tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED
-                .generate_with_stack_by_args(&[tidb_mysql::errors::FormatArg::from(
-                    constraint_name.go_to_lower(),
-                )])
-                .into()
-        }
-        other => DdlPlanError::Encode(format!(
-            "validation of check constraint '{constraint_name}' failed: {other:?}"
-        )),
-    }
+/// Go `dbterror.ErrCheckConstraintIsViolated.GenWithStackByArgs(constr.Name.L)`.
+fn check_constraint_violated(constraint_name: &str) -> DdlPlanError {
+    use tidb_hack::GoToLower;
+    tidb_dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED
+        .generate_with_stack_by_args(&[tidb_mysql::errors::FormatArg::from(
+            constraint_name.go_to_lower(),
+        )])
+        .into()
 }
 
 fn exchange_validation_internal(message: String) -> LockSqlError {
     LockSqlError::from(tidb_terror::MysqlError::unknown(message))
-}
-
-fn exchange_validation_table_error(error: tidb_table::kv_table::KvTableError) -> LockSqlError {
-    match error {
-        tidb_table::kv_table::KvTableError::Mysql(error)
-            if error
-                .equal(&tidb_table::table_errors::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET)
-                || error.equal(&tidb_table::table_errors::ERR_NO_PARTITION_FOR_GIVEN_VALUE)
-                || error.equal(&tidb_table::table_errors::ERR_CHECK_CONSTRAINT_VIOLATED) =>
-        {
-            LockSqlError::from(tidb_terror::MysqlError::from_terror(
-                &tidb_dbterror::ERR_ROW_DOES_NOT_MATCH_PARTITION
-                    .generate_with_stack_by_args(&[]),
-            ))
-        }
-        tidb_table::kv_table::KvTableError::CheckConstraint {
-            eval: Some(eval), ..
-        } => {
-            let error = eval.to_mysql_error();
-            LockSqlError::from(error)
-        }
-        other => exchange_validation_internal(format!("{other:?}")),
-    }
 }
 
 /// Preserve the shared table/expression error identity through DDL rollback.

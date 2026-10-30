@@ -12,58 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The range of a table's CLUSTERED HANDLE that a `WHERE` implies:
-//! what turns Go's `TableFullScan` into its `TableRangeScan`.
+//! Go `TableReaderExecutor`'s key ranges (`executor/table_reader.go`): the
+//! planned handle ranges of a table, split at the int64 boundary for an
+//! unsigned handle (`distsql.SplitRangesAcrossInt64Boundary`, whose two
+//! halves are Go's `firstPartRanges` / `secondPartRanges`) and encoded for
+//! each physical table (`distsql.TableHandleRangesToKVRanges`).
 //!
-//! Mirrors Go `pkg/planner/core/stats.go`'s `deriveTablePathStats`, which is
-//! three steps this module keeps in the same order:
-//!
-//! 1. `ranger.BuildTableRange` builds the ranges. Go's builder is
-//!    `buildColumnRange(..., tableRange: true)` -- the SAME point algebra as
-//!    the index detacher, over one column -- so this module calls
-//!    [`tidb_table::index_range::detach_cond_and_build_range_for_index`] with the
-//!    primary key as a one-column index rather than growing a second ranger.
-//!    There is exactly one range algebra in this crate and this is a caller
-//!    of it.
-//! 2. `points2TableRanges` then replaces the open endpoints with the handle
-//!    domain's own extremes ([`to_table_range`]), which is what makes the
-//!    range encodable as a key interval.
-//! 3. `cardinality.GetRowCountByColumnRanges` with `pkIsHandle` estimates it.
-//!
-//! # Why the conversion of step 2 decides the number, and the one step that
-//! is NOT ported
-//!
-//! `GetRowCountByColumnRanges` dispatches on the FIRST range's low-bound
-//! KIND: `KindInt64` takes the SIGNED pseudo estimator, anything else takes
-//! the UNSIGNED one, which reads the bound's BITS as a `uint64`. Step 2 is
-//! what settles that kind for this call -- after `points2TableRanges` an open
-//! low bound is a real `KindInt64` `math.MinInt64`, so a table path always
-//! takes the signed arm. `CountAfterAccess` is that number, and it is what
-//! `EXPLAIN` prints on the scan node (`convertToTableScan` gives the
-//! `PhysicalTableScan` its stats from `path.CountAfterAccess`).
-//!
-//! Go calls the same estimator a SECOND time, from `Selectivity`, over the
-//! UNCONVERTED column ranges whose open low bound is still `KindMinNotNull`
-//! -- and that call takes the unsigned arm. Instrumenting Go's own dispatch
-//! on `sbtest1(id bigint primary key, ...)` with no statistics shows both,
-//! in this order:
-//!
-//! ```text
-//!   explain select c from sbtest1 where id < -1
-//!     ranges=[[-inf,-1)] lowKind=KindMinNotNull  -> unsigned -> 10000.00
-//!     ranges=[[-inf,-1)] lowKind=KindInt64       -> signed   ->  3333.33
-//!     printed: TableRangeScan_8  10000.00
-//! ```
-//!
-//! That second number is `ds.StatsInfo().RowCount`, and it reaches the scan
-//! through `adjustCountAfterAccess`, which RAISES `CountAfterAccess` to
-//! `RowCount / SelectionFactor` when the path's own estimate falls below it.
-//! `id < -1` is exactly that case: the unsigned arm reads `-1`'s bits as
-//! `u64::MAX`, calls `[-inf,-1)` the whole domain, and the adjustment lifts
-//! the printed 3333.33 to 10000.00.
-//!
-//! The shared planner owns that estimate and lower bound; this module now
-//! performs range algebra only.
+//! An open bound becomes the handle domain's extreme first (Go
+//! `points2TableRanges`, which the planner already applied to a planned
+//! table path), so every bound is an integer the boundary split can read.
 
 use tidb_table::kv_table::KvTable;
 use tidb_ranger::types::Range;

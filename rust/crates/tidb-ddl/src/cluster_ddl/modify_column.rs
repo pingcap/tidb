@@ -71,7 +71,7 @@ pub fn prepare_modify_column_job_submission<S: MetaSnapshot>(
     upgrading: bool,
     min_job_id: i64,
     store_count: usize,
-    has_null: &mut dyn FnMut(&TableInfo, i64) -> Result<bool, DdlPlanError>,
+    has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
     let built = build_modify_column_job(
@@ -93,7 +93,7 @@ pub(super) fn build_modify_column_job<S: MetaSnapshot>(
     statement: &DdlStatement,
     job_context: &dyn DdlSessionContext,
     store_count: usize,
-    has_null: &mut dyn FnMut(&TableInfo, i64) -> Result<bool, DdlPlanError>,
+    has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let (schema, stored, schema_id, args, need_reorg) = match statement {
         DdlStatement::ModifyColumn {
@@ -247,7 +247,7 @@ fn get_modifiable_column_job(
     column: &tidb_ast::ColumnDef,
     position: &tidb_ast::ColumnPosition,
     context: &DdlStatementContext,
-    has_null: &mut dyn FnMut(&TableInfo, i64) -> Result<bool, DdlPlanError>,
+    has_null: &mut dyn FnMut(&str, &TableInfo, i64) -> Result<bool, DdlPlanError>,
 ) -> Result<ModifiableColumn, DdlPlanError> {
     let original_l = original_col_name.go_to_lower();
     // Go `table.FindCol(t.Cols(), originalColName.L)`: the public columns.
@@ -381,7 +381,7 @@ fn get_modifiable_column_job(
         && new_col.field_type.has_flag(FieldTypeFlags::NOT_NULL)
         && !(col.field_type.code() != FieldTypeCode::Timestamp
             && new_col.field_type.code() == FieldTypeCode::Timestamp)
-        && has_null(stored, col.id)?
+        && has_null(&schema, stored, col.id)?
     {
         return Err(coded_refusal(
             &tidb_datatype::types_errors::ERR_TRUNCATED,
@@ -3349,4 +3349,138 @@ pub(super) fn plan_cancel_modify_column(
             })
         }
     }
+}
+
+/// Go `checkForNullValue`'s query: whether `schema`.`table` holds a NULL in
+/// any of `columns` (all lowercase names), read on a pooled session.
+///
+/// # Errors
+///
+/// The query's own error.
+pub fn has_null_value(
+    pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
+    schema: &str,
+    table: &str,
+    columns: &[&str],
+) -> Result<bool, tidb_terror::MysqlError> {
+    use tidb_hack::GoToLower;
+    use tidb_sqlescape::SqlArg;
+    let schema = schema.go_to_lower();
+    let table = table.go_to_lower();
+    let mut sql = String::from("select 1 from %n.%n where ");
+    let mut params = vec![SqlArg::String(schema.as_bytes()), SqlArg::String(table.as_bytes())];
+    for (i, column) in columns.iter().enumerate() {
+        sql.push_str(if i == 0 { "%n is null" } else { " or %n is null" });
+        params.push(SqlArg::String(column.as_bytes()));
+    }
+    sql.push_str(" limit 1");
+    Ok(!pool.exec_restricted_sql_with(&sql, &params)?.is_empty())
+}
+
+/// Go `checkModifyColumnData`: a restricted query for the first stored value
+/// of `old_col` that `changing_col` refuses. `Err((true, _))` is a found
+/// value (`ErrInvalidUseOfNull` or `ErrTruncated` naming it), `Err((false,
+/// _))` a failure to check at all.
+///
+/// # Errors
+///
+/// As above.
+pub fn check_modify_column_data(
+    pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
+    db_name: &str,
+    tbl_name: &str,
+    old_col: &tidb_model::ColumnInfo,
+    changing_col: &tidb_model::ColumnInfo,
+    check_value_range: bool,
+) -> Result<(), (bool, tidb_terror::MysqlError)> {
+    let sql = build_check_sql_from_modify_column(
+        db_name,
+        tbl_name,
+        old_col,
+        changing_col,
+        check_value_range,
+    );
+    if sql.is_empty() {
+        return Ok(());
+    }
+    let rows = pool.exec_restricted_sql(&sql).map_err(|error| (false, error))?;
+    let Some(value) = rows.first().and_then(|row| row.first()) else {
+        return Ok(());
+    };
+    if value.is_null() {
+        return Err((
+            true,
+            tidb_terror::MysqlError::from_terror(&tidb_dbterror::ERR_INVALID_USE_OF_NULL),
+        ));
+    }
+    // Go `datumToStringNoErr`.
+    let shown = value.sql_bytes().unwrap_or_default();
+    Err((
+        true,
+        tidb_terror::MysqlError::from_terror(
+            &tidb_datatype::types_errors::ERR_TRUNCATED.generate_with_stack(format!(
+                "Data truncated for column '{}', value is '{}'",
+                old_col.name.lowercase(),
+                String::from_utf8_lossy(&shown)
+            )),
+        ),
+    ))
+}
+
+/// Go `buildCheckSQLFromModifyColumn`.
+fn build_check_sql_from_modify_column(
+    db_name: &str,
+    tbl_name: &str,
+    old_col: &tidb_model::ColumnInfo,
+    changing_col: &tidb_model::ColumnInfo,
+    check_value_range: bool,
+) -> String {
+    let old_tp = old_col.field_type.code();
+    let changing_tp = changing_col.field_type.code();
+    let mut conditions = Vec::new();
+    let check_col_name = format!("`{}`", old_col.name.original());
+    let table_name = format!("`{db_name}`.`{tbl_name}`");
+    if check_value_range {
+        if old_tp.is_integer_type() && changing_tp.is_integer_type() {
+            conditions.push(build_check_range_for_integer_types(old_col, changing_col));
+        } else {
+            conditions.push(format!(
+                "LENGTH({check_col_name}) > {}",
+                changing_col.field_type.flen()
+            ));
+            if old_tp == FieldTypeCode::Varchar && changing_tp == FieldTypeCode::String {
+                conditions.push(format!("{check_col_name} LIKE '% '"));
+            }
+        }
+    }
+    // Go `isNullToNotNullChange`.
+    if !old_col.field_type.has_flag(FieldTypeFlags::NOT_NULL)
+        && changing_col.field_type.has_flag(FieldTypeFlags::NOT_NULL)
+        && !(old_tp != FieldTypeCode::Timestamp && changing_tp == FieldTypeCode::Timestamp)
+    {
+        conditions.push(format!("`{}` IS NULL", old_col.name.original()));
+    }
+    if conditions.is_empty() {
+        return String::new();
+    }
+    format!(
+        "SELECT {check_col_name} FROM {table_name} WHERE {} LIMIT 1",
+        conditions.join(" OR ")
+    )
+}
+
+/// Go `buildCheckRangeForIntegerTypes`.
+fn build_check_range_for_integer_types(
+    old_col: &tidb_model::ColumnInfo,
+    changing_col: &tidb_model::ColumnInfo,
+) -> String {
+    let changing_tp = changing_col.field_type.code();
+    let column_name = format!("`{}`", old_col.name.original());
+    if changing_col.field_type.has_flag(FieldTypeFlags::UNSIGNED) {
+        let upper_bound = tidb_datatype::integer_unsigned_upper_bound(changing_tp);
+        return format!("({column_name} < 0 OR {column_name} > {upper_bound})");
+    }
+    let lower_bound = tidb_datatype::integer_signed_lower_bound(changing_tp);
+    let upper_bound = tidb_datatype::integer_signed_upper_bound(changing_tp);
+    format!("({column_name} < {lower_bound} OR {column_name} > {upper_bound})")
 }

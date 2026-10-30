@@ -463,6 +463,7 @@ pub fn cluster_session_stack(
     let schema_version_syncer = schema_sync_ack
         .as_ref()
         .map(tidb_ddl::schema_sync::SchemaSyncAck::syncer);
+    let ddl_session_pool = Arc::new(tidb_session::ddl_session_pool::NodeDdlSessionPool::default());
     let cluster_ddl = Arc::new(
         RealClusterDdl::new_with_min_job_id_refresher(
             authority.transaction_opener(),
@@ -474,7 +475,7 @@ pub fn cluster_session_stack(
             Arc::clone(&schema_validator),
             config.run_ddl,
             min_job_id_refresher,
-            Arc::new(tidb_session::ddl_session_pool::ExecutorDdlSessionPool),
+            Arc::clone(&ddl_session_pool) as _,
             Arc::clone(&node_auto_ids),
         )
         .map_err(|error| {
@@ -585,6 +586,7 @@ pub fn cluster_session_stack(
         None => factory,
     };
     let factory = factory.with_bindings(Arc::clone(&bindings));
+    ddl_session_pool.bind(&factory);
     tidb_session::domain::cluster_session_node::NodeServices::new(analyze)
     .with_cluster_peer_client(Arc::new(tidb_executor::cluster_peer::ClusterPeerClient::new(
         authority.tikv_store().clone(),

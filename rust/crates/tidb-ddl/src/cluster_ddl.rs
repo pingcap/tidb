@@ -5723,6 +5723,7 @@ fn plan_persisted_check_constraint_job_step(
                             let constraint_name = constraint.name.original().to_owned();
                             drop(constraint);
                             validation = Some(CheckConstraintValidation {
+                                schema: database.info.name.original().to_owned(),
                                 table: Box::new(info.clone_like_go()),
                                 constraint_name,
                             });
@@ -5882,6 +5883,7 @@ fn plan_persisted_check_constraint_job_step(
                         let constraint_name = constraint.name.original().to_owned();
                         drop(constraint);
                         validation = Some(CheckConstraintValidation {
+                            schema: database.info.name.original().to_owned(),
                             table: Box::new(info.clone_like_go()),
                             constraint_name,
                         });
@@ -7265,12 +7267,17 @@ impl ResourceGroupUpdate {
 /// on the final metadata write.
 #[derive(Clone, Debug)]
 pub struct ExchangePartitionValidation {
-    /// Partitioned table before the physical-ID swap.
+    /// Partitioned table before the physical-ID swap (Go `ptbl`).
     pub partitioned: Box<TableInfo>,
-    /// Standalone table whose existing rows must all route to `partition_id`.
+    /// Standalone table whose existing rows must all fit the partition (Go
+    /// `ntbl`).
     pub standalone: Box<TableInfo>,
-    /// Physical ID of the named partition before the swap.
-    pub partition_id: i64,
+    /// Go `pschemaName`: the partitioned table's database, lowercase.
+    pub partitioned_schema: String,
+    /// Go `nschemaName`: the standalone table's database, lowercase.
+    pub standalone_schema: String,
+    /// Go `partitionName`.
+    pub partition_name: String,
     /// Go `vardef.EnableCheckConstraint`: whether each table's writable
     /// CHECK constraints are applied to the other's rows.
     pub check_constraints: bool,
@@ -7476,6 +7483,8 @@ use tidb_ddl_build::session_pool::ForeignKeyCheck;
 /// existing row before its metadata can be published.
 #[derive(Clone, Debug)]
 pub struct CheckConstraintValidation {
+    /// The table's database (Go `dbInfo.Name`).
+    pub schema: String,
     /// Candidate metadata, including the newly enforced constraint.
     pub table: Box<TableInfo>,
     /// The constraint whose violation Go reports as 3819.

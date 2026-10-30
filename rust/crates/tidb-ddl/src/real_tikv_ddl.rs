@@ -443,14 +443,13 @@ pub trait IndexBackfiller {
     /// One unit of ADD INDEX's transactional reorganization through a batch
     /// transaction's snapshot and buffer (Go's backfill workers). The caller
     /// commits the buffer, with the batch's row locks, in that transaction.
-    /// Go `checkForNullValue`'s query: whether `table` holds a NULL in
-    /// column `column_id`, read through a submitting transaction's snapshot.
+    /// Go `checkForNullValue`'s query: whether `schema`.`table` holds a
+    /// NULL in column `column_id`, read on a pooled session.
     fn has_null_value(
         &self,
+        _schema: &str,
         _table: &tidb_model::TableInfo,
         _column_id: i64,
-        _snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
-        _buffer: &MutationBuffer,
     ) -> Result<bool, LockSqlError> {
         Err(LockSqlError::from(tidb_terror::MysqlError::unknown(
             "this path cannot read a table's rows",
@@ -1189,8 +1188,8 @@ pub enum AddIndexSubmitted {
 /// Go's executor halves for every statement this node submits as a
 /// persisted job: the statement checked and its job built and prepared for
 /// insertion (`doDDLJob2` up to the insert), against `snapshot`.
-/// `has_null` answers Go `checkForNullValue`'s query in the submitting
-/// transaction.
+/// `has_null` answers Go `checkForNullValue`'s query on a pooled
+/// session.
 ///
 /// # Errors
 ///
@@ -1206,7 +1205,7 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
     min_job_id: i64,
     store_count: usize,
     tiflash_stores: &dyn Fn() -> Result<u64, String>,
-    has_null: &mut dyn FnMut(&tidb_model::TableInfo, i64) -> Result<bool, DdlPlanError>,
+    has_null: &mut dyn FnMut(&str, &tidb_model::TableInfo, i64) -> Result<bool, DdlPlanError>,
 ) -> Result<Option<crate::cluster_ddl::add_index::AddIndexSubmission>, DdlPlanError> {
     let snapshot = &mut *snapshot;
     match statement {
@@ -1492,21 +1491,10 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
                 .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
         )
         .with_auto_ids_opt(auto_ids);
-        // Go `checkForNullValue`'s query, run in the submitting transaction.
-        let null_snapshot = Arc::new(Mutex::new(SwappableSnapshot::new()));
-        null_snapshot
-            .lock()
-            .map_err(|_| ClusterDdlError::Backfill("snapshot slot poisoned".to_owned()))?
-            .bind(
-                preparation
-                    .snapshot()
-                    .map_err(|error| ClusterDdlError::Backfill(error.to_string()))?,
-            );
-        let null_snapshot: Arc<Mutex<dyn ClusterSnapshot>> = null_snapshot;
-        let null_buffer = MutationBuffer::new();
-        let mut has_null = |table: &tidb_model::TableInfo, column_id: i64| {
+        // Go `checkForNullValue`'s query, on a pooled session.
+        let mut has_null = |schema: &str, table: &tidb_model::TableInfo, column_id: i64| {
             backfiller
-                .has_null_value(table, column_id, Arc::clone(&null_snapshot), &null_buffer)
+                .has_null_value(schema, table, column_id)
                 .map_err(|error| {
                     DdlPlanError::from_mysql_error(
                         tidb_terror::MysqlError::from_parts(

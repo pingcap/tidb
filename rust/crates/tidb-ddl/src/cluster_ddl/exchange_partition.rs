@@ -416,10 +416,20 @@ pub(super) fn plan_persisted_exchange_partition_job_step<S: MetaSnapshot>(
         let outcome = reorg_outcome.filter(|outcome| outcome.job_id == active.job.id);
         match outcome.map(|outcome| &outcome.result) {
             None => {
+                let schema_name = |id: i64| {
+                    catalog
+                        .databases
+                        .iter()
+                        .find(|database| database.info.id == id)
+                        .map(|database| database.info.name.lowercase().to_owned())
+                        .unwrap_or_default()
+                };
                 let check = ExchangePartitionValidation {
                     partitioned: Box::new(partitioned.clone_like_go()),
                     standalone: Box::new(standalone.clone_like_go()),
-                    partition_id: args.partition_id,
+                    partitioned_schema: schema_name(args.pt_schema_id),
+                    standalone_schema: schema_name(active.job.schema_id),
+                    partition_name: args.partition_name.clone(),
                     check_constraints: tidb_vardef::ENABLE_CHECK_CONSTRAINT
                         .load(std::sync::atomic::Ordering::Relaxed),
                 };
@@ -657,4 +667,379 @@ pub(super) fn plan_cancel_exchange_partition(
     let (_, args) = exchange_args(active)?;
     let standalone = checked_job_table(catalog, active, true)?.clone_like_go();
     rollback_exchange_table_partition(catalog, active, &args, standalone, start_ts)
+}
+
+/// Go `partitionMaxValue`.
+const PARTITION_MAX_VALUE: &str = "MAXVALUE";
+
+/// One `ExecRestrictedSQL` parameter Go appends (`any`).
+enum CheckParam {
+    Text(String),
+    Unsigned(u64),
+    Signed(i64),
+}
+
+impl CheckParam {
+    fn arg(&self) -> tidb_sqlescape::SqlArg<'_> {
+        match self {
+            Self::Text(text) => tidb_sqlescape::SqlArg::String(text.as_bytes()),
+            Self::Unsigned(value) => tidb_sqlescape::SqlArg::Unsigned(*value),
+            Self::Signed(value) => tidb_sqlescape::SqlArg::Signed(*value),
+        }
+    }
+}
+
+/// Go `driver.UnwrapFromSingleQuotes` as a parameter.
+fn unquoted(value: &str) -> CheckParam {
+    CheckParam::Text(tidb_ddl_build::table_partition::unwrap_from_single_quotes(value))
+}
+
+/// Go `TableCommon.WritableConstraint` over `table.LoadCheckConstraint`: the
+/// constraints whose columns are all public, enforced, and not being
+/// dropped.
+fn writable_constraint_exprs(table: &TableInfo) -> Vec<String> {
+    table
+        .constraints
+        .iter_deref()
+        .filter_map(|constraint| {
+            let constraint = constraint.read();
+            let valid = constraint.constraint_cols.iter().all(|column| {
+                table.columns.iter_deref().any(|stored| {
+                    let stored = stored.read();
+                    stored.name.lowercase() == column.lowercase()
+                        && stored.state == SchemaState::PUBLIC
+                })
+            });
+            (valid
+                && constraint.enforced
+                && constraint.state != SchemaState::DELETE_ONLY
+                && constraint.state != SchemaState::DELETE_REORGANIZATION)
+                .then(|| constraint.expr_string.clone())
+        })
+        .collect()
+}
+
+/// Go `checkExchangePartitionRecordValidation`'s `genConstraintCondition`.
+fn gen_constraint_condition(exprs: &[String]) -> String {
+    let mut buf = String::from("not (");
+    for (i, expr) in exprs.iter().enumerate() {
+        if i != 0 {
+            buf.push_str(" and ");
+        }
+        buf.push('(');
+        buf.push_str(expr);
+        buf.push(')');
+    }
+    buf.push(')');
+    buf
+}
+
+/// Go `checkExchangePartitionRecordValidation`: restricted queries for a
+/// standalone row the partition would not hold (or the partitioned table's
+/// constraints refuse), and a partition row the standalone table's
+/// constraints refuse.
+///
+/// # Errors
+///
+/// `ErrRowDoesNotMatchPartition`, `ErrUnsupportedPartitionType`, or a
+/// query's own error.
+pub fn check_exchange_partition_record_validation(
+    pool: &dyn tidb_ddl_build::session_pool::DdlSessionPool,
+    plan: &ExchangePartitionValidation,
+) -> Result<(), tidb_terror::MysqlError> {
+    let verify = |sql: &str, params: &[CheckParam]| {
+        let args: Vec<_> = params.iter().map(CheckParam::arg).collect();
+        if pool.exec_restricted_sql_with(sql, &args)?.is_empty() {
+            Ok(())
+        } else {
+            Err(tidb_terror::MysqlError::from_terror(
+                &tidb_dbterror::ERR_ROW_DOES_NOT_MATCH_PARTITION.generate_with_stack_by_args(&[]),
+            ))
+        }
+    };
+    let pt = &plan.partitioned;
+    let Some(pi) = pt.get_partition_info() else {
+        return Err(tidb_terror::MysqlError::from_terror(
+            &tidb_dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED.generate_with_stack_by_args(&[]),
+        ));
+    };
+    let pi = pi.read();
+    // Go `getPartitionDef`.
+    let definitions = pi.definitions.snapshot();
+    let index = definitions
+        .iter()
+        .position(|definition| definition.name.lowercase() == plan.partition_name)
+        .ok_or_else(|| {
+            tidb_terror::MysqlError::from_terror(
+                &tidb_table::table_errors::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[
+                    plan.partition_name.as_str().into(),
+                    pt.name.original().into(),
+                ]),
+            )
+        })?;
+
+    let mut buf = String::from("select 1 from %n.%n where ");
+    let mut params = vec![
+        CheckParam::Text(plan.standalone_schema.clone()),
+        CheckParam::Text(plan.standalone.name.lowercase().to_owned()),
+    ];
+    let mut check_nt = true;
+    match pi.partition_type {
+        tidb_ast::PartitionType::HASH => {
+            if pi.num == 1 {
+                check_nt = false;
+            } else {
+                buf.push_str("mod(");
+                buf.push_str(&pi.expr);
+                buf.push_str(", %?) != %?");
+                params.push(CheckParam::Unsigned(pi.num));
+                params.push(CheckParam::Signed(index as i64));
+                if index != 0 {
+                    buf.push_str(" or mod(");
+                    buf.push_str(&pi.expr);
+                    buf.push_str(", %?) is null");
+                    params.push(CheckParam::Unsigned(pi.num));
+                    params.push(CheckParam::Signed(index as i64));
+                }
+            }
+        }
+        tidb_ast::PartitionType::RANGE => {
+            let first_less_than = |at: usize| {
+                definitions[at].less_than.snapshot().first().cloned().unwrap_or_default()
+            };
+            if definitions.len() == 1 && first_less_than(index).eq_ignore_ascii_case(PARTITION_MAX_VALUE) {
+                check_nt = false;
+            } else if pi.columns.is_empty() {
+                build_check_sql_condition_for_range_expr_partition(&pi.expr, &definitions, index, &mut buf, &mut params);
+            } else {
+                let columns: Vec<String> =
+                    pi.columns.snapshot().iter().map(|column| column.lowercase().to_owned()).collect();
+                build_check_sql_condition_for_range_columns_partition(&columns, &definitions, index, &mut buf, &mut params);
+            }
+        }
+        tidb_ast::PartitionType::LIST => {
+            if pi.columns.is_empty() {
+                build_check_sql_condition_for_list_partition(&pi.expr, &definitions[index], &mut buf);
+            } else {
+                let columns: Vec<String> =
+                    pi.columns.snapshot().iter().map(|column| column.original().to_owned()).collect();
+                build_check_sql_condition_for_list_columns_partition(&columns, &definitions[index], &mut buf);
+            }
+        }
+        _ => {
+            return Err(tidb_terror::MysqlError::from_terror(
+                &tidb_dbterror::ERR_UNSUPPORTED_PARTITION_TYPE
+                    .generate_with_stack_by_args(&[pt.name.original().into()]),
+            ));
+        }
+    }
+
+    if plan.check_constraints {
+        let p_cons = writable_constraint_exprs(pt);
+        if !p_cons.is_empty() {
+            if !check_nt {
+                check_nt = true;
+            } else {
+                buf.push_str(" or ");
+            }
+            buf.push_str(&gen_constraint_condition(&p_cons));
+        }
+    }
+    // Check non-partition table records.
+    if check_nt {
+        buf.push_str(" limit 1");
+        verify(&buf, &params)?;
+    }
+
+    // Check partition table records.
+    if plan.check_constraints {
+        let n_cons = writable_constraint_exprs(&plan.standalone);
+        if !n_cons.is_empty() {
+            let sql = format!(
+                "select 1 from %n.%n partition(%n) where {} limit 1",
+                gen_constraint_condition(&n_cons)
+            );
+            verify(
+                &sql,
+                &[
+                    CheckParam::Text(plan.partitioned_schema.clone()),
+                    CheckParam::Text(pt.name.lowercase().to_owned()),
+                    CheckParam::Text(plan.partition_name.clone()),
+                ],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Go `buildCheckSQLConditionForRangeExprPartition`.
+fn build_check_sql_condition_for_range_expr_partition(
+    expr: &str,
+    definitions: &[tidb_model::partition::PartitionDefinition],
+    index: usize,
+    buf: &mut String,
+    params: &mut Vec<CheckParam>,
+) {
+    let less_than = |at: usize| {
+        definitions[at].less_than.snapshot().first().cloned().unwrap_or_default()
+    };
+    if index == 0 {
+        buf.push_str(expr);
+        buf.push_str(" >= %?");
+        params.push(unquoted(&less_than(index)));
+    } else if index == definitions.len() - 1
+        && less_than(index).eq_ignore_ascii_case(PARTITION_MAX_VALUE)
+    {
+        buf.push_str(expr);
+        buf.push_str(" < %? or ");
+        buf.push_str(expr);
+        buf.push_str(" is null");
+        params.push(unquoted(&less_than(index - 1)));
+    } else {
+        buf.push_str(expr);
+        buf.push_str(" < %? or ");
+        buf.push_str(expr);
+        buf.push_str(" >= %? or ");
+        buf.push_str(expr);
+        buf.push_str(" is null");
+        params.push(unquoted(&less_than(index - 1)));
+        params.push(unquoted(&less_than(index)));
+    }
+}
+
+/// Go `buildCheckSQLConditionForRangeColumnsPartition`, over the
+/// partitioning columns' lowercase names.
+fn build_check_sql_condition_for_range_columns_partition(
+    columns: &[String],
+    definitions: &[tidb_model::partition::PartitionDefinition],
+    index: usize,
+    buf: &mut String,
+    params: &mut Vec<CheckParam>,
+) {
+    let has_lower_bound = index > 0;
+    let mut need_or = false;
+
+    // Lower bound check (for all partitions except first)
+    if has_lower_bound {
+        let curr_vals = definitions[index - 1].less_than.snapshot();
+        for i in 0..columns.len() {
+            let next_is_max = i < columns.len() - 1
+                && curr_vals[i + 1].eq_ignore_ascii_case(PARTITION_MAX_VALUE);
+            if need_or {
+                buf.push_str(" OR ");
+            }
+            if i > 0 {
+                buf.push('(');
+                // All previous columns must be equal and non-NULL
+                for j in 0..i {
+                    if j > 0 {
+                        buf.push_str(" AND ");
+                    }
+                    buf.push_str("(%n = %?)");
+                    params.push(CheckParam::Text(columns[j].clone()));
+                    params.push(unquoted(&curr_vals[j]));
+                }
+                buf.push_str(" AND ");
+            }
+            params.push(CheckParam::Text(columns[i].clone()));
+            params.push(unquoted(&curr_vals[i]));
+            params.push(CheckParam::Text(columns[i].clone()));
+            if next_is_max {
+                buf.push_str("(%n <= %? OR %n IS NULL)");
+            } else {
+                buf.push_str("(%n < %? OR %n IS NULL)");
+            }
+            if i > 0 {
+                buf.push(')');
+            }
+            need_or = true;
+            if next_is_max {
+                break;
+            }
+        }
+    }
+
+    let curr_vals = definitions[index].less_than.snapshot();
+    // Upper bound check (for all partitions)
+    for i in 0..columns.len() {
+        if curr_vals[i].eq_ignore_ascii_case(PARTITION_MAX_VALUE) {
+            break;
+        }
+        if need_or {
+            buf.push_str(" OR ");
+        }
+        if i > 0 {
+            buf.push('(');
+            // All previous columns must be equal
+            for j in 0..i {
+                if j > 0 {
+                    buf.push_str(" AND ");
+                }
+                params.push(CheckParam::Text(columns[j].clone()));
+                params.push(unquoted(&curr_vals[j]));
+                buf.push_str("(%n = %?)");
+            }
+            buf.push_str(" AND ");
+        }
+        if i == columns.len() - 1 {
+            buf.push_str("(%n >= %?)");
+        } else {
+            buf.push_str("(%n > %?)");
+        }
+        params.push(CheckParam::Text(columns[i].clone()));
+        params.push(unquoted(&curr_vals[i]));
+        if i > 0 {
+            buf.push(')');
+        }
+        need_or = true;
+    }
+}
+
+/// Go `buildCheckSQLConditionForListPartition`.
+fn build_check_sql_condition_for_list_partition(
+    expr: &str,
+    definition: &tidb_model::partition::PartitionDefinition,
+    buf: &mut String,
+) {
+    buf.push_str("not (");
+    for (i, in_value) in definition.in_values.snapshot().iter().enumerate() {
+        if i != 0 {
+            buf.push_str(" OR ");
+        }
+        for (j, val) in in_value.snapshot().iter().enumerate() {
+            if j != 0 {
+                buf.push_str(" AND ");
+            }
+            // null-safe compare '<=>'
+            buf.push_str(&format!("({expr}) <=> {val}"));
+        }
+    }
+    buf.push(')');
+}
+
+/// Go `buildCheckSQLConditionForListColumnsPartition`, over the
+/// partitioning columns' names as written.
+fn build_check_sql_condition_for_list_columns_partition(
+    columns: &[String],
+    definition: &tidb_model::partition::PartitionDefinition,
+    buf: &mut String,
+) {
+    buf.push_str("not (");
+    let col_names: Vec<String> = columns
+        .iter()
+        .map(|column| format!("`{}`", column.replace('`', "``")))
+        .collect();
+    for (i, col_values) in definition.in_values.snapshot().iter().enumerate() {
+        if i != 0 {
+            buf.push_str(" OR ");
+        }
+        for (j, val) in col_values.snapshot().iter().enumerate() {
+            if j != 0 {
+                buf.push_str(" AND ");
+            }
+            // null-safe compare '<=>'
+            buf.push_str(&format!("{} <=> {val}", col_names[j]));
+        }
+    }
+    buf.push(')');
 }

@@ -12,150 +12,68 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The DDL session pool over the executor.
+//! The node's DDL session pool.
 //!
 //! Go's `pkg/ddl` takes its sessions from the pool the domain hands it: a
-//! system session for a job the domain submits itself, and the sessions
-//! `checkModifyColumnData`, `checkForeignKeyConstrain` and
-//! `verifyRemainRecordsForCheckConstraint` run their restricted SQL in; the
+//! system session for a job the domain submits itself, and the sessions its
+//! data checks (`checkModifyColumnData`, `checkForNullValue`,
+//! `checkForeignKeyConstrain`, `verifyRemainRecordsForCheckConstraint`,
+//! `checkExchangePartitionRecordValidation`) run their restricted SQL in; the
 //! DDL package never imports the executor. The worker here holds a
 //! [`tidb_ddl_build::session_pool::DdlSessionPool`] the same way, and this is
-//! the implementation the node hands it.
+//! the implementation the node hands it: built before the node's domain (the
+//! DDL is one of the domain's inputs) and bound to it once the domain exists,
+//! as Go's domain hands DDL its session pool from the session factory.
 
-use tidb_ddl_build::session_pool::{DdlSessionPool, ForeignKeyCheck, ReorgSessionVars};
-use tidb_table::table_from_meta::{cluster_table, AutoIdSource};
+use std::sync::{Arc, OnceLock, Weak};
+
+use tidb_domain_core::domain::Domain;
+
+use crate::domain::cluster_session_node::DomainSessions;
+
+use tidb_ddl_build::session_pool::DdlSessionPool;
 use tidb_terror::MysqlError;
-use tidb_ddl_build::partition_reorg::KvTablePartitionReorg;
-use tidb_executor::{KvTableDdl, KvTableReader};
 use tidb_sessionctx::StmtContext;
-use tidb_store_driver_txn::cluster_storage::ClusterTableStorage;
-use tidb_tblctx::MutateContext;
-use tidb_table::kv_table::{KvTable, KvTableError, RowDecodeContext, TableCharset};
 
-/// The executor's DDL session pool.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ExecutorDdlSessionPool;
+/// The node's DDL session pool: system sessions of the node's domain.
+#[derive(Debug, Default)]
+pub struct NodeDdlSessionPool {
+    domain: OnceLock<Weak<Domain>>,
+}
 
-impl DdlSessionPool for ExecutorDdlSessionPool {
+impl NodeDdlSessionPool {
+    /// Binds the pool to the domain whose sessions it hands out.
+    pub fn bind(&self, domain: &Arc<Domain>) {
+        if self.domain.set(Arc::downgrade(domain)).is_err() {
+            panic!("a node's DDL session pool is bound once");
+        }
+    }
+}
+
+impl DdlSessionPool for NodeDdlSessionPool {
     /// A fresh statement of a default session.
     fn system_session(&self) -> Box<dyn tidb_ddl_build::session_context::DdlSessionContext> {
         Box::new(StmtContext::for_query())
     }
 
-    fn modify_column_data(
+    /// One statement on a fresh system session of the node, in its own
+    /// autocommit transaction (Go `withRestrictedSQLExecutor` without
+    /// `ExecOptionUseCurSession`).
+    fn exec_restricted_sql(
         &self,
-        table: &mut KvTable,
-        offset: usize,
-        new_type: &tidb_datatype::FieldType,
-        check_value_range: bool,
-        ctx: &dyn MutateContext,
-    ) -> Result<Option<KvTableError>, KvTableError> {
-        table.check_modify_column_data(offset, new_type, check_value_range, ctx)
+        sql: &str,
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, MysqlError> {
+        let domain = self
+            .domain
+            .get()
+            .and_then(Weak::upgrade)
+            .ok_or_else(|| MysqlError::unknown("the DDL session pool has no running node"))?;
+        let to_mysql = |error: tidb_store_driver_error::sql_query_error::SqlQueryError| {
+            MysqlError::from_parts(error.code, error.state, error.message)
+                .with_identity_opt(error.identity)
+        };
+        let mut session = domain.open_system_session().map_err(to_mysql)?;
+        let rows = session.node_conn().execute_internal(sql).map_err(to_mysql);
+        rows
     }
-
-    /// The child's existing rows against its parent, both read through the
-    /// DDL transaction's snapshot and buffer, by the same check the
-    /// in-process `ADD FOREIGN KEY` runs.
-    fn foreign_key(
-        &self,
-        plan: &ForeignKeyCheck,
-        storage: &ClusterTableStorage,
-    ) -> Result<(), MysqlError> {
-        let mut catalog = tidb_infoschema_perfschema::catalog();
-        let child = cluster_table(&plan.child, storage, &AutoIdSource::Unavailable)
-            .map_err(MysqlError::unknown)?
-            .with_new_collation_mode(plan.use_new_collation);
-        catalog.register_database_with_id_and_charset(
-            &plan.schema,
-            plan.schema_id,
-            TableCharset::default(),
-        );
-        catalog
-            .register_kv_in(&plan.schema, plan.child.name.original(), child)
-            .map_err(|error| MysqlError::unknown(format!("{error:?}")))?;
-        if let Some((schema, schema_id, parent)) = &plan.parent {
-            let table = cluster_table(parent, storage, &AutoIdSource::Unavailable)
-                .map_err(MysqlError::unknown)?
-                .with_new_collation_mode(plan.use_new_collation);
-            catalog.register_database_with_id_and_charset(
-                schema,
-                *schema_id,
-                TableCharset::default(),
-            );
-            catalog
-                .register_kv_in(schema, parent.name.original(), table)
-                .map_err(|error| MysqlError::unknown(format!("{error:?}")))?;
-        }
-        tidb_executor::check_foreign_key_constrain(
-            &mut catalog,
-            &plan.schema,
-            plan.child.name.original(),
-            &plan.name,
-            &reorg_statement_context(&plan.session_vars),
-        )
-        .map_err(tidb_driver_error::DriverError::to_mysql_error)
-    }
-
-    /// Every stored row under the DDL's default statement context.
-    fn check_constraint_rows(&self, table: &mut KvTable) -> Result<(), KvTableError> {
-        let context = tidb_ddl_build::table_info_build::default_ddl_statement_context();
-        let rows = table.scan_rows_with_context(&RowDecodeContext::for_query(&context))?;
-        for row in rows {
-            table.validate_check_constraints(&row, &context)?;
-        }
-        Ok(())
-    }
-
-    /// Both directions read under a fresh statement of a default session,
-    /// in the DDL transaction's snapshot.
-    fn exchange_partition_rows(
-        &self,
-        standalone: &mut KvTable,
-        partitioned: &mut KvTable,
-        ordinal: usize,
-        partition_id: i64,
-        check_constraints: bool,
-    ) -> Result<(), KvTableError> {
-        let context = StmtContext::for_query();
-        let rows = standalone.scan_rows_with_context(&RowDecodeContext::for_query(&context))?;
-        for row in rows {
-            // Go's literal condition (HASH's signed `mod(expr, num) != index`),
-            // not the row's route.
-            if partitioned.exchange_row_mismatches(ordinal, &row, &context)? {
-                return Err(KvTableError::Mysql(
-                    tidb_terror::MysqlError::from_terror(
-                        &tidb_table::table_errors::ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET
-                            .generate_with_stack_by_args(&[]),
-                    ),
-                ));
-            }
-            // Go applies the CHECK constraints only while
-            // `vardef.EnableCheckConstraint` is on.
-            if check_constraints {
-                partitioned.validate_check_constraints(&row, &context)?;
-            }
-        }
-        if !check_constraints {
-            return Ok(());
-        }
-
-        // Go's second restricted query reads the target partition and applies
-        // the standalone table's writable constraints. Both scans share the
-        // same transaction snapshot so neither direction can race the swap.
-        partitioned.restrict_read_to_partitions(&[partition_id]);
-        let rows = partitioned.scan_rows_with_context(&RowDecodeContext::for_query(&context))?;
-        for row in rows {
-            standalone.validate_check_constraints(&row, &context)?;
-        }
-        Ok(())
-    }
-}
-
-/// The session the check's SQL runs in: the job's SQL mode and time zone
-/// over the DDL's default statement context, as a reorganization.
-fn reorg_statement_context(vars: &ReorgSessionVars) -> StmtContext {
-    tidb_ddl_build::table_info_build::default_ddl_statement_context()
-        .with_ddl_sql_mode(vars.sql_mode)
-        .with_lazy_clock(None, vars.time_zone.clone())
-        .for_reorg()
 }

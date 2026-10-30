@@ -20,7 +20,6 @@
 
 use tidb_datatype::Datum;
 use tidb_table::kv_table::{KvTable, KvTableError, RowDecodeContext, TableHandle};
-use tidb_table::partition_routing::PartitionKind;
 use tidb_txnkv::Key;
 
 use crate::backfilling::ReorgBatch;
@@ -45,20 +44,6 @@ pub trait KvTablePartitionReorg {
         ctx: &dyn tidb_tblctx::MutateContext,
     ) -> Result<ReorgBatch, KvTableError>;
 
-    /// Go `checkExchangePartitionRecordValidation`'s partition condition for
-    /// one row of the table being exchanged in: whether the row does NOT
-    /// belong to the partition at `ordinal`.
-    ///
-    /// HASH is Go's literal `mod(expr, num) != index`, which refuses a
-    /// negative value that routing would place by its absolute value, and a
-    /// NULL anywhere but the first partition. The other methods compare the
-    /// row's route, and a row no partition accepts does not match.
-    fn exchange_row_mismatches(
-        &self,
-        ordinal: usize,
-        row: &[Datum],
-        ctx: &dyn tidb_exprctx::Columns,
-    ) -> Result<bool, KvTableError>;
 }
 
 impl KvTablePartitionReorg for KvTable {
@@ -167,46 +152,4 @@ impl KvTablePartitionReorg for KvTable {
         Ok(batch)
     }
 
-    fn exchange_row_mismatches(
-        &self,
-        ordinal: usize,
-        row: &[Datum],
-        ctx: &dyn tidb_exprctx::Columns,
-    ) -> Result<bool, KvTableError> {
-        let partition = self.partition().expect("validated by DDL");
-        if let PartitionKind::Hash = partition.kind {
-            let num = partition.num();
-            if num == 1 {
-                return Ok(false);
-            }
-            let value = tidb_table::generated_column::eval_over_dependencies(
-                &partition.expr,
-                &partition.dependencies,
-                &*self.columns(),
-                row,
-                ctx,
-            )
-            .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
-            let remainder = match value {
-                Datum::Null => return Ok(ordinal != 0),
-                Datum::UInt(value) => (value % num) as i64,
-                Datum::Int(value) => value % num as i64,
-                other => {
-                    let index = tidb_table::partition_routing::hash_partition_index(&other, num)
-                        .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
-                    index as i64
-                }
-            };
-            return Ok(remainder != ordinal as i64);
-        }
-        match self.record_physical_id(row, ctx) {
-            Ok(physical_id) => Ok(physical_id != partition.definitions[ordinal].id),
-            Err(KvTableError::Mysql(error))
-                if error.equal(&tidb_table::table_errors::ERR_NO_PARTITION_FOR_GIVEN_VALUE) =>
-            {
-                Ok(true)
-            }
-            Err(error) => Err(error),
-        }
-    }
 }

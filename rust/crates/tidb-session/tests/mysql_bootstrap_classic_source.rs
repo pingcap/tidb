@@ -332,7 +332,7 @@ fn the_first_user_table_is_117() {
         0,
         // A store without TiFlash.
         &|| Ok(0),
-        &mut |_, _| Ok(false),
+        &mut |_, _, _| Ok(false),
     )
     .unwrap();
     let Some(AddIndexSubmission::Job(mut spec, _)) = submission else {

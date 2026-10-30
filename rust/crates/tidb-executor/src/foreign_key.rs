@@ -97,7 +97,7 @@ use tidb_table::kv_table::TableHandle;
 use tidb_table::kv_table::RowDecodeContext;
 use tidb_table::kv_table::KvForeignKey;
 use tidb_table::kv_table::FkAction;
-use tidb_hack::{GoCaseCompare, GoToLower};
+use tidb_hack::GoCaseCompare;
 use tidb_planner_core_operator_physicalop::{FkTriggerKind, FkTriggerNode};
 
 /// MySQL's `FK_MAX_CASCADE_DEL`: the deepest a cascade may recurse before Go
@@ -157,17 +157,6 @@ fn lookup_handles(
         .map_err(|error| crate::driver::kv_read_error("foreign key lookup failed", error))
 }
 
-/// The foreign keys a table declares, with the child's column names.
-fn declared(catalog: &Catalog, database: &str, table: &str) -> (Vec<KvForeignKey>, Vec<String>) {
-    match catalog.get_in(database, table) {
-        Some(TableEntry::Kv(kv)) => (
-            kv.foreign_keys().to_vec(),
-            kv.columns().iter().map(|c| c.name.clone()).collect(),
-        ),
-        _ => (Vec::new(), Vec::new()),
-    }
-}
-
 /// Go `buildFKCheckForReferredFK`'s index, computed on demand: every
 /// `(schema, table, foreign key)` whose constraint REFERS to `database.table`.
 pub(crate) fn referring(
@@ -205,34 +194,6 @@ pub(crate) fn referring(
         .into_iter()
         .map(|(database, table, key)| (database.to_owned(), table.to_owned(), key.clone()))
         .collect()
-}
-
-/// Resolves the REFERENCING columns' offsets in the child's own schema.
-///
-/// The constraint stores names, so this runs against the column list as it is
-/// NOW: an `ALTER TABLE` that moved a column leaves the constraint checking
-/// the columns it was declared over, not whatever sits at the old offsets.
-/// `None` means a referencing column is gone, which DDL refuses to do.
-fn child_offsets(names: &[String], foreign_key: &KvForeignKey) -> Option<Vec<usize>> {
-    foreign_key
-        .cols
-        .iter()
-        .map(|name| names.iter().position(|column| column.go_lower_eq(name)))
-        .collect()
-}
-
-/// Resolves the referenced columns' offsets in the parent's schema.
-fn parent_offsets(
-    catalog: &Catalog,
-    foreign_key: &KvForeignKey,
-) -> Option<(Vec<usize>, Vec<String>)> {
-    let entry = catalog.get_in(&foreign_key.ref_schema, &foreign_key.ref_table)?;
-    let names = entry.column_names();
-    let mut offsets = Vec::with_capacity(foreign_key.ref_cols.len());
-    for name in &foreign_key.ref_cols {
-        offsets.push(names.iter().position(|column| column.go_lower_eq(name))?);
-    }
-    Some((offsets, names))
 }
 
 /// Whether the retained root owns a constraint for this target.
@@ -322,111 +283,6 @@ fn check_child_row_changes(
             {
                 return Err(planned_violation(node));
             }
-        }
-    }
-    Ok(())
-}
-
-/// Go `checkForeignKeyConstrain` for a foreign key named `name` that
-/// `database`.`table` in `catalog` already carries: the production node's
-/// DDL transaction builds `catalog` from the child and its parent over the
-/// transaction's storage and checks the child's existing rows here.
-///
-/// # Errors
-///
-/// 1452 naming the constraint, or a read failure.
-pub fn check_foreign_key_constrain(
-    catalog: &mut Catalog,
-    database: &str,
-    table: &str,
-    name: &str,
-    ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    let Some(TableEntry::Kv(child)) = catalog.table_in(database, table) else {
-        return Ok(());
-    };
-    let Some(foreign_key) = child
-        .foreign_keys()
-        .iter()
-        .find(|key| key.name.go_lower_eq(name))
-        .cloned()
-    else {
-        return Ok(());
-    };
-    require_existing_rows(catalog, database, table, &foreign_key, ctx)
-}
-
-/// Go `checkForeignKeyConstrain`'s failure:
-/// `dbterror.ErrNoReferencedRow2.GenWithStackByArgs(fkInfo.String(schema, table))`,
-/// over `job.SchemaName` and `tblInfo.Name.L`.
-fn no_referenced_row(database: &str, table: &str, foreign_key: &KvForeignKey) -> DriverError {
-    let fk =
-        crate::driver::fk_trigger_plan::meta(foreign_key).string(database, &table.go_to_lower());
-    DriverError::from(
-        tidb_dbterror::ERR_NO_REFERENCED_ROW2.generate_with_stack_by_args(&[fk.into()]),
-    )
-}
-
-/// Go `checkForeignKeyConstrain`: the rows a table ALREADY holds, checked
-/// against a constraint that is being ADDED to it.
-///
-/// Go runs this as one statement -- `select 1 from child where <cols> is not
-/// null and (<cols>) not in (select <refcols> from parent) limit 1` -- and
-/// raises `ErrNoReferencedRow2` (1452) when it returns a row, which is why an
-/// `ALTER TABLE ... ADD FOREIGN KEY` over orphaned rows fails instead of
-/// blessing them. Only the NEW constraint is checked: rows that already
-/// violate an OLDER constraint (written while `foreign_key_checks` was off)
-/// are not this statement's business, and Go's query names one `fkInfo`.
-///
-/// `foreign_key_checks = 0` skips it entirely -- Go returns before running
-/// the query at all -- so the caller decides whether to call this.
-pub(crate) fn require_existing_rows(
-    catalog: &mut Catalog,
-    database: &str,
-    table: &str,
-    foreign_key: &KvForeignKey,
-    ctx: &crate::StmtContext,
-) -> Result<(), DriverError> {
-    let (_, columns) = declared(catalog, database, table);
-    let Some(child) = child_offsets(&columns, foreign_key) else {
-        return Ok(());
-    };
-    let Some((offsets, _)) = parent_offsets(catalog, foreign_key) else {
-        return Ok(());
-    };
-    let Some(TableEntry::Kv(parent)) =
-        catalog.get_in(&foreign_key.ref_schema, &foreign_key.ref_table)
-    else {
-        return Ok(());
-    };
-    let index = parent
-        .foreign_key_lookup_index(&offsets)
-        .ok_or_else(|| no_referenced_row(database, table, foreign_key))?;
-    let Some(TableEntry::Kv(child_table)) = catalog.get_mut_for_foreign_key(database, table) else {
-        return Ok(());
-    };
-    let mut rows = std::sync::Arc::make_mut(child_table)
-        .row_cursor_with_context(&RowDecodeContext::for_write(ctx))
-        .map_err(|error| crate::driver::kv_read_error("foreign key validation failed", error))?;
-    while let Some((_, row)) = rows
-        .next_row()
-        .map_err(|error| crate::driver::kv_read_error("foreign key validation failed", error))?
-    {
-        let Some(key) = key_at(&row, &child) else {
-            continue;
-        };
-        if lookup_handles(
-            catalog,
-            &foreign_key.ref_schema,
-            &foreign_key.ref_table,
-            index,
-            &key,
-            1,
-            ctx,
-        )?
-        .is_empty()
-        {
-            return Err(no_referenced_row(database, table, foreign_key));
         }
     }
     Ok(())

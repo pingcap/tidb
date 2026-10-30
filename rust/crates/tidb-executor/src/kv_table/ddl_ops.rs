@@ -61,20 +61,6 @@ pub trait KvTableDdl {
         decode_context: &RowDecodeContext,
     ) -> Result<Option<(i64, i64)>, KvTableError>;
 
-    /// Go `checkModifyColumnData`: the first row, in handle order, whose old
-    /// value Go's check query matches
-    /// ([`tidb_ddl_build::modify_column_type::modify_column_data_violation`]).
-    /// `Ok(Some(..))` carries Go's verdict on that row -- 1138 for a NULL,
-    /// 1265 naming the value otherwise -- and `Ok(None)` means every row
-    /// passed or there was nothing to check.
-    fn check_modify_column_data(
-        &mut self,
-        offset: usize,
-        new_type: &tidb_datatype::FieldType,
-        check_value_range: bool,
-        ctx: &dyn tidb_tblctx::MutateContext,
-    ) -> Result<Option<KvTableError>, KvTableError>;
-
 }
 
 impl KvTableDdl for KvTable {
@@ -226,63 +212,6 @@ impl KvTableDdl for KvTable {
             added += 1;
         }
         Ok(Some((added, scanned)))
-    }
-
-    fn check_modify_column_data(
-        &mut self,
-        offset: usize,
-        new_type: &tidb_datatype::FieldType,
-        check_value_range: bool,
-        ctx: &dyn tidb_tblctx::MutateContext,
-    ) -> Result<Option<KvTableError>, KvTableError> {
-        let old_type = self.columns()[offset].field_type.clone();
-        let column = tidb_hack::go_to_lower(&self.columns()[offset].name);
-        if tidb_ddl_build::modify_column_type::modify_column_data_violation(
-            &old_type,
-            new_type,
-            check_value_range,
-            &Datum::Null,
-        )
-        .is_none()
-        {
-            return Ok(None);
-        }
-        let mut cursor = self.row_cursor_projected_with_context(
-            Some(&[offset]),
-            None,
-            &RowDecodeContext::for_query(ctx),
-        )?;
-        while let Some((_, row)) = cursor.next_row()? {
-            let value = &row[0];
-            if tidb_ddl_build::modify_column_type::modify_column_data_violation(
-                &old_type,
-                new_type,
-                check_value_range,
-                value,
-            ) != Some(true)
-            {
-                continue;
-            }
-            if value.is_null() {
-                return Ok(Some(KvTableError::Mysql(
-                    tidb_terror::MysqlError::from_terror(
-                        &tidb_dbterror::ERR_INVALID_USE_OF_NULL
-                            .generate_with_stack_by_args(&[]),
-                    ),
-                )));
-            }
-            let shown = value.sql_bytes().unwrap_or_default();
-            return Ok(Some(KvTableError::Mysql(
-                tidb_terror::MysqlError::from_terror(
-                    &tidb_datatype::types_errors::ERR_TRUNCATED.generate_with_stack(format!(
-                        "Data truncated for column '{}', value is '{}'",
-                        (column),
-                        (String::from_utf8_lossy(&shown).into_owned())
-                    )),
-                ),
-            )));
-        }
-        Ok(None)
     }
 
 }

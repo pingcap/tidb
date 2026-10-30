@@ -3160,7 +3160,7 @@ fn plan_ddl_with_tiflash_stores(
 ) -> Result<DdlPlan, DdlPlanError> {
     let row_ids = std::sync::Arc::clone(&store.row_ids);
     let context = tidb_sessionctx::StmtContext::for_query();
-    let mut no_null = |_: &tidb_model::TableInfo, _: i64| Ok(false);
+    let mut no_null = |_: &str, _: &tidb_model::TableInfo, _: i64| Ok(false);
     let submission = tidb_ddl::real_tikv_ddl::prepare_persisted_job_submission(
         store,
         statement,
