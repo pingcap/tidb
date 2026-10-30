@@ -591,13 +591,13 @@ func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *mod
 		restore(sessCtx)
 		return nil, errors.Trace(err)
 	}
+	if mviewTableInfo != nil && mviewTableInfo.MaterializedView != nil {
+		target.DivPrecisionIncrement = mviewTableInfo.MaterializedView.DefinitionDivPrecisionIncrement
+	}
 	restoreExecution, err := ApplyMViewExecutionSessionVars(sessVars, target)
 	if err != nil {
 		restore(sessCtx)
 		return nil, errors.Trace(err)
-	}
-	if mviewTableInfo != nil && mviewTableInfo.MaterializedView != nil {
-		sessVars.DivPrecisionIncrement = mviewTableInfo.MaterializedView.DefinitionDivPrecisionIncrement
 	}
 	sessVars.CurrentDB = currentDB
 	sessVars.InMViewMaintenance = true

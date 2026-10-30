@@ -290,6 +290,8 @@ func AddMViewExecutionSessionVarsToJob(job *model.Job, sessVars *variable.Sessio
 	job.AddSystemVars(vardef.TiFlashFineGrainedShuffleBatchSize, strconv.FormatUint(target.FineGrainedBatchSize, 10))
 	job.AddSystemVars(vardef.TiDBMViewMaintainImportThreads, strconv.Itoa(target.ImportThreads))
 	job.AddSystemVars(vardef.TiDBMViewMaintainImportDiskQuota, target.ImportDiskQuota)
+	job.AddSystemVars(vardef.TiDBTrackAggregateMemoryUsage, variable.BoolToOnOff(target.TrackAggregateMemoryUsage))
+	job.AddSystemVars(vardef.TiDBEnableParallelHashaggSpill, variable.BoolToOnOff(target.EnableParallelHashaggSpill))
 }
 
 // MViewExecutionSessionVarsFromJob reconstructs MV execution vars from a DDL job.
@@ -338,6 +340,12 @@ func MViewExecutionSessionVarsFromJob(job *model.Job, defaultSessVars *variable.
 	}
 	if val, ok := job.GetSystemVars(vardef.TiDBMViewMaintainImportDiskQuota); ok {
 		target.ImportDiskQuota = val
+	}
+	if val, ok := job.GetSystemVars(vardef.TiDBTrackAggregateMemoryUsage); ok {
+		target.TrackAggregateMemoryUsage = variable.TiDBOptOn(val)
+	}
+	if val, ok := job.GetSystemVars(vardef.TiDBEnableParallelHashaggSpill); ok {
+		target.EnableParallelHashaggSpill = variable.TiDBOptOn(val)
 	}
 	return target, nil
 }

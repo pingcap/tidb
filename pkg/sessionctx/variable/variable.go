@@ -43,6 +43,9 @@ type MViewExecutionSessionVars struct {
 	FineGrainedBatchSize         uint64
 	ImportThreads                int
 	ImportDiskQuota              string
+	TrackAggregateMemoryUsage    bool
+	EnableParallelHashaggSpill   bool
+	DivPrecisionIncrement        int
 }
 
 // MViewExecutionSessionVarsApplyConfig describes how MV execution vars should be applied onto a
@@ -83,6 +86,9 @@ func CaptureMViewExecutionSessionVars(sessVars *SessionVars) MViewExecutionSessi
 		FineGrainedBatchSize:         sessVars.TiFlashFineGrainedShuffleBatchSize,
 		ImportThreads:                sessVars.MViewMaintainImportThreads,
 		ImportDiskQuota:              sessVars.MViewMaintainImportDiskQuota,
+		TrackAggregateMemoryUsage:    sessVars.TrackAggregateMemoryUsage,
+		EnableParallelHashaggSpill:   sessVars.EnableParallelHashaggSpill,
+		DivPrecisionIncrement:        sessVars.DivPrecisionIncrement,
 	}
 }
 
@@ -106,6 +112,9 @@ func CaptureAppliedMViewExecutionSessionVars(sessVars *SessionVars) MViewExecuti
 		FineGrainedBatchSize:         sessVars.TiFlashFineGrainedShuffleBatchSize,
 		ImportThreads:                sessVars.MViewMaintainImportThreads,
 		ImportDiskQuota:              sessVars.MViewMaintainImportDiskQuota,
+		TrackAggregateMemoryUsage:    sessVars.TrackAggregateMemoryUsage,
+		EnableParallelHashaggSpill:   sessVars.EnableParallelHashaggSpill,
+		DivPrecisionIncrement:        sessVars.DivPrecisionIncrement,
 	}
 }
 
@@ -148,11 +157,9 @@ func ApplyMViewExecutionSessionVarsWithConfig(
 		maintainIsolationReadEnginesVarName = vardef.TiDBMViewMaintainIsolationReadEngines
 	}
 
+	// Set the variables even if the fields already hold the target values, so
+	// that the session variables, which the session states take, agree with them.
 	origin := captureApplied(sessVars)
-	if origin == target {
-		return func() {}, nil
-	}
-
 	for _, assignment := range buildMViewExecutionSessionVarAssignments(target, maintainMemQuotaVarName, maintainIsolationReadEnginesVarName) {
 		err := error(nil)
 		if cfg.InjectApplyError != nil {
@@ -258,6 +265,21 @@ func buildMViewExecutionSessionVarAssignments(
 			name:           vardef.TiDBMViewMaintainImportDiskQuota,
 			value:          target.ImportDiskQuota,
 			failureMessage: "mv execution: failed to apply tidb_mview_maintain_import_disk_quota",
+		},
+		{
+			name:           vardef.TiDBTrackAggregateMemoryUsage,
+			value:          BoolToOnOff(target.TrackAggregateMemoryUsage),
+			failureMessage: "mv execution: failed to apply tidb_track_aggregate_memory_usage",
+		},
+		{
+			name:           vardef.TiDBEnableParallelHashaggSpill,
+			value:          BoolToOnOff(target.EnableParallelHashaggSpill),
+			failureMessage: "mv execution: failed to apply tidb_enable_parallel_hashagg_spill",
+		},
+		{
+			name:           vardef.DivPrecisionIncrement,
+			value:          strconv.Itoa(target.DivPrecisionIncrement),
+			failureMessage: "mv execution: failed to apply div_precision_increment",
 		},
 	}
 }
