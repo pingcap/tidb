@@ -71,6 +71,9 @@ const (
 	// decode overhead when estimating concurrency.
 	// This is an empirically chosen value and may not be optimal.
 	readerMemBudgetRatio = 0.3
+	// queryMemBudgetRatio is the share of subtask memory for the SELECT of a
+	// query import, leaving the rest to encoding and sort writers.
+	queryMemBudgetRatio = 0.25
 )
 
 // importStepExecutor is a executor for import step.
@@ -446,7 +449,7 @@ func (s *importStepExecutor) readQuery(
 
 	return importer.RunImportQuery(
 		ctx, se, s.taskMeta.Plan.QuerySource, s.taskMeta.Stmt,
-		s.GetResource().Mem.Capacity()/4, selected)
+		int64(float64(s.GetResource().Mem.Capacity())*queryMemBudgetRatio), selected)
 }
 
 func (s *importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {

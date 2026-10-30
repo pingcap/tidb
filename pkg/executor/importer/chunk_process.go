@@ -580,6 +580,8 @@ type QueryChunk struct {
 
 // RunImportQuery runs the SELECT of the IMPORT INTO statement importSQL at q.ReadTS.
 // sctx takes the session states of the submitter, so the caller must destroy it.
+// It sends the result chunks to output, which the caller closes, and the
+// receiver owns the chunks it gets.
 // TODO(joechenrh): Registration by executor is to avoid import cycle. We can refactor it later.
 var RunImportQuery func(ctx context.Context, sctx sessionctx.Context, q *QuerySource, importSQL string, memQuota int64, output chan<- QueryChunk) error
 

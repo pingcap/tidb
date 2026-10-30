@@ -19,9 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strconv"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -182,13 +180,13 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		require.False(t, se.GetSessionVars().InTxn())
 		require.True(t, se.GetSessionVars().IsAutocommit())
 
-		// Without @@timestamp, the worker still runs at the time of the statement.
+		// Without @@timestamp, the statement time is captured, and the worker
+		// runs at the captured time instead of its own clock.
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
 		q = captureImportQuery(t, tk, sql)
-		captured, err := strconv.ParseFloat(q.SessionStates.SystemVars[vardef.Timestamp], 64)
-		require.NoError(t, err)
-		time.Sleep(1100 * time.Millisecond)
-		require.Equal(t, []string{fmt.Sprintf("[%d]", int64(captured))}, runImportQuery(t, newWorkerSession(t, store), q, sql))
+		require.NotEmpty(t, q.SessionStates.SystemVars[vardef.Timestamp])
+		q.SessionStates.SystemVars[vardef.Timestamp] = "1000000000"
+		require.Equal(t, []string{"[1000000000]"}, runImportQuery(t, newWorkerSession(t, store), q, sql))
 	})
 	t.Run("source tables at read ts", func(t *testing.T) {
 		tk.MustExec("create resource group rg1 ru_per_sec=1000")
