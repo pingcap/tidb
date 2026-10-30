@@ -181,6 +181,17 @@ func TestDumpTextValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "2.20", mustDecodeStr(t, bs))
 
+	columns[0].Table = "derived_alias"
+	bs, err = DumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f64}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "2.20", mustDecodeStr(t, bs))
+	columns[0].OrgTable = "base_table"
+	bs, err = DumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f64}).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, "2.2", mustDecodeStr(t, bs))
+	columns[0].Table = ""
+	columns[0].OrgTable = ""
+
 	columns[0].Type = mysql.TypeBlob
 	bs, err = DumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewBytesDatum([]byte("foo"))}).ToRow(), dp)
 	require.NoError(t, err)
