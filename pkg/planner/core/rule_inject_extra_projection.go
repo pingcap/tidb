@@ -282,7 +282,6 @@ func InjectProjBelowSort(p base.PhysicalPlan, orderByItems []*util.ByItems) base
 	if origChildProj, isChildProj := childPlan.(*physicalop.PhysicalProjection); isChildProj {
 		refine4NeighbourProj(bottomProj, origChildProj)
 	}
-	refine4NeighbourProj(topProj, bottomProj)
 
 	return topProj
 }
