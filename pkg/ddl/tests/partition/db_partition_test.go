@@ -2894,21 +2894,29 @@ func TestIssue40135Ver2(t *testing.T) {
 
 	tk.MustExec("CREATE TABLE t40135 ( a int DEFAULT NULL, b varchar(32) DEFAULT 'md', c varchar(255), index(a)) PARTITION BY HASH (a) PARTITIONS 6")
 	tk.MustExec("insert into t40135 values (1, 'md', '1-md'), (2, 'ma','2-ma'), (3, 'md','3-md'), (4, 'ma','4-ma'), (5, 'md','5-md'), (6, 'ma','6-ma')")
-	one := true
+	tbl := external.GetTableByName(t, tk, "test", "t40135")
+	tableID := tbl.Meta().ID
+	var startAlterOnce sync.Once
+	var deleteOnce sync.Once
 	var checkErr error
 	var wg sync.WaitGroup
 	wg.Add(1)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		// beforeRunOneJobStep is global, so keep this hook on the target DDL job.
+		if job.Type != model.ActionModifyColumn || job.TableID != tableID {
+			return
+		}
 		if job.SchemaState == model.StateDeleteOnly {
-			tk3.MustExec("delete from t40135 where a = 1")
+			deleteOnce.Do(func() {
+				tk3.MustExec("delete from t40135 where a = 1")
+			})
 		}
-		if one {
-			one = false
+		startAlterOnce.Do(func() {
 			go func() {
+				defer wg.Done()
 				_, checkErr = tk1.Exec("alter table t40135 modify column a int NULL")
-				wg.Done()
 			}()
-		}
+		})
 	})
 	tk.MustExec("alter table t40135 modify column a bigint NULL DEFAULT '6243108' FIRST")
 	wg.Wait()
