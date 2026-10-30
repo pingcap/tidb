@@ -23,7 +23,7 @@ use tidb_hint::{generate_qb_name, remove_duplicated_hints, NodeType};
 use tidb_planner_core_base::LogicalJoinType;
 use crate::physical::PhysicalPlan;
 use tidb_kv::store_type::StoreType;
-use crate::plan_cost_ver2::IndexJoinKind;
+use crate::physical::IndexJoinKind;
 
 /// Table identity the physical plan does not carry itself.
 pub trait HintCatalog {

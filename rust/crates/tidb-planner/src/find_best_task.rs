@@ -54,7 +54,7 @@
 use tidb_planner_core_operator_logicalop::LogicalPlan;
 use tidb_planner_property::{PhysicalProperty, SortItem, TaskType};
 use tidb_planner_core_base::{LogicalJoinType, PlanError};
-use crate::plan_cost_ver2::IndexJoinKind;
+use crate::physical::IndexJoinKind;
 
 /// `tryToEnumerateIndexJoin`: which side may be the OUTER one.
 ///

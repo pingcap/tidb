@@ -108,9 +108,8 @@ fn point_range(value: i64) -> tidb_ranger::types::Range {
 
 #[test]
 fn cached_plan_rebuilds_normal_and_reader_scan_trees_without_mutating_template() {
-    use crate::physical_plan_cache::{
-        CachedPlanRebuildContext, IndexRangeRebuild, TableRangeRebuild,
-    };
+    use crate::physical_plan_cache::{CachedPlanRebuildContext};
+    use crate::physical::range_rebuild::{IndexRangeRebuild, TableRangeRebuild};
 
     let int_type = FieldType::new(FieldTypeCode::LongLong);
     let handle = Column::new(1, int_type.clone());
@@ -215,7 +214,8 @@ fn cached_plan_rebuilds_normal_and_reader_scan_trees_without_mutating_template()
 
 #[test]
 fn cached_index_lookup_rebuilds_only_gos_index_plan() {
-    use crate::physical_plan_cache::{CachedPlanRebuildContext, TableRangeRebuild};
+    use crate::physical_plan_cache::{CachedPlanRebuildContext};
+    use crate::physical::range_rebuild::{TableRangeRebuild};
 
     let invalid_table_side = PhysicalPlan::TableScan(PhysicalTableScan {
         base: BasePhysicalPlan::with_id(901, "TableRowIDScan", 0),
@@ -316,7 +316,8 @@ fn physical_plan_cache_reads_noncacheable_reason_and_size() {
 
 #[test]
 fn cached_plan_rebuilds_the_same_tree_for_consecutive_parameter_sets() {
-    use crate::physical_plan_cache::{CachedPlanRebuildContext, TableRangeRebuild};
+    use crate::physical_plan_cache::{CachedPlanRebuildContext};
+    use crate::physical::range_rebuild::{TableRangeRebuild};
 
     let int_type = FieldType::new(FieldTypeCode::LongLong);
     let handle = Column::new(1, int_type.clone());
@@ -350,9 +351,8 @@ fn cached_plan_rebuilds_the_same_tree_for_consecutive_parameter_sets() {
 
 #[test]
 fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
-    use crate::physical_plan_cache::{
-        CachedPlanRebuildContext, IndexRangeRebuild, PointRangeRebuild, TableRangeRebuild,
-    };
+    use crate::physical_plan_cache::{CachedPlanRebuildContext};
+    use crate::physical::range_rebuild::{IndexRangeRebuild, PointRangeRebuild, TableRangeRebuild};
 
     let int_type = FieldType::new(FieldTypeCode::LongLong);
     let handle = Column::new(1, int_type.clone());
@@ -442,9 +442,8 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
 /// common handle and for a unique index alike.
 #[test]
 fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
-    use crate::physical_plan_cache::{
-        CachedPlanRebuildContext, IndexRangeRebuild, PointRangeRebuild, TableRangeRebuild,
-    };
+    use crate::physical_plan_cache::{CachedPlanRebuildContext};
+    use crate::physical::range_rebuild::{IndexRangeRebuild, PointRangeRebuild, TableRangeRebuild};
 
     let int_type = FieldType::new(FieldTypeCode::LongLong);
     let first = Column::new(3, int_type.clone());
@@ -522,9 +521,8 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
 /// it, as in Go's `buildRangeForIndexInfo`.
 #[test]
 fn cached_point_plan_rebuilds_a_collated_string_key_as_its_sort_key() {
-    use crate::physical_plan_cache::{
-        CachedPlanRebuildContext, IndexRangeRebuild, PointRangeRebuild,
-    };
+    use crate::physical_plan_cache::{CachedPlanRebuildContext};
+    use crate::physical::range_rebuild::{IndexRangeRebuild, PointRangeRebuild};
 
     let mut string_type = FieldType::new(FieldTypeCode::Varchar);
     string_type.set_flen(32);
@@ -601,9 +599,8 @@ fn cached_point_plan_rebuilds_a_collated_string_key_as_its_sort_key() {
 /// point per item, unioned in encoded key order like the detacher's DNF path.
 #[test]
 fn cached_batch_point_plan_rebuilds_dnf_equalities_as_unioned_points() {
-    use crate::physical_plan_cache::{
-        CachedPlanRebuildContext, IndexRangeRebuild, PointRangeRebuild,
-    };
+    use crate::physical_plan_cache::{CachedPlanRebuildContext};
+    use crate::physical::range_rebuild::{IndexRangeRebuild, PointRangeRebuild};
 
     let int_type = FieldType::new(FieldTypeCode::LongLong);
     let first = Column::new(3, int_type.clone());
@@ -676,9 +673,8 @@ fn cached_batch_point_plan_rebuilds_dnf_equalities_as_unioned_points() {
 
 #[test]
 fn cached_plan_rebuilds_index_join_range_and_updates_inner_reader() {
-    use crate::physical_plan_cache::{
-        CachedPlanRebuildContext, IndexRangeRebuild, PointRangeRebuild,
-    };
+    use crate::physical_plan_cache::{CachedPlanRebuildContext};
+    use crate::physical::range_rebuild::{IndexRangeRebuild, PointRangeRebuild};
 
     let index_column = Column::new(2, FieldType::new(FieldTypeCode::LongLong));
     let inner_scan = PhysicalPlan::IndexScan(PhysicalIndexScan {

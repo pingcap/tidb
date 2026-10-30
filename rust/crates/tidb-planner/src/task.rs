@@ -90,7 +90,7 @@ pub struct IndexJoinInfo {
     /// Retained as expressions for the executor renderer, not row evaluation.
     pub access_conditions: Vec<tidb_expr::expression::Expression>,
     /// Static template inputs for Go mutableIndexJoinRange on cache reuse.
-    pub range_rebuild: Option<crate::physical_plan_cache::PointRangeRebuild>,
+    pub range_rebuild: Option<crate::physical::range_rebuild::PointRangeRebuild>,
     /// Go `IndexJoinInfo.CompareFilters`.
     pub compare_filters: Option<crate::physical::IndexJoinCompareFilters>,
     /// Go `AccessPath.RangeInfo`'s spelling: `indexJoinIntPKRangeInfo` renders
@@ -3615,7 +3615,7 @@ fn complete_physical_index_join(
     // `completePhysicalIndexJoin` at all -- its inner plan is already fixed
     // before `Attach2Task` runs, and the merge executor has no hash table to
     // key -- so `IndexMergeJoin` alone keeps skipping this extraction.
-    if join.kind != crate::plan_cost_ver2::IndexJoinKind::IndexMergeJoin {
+    if join.kind != crate::physical::IndexJoinKind::IndexMergeJoin {
         let outer_schema = outer_plan.schema().ok_or_else(|| {
             PlanError::internal("completePhysicalIndexJoin outer child has no schema")
         })?;
@@ -5441,7 +5441,7 @@ mod attach_tests {
             // `extractOtherEQ=true` (`task.go:158,178`) applies to both.
             ..crate::physical::PhysicalIndexJoin::default()
         };
-        assert_eq!(join.kind, crate::plan_cost_ver2::IndexJoinKind::IndexJoin);
+        assert_eq!(join.kind, crate::physical::IndexJoinKind::IndexJoin);
 
         complete_physical_index_join(
             &mut join,

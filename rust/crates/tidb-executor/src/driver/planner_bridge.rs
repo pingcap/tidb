@@ -2377,7 +2377,7 @@ pub(crate) fn plan_insert_expressions(
     insert: &tidb_ast::InsertStmt,
     select: Option<(
         &tidb_expr::schema::Schema,
-        &tidb_planner::plan_builder::insert_on_duplicate::InsertSelectOutput,
+        &tidb_planner::physical::InsertSelectOutput,
     )>,
     catalog: &Catalog,
     current_database: &str,

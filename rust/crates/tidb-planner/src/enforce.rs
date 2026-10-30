@@ -28,7 +28,7 @@
 //!
 //! * `ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(...)`
 //!   (`enforce.go:37`) is raised through the caller's
-//!   [`crate::find_best_task::dispatch::MppWarningSink`].
+//!   [`MppWarningSink`].
 
 use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
 use tidb_planner_property::PhysicalProperty;
@@ -151,7 +151,7 @@ pub(crate) fn enforce_property_in(
     mut task: Task,
     allocator: &PlanIdAllocator,
     evaluate: &tidb_ranger::points::ExpressionEvaluator<'_>,
-    mpp_warning_sink: Option<&dyn crate::find_best_task::dispatch::MppWarningSink>,
+    mpp_warning_sink: Option<&dyn MppWarningSink>,
 ) -> Result<Task, PlanError> {
     if prop.task_tp == TaskType::Mpp {
         let Task::Mpp(mpp) = &task else {
@@ -306,4 +306,22 @@ mod tests {
             .expect("matching hash partitioning needs no exchange");
         assert!(matches!(enforced.plan(), Some(PhysicalPlan::TableDual(_))));
     }
+}
+
+/// Go `SessionVars.RaiseWarningWhenMPPEnforced`'s statement-context sink.
+///
+/// Physical enumeration stays in the planner crate, while warning buffers
+/// and the `InExplainStmt`/extra-warning split belong to the session
+/// executor. This trait carries that side effect across the crate boundary
+/// without making the planner depend on a session implementation.
+pub trait MppWarningSink {
+    /// Raises one source-shaped MPP refusal warning when enforcement is on.
+    fn raise_mpp_warning(&self, message: &str);
+
+    /// Go `StmtCtx.SetHintWarning`: a planner `ErrInternal` hint warning.
+    fn set_hint_warning(&self, message: &str);
+
+    /// A planner note: Go `AppendNote` under `EXPLAIN FORMAT='verbose'`
+    /// (`InVerboseExplain`), `AppendExtraNote` otherwise.
+    fn append_planner_note(&self, message: &str);
 }

@@ -1034,9 +1034,9 @@ fn physical_operator_name(
         PhysicalPlan::HashJoin(_) => "HashJoin".to_owned(),
         PhysicalPlan::MergeJoin(_) => "MergeJoin".to_owned(),
         PhysicalPlan::IndexJoin(join) => match join.kind {
-            tidb_planner::plan_cost_ver2::IndexJoinKind::IndexJoin => "IndexJoin",
-            tidb_planner::plan_cost_ver2::IndexJoinKind::IndexHashJoin => "IndexHashJoin",
-            tidb_planner::plan_cost_ver2::IndexJoinKind::IndexMergeJoin => "IndexMergeJoin",
+            tidb_planner::physical::IndexJoinKind::IndexJoin => "IndexJoin",
+            tidb_planner::physical::IndexJoinKind::IndexHashJoin => "IndexHashJoin",
+            tidb_planner::physical::IndexJoinKind::IndexMergeJoin => "IndexMergeJoin",
         }
         .to_owned(),
         _ => plan.tp().to_owned(),
@@ -1340,7 +1340,7 @@ fn physical_operator_info(
                 ));
             }
             if !join.outer_hash_keys.is_empty()
-                && join.kind != tidb_planner::plan_cost_ver2::IndexJoinKind::IndexMergeJoin
+                && join.kind != tidb_planner::physical::IndexJoinKind::IndexMergeJoin
             {
                 let mut equal = join
                     .outer_hash_keys
@@ -2898,7 +2898,7 @@ fn index_join_normalized_info(
         ));
     }
     if !join.outer_hash_keys.is_empty()
-        && join.kind != tidb_planner::plan_cost_ver2::IndexJoinKind::IndexMergeJoin
+        && join.kind != tidb_planner::physical::IndexJoinKind::IndexMergeJoin
     {
         let mut equal = join
             .outer_hash_keys
@@ -4312,15 +4312,15 @@ mod tests {
         let mut index = tidb_planner::physical::PhysicalIndexJoin::default();
         for (kind, expected) in [
             (
-                tidb_planner::plan_cost_ver2::IndexJoinKind::IndexJoin,
+                tidb_planner::physical::IndexJoinKind::IndexJoin,
                 "IndexJoin",
             ),
             (
-                tidb_planner::plan_cost_ver2::IndexJoinKind::IndexHashJoin,
+                tidb_planner::physical::IndexJoinKind::IndexHashJoin,
                 "IndexHashJoin",
             ),
             (
-                tidb_planner::plan_cost_ver2::IndexJoinKind::IndexMergeJoin,
+                tidb_planner::physical::IndexJoinKind::IndexMergeJoin,
                 "IndexMergeJoin",
             ),
         ] {

@@ -41,6 +41,7 @@
 
 mod memory;
 pub mod part_info;
+pub mod range_rebuild;
 pub use part_info::PhysPlanPartInfo;
 use tidb_kv::store_type::StoreType;
 use tidb_planner_cardinality::derive_stats::StatsInfoScale;
@@ -702,9 +703,9 @@ impl PhysicalIndexJoin {
             sum += filters.memory_usage();
         }
         sum += match self.kind {
-            crate::plan_cost_ver2::IndexJoinKind::IndexJoin => 0,
-            crate::plan_cost_ver2::IndexJoinKind::IndexHashJoin => SIZE_OF_BOOL,
-            crate::plan_cost_ver2::IndexJoinKind::IndexMergeJoin => {
+            IndexJoinKind::IndexJoin => 0,
+            IndexJoinKind::IndexHashJoin => SIZE_OF_BOOL,
+            IndexJoinKind::IndexMergeJoin => {
                 SIZE_OF_SLICE * 3
                     + self.left_join_keys.len() as i64 * 2 * SIZE_OF_FUNC
                     + SIZE_OF_BOOL * 2
@@ -871,7 +872,7 @@ pub struct PhysicalIndexJoin {
     /// Go `BasePhysicalJoin.InnerChildIdx`.
     pub inner_child_idx: usize,
     /// Which of Go's index-join executor variants this candidate uses.
-    pub kind: crate::plan_cost_ver2::IndexJoinKind,
+    pub kind: IndexJoinKind,
     /// Go `PhysicalIndexHashJoin.KeepOuterOrder` (the plain index join also
     /// preserves its outer order by construction).
     pub keep_outer_order: bool,
@@ -923,7 +924,7 @@ pub struct PhysicalIndexJoin {
     /// Go `PhysicalIndexJoin.CompareFilters`.
     pub compare_filters: Option<IndexJoinCompareFilters>,
     /// Parameter-dependent range metadata retained for cache rebuilding.
-    pub range_rebuild: Option<crate::physical_plan_cache::PointRangeRebuild>,
+    pub range_rebuild: Option<crate::physical::range_rebuild::PointRangeRebuild>,
     /// Which `RangeInfo` spelling master renders on the inner access scan:
     /// bare outer keys for the integer-handle probe, `eq(inner, outer)`
     /// pairs otherwise (`indexJoinIntPKRangeInfo` vs
@@ -937,7 +938,7 @@ impl Default for PhysicalIndexJoin {
             base: BasePhysicalPlan::default(),
             join_type: LogicalJoinType::Inner,
             inner_child_idx: 1,
-            kind: crate::plan_cost_ver2::IndexJoinKind::IndexJoin,
+            kind: IndexJoinKind::IndexJoin,
             keep_outer_order: false,
             inner_access_table_id: None,
             inner_access_index_id: None,
@@ -1282,7 +1283,7 @@ pub struct PhysicalTableScan {
     pub by_items: Vec<tidb_expression_aggregation::ByItems>,
     /// Access conditions and handle metadata retained for execute-time plan
     /// cache range rebuild.
-    pub range_rebuild: Option<crate::physical_plan_cache::TableRangeRebuild>,
+    pub range_rebuild: Option<crate::physical::range_rebuild::TableRangeRebuild>,
     /// Go `getTableScanPenalty`'s table/session inputs.
     pub table_scan_penalty: tidb_planner_core_operator_logicalop::data_source::TableScanPenaltyInput,
     /// Schema-resolved fields consumed by the TiKV protobuf lowering path.
@@ -2530,7 +2531,7 @@ pub struct PhysicalIndexScan {
     pub by_items: Vec<tidb_expression_aggregation::ByItems>,
     /// Access conditions and index metadata retained for execute-time plan
     /// cache range rebuild.
-    pub range_rebuild: Option<crate::physical_plan_cache::IndexRangeRebuild>,
+    pub range_rebuild: Option<crate::physical::range_rebuild::IndexRangeRebuild>,
     /// Normalized source ranges used by the bounded `checkCoverIndex` bridge.
     /// They represent the same Go `Ranges` as [`Self::ranges`] until that
     /// cardinality adapter consumes the full ranger type.
@@ -2789,7 +2790,7 @@ pub struct PhysicalPointGet {
     /// The single point range represented by this plan.
     pub ranges: tidb_ranger::types::Ranges,
     /// Parameter-dependent range metadata retained for cache rebuilding.
-    pub range_rebuild: Option<crate::physical_plan_cache::PointRangeRebuild>,
+    pub range_rebuild: Option<crate::physical::range_rebuild::PointRangeRebuild>,
     /// Go `PointGetPlan.Lock`: the enclosing UPDATE/DELETE, or a locking
     /// SELECT inside a transaction, locks the row it reads; rendered as the
     /// `lock` operator detail.
@@ -2832,7 +2833,7 @@ pub struct PhysicalBatchPointGet {
     /// global index applies to the partition each entry records.
     pub partition_names: Vec<String>,
     /// Parameter-dependent range metadata retained for cache rebuilding.
-    pub range_rebuild: Option<crate::physical_plan_cache::PointRangeRebuild>,
+    pub range_rebuild: Option<crate::physical::range_rebuild::PointRangeRebuild>,
     /// Go `KeepOrder`.
     pub keep_order: bool,
     /// Go `Desc`.
@@ -2994,7 +2995,7 @@ pub struct PhysicalDmlRoot {
     pub update_assigns: Vec<UpdateAssign>,
     /// What the planner decided about an `INSERT ... SELECT`'s source: the
     /// names of its outputs and how many of them fill the insert.
-    pub insert_select: Option<crate::plan_builder::insert_on_duplicate::InsertSelectOutput>,
+    pub insert_select: Option<InsertSelectOutput>,
 }
 
 /// The operation selected by Go's BuildOn{Insert,Update,Delete}FKTriggers.
@@ -4014,6 +4015,31 @@ pub fn exhaust_physical_plans_4_logical_window(
     })]
 }
 
+/// Which index-join executor a `PhysicalIndexJoin` is (Go's
+/// `PhysicalIndexJoin` / `PhysicalIndexHashJoin` / `PhysicalIndexMergeJoin`),
+/// the `indexJoinType` the cost model reads.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IndexJoinKind {
+    /// `IndexJoin`: the hash table is built over ALL probe rows.
+    IndexJoin,
+    /// `IndexHashJoin`: the hash table is built over the build side.
+    IndexHashJoin,
+    /// `IndexMergeJoin`: no hash table.
+    IndexMergeJoin,
+}
+
+/// What the planner knows of an `INSERT ... SELECT`'s source once it is
+/// built: the names of the (possibly extended) SELECT's outputs, and how many
+/// of them fill the insert.
+#[derive(Clone, Debug, Default)]
+pub struct InsertSelectOutput {
+    /// Go `selectPlan.OutputNames()`.
+    pub names: Vec<tidb_datatype::FieldName>,
+    /// Go `actualColLen`: the SELECT's own width when it was extended for the
+    /// assignments; `None` when it was not.
+    pub actual_col_len: Option<usize>,
+}
+
 /// Go `base.PhysicalPlan`: a tree of physical operators.
 #[derive(Clone, Debug)]
 pub enum PhysicalPlan {
@@ -4414,29 +4440,6 @@ impl PhysicalPlan {
             }
         }
         Ok(total)
-    }
-
-    /// Go `GetPlanCostVer2(taskType, option, isChildOfINL...)` (`<1st>`).
-    ///
-    /// The production planner owns its statement-local cost environment at
-    /// [`crate::find_best_task::coster::Ver2Coster`]. Detached physical plans
-    /// use the same recursive dispatcher with Go's default factors here. The
-    /// option flags are forwarded to every formula so detached callers retain
-    /// the source behavior for cost tracing.
-    pub fn get_plan_cost_ver2(
-        &self,
-        task_type: TaskType,
-        option: PlanCostOption,
-        is_child_of_inl: bool,
-    ) -> Result<CostVer2, PlanError> {
-        Ok(
-            crate::find_best_task::coster::Ver2Coster::default().plan_cost_with_option(
-                self,
-                task_type,
-                is_child_of_inl,
-                option,
-            ),
-        )
     }
 
     // Go `Attach2Task(...Task) Task` (`<2nd>`) lives at

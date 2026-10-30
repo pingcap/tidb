@@ -454,7 +454,7 @@ fn build_fast_point_physical_plan(
                 },
                 range_rebuild: batch
                     .constants
-                    .map(crate::physical_plan_cache::PointRangeRebuild::Constants),
+                    .map(crate::physical::range_rebuild::PointRangeRebuild::Constants),
                 keep_order: false,
                 desc: false,
                 lock: select_lock.is_some(),
@@ -539,13 +539,13 @@ fn build_fast_point_physical_plan(
         .set_stats(Some(tidb_planner_property::stats_info::StatsInfo::new(1.0, [])));
     base.base.set_schema(Some(schema));
     // Go `PointGetPlan.HandleConstant` / `IndexConstants`.
-    let constants = crate::physical_plan_cache::PointConstantsRebuild {
+    let constants = crate::physical::range_rebuild::PointConstantsRebuild {
         rows: vec![point
             .key_markers
             .iter()
             .zip(&point.key_values)
             .map(
-                |(marker, value)| crate::physical_plan_cache::PointKeyConstant {
+                |(marker, value)| crate::physical::range_rebuild::PointKeyConstant {
                     marker: *marker,
                     value: value.clone(),
                 },
@@ -556,7 +556,7 @@ fn build_fast_point_physical_plan(
     };
     let range_rebuild = constants
         .has_parameters()
-        .then_some(crate::physical_plan_cache::PointRangeRebuild::Constants(constants));
+        .then_some(crate::physical::range_rebuild::PointRangeRebuild::Constants(constants));
     Ok(Some(crate::physical::PhysicalPlan::PointGet(
         crate::physical::PhysicalPointGet {
             base,
@@ -859,7 +859,7 @@ pub struct BatchPointLookup {
     key_values: Vec<Vec<Datum>>,
     /// Go `HandleParams` / `IndexValueParams`: every candidate key with the
     /// EXECUTE parameters it reads, present when any part is a parameter.
-    constants: Option<crate::physical_plan_cache::PointConstantsRebuild>,
+    constants: Option<crate::physical::range_rebuild::PointConstantsRebuild>,
 }
 
 /// One IN-list item a batch point plan keys by. Go's `newBatchPointGetPlan`
@@ -922,11 +922,11 @@ impl BatchPointLookup {
     /// reads an EXECUTE parameter.
     fn with_constants(
         mut self,
-        rows: Vec<Vec<crate::physical_plan_cache::PointKeyConstant>>,
+        rows: Vec<Vec<crate::physical::range_rebuild::PointKeyConstant>>,
         field_types: Vec<FieldType>,
         handle_batch: bool,
     ) -> Self {
-        let rebuild = crate::physical_plan_cache::PointConstantsRebuild {
+        let rebuild = crate::physical::range_rebuild::PointConstantsRebuild {
             rows,
             field_types,
             handle_batch,
@@ -1078,7 +1078,7 @@ pub fn try_batch_point_get_stmt(
                         else {
                             return Ok(None);
                         };
-                        constant_row.push(crate::physical_plan_cache::PointKeyConstant {
+                        constant_row.push(crate::physical::range_rebuild::PointKeyConstant {
                             marker,
                             value: value.clone(),
                         });
@@ -1155,7 +1155,7 @@ pub fn try_batch_point_get_stmt(
                     else {
                         return Ok(None);
                     };
-                    constant_row.push(crate::physical_plan_cache::PointKeyConstant {
+                    constant_row.push(crate::physical::range_rebuild::PointKeyConstant {
                         marker,
                         value: value.clone(),
                     });
@@ -1210,7 +1210,7 @@ pub fn try_batch_point_get_stmt(
                     Some(Datum::UInt(v)) => v as i64,
                     _ => return Ok(None),
                 };
-                constant_rows.push(vec![crate::physical_plan_cache::PointKeyConstant {
+                constant_rows.push(vec![crate::physical::range_rebuild::PointKeyConstant {
                     marker: *marker,
                     value: Datum::Int(handle),
                 }]);
@@ -1263,7 +1263,7 @@ pub fn try_batch_point_get_stmt(
             .iter()
             .zip(&markers)
             .map(|(value, marker)| {
-                vec![crate::physical_plan_cache::PointKeyConstant {
+                vec![crate::physical::range_rebuild::PointKeyConstant {
                     marker: *marker,
                     value: value.clone(),
                 }]

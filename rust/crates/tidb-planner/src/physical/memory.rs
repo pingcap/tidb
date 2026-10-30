@@ -449,11 +449,11 @@ pub(super) fn go_node_memory_usage(node: &PhysicalPlan) -> i64 {
 /// index key's datums (`IndexValues`) and column types (`ColsFieldType` /
 /// `IndexColTypes`). A `Handles` slot costs an interface in a batch.
 fn point_plan_keys_usage(
-    rebuild: Option<&crate::physical_plan_cache::PointRangeRebuild>,
+    rebuild: Option<&crate::physical::range_rebuild::PointRangeRebuild>,
     is_handle: bool,
     is_batch: bool,
 ) -> i64 {
-    use crate::physical_plan_cache::PointRangeRebuild;
+    use crate::physical::range_rebuild::PointRangeRebuild;
     let Some(PointRangeRebuild::Constants(constants)) = rebuild else {
         return 0;
     };

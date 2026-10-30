@@ -70,24 +70,6 @@ pub trait TaskCoster {
     fn task_cost(&self, task: &Task) -> Result<f64, PlanError>;
 }
 
-/// Go `SessionVars.RaiseWarningWhenMPPEnforced`'s statement-context sink.
-///
-/// Physical enumeration stays in the planner crate, while warning buffers
-/// and the `InExplainStmt`/extra-warning split belong to the session
-/// executor. This trait carries that side effect across the crate boundary
-/// without making the planner depend on a session implementation.
-pub trait MppWarningSink {
-    /// Raises one source-shaped MPP refusal warning when enforcement is on.
-    fn raise_mpp_warning(&self, message: &str);
-
-    /// Go `StmtCtx.SetHintWarning`: a planner `ErrInternal` hint warning.
-    fn set_hint_warning(&self, message: &str);
-
-    /// A planner note: Go `AppendNote` under `EXPLAIN FORMAT='verbose'`
-    /// (`InVerboseExplain`), `AppendExtraNote` otherwise.
-    fn append_planner_note(&self, message: &str);
-}
-
 /// Go `compareTaskCost` (`find_best_task.go:479`): whether `cur` beats
 /// `best`. An invalid current task never wins; an invalid best always
 /// loses; otherwise strictly-lower cost wins.
@@ -194,7 +176,7 @@ pub struct DispatchContext<'a> {
     /// Go SessionVars.OptPrefixIndexSingleScan.
     pub opt_prefix_index_single_scan: bool,
     /// Statement-context sink for Go's enforced-MPP refusal warnings.
-    pub mpp_warning_sink: Option<&'a dyn MppWarningSink>,
+    pub mpp_warning_sink: Option<&'a dyn crate::enforce::MppWarningSink>,
     /// DataSources whose heuristic-selection note was already raised: Go
     /// derives a DataSource's statistics, and so selects, only once.
     pub heuristic_noted: std::collections::HashSet<usize>,
@@ -563,7 +545,7 @@ impl<'a> DispatchContext<'a> {
     /// Attach the session statement-context sink used by physical refusal
     /// warnings. The planner remains usable without a session in unit tests.
     #[must_use]
-    pub const fn with_mpp_warning_sink(mut self, sink: &'a dyn MppWarningSink) -> Self {
+    pub const fn with_mpp_warning_sink(mut self, sink: &'a dyn crate::enforce::MppWarningSink) -> Self {
         self.mpp_warning_sink = Some(sink);
         self
     }
@@ -921,13 +903,13 @@ fn exhaust_physical_plans(
                     // NO_MERGE_JOIN was applied by `exhaust_join`.
                     JoinStrategy::Merge { .. } => false,
                     JoinStrategy::Index { kind, .. } => match kind {
-                        crate::plan_cost_ver2::IndexJoinKind::IndexJoin => {
+                        crate::physical::IndexJoinKind::IndexJoin => {
                             op.prefer_any(&[join_hint_flags::NO_INDEX_JOIN])
                         }
-                        crate::plan_cost_ver2::IndexJoinKind::IndexHashJoin => {
+                        crate::physical::IndexJoinKind::IndexHashJoin => {
                             op.prefer_any(&[join_hint_flags::NO_INDEX_HASH_JOIN])
                         }
-                        crate::plan_cost_ver2::IndexJoinKind::IndexMergeJoin => {
+                        crate::physical::IndexJoinKind::IndexMergeJoin => {
                             op.prefer_any(&[join_hint_flags::NO_INDEX_MERGE_JOIN])
                         }
                     },
@@ -1049,7 +1031,7 @@ fn exhaust_physical_plans(
                 if matches!(
                     &strategy,
                     JoinStrategy::Index {
-                        kind: crate::plan_cost_ver2::IndexJoinKind::IndexHashJoin,
+                        kind: crate::physical::IndexJoinKind::IndexHashJoin,
                         ..
                     }
                 ) {
@@ -1525,7 +1507,7 @@ fn burn_index_join_candidate_ids(
         return;
     };
     let query_block_offset = join.base.base.query_block_offset();
-    if matches!(kind, crate::plan_cost_ver2::IndexJoinKind::IndexHashJoin) {
+    if matches!(kind, crate::physical::IndexJoinKind::IndexHashJoin) {
         let _ = physical::BasePhysicalPlan::new(ctx.allocator, "IndexJoin", query_block_offset);
     }
     let _ = physical::BasePhysicalPlan::new(ctx.allocator, join.base.base.tp(), query_block_offset);
@@ -2244,7 +2226,7 @@ pub(super) struct IndexJoinPathResult {
     /// Go `indexJoinPathGetRangeInfoAndMaxOneRow`'s `maxOneRow`.
     max_one_row: bool,
     /// Go `mutableIndexJoinRange`, set when the accesses hold parameters.
-    rebuild: Option<super::index_join_path::IndexJoinPathRebuild>,
+    rebuild: Option<crate::physical::range_rebuild::IndexJoinPathRebuild>,
 }
 
 /// What building one inner path for an index join answers.
@@ -2373,7 +2355,7 @@ fn build_index_join_path_result(
         &core.chosen_access,
     )
     .then(|| {
-        super::index_join_path::IndexJoinPathRebuild::new(
+        super::index_join_path::index_join_path_rebuild(
             info,
             &idx_cols,
             &idx_col_lens,
@@ -2574,7 +2556,7 @@ fn index_join_info_from_result(
         range_rebuild: result
             .rebuild
             .clone()
-            .map(|rebuild| crate::physical_plan_cache::PointRangeRebuild::IndexJoin(Box::new(rebuild))),
+            .map(|rebuild| crate::physical::range_rebuild::PointRangeRebuild::IndexJoin(Box::new(rebuild))),
         compare_filters: result.core.last_col_manager.clone(),
     }
 }
@@ -3463,14 +3445,14 @@ fn find_best_task_4_logical_data_source_paths(
                     None
                 } else if common_handle.is_some() {
                     Some(
-                        crate::physical_plan_cache::TableRangeRebuild::common_handle(
+                        crate::physical::range_rebuild::TableRangeRebuild::common_handle(
                             table_access_conds.clone(),
                             common_columns.clone(),
                             common_lengths.clone(),
                         ),
                     )
                 } else {
-                    Some(crate::physical_plan_cache::TableRangeRebuild::int_handle(
+                    Some(crate::physical::range_rebuild::TableRangeRebuild::int_handle(
                         table_access_conds.clone(),
                         handle_type.clone(),
                         handle_type.is_unsigned(),
@@ -3576,7 +3558,7 @@ fn find_best_task_4_logical_data_source_paths(
                             ranges,
                             range_rebuild: table_range_rebuild
                                 .clone()
-                                .map(crate::physical_plan_cache::PointRangeRebuild::Table),
+                                .map(crate::physical::range_rebuild::PointRangeRebuild::Table),
                             lock: false,
                             select_lock: None,
                         })
@@ -3592,7 +3574,7 @@ fn find_best_task_4_logical_data_source_paths(
                             partition_names: ds.partition_names.clone(),
                             range_rebuild: table_range_rebuild
                                 .clone()
-                                .map(crate::physical_plan_cache::PointRangeRebuild::Table),
+                                .map(crate::physical::range_rebuild::PointRangeRebuild::Table),
                             keep_order,
                             desc,
                             select_lock: None,
@@ -4071,7 +4053,7 @@ fn find_best_task_4_logical_data_source_paths(
                     .flatten()
                     .filter(|result| !result.access_conds.is_empty())
                     .map(|result| {
-                        crate::physical_plan_cache::IndexRangeRebuild::new(
+                        crate::physical::range_rebuild::IndexRangeRebuild::new(
                             result.access_conds.clone(),
                             index_cols.clone(),
                             index_lengths.clone(),
@@ -4199,7 +4181,7 @@ fn find_best_task_4_logical_data_source_paths(
                             ranges: ranges.clone(),
                             range_rebuild: index_range_rebuild
                                 .clone()
-                                .map(crate::physical_plan_cache::PointRangeRebuild::Index),
+                                .map(crate::physical::range_rebuild::PointRangeRebuild::Index),
                             lock: false,
                             select_lock: None,
                         })
@@ -4219,7 +4201,7 @@ fn find_best_task_4_logical_data_source_paths(
                             partition_names: ds.partition_names.clone(),
                             range_rebuild: index_range_rebuild
                                 .clone()
-                                .map(crate::physical_plan_cache::PointRangeRebuild::Index),
+                                .map(crate::physical::range_rebuild::PointRangeRebuild::Index),
                             keep_order,
                             desc,
                             select_lock: None,
@@ -5315,7 +5297,7 @@ fn normal_preference_applies(
 /// valid hinted tasks still compare by cost.
 fn logical_join_hint_applies(plan: &LogicalPlan, physical: &PhysicalPlan) -> bool {
     use tidb_hint::join_hint_flags as hint;
-    use crate::plan_cost_ver2::IndexJoinKind;
+    use crate::physical::IndexJoinKind;
 
     let LogicalPlan::Join(join) = plan else {
         return false;
@@ -5390,7 +5372,7 @@ mod tests {
 
     struct RecordingMppWarningSink(RefCell<Vec<String>>);
 
-    impl MppWarningSink for RecordingMppWarningSink {
+    impl crate::enforce::MppWarningSink for RecordingMppWarningSink {
         fn raise_mpp_warning(&self, message: &str) {
             self.0.borrow_mut().push(message.to_owned());
         }

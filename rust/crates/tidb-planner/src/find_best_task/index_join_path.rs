@@ -18,6 +18,7 @@
 //! for every outer row. The same build reruns on plan-cache reuse
 //! (`mutableIndexJoinRange.Rebuild`) without the range memory limit.
 
+use crate::physical::range_rebuild::IndexJoinPathRebuild;
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
@@ -673,81 +674,7 @@ pub(crate) fn index_join_path_max_one_row(
     }
 }
 
-/// The inputs `mutableIndexJoinRange.Rebuild` reruns `indexJoinPathBuild`
-/// with when a cached plan is reused with new parameters.
-#[derive(Clone, Debug)]
-pub struct IndexJoinPathRebuild {
-    pub(crate) idx_cols: Vec<Column>,
-    pub(crate) idx_col_lens: Vec<i64>,
-    pub(crate) pushed_conditions: Vec<Expression>,
-    pub(crate) other_conditions: Vec<Expression>,
-    pub(crate) outer_join_keys: Vec<Column>,
-    pub(crate) inner_join_keys: Vec<Column>,
-    pub(crate) inner_schema: Schema,
-    pub(crate) opt_prefix_index_single_scan: bool,
-}
 
-impl IndexJoinPathRebuild {
-    pub(crate) fn new(
-        info: IndexJoinPathInfo<'_>,
-        idx_cols: &[Column],
-        idx_col_lens: &[i64],
-        opt_prefix_index_single_scan: bool,
-    ) -> Self {
-        Self {
-            idx_cols: idx_cols.to_vec(),
-            idx_col_lens: idx_col_lens.to_vec(),
-            pushed_conditions: info.inner_pushed_conditions.to_vec(),
-            other_conditions: info.other_conditions.to_vec(),
-            outer_join_keys: info.outer_join_keys.to_vec(),
-            inner_join_keys: info.inner_join_keys.to_vec(),
-            inner_schema: info.inner_schema.clone(),
-            opt_prefix_index_single_scan,
-        }
-    }
-
-    /// The conditions whose parameters a reuse binds.
-    pub(crate) fn conditions_mut(&mut self) -> [&mut Vec<Expression>; 2] {
-        [&mut self.pushed_conditions, &mut self.other_conditions]
-    }
-
-    /// Go `mutableIndexJoinRange.Rebuild`: rerun the build in rebuild mode.
-    /// `None` is Go's refusal: the path no longer builds, or its ranges are
-    /// empty.
-    pub(crate) fn rebuild(
-        &self,
-        evaluate: &ExpressionEvaluator<'_>,
-    ) -> Result<(Option<Ranges>, Option<String>), PlanError> {
-        /// Go's `SetSkipPlanCache` during the rebuild, which ends the hit.
-        #[derive(Default)]
-        struct Recorded(std::cell::RefCell<Option<String>>);
-        impl tidb_planner_core_base::PlanCacheMarker for Recorded {
-            fn set_skip_plan_cache(&self, reason: &str) {
-                self.0.borrow_mut().get_or_insert_with(|| reason.to_owned());
-            }
-        }
-        let recorded = Recorded::default();
-        let info = IndexJoinPathInfo {
-            other_conditions: &self.other_conditions,
-            outer_join_keys: &self.outer_join_keys,
-            inner_join_keys: &self.inner_join_keys,
-            inner_pushed_conditions: &self.pushed_conditions,
-            inner_schema: &self.inner_schema,
-        };
-        let env = IndexJoinRangeEnv {
-            range_max_size: 0,
-            fallback_handler: None,
-            opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
-            evaluate,
-            plan_cache_marker: Some(&recorded),
-        };
-        let ranges = match index_join_path_build(info, &self.idx_cols, &self.idx_col_lens, env)? {
-            IndexJoinPathOutcome::Built(core) if !core.ranges.is_empty() => Some(core.ranges),
-            _ => None,
-        };
-        Ok((ranges, recorded.0.into_inner()))
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -1202,9 +1129,9 @@ mod tests {
             inner_schema: fixture.ds_schema.clone(),
             opt_prefix_index_single_scan: true,
         };
-        let (ranges, skip_plan_cache) = rebuild
-            .rebuild(&tidb_ranger::points::evaluate_static)
-            .expect("rebuilds");
+        let (ranges, skip_plan_cache) =
+            super::rebuild_index_join_path(&rebuild, &tidb_ranger::points::evaluate_static)
+                .expect("rebuilds");
         assert_eq!(skip_plan_cache, None);
         let ranges = ranges.expect("a range");
         assert_eq!(
@@ -1213,4 +1140,59 @@ mod tests {
         );
         assert!(tidb_ranger::types::ranges_mem_usage(&ranges) > 1);
     }
+}
+
+pub(crate) fn index_join_path_rebuild(
+    info: IndexJoinPathInfo<'_>,
+    idx_cols: &[Column],
+    idx_col_lens: &[i64],
+    opt_prefix_index_single_scan: bool,
+) -> IndexJoinPathRebuild {
+    IndexJoinPathRebuild {
+        idx_cols: idx_cols.to_vec(),
+        idx_col_lens: idx_col_lens.to_vec(),
+        pushed_conditions: info.inner_pushed_conditions.to_vec(),
+        other_conditions: info.other_conditions.to_vec(),
+        outer_join_keys: info.outer_join_keys.to_vec(),
+        inner_join_keys: info.inner_join_keys.to_vec(),
+        inner_schema: info.inner_schema.clone(),
+        opt_prefix_index_single_scan,
+    }
+}
+
+/// Go `mutableIndexJoinRange.Rebuild`: rerun the build in rebuild mode.
+/// `None` is Go's refusal: the path no longer builds, or its ranges are
+/// empty.
+pub(crate) fn rebuild_index_join_path(
+    path: &IndexJoinPathRebuild,
+    evaluate: &ExpressionEvaluator<'_>,
+) -> Result<(Option<Ranges>, Option<String>), PlanError> {
+    /// Go's `SetSkipPlanCache` during the rebuild, which ends the hit.
+    #[derive(Default)]
+    struct Recorded(std::cell::RefCell<Option<String>>);
+    impl tidb_planner_core_base::PlanCacheMarker for Recorded {
+        fn set_skip_plan_cache(&self, reason: &str) {
+            self.0.borrow_mut().get_or_insert_with(|| reason.to_owned());
+        }
+    }
+    let recorded = Recorded::default();
+    let info = IndexJoinPathInfo {
+        other_conditions: &path.other_conditions,
+        outer_join_keys: &path.outer_join_keys,
+        inner_join_keys: &path.inner_join_keys,
+        inner_pushed_conditions: &path.pushed_conditions,
+        inner_schema: &path.inner_schema,
+    };
+    let env = IndexJoinRangeEnv {
+        range_max_size: 0,
+        fallback_handler: None,
+        opt_prefix_index_single_scan: path.opt_prefix_index_single_scan,
+        evaluate,
+        plan_cache_marker: Some(&recorded),
+    };
+    let ranges = match index_join_path_build(info, &path.idx_cols, &path.idx_col_lens, env)? {
+        IndexJoinPathOutcome::Built(core) if !core.ranges.is_empty() => Some(core.ranges),
+        _ => None,
+    };
+    Ok((ranges, recorded.0.into_inner()))
 }

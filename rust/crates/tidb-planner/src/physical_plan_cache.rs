@@ -28,10 +28,10 @@
 //! while the cached plan no longer carries the residual filter needed to make
 //! that widening safe.
 
+use crate::physical::range_rebuild::{PointConstantsRebuild, PointRangeRebuild, TableRangeRebuild};
 use std::fmt;
 
-use tidb_datatype::{Datum, FieldType};
-use tidb_expr::column::Column;
+use tidb_datatype::Datum;
 use tidb_expr::expression::Expression;
 
 use crate::physical::{PhysicalPlan, PhysicalTableScan};
@@ -229,187 +229,6 @@ pub fn plan_cacheable(plan: &PhysicalPlan, context: PlanCacheabilityContext) -> 
         );
     }
     physical_plan_cacheable(physical, context, false)
-}
-
-/// The table-scan facts retained specifically so a cache hit can rebuild its
-/// parameter-dependent ranges without re-running logical optimization.
-#[derive(Clone, Debug)]
-pub struct TableRangeRebuild {
-    /// Go `PhysicalTableScan.AccessCondition`.
-    pub access_conditions: Vec<Expression>,
-    /// Integer-handle type.  `None` selects the common-handle index columns.
-    pub handle_type: Option<FieldType>,
-    /// Go primary-index columns for a common handle.
-    pub common_handle_columns: Vec<Column>,
-    /// Prefix lengths aligned with [`Self::common_handle_columns`].
-    pub common_handle_lengths: Vec<i64>,
-    /// Whether the integer handle is unsigned.
-    pub unsigned_int_handle: bool,
-}
-
-impl TableRangeRebuild {
-    /// Retains an integer primary-key handle range source.
-    #[must_use]
-    pub fn int_handle(
-        access_conditions: Vec<Expression>,
-        handle_type: FieldType,
-        unsigned_int_handle: bool,
-    ) -> Self {
-        Self {
-            access_conditions,
-            handle_type: Some(handle_type),
-            common_handle_columns: Vec::new(),
-            common_handle_lengths: Vec::new(),
-            unsigned_int_handle,
-        }
-    }
-
-    /// Retains a clustered common-handle range source.
-    #[must_use]
-    pub fn common_handle(
-        access_conditions: Vec<Expression>,
-        columns: Vec<Column>,
-        lengths: Vec<i64>,
-    ) -> Self {
-        Self {
-            access_conditions,
-            handle_type: None,
-            common_handle_columns: columns,
-            common_handle_lengths: lengths,
-            unsigned_int_handle: false,
-        }
-    }
-}
-
-/// The index-scan facts retained specifically so a cache hit can rebuild its
-/// parameter-dependent ranges.
-#[derive(Clone, Debug)]
-pub struct IndexRangeRebuild {
-    /// Go `PhysicalIndexScan.AccessCondition`.
-    pub access_conditions: Vec<Expression>,
-    /// Go `PhysicalIndexScan.IdxCols`.
-    pub index_columns: Vec<Column>,
-    /// Go `PhysicalIndexScan.IdxColLens`.
-    pub index_column_lengths: Vec<i64>,
-}
-
-impl IndexRangeRebuild {
-    /// Retains a complete index range source.
-    #[must_use]
-    pub fn new(
-        access_conditions: Vec<Expression>,
-        index_columns: Vec<Column>,
-        index_column_lengths: Vec<i64>,
-    ) -> Self {
-        Self {
-            access_conditions,
-            index_columns,
-            index_column_lengths,
-        }
-    }
-}
-
-/// Range metadata retained by point, batch-point and index-join plans. Go rebuilds CBO
-/// point plans from access conditions exactly like their originating table or
-/// index scan, then additionally verifies that the number of point ranges did
-/// not change.
-#[derive(Clone, Debug)]
-pub enum PointRangeRebuild {
-    /// A primary-key/table-handle point range.
-    Table(TableRangeRebuild),
-    /// A unique-index point range.
-    Index(IndexRangeRebuild),
-    /// Go `mutableIndexJoinRange`: the template ranges rebuilt by rerunning
-    /// `indexJoinPathBuild` with the new parameters.
-    IndexJoin(Box<crate::find_best_task::index_join_path::IndexJoinPathRebuild>),
-    /// A fast point plan's keys (`TryFastPlan`), rebuilt from its constants.
-    Constants(PointConstantsRebuild),
-}
-
-/// One key part of a fast point plan: Go `PointGetPlan.HandleConstant` /
-/// `IndexConstants[i]`, or `BatchPointGetPlan.HandleParams[i]` /
-/// `IndexValueParams[i][j]`.
-#[derive(Clone, Debug)]
-pub struct PointKeyConstant {
-    /// The EXECUTE parameter this part reads, or `None` for a literal.
-    pub marker: Option<usize>,
-    /// The planned value: the literal, or the planning execution's
-    /// parameter, already in the key column's domain.
-    pub value: Datum,
-}
-
-/// A fast point plan's keys, which Go's `buildRangesForPointGet` /
-/// `buildRangesForBatchGet` move into each execution's parameters through
-/// `convertConstant2Datum`; a parameter that does not survive that
-/// conversion rebuilds no plan.
-#[derive(Clone, Debug)]
-pub struct PointConstantsRebuild {
-    /// Every candidate key in written order. A batch keeps its repeated
-    /// keys here, as Go's plan does, so each execution dedups its own.
-    pub rows: Vec<Vec<PointKeyConstant>>,
-    /// The key columns' types, aligned with each row.
-    pub field_types: Vec<FieldType>,
-    /// A batch over a record handle: a repeated key is read once, and an
-    /// unsigned integer handle is keyed by its signed bit pattern, as the
-    /// planned batch was.
-    pub handle_batch: bool,
-}
-
-impl PointConstantsRebuild {
-    /// Whether any key part reads an EXECUTE parameter.
-    #[must_use]
-    pub fn has_parameters(&self) -> bool {
-        self.rows.iter().flatten().any(|part| part.marker.is_some())
-    }
-
-    /// Go `convertConstant2Datum` over every parameter part, giving the
-    /// closed point ranges this execution reads.
-    fn rebuild(
-        &self,
-        plan_id: i32,
-        context: &CachedPlanRebuildContext<'_>,
-    ) -> Result<Ranges, PlanCacheRebuildError> {
-        let mut keys: Vec<Vec<Datum>> = Vec::with_capacity(self.rows.len());
-        for row in &self.rows {
-            if row.len() != self.field_types.len() {
-                return Err(PlanCacheRebuildError::InvalidMetadata {
-                    plan_id,
-                    detail: "point key constants and their column types must be aligned",
-                });
-            }
-            let mut key = Vec::with_capacity(row.len());
-            for (part, field_type) in row.iter().zip(&self.field_types) {
-                let Some(order) = part.marker else {
-                    key.push(part.value.clone());
-                    continue;
-                };
-                let parameter = context
-                    .parameters
-                    .get(order)
-                    .ok_or(PlanCacheRebuildError::MissingParameter(order as i64))?;
-                let value = crate::point_get_value::point_get_value(field_type, parameter)
-                    .ok_or(PlanCacheRebuildError::ConstantChanged)?;
-                key.push(match (self.handle_batch, value) {
-                    (true, Datum::UInt(handle)) if row.len() == 1 => Datum::Int(handle as i64),
-                    (_, value) => value,
-                });
-            }
-            if self.handle_batch && keys.contains(&key) {
-                continue;
-            }
-            keys.push(key);
-        }
-        Ok(keys
-            .into_iter()
-            .map(|values| tidb_ranger::types::Range {
-                collators: vec![tidb_charset::Collation::Binary; values.len()],
-                low_val: values.clone(),
-                high_val: values,
-                low_exclude: false,
-                high_exclude: false,
-            })
-            .collect())
-    }
 }
 
 /// An evaluator for a deferred constant such as a non-deterministic function.
@@ -931,7 +750,7 @@ fn rebuild_point_ranges(
     if let PointRangeRebuild::Constants(constants) = rebuild {
         // A batch may read fewer distinct keys than it planned; Go keeps the
         // repeats in the plan and its executor reads each key once.
-        *ranges = constants.rebuild(plan_id, context)?;
+        *ranges = rebuild_point_constants(constants, plan_id, context)?;
         return Ok(());
     }
     let original = ranges.clone();
@@ -999,8 +818,11 @@ fn rebuild_point_ranges(
             }
             // Go `mutableIndexJoinRange.Rebuild`: an empty or no-longer-built
             // range, or one whose count or width changed, is refused.
-            let (rebuilt, skip_plan_cache) = rebuild
-                .rebuild(&|expr: &Expression| context.evaluate(expr))
+            let (rebuilt, skip_plan_cache) =
+                crate::find_best_task::index_join_path::rebuild_index_join_path(
+                    rebuild,
+                    &|expr: &Expression| context.evaluate(expr),
+                )
                 .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
             note_skipped(context, &skip_plan_cache);
             let rebuilt = rebuilt.ok_or(PlanCacheRebuildError::UnsafeRange { plan_id })?;
@@ -1246,4 +1068,53 @@ impl PhysicalPlan {
         rebuilt.rebuild_plan_for_cache_in_place(context)?;
         Ok(rebuilt)
     }
+}
+
+/// Go `convertConstant2Datum` over every parameter part, giving the
+/// closed point ranges this execution reads.
+fn rebuild_point_constants(
+    constants: &PointConstantsRebuild,
+    plan_id: i32,
+    context: &CachedPlanRebuildContext<'_>,
+) -> Result<Ranges, PlanCacheRebuildError> {
+    let mut keys: Vec<Vec<Datum>> = Vec::with_capacity(constants.rows.len());
+    for row in &constants.rows {
+        if row.len() != constants.field_types.len() {
+            return Err(PlanCacheRebuildError::InvalidMetadata {
+                plan_id,
+                detail: "point key constants and their column types must be aligned",
+            });
+        }
+        let mut key = Vec::with_capacity(row.len());
+        for (part, field_type) in row.iter().zip(&constants.field_types) {
+            let Some(order) = part.marker else {
+                key.push(part.value.clone());
+                continue;
+            };
+            let parameter = context
+                .parameters
+                .get(order)
+                .ok_or(PlanCacheRebuildError::MissingParameter(order as i64))?;
+            let value = crate::point_get_value::point_get_value(field_type, parameter)
+                .ok_or(PlanCacheRebuildError::ConstantChanged)?;
+            key.push(match (constants.handle_batch, value) {
+                (true, Datum::UInt(handle)) if row.len() == 1 => Datum::Int(handle as i64),
+                (_, value) => value,
+            });
+        }
+        if constants.handle_batch && keys.contains(&key) {
+            continue;
+        }
+        keys.push(key);
+    }
+    Ok(keys
+        .into_iter()
+        .map(|values| tidb_ranger::types::Range {
+            collators: vec![tidb_charset::Collation::Binary; values.len()],
+            low_val: values.clone(),
+            high_val: values,
+            low_exclude: false,
+            high_exclude: false,
+        })
+        .collect())
 }

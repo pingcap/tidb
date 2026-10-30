@@ -23,6 +23,7 @@
 //! `t2(a, b)` is ambiguous, while `VALUES(col)` reads the target's columns
 //! only.
 
+use crate::physical::InsertSelectOutput;
 use std::collections::BTreeMap;
 
 use tidb_ast::{Expr, InsertStmt, QueryStmt, SelectField, SelectStmt};
@@ -39,18 +40,6 @@ use super::marker::MarkerKind;
 use super::{ClauseCode, PlanBuilder};
 use tidb_planner_core_operator_logicalop::{LogicalPlan, LogicalTableDual};
 use tidb_planner_core_base::PlanError;
-
-/// What the planner knows of an `INSERT ... SELECT`'s source once it is
-/// built: the names of the (possibly extended) SELECT's outputs, and how many
-/// of them fill the insert.
-#[derive(Clone, Debug, Default)]
-pub struct InsertSelectOutput {
-    /// Go `selectPlan.OutputNames()`.
-    pub names: Vec<FieldName>,
-    /// Go `actualColLen`: the SELECT's own width when it was extended for the
-    /// assignments; `None` when it was not.
-    pub actual_col_len: Option<usize>,
-}
 
 /// One `ON DUPLICATE KEY UPDATE` assignment (Go `expression.Assignment`).
 #[derive(Clone, Debug)]

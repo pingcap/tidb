@@ -3870,7 +3870,7 @@ fn build_index_join(
     );
     executor.set_index_join_batch_size(ctx.index_join_batch_size());
     executor.set_vectorized_expression(ctx.enable_vectorized_expression());
-    if join.kind == tidb_planner::plan_cost_ver2::IndexJoinKind::IndexHashJoin {
+    if join.kind == tidb_planner::physical::IndexJoinKind::IndexHashJoin {
         executor.set_index_hash_join(join.keep_outer_order);
     }
     executor
@@ -4767,7 +4767,7 @@ fn point_partition_id(
         let values = match &point.range_rebuild {
             // Original values, not collation sort keys, are the partition
             // expression's inputs.
-            Some(tidb_planner::physical_plan_cache::PointRangeRebuild::Index(rebuild)) => {
+            Some(tidb_planner::physical::range_rebuild::PointRangeRebuild::Index(rebuild)) => {
                 let result =
                     tidb_ranger::detacher::detach_cond_and_build_range_for_partition_in(
                         &rebuild.access_conditions,
@@ -4817,7 +4817,7 @@ fn point_partition_id(
     } else {
         // Go PointGetPlan.PrunePartitions rebuilds original values: a common
         // handle's collation sort keys are not SQL partition expression inputs.
-        let Some(tidb_planner::physical_plan_cache::PointRangeRebuild::Table(rebuild)) =
+        let Some(tidb_planner::physical::range_rebuild::PointRangeRebuild::Table(rebuild)) =
             &point.range_rebuild
         else {
             return Err(DriverError::unsupported(

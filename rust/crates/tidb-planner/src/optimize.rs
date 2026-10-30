@@ -30,7 +30,8 @@ use std::time::{Duration, Instant};
 
 use tidb_planner_core_base::ColumnIdAllocator;
 use crate::find_best_task::coster::{CostEnv, Ver2Coster};
-use crate::find_best_task::dispatch::{find_best_task, DispatchContext, MppWarningSink};
+use crate::enforce::MppWarningSink;
+use crate::find_best_task::dispatch::{find_best_task, DispatchContext};
 use tidb_fixcontrol::OptimizerFixControl;
 use crate::rule::{flags, logical_optimize};
 use tidb_planner_core_operator_logicalop::plan_context::{CteOptimizer, DisabledLogicalRules, HintWarningSink, RuleContext, UsedStatsRecorder};

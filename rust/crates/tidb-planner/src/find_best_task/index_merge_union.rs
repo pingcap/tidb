@@ -807,12 +807,12 @@ fn keeps_phys_tbl_id(ds: &DataSource) -> bool {
 /// merge partial, which `rebuildRange` re-detaches on a plan-cache hit.
 pub(crate) fn partial_index_range_rebuild(
     filled: &tidb_planner_util::path::FilledIndexPath,
-) -> Option<crate::physical_plan_cache::IndexRangeRebuild> {
+) -> Option<crate::physical::range_rebuild::IndexRangeRebuild> {
     if filled.detached.access_conds.is_empty() {
         return None;
     }
     let (columns, lengths) = filled.columns.iter().cloned().unzip();
-    Some(crate::physical_plan_cache::IndexRangeRebuild::new(
+    Some(crate::physical::range_rebuild::IndexRangeRebuild::new(
         filled.detached.access_conds.clone(),
         columns,
         lengths,
@@ -824,20 +824,20 @@ pub(crate) fn partial_index_range_rebuild(
 fn partial_table_range_rebuild(
     ds: &DataSource,
     filled: &tidb_planner_util::path::FilledTablePath,
-) -> Option<crate::physical_plan_cache::TableRangeRebuild> {
+) -> Option<crate::physical::range_rebuild::TableRangeRebuild> {
     let access_conds = &filled.detached.access_conds;
     if access_conds.is_empty() {
         return None;
     }
     Some(if ds.common_handle_cols.is_empty() {
-        crate::physical_plan_cache::TableRangeRebuild::int_handle(
+        crate::physical::range_rebuild::TableRangeRebuild::int_handle(
             access_conds.clone(),
             filled.handle_type.clone(),
             ds.pk_is_handle && filled.handle_type.is_unsigned(),
         )
     } else {
         let (columns, lengths) = filled.common_columns.iter().cloned().unzip();
-        crate::physical_plan_cache::TableRangeRebuild::common_handle(
+        crate::physical::range_rebuild::TableRangeRebuild::common_handle(
             access_conds.clone(),
             columns,
             lengths,

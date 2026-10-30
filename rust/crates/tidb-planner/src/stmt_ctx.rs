@@ -152,7 +152,7 @@ impl PlannerStmtCtxData for StmtContextData {
     }
 }
 
-impl crate::find_best_task::dispatch::MppWarningSink for StmtContext {
+impl crate::enforce::MppWarningSink for StmtContext {
     fn raise_mpp_warning(&self, message: &str) {
         StmtContext::append_mpp_warning(self, message);
     }

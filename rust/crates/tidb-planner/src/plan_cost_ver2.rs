@@ -51,6 +51,7 @@
 //! `pkg/sessionctx/vardef/tidb_vars.go`. Callers that later gain real session
 //! variables set the struct instead of changing a formula.
 
+use crate::physical::IndexJoinKind;
 use tidb_planner_core_operator_logicalop::data_source::TableScanPenaltyInput;
 use tidb_planner_cardinality::row_size::{RowSizeColumn, get_avg_row_size_data_in_disk_by_rows};
 use tidb_planner_costusage::{
@@ -1303,18 +1304,6 @@ pub fn hash_join_cost(
         ])
     };
     mul_cost_ver2(&cost, hash_join_cost_factor)
-}
-
-/// Which index-join executor is being costed, matching Go's `indexJoinType`
-/// argument. Only the hash table term differs.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum IndexJoinKind {
-    /// `IndexJoin`: the hash table is built over ALL probe rows.
-    IndexJoin,
-    /// `IndexHashJoin`: the hash table is built over the build side.
-    IndexHashJoin,
-    /// `IndexMergeJoin`: no hash table.
-    IndexMergeJoin,
 }
 
 /// Everything `getIndexJoinCostVer24PhysicalIndexJoin` reads.

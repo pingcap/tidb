@@ -1359,9 +1359,9 @@ mod tests {
         let mut option = PlanCostOption::new();
         option.with_cost_flag(tidb_planner_costusage::COST_FLAG_TRACE);
         let detached = point(5, true);
-        let traced = detached
-            .get_plan_cost_ver2(TaskType::Root, option, false)
-            .expect("detached plan cost");
+        // Go `GetPlanCostVer2` on a detached plan: the default factors.
+        let traced =
+            Ver2Coster::default().plan_cost_with_option(&detached, TaskType::Root, false, option);
         assert!(traced.trace().is_some());
     }
 

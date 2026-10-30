@@ -695,7 +695,7 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub session_ctx: Option<&'a dyn stmt_build::SessionPlanContext>,
     /// Go `SessionVars.RaiseWarningWhenMPPEnforced`'s sink. `None` raises
     /// nothing, as a builder without a session.
-    pub mpp_warning_sink: Option<&'a dyn crate::find_best_task::dispatch::MppWarningSink>,
+    pub mpp_warning_sink: Option<&'a dyn crate::enforce::MppWarningSink>,
     /// Go `StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode`.
     pub tiflash_engine_removed_due_to_strict_sql_mode: bool,
     /// Go `evalFieldDefaultValue`, installed by the executor. `None` keeps a
@@ -1705,7 +1705,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
     #[must_use]
     pub const fn with_mpp_warning_sink(
         mut self,
-        sink: &'a dyn crate::find_best_task::dispatch::MppWarningSink,
+        sink: &'a dyn crate::enforce::MppWarningSink,
     ) -> Self {
         self.mpp_warning_sink = Some(sink);
         self

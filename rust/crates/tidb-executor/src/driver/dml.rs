@@ -399,7 +399,7 @@ fn physical_dml_plan_with_cache_mode(
                     &column_ids,
                 )
                 .map_err(super::planner_error_to_driver)?;
-            insert_select = Some(tidb_planner::plan_builder::insert_on_duplicate::InsertSelectOutput {
+            insert_select = Some(tidb_planner::physical::InsertSelectOutput {
                 names,
                 actual_col_len: insert_actual_col_len,
             });
@@ -803,7 +803,7 @@ fn plan_insert(
     insert: &tidb_ast::InsertStmt,
     select: Option<(
         &tidb_expr::schema::Schema,
-        &tidb_planner::plan_builder::insert_on_duplicate::InsertSelectOutput,
+        &tidb_planner::physical::InsertSelectOutput,
     )>,
     catalog: &Catalog,
     current_db: &str,
@@ -3118,7 +3118,7 @@ fn mark_dml_point_source_lock(plan: &mut tidb_planner::physical::PhysicalPlan, p
 
 fn promote_cached_dml_point_source(plan: &mut tidb_planner::physical::PhysicalPlan) {
     use tidb_planner::physical::{PhysicalPlan, PhysicalPointGet};
-    use tidb_planner::physical_plan_cache::PointRangeRebuild;
+    use tidb_planner::physical::range_rebuild::PointRangeRebuild;
 
     if let PhysicalPlan::Dml(dml) = plan {
         if let Some(child) = dml.select_plan.as_deref_mut() {
