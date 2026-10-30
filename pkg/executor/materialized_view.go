@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -137,7 +138,6 @@ type CancelMaterializedViewJobExec struct {
 }
 
 var errMLogPurgeLockConflict = errors.NewNoStackError("mlog purge lock conflict")
-var errMVRefreshAdvisoryLockConflict = errors.NewNoStackError("materialized view refresh advisory lock conflict")
 var errMVTaskCanceledManually = errors.NewNoStackError("materialized view task canceled manually")
 
 // Refreshes that find a stale schema share reload results by rechecking their
@@ -2415,9 +2415,9 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	advisoryLockName := mviewutil.PurgeAdvisoryLockName(mlogID)
 	if err := purgeSctx.GetAdvisoryLock(advisoryLockName, 1); err != nil {
 		if storeerr.ErrLockWaitTimeout.Equal(err) {
-			return errors.Annotatef(errMLogPurgeLockConflict,
+			return exeerrors.ErrMVAdvisoryLockConflict.GenWithStackByArgs(fmt.Sprintf(
 				"another purge or materialized view cutover is running for materialized view log on %s.%s, please retry later",
-				schemaName.O, s.Table.Name.O)
+				schemaName.O, s.Table.Name.O))
 		}
 		return errors.Trace(err)
 	}
@@ -5628,21 +5628,16 @@ func acquireMVRefreshAdvisoryLock(
 ) (string, error) {
 	lockName := mviewutil.RefreshAdvisoryLockName(tblInfo.DBID, tblInfo.ID)
 	if err := refreshSctx.GetAdvisoryLock(lockName, mvRefreshAdvisoryLockTimeoutSec); err != nil {
-		if isMVRefreshAdvisoryLockConflict(err) {
-			return lockName, errors.Annotatef(
-				errMVRefreshAdvisoryLockConflict,
+		if storeerr.ErrLockWaitTimeout.Equal(err) {
+			return lockName, exeerrors.ErrMVAdvisoryLockConflict.GenWithStackByArgs(fmt.Sprintf(
 				"another refresh or materialized view log creation is running for materialized view %s.%s, please retry later",
 				schemaName.O,
 				tblInfo.Name.O,
-			)
+			))
 		}
 		return lockName, errors.Trace(err)
 	}
 	return lockName, nil
-}
-
-func isMVRefreshAdvisoryLockConflict(err error) bool {
-	return err != nil && storeerr.ErrLockWaitTimeout.Equal(err)
 }
 
 func releaseMVRefreshAdvisoryLockFully(refreshSctx sessionctx.Context, lockName string) int {

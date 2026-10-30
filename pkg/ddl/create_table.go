@@ -54,6 +54,7 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -319,7 +320,8 @@ func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job)
 				// Do not retry this job while retaining its DDL scheduling claim:
 				// an OOP refresh holds the lock while waiting for its cutover DDL.
 				job.State = model.JobStateCancelled
-				return ver, errors.Errorf("cannot create materialized view log on %s.%s: materialized view refresh is running, please retry later", job.SchemaName, baseTblInfo.Name.O)
+				return ver, exeerrors.ErrMVAdvisoryLockConflict.GenWithStackByArgs(fmt.Sprintf(
+					"cannot create materialized view log on %s.%s: materialized view refresh is running, please retry later", job.SchemaName, baseTblInfo.Name.O))
 			}
 			return ver, errors.Trace(err)
 		}

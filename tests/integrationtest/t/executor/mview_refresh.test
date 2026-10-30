@@ -178,6 +178,12 @@ set @source_mv_old_id = (select tidb_table_id from information_schema.tables whe
 set @source_log_id = (select mlog_id from information_schema.tidb_mlogs where table_schema = 'test' and mlog_name = '$mlog$t_mv_source_info');
 select MLOG_ID = @source_log_id as input_log_matches from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = @source_mv_old_id;
 
+# Advisory-lock conflicts have a distinct SQL error code.
+select get_lock(concat('mlog_purge_', @source_log_id), 0) as lock_acquired;
+-- error 8182
+purge materialized view log on t_mv_source_info;
+select release_lock(concat('mlog_purge_', @source_log_id)) as lock_released;
+
 insert into t_mv_source_info values (1, 5);
 refresh materialized view mv_source_info fast;
 select * from mv_source_info order by a;
@@ -186,7 +192,7 @@ select MLOG_ID = @source_log_id as input_log_matches from mysql.tidb_mview_fast_
 # A nonempty but stale/incomplete registration requires COMPLETE recovery.
 update mysql.tidb_mview_fast_refresh_source_info set MLOG_ID = 0 where MVIEW_ID = @source_mv_old_id;
 insert into t_mv_source_info values (2, 3);
--- error 1105
+-- error 8183
 refresh materialized view mv_source_info fast;
 select * from mv_source_info order by a;
 refresh materialized view mv_source_info complete delta apply;
@@ -194,7 +200,7 @@ select * from mv_source_info order by a;
 select MLOG_ID = @source_log_id as input_log_matches from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = @source_mv_old_id;
 
 insert into mysql.tidb_mview_fast_refresh_source_info values (@source_mv_old_id, -1);
--- error 1105
+-- error 8183
 refresh materialized view mv_source_info fast;
 refresh materialized view mv_source_info complete in place;
 select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = @source_mv_old_id;
@@ -235,7 +241,7 @@ select count(*) from mysql.tidb_mlog_purge_info where MLOG_ID=@oop_old_log;
 select LAST_PURGED_TSO is null from mysql.tidb_mlog_purge_info where MLOG_ID=@oop_new_log;
 select MLOG_ID=@oop_old_log as old_input_preserved from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID=@oop_child;
 select LAST_SUCCESS_READ_TSO=@oop_child_tso as child_watermark_preserved from mysql.tidb_mview_refresh_info where MVIEW_ID=@oop_child;
--- error 1105
+-- error 8183
 refresh materialized view mv_oop_child fast;
 select * from mv_oop_child order by a;
 insert into t_oop_log values (4, 40);

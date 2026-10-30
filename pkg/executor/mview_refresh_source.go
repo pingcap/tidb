@@ -24,17 +24,18 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/mviewutil"
 )
 
 func checkMVRefreshLogBaseline(sources []model.MViewRefreshSource, registered []int64) error {
 	for _, source := range sources {
 		if source.MLogID == 0 {
-			return errors.New("refresh materialized view fast: source has no materialized view log; run COMPLETE refresh to rebuild the input log baseline")
+			return exeerrors.ErrMVRefreshLogBaselineChanged.GenWithStack("refresh materialized view fast: source has no materialized view log; run COMPLETE refresh to rebuild the input log baseline")
 		}
 	}
 	if !slices.Equal(mviewutil.RefreshSourceLogIDs(sources), registered) {
-		return errors.New("refresh materialized view fast: input log baseline has changed; run COMPLETE refresh to rebuild it")
+		return exeerrors.ErrMVRefreshLogBaselineChanged.GenWithStackByArgs()
 	}
 	return nil
 }

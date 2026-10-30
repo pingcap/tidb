@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -142,7 +143,7 @@ func TestMViewRefreshSourceInfoBaselineRecovery(t *testing.T) {
 				beforeSources := tk.MustQuery("select * from mysql.tidb_mview_fast_refresh_source_info order by MVIEW_ID, MLOG_ID").Rows()
 				beforeData := tk.MustQuery("select * from mv_source_init order by a").Rows()
 				tk.MustExec("insert into t_source_init values (1, 5)")
-				require.ErrorContains(t, tk.ExecToErr("refresh materialized view mv_source_init fast"), "run COMPLETE refresh")
+				tk.MustGetErrCode("refresh materialized view mv_source_init fast", int(exeerrors.ErrMVRefreshLogBaselineChanged.Code()))
 				require.Equal(t, before, tk.MustQuery("select * from mysql.tidb_mview_refresh_info").Rows())
 				require.Equal(t, beforeSources, tk.MustQuery("select * from mysql.tidb_mview_fast_refresh_source_info order by MVIEW_ID, MLOG_ID").Rows())
 				require.Equal(t, beforeData, tk.MustQuery("select * from mv_source_init order by a").Rows())
@@ -351,6 +352,9 @@ func TestMViewRefreshSourceInfoSnapshotIdentity(t *testing.T) {
 					tk.MustQuery("select MLOG_ID from mysql.tidb_mview_fast_refresh_source_info").Check(testkit.Rows(fmt.Sprint(expectedLogID)))
 				} else {
 					require.Error(t, err)
+					if method == "fast" && (change == "log replaced" || change == "missing log" || change == "snapshot and plan log replaced") {
+						require.True(t, exeerrors.ErrMVRefreshLogBaselineChanged.Equal(err), "%v", err)
+					}
 					require.Equal(t, before, tk.MustQuery("select * from mysql.tidb_mview_refresh_info").Rows())
 					require.Equal(t, beforeSources, tk.MustQuery("select * from mysql.tidb_mview_fast_refresh_source_info").Rows())
 					require.Equal(t, beforeData, tk.MustQuery("select * from mv_source_init order by a").Rows())

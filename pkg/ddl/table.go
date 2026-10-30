@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"go.uber.org/zap"
 )
@@ -1323,7 +1324,7 @@ func (w *worker) onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx *jobC
 		// Drain old purges before taking the shared schema-version mutex. The
 		// advisory lock also excludes new purges until this job finishes.
 		if err := w.acquireMLogPurgeAdvisoryLockForCutover(jobCtx, args.OldMLogID); err != nil {
-			if errors.Cause(err) == errMViewCutoverPurgeLockTimeout {
+			if exeerrors.ErrMVAdvisoryLockConflict.Equal(err) {
 				// Retrying this job would reset the total purge-lock wait budget.
 				job.State = model.JobStateCancelled
 			}
