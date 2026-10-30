@@ -2,6 +2,9 @@ module github.com/pingcap/tidb
 
 go 1.27.3
 
+// Temporary diagnostic build with per-request BatchCommands trace events.
+replace github.com/tikv/client-go/v2 => github.com/hujiatao0/client-go/v2 v2.0.8-0.20261015170520-0e03bede3a34
+
 require (
 	cloud.google.com/go/kms v1.21.0
 	cloud.google.com/go/storage v1.52.0
