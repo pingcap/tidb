@@ -26,13 +26,13 @@ pub mod explain;
 pub mod prepared;
 pub mod prepared_ast;
 pub mod non_prepared_plan_cache;
-pub mod plan_cacheable_checker;
 
 // traits
 pub use explain::ExplainCompile;
 pub use prepared::PreparedExec;
 pub use prepared_ast::PreparedAstCompile;
 pub use non_prepared_plan_cache::NonPreparedPlanCacheCompile;
+pub mod plan_cacheable_checker;
 pub use plan_cacheable_checker::PlanCacheableChecker;
 
 /// The session primitives Go's compiler reads through `sctx`.

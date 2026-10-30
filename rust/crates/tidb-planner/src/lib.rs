@@ -106,6 +106,7 @@ pub mod resolve_indices;
 pub mod inject_extra_projection;
 pub mod shuffle_optimize;
 pub mod physical_plan_cache;
+pub mod plan_cacheable_checker;
 pub mod plan_builder;
 pub mod plan_cache_lru;
 pub mod plan_cache_instance;

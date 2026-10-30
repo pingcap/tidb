@@ -3597,7 +3597,6 @@ mod attach_tests {
 mod task_tests {
     use super::*;
     use tidb_planner_core_operator_physicalop::physical_table_reader::ReadReqType;
-    use tidb_planner_core_operator_physicalop::task::*;
     use tidb_planner_core_operator_physicalop::PhysicalPlan;
     use tidb_planner_core_base::PlanIdAllocator;
     use tidb_planner_property::stats_info::StatsInfo;
