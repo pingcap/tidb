@@ -42,7 +42,7 @@ var (
 func validateAndParseMasterKeyString(keyString string) (encryptionpb.MasterKey, error) {
 	u, err := url.Parse(keyString)
 	if err != nil {
-		return encryptionpb.MasterKey{}, errors.Trace(err)
+		return encryptionpb.MasterKey{}, errors.New("invalid master key URL")
 	}
 
 	switch u.Scheme {

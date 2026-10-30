@@ -646,7 +646,7 @@ func TestImportIntoSecureText(t *testing.T) {
 		},
 		{
 			input:   "import into t from 'gcs://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb'",
-			secured: "\\QIMPORT INTO `t` FROM 'gcs://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb'\\E",
+			secured: "^\\QIMPORT INTO `t` FROM 'gcs://bucket/prefix'\\E$",
 		},
 		{
 			input:   "import into t from 's3://bucket/prefix?access-key=aaaaa&secret-access-key=bbbbb' with CLOUD_STORAGE_uri='s3://bucket/prefix?access-key=cccccc&secret-access-key=dddddd'",

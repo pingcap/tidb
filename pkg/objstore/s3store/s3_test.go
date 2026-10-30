@@ -90,6 +90,9 @@ func TestApply(t *testing.T) {
 		if test.errReturn {
 			require.Error(t, err)
 			require.Regexp(t, test.errMsg, err.Error())
+			for _, secret := range []string{"FAKE_ENDPOINT_USER", "FAKE_ENDPOINT_PASS", "FAKE_ENDPOINT_TOKEN"} {
+				require.NotContains(t, err.Error(), secret)
+			}
 		} else {
 			require.NoError(t, err)
 		}
@@ -134,7 +137,15 @@ func TestApply(t *testing.T) {
 			options: S3BackendOptions{
 				Endpoint: "!http:12345",
 			},
-			errMsg:    "parse (.*)!http:12345(.*): first path segment in URL cannot contain colon.*",
+			errMsg:    "invalid S3 endpoint URL.*",
+			errReturn: true,
+		},
+		{
+			name: "invalid endpoint with credentials",
+			options: S3BackendOptions{
+				Endpoint: "https://FAKE_ENDPOINT_USER:FAKE_ENDPOINT_PASS@host/path%zz?sig=FAKE_ENDPOINT_TOKEN",
+			},
+			errMsg:    "invalid S3 endpoint URL.*",
 			errReturn: true,
 		},
 	}

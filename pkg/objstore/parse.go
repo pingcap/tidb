@@ -67,30 +67,11 @@ const InvalidURLPlaceholder = ast.InvalidURLPlaceholder
 
 // RedactURL masks the credentials in a storage URL or endpoint so that it can
 // be put into logs and error messages. An unparseable value is replaced by
-// InvalidURLPlaceholder, userinfo and fragments are removed, and the query of a URL with an
-// unknown scheme is dropped, since ast.RedactURL cannot tell which parameters
-// are secret there. A value with neither "://" nor "?" is a local path and is
-// returned unchanged.
+// InvalidURLPlaceholder, userinfo and fragments are removed, and queries are
+// dropped unless the scheme has a safe query allowlist in ast.RedactURL.
+// A value with neither "://" nor "?" is a local path and is returned unchanged.
 func RedactURL(rawURL string) string {
-	// A plain local path has nothing to mask, and parsing it would escape or
-	// reject characters such as spaces and '%'.
-	if !strings.Contains(rawURL, "://") && !strings.Contains(rawURL, "?") {
-		return rawURL
-	}
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return InvalidURLPlaceholder
-	}
-	u.Fragment = ""
-	u.RawFragment = ""
-	rawURL = u.String()
-	switch strings.ToLower(u.Scheme) {
-	case "", "file", "local", "hdfs", "noop", "gs", "gcs", "s3", "ks3", "oss", "azure", "azblob":
-		return ast.RedactURL(rawURL)
-	}
-	u.User = nil
-	u.RawQuery = ""
-	return u.String()
+	return ast.RedactURL(rawURL)
 }
 
 // ParseRawURL parse raw url to url object.
@@ -322,7 +303,7 @@ func FormatBackendURL(backend *backuppb.StorageBackend) (u url.URL) {
 func IsLocalPath(p string) (bool, error) {
 	u, err := url.Parse(p)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, errors.Annotate(berrors.ErrStorageInvalidConfig, "invalid storage URL")
 	}
 	return IsLocal(u), nil
 }

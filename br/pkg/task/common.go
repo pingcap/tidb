@@ -859,7 +859,7 @@ func (cfg *Config) parseAndValidateMasterKeyInfo(hasPlaintextKey bool, flags *pf
 	for _, keyString := range masterKeyStrings {
 		masterKey, err := validateAndParseMasterKeyString(strings.TrimSpace(keyString))
 		if err != nil {
-			return errors.Wrapf(err, "invalid master key configuration: %s", keyString)
+			return errors.Wrapf(err, "invalid master key configuration for --%s", flagMasterKeyConfig)
 		}
 		cfg.MasterKeyConfig.MasterKeys = append(cfg.MasterKeyConfig.MasterKeys, &masterKey)
 	}
@@ -969,22 +969,27 @@ func ReadBackupMeta(
 	return u, s, backupMeta, nil
 }
 
+func formatStorageURLForLog(rawURL string) string {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return "<invalid URI>"
+	}
+	parsedURL.User = nil
+	parsedURL.RawQuery = ""
+	parsedURL.ForceQuery = false
+	parsedURL.Fragment = ""
+	parsedURL.RawFragment = ""
+	return parsedURL.String()
+}
+
 // flagToZapField checks whether this flag can be logged,
 // if need to log, return its zap field. Or return a field with hidden value.
 func flagToZapField(f *pflag.Flag) zap.Field {
 	switch f.Name {
 	case flagStorage, FlagStreamFullBackupStorage, FlagPiTRAddIndexSQLStorage, flagCheckpointStorage,
-		"upstream-storage", "downstream-storage":
-		hiddenQuery, err := url.Parse(f.Value.String())
-		if err != nil {
-			return zap.String(f.Name, "<invalid URI>")
-		}
-		// Hide query parameters and fragments, which may contain unescaped secrets.
-		hiddenQuery.RawQuery = ""
-		hiddenQuery.Fragment = ""
-		hiddenQuery.RawFragment = ""
-		return zap.Stringer(f.Name, hiddenQuery)
-	case flagFullBackupCipherKey, flagLogBackupCipherKey, "azblob.encryption-key", "s3.sse-kms-context":
+		"s3.endpoint", "gcs.endpoint", "azblob.endpoint", "upstream-storage", "downstream-storage":
+		return zap.String(f.Name, formatStorageURLForLog(f.Value.String()))
+	case flagFullBackupCipherKey, flagLogBackupCipherKey, "azblob.encryption-key", "azblob.account-key", "azblob.sas-token", "s3.sse-kms-context":
 		return zap.String(f.Name, "<redacted>")
 	case flagMasterKeyConfig:
 		// TODO: we don't really need to hide the entirety of --master-key, consider parsing the URL here.

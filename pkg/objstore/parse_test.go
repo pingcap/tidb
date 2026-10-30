@@ -336,6 +336,15 @@ func TestFormatBackendURL(t *testing.T) {
 }
 
 func TestParseRawURL(t *testing.T) {
+	t.Run("malformed credentials", func(t *testing.T) {
+		_, err := ParseRawURL("s3://FAKE_RAW_USER:FAKE_RAW_PASS@bucket/path%zz?access-key=FAKE_RAW_AK&secret-access-key=FAKE_RAW_SK")
+		require.Error(t, err)
+		for _, output := range []string{err.Error(), fmt.Sprintf("%+v", err)} {
+			for _, secret := range []string{"FAKE_RAW_USER", "FAKE_RAW_PASS", "FAKE_RAW_AK", "FAKE_RAW_SK"} {
+				t.Run(secret, func(t *testing.T) { require.NotContains(t, output, secret) })
+			}
+		}
+	})
 	cases := []struct {
 		url             string
 		schema          string
@@ -382,6 +391,15 @@ func TestParseRawURL(t *testing.T) {
 }
 
 func TestIsLocal(t *testing.T) {
+	t.Run("malformed credentials", func(t *testing.T) {
+		_, err := IsLocalPath("s3://FAKE_LOCAL_USER:FAKE_LOCAL_PASS@bucket/path%zz?access-key=FAKE_LOCAL_AK&secret-access-key=FAKE_LOCAL_SK")
+		require.Error(t, err)
+		for _, output := range []string{err.Error(), fmt.Sprintf("%+v", err)} {
+			for _, secret := range []string{"FAKE_LOCAL_USER", "FAKE_LOCAL_PASS", "FAKE_LOCAL_AK", "FAKE_LOCAL_SK"} {
+				t.Run(secret, func(t *testing.T) { require.NotContains(t, output, secret) })
+			}
+		}
+	})
 	type args struct {
 		path string
 	}
@@ -391,7 +409,7 @@ func TestIsLocal(t *testing.T) {
 		want   bool
 		errStr string
 	}{
-		{"local", args{":"}, false, "missing protocol scheme"},
+		{"local", args{":"}, false, "invalid storage URL"},
 		{"local", args{"~/tmp/file"}, true, ""},
 		{"local", args{"."}, true, ""},
 		{"local", args{".."}, true, ""},
@@ -540,6 +558,23 @@ func TestS3NoProfileCredentialsValidation(t *testing.T) {
 }
 
 func TestParseBackend(t *testing.T) {
+	for _, rawURL := range []string{
+		"s3://FAKE_BACKEND_USER:FAKE_BACKEND_PASS@bucket/path%zz?access-key=FAKE_BACKEND_AK&secret-access-key=FAKE_BACKEND_SK",
+		"s3:///path?access-key=FAKE_BACKEND_AK&secret-access-key=FAKE_BACKEND_SK&unknown-token=FAKE_BACKEND_TOKEN",
+		"gcs:///path?credentials=FAKE_BACKEND_GCS",
+		"azure:///path?sig=FAKE_BACKEND_SAS",
+		"s3://bucket/prefix?endpoint=" + url.QueryEscape("https://FAKE_BACKEND_USER:FAKE_BACKEND_PASS@host/path%zz?sig=FAKE_BACKEND_TOKEN"),
+	} {
+		t.Run(rawURL, func(t *testing.T) {
+			_, err := ParseBackend(rawURL, nil)
+			require.Error(t, err)
+			for _, output := range []string{err.Error(), fmt.Sprintf("%+v", err)} {
+				for _, secret := range []string{"FAKE_BACKEND_USER", "FAKE_BACKEND_PASS", "FAKE_BACKEND_AK", "FAKE_BACKEND_SK", "FAKE_BACKEND_TOKEN", "FAKE_BACKEND_GCS", "FAKE_BACKEND_SAS"} {
+					t.Run(secret, func(t *testing.T) { require.NotContains(t, output, secret) })
+				}
+			}
+		})
+	}
 	{
 		backendOptions := &BackendOptions{
 			S3:     s3like.S3BackendOptions{},
@@ -697,14 +732,32 @@ func TestRedactURL(t *testing.T) {
 		{"/local/path", "/local/path"},
 		{"/local/path#name", "/local/path#name"},
 		{"/data/my files/100%off", "/data/my files/100%off"},
+		{"/local/path?token=SECRET#FRAGMENT", "/local/path"},
+		{"file:///local/path?token=SECRET#FRAGMENT", "file:///local/path"},
+		{"local://USER:PASS@/local/path?token=SECRET#FRAGMENT", "local:///local/path"},
+		{"hdfs://USER:PASS@host/path?token=SECRET#FRAGMENT", "hdfs://host/path"},
+		{"noop:///?token=SECRET#FRAGMENT", "noop:///"},
+		{"gs://bucket/path?credentials=SECRET#FRAGMENT", "gs://bucket/path"},
+		{"gcs://USER:PASS@bucket/path?credentials=SECRET#FRAGMENT", "gcs://bucket/path"},
+		{"GCS://bucket/path?credentials=SECRET", "gcs://bucket/path"},
+		{"gcs://bucket/path?credentials=SECRET%zz", "gcs://bucket/path"},
+		{"local:///local/path?", "local:///local/path"},
+		{"https://host/path?", "https://host/path"},
 		{"s3://bucket/prefix", "s3://bucket/prefix"},
 		{"s3://bucket/prefix?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D", "s3://bucket/prefix?sse-kms-context=xxxxxx"},
 		{`s3://bucket/prefix?sse-kms-context={"tenant":"#context-value"}`, "s3://bucket/prefix"},
 		{`s3://bucket/prefix?sse=aws:kms&sse-kms-context={"tenant":"a&private-context-value"}`, "s3://bucket/prefix"},
+		{`s3://bucket/prefix?sse-kms-context={"tenant":"a&region=private-context-value"}`, "s3://bucket/prefix"},
+		{`s3://bucket/prefix?sse-kms-context=%7B%7D&sse-kms-context={"tenant":"a&region=private-context-value"}`, "s3://bucket/prefix"},
 		{`s3://bucket/prefix?sse=aws:kms&sse-kms-context={"tenant":"a;x&private-context-value"}`, "s3://bucket/prefix"},
 		{`s3://bucket/prefix?sse=aws:kms&sse-kms-context={"tenant":"a%zz&private-context-value"}`, "s3://bucket/prefix"},
 		{"s3://bucket/prefix?access-key=AKID&secret-access-key=SKEY&region=us", "s3://bucket/prefix?access-key=xxxxxx&region=us&secret-access-key=xxxxxx"},
+		{"s3://bucket/prefix?endpoint=https%3A%2F%2FUSER%3APASS%40host%2F%3Fsig%3DSECRET", "s3://bucket/prefix?endpoint=xxxxxx"},
+		{"ks3://bucket/prefix?access-key=AKID&region=us", "ks3://bucket/prefix?access-key=xxxxxx&region=us"},
+		{"oss://bucket/prefix?access-key=AKID&region=us", "oss://bucket/prefix?access-key=xxxxxx&region=us"},
 		{"azure://bucket/prefix?sas-token=SAS", "azure://bucket/prefix?sas-token=xxxxxx"},
+		{"azblob://bucket/prefix?account-name=a&sas-token=SAS", "azblob://bucket/prefix?account-name=a&sas-token=xxxxxx"},
+		{"azure://c/p?account-name=a&sas-token=sv=2020-08-04&ss=b&sig=SECRETSIG", "azure://c/p?account-name=a&sas-token=xxxxxx"},
 		{"s3://bucket:port/prefix?access-key=AKID&secret-access-key=SKEY", InvalidURLPlaceholder},
 		{"s3://bucket%zz/prefix?access-key=AKID&secret-access-key=SKEY", InvalidURLPlaceholder},
 		{"s3a://bucket/prefix?access-key=AKID&secret-access-key=SKEY", "s3a://bucket/prefix"},
@@ -713,7 +766,9 @@ func TestRedactURL(t *testing.T) {
 		{"https://account.blob.core.windows.net/?sv=2022&sig=SAS", "https://account.blob.core.windows.net/"},
 	}
 	for _, c := range cases {
-		require.Equal(t, c.expected, RedactURL(c.raw), c.raw)
+		t.Run(c.raw, func(t *testing.T) {
+			require.Equal(t, c.expected, RedactURL(c.raw))
+		})
 	}
 }
 
