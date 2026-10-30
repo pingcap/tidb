@@ -258,3 +258,30 @@ pub struct IndexMergePath {
     /// depend on parameter values.
     pub noncacheable_reason: Option<String>,
 }
+
+/// Go `getPossibleAccessPaths`' hint-filtering result.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ResolvedIndexPaths {
+    /// Go `available` after ignore and fallback handling.
+    pub paths: Vec<PossiblePath>,
+    /// Index IDs whose path has `Forced` set.
+    pub forced_index_ids: std::collections::BTreeSet<i64>,
+    /// Index IDs whose path has `ForceKeepOrder` set.
+    pub force_keep_order_index_ids: std::collections::BTreeSet<i64>,
+    /// Index IDs whose path has `ForceNoKeepOrder` set.
+    pub force_no_keep_order_index_ids: std::collections::BTreeSet<i64>,
+    /// Whether the TiKV table path has `ForceKeepOrder` set.
+    pub force_keep_order_table_path: bool,
+    /// Whether the TiKV table path has `ForceNoKeepOrder` set.
+    pub force_no_keep_order_table_path: bool,
+    /// Go `AccessPath.IndexLookUpPushDownBy`, keyed by index ID.
+    pub index_lookup_push_down_by: std::collections::BTreeMap<i64, IndexLookupPushDownBy>,
+    /// Unknown names from comment-style hints; Go downgrades these to 1176
+    /// warnings while table-syntax hints return the error directly.
+    pub unknown_comment_indexes: Vec<String>,
+    /// Go statement-context hint warnings produced while resolving paths.
+    pub hint_warnings: Vec<String>,
+    /// Ordinary statement warnings produced when a comment-style index hint
+    /// names a TiKV index while TiKV is absent from the isolation engines.
+    pub isolation_read_warnings: Vec<String>,
+}

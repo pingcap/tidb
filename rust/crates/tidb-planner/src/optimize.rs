@@ -259,6 +259,7 @@ pub fn optimize_logical<C: OptimizeContext>(
         cte_optimizer: Some(services.cte_optimizer),
         data_source_stats: &crate::stats::CoreDataSourceStats,
         predicate_simplifier: &crate::rule::rule_predicate_simplification::RulePredicateSimplifier,
+        access_path_resolver: &crate::access_path::CoreAccessPathResolver,
     };
     // Go DataSource.InitStats is available to logical rules themselves;
     // join reorder derives candidate statistics while logical optimization

@@ -82,6 +82,7 @@ fn resolve_storage_hints_for_partition(
 }
 
 fn resolve_index_hints_for_partition(
+    ctx: &RuleContext<'_>,
     source: &mut DataSource,
     partition_name: &str,
 ) -> Result<(), PlanError> {
@@ -110,7 +111,7 @@ fn resolve_index_hints_for_partition(
     // scope. The two lists are disjoint (`index_hints` holds only comment
     // hints), exactly as at the top-level resolution. Dropping the AST list
     // put the table path back on every partition of `t USE INDEX (ia)`.
-    let resolution = crate::access_path::apply_table_index_hints(
+    let resolution = ctx.access_path_resolver.apply_table_index_hints(
         &table,
         &source.public_enumerated_paths,
         &source.ast_index_hints,
@@ -238,7 +239,7 @@ fn make_children(
         child.partition_def_idx = Some(index);
         child.physical_table_id = physical_id;
         if let Some(partition_name) = source.partition_definition_names.get(index) {
-            resolve_index_hints_for_partition(&mut child, partition_name)?;
+            resolve_index_hints_for_partition(ctx, &mut child, partition_name)?;
             resolve_index_merge_hints_for_partition(&mut child, partition_name);
             resolve_storage_hints_for_partition(ctx, &mut child, partition_name);
             used_partition_names.insert(tidb_mysql::to_lowercase(partition_name));
@@ -487,9 +488,9 @@ mod tests {
 
         // `PARTITION(P1)` applies to the partition written `P1` only.
         let mut folded = source.clone_shallow();
-        resolve_index_hints_for_partition(&mut folded, "p1").expect("paths resolve");
+        resolve_index_hints_for_partition(&crate::rule::rule_tests::test_context(&tidb_planner_core_base::PlanIdAllocator::new()), &mut folded, "p1").expect("paths resolve");
         assert_eq!(folded.index_hints.len(), 1);
-        resolve_index_hints_for_partition(&mut source, "P1").expect("paths resolve");
+        resolve_index_hints_for_partition(&crate::rule::rule_tests::test_context(&tidb_planner_core_base::PlanIdAllocator::new()), &mut source, "P1").expect("paths resolve");
         assert_eq!(
             source.enumerated_paths,
             vec![
@@ -564,7 +565,7 @@ mod tests {
             ..DataSource::default()
         };
 
-        resolve_index_hints_for_partition(&mut source, "p0").expect("paths resolve");
+        resolve_index_hints_for_partition(&crate::rule::rule_tests::test_context(&tidb_planner_core_base::PlanIdAllocator::new()), &mut source, "p0").expect("paths resolve");
         assert_eq!(
             source.enumerated_paths,
             vec![PossiblePath::Index { index: 0 }]

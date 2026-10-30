@@ -165,6 +165,34 @@ pub struct RuleContext<'a> {
     /// Go `ruleutil.ApplyPredicateSimplification` /
     /// `ApplyPredicateSimplificationForJoin`, which the rule package fills.
     pub predicate_simplifier: &'a dyn PredicateSimplifier,
+    /// Go `utilfuncp.GetPossibleAccessPaths`: core's `getPossibleAccessPaths`
+    /// hint resolution, which the partition processor re-runs per partition.
+    pub access_path_resolver: &'a dyn AccessPathResolver,
+}
+
+/// Go `utilfuncp.GetPossibleAccessPaths` (`core_init.go` registers core's
+/// `getPossibleAccessPaths`): a table's public paths filtered by its index
+/// hints.
+pub trait AccessPathResolver {
+    /// Resolves `public_paths` under the table-syntax `hints` and the
+    /// comment-style `comment_hints`.
+    ///
+    /// # Errors
+    ///
+    /// Go's hint errors (an unknown index under `FORCE INDEX`, ...).
+    #[allow(clippy::too_many_arguments)]
+    fn apply_table_index_hints(
+        &self,
+        table: &tidb_infoschema::table_source::SourceTable,
+        public_paths: &[tidb_planner_util::path::PossiblePath],
+        hints: &[tidb_ast::IndexHint],
+        comment_hints: &[crate::data_source::DataSourceIndexHint],
+        remove_global_indexes: bool,
+        force_no_index_lookup_push_down: bool,
+        session: tidb_sessionctx::IndexLookupPushDownSession,
+        tikv_in_isolation_read: bool,
+        isolation_read_engines_value: &str,
+    ) -> Result<tidb_planner_util::path::ResolvedIndexPaths, PlanError>;
 }
 
 /// Go `ruleutil.ApplyPredicateSimplification` and

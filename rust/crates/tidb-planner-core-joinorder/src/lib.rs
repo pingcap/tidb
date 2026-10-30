@@ -2505,6 +2505,23 @@ mod tests {
         }
     }
 
+    impl tidb_planner_core_operator_logicalop::plan_context::AccessPathResolver for NoCore {
+        fn apply_table_index_hints(
+            &self,
+            _table: &tidb_infoschema::table_source::SourceTable,
+            _public_paths: &[tidb_planner_util::path::PossiblePath],
+            _hints: &[tidb_ast::IndexHint],
+            _comment_hints: &[tidb_planner_core_operator_logicalop::data_source::DataSourceIndexHint],
+            _remove_global_indexes: bool,
+            _force_no_index_lookup_push_down: bool,
+            _session: tidb_sessionctx::IndexLookupPushDownSession,
+            _tikv_in_isolation_read: bool,
+            _isolation_read_engines_value: &str,
+        ) -> Result<tidb_planner_util::path::ResolvedIndexPaths, tidb_planner_core_base::PlanError> {
+            unreachable!("join-order tests prune no partitions")
+        }
+    }
+
     impl tidb_planner_core_operator_logicalop::plan_context::PredicateSimplifier for NoCore {
         fn apply_predicate_simplification(
             &self,
@@ -2576,6 +2593,7 @@ mod tests {
             cte_optimizer: None,
             data_source_stats: &NoCore,
             predicate_simplifier: &NoCore,
+            access_path_resolver: &NoCore,
         }
     }
 

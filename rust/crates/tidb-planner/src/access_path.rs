@@ -18,6 +18,7 @@
 //! before physical index conversion. Both are explicit at this boundary, so a
 //! generic Rust candidate cannot silently become an index scan.
 
+use tidb_planner_util::path::ResolvedIndexPaths;
 use tidb_planner_util::path::{DerivedAccessPath, DerivedAccessPaths, IndexLookupPushDownBy, PossiblePath};
 use tidb_sessionctx::{IndexLookupPushDownPolicy, IndexLookupPushDownSession};
 
@@ -433,31 +434,37 @@ pub fn get_possible_access_paths(
     Ok(paths)
 }
 
-/// Go `getPossibleAccessPaths`' hint-filtering result.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ResolvedIndexPaths {
-    /// Go `available` after ignore and fallback handling.
-    pub paths: Vec<PossiblePath>,
-    /// Index IDs whose path has `Forced` set.
-    pub forced_index_ids: std::collections::BTreeSet<i64>,
-    /// Index IDs whose path has `ForceKeepOrder` set.
-    pub force_keep_order_index_ids: std::collections::BTreeSet<i64>,
-    /// Index IDs whose path has `ForceNoKeepOrder` set.
-    pub force_no_keep_order_index_ids: std::collections::BTreeSet<i64>,
-    /// Whether the TiKV table path has `ForceKeepOrder` set.
-    pub force_keep_order_table_path: bool,
-    /// Whether the TiKV table path has `ForceNoKeepOrder` set.
-    pub force_no_keep_order_table_path: bool,
-    /// Go `AccessPath.IndexLookUpPushDownBy`, keyed by index ID.
-    pub index_lookup_push_down_by: std::collections::BTreeMap<i64, IndexLookupPushDownBy>,
-    /// Unknown names from comment-style hints; Go downgrades these to 1176
-    /// warnings while table-syntax hints return the error directly.
-    pub unknown_comment_indexes: Vec<String>,
-    /// Go statement-context hint warnings produced while resolving paths.
-    pub hint_warnings: Vec<String>,
-    /// Ordinary statement warnings produced when a comment-style index hint
-    /// names a TiKV index while TiKV is absent from the isolation engines.
-    pub isolation_read_warnings: Vec<String>,
+
+/// Core's `getPossibleAccessPaths` hint resolution, registered for the rules
+/// (Go `utilfuncp.GetPossibleAccessPaths`).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CoreAccessPathResolver;
+
+impl tidb_planner_core_operator_logicalop::plan_context::AccessPathResolver for CoreAccessPathResolver {
+    fn apply_table_index_hints(
+        &self,
+        table: &tidb_infoschema::table_source::SourceTable,
+        public_paths: &[PossiblePath],
+        hints: &[tidb_ast::IndexHint],
+        comment_hints: &[tidb_planner_core_operator_logicalop::data_source::DataSourceIndexHint],
+        remove_global_indexes: bool,
+        force_no_index_lookup_push_down: bool,
+        session: IndexLookupPushDownSession,
+        tikv_in_isolation_read: bool,
+        isolation_read_engines_value: &str,
+    ) -> Result<ResolvedIndexPaths, tidb_planner_core_base::PlanError> {
+        apply_table_index_hints(
+            table,
+            public_paths,
+            hints,
+            comment_hints,
+            remove_global_indexes,
+            force_no_index_lookup_push_down,
+            session,
+            tikv_in_isolation_read,
+            isolation_read_engines_value,
+        )
+    }
 }
 
 /// Applies Go `getPossibleAccessPaths`' table-syntax and already-matched

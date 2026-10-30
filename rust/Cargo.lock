@@ -5906,6 +5906,7 @@ dependencies = [
  "tidb-planner-core-operator-logicalop",
  "tidb-planner-property",
  "tidb-planner-util",
+ "tidb-sessionctx",
  "tidb-vardef",
 ]
 

@@ -106,6 +106,7 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         cte_optimizer: None,
         data_source_stats: &crate::stats::CoreDataSourceStats,
         predicate_simplifier: &crate::rule::rule_predicate_simplification::RulePredicateSimplifier,
+        access_path_resolver: &crate::access_path::CoreAccessPathResolver,
     }
 }
 
