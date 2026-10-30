@@ -211,63 +211,7 @@ pub struct SessionMemory {
     session: Arc<Tracker>,
     disk_session: Arc<Tracker>,
     config: Arc<Mutex<SessionMemoryConfig>>,
-    query_cancellation: Arc<Mutex<QueryCancellationState>>,
-}
-
-#[derive(Default)]
-struct QueryCancellationState {
-    generation: u64,
-    requested: bool,
-}
-
-/// One command's handle for `KILL QUERY` and connection shutdown.
-///
-/// The handle is installed before parsing starts. If cancellation arrives
-/// before `ResetContextOfStmt` creates the statement, the request stays
-/// latched and is replayed onto the freshly reset statement killer.
-pub struct StatementCancellation {
-    killer: Arc<SqlKiller>,
-    state: Arc<Mutex<QueryCancellationState>>,
-    generation: u64,
-}
-
-impl StatementCancellation {
-    /// Resets the current internal task at Track/UnTrack boundaries. A stale
-    /// handle cannot clear the cancellation of a reused session's next task.
-    pub fn reset(&self) {
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if state.generation == self.generation {
-            state.requested = false;
-            self.killer.reset();
-        }
-    }
-
-    /// Interrupts the command that owns this handle.
-    pub fn cancel(&self) {
-        self.cancel_with(KillSignal::QueryInterrupted);
-    }
-
-    /// Interrupts the command with the watchdog's own signal (Go server
-    /// `killQuery`: `MaxExecTimeExceeded` for `max_execution_time`,
-    /// `RunawayQueryExceeded` for a runaway rule).
-    pub fn cancel_with(&self, signal: KillSignal) {
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if state.generation != self.generation {
-            return;
-        }
-        state.requested = true;
-        drop(state);
-        self.killer.send_kill_signal(signal);
-    }
-}
-
-impl Drop for StatementCancellation {
-    fn drop(&mut self) {
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if state.generation == self.generation {
-            state.requested = false;
-        }
-    }
+    query_cancellation: tidb_sqlkiller::QueryCancellation,
 }
 
 #[derive(Clone)]
@@ -324,7 +268,7 @@ impl SessionMemory {
                 tmp_storage_on_oom: true,
                 oom_action,
             })),
-            query_cancellation: Arc::default(),
+            query_cancellation: tidb_sqlkiller::QueryCancellation::default(),
         }
     }
 
@@ -337,21 +281,8 @@ impl SessionMemory {
 
     /// Starts the cancellation lifetime for one wire command.
     #[must_use]
-    pub fn begin_query_cancellation(&self) -> StatementCancellation {
-        let generation = {
-            let mut state = self
-                .query_cancellation
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            state.generation = state.generation.wrapping_add(1);
-            state.requested = false;
-            state.generation
-        };
-        StatementCancellation {
-            killer: Arc::clone(&self.session.killer),
-            state: Arc::clone(&self.query_cancellation),
-            generation,
-        }
+    pub fn begin_query_cancellation(&self) -> tidb_sqlkiller::StatementCancellation {
+        self.query_cancellation.begin(Arc::clone(&self.session.killer))
     }
 
     /// Sets `@@tidb_enable_tmp_storage_on_oom` for subsequently created
@@ -469,12 +400,7 @@ impl SessionMemory {
         let connection_id = self.session.session_id.load(SeqCst);
         let config = self.config.lock().unwrap().clone();
         let killer = install_oom_action(&self.session, config.oom_action, connection_id);
-        if self
-            .query_cancellation
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .requested
-        {
+        if self.query_cancellation.requested() {
             killer.send_kill_signal(KillSignal::QueryInterrupted);
         }
 

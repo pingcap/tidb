@@ -377,21 +377,6 @@ pub(super) fn run_physical_set_opr_stmt(
 pub(super) fn planner_error_to_driver(error: tidb_planner_core_base::PlanError) -> DriverError {
     match error.kind() {
         tidb_planner_core_base::PlanErrorKind::Mysql(error) => DriverError::Mysql(error.clone()),
-        tidb_planner_core_base::PlanErrorKind::Aggregation(aggregate) => {
-            use tidb_expression_aggregation::AggDescError;
-            match aggregate {
-                AggDescError::ApproxPercentileOutOfRange(value) => {
-                    DriverError::from(tidb_terror::MysqlError::unknown(format!("Percentage value {} is out of range [1, 100]", *value)))
-                }
-                AggDescError::ApproxPercentileArgCount => DriverError::from(tidb_terror::MysqlError::unknown("APPROX_PERCENTILE should take 2 arguments")),
-                AggDescError::ApproxPercentileNotConstant => DriverError::from(tidb_terror::MysqlError::unknown("APPROX_PERCENTILE should take a constant expression as percentage argument")),
-                AggDescError::ApproxPercentileNullPercentage => {
-                    DriverError::from(tidb_terror::MysqlError::unknown("APPROX_PERCENTILE: Percentage value cannot be NULL"))
-                }
-                AggDescError::Expr(eval) => DriverError::Exec(ExecError::Eval(eval.clone())),
-                other => DriverError::unsupported(other.to_string()),
-            }
-        }
         tidb_planner_core_base::PlanErrorKind::Eval(tidb_exprctx::EvalError::InvalidGroupFuncUse) => {
             DriverError::from(
                 tidb_plannererrors::ERR_INVALID_GROUP_FUNC_USE

@@ -3937,6 +3937,7 @@ dependencies = [
  "tidb-context",
  "tidb-datatype",
  "tidb-dbterror",
+ "tidb-ddl-jobsubmit",
  "tidb-ddl-label",
  "tidb-domain-infosync",
  "tidb-errno",
@@ -3992,7 +3993,6 @@ dependencies = [
  "tidb-ast",
  "tidb-dbterror",
  "tidb-ddl-bdr",
- "tidb-ddl-build",
  "tidb-ddl-systable",
  "tidb-filter",
  "tidb-goruntime",
@@ -4001,7 +4001,6 @@ dependencies = [
  "tidb-metadef",
  "tidb-model",
  "tidb-mysql",
- "tidb-sessionctx",
  "tidb-terror",
  "tidb-txnkv",
 ]
@@ -4680,7 +4679,6 @@ dependencies = [
  "tidb-executor-aggfuncs",
  "tidb-executor-internal-exec",
  "tidb-executor-internal-vecgroupchecker",
- "tidb-executor-join",
  "tidb-expr",
  "tidb-exprctx",
  "tidb-expression-aggregation",
@@ -4777,9 +4775,6 @@ dependencies = [
 [[package]]
 name = "tidb-executor-join-joinversion"
 version = "0.0.0"
-dependencies = [
- "tidb-vardef",
-]
 
 [[package]]
 name = "tidb-executor-lockstats"
@@ -5885,7 +5880,6 @@ dependencies = [
  "tidb-datatype",
  "tidb-expr",
  "tidb-exprctx",
- "tidb-expression-aggregation",
  "tidb-hack",
  "tidb-planner-cascades-base",
  "tidb-planner-property",
@@ -6976,7 +6970,6 @@ dependencies = [
  "tidb-sqlkiller",
  "tidb-stmtctx",
  "tidb-txninfo",
- "tidb-variable",
 ]
 
 [[package]]
@@ -8203,6 +8196,7 @@ dependencies = [
 name = "tidb-vardef"
 version = "0.0.0"
 dependencies = [
+ "tidb-executor-join-joinversion",
  "tidb-hack",
 ]
 
@@ -8222,6 +8216,7 @@ dependencies = [
  "tidb-dbterror",
  "tidb-errno",
  "tidb-execdetails",
+ "tidb-executor-join-joinversion",
  "tidb-exeerrors",
  "tidb-fixcontrol",
  "tidb-go-time-layout",

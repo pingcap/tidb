@@ -27,7 +27,6 @@ tidb-execdetails = { path = "../tidb-execdetails" }
 tidb-executor-aggfuncs = { path = "../tidb-executor-aggfuncs" }
 tidb-executor-internal-exec = { path = "../tidb-executor-internal-exec" }
 tidb-executor-internal-vecgroupchecker = { path = "../tidb-executor-internal-vecgroupchecker" }
-tidb-executor-join = { path = "../tidb-executor-join" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-expression-aggregation = { path = "../tidb-expression-aggregation" }

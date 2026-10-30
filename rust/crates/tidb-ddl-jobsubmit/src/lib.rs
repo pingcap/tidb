@@ -15,7 +15,6 @@
 //! Pinned Go `pkg/ddl/jobsubmit`: job construction, admission, ID allocation,
 //! active-table insertion, and retry-attempt cleanup.
 
-use tidb_ddl_build::session_context::DdlSessionContext;
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -40,8 +39,6 @@ use tidb_goruntime::go_runtime::GoSharedSlice;
 use tidb_txnkv::transaction::BufferMutation;
 
 use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
-use tidb_ddl_build::plan_error::DdlPlanError;
-use tidb_ddl_build::table_info_build::DdlAdmissionError;
 use tidb_ddl_systable::ddl_job_table::DdlJobTable;
 
 /// Go `JobSpec`: the durable envelope plus its source-typed private arguments.
@@ -64,10 +61,10 @@ pub struct GlobalIdAllocator {
 }
 
 impl GlobalIdAllocator {
-    pub fn load<S: MetaSnapshot>(snapshot: &mut S) -> Result<Self, DdlPlanError> {
+    pub fn load<S: MetaSnapshot>(snapshot: &mut S) -> Result<Self, JobSubmitError> {
         let current = match snapshot.get(&key::next_global_id_kv_key())? {
             Some(stored) => value::parse_int_value(&stored)
-                .map_err(|error| DdlPlanError::Encode(format!("NextGlobalID: {error}")))?,
+                .map_err(|error| JobSubmitError::Encode(format!("NextGlobalID: {error}")))?,
             None => 0,
         };
         Ok(Self {
@@ -76,23 +73,23 @@ impl GlobalIdAllocator {
         })
     }
 
-    pub fn allocate(&mut self, count: i64) -> Result<Vec<i64>, DdlPlanError> {
+    pub fn allocate(&mut self, count: i64) -> Result<Vec<i64>, JobSubmitError> {
         let first = self
             .current
             .checked_add(1)
-            .ok_or(DdlPlanError::GlobalIdExhausted { wanted: i64::MAX })?;
+            .ok_or(JobSubmitError::GlobalIdExhausted { wanted: i64::MAX })?;
         let new_max = self
             .current
             .checked_add(count)
-            .ok_or(DdlPlanError::GlobalIdExhausted { wanted: i64::MAX })?;
+            .ok_or(JobSubmitError::GlobalIdExhausted { wanted: i64::MAX })?;
         if new_max > MAX_USER_GLOBAL_ID {
-            return Err(DdlPlanError::GlobalIdExhausted { wanted: new_max });
+            return Err(JobSubmitError::GlobalIdExhausted { wanted: new_max });
         }
         self.current = new_max;
         Ok((first..=new_max).collect())
     }
 
-    pub fn mutation(&self) -> Result<Option<BufferMutation>, DdlPlanError> {
+    pub fn mutation(&self) -> Result<Option<BufferMutation>, JobSubmitError> {
         (self.current != self.original)
             .then(|| {
                 BufferMutation::set(
@@ -110,7 +107,7 @@ impl GlobalIdAllocator {
 /// the ID; a write conflict requires a fresh read and allocation.
 pub fn reserve_global_id<S: MetaSnapshot>(
     snapshot: &mut S,
-) -> Result<(i64, BufferMutation), DdlPlanError> {
+) -> Result<(i64, BufferMutation), JobSubmitError> {
     let mut allocator = GlobalIdAllocator::load(snapshot)?;
     let id = allocator.allocate(1)?[0];
     Ok((id, allocator.mutation()?.expect("one allocated global ID")))
@@ -120,15 +117,15 @@ pub fn reserve_global_id<S: MetaSnapshot>(
 /// placement policies' own sequence. Commit the mutation before using it.
 pub fn reserve_placement_policy_id<S: MetaSnapshot>(
     snapshot: &mut S,
-) -> Result<(i64, BufferMutation), DdlPlanError> {
+) -> Result<(i64, BufferMutation), JobSubmitError> {
     let current = match snapshot.get(&key::policy_global_id_kv_key())? {
         Some(stored) => value::parse_int_value(&stored)
-            .map_err(|error| DdlPlanError::Encode(format!("PolicyGlobalID: {error}")))?,
+            .map_err(|error| JobSubmitError::Encode(format!("PolicyGlobalID: {error}")))?,
         None => 0,
     };
     let id = current
         .checked_add(1)
-        .ok_or(DdlPlanError::GlobalIdExhausted { wanted: i64::MAX })?;
+        .ok_or(JobSubmitError::GlobalIdExhausted { wanted: i64::MAX })?;
     Ok((
         id,
         BufferMutation::set(key::policy_global_id_kv_key(), value::encode_int_value(id))?,
@@ -418,6 +415,29 @@ pub enum JobSubmitError {
     BdrRestricted(String),
     /// An active flashback-cluster job excludes every new DDL submission.
     FlashbackClusterJob,
+    /// The catalog could not be read.
+    Catalog(tidb_infoschema::cluster_catalog::ClusterCatalogError),
+    /// A stored value could not be decoded or encoded.
+    Encode(String),
+    /// A mutation could not be built.
+    Mutations(tidb_txnkv::transaction::MutationSetError),
+    /// Go `GenGlobalIDs`' own limit: the user ID space is exhausted.
+    GlobalIdExhausted {
+        /// The ID the allocation would have reached.
+        wanted: i64,
+    },
+}
+
+impl From<tidb_infoschema::cluster_catalog::ClusterCatalogError> for JobSubmitError {
+    fn from(error: tidb_infoschema::cluster_catalog::ClusterCatalogError) -> Self {
+        Self::Catalog(error)
+    }
+}
+
+impl From<tidb_txnkv::transaction::MutationSetError> for JobSubmitError {
+    fn from(error: tidb_txnkv::transaction::MutationSetError) -> Self {
+        Self::Mutations(error)
+    }
 }
 
 impl JobSubmitError {
@@ -442,7 +462,12 @@ impl JobSubmitError {
                 tidb_dbterror::ERR_BDR_RESTRICTED_DDL
                     .generate_with_stack_by_args(&[role.as_str().into()]),
             ),
-            Self::InvalidInvolvingSchemaInfo(_) | Self::FlashbackClusterJob => None,
+            Self::InvalidInvolvingSchemaInfo(_)
+            | Self::FlashbackClusterJob
+            | Self::Catalog(_)
+            | Self::Encode(_)
+            | Self::Mutations(_)
+            | Self::GlobalIdExhausted { .. } => None,
         }
     }
 
@@ -461,6 +486,14 @@ impl fmt::Display for JobSubmitError {
         match (self.to_terror(), self) {
             (Some(error), _) => formatter.write_str(error.message()),
             (None, Self::InvalidInvolvingSchemaInfo(message)) => formatter.write_str(message),
+            (None, Self::Catalog(error)) => write!(formatter, "{error}"),
+            (None, Self::Encode(detail)) => formatter.write_str(detail),
+            (None, Self::Mutations(error)) => write!(formatter, "{error}"),
+            (None, Self::GlobalIdExhausted { wanted }) => write!(
+                formatter,
+                "global id:{wanted} exceeds the limit:{}",
+                tidb_metadef::MAX_USER_GLOBAL_ID
+            ),
             (None, _) => formatter.write_str("Can't add ddl job, have flashback cluster job"),
         }
     }
@@ -472,7 +505,8 @@ impl std::error::Error for JobSubmitError {}
 ///
 /// `Ok(None)` is Go's `noop=true`: the table is already in the requested mode.
 pub fn build_alter_table_mode_job(
-    context: &dyn DdlSessionContext,
+    cdc_write_source: u64,
+    sql_mode: i64,
     target: &AlterTableModeTarget,
 ) -> Result<Option<(Job, GoShared<AlterTableModeArgs>)>, JobSubmitError> {
     if !target.current_mode.can_transition_to(target.target_mode) {
@@ -500,8 +534,8 @@ pub fn build_alter_table_mode_job(
     job.type_ = ActionType::ACTION_ALTER_TABLE_MODE;
     job.query = "skip".into();
     job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
-    job.cdc_write_source = context.ddl_cdc_write_source();
-    job.sql_mode = context.ddl_sql_mode();
+    job.cdc_write_source = cdc_write_source;
+    job.sql_mode = sql_mode;
     job.involving_schema_info = GoSharedSlice::from_vec(vec![InvolvingSchemaInfo {
         database: target.schema_name.lowercase().into(),
         table: target.table_name.lowercase().to_owned().into(),
@@ -570,12 +604,6 @@ pub fn prepare_spec_for_submit(
     Ok(())
 }
 
-pub fn submit_error(error: JobSubmitError) -> DdlPlanError {
-    match error.to_terror() {
-        Some(go) => DdlPlanError::Admission(DdlAdmissionError::from_terror(&go)),
-        None => DdlPlanError::plain_refusal(error.to_string()),
-    }
-}
 
 fn string_for_ids(ids: impl IntoIterator<Item = i64>) -> String {
     ids.into_iter()
@@ -649,20 +677,20 @@ pub fn prepare_submit_batch<S: MetaSnapshot>(
     start_ts: u64,
     upgrading: bool,
     min_job_id: i64,
-) -> Result<(), DdlPlanError> {
+) -> Result<(), JobSubmitError> {
     if specs.is_empty() {
         return Ok(());
     }
     let system_tables = tidb_ddl_systable::SystemTableManager::new(catalog);
     if system_tables
         .has_flashback_cluster_job(snapshot, min_job_id)
-        .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+        .map_err(|error| JobSubmitError::Encode(error.to_string()))?
     {
-        return Err(submit_error(JobSubmitError::FlashbackClusterJob));
+        return Err(JobSubmitError::FlashbackClusterJob);
     }
     let bdr_role = snapshot.get(&key::bdr_role_kv_key())?.unwrap_or_default();
     for spec in specs.iter_mut() {
-        prepare_spec_for_submit(spec, start_ts, &bdr_role, upgrading).map_err(submit_error)?;
+        prepare_spec_for_submit(spec, start_ts, &bdr_role, upgrading)?;
     }
     Ok(())
 }
@@ -672,12 +700,12 @@ pub fn prepare_submit_batch<S: MetaSnapshot>(
 pub fn plan_assign_global_ids<S: MetaSnapshot>(
     snapshot: &mut S,
     specs: &mut [JobSpec],
-) -> Result<Vec<BufferMutation>, DdlPlanError> {
+) -> Result<Vec<BufferMutation>, JobSubmitError> {
     if specs.is_empty() {
         return Ok(Vec::new());
     }
     let count = i64::try_from(required_global_id_count(specs))
-        .map_err(|_| DdlPlanError::GlobalIdExhausted { wanted: i64::MAX })?;
+        .map_err(|_| JobSubmitError::GlobalIdExhausted { wanted: i64::MAX })?;
     let mut allocator = GlobalIdAllocator::load(snapshot)?;
     let ids = allocator.allocate(count)?;
     assign_global_ids(specs, &ids);
@@ -695,12 +723,12 @@ pub fn plan_insert_job_rows(
     catalog: &ClusterCatalog,
     specs: &mut [JobSpec],
     mutations: &mut Vec<BufferMutation>,
-) -> Result<(), DdlPlanError> {
+) -> Result<(), JobSubmitError> {
     if specs.is_empty() {
         return Ok(());
     }
     let job_table =
-        DdlJobTable::locate(catalog).map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        DdlJobTable::locate(catalog).map_err(|error| JobSubmitError::Encode(error.to_string()))?;
     for spec in specs {
         if spec.job.type_ == ActionType::ACTION_MULTI_SCHEMA_CHANGE {
             // Go `fillArgsWithSubJobs`: each sub-job in the parent's version.
@@ -725,7 +753,7 @@ pub fn plan_insert_job_rows(
                 false,
                 mutations,
             )
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            .map_err(|error| JobSubmitError::Encode(error.to_string()))?;
     }
     Ok(())
 }
@@ -743,7 +771,7 @@ pub fn plan_insert_attempt<S, F, Cleanup>(
     catalog: &ClusterCatalog,
     specs: &mut [JobSpec],
     before_insert_with_assigned_ids: &mut F,
-) -> Result<(Vec<BufferMutation>, Option<Cleanup>), DdlPlanError>
+) -> Result<(Vec<BufferMutation>, Option<Cleanup>), JobSubmitError>
 where
     S: MetaSnapshot,
     F: FnMut(&[JobSpec]) -> Option<Cleanup>,
@@ -912,11 +940,9 @@ mod tests {
 
     #[test]
     fn alter_table_mode_job_matches_go() {
-        let context = tidb_sessionctx::StmtContext::for_query()
-            .with_ddl_sql_mode(4)
-            .with_ddl_job_context(7, 1, "", Vec::new());
+        // The session's `CDCWriteSource` and SQL mode.
         let (job, args) =
-            build_alter_table_mode_job(&context, &target(TableMode::NORMAL, TableMode::IMPORT))
+            build_alter_table_mode_job(7, 4, &target(TableMode::NORMAL, TableMode::IMPORT))
                 .unwrap()
                 .unwrap();
         assert_eq!(job.version, tidb_model::JobVersion::V2);
@@ -939,15 +965,11 @@ mod tests {
 
     #[test]
     fn alter_table_mode_noop_and_invalid_match_go() {
-        let context = tidb_sessionctx::StmtContext::for_query();
-        assert!(build_alter_table_mode_job(
-            &context,
-            &target(TableMode::IMPORT, TableMode::IMPORT)
-        )
+        assert!(build_alter_table_mode_job(0, 0, &target(TableMode::IMPORT, TableMode::IMPORT))
         .unwrap()
         .is_none());
         let error =
-            build_alter_table_mode_job(&context, &target(TableMode::IMPORT, TableMode::RESTORE))
+            build_alter_table_mode_job(0, 0, &target(TableMode::IMPORT, TableMode::RESTORE))
                 .unwrap_err();
         assert_eq!(error.code(), 8259);
         assert_eq!(

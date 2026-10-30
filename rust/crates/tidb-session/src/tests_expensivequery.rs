@@ -27,7 +27,7 @@ use tidb_sqlkiller::KillSignal;
 /// A connection's kill target holding its running command's
 /// cancellation, as the server's `ConnectionCancellation` does.
 #[derive(Default)]
-struct Command(Mutex<Option<tidb_executor::StatementCancellation>>);
+struct Command(Mutex<Option<tidb_sqlkiller::StatementCancellation>>);
 
 impl ProcessKillTarget for Command {
     fn cancel_query(&self) {

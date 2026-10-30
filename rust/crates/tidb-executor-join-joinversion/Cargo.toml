@@ -11,4 +11,3 @@ description = "TiDB pkg/executor/join/joinversion (Rust)."
 workspace = true
 
 [dependencies]
-tidb-vardef = { path = "../tidb-vardef" }

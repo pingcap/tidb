@@ -14,7 +14,6 @@ workspace = true
 test-util = []
 
 [dependencies]
-tidb-variable = { path = "../tidb-variable" }
 tidb-stmtctx = { path = "../tidb-stmtctx" }
 tidb-txninfo = { path = "../tidb-txninfo" }
 tidb-memory = { path = "../tidb-memory" }

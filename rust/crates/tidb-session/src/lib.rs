@@ -1183,7 +1183,7 @@ impl Session {
 
     /// Starts the cancellation lifetime for the next wire command.
     #[must_use]
-    pub fn begin_query_cancellation(&self) -> tidb_executor::StatementCancellation {
+    pub fn begin_query_cancellation(&self) -> tidb_sqlkiller::StatementCancellation {
         self.session_memory.begin_query_cancellation()
     }
 

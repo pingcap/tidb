@@ -1338,7 +1338,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 )));
             }
             let mut descriptor = AggFuncDesc::new(self.ctx, &name, built_args, distinct)
-                .map_err(PlanError::aggregation)?;
+                .map_err(agg_desc_error)?;
             if descriptor.name() != agg_names::FIRST_ROW {
                 all_aggs_first_row = false;
             }
@@ -1644,4 +1644,14 @@ fn decompose_aggregate(agg: &Expr) -> Result<DecomposedAggregate<'_>, PlanError>
 #[must_use]
 pub fn columns_and_correlated(expr: &Expression) -> (Vec<Column>, Vec<CorrelatedColumn>) {
     (extract_columns(expr), extract_cor_columns(expr))
+}
+
+/// Go returns an aggregate descriptor's `error` as the plan's: the
+/// expression error it wraps, or its plain `errors.New` / `errors.Errorf`
+/// (1105) as written.
+fn agg_desc_error(error: tidb_expression_aggregation::AggDescError) -> PlanError {
+    match error {
+        tidb_expression_aggregation::AggDescError::Expr(eval) => PlanError::eval(eval),
+        other => PlanError::from(tidb_terror::MysqlError::unknown(other.to_string())),
+    }
 }

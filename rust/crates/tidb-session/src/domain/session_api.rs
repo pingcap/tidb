@@ -43,13 +43,13 @@ pub trait ActiveQueryCancellation: Send + Sync {
     }
 }
 
-impl ActiveQueryCancellation for tidb_executor::StatementCancellation {
+impl ActiveQueryCancellation for tidb_sqlkiller::StatementCancellation {
     fn cancel(&self) {
-        tidb_executor::StatementCancellation::cancel(self);
+        tidb_sqlkiller::StatementCancellation::cancel(self);
     }
 
     fn cancel_with(&self, signal: tidb_sqlkiller::KillSignal) {
-        tidb_executor::StatementCancellation::cancel_with(self, signal);
+        tidb_sqlkiller::StatementCancellation::cancel_with(self, signal);
     }
 }
 

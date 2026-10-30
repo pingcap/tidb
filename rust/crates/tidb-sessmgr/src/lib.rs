@@ -940,7 +940,7 @@ pub struct ProcessGuard {
 #[derive(Clone)]
 pub struct SystemProcess {
     entry: SharedProcessEntry,
-    cancellation: Arc<tidb_variable::mem_quota::StatementCancellation>,
+    cancellation: Arc<tidb_sqlkiller::StatementCancellation>,
 }
 
 /// Retained physical transaction observation, independent of statement publication.
@@ -1027,7 +1027,7 @@ impl ProcessGuard {
     /// Captures the live entry and the current command's cancellation lifetime.
     pub fn system_process(
         &self,
-        cancellation: tidb_variable::mem_quota::StatementCancellation,
+        cancellation: tidb_sqlkiller::StatementCancellation,
     ) -> SystemProcess {
         SystemProcess {
             entry: Arc::clone(&self.entry),

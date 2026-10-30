@@ -15,7 +15,6 @@ tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-plannererrors = { path = "../tidb-plannererrors" }
 tidb-planner-property = { path = "../tidb-planner-property" }
-tidb-expression-aggregation = { path = "../tidb-expression-aggregation" }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-planner-cascades-base = { path = "../tidb-planner-cascades-base" }

@@ -157,8 +157,9 @@ use tidb_driver_error::ExecError;
 use crate::hash_join::{
     equi_keys_equal_chunk_rows, equi_keys_equal_row, exact_int_key_chunk, exact_int_keys_chunk,
     row_hash, row_hash_chunk, row_hash_chunk_batched, row_key, row_key_by, BuildError, BuildTable,
-    Chain, EquiKey, FastBytesMap, KeyClass, KeyError,
+    Chain, EquiKey, KeyClass, KeyError,
 };
+use tidb_executor_internal_exec::fast_bytes_map::FastBytesMap;
 use tidb_variable::mem_quota::StatementMemory;
 mod index_hash;
 mod output;

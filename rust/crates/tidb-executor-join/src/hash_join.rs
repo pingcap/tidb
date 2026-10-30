@@ -76,40 +76,7 @@ use tidb_expr::expression::Expression;
 use tidb_memory::Tracker;
 use tidb_spill_storage::SpillStorage;
 
-/// Go's hash join feeds encoded key columns to `hash/fnv.New64`. The complete
-/// encoded key is still compared after a bucket hit, so this hash is only a
-/// fast bucket selector and collisions cannot change SQL results.
-#[derive(Default)]
-pub struct FastBytesHasher {
-    hash: u64,
-    initialized: bool,
-}
-
-impl Hasher for FastBytesHasher {
-    fn finish(&self) -> u64 {
-        if self.initialized {
-            self.hash
-        } else {
-            0xcbf29ce484222325
-        }
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        let mut hash = if self.initialized {
-            self.hash
-        } else {
-            self.initialized = true;
-            0xcbf29ce484222325
-        };
-        for byte in bytes {
-            hash = hash.wrapping_mul(0x100000001b3);
-            hash ^= u64::from(*byte);
-        }
-        self.hash = hash;
-    }
-}
-
-pub type FastBytesMap<V> = HashMap<Vec<u8>, V, BuildHasherDefault<FastBytesHasher>>;
+use tidb_executor_internal_exec::fast_bytes_map::FastBytesHasher;
 
 #[derive(Default)]
 pub struct IdentityU64Hasher(u64);

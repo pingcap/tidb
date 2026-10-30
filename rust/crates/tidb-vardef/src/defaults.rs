@@ -267,13 +267,9 @@ pub const DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_SORT: i64 = -1;
 pub const DEF_TIFLASH_MEM_QUOTA_QUERY_PER_NODE: i64 = 0;
 /// Go `DefTiFlashQuerySpillRatio` (= `0.7`).
 pub const DEF_TIFLASH_QUERY_SPILL_RATIO: f64 = 0.7;
-/// Go `joinversion.HashJoinVersionLegacy`.
-pub const HASH_JOIN_VERSION_LEGACY: &str = "legacy";
-/// Go `joinversion.HashJoinVersionOptimized`.
-pub const HASH_JOIN_VERSION_OPTIMIZED: &str = "optimized";
 /// Go `DefTiFlashHashJoinVersion` (= `joinversion.TiFlashHashJoinVersionDefVal`).
-/// Resolved from joinversion.TiFlashHashJoinVersionDefVal.
-pub const DEF_TIFLASH_HASH_JOIN_VERSION: &str = HASH_JOIN_VERSION_LEGACY;
+pub const DEF_TIFLASH_HASH_JOIN_VERSION: &str =
+    tidb_executor_join_joinversion::TIFLASH_HASH_JOIN_VERSION_DEFAULT;
 /// Go `DefTiDBEnableTiFlashPipelineMode` (= `true`).
 pub const DEF_TIDB_ENABLE_TIFLASH_PIPELINE_MODE: bool = true;
 /// Go `DefTiDBMPPStoreFailTTL` (= `"0s"`).
@@ -795,7 +791,8 @@ pub const DEF_TIDB_SKIP_MISSING_PARTITION_STATS: bool = true;
 pub const DEF_TIDB_OPT_ENABLE_HASH_JOIN: bool = true;
 /// Go `DefTiDBHashJoinVersion` (= `joinversion.HashJoinVersionOptimized`).
 /// Resolved from joinversion.HashJoinVersionOptimized.
-pub const DEF_TIDB_HASH_JOIN_VERSION: &str = HASH_JOIN_VERSION_OPTIMIZED;
+pub const DEF_TIDB_HASH_JOIN_VERSION: &str =
+    tidb_executor_join_joinversion::HASH_JOIN_VERSION_OPTIMIZED;
 /// Go `DefTiDBOptIndexJoinBuild` (= `true`).
 pub const DEF_TIDB_OPT_INDEX_JOIN_BUILD: bool = true;
 /// Go `DefTiDBOptObjective` (= `OptObjectiveModerate`).
@@ -909,7 +906,10 @@ mod tests {
         assert_eq!(DEF_TIDB_SCHEMA_CACHE_SIZE as u64, 512 * 1024 * 1024);
         assert_eq!(DEF_TIDB_CIRCUIT_BREAKER_PD_META_ERROR_RATE_RATIO, 0.0);
         assert!(DEF_ENABLE_WINDOW_FUNCTION);
-        assert_eq!(DEF_TIDB_HASH_JOIN_VERSION, HASH_JOIN_VERSION_OPTIMIZED);
+        assert_eq!(
+            DEF_TIDB_HASH_JOIN_VERSION,
+            tidb_executor_join_joinversion::HASH_JOIN_VERSION_OPTIMIZED
+        );
         assert_eq!(DEF_TIDB_AUTO_ANALYZE_CONCURRENCY, 3);
         assert_eq!(DEF_TIDB_ANALYZE_DEFAULT_NUM_BUCKETS, 256);
         assert_eq!(DEF_TIDB_ANALYZE_DEFAULT_NUM_TOP_N, 100);

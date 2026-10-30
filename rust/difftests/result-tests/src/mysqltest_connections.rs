@@ -118,7 +118,7 @@ pub struct Connections {
 /// it, which the server's `ConnectionCancellation` holds the same way.
 #[derive(Default)]
 struct CommandCancellation {
-    active: Mutex<Option<tidb_executor::StatementCancellation>>,
+    active: Mutex<Option<tidb_sqlkiller::StatementCancellation>>,
 }
 
 impl ProcessKillTarget for CommandCancellation {

@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Go pkg/sessionctx/variable for the TiDB Rust rewrite."
 
 [dependencies]
+tidb-executor-join-joinversion = { path = "../tidb-executor-join-joinversion" }
 tracing = "0.1"
 tidb-exeerrors = { path = "../tidb-exeerrors" }
 tidb-spill-storage = { path = "../tidb-spill-storage" }

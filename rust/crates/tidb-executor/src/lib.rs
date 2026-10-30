@@ -236,7 +236,7 @@ pub use kv_table::{KvTableDdl, KvTablePartitionMaintenance, KvTableReader, RowDe
 use tidb_ddl_build::table_backfill::KvTableBackfill;
 use tidb_table::kv_table::{FkAction, KvColumn, KvTable, RowDecodeContext, TableCharset};
 pub use limit::LimitExec;
-pub use mem_quota::{SessionMemory, StatementCancellation, StatementMemory};
+pub use mem_quota::{SessionMemory, StatementMemory};
 use tidb_vardef::OomAction;
 pub use mem_table::MemTableSourceExec;
 pub use mpp_query::MppQueryInfo;

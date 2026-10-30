@@ -26,7 +26,7 @@
 use tidb_ast::BdrRole;
 
 use tidb_ddl_build::plan_error::DdlPlanError;
-use tidb_ddl_jobsubmit::{submit_error, JobSubmitError};
+use tidb_ddl_jobsubmit::JobSubmitError;
 use tidb_hack::GoToLower;
 
 fn role_of(stored: &[u8]) -> Option<BdrRole> {
@@ -38,7 +38,7 @@ fn role_of(stored: &[u8]) -> Option<BdrRole> {
 }
 
 fn restricted(stored: &[u8]) -> DdlPlanError {
-    submit_error(JobSubmitError::BdrRestricted(
+    DdlPlanError::from(JobSubmitError::BdrRestricted(
         String::from_utf8_lossy(stored).into_owned(),
     ))
 }

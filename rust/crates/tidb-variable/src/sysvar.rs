@@ -1725,7 +1725,7 @@ impl SysVarDef {
             self.name,
             "tidb_hash_join_version" | "tiflash_hash_join_version"
         ) {
-            use tidb_vardef::defaults::{HASH_JOIN_VERSION_LEGACY, HASH_JOIN_VERSION_OPTIMIZED};
+            use tidb_executor_join_joinversion::{HASH_JOIN_VERSION_LEGACY, HASH_JOIN_VERSION_OPTIMIZED};
 
             let is_valid = validated
                 .value

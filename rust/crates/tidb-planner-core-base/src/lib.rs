@@ -376,8 +376,6 @@ pub struct PlanError {
 pub enum PlanErrorKind {
     /// The error value Go's planner returns, raised as Go raises it.
     Mysql(tidb_terror::MysqlError),
-    /// Aggregate descriptor validation before executor construction.
-    Aggregation(tidb_expression_aggregation::AggDescError),
     /// An expression error whose MySQL identity must survive the planner
     /// boundary (for example Go's 1253 collation/charset mismatch). Keeping
     /// the typed error avoids turning it into generic 1105 merely because
@@ -408,15 +406,6 @@ impl PlanError {
         Self {
             kind: PlanErrorKind::Internal,
             message: message.into(),
-        }
-    }
-
-    /// Preserve aggregate validation errors across planning.
-    #[must_use]
-    pub fn aggregation(error: tidb_expression_aggregation::AggDescError) -> Self {
-        Self {
-            message: error.to_string(),
-            kind: PlanErrorKind::Aggregation(error),
         }
     }
 

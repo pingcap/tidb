@@ -17,10 +17,8 @@ tidb-ddl-bdr = { path = "../tidb-ddl-bdr" }
 tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-filter = { path = "../tidb-filter" }
 tidb-goruntime = { path = "../tidb-goruntime" }
-tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-ast = { path = "../tidb-ast" }
-tidb-ddl-build = { path = "../tidb-ddl-build" }
 tidb-meta = { path = "../tidb-meta" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }

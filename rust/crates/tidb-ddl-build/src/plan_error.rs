@@ -215,3 +215,22 @@ impl From<tidb_syssession::mysql_system_tables::SystemTableError> for DdlPlanErr
         Self::Encode(error.to_string())
     }
 }
+
+/// What `jobsubmit` returned, as the DDL statement's error: its refusals as
+/// Go raises them (a `*terror.Error`, or a plain `errors.Errorf`), the rest
+/// as this crate's own variants.
+impl From<tidb_ddl_jobsubmit::JobSubmitError> for DdlPlanError {
+    fn from(error: tidb_ddl_jobsubmit::JobSubmitError) -> Self {
+        use tidb_ddl_jobsubmit::JobSubmitError;
+        match error {
+            JobSubmitError::Catalog(error) => Self::Catalog(error),
+            JobSubmitError::Encode(detail) => Self::Encode(detail),
+            JobSubmitError::Mutations(error) => Self::Mutations(error),
+            JobSubmitError::GlobalIdExhausted { wanted } => Self::GlobalIdExhausted { wanted },
+            refusal => match refusal.to_terror() {
+                Some(go) => Self::Admission(DdlAdmissionError::from_terror(&go)),
+                None => Self::plain_refusal(refusal.to_string()),
+            },
+        }
+    }
+}

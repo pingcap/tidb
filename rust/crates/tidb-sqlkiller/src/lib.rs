@@ -430,6 +430,93 @@ pub fn memory_exceed_for_query(conn_id: u64) -> tidb_mysql::errors::SqlError {
         .to_sql_error()
 }
 
+/// One connection's latched `KILL QUERY` request, across its commands: a
+/// request that arrives before the command's statement exists stays latched
+/// and is replayed onto the statement's freshly reset killer.
+#[derive(Clone, Default)]
+pub struct QueryCancellation(Arc<Mutex<QueryCancellationState>>);
+
+#[derive(Default)]
+struct QueryCancellationState {
+    generation: u64,
+    requested: bool,
+}
+
+impl QueryCancellation {
+    /// Starts the cancellation lifetime of one wire command over the
+    /// session's `killer`.
+    #[must_use]
+    pub fn begin(&self, killer: Arc<SqlKiller>) -> StatementCancellation {
+        let generation = {
+            let mut state = self.0.lock().unwrap_or_else(|error| error.into_inner());
+            state.generation = state.generation.wrapping_add(1);
+            state.requested = false;
+            state.generation
+        };
+        StatementCancellation {
+            killer,
+            state: Arc::clone(&self.0),
+            generation,
+        }
+    }
+
+    /// Whether the current command's cancellation was requested.
+    #[must_use]
+    pub fn requested(&self) -> bool {
+        self.0.lock().unwrap_or_else(|error| error.into_inner()).requested
+    }
+}
+
+/// One command's handle for `KILL QUERY` and connection shutdown.
+///
+/// The handle is installed before parsing starts. If cancellation arrives
+/// before `ResetContextOfStmt` creates the statement, the request stays
+/// latched and is replayed onto the freshly reset statement killer.
+pub struct StatementCancellation {
+    killer: Arc<SqlKiller>,
+    state: Arc<Mutex<QueryCancellationState>>,
+    generation: u64,
+}
+
+impl StatementCancellation {
+    /// Resets the current internal task at Track/UnTrack boundaries. A stale
+    /// handle cannot clear the cancellation of a reused session's next task.
+    pub fn reset(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.generation == self.generation {
+            state.requested = false;
+            self.killer.reset();
+        }
+    }
+
+    /// Interrupts the command that owns this handle.
+    pub fn cancel(&self) {
+        self.cancel_with(KillSignal::QueryInterrupted);
+    }
+
+    /// Interrupts the command with the watchdog's own signal (Go server
+    /// `killQuery`: `MaxExecTimeExceeded` for `max_execution_time`,
+    /// `RunawayQueryExceeded` for a runaway rule).
+    pub fn cancel_with(&self, signal: KillSignal) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.generation != self.generation {
+            return;
+        }
+        state.requested = true;
+        drop(state);
+        self.killer.send_kill_signal(signal);
+    }
+}
+
+impl Drop for StatementCancellation {
+    fn drop(&mut self) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.generation == self.generation {
+            state.requested = false;
+        }
+    }
+}
+
 #[cfg(test)]
 mod kill_event_channel_tests {
     use super::*;

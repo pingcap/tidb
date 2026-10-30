@@ -327,6 +327,12 @@ impl From<DdlPlanError> for ClusterDdlError {
     }
 }
 
+impl From<tidb_ddl_jobsubmit::JobSubmitError> for ClusterDdlError {
+    fn from(error: tidb_ddl_jobsubmit::JobSubmitError) -> Self {
+        Self::Plan(DdlPlanError::from(error))
+    }
+}
+
 impl From<OptimisticCoordinatorError> for ClusterDdlError {
     fn from(error: OptimisticCoordinatorError) -> Self {
         Self::Transaction(error)
