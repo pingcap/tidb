@@ -638,7 +638,7 @@ IndexMerge	root		type: union
 explain format='plan_tree' select * from t3 where a = _utf8mb4'a' collate utf8mb4_unicode_ci or a = _utf8mb4'a' collate utf8mb4_0900_ai_ci or a = 'A' or b = 'b' or b = 'b' or b = 'B';
 id	task	access object	operator info
 TableReader	root		data:Selection
-└─Selection	cop[tikv]		or(or(eq(planner__core__casetest__predicate_simplification.t3.a, "a"), eq(planner__core__casetest__predicate_simplification.t3.a, "A")), or(eq(planner__core__casetest__predicate_simplification.t3.b, "b"), eq(planner__core__casetest__predicate_simplification.t3.b, "B")))
+└─Selection	cop[tikv]		or(or(eq(planner__core__casetest__predicate_simplification.t3.a, "a"), eq(planner__core__casetest__predicate_simplification.t3.a, "a")), or(eq(planner__core__casetest__predicate_simplification.t3.a, "A"), or(eq(planner__core__casetest__predicate_simplification.t3.b, "b"), eq(planner__core__casetest__predicate_simplification.t3.b, "B"))))
   └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
 drop table if exists t4;
 create table t4(a int, b int, c int, d int, index iab(a,b), index iac(a,c), index iad(a,d));

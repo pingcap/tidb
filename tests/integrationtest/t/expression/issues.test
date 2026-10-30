@@ -2340,3 +2340,22 @@ select
   collation(group_concat(' ', first_name, ' ', last_name, ' ', marker)) as group_concat_collation
 from t_gc;
 drop table if exists t_gc;
+
+# TestIssue70130
+drop table if exists t70130;
+create table t70130(id int primary key, ts datetime(6));
+insert into t70130 values (1, '2024-01-01 00:00:00'), (2, '2024-01-01 12:00:00'), (3, '2024-01-02 00:00:00');
+select id from t70130 where cast(ts as date) = '2024-01-01' and cast(ts as datetime) = '2024-01-01 00:00:00' order by id;
+select id from t70130 where cast(ts as datetime) = '2024-01-01 00:00:00' and cast(ts as date) = '2024-01-01' order by id;
+select id from t70130 where cast(ts as datetime(6)) = '2024-01-01 12:00:00' and cast(ts as datetime) = '2024-01-01 12:00:00' order by id;
+delete from t70130 where cast(ts as date) = '2024-01-01' and cast(ts as datetime) = '2024-01-01 00:00:00';
+select id from t70130 order by id;
+
+# TestIssue70129
+drop table if exists t70129;
+create table t70129(id int primary key, s varchar(10) collate utf8mb4_bin);
+insert into t70129 values (1, 'A'), (2, 'a'), (3, 'B');
+select id from t70129 where s = (_utf8mb4'A' collate utf8mb4_general_ci) and s = (_utf8mb4'A' collate utf8mb4_bin) order by id;
+select id from t70129 where s = (_utf8mb4'A' collate utf8mb4_bin) and s = (_utf8mb4'A' collate utf8mb4_general_ci) order by id;
+delete from t70129 where s = (_utf8mb4'A' collate utf8mb4_general_ci) and s = (_utf8mb4'A' collate utf8mb4_bin);
+select id from t70129 order by id;
