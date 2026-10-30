@@ -274,6 +274,10 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
 	}
+	if s.IfNotExists && is.TableExists(schemaName, s.ViewName.Name) {
+		ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.FastGenByArgs(ast.Ident{Schema: schemaName, Name: s.ViewName.Name}))
+		return nil
+	}
 	sessionVars := ctx.GetSessionVars()
 	if _, err := validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, s.ViewName.Name.L, &s.Comment, dbterror.ErrTooLongTableComment); err != nil {
 		return errors.Trace(err)
@@ -482,6 +486,11 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		MLogTableIDs: []int64{mlogTableInfo.ID},
 	}, false)
 	if err := e.DoDDLJobWrapper(ctx, jobW); err != nil {
+		// A concurrent creator may have won after the existence precheck.
+		if s.IfNotExists && infoschema.ErrTableExists.Equal(err) {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
 		return errors.Trace(err)
 	}
 
