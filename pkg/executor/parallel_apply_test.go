@@ -926,44 +926,70 @@ func TestOrderedParallelApplyKillSignal(t *testing.T) {
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 	tk.MustExec("set tidb_executor_concurrency=3")
 
-	sql := "select t1.a, (select max(t2.b) from t2 where t2.a <= t1.a) from t1 order by t1.a"
+	sql := "select t1.a, (select max(t2.b + sleep(@parallel_apply_sleep_secs)) from t2 where t2.a <= t1.a) from t1 order by t1.a"
 
 	// Verify baseline works before testing kill.
+	tk.MustExec("set @parallel_apply_sleep_secs = 0")
 	checkApplyPlan(t, tk, sql, 3)
 	tk.MustQuery(sql).Check(testkit.Rows("1 10", "2 20", "3 30", "4 30", "5 30"))
 
-	// Enable a failpoint that makes inner workers sleep, giving us time
-	// to send a kill signal while the ordered pipeline is active.
-	fpPath := "github.com/pingcap/tidb/pkg/executor/parallelApplyOrderedSleep"
-	require.NoError(t, failpoint.Enable(fpPath, "return(500)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable(fpPath))
-	}()
+	// Kill signal during ordered inner worker processing. The SLEEP() call
+	// keeps the inner side active under the normal Go test harness, while
+	// processlist polling ensures the kill is delivered only after the query
+	// has started executing.
+	tk.MustExec("set @parallel_apply_sleep_secs = 10")
+	sessVars := tk.Session().GetSessionVars()
+	connID := sessVars.ConnectionID
+	killer := &sessVars.SQLKiller
+	killer.Reset()
 
-	// Kill signal during inner worker processing.
-	// The kill signal is sent after 200ms while inner workers are sleeping
-	// for 500ms each. The exec.Next() kill check after the sleep should
-	// detect the signal and return ErrQueryInterrupted, which propagates
-	// through orderedResultCh → reorder worker → resultChkCh → consumer.
-	tk.Session().GetSessionVars().SQLKiller.Reset()
+	var queryErr error
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
+	done := make(chan struct{})
 	go func() {
 		defer wg.Done()
-		time.Sleep(200 * time.Millisecond)
-		tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+		queryErr = tk.QueryToErr(sql)
 	}()
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	t.Cleanup(func() {
+		select {
+		case <-done:
+		default:
+			killer.SendKillSignal(sqlkiller.QueryInterrupted)
+			<-done
+		}
+	})
+
+	tk2 := testkit.NewTestKit(t, store)
+	require.Eventually(t, func() bool {
+		sm := tk2.Session().GetSessionManager()
+		if sm == nil {
+			return false
+		}
+		for _, pi := range sm.ShowProcessList() {
+			if pi.ID == connID && strings.Contains(pi.Info, "sleep(@parallel_apply_sleep_secs)") {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 10*time.Millisecond, "query should be running before kill is sent")
 
 	start := time.Now()
-	err := tk.QueryToErr(sql)
+	killer.SendKillSignal(sqlkiller.QueryInterrupted)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		require.FailNow(t, "query did not stop promptly after kill signal")
+	}
 	elapsed := time.Since(start)
-	require.Error(t, err, "query should be interrupted by kill signal")
-	// The query should be interrupted well before all 5 rows × 500ms
-	// sleep would complete (~2.5s). Allow generous headroom but verify
-	// it didn't run to completion.
+	require.Error(t, queryErr, "query should be interrupted by kill signal")
+	require.Contains(t, queryErr.Error(), "Query execution was interrupted")
 	require.Less(t, elapsed, 2*time.Second,
 		"kill signal should abort execution promptly, but took %v", elapsed)
-	wg.Wait()
 }
 
 func TestOrderedParallelApplyNested(t *testing.T) {
