@@ -1323,7 +1323,7 @@ func (w *worker) onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx *jobC
 	if args.OldMLogID != 0 {
 		// Drain old purges before taking the shared schema-version mutex. The
 		// advisory lock also excludes new purges until this job finishes.
-		if err := w.acquireMLogPurgeAdvisoryLockForCutover(jobCtx, args.OldMLogID); err != nil {
+		if err := w.acquireMLogPurgeAdvisoryLockForCutover(jobCtx, job, args.OldMLogID); err != nil {
 			if exeerrors.ErrMVAdvisoryLockConflict.Equal(err) {
 				// Retrying this job would reset the total purge-lock wait budget.
 				job.State = model.JobStateCancelled

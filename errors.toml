@@ -1973,7 +1973,7 @@ materialized view advisory lock conflict: %s
 
 ["executor:8183"]
 error = '''
-refresh materialized view fast: input log baseline has changed; run COMPLETE refresh to rebuild it
+refresh materialized view %s.%s fast: input log baseline has changed; run COMPLETE refresh to rebuild it
 '''
 
 ["executor:8212"]

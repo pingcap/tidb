@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -28,14 +29,21 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mviewutil"
 )
 
-func checkMVRefreshLogBaseline(sources []model.MViewRefreshSource, registered []int64) error {
+func checkMVRefreshLogBaseline(
+	is infoschema.InfoSchema, mviewID int64, sources []model.MViewRefreshSource, registered []int64,
+) error {
+	// Keep diagnostic name lookups on error paths: every FAST refresh runs this check.
 	for _, source := range sources {
 		if source.MLogID == 0 {
-			return exeerrors.ErrMVRefreshLogBaselineChanged.FastGen("refresh materialized view fast: source has no materialized view log; run COMPLETE refresh to rebuild the input log baseline")
+			mview, _ := is.TableItemByID(mviewID)
+			return exeerrors.ErrMVRefreshLogBaselineChanged.FastGen(
+				"refresh materialized view %s.%s fast: source has no materialized view log; cannot perform FAST refresh",
+				mview.DBName.O, mview.TableName.O)
 		}
 	}
 	if !slices.Equal(mviewutil.RefreshSourceLogIDs(sources), registered) {
-		return exeerrors.ErrMVRefreshLogBaselineChanged.FastGenByArgs()
+		mview, _ := is.TableItemByID(mviewID)
+		return exeerrors.ErrMVRefreshLogBaselineChanged.FastGenByArgs(mview.DBName.O, mview.TableName.O)
 	}
 	return nil
 }
@@ -53,7 +61,7 @@ func validateMVFastRefreshInput(
 	if err != nil {
 		return err
 	}
-	if err := checkMVRefreshLogBaseline(sources, registered); err != nil {
+	if err := checkMVRefreshLogBaseline(snapshotIS, mviewID, sources, registered); err != nil {
 		return err
 	}
 	if !slices.ContainsFunc(sources, func(source model.MViewRefreshSource) bool {

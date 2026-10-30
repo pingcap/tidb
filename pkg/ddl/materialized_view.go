@@ -58,7 +58,7 @@ const (
 	mviewCutoverPurgeLockTimeout                          = time.Minute
 )
 
-func (w *worker) acquireMLogPurgeAdvisoryLockForCutover(jobCtx *jobContext, mlogID int64) (err error) {
+func (w *worker) acquireMLogPurgeAdvisoryLockForCutover(jobCtx *jobContext, job *model.Job, mlogID int64) (err error) {
 	timeout := mviewCutoverPurgeLockTimeout
 	failpoint.Inject("mockMViewOutOfPlacePurgeAdvisoryLockTimeout", func(val failpoint.Value) {
 		timeoutMillis := val.(int)
@@ -67,7 +67,9 @@ func (w *worker) acquireMLogPurgeAdvisoryLockForCutover(jobCtx *jobContext, mlog
 	ctx, cancel := context.WithTimeoutCause(
 		kv.WithInternalSourceType(jobCtx.stepCtx, kv.InternalTxnDDL),
 		timeout,
-		exeerrors.ErrMVAdvisoryLockConflict.FastGenByArgs("refresh materialized view complete OUT OF PLACE cutover: timed out waiting for materialized view log purge; retry refresh"),
+		exeerrors.ErrMVAdvisoryLockConflict.FastGenByArgs(fmt.Sprintf(
+			"refresh materialized view complete OUT OF PLACE cutover for %s.%s: timed out waiting for materialized view log purge; retry refresh",
+			job.SchemaName, job.TableName)),
 	)
 	defer func() {
 		// Advisory lock acquisition has its own context. Recheck the budget on

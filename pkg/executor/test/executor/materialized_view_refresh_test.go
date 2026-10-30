@@ -5548,7 +5548,7 @@ func TestMaterializedViewRefreshCompleteOutOfPlacePurgeConcurrency(t *testing.T)
 					waitFor(cutoverFinished, "cutover purge-lock timeout")
 					err := <-cutoverDone
 					require.True(t, exeerrors.ErrMVAdvisoryLockConflict.Equal(err), "%v", err)
-					require.ErrorContains(t, err, "timed out waiting for materialized view log purge")
+					require.ErrorContains(t, err, "refresh materialized view complete OUT OF PLACE cutover for test.mv_source_init: timed out waiting for materialized view log purge; retry refresh")
 					require.Equal(t, int32(1), cutoverAttempts.Load())
 					require.False(t, retiring.Load())
 					require.Equal(t, beforeInfo, tk.MustQuery("select * from mysql.tidb_mview_refresh_info order by MVIEW_ID").Rows())

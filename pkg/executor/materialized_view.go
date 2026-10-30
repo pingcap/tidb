@@ -4486,11 +4486,12 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		return errors.New("refresh materialized view: input log records are missing")
 	}
 	if refreshMode == ast.RefreshMaterializedViewModeFast {
-		currentSources, err := mviewutil.ResolveRefreshSources(kctx, domain.GetDomain(e.Ctx()).InfoSchema(), mviewID)
+		is := domain.GetDomain(e.Ctx()).InfoSchema()
+		currentSources, err := mviewutil.ResolveRefreshSources(kctx, is, mviewID)
 		if err != nil {
 			return err
 		}
-		if err := checkMVRefreshLogBaseline(currentSources, registeredLogs); err != nil {
+		if err := checkMVRefreshLogBaseline(is, mviewID, currentSources, registeredLogs); err != nil {
 			return err
 		}
 	}

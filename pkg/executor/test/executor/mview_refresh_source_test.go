@@ -143,7 +143,9 @@ func TestMViewRefreshSourceInfoBaselineRecovery(t *testing.T) {
 				beforeSources := tk.MustQuery("select * from mysql.tidb_mview_fast_refresh_source_info order by MVIEW_ID, MLOG_ID").Rows()
 				beforeData := tk.MustQuery("select * from mv_source_init order by a").Rows()
 				tk.MustExec("insert into t_source_init values (1, 5)")
-				tk.MustGetErrCode("refresh materialized view mv_source_init fast", int(exeerrors.ErrMVRefreshLogBaselineChanged.Code()))
+				err = tk.ExecToErr("refresh materialized view mv_source_init fast")
+				require.True(t, exeerrors.ErrMVRefreshLogBaselineChanged.Equal(err), "%v", err)
+				require.ErrorContains(t, err, "refresh materialized view test.mv_source_init fast:")
 				require.Equal(t, before, tk.MustQuery("select * from mysql.tidb_mview_refresh_info").Rows())
 				require.Equal(t, beforeSources, tk.MustQuery("select * from mysql.tidb_mview_fast_refresh_source_info order by MVIEW_ID, MLOG_ID").Rows())
 				require.Equal(t, beforeData, tk.MustQuery("select * from mv_source_init order by a").Rows())
@@ -354,6 +356,12 @@ func TestMViewRefreshSourceInfoSnapshotIdentity(t *testing.T) {
 					require.Error(t, err)
 					if method == "fast" && (change == "log replaced" || change == "missing log" || change == "snapshot and plan log replaced") {
 						require.True(t, exeerrors.ErrMVRefreshLogBaselineChanged.Equal(err), "%v", err)
+						require.ErrorContains(t, err, "refresh materialized view test.mv_source_init fast:")
+						if change == "missing log" {
+							require.NotContains(t, err.Error(), "COMPLETE")
+							require.NotContains(t, err.Error(), "restore")
+							require.ErrorContains(t, err, "source has no materialized view log; cannot perform FAST refresh")
+						}
 					}
 					require.Equal(t, before, tk.MustQuery("select * from mysql.tidb_mview_refresh_info").Rows())
 					require.Equal(t, beforeSources, tk.MustQuery("select * from mysql.tidb_mview_fast_refresh_source_info").Rows())
