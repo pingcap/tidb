@@ -1070,6 +1070,111 @@ fn check_contain_dot_column(create: &CreateTableStmt) -> Result<(), MysqlError> 
 // Go's error constructors this file raises, rendered as the driver rendered
 // them (`tidb-dbterror`'s `to_mysql_error` arms, verbatim).
 
+/// Go `preprocessor.checkNoopFuncs`' walk: the clauses TiDB parses but only
+/// implements as no-ops, which the session refuses or warns about under
+/// `tidb_enable_noop_functions`.
+///
+/// Names every gated clause the query uses, in the order Go's preprocessor
+/// would reach them.
+///
+/// Go walks the whole statement tree, so a gated clause inside a derived
+/// table, a CTE or a subquery counts too; this walk covers the same
+/// containers.
+pub fn collect_noop_clauses(query: &tidb_ast::QueryStmt, out: &mut Vec<&'static str>) {
+    match query {
+        tidb_ast::QueryStmt::Select(select) => collect_noop_in_select(select, out),
+        tidb_ast::QueryStmt::SetOpr(set_opr) => collect_noop_in_set_opr(set_opr, out),
+    }
+}
+
+fn collect_noop_in_set_opr(set_opr: &tidb_ast::SetOprStmt, out: &mut Vec<&'static str>) {
+    if let Some(with) = &set_opr.with {
+        for cte in &with.ctes {
+            collect_noop_clauses(&cte.query, out);
+        }
+    }
+    for term in &set_opr.terms {
+        match &term.body {
+            tidb_ast::SetOprTermBody::Select(select) => collect_noop_in_select(select, out),
+            tidb_ast::SetOprTermBody::Nested(nested) => collect_noop_in_set_opr(nested, out),
+        }
+    }
+}
+
+/// Whether a locking clause is the shared kind, which is the gated one --
+/// `FOR UPDATE` is a real lock in TiDB and is never gated.
+fn share_lock(lock: &Option<tidb_ast::SelectLock>) -> bool {
+    matches!(
+        lock,
+        Some(tidb_ast::SelectLock {
+            kind: tidb_ast::LockKind::Share,
+            ..
+        })
+    )
+}
+
+fn collect_noop_in_select(select: &tidb_ast::SelectStmt, out: &mut Vec<&'static str>) {
+    if select.calc_found_rows {
+        out.push("SQL_CALC_FOUND_ROWS");
+    }
+    if share_lock(&select.lock) {
+        out.push("LOCK IN SHARE MODE");
+    }
+    // Go's `checkGroupBy`: a written ASC/DESC on a GROUP BY item is a no-op,
+    // because TiDB does not order groups.
+    if select.group_by.iter().any(|item| item.desc.is_some()) {
+        out.push("GROUP BY expr ASC|DESC");
+    }
+    if let Some(with) = &select.with {
+        for cte in &with.ctes {
+            collect_noop_clauses(&cte.query, out);
+        }
+    }
+    if let Some(from) = &select.from {
+        collect_noop_in_join(from, out);
+    }
+    for expr in select
+        .where_clause
+        .iter()
+        .chain(select.having.iter())
+        .chain(select.group_by.iter().map(|item| &item.expr))
+        .chain(select.order_by.iter().map(|item| &item.expr))
+    {
+        collect_noop_in_expr(expr, out);
+    }
+}
+
+/// The subqueries a `FROM` clause holds, which are derived tables.
+fn collect_noop_in_join(join: &tidb_ast::Join, out: &mut Vec<&'static str>) {
+    for node in std::iter::once(&join.left).chain(join.right.iter()) {
+        match node {
+            tidb_ast::JoinNode::Derived { subquery, .. } => collect_noop_clauses(subquery, out),
+            tidb_ast::JoinNode::Join(nested) => collect_noop_in_join(nested, out),
+            tidb_ast::JoinNode::Table(_) => {}
+        }
+    }
+    if let Some(on) = &join.on {
+        collect_noop_in_expr(on, out);
+    }
+}
+
+/// The subqueries an expression holds.
+fn collect_noop_in_expr(expr: &tidb_ast::Expr, out: &mut Vec<&'static str>) {
+    match expr {
+        tidb_ast::Expr::Subquery(query) => collect_noop_clauses(query, out),
+        tidb_ast::Expr::Exists { subquery, .. } => collect_noop_clauses(subquery, out),
+        tidb_ast::Expr::InSubquery { expr, subquery, .. } => {
+            collect_noop_in_expr(expr, out);
+            collect_noop_clauses(subquery, out);
+        }
+        tidb_ast::Expr::CompareSubquery { left, subquery, .. } => {
+            collect_noop_in_expr(left, out);
+            collect_noop_clauses(subquery, out);
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod ddl_grammar_tests {
     use super::*;
