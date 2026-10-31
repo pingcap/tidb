@@ -108,6 +108,43 @@ fn stats_table_for_session(
     Some(statistics)
 }
 
+/// Go `stats.LoadTableStats`: records the statement's `UsedStatsInfo` entry
+/// for `physical_table_id` from `GetStatsTable` unless planning already did,
+/// and returns that entry.
+pub fn load_table_stats(
+    ctx: &crate::StmtContext,
+    catalog: &tidb_infoschema::Catalog,
+    physical_table_id: i64,
+) -> Option<tidb_stmtctx::used_stats::UsedStatsInfoForTable> {
+    if ctx.used_stats_info(physical_table_id).is_none() {
+        let statistics = get_stats_table(ctx, catalog, physical_table_id);
+        // A `None` from `get_stats_table` is Go's `PseudoTable`.
+        let (version, realtime_count, modify_count) = statistics.map_or(
+            (tidb_stats::PSEUDO_VERSION, tidb_stats::PSEUDO_ROW_COUNT, 0),
+            |statistics| {
+                let version = if statistics.hist_coll.pseudo {
+                    tidb_stats::PSEUDO_VERSION
+                } else {
+                    statistics.version
+                };
+                (
+                    version,
+                    statistics.hist_coll.realtime_count,
+                    statistics.hist_coll.modify_count,
+                )
+            },
+        );
+        ctx.record_used_stats_info(
+            physical_table_id,
+            catalog.used_stats_table_name(physical_table_id),
+            version,
+            realtime_count,
+            modify_count,
+        );
+    }
+    ctx.used_stats_info(physical_table_id)
+}
+
 /// Go `getLatestVersionFromStatsTable` (`logical_plan_builder.go`), the
 /// plan-cache key's statistics version for one table: zero for any table
 /// `GetStatsTable` answers with a pseudo table by rule 2, otherwise the

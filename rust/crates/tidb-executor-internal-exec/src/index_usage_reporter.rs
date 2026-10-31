@@ -21,7 +21,7 @@ use tidb_datatype::FieldType;
 use tidb_expr::schema::Schema;
 use tidb_stats_handle_usage_indexusage::{new_sample, StmtIndexUsageCollector};
 
-use tidb_stats::Table;
+use tidb_stmtctx::used_stats::UsedStatsInfoForTable;
 use crate::Executor;
 use tidb_driver_error::ExecError;
 use tidb_table::kv_table::KvTable;
@@ -44,7 +44,7 @@ impl<'a> IndexUsageReporter<'a> {
     pub fn report_cop_for_table(
         &self,
         table: &KvTable,
-        stats: Option<&Table>,
+        stats: Option<&UsedStatsInfoForTable>,
         index_id: i64,
         kv_requests: u64,
         accessed_rows: u64,
@@ -57,7 +57,7 @@ impl<'a> IndexUsageReporter<'a> {
         &self,
         logical_table_id: i64,
         index_id: i64,
-        stats: Option<&Table>,
+        stats: Option<&UsedStatsInfoForTable>,
         kv_requests: u64,
         accessed_rows: u64,
     ) {
@@ -81,7 +81,7 @@ impl<'a> IndexUsageReporter<'a> {
     pub fn report_point_for_handle(
         &self,
         table: &KvTable,
-        stats: Option<&Table>,
+        stats: Option<&UsedStatsInfoForTable>,
         kv_requests: u64,
         rows: u64,
     ) {
@@ -95,7 +95,7 @@ impl<'a> IndexUsageReporter<'a> {
     pub fn report_point_for_table(
         &self,
         table: &KvTable,
-        stats: Option<&Table>,
+        stats: Option<&UsedStatsInfoForTable>,
         index_id: i64,
         kv_requests: u64,
         rows: u64,
@@ -108,7 +108,7 @@ impl<'a> IndexUsageReporter<'a> {
     pub fn report_point(
         &self,
         logical_table_id: i64,
-        stats: Option<&Table>,
+        stats: Option<&UsedStatsInfoForTable>,
         index_id: i64,
         kv_requests: u64,
         rows: u64,
@@ -125,12 +125,14 @@ impl<'a> IndexUsageReporter<'a> {
     }
 }
 
-fn real_table_row_count(stats: Option<&Table>) -> Option<u64> {
+/// Go `getTableRowCount`: the statement's `UsedStatsInfo` entry, unless its
+/// statistics were pseudo (`Version == PseudoVersion`).
+fn real_table_row_count(stats: Option<&UsedStatsInfoForTable>) -> Option<u64> {
     let stats = stats?;
-    if stats.hist_coll.pseudo {
+    if stats.version == 0 {
         return None;
     }
-    Some(stats.hist_coll.realtime_count as u64)
+    Some(stats.realtime_count as u64)
 }
 
 /// Go `getClusterIndexID`.
@@ -175,7 +177,7 @@ pub struct PointSnapshotStats {
 pub struct PointIndexUsageExec {
     child: Box<dyn Executor>,
     table: KvTable,
-    stats: Option<Arc<Table>>,
+    stats: Option<UsedStatsInfoForTable>,
     collector: Option<Arc<StmtIndexUsageCollector>>,
     index_id: Option<i64>,
     command: PointCommand,
@@ -193,7 +195,7 @@ impl PointIndexUsageExec {
     pub fn new(
         child: Box<dyn Executor>,
         table: KvTable,
-        stats: Option<Arc<Table>>,
+        stats: Option<UsedStatsInfoForTable>,
         collector: Option<Arc<StmtIndexUsageCollector>>,
         index_id: Option<i64>,
         command: PointCommand,
@@ -238,14 +240,14 @@ impl PointIndexUsageExec {
         match self.index_id {
             Some(index_id) => reporter.report_point_for_table(
                 &self.table,
-                self.stats.as_deref(),
+                self.stats.as_ref(),
                 index_id,
                 kv_requests,
                 self.rows,
             ),
             None => reporter.report_point_for_handle(
                 &self.table,
-                self.stats.as_deref(),
+                self.stats.as_ref(),
                 kv_requests,
                 self.rows,
             ),
@@ -312,7 +314,7 @@ impl Executor for PointIndexUsageExec {
 pub struct CopIndexUsageExec {
     child: Box<dyn Executor>,
     logical_table_id: i64,
-    stats: Option<Arc<Table>>,
+    stats: Option<UsedStatsInfoForTable>,
     collector: Option<Arc<StmtIndexUsageCollector>>,
     index_id: Option<i64>,
     reported: bool,
@@ -324,7 +326,7 @@ impl CopIndexUsageExec {
     pub fn new(
         child: Box<dyn Executor>,
         logical_table_id: i64,
-        stats: Option<Arc<Table>>,
+        stats: Option<UsedStatsInfoForTable>,
         collector: Option<Arc<StmtIndexUsageCollector>>,
         index_id: Option<i64>,
     ) -> Self {
@@ -362,7 +364,7 @@ impl CopIndexUsageExec {
             reporter.report_cop(
                 self.logical_table_id,
                 index_id,
-                self.stats.as_deref(),
+                self.stats.as_ref(),
                 kv_requests,
                 accessed_rows,
             );
@@ -478,11 +480,13 @@ mod tests {
         (global, session, statement)
     }
 
-    fn stats_with_count(realtime_count: i64, pseudo: bool) -> Table {
-        let mut stats = Table::default();
-        stats.hist_coll.realtime_count = realtime_count;
-        stats.hist_coll.pseudo = pseudo;
-        stats
+    fn stats_with_count(realtime_count: i64, pseudo: bool) -> UsedStatsInfoForTable {
+        UsedStatsInfoForTable {
+            realtime_count,
+            // Go `PseudoVersion` is zero.
+            version: if pseudo { 0 } else { 1 },
+            ..UsedStatsInfoForTable::default()
+        }
     }
 
     #[test]
@@ -514,7 +518,7 @@ mod tests {
         let mut reporter = CopIndexUsageExec::new(
             Box::new(scan),
             42,
-            Some(Arc::new(stats_with_count(100, false))),
+            Some(stats_with_count(100, false)),
             Some(statement),
             Some(7),
         );

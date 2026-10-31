@@ -4723,6 +4723,7 @@ dependencies = [
  "tidb-sessionctx",
  "tidb-stats",
  "tidb-stats-handle-usage-indexusage",
+ "tidb-stmtctx",
  "tidb-table",
  "tidb-txnkv",
  "tikv-client",

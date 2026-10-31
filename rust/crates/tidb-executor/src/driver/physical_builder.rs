@@ -1240,9 +1240,9 @@ fn build_table_scan(
     let (schema, keep, extra_handle_slot, extra_commit_ts_slot) = table_scan_schema(scan, &table)?;
     let logical_table_id = table.table_id();
     let index_id = tidb_executor_internal_exec::index_usage_reporter::cluster_index_id(&table);
-    // Go's index-usage reporter reads the statement's `UsedStatsInfo` entry,
-    // which `initStats` fills from `GetStatsTable`.
-    let stats = crate::access_cost::get_stats_table(ctx, catalog, table.stats_physical_id());
+    // Go `buildIndexUsageReporter(v, true)`: `LoadTableStats`, then the
+    // statement's `UsedStatsInfo` entry the report reads.
+    let stats = crate::access_cost::load_table_stats(ctx, catalog, table.stats_physical_id());
     let column_count = table.logical_data_source_column_count();
     let partition_ids = scan
         .dynamic_partition_access
@@ -2674,7 +2674,8 @@ fn build_index_reader(
         })
         .transpose()?;
     let logical_table_id = table.table_id();
-    let stats = crate::access_cost::get_stats_table(ctx, catalog, table.stats_physical_id());
+    // Go `buildIndexUsageReporter(v, true)`.
+    let stats = crate::access_cost::load_table_stats(ctx, catalog, table.stats_physical_id());
     let mut source = IndexRangeSourceExec::new_with_statement(
         meta(ctx, plan, source_schema),
         std::sync::Arc::unwrap_or_clone(table),
@@ -5349,12 +5350,12 @@ fn wrap_point_index_usage(
     command: PointCommand,
     snapshot_stats: Option<tidb_executor_internal_exec::index_usage_reporter::PointSnapshotStats>,
 ) -> Box<dyn Executor> {
-    // Go PointGet has no planner UsedStatsInfo entry and uses the smallest
-    // bucket. BatchPointGet reports against the logical table's whole count,
-    // including when static pruning narrows the keys to one partition.
+    // Go `buildIndexUsageReporter(p, false)` for a PointGet loads nothing,
+    // so its read counts against `math.MaxInt32` rows; a BatchPointGet's
+    // `LoadTableStats` loads the logical table's, whatever partitions it reads.
     let stats = match command {
         PointCommand::Get => None,
-        PointCommand::BatchGet => batch_point_usage_stats(catalog, ctx, &table),
+        PointCommand::BatchGet => crate::access_cost::load_table_stats(ctx, catalog, table.table_id()),
     };
     Box::new(PointIndexUsageExec::new(
         child,
@@ -5365,30 +5366,6 @@ fn wrap_point_index_usage(
         command,
         snapshot_stats,
     ))
-}
-
-fn batch_point_usage_stats(
-    catalog: &Catalog,
-    ctx: &crate::StmtContext,
-    table: &tidb_table::kv_table::KvTable,
-) -> Option<std::sync::Arc<tidb_stats::Table>> {
-    // Go `BatchPointGetPlan.LoadTableStats`: `GetStatsTable(TblInfo.ID)`.
-    if crate::access_cost::table_statistics(ctx, catalog, table.table_id()).is_some() {
-        return crate::access_cost::get_stats_table(ctx, catalog, table.table_id());
-    }
-    let partition = table.partition()?;
-    let mut row_count = 0_i64;
-    for definition in &partition.definitions {
-        // Go `LoadTableStats` reads each partition through `GetStatsTable`.
-        let stats = crate::access_cost::get_stats_table(ctx, catalog, definition.id)?;
-        if stats.hist_coll.pseudo {
-            return None;
-        }
-        row_count = row_count.saturating_add(stats.hist_coll.realtime_count);
-    }
-    let mut stats = tidb_stats::Table::default();
-    stats.hist_coll.realtime_count = row_count;
-    Some(std::sync::Arc::new(stats))
 }
 
 fn schema_column_slot(schema: &Schema, wanted: &Column) -> Option<usize> {
@@ -5482,7 +5459,7 @@ struct IndexPartialHandleSource {
     source: IndexRangeSourceExec,
     partition_indexes: Vec<usize>,
     table: crate::KvTable,
-    stats: Option<Arc<tidb_stats::Table>>,
+    stats: Option<tidb_stmtctx::used_stats::UsedStatsInfoForTable>,
     ctx: crate::StmtContext,
     index_id: i64,
     reported: bool,
@@ -5543,7 +5520,7 @@ impl PartialHandleSource for IndexPartialHandleSource {
                 )
                 .report_cop_for_table(
                     &self.table,
-                    self.stats.as_deref(),
+                    self.stats.as_ref(),
                     self.index_id,
                     requests,
                     rows,
@@ -5647,7 +5624,7 @@ fn build_index_merge_reader(
                     Box::new(IndexPartialHandleSource {
                         source,
                         partition_indexes: selected,
-                        stats: crate::access_cost::get_stats_table(
+                        stats: crate::access_cost::load_table_stats(
                             ctx,
                             catalog,
                             partial_table.stats_physical_id(),
