@@ -1054,6 +1054,20 @@ func testConvertTimeTimeZone(t *testing.T, ctx Context) {
 }
 
 func TestConvertJSONToInt(t *testing.T) {
+	for _, input := range []string{" -1", "\t-1", "\n-1", "\r\n -1 ", "\u00a0-1", " -9223372036854775808"} {
+		for _, unsigned := range []bool{false, true} {
+			t.Run(fmt.Sprintf("whitespace/%q/unsigned=%t", input, unsigned), func(t *testing.T) {
+				want := int64(-1)
+				if input == " -9223372036854775808" {
+					want = math.MinInt64
+				}
+				v, err := ConvertJSONToInt64(DefaultStmtNoWarningContext, CreateBinaryJSON(input), unsigned)
+				require.NoError(t, err)
+				require.Equal(t, want, v)
+			})
+		}
+	}
+
 	var tests = []struct {
 		in  string
 		out int64
@@ -1070,6 +1084,10 @@ func TestConvertJSONToInt(t *testing.T) {
 		{in: `"hello"`, err: true},
 		{in: `"123hello"`, out: 123, err: true},
 		{in: `"1234"`, out: 1234},
+		{in: `" +2 "`, out: 2},
+		{in: `" "`, err: true},
+		{in: `" -1x"`, out: -1, err: true},
+		{in: `" 18446744073709551615"`, out: -1},
 	}
 	for _, tt := range tests {
 		j, err := ParseBinaryJSONFromString(tt.in)
