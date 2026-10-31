@@ -48,6 +48,12 @@ The submitter-side wait loop assumes this simplified sequence (see the comment i
 - resumable (persist progress needed for the next step),
 - safe under partial failures (e.g., crash after meta write but before schema sync).
 
+Internal SQL can move earlier metadata writes out of the current statement buffer.
+Steps that use `jobContext.mustRollbackTxnOnError` discard the entire transaction
+on error before persisting either a retry or a cancelled job. This also protects
+TRUNCATE TABLE when masking-policy SQL has already flushed the old table deletion;
+`sess.Reset()` alone only discards the current statement buffer.
+
 ## Schema version + diff and cluster-wide synchronization
 
 After schema changes, TiDB relies on a global schema version + per-job synchronization to coordinate all nodes.

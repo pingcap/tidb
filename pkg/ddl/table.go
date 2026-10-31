@@ -78,8 +78,11 @@ func (w *worker) cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx *jobContext, jo
 
 	// Materialized views in Stage-1 are non-partitioned, so their table-level
 	// affinity group ID is derived directly from the old physical table ID.
-	groupID := GetTableAffinityGroupID(jobCtx.store.GetCodec(), args.OldMViewID)
-	if err := affinity.DeleteGroupsWithRetry(jobCtx.ctx, []string{groupID}); err != nil {
+	groupID, err := GetTableAffinityGroupID(jobCtx.store.GetCodec(), args.OldMViewID)
+	if err == nil {
+		err = affinity.DeleteGroupsWithRetry(jobCtx.ctx, []string{groupID})
+	}
+	if err != nil {
 		logutil.DDLLogger().Warn(
 			"failed to delete old materialized view affinity group after cutover",
 			zap.Int64("tableID", args.OldMViewID),
@@ -718,6 +721,10 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	// Create new affinity groups first (critical operation - must succeed)
 	if tblInfo.Affinity != nil {
 		if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
+			// PD may have committed the groups even when its response failed.
+			if deleteErr := deleteTableAffinityGroupsInPD(jobCtx, tblInfo, nil); deleteErr != nil {
+				logutil.DDLLogger().Warn("failed to delete replacement table affinity groups", zap.Error(deleteErr), zap.Int64("tableID", tblInfo.ID))
+			}
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}

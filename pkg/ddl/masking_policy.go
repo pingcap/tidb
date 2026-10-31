@@ -567,6 +567,9 @@ func (w *worker) dropMaskingPoliciesByDBName(jobCtx *jobContext, dbName string) 
 // mysql.tidb_masking_policy from the old table ID to the new one after TRUNCATE TABLE.
 // Column IDs remain the same across truncate, so column bindings are preserved.
 func (w *worker) updateMaskingPolicyTableIDAfterTruncate(jobCtx *jobContext, oldTableID, newTableID int64) error {
+	// Internal SQL can flush the old table's deletion into the DDL transaction.
+	// Any later error, including cancellation, must discard the whole step.
+	jobCtx.mustRollbackTxnOnError = true
 	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(jobCtx.stepCtx, oldTableID)
 	if err != nil {
 		return errors.Trace(err)

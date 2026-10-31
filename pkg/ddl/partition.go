@@ -2738,6 +2738,23 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 
 	switch job.SchemaState {
 	case model.StatePublic:
+		// Prepare the replacement groups while cancellation is still safe.
+		// Publishing new partition IDs before this succeeds can lose data if a
+		// later PD failure cancels the job instead of finishing the truncate.
+		if tblInfo.Affinity != nil {
+			replacement := tblInfo.Clone()
+			for i, oldID := range oldIDs {
+				for j := range replacement.Partition.Definitions {
+					if replacement.Partition.Definitions[j].ID == oldID {
+						replacement.Partition.Definitions[j].ID = newIDs[i]
+						break
+					}
+				}
+			}
+			if err = createTableAffinityGroupsInPD(jobCtx, replacement); err != nil {
+				return convertTruncateTablePartitionJob2RollbackJob(jobCtx, job, err, tblInfo)
+			}
+		}
 		// This work as a flag to ignore Global Index entries from the new partitions!
 		// Used in IDsInDDLToIgnore() for filtering new partitions from
 		// the global index
@@ -2816,10 +2833,11 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		pi.DDLState = model.StateNone
 		pi.DDLAction = model.ActionNone
 
-		// Create new affinity groups first (critical operation - must succeed)
+		// Also prepare groups for jobs started by an older TiDB version. The
+		// replacement is already visible, so failures here must retry rather
+		// than cancel the job and leave the partition metadata unfinished.
 		if tblInfo.Affinity != nil {
 			if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
-				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
 		}

@@ -18,12 +18,15 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain/affinity"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	tikv "github.com/tikv/client-go/v2/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
 )
 
@@ -31,6 +34,13 @@ type mockPDCliForAffinity struct {
 	pdhttp.Client
 	mock.Mock
 }
+
+type affinityCodecStore struct {
+	kv.Storage
+	codec tikv.Codec
+}
+
+func (s affinityCodecStore) GetCodec() tikv.Codec { return s.codec }
 
 func (m *mockPDCliForAffinity) GetAllAffinityGroups(ctx context.Context) (map[string]*pdhttp.AffinityGroupState, error) {
 	args := m.Called(ctx)
@@ -209,7 +219,8 @@ func TestShowAffinityColumns(t *testing.T) {
 	is := tk.Session().GetLatestInfoSchema()
 	tbl, err := is.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
-	groupID := ddl.GetTableAffinityGroupID(store.GetCodec(), tbl.ID)
+	groupID, err := ddl.GetTableAffinityGroupID(store.GetCodec(), tbl.ID)
+	require.NoError(t, err)
 
 	// Step 3: Set up mock PD client
 	mockCli := &mockPDCliForAffinity{}
@@ -267,7 +278,9 @@ func TestShowAffinityColumns(t *testing.T) {
 	require.NoError(t, err)
 	partitionIDs := make([]string, 0, len(partitioned.Partition.Definitions))
 	for _, def := range partitioned.Partition.Definitions {
-		partitionIDs = append(partitionIDs, ddl.GetPartitionAffinityGroupID(store.GetCodec(), partitioned.ID, def.ID))
+		partitionID, err := ddl.GetPartitionAffinityGroupID(store.GetCodec(), partitioned.ID, def.ID)
+		require.NoError(t, err)
+		partitionIDs = append(partitionIDs, partitionID)
 	}
 	mockCli.On("GetAffinityGroups", mock.Anything, partitionIDs).Return(map[string]*pdhttp.AffinityGroupState{
 		partitionIDs[0]: {
@@ -285,6 +298,15 @@ func TestShowAffinityColumns(t *testing.T) {
 	))
 	// No matching tables must not issue a PD request (including a full scan).
 	require.Empty(t, tk.MustQuery("show affinity like 'missing'").Rows())
+	if kerneltype.IsNextGen() {
+		for _, invalidCodec := range []tikv.Codec{nil, tikv.NewCodecV1(tikv.ModeTxn)} {
+			invalidTK := testkit.NewTestKit(t, affinityCodecStore{Storage: store, codec: invalidCodec})
+			invalidTK.MustExec("use test")
+			for _, query := range []string{"show affinity like 't1'", "show affinity like 't2'"} {
+				require.ErrorContains(t, invalidTK.QueryToErr(query), "affinity requires a valid APIv2 keyspace codec in NextGen")
+			}
+		}
+	}
 	mockCli.AssertExpectations(t)
 }
 
@@ -306,7 +328,8 @@ func TestShowAffinityNullStatus(t *testing.T) {
 	// Step 3: Mock PD response with empty map (group not found)
 	tbl, err := tk.Session().GetLatestInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
-	groupID := ddl.GetTableAffinityGroupID(store.GetCodec(), tbl.ID)
+	groupID, err := ddl.GetTableAffinityGroupID(store.GetCodec(), tbl.ID)
+	require.NoError(t, err)
 	mockCli.On("GetAffinityGroups", mock.Anything, []string{groupID}).Return(
 		map[string]*pdhttp.AffinityGroupState{}, nil,
 	).Once()

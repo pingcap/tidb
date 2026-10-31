@@ -18,7 +18,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/ddl/label"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain/affinity"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -33,22 +33,41 @@ import (
 // the keyspace ID when the table uses a NextGen keyspace codec.
 // Classic format: _tidb_t_{tableID}.
 // NextGen format: _tidb_ks{keyspaceID}_t_{tableID}.
-func GetTableAffinityGroupID(codec tikv.Codec, tableID int64) string {
-	if label.UseKeyspaceAwareRules(codec) {
-		return fmt.Sprintf("_tidb_ks%d_t_%d", codec.GetKeyspaceID(), tableID)
+// NextGen requires a valid APIv2 keyspace codec; otherwise an error is returned.
+func GetTableAffinityGroupID(codec tikv.Codec, tableID int64) (string, error) {
+	if err := validateAffinityCodec(codec); err != nil {
+		return "", err
 	}
-	return fmt.Sprintf("_tidb_t_%d", tableID)
+	if kerneltype.IsNextGen() {
+		return fmt.Sprintf("_tidb_ks%d_t_%d", codec.GetKeyspaceID(), tableID), nil
+	}
+	return fmt.Sprintf("_tidb_t_%d", tableID), nil
 }
 
 // GetPartitionAffinityGroupID returns the affinity group ID for a partition,
 // including the keyspace ID when the partition uses a NextGen keyspace codec.
 // Classic format: _tidb_pt_{tableID}_p{partitionID}.
 // NextGen format: _tidb_ks{keyspaceID}_pt_{tableID}_p{partitionID}.
-func GetPartitionAffinityGroupID(codec tikv.Codec, tableID, partitionID int64) string {
-	if label.UseKeyspaceAwareRules(codec) {
-		return fmt.Sprintf("_tidb_ks%d_pt_%d_p%d", codec.GetKeyspaceID(), tableID, partitionID)
+// NextGen requires a valid APIv2 keyspace codec; otherwise an error is returned.
+func GetPartitionAffinityGroupID(codec tikv.Codec, tableID, partitionID int64) (string, error) {
+	if err := validateAffinityCodec(codec); err != nil {
+		return "", err
 	}
-	return fmt.Sprintf("_tidb_pt_%d_p%d", tableID, partitionID)
+	if kerneltype.IsNextGen() {
+		return fmt.Sprintf("_tidb_ks%d_pt_%d_p%d", codec.GetKeyspaceID(), tableID, partitionID), nil
+	}
+	return fmt.Sprintf("_tidb_pt_%d_p%d", tableID, partitionID), nil
+}
+
+func validateAffinityCodec(codec tikv.Codec) error {
+	if !kerneltype.IsNextGen() {
+		return nil
+	}
+	// client-go validates the keyspace identity when constructing CodecV2.
+	if codec == nil || codec.GetKeyspaceMeta() == nil {
+		return errors.New("affinity requires a valid APIv2 keyspace codec in NextGen")
+	}
+	return nil
 }
 
 func buildAffinityGroupKeyRange(codec tikv.Codec, physicalID int64) pdhttp.AffinityGroupKeyRange {
@@ -74,7 +93,10 @@ func buildAffinityGroupDefinitions(codec tikv.Codec, tblInfo *model.TableInfo, p
 
 	switch tblInfo.Affinity.Level {
 	case ast.TableAffinityLevelTable:
-		groupID := GetTableAffinityGroupID(codec, tblInfo.ID)
+		groupID, err := GetTableAffinityGroupID(codec, tblInfo.ID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		return map[string][]pdhttp.AffinityGroupKeyRange{
 			groupID: {buildAffinityGroupKeyRange(codec, tblInfo.ID)},
 		}, nil
@@ -89,7 +111,10 @@ func buildAffinityGroupDefinitions(codec tikv.Codec, tblInfo *model.TableInfo, p
 
 		groups := make(map[string][]pdhttp.AffinityGroupKeyRange, len(definitions))
 		for _, def := range definitions {
-			groupID := GetPartitionAffinityGroupID(codec, tblInfo.ID, def.ID)
+			groupID, err := GetPartitionAffinityGroupID(codec, tblInfo.ID, def.ID)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			groups[groupID] = []pdhttp.AffinityGroupKeyRange{buildAffinityGroupKeyRange(codec, def.ID)}
 		}
 		return groups, nil
@@ -118,6 +143,9 @@ func createTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo)
 	}
 
 	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = jobCtx.ctx
+	}
 	codec := jobCtx.store.GetCodec()
 
 	groups, err := buildAffinityGroupDefinitions(codec, tblInfo, nil)
@@ -149,6 +177,9 @@ func deleteTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo,
 	}
 
 	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = jobCtx.ctx
+	}
 	codec := jobCtx.store.GetCodec()
 
 	groups, err := buildAffinityGroupDefinitions(codec, tblInfo, partitionDefs)
