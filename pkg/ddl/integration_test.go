@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -87,6 +88,39 @@ func TestDDLStatementsBackFill(t *testing.T) {
 		tk.MustExec(tc.ddlSQL)
 		require.Equal(t, tc.expectedNeedReorg, needReorg, tc)
 	}
+}
+
+func TestPartialIndexLegacyJobVersion(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("legacy Job V1 rolling upgrades and configurable fast reorg are classic-only")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table legacy_partial (a int, b int)")
+	tk.MustExec("insert into legacy_partial values (-1,10), (0,20), (1,30), (2,40)")
+	originalFastReorg := tk.MustQuery("select @@global.tidb_ddl_enable_fast_reorg").Rows()[0][0]
+	defer tk.MustExec(fmt.Sprintf("set global tidb_ddl_enable_fast_reorg = %s", originalFastReorg))
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = on")
+	originalVersion := model.GetJobVerInUse()
+	defer model.SetJobVerInUse(originalVersion)
+	model.SetJobVerInUse(model.JobVersion1)
+	for _, sql := range []string{
+		"create index partial_idx on legacy_partial(b) where a > 0",
+		"alter table legacy_partial add index partial_idx(b) where a > 0",
+		"create unique index partial_idx on legacy_partial(b) where a > 0",
+		"alter table legacy_partial add index another_idx(a), add index partial_idx(b) where a > 0",
+	} {
+		tk.MustGetDBError(sql, dbterror.ErrUnsupportedAddPartialIndex)
+	}
+	tk.MustQuery("select key_name from information_schema.tidb_indexes where table_schema = 'test' and table_name = 'legacy_partial'").Check(testkit.Rows())
+	tk.MustExec("create index full_idx on legacy_partial(b)")
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	model.SetJobVerInUse(model.JobVersion2)
+	tk.MustExec("create index partial_idx on legacy_partial(b) where a > 0")
+	tk.MustQuery("select predicate from information_schema.tidb_indexes where table_schema = 'test' and table_name = 'legacy_partial' and key_name = 'partial_idx'").Check(testkit.Rows("`a` > 0"))
+	tk.MustExec("admin check table legacy_partial")
+	tk.MustQuery("select b from legacy_partial use index (partial_idx) where a > 0 order by b").Check(testkit.Rows("30", "40"))
 }
 
 func TestPartialIndex(t *testing.T) {
