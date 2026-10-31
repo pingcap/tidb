@@ -113,6 +113,8 @@ pub struct DataSourceIndexHint {
 pub struct DataSource {
     /// The shared logical base.
     pub base: BaseLogicalPlan,
+    /// Go `DataSource.TableInfo`: the table's shared `*model.TableInfo`.
+    pub table_info: Option<tidb_model::GoShared<tidb_model::TableInfo>>,
     /// Go `TableInfo.ID`.
     pub table_id: i64,
     /// Go `TableInfo.Name.O`.
@@ -1146,6 +1148,7 @@ impl DataSource {
     pub fn clone_shallow(&self) -> Self {
         Self {
             base: self.base.shell(),
+            table_info: self.table_info.clone(),
             table_id: self.table_id,
             table_name: self.table_name.clone(),
             table_as_name: self.table_as_name.clone(),

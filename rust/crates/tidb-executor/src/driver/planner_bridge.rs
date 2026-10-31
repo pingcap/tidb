@@ -1108,37 +1108,6 @@ pub(crate) fn record_used_item_stats_status(
 
 
 
-/// Go `infoschema.buildTableMeta`'s `TableInfo` for a source the catalog
-/// holds no stored table for (a memory table): the columns it lists, every
-/// one public, with no index.
-fn memory_table_info(
-    source: &tidb_planner_core_operator_logicalop::DataSource,
-) -> tidb_model::TableInfo {
-    tidb_model::TableInfo {
-        id: source.table_id,
-        name: tidb_ast::CiString::new(source.table_name.clone()),
-        columns: source
-            .table_columns
-            .iter()
-            .enumerate()
-            .filter(|(_, column)| column.id > 0)
-            .filter_map(|(offset, column)| {
-                Some(tidb_model::ColumnInfo {
-                    id: column.id,
-                    name: tidb_ast::CiString::new(column.orig_name.clone()),
-                    offset: offset as i64,
-                    field_type: column.ret_type.clone()?,
-                    state: tidb_model::SchemaState::PUBLIC,
-                    hidden: column.is_hidden,
-                    ..tidb_model::ColumnInfo::default()
-                })
-            })
-            .collect::<Vec<_>>()
-            .into(),
-        ..tidb_model::TableInfo::default()
-    }
-}
-
 fn read<T>(lock: &std::sync::RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
     lock.read().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
@@ -1257,12 +1226,10 @@ impl InitStats<'_> {
         // scaling and histogram estimates without inferring state from buckets.
         let predicate_loaded = self.predicate_loaded_items(source, statistics);
         // Go `ds.TableInfo`.
-        let table_info = self
-            .catalog
-            .kv_table_by_id(source.table_id)
-            .map_or_else(|| tidb_model::GoShared::new(memory_table_info(source)), |table| {
-                table.meta()
-            });
+        let table_info = source
+            .table_info
+            .clone()
+            .expect("a planned data source carries its TableInfo");
         tidb_planner::stats::init_stats::init_stats(
             source,
             &table_info.read(),
@@ -3487,6 +3454,7 @@ mod statistics_initialization_tests {
             }],
         );
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
+        let table_info = table.meta();
         catalog.register_kv("t", table);
         let context = crate::StmtContext::default();
         context.stats_handle().set_table_statistics(
@@ -3494,6 +3462,8 @@ mod statistics_initialization_tests {
             std::sync::Arc::new(tidb_stats::Table::from_analyzed_items(7, 1000, 0, [], [])),
         );
         let mut source = DataSource::new(Default::default(), 7, "t");
+        // Go `ds.TableInfo`.
+        source.table_info = Some(table_info);
         source.db_name = "test".to_owned();
         source.physical_table_id = 7;
         source.derived_index_paths.insert(
@@ -3601,8 +3571,11 @@ mod statistics_initialization_tests {
             table.add_index(index, false);
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
+        let table_info = table.meta();
         catalog.register_kv("t", table);
         let mut source = DataSource::new(Default::default(), 7, "t");
+        // Go `ds.TableInfo`.
+        source.table_info = Some(table_info.clone());
         source.db_name = "test".to_owned();
         source.columns = vec![DataSourceColumn {
             id: 1,
@@ -3801,8 +3774,11 @@ mod statistics_initialization_tests {
             false,
         );
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
+        let table_info = table.meta();
         catalog.register_kv("t", table);
         let mut source = DataSource::new(Default::default(), 7, "t");
+        // Go `ds.TableInfo`.
+        source.table_info = Some(table_info.clone());
         source.db_name = "test".to_owned();
         source.columns = vec![DataSourceColumn {
             id: 1,
