@@ -49,21 +49,6 @@ pub(crate) fn column_metadata(table: &TableEntry) -> Vec<ColumnDefaultMeta> {
             .into_iter()
             .map(|(_, column)| kv_column_metadata(column))
             .collect(),
-        // A matrix-backed table carries no column metadata, so every column
-        // is nullable with no default -- the original mock behavior.
-        TableEntry::Mem(mem) => mem
-            .columns
-            .iter()
-            .map(|(name, field_type)| ColumnDefaultMeta {
-                default_value: None,
-                not_null: false,
-                no_default_value: false,
-                name: name.clone(),
-                field_type: field_type.clone(),
-                column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-                generated: false,
-            })
-            .collect(),
         // Writes through either object are refused before row evaluation.
         TableEntry::View(view) => view
             .columns

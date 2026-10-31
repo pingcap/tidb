@@ -225,7 +225,7 @@ pub use driver::{
     run_update_in, run_update_on, run_update_stmt, run_update_stmt_with_physical,
     PreparedDmlExecution, PreparedDmlPlan, SelectMeta,
 };
-use tidb_infoschema::{Catalog, MemTable, TableEntry, ViewDef, DEFAULT_DATABASE};
+use tidb_infoschema::{Catalog, TableEntry, ViewDef, DEFAULT_DATABASE};
 use tidb_driver_error::DriverError;
 use tidb_terror::MysqlError;
 use tidb_driver_error::ExecError;

@@ -364,10 +364,9 @@ impl Catalog {
             .schema.databases
             .values()
             .flat_map(|database| {
-                database.tables.iter().filter_map(move |(name, entry)| {
-                    (matches!(**entry, TableEntry::Mem(_))
-                        || is_virtual_schema_table(&database.name, name))
-                    .then(|| (database.name.go_to_lower(), name.go_to_lower()))
+                database.tables.keys().filter_map(move |name| {
+                    is_virtual_schema_table(&database.name, name)
+                        .then(|| (database.name.go_to_lower(), name.go_to_lower()))
                 })
             })
             .collect();
@@ -444,40 +443,6 @@ impl Catalog {
                             key(),
                             kv_source_table(table, &database.name, resolve_db_info.clone()),
                         );
-                    }
-                    TableEntry::Mem(table) => {
-                        // Go's memory-table `TableInfo.Name.O` is the
-                        // table's own spelling, which the scan's access
-                        // object and output names print.
-                        let table_name = if database
-                            .name
-                            .go_lower_eq(crate::infoschema_meta::INFORMATION_SCHEMA)
-                        {
-                            crate::infoschema_meta::canonical_table_name(entry_name)
-                                .map_or_else(|| entry_name.clone(), str::to_owned)
-                        } else {
-                            entry_name.clone()
-                        };
-                        let table_id = memory_table_id(&database.name, entry_name);
-                        let mut source_table = SourceTable {
-                            is_memory_table: true,
-                            table_id,
-                            table_name,
-                            db_name: database.name.clone(),
-                            physical_table_id: table_id,
-                            columns: table
-                                .columns
-                                .iter()
-                                .enumerate()
-                                .map(|(offset, (name, ret_type))| {
-                                    memory_column(offset, name, ret_type)
-                                })
-                                .collect(),
-                            ..SourceTable::default()
-                        };
-                        mark_cluster_table(&mut source_table, &database.name, entry_name);
-                        source_table.attach_resolve_metadata(resolve_db_info.clone(), None);
-                        tables.insert(key(), source_table);
                     }
                     TableEntry::View(view) => {
                         views.insert(

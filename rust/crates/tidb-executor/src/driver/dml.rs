@@ -318,16 +318,6 @@ fn physical_dml_plan_with_cache_mode(
 ) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
     use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, PhysicalDmlRoot, PhysicalPlan};
 
-    for spec in fk_specs {
-        if matches!(
-            catalog.get_in(&spec.database, &spec.table),
-            Some(TableEntry::Mem(_))
-        ) {
-            return Err(DriverError::Mysql(MysqlError::from_terror(
-                &tidb_table::table_errors::ERR_UNSUPPORTED_OP.generate_with_stack_by_args(&[]),
-            )));
-        }
-    }
 
     let plan_ids = tidb_planner_core_base::PlanIdAllocator::new();
     let column_ids = tidb_planner_core_base::ColumnIdAllocator::new();

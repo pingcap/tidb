@@ -378,9 +378,6 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                         None,
                     ))
                 }
-                crate::TableEntry::Mem(_) => Err(DriverError::unsupported(
-                    "SHOW CREATE TABLE needs a storage-backed table",
-                )),
             }
         });
         let (text, reported, view_charset) = shown?;

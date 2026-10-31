@@ -1475,14 +1475,12 @@ fn build_table_sample(
 }
 
 /// The declared columns and the rows a memory-table scan reads.
-struct MemoryTableRows<'a> {
+struct MemoryTableRows {
     column_names: Vec<String>,
-    source: MemoryTableRowSource<'a>,
+    source: MemoryTableRowSource,
 }
 
-enum MemoryTableRowSource<'a> {
-    /// The catalog stores the rows (a fixture, `SHOW ... WHERE`'s selection).
-    Stored(&'a [Vec<tidb_datatype::Datum>]),
+enum MemoryTableRowSource {
     /// The session retrieved them for this scan (Go `memtableRetriever`).
     Retrieved(std::sync::Arc<Vec<Vec<tidb_datatype::Datum>>>),
     /// The scan retrieves them itself when it is first read (Go
@@ -1503,10 +1501,9 @@ enum MemoryTableRowsOrRetriever<'a> {
     ),
 }
 
-impl MemoryTableRows<'_> {
+impl MemoryTableRows {
     fn rows(&self) -> MemoryTableRowsOrRetriever<'_> {
         match &self.source {
-            MemoryTableRowSource::Stored(rows) => MemoryTableRowsOrRetriever::Rows(rows),
             MemoryTableRowSource::Retrieved(rows) => MemoryTableRowsOrRetriever::Rows(rows),
             MemoryTableRowSource::Owned(read, retriever) => {
                 MemoryTableRowsOrRetriever::Owned(read.clone(), std::sync::Arc::clone(retriever))
@@ -1545,21 +1542,17 @@ fn retrieval_error(error: DriverError) -> crate::ExecError {
 /// `database`.`table`. A virtual table's rows are not stored: the session
 /// retrieves them per scan, so a scan read before that fails with
 /// [`DriverError::MemTableRetrievalNeeded`].
-fn memory_table_rows<'a>(
+fn memory_table_rows(
     plan: &PhysicalPlan,
     database: &str,
     table: &str,
-    catalog: &'a Catalog,
+    catalog: &Catalog,
     ctx: &crate::StmtContext,
-) -> Result<MemoryTableRows<'a>, DriverError> {
+) -> Result<MemoryTableRows, DriverError> {
     match catalog
         .table_in(database, table)
         .ok_or_else(|| DriverError::unsupported("memory table is absent from the catalog"))?
     {
-        super::TableEntry::Mem(stored) => Ok(MemoryTableRows {
-            column_names: stored.columns.iter().map(|(name, _)| name.clone()).collect(),
-            source: MemoryTableRowSource::Stored(&stored.rows),
-        }),
         super::TableEntry::Kv(virtual_table) => {
             let column_names = virtual_table
                 .columns()

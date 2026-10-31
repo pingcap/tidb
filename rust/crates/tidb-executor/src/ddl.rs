@@ -106,11 +106,6 @@ pub fn create_table_in_catalog(
                             ]),
                     ));
                 }
-                Some(crate::TableEntry::Mem(_)) => {
-                    return Err(DriverError::unsupported(
-                        "CREATE TABLE ... LIKE a fixture table with no TableInfo",
-                    ));
-                }
                 None => return Err(not_exists()),
             };
             let refer = refer.read();

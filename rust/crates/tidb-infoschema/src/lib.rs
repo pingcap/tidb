@@ -25,7 +25,7 @@
 use tidb_table::sequence::SequenceDef;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::FieldType;
 use tidb_table::kv_table::KvTable;
 use tidb_driver_error::DriverError;
 use tidb_table::kv_table::TableCharset;
@@ -78,15 +78,6 @@ pub use planner_view::{PlannerCatalog, PlannerSchemaView};
 pub mod statistics_access;
 pub mod temporary;
 pub mod cluster_catalog;
-
-/// An in-memory table: named, typed columns plus row values.
-#[derive(Clone, Debug, Default)]
-pub struct MemTable {
-    /// The columns, in row order: `(name, type)`.
-    pub columns: Vec<(String, FieldType)>,
-    /// The rows (one `Datum` per column).
-    pub rows: Vec<Vec<Datum>>,
-}
 
 /// Splits a table reference into its schema and table names. A bare name
 /// resolves in the default schema; `db.t` names its schema explicitly.
@@ -447,8 +438,6 @@ pub struct ViewDef {
 /// A catalog table's backing store.
 #[derive(Clone, Debug)]
 pub enum TableEntry {
-    /// Read-only materialized rows for virtual tables and query fixtures.
-    Mem(MemTable),
     /// Rows stored as real TiKV-format bytes (see [`crate::kv_table`]).
     ///
     /// `Arc`-wrapped so a transient, read-only view of an already-private
@@ -483,7 +472,6 @@ impl TableEntry {
     /// a stored-row offset when the table has a hidden column.
     pub fn columns(&self) -> impl Iterator<Item = (String, FieldType)> {
         let columns: Vec<_> = match self {
-            TableEntry::Mem(mem) => mem.columns.clone(),
             TableEntry::Kv(kv) => kv
                 .visible_columns()
                 .into_iter()
@@ -599,19 +587,6 @@ impl Catalog {
         Some(Arc::make_mut(entry))
     }
 
-    /// Registers a matrix-backed `table` in the default database.
-    ///
-    /// # Panics
-    /// If `test` has been dropped. Every caller is a fixture or a bootstrap
-    /// step that runs against a freshly [`Default`]ed catalog, where `test`
-    /// exists by construction; a statement-driven create names its schema and
-    /// goes through [`Catalog::register_kv_in`], which reports 1049 instead.
-    pub fn register(&mut self, name: &str, table: MemTable) {
-        self.bump_metadata_version();
-        self.register_in(DEFAULT_DATABASE, name, TableEntry::Mem(table))
-            .expect("the default database exists in a freshly built catalog");
-    }
-
     /// Registers a TiKV-format-byte-backed `table` in the default database.
     ///
     /// # Panics
@@ -695,23 +670,13 @@ impl Catalog {
     #[must_use]
     pub fn table_names(&self, database: &str) -> Option<Vec<String>> {
         let database = self.schema.databases.get(&database.go_to_lower())?;
-        let is_information_schema = database
-            .name
-            .go_lower_eq(crate::infoschema_meta::INFORMATION_SCHEMA);
         let mut names: Vec<String> = database
             .tables
-            .iter()
-            .filter_map(|(key, entry)| match entry.as_ref() {
+            .values()
+            .filter_map(|entry| match entry.as_ref() {
                 TableEntry::Kv(table) => Some(table.name()),
                 TableEntry::View(view) => Some(view.name.clone()),
                 TableEntry::Sequence(sequence) => Some(sequence.name.clone()),
-                // A memory table carries no name of its own: its key, or the
-                // canonical spelling of an information_schema table.
-                TableEntry::Mem(_) if is_information_schema => Some(
-                    crate::infoschema_meta::canonical_table_name(key)
-                        .map_or_else(|| key.clone(), str::to_owned),
-                ),
-                TableEntry::Mem(_) => Some(key.clone()),
             })
             .collect();
         names.sort();
@@ -908,7 +873,7 @@ impl Catalog {
         match self.get_in(database, name)? {
             TableEntry::Kv(table) => Some(Some(table.table_id())),
             TableEntry::View(view) => Some((view.id != 0).then_some(view.id)),
-            TableEntry::Mem(_) | TableEntry::Sequence(_) => Some(None),
+            TableEntry::Sequence(_) => Some(None),
         }
     }
 

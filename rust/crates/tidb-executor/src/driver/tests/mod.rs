@@ -34,22 +34,14 @@ use crate::StatsStmtCtx as _;
 use super::*;
 
 fn test_catalog() -> Catalog {
-    use tidb_datatype::FieldTypeCode;
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-    catalog.register(
-        "t",
-        MemTable {
-            columns: vec![
-                ("a".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
-                ("b".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
-            ],
-            rows: vec![
-                vec![Datum::Int(1), Datum::Int(30)],
-                vec![Datum::Int(2), Datum::Int(20)],
-                vec![Datum::Int(3), Datum::Int(10)],
-            ],
-        },
-    );
+    crate::run_create_table_on("CREATE TABLE t (a BIGINT, b BIGINT)", &mut catalog).unwrap();
+    run_insert_on(
+        "INSERT INTO t VALUES (1, 30), (2, 20), (3, 10)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
     catalog
 }
 

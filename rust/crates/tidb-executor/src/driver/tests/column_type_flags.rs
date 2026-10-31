@@ -17,13 +17,7 @@ use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
 #[test]
 fn catalog_column_iteration_borrows_visible_metadata() {
     let mut catalog = flag_table();
-    catalog.register(
-        "memory",
-        MemTable {
-            columns: vec![("Label".into(), FieldType::new(FieldTypeCode::Varchar))],
-            rows: Vec::new(),
-        },
-    );
+    crate::run_create_table_on("CREATE TABLE memory (Label VARCHAR(255))", &mut catalog).unwrap();
     for name in ["y", "memory"] {
         let entry = catalog.table_in("test", name).unwrap();
         let owned = entry.column_types();
@@ -38,7 +32,6 @@ fn catalog_column_iteration_borrows_visible_metadata() {
                     let column = kv.visible_columns()[offset].1.read();
                     (column.name.original().to_owned(), column.field_type.clone())
                 }
-                TableEntry::Mem(mem) => mem.columns[offset].clone(),
                 _ => unreachable!(),
             };
             assert_eq!((name, ty), (source_name, source_type));

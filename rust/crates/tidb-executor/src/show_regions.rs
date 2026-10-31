@@ -78,15 +78,6 @@ fn resolve<'a>(
             id: sequence.id,
             table: None,
         },
-        TableEntry::Mem(_) => Target {
-            name: table_name.to_owned(),
-            id: if database.eq_ignore_ascii_case("information_schema") {
-                tidb_infoschema::infoschema_meta::memory_table_id(table_name).unwrap_or(0)
-            } else {
-                0
-            },
-            table: None,
-        },
     };
     if target.table.is_some_and(KvTable::is_temporary) {
         return Err(DriverError::from(

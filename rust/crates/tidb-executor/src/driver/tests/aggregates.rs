@@ -1968,17 +1968,23 @@ fn explain_distinct_scalar_subquery_with_filter() {
 /// reading from Go's: as a signed BIGINT they would print `-1`.
 #[test]
 fn bit_aggregates_are_unsigned() {
-    use tidb_datatype::FieldTypeCode;
 
     fn catalog_with(rows: Vec<Vec<Datum>>) -> Catalog {
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-        catalog.register(
-            "b",
-            MemTable {
-                columns: vec![("v".to_owned(), FieldType::new(FieldTypeCode::LongLong))],
-                rows,
-            },
-        );
+        crate::run_create_table_on("CREATE TABLE b (v BIGINT)", &mut catalog).unwrap();
+        for row in rows {
+            let literal = match &row[0] {
+                Datum::Null => "NULL".to_owned(),
+                Datum::Int(value) => value.to_string(),
+                other => panic!("unexpected fixture value {other:?}"),
+            };
+            run_insert_on(
+                &format!("INSERT INTO b VALUES ({literal})"),
+                &mut catalog,
+                &crate::StmtContext::for_query(),
+            )
+            .unwrap();
+        }
         catalog
     }
 

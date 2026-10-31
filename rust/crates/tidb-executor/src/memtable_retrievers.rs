@@ -1496,7 +1496,6 @@ fn all_schemas(catalog: &tidb_infoschema::Catalog) -> Vec<store_helper::HelperSc
                     indices: Vec::new(),
                     is_common_handle: false,
                 },
-                tidb_infoschema::TableEntry::Mem(_) => continue,
             };
             tables.push(table);
         }
