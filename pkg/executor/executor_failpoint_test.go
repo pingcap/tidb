@@ -293,8 +293,30 @@ func TestCollectCopRuntimeStats(t *testing.T) {
 	require.NoError(t, failpoint.Disable("tikvclient/tikvStoreRespResult"))
 }
 
+func coprocessorOOMFailpointsInstrumented(t *testing.T) bool {
+	t.Helper()
+	const fp = "github.com/pingcap/tidb/pkg/executor/coprocessorOOMTiCaseProbe"
+	require.NoError(t, failpoint.Enable(fp, `return(true)`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable(fp))
+	})
+
+	instrumented := false
+	failpoint.Inject("coprocessorOOMTiCaseProbe", func(val failpoint.Value) {
+		instrumented = val.(bool)
+	})
+	return instrumented
+}
+
+// failpoint-ctl does not generate a binding helper for this external test package.
+//
+//revive:disable-next-line:var-naming
+func _curpkg_(name string) string {
+	return "github.com/pingcap/tidb/pkg/executor/" + name
+}
+
 func TestCoprocessorOOMTiCase(t *testing.T) {
-	t.Skip("skip")
+	failpointsInstrumented := coprocessorOOMFailpointsInstrumented(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -344,33 +366,27 @@ func TestCoprocessorOOMTiCase(t *testing.T) {
 				expect = append(expect, fmt.Sprintf("%v", i))
 			}
 			tk.MustQuery(testcase.sql).Sort().Check(testkit.Rows(expect...))
-			// assert oom action worked by max consumed > memory quota
-			require.Greater(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), int64(quota))
+			maxConsumed := tk.Session().GetSessionVars().StmtCtx.MemTracker.MaxConsumed()
+			oomTriggered := maxConsumed > int64(quota)
+			require.Equal(t, failpointsInstrumented, oomTriggered, "max consumed: %d, quota: %d", maxConsumed, quota)
 			se.Close()
 		}
 	}
 
-	// ticase-4169, trigger oom action twice after workers consuming all the data
-	err := failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/ticase-4169", `return(true)`)
-	require.NoError(t, err)
-	f()
-	err = failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/ticase-4169")
-	require.NoError(t, err)
-	/*
-		// ticase-4170, trigger oom action twice after iterator receiving all the data.
-		err = failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/ticase-4170", `return(true)`)
-		require.NoError(t, err)
+	runTiCase := func(fp string) {
+		require.NoError(t, failpoint.Enable(fp, `return(true)`))
+		defer func() {
+			require.NoError(t, failpoint.Disable(fp))
+		}()
 		f()
-		err = failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/ticase-4170")
-		require.NoError(t, err)
-		// ticase-4171, trigger oom before reading or consuming any data
-		err = failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/ticase-4171", `return(true)`)
-		require.NoError(t, err)
-		f()
-		err = failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/ticase-4171")
-		require.NoError(t, err)
+	}
 
-	*/
+	// ticase-4169, trigger oom action twice after workers consuming all the data.
+	runTiCase("github.com/pingcap/tidb/pkg/store/copr/ticase-4169")
+	// ticase-4170, trigger oom action twice after iterator receiving all the data.
+	runTiCase("github.com/pingcap/tidb/pkg/store/copr/ticase-4170")
+	// ticase-4171, trigger oom before reading or consuming any data.
+	runTiCase("github.com/pingcap/tidb/pkg/store/copr/ticase-4171")
 }
 
 func TestCoprocessorBlockIssues56916(t *testing.T) {
