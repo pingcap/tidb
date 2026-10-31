@@ -3609,20 +3609,24 @@ mod statistics_initialization_tests {
             null_count: 3,
             ..Default::default()
         };
-        let column_stats = tidb_stats::table_statistics::ColumnStats {
+        let column_stats = tidb_stats::column::Column {
             histogram: histogram.clone(),
-            topn: None,
-            cms: None,
-            stats_ver: 2,
-            unsigned: false,
+            top_n: None,
+            cmsketch: None,
+            stats_version: 2,
+            ..Default::default()
         };
-        let index_stats = tidb_stats::table_statistics::IndexStats {
+        let index_stats = tidb_stats::index::Index {
             histogram: tidb_stats::Histogram { id: 9, ..histogram },
-            topn: None,
-            cms: None,
-            stats_ver: 2,
-            num_columns: 1,
-            unique: false,
+            top_n: None,
+            cmsketch: None,
+            stats_version: 2,
+            info: Some(tidb_stats::index::IndexInfo {
+                columns: vec![String::new(); 1],
+                unique: false,
+                ..Default::default()
+            }),
+            ..Default::default()
         };
         let mut statistics = tidb_stats::table_statistics::TableStatistics::new(
             100,

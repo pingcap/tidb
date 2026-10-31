@@ -337,7 +337,6 @@ mod analyzed_filter_selectivity_tests {
     use tidb_expr::scalar_function::ScalarFunction;
     use tidb_planner_cardinality::row_count_estimator::EstimatorOptions;
     use tidb_planner_property::stats_info::{HistColl, StatsInfo};
-    use tidb_stats::table_statistics::ColumnStats;
     use tidb_stats::{Bucket, Histogram};
 
     #[test]
@@ -353,12 +352,12 @@ mod analyzed_filter_selectivity_tests {
             }],
             ..Histogram::default()
         };
-        let column_stats = std::sync::Arc::new(ColumnStats {
+        let column_stats = std::sync::Arc::new(tidb_stats::column::Column {
             histogram,
-            topn: None,
-            cms: None,
-            stats_ver: 2,
-            unsigned: false,
+            top_n: None,
+            cmsketch: None,
+            stats_version: 2,
+            ..Default::default()
         });
         let stats = StatsInfo::new(100.0, [(7, 10.0), (8, 10.0)]).with_hist_coll(
             HistColl::new(false, 100, [])
@@ -459,12 +458,12 @@ mod analyzed_filter_selectivity_tests {
             ..Histogram::default()
         };
         let histogram_before = histogram.clone();
-        let column_stats = std::sync::Arc::new(ColumnStats {
+        let column_stats = std::sync::Arc::new(tidb_stats::column::Column {
             histogram,
-            topn: None,
-            cms: None,
-            stats_ver: 2,
-            unsigned: false,
+            top_n: None,
+            cmsketch: None,
+            stats_version: 2,
+            ..Default::default()
         });
         let stats = StatsInfo::new(6.0, [(1, 3.0)]).with_hist_coll(
             HistColl::new(false, 6, []).with_histograms([(1, column_stats.clone())]),
@@ -541,12 +540,12 @@ mod analyzed_filter_selectivity_tests {
         let hist_coll = HistColl::new(false, 1_000, [])
             .with_histograms([(
                 unique_id,
-                std::sync::Arc::new(ColumnStats {
+                std::sync::Arc::new(tidb_stats::column::Column {
                     histogram,
-                    topn: None,
-                    cms: None,
-                    stats_ver: 2,
-                    unsigned: false,
+                    top_n: None,
+                    cmsketch: None,
+                    stats_version: 2,
+                    ..Default::default()
                 }),
             )])
             .with_modify_count(2_000);
@@ -617,12 +616,12 @@ mod analyzed_filter_selectivity_tests {
         let hist_coll = HistColl::new(false, 300_000, [])
             .with_histograms([(
                 unique_id,
-                std::sync::Arc::new(ColumnStats {
+                std::sync::Arc::new(tidb_stats::column::Column {
                     histogram,
-                    topn: None,
-                    cms: None,
-                    stats_ver: 2,
-                    unsigned: false,
+                    top_n: None,
+                    cmsketch: None,
+                    stats_version: 2,
+                    ..Default::default()
                 }),
             )])
             .with_modify_count(0);
@@ -691,12 +690,12 @@ mod analyzed_filter_selectivity_tests {
         let hist_coll = HistColl::new(false, 1_000, [])
             .with_histograms([(
                 unique_id,
-                std::sync::Arc::new(ColumnStats {
+                std::sync::Arc::new(tidb_stats::column::Column {
                     histogram,
-                    topn: None,
-                    cms: None,
-                    stats_ver: 2,
-                    unsigned: false,
+                    top_n: None,
+                    cmsketch: None,
+                    stats_version: 2,
+                    ..Default::default()
                 }),
             )])
             .with_modify_count(0);
@@ -798,12 +797,12 @@ mod analyzed_filter_selectivity_tests {
         let hist_coll = HistColl::new(false, 6_001_215, [])
             .with_histograms([(
                 unique_id,
-                std::sync::Arc::new(ColumnStats {
+                std::sync::Arc::new(tidb_stats::column::Column {
                     histogram,
-                    topn: Some(topn),
-                    cms: None,
-                    stats_ver: 2,
-                    unsigned: false,
+                    top_n: Some(topn),
+                    cmsketch: None,
+                    stats_version: 2,
+                    ..Default::default()
                 }),
             )])
             .with_modify_count(0);
@@ -904,12 +903,12 @@ mod analyzed_filter_selectivity_tests {
         let hist_coll = HistColl::new(false, 1_000, [])
             .with_histograms([(
                 unique_id,
-                std::sync::Arc::new(ColumnStats {
+                std::sync::Arc::new(tidb_stats::column::Column {
                     histogram,
-                    topn: None,
-                    cms: None,
-                    stats_ver: 2,
-                    unsigned: false,
+                    top_n: None,
+                    cmsketch: None,
+                    stats_version: 2,
+                    ..Default::default()
                 }),
             )])
             .with_modify_count(0);
@@ -974,12 +973,12 @@ mod analyzed_filter_selectivity_tests {
         let hist_coll = HistColl::new(false, 128, [])
             .with_histograms([(
                 unique_id,
-                std::sync::Arc::new(ColumnStats {
+                std::sync::Arc::new(tidb_stats::column::Column {
                     histogram,
-                    topn: None,
-                    cms: None,
-                    stats_ver: 2,
-                    unsigned: false,
+                    top_n: None,
+                    cmsketch: None,
+                    stats_version: 2,
+                    ..Default::default()
                 }),
             )])
             .with_modify_count(0);

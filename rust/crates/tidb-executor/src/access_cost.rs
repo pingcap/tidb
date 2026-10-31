@@ -183,8 +183,6 @@ pub(crate) fn realtime_row_count(stats: Option<&TableStatistics>) -> f64 {
 mod tests {
     use super::*;
     use std::collections::{BTreeMap, BTreeSet};
-    use tidb_stats::table_statistics::ColumnStats;
-    use tidb_stats::table_statistics::IndexStats;
     use tidb_planner::table_statistics::TableStatisticsExt as _;
     use tidb_datatype::Datum;
 
@@ -233,15 +231,15 @@ mod tests {
     /// placeholder made this engine estimate 1.00.
     #[test]
     fn estimate_column_ndv_skips_an_uninitialized_column() {
-        let column = ColumnStats {
+        let column = tidb_stats::column::Column {
             histogram: tidb_stats::Histogram {
                 id: 3,
                 ..tidb_stats::Histogram::default()
             },
-            topn: None,
-            cms: None,
-            stats_ver: 0,
-            unsigned: false,
+            top_n: None,
+            cmsketch: None,
+            stats_version: 0,
+            ..Default::default()
         };
         let mut stats = TableStatistics::new(8, 8, BTreeMap::from([(3, column)]), BTreeMap::new());
         stats
@@ -264,13 +262,17 @@ mod tests {
     /// histogram counts array elements rather than rows.
     #[test]
     fn analyze_row_count_skips_multi_valued_indexes() {
-        let index = |id, count| IndexStats {
+        let index = |id, count| tidb_stats::index::Index {
             histogram: histogram_with_count(id, 1, count, 42),
-            topn: None,
-            cms: None,
-            stats_ver: 2,
-            num_columns: 1,
-            unique: false,
+            top_n: None,
+            cmsketch: None,
+            stats_version: 2,
+            info: Some(tidb_stats::index::IndexInfo {
+                columns: vec![String::new(); 1],
+                unique: false,
+                ..Default::default()
+            }),
+            ..Default::default()
         };
         let mut statistics = TableStatistics::new(
             4,
@@ -289,12 +291,12 @@ mod tests {
         let predicate_id = 2;
         let index_id = 3;
         let version = 42;
-        let column = |id, ndv, count| ColumnStats {
+        let column = |id, ndv, count| tidb_stats::column::Column {
             histogram: histogram_with_count(id, ndv, count, version),
-            topn: None,
-            cms: None,
-            stats_ver: 2,
-            unsigned: false,
+            top_n: None,
+            cmsketch: None,
+            stats_version: 2,
+            ..Default::default()
         };
         let statistics = TableStatistics::new(
             300_000,
@@ -307,13 +309,17 @@ mod tests {
             .collect(),
             [(
                 index_id,
-                IndexStats {
+                tidb_stats::index::Index {
                     histogram: histogram_with_count(index_id, 10, 299_995, version),
-                    topn: None,
-                    cms: None,
-                    stats_ver: 2,
-                    num_columns: 1,
-                    unique: false,
+                    top_n: None,
+                    cmsketch: None,
+                    stats_version: 2,
+                    info: Some(tidb_stats::index::IndexInfo {
+                        columns: vec![String::new(); 1],
+                        unique: false,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
                 },
             )]
             .into_iter()

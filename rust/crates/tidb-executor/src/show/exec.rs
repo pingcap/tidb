@@ -1296,7 +1296,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                                 &column.name,
                                 1,
                                 false,
-                                column_stats.topn.as_ref(),
+                                column_stats.top_n.as_ref(),
                                 &column_types,
                                 &mut render,
                             )?);
@@ -1334,7 +1334,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                                 &index.name,
                                 index.column_offsets.len(),
                                 true,
-                                index_stats.topn.as_ref(),
+                                index_stats.top_n.as_ref(),
                                 &column_types,
                                 &mut render,
                             )?);

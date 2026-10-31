@@ -26,6 +26,8 @@ pub struct ColumnInfo {
     pub name: String,
     /// Whether the MySQL primary-key flag is present.
     pub primary_key: bool,
+    /// Go `Info.GetFlag()`: the column's field-type flags.
+    pub flag: usize,
 }
 
 /// A column histogram and its optional sketches.
@@ -50,16 +52,12 @@ impl Column {
         copied
     }
 
-    /// Go `TotalRowCount`. Analyze-v2 requires a TopN, as the source does.
+    /// Go `TotalRowCount`: version 2 folds the TopN back in.
     pub fn total_row_count(&self) -> f64 {
         let histogram = self.histogram.total_row_count();
         if self.stats_version >= 2 {
-            histogram
-                + self
-                    .top_n
-                    .as_ref()
-                    .expect("v2 column has no TopN")
-                    .total_count() as f64
+            // Go's `(*TopN).TotalCount` is nil-safe.
+            histogram + self.top_n.as_ref().map_or(0, TopN::total_count) as f64
         } else {
             histogram
         }
@@ -69,15 +67,26 @@ impl Column {
     pub fn not_null_count(&self) -> f64 {
         let histogram = self.histogram.not_null_count();
         if self.stats_version >= 2 {
-            histogram
-                + self
-                    .top_n
-                    .as_ref()
-                    .expect("v2 column has no TopN")
-                    .total_count() as f64
+            // Go's `(*TopN).TotalCount` is nil-safe.
+            histogram + self.top_n.as_ref().map_or(0, TopN::total_count) as f64
         } else {
             histogram
         }
+    }
+
+    /// The payload gate from Go `ColumnStatsIsInvalid`, independent of the
+    /// collection owner's load requests and restricted-SQL policy.
+    #[must_use]
+    pub fn is_valid_for_estimation(&self, pseudo: bool, essential_loaded: bool) -> bool {
+        !pseudo && self.total_row_count() != 0.0 && (essential_loaded || self.histogram.ndv <= 0)
+    }
+
+    /// Go `mysql.HasUnsignedFlag(c.Info.GetFlag())`.
+    #[must_use]
+    pub fn is_unsigned(&self) -> bool {
+        self.info
+            .as_ref()
+            .is_some_and(|info| tidb_mysql::has_unsigned_flag(info.flag))
     }
 
     /// Go `GetIncreaseFactor`, including its zero-count identity fallback.

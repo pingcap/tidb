@@ -3622,7 +3622,6 @@ mod task_tests {
 
     #[test]
     fn root_conversion_uses_statement_values_for_root_filters() {
-        use tidb_stats::table_statistics::ColumnStats;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::constant::{Constant, ParamMarker};
         let allocator = PlanIdAllocator::new();
@@ -3638,7 +3637,7 @@ mod task_tests {
                     Expression::Constant(parameter),
                 ],
             ));
-        let histogram = std::sync::Arc::new(ColumnStats {
+        let histogram = std::sync::Arc::new(tidb_stats::column::Column {
             histogram: tidb_stats::Histogram {
                 ndv: 10,
                 buckets: vec![tidb_stats::Bucket {
@@ -3650,10 +3649,10 @@ mod task_tests {
                 }],
                 ..Default::default()
             },
-            topn: None,
-            cms: None,
-            stats_ver: 2,
-            unsigned: false,
+            top_n: None,
+            cmsketch: None,
+            stats_version: 2,
+            ..Default::default()
         });
         let mut plan = table_scan_with_rows(100.0);
         plan.base_mut()
@@ -4436,7 +4435,6 @@ mod task_tests {
 
     #[test]
     fn root_task_filter_preserves_go_one_row_floor() {
-        use tidb_stats::table_statistics::ColumnStats;
         use tidb_planner_property::stats_info::HistColl;
         use std::sync::Arc;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -4461,12 +4459,12 @@ mod task_tests {
         let hist_coll = HistColl::new(false, 100, [])
             .with_histograms([(
                 unique_id,
-                Arc::new(ColumnStats {
+                Arc::new(tidb_stats::column::Column {
                     histogram,
-                    topn: None,
-                    cms: None,
-                    stats_ver: 2,
-                    unsigned: false,
+                    top_n: None,
+                    cmsketch: None,
+                    stats_version: 2,
+                    ..Default::default()
                 }),
             )])
             .with_modify_count(0);
@@ -4563,7 +4561,6 @@ mod task_tests {
     #[test]
     fn root_task_filter_uses_the_task_session_estimator_options() {
         use tidb_planner_cardinality::row_count_estimator::EstimatorOptions;
-        use tidb_stats::table_statistics::ColumnStats;
         use tidb_planner_property::stats_info::HistColl;
         use std::sync::Arc;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -4588,12 +4585,12 @@ mod task_tests {
         let hist_coll = HistColl::new(false, 1_000, [])
             .with_histograms([(
                 unique_id,
-                Arc::new(ColumnStats {
+                Arc::new(tidb_stats::column::Column {
                     histogram,
-                    topn: None,
-                    cms: None,
-                    stats_ver: 2,
-                    unsigned: false,
+                    top_n: None,
+                    cmsketch: None,
+                    stats_version: 2,
+                    ..Default::default()
                 }),
             )])
             .with_modify_count(2_000);

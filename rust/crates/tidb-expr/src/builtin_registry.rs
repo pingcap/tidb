@@ -514,7 +514,7 @@ pub(crate) fn unresolved_error(name: &str, current_database: Option<String>) -> 
         // 1235 message rather than formatting it: the checksum exists only
         // as the fast point plan's select field (`tryExtractRowChecksumColumn`).
         "tidb_row_checksum" => {
-            use tidb_terror::{TerrorClass, TerrorCode, TerrorError};
+            use tidb_terror::{TerrorClass, TerrorError};
             // Go `ErrNotSupportedYet`: `ClassExpression.NewStd(1235)`.
             static ERR_NOT_SUPPORTED_YET: std::sync::LazyLock<TerrorError> =
                 std::sync::LazyLock::new(|| {

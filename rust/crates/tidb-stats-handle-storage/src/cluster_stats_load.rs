@@ -516,6 +516,7 @@ impl StatsTableSchema {
                         primary_key: column.field_type.flags()
                             & tidb_datatype::FieldTypeFlags::PRI_KEY
                             != 0,
+                        flag: column.field_type.flags() as usize,
                     },
                     visible: column.state == tidb_model::SchemaState::PUBLIC && !column.hidden,
                 }
@@ -536,6 +537,7 @@ impl StatsTableSchema {
                             .map(|column| column.read().name.lowercase().to_owned())
                             .collect(),
                         mv_index: index.mv_index,
+                        unique: index.unique,
                     },
                     public: index.state == tidb_model::SchemaState::PUBLIC,
                 }
@@ -591,6 +593,7 @@ impl StatsTableSchema {
                     primary_key: column
                         .field_type
                         .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
+                    flag: column.field_type.flags() as usize,
                 },
                 visible: !table.is_hidden(offset),
             })
@@ -609,6 +612,7 @@ impl StatsTableSchema {
                         .map(|column| tidb_hack::go_to_lower(&column.name))
                         .collect(),
                     mv_index: table.mv_key_part_source(index.id).is_some(),
+                    unique: index.unique,
                 },
                 public: true,
             })

@@ -278,10 +278,10 @@ pub fn init_stats(
                             })
                     })
                     .unwrap_or(-1.0);
-                let index_total_count = statistics.indexes().get(&index.id).map_or(
-                    0.0,
-                    tidb_stats::table_statistics::IndexStats::total_row_count,
-                );
+                let index_total_count = statistics
+                    .indexes()
+                    .get(&index.id)
+                    .map_or(0.0, tidb_stats::index::Index::total_row_count);
                 if analyzed_row_count > 0.0 && index_total_count > 0.0 {
                     let scale = index_total_count / analyzed_row_count;
                     row_counts.index_realtime = (statistics.row_count() as f64 * scale) as i64;
@@ -482,8 +482,6 @@ use tidb_charset::Collation;
     use super::TableStatsSnapshot;
     use tidb_planner_cardinality::row_count_estimator::EstimatorOptions;
     use tidb_ranger::Range;
-    use tidb_stats::table_statistics::ColumnStats;
-    use tidb_stats::table_statistics::IndexStats;
     use tidb_planner_cardinality::selectivity::get_row_count_by_index_ranges;
     use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
     use tidb_planner_core_operator_logicalop::DataSource;
@@ -494,8 +492,8 @@ use tidb_charset::Collation;
     struct Snapshot {
         row_count: i64,
         modify_count: i64,
-        columns: BTreeMap<i64, ColumnStats>,
-        indexes: BTreeMap<i64, IndexStats>,
+        columns: BTreeMap<i64, tidb_stats::column::Column>,
+        indexes: BTreeMap<i64, tidb_stats::index::Index>,
         column_load_status: BTreeMap<i64, StatsLoadedStatus>,
         index_load_status: BTreeMap<i64, StatsLoadedStatus>,
         index_stats_existence: BTreeMap<i64, bool>,
@@ -518,10 +516,10 @@ use tidb_charset::Collation;
         fn stats_ver(&self) -> i64 {
             2
         }
-        fn columns(&self) -> &BTreeMap<i64, ColumnStats> {
+        fn columns(&self) -> &BTreeMap<i64, tidb_stats::column::Column> {
             &self.columns
         }
-        fn indexes(&self) -> &BTreeMap<i64, IndexStats> {
+        fn indexes(&self) -> &BTreeMap<i64, tidb_stats::index::Index> {
             &self.indexes
         }
         fn column_load_status(&self) -> &BTreeMap<i64, StatsLoadedStatus> {
@@ -559,7 +557,7 @@ use tidb_charset::Collation;
         };
         snapshot.columns.insert(
             1,
-            ColumnStats {
+            tidb_stats::column::Column {
                 histogram: Histogram {
                     id: 1,
                     ndv: 100,
@@ -573,15 +571,15 @@ use tidb_charset::Collation;
                     }],
                     ..Histogram::default()
                 },
-                topn: None,
-                cms: None,
-                stats_ver: 2,
-                unsigned: false,
+                top_n: None,
+                cmsketch: None,
+                stats_version: 2,
+                ..Default::default()
             },
         );
         snapshot.indexes.insert(
             7,
-            IndexStats {
+            tidb_stats::index::Index {
                 histogram: Histogram {
                     id: 7,
                     ndv: 100,
@@ -598,11 +596,15 @@ use tidb_charset::Collation;
                     }],
                     ..Histogram::default()
                 },
-                topn: Some(topn),
-                cms: None,
-                stats_ver: 2,
-                num_columns: 1,
-                unique: false,
+                top_n: Some(topn),
+                cmsketch: None,
+                stats_version: 2,
+                info: Some(tidb_stats::index::IndexInfo {
+                    columns: vec![String::new(); 1],
+                    unique: false,
+                    ..Default::default()
+                }),
+                ..Default::default()
             },
         );
         snapshot

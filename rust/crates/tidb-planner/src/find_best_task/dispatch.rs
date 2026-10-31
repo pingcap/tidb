@@ -2749,7 +2749,6 @@ mod index_scan_limit_adjustment_tests {
 #[cfg(test)]
 mod correlation_tests {
     use super::filter_column_correlation;
-    use tidb_stats::table_statistics::ColumnStats;
     use tidb_planner_property::stats_info::{HistColl, StatsInfo};
     use std::sync::Arc;
     use tidb_datatype::{FieldType, FieldTypeCode};
@@ -2762,16 +2761,16 @@ mod correlation_tests {
         let column_a = Column::new(7, FieldType::new(FieldTypeCode::LongLong));
         let column_b = Column::new(8, FieldType::new(FieldTypeCode::LongLong));
         let histogram = |id, correlation| {
-            Arc::new(ColumnStats {
+            Arc::new(tidb_stats::column::Column {
                 histogram: Histogram {
                     id,
                     correlation,
                     ..Histogram::default()
                 },
-                topn: None,
-                cms: None,
-                stats_ver: 2,
-                unsigned: false,
+                top_n: None,
+                cmsketch: None,
+                stats_version: 2,
+                ..Default::default()
             })
         };
         let stats = StatsInfo::new(100.0, []).with_hist_coll(
@@ -2818,7 +2817,6 @@ mod cross_estimate_dispatch_tests {
         find_best_task_4_logical_data_source_without_enforcer,
     };
     use tidb_planner_util::path::PossiblePath;
-    use tidb_stats::table_statistics::ColumnStats;
     use crate::find_best_task::coster::Ver2Coster;
     use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
     use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, DataSource};
@@ -2853,7 +2851,7 @@ mod cross_estimate_dispatch_tests {
                 )),
             ],
         ));
-        let histogram = Arc::new(ColumnStats {
+        let histogram = Arc::new(tidb_stats::column::Column {
             histogram: Histogram {
                 id: 2,
                 ndv: 100,
@@ -2867,10 +2865,10 @@ mod cross_estimate_dispatch_tests {
                 }],
                 ..Histogram::default()
             },
-            topn: None,
-            cms: None,
-            stats_ver: 2,
-            unsigned: false,
+            top_n: None,
+            cmsketch: None,
+            stats_version: 2,
+            ..Default::default()
         });
         let hist_coll = HistColl::new(false, 100, []).with_histograms([(2, histogram)]);
         let stats = StatsInfo::new(100.0, []).with_hist_coll(hist_coll.clone());

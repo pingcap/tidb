@@ -23,8 +23,6 @@ use tidb_charset::Collation;
 use tidb_planner_cardinality::row_count_estimator::{ColumnRange, EstimatorOptions, IndexColumnStats, get_column_row_count, get_index_row_count_for_stats_v2};
 use tidb_planner_property::stats_info::IndexRowCounts;
 use tidb_ranger::Range;
-use tidb_stats::table_statistics::ColumnStats;
-use tidb_stats::table_statistics::IndexStats;
 use tidb_stats::histogram::Histogram;
 
 fn longlong() -> FieldType {
@@ -56,20 +54,20 @@ fn int_values(begin: i64, num: i64) -> Vec<Datum> {
     (begin..begin + num).map(Datum::Int).collect()
 }
 
-fn column_stats(histogram: Histogram) -> ColumnStats {
-    ColumnStats {
+fn column_stats(histogram: Histogram) -> tidb_stats::column::Column {
+    tidb_stats::column::Column {
         histogram,
-        topn: None,
-        cms: None,
-        stats_ver: 2,
-        unsigned: false,
+        top_n: None,
+        cmsketch: None,
+        stats_version: 2,
+        ..Default::default()
     }
 }
 
 /// Go `getRange(start, end)` through the single-column wrapper
 /// `getColumnRowCount` (`selectivity_test.go:68-73`).
 fn column_row_count(
-    column: &ColumnStats,
+    column: &tidb_stats::column::Column,
     start: i64,
     end: i64,
     realtime_row_count: i64,
@@ -438,13 +436,17 @@ fn risk_eq_skew_ratio_raises_index_equal_estimates_for_unseen_value() {
     histogram.buckets[3].count = 8;
     histogram.buckets[4].repeat = 1;
     histogram.buckets[4].count = 9;
-    let index = IndexStats {
+    let index = tidb_stats::index::Index {
         histogram,
-        topn: None,
-        cms: None,
-        stats_ver: 2,
-        num_columns: 1,
-        unique: false,
+        top_n: None,
+        cmsketch: None,
+        stats_version: 2,
+        info: Some(tidb_stats::index::IndexInfo {
+            columns: vec![String::new(); 1],
+            unique: false,
+            ..Default::default()
+        }),
+        ..Default::default()
     };
     let columns: IndexColumnStats<'_> = vec![None];
     let range_for = |value: i64| Range {
@@ -491,13 +493,17 @@ fn index_estimation_survives_empty_idx_to_col_mapping() {
             )
         })
         .collect();
-    let index = IndexStats {
+    let index = tidb_stats::index::Index {
         histogram: mock_stats_histogram(1, &encoded_values, 1),
-        topn: None,
-        cms: None,
-        stats_ver: 2,
-        num_columns: 1,
-        unique: false,
+        top_n: None,
+        cmsketch: None,
+        stats_version: 2,
+        info: Some(tidb_stats::index::IndexInfo {
+            columns: vec![String::new(); 1],
+            unique: false,
+            ..Default::default()
+        }),
+        ..Default::default()
     };
     let columns: IndexColumnStats<'_> = vec![None];
     let estimate = get_index_row_count_for_stats_v2(
@@ -556,12 +562,12 @@ fn estimation_for_unknown_values_after_modify_stays_bounded() {
         topn.append(&encoded, 10);
     }
     topn.sort();
-    let analyzed_column = ColumnStats {
+    let analyzed_column = tidb_stats::column::Column {
         histogram,
-        topn: Some(topn),
-        cms: None,
-        stats_ver: 2,
-        unsigned: false,
+        top_n: Some(topn),
+        cmsketch: None,
+        stats_version: 2,
+        ..Default::default()
     };
 
     let known = column_row_count(&analyzed_column, 5, 5, 100, 0);
@@ -598,13 +604,17 @@ fn estimation_for_unknown_values_after_modify_stays_bounded() {
 fn unique_key_equal_conds_return_exact_counts() {
     let values = int_values(1, 7);
     let column = column_stats(mock_stats_histogram(1, &values, 1));
-    let index = IndexStats {
+    let index = tidb_stats::index::Index {
         histogram: Histogram::new(7, 7, 0, 0, &blob(), 1, 0),
-        topn: None,
-        cms: None,
-        stats_ver: 2,
-        num_columns: 1,
-        unique: true,
+        top_n: None,
+        cmsketch: None,
+        stats_version: 2,
+        info: Some(tidb_stats::index::IndexInfo {
+            columns: vec![String::new(); 1],
+            unique: true,
+            ..Default::default()
+        }),
+        ..Default::default()
     };
     for value in [7, 6] {
         let estimate = get_index_row_count_for_stats_v2(
@@ -670,14 +680,18 @@ fn issue_39593_composite_prefix_point_ranges_match_estimates() {
             ));
         }
     }
-    let index = IndexStats {
+    let index = tidb_stats::index::Index {
         histogram: mock_stats_histogram(1, &encoded_pairs, 60),
-        topn: None,
-        cms: None,
+        top_n: None,
+        cmsketch: None,
         // Go's mock `statistics.Index` omits StatsVer here, so it is version 0.
-        stats_ver: 0,
-        num_columns: 2,
-        unique: false,
+        stats_version: 0,
+        info: Some(tidb_stats::index::IndexInfo {
+            columns: vec![String::new(); 2],
+            unique: false,
+            ..Default::default()
+        }),
+        ..Default::default()
     };
     let columns: IndexColumnStats<'_> = vec![Some(&first), Some(&second)];
     let ranges = (1..=20)
@@ -742,13 +756,17 @@ fn risk_range_skew_ratio_widens_within_bucket_estimates() {
     let high = tidb_codec::encode_key(&[Datum::Int(5)]).unwrap();
     let mut histogram = Histogram::new(7, 5, 0, 0, &blob(), 1, 0);
     histogram.append_bucket(Datum::Bytes(low), Datum::Bytes(high), 10, 2);
-    let index = IndexStats {
+    let index = tidb_stats::index::Index {
         histogram,
-        topn: None,
-        cms: None,
-        stats_ver: 2,
-        num_columns: 1,
-        unique: false,
+        top_n: None,
+        cmsketch: None,
+        stats_version: 2,
+        info: Some(tidb_stats::index::IndexInfo {
+            columns: vec![String::new(); 1],
+            unique: false,
+            ..Default::default()
+        }),
+        ..Default::default()
     };
     let range = Range {
         collators: vec![tidb_charset::Collation::Binary; 1],
@@ -849,13 +867,17 @@ fn last_bucket_end_value_heuristic_lifts_underrepresented_counts() {
     ] {
         index_histogram.append_bucket_with_ndv(encode(low), encode(high), cumulative, repeat, ndv);
     }
-    let index = IndexStats {
+    let index = tidb_stats::index::Index {
         histogram: index_histogram,
-        topn: None,
-        cms: None,
-        stats_ver: 2,
-        num_columns: 1,
-        unique: false,
+        top_n: None,
+        cmsketch: None,
+        stats_version: 2,
+        info: Some(tidb_stats::index::IndexInfo {
+            columns: vec![String::new(); 1],
+            unique: false,
+            ..Default::default()
+        }),
+        ..Default::default()
     };
     let estimate_index = |value, realtime, modify| {
         get_index_row_count_for_stats_v2(

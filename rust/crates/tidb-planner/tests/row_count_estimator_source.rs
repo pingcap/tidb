@@ -49,8 +49,6 @@ use tidb_charset::Collation;
 use tidb_planner_cardinality::row_count_estimator::{equal_row_count_on_column, get_index_row_count_for_stats_v2, get_row_count_by_column_ranges, ColumnRange, EstimatorOptions};
 use tidb_planner_property::stats_info::IndexRowCounts;
 use tidb_ranger::Range;
-use tidb_stats::table_statistics::ColumnStats;
-use tidb_stats::table_statistics::IndexStats;
 use tidb_planner_cardinality::selectivity_greedy::{
     combine_selectivity, ConditionKind, SelectivityDefaults, StatsNode, StatsNodeType,
 };
@@ -115,8 +113,8 @@ fn topn_of(entries: &[(&[Datum], u64, &str)]) -> TopN {
 }
 
 /// `test.t1.a`: `ndv = 40`, `null_count = 3`, 4 buckets, 5 TopN entries.
-fn column_a() -> ColumnStats {
-    ColumnStats {
+fn column_a() -> tidb_stats::column::Column {
+    tidb_stats::column::Column {
         histogram: Histogram {
             id: 1,
             ndv: 40,
@@ -129,22 +127,22 @@ fn column_a() -> ColumnStats {
             ],
             ..Histogram::default()
         },
-        topn: Some(topn_of(&[
+        top_n: Some(topn_of(&[
             (&[Datum::Int(1)], 22, "038000000000000001"),
             (&[Datum::Int(2)], 18, "038000000000000002"),
             (&[Datum::Int(5)], 3, "038000000000000005"),
             (&[Datum::Int(8)], 3, "038000000000000008"),
             (&[Datum::Int(11)], 3, "03800000000000000b"),
         ])),
-        cms: None,
-        stats_ver: 2,
-        unsigned: false,
+        cmsketch: None,
+        stats_version: 2,
+        ..Default::default()
     }
 }
 
 /// `test.t1.b`, whose values are `2 * a`.
-fn column_b() -> ColumnStats {
-    ColumnStats {
+fn column_b() -> tidb_stats::column::Column {
+    tidb_stats::column::Column {
         histogram: Histogram {
             id: 2,
             ndv: 40,
@@ -157,22 +155,22 @@ fn column_b() -> ColumnStats {
             ],
             ..Histogram::default()
         },
-        topn: Some(topn_of(&[
+        top_n: Some(topn_of(&[
             (&[Datum::Int(2)], 22, "038000000000000002"),
             (&[Datum::Int(4)], 18, "038000000000000004"),
             (&[Datum::Int(10)], 3, "03800000000000000a"),
             (&[Datum::Int(16)], 3, "038000000000000010"),
             (&[Datum::Int(22)], 3, "038000000000000016"),
         ])),
-        cms: None,
-        stats_ver: 2,
-        unsigned: false,
+        cmsketch: None,
+        stats_version: 2,
+        ..Default::default()
     }
 }
 
 /// `test.t1.idx(a, b)`: `ndv = 41`, no NULL count, bounds are index keys.
-fn index_ab() -> IndexStats {
-    IndexStats {
+fn index_ab() -> tidb_stats::index::Index {
+    tidb_stats::index::Index {
         histogram: Histogram {
             id: 1,
             ndv: 41,
@@ -205,7 +203,7 @@ fn index_ab() -> IndexStats {
             ],
             ..Histogram::default()
         },
-        topn: Some(topn_of(&[
+        top_n: Some(topn_of(&[
             (&[Datum::Null, Datum::Null], 3, "0000"),
             (
                 &[Datum::Int(1), Datum::Int(2)],
@@ -228,10 +226,14 @@ fn index_ab() -> IndexStats {
                 "038000000000000008038000000000000010",
             ),
         ])),
-        cms: None,
-        stats_ver: 2,
-        num_columns: 2,
-        unique: false,
+        cmsketch: None,
+        stats_version: 2,
+        info: Some(tidb_stats::index::IndexInfo {
+            columns: vec![String::new(); 2],
+            unique: false,
+            ..Default::default()
+        }),
+        ..Default::default()
     }
 }
 
@@ -244,7 +246,7 @@ fn range_of(low: Datum, high: Datum, low_exclude: bool, high_exclude: bool) -> C
 }
 
 fn column_estimate(
-    column: Option<&ColumnStats>,
+    column: Option<&tidb_stats::column::Column>,
     ranges: &[ColumnRange],
     pk: bool,
 ) -> (f64, f64, f64) {
@@ -271,7 +273,13 @@ fn check(name: &str, got: (f64, f64, f64), want: (f64, f64, f64)) {
 fn source_column_point_estimates_follow_topn_then_histogram_then_uniform() {
     let a = column_a();
     let b = column_b();
-    let cases: &[(&str, &ColumnStats, i64, bool, (f64, f64, f64))] = &[
+    let cases: &[(
+        &str,
+        &tidb_stats::column::Column,
+        i64,
+        bool,
+        (f64, f64, f64),
+    )] = &[
         // TopN hits are exact counts, scaled by the increase factor 127/117.
         (
             "a_eq_1_topn",
@@ -382,7 +390,12 @@ fn source_closed_point_ranges_accumulate_go_point_estimates() {
 fn source_column_null_and_range_estimates() {
     let a = column_a();
     let b = column_b();
-    let cases: &[(&str, &ColumnStats, ColumnRange, (f64, f64, f64))] = &[
+    let cases: &[(
+        &str,
+        &tidb_stats::column::Column,
+        ColumnRange,
+        (f64, f64, f64),
+    )] = &[
         (
             "a_eq_null",
             &a,
@@ -520,16 +533,16 @@ fn source_column_multi_range_estimates() {
 fn source_pseudo_estimates_when_the_column_has_no_statistics() {
     // Go ColumnStatsIsInvalid rejects a retained histogram header with no
     // loaded rows exactly as it rejects a missing column.
-    let unloaded = ColumnStats {
+    let unloaded = tidb_stats::column::Column {
         histogram: Histogram {
             id: 1,
             ndv: 10,
             ..Histogram::default()
         },
-        topn: None,
-        cms: None,
-        stats_ver: 2,
-        unsigned: false,
+        top_n: None,
+        cmsketch: None,
+        stats_version: 2,
+        ..Default::default()
     };
     let cases: &[(&str, Vec<ColumnRange>, bool, f64)] = &[
         ("pseudo_eq", vec![point(3)], false, 0.127),
@@ -749,7 +762,7 @@ fn source_composite_index_prefix_matching_the_first_bound_is_in_range() {
     let mut index_topn = TopN::new(1);
     index_topn.append(&key_of(&[Datum::Int(1), Datum::Int(1)]), 10);
     index_topn.sort();
-    let index = IndexStats {
+    let index = tidb_stats::index::Index {
         histogram: Histogram {
             id: 1,
             ndv: 10,
@@ -762,23 +775,27 @@ fn source_composite_index_prefix_matching_the_first_bound_is_in_range() {
             }],
             ..Histogram::default()
         },
-        topn: Some(index_topn),
-        cms: None,
-        stats_ver: 2,
-        num_columns: 2,
-        unique: true,
+        top_n: Some(index_topn),
+        cmsketch: None,
+        stats_version: 2,
+        info: Some(tidb_stats::index::IndexInfo {
+            columns: vec![String::new(); 2],
+            unique: true,
+            ..Default::default()
+        }),
+        ..Default::default()
     };
-    let leading_column = ColumnStats {
+    let leading_column = tidb_stats::column::Column {
         histogram: Histogram {
             id: 1,
             ndv: 10,
             buckets: vec![int_bucket(90, 9, 1, 10)],
             ..Histogram::default()
         },
-        topn: Some(topn_of(&[(&[Datum::Int(1)], 10, "038000000000000001")])),
-        cms: None,
-        stats_ver: 2,
-        unsigned: false,
+        top_n: Some(topn_of(&[(&[Datum::Int(1)], 10, "038000000000000001")])),
+        cmsketch: None,
+        stats_version: 2,
+        ..Default::default()
     };
     let columns = vec![Some(&leading_column), None];
 
@@ -844,26 +861,29 @@ const V1_CMS_INSERTS: &[(i64, u64)] = &[
     (39, 1),
 ];
 
-fn column_v1() -> ColumnStats {
+fn column_v1() -> tidb_stats::column::Column {
     let mut cms = CmsSketch::new(5, 2048);
     for (value, count) in V1_CMS_INSERTS {
         let encoded =
             encode_integer_datum_value(&Datum::Int(*value)).expect("integer datums always encode");
         cms.insert_bytes_by_count(&encoded, *count);
     }
-    ColumnStats {
+    tidb_stats::column::Column {
         histogram: column_a().histogram,
-        topn: None,
-        cms: Some(cms),
-        stats_ver: 1,
-        unsigned: false,
+        top_n: None,
+        cmsketch: Some(cms),
+        stats_version: 1,
+        ..Default::default()
     }
 }
 
 #[test]
 fn source_v1_cmsketch_queries_match_go() {
     let column = column_v1();
-    let cms = column.cms.as_ref().expect("version-1 column has a sketch");
+    let cms = column
+        .cmsketch
+        .as_ref()
+        .expect("version-1 column has a sketch");
     // Printed by the generator's CMSQUERY lines.
     for (value, want) in [
         (0_i64, 1_u64),

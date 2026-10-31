@@ -809,9 +809,9 @@ fn find_available_stats_for_col(coll: &HistColl, unique_id: i64) -> Option<Filte
         .filter(|_| coll.column_is_full_load(unique_id))
     {
         return Some(FilterStats {
-            stats_ver: column.stats_ver,
+            stats_ver: column.stats_version,
             histogram: &column.histogram,
-            topn: column.topn.as_ref(),
+            topn: column.top_n.as_ref(),
         });
     }
     coll.index_ids().into_iter().find_map(|index_id| {
@@ -829,9 +829,9 @@ fn find_available_stats_for_col(coll: &HistColl, unique_id: i64) -> Option<Filte
             .index_histogram(index_id)
             .filter(|index| index.total_row_count() != 0.0)?;
         Some(FilterStats {
-            stats_ver: index.stats_ver,
+            stats_ver: index.stats_version,
             histogram: &index.histogram,
-            topn: index.topn.as_ref(),
+            topn: index.top_n.as_ref(),
         })
     })
 }
@@ -875,7 +875,6 @@ use tidb_charset::Collation;
     use crate::row_count_estimator::EstimatorOptions;
     use tidb_planner_property::stats_info::IndexRowCounts;
     use tidb_ranger::Range;
-    use tidb_stats::table_statistics::IndexStats;
     use tidb_planner_property::stats_info::HistColl;
 
     fn column(unique_id: i64) -> Column {
@@ -892,8 +891,12 @@ use tidb_charset::Collation;
         }
     }
 
-    fn two_column_histogram(id: i64, first_low: i64, first_high: i64) -> Arc<IndexStats> {
-        Arc::new(IndexStats {
+    fn two_column_histogram(
+        id: i64,
+        first_low: i64,
+        first_high: i64,
+    ) -> Arc<tidb_stats::index::Index> {
+        Arc::new(tidb_stats::index::Index {
             histogram: Histogram {
                 id,
                 ndv: 100,
@@ -910,11 +913,15 @@ use tidb_charset::Collation;
                 }],
                 ..Histogram::default()
             },
-            topn: None,
-            cms: None,
-            stats_ver: 2,
-            num_columns: 2,
-            unique: false,
+            top_n: None,
+            cmsketch: None,
+            stats_version: 2,
+            info: Some(tidb_stats::index::IndexInfo {
+                columns: vec![String::new(); 2],
+                unique: false,
+                ..Default::default()
+            }),
+            ..Default::default()
         })
     }
 
@@ -986,17 +993,21 @@ use tidb_charset::Collation;
             topn.append(&encoded, 1);
         }
         topn.sort();
-        let index = Arc::new(IndexStats {
+        let index = Arc::new(tidb_stats::index::Index {
             histogram: Histogram {
                 id: 7,
                 ndv: 10,
                 ..Default::default()
             },
-            topn: Some(topn),
-            cms: None,
-            stats_ver: 2,
-            num_columns: 2,
-            unique: false,
+            top_n: Some(topn),
+            cmsketch: None,
+            stats_version: 2,
+            info: Some(tidb_stats::index::IndexInfo {
+                columns: vec![String::new(); 2],
+                unique: false,
+                ..Default::default()
+            }),
+            ..Default::default()
         });
         let collection = HistColl::new(false, 20, [])
             .with_modify_count(10)
@@ -1025,7 +1036,7 @@ use tidb_charset::Collation;
     /// take that shortcut.
     #[test]
     fn a_full_index_range_is_the_realtime_row_count() {
-        let index = Arc::new(IndexStats {
+        let index = Arc::new(tidb_stats::index::Index {
             histogram: Histogram {
                 id: 7,
                 ndv: 50,
@@ -1039,11 +1050,15 @@ use tidb_charset::Collation;
                 }],
                 ..Default::default()
             },
-            topn: None,
-            cms: None,
-            stats_ver: 2,
-            num_columns: 1,
-            unique: false,
+            top_n: None,
+            cmsketch: None,
+            stats_version: 2,
+            info: Some(tidb_stats::index::IndexInfo {
+                columns: vec![String::new(); 1],
+                unique: false,
+                ..Default::default()
+            }),
+            ..Default::default()
         });
         let collection = HistColl::new(false, 80, [])
             .with_index_histograms([(7, index)])

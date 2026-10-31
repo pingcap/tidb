@@ -135,7 +135,7 @@ fn full_sampling_keeps_nulls_out_of_column_and_index_distributions() {
 
     let column = statistics.columns.values().next().expect("a statistics");
     assert_eq!(column.histogram.null_count, 3);
-    assert_eq!(topn_counts(column.topn.as_ref()), vec![2, 3]);
+    assert_eq!(topn_counts(column.top_n.as_ref()), vec![2, 3]);
     assert_eq!(
         column
             .histogram
@@ -156,7 +156,7 @@ fn full_sampling_keeps_nulls_out_of_column_and_index_distributions() {
 
     let index = statistics.indexes.values().next().expect("idx statistics");
     assert_eq!(index.histogram.null_count, 3);
-    assert_eq!(topn_counts(index.topn.as_ref()), vec![2, 3]);
+    assert_eq!(topn_counts(index.top_n.as_ref()), vec![2, 3]);
     assert_eq!(
         index
             .histogram
@@ -303,7 +303,7 @@ fn analyze_partition_publishes_per_partition_then_partition_scoped_statistics() 
             assert!(
                 column.histogram.len()
                     + column
-                        .topn
+                        .top_n
                         .as_ref()
                         .map_or(0, tidb_stats::cmsketch::TopN::num)
                     > 0,
@@ -314,7 +314,7 @@ fn analyze_partition_publishes_per_partition_then_partition_scoped_statistics() 
             assert!(
                 index.histogram.len()
                     + index
-                        .topn
+                        .top_n
                         .as_ref()
                         .map_or(0, tidb_stats::cmsketch::TopN::num)
                     > 0,
@@ -398,7 +398,7 @@ fn analyze_extract_topn_entries_and_counts_from_index_and_column() {
         .values()
         .find(|column| column.histogram.ndv == 10)
         .expect("column b statistics");
-    let topn = column_b.topn.as_ref().expect("v2 keeps a TopN");
+    let topn = column_b.top_n.as_ref().expect("v2 keeps a TopN");
     assert_eq!(topn.num(), 10, "colStats.TopN.TopN length");
     assert_eq!(topn.entries()[0].count, 11, "the zero value's count");
     assert_eq!(topn_counts(Some(topn)), vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 11]);
@@ -408,7 +408,7 @@ fn analyze_extract_topn_entries_and_counts_from_index_and_column() {
         .values()
         .find(|index| index.histogram.ndv == 10)
         .expect("index_b statistics");
-    let topn = index_b.topn.as_ref().expect("v2 keeps a TopN");
+    let topn = index_b.top_n.as_ref().expect("v2 keeps a TopN");
     assert_eq!(topn.num(), 10, "idxStats.TopN.TopN length");
     assert_eq!(topn.entries()[0].count, 11, "the zero value's count");
     assert_eq!(topn_counts(Some(topn)), vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 11]);
@@ -461,7 +461,7 @@ fn analyze_full_sampling_on_virtual_or_prefix_column_index() {
         "show stats_buckets rows"
     );
 
-    let topn = index.topn.as_ref().expect("topn kept with 1 topn");
+    let topn = index.top_n.as_ref().expect("topn kept with 1 topn");
     assert_eq!(topn.num(), 1);
     assert_eq!(topn.entries()[0].count, 4, "the value 6 counts 4");
 
@@ -480,7 +480,7 @@ fn analyze_full_sampling_on_virtual_or_prefix_column_index() {
 
     let index = statistics.indexes.values().next().expect("idx statistics");
     assert_eq!(index.histogram.ndv, 2, "prefix-index NDV");
-    let topn = index.topn.as_ref().expect("prefix index keeps a TopN");
+    let topn = index.top_n.as_ref().expect("prefix index keeps a TopN");
     assert_eq!(topn.num(), 1);
     assert_eq!(topn.entries()[0].count, 3);
     assert_eq!(
@@ -566,7 +566,7 @@ fn analyze_collation_sort_keys_shape_topn_and_histograms() {
     };
     let column_a = &statistics.columns[&1];
     assert_eq!(
-        key_bytes(column_a.topn.as_ref()),
+        key_bytes(column_a.top_n.as_ref()),
         vec![
             ("0102d2000000000000f9".to_owned(), 1),
             ("010e0f000000000000f9".to_owned(), 1),
@@ -576,7 +576,7 @@ fn analyze_collation_sort_keys_shape_topn_and_histograms() {
     );
     let column_b = &statistics.columns[&2];
     assert_eq!(
-        key_bytes(column_b.topn.as_ref()),
+        key_bytes(column_b.top_n.as_ref()),
         vec![
             ("010041000000000000f9".to_owned(), 1),
             ("010043000000000000f9".to_owned(), 2),
@@ -585,12 +585,12 @@ fn analyze_collation_sort_keys_shape_topn_and_histograms() {
     );
     // The indexes repeat the column keys.
     assert_eq!(
-        key_bytes(statistics.indexes[&1].topn.as_ref()),
-        key_bytes(column_a.topn.as_ref())
+        key_bytes(statistics.indexes[&1].top_n.as_ref()),
+        key_bytes(column_a.top_n.as_ref())
     );
     assert_eq!(
-        key_bytes(statistics.indexes[&2].topn.as_ref()),
-        key_bytes(column_b.topn.as_ref())
+        key_bytes(statistics.indexes[&2].top_n.as_ref()),
+        key_bytes(column_b.top_n.as_ref())
     );
 
     // Histogram rows, Go's `select is_index, hist_id, distinct_count,
@@ -605,7 +605,7 @@ fn analyze_collation_sort_keys_shape_topn_and_histograms() {
             column_a.histogram.ndv,
             column_a.histogram.null_count,
             column_a.histogram.tot_col_size,
-            column_a.stats_ver,
+            column_a.stats_version,
             column_a.histogram.correlation
         )
     );
@@ -615,7 +615,7 @@ fn analyze_collation_sort_keys_shape_topn_and_histograms() {
             column_b.histogram.ndv,
             column_b.histogram.null_count,
             column_b.histogram.tot_col_size,
-            column_b.stats_ver,
+            column_b.stats_version,
             column_b.histogram.correlation
         )
     );
@@ -625,7 +625,7 @@ fn analyze_collation_sort_keys_shape_topn_and_histograms() {
             statistics.indexes[&1].histogram.ndv,
             statistics.indexes[&1].histogram.null_count,
             statistics.indexes[&1].histogram.tot_col_size,
-            statistics.indexes[&1].stats_ver,
+            statistics.indexes[&1].stats_version,
             statistics.indexes[&1].histogram.correlation
         )
     );
@@ -635,7 +635,7 @@ fn analyze_collation_sort_keys_shape_topn_and_histograms() {
             statistics.indexes[&2].histogram.ndv,
             statistics.indexes[&2].histogram.null_count,
             statistics.indexes[&2].histogram.tot_col_size,
-            statistics.indexes[&2].stats_ver,
+            statistics.indexes[&2].stats_version,
             statistics.indexes[&2].histogram.correlation
         )
     );
@@ -670,7 +670,7 @@ fn analyze_clustered_varchar_primary_key_buckets_without_topn() {
         for column in statistics.columns.values() {
             assert_eq!(
                 column
-                    .topn
+                    .top_n
                     .as_ref()
                     .map_or(0, tidb_stats::cmsketch::TopN::num),
                 0,
@@ -680,7 +680,7 @@ fn analyze_clustered_varchar_primary_key_buckets_without_topn() {
         for index in statistics.indexes.values() {
             assert_eq!(
                 index
-                    .topn
+                    .top_n
                     .as_ref()
                     .map_or(0, tidb_stats::cmsketch::TopN::num),
                 0,
@@ -833,7 +833,7 @@ fn analyze_single_sample_scales_topn_count_to_the_table() {
     let statistics = analyze_kv_table(&mut table, &options, None, &ctx())
         .unwrap_or_else(|error| panic!("analyze failed: {error:?}"));
     let column = statistics.columns.values().next().expect("column a");
-    let topn = column.topn.as_ref().expect("one topn kept");
+    let topn = column.top_n.as_ref().expect("one topn kept");
     assert_eq!(topn.num(), 1, "with 1 topn");
     assert_eq!(
         topn.entries()[0].count,
@@ -867,10 +867,10 @@ fn analyze_stored_generated_column_from_json_with_unique_index() {
     );
     assert_eq!(statistics.indexes.len(), 1, "g_idx is analyzed");
     for column in statistics.columns.values() {
-        assert_eq!(column.stats_ver, 2, "v2 stats");
+        assert_eq!(column.stats_version, 2, "v2 stats");
     }
     for index in statistics.indexes.values() {
-        assert_eq!(index.stats_ver, 2, "v2 stats");
+        assert_eq!(index.stats_version, 2, "v2 stats");
     }
     assert!(
         statistics.columns.contains_key(&2),

@@ -123,6 +123,8 @@ pub struct LoadStatsIndexSchema {
     pub columns: Vec<String>,
     /// Go `IndexInfo.MVIndex`.
     pub mv_index: bool,
+    /// Go `IndexInfo.Unique`.
+    pub unique: bool,
 }
 
 impl LoadStatsTableSchema {
@@ -163,6 +165,7 @@ impl LoadStatsTableSchema {
                         })
                         .collect(),
                     mv_index: table.mv_key_part_source(index.id).is_some(),
+                    unique: index.unique,
                 })
                 .collect(),
             pk_is_handle: table.pk_handle_offset().is_some(),
@@ -201,17 +204,18 @@ pub fn statistics_table_from_planner_statistics(
         };
         hist_coll.stats_version = hist_coll
             .stats_version
-            .max(i32::try_from(item.stats_ver).unwrap_or(i32::MAX));
+            .max(i32::try_from(item.stats_version).unwrap_or(i32::MAX));
         hist_coll.set_column(
             column.id,
             Column {
-                cmsketch: item.cms.clone(),
-                top_n: item.topn.clone(),
+                cmsketch: item.cmsketch.clone(),
+                top_n: item.top_n.clone(),
                 fm_sketch: statistics.column_fm_sketches.get(&column.id).cloned(),
                 info: Some(ColumnInfo {
                     id: column.id,
                     name: column.name.clone(),
                     primary_key: column.primary_key,
+                    flag: column.field_type.flags() as usize,
                 }),
                 histogram: item.histogram.clone(),
                 stats_loaded_status: statistics
@@ -220,7 +224,7 @@ pub fn statistics_table_from_planner_statistics(
                     .copied()
                     .unwrap_or_else(StatsLoadedStatus::full_load),
                 physical_id,
-                stats_version: item.stats_ver,
+                stats_version: item.stats_version,
                 is_handle: table
                     .pk_handle_offset()
                     .is_some_and(|offset| table.columns()[offset].id == column.id),
@@ -241,18 +245,19 @@ pub fn statistics_table_from_planner_statistics(
         };
         hist_coll.stats_version = hist_coll
             .stats_version
-            .max(i32::try_from(item.stats_ver).unwrap_or(i32::MAX));
+            .max(i32::try_from(item.stats_version).unwrap_or(i32::MAX));
         hist_coll.set_index(
             index.id,
             Index {
-                cmsketch: item.cms.clone(),
-                top_n: item.topn.clone(),
+                cmsketch: item.cmsketch.clone(),
+                top_n: item.top_n.clone(),
                 fm_sketch: statistics.index_fm_sketches.get(&index.id).cloned(),
                 info: Some(IndexInfo {
                     id: index.id,
                     name: index.name.clone(),
                     columns: index.columns.clone(),
                     mv_index: index.mv_index,
+                    unique: index.unique,
                 }),
                 histogram: item.histogram.clone(),
                 stats_loaded_status: statistics
@@ -260,7 +265,7 @@ pub fn statistics_table_from_planner_statistics(
                     .get(&index.id)
                     .copied()
                     .unwrap_or_else(StatsLoadedStatus::full_load),
-                stats_version: item.stats_ver,
+                stats_version: item.stats_version,
                 physical_id,
             },
         );
@@ -759,7 +764,7 @@ const STATS_CONVERSION_FLAGS: ConversionFlags = ConversionFlags::from_bits(
         | ConversionFlags::IGNORE_ZERO_IN_DATE_ERR,
 );
 
-/// One dumped column into the estimator's [`ColumnStats`]: Go
+/// One dumped column into the estimator's [`tidb_stats::column::Column`]: Go
 /// `TableStatsFromJSON`'s column arm.
 fn column_from_json(
     column: &LoadStatsColumnSchema,
@@ -809,6 +814,7 @@ fn column_from_json(
             id: column.id,
             name: column.name.go_to_lower(),
             primary_key,
+            flag: column.field_type.flags() as usize,
         }),
         histogram,
         stats_loaded_status: StatsLoadedStatus::full_load(),
@@ -818,7 +824,7 @@ fn column_from_json(
     })
 }
 
-/// One dumped index into [`IndexStats`]: Go `TableStatsFromJSON`'s index arm,
+/// One dumped index into [`tidb_stats::index::Index`]: Go `TableStatsFromJSON`'s index arm,
 /// which sets id/null-count/version/correlation on the histogram and nothing
 /// else -- crucially NO `ConvertTo`, because index bounds are key bytes.
 fn index_from_json(
@@ -845,6 +851,7 @@ fn index_from_json(
             name: index.name.go_to_lower(),
             columns: index.columns.clone(),
             mv_index: index.mv_index,
+            unique: index.unique,
         }),
         histogram,
         stats_loaded_status: StatsLoadedStatus::full_load(),
@@ -1078,6 +1085,7 @@ mod tests {
                 name: "i".into(),
                 columns: vec!["a".into()],
                 mv_index: false,
+                unique: false,
             }],
         };
         let sketch = JsonFmSketch {
@@ -1126,6 +1134,7 @@ mod tests {
                     id: 1,
                     name: "A".to_owned(),
                     primary_key: false,
+                    flag: 0,
                 }),
                 histogram: column_histogram,
                 stats_version: 2,
@@ -1340,6 +1349,7 @@ mod tests {
                     id: 1,
                     name: "a".to_owned(),
                     primary_key: false,
+                    flag: 0,
                 }),
                 histogram: Histogram {
                     id: 1,

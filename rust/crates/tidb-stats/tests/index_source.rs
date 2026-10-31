@@ -35,6 +35,7 @@ fn populated_index(version: i64) -> Index {
         top_n: Some(top_n),
         fm_sketch: Some(FmSketch::new(8)),
         info: Some(IndexInfo {
+            unique: false,
             id: 9,
             name: "idx_a".to_owned(),
             columns: vec!["a".to_owned()],
@@ -96,12 +97,13 @@ fn source_count_factor_query_and_accessors_match() {
     assert_eq!(v2.increase_factor(100), 1.0);
 }
 
+/// Go `(*TopN).TotalCount` returns 0 for a nil TopN, so a version-2
+/// index without one counts its histogram alone.
 #[test]
-#[should_panic(expected = "v2 index has no TopN")]
-fn source_v2_count_keeps_the_topn_precondition() {
+fn source_v2_count_treats_a_missing_topn_as_empty() {
     let mut index = populated_index(2);
     index.top_n = None;
-    let _ = index.total_row_count();
+    assert_eq!(index.total_row_count(), index.histogram.total_row_count());
 }
 
 #[test]

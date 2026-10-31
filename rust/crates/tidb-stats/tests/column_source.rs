@@ -30,6 +30,7 @@ fn populated_column(stats_version: i64) -> Column {
         top_n: Some(top_n(3)),
         fm_sketch: Some(FmSketch::new(8)),
         info: Some(ColumnInfo {
+            flag: 0,
             id: 7,
             name: "a".to_owned(),
             primary_key: true,
@@ -83,12 +84,14 @@ fn source_v1_and_v2_counts_and_increase_factor_match() {
     assert_eq!(empty.increase_factor(200), 1.0);
 }
 
+/// Go `(*TopN).TotalCount` returns 0 for a nil TopN, so a version-2
+/// column without one counts its histogram alone.
 #[test]
-#[should_panic(expected = "v2 column has no TopN")]
-fn source_v2_count_keeps_the_topn_precondition() {
+fn source_v2_count_treats_a_missing_topn_as_empty() {
     let mut column = populated_column(2);
     column.top_n = None;
-    let _ = column.total_row_count();
+    assert_eq!(column.total_row_count(), column.histogram.total_row_count());
+    assert_eq!(column.not_null_count(), column.histogram.not_null_count());
 }
 
 #[test]
@@ -160,6 +163,7 @@ fn source_status_availability_and_empty_column_boundaries_match() {
         -1,
         true,
         ColumnInfo {
+            flag: 0,
             id: 5,
             name: "pk".to_owned(),
             primary_key: true,

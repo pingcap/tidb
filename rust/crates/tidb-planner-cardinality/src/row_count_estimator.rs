@@ -45,7 +45,6 @@ use tidb_charset::Collation;
 #[cfg(test)]
 use tidb_stats::cmsketch::CmsSketch;
 use tidb_stats::cmsketch::TopN;
-use tidb_stats::table_statistics::{ColumnStats, IndexStats};
 use tidb_stats::histogram::{Histogram, OutOfRangeContext};
 
 use super::pseudo::{
@@ -348,7 +347,7 @@ fn uniform_estimate(
 /// because Go queries a sketch through `tablecodec.EncodeValue` instead.
 /// Encoding failures propagate to the range estimator; they are not zero rows.
 pub fn equal_row_count_on_column(
-    column: &ColumnStats,
+    column: &tidb_stats::column::Column,
     value: &Datum,
     encoded_value: &[u8],
     collation: Collation,
@@ -361,7 +360,7 @@ pub fn equal_row_count_on_column(
     }
     let histogram = &column.histogram;
 
-    if column.stats_ver < VERSION2 {
+    if column.stats_version < VERSION2 {
         if histogram.is_empty() {
             return Ok(tidb_stats::default_row_est(0.0));
         }
@@ -371,10 +370,10 @@ pub fn equal_row_count_on_column(
                 out_of_range_eq_selectivity(histogram.ndv, realtime_row_count, total as i64);
             return Ok(tidb_stats::default_row_est(selectivity * total));
         }
-        if let Some(cms) = column.cms.as_ref() {
+        if let Some(cms) = column.cmsketch.as_ref() {
             let count = tidb_stats::cmsketch::query_value(
                 Some(cms),
-                column.topn.as_ref(),
+                column.top_n.as_ref(),
                 value,
                 Some(options.time_zone.as_ref()),
             )?;
@@ -385,18 +384,18 @@ pub fn equal_row_count_on_column(
     }
 
     // Stats version 2.
-    if histogram.is_empty() && topn_num(column.topn.as_ref()) == 0 {
+    if histogram.is_empty() && topn_num(column.top_n.as_ref()) == 0 {
         return Ok(tidb_stats::default_row_est(0.0));
     }
     // 1. TopN is exact.
-    if let Some(topn) = column.topn.as_ref() {
+    if let Some(topn) = column.top_n.as_ref() {
         if let Some(count) = topn.query_bytes(encoded_value) {
             return Ok(tidb_stats::default_row_est(count as f64));
         }
     }
     // 2. Bucket repeat / bucket NDV.
     let (hist_count, matched) = histogram.equal_row_count(value, true, collation);
-    let hist_ndv = (histogram.ndv - topn_num(column.topn.as_ref()) as i64) as f64;
+    let hist_ndv = (histogram.ndv - topn_num(column.top_n.as_ref()) as i64) as f64;
     if matched
         && hist_count > 0.0
         && !is_last_bucket_end_value_underrepresented(
@@ -414,7 +413,7 @@ pub fn equal_row_count_on_column(
     // 3. Uniform distribution, which is also where out-of-range values land.
     Ok(uniform_estimate(
         histogram,
-        column.topn.as_ref(),
+        column.top_n.as_ref(),
         column.total_row_count(),
         column.increase_factor(realtime_row_count),
         realtime_row_count,
@@ -426,7 +425,7 @@ pub fn equal_row_count_on_column(
 /// Estimates the rows in `[low, high)`, Go `betweenRowCountOnColumn`.
 #[must_use]
 pub fn between_row_count_on_column(
-    column: &ColumnStats,
+    column: &tidb_stats::column::Column,
     low: &Datum,
     high: &Datum,
     low_encoded: &[u8],
@@ -443,11 +442,11 @@ pub fn between_row_count_on_column(
         collation,
         Some(options.risk_range_skew_ratio),
     ));
-    if column.stats_ver <= VERSION1 {
+    if column.stats_version <= VERSION1 {
         return result;
     }
     let topn_count = column
-        .topn
+        .top_n
         .as_ref()
         .map_or(0, |topn| topn.between_count(low_encoded, high_encoded));
     // Only the default estimate takes the TopN rows; the min/max stay the
@@ -515,7 +514,7 @@ fn to_sort_key(value: &Datum) -> Datum {
 /// `collation` is read only to reach [`to_sort_key`]'s domain; the estimates
 /// themselves compare sort key against sort key, which is binary.
 pub fn get_column_row_count(
-    column: &ColumnStats,
+    column: &tidb_stats::column::Column,
     ranges: &[ColumnRange],
     _collation: Collation,
     realtime_row_count: i64,
@@ -592,7 +591,7 @@ pub fn get_column_row_count(
 
         // Case 2: a small range under version 1, where the CMSketch gives a
         // better answer per point than the histogram does for the interval.
-        if column.stats_ver < VERSION2 {
+        if column.stats_version < VERSION2 {
             if let Some(values) = enum_range_values(
                 &range.low,
                 &range.high,
@@ -669,8 +668,8 @@ pub fn get_column_row_count(
             || column.histogram.out_of_range(&range.high, collation);
         if !at_full_range && out_of_range {
             let mut hist_ndv = column.histogram.ndv;
-            if column.stats_ver == VERSION2 {
-                hist_ndv -= topn_num(column.topn.as_ref()) as i64;
+            if column.stats_version == VERSION2 {
+                hist_ndv -= topn_num(column.top_n.as_ref()) as i64;
             }
             count.add(to_planner_est(column.histogram.out_of_range_row_count(
                 &range.low,
@@ -679,7 +678,7 @@ pub fn get_column_row_count(
                     realtime_row_count,
                     modify_count,
                     hist_ndv,
-                    unsigned: column.unsigned,
+                    unsigned: column.is_unsigned(),
                     allow_use_modify_count: options.allow_use_modify_count,
                     skew_ratio: options.risk_range_skew_ratio,
                 },
@@ -696,7 +695,7 @@ pub fn get_column_row_count(
 /// column availability and rejected full ranges. Shared by ordinary and merge
 /// index alternatives; ranges belong to the candidate being estimated.
 pub fn get_index_row_count_with_partial_stats(
-    columns: &[(Option<&ColumnStats>, Collation)],
+    columns: &[(Option<&tidb_stats::column::Column>, Collation)],
     ranges: &[Range],
     realtime: i64,
     modify_count: i64,
@@ -776,7 +775,7 @@ pub fn get_index_row_count_with_partial_stats(
 /// column has none or its retained payload has no rows. The collection owner
 /// also filters pseudo/evicted entries using Go `ColumnStatsIsInvalid`.
 pub fn get_row_count_by_column_ranges(
-    column: Option<&ColumnStats>,
+    column: Option<&tidb_stats::column::Column>,
     ranges: &[ColumnRange],
     collation: Collation,
     realtime_row_count: i64,
@@ -811,16 +810,16 @@ use tidb_charset::Collation;
 
     #[test]
     fn loaded_column_estimation_preserves_invalid_bound_errors() {
-        let column = super::ColumnStats {
+        let column = tidb_stats::column::Column {
             histogram: super::Histogram {
                 ndv: 10,
                 null_count: 100,
                 ..Default::default()
             },
-            topn: None,
-            cms: None,
-            stats_ver: 2,
-            unsigned: false,
+            top_n: None,
+            cmsketch: None,
+            stats_version: 2,
+            ..Default::default()
         };
         for range in [
             ColumnRange::point(Datum::Raw(vec![1])),
@@ -1015,41 +1014,43 @@ fn pseudo_row_count(
 /// `equalRowCountOnIndex`. `encoded` is `codec.EncodeKey` output.
 #[must_use]
 pub fn equal_row_count_on_index(
-    index: &IndexStats,
+    index: &tidb_stats::index::Index,
     encoded: &[u8],
     realtime_row_count: i64,
     modify_count: i64,
     options: &EstimatorOptions,
 ) -> RowEstimate {
-    if index.num_columns == 1 && encoded == null_key_bytes().as_slice() {
+    if index.info.as_ref().map_or(0, |info| info.columns.len()) == 1
+        && encoded == null_key_bytes().as_slice()
+    {
         return tidb_stats::default_row_est(index.histogram.null_count as f64);
     }
     let value = Datum::Bytes(encoded.to_vec());
     let histogram = &index.histogram;
 
-    if index.stats_ver < VERSION2 {
+    if index.stats_version < VERSION2 {
         if histogram.ndv > 0 && out_of_range_on_index(index, &value) {
             let total = index.total_row_count();
             let selectivity =
                 out_of_range_eq_selectivity(histogram.ndv, realtime_row_count, total as i64);
             return tidb_stats::default_row_est(selectivity * total);
         }
-        if let Some(cms) = index.cms.as_ref() {
+        if let Some(cms) = index.cmsketch.as_ref() {
             return tidb_stats::default_row_est(
-                cms.query_with_topn(index.topn.as_ref(), encoded) as f64
+                cms.query_with_topn(index.top_n.as_ref(), encoded) as f64
             );
         }
         let (hist_count, _) = histogram.equal_row_count(&value, false, Collation::Binary);
         return tidb_stats::default_row_est(hist_count);
     }
 
-    if let Some(topn) = index.topn.as_ref() {
+    if let Some(topn) = index.top_n.as_ref() {
         if let Some(count) = topn.query_bytes(encoded) {
             return tidb_stats::default_row_est(count as f64);
         }
     }
     let (hist_count, matched) = histogram.equal_row_count(&value, true, Collation::Binary);
-    let hist_ndv = (histogram.ndv - topn_num(index.topn.as_ref()) as i64) as f64;
+    let hist_ndv = (histogram.ndv - topn_num(index.top_n.as_ref()) as i64) as f64;
     if matched
         && !is_last_bucket_end_value_underrepresented(
             histogram,
@@ -1065,7 +1066,7 @@ pub fn equal_row_count_on_index(
     }
     uniform_estimate(
         histogram,
-        index.topn.as_ref(),
+        index.top_n.as_ref(),
         index.total_row_count(),
         index.increase_factor(realtime_row_count),
         realtime_row_count,
@@ -1077,7 +1078,7 @@ pub fn equal_row_count_on_index(
 /// Go `betweenRowCountOnIndex`, for the half-open key interval `[l, r)`.
 #[must_use]
 pub fn between_row_count_on_index(
-    index: &IndexStats,
+    index: &tidb_stats::index::Index,
     left: &[u8],
     right: &[u8],
     options: &EstimatorOptions,
@@ -1090,11 +1091,11 @@ pub fn between_row_count_on_index(
         Collation::Binary,
         Some(options.risk_range_skew_ratio),
     ));
-    if index.stats_ver == VERSION1 {
+    if index.stats_version == VERSION1 {
         return result;
     }
     let topn_count = index
-        .topn
+        .top_n
         .as_ref()
         .map_or(0, |topn| topn.between_count(left, right));
     result.add_all(topn_count as f64);
@@ -1111,7 +1112,7 @@ fn null_key_bytes() -> Vec<u8> {
 /// A shortened composite-index key sorts before the first full key that has
 /// the same prefix. Go does not call that prefix out of range: doing so would
 /// add one out-of-range value to an otherwise exact leading-column estimate.
-fn out_of_range_on_index(index: &IndexStats, value: &Datum) -> bool {
+fn out_of_range_on_index(index: &tidb_stats::index::Index, value: &Datum) -> bool {
     if !index.histogram.out_of_range(value, Collation::Binary) {
         return false;
     }
@@ -1151,7 +1152,7 @@ pub fn ordinal_of_range_cond(range: &Range) -> usize {
 /// ranges the caller supplies other indexes led by that column, matching
 /// `HistColl.ColUniqueID2IdxIDs`. If none can estimate a virtual column,
 /// backoff gives way to the full index histogram instead of dropping it.
-pub type IndexColumnStats<'a> = Vec<Option<&'a ColumnStats>>;
+pub type IndexColumnStats<'a> = Vec<Option<&'a tidb_stats::column::Column>>;
 
 
 
@@ -1159,7 +1160,7 @@ pub type IndexColumnStats<'a> = Vec<Option<&'a ColumnStats>>;
 /// Raw NDVs and valid histograms are distinct in Go's V1 cross validation.
 pub struct IndexEstimationStats<'a> {
     /// Retained index payload, including absent or zero-count entries.
-    pub index: Option<&'a IndexStats>,
+    pub index: Option<&'a tidb_stats::index::Index>,
     /// Valid column histograms in physical key order.
     pub columns: IndexColumnStats<'a>,
     /// Declared-column NDVs, retained even when their histograms are invalid.
@@ -1183,11 +1184,12 @@ impl<'a> IndexEstimationStats<'a> {
     /// Creates a context for fully loaded ordinary column inputs. Collection
     /// adapters replace raw NDVs and handle flags with the original metadata.
     pub fn new(
-        index: Option<&'a IndexStats>,
+        index: Option<&'a tidb_stats::index::Index>,
         columns: IndexColumnStats<'a>,
         row_counts: IndexRowCounts,
     ) -> Self {
-        let uses_v1 = index.is_some_and(|index| index.stats_ver == VERSION1 && index.cms.is_some());
+        let uses_v1 =
+            index.is_some_and(|index| index.stats_version == VERSION1 && index.cmsketch.is_some());
         let column_ndvs = if uses_v1 {
             columns
                 .iter()
@@ -1202,7 +1204,9 @@ impl<'a> IndexEstimationStats<'a> {
             Vec::new()
         };
         Self {
-            unique_columns: index.filter(|index| index.unique).map(|index| index.num_columns),
+            unique_columns: index
+                .filter(|index| index.info.as_ref().is_some_and(|info| info.unique))
+                .map(|index| index.info.as_ref().map_or(0, |info| info.columns.len())),
             index,
             columns,
             column_ndvs,
@@ -1282,7 +1286,7 @@ pub fn get_index_row_count(
             ),
         ));
     };
-    if index.stats_ver != VERSION1 || index.cms.is_none() {
+    if index.stats_version != VERSION1 || index.cmsketch.is_none() {
         return get_index_row_count_for_stats_v2(
             index,
             &stats.columns,
@@ -1309,7 +1313,7 @@ pub fn get_index_row_count(
         if values.is_some() {
             position += 1;
         }
-        let single_null = index.num_columns <= 1
+        let single_null = index.info.as_ref().map_or(0, |info| info.columns.len()) <= 1
             && range.low_val.first().is_some_and(Datum::is_null)
             && range.high_val.first().is_some_and(Datum::is_null);
         if position == 0 || single_null {
@@ -1329,7 +1333,8 @@ pub fn get_index_row_count(
             let mut column_counts = Vec::new();
             // Go skips cross validation entirely for a full unique key or
             // an out-of-range prefix; errors in unused columns must not leak.
-            if !(index.unique && position == index.num_columns)
+            if !(index.info.as_ref().is_some_and(|info| info.unique)
+                && position == index.info.as_ref().map_or(0, |info| info.columns.len()))
                 && !out_of_range_on_index(index, &Datum::Bytes(encoded.to_vec()))
             {
                 for (column_position, column) in stats
@@ -1443,8 +1448,8 @@ pub fn get_index_row_count(
 /// corresponds to Go's supplied `idxCols`; an empty slice matches nil metadata
 /// on recursive calls.
 pub fn exp_backoff_estimation(
-    index: &IndexStats,
-    columns: &[Option<&ColumnStats>],
+    index: &tidb_stats::index::Index,
+    columns: &[Option<&tidb_stats::column::Column>],
     virtual_columns: &[bool],
     recursive_indexes: &[Vec<RecursiveIndexStats<'_>>],
     range: &Range,
@@ -1516,7 +1521,7 @@ pub fn exp_backoff_estimation(
             // full index histogram/TopN instead unless recursion supplied it.
             if !found_stats
                 && virtual_columns.get(position).copied().unwrap_or(false)
-                && (!index.histogram.is_empty() || topn_num(index.topn.as_ref()) > 0)
+                && (!index.histogram.is_empty() || topn_num(index.top_n.as_ref()) > 0)
             {
                 return Ok(None);
             }
@@ -1558,7 +1563,7 @@ pub fn exp_backoff_estimation(
     };
     let mut idx_low_bound = 1.0 / hist_ndv.min(realtime_row_count) as f64;
     let mut min_bound = idx_low_bound;
-    if len < index.num_columns {
+    if len < index.info.as_ref().map_or(0, |info| info.columns.len()) {
         idx_low_bound /= 0.9;
     }
     max_sel = go_max(idx_low_bound, max_sel);
@@ -1575,8 +1580,8 @@ pub fn exp_backoff_estimation(
 /// Estimates an index's row count over `ranges` under stats version 2, Go
 /// `getIndexRowCountForStatsV2`. Index-bound encoding errors reach the caller.
 pub fn get_index_row_count_for_stats_v2(
-    index: &IndexStats,
-    columns: &[Option<&ColumnStats>],
+    index: &tidb_stats::index::Index,
+    columns: &[Option<&tidb_stats::column::Column>],
     virtual_columns: &[bool],
     recursive_indexes: &[Vec<RecursiveIndexStats<'_>>],
     ranges: &[Range],
@@ -1586,14 +1591,17 @@ pub fn get_index_row_count_for_stats_v2(
     let realtime_row_count = row_counts.index_realtime;
     let modify_count = row_counts.index_modify;
     let mut total = tidb_stats::default_row_est(0.0);
-    let is_single_col_idx = index.num_columns == 1;
+    let is_single_col_idx = index.info.as_ref().map_or(0, |info| info.columns.len()) == 1;
     let null_key = null_key_bytes();
 
     for range in ranges {
         let mut count = tidb_stats::default_row_est(0.0);
-        let mut lb = tidb_codec::encode_key_in_timezone(options.time_zone.as_ref(), &range.low_val)?;
-        let mut rb = tidb_codec::encode_key_in_timezone(options.time_zone.as_ref(), &range.high_val)?;
-        let full_len = range.low_val.len() == range.high_val.len() && range.low_val.len() == index.num_columns;
+        let mut lb =
+            tidb_codec::encode_key_in_timezone(options.time_zone.as_ref(), &range.low_val)?;
+        let mut rb =
+            tidb_codec::encode_key_in_timezone(options.time_zone.as_ref(), &range.high_val)?;
+        let full_len = range.low_val.len() == range.high_val.len()
+            && range.low_val.len() == index.info.as_ref().map_or(0, |info| info.columns.len());
 
         if lb == rb {
             // Case 1: a point.
@@ -1601,7 +1609,7 @@ pub fn get_index_row_count_for_stats_v2(
                 continue;
             }
             if full_len {
-                if index.unique {
+                if index.info.as_ref().is_some_and(|info| info.unique) {
                     let only_null = range.low_val.iter().all(Datum::is_null);
                     if !only_null {
                         total.add_all(1.0);
@@ -1631,7 +1639,7 @@ pub fn get_index_row_count_for_stats_v2(
         }
 
         let mut exp_backoff_success = false;
-        if ordinal_of_range_cond(range) > 0 && index.stats_ver >= VERSION2 {
+        if ordinal_of_range_cond(range) > 0 && index.stats_version >= VERSION2 {
             if let Some((sel, min_sel, max_sel)) = exp_backoff_estimation(
                 index,
                 columns,
@@ -1663,7 +1671,7 @@ pub fn get_index_row_count_for_stats_v2(
                     };
                     upper_limit = index.histogram.buckets[upper_bkt].count as f64 - pre_count;
                     upper_limit += index
-                        .topn
+                        .top_n
                         .as_ref()
                         .map_or(0, |topn| topn.between_count(&lb, &rb))
                         as f64;
@@ -1690,7 +1698,7 @@ pub fn get_index_row_count_for_stats_v2(
             let mut hist_ndv = index.histogram.ndv;
             let single_col_range = range.low_val.len() == range.high_val.len() && range.low_val.len() == 1;
             let first_column = columns.first().copied().flatten();
-            if index.stats_ver == VERSION2 {
+            if index.stats_version == VERSION2 {
                 match first_column {
                     Some(column)
                         if single_col_range
@@ -1701,7 +1709,7 @@ pub fn get_index_row_count_for_stats_v2(
                         // the column's own histogram: index bounds have been
                         // flattened to key bytes, the column's have not.
                         let column_ndv =
-                            column.histogram.ndv - topn_num(column.topn.as_ref()) as i64;
+                            column.histogram.ndv - topn_num(column.top_n.as_ref()) as i64;
                         count.add(to_planner_est(column.histogram.out_of_range_row_count(
                             &range.low_val[0],
                             &range.high_val[0],
@@ -1709,14 +1717,14 @@ pub fn get_index_row_count_for_stats_v2(
                                 realtime_row_count,
                                 modify_count,
                                 hist_ndv: column_ndv,
-                                unsigned: column.unsigned,
+                                unsigned: column.is_unsigned(),
                                 allow_use_modify_count: options.allow_use_modify_count,
                                 skew_ratio: options.risk_range_skew_ratio,
                             },
                         )));
                     }
                     _ => {
-                        hist_ndv -= topn_num(index.topn.as_ref()) as i64;
+                        hist_ndv -= topn_num(index.top_n.as_ref()) as i64;
                         count.add(to_planner_est(index.histogram.out_of_range_row_count(
                             &l,
                             &r,
@@ -1761,7 +1769,7 @@ pub fn get_index_row_count_for_stats_v2(
 /// estimates the cross validation consults.
 pub struct EqualCondSelectivityInputs<'a> {
     /// The index the equality condition targets.
-    pub index: &'a IndexStats,
+    pub index: &'a tidb_stats::index::Index,
     /// The encoded equality value (index-key bytes).
     pub encoded_value: &'a [u8],
     /// How many of the index's leading columns the equality covers.
@@ -1795,8 +1803,9 @@ pub struct EqualCondSelectivityInputs<'a> {
 ///    minimum row count is below the sketch count.
 pub fn get_equal_cond_selectivity(inputs: EqualCondSelectivityInputs<'_>) -> f64 {
     let index = inputs.index;
-    let cover_all = inputs.used_cols_len == index.num_columns;
-    if index.unique && cover_all {
+    let cover_all =
+        inputs.used_cols_len == index.info.as_ref().map_or(0, |info| info.columns.len());
+    if index.info.as_ref().is_some_and(|info| info.unique) && cover_all {
         return 1.0 / index.total_row_count();
     }
     let value = Datum::Bytes(inputs.encoded_value.to_vec());
@@ -1825,11 +1834,22 @@ pub fn get_equal_cond_selectivity(inputs: EqualCondSelectivityInputs<'_>) -> f64
         inputs.used_cols_len,
         index.total_row_count(),
     );
-    let idx_count = index.topn.as_ref().and_then(|topn| topn.query_bytes(inputs.encoded_value))
-        .or_else(|| index.cms.as_ref().map(|cms| cms.query_bytes(inputs.encoded_value)))
-        .unwrap_or_else(|| index.histogram.equal_row_count(
-            &value, index.stats_ver >= VERSION2, Collation::Binary,
-        ).0 as u64) as f64;
+    let idx_count = index
+        .top_n
+        .as_ref()
+        .and_then(|topn| topn.query_bytes(inputs.encoded_value))
+        .or_else(|| {
+            index
+                .cmsketch
+                .as_ref()
+                .map(|cms| cms.query_bytes(inputs.encoded_value))
+        })
+        .unwrap_or_else(|| {
+            index
+                .histogram
+                .equal_row_count(&value, index.stats_version >= VERSION2, Collation::Binary)
+                .0 as u64
+        }) as f64;
     if min_row_count < idx_count {
         return cross_valid;
     }
@@ -1839,13 +1859,13 @@ pub fn get_equal_cond_selectivity(inputs: EqualCondSelectivityInputs<'_>) -> f64
 #[cfg(test)]
 mod equal_cond_selectivity_tests {
     use super::{
-        EqualCondSelectivityInputs, EstimatorOptions, IndexStats,
+        EqualCondSelectivityInputs, EstimatorOptions,
         get_equal_cond_selectivity, out_of_range_on_index,
     };
     use tidb_datatype::Datum;
 
-    fn index(ndv: i64, num_columns: usize, unique: bool) -> IndexStats {
-        IndexStats {
+    fn index(ndv: i64, num_columns: usize, unique: bool) -> tidb_stats::index::Index {
+        tidb_stats::index::Index {
             histogram: super::Histogram {
                 id: 7,
                 ndv,
@@ -1859,16 +1879,20 @@ mod equal_cond_selectivity_tests {
                 null_count: 0,
                 ..super::Histogram::default()
             },
-            topn: None,
-            cms: None,
-            stats_ver: 2,
-            num_columns,
-            unique,
+            top_n: None,
+            cmsketch: None,
+            stats_version: 2,
+            info: Some(tidb_stats::index::IndexInfo {
+                columns: vec![String::new(); num_columns],
+                unique: unique,
+                ..Default::default()
+            }),
+            ..Default::default()
         }
     }
 
     fn inputs<'a>(
-        index: &'a IndexStats,
+        index: &'a tidb_stats::index::Index,
         encoded: &'a [u8],
         used: usize,
         ndvs: &'a [Option<i64>],
@@ -1935,11 +1959,11 @@ mod equal_cond_selectivity_tests {
     #[test]
     fn cross_validation_wins_over_a_maximally_noisy_cms() {
         let mut index = index(5, 1, false);
-        index.stats_ver = super::VERSION1;
+        index.stats_version = super::VERSION1;
         let mut cms = tidb_stats::CmsSketch::new(5, 2_048);
         cms.insert_bytes_by_count(b"m", 100_000);
         assert!(cms.query_with_topn(None, b"m") >= 100_000);
-        index.cms = Some(cms);
+        index.cmsketch = Some(cms);
         let result = get_equal_cond_selectivity(inputs(&index, b"m", 1, &[], &[Some(2.0)]));
         assert!(
             (result - 0.2).abs() < 1e-9,
@@ -1956,7 +1980,7 @@ mod equal_cond_selectivity_tests {
         // cross validation competes against.
         let mut topn = tidb_stats::TopN::new(1);
         topn.append(b"m", 3);
-        index.topn = Some(topn);
+        index.top_n = Some(topn);
 
         let result = get_equal_cond_selectivity(inputs(&index, b"m", 1, &[], &[Some(5.0)]));
         let expected = 3.0 / index.total_row_count();
@@ -1971,14 +1995,14 @@ mod equal_cond_selectivity_tests {
 mod recursive_index_estimation_tests {
     use super::{
         encode_datums, exp_backoff_estimation, EstimatorOptions, Histogram, IndexColumnStats,
-        Range, IndexRowCounts, IndexStats, RecursiveIndexStats,
+        Range, IndexRowCounts, RecursiveIndexStats,
     };
     use tidb_datatype::Datum;
 
-    fn index_stats(id: i64, count: i64) -> IndexStats {
+    fn index_stats(id: i64, count: i64) -> tidb_stats::index::Index {
         let low = encode_datums(std::slice::from_ref(&Datum::Int(1)));
         let high = encode_datums(std::slice::from_ref(&Datum::Int(10)));
-        IndexStats {
+        tidb_stats::index::Index {
             histogram: Histogram {
                 id,
                 ndv: 10,
@@ -1994,11 +2018,15 @@ mod recursive_index_estimation_tests {
                     .collect(),
                 ..Histogram::default()
             },
-            topn: None,
-            cms: None,
-            stats_ver: 2,
-            num_columns: 1,
-            unique: false,
+            top_n: None,
+            cmsketch: None,
+            stats_version: 2,
+            info: Some(tidb_stats::index::IndexInfo {
+                columns: vec![String::new(); 1],
+                unique: false,
+                ..Default::default()
+            }),
+            ..Default::default()
         }
     }
 
@@ -2043,7 +2071,7 @@ mod recursive_index_estimation_tests {
 
     #[test]
     fn missing_virtual_column_requires_index_histogram_fallback() {
-        let column = super::ColumnStats {
+        let column = tidb_stats::column::Column {
             histogram: Histogram {
                 ndv: 10,
                 buckets: vec![tidb_stats::Bucket {
@@ -2055,10 +2083,10 @@ mod recursive_index_estimation_tests {
                 }],
                 ..Histogram::default()
             },
-            topn: None,
-            cms: None,
-            stats_ver: 2,
-            unsigned: false,
+            top_n: None,
+            cmsketch: None,
+            stats_version: 2,
+            ..Default::default()
         };
         let columns = vec![Some(&column), None];
         let range = Range {
@@ -2069,8 +2097,8 @@ mod recursive_index_estimation_tests {
             high_exclude: false,
         };
         let mut index = index_stats(1, 100);
-        index.num_columns = 2;
-        let estimate = |index: &IndexStats,
+        index.info.get_or_insert_with(Default::default).columns = vec![String::new(); 2];
+        let estimate = |index: &tidb_stats::index::Index,
                         virtual_columns: &[bool],
                         candidates: &[Vec<RecursiveIndexStats<'_>>]| {
             exp_backoff_estimation(
@@ -2101,13 +2129,13 @@ mod recursive_index_estimation_tests {
         assert!(estimate(&index, &[false, true], &[]).is_some());
         let mut topn = super::TopN::new(1);
         topn.append(&encode_datums(&[Datum::Int(1), Datum::Int(6)]), 100);
-        index.topn = Some(topn);
+        index.top_n = Some(topn);
         assert!(estimate(&index, &[false, true], &[]).is_none());
     }
 
     #[test]
     fn failed_recursive_estimates_do_not_suppress_virtual_index_fallback() {
-        let column = super::ColumnStats {
+        let column = tidb_stats::column::Column {
             histogram: Histogram {
                 ndv: 10,
                 buckets: vec![tidb_stats::Bucket {
@@ -2119,14 +2147,14 @@ mod recursive_index_estimation_tests {
                 }],
                 ..Histogram::default()
             },
-            topn: None,
-            cms: None,
-            stats_ver: 2,
-            unsigned: false,
+            top_n: None,
+            cmsketch: None,
+            stats_version: 2,
+            ..Default::default()
         };
         let columns = vec![Some(&column), None];
         let mut index = index_stats(1, 100);
-        index.num_columns = 2;
+        index.info.get_or_insert_with(Default::default).columns = vec![String::new(); 2];
         let candidate = index_stats(2, 100);
         let recursive_indexes = vec![
             Vec::new(),
@@ -2164,8 +2192,8 @@ mod recursive_index_estimation_tests {
         // Keep the source index's lower bound below the candidate maximum so
         // its normalization denominator remains observable in max_sel.
         index.histogram.ndv = 1_000;
-        index.num_columns = 2;
-        let second_column = super::ColumnStats {
+        index.info.get_or_insert_with(Default::default).columns = vec![String::new(); 2];
+        let second_column = tidb_stats::column::Column {
             histogram: Histogram {
                 id: 4,
                 ndv: 100,
@@ -2178,16 +2206,16 @@ mod recursive_index_estimation_tests {
                 }],
                 ..Histogram::default()
             },
-            topn: None,
-            cms: None,
-            stats_ver: 2,
-            unsigned: false,
+            top_n: None,
+            cmsketch: None,
+            stats_version: 2,
+            ..Default::default()
         };
         let mut candidate = index_stats(2, 4_950);
         candidate.histogram.buckets[0].lower_bound = Datum::Bytes(encode_datums(&[Datum::Int(2)]));
         let mut topn = super::TopN::new(1);
         topn.append(&encode_datums(&[Datum::Int(1)]), 50);
-        candidate.topn = Some(topn);
+        candidate.top_n = Some(topn);
         let candidates = vec![
             vec![RecursiveIndexStats::new(Some(&candidate), vec![None], IndexRowCounts {
                     table_realtime: 1_500,
@@ -2257,15 +2285,15 @@ mod recursive_index_estimation_tests {
     #[test]
     fn backoff_propagates_a_loaded_column_comparison_error() {
         let index = index_stats(1, 100);
-        let column = super::ColumnStats {
+        let column = tidb_stats::column::Column {
             histogram: Histogram {
                 null_count: 100,
                 ..Default::default()
             },
-            topn: None,
-            cms: None,
-            stats_ver: 2,
-            unsigned: false,
+            top_n: None,
+            cmsketch: None,
+            stats_version: 2,
+            ..Default::default()
         };
         let range = Range {
             collators: vec![tidb_charset::Collation::Binary; 1],
@@ -2399,12 +2427,12 @@ mod version_one_value_tests {
                         count,
                     );
                 }
-                statistics.cms = Some(cms);
+                statistics.cmsketch = Some(cms);
                 for version in [VERSION1, VERSION2] {
-                    statistics.stats_ver = version;
+                    statistics.stats_version = version;
                     if version == VERSION2 {
-                        statistics.cms = None;
-                        statistics.topn = Some(topn.clone());
+                        statistics.cmsketch = None;
+                        statistics.top_n = Some(topn.clone());
                         statistics.histogram.buckets.clear();
                     }
                     let estimate = get_column_row_count(
@@ -2423,13 +2451,17 @@ mod version_one_value_tests {
                     );
                 }
                 for version in [VERSION1, VERSION2] {
-                    let mut index = IndexStats {
+                    let mut index = tidb_stats::index::Index {
                         histogram: statistics.histogram.clone(),
-                        topn: Some(topn.clone()),
-                        cms: None,
-                        stats_ver: version,
-                        num_columns: 1,
-                        unique: false,
+                        top_n: Some(topn.clone()),
+                        cmsketch: None,
+                        stats_version: version,
+                        info: Some(tidb_stats::index::IndexInfo {
+                            columns: vec![String::new(); 1],
+                            unique: false,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
                     };
                     if version == VERSION1 {
                         let mut cms = CmsSketch::new(5, 2048);
@@ -2446,8 +2478,8 @@ mod version_one_value_tests {
                         for (key, count) in keys.iter().zip([1, 2, 7, 13, 77]) {
                             cms.insert_bytes_by_count(key, count);
                         }
-                        index.cms = Some(cms);
-                        index.topn = None;
+                        index.cmsketch = Some(cms);
+                        index.top_n = None;
                         index.histogram.append_bucket(
                             Datum::Bytes(keys[0].clone()),
                             Datum::Bytes(keys[4].clone()),
@@ -2511,7 +2543,7 @@ mod version_one_value_tests {
             .collect()
     }
 
-    fn column(values: &[Datum]) -> ColumnStats {
+    fn column(values: &[Datum]) -> tidb_stats::column::Column {
         let mut cms = CmsSketch::new(5, 2048);
         for (value, count) in values.iter().zip([1, 2, 7, 13, 77]) {
             cms.insert_bytes_by_count(
@@ -2519,7 +2551,7 @@ mod version_one_value_tests {
                 count,
             );
         }
-        ColumnStats {
+        tidb_stats::column::Column {
             histogram: Histogram {
                 ndv: 5,
                 buckets: vec![tidb_stats::Bucket {
@@ -2531,15 +2563,15 @@ mod version_one_value_tests {
                 }],
                 ..Histogram::default()
             },
-            topn: None,
-            cms: Some(cms),
-            stats_ver: VERSION1,
-            unsigned: false,
+            top_n: None,
+            cmsketch: Some(cms),
+            stats_version: VERSION1,
+            ..Default::default()
         }
     }
 
     fn estimate(
-        column: &ColumnStats,
+        column: &tidb_stats::column::Column,
         low: Datum,
         high: Datum,
         low_exclude: bool,
@@ -2590,7 +2622,7 @@ mod version_one_value_tests {
                 &tidb_tablecodec::encode_table_value(None, &values[2]).unwrap(),
                 9,
             );
-            column.topn = Some(topn);
+            column.top_n = Some(topn);
             assert_eq!(
                 estimate(&column, values[2].clone(), values[2].clone(), false, false),
                 18.0,
@@ -2639,7 +2671,7 @@ mod value_encoding_error_tests {
     #[test]
     fn version_one_value_encoding_errors_are_not_zero_estimates() {
         let value = Datum::Raw(vec![1]);
-        let column = ColumnStats {
+        let column = tidb_stats::column::Column {
             histogram: Histogram {
                 ndv: 0,
                 buckets: vec![tidb_stats::Bucket {
@@ -2651,10 +2683,10 @@ mod value_encoding_error_tests {
                 }],
                 ..Histogram::default()
             },
-            topn: None,
-            cms: Some(CmsSketch::new(5, 2048)),
-            stats_ver: VERSION1,
-            unsigned: false,
+            top_n: None,
+            cmsketch: Some(CmsSketch::new(5, 2048)),
+            stats_version: VERSION1,
+            ..Default::default()
         };
         assert!(matches!(
             equal_row_count_on_column(
@@ -2679,12 +2711,12 @@ mod value_encoding_error_tests {
 mod version_one_index_dispatch_tests {
     use super::*;
 
-    fn index() -> IndexStats {
+    fn index() -> tidb_stats::index::Index {
         let mut cms = CmsSketch::new(5, 2048);
         for (value, count) in [1, 2, 7, 13, 77].into_iter().enumerate() {
             cms.insert_bytes_by_count(&encode_key(&[Datum::Int(value as i64)]).unwrap(), count);
         }
-        IndexStats {
+        tidb_stats::index::Index {
             histogram: Histogram {
                 id: 1,
                 ndv: 5,
@@ -2697,11 +2729,15 @@ mod version_one_index_dispatch_tests {
                 }],
                 ..Histogram::default()
             },
-            topn: None,
-            cms: Some(cms),
-            stats_ver: VERSION1,
-            num_columns: 1,
-            unique: false,
+            top_n: None,
+            cmsketch: Some(cms),
+            stats_version: VERSION1,
+            info: Some(tidb_stats::index::IndexInfo {
+                columns: vec![String::new(); 1],
+                unique: false,
+                ..Default::default()
+            }),
+            ..Default::default()
         }
     }
 
@@ -2732,25 +2768,25 @@ mod version_one_index_dispatch_tests {
         }
     }
 
-    fn topn_column(value: i64, count: u64) -> ColumnStats {
+    fn topn_column(value: i64, count: u64) -> tidb_stats::column::Column {
         let mut topn = TopN::new(1);
         topn.append(&encode_key(&[Datum::Int(value)]).unwrap(), count);
-        ColumnStats {
+        tidb_stats::column::Column {
             histogram: Histogram {
                 ndv: 1,
                 ..Histogram::default()
             },
-            topn: Some(topn),
-            cms: None,
-            stats_ver: VERSION2,
-            unsigned: false,
+            top_n: Some(topn),
+            cmsketch: None,
+            stats_version: VERSION2,
+            ..Default::default()
         }
     }
 
     #[test]
     fn version_one_suffix_prefers_the_first_index_even_when_invalid() {
         let mut index = index();
-        index.num_columns = 2;
+        index.info.get_or_insert_with(Default::default).columns = vec![String::new(); 2];
         let column = topn_column(15, 7);
         let context = IndexEstimationStats::new(
             Some(&index),
@@ -2763,13 +2799,17 @@ mod version_one_index_dispatch_tests {
         );
         let missing =
             IndexEstimationStats::new(None, vec![Some(&column)], IndexRowCounts::unscaled(100, 0));
-        let empty = IndexStats {
+        let empty = tidb_stats::index::Index {
             histogram: Histogram::default(),
-            cms: None,
-            topn: None,
-            stats_ver: VERSION2,
-            num_columns: 1,
-            unique: false,
+            cmsketch: None,
+            top_n: None,
+            stats_version: VERSION2,
+            info: Some(tidb_stats::index::IndexInfo {
+                columns: vec![String::new(); 1],
+                unique: false,
+                ..Default::default()
+            }),
+            ..Default::default()
         };
         let invalid = IndexEstimationStats::new(
             Some(&empty),
@@ -2798,7 +2838,7 @@ mod version_one_index_dispatch_tests {
     #[test]
     fn version_one_cross_validation_retains_handle_and_raw_ndv_metadata() {
         let mut index = index();
-        index.num_columns = 2;
+        index.info.get_or_insert_with(Default::default).columns = vec![String::new(); 2];
         let column = topn_column(1, 10);
         let mut context = IndexEstimationStats::new(
             Some(&index),
@@ -2846,9 +2886,9 @@ mod version_one_index_dispatch_tests {
                 .est,
             0.0
         );
-        index.unique = true;
+        index.info.get_or_insert_with(Default::default).unique = true;
         index
-            .cms
+            .cmsketch
             .as_mut()
             .unwrap()
             .insert_bytes_by_count(&encode_key(&[Datum::Int(1), Datum::Int(2)]).unwrap(), 7);
@@ -2875,7 +2915,7 @@ mod version_one_index_dispatch_tests {
         let mut cms = CmsSketch::new(5, 2048);
         cms.insert_bytes_by_count(&encode_key(&[Datum::new_string("A")]).unwrap(), 20);
         cms.insert_bytes_by_count(&encode_key(&[Datum::new_string("a")]).unwrap(), 80);
-        candidate.cms = Some(cms);
+        candidate.cmsketch = Some(cms);
         let context = IndexEstimationStats::new(
             Some(&candidate),
             vec![None],
@@ -2888,9 +2928,9 @@ mod version_one_index_dispatch_tests {
         range.collators = vec![Collation::Utf8Mb4GeneralCi, Collation::Binary];
         let recursive = [Vec::new(), vec![context]];
         let mut main = index();
-        main.stats_ver = VERSION2;
-        main.cms = None;
-        main.num_columns = 2;
+        main.stats_version = VERSION2;
+        main.cmsketch = None;
+        main.info.get_or_insert_with(Default::default).columns = vec![String::new(); 2];
         main.histogram.ndv = 2;
         main.histogram.buckets[0].repeat = 80;
         main.histogram.buckets[0].lower_bound =
@@ -2951,7 +2991,7 @@ impl HistCollIndexEstimation for tidb_planner_property::stats_info::HistColl {
         );
         if stats
             .index
-            .is_some_and(|index| index.stats_ver == 1 && index.cms.is_some())
+            .is_some_and(|index| index.stats_version == 1 && index.cmsketch.is_some())
         {
             stats.column_ndvs = columns
                 .iter()

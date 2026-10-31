@@ -37,6 +37,7 @@ pub fn pseudo_table_info(table: &crate::KvTable) -> tidb_stats::PseudoTableInfo 
                     primary_key: column
                         .field_type
                         .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
+                    flag: column.field_type.flags() as usize,
                 },
                 public: true,
                 hidden: table.is_hidden(offset),
@@ -56,6 +57,7 @@ pub fn pseudo_table_info(table: &crate::KvTable) -> tidb_stats::PseudoTableInfo 
                         .map(|column| column.name.go_to_lower())
                         .collect(),
                     mv_index: table.mv_key_part_source(index.id).is_some(),
+                    unique: index.unique,
                 },
                 public: true,
             })

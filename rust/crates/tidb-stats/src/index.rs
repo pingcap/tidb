@@ -28,6 +28,8 @@ pub struct IndexInfo {
     /// Lower-cased indexed-column names in index order.
     pub columns: Vec<String>,
     pub mv_index: bool,
+    /// Go `Info.Unique`.
+    pub unique: bool,
 }
 
 /// An index histogram and its optional sketches.
@@ -93,12 +95,8 @@ impl Index {
     pub fn total_row_count(&self) -> f64 {
         let histogram = self.histogram.total_row_count();
         if self.stats_version >= 2 {
-            histogram
-                + self
-                    .top_n
-                    .as_ref()
-                    .expect("v2 index has no TopN")
-                    .total_count() as f64
+            // Go's `(*TopN).TotalCount` is nil-safe.
+            histogram + self.top_n.as_ref().map_or(0, TopN::total_count) as f64
         } else {
             histogram
         }

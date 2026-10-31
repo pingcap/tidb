@@ -427,7 +427,9 @@ fn analyzed_composite_index_dominates_single_equality_index() {
         let mut current = statistics.clone();
         if evicted {
             // Eviction removes payloads, not persisted HasAnalyzed metadata.
-            current.indexes.retain(|_, index| index.num_columns == 1);
+            current
+                .indexes
+                .retain(|_, index| index.info.as_ref().map_or(0, |info| info.columns.len()) == 1);
         }
         ctx.stats_handle().set_table_statistics(table_id, Arc::new(current));
         let rows = explain_plan("SELECT * FROM t WHERE bucket = 1 AND rare = 7", &catalog, &ctx);

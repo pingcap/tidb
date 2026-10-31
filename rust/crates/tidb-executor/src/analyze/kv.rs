@@ -45,8 +45,6 @@ use std::collections::BTreeMap;
 use std::collections::HashSet;
 
 use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_stats::table_statistics::ColumnStats;
-use tidb_stats::table_statistics::IndexStats;
 use tidb_stats::cmsketch::TopN;
 
 use tidb_stats::table_statistics::TableStatistics;
@@ -226,13 +224,17 @@ pub fn analyze_kv_table_independent_index(
     let mut indexes = BTreeMap::new();
     indexes.insert(
         index.id,
-        IndexStats {
+        tidb_stats::index::Index {
             histogram: built.histogram,
-            topn: Some(built.topn),
-            cms: None,
-            stats_ver: 2,
-            num_columns: index.column_offsets.len(),
-            unique: index.unique,
+            top_n: Some(built.topn),
+            cmsketch: None,
+            stats_version: 2,
+            info: Some(tidb_stats::index::IndexInfo {
+                columns: vec![String::new(); index.column_offsets.len()],
+                unique: index.unique,
+                ..Default::default()
+            }),
+            ..Default::default()
         },
     );
     let mut statistics = TableStatistics::new(0, 0, BTreeMap::new(), indexes)
@@ -284,32 +286,48 @@ fn column_statistics(
     mut built: AnalyzedHistogram,
     field_type: &FieldType,
     unsigned: bool,
-) -> ColumnStats {
+) -> tidb_stats::column::Column {
     built.histogram.round_trip_through_storage(field_type);
-    ColumnStats {
+    tidb_stats::column::Column {
         histogram: built.histogram,
-        topn: sorted_topn(built.topn),
+        top_n: sorted_topn(built.topn),
         // Analyze v2 builds no CMSketch: its TopN and histogram carry what the
         // CMSketch used to.
-        cms: None,
-        stats_ver: built.stats_ver,
-        unsigned,
+        cmsketch: None,
+        stats_version: built.stats_ver,
+        info: Some(tidb_stats::column::ColumnInfo {
+            flag: if unsigned {
+                tidb_mysql::UnsignedFlag
+            } else {
+                0
+            },
+            ..Default::default()
+        }),
+        ..Default::default()
     }
 }
 
 /// One built index histogram, with the two schema facts the estimator needs
 /// that the histogram itself does not carry.
-fn index_statistics(mut built: AnalyzedHistogram, num_columns: usize, unique: bool) -> IndexStats {
+fn index_statistics(
+    mut built: AnalyzedHistogram,
+    num_columns: usize,
+    unique: bool,
+) -> tidb_stats::index::Index {
     built
         .histogram
         .round_trip_through_storage(&FieldType::new(FieldTypeCode::Blob));
-    IndexStats {
+    tidb_stats::index::Index {
         histogram: built.histogram,
-        topn: sorted_topn(built.topn),
-        cms: None,
-        stats_ver: built.stats_ver,
-        num_columns,
-        unique,
+        top_n: sorted_topn(built.topn),
+        cmsketch: None,
+        stats_version: built.stats_ver,
+        info: Some(tidb_stats::index::IndexInfo {
+            columns: vec![String::new(); num_columns],
+            unique: unique,
+            ..Default::default()
+        }),
+        ..Default::default()
     }
 }
 

@@ -749,25 +749,29 @@
             };
             let columns = [(
                 column_id,
-                tidb_stats::table_statistics::ColumnStats {
+                tidb_stats::column::Column {
                     histogram: histogram(column_id, column_version),
-                    topn: None,
-                    cms: None,
-                    stats_ver: 2,
-                    unsigned: false,
+                    top_n: None,
+                    cmsketch: None,
+                    stats_version: 2,
+                    ..Default::default()
                 },
             )]
             .into_iter()
             .collect();
             let indexes = [(
                 index_id,
-                tidb_stats::table_statistics::IndexStats {
+                tidb_stats::index::Index {
                     histogram: histogram(index_id, 7),
-                    topn: None,
-                    cms: None,
-                    stats_ver: 2,
-                    num_columns: 1,
-                    unique: false,
+                    top_n: None,
+                    cmsketch: None,
+                    stats_version: 2,
+                    info: Some(tidb_stats::index::IndexInfo {
+                        columns: vec![String::new(); 1],
+                        unique: false,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
                 },
             )]
             .into_iter()

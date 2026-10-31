@@ -314,7 +314,6 @@ mod tests {
         CountedRange, EstimatorOptions, convert_range_from_expected_cnt,
         estimate_table_cross_row_count,
     };
-    use tidb_stats::table_statistics::ColumnStats;
     use tidb_ranger::types::Range;
     use tidb_planner_property::stats_info::HistColl;
     use std::sync::Arc;
@@ -412,7 +411,7 @@ use tidb_charset::Collation;
         ));
         let stats = HistColl::new(false, 100, []).with_histograms([(
             7,
-            Arc::new(ColumnStats {
+            Arc::new(tidb_stats::column::Column {
                 histogram: Histogram {
                     id: 7,
                     ndv: 100,
@@ -426,10 +425,10 @@ use tidb_charset::Collation;
                     }],
                     ..Histogram::default()
                 },
-                topn: None,
-                cms: None,
-                stats_ver: 2,
-                unsigned: false,
+                top_n: None,
+                cmsketch: None,
+                stats_version: 2,
+                ..Default::default()
             }),
         )]);
         (stats, column, vec![filter])
@@ -540,11 +539,10 @@ use tidb_charset::Collation;
     #[test]
     fn table_cross_estimate_does_not_skip_the_first_leading_index() {
         use tidb_planner_property::stats_info::IndexRowCounts;
-        use tidb_stats::table_statistics::IndexStats;
 
         let (column_stats, column, filters) = correlated_fixture();
         let source_stats = HistColl::new(false, 100, []).with_column_index_ids([(7, 11), (7, 4)]);
-        let later_index = IndexStats {
+        let later_index = tidb_stats::index::Index {
             histogram: Histogram {
                 id: 11,
                 ndv: 100,
@@ -557,11 +555,15 @@ use tidb_charset::Collation;
                 }],
                 ..Histogram::default()
             },
-            topn: None,
-            cms: None,
-            stats_ver: 2,
-            num_columns: 1,
-            unique: false,
+            top_n: None,
+            cmsketch: None,
+            stats_version: 2,
+            info: Some(tidb_stats::index::IndexInfo {
+                columns: vec![String::new(); 1],
+                unique: false,
+                ..Default::default()
+            }),
+            ..Default::default()
         };
         // Go uses the first ID in ColUniqueID2IdxIDs. If it is absent or
         // unusable, it falls back to the correlation heuristic; it does not

@@ -1223,6 +1223,7 @@ mod tests {
                     id: 1,
                     name: "a".to_owned(),
                     primary_key: false,
+                    flag: 0,
                 }),
                 histogram: evicted.histogram,
                 stats_loaded_status: evicted.load_status,
@@ -1444,6 +1445,7 @@ mod tests {
                     id: 1,
                     name: "a".to_owned(),
                     primary_key: false,
+                    flag: 0,
                 }),
                 histogram: Histogram {
                     id: 1,
@@ -1678,6 +1680,7 @@ mod tests {
                     id: 1,
                     name: "a".to_owned(),
                     primary_key: false,
+                    flag: 0,
                 },
                 public: true,
                 hidden: false,

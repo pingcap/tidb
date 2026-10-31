@@ -109,7 +109,6 @@ fn logical_range_derivation_uses_current_statement_parameters() {
 
 #[test]
 fn analyzed_derivation_evaluates_parameters_like_literal_predicates() {
-    use tidb_stats::table_statistics::ColumnStats;
     use tidb_planner_property::stats_info::HistColl;
     let allocator = tidb_planner_core_base::PlanIdAllocator::new();
     let ty = FieldType::new(FieldTypeCode::LongLong);
@@ -118,7 +117,7 @@ fn analyzed_derivation_evaluates_parameters_like_literal_predicates() {
         column.id = id;
         column
     });
-    let histogram = std::sync::Arc::new(ColumnStats {
+    let histogram = std::sync::Arc::new(tidb_stats::column::Column {
         histogram: tidb_stats::Histogram {
             ndv: 10,
             buckets: vec![tidb_stats::Bucket {
@@ -130,10 +129,10 @@ fn analyzed_derivation_evaluates_parameters_like_literal_predicates() {
             }],
             ..Default::default()
         },
-        topn: None,
-        cms: None,
-        stats_ver: 2,
-        unsigned: false,
+        top_n: None,
+        cmsketch: None,
+        stats_version: 2,
+        ..Default::default()
     });
     let profile = StatsInfo::new(100.0, [(1, 10.0), (2, 10.0)]).with_hist_coll(
         HistColl::new(false, 100, []).with_histograms([(1, histogram.clone()), (2, histogram)]),

@@ -17,7 +17,7 @@
 //! `SHOW WARNINGS`, the log) reads. Lives beside [`tidb_mysql::errors::SqlError`], the
 //! `mysql.SQLError` view it is converted from.
 
-use crate::{TerrorClass, TerrorCode, TerrorError, TerrorIdentity};
+use crate::{TerrorError, TerrorIdentity};
 
 /// The MySQL error a driver failure becomes on the wire, which is also what
 /// `SHOW WARNINGS` reports for a failed statement.

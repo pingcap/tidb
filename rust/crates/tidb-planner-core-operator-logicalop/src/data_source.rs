@@ -1355,7 +1355,7 @@ mod tests {
         let hist_coll =
             HistColl::new(false, row_count as i64, std::iter::empty()).with_histograms([(
                 1,
-                Arc::new(tidb_stats::table_statistics::ColumnStats {
+                Arc::new(tidb_stats::column::Column {
                     histogram: Histogram {
                         id: 1,
                         ndv: 900,
@@ -1372,10 +1372,10 @@ mod tests {
                         }],
                         ..Default::default()
                     },
-                    topn: None,
-                    cms: None,
-                    stats_ver: 2,
-                    unsigned: false,
+                    top_n: None,
+                    cmsketch: None,
+                    stats_version: 2,
+                    ..Default::default()
                 }),
             )]);
         StatsInfo::new(row_count, std::iter::empty()).with_hist_coll(hist_coll)

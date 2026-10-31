@@ -17,8 +17,6 @@ fn install_cardinality_mock_statistics_for_table(
     row_count: i64,
     columns: &[(i64, i64)],
 ) {
-    use tidb_stats::table_statistics::ColumnStats;
-    use tidb_stats::table_statistics::IndexStats;
     use tidb_stats::histogram::Histogram;
 
     let shared = session.shared_catalog();
@@ -52,12 +50,12 @@ fn install_cardinality_mock_statistics_for_table(
     for (column, &(ndv, repeat)) in table.columns().iter().zip(columns) {
         statistics.columns.insert(
             column.id,
-            ColumnStats {
+            tidb_stats::column::Column {
                 histogram: histogram(column.id, ndv, repeat, false),
-                topn: None,
-                cms: None,
-                stats_ver: 2,
-                unsigned: false,
+                top_n: None,
+                cmsketch: None,
+                stats_version: 2,
+                ..Default::default()
             },
         );
         statistics
@@ -75,13 +73,17 @@ fn install_cardinality_mock_statistics_for_table(
         let (ndv, repeat) = columns[index.column_offsets[0]];
         statistics.indexes.insert(
             index.id,
-            IndexStats {
+            tidb_stats::index::Index {
                 histogram: histogram(index.id, ndv, repeat, true),
-                topn: None,
-                cms: None,
-                stats_ver: 2,
-                num_columns: index.column_offsets.len(),
-                unique: index.unique,
+                top_n: None,
+                cmsketch: None,
+                stats_version: 2,
+                info: Some(tidb_stats::index::IndexInfo {
+                    columns: vec![String::new(); index.column_offsets.len()],
+                    unique: index.unique,
+                    ..Default::default()
+                }),
+                ..Default::default()
             },
         );
         statistics

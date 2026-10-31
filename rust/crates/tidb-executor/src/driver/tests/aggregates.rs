@@ -1483,7 +1483,7 @@ fn global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader() {
         topn.sort();
         let bounds = |value| tidb_codec::encode_key(&[Datum::Int(value)]).unwrap();
         (
-            tidb_stats::table_statistics::ColumnStats {
+            tidb_stats::column::Column {
                 histogram: tidb_stats::Histogram {
                     id: column_id,
                     ndv: 1736,
@@ -1497,12 +1497,12 @@ fn global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader() {
                     }],
                     ..tidb_stats::Histogram::default()
                 },
-                topn: Some(topn.clone()),
-                cms: None,
-                stats_ver: 2,
-                unsigned: false,
+                top_n: Some(topn.clone()),
+                cmsketch: None,
+                stats_version: 2,
+                ..Default::default()
             },
-            tidb_stats::table_statistics::IndexStats {
+            tidb_stats::index::Index {
                 histogram: tidb_stats::Histogram {
                     id: index_id,
                     ndv: 1736,
@@ -1516,11 +1516,15 @@ fn global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader() {
                     }],
                     ..tidb_stats::Histogram::default()
                 },
-                topn: Some(topn),
-                cms: None,
-                stats_ver: 2,
-                num_columns: 1,
-                unique: false,
+                top_n: Some(topn),
+                cmsketch: None,
+                stats_version: 2,
+                info: Some(tidb_stats::index::IndexInfo {
+                    columns: vec![String::new(); 1],
+                    unique: false,
+                    ..Default::default()
+                }),
+                ..Default::default()
             },
         )
     };

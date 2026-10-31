@@ -245,6 +245,7 @@ fn load_stats_schema(table: &TableInfo) -> LoadStatsTableSchema {
                         .map(|column| column.read().name.lowercase().to_owned())
                         .collect(),
                     mv_index: index.mv_index,
+                    unique: index.unique,
                 }
             })
             .collect(),

@@ -22,9 +22,6 @@ use std::sync::Arc;
 
 use tidb_datatype::FieldTypeCode;
 
-use tidb_stats::table_statistics::ColumnStats;
-use tidb_stats::table_statistics::IndexStats;
-
 /// Go `statistics.HistColl` state consumed by planner cardinality and costing.
 ///
 /// `property.StatsInfo.HistColl` is not interchangeable with the scalar NDV
@@ -42,13 +39,13 @@ pub struct HistColl {
     /// `Column.UniqueID`. The row-size map above is `Copy`; the histograms are
     /// shared so a plan carrying the collection does not deep-copy them.
     /// Empty for pseudo collections and for profiles built without a catalog.
-    histograms: BTreeMap<i64, Arc<ColumnStats>>,
+    histograms: BTreeMap<i64, Arc<tidb_stats::column::Column>>,
     /// Original column validity state, separate from retained histogram metadata.
     column_load_status: BTreeMap<i64, tidb_stats::StatsLoadedStatus>,
     /// Index load states, keyed by index ID.
     index_load_status: BTreeMap<i64, tidb_stats::StatsLoadedStatus>,
     /// Go `HistColl.Indices`, keyed by index ID, for correlated-range counts.
-    index_histograms: BTreeMap<i64, Arc<IndexStats>>,
+    index_histograms: BTreeMap<i64, Arc<tidb_stats::index::Index>>,
     /// Go `HistColl.ColUniqueID2IdxIDs`, sorted by index ID as generated.
     column_index_ids: BTreeMap<i64, Vec<i64>>,
     /// Go `HistColl.Idx2ColUniqueIDs`, in declared index-column order.
@@ -294,7 +291,7 @@ impl HistColl {
     #[must_use]
     pub fn with_histograms(
         mut self,
-        histograms: impl IntoIterator<Item = (i64, Arc<ColumnStats>)>,
+        histograms: impl IntoIterator<Item = (i64, Arc<tidb_stats::column::Column>)>,
     ) -> Self {
         self.histograms = histograms.into_iter().collect();
         for id in self.histograms.keys() {
@@ -319,7 +316,7 @@ impl HistColl {
     #[must_use]
     pub fn with_index_histograms(
         mut self,
-        histograms: impl IntoIterator<Item = (i64, Arc<IndexStats>)>,
+        histograms: impl IntoIterator<Item = (i64, Arc<tidb_stats::index::Index>)>,
     ) -> Self {
         self.index_histograms = histograms.into_iter().collect();
         self
@@ -448,14 +445,17 @@ impl HistColl {
 
     /// The loaded histogram for one planner column, when it is present.
     #[must_use]
-    pub fn histogram(&self, unique_id: i64) -> Option<&Arc<ColumnStats>> {
+    pub fn histogram(&self, unique_id: i64) -> Option<&Arc<tidb_stats::column::Column>> {
         self.histograms.get(&unique_id)
     }
 
     /// Go ColumnStatsIsInvalid's estimation gate. Retained metadata remains
     /// accessible through histogram(), independently of its usability here.
     #[must_use]
-    pub fn histogram_for_estimation(&self, unique_id: i64) -> Option<&Arc<ColumnStats>> {
+    pub fn histogram_for_estimation(
+        &self,
+        unique_id: i64,
+    ) -> Option<&Arc<tidb_stats::column::Column>> {
         let column = self.histograms.get(&unique_id)?;
         let essential = self
             .column_load_status
@@ -468,7 +468,7 @@ impl HistColl {
 
     /// The loaded statistics for one Go planner index ID.
     #[must_use]
-    pub fn index_histogram(&self, index_id: i64) -> Option<&Arc<IndexStats>> {
+    pub fn index_histogram(&self, index_id: i64) -> Option<&Arc<tidb_stats::index::Index>> {
         self.index_histograms.get(&index_id)
     }
 

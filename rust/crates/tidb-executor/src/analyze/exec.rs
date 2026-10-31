@@ -70,8 +70,8 @@ fn finish_analyze_publication(statistics: &mut tidb_stats::table_statistics::Tab
     if let Some(version) = statistics
         .columns
         .values()
-        .map(|item| item.stats_ver)
-        .chain(statistics.indexes.values().map(|item| item.stats_ver))
+        .map(|item| item.stats_version)
+        .chain(statistics.indexes.values().map(|item| item.stats_version))
         .filter(|version| *version != 0)
         .max()
     {
@@ -204,15 +204,15 @@ fn merge_partitioned_global_statistics(
             .iter()
             .map(|(stats, fm_sketch)| tidb_stats_handle_globalstats::PartitionStatsItem {
                 histogram: stats.histogram.clone(),
-                cmsketch: stats.cms.clone(),
-                topn: stats.topn.clone(),
+                cmsketch: stats.cmsketch.clone(),
+                topn: stats.top_n.clone(),
                 fm_sketch: fm_sketch.clone(),
             })
             .collect();
         let source = items[0].0;
         let merged = tidb_stats_handle_globalstats::merge_partition_stats_item(
             Some(time_zone),
-            source.stats_ver,
+            source.stats_version,
             topn_count,
             bucket_count,
             row_count,
@@ -234,12 +234,20 @@ fn merge_partitioned_global_statistics(
             histogram.round_trip_through_storage(&column.field_type);
             global.columns.insert(
                 column.id,
-                tidb_stats::table_statistics::ColumnStats {
+                tidb_stats::column::Column {
                     histogram,
-                    topn: merged.topn,
-                    cms: merged.cmsketch,
-                    stats_ver: source.stats_ver,
-                    unsigned: column.field_type.is_unsigned(),
+                    top_n: merged.topn,
+                    cmsketch: merged.cmsketch,
+                    stats_version: source.stats_version,
+                    info: Some(tidb_stats::column::ColumnInfo {
+                        flag: if column.field_type.is_unsigned() {
+                            tidb_mysql::UnsignedFlag
+                        } else {
+                            0
+                        },
+                        ..Default::default()
+                    }),
+                    ..Default::default()
                 },
             );
             global.column_stats_existence.insert(column.id, true);
@@ -271,8 +279,8 @@ fn merge_partitioned_global_statistics(
             .iter()
             .map(|(stats, fm_sketch)| tidb_stats_handle_globalstats::PartitionStatsItem {
                 histogram: stats.histogram.clone(),
-                cmsketch: stats.cms.clone(),
-                topn: stats.topn.clone(),
+                cmsketch: stats.cmsketch.clone(),
+                topn: stats.top_n.clone(),
                 fm_sketch: fm_sketch.clone(),
             })
             .collect();
@@ -285,7 +293,7 @@ fn merge_partitioned_global_statistics(
             .ok_or_else(|| DriverError::unsupported("global index has no leading column"))?;
         let merged = tidb_stats_handle_globalstats::merge_partition_stats_item(
             Some(time_zone),
-            source.stats_ver,
+            source.stats_version,
             topn_count,
             bucket_count,
             row_count,
@@ -309,13 +317,20 @@ fn merge_partitioned_global_statistics(
             ));
             global.indexes.insert(
                 index.id,
-                tidb_stats::table_statistics::IndexStats {
+                tidb_stats::index::Index {
                     histogram,
-                    topn: merged.topn,
-                    cms: merged.cmsketch,
-                    stats_ver: source.stats_ver,
-                    num_columns: source.num_columns,
-                    unique: source.unique,
+                    top_n: merged.topn,
+                    cmsketch: merged.cmsketch,
+                    stats_version: source.stats_version,
+                    info: Some(tidb_stats::index::IndexInfo {
+                        columns: vec![
+                            String::new();
+                            source.info.as_ref().map_or(0, |info| info.columns.len())
+                        ],
+                        unique: source.info.as_ref().is_some_and(|info| info.unique),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
                 },
             );
             global.index_stats_existence.insert(index.id, true);

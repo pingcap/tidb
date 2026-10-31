@@ -25,6 +25,7 @@ use tidb_stats::{
 fn column(id: i64, count: i64, status: StatsLoadedStatus) -> Column {
     Column {
         info: Some(ColumnInfo {
+            flag: 0,
             id,
             name: format!("c{id}"),
             primary_key: false,
@@ -49,6 +50,7 @@ fn column(id: i64, count: i64, status: StatsLoadedStatus) -> Column {
 fn index(id: i64, count: i64, mv_index: bool, status: StatsLoadedStatus) -> Index {
     Index {
         info: Some(IndexInfo {
+            unique: false,
             id,
             name: format!("i{id}"),
             columns: vec![format!("c{id}")],
@@ -249,6 +251,7 @@ fn source_pseudo_table_filters_schema_and_optionally_fills_histograms() {
         columns: vec![
             PseudoColumnInfo {
                 info: ColumnInfo {
+                    flag: 0,
                     id: 1,
                     name: "pk".to_owned(),
                     primary_key: true,
@@ -258,6 +261,7 @@ fn source_pseudo_table_filters_schema_and_optionally_fills_histograms() {
             },
             PseudoColumnInfo {
                 info: ColumnInfo {
+                    flag: 0,
                     id: 2,
                     name: "hidden".to_owned(),
                     primary_key: false,
@@ -267,6 +271,7 @@ fn source_pseudo_table_filters_schema_and_optionally_fills_histograms() {
             },
             PseudoColumnInfo {
                 info: ColumnInfo {
+                    flag: 0,
                     id: 3,
                     name: "nonpublic".to_owned(),
                     primary_key: false,
@@ -457,6 +462,7 @@ fn source_index_start_lookup_panics_for_empty_column_metadata() {
         1,
         Index {
             info: Some(IndexInfo {
+                unique: false,
                 id: 1,
                 name: "broken".to_owned(),
                 columns: Vec::new(),
