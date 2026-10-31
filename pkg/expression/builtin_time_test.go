@@ -1219,6 +1219,37 @@ func addTimeTestForIssue56861(t *testing.T, ctx *mock.Context, fc functionClass)
 
 func TestSubTimeSig(t *testing.T) {
 	ctx := createContext(t)
+	t.Run("timestamp input datetime result", func(t *testing.T) {
+		ctx := createContext(t)
+		ctx.ResetSessionAndStmtTimeZone(time.UTC)
+		for _, tc := range []struct{ fn, input, duration, expected string }{
+			{ast.SubTime, "1970-01-01 01:00:01.000000", "10:00:00.000001", "1969-12-31 15:00:00.999999"},
+			{ast.AddTime, "2038-01-19 03:14:07.000000", "00:00:01", "2038-01-19 03:14:08.000000"},
+		} {
+			ts, err := types.ParseTime(ctx.GetSessionVars().StmtCtx.TypeCtx(), tc.input, mysql.TypeTimestamp, 6)
+			require.NoError(t, err)
+			dur, _, err := types.ParseDuration(ctx.GetSessionVars().StmtCtx.TypeCtx(), tc.duration, 6)
+			require.NoError(t, err)
+			for _, rhs := range []types.Datum{types.NewStringDatum(tc.duration), types.NewDurationDatum(dur)} {
+				args := datumsToConstants([]types.Datum{types.NewTimeDatum(ts), rhs})
+				args[0].GetType(ctx).SetType(mysql.TypeTimestamp)
+				args[0].GetType(ctx).SetDecimal(6)
+				f, err := funcs[tc.fn].getFunction(ctx, args)
+				require.NoError(t, err)
+				result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+				require.NoError(t, err)
+				require.Equal(t, mysql.TypeDatetime, result.GetMysqlTime().Type())
+				require.Equal(t, tc.expected, result.GetMysqlTime().String())
+				input := chunk.NewChunkWithCapacity(nil, 1)
+				input.SetNumVirtualRows(1)
+				output := chunk.NewColumn(f.getRetTp(), 1)
+				require.True(t, f.isChildrenVectorized())
+				require.NoError(t, f.vecEvalTime(ctx, input, output))
+				require.False(t, output.IsNull(0))
+				require.Equal(t, tc.expected, output.Times()[0].String())
+			}
+		}
+	})
 	tbl := []struct {
 		Input         string
 		InputDuration string
