@@ -40,10 +40,11 @@ fn index_entry_count(session: &mut Session, table: &str, index: &str) -> usize {
             let index = stored
                 .index_list_for_check()
                 .into_iter()
-                .find(|candidate| candidate.name.eq_ignore_ascii_case(index))
+                .find(|candidate| candidate.read().name.original().eq_ignore_ascii_case(index))
                 .expect("the index exists");
+            let id = index.read().id;
             Ok(stored
-                .index_entries_for_check(index.id)
+                .index_entries_for_check(id)
                 .expect("entries readable")
                 .len())
         })

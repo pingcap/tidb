@@ -174,9 +174,9 @@ fn a_unique_index_entry_points_at_its_row() {
     let index_id = table
         .indexes()
         .iter()
-        .find(|index| index.name == "code")
+        .find(|index| index.read().name.original() == "code")
         .expect("the unique index exists")
-        .id;
+        .read().id;
     assert_eq!(
         table
             .lookup_unique(

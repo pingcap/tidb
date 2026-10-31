@@ -1040,7 +1040,7 @@ fn select_shard_column_by_given_name(
     let indexed = table
         .indexes()
         .iter()
-        .any(|index| index.visible && index.column_offsets.first() == Some(&offset));
+        .any(|index| (!index.read().invisible) && index.column_offsets.first() == Some(&offset));
     Ok((indexed, Some(info)))
 }
 

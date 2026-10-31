@@ -731,20 +731,28 @@ fn an_index_join_probe_displays_the_outer_probe_count() {
         let table = std::sync::Arc::make_mut(table);
         table.add_index(
             tidb_table::kv_table::KvIndex {
-                id: 1,
-                name: "PRIMARY".to_owned(),
-                comment: String::new(),
-                unique: true,
-                prefix_lengths: vec![
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("PRIMARY"),
+                    unique: true,
+                    primary: true,
+                    columns: (column_offsets)
+                        .iter()
+                        .enumerate()
+                        .map(|(position, _)| tidb_model::IndexColumn {
+                            length: (vec![
                     tidb_datatype::UNSPECIFIED_LENGTH;
                     column_offsets.len()
-                ],
-                column_offsets,
-                visible: true,
-                global: false,
-                global_index_version: 0,
+                ]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                            ..tidb_model::IndexColumn::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
+                column_offsets: column_offsets,
                 clustered_primary: false,
-                primary: true,
             },
             false,
         );

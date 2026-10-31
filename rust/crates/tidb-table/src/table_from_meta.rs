@@ -723,8 +723,8 @@ pub fn cluster_table(
         });
         kv_table.set_auto_random_id(auto.random_allocator_for(table));
     }
-    for index in table.indices.iter_deref() {
-        let index = index.read();
+    for shared in table.indices.iter_deref() {
+        let index = shared.read();
         // Go `IndexColumn.UseChangingType`: the parts cast to their column's
         // changing type.
         kv_table.set_changing_index_parts(
@@ -762,7 +762,7 @@ pub fn cluster_table(
                         .map(|column| column.column.clone()),
                 )
                 .collect();
-            let Ok(nonpublic) = kv_index(&index, &write_columns) else {
+            let Ok(nonpublic) = kv_index(&shared, &write_columns) else {
                 continue;
             };
             kv_table.add_nonpublic_index(nonpublic, index.state, index.backfill_state);
@@ -798,7 +798,7 @@ pub fn cluster_table(
         // clustered record corrupted tables shared with a Go TiDB node),
         // while multi-column join NDV estimation still reads its stats.
         let clustered_primary = (table.pk_is_handle || table.is_common_handle) && index.primary;
-        kv_table.add_index(kv_index(&index, &kv_table.columns)?, clustered_primary);
+        kv_table.add_index(kv_index(&shared, &kv_table.columns)?, clustered_primary);
         // Go `IndexInfo.ConditionExprString`: a partial index's predicate,
         // built as `TableFromMeta` builds it, in the default context.
         if index.has_condition() {
@@ -1068,19 +1068,15 @@ fn loaded_partition_spec(
 /// WRITTEN under one mapping and READ under another is the exact silent wrong
 /// answer this tier keeps hunting.
 pub fn kv_index(
-    index: &tidb_model::index::IndexInfo,
+    shared: &tidb_model::GoShared<tidb_model::index::IndexInfo>,
     columns: &[KvColumn],
 ) -> Result<KvIndex, String> {
+    let index = shared.read();
     let mut offsets = Vec::with_capacity(index.columns.len());
-    let mut prefix_lengths = Vec::with_capacity(index.columns.len());
     for column in index.columns.iter_deref() {
-        let (name, original_name, length) = {
+        let (name, original_name) = {
             let column = column.read();
-            (
-                column.name.lowercase().to_owned(),
-                column.name.original().to_owned(),
-                column.length,
-            )
+            (column.name.lowercase().to_owned(), column.name.original().to_owned())
         };
         let offset = columns
             .iter()
@@ -1093,20 +1089,13 @@ pub fn kv_index(
                 )
             })?;
         offsets.push(offset);
-        prefix_lengths.push(length);
     }
+    // Go `table.Index` wraps the `IndexInfo` pointer `TableInfo.Indices`
+    // holds.
     Ok(KvIndex {
-        id: index.id,
-        name: index.name.original().to_owned(),
-        comment: index.comment.clone(),
-        unique: index.unique,
+        info: shared.clone(),
         column_offsets: offsets,
-        prefix_lengths,
-        visible: !index.invisible,
-        global: index.global,
-        global_index_version: index.global_index_version,
         clustered_primary: false,
-        primary: index.primary,
     })
 }
 

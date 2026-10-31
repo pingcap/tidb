@@ -1475,9 +1475,9 @@ fn all_schemas(catalog: &tidb_infoschema::Catalog) -> Vec<store_helper::HelperSc
                         .indexes()
                         .iter()
                         .map(|index| store_helper::HelperIndex {
-                            id: index.id,
-                            name: index.name.clone(),
-                            global: index.global,
+                            id: index.read().id,
+                            name: index.read().name.original().to_owned(),
+                            global: index.read().global,
                         })
                         .collect(),
                     is_common_handle: !table.common_handle_offsets().is_empty(),

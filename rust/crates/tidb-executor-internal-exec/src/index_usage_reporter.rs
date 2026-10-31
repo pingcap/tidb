@@ -148,7 +148,7 @@ pub fn cluster_index_id(table: &KvTable) -> Option<i64> {
             .indexes()
             .iter()
             .find(|index| index.clustered_primary)
-            .map_or(0, |index| index.id),
+            .map_or(0, |index| index.read().id),
     )
 }
 
@@ -590,17 +590,24 @@ mod tests {
         common_handle.set_common_handle_offsets(vec![0]);
         common_handle.add_index(
             tidb_table::kv_table::KvIndex {
-                id: 7,
-                name: "PRIMARY".to_owned(),
-                comment: String::new(),
-                unique: true,
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 7,
+                    name: tidb_ast::CiString::new("PRIMARY"),
+                    unique: true,
+                    primary: true,
+                    columns: (vec![0])
+                        .iter()
+                        .map(|_| tidb_model::IndexColumn {
+                            length: tidb_datatype::UNSPECIFIED_LENGTH,
+                            ..tidb_model::IndexColumn::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
                 column_offsets: vec![0],
-                prefix_lengths: vec![],
-                visible: true,
-                global: false,
-                global_index_version: 0,
                 clustered_primary: false,
-                primary: true,
             },
             true,
         );
@@ -609,17 +616,24 @@ mod tests {
         let mut nonclustered_handle = KvTable::new(3, vec![]);
         nonclustered_handle.add_index(
             tidb_table::kv_table::KvIndex {
-                id: 8,
-                name: "PRIMARY".to_owned(),
-                comment: String::new(),
-                unique: true,
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 8,
+                    name: tidb_ast::CiString::new("PRIMARY"),
+                    unique: true,
+                    primary: true,
+                    columns: (vec![0])
+                        .iter()
+                        .map(|_| tidb_model::IndexColumn {
+                            length: tidb_datatype::UNSPECIFIED_LENGTH,
+                            ..tidb_model::IndexColumn::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
                 column_offsets: vec![0],
-                prefix_lengths: vec![],
-                visible: true,
-                global: false,
-                global_index_version: 0,
                 clustered_primary: false,
-                primary: true,
             },
             false,
         );

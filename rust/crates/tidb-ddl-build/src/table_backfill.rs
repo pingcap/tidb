@@ -263,7 +263,7 @@ impl KvTableBackfill for KvTable {
             .map(|index_id| {
                 self.indexes()
                     .iter()
-                    .find(|index| index.id == *index_id)
+                    .find(|index| index.read().id == *index_id)
                     .cloned()
                     .ok_or_else(|| {
                         KvTableError::Decode(format!("index {index_id} is not on the table"))
@@ -312,7 +312,7 @@ impl KvTableBackfill for KvTable {
         let index = self
             .indexes()
             .iter()
-            .find(|index| index.id == index_id)
+            .find(|index| index.read().id == index_id)
             .cloned()
             .ok_or_else(|| KvTableError::Decode(format!("index {index_id} is not on the table")))?;
         let zone = decode_context.zone().clone();
@@ -323,10 +323,10 @@ impl KvTableBackfill for KvTable {
         for (row_key, handle, row) in &rows {
             batch.scanned += 1;
             let entries = self.index_entry_keys(&index, row, handle, physical_id, &zone)?;
-            let mut skip = index.unique;
+            let mut skip = index.read().unique;
             let mut pending = Vec::with_capacity(entries.len());
             for entry in entries {
-                if index.unique {
+                if index.read().unique {
                     let existing = match filed.get(&entry.key) {
                         Some(owner) => Some(owner.clone()),
                         None => match self.store_mut().get(&Key::from_bytes(entry.key.clone())) {
@@ -359,7 +359,7 @@ impl KvTableBackfill for KvTable {
                                         &[
                                             (duplicate_value_text(&self.index_values(&index, row)))
                                                 .into(),
-                                            (self.qualified_key(&index.name)).into(),
+                                            (self.qualified_key(index.read().name.original())).into(),
                                         ],
                                     ),
                                 ),
@@ -410,7 +410,7 @@ impl KvTableBackfill for KvTable {
         let index = self
             .indexes()
             .iter()
-            .find(|index| index.id == index_id)
+            .find(|index| index.read().id == index_id)
             .cloned()
             .ok_or_else(|| KvTableError::Decode(format!("index {index_id} is not on the table")))?;
         struct TempRecord {
@@ -491,7 +491,7 @@ impl KvTableBackfill for KvTable {
             key_next(last_key.as_deref().expect("records came from a key"))
         };
         // Go `batchCheckTemporaryUniqueKey`.
-        if index.unique {
+        if index.read().unique {
             let mut seen: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
             for record in &mut records {
                 let original = match seen.get(&record.origin_key) {
@@ -516,7 +516,7 @@ impl KvTableBackfill for KvTable {
                                                     &record.origin_key,
                                                 ))
                                                 .into(),
-                                                (self.qualified_key(&index.name)).into(),
+                                                (self.qualified_key(index.read().name.original())).into(),
                                             ]),
                                     ),
                                 ));

@@ -195,8 +195,7 @@ fn complete_func_index_error(
     };
     let name = table
         .func_index_name(offset)
-        .unwrap_or("expression_index")
-        .to_owned();
+        .unwrap_or_else(|| "expression_index".to_owned());
     let completed = |code: u16, args: &[FormatArg]| {
         tidb_exprctx::EvalError::Conversion(
             tidb_dbterror::ErrClass(TerrorClass::Expression).new_std(code)

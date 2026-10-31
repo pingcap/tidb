@@ -86,8 +86,8 @@ fn key_info_table(
             .indexes()
             .iter()
             .map(|index| KeyInfoIndex {
-                id: index.id,
-                name: index.name.clone(),
+                id: index.read().id,
+                name: index.read().name.original().to_owned(),
             })
             .collect(),
     }

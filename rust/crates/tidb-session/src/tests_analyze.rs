@@ -1276,7 +1276,7 @@ fn physical_statistics_loads_become_shared_at_the_next_statement_boundary() {
                                 .filter_map(|offset| table.columns().get(*offset))
                                 .map(|column| column.read().id)
                                 .collect::<Vec<_>>();
-                            (index.id, columns)
+                            (index.read().id, columns)
                         })
                         .collect::<Vec<_>>();
                     let mut options = tidb_executor::analyze::AnalyzeOptions::default();

@@ -336,7 +336,7 @@ pub fn column_key_flag(table: &crate::KvTable, offset: usize) -> String {
     } else if table
         .indexes()
         .iter()
-        .any(|index| index.unique && index.column_offsets == [offset])
+        .any(|index| index.read().unique && index.column_offsets == [offset])
     {
         "UNI".to_owned()
     } else if table

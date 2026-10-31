@@ -357,9 +357,9 @@ fn a_corrupted_index_is_caught() {
             let index = table
                 .index_list_for_check()
                 .into_iter()
-                .find(|index| index.name.eq_ignore_ascii_case("idx_b"))
+                .find(|index| index.read().name.original().eq_ignore_ascii_case("idx_b"))
                 .expect("idx_b");
-            let entries = table.index_entries_for_check(index.id).expect("entries");
+            let entries = table.index_entries_for_check(index.read().id).expect("entries");
             assert_eq!(entries.len(), 3, "three rows, three entries");
             Ok(entries[0].0.clone())
         })
@@ -444,9 +444,9 @@ fn a_unique_index_entry_naming_the_wrong_row_reports_both_records() {
             let index = table
                 .index_list_for_check()
                 .into_iter()
-                .find(|index| index.name.eq_ignore_ascii_case("idx_b"))
+                .find(|index| index.read().name.original().eq_ignore_ascii_case("idx_b"))
                 .expect("idx_b");
-            let entries = table.index_entries_for_check(index.id).expect("entries");
+            let entries = table.index_entries_for_check(index.read().id).expect("entries");
             assert_eq!(entries.len(), 2);
             table
                 .swap_raw_values_for_test(&entries[0].0, &entries[1].0)
@@ -492,9 +492,9 @@ fn an_index_value_mismatch_reports_the_column_and_both_values() {
             let index = table
                 .index_list_for_check()
                 .into_iter()
-                .find(|index| index.name.eq_ignore_ascii_case("idx_b"))
+                .find(|index| index.read().name.original().eq_ignore_ascii_case("idx_b"))
                 .expect("idx_b");
-            let entries = table.index_entries_for_check(index.id).expect("entries");
+            let entries = table.index_entries_for_check(index.read().id).expect("entries");
             let (old_key, _) = entries
                 .iter()
                 .find(|(_, handle)| *handle == tidb_table::kv_table::TableHandle::Int(2))
@@ -601,9 +601,9 @@ fn recover_and_cleanup_index_repair_what_check_finds() {
                     let index = table
                         .index_list_for_check()
                         .into_iter()
-                        .find(|index| index.name.eq_ignore_ascii_case("idx_b"))
+                        .find(|index| index.read().name.original().eq_ignore_ascii_case("idx_b"))
                         .expect("idx_b");
-                    let entries = table.index_entries_for_check(index.id).expect("entries");
+                    let entries = table.index_entries_for_check(index.read().id).expect("entries");
                     Ok(entries[0].0.clone())
                 } else {
                     Ok(tidb_tablecodec::table_key::encode_row_key_with_handle(

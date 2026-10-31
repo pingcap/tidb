@@ -90,10 +90,10 @@ fn admin_check_detects_generated_column_index_value_corruption() {
     let index = table
         .index_list_for_check()
         .into_iter()
-        .find(|index| index.name.eq_ignore_ascii_case("idx_gen"))
+        .find(|index| index.read().name.original().eq_ignore_ascii_case("idx_gen"))
         .expect("idx_gen exists");
     let Some((old_entry_key, _)) = table
-        .index_entries_for_check(index.id)
+        .index_entries_for_check(index.read().id)
         .expect("index entries")
         .into_iter()
         .next()

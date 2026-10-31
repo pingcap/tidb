@@ -161,7 +161,7 @@
         let indexes = table
             .indexes()
             .iter()
-            .map(|index| (index.name.clone(), index.id))
+            .map(|index| (index.read().name.original().to_owned(), index.read().id))
             .collect::<Vec<_>>();
         let index_ids = indexes.iter().map(|(_, id)| *id).collect::<Vec<_>>();
         for physical_id in std::iter::once(table_id).chain(partition_ids.iter().copied()) {
@@ -479,7 +479,7 @@
             .kv_table_by_id(table_id)
             .and_then(|table| table.indexes().first())
             .expect("fixture index ia")
-            .id;
+            .read().id;
         let column_id = catalog.kv_table_by_id(table_id).unwrap().columns()[0].read().id;
         let statistics = evicted_statistics(10, 0, &[column_id], &[index_id]);
         handle.set_table_statistics(table_id, Arc::new(statistics));
@@ -618,7 +618,7 @@
             .kv_table_by_id(table_id)
             .and_then(|table| table.indexes().first())
             .expect("fixture index ia")
-            .id;
+            .read().id;
         let dropped = tidb_model::TableItemID {
             table_id,
             id: index_id,
@@ -650,7 +650,7 @@
         let (mut catalog, handle, table_id, _) = analyzed_lite_catalog();
         let index_id = catalog
             .kv_table_by_id(table_id)
-            .and_then(|table| table.indexes().iter().map(|index| index.id).max())
+            .and_then(|table| table.indexes().iter().map(|index| index.read().id).max())
             .expect("fixture index ia")
             + 1;
         let loader = Arc::new(RecordingLoader::default());
@@ -683,7 +683,7 @@
             .kv_table_by_id(table_id)
             .and_then(|table| table.indexes().first())
             .expect("fixture index")
-            .id;
+            .read().id;
         // `GetStatsTable` rule 2 makes this table's planner copy pseudo,
         // while the cached `HistColl.Pseudo` stays false.
         let statistics = evicted_statistics(0, 3, &[column_id], &[index_id]);
@@ -743,7 +743,7 @@
             panic!("fixture is not a KV table")
         };
         let (table_id, column_id, index_id) =
-            (table.table_id(), table.columns()[0].read().id, table.indexes()[0].id);
+            (table.table_id(), table.columns()[0].read().id, table.indexes()[0].read().id);
         let statistics = |meta_version: u64, row_count: i64, column_version: u64| {
             let histogram = |id, last_update_version| tidb_stats::Histogram {
                 id,
@@ -816,7 +816,7 @@
             .kv_table_by_id(table_id)
             .and_then(|table| table.indexes().first())
             .expect("fixture index")
-            .id;
+            .read().id;
         let statistics = evicted_statistics(10, 0, &[column_id], &[index_id]);
         handle.set_table_statistics(table_id, Arc::new(statistics));
         let column = tidb_model::TableItemID {
@@ -903,7 +903,7 @@
             .find(|column| column.read().name.original() == "v")
             .unwrap()
             .read().id;
-        let index_id = table.indexes().first().expect("expression index").id;
+        let index_id = table.indexes().first().expect("expression index").read().id;
         handle.set_table_statistics(
             table_id,
             Arc::new(evicted_statistics(10, 0, &[a, v], &[index_id])),

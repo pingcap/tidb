@@ -2617,7 +2617,7 @@ fn build_index_reader(
     if !table
         .indexes()
         .iter()
-        .any(|index| index.id == scan.index_id)
+        .any(|index| index.read().id == scan.index_id)
     {
         return Err(DriverError::unsupported(
             "physical index ID is absent from its table",
@@ -2661,7 +2661,7 @@ fn build_index_reader(
             table
                 .indexes()
                 .iter()
-                .find(|index| index.id == scan.index_id)
+                .find(|index| index.read().id == scan.index_id)
                 .and_then(|index| {
                     index
                         .column_offsets
@@ -3148,7 +3148,7 @@ fn index_join_probe_key_domains(
     let object_types = if let Some(index_id) = join.inner_access_index_id {
         let index = table
             .plan_indexes()
-            .find(|index| index.id == index_id)
+            .find(|index| index.read().id == index_id)
             .ok_or_else(|| {
                 DriverError::unsupported("a physical index-join index ID is absent from its table")
             })?;
@@ -3171,7 +3171,7 @@ fn index_join_probe_key_domains(
         // a common handle carries the handle after its own columns
         // (`path.IdxCols = append(path.IdxCols, handleCol)`), which an
         // index join may probe by.
-        if !index.unique && table.common_handle_offsets().is_empty() {
+        if !index.read().unique && table.common_handle_offsets().is_empty() {
             types.push(
                 table
                     .pk_handle_offset()
@@ -3350,7 +3350,7 @@ fn build_index_inner_reader(
         ));
     }
     let object = if let Some(index_id) = join.inner_access_index_id {
-        if !table.plan_indexes().any(|index| index.id == index_id) {
+        if !table.plan_indexes().any(|index| index.read().id == index_id) {
             return Err(DriverError::unsupported(
                 "a physical index-join index ID is absent from its table",
             ));
@@ -4685,9 +4685,9 @@ fn unique_index_point_values(
 ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
     let index = table
         .plan_indexes()
-        .find(|index| index.id == index_id)
+        .find(|index| index.read().id == index_id)
         .ok_or_else(|| DriverError::unsupported("physical point-get index ID is absent"))?;
-    if !index.unique || index.has_prefix() {
+    if !index.read().unique || index.has_prefix() {
         return Err(DriverError::unsupported(
             "a retained index point-get requires a non-prefix unique index",
         ));
@@ -4755,9 +4755,9 @@ fn point_partition_id(
         Some(index_id) => {
             let index = table
                 .plan_indexes()
-                .find(|index| index.id == index_id)
+                .find(|index| index.read().id == index_id)
                 .ok_or_else(|| DriverError::unsupported("point partition index is absent"))?;
-            if index.global {
+            if index.read().global {
                 return Ok(Some(point.table_id));
             }
             Some(index.column_offsets.clone())
@@ -7478,7 +7478,7 @@ fn build_union_scan(
     let need_extra_sorting = !reader.by_item_columns.is_empty();
     let used_index = reader
         .index_id
-        .and_then(|index_id| table.indexes().iter().find(|index| index.id == index_id))
+        .and_then(|index_id| table.indexes().iter().find(|index| index.read().id == index_id))
         .map(|index| {
             index
                 .column_offsets
@@ -8824,17 +8824,24 @@ use super::*;
         table
             .create_index_with_context(
                 tidb_table::kv_table::KvIndex {
-                    id: 8,
-                    name: "value_uidx".to_owned(),
-                    comment: String::new(),
-                    unique: true,
+                    info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                        id: 8,
+                        name: tidb_ast::CiString::new("value_uidx"),
+                        unique: true,
+                        columns: (vec![1])
+                            .iter()
+                            .enumerate()
+                            .map(|(position, _)| tidb_model::IndexColumn {
+                                length: (vec![tidb_datatype::UNSPECIFIED_LENGTH]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                                ..tidb_model::IndexColumn::default()
+                            })
+                            .collect::<Vec<_>>()
+                            .into(),
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::IndexInfo::default()
+                    }),
                     column_offsets: vec![1],
-                    prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
-                    visible: true,
-                    global: false,
-                    global_index_version: 0,
                     clustered_primary: false,
-                    primary: false,
                 },
                 &crate::StmtContext::for_query(),
             )
@@ -8943,17 +8950,24 @@ use super::*;
         table
             .create_index_with_context(
                 tidb_table::kv_table::KvIndex {
-                    id: 8,
-                    name: "value_uidx".to_owned(),
-                    comment: String::new(),
-                    unique: true,
+                    info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                        id: 8,
+                        name: tidb_ast::CiString::new("value_uidx"),
+                        unique: true,
+                        columns: (vec![1])
+                            .iter()
+                            .enumerate()
+                            .map(|(position, _)| tidb_model::IndexColumn {
+                                length: (vec![tidb_datatype::UNSPECIFIED_LENGTH]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                                ..tidb_model::IndexColumn::default()
+                            })
+                            .collect::<Vec<_>>()
+                            .into(),
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::IndexInfo::default()
+                    }),
                     column_offsets: vec![1],
-                    prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
-                    visible: true,
-                    global: false,
-                    global_index_version: 0,
                     clustered_primary: false,
-                    primary: false,
                 },
                 &crate::StmtContext::for_query(),
             )
@@ -9070,17 +9084,23 @@ use super::*;
         table
             .create_index_with_context(
                 tidb_table::kv_table::KvIndex {
-                    id: 7,
-                    name: "value_idx".to_owned(),
-                    comment: String::new(),
-                    unique: false,
+                    info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                        id: 7,
+                        name: tidb_ast::CiString::new("value_idx"),
+                        columns: (vec![1])
+                            .iter()
+                            .enumerate()
+                            .map(|(position, _)| tidb_model::IndexColumn {
+                                length: (vec![tidb_datatype::UNSPECIFIED_LENGTH]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                                ..tidb_model::IndexColumn::default()
+                            })
+                            .collect::<Vec<_>>()
+                            .into(),
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::IndexInfo::default()
+                    }),
                     column_offsets: vec![1],
-                    prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
-                    visible: true,
-                    global: false,
-                    global_index_version: 0,
                     clustered_primary: false,
-                    primary: false,
                 },
                 &crate::StmtContext::for_query(),
             )
@@ -9524,17 +9544,24 @@ use super::*;
                 table
                     .create_index_with_context(
                         tidb_table::kv_table::KvIndex {
-                            id: 7,
-                            name: "value_idx".to_owned(),
-                            comment: String::new(),
-                            unique: false,
+                            info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                                id: 7,
+                                name: tidb_ast::CiString::new("value_idx"),
+                                global: global,
+                                columns: (vec![1])
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(position, _)| tidb_model::IndexColumn {
+                                        length: (vec![tidb_datatype::UNSPECIFIED_LENGTH]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                                        ..tidb_model::IndexColumn::default()
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .into(),
+                                state: tidb_model::SchemaState::PUBLIC,
+                                ..tidb_model::IndexInfo::default()
+                            }),
                             column_offsets: vec![1],
-                            prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
-                            visible: true,
-                            global,
-                            global_index_version: 0,
                             clustered_primary: false,
-                            primary: false,
                         },
                         &crate::StmtContext::for_query(),
                     )

@@ -93,17 +93,23 @@
         };
         Arc::make_mut(table).add_index(
             tidb_table::kv_table::KvIndex {
-                id: 7,
-                name: "ib".to_owned(),
-                comment: String::new(),
-                unique: false,
-                prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 7,
+                    name: tidb_ast::CiString::new("ib"),
+                    columns: (vec![1])
+                        .iter()
+                        .enumerate()
+                        .map(|(position, _)| tidb_model::IndexColumn {
+                            length: (vec![tidb_datatype::UNSPECIFIED_LENGTH]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                            ..tidb_model::IndexColumn::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
                 column_offsets: vec![1],
-                visible: true,
-                global: false,
-                global_index_version: 0,
                 clustered_primary: false,
-                primary: false,
             },
             false,
         );
@@ -117,13 +123,13 @@
             .unwrap()
             .indexes()
             .iter()
-            .any(|index| index.id == 7));
+            .any(|index| index.read().id == 7));
         assert!(!original
             .kv_table_by_id(table_id)
             .unwrap()
             .indexes()
             .iter()
-            .any(|index| index.id == 7));
+            .any(|index| index.read().id == 7));
         assert!(!Arc::ptr_eq(&first, &after_index), "the view is rebuilt");
         assert!(
             after_index

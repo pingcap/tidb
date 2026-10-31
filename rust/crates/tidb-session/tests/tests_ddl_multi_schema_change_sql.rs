@@ -48,7 +48,7 @@ fn index_names(tk: &TestKit, table: &str) -> Vec<String> {
     table_meta(tk, table)
         .indexes()
         .iter()
-        .map(|index| index.name.clone())
+        .map(|index| index.read().name.original().to_owned())
         .collect()
 }
 
@@ -434,13 +434,13 @@ fn multi_schema_change_expression_index_rename_preserves_identity() {
     tk.must_exec("create table t (a int, index expr_i((a+1)))");
     tk.must_exec("insert into t values (1)");
     let original = table_meta(&tk, "t");
-    let index_id = original.indexes()[0].id;
+    let index_id = original.indexes()[0].read().id;
     let hidden_id = original.columns()[1].read().id;
     tk.must_exec("alter table t rename index expr_i to expr_j");
     let table = table_meta(&tk, "t");
     assert_eq!(table.columns()[1].read().name.original(), "_V$_expr_j_0");
     assert_eq!(table.columns()[1].read().id, hidden_id);
-    assert_eq!(table.indexes()[0].id, index_id);
+    assert_eq!(table.indexes()[0].read().id, index_id);
     // The renamed index's entries still match the rows.
     tk.must_exec("admin check table t");
     tk.must_query("select a from t use index (expr_j) where a+1=2").check(["1"]);
@@ -908,7 +908,7 @@ fn multi_schema_change_retains_metadata_id_high_water_marks() {
         tk.must_exec(&format!("alter table {name} add column c int default 7, add index j(a)"));
         let table = table_meta(&tk, name);
         assert_eq!(table.columns()[1].read().id, 3, "{name}");
-        assert_eq!(table.indexes()[0].id, 2, "{name}");
+        assert_eq!(table.indexes()[0].read().id, 2, "{name}");
     }
 }
 

@@ -123,7 +123,7 @@ fn used_stats_suffix_for_scan(
             &table.name(),
             physical_table_id,
             statistics.as_deref(),
-            table.indexes().iter().any(|index| index.id == index_id),
+            table.indexes().iter().any(|index| index.read().id == index_id),
             index_id,
             true,
         );
@@ -141,7 +141,7 @@ fn used_stats_suffix_for_scan(
                     table
                         .indexes()
                         .iter()
-                        .map(|index| (index.id, index.name.clone()))
+                        .map(|index| (index.read().id, index.read().name.original().to_owned()))
                         .collect(),
                 )
             })
@@ -728,11 +728,11 @@ fn index_access(
         let database = catalog.physical_kv_table_database_by_id(table_id)?;
         tidb_table::kv_table::hypo_kv_indexes(hypo_indexes?, database, &table)
             .into_iter()
-            .find(|index| index.id == index_id)
+            .find(|index| index.read().id == index_id)
     };
     let Some(index) = table
         .plan_indexes()
-        .find(|index| index.id == index_id)
+        .find(|index| index.read().id == index_id)
         .cloned()
         .or_else(hypo_index)
     else {
@@ -756,7 +756,7 @@ fn index_access(
         })
         .collect();
     table_access.indexes.push(IndexAccess {
-        name: index.name.clone(),
+        name: index.read().name.original().to_owned(),
         cols,
         is_clustered_index: false,
     });
@@ -2580,7 +2580,7 @@ fn collect_executor_process_fields(
                         if let Some(primary) =
                             table.indexes().iter().find(|index| index.clustered_primary)
                         {
-                            index_names.push(format!("{}:{}", table.name(), primary.name));
+                            index_names.push(format!("{}:{}", table.name(), primary.read().name));
                         }
                     }
                 }
@@ -2592,8 +2592,8 @@ fn collect_executor_process_fields(
         PhysicalPlan::PointGet(point) => {
             if let Some(index_id) = point.index_id {
                 if let Some(table) = catalog.physical_kv_table_by_id(point.table_id) {
-                    if let Some(index) = table.indexes().iter().find(|index| index.id == index_id) {
-                        index_names.push(format!("{}:{}", table.name(), index.name));
+                    if let Some(index) = table.indexes().iter().find(|index| index.read().id == index_id) {
+                        index_names.push(format!("{}:{}", table.name(), index.read().name));
                     }
                 }
             }
@@ -2601,8 +2601,8 @@ fn collect_executor_process_fields(
         PhysicalPlan::BatchPointGet(point) => {
             if let Some(index_id) = point.index_id {
                 if let Some(table) = catalog.physical_kv_table_by_id(point.table_id) {
-                    if let Some(index) = table.indexes().iter().find(|index| index.id == index_id) {
-                        index_names.push(format!("{}:{}", table.name(), index.name));
+                    if let Some(index) = table.indexes().iter().find(|index| index.read().id == index_id) {
+                        index_names.push(format!("{}:{}", table.name(), index.read().name));
                     }
                 }
             }

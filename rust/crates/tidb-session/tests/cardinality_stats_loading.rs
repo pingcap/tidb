@@ -66,7 +66,8 @@ fn subset_index_cardinality_after_async_statistics_load() {
             .iter()
             .map(|column| column.read().id)
             .collect::<Vec<_>>();
-        (table.table_id(), column_ids, table.indexes()[0].id)
+        let index_id = table.indexes()[0].read().id;
+        (table.table_id(), column_ids, index_id)
     };
     let queued = || {
         tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS

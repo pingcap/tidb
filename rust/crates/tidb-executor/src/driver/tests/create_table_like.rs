@@ -44,12 +44,12 @@ fn like_copies_the_structure_and_none_of_the_rows() {
     // Structure inherited: both indexes, by name and uniqueness.
     let dst = kv(&catalog, "dst");
     assert_eq!(dst.columns().len(), 2);
-    let indexes: Vec<(&str, bool)> = dst
+    let indexes: Vec<(String, bool)> = dst
         .indexes()
         .iter()
-        .map(|index| (index.name.as_str(), index.unique))
+        .map(|index| (index.read().name.original().to_owned(), index.read().unique))
         .collect();
-    assert_eq!(indexes, vec![("k", false), ("u", true)]);
+    assert_eq!(indexes, vec![("k".to_owned(), false), ("u".to_owned(), true)]);
 
     // Rows NOT inherited.
     assert_eq!(

@@ -280,17 +280,25 @@ fn a_stored_primary_index_yields_the_same_ids() {
     );
     table.set_common_handle_offsets(vec![0]);
     table.add_index(KvIndex {
-        id: 1,
-        name: "PRIMARY".to_owned(),
-        comment: String::new(),
-        unique: true,
+        info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+            id: 1,
+            name: tidb_ast::CiString::new("PRIMARY"),
+            unique: true,
+            primary: true,
+            columns: (vec![0])
+                .iter()
+                .enumerate()
+                .map(|(position, _)| tidb_model::IndexColumn {
+                    length: (vec![UNSPECIFIED_LENGTH]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                    ..tidb_model::IndexColumn::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            state: tidb_model::SchemaState::PUBLIC,
+            ..tidb_model::IndexInfo::default()
+        }),
         column_offsets: vec![0],
-        prefix_lengths: vec![UNSPECIFIED_LENGTH],
-        visible: true,
-        global: false,
-        global_index_version: 0,
         clustered_primary: true,
-        primary: true,
     }, true);
 
     capture(&mut table, Arc::clone(&captured));

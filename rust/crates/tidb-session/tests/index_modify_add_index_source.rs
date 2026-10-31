@@ -25,7 +25,7 @@ fn index_names(tk: &TestKit, database: &str, name: &str) -> Vec<String> {
         TableEntry::Kv(table) => table
             .indexes()
             .iter()
-            .map(|index| index.name.to_lowercase())
+            .map(|index| index.read().name.original().to_lowercase())
             .collect(),
         _ => panic!("expected a storage-backed table {database}.{name}"),
     }

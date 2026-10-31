@@ -244,7 +244,7 @@ impl KvTable {
                         tidb_terror::MysqlError::from_terror(
                             &tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_generate_by_args(&[
                                 (duplicate_value.clone()).into(),
-                                (self.qualified_key(&kv_index.name)).into(),
+                                (self.qualified_key(kv_index.read().name.original())).into(),
                             ]),
                         ),
                     ));
@@ -274,7 +274,7 @@ impl KvTable {
             let lazy_check = self.check_insert_key(
                 &key,
                 &duplicate_value,
-                &self.qualified_key(&kv_index.name),
+                &self.qualified_key(kv_index.read().name.original()),
                 lazy_dup_check,
             )?;
             self.store
@@ -305,7 +305,7 @@ impl KvTable {
         let deleted_handle = txn_handle(handle)?;
         for entry in self.index_entry_keys(kv_index, row, handle, physical_id, zone)? {
             let (key, temp_key, key_version) = gen_temp_idx_key_by_state(index, entry.key)?;
-            let previous = match (&temp_key, kv_index.unique) {
+            let previous = match (&temp_key, kv_index.read().unique) {
                 (Some(temp_key), true) => self.get_key_in_txn(temp_key)?.unwrap_or_default(),
                 _ => Vec::new(),
             };

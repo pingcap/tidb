@@ -1653,7 +1653,7 @@ impl KvTable {
                     })
                     && self.partial_index_safe_for_columns(index, columns)
             })
-            .map(|index| Some(index.id))
+            .map(|index| Some(index.read().id))
     }
 
     /// The stored record for `handle` -- its key AND its bytes -- found by
@@ -2774,7 +2774,7 @@ impl KvTable {
         let Some(index) = self
             .indexes
             .iter()
-            .find(|index| index.name.go_lower_eq(index_name))
+            .find(|index| index.read().name.original().go_lower_eq(index_name))
             .cloned()
         else {
             return Ok(None);
@@ -2783,7 +2783,7 @@ impl KvTable {
             return Ok(Some(0));
         }
         let mut removed = 0_u64;
-        for entry in self.index_entry_records_for_check(index.id)? {
+        for entry in self.index_entry_records_for_check(index.read().id)? {
             if read_stored_record_one(self.store.as_mut(), entry.physical_id, &entry.handle)?
                 .is_some()
             {
@@ -2804,14 +2804,14 @@ impl KvTable {
         let Some(position) = self
             .indexes
             .iter()
-            .position(|index| index.name.go_lower_eq(name))
+            .position(|index| index.read().name.original().go_lower_eq(name))
         else {
             return Ok(false);
         };
         let index = &self.indexes[position];
-        let index_id = index.id;
+        let index_id = index.read().id;
         // DDL owns all physical partitions, even on a read-restricted view.
-        let physical_ids = if index.global {
+        let physical_ids = if index.read().global {
             vec![self.table_id]
         } else {
             self.partition
@@ -2929,9 +2929,9 @@ impl KvTable {
         self.hidden_offsets.contains(&offset)
     }
 
-    /// Points every column at the `ColumnInfo` the `TableInfo` now holds (a
-    /// copy-on-write change of the `TableInfo` makes new ones), and re-reads
-    /// [`Self::hidden_offsets`] off them.
+    /// Points every column and index at the `ColumnInfo` / `IndexInfo` the
+    /// `TableInfo` now holds (a copy-on-write change of the `TableInfo` makes
+    /// new ones), and re-reads [`Self::hidden_offsets`] off the columns.
     fn refresh_from_meta(&mut self) {
         let meta = self.meta.clone();
         let meta = meta.read();
@@ -2944,6 +2944,27 @@ impl KvTable {
                 let id = column.read().id;
                 if let Some(info) = meta.find_column_by_id(id) {
                     column.info = info;
+                }
+            }
+        }
+        // Go `table.Index` wraps the `IndexInfo` the `TableInfo` holds.
+        let stale_index = |index: &KvIndex| {
+            meta.find_index_by_id(index.read().id)
+                .is_some_and(|info| !info.ptr_eq(&index.info))
+        };
+        if self.indexes.iter().any(stale_index) {
+            for index in self.indexes_mut() {
+                let id = index.read().id;
+                if let Some(info) = meta.find_index_by_id(id) {
+                    index.info = info;
+                }
+            }
+        }
+        if self.nonpublic_indexes.iter().any(|nonpublic| stale_index(&nonpublic.index)) {
+            for nonpublic in std::sync::Arc::make_mut(&mut self.nonpublic_indexes) {
+                let id = nonpublic.index.read().id;
+                if let Some(info) = meta.find_index_by_id(id) {
+                    nonpublic.index.info = info;
                 }
             }
         }
@@ -3137,7 +3158,7 @@ impl KvTable {
             }
         }
         for index in self.indexes.as_ref().clone() {
-            if !index.unique
+            if !index.read().unique
                 || index.clustered_primary
                 || !self.index_condition_holds(&index, row, &zone)?
             {
@@ -3181,7 +3202,7 @@ impl KvTable {
                                     }
                                 }
                                 .into(),
-                                self.qualified_key(&index.name).into(),
+                                self.qualified_key(index.read().name.original()).into(),
                             ]),
                         )),
                         on_record_key: false,
@@ -3217,7 +3238,7 @@ impl KvTable {
         });
         let mut unique_keys = Vec::new();
         for index in self.indexes.as_ref().clone() {
-            if !index.unique
+            if !index.read().unique
                 || index.clustered_primary
                 || !self.index_condition_holds(&index, row, &zone)?
             {
@@ -3392,11 +3413,11 @@ impl KvTable {
     /// replaces the one [`Self::set_common_handle_offsets`] recorded for it.
     fn record_fixture_index(&mut self, index: &KvIndex) {
         let meta = self.meta.read();
-        if meta.indices.iter_deref().any(|info| info.read().id == index.id) {
+        if meta.indices.iter_deref().any(|info| info.read().id == index.read().id) {
             return;
         }
         let recorded_primary = index
-            .primary
+            .read().primary
             .then(|| {
                 meta.indices
                     .iter_deref()
@@ -3404,25 +3425,23 @@ impl KvTable {
             })
             .flatten();
         drop(meta);
-        let info = tidb_model::IndexInfo {
-            id: index.id,
-            name: tidb_ast::CiString::new(index.name.clone()),
-            columns: self
-                .fixture_index_columns(&index.column_offsets, &index.prefix_lengths)
-                .into(),
-            state: tidb_model::SchemaState::PUBLIC,
-            unique: index.unique,
-            primary: index.primary,
-            invisible: !index.visible,
-            global: index.global,
-            mv_index: self.mv_key_part_source(index.id).is_some(),
-            ..tidb_model::IndexInfo::default()
-        };
+        // Go's DDL names and places each key part, publishes the index and
+        // records MVIndex; the table's `TableInfo` then lists this very
+        // `IndexInfo`.
+        let columns = self.fixture_index_columns(&index.column_offsets, &index.prefix_lengths());
+        let mv_index = self.mv_key_part_source(index.read().id).is_some();
+        {
+            let mut info = index.info.write();
+            info.columns = columns.into();
+            info.state = tidb_model::SchemaState::PUBLIC;
+            info.mv_index |= mv_index;
+        }
+        let shared = index.info.clone();
         self.update_meta(|meta| {
             if let Some(position) = recorded_primary {
                 meta.indices.delete_go(position, position + 1);
             }
-            meta.indices.push_go(info);
+            meta.indices.push_handle_go(Some(shared));
         });
     }
 
@@ -3496,12 +3515,12 @@ impl KvTable {
 
     /// Go `completeError`'s lookup: the name of the index whose key part is
     /// the column at `offset` -- the last such index, as Go's loop leaves it.
-    pub fn func_index_name(&self, offset: usize) -> Option<&str> {
+    pub fn func_index_name(&self, offset: usize) -> Option<String> {
         self.indexes
             .iter()
             .rev()
             .find(|index| index.column_offsets.contains(&offset))
-            .map(|index| index.name.as_str())
+            .map(|index| index.read().name.original().to_owned())
     }
 
     /// Records a multi-valued index's source column from its ARRAY key part's
@@ -3520,7 +3539,7 @@ impl KvTable {
         };
         if let [source] = generated.dependencies.as_slice() {
             let source = source.go_to_lower();
-            self.mv_key_part_sources.insert(index.id, source);
+            self.mv_key_part_sources.insert(index.read().id, source);
         }
     }
 
@@ -3635,7 +3654,7 @@ impl KvTable {
         row: &[Datum],
         zone: &SessionTimeZone,
     ) -> Result<bool, KvTableError> {
-        let Some(condition) = self.partial_index_conditions.get(&index.id) else {
+        let Some(condition) = self.partial_index_conditions.get(&index.read().id) else {
             return Ok(true);
         };
         let context = IndexConditionContext {
@@ -3674,7 +3693,7 @@ impl KvTable {
         index: &KvIndex,
         offsets: &[usize],
     ) -> bool {
-        let Some(condition) = self.partial_index_conditions.get(&index.id) else {
+        let Some(condition) = self.partial_index_conditions.get(&index.read().id) else {
             return true;
         };
         let mut not_null = HashSet::new();
@@ -3731,7 +3750,7 @@ impl KvTable {
     }
 
     pub fn plan_indexes(&self) -> impl Iterator<Item = &KvIndex> {
-        self.indexes.iter().filter(|index| index.visible)
+        self.indexes.iter().filter(|index| !index.read().invisible)
     }
 
     /// The indexes Go's `tryPointGetPlan`/`tryBatchPointGetPlan` may pin: a
@@ -3740,7 +3759,7 @@ impl KvTable {
     /// the fast plan has no residual to notice a row it never stored.
     pub fn point_get_indexes(&self) -> impl Iterator<Item = &KvIndex> {
         self.plan_indexes()
-            .filter(|index| !self.index_has_condition(index.id))
+            .filter(|index| !self.index_has_condition(index.read().id))
     }
 
     /// Marks the column at `offset` as the table's handle column, which Go
@@ -4860,7 +4879,7 @@ pub fn null_timestamp_substitute(
 pub fn common_handle_primary(table: &KvTable) -> Option<&KvIndex> {
     table
         .plan_indexes()
-        .find(|index| index.primary && index.column_offsets == table.common_handle_offsets())
+        .find(|index| index.read().primary && index.column_offsets == table.common_handle_offsets())
 }
 
 /// The clustered PRIMARY's index METADATA, whether or not the catalog stores
@@ -4886,18 +4905,12 @@ pub fn clustered_primary_metadata(table: &KvTable) -> Option<std::borrow::Cow<'_
     if let Some(index) = common_handle_primary(table) {
         return Some(std::borrow::Cow::Borrowed(index));
     }
+    // Go's clustered table lists its PRIMARY KEY in `TableInfo.Indices`.
+    let primary = table.meta().read().get_primary_key()?;
     Some(std::borrow::Cow::Owned(KvIndex {
-        id: 0,
-        name: "PRIMARY".to_owned(),
-        comment: String::new(),
-        unique: true,
+        info: primary,
         column_offsets: table.common_handle_offsets().to_vec(),
-        prefix_lengths: table.common_handle_prefix_lengths().to_vec(),
-        visible: true,
-        global: false,
-        global_index_version: 0,
         clustered_primary: false,
-        primary: true,
     }))
 }
 
@@ -4913,7 +4926,9 @@ pub fn hypo_kv_indexes(
 ) -> Vec<KvIndex> {
     hypo.table_indexes(database, &table.name())
         .into_iter()
-        .filter_map(|index| crate::table_from_meta::kv_index(index, &table.columns).ok())
+        .filter_map(|index| {
+            crate::table_from_meta::kv_index(&tidb_model::GoShared::new(index.clone()), &table.columns).ok()
+        })
         .collect()
 }
 

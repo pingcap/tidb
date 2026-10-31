@@ -672,7 +672,7 @@ fn has_primary_index(catalog: &Catalog, name: &str) -> bool {
     table
         .indexes()
         .iter()
-        .any(|index| index.name.eq_ignore_ascii_case("PRIMARY"))
+        .any(|index| index.read().name.original().eq_ignore_ascii_case("PRIMARY"))
 }
 
 /// Go `ShouldBuildClusteredIndex` (`pkg/ddl/create_table.go:1754`) crossed

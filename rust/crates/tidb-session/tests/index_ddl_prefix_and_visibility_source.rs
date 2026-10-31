@@ -130,7 +130,7 @@ fn modify_column_keeps_a_prefix_the_new_type_can_carry() {
     let TableEntry::Kv(table) = tk.get_table_by_name("test", "t") else {
         panic!("the table is not storage-backed");
     };
-    assert_eq!(table.indexes()[0].prefix_lengths, vec![2]);
+    assert_eq!(table.indexes()[0].prefix_lengths(), vec![2]);
     tk.must_exec("admin check table t");
 
     // The same column with NO surviving prefix is Go's 1170.

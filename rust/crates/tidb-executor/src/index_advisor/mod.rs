@@ -381,7 +381,7 @@ impl<S: IndexAdvisorExec> Optimizer for SessionOptimizer<'_, S> {
             Ok(stored
                 .indexes()
                 .iter()
-                .any(|index| index.name.go_to_lower() == index_name))
+                .any(|index| index.read().name.original().go_to_lower() == index_name))
         })
     }
 

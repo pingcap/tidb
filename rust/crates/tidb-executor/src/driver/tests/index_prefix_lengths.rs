@@ -171,7 +171,7 @@ fn a_real_prefix_on_a_secondary_index_is_built_and_recorded() {
             panic!("{sql}: the table is not storage-backed");
         };
         let index = table.indexes().last().expect(sql);
-        assert_eq!(index.prefix_lengths, expected, "{sql}");
+        assert_eq!(index.prefix_lengths(), expected, "{sql}");
         assert_eq!(
             index.has_prefix(),
             expected.iter().any(|l| *l != -1),
@@ -198,7 +198,7 @@ fn a_prefix_primary_key_is_stored_on_the_common_handle() {
     let primary = table
         .indexes()
         .iter()
-        .find(|index| index.name == "PRIMARY")
+        .find(|index| index.read().name.original() == "PRIMARY")
         .expect("clustered primary metadata is present");
-    assert_eq!(primary.prefix_lengths, [3, -1]);
+    assert_eq!(primary.prefix_lengths(), [3, -1]);
 }

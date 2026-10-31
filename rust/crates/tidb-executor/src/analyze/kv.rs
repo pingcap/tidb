@@ -60,14 +60,14 @@ use tidb_table::kv_table::KvTable;
 /// task.
 #[must_use]
 pub fn is_special_global_index(table: &KvTable, index: &tidb_table::kv_table::KvIndex) -> bool {
-    index.global
+    index.read().global
         && index
             .column_offsets
             .iter()
             .enumerate()
             .any(|(position, offset)| {
                 index
-                    .prefix_lengths
+                    .prefix_lengths()
                     .get(position)
                     .is_some_and(|length| *length != tidb_datatype::UNSPECIFIED_LENGTH)
                     || table
@@ -141,7 +141,7 @@ pub fn analyze_kv_table_columns(
     let mut indexes = BTreeMap::new();
     for (position, built) in analyzed.indexes.into_iter().enumerate() {
         let stored = &table.indexes()[source_indexes[position]];
-        let info = meta.find_index_by_id(stored.id);
+        let info = meta.find_index_by_id(stored.read().id);
         indexes.insert(built.id, index_statistics(built, info, physical_id));
     }
 
@@ -193,13 +193,13 @@ pub fn analyze_kv_table_independent_index(
     let index = table
         .indexes()
         .iter()
-        .find(|index| index.id == index_id)
+        .find(|index| index.read().id == index_id)
         .cloned()
         .ok_or_else(|| AnalyzeError::Unsupported(format!("no such index id {index_id}")))?;
     if !is_special_global_index(table, &index) {
         return Err(AnalyzeError::Unsupported(format!(
             "index `{}` is not a special global index",
-            index.name
+            index.read().name
         )));
     }
     let bucket_count = usize::try_from(options.num_buckets)
@@ -207,13 +207,13 @@ pub fn analyze_kv_table_independent_index(
     let topn_count = usize::try_from(options.num_topn)
         .map_err(|_| AnalyzeError::Unsupported("invalid ANALYZE TopN count".to_owned()))?;
     let mut processor = tidb_stats::IndependentIndexAnalyze::new(
-        index.id,
+        index.read().id,
         index.column_offsets.len(),
         bucket_count,
         topn_count,
     );
     for entry in table
-        .index_entry_records_for_check(index.id)
+        .index_entry_records_for_check(index.read().id)
         .map_err(AnalyzeError::from)?
     {
         let (encoded_columns, _) =
@@ -226,10 +226,10 @@ pub fn analyze_kv_table_independent_index(
     let built = processor
         .finish()
         .map_err(|error| AnalyzeError::Unsupported(error.to_string()))?;
-    let info = table.meta().read().find_index_by_id(index.id);
+    let info = table.meta().read().find_index_by_id(index.read().id);
     let mut indexes = BTreeMap::new();
     indexes.insert(
-        index.id,
+        index.read().id,
         tidb_stats::index::Index {
             histogram: built.histogram,
             top_n: Some(built.topn),
@@ -375,10 +375,10 @@ fn kv_analyze_plan(
             continue;
         }
         indexes.push(AnalyzedIndex {
-            id: index.id,
-            single_column_unique: unique_by_schema(table, true, index.id),
+            id: index.read().id,
+            single_column_unique: unique_by_schema(table, true, index.read().id),
             column_positions,
-            prefix_lengths: index.prefix_lengths.clone(),
+            prefix_lengths: index.prefix_lengths().clone(),
         });
         source_indexes.push(source_index);
     }
@@ -415,17 +415,17 @@ pub fn is_local_unique(table: &KvTable, is_index: bool, id: i64) -> bool {
 
 fn schema_unique_item(table: &KvTable, is_index: bool, id: i64, local_only: bool) -> bool {
     table.indexes().iter().any(|index| {
-        if local_only && index.global {
+        if local_only && index.read().global {
             return false;
         }
         // This catalog exposes public indexes; project their metadata into
         // the shared statistics predicate instead of maintaining a second rule.
         let metadata = tidb_model::IndexInfo {
             state: tidb_model::SchemaState::PUBLIC,
-            unique: index.unique,
-            primary: index.primary,
+            unique: index.read().unique,
+            primary: index.read().primary,
             condition_expr_string: table
-                .partial_index_condition_string(index.id)
+                .partial_index_condition_string(index.read().id)
                 .unwrap_or_default(),
             columns: index
                 .column_offsets
@@ -442,7 +442,7 @@ fn schema_unique_item(table: &KvTable, is_index: bool, id: i64, local_only: bool
         };
         tidb_stats::index::is_single_col_non_prefix_unique_index(&metadata)
             && if is_index {
-                index.id == id
+                index.read().id == id
             } else {
                 table
                     .columns()

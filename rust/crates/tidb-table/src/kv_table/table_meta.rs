@@ -220,59 +220,21 @@ impl TableHandle {
     }
 }
 
-/// One index of a [`KvTable`]: Go `model.IndexInfo`, reduced to what an index
-/// write and a uniqueness check need.
+/// One index of a [`KvTable`]: Go `table.Index`, the table's
+/// `*model.IndexInfo` and where its key parts sit in the table's columns.
 #[derive(Clone, Debug)]
 pub struct KvIndex {
-    /// The index id (Go `IndexInfo.ID`), the `_i` key component.
-    pub id: i64,
-    /// The index name, which a duplicate-key error reports.
-    pub name: String,
-    /// Go `IndexInfo.Comment`, preserved verbatim in metadata and escaped
-    /// only when a SQL renderer emits it.
-    pub comment: String,
-    /// Go `IndexInfo.Unique`.
-    pub unique: bool,
-    /// The indexed columns' offsets in the row, in index order.
+    /// Go's `*model.IndexInfo`, the pointer `TableInfo.Indices` holds.
+    pub info: tidb_model::GoShared<tidb_model::IndexInfo>,
+    /// Each key part's place in the table's columns, in index order: Go's
+    /// `IndexColumn.Offset` resolved by name against the columns this table
+    /// loaded.
     pub column_offsets: Vec<usize>,
-    /// Go `IndexColumn.Length`, one per entry of `column_offsets`:
-    /// [`tidb_datatype::UNSPECIFIED_LENGTH`] for a key part that
-    /// stores the whole column, and the declared prefix otherwise.
-    ///
-    /// A prefix key part changes what the index MEANS, not just how large it
-    /// is: the entry holds `'abc'` where the row holds `'abcdef'`, so the
-    /// index no longer covers that column ([`KvIndex::covers`]), no longer
-    /// orders by it ([`KvIndex::ordered_column_offsets`]), and can no longer
-    /// answer a point get ([`KvIndex::has_prefix`]).
-    pub prefix_lengths: Vec<i64>,
-    /// Go `!IndexInfo.Invisible`. An invisible index is maintained by every
-    /// write and reported by `SHOW INDEX` exactly like any other, and is only
-    /// hidden from the *planner*: it never becomes an access path, and naming
-    /// it in `USE INDEX`/`FORCE INDEX` is Go's 1176 "Key ... doesn't exist".
-    pub visible: bool,
-    /// Go `IndexInfo.Global`: a `GLOBAL` index of a PARTITIONED table, whose
-    /// single entry set spans every partition instead of living inside one.
-    ///
-    /// Its keys live under the logical table id and each value carries the
-    /// physical partition id. The flag also drives Go's visible hint rule:
-    /// `checkIndexLookUpPushDownSupported` (`planbuilder.go:1274`) refuses
-    /// `INDEX_LOOKUP_PUSHDOWN` on a global index with 1815, because a
-    /// coprocessor-local lookup cannot follow a handle out of its own region's
-    /// partition. Always false on an unpartitioned table: Go's DDL records
-    /// `GLOBAL` only where partitioning makes it mean something.
-    pub global: bool,
-    /// Go `IndexInfo.GlobalIndexVersion`, selecting whether a non-distinct
-    /// global-index key also carries its partition id.
-    pub global_index_version: u8,
     /// Whether this entry IS the clustered record handle's PRIMARY key
     /// (Go keeps the IndexInfo in metadata but never maintains `_i` entries
     /// for it). Write paths skip it; the planner still reads its stats so
     /// multi-column join NDV estimation sees the composite key.
     pub clustered_primary: bool,
-    /// Go `IndexInfo.Primary`: the PRIMARY KEY's index, clustered or not. A
-    /// legacy secondary index may be called `primary` (TiDB #14243), so the
-    /// name never stands in for this flag.
-    pub primary: bool,
 }
 
 /// An index Go's DDL is still adding or dropping (an `IndexInfo` in a
@@ -328,17 +290,37 @@ impl NonPublicIndex {
 }
 
 impl KvIndex {
-    /// The prefix declared on the key part at `position`, or
+    /// An index over `info` whose key parts sit at `column_offsets`.
+    #[must_use]
+    pub fn new(info: tidb_model::IndexInfo, column_offsets: Vec<usize>) -> Self {
+        Self {
+            info: tidb_model::GoShared::new(info),
+            column_offsets,
+            clustered_primary: false,
+        }
+    }
+
+    /// The shared `IndexInfo`, read.
+    pub fn read(&self) -> std::sync::RwLockReadGuard<'_, tidb_model::IndexInfo> {
+        self.info.read()
+    }
+
+    /// Go `IndexColumn.Length` of the key part at `position`, or
     /// [`UNSPECIFIED_LENGTH`] when the key part stores the whole column.
-    ///
-    /// A missing entry reads as "whole column", so an index built before this
-    /// field existed cannot be mistaken for a prefix one.
     #[must_use]
     pub fn prefix_length(&self, position: usize) -> i64 {
-        self.prefix_lengths
+        self.read()
+            .columns
             .get(position)
-            .copied()
-            .unwrap_or(UNSPECIFIED_LENGTH)
+            .map_or(UNSPECIFIED_LENGTH, |column| column.read().length)
+    }
+
+    /// Go `IndexColumn.Length` of every key part, in index order.
+    #[must_use]
+    pub fn prefix_lengths(&self) -> Vec<i64> {
+        (0..self.column_offsets.len())
+            .map(|position| self.prefix_length(position))
+            .collect()
     }
 
     /// Go `IndexInfo.HasPrefixIndex`: any key part stores less than its whole
@@ -349,7 +331,7 @@ impl KvIndex {
     /// an entry found by a prefix does not prove the row matches.
     #[must_use]
     pub fn has_prefix(&self) -> bool {
-        self.prefix_lengths
+        self.prefix_lengths()
             .iter()
             .any(|length| *length != UNSPECIFIED_LENGTH)
     }
@@ -368,15 +350,10 @@ impl KvIndex {
     #[must_use]
     pub fn ordered_column_offsets(&self) -> &[usize] {
         let ordered = self
-            .prefix_lengths
+            .prefix_lengths()
             .iter()
             .take_while(|length| **length == UNSPECIFIED_LENGTH)
-            .count()
-            .min(self.column_offsets.len());
-        // An index with no recorded lengths stores every column whole.
-        if self.prefix_lengths.is_empty() {
-            return &self.column_offsets;
-        }
+            .count();
         &self.column_offsets[..ordered]
     }
 

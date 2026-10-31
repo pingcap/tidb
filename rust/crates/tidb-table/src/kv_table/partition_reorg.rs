@@ -108,15 +108,15 @@ impl KvTable {
         let mut stateful: Vec<NonPublicIndex> = self
             .nonpublic_indexes
             .iter()
-            .filter(|index| !mode.excluded.contains(&index.index.id))
+            .filter(|index| !mode.excluded.contains(&index.index.read().id))
             .cloned()
             .collect();
         for index in self.indexes.iter() {
-            if mode.excluded.contains(&index.id) {
+            if mode.excluded.contains(&index.read().id) {
                 continue;
             }
             match mode.state {
-                Some(state) if !index.clustered_primary && !mode.changed.contains(&index.id) => {
+                Some(state) if !index.clustered_primary && !mode.changed.contains(&index.read().id) => {
                     stateful.push(NonPublicIndex {
                         index: index.clone(),
                         state,

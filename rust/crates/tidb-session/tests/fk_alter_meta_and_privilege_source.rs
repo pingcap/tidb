@@ -70,7 +70,7 @@ fn index_names(tk: &TestKit, db: &str, table: &str) -> Vec<String> {
     table_info(tk, db, table)
         .indexes()
         .iter()
-        .map(|index| index.name.clone())
+        .map(|index| index.read().name.original().to_owned())
         .collect()
 }
 
@@ -145,7 +145,7 @@ fn alter_add_foreign_key_lands_constraints_and_enforces_child_side() {
     );
     let table = table_info(&tk, "test", "t2");
     assert_eq!(table.indexes().len(), 4, "Go: len(tbl2Info.Indices) == 4");
-    let index_names: Vec<String> = table.indexes().iter().map(|index| index.name.clone()).collect();
+    let index_names: Vec<String> = table.indexes().iter().map(|index| index.read().name.original().to_owned()).collect();
     assert_eq!(index_names, vec!["fk", "idx_c", "fk_d", "fk_e"], "Go's index order");
     let names: Vec<String> = table.foreign_keys().iter().map(|key| key.name.clone()).collect();
     assert_eq!(names, vec!["fk", "fk_c", "fk_d", "fk_e"], "Go's FK order");

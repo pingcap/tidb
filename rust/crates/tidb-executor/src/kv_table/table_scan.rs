@@ -639,7 +639,7 @@ impl KvTableReader for KvTable {
         let index = self
             .indexes()
             .iter()
-            .find(|index| index.id == index_id)
+            .find(|index| index.read().id == index_id)
             .ok_or_else(|| KvTableError::Decode("foreign key index is missing".into()))?;
         if index.clustered_primary {
             let encoded = tidb_codec::Encoder::new(self.use_new_collation())
@@ -672,7 +672,7 @@ impl KvTableReader for KvTable {
             }
             return Ok(handles);
         }
-        if index.unique && values.len() == index.column_offsets.len() && !index.has_prefix() {
+        if index.read().unique && values.len() == index.column_offsets.len() && !index.has_prefix() {
             return Ok(self
                 .lookup_unique(index_id, values, zone)?
                 .into_iter()
@@ -2162,7 +2162,7 @@ impl KvTableReader for KvTable {
         if self.has_dirty_content(&statement.staged_writes) {
             return Ok(None);
         }
-        let Some(index) = self.indexes().iter().find(|index| index.id == index_id) else {
+        let Some(index) = self.indexes().iter().find(|index| index.read().id == index_id) else {
             return Ok(None);
         };
         // A local index of a partitioned table is one request per pruned
@@ -2170,7 +2170,7 @@ impl KvTableReader for KvTable {
         // `PartitionTableReader` builds them; a GLOBAL index lives under the
         // logical id and is one request. An ORDERED partial result over
         // several partitions would need them merged, so it stays local.
-        let physical_ids = if self.partition().is_some() && !index.global {
+        let physical_ids = if self.partition().is_some() && !index.read().global {
             self.record_physical_ids()
         } else {
             vec![self.table_id()]
@@ -2217,7 +2217,7 @@ impl KvTableReader for KvTable {
         }
         // Go `checkCoverIndex` again: a unique flag over PARTIAL-key ranges
         // asks TiKV for a unique get the range does not name.
-        let declared_unique = index.unique
+        let declared_unique = index.read().unique
             && ranges.iter().all(|range| {
                 range.low_val.len() == index.column_offsets.len()
                     && !range.low_val.iter().any(|datum| matches!(datum, Datum::Null))
@@ -2411,7 +2411,7 @@ impl KvTableReader for KvTable {
         let index = self
             .indexes()
             .iter()
-            .find(|index| index.id == index_id)
+            .find(|index| index.read().id == index_id)
             .ok_or_else(|| KvTableError::Decode("index filter has no index".to_owned()))?;
         // Go DecodeIndexKV restores clustered-handle columns from the index
         // value. Decoding only the handle key loses nonbinary string bytes;
@@ -2525,7 +2525,7 @@ impl KvTableReader for KvTable {
         if scan_extra_handle_slot.is_some_and(|slot| slot > scan_keep.len()) {
             return Ok(None);
         }
-        let Some(index) = self.indexes().iter().find(|index| index.id == index_id) else {
+        let Some(index) = self.indexes().iter().find(|index| index.read().id == index_id) else {
             return Ok(None);
         };
         // The compact layout is the source's current schema after column
@@ -2767,7 +2767,7 @@ impl KvTableReader for KvTable {
         // -- a prefix range of a unique index is not a unique get, and
         // telling TiKV it is makes the region treat the partial-key span as
         // a unique lookup that binds no handle and answer nothing.
-        let declared_unique = index.unique
+        let declared_unique = index.read().unique
             && ranges.iter().all(|range| {
                 range.low_val.len() == index.column_offsets.len()
                     && !range.low_val.iter().any(|datum| matches!(datum, Datum::Null))
@@ -3153,14 +3153,14 @@ impl KvTableReader for KvTable {
         let Some(index) = self
             .indexes()
             .iter()
-            .find(|index| index.id == index_id)
+            .find(|index| index.read().id == index_id)
             .cloned()
         else {
             return Err(KvTableError::Decode("no such index".to_owned()));
         };
         // Go `index.GenIndexKey` files a GLOBAL index under TableInfo.ID,
         // while local indexes remain under each physical partition id.
-        let scan_physical_ids = if index.global {
+        let scan_physical_ids = if index.read().global {
             vec![self.table_id()]
         } else {
             physical_ids.to_vec()
@@ -3241,7 +3241,7 @@ impl KvTableReader for KvTable {
                 }
             }
         }
-        let global_partition_ids = index.global.then(|| physical_ids.to_vec());
+        let global_partition_ids = index.read().global.then(|| physical_ids.to_vec());
         Ok(IndexRangeCursor {
             iterators,
             partition_of_iterator,
@@ -6576,17 +6576,23 @@ mod remote_cursor_tests {
         table.set_pk_handle_offset(0);
         table.add_index(
             crate::kv_table::KvIndex {
-                id: 7,
-                name: "idx_a".to_owned(),
-                comment: String::new(),
-                unique: false,
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 7,
+                    name: tidb_ast::CiString::new("idx_a"),
+                    columns: (vec![1])
+                        .iter()
+                        .enumerate()
+                        .map(|(position, _)| tidb_model::IndexColumn {
+                            length: (vec![UNSPECIFIED_LENGTH]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                            ..tidb_model::IndexColumn::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
                 column_offsets: vec![1],
-                prefix_lengths: vec![UNSPECIFIED_LENGTH],
-                visible: true,
-                global: false,
-                global_index_version: 0,
                 clustered_primary: false,
-                primary: false,
             },
             false,
         );
@@ -6644,17 +6650,23 @@ mod remote_cursor_tests {
         table.set_pk_handle_offset(0);
         table.add_index(
             crate::kv_table::KvIndex {
-                id: 7,
-                name: "idx_a".to_owned(),
-                comment: String::new(),
-                unique: false,
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 7,
+                    name: tidb_ast::CiString::new("idx_a"),
+                    columns: (vec![1])
+                        .iter()
+                        .enumerate()
+                        .map(|(position, _)| tidb_model::IndexColumn {
+                            length: (vec![prefix_length]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                            ..tidb_model::IndexColumn::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
                 column_offsets: vec![1],
-                prefix_lengths: vec![prefix_length],
-                visible: true,
-                global: false,
-                global_index_version: 0,
                 clustered_primary: false,
-                primary: false,
             },
             false,
         );
@@ -6855,7 +6867,11 @@ mod remote_cursor_tests {
                 (1, vec![2, 1, 2], vec![1, 2], vec![2])
             } else {
                 table.indexes_mut()[0].column_offsets = vec![0];
-                table.indexes_mut()[0].prefix_lengths = vec![-1];
+                table.indexes_mut()[0].info.write().columns = vec![tidb_model::IndexColumn {
+                    length: -1,
+                    ..tidb_model::IndexColumn::default()
+                }]
+                .into();
                 (0, vec![1, 1], vec![1], vec![1])
             };
             let cursor = table
@@ -6898,11 +6914,23 @@ mod remote_cursor_tests {
             table.set_common_handle_offsets(vec![0, 1]);
             table.set_common_handle_version(1);
             let mut primary = table.indexes()[0].clone();
-            primary.id = 0;
-            primary.name = "PRIMARY".to_owned();
-            primary.primary = true;
+            let detached = tidb_model::GoShared::new(primary.read().clone_like_go());
+            primary.info = detached;
+            {
+                let mut info = primary.info.write();
+                info.id = 0;
+                info.name = tidb_ast::CiString::new("PRIMARY");
+                info.primary = true;
+                info.columns = [-1, 2]
+                    .into_iter()
+                    .map(|length| tidb_model::IndexColumn {
+                        length,
+                        ..tidb_model::IndexColumn::default()
+                    })
+                    .collect::<Vec<_>>()
+                    .into();
+            }
             primary.column_offsets = vec![0, 1];
-            primary.prefix_lengths = vec![-1, 2];
             table.add_index(primary, true);
             // A full index part can still supply a value that the clustered
             // handle truncates; two truncated copies cannot supply it.
@@ -6957,10 +6985,19 @@ mod remote_cursor_tests {
             *table.pk_handle_offset_mut() = None;
             table.set_common_handle_offsets(vec![1]);
             let mut primary = table.indexes()[0].clone();
-            primary.id = 0;
-            primary.name = "PRIMARY".to_owned();
-            primary.primary = true;
-            primary.prefix_lengths = vec![if handle_value.len() == 2 { 2 } else { -1 }];
+            let detached = tidb_model::GoShared::new(primary.read().clone_like_go());
+            primary.info = detached;
+            {
+                let mut info = primary.info.write();
+                info.id = 0;
+                info.name = tidb_ast::CiString::new("PRIMARY");
+                info.primary = true;
+                info.columns = vec![tidb_model::IndexColumn {
+                    length: if handle_value.len() == 2 { 2 } else { -1 },
+                    ..tidb_model::IndexColumn::default()
+                }]
+                .into();
+            }
             table.add_index(primary, true);
             let encoded = |value: &str| {
                 tidb_codec::encode_key(&[Datum::Bytes(value.as_bytes().to_vec())]).unwrap()
@@ -7427,17 +7464,23 @@ mod remote_cursor_tests {
         table.set_common_handle_offsets(vec![0, 1]);
         table.add_index(
             crate::kv_table::table_meta::KvIndex {
-                id: 5,
-                name: "idx_c".to_owned(),
-                comment: String::new(),
-                unique: false,
-                prefix_lengths: vec![UNSPECIFIED_LENGTH],
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 5,
+                    name: tidb_ast::CiString::new("idx_c"),
+                    columns: (vec![2])
+                        .iter()
+                        .enumerate()
+                        .map(|(position, _)| tidb_model::IndexColumn {
+                            length: (vec![UNSPECIFIED_LENGTH]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                            ..tidb_model::IndexColumn::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
                 column_offsets: vec![2],
-                visible: true,
-                global: false,
-                global_index_version: 0,
                 clustered_primary: false,
-                primary: false,
             },
             false,
         );
@@ -7552,17 +7595,23 @@ mod remote_cursor_tests {
         // `c` (offset 2), which this index does not carry in any position.
         table.add_index(
             crate::kv_table::table_meta::KvIndex {
-                id: 7,
-                name: "idx_a".to_owned(),
-                comment: String::new(),
-                unique: false,
-                prefix_lengths: vec![UNSPECIFIED_LENGTH],
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 7,
+                    name: tidb_ast::CiString::new("idx_a"),
+                    columns: (vec![0])
+                        .iter()
+                        .enumerate()
+                        .map(|(position, _)| tidb_model::IndexColumn {
+                            length: (vec![UNSPECIFIED_LENGTH]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                            ..tidb_model::IndexColumn::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
                 column_offsets: vec![0],
-                visible: true,
-                global: false,
-                global_index_version: 0,
                 clustered_primary: false,
-                primary: false,
             },
             false,
         );

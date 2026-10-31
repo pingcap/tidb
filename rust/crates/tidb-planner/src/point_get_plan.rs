@@ -317,8 +317,8 @@ fn build_fast_point_physical_plan(
             let index_name = match batch.index.as_ref() {
                 Some((index_id, _)) => match table
                     .plan_indexes()
-                    .find(|index| index.id == *index_id)
-                    .map(|index| index.name.as_str())
+                    .find(|index| index.read().id == *index_id)
+                    .map(|index| index.read().name.original().to_owned())
                 {
                     Some(name) => Some(name),
                     None => return false,
@@ -329,7 +329,7 @@ fn build_fast_point_physical_plan(
                 current_db,
                 database,
                 visible,
-                index_name,
+                index_name.as_deref(),
                 &select.hints,
                 &table_ref.hints,
             )
@@ -342,8 +342,8 @@ fn build_fast_point_physical_plan(
         let global_index = batch
             .index
             .as_ref()
-            .and_then(|(id, _)| table.plan_indexes().find(|index| index.id == *id))
-            .is_some_and(|index| index.global);
+            .and_then(|(id, _)| table.plan_indexes().find(|index| index.read().id == *id))
+            .is_some_and(|index| index.read().global);
         if !global_index && !table_ref.partitions.is_empty() {
             return Ok(None);
         }
@@ -387,7 +387,7 @@ fn build_fast_point_physical_plan(
             } else {
                 let offsets = match &batch.index {
                     Some((index_id, _)) => {
-                        let Some(index) = table.plan_indexes().find(|index| index.id == *index_id)
+                        let Some(index) = table.plan_indexes().find(|index| index.read().id == *index_id)
                         else {
                             return Ok(None);
                         };
@@ -507,8 +507,8 @@ fn build_fast_point_physical_plan(
     // and PARTITION-clause pins take the ordinary planner.
     let global_index = point
         .index_id
-        .and_then(|index_id| table.plan_indexes().find(|index| index.id == index_id))
-        .is_some_and(|index| index.global);
+        .and_then(|index_id| table.plan_indexes().find(|index| index.read().id == index_id))
+        .is_some_and(|index| index.read().global);
     let routed_int_handle = point.index_id.is_none()
         && table.common_handle_offsets().is_empty()
         && table_ref.partitions.is_empty();
@@ -518,8 +518,8 @@ fn build_fast_point_physical_plan(
     let index_name = point.index_id.and_then(|index_id| {
         table
             .plan_indexes()
-            .find(|index| index.id == index_id)
-            .map(|index| index.name.as_str())
+            .find(|index| index.read().id == index_id)
+            .map(|index| index.read().name.original().to_owned())
     });
     if point.index_id.is_some() && index_name.is_none() {
         return Ok(None);
@@ -528,7 +528,7 @@ fn build_fast_point_physical_plan(
         current_db,
         database,
         visible,
-        index_name,
+        index_name.as_deref(),
         &select.hints,
         &table_ref.hints,
     ) {
@@ -629,7 +629,7 @@ fn overflow_plans_table_dual(
     (!table.common_handle_offsets().is_empty() && index_available(None))
         || table
             .point_get_indexes()
-            .any(|index| index.unique && index_available(Some(&index.name)))
+            .any(|index| index.read().unique && index_available(Some(index.read().name.original())))
 }
 
 fn fast_dml_point_output(table: &KvTable) -> FastPointOutput {
@@ -797,7 +797,7 @@ pub fn point_get_predicate_is_consumed(
     }
     let matches_unique_index = table
         .point_get_indexes()
-        .any(|index| index.unique && !index.has_prefix() && key_matches(&index.column_offsets));
+        .any(|index| index.read().unique && !index.has_prefix() && key_matches(&index.column_offsets));
     matches_unique_index
 }
 
@@ -957,7 +957,7 @@ impl BatchPointLookup {
             .collect::<Vec<_>>()
             .join(", ");
         Self {
-            index: Some((index.id, format!("index:{}({index_columns})", index.name))),
+            index: Some((index.read().id, format!("index:{}({index_columns})", index.read().name))),
             common_handle: false,
             plan_rows,
             key_values,
@@ -1119,7 +1119,7 @@ pub fn try_batch_point_get_stmt(
             }
         }
         for index in table.point_get_indexes().cloned().collect::<Vec<_>>() {
-            if !index.unique || index.has_prefix() || index.column_offsets.len() != names.len() {
+            if !index.read().unique || index.has_prefix() || index.column_offsets.len() != names.len() {
                 continue;
             }
             let mut positions = Vec::with_capacity(index.column_offsets.len());
@@ -1234,7 +1234,7 @@ pub fn try_batch_point_get_stmt(
 
     // The unique-index path.
     for index in table.point_get_indexes().cloned().collect::<Vec<_>>() {
-        if !index.unique || index.column_offsets.len() != 1 {
+        if !index.read().unique || index.column_offsets.len() != 1 {
             continue;
         }
         // Go `point_get_plan.go` declines an index with `HasPrefixIndex()`:
@@ -1794,7 +1794,7 @@ pub fn try_point_get(
 
     // The unique-index path: every column of some unique index is pinned.
     for index in table.point_get_indexes() {
-        if !index.unique {
+        if !index.read().unique {
             continue;
         }
         // Go `point_get_plan.go` declines an index with `HasPrefixIndex()`:
@@ -1838,7 +1838,7 @@ pub fn try_point_get(
         }
         return Ok(Some(PointGetPin {
             key_values: values,
-            index_id: Some(index.id),
+            index_id: Some(index.read().id),
             key_markers: markers,
             key_types: types,
         }));

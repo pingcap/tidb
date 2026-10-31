@@ -269,7 +269,7 @@ fn merge_partitioned_global_statistics(
         let items = partitions
             .iter()
             .filter_map(|(_, stats)| {
-                let index_stats = stats.hist_coll.get_index(index.id)?;
+                let index_stats = stats.hist_coll.get_index(index.read().id)?;
                 let index_stats = index_stats
                     .read()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -311,7 +311,7 @@ fn merge_partitioned_global_statistics(
         )
         .map_err(|error| DriverError::unsupported(error.to_string()))?;
         if let Some(mut histogram) = merged.histogram {
-            if crate::analyze::kv::is_local_unique(table, true, index.id) {
+            if crate::analyze::kv::is_local_unique(table, true, index.read().id) {
                 histogram.ndv = tidb_stats_handle_globalstats::unique_global_ndv(
                     items.iter().map(|stats| &stats.histogram),
                     row_count,
@@ -321,19 +321,19 @@ fn merge_partitioned_global_statistics(
                 tidb_datatype::FieldTypeCode::Blob,
             ));
             global.hist_coll.set_index(
-                index.id,
+                index.read().id,
                 tidb_stats::index::Index {
                     histogram,
                     top_n: merged.topn,
                     cmsketch: merged.cmsketch,
                     stats_version: source.stats_version,
                     stats_loaded_status: source.stats_loaded_status,
-                    info: meta.find_index_by_id(index.id),
+                    info: meta.find_index_by_id(index.read().id),
                     physical_id: table.table_id(),
                     ..Default::default()
                 },
             );
-            insert_existence(&global, index.id, true);
+            insert_existence(&global, index.read().id, true);
         }
     }
     finish_analyze_publication(&mut global);
@@ -357,7 +357,7 @@ fn select_index_tasks(
                     .indexes()
                     .iter()
                     .filter(|index| is_special_global_index(table, index))
-                    .map(|index| index.id)
+                    .map(|index| index.read().id)
                     .collect()
             } else {
                 Vec::new()
@@ -373,7 +373,7 @@ fn select_index_tasks(
                 table
                     .indexes()
                     .iter()
-                    .find(|index| go_to_lower(&index.name) == go_to_lower(name))
+                    .find(|index| go_to_lower(index.read().name.original()) == go_to_lower(name))
                     .ok_or_else(|| {
                         DriverError::unsupported(format!(
                             "Index '{name}' in field list does not exist in table '{}'",
@@ -390,7 +390,7 @@ fn select_index_tasks(
         if let Some(index) = selected.iter().find(|_| !statement.partitions.is_empty()) {
             return Err(DriverError::unsupported(format!(
                 "Analyze global index '{}' can't work with analyze specified partitions",
-                index.name
+                index.read().name
             )));
         }
         // Pinned Go deliberately iterates the explicitly named list here.
@@ -403,8 +403,8 @@ fn select_index_tasks(
                 .filter_map(|name| {
                     selected
                         .iter()
-                        .find(|index| go_to_lower(&index.name) == go_to_lower(name))
-                        .map(|index| index.id)
+                        .find(|index| go_to_lower(index.read().name.original()) == go_to_lower(name))
+                        .map(|index| index.read().id)
                 })
                 .collect(),
         });
@@ -416,7 +416,7 @@ fn select_index_tasks(
                 .indexes()
                 .iter()
                 .filter(|index| is_special_global_index(table, index))
-                .map(|index| index.id)
+                .map(|index| index.read().id)
                 .collect()
         } else {
             Vec::new()

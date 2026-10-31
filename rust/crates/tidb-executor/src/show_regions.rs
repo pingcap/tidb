@@ -142,7 +142,7 @@ fn physical_ids(
     }
     let has_global_index = target
         .table
-        .is_some_and(|table| table.indexes().iter().any(|index| index.global));
+        .is_some_and(|table| table.indexes().iter().any(|index| index.read().global));
     Ok((ids, has_global_index))
 }
 
@@ -269,10 +269,10 @@ fn table_regions(
     for index in target.table.map_or(&[][..], KvTable::indexes) {
         collect(
             store,
-            tidb_tablecodec::get_table_index_key_range(physical_id, index.id),
+            tidb_tablecodec::get_table_index_key_range(physical_id, index.read().id),
             &decoder(
-                tidb_tablecodec::table_key::encode_table_index_prefix(physical_id, index.id),
-                index.id,
+                tidb_tablecodec::table_key::encode_table_index_prefix(physical_id, index.read().id),
+                index.read().id,
             ),
             seen,
             rows,
@@ -377,7 +377,7 @@ pub fn show_table_regions(
                 table
                     .indexes()
                     .iter()
-                    .find(|index| index.name.go_lower_eq(name))
+                    .find(|index| index.read().name.original().go_lower_eq(name))
             });
             let Some(found) = found else {
                 return Err(DriverError::from(
@@ -386,11 +386,11 @@ pub fn show_table_regions(
                     ),
                 ));
             };
-            if found.global {
+            if found.read().global {
                 physical_ids = vec![target.id];
             }
             for physical_id in physical_ids {
-                index_regions(store, found.id, physical_id, &mut seen, &mut rows)?;
+                index_regions(store, found.read().id, physical_id, &mut seen, &mut rows)?;
             }
         }
         None => {

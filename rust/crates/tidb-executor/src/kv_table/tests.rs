@@ -401,17 +401,23 @@ fn column_and_index_mutators_keep_the_table_info_in_step() {
 
     table.add_index(
         KvIndex {
-            id: 9,
-            name: "iz".to_owned(),
-            comment: String::new(),
-            unique: false,
+            info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                id: 9,
+                name: tidb_ast::CiString::new("iz"),
+                invisible: true,
+                columns: (vec![4])
+                    .iter()
+                    .map(|_| tidb_model::IndexColumn {
+                        length: tidb_datatype::UNSPECIFIED_LENGTH,
+                        ..tidb_model::IndexColumn::default()
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::IndexInfo::default()
+            }),
             column_offsets: vec![4],
-            prefix_lengths: vec![],
-            visible: false,
-            global: false,
-            global_index_version: 0,
             clustered_primary: false,
-            primary: false,
         },
         false,
     );
@@ -453,17 +459,15 @@ fn drop_index_removes_orphan_entries_without_decoding_rows() {
     let mut table = KvTable::new(42, Vec::new());
     table.add_index(
         KvIndex {
-            id: 1,
-            name: "retired".to_owned(),
-            comment: String::new(),
-            unique: false,
+            info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                id: 1,
+                name: tidb_ast::CiString::new("retired"),
+                columns: Vec::<tidb_model::IndexColumn>::new().into(),
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::IndexInfo::default()
+            }),
             column_offsets: vec![],
-            prefix_lengths: vec![],
-            visible: true,
-            global: false,
-            global_index_version: 0,
             clustered_primary: false,
-            primary: false,
         },
         false,
     );
@@ -511,17 +515,16 @@ fn drop_index_covers_all_partition_ranges_and_global_ownership() {
         table.restrict_read_to_partitions(&[43]);
         table.add_index(
             KvIndex {
-                id: 1,
-                name: "retired".to_owned(),
-                comment: String::new(),
-                unique: false,
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("retired"),
+                    global: global,
+                    columns: Vec::<tidb_model::IndexColumn>::new().into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
                 column_offsets: vec![],
-                prefix_lengths: vec![],
-                visible: true,
-                global,
-                global_index_version: 0,
                 clustered_primary: false,
-                primary: false,
             },
             false,
         );
@@ -610,17 +613,23 @@ fn update_rewrites_only_index_entries_whose_bytes_change() {
     table.set_pk_handle_offset(0);
     table.add_index(
         KvIndex {
-            id: 1,
-            name: "s".to_owned(),
-            comment: String::new(),
-            unique: false,
+            info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                id: 1,
+                name: tidb_ast::CiString::new("s"),
+                columns: (vec![1])
+                    .iter()
+                    .enumerate()
+                    .map(|(position, _)| tidb_model::IndexColumn {
+                        length: (vec![tidb_datatype::UNSPECIFIED_LENGTH]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                        ..tidb_model::IndexColumn::default()
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::IndexInfo::default()
+            }),
             column_offsets: vec![1],
-            prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
-            visible: true,
-            global: false,
-            global_index_version: 0,
             clustered_primary: false,
-            primary: false,
         },
         false,
     );
@@ -676,17 +685,24 @@ fn row_conflicts_only_include_matching_partial_indexes() {
     table.set_pk_handle_offset(0);
     table.add_index(
         KvIndex {
-            id: 1,
-            name: "unique_s".to_owned(),
-            comment: String::new(),
-            unique: true,
+            info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                id: 1,
+                name: tidb_ast::CiString::new("unique_s"),
+                unique: true,
+                columns: (vec![1])
+                    .iter()
+                    .enumerate()
+                    .map(|(position, _)| tidb_model::IndexColumn {
+                        length: (vec![-1]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                        ..tidb_model::IndexColumn::default()
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::IndexInfo::default()
+            }),
             column_offsets: vec![1],
-            prefix_lengths: vec![-1],
-            visible: true,
-            global: false,
-            global_index_version: 0,
             clustered_primary: false,
-            primary: false,
         },
         false,
     );
@@ -757,17 +773,24 @@ fn a_nonpublic_index_is_written_by_its_backfill_state() {
     ] {
         let mut table = test_table();
         let index = KvIndex {
-            id: 1,
-            name: "ua".to_owned(),
-            comment: String::new(),
-            unique: true,
+            info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                id: 1,
+                name: tidb_ast::CiString::new("ua"),
+                unique: true,
+                columns: (vec![0])
+                    .iter()
+                    .enumerate()
+                    .map(|(position, _)| tidb_model::IndexColumn {
+                        length: (vec![tidb_datatype::UNSPECIFIED_LENGTH]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                        ..tidb_model::IndexColumn::default()
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::IndexInfo::default()
+            }),
             column_offsets: vec![0],
-            prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
-            visible: true,
-            global: false,
-            global_index_version: 0,
             clustered_primary: false,
-            primary: false,
         };
         table.add_nonpublic_index(index.clone(), state, backfill);
         let row = [Datum::Int(7), Datum::Null];
@@ -829,17 +852,24 @@ fn test_unique_index_multiple_null_entries() {
     table.set_pk_handle_offset(0);
     table.add_index(
         KvIndex {
-            id: 1,
-            name: "s".to_owned(),
-            comment: String::new(),
-            unique: true,
+            info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                id: 1,
+                name: tidb_ast::CiString::new("s"),
+                unique: true,
+                columns: (vec![1])
+                    .iter()
+                    .enumerate()
+                    .map(|(position, _)| tidb_model::IndexColumn {
+                        length: (vec![tidb_datatype::UNSPECIFIED_LENGTH]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                        ..tidb_model::IndexColumn::default()
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::IndexInfo::default()
+            }),
             column_offsets: vec![1],
-            prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
-            visible: true,
-            global: false,
-            global_index_version: 0,
             clustered_primary: false,
-            primary: false,
         },
         false,
     );
@@ -1143,17 +1173,23 @@ fn a_short_common_handle_indexes_under_the_key_the_delete_path_computes() {
     t.set_common_handle_offsets(vec![0]);
     t.add_index(
         KvIndex {
-            id: 1,
-            name: "idx".to_owned(),
-            comment: String::new(),
-            unique: false,
+            info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                id: 1,
+                name: tidb_ast::CiString::new("idx"),
+                columns: (vec![1])
+                    .iter()
+                    .enumerate()
+                    .map(|(position, _)| tidb_model::IndexColumn {
+                        length: (vec![tidb_datatype::UNSPECIFIED_LENGTH]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                        ..tidb_model::IndexColumn::default()
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::IndexInfo::default()
+            }),
             column_offsets: vec![1],
-            prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
-            visible: true,
-            global: false,
-            global_index_version: 0,
             clustered_primary: false,
-            primary: false,
         },
         false,
     );

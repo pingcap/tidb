@@ -1164,7 +1164,7 @@ fn alter_modify_column_on_partitioned_table() {
     tk.must_exec("alter table t change b c varchar(150) charset utf8mb4");
     {
         let table = kv_table(&tk, "t");
-        assert!(table.indexes().iter().any(|index| index.name == "b"), "index b survives");
+        assert!(table.indexes().iter().any(|index| index.read().name.original() == "b"), "index b survives");
         let spec = table.partition().unwrap();
         assert_eq!(spec.definitions.len(), 4);
         assert_eq!(spec.definitions[3].name, "pMax");
@@ -1201,11 +1201,11 @@ fn primary_global_index_clustered_partition_key_errors() {
         let primaries: Vec<_> = table
             .indexes()
             .iter()
-            .filter(|index| index.name.eq_ignore_ascii_case("primary"))
+            .filter(|index| index.read().name.original().eq_ignore_ascii_case("primary"))
             .collect();
         assert_eq!(table.indexes().len(), 1);
         assert_eq!(primaries.len(), 1);
-        assert!(!primaries[0].global, "Go pins primary.Global=false");
+        assert!(!primaries[0].read().global, "Go pins primary.Global=false");
     }
     drop_table(&mut tk, "t");
     // Covering clustered PK + partition by key(b) IS legal
@@ -1244,7 +1244,7 @@ fn primary_no_global_index_errors() {
     {
         let table = kv_table(&tk, "t");
         assert_eq!(table.indexes().len(), 1);
-        assert!(!table.indexes()[0].global);
+        assert!(!table.indexes()[0].read().global);
     }
 }
 

@@ -86,17 +86,25 @@ fn edge_table() -> KvTable {
     let mut table = KvTable::new(459, edges_columns());
     table.add_index(
         KvIndex {
-            id: 1,
-            name: "PRIMARY".to_owned(),
-            comment: String::new(),
-            unique: true,
+            info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                id: 1,
+                name: tidb_ast::CiString::new("PRIMARY"),
+                unique: true,
+                primary: true,
+                columns: (vec![0, 1, 2])
+                    .iter()
+                    .enumerate()
+                    .map(|(position, _)| tidb_model::IndexColumn {
+                        length: (vec![-1, -1, -1]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                        ..tidb_model::IndexColumn::default()
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::IndexInfo::default()
+            }),
             column_offsets: vec![0, 1, 2],
-            prefix_lengths: vec![-1, -1, -1],
-            visible: true,
-            global: false,
-            global_index_version: 0,
             clustered_primary: false,
-            primary: true,
         },
         false,
     );
@@ -365,17 +373,25 @@ fn edges_table_on_capturing_store(captured: Arc<Mutex<Vec<DagRequest>>>) -> KvTa
     );
     table.add_index(
         KvIndex {
-            id: 1,
-            name: "PRIMARY".to_owned(),
-            comment: String::new(),
-            unique: true,
+            info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                id: 1,
+                name: tidb_ast::CiString::new("PRIMARY"),
+                unique: true,
+                primary: true,
+                columns: (vec![0, 1, 2])
+                    .iter()
+                    .enumerate()
+                    .map(|(position, _)| tidb_model::IndexColumn {
+                        length: (vec![-1, -1, -1]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                        ..tidb_model::IndexColumn::default()
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::IndexInfo::default()
+            }),
             column_offsets: vec![0, 1, 2],
-            prefix_lengths: vec![-1, -1, -1],
-            visible: true,
-            global: false,
-            global_index_version: 0,
             clustered_primary: false,
-            primary: true,
         },
         false,
     );

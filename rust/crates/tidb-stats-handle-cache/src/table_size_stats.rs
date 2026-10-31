@@ -207,10 +207,10 @@ impl SizeStats<'_> {
         let mut index = 0_u64;
         for kv_index in table.indexes() {
             if partitioned {
-                if kv_index.global && table.table_id() != physical_id {
+                if kv_index.read().global && table.table_id() != physical_id {
                     continue;
                 }
-                if !kv_index.global && table.table_id() == physical_id {
+                if !kv_index.read().global && table.table_id() == physical_id {
                     continue;
                 }
             }

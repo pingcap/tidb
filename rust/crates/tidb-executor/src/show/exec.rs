@@ -1192,7 +1192,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                             ));
                         }
                         for index in table.indexes() {
-                            let Some(index_stats) = statistics.hist_coll.get_index(index.id) else {
+                            let Some(index_stats) = statistics.hist_coll.get_index(index.read().id) else {
                                 continue;
                             };
                             let index_stats = index_stats
@@ -1206,7 +1206,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                                 &database,
                                 &name,
                                 &target.label,
-                                &index.name,
+                                index.read().name.original(),
                                 true,
                                 &index_stats.histogram,
                                 0.0,
@@ -1309,7 +1309,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                             )?);
                         }
                         for (id, index_stats) in &sorted_indexes(&statistics) {
-                            let Some(index) = table.indexes().iter().find(|index| index.id == *id)
+                            let Some(index) = table.indexes().iter().find(|index| index.read().id == *id)
                             else {
                                 continue;
                             };
@@ -1338,7 +1338,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                                 &database,
                                 &name,
                                 &target.label,
-                                &index.name,
+                                index.read().name.original(),
                                 index.column_offsets.len(),
                                 true,
                                 index_stats.top_n.as_ref(),
@@ -1438,7 +1438,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                             )?);
                         }
                         for (id, index_stats) in &sorted_indexes(&statistics) {
-                            let Some(index) = table.indexes().iter().find(|index| index.id == *id)
+                            let Some(index) = table.indexes().iter().find(|index| index.read().id == *id)
                             else {
                                 continue;
                             };
@@ -1467,7 +1467,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                                 &database,
                                 &name,
                                 &target.label,
-                                &index.name,
+                                index.read().name.original(),
                                 index.column_offsets.len(),
                                 &index_stats.histogram,
                                 &column_types,

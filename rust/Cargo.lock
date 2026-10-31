@@ -4710,6 +4710,7 @@ dependencies = [
 name = "tidb-executor-internal-exec"
 version = "0.0.0"
 dependencies = [
+ "tidb-ast",
  "tidb-charset",
  "tidb-chunk",
  "tidb-datatype",
@@ -4718,6 +4719,7 @@ dependencies = [
  "tidb-expr",
  "tidb-exprctx",
  "tidb-kv",
+ "tidb-model",
  "tidb-ppcpuusage",
  "tidb-ranger",
  "tidb-sessionctx",

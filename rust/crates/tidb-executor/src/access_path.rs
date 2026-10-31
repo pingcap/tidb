@@ -1177,7 +1177,7 @@ impl UniqueIndexPointSourceExec {
             && self
                 .table
                 .plan_indexes()
-                .any(|index| index.id == self.index_id && index.clustered_primary);
+                .any(|index| index.read().id == self.index_id && index.clustered_primary);
         let mut routed_partitions: Option<Vec<i64>> = None;
         let mut index_keys: Vec<Option<tidb_txnkv::Key>> = Vec::new();
         let mut missing_index_keys: Vec<tidb_txnkv::Key> = Vec::new();
@@ -2107,7 +2107,7 @@ impl IndexRangeSourceExec {
             .table
             .indexes()
             .iter()
-            .find(|index| index.id == self.index_id)
+            .find(|index| index.read().id == self.index_id)
         else {
             return;
         };
@@ -3810,7 +3810,7 @@ impl IndexRangeSourceExec {
             .table
             .indexes()
             .iter()
-            .find(|index| index.id == self.index_id)
+            .find(|index| index.read().id == self.index_id)
         else {
             return false;
         };
@@ -4483,7 +4483,7 @@ impl tidb_executor_internal_exec::table_access::TableAccess for IndexRangeSource
             .table
             .indexes()
             .iter()
-            .find(|index| index.id == self.index_id)
+            .find(|index| index.read().id == self.index_id)
         else {
             return false;
         };
@@ -4558,7 +4558,7 @@ impl tidb_executor_internal_exec::table_access::TableAccess for IndexRangeSource
             .table
             .indexes()
             .iter()
-            .find(|index| index.id == self.index_id)
+            .find(|index| index.read().id == self.index_id)
             .is_some_and(tidb_table::kv_table::KvIndex::has_prefix);
         if (self.filter.is_some() || self.index_probe.is_some()) && index_is_prefix {
             return false;
@@ -4807,7 +4807,7 @@ impl tidb_executor_internal_exec::table_access::TableAccess for IndexRangeSource
             .table
             .indexes()
             .iter()
-            .find(|index| index.id == self.index_id)
+            .find(|index| index.read().id == self.index_id)
         else {
             return false;
         };
@@ -5758,7 +5758,7 @@ impl IndexJoinLookupExec {
                     .table
                     .indexes()
                     .iter()
-                    .find(|index| index.id == *index_id)?;
+                    .find(|index| index.read().id == *index_id)?;
                 Some(
                     index
                         .column_offsets
@@ -6959,17 +6959,24 @@ use std::collections::HashMap;
             table
                 .create_index_with_context(
                     tidb_table::kv_table::KvIndex {
-                        id: 1,
-                        name: "idx".to_owned(),
-                        comment: String::new(),
-                        unique: global,
+                        info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                            id: 1,
+                            name: tidb_ast::CiString::new("idx"),
+                            unique: global,
+                            global: global,
+                            columns: (vec![1])
+                                .iter()
+                                .map(|_| tidb_model::IndexColumn {
+                                    length: tidb_datatype::UNSPECIFIED_LENGTH,
+                                    ..tidb_model::IndexColumn::default()
+                                })
+                                .collect::<Vec<_>>()
+                                .into(),
+                            state: tidb_model::SchemaState::PUBLIC,
+                            ..tidb_model::IndexInfo::default()
+                        }),
                         column_offsets: vec![1],
-                        prefix_lengths: Vec::new(),
-                        visible: true,
-                        global,
-                        global_index_version: 0,
                         clustered_primary: false,
-                        primary: false,
                     },
                     &crate::StmtContext::for_query(),
                 )
@@ -7191,17 +7198,23 @@ use std::collections::HashMap;
             table
                 .create_index_with_context(
                     tidb_table::kv_table::KvIndex {
-                        id: 1,
-                        name: "ib".to_owned(),
-                        comment: String::new(),
-                        unique: false,
+                        info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                            id: 1,
+                            name: tidb_ast::CiString::new("ib"),
+                            columns: (vec![1])
+                                .iter()
+                                .enumerate()
+                                .map(|(position, _)| tidb_model::IndexColumn {
+                                    length: (vec![tidb_datatype::UNSPECIFIED_LENGTH]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                                    ..tidb_model::IndexColumn::default()
+                                })
+                                .collect::<Vec<_>>()
+                                .into(),
+                            state: tidb_model::SchemaState::PUBLIC,
+                            ..tidb_model::IndexInfo::default()
+                        }),
                         column_offsets: vec![1],
-                        prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
-                        visible: true,
-                        global: false,
-                        global_index_version: 0,
                         clustered_primary: false,
-                        primary: false,
                     },
                     &crate::StmtContext::for_query(),
                 )
@@ -7257,7 +7270,7 @@ use std::collections::HashMap;
             panic!("table");
         };
         let field_type = table.columns()[0].read().field_type.clone();
-        let index_id = table.indexes()[0].id;
+        let index_id = table.indexes()[0].read().id;
         let schema = Schema::new(vec![tidb_expr::column::Column::new(1, field_type)]);
         let mut source = IndexRangeSourceExec::new_with_context(
             ExecutorMeta::new(schema, 0, 1, 3),
@@ -7405,17 +7418,23 @@ use std::collections::HashMap;
         );
         table.add_index(
             tidb_table::kv_table::KvIndex {
-                id: 1,
-                name: "ib".to_owned(),
-                comment: String::new(),
-                unique: false,
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("ib"),
+                    columns: (vec![1])
+                        .iter()
+                        .enumerate()
+                        .map(|(position, _)| tidb_model::IndexColumn {
+                            length: (vec![tidb_datatype::UNSPECIFIED_LENGTH]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                            ..tidb_model::IndexColumn::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
                 column_offsets: vec![1],
-                prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
-                visible: true,
-                global: false,
-                global_index_version: 0,
                 clustered_primary: false,
-                primary: false,
             },
             false,
         );
@@ -7573,17 +7592,23 @@ use std::collections::HashMap;
                         }
                         table.add_index(
                             tidb_table::kv_table::KvIndex {
-                                id: 1,
-                                name: "ib".to_owned(),
-                                comment: String::new(),
-                                unique: false,
+                                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                                    id: 1,
+                                    name: tidb_ast::CiString::new("ib"),
+                                    columns: (vec![1])
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(position, _)| tidb_model::IndexColumn {
+                                            length: (vec![-1]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                                            ..tidb_model::IndexColumn::default()
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .into(),
+                                    state: tidb_model::SchemaState::PUBLIC,
+                                    ..tidb_model::IndexInfo::default()
+                                }),
                                 column_offsets: vec![1],
-                                prefix_lengths: vec![-1],
-                                visible: true,
-                                global: false,
-                                global_index_version: 0,
                                 clustered_primary: false,
-                                primary: false,
                             },
                             false,
                         );
@@ -7810,17 +7835,23 @@ use std::collections::HashMap;
         );
         table.add_index(
             tidb_table::kv_table::KvIndex {
-                id: 1,
-                name: "ib".to_owned(),
-                comment: String::new(),
-                unique: false,
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("ib"),
+                    columns: (vec![1])
+                        .iter()
+                        .enumerate()
+                        .map(|(position, _)| tidb_model::IndexColumn {
+                            length: (vec![tidb_datatype::UNSPECIFIED_LENGTH]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                            ..tidb_model::IndexColumn::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
                 column_offsets: vec![1],
-                prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
-                visible: true,
-                global: false,
-                global_index_version: 0,
                 clustered_primary: false,
-                primary: false,
             },
             false,
         );
@@ -7934,20 +7965,26 @@ use std::collections::HashMap;
         let mut table = KvTable::new(91, vec![column("a", 1), column("b", 2)]);
         table.add_index(
             tidb_table::kv_table::KvIndex {
-                id: 1,
-                name: "ab".to_owned(),
-                comment: String::new(),
-                unique: false,
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("ab"),
+                    columns: (vec![0, 1])
+                        .iter()
+                        .enumerate()
+                        .map(|(position, _)| tidb_model::IndexColumn {
+                            length: (vec![
+                    tidb_datatype::UNSPECIFIED_LENGTH,
+                    tidb_datatype::UNSPECIFIED_LENGTH,
+                ]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                            ..tidb_model::IndexColumn::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
                 column_offsets: vec![0, 1],
-                prefix_lengths: vec![
-                    tidb_datatype::UNSPECIFIED_LENGTH,
-                    tidb_datatype::UNSPECIFIED_LENGTH,
-                ],
-                visible: true,
-                global: false,
-                global_index_version: 0,
                 clustered_primary: false,
-                primary: false,
             },
             false,
         );
@@ -8295,17 +8332,25 @@ use std::collections::HashMap;
         table
             .create_index_with_context(
                 tidb_table::kv_table::KvIndex {
-                    id: 1,
-                    name: "PRIMARY".to_owned(),
-                    comment: String::new(),
-                    unique: true,
+                    info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                        id: 1,
+                        name: tidb_ast::CiString::new("PRIMARY"),
+                        unique: true,
+                        primary: true,
+                        columns: (vec![0, 1, 2])
+                            .iter()
+                            .enumerate()
+                            .map(|(position, _)| tidb_model::IndexColumn {
+                                length: (vec![tidb_datatype::UNSPECIFIED_LENGTH; 3]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                                ..tidb_model::IndexColumn::default()
+                            })
+                            .collect::<Vec<_>>()
+                            .into(),
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::IndexInfo::default()
+                    }),
                     column_offsets: vec![0, 1, 2],
-                    prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH; 3],
-                    visible: true,
-                    global: false,
-                    global_index_version: 0,
                     clustered_primary: false,
-                    primary: true,
                 },
                 &crate::StmtContext::default(),
             )
@@ -8360,17 +8405,25 @@ use std::collections::HashMap;
         table
             .create_index_with_context(
                 tidb_table::kv_table::KvIndex {
-                    id: 1,
-                    name: "PRIMARY".to_owned(),
-                    comment: String::new(),
-                    unique: true,
+                    info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                        id: 1,
+                        name: tidb_ast::CiString::new("PRIMARY"),
+                        unique: true,
+                        primary: true,
+                        columns: (vec![0, 1, 2, 3])
+                            .iter()
+                            .enumerate()
+                            .map(|(position, _)| tidb_model::IndexColumn {
+                                length: (vec![tidb_datatype::UNSPECIFIED_LENGTH; 4]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                                ..tidb_model::IndexColumn::default()
+                            })
+                            .collect::<Vec<_>>()
+                            .into(),
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::IndexInfo::default()
+                    }),
                     column_offsets: vec![0, 1, 2, 3],
-                    prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH; 4],
-                    visible: true,
-                    global: false,
-                    global_index_version: 0,
                     clustered_primary: false,
-                    primary: true,
                 },
                 &crate::StmtContext::default(),
             )
@@ -8491,17 +8544,23 @@ use std::collections::HashMap;
         table
             .create_index_with_context(
                 tidb_table::kv_table::KvIndex {
-                    id: 1,
-                    name: "k4".to_owned(),
-                    comment: String::new(),
-                    unique: false,
-                    clustered_primary: false,
-                    primary: false,
+                    info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                        id: 1,
+                        name: tidb_ast::CiString::new("k4"),
+                        columns: (vec![0, 1, 3])
+                            .iter()
+                            .enumerate()
+                            .map(|(position, _)| tidb_model::IndexColumn {
+                                length: (vec![tidb_datatype::UNSPECIFIED_LENGTH; 3]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                                ..tidb_model::IndexColumn::default()
+                            })
+                            .collect::<Vec<_>>()
+                            .into(),
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::IndexInfo::default()
+                    }),
                     column_offsets: vec![0, 1, 3],
-                    prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH; 3],
-                    visible: true,
-                    global: false,
-                    global_index_version: 0,
+                    clustered_primary: false,
                 },
                 &crate::StmtContext::for_query(),
             )
@@ -8685,20 +8744,26 @@ use std::collections::HashMap;
         table
             .create_index_with_context(
                 tidb_table::kv_table::KvIndex {
-                    id: 1,
-                    name: "ibc".to_owned(),
-                    comment: String::new(),
-                    unique: false,
+                    info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                        id: 1,
+                        name: tidb_ast::CiString::new("ibc"),
+                        columns: (vec![1, 2])
+                            .iter()
+                            .enumerate()
+                            .map(|(position, _)| tidb_model::IndexColumn {
+                                length: (vec![
+                        tidb_datatype::UNSPECIFIED_LENGTH,
+                        tidb_datatype::UNSPECIFIED_LENGTH,
+                    ]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                                ..tidb_model::IndexColumn::default()
+                            })
+                            .collect::<Vec<_>>()
+                            .into(),
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::IndexInfo::default()
+                    }),
                     column_offsets: vec![1, 2],
-                    prefix_lengths: vec![
-                        tidb_datatype::UNSPECIFIED_LENGTH,
-                        tidb_datatype::UNSPECIFIED_LENGTH,
-                    ],
-                    visible: true,
-                    global: false,
-                    global_index_version: 0,
                     clustered_primary: false,
-                    primary: false,
                 },
                 &crate::StmtContext::for_query(),
             )
@@ -8864,20 +8929,26 @@ use std::collections::HashMap;
         table
             .create_index_with_context(
                 tidb_table::kv_table::KvIndex {
-                    id: 1,
-                    name: "ibc".to_owned(),
-                    comment: String::new(),
-                    unique: false,
+                    info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                        id: 1,
+                        name: tidb_ast::CiString::new("ibc"),
+                        columns: (vec![1, 2])
+                            .iter()
+                            .enumerate()
+                            .map(|(position, _)| tidb_model::IndexColumn {
+                                length: (vec![
+                        tidb_datatype::UNSPECIFIED_LENGTH,
+                        tidb_datatype::UNSPECIFIED_LENGTH,
+                    ]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                                ..tidb_model::IndexColumn::default()
+                            })
+                            .collect::<Vec<_>>()
+                            .into(),
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::IndexInfo::default()
+                    }),
                     column_offsets: vec![1, 2],
-                    prefix_lengths: vec![
-                        tidb_datatype::UNSPECIFIED_LENGTH,
-                        tidb_datatype::UNSPECIFIED_LENGTH,
-                    ],
-                    visible: true,
-                    global: false,
-                    global_index_version: 0,
                     clustered_primary: false,
-                    primary: false,
                 },
                 &crate::StmtContext::for_query(),
             )

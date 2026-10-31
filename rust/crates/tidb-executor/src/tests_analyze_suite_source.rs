@@ -203,7 +203,7 @@ fn single_column_index_ndv_and_null_count_match_the_column() {
     let index_names = table
         .indexes()
         .iter()
-        .map(|index| (index.id, index.name.clone()))
+        .map(|index| (index.read().id, index.read().name.original().to_owned()))
         .collect::<BTreeMap<_, _>>();
     let statistics = analyze_kv_table(&mut table, &AnalyzeOptions::default(), None, &ctx())
         .unwrap_or_else(|error| panic!("analyze failed: {error:?}"));

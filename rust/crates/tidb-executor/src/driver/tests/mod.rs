@@ -149,7 +149,7 @@ fn scale_analyzed_tpcc_table(
                     .filter_map(|offset| table.columns().get(*offset))
                     .map(|column| column.read().id)
                     .collect::<Vec<_>>();
-                (index.id, columns)
+                (index.read().id, columns)
             })
             .collect::<Vec<_>>();
         let mut options = crate::analyze::AnalyzeOptions::default();

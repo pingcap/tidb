@@ -287,7 +287,7 @@ pub fn show_create_table_text(
     // unconditionally therefore printed the key TWICE for the first tier --
     // a `SHOW CREATE TABLE` that is not valid SQL. Print it here only when
     // the index list does not already carry it.
-    let index_carries_primary = table.indexes().iter().any(|index| index.primary);
+    let index_carries_primary = table.indexes().iter().any(|index| index.read().primary);
     let handle_columns: Vec<usize> = match table.pk_handle_offset() {
         Some(offset) => vec![offset],
         None if index_carries_primary => Vec::new(),
@@ -331,7 +331,7 @@ pub fn show_create_table_text(
         // altogether. A `pk_is_handle` table whose index list also held a
         // PRIMARY was the mirror case: neither test fired and it printed
         // TWICE.
-        if index.primary && primary_emitted_from_handles {
+        if index.read().primary && primary_emitted_from_handles {
             continue;
         }
         // Go `show.go`: a partial index prints its stored condition
@@ -339,7 +339,7 @@ pub fn show_create_table_text(
         let condition = if is_hypo {
             None
         } else {
-            table.partial_index_condition_string(index.id)
+            table.partial_index_condition_string(index.read().id)
         };
         let columns = index
             .column_offsets
@@ -351,18 +351,18 @@ pub fn show_create_table_text(
             .collect::<Vec<_>>()
             .join(",");
         // Go `if idxInfo.Primary`.
-        let primary = index.primary;
+        let primary = index.read().primary;
         let mut clause = if primary {
             format!("  PRIMARY KEY ({columns})")
-        } else if index.unique {
+        } else if index.read().unique {
             format!(
                 "  UNIQUE KEY {} ({columns})",
-                escape_name(&index.name, ansi_quotes)
+                escape_name(index.read().name.original(), ansi_quotes)
             )
         } else {
             format!(
                 "  KEY {} ({columns})",
-                escape_name(&index.name, ansi_quotes)
+                escape_name(index.read().name.original(), ansi_quotes)
             )
         };
         // Go `show.go`: a partial index prints its stored condition right
@@ -370,12 +370,12 @@ pub fn show_create_table_text(
         if let Some(restored) = condition.as_deref() {
             clause.push_str(&format!(" WHERE {restored}"));
         }
-        if !index.visible {
+        if index.read().invisible {
             clause.push_str(" /*!80000 INVISIBLE */");
         }
-        if !index.comment.is_empty() {
+        if !index.read().comment.is_empty() {
             clause.push_str(" COMMENT '");
-            clause.push_str(&tidb_format::output_format(&index.comment));
+            clause.push_str(&tidb_format::output_format(&index.read().comment));
             clause.push('\'');
         }
         if is_hypo {
@@ -391,7 +391,7 @@ pub fn show_create_table_text(
                 clause.push_str(" /*T![clustered_index] CLUSTERED */");
             }
         }
-        if index.global {
+        if index.read().global {
             clause.push_str(" /*T![global_index] GLOBAL */");
         }
         clauses.push(clause);
@@ -616,17 +616,17 @@ fn region_split_text(table: &crate::KvTable, ansi_quotes: bool) -> String {
         text.push_str(&format!("\n/*T![region_split] SPLIT {} */", bounds(&policy)));
     }
     for index in table.indexes() {
-        let Some(policy) = table.index_split_policy(index.id) else {
+        let Some(policy) = table.index_split_policy(index.read().id) else {
             continue;
         };
-        let target = if index.name == "PRIMARY" {
+        let target = if index.read().name.original() == "PRIMARY" {
             "PRIMARY KEY"
         } else {
             "INDEX"
         };
         text.push_str(&format!(
             "\n/*T![region_split] SPLIT {target} {} {} */",
-            escape_name(&index.name, ansi_quotes),
+            escape_name(index.read().name.original(), ansi_quotes),
             bounds(&policy),
         ));
     }

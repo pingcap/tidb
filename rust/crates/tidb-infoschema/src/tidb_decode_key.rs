@@ -75,7 +75,7 @@ impl TidbDecodeKeySnapshot {
                 .indexes()
                 .iter()
                 .map(|index| DecodeIndex {
-                    id: index.id,
+                    id: index.read().id,
                     columns: index.column_offsets.clone(),
                 })
                 .collect(),

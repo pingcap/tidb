@@ -1469,8 +1469,8 @@ fn global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader() {
         let index_id = table
             .indexes()
             .iter()
-            .find(|index| index.name == "k_1")
-            .map(|index| index.id)
+            .find(|index| index.read().name.original() == "k_1")
+            .map(|index| index.read().id)
             .expect("k_1 index");
         (table.table_id(), k_column_id, index_id)
     };

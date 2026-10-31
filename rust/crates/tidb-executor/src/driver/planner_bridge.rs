@@ -3560,24 +3560,32 @@ mod statistics_initialization_tests {
         );
         table.add_index(
             KvIndex {
-                id: 9,
-                name: "ia".to_owned(),
-                comment: String::new(),
-                unique: false,
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 9,
+                    name: tidb_ast::CiString::new("ia"),
+                    columns: (vec![0])
+                        .iter()
+                        .enumerate()
+                        .map(|(position, _)| tidb_model::IndexColumn {
+                            length: (vec![-1]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                            ..tidb_model::IndexColumn::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
                 column_offsets: vec![0],
-                prefix_lengths: vec![-1],
-                visible: true,
-                global: false,
-                global_index_version: 0,
                 clustered_primary: false,
-                primary: false,
             },
             false,
         );
         for id in [10, 11] {
             let mut index = table.indexes()[0].clone();
-            index.id = id;
-            index.name = format!("ia_{id}");
+            let detached = tidb_model::GoShared::new(index.read().clone_like_go());
+            index.info = detached;
+            index.info.write().id = id;
+            index.info.write().name = tidb_ast::CiString::new(format!("ia_{id}"));
             table.add_index(index, false);
         }
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -3776,17 +3784,23 @@ mod statistics_initialization_tests {
         );
         table.add_index(
             KvIndex {
-                id: 9,
-                name: "ia".to_owned(),
-                comment: String::new(),
-                unique: false,
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 9,
+                    name: tidb_ast::CiString::new("ia"),
+                    columns: (vec![0])
+                        .iter()
+                        .enumerate()
+                        .map(|(position, _)| tidb_model::IndexColumn {
+                            length: (vec![-1]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                            ..tidb_model::IndexColumn::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
                 column_offsets: vec![0],
-                prefix_lengths: vec![-1],
-                visible: true,
-                global: false,
-                global_index_version: 0,
                 clustered_primary: false,
-                primary: false,
             },
             false,
         );

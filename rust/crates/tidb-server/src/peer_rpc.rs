@@ -1800,14 +1800,16 @@ mod tests {
             else {
                 panic!("KV table")
             };
+            let index_id = table
+                .indexes()
+                .iter()
+                .find(|index| index.read().name.original().eq_ignore_ascii_case("ix"))
+                .unwrap()
+                .read()
+                .id;
             (
                 table.table_id(),
-                table
-                    .indexes()
-                    .iter()
-                    .find(|index| index.name.eq_ignore_ascii_case("ix"))
-                    .unwrap()
-                    .id,
+                index_id,
             )
         };
         let mut updates = collector.spawn_session_collector();

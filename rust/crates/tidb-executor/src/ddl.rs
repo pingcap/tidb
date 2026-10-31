@@ -288,8 +288,10 @@ use tidb_charset::Collation;
         let Some(crate::TableEntry::Kv(kv)) = catalog.get_table_for_test("t") else {
             panic!("expected a kv table");
         };
-        let maintained: Vec<&str> = kv.indexes().iter().map(|i| i.name.as_str()).collect();
-        let planned: Vec<&str> = kv.plan_indexes().map(|i| i.name.as_str()).collect();
+        let maintained: Vec<String> =
+            kv.indexes().iter().map(|i| i.read().name.original().to_owned()).collect();
+        let planned: Vec<String> =
+            kv.plan_indexes().map(|i| i.read().name.original().to_owned()).collect();
         assert_eq!(
             maintained,
             vec!["idx_a", "idx_b"],

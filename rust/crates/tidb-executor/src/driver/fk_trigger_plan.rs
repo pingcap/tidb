@@ -94,8 +94,8 @@ impl ForeignKeyCatalog for CatalogForeignKeys<'_> {
         };
         table.foreign_key_lookup_index(columns).map(|index| {
             index.map(|id| {
-                let found = table.indexes().iter().find(|index| index.id == id).unwrap();
-                (id, found.name.clone())
+                let found = table.indexes().iter().find(|index| index.read().id == id).unwrap();
+                (id, found.read().name.original().to_owned())
             })
         })
     }

@@ -248,7 +248,7 @@ pub fn check_table(
         Some(name) => {
             let found = indexes
                 .iter()
-                .find(|index| index.name.go_equal_fold(name))
+                .find(|index| index.read().name.original().go_equal_fold(name))
                 .cloned()
                 .ok_or_else(|| AdminCheckError::UnknownIndex {
                     index: name.to_owned(),
@@ -275,7 +275,7 @@ pub fn check_table(
     // Go builds `CheckTableExec` only when `tidb_enable_fast_table_check` is
     // OFF (`FastCheckTableExec` otherwise), and its `Next` refuses a partial
     // index before counting anything (`check_table_index.go:153`).
-    if !fast_check && selected.iter().any(|index| table.index_has_condition(index.id)) {
+    if !fast_check && selected.iter().any(|index| table.index_has_condition(index.read().id)) {
         return Err(AdminCheckError::PartialIndexWithoutFastCheck);
     }
     // Go checks a partitioned table partition by partition: once a
@@ -292,13 +292,13 @@ pub fn check_table(
         if table.is_mv_index(index) {
             continue;
         }
-        let entries = index_entries(table, index.id)?;
+        let entries = index_entries(table, index.read().id)?;
         let index_count = entries.len() as i64;
         let expected_count = partial_index_rows(table, index, &rows, context)?.len() as i64;
         if index_count != expected_count && only_index.is_some() {
             return Err(AdminCheckError::CountMismatch {
                 table_count: expected_count,
-                index: index.name.clone(),
+                index: index.read().name.original().to_owned(),
                 index_count,
             });
         }
@@ -310,7 +310,7 @@ pub fn check_table(
         // Go chooses the direction from the count comparison. Equal counts
         // use IndexLookUp (INDEX -> ROW); only a table-heavy mismatch uses
         // `CheckRecordAndIndex` (ROW -> INDEX).
-        let stored = index_entries(table, index.id)?;
+        let stored = index_entries(table, index.read().id)?;
         let matching_rows = partial_index_rows(table, index, &rows, context)?;
         if table.is_mv_index(index) {
             check_mv_index(table, index, &stored, matching_rows, context)?;
@@ -340,7 +340,7 @@ pub fn check_table(
                     Some((_, stored_handle)) => {
                         return Err(AdminCheckError::Inconsistent {
                             table: table_name.clone(),
-                            index: index.name.clone(),
+                            index: index.read().name.original().to_owned(),
                             handle: render_handle(handle),
                             index_values: render_record(stored_handle, &indexed),
                             record_values: render_record(handle, &indexed),
@@ -349,7 +349,7 @@ pub fn check_table(
                     None => {
                         return Err(AdminCheckError::Inconsistent {
                             table: table_name.clone(),
-                            index: index.name.clone(),
+                            index: index.read().name.original().to_owned(),
                             handle: render_handle(handle),
                             index_values: String::new(),
                             record_values: render_record(handle, &indexed),
@@ -372,7 +372,7 @@ pub fn check_table(
                         .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
                     return Err(AdminCheckError::Inconsistent {
                         table: table_name.clone(),
-                        index: index.name.clone(),
+                        index: index.read().name.original().to_owned(),
                         handle: render_handle(handle),
                         index_values: render_record(handle, &indexed),
                         record_values: String::new(),
@@ -384,7 +384,7 @@ pub fn check_table(
                 {
                     return Err(AdminCheckError::Inconsistent {
                         table: table_name.clone(),
-                        index: index.name.clone(),
+                        index: index.read().name.original().to_owned(),
                         handle: render_handle(handle),
                         index_values: render_record(handle, &[]),
                         record_values: String::new(),
@@ -421,7 +421,7 @@ pub fn check_table(
                             return Err(AdminCheckError::ValueMismatch(Box::new(
                                 AdminValueMismatch {
                                     table: table_name.clone(),
-                                    index: index.name.clone(),
+                                    index: index.read().name.original().to_owned(),
                                     column: column.read().name.original().to_owned(),
                                     handle: render_handle(handle),
                                     index_value: render_go_datum(reported),
@@ -478,7 +478,7 @@ fn check_mv_index(
             .map_err(decode)?;
         return Err(AdminCheckError::Inconsistent {
             table: table.name(),
-            index: index.name.clone(),
+            index: index.read().name.original().to_owned(),
             handle: render_handle(&entry.handle),
             index_values: render_record(&entry.handle, &indexed),
             record_values: String::new(),
@@ -499,7 +499,7 @@ fn check_mv_index(
         }
         return Err(AdminCheckError::Inconsistent {
             table: table.name(),
-            index: index.name.clone(),
+            index: index.read().name.original().to_owned(),
             handle: render_handle(handle),
             index_values: String::new(),
             record_values: render_record(handle, &table.index_values_for_check(index, row)),
@@ -536,7 +536,7 @@ pub fn check_index_ranges(
     let index = table
         .index_list_for_check()
         .into_iter()
-        .find(|index| index.name.go_lower_eq(index_name))
+        .find(|index| index.read().name.original().go_lower_eq(index_name))
         .ok_or_else(|| AdminCheckError::UnknownIndex {
             index: index_name.to_owned(),
             table: table.name(),

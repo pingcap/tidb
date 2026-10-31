@@ -298,7 +298,7 @@ fn index_if_not_exists_skips_duplicate_create_and_alter() {
         table
             .indexes()
             .iter()
-            .filter(|index| index.name.eq_ignore_ascii_case("idx_a"))
+            .filter(|index| index.read().name.original().eq_ignore_ascii_case("idx_a"))
             .count(),
         1,
         "guarded duplicate adds do not create another index"

@@ -763,7 +763,8 @@ use tidb_table::table_from_meta::kv_index;
         let mut walked = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
             .expect("the backfill builds this table");
         let index =
-            kv_index(&index(1, "vi", "v", 1, -1), &walked.columns()).expect("a full-value index");
+            kv_index(&tidb_model::GoShared::new(index(1, "vi", "v", 1, -1)), &walked.columns())
+                .expect("a full-value index");
 
         walked
             .create_index_with_context(index, &tidb_sessionctx::StmtContext::default())

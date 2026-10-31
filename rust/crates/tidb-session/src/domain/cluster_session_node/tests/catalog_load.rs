@@ -956,8 +956,8 @@ fn an_invisible_index_is_loaded_but_never_chosen() {
         let catalog = catalog.lock().unwrap();
         let kv = kv_table(&catalog, "iv");
         assert_eq!(kv.indexes().len(), 1);
-        assert_eq!(kv.indexes()[0].comment, "cluster comment");
-        assert_eq!(kv.indexes()[0].visible, expect_plan_index);
+        assert_eq!(kv.indexes()[0].read().comment, "cluster comment");
+        assert_eq!((!kv.indexes()[0].read().invisible), expect_plan_index);
         assert_eq!(kv.plan_indexes().count(), usize::from(expect_plan_index));
     }
 }

@@ -37,12 +37,12 @@ fn check_global_and_pk(tk: &TestKit, name: &str, indexes: usize, pk_is_handle: b
         let index = table
             .indexes()
             .iter()
-            .find(|index| index.name.eq_ignore_ascii_case("primary"))
+            .find(|index| index.read().name.original().eq_ignore_ascii_case("primary"))
             .expect("Go FindIndexByName(primary)");
-        assert_eq!(index.global, global, "{name} primary.Global");
+        assert_eq!(index.read().global, global, "{name} primary.Global");
         // Go `idxInfo.Primary` — the tier stores the PRIMARY entry under the
         // conventional name; Go sets `Primary` for it at build time.
-        assert!(index.name.eq_ignore_ascii_case("primary"), "{name} primary.Primary");
+        assert!(index.read().name.original().eq_ignore_ascii_case("primary"), "{name} primary.Primary");
     }
 }
 

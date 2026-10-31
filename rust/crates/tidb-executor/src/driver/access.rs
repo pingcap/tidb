@@ -1473,7 +1473,7 @@ pub fn build_prepared_point_get_plan(
         (PreparedPointTarget::RowHandle, handle_offsets.clone())
     } else {
         let index = table.point_get_indexes().find(|index| {
-            index.unique
+            index.read().unique
                 && !index.has_prefix()
                 && !index.column_offsets.is_empty()
                 && index
@@ -1482,7 +1482,7 @@ pub fn build_prepared_point_get_plan(
                     .all(|offset| column_pinned_once(*offset, &resolved))
         })?;
         (
-            PreparedPointTarget::UniqueIndex { index_id: index.id },
+            PreparedPointTarget::UniqueIndex { index_id: index.read().id },
             index.column_offsets.clone(),
         )
     };

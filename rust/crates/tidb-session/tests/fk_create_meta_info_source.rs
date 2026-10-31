@@ -55,7 +55,7 @@ fn foreign_keys_of(tk: &TestKit, db: &str, table: &str) -> Vec<KvForeignKey> {
 /// Go `getTableInfo(t, dom, db, table).Indices`, by name.
 fn index_names(tk: &TestKit, db: &str, table: &str) -> Vec<String> {
     match tk.get_table_by_name(db, table) {
-        TableEntry::Kv(table) => table.indexes().iter().map(|index| index.name.clone()).collect(),
+        TableEntry::Kv(table) => table.indexes().iter().map(|index| index.read().name.original().to_owned()).collect(),
         other => panic!("expected a storage-backed table {db}.{table}, got {other:?}"),
     }
 }

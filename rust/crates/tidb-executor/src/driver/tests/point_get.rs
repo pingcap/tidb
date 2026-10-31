@@ -1701,9 +1701,9 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
     let index_id = table
         .indexes()
         .iter()
-        .find(|index| index.name == "code")
+        .find(|index| index.read().name.original() == "code")
         .unwrap()
-        .id;
+        .read().id;
     let mut unique = crate::access_path::UniqueIndexPointSourceExec::new(
         crate::ExecutorMeta::new(schema.clone(), 1, 8, 8),
         (**table).clone(),
@@ -2484,17 +2484,25 @@ fn residual_selection_uses_logical_rows_over_access_rows() {
     customer.set_common_handle_offsets(vec![2, 1, 0]);
     customer.add_index(
         tidb_table::kv_table::KvIndex {
-            id: 2,
-            name: "PRIMARY".to_owned(),
-            comment: String::new(),
-            unique: true,
-            prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH; 3],
+            info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                id: 2,
+                name: tidb_ast::CiString::new("PRIMARY"),
+                unique: true,
+                primary: true,
+                columns: (vec![2, 1, 0])
+                    .iter()
+                    .enumerate()
+                    .map(|(position, _)| tidb_model::IndexColumn {
+                        length: (vec![tidb_datatype::UNSPECIFIED_LENGTH; 3]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                        ..tidb_model::IndexColumn::default()
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::IndexInfo::default()
+            }),
             column_offsets: vec![2, 1, 0],
-            visible: true,
-            global: false,
-            global_index_version: 0,
             clustered_primary: false,
-            primary: true,
         },
         false,
     );

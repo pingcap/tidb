@@ -66,9 +66,9 @@ fn install_cardinality_mock_statistics_for_table(
         // one-component histogram keys even for its composite ibc index.
         let (ndv, repeat) = columns[index.column_offsets[0]];
         statistics.put_analyzed_index(
-            index.id,
+            index.read().id,
             tidb_stats::index::Index {
-                histogram: histogram(index.id, ndv, repeat, true),
+                histogram: histogram(index.read().id, ndv, repeat, true),
                 top_n: None,
                 cmsketch: None,
                 stats_version: 2,
@@ -81,7 +81,7 @@ fn install_cardinality_mock_statistics_for_table(
                         })
                         .collect::<Vec<_>>()
                         .into(),
-                    unique: index.unique,
+                    unique: index.read().unique,
                     ..tidb_model::IndexInfo::default()
                 })),
                 ..Default::default()
@@ -896,14 +896,16 @@ fn appended_handle_range_uses_partial_column_statistics() {
             tidb_infoschema::TableEntry::Kv(table) => table,
             _ => panic!("appended_partial_stats is not a KV table"),
         };
+        let index_id = table
+            .indexes()
+            .iter()
+            .find(|index| index.read().name.original().eq_ignore_ascii_case("idx_ab"))
+            .expect("idx_ab")
+            .read()
+            .id;
         (
             table.table_id(),
-            table
-                .indexes()
-                .iter()
-                .find(|index| index.name.eq_ignore_ascii_case("idx_ab"))
-                .expect("idx_ab")
-                .id,
+            index_id,
         )
     };
     {
@@ -1781,14 +1783,16 @@ fn explain_marks_missing_stats_for_selected_index() {
             .expect("column b")
             .read()
             .id;
+        let index_id = table
+            .indexes()
+            .iter()
+            .find(|index| index.read().name.original().eq_ignore_ascii_case("idx_ab"))
+            .expect("idx_ab")
+            .read()
+            .id;
         (
             table.table_id(),
-            table
-                .indexes()
-                .iter()
-                .find(|index| index.name.eq_ignore_ascii_case("idx_ab"))
-                .expect("idx_ab")
-                .id,
+            index_id,
             column_b_id,
             statistics,
         )

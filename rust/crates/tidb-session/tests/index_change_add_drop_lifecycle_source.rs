@@ -43,7 +43,7 @@ fn index_change_add_then_drop_rebuilds_and_clears_the_index() {
     let indexed = table
         .indexes()
         .iter()
-        .find(|index| index.name == "c2")
+        .find(|index| index.read().name.original() == "c2")
         .expect("index c2 exists after add");
     assert_eq!(indexed.column_offsets, vec![1], "index covers c2");
     tk.must_exec("admin check table t");

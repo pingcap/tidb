@@ -52,17 +52,24 @@ use tidb_txnkv::Key;
         table.set_pk_handle_offset(0);
         table.add_index(
             KvIndex {
-                id: 1,
-                name: "u".into(),
-                comment: String::new(),
-                unique: true,
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("u"),
+                    unique: true,
+                    columns: (vec![1])
+                        .iter()
+                        .enumerate()
+                        .map(|(position, _)| tidb_model::IndexColumn {
+                            length: (vec![-1]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                            ..tidb_model::IndexColumn::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
                 column_offsets: vec![1],
-                prefix_lengths: vec![-1],
-                visible: true,
-                global: false,
-                global_index_version: 0,
                 clustered_primary: false,
-                primary: false,
             },
             false,
         );
@@ -278,17 +285,24 @@ use tidb_txnkv::Key;
             for (id, unique) in [(1, true), (2, false)] {
                 table.add_index(
                     KvIndex {
-                        id,
-                        name: format!("idx{id}"),
-                        comment: String::new(),
-                        unique,
+                        info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                            id: id,
+                            name: tidb_ast::CiString::new(format!("idx{id}")),
+                            unique: unique,
+                            columns: (vec![0])
+                                .iter()
+                                .enumerate()
+                                .map(|(position, _)| tidb_model::IndexColumn {
+                                    length: (vec![-1]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                                    ..tidb_model::IndexColumn::default()
+                                })
+                                .collect::<Vec<_>>()
+                                .into(),
+                            state: tidb_model::SchemaState::PUBLIC,
+                            ..tidb_model::IndexInfo::default()
+                        }),
                         column_offsets: vec![0],
-                        prefix_lengths: vec![-1],
-                        visible: true,
-                        global: false,
-                        global_index_version: 0,
                         clustered_primary: false,
-                        primary: false,
                     },
                     false,
                 );
@@ -466,17 +480,24 @@ use tidb_txnkv::Key;
         let row = [Datum::Int(7)];
         table.add_index(
             KvIndex {
-                id: 1,
-                name: "unique_a".to_owned(),
-                comment: String::new(),
-                unique: true,
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("unique_a"),
+                    unique: true,
+                    columns: (vec![0])
+                        .iter()
+                        .enumerate()
+                        .map(|(position, _)| tidb_model::IndexColumn {
+                            length: (vec![-1]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                            ..tidb_model::IndexColumn::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
                 column_offsets: vec![0],
-                prefix_lengths: vec![-1],
-                visible: true,
-                global: false,
-                global_index_version: 0,
                 clustered_primary: false,
-                primary: false,
             },
             false,
         );
@@ -601,17 +622,24 @@ use tidb_txnkv::Key;
                 table.set_name("index_errors");
                 table.set_pk_handle_offset(0);
                 let index = KvIndex {
-                    id: 1,
-                    name: "unique_v".to_owned(),
-                    comment: String::new(),
-                    unique: true,
+                    info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                        id: 1,
+                        name: tidb_ast::CiString::new("unique_v"),
+                        unique: true,
+                        columns: (vec![1])
+                            .iter()
+                            .enumerate()
+                            .map(|(position, _)| tidb_model::IndexColumn {
+                                length: (vec![-1]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                                ..tidb_model::IndexColumn::default()
+                            })
+                            .collect::<Vec<_>>()
+                            .into(),
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::IndexInfo::default()
+                    }),
                     column_offsets: vec![1],
-                    prefix_lengths: vec![-1],
-                    visible: true,
-                    global: false,
-                    global_index_version: 0,
                     clustered_primary: false,
-                    primary: false,
                 };
                 let ctx = crate::StmtContext::default();
                 if operation != "backfill" {

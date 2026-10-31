@@ -194,7 +194,7 @@ fn plan_index_split<'a>(
     let index = table
         .indexes()
         .iter()
-        .find(|index| index.name.go_lower_eq(index_name))
+        .find(|index| index.read().name.original().go_lower_eq(index_name))
         .ok_or_else(|| {
             // Go `buildSplitIndexRegion`: `plannererrors.ErrKeyDoesNotExist`.
             DriverError::from(
@@ -237,13 +237,13 @@ fn plan_index_split<'a>(
                 if values.is_empty() {
                     return Err(unknown(format!(
                         "Split index `{}` region {which} value count should more than 0",
-                        index.name
+                        index.read().name
                     )));
                 }
                 if values.len() > index.column_offsets.len() {
                     return Err(unknown(format!(
                         "Split index `{}` region column count doesn't match value count at {which}",
-                        index.name
+                        index.read().name
                     )));
                 }
                 convert_tuple(values)
@@ -408,11 +408,11 @@ fn index_split_keys(
         if table
             .indexes()
             .first()
-            .is_some_and(|first| first.id != index.id)
+            .is_some_and(|first| first.read().id != index.read().id)
         {
-            keys.push(encode_table_index_prefix(physical_id, index.id));
+            keys.push(encode_table_index_prefix(physical_id, index.read().id));
         }
-        keys.push(encode_table_index_prefix(physical_id, index.id + 1));
+        keys.push(encode_table_index_prefix(physical_id, index.read().id + 1));
     };
     let index_key = |values: &[Datum]| {
         table
@@ -435,7 +435,7 @@ fn index_split_keys(
                     &tidb_exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
                         .generate_with_stack_by_args(&[(format!(
                     "Split index `{}` region lower value {} should less than the upper value {}",
-                    index.name,
+                    index.read().name,
                     datums_text(lower),
                     datums_text(upper)
                 ))

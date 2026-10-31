@@ -101,12 +101,12 @@ impl KvTableDdl for KvTable {
         if self
             .indexes()
             .iter()
-            .any(|existing| existing.name.go_lower_eq(&index.name))
+            .any(|existing| existing.read().name.original().go_lower_eq(index.read().name.original()))
         {
             return Err(KvTableError::Mysql(
                 tidb_terror::MysqlError::from_terror(
                     &tidb_dbterror::ERR_DUP_KEY_NAME
-                        .generate_with_stack_by_args(&[(index.name.clone()).into()]),
+                        .generate_with_stack_by_args(&[(index.read().name.original().to_owned()).into()]),
                 ),
             ));
         }
@@ -129,7 +129,7 @@ impl KvTableDdl for KvTable {
                     self.check_insert_key(
                         &key,
                         &duplicate_value,
-                        &self.qualified_key(&index.name),
+                        &self.qualified_key(index.read().name.original()),
                         false,
                     )?;
                 }
@@ -161,7 +161,7 @@ impl KvTableDdl for KvTable {
         let Some(index) = self
             .indexes()
             .iter()
-            .find(|index| index.name.go_lower_eq(index_name))
+            .find(|index| index.read().name.original().go_lower_eq(index_name))
             .cloned()
         else {
             return Ok(None);

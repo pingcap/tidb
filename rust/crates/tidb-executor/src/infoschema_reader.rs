@@ -275,8 +275,8 @@ pub fn tidb_index_usage_rows(
             rows.push(usage_row(
                 &schema,
                 &table.name(),
-                &index.name.go_to_lower(),
-                collector.get_index_usage(table.table_id(), index.id),
+                index.read().name.lowercase(),
+                collector.get_index_usage(table.table_id(), index.read().id),
             ));
         }
     }
@@ -518,10 +518,10 @@ fn key_column_usage_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Ve
             ));
         }
         for index in table.indexes() {
-            let constraint_name = if index.primary {
-                "PRIMARY"
-            } else if index.unique {
-                index.name.as_str()
+            let constraint_name = if index.read().primary {
+                "PRIMARY".to_owned()
+            } else if index.read().unique {
+                index.read().name.original().to_owned()
             } else {
                 continue;
             };
@@ -532,8 +532,8 @@ fn key_column_usage_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Ve
                 rows.push(key_column_usage_row(
                     &schema,
                     &table_name,
-                    constraint_name,
-                    &table.columns()[*offset].read().name.original(),
+                    &constraint_name,
+                    table.columns()[*offset].read().name.original(),
                     (position + 1) as i64,
                     Datum::Null,
                     None,
@@ -640,10 +640,10 @@ fn statistics_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
                     &schema,
                     &table_name,
                     StatisticsIndex {
-                        name: &index.name,
-                        unique: index.unique,
-                        comment: &index.comment,
-                        visible: index.visible,
+                        name: index.read().name.original(),
+                        unique: index.read().unique,
+                        comment: &index.read().comment,
+                        visible: (!index.read().invisible),
                     },
                     StatisticsKeyPart {
                         sequence: position + 1,
@@ -725,10 +725,10 @@ fn table_constraints_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> V
             ));
         }
         for index in table.indexes() {
-            if !index.unique {
+            if !index.read().unique {
                 continue;
             }
-            let constraint_type = if index.primary {
+            let constraint_type = if index.read().primary {
                 "PRIMARY KEY"
             } else {
                 "UNIQUE"
@@ -736,7 +736,7 @@ fn table_constraints_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> V
             rows.push(table_constraint_row(
                 &schema,
                 &table_name,
-                &index.name,
+                index.read().name.original(),
                 constraint_type,
             ));
         }
@@ -2368,7 +2368,7 @@ fn tidb_indexes_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Ve
             // predicate.
             let clustered = if index.clustered_primary { "YES" } else { "NO" };
             let predicate = table
-                .partial_index_condition_string(index.id)
+                .partial_index_condition_string(index.read().id)
                 .map_or(Datum::Null, |condition| text(&condition));
             for (position, offset) in index.column_offsets.iter().enumerate() {
                 let column = &table.columns()[*offset];
@@ -2386,8 +2386,8 @@ fn tidb_indexes_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Ve
                     vec![
                         text(&schema),
                         text(&table_name),
-                        Datum::Int(i64::from(!index.unique)),
-                        text(&index.name),
+                        Datum::Int(i64::from(!index.read().unique)),
+                        text(index.read().name.original()),
                         Datum::Int(position as i64 + 1),
                         match &generated_expr {
                             Some(_) => text("NULL"),
@@ -2398,15 +2398,15 @@ fn tidb_indexes_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Ve
                         } else {
                             Datum::Int(prefix)
                         },
-                        text(&index.comment),
+                        text(&index.read().comment),
                         match &generated_expr {
                             Some(expr) => text(expr),
                             None => Datum::Null,
                         },
-                        Datum::Int(index.id),
-                        text(if index.visible { "YES" } else { "NO" }),
+                        Datum::Int(index.read().id),
+                        text(if (!index.read().invisible) { "YES" } else { "NO" }),
                         text(clustered),
-                        Datum::Int(i64::from(index.global)),
+                        Datum::Int(i64::from(index.read().global)),
                         predicate.clone(),
                     ],
                 ));

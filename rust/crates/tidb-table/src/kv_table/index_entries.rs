@@ -183,15 +183,15 @@ impl KvTable {
         let Some(index) = self
             .indexes
             .iter()
-            .find(|index| index.id == index_id)
+            .find(|index| index.read().id == index_id)
             .cloned()
         else {
             return Err(KvTableError::Decode("no such index".to_owned()));
         };
         let common = !self.common_handle_offsets().is_empty();
         let mut entries = Vec::new();
-        let physical_ids = if index.global {
-            vec![self.global_index_table_id(index.id)]
+        let physical_ids = if index.read().global {
+            vec![self.global_index_table_id(index.read().id)]
         } else {
             self.record_physical_ids()
         };
@@ -205,7 +205,7 @@ impl KvTable {
                 let key = iterator.key().as_bytes().to_vec();
                 let value = iterator.value().to_vec();
                 let handle = index_entry_handle(&index, &key, &value, common)?;
-                let row_physical_id = if index.global {
+                let row_physical_id = if index.read().global {
                     tidb_tablecodec::decode_index_handle(&key, &value, index.column_offsets.len())
                         .map_err(|e| KvTableError::Decode(format!("{e:?}")))?
                         .as_ref()
@@ -290,12 +290,12 @@ impl KvTable {
                 // Go `castIndexValuesToChangingTypes` before
                 // `TruncateIndexValues`, which cuts by the part's type.
                 let mut value = self.cast_index_part(
-                    index.id,
+                    index.read().id,
                     position,
                     *offset,
                     row.get(*offset).cloned().unwrap_or(Datum::Null),
                 );
-                if let Some(field_type) = self.index_part_type(index.id, position, *offset) {
+                if let Some(field_type) = self.index_part_type(index.read().id, position, *offset) {
                     tidb_tablecodec::cut_datum_by_prefix_len(
                         &mut value,
                         index.prefix_length(position),
@@ -441,7 +441,7 @@ impl KvTable {
                 .map_err(|error| KvTableError::Encode(format!("{error:?}")))?
                 .into(),
         };
-        let handle = if index.global && index.global_index_version >= 1 {
+        let handle = if index.read().global && index.read().global_index_version >= 1 {
             tidb_txnkv::PartitionHandle::new(physical_id, Some(handle)).into()
         } else {
             handle
@@ -451,8 +451,8 @@ impl KvTable {
             Some(zone),
             &self.codec_table_info(),
             &self.codec_index_info(index),
-            if index.global {
-                self.global_index_table_id(index.id)
+            if index.read().global {
+                self.global_index_table_id(index.read().id)
             } else {
                 physical_id
             },
@@ -531,7 +531,7 @@ impl KvTable {
     /// The `tidb-tablecodec` view of one of this table's indexes.
     pub(crate) fn codec_index_info(&self, index: &KvIndex) -> CodecIndexInfo {
         CodecIndexInfo {
-            id: index.id,
+            id: index.read().id,
             columns: index
                 .column_offsets
                 .iter()
@@ -541,14 +541,14 @@ impl KvTable {
                     length: index.prefix_length(position),
                     use_changing_type: self
                         .changing_index_parts
-                        .get(&index.id)
+                        .get(&index.read().id)
                         .is_some_and(|parts| parts.contains(&position)),
                 })
                 .collect(),
-            unique: index.unique,
-            global: index.global,
-            global_index_version: index.global_index_version,
-            primary: index.primary,
+            unique: index.read().unique,
+            global: index.read().global,
+            global_index_version: index.read().global_index_version,
+            primary: index.read().primary,
         }
     }
 
@@ -560,7 +560,7 @@ impl KvTable {
             .iter()
             .enumerate()
             .any(|(position, offset)| {
-                self.index_part_type(index.id, position, *offset)
+                self.index_part_type(index.read().id, position, *offset)
                     .is_some_and(|field_type| {
                         field_type.need_restored_data_with_collation(self.use_new_collation)
                     })
@@ -661,7 +661,7 @@ impl KvTable {
             untouched,
             values,
             &handle,
-            if index.global { physical_id } else { 0 },
+            if index.read().global { physical_id } else { 0 },
             &self.handle_restored_data(row),
         )
         .map_err(|e| KvTableError::Encode(format!("{e:?}")))
@@ -759,7 +759,7 @@ impl KvTable {
                 self.check_insert_key(
                     &key,
                     &duplicate_value,
-                    &self.qualified_key(&index.name),
+                    &self.qualified_key(index.read().name.original()),
                     lazy_dup_check,
                 )?
             } else {
@@ -1052,7 +1052,7 @@ impl KvTable {
                 self.check_insert_key(
                     &key,
                     &duplicate_value_text(&new_values),
-                    &self.qualified_key(&index.name),
+                    &self.qualified_key(index.read().name.original()),
                     lazy_dup_check,
                 )?
             } else {
@@ -1107,10 +1107,10 @@ impl KvTable {
         values: &[Datum],
         zone: &SessionTimeZone,
     ) -> Result<Option<UniquePointRead>, KvTableError> {
-        let Some(index) = self.indexes.iter().find(|index| index.id == index_id) else {
+        let Some(index) = self.indexes.iter().find(|index| index.read().id == index_id) else {
             return Err(KvTableError::Decode("no such index".to_owned()));
         };
-        if !index.unique || values.contains(&Datum::Null) {
+        if !index.read().unique || values.contains(&Datum::Null) {
             // Only a distinct entry stores the handle in its value.
             return Ok(None);
         }
@@ -1126,14 +1126,14 @@ impl KvTable {
         let encoded = Encoder::new(self.use_new_collation)
             .encode_key_in_timezone(zone, values)
             .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
-        let physical_ids = if index.global {
-            vec![self.global_index_table_id(index.id)]
+        let physical_ids = if index.read().global {
+            vec![self.global_index_table_id(index.read().id)]
         } else {
             self.record_physical_ids()
         };
         Ok(Some(UniquePointRead {
             physical_ids,
-            index_id: index.id,
+            index_id: index.read().id,
             encoded,
         }))
     }
@@ -1176,18 +1176,18 @@ impl KvTable {
         let Some(index) = self
             .indexes
             .iter()
-            .find(|index| index.id == index_id)
+            .find(|index| index.read().id == index_id)
             .cloned()
         else {
             return Err(KvTableError::Decode("no such index".to_owned()));
         };
-        if !index.unique || index.has_prefix() {
+        if !index.read().unique || index.has_prefix() {
             return Err(KvTableError::Decode(
                 "batch point lookup requires a non-prefix unique index".to_owned(),
             ));
         }
-        let physical_ids = if index.global {
-            vec![self.global_index_table_id(index.id)]
+        let physical_ids = if index.read().global {
+            vec![self.global_index_table_id(index.read().id)]
         } else {
             self.record_physical_ids()
         };
@@ -1232,7 +1232,7 @@ impl KvTable {
                 .map_err(|error| KvTableError::Encode(format!("{error:?}")))?;
             keys.push(Some(Key::from_bytes(encode_index_seek_key(
                 physical_id,
-                index.id,
+                index.read().id,
                 &encoded,
             ))));
             routes.push(routed.map(|_| physical_id));
@@ -1351,7 +1351,7 @@ pub fn index_entry_handle(
     // entry's value is not always that byte: a restored-data index stores a
     // rowcodec payload, and a version-1 common-handle table stores its three
     // version bytes.
-    if index.unique && index_kv_is_unique(value) {
+    if index.read().unique && index_kv_is_unique(value) {
         let handle = decode_handle_in_index_value(value)
             .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
         let handle = handle

@@ -168,17 +168,24 @@ fn varchar(collation: Collation) -> FieldType {
 fn index(id: i64, unique: bool, offsets: Vec<usize>) -> KvIndex {
     let prefix_lengths = vec![WHOLE_COLUMN; offsets.len()];
     KvIndex {
-        id,
-        name: "idx".to_owned(),
-        comment: String::new(),
-        unique,
+        info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+            id: id,
+            name: tidb_ast::CiString::new("idx"),
+            unique: unique,
+            columns: (offsets)
+                .iter()
+                .enumerate()
+                .map(|(position, _)| tidb_model::IndexColumn {
+                    length: (prefix_lengths).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                    ..tidb_model::IndexColumn::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            state: tidb_model::SchemaState::PUBLIC,
+            ..tidb_model::IndexInfo::default()
+        }),
         column_offsets: offsets,
-        prefix_lengths,
-        visible: true,
-        global: false,
-        global_index_version: 0,
         clustered_primary: false,
-        primary: false,
     }
 }
 

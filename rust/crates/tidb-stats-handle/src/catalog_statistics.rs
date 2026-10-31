@@ -95,7 +95,7 @@ impl CatalogStatistics for Catalog {
             let item = requested.table_item_id;
             let valid_metadata = if item.is_index {
                 self.kv_table_by_id(item.table_id)
-                    .is_some_and(|table| table.indexes().iter().any(|index| index.id == item.id))
+                    .is_some_and(|table| table.indexes().iter().any(|index| index.read().id == item.id))
             } else {
                 item.id > 0
                     && self.kv_table_by_id(item.table_id).is_some_and(|table| {
@@ -251,21 +251,21 @@ impl CatalogStatistics for Catalog {
             }
             for index in table.indexes() {
                 if !index.column_offsets.contains(&offset)
-                    || !statistics.index_load_needed(index.id).1
+                    || !statistics.index_load_needed(index.read().id).1
                 {
                     continue;
                 }
                 if usage
                     .kept_index_ids
                     .get(&column.table_id)
-                    .is_some_and(|kept| !kept.contains(&index.id))
+                    .is_some_and(|kept| !kept.contains(&index.read().id))
                 {
                     continue;
                 }
                 items.insert(
                     tidb_model::TableItemID {
                         table_id: column.table_id,
-                        id: index.id,
+                        id: index.read().id,
                         is_index: true,
                         is_sync_load_failed: false,
                     },

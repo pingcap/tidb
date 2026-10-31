@@ -751,17 +751,23 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
     // DDL backfill and ADMIN use the full map and therefore recompute the
     // stored generated column from the current expression.
     let index = KvIndex {
-        id: 7,
-        name: "b".to_owned(),
-        comment: String::new(),
-        unique: false,
+        info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+            id: 7,
+            name: tidb_ast::CiString::new("b"),
+            columns: (vec![1])
+                .iter()
+                .enumerate()
+                .map(|(position, _)| tidb_model::IndexColumn {
+                    length: (vec![-1]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                    ..tidb_model::IndexColumn::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            state: tidb_model::SchemaState::PUBLIC,
+            ..tidb_model::IndexInfo::default()
+        }),
         column_offsets: vec![1],
-        prefix_lengths: vec![-1],
-        visible: true,
-        global: false,
-        global_index_version: 0,
         clustered_primary: false,
-        primary: false,
     };
     table.create_index_with_context(index, &statement).unwrap();
     let handles = table

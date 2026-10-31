@@ -80,7 +80,7 @@ pub fn show_index_rows(
     }
     for index in table.indexes() {
         // Go `tb.Meta().IsCommonHandle && idxInfo.Primary`.
-        let clustered = index.primary && !table.common_handle_offsets().is_empty();
+        let clustered = index.read().primary && !table.common_handle_offsets().is_empty();
         for (position, offset) in index.column_offsets.iter().enumerate() {
             let column = &table.columns()[*offset];
             let nullable = column.read().field_type.flags() & FieldTypeFlags::NOT_NULL == 0;
@@ -91,13 +91,13 @@ pub fn show_index_rows(
                 .filter(|_| table.is_hidden(*offset))
                 .map(|generated| generated.expr_text.as_str());
             let sub_part = index
-                .prefix_lengths
+                .prefix_lengths()
                 .get(position)
                 .copied()
                 .filter(|length| *length != tidb_datatype::UNSPECIFIED_LENGTH);
             push(
-                &index.name,
-                index.unique,
+                index.read().name.original(),
+                index.read().unique,
                 clustered,
                 position + 1,
                 // Go `fetchShowIndex`: a hidden expression-index column is
@@ -106,9 +106,9 @@ pub fn show_index_rows(
                 column_ndv(column.read().id),
                 expression,
                 nullable,
-                &index.comment,
-                index.visible,
-                index.global,
+                &index.read().comment,
+                (!index.read().invisible),
+                index.read().global,
                 sub_part,
             );
         }

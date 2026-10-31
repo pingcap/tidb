@@ -50,7 +50,7 @@ fn table_ids(session: &mut Session, name: &str) -> (i64, Vec<i64>) {
             };
             Ok((
                 table.table_id(),
-                table.indexes().iter().map(|index| index.id).collect(),
+                table.indexes().iter().map(|index| index.read().id).collect(),
             ))
         })
         .unwrap()
@@ -210,7 +210,7 @@ fn tidb_decode_key_distinguishes_clustered_and_partition_handles() {
                 table
                     .indexes()
                     .iter()
-                    .map(|index| index.id)
+                    .map(|index| index.read().id)
                     .collect::<Vec<_>>(),
                 table.partition().unwrap().definitions[0].id,
                 keys.iter()

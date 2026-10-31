@@ -466,17 +466,25 @@ mod tests {
         fixture.table.set_common_handle_offsets(vec![0, 1]);
         fixture.table.add_index(
             KvIndex {
-                id: 1,
-                name: "PRIMARY".to_owned(),
-                comment: String::new(),
-                unique: true,
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("PRIMARY"),
+                    unique: true,
+                    primary: true,
+                    columns: (vec![0, 1])
+                        .iter()
+                        .enumerate()
+                        .map(|(position, _)| tidb_model::IndexColumn {
+                            length: (vec![tidb_datatype::UNSPECIFIED_LENGTH; 2]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                            ..tidb_model::IndexColumn::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
                 column_offsets: vec![0, 1],
-                prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH; 2],
-                visible: true,
-                global: false,
-                global_index_version: 0,
                 clustered_primary: false,
-                primary: true,
             },
             false,
         );
@@ -899,17 +907,23 @@ mod tests {
             let mut fixture = fixture_with_columns(pk_handle_offset, columns);
             fixture.table.add_index(
                 KvIndex {
-                    id: 2,
-                    name: "check_stored".to_owned(),
-                    comment: String::new(),
-                    unique: false,
+                    info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                        id: 2,
+                        name: tidb_ast::CiString::new("check_stored"),
+                        columns: (vec![2])
+                            .iter()
+                            .enumerate()
+                            .map(|(position, _)| tidb_model::IndexColumn {
+                                length: (vec![tidb_datatype::UNSPECIFIED_LENGTH]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                                ..tidb_model::IndexColumn::default()
+                            })
+                            .collect::<Vec<_>>()
+                            .into(),
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::IndexInfo::default()
+                    }),
                     column_offsets: vec![2],
-                    prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
-                    visible: true,
-                    global: false,
-                    global_index_version: 0,
                     clustered_primary: false,
-                    primary: false,
                 },
                 false,
             );
@@ -1454,17 +1468,23 @@ mod tests {
         let mut secondary = fixture();
         secondary.table.add_index(
             KvIndex {
-                id: 1,
-                name: "ia".to_owned(),
-                comment: String::new(),
-                unique: false,
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("ia"),
+                    columns: (vec![0])
+                        .iter()
+                        .enumerate()
+                        .map(|(position, _)| tidb_model::IndexColumn {
+                            length: (vec![-1]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                            ..tidb_model::IndexColumn::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
                 column_offsets: vec![0],
-                prefix_lengths: vec![-1],
-                visible: true,
-                global: false,
-                global_index_version: 0,
                 clustered_primary: false,
-                primary: false,
             },
             false,
         );
@@ -1574,17 +1594,23 @@ mod tests {
         fixture.table.set_common_handle_offsets(vec![0, 1]);
         fixture.table.add_index(
             KvIndex {
-                id: 1,
-                name: "ib".into(),
-                comment: String::new(),
-                unique: false,
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("ib"),
+                    columns: (vec![1])
+                        .iter()
+                        .enumerate()
+                        .map(|(position, _)| tidb_model::IndexColumn {
+                            length: (vec![-1]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                            ..tidb_model::IndexColumn::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
                 column_offsets: vec![1],
-                prefix_lengths: vec![-1],
-                visible: true,
-                global: false,
-                global_index_version: 0,
                 clustered_primary: false,
-                primary: false,
             },
             false,
         );
@@ -1700,17 +1726,23 @@ mod tests {
         for (id, name, offset) in [(1, "ia", 0), (2, "ib", 1)] {
             fixture.table.add_index(
                 KvIndex {
-                    id,
-                    name: name.into(),
-                    comment: String::new(),
-                    unique: false,
+                    info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                        id: id,
+                        name: tidb_ast::CiString::new(name),
+                        columns: (vec![offset])
+                            .iter()
+                            .enumerate()
+                            .map(|(position, _)| tidb_model::IndexColumn {
+                                length: (vec![-1]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                                ..tidb_model::IndexColumn::default()
+                            })
+                            .collect::<Vec<_>>()
+                            .into(),
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::IndexInfo::default()
+                    }),
                     column_offsets: vec![offset],
-                    prefix_lengths: vec![-1],
-                    visible: true,
-                    global: false,
-                    global_index_version: 0,
                     clustered_primary: false,
-                    primary: false,
                 },
                 false,
             );
@@ -1753,17 +1785,23 @@ mod tests {
         let mut fixture = fixture();
         fixture.table.add_index(
             KvIndex {
-                id: 1,
-                name: "ia".into(),
-                comment: String::new(),
-                unique: false,
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("ia"),
+                    columns: (vec![0])
+                        .iter()
+                        .enumerate()
+                        .map(|(position, _)| tidb_model::IndexColumn {
+                            length: (vec![-1]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                            ..tidb_model::IndexColumn::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
                 column_offsets: vec![0],
-                prefix_lengths: vec![-1],
-                visible: true,
-                global: false,
-                global_index_version: 0,
                 clustered_primary: false,
-                primary: false,
             },
             false,
         );
@@ -1812,17 +1850,23 @@ mod tests {
             for (id, name, offset) in [(1, "ia", 0), (2, "ib", 1)] {
                 fixture.table.add_index(
                     KvIndex {
-                        id,
-                        name: name.into(),
-                        comment: String::new(),
-                        unique: false,
+                        info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                            id: id,
+                            name: tidb_ast::CiString::new(name),
+                            columns: (vec![offset])
+                                .iter()
+                                .enumerate()
+                                .map(|(position, _)| tidb_model::IndexColumn {
+                                    length: (vec![-1]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                                    ..tidb_model::IndexColumn::default()
+                                })
+                                .collect::<Vec<_>>()
+                                .into(),
+                            state: tidb_model::SchemaState::PUBLIC,
+                            ..tidb_model::IndexInfo::default()
+                        }),
                         column_offsets: vec![offset],
-                        prefix_lengths: vec![-1],
-                        visible: true,
-                        global: false,
-                        global_index_version: 0,
                         clustered_primary: false,
-                        primary: false,
                     },
                     false,
                 );

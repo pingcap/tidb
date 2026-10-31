@@ -82,17 +82,23 @@ fn inner_table(rows: &[(i64, i64)]) -> KvTable {
     table
         .create_index_with_context(
             KvIndex {
-                id: 1,
-                name: "ib".to_owned(),
-                comment: String::new(),
-                unique: false,
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("ib"),
+                    columns: (vec![1])
+                        .iter()
+                        .enumerate()
+                        .map(|(position, _)| tidb_model::IndexColumn {
+                            length: (vec![tidb_datatype::UNSPECIFIED_LENGTH]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                            ..tidb_model::IndexColumn::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
                 column_offsets: vec![1],
-                prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH],
-                visible: true,
-                global: false,
-                global_index_version: 0,
                 clustered_primary: false,
-                primary: false,
             },
             &crate::StmtContext::for_query(),
         )
@@ -112,17 +118,25 @@ fn common_handle_table(rows: &[(i64, i64)]) -> KvTable {
     table
         .create_index_with_context(
             KvIndex {
-                id: 1,
-                name: "PRIMARY".to_owned(),
-                comment: String::new(),
-                unique: true,
+                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("PRIMARY"),
+                    unique: true,
+                    primary: true,
+                    columns: (vec![0, 1])
+                        .iter()
+                        .enumerate()
+                        .map(|(position, _)| tidb_model::IndexColumn {
+                            length: (vec![tidb_datatype::UNSPECIFIED_LENGTH; 2]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
+                            ..tidb_model::IndexColumn::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                }),
                 column_offsets: vec![0, 1],
-                prefix_lengths: vec![tidb_datatype::UNSPECIFIED_LENGTH; 2],
-                visible: true,
-                global: false,
-                global_index_version: 0,
                 clustered_primary: false,
-                primary: true,
             },
             &crate::StmtContext::for_query(),
         )
