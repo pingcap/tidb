@@ -1009,6 +1009,7 @@ var tokenMap = map[string]int{
 	"MAXIMUM_PERFORMANCE":  maximumPerformance,
 	"MAXIMUM_PROTECTION":   maximumProtection,
 	"PROTECTION_MODE":      protectionMode,
+	"LEARNER_COUNT":        learnerCount,
 	"SOURCE_HOST":          sourceHost,
 	"SOURCE_PORT":          sourcePort,
 	"SOURCE_USER":          sourceUser,

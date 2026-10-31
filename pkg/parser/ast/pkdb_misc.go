@@ -228,6 +228,8 @@ const (
 	LogReplicationOptProtectionMode
 	LogReplicationOptDegradeTimeout
 	LogReplicationOptDetached
+	// LogReplicationOptLearnerCount specifies target learners per source region.
+	LogReplicationOptLearnerCount
 )
 
 func (t LogReplicationOptType) String() string {
@@ -246,6 +248,8 @@ func (t LogReplicationOptType) String() string {
 		return "DEGRADE_TIMEOUT"
 	case LogReplicationOptDetached:
 		return "DETACHED"
+	case LogReplicationOptLearnerCount:
+		return "LEARNER_COUNT"
 	default:
 		return "UNKNOWN"
 	}
@@ -261,7 +265,7 @@ func (o *LogReplicationOpt) Restore(ctx *format.RestoreCtx) error {
 	switch o.Tp {
 	case LogReplicationOptSourceHost, LogReplicationOptSourcePort, LogReplicationOptSourceUser,
 		LogReplicationOptSourcePassword, LogReplicationOptProtectionMode, LogReplicationOptDegradeTimeout,
-		LogReplicationOptDetached:
+		LogReplicationOptDetached, LogReplicationOptLearnerCount:
 		// ok
 	default:
 		return errors.Errorf("unknown LogReplicationOptType: %d", o.Tp)
@@ -273,7 +277,7 @@ func (o *LogReplicationOpt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WritePlain(" = ")
 	switch o.Tp {
-	case LogReplicationOptSourcePort:
+	case LogReplicationOptSourcePort, LogReplicationOptLearnerCount:
 		ctx.WritePlainf("%d", o.UintValue)
 	case LogReplicationOptProtectionMode:
 		pm := ProtectionMode(o.UintValue)

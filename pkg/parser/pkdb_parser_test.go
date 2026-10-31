@@ -4,6 +4,8 @@ import (
 	"testing"
 )
 
+// TestLogReplication parses administrative statements, restores their SQL and
+// rejects malformed syntax, including learner-count integer literals.
 func TestLogReplication(t *testing.T) {
 	table := []testCase{
 		// CREATE/ALTER
@@ -18,6 +20,9 @@ func TestLogReplication(t *testing.T) {
 		{"ADMIN ALTER LOG REPLICATION test RENAME TO test_renamed", true, "ADMIN ALTER LOG REPLICATION `test` RENAME TO `test_renamed`"},
 
 		// PAUSE/RESUME/DROP
+		{"ADMIN CREATE LOG REPLICATION test SOURCE_HOST='127.0.0.1' LEARNER_COUNT=2", true, "ADMIN CREATE LOG REPLICATION `test` SOURCE_HOST = '127.0.0.1' LEARNER_COUNT = 2"},
+		{"ADMIN ALTER LOG REPLICATION test LEARNER_COUNT 3", true, "ADMIN ALTER LOG REPLICATION `test` LEARNER_COUNT = 3"},
+		{"ADMIN ALTER LOG REPLICATION test PROTECTION_MODE=0 LEARNER_COUNT=4294967295", true, "ADMIN ALTER LOG REPLICATION `test` PROTECTION_MODE = MAXIMUM_PERFORMANCE LEARNER_COUNT = 4294967295"},
 		{"ADMIN PAUSE LOG REPLICATION test", true, "ADMIN PAUSE LOG REPLICATION `test`"},
 		{"ADMIN RESUME LOG REPLICATION test", true, "ADMIN RESUME LOG REPLICATION `test`"},
 		{"ADMIN DROP LOG REPLICATION test", true, "ADMIN DROP LOG REPLICATION `test`"},
@@ -33,6 +38,9 @@ func TestLogReplication(t *testing.T) {
 		{"ADMIN CANCEL LOG REPLICATION WORKFLOW 123", true, "ADMIN CANCEL LOG REPLICATION WORKFLOW 123"},
 
 		// Error cases
+		{"ADMIN ALTER LOG REPLICATION test LEARNER_COUNT=-1", false, ""},
+		{"ADMIN ALTER LOG REPLICATION test LEARNER_COUNT=1.5", false, ""},
+		{"ADMIN ALTER LOG REPLICATION test LEARNER_COUNT=18446744073709551616", false, ""},
 		{"ADMIN CREATE LOG REPLICATION test", false, ""},
 		{"ADMIN ALTER LOG REPLICATION test SOURCE_HOST = 127", false, ""},
 		{"ADMIN ALTER LOG REPLICATION test CHANGE SOURCE TO '123'", false, ""},

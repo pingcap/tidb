@@ -25,6 +25,7 @@ func (b *executorBuilder) pkdbBuild(p base.Plan) exec.Executor {
 			ProtectionMode:    v.ProtectionMode,
 			DegradeTimeoutSec: v.DegradeTimeoutSec,
 			Detached:          v.Detached,
+			LearnerCount:      v.LearnerCount,
 		}
 	case *plannercore.AlterLogReplication:
 		return &AlterLogReplicationExec{
@@ -34,6 +35,8 @@ func (b *executorBuilder) pkdbBuild(p base.Plan) exec.Executor {
 			ProtectionMode:     v.ProtectionMode,
 			DegradeTimeoutSec:  v.DegradeTimeoutSec,
 			NewName:            v.NewName,
+			LearnerCount:       v.LearnerCount,
+			ProtectionModeSet:  v.ProtectionModeSet,
 		}
 
 	case *plannercore.PauseLogReplication:

@@ -954,6 +954,7 @@ type likeEscapeSpec struct {
 	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	job                        "JOB"
 	jobs                       "JOBS"
+	learnerCount               "LEARNER_COUNT"
 	maximumAvailability        "MAXIMUM_AVAILABILITY"
 	maximumPerformance         "MAXIMUM_PERFORMANCE"
 	maximumProtection          "MAXIMUM_PROTECTION"
@@ -7560,6 +7561,7 @@ TiDBKeyword:
 |	"MAXIMUM_PERFORMANCE"
 |	"MAXIMUM_PROTECTION"
 |	"PROTECTION_MODE"
+|	"LEARNER_COUNT"
 |	"DEGRADE_TIMEOUT"
 |	"DETACHED"
 
@@ -18547,6 +18549,13 @@ LogReplicationOpt:
 	{
 		$$ = &ast.LogReplicationOpt{
 			Tp:        ast.LogReplicationOptSourcePort,
+			UintValue: $3.(uint64),
+		}
+	}
+|	"LEARNER_COUNT" EqOpt LengthNum
+	{
+		$$ = &ast.LogReplicationOpt{
+			Tp:        ast.LogReplicationOptLearnerCount,
 			UintValue: $3.(uint64),
 		}
 	}

@@ -98,6 +98,9 @@ func buildLogReplStatusGlobalRow(status *pdpb.LogReplicationStatus) []types.Datu
 	}
 
 	row[12].SetFloat32(status.InitializingProgress) // INITIALIZING_PROGRESS
+	if status.GetLearnerCount() > 0 {
+		row[14].SetUint64(uint64(status.GetLearnerCount())) // LEARNER_COUNT target
+	}
 	if status.LastHeartbeatTime > 0 {
 		goTime := time.Unix(int64(status.LastHeartbeatTime), 0)
 		lastHeartbeatTime := types.NewTime(types.FromGoTime(goTime), mysql.TypeTimestamp, types.DefaultFsp)
@@ -341,6 +344,9 @@ func buildLogReplStatusLocalRow(localStatus *pdpb.LogReplicationLocalStatus) ([]
 	}
 	row[17].SetMysqlEnum(failoverEnum, mysql.DefaultCollationName) // FAILOVER_READY
 	row[18].SetFloat32(status.GetInitializingProgress())           // INITIALIZING_PROGRESS
+	if status.GetLearnerCount() > 0 {
+		row[19].SetUint64(uint64(status.GetLearnerCount())) // LEARNER_COUNT target
+	}
 
 	return row, nil
 }

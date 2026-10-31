@@ -89,6 +89,7 @@ var TableLogReplStatusGlobalCols = []columnInfo{
 	{name: "CHECKPOINT_LAG", tp: mysql.TypeLonglong, flag: mysql.UnsignedFlag, size: 21},
 	{name: "INITIALIZING_PROGRESS", tp: mysql.TypeFloat, size: 12},
 	{name: "LAST_HEARTBEAT_TIME", tp: mysql.TypeTimestamp, size: 26},
+	{name: "LEARNER_COUNT", tp: mysql.TypeLonglong, flag: mysql.UnsignedFlag, size: 21},
 }
 
 // TableLogReplClusterStatusGlobalCols contains column definitions for LR_CLUSTER_STATUS_GLOBAL table.
@@ -143,6 +144,7 @@ var TableLogReplStatusLocalCols = []columnInfo{
 	{name: "SWITCHOVER_READY", tp: mysql.TypeEnum, enumElems: ReadyStatusStrs, size: 16},
 	{name: "FAILOVER_READY", tp: mysql.TypeEnum, enumElems: ReadyStatusStrs, size: 16},
 	{name: "INITIALIZING_PROGRESS", tp: mysql.TypeFloat, size: 12},
+	{name: "LEARNER_COUNT", tp: mysql.TypeLonglong, flag: mysql.UnsignedFlag, size: 21},
 }
 
 var tableClusterMonitoringCols = []columnInfo{

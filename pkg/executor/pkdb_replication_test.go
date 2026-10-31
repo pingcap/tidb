@@ -304,3 +304,26 @@ func TestFetchTiKVConfigFromPDRejectsNonUpStore(t *testing.T) {
 	_, _, err := fetchTiKVConfigFromPD(context.Background(), "source", mockStoreLister{stores: stores}, nil)
 	require.ErrorContains(t, err, "source TiKV store 3 is not in Up state")
 }
+
+// TestLearnerCountOptionForwarding builds executor options for zero and positive
+// targets, checking omission and exact values cross the executor-to-client boundary.
+func TestLearnerCountOptionForwarding(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		count uint32
+	}{
+		{name: "omitted", count: 0},
+		{name: "explicit", count: 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Build both option types and compare the unchanged scalar targets.
+			create := &CreateLogReplicationExec{LearnerCount: tc.count}
+			createOpts := create.logReplicationOptions([]string{"127.0.0.1:2379"})
+			require.Equal(t, []string{"127.0.0.1:2379"}, createOpts.SourcePDAddrs)
+			alter := &AlterLogReplicationExec{LearnerCount: tc.count}
+			alterOpts := alter.logReplicationOptions()
+			require.Equal(t, tc.count, createOpts.LearnerCount)
+			require.Equal(t, tc.count, alterOpts.LearnerCount)
+		})
+	}
+}

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
 	"time"
@@ -36,6 +37,8 @@ type CreateLogReplication struct {
 	ProtectionMode    ast.ProtectionMode
 	DegradeTimeoutSec uint64
 	Detached          bool
+	// LearnerCount is zero when CREATE should use the mode-independent default 1.
+	LearnerCount uint32
 }
 
 // AlterLogReplication represents an ALTER LOG REPLICATION plan.
@@ -48,6 +51,10 @@ type AlterLogReplication struct {
 	ProtectionMode     ast.ProtectionMode
 	DegradeTimeoutSec  uint64
 	NewName            pmodel.CIStr
+	// LearnerCount is zero when ALTER should preserve the current target in any mode.
+	LearnerCount uint32
+	// ProtectionModeSet distinguishes an omitted mode from explicit mode zero.
+	ProtectionModeSet bool
 }
 
 // PauseLogReplication represents a PAUSE LOG REPLICATION plan.
@@ -134,6 +141,20 @@ func getLogReplOptsMap(opts []*ast.LogReplicationOpt) (map[ast.LogReplicationOpt
 	return optsMap, nil
 }
 
+// parseLogReplicationLearnerCount validates before narrowing the SQL uint64
+// literal to the uint32 protocol field. Zero represents omission after validation.
+func parseLogReplicationLearnerCount(opts map[ast.LogReplicationOptType]*ast.LogReplicationOpt) (uint32, error) {
+	opt, ok := opts[ast.LogReplicationOptLearnerCount]
+	if !ok {
+		return 0, nil
+	}
+	if opt.UintValue == 0 || opt.UintValue > math.MaxUint32 {
+		return 0, errors.Errorf("LEARNER_COUNT must be between 1 and %d, got %d", uint64(math.MaxUint32), opt.UintValue)
+	}
+	count := uint32(opt.UintValue)
+	return count, nil
+}
+
 func validateProtectionMode(mode ast.ProtectionMode) error {
 	switch mode {
 	case ast.ProtectionModeMaximumPerformance, ast.ProtectionModeMaximumProtection,
@@ -151,6 +172,10 @@ func (*PlanBuilder) buildAdminCreateLogReplication(_ context.Context, as *ast.Cr
 	}
 	p := &CreateLogReplication{
 		Name: as.Name,
+	}
+	p.LearnerCount, err = parseLogReplicationLearnerCount(optsMap)
+	if err != nil {
+		return nil, err
 	}
 	if opt, ok := optsMap[ast.LogReplicationOptSourceHost]; ok {
 		p.Host = opt.Value
@@ -213,7 +238,12 @@ func (*PlanBuilder) buildAdminAlterLogReplication(_ context.Context, as *ast.Alt
 	p := &AlterLogReplication{
 		Name: as.Name,
 	}
+	p.LearnerCount, err = parseLogReplicationLearnerCount(optsMap)
+	if err != nil {
+		return nil, err
+	}
 	if opt, ok := optsMap[ast.LogReplicationOptProtectionMode]; ok {
+		p.ProtectionModeSet = true
 		p.ProtectionMode = ast.ProtectionMode(opt.UintValue)
 		if err := validateProtectionMode(p.ProtectionMode); err != nil {
 			return nil, err
@@ -224,6 +254,7 @@ func (*PlanBuilder) buildAdminAlterLogReplication(_ context.Context, as *ast.Alt
 	}
 	delete(optsMap, ast.LogReplicationOptProtectionMode)
 	delete(optsMap, ast.LogReplicationOptDegradeTimeout)
+	delete(optsMap, ast.LogReplicationOptLearnerCount)
 	for tp := range optsMap {
 		return nil, errors.Errorf("%v is not supported in ALTER LOG REPLICATION", tp)
 	}

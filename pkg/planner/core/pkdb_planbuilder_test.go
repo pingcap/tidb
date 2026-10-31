@@ -453,3 +453,62 @@ func TestParseDegradeTimeoutOption(t *testing.T) {
 		})
 	}
 }
+
+// TestLogReplicationLearnerCountPlanning parses CREATE/ALTER statements and
+// builds plans, checking range validation, omission and explicit mode zero.
+func TestLogReplicationLearnerCountPlanning(t *testing.T) {
+	cases := []struct {
+		sql           string
+		count         uint32
+		modeSet       bool
+		errorContains string
+	}{
+		{sql: "ADMIN CREATE LOG REPLICATION lr SOURCE_HOST='source'"},
+		{sql: "ADMIN CREATE LOG REPLICATION lr SOURCE_HOST='source' PROTECTION_MODE=MAXIMUM_AVAILABILITY DEGRADE_TIMEOUT='30s'"},
+		{sql: "ADMIN CREATE LOG REPLICATION lr SOURCE_HOST='source' PROTECTION_MODE=MAXIMUM_PROTECTION"},
+		{sql: "ADMIN CREATE LOG REPLICATION lr SOURCE_HOST='source' LEARNER_COUNT=1", count: 1},
+		{sql: "ADMIN CREATE LOG REPLICATION lr SOURCE_HOST='source' LEARNER_COUNT=3", count: 3},
+		{sql: "ADMIN CREATE LOG REPLICATION lr SOURCE_HOST='source' LEARNER_COUNT=4294967295", count: ^uint32(0)},
+		{sql: "ADMIN ALTER LOG REPLICATION lr PROTECTION_MODE=2", modeSet: true},
+		{sql: "ADMIN ALTER LOG REPLICATION lr PROTECTION_MODE=0", modeSet: true},
+		{sql: "ADMIN ALTER LOG REPLICATION lr PROTECTION_MODE=1 DEGRADE_TIMEOUT='30s'", modeSet: true},
+		{sql: "ADMIN ALTER LOG REPLICATION lr LEARNER_COUNT=2", count: 2},
+		{sql: "ADMIN ALTER LOG REPLICATION lr PROTECTION_MODE=0 LEARNER_COUNT=3", count: 3, modeSet: true},
+		{sql: "ADMIN ALTER LOG REPLICATION lr PROTECTION_MODE=1 DEGRADE_TIMEOUT='30s' LEARNER_COUNT=3", count: 3, modeSet: true},
+		{sql: "ADMIN CREATE LOG REPLICATION lr SOURCE_HOST='source' LEARNER_COUNT=0", errorContains: "LEARNER_COUNT must be between"},
+		{sql: "ADMIN ALTER LOG REPLICATION lr LEARNER_COUNT=0", errorContains: "LEARNER_COUNT must be between"},
+		{sql: "ADMIN ALTER LOG REPLICATION lr LEARNER_COUNT=4294967296", errorContains: "LEARNER_COUNT must be between"},
+		{sql: "ADMIN ALTER LOG REPLICATION lr LEARNER_COUNT=1 LEARNER_COUNT=2", errorContains: "duplicate option"},
+		{sql: "ADMIN CREATE LOG REPLICATION lr SOURCE_HOST='source' LEARNER_COUNT=1 LEARNER_COUNT=2", errorContains: "duplicate option"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.sql, func(t *testing.T) {
+			stmt, err := parser.New().ParseOneStmt(tc.sql, "", "")
+			require.NoError(t, err)
+			admin := stmt.(*ast.AdminStmt)
+			builder := &PlanBuilder{}
+			var count uint32
+			if admin.Tp == ast.AdminCreateLogReplication {
+				plan, planErr := builder.buildAdminCreateLogReplication(context.Background(), admin.CreateLogReplication)
+				err = planErr
+				if err == nil {
+					count = plan.(*CreateLogReplication).LearnerCount
+				}
+			} else {
+				plan, planErr := builder.buildAdminAlterLogReplication(context.Background(), admin.AlterLogReplication)
+				err = planErr
+				if err == nil {
+					alter := plan.(*AlterLogReplication)
+					count = alter.LearnerCount
+					require.Equal(t, tc.modeSet, alter.ProtectionModeSet)
+				}
+			}
+			if tc.errorContains != "" {
+				require.ErrorContains(t, err, tc.errorContains)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.count, count)
+		})
+	}
+}

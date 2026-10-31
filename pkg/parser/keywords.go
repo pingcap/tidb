@@ -733,6 +733,7 @@ var Keywords = []KeywordsType{
 	{"HISTOGRAMS_IN_FLIGHT", false, "tidb"},
 	{"JOB", false, "tidb"},
 	{"JOBS", false, "tidb"},
+	{"LEARNER_COUNT", false, "tidb"},
 	{"MAXIMUM_AVAILABILITY", false, "tidb"},
 	{"MAXIMUM_PERFORMANCE", false, "tidb"},
 	{"MAXIMUM_PROTECTION", false, "tidb"},

@@ -64,9 +64,22 @@ type CreateLogReplicationExec struct {
 	ProtectionMode    ast.ProtectionMode
 	DegradeTimeoutSec uint64
 	Detached          bool
+	// LearnerCount is the target learners per source region; zero defaults to 1.
+	LearnerCount uint32
 
 	workflowID uint64
 	dataFilled bool
+}
+
+// logReplicationOptions builds CREATE options, carrying zero as the omitted
+// learner target so PD can apply its default.
+func (e *CreateLogReplicationExec) logReplicationOptions(sourcePDAddrs []string) *pd.LogReplicationOptions {
+	return &pd.LogReplicationOptions{
+		SourcePDAddrs:     sourcePDAddrs,
+		ProtectionMode:    astProtectionModeToPB(e.ProtectionMode),
+		DegradeTimeoutSec: e.DegradeTimeoutSec,
+		LearnerCount:      e.LearnerCount,
+	}
 }
 
 // Open implements the Executor Open interface.
@@ -105,11 +118,7 @@ func (e *CreateLogReplicationExec) Open(ctx context.Context) error {
 		return err
 	}
 
-	opts := &pd.LogReplicationOptions{
-		SourcePDAddrs:     sourcePDAddrs,
-		ProtectionMode:    astProtectionModeToPB(e.ProtectionMode),
-		DegradeTimeoutSec: e.DegradeTimeoutSec,
-	}
+	opts := e.logReplicationOptions(sourcePDAddrs)
 
 	pkdbrepl.HoldRestart()
 	defer pkdbrepl.ReleaseRestart()
@@ -147,6 +156,23 @@ type AlterLogReplicationExec struct {
 	ProtectionMode     ast.ProtectionMode
 	DegradeTimeoutSec  uint64
 	NewName            model.CIStr
+	// LearnerCount is zero when ALTER should preserve the current target in any mode.
+	LearnerCount uint32
+	// ProtectionModeSet preserves mode omission for count-only changes.
+	ProtectionModeSet bool
+}
+
+// logReplicationOptions builds ALTER options. A zero learner target leaves the
+// count unchanged; ProtectionModeSet retains explicit mode zero independently.
+func (e *AlterLogReplicationExec) logReplicationOptions() *pd.LogReplicationOptions {
+	return &pd.LogReplicationOptions{
+		ProtectionMode:     astProtectionModeToPB(e.ProtectionMode),
+		DegradeTimeoutSec:  e.DegradeTimeoutSec,
+		NewSourceClusterID: e.NewSourceClusterID,
+		NewName:            e.NewName.L,
+		LearnerCount:       e.LearnerCount,
+		ProtectionModeSet:  e.ProtectionModeSet,
+	}
 }
 
 // Open implements the Executor Open interface.
@@ -154,17 +180,12 @@ func (e *AlterLogReplicationExec) Open(ctx context.Context) error {
 	do := domain.GetDomain(e.Ctx())
 	pdCli := do.GetPDClient()
 
-	opts := pd.LogReplicationOptions{
-		ProtectionMode:     astProtectionModeToPB(e.ProtectionMode),
-		DegradeTimeoutSec:  e.DegradeTimeoutSec,
-		NewSourceClusterID: e.NewSourceClusterID,
-		NewName:            e.NewName.L,
-	}
+	opts := e.logReplicationOptions()
 
 	pkdbrepl.HoldRestart()
 	defer pkdbrepl.ReleaseRestart()
 
-	workflowID, err := pdCli.AlterLogReplication(ctx, e.Name.L, &opts)
+	workflowID, err := pdCli.AlterLogReplication(ctx, e.Name.L, opts)
 	if err != nil {
 		return err
 	}

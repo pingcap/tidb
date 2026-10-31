@@ -25,6 +25,8 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
+// TestBuildLogReplStatusLocalRow builds primary and standby rows and validates
+// values and nullable columns after the count column is appended.
 func TestBuildLogReplStatusLocalRow(t *testing.T) {
 	requireNull := func(t *testing.T, row []types.Datum, idx int) {
 		require.Equal(t, types.KindNull, row[idx].Kind())
@@ -43,7 +45,7 @@ func TestBuildLogReplStatusLocalRow(t *testing.T) {
 			LastGlobalUpdateTs: 1710000000,
 		})
 		require.NoError(t, err)
-		require.Len(t, row, 19)
+		require.Len(t, row, 20)
 		require.Equal(t, uint64(1001), row[0].GetUint64()) // CLUSTER_ID
 		require.Equal(t, "prod-east", row[1].GetString())  // CLUSTER_NAME
 		requireEnum(t, row, 2, "PRIMARY")                  // ROLE
@@ -92,7 +94,7 @@ func TestBuildLogReplStatusLocalRow(t *testing.T) {
 			LastGlobalUpdateTs: 1710000001,
 		})
 		require.NoError(t, err)
-		require.Len(t, row, 19)
+		require.Len(t, row, 20)
 		require.Equal(t, uint64(1002), row[0].GetUint64()) // CLUSTER_ID
 		require.Equal(t, "prod-dr", row[1].GetString())    // CLUSTER_NAME
 		requireEnum(t, row, 2, "STANDBY")                  // ROLE
@@ -199,7 +201,7 @@ func TestBuildLogReplStatusGlobalRow(t *testing.T) {
 			CheckpointTs:     checkpointTS,
 			CheckpointLagSec: 5,
 		})
-		require.Len(t, row, 14)
+		require.Len(t, row, 15)
 		require.Equal(t, checkpointTS, row[9].GetUint64()) // CHECKPOINT_TS
 		require.Equal(t, uint64(5), row[11].GetUint64())   // CHECKPOINT_LAG
 	})
@@ -211,7 +213,7 @@ func TestBuildLogReplStatusGlobalRow(t *testing.T) {
 			CheckpointTs:     checkpointTS,
 			CheckpointLagSec: -1,
 		})
-		require.Len(t, row, 14)
+		require.Len(t, row, 15)
 		require.Equal(t, checkpointTS, row[9].GetUint64()) // CHECKPOINT_TS
 		requireNull(t, row, 11)                            // CHECKPOINT_LAG
 	})
@@ -224,4 +226,27 @@ func TestBuildLogReplStatusGlobalRow(t *testing.T) {
 		requireNull(t, row, 9)  // CHECKPOINT_TS
 		requireNull(t, row, 11) // CHECKPOINT_LAG
 	})
+}
+
+// TestLearnerCountStatusRows builds global and local rows for unknown and
+// configured targets, checking the appended column and primary NULL behavior.
+func TestLearnerCountStatusRows(t *testing.T) {
+	for _, count := range []uint32{0, 1, 2, 3, ^uint32(0)} {
+		status := &pdpb.LogReplicationStatus{ReplicaClusterId: 2, SourceClusterId: 1, LearnerCount: count}
+		global := buildLogReplStatusGlobalRow(status)
+		local, err := buildLogReplStatusLocalRow(&pdpb.LogReplicationLocalStatus{Status: status})
+		require.NoError(t, err)
+		require.Len(t, global, 15)
+		require.Len(t, local, 20)
+		for _, value := range []types.Datum{global[14], local[19]} {
+			if count == 0 {
+				require.True(t, value.IsNull())
+			} else {
+				require.Equal(t, uint64(count), value.GetUint64())
+			}
+		}
+	}
+	primary, err := buildLogReplStatusLocalRow(&pdpb.LogReplicationLocalStatus{Status: &pdpb.LogReplicationStatus{ReplicaClusterId: 1}})
+	require.NoError(t, err)
+	require.True(t, primary[19].IsNull())
 }
