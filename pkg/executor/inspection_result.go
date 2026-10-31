@@ -95,6 +95,9 @@ type (
 
 	// thresholdCheckInspection is used to check some threshold value, like CPU usage, leader count change.
 	thresholdCheckInspection struct{ inspectionName }
+
+	// planChangeInspection is used to check whether SQL plan changed and execution slowed down notably.
+	planChangeInspection struct{ inspectionName }
 )
 
 var inspectionRules = []inspectionRule{
@@ -103,6 +106,7 @@ var inspectionRules = []inspectionRule{
 	&nodeLoadInspection{inspectionName: "node-load"},
 	&criticalErrorInspection{inspectionName: "critical-error"},
 	&thresholdCheckInspection{inspectionName: "threshold-check"},
+	&planChangeInspection{inspectionName: "plan-change"},
 }
 
 type inspectionResultRetriever struct {
@@ -1250,6 +1254,130 @@ func (thresholdCheckInspection) inspectForLeaderDrop(ctx context.Context, sctx s
 			}
 			lastValue = v
 		}
+	}
+	return results
+}
+
+const (
+	planChangeSlowThreshold = 2.0
+	planChangeResultLimit   = 3
+)
+
+func (planChangeInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+	from := filter.timeRange.From.Format(plannerutil.MetricTableTimeFormat)
+	to := filter.timeRange.To.Format(plannerutil.MetricTableTimeFormat)
+
+	// cluster_statements_summary and cluster_statements_summary_history only contain recent data.
+	// Try them first, then fall back to cluster_slow_query for older time ranges.
+	results := inspectPlanChangeFromStmtSummary(ctx, sctx, filter, infoschema.ClusterTableStatementsSummary, from, to)
+	if len(results) > 0 {
+		return results
+	}
+	results = inspectPlanChangeFromStmtSummary(ctx, sctx, filter, infoschema.ClusterTableStatementsSummaryHistory, from, to)
+	if len(results) > 0 {
+		return results
+	}
+	return inspectPlanChangeFromSlowQuery(ctx, sctx, filter, from, to)
+}
+
+func inspectPlanChangeFromStmtSummary(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter, tableName, from, to string) []inspectionResult {
+	exec := sctx.GetRestrictedSQLExecutor()
+	sql := fmt.Sprintf("select digest, plan_digest, avg_latency, query_sample_text from information_schema.%s where summary_begin_time <= '%s' and summary_end_time >= '%s'", tableName, to, from)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql)
+	if err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check plan change from %s failed: %v", tableName, err))
+		return nil
+	}
+	return buildPlanChangeResults(filter, rows, "avg_latency")
+}
+
+func inspectPlanChangeFromSlowQuery(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter, from, to string) []inspectionResult {
+	exec := sctx.GetRestrictedSQLExecutor()
+	sql := fmt.Sprintf("select digest, plan_digest, avg(query_time) as avg_query_time, min(query) from information_schema.cluster_slow_query where time >= '%s' and time <= '%s' group by digest, plan_digest", from, to)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql)
+	if err != nil {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check plan change from cluster_slow_query failed: %v", err))
+		return nil
+	}
+	return buildPlanChangeResults(filter, rows, "query_time")
+}
+
+type planChangePlanInfo struct {
+	planDigest string
+	latency    float64
+	queryText  string
+}
+
+func buildPlanChangeResults(filter inspectionFilter, rows []chunk.Row, latencyCol string) []inspectionResult {
+	digestToPlans := make(map[string][]planChangePlanInfo)
+	for _, row := range rows {
+		if row.Len() < 4 {
+			continue
+		}
+		digest := row.GetString(0)
+		planDigest := row.GetString(1)
+		var latency float64
+		switch latencyCol {
+		case "avg_latency":
+			latency = float64(row.GetUint64(2))
+		case "query_time":
+			latency = row.GetFloat64(2)
+		}
+		queryText := row.GetString(3)
+		digestToPlans[digest] = append(digestToPlans[digest], planChangePlanInfo{planDigest: planDigest, latency: latency, queryText: queryText})
+	}
+
+	var results []inspectionResult
+	for digest, plans := range digestToPlans {
+		if len(plans) < 2 {
+			continue
+		}
+		if !filter.enable(digest) {
+			continue
+		}
+		minLatency := plans[0].latency
+		maxLatency := plans[0].latency
+		var queryText string
+		for _, p := range plans {
+			if p.latency < minLatency {
+				minLatency = p.latency
+			}
+			if p.latency > maxLatency {
+				maxLatency = p.latency
+				queryText = p.queryText
+			}
+		}
+		if minLatency <= 0 {
+			continue
+		}
+		ratio := maxLatency / minLatency
+		if ratio < planChangeSlowThreshold {
+			continue
+		}
+		detail := fmt.Sprintf("the plan of sql '%s' changed, execution time slow down %.2fx; possible causes: inaccurate statistics, consider running ANALYZE TABLE or using SQL plan binding", queryText, ratio)
+		if len(detail) > 256 {
+			detail = detail[:256]
+		}
+		results = append(results, inspectionResult{
+			tp:       "tidb",
+			item:     digest,
+			actual:   fmt.Sprintf("%.2f", ratio),
+			expected: "< 2.00",
+			severity: "warning",
+			detail:   detail,
+			degree:   ratio,
+		})
+	}
+
+	// Sort by degree descending and item ascending, then limit the result count.
+	slices.SortFunc(results, func(i, j inspectionResult) int {
+		if c := cmp.Compare(j.degree, i.degree); c != 0 {
+			return c
+		}
+		return cmp.Compare(i.item, j.item)
+	})
+	if len(results) > planChangeResultLimit {
+		results = results[:planChangeResultLimit]
 	}
 	return results
 }
