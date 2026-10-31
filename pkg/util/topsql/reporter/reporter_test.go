@@ -630,6 +630,12 @@ func TestProcessStmtStatsData(t *testing.T) {
 	restoreTicker := SetReportTickerIntervalSecondsForTest(3)
 	t.Cleanup(restoreTicker)
 	topsqlstate.GlobalState.MaxStatementCount.Store(3)
+	origNowFunc := nowFunc
+	// This test checks merge/eviction semantics, not wall-clock bucket boundaries.
+	nowFunc = func() time.Time {
+		return time.Unix(1781581027, 0)
+	}
+	t.Cleanup(func() { nowFunc = origNowFunc })
 
 	r := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
 	r.Start()
