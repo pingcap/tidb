@@ -46,7 +46,7 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
-	pd "github.com/tikv/pd/client"
+	pdopt "github.com/tikv/pd/client/opt"
 )
 
 func init() {
@@ -491,7 +491,7 @@ func TestSplitRangeForTable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
-	stores, err := dom.GetPDClient().GetAllStores(context.Background(), pd.WithExcludeTombstone())
+	stores, err := dom.GetPDClient().GetAllStores(context.Background(), pdopt.WithExcludeTombstone())
 	require.NoError(t, err)
 
 	tk.MustExec("drop database if exists addindexlit;")

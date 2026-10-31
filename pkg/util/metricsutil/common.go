@@ -41,6 +41,7 @@ import (
 	topsqlreporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
 	tikvconfig "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 )
 
 // RegisterMetrics register metrics with const label 'keyspace_id' if keyspaceName set.
@@ -60,7 +61,7 @@ func RegisterMetrics() error {
 		CAPath:   cfg.Security.ClusterSSLCA,
 		CertPath: cfg.Security.ClusterSSLCert,
 		KeyPath:  cfg.Security.ClusterSSLKey,
-	}, pd.WithCustomTimeoutOption(timeoutSec))
+	}, opt.WithCustomTimeoutOption(timeoutSec))
 	if err != nil {
 		return err
 	}
@@ -82,7 +83,7 @@ func RegisterMetricsForBR(pdAddrs []string, keyspaceName string) error {
 
 	timeoutSec := 10 * time.Second
 	pdCli, err := pd.NewClient(pdAddrs, pd.SecurityOption{},
-		pd.WithCustomTimeoutOption(timeoutSec))
+		opt.WithCustomTimeoutOption(timeoutSec))
 	if err != nil {
 		return err
 	}

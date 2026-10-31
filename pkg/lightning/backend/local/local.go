@@ -62,7 +62,9 @@ import (
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
-	"github.com/tikv/pd/client/retry"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/retry"
+	sd "github.com/tikv/pd/client/servicediscovery"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -526,7 +528,7 @@ func NewBackend(
 	ctx context.Context,
 	tls *common.TLS,
 	config BackendConfig,
-	pdSvcDiscovery pd.ServiceDiscovery,
+	pdSvcDiscovery sd.ServiceDiscovery,
 ) (b *Backend, err error) {
 	var (
 		pdCli                pd.Client
@@ -576,10 +578,10 @@ func NewBackend(
 	}
 	pdCli, err = pd.NewClientWithContext(
 		ctx, pdAddrs, tls.ToPDSecurityOption(),
-		pd.WithGRPCDialOptions(maxCallMsgSize...),
+		opt.WithGRPCDialOptions(maxCallMsgSize...),
 		// If the time too short, we may scatter a region many times, because
 		// the interface `ScatterRegions` may time out.
-		pd.WithCustomTimeoutOption(60*time.Second),
+		opt.WithCustomTimeoutOption(60*time.Second),
 	)
 	if err != nil {
 		return nil, common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
@@ -674,7 +676,7 @@ func (local *Backend) TotalMemoryConsume() int64 {
 }
 
 func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, importClientFactory ImportClientFactory) (bool, error) {
-	stores, err := pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1423,7 +1425,7 @@ func (local *Backend) ImportEngine(
 		log.FromContext(ctx).Info("force table split range",
 			zap.String("startKey", redact.Key(startKey)),
 			zap.String("endKey", redact.Key(endKey)))
-		stores, err := local.pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
+		stores, err := local.pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())
 		if err != nil {
 			return err
 		}
@@ -1922,7 +1924,7 @@ func getSplitConfFromStore(ctx context.Context, host string, tls *common.TLS) (
 // GetRegionSplitSizeKeys return region split size, region split keys, error
 func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS) (
 	regionSplitSize int64, regionSplitKeys int64, err error) {
-	stores, err := cli.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := cli.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return 0, 0, err
 	}

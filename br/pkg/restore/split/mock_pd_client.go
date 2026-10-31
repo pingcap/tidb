@@ -14,6 +14,8 @@ import (
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/router"
+	"github.com/tikv/pd/client/opt"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -94,8 +96,8 @@ func (c *MockPDClientForSplit) ScanRegions(
 	_ context.Context,
 	key, endKey []byte,
 	limit int,
-	_ ...pd.GetRegionOption,
-) ([]*pd.Region, error) {
+	_ ...opt.GetRegionOption,
+) ([]*router.Region, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -110,9 +112,9 @@ func (c *MockPDClientForSplit) ScanRegions(
 	}
 
 	regions := c.Regions.ScanRange(key, endKey, limit)
-	ret := make([]*pd.Region, 0, len(regions))
+	ret := make([]*router.Region, 0, len(regions))
 	for _, r := range regions {
-		ret = append(ret, &pd.Region{
+		ret = append(ret, &router.Region{
 			Meta:   r.Meta,
 			Leader: r.Leader,
 		})
@@ -122,10 +124,10 @@ func (c *MockPDClientForSplit) ScanRegions(
 
 func (c *MockPDClientForSplit) BatchScanRegions(
 	_ context.Context,
-	keyRanges []pd.KeyRange,
+	keyRanges []router.KeyRange,
 	limit int,
-	_ ...pd.GetRegionOption,
-) ([]*pd.Region, error) {
+	_ ...opt.GetRegionOption,
+) ([]*router.Region, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -139,7 +141,7 @@ func (c *MockPDClientForSplit) BatchScanRegions(
 		c.scanRegions.beforeHook()
 	}
 
-	regions := make([]*pd.Region, 0, len(keyRanges))
+	regions := make([]*router.Region, 0, len(keyRanges))
 	var lastRegion *pdtypes.Region
 	for _, keyRange := range keyRanges {
 		if lastRegion != nil {
@@ -153,7 +155,7 @@ func (c *MockPDClientForSplit) BatchScanRegions(
 		rs := c.Regions.ScanRange(keyRange.StartKey, keyRange.EndKey, limit)
 		for _, r := range rs {
 			lastRegion = r
-			regions = append(regions, &pd.Region{
+			regions = append(regions, &router.Region{
 				Meta:   r.Meta,
 				Leader: r.Leader,
 			})
@@ -162,13 +164,13 @@ func (c *MockPDClientForSplit) BatchScanRegions(
 	return regions, nil
 }
 
-func (c *MockPDClientForSplit) GetRegionByID(_ context.Context, regionID uint64, _ ...pd.GetRegionOption) (*pd.Region, error) {
+func (c *MockPDClientForSplit) GetRegionByID(_ context.Context, regionID uint64, _ ...opt.GetRegionOption) (*router.Region, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	for _, r := range c.Regions.Regions {
 		if r.Meta.Id == regionID {
-			return &pd.Region{
+			return &router.Region{
 				Meta:   r.Meta,
 				Leader: r.Leader,
 			}, nil
@@ -216,7 +218,7 @@ func (c *MockPDClientForSplit) ScatterRegion(_ context.Context, regionID uint64)
 	return newRegionNotFullyReplicatedErr(regionID)
 }
 
-func (c *MockPDClientForSplit) ScatterRegions(_ context.Context, regionIDs []uint64, _ ...pd.RegionsOption) (*pdpb.ScatterRegionResponse, error) {
+func (c *MockPDClientForSplit) ScatterRegions(_ context.Context, regionIDs []uint64, _ ...opt.RegionsOption) (*pdpb.ScatterRegionResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

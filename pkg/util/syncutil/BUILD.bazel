@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "syncutil",
@@ -9,4 +9,12 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/syncutil",
     visibility = ["//visibility:public"],
     deps = ["@com_github_sasha_s_go_deadlock//:go-deadlock"],  #keep
+)
+
+go_test(
+    name = "syncutil_test",
+    timeout = "short",
+    srcs = ["mutex_test.go"],
+    embed = [":syncutil"],
+    flaky = True,
 )

@@ -166,7 +166,7 @@ func (r *DBReader) getReverseIter() *badger.Iterator {
 }
 
 // BatchGetFunc defines a batch get function.
-type BatchGetFunc = func(key, value []byte, err error)
+type BatchGetFunc = func(key, value []byte, userMeta mvcc.DBUserMeta, err error)
 
 // BatchGet batch gets keys.
 func (r *DBReader) BatchGet(keys [][]byte, startTS uint64, f BatchGetFunc) {
@@ -177,20 +177,26 @@ func (r *DBReader) BatchGet(keys [][]byte, startTS uint64, f BatchGetFunc) {
 	items, err := r.txn.MultiGet(keys)
 	if err != nil {
 		for _, key := range keys {
-			f(key, nil, err)
+			f(key, nil, mvcc.DBUserMeta{}, err)
 		}
 		return
 	}
 	for i, item := range items {
 		key := keys[i]
 		var val []byte
+		var userMeta mvcc.DBUserMeta
 		if item != nil {
 			val, err = item.Value()
 			if err == nil {
 				err = r.CheckWriteItemForRcCheckTSRead(startTS, item)
 			}
+
+			if err == nil {
+				userMeta = item.UserMeta()
+			}
 		}
-		f(key, val, err)
+
+		f(key, val, userMeta, err)
 	}
 }
 
