@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -93,8 +93,8 @@ func TestContextManagerOnlineNoStores(t *testing.T) {
 		},
 	}
 
-	pdClient := utiltest.NewFakePDClient(stores, false, nil)
-	pdHTTPCli := utiltest.NewFakePDHTTPClient()
+	pdClient := split.NewFakePDClient(stores, false, nil)
+	pdHTTPCli := split.NewFakePDHTTPClient()
 	placementRuleManager, err := snapclient.NewPlacementRuleManager(ctx, pdClient, pdHTTPCli, nil, true)
 	require.NoError(t, err)
 	tables := generateTables()
@@ -234,9 +234,9 @@ func TestContextManagerOnlineLeave(t *testing.T) {
 	stores := generateStores()
 	regions := generateRegions()
 
-	pdClient := utiltest.NewFakePDClient(stores, false, nil)
+	pdClient := split.NewFakePDClient(stores, false, nil)
 	pdClient.SetRegions(regions)
-	pdHTTPCli := utiltest.NewFakePDHTTPClient()
+	pdHTTPCli := split.NewFakePDHTTPClient()
 	placementRuleManager, err := snapclient.NewPlacementRuleManager(ctx, pdClient, pdHTTPCli, nil, true)
 	require.NoError(t, err)
 	tables := generateTables()

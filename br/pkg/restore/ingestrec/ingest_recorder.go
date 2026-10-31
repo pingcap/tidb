@@ -15,6 +15,7 @@
 package ingestrec
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -44,6 +45,8 @@ type IngestIndexInfo struct {
 type IngestRecorder struct {
 	// Table ID -> Index ID -> Index info
 	items map[int64]map[int64]*IngestIndexInfo
+	// need to drop the constraints at first
+	foreignKeyRecordManager *ForeignKeyRecordManager
 }
 
 // Return an empty IngestRecorder
@@ -152,13 +155,13 @@ func (i *IngestRecorder) RewriteTableID(rewriteFunc func(tableID int64) (int64, 
 }
 
 // UpdateIndexInfo uses the newest schemas to update the ingest index's information
-func (i *IngestRecorder) UpdateIndexInfo(infoSchema infoschema.InfoSchema) error {
+func (i *IngestRecorder) UpdateIndexInfo(ctx context.Context, infoSchema infoschema.InfoSchema) error {
 	log.Info("start to update index information for ingest index")
 	start := time.Now()
 	defer func() {
 		log.Info("finish updating index information for ingest index", zap.Duration("takes", time.Since(start)))
 	}()
-
+	finalForeignKeyManager := NewForeignKeyRecordManager()
 	for tableID, tableIndexes := range i.items {
 		tblInfo, tblexists := infoSchema.TableInfoByID(tableID)
 		if !tblexists || tblInfo == nil {
@@ -171,9 +174,14 @@ func (i *IngestRecorder) UpdateIndexInfo(infoSchema infoschema.InfoSchema) error
 			return errors.Errorf("failed to repair ingest index because table exists but cannot find database."+
 				"[table-id:%d][db-id:%d]", tableID, tblInfo.DBID)
 		}
+		tableForeignKeyManager, err := NewForeignKeyRecordManagerForTables(ctx, infoSchema, dbInfo.Name, tblInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		for _, indexInfo := range tblInfo.Indices {
 			index, idxexists := tableIndexes[indexInfo.ID]
 			if !idxexists {
+				tableForeignKeyManager.RemoveForeignKeys(tblInfo, indexInfo)
 				continue
 			}
 			var columnListBuilder strings.Builder
@@ -209,7 +217,9 @@ func (i *IngestRecorder) UpdateIndexInfo(infoSchema infoschema.InfoSchema) error
 			index.TableName = tblInfo.Name
 			index.Updated = true
 		}
+		finalForeignKeyManager.Merge(tableForeignKeyManager)
 	}
+	i.foreignKeyRecordManager = finalForeignKeyManager
 	return nil
 }
 
@@ -223,6 +233,16 @@ func (i *IngestRecorder) Iterate(f func(tableID int64, indexID int64, info *Inge
 			if err := f(tableID, indexID, info); err != nil {
 				return errors.Trace(err)
 			}
+		}
+	}
+	return nil
+}
+
+// IterateForeignKeys iterates all the foreign keys need to be dropped before repair indexes
+func (i *IngestRecorder) IterateForeignKeys(f func(*ForeignKeyRecord) error) error {
+	for _, fkRecord := range i.foreignKeyRecordManager.fkRecordMap {
+		if err := f(fkRecord); err != nil {
+			return errors.Trace(err)
 		}
 	}
 	return nil

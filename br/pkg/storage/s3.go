@@ -68,7 +68,7 @@ const (
 
 var permissionCheckFn = map[Permission]func(context.Context, s3iface.S3API, *backuppb.S3) error{
 	AccessBuckets:      s3BucketExistenceCheck,
-	ListObjects:        listObjectsCheck,
+	ListObjects:        listObjectsV2Check,
 	GetObject:          getObjectCheck,
 	PutAndDeleteObject: PutAndDeleteObjectCheck,
 }
@@ -83,6 +83,10 @@ type S3Storage struct {
 	options *backuppb.S3
 }
 
+func (*S3Storage) MarkStrongConsistency() {
+	// See https://aws.amazon.com/cn/s3/consistency/
+}
+
 // GetS3APIHandle gets the handle to the S3 API.
 func (rs *S3Storage) GetS3APIHandle() s3iface.S3API {
 	return rs.svc
@@ -91,6 +95,25 @@ func (rs *S3Storage) GetS3APIHandle() s3iface.S3API {
 // GetOptions gets the external storage operations for the S3.
 func (rs *S3Storage) GetOptions() *backuppb.S3 {
 	return rs.options
+}
+
+func (rs *S3Storage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
+	s, ok := e.(*S3Storage)
+	if !ok {
+		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "S3Storage.CopyFrom supports S3 storage only, get %T", e)
+	}
+
+	copyInput := &s3.CopyObjectInput{
+		Bucket: aws.String(rs.options.Bucket),
+		// NOTE: Perhaps we need to allow copy cross regions / accounts.
+		CopySource: aws.String(path.Join(s.options.Bucket, s.options.Prefix, spec.From)),
+		Key:        aws.String(rs.options.Prefix + spec.To),
+	}
+
+	// NOTE: Maybe check whether the Go SDK will handle 200 OK errors.
+	// https://repost.aws/knowledge-center/s3-resolve-200-internalerror
+	_, err := s.svc.CopyObjectWithContext(ctx, copyInput)
+	return err
 }
 
 // S3Uploader does multi-part upload to s3.
@@ -448,14 +471,14 @@ func s3BucketExistenceCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S
 	return errors.Trace(err)
 }
 
-// listObjectsCheck checks the permission of listObjects
-func listObjectsCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error {
-	input := &s3.ListObjectsInput{
+// listObjectsV2Check checks the permission of listObjectsV2
+func listObjectsV2Check(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error {
+	input := &s3.ListObjectsV2Input{
 		Bucket:  aws.String(qs.Bucket),
 		Prefix:  aws.String(qs.Prefix),
 		MaxKeys: aws.Int64(1),
 	}
-	_, err := svc.ListObjects(input)
+	_, err := svc.ListObjectsV2(input)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -557,6 +580,7 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 	// we don't need to calculate contentMD5 if s3 object lock enabled.
 	// since aws-go-sdk already did it in #computeBodyHashes
 	// https://github.com/aws/aws-sdk-go/blob/bcb2cf3fc2263c8c28b3119b07d2dbb44d7c93a0/service/s3/body_hash.go#L30
+	RecordAPICall(BackendS3, APICallPutObject)
 	_, err := rs.svc.PutObjectWithContext(ctx, input)
 	if err != nil {
 		return errors.Trace(err)
@@ -565,6 +589,7 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + file),
 	}
+	RecordAPICall(BackendS3, APICallHeadObjects)
 	err = rs.svc.WaitUntilObjectExistsWithContext(ctx, hinput)
 	return errors.Trace(err)
 }
@@ -659,6 +684,7 @@ func (rs *S3Storage) FileExists(ctx context.Context, file string) (bool, error) 
 		Key:    aws.String(rs.options.Prefix + file),
 	}
 
+	RecordAPICall(BackendS3, APICallHeadObjects)
 	_, err := rs.svc.HeadObjectWithContext(ctx, input)
 	if err != nil {
 		if aerr, ok := errors.Cause(err).(awserr.Error); ok { // nolint:errorlint
@@ -695,32 +721,22 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	if opt.ListCount > 0 {
 		maxKeys = opt.ListCount
 	}
-	req := &s3.ListObjectsInput{
+	req := &s3.ListObjectsV2Input{
 		Bucket:  aws.String(rs.options.Bucket),
 		Prefix:  aws.String(prefix),
 		MaxKeys: aws.Int64(maxKeys),
 	}
+	if opt.StartAfter != "" {
+		req.StartAfter = aws.String(path.Join(rs.options.Prefix, opt.StartAfter))
+	}
 
 	for {
-		// FIXME: We can't use ListObjectsV2, it is not universally supported.
-		// (Ceph RGW supported ListObjectsV2 since v15.1.0, released 2020 Jan 30th)
-		// (as of 2020, DigitalOcean Spaces still does not support V2 - https://developers.digitalocean.com/documentation/spaces/#list-bucket-contents)
-		res, err := rs.svc.ListObjectsWithContext(ctx, req)
+		RecordAPICall(BackendS3, APICallListObjects)
+		res, err := rs.svc.ListObjectsV2WithContext(ctx, req)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		for _, r := range res.Contents {
-			// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjects.html#AmazonS3-ListObjects-response-NextMarker -
-			//
-			// `res.NextMarker` is populated only if we specify req.Delimiter.
-			// Aliyun OSS and minio will populate NextMarker no matter what,
-			// but this documented behavior does apply to AWS S3:
-			//
-			// "If response does not include the NextMarker and it is truncated,
-			// you can use the value of the last Key in the response as the marker
-			// in the subsequent request to get the next set of object keys."
-			req.Marker = r.Key
-
 			// when walk on specify directory, the result include storage.Prefix,
 			// which can not be reuse in other API(Open/Read) directly.
 			// so we use TrimPrefix to filter Prefix for next Open/Read.
@@ -738,12 +754,59 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 				return errors.Trace(err)
 			}
 		}
+		prevContinuationToken := aws.StringValue(req.ContinuationToken)
+		nextContinuationToken := aws.StringValue(res.NextContinuationToken)
+		req.ContinuationToken = res.NextContinuationToken
+		req.StartAfter = nil
 		if !aws.BoolValue(res.IsTruncated) {
 			break
+		}
+		if nextContinuationToken == "" || nextContinuationToken == prevContinuationToken {
+			return errors.Annotatef(
+				berrors.ErrStorageUnknown,
+				"list objects pagination is truncated but continuation token does not advance (previous=%q, next=%q, prefix=%q)",
+				prevContinuationToken,
+				nextContinuationToken,
+				prefix,
+			)
 		}
 	}
 
 	return nil
+}
+
+// FileSynced reports whether the object has completed source-side replication.
+func (rs *S3Storage) FileSynced(ctx context.Context, file string) (bool, error) {
+	input := &s3.HeadObjectInput{
+		Bucket: aws.String(rs.options.Bucket),
+		Key:    aws.String(rs.options.Prefix + file),
+	}
+
+	RecordAPICall(BackendS3, APICallHeadObjects)
+	head, err := rs.svc.HeadObjectWithContext(ctx, input)
+	if err != nil {
+		if aerr, ok := errors.Cause(err).(awserr.Error); ok { // nolint:errorlint
+			switch aerr.Code() {
+			case s3.ErrCodeNoSuchBucket, s3.ErrCodeNoSuchKey, notFound:
+				return false, nil
+			}
+		}
+		return false, errors.Trace(err)
+	}
+
+	status := aws.StringValue(head.ReplicationStatus)
+	switch status {
+	case "COMPLETE", "COMPLETED", "REPLICA":
+		return true, nil
+	case "PENDING":
+		return false, nil
+	case "FAILED":
+		return false, errors.Errorf("upstream replication status for %s is FAILED", file)
+	case "":
+		return false, errors.Errorf("upstream replication status for %s is empty", file)
+	default:
+		return false, errors.Errorf("upstream replication status for %s is %q", file, status)
+	}
 }
 
 // URI returns s3://<base>/<prefix>.

@@ -105,6 +105,11 @@ func (conf Config) GetSubscriberErrorStartPollThreshold() time.Duration {
 	return conf.TryAdvanceThreshold * 9 / 20
 }
 
+// GetResolveLockInterval returns how long an unchanged checkpoint waits before resolving locks.
+func (conf Config) GetResolveLockInterval() time.Duration {
+	return conf.TickDuration * 2
+}
+
 // TickTimeout returns the max duration for each tick.
 func (conf Config) TickTimeout() time.Duration {
 	// If a tick blocks longer than the interval of ticking, we may need to break it and retry.

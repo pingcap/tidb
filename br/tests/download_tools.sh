@@ -26,7 +26,7 @@ if [ "$(uname -s)" != Linux ]; then
 fi
 
 MISSING_TIDB_COMPONENTS=
-for COMPONENT in tidb-server pd-server tikv-server pd-ctl; do
+for COMPONENT in tidb-server pd-server tikv-server tikv-ctl pd-ctl; do
     if [ ! -e "$BIN/$COMPONENT" ]; then
         MISSING_TIDB_COMPONENTS="$MISSING_TIDB_COMPONENTS tidb-nightly-linux-amd64/bin/$COMPONENT"
     fi

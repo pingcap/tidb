@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/utiltest"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
@@ -62,7 +62,7 @@ func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
 		},
 	}
 
-	fpdc := utiltest.NewFakePDClient(stores, false, nil)
+	fpdc := split.NewFakePDClient(stores, false, nil)
 
 	_, err = conn.GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
 	require.Error(t, err)
@@ -108,7 +108,7 @@ func TestGetAllTiKVStoresWithUnknown(t *testing.T) {
 		},
 	}
 
-	fpdc := utiltest.NewFakePDClient(stores, false, nil)
+	fpdc := split.NewFakePDClient(stores, false, nil)
 
 	_, err = conn.GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
 	require.Error(t, err)
@@ -164,7 +164,7 @@ func TestCheckStoresAlive(t *testing.T) {
 		},
 	}
 
-	fpdc := utiltest.NewFakePDClient(stores, false, nil)
+	fpdc := split.NewFakePDClient(stores, false, nil)
 
 	kvStores, err := conn.GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
 	require.NoError(t, err)
@@ -251,7 +251,7 @@ func TestGetAllTiKVStores(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-		pdClient := utiltest.NewFakePDClient(testCase.stores, false, nil)
+		pdClient := split.NewFakePDClient(testCase.stores, false, nil)
 		stores, err := util.GetAllTiKVStores(context.Background(), pdClient, testCase.storeBehavior)
 		if len(testCase.expectedError) != 0 {
 			require.Error(t, err)
@@ -357,8 +357,8 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 			content: []string{
 				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 1, \"region-split-size\": \"1MiB\"}, \"import\": {\"num-threads\": 6}}",
 			},
-			// the number of import goroutines is 8 times than import.num-threads.
-			importNumGoroutines: 48,
+			// the default value already satisfies import.num-threads + 4.
+			importNumGoroutines: conn.DefaultImportNumGoroutines,
 			// one tikv detected in this case we are not update default size and keys because they are too small.
 			regionSplitSize: 1 * units.MiB,
 			regionSplitKeys: 1,
@@ -379,7 +379,7 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 			content: []string{
 				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 10000000, \"region-split-size\": \"1GiB\"}, \"import\": {\"num-threads\": 128}}",
 			},
-			importNumGoroutines: 1024,
+			importNumGoroutines: 132,
 			// one tikv detected in this case and we update with new size and keys.
 			regionSplitSize: 1 * units.GiB,
 			regionSplitKeys: 10000000,
@@ -411,8 +411,7 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 10000000, \"region-split-size\": \"1GiB\"}, \"import\": {\"num-threads\": 128}}",
 				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 12000000, \"region-split-size\": \"900MiB\"}, \"import\": {\"num-threads\": 12}}",
 			},
-			// two tikv detected in this case and we choose the small one.
-			importNumGoroutines: 96,
+			importNumGoroutines: 132,
 			regionSplitSize:     1 * units.GiB,
 			regionSplitKeys:     10000000,
 		},
@@ -421,7 +420,7 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 	pctx := context.Background()
 	for _, ca := range cases {
 		ctx, cancel := context.WithCancel(pctx)
-		pdCli := utiltest.NewFakePDClient(ca.stores, false, nil)
+		pdCli := split.NewFakePDClient(ca.stores, false, nil)
 		require.Equal(t, len(ca.content), len(ca.stores))
 		count := 0
 		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -586,7 +585,7 @@ func TestIsLogBackupEnabled(t *testing.T) {
 	pctx := context.Background()
 	for _, ca := range cases {
 		ctx, cancel := context.WithCancel(pctx)
-		pdCli := utiltest.NewFakePDClient(ca.stores, false, nil)
+		pdCli := split.NewFakePDClient(ca.stores, false, nil)
 		require.Equal(t, len(ca.content), len(ca.stores))
 		count := 0
 		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

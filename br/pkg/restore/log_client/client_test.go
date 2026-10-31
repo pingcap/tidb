@@ -16,6 +16,7 @@ package logclient_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -23,21 +24,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	rawclient "github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -46,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
@@ -97,7 +107,7 @@ func TestDeleteRangeQueryExec(t *testing.T) {
 	m := mc
 	g := gluetidb.New()
 	client := logclient.NewRestoreClient(
-		utiltest.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
+		split.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
 	err := client.Init(ctx, g, m.Storage)
 	require.NoError(t, err)
 
@@ -116,7 +126,7 @@ func TestDeleteRangeQuery(t *testing.T) {
 
 	g := gluetidb.New()
 	client := logclient.NewRestoreClient(
-		utiltest.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
+		split.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
 	err := client.Init(ctx, g, m.Storage)
 	require.NoError(t, err)
 
@@ -151,6 +161,69 @@ func MockEmptySchemasReplace() *stream.SchemasReplace {
 	)
 }
 
+func MockEmptySchemasReplaceWithGlobalID() *stream.SchemasReplace {
+	dbMap := make(map[stream.UpstreamID]*stream.DBReplace)
+	nextID := int64(100)
+	return stream.NewSchemasReplace(
+		dbMap,
+		true,
+		nil,
+		1,
+		filter.All(),
+		func(context.Context) (int64, error) {
+			nextID++
+			return nextID, nil
+		},
+		nil,
+		nil,
+	)
+}
+
+func encodeTxnMetaKV(key, field []byte, ts uint64, value []byte) []byte {
+	rawKey := tablecodec.EncodeMetaKey(key, field)
+	txnKey := codec.EncodeBytes(nil, rawKey)
+	txnKey = codec.EncodeUintDesc(txnKey, ts)
+	return stream.EncodeKVEntry(txnKey, value)
+}
+
+func mustMarshalJSON(t *testing.T, value any) []byte {
+	data, err := json.Marshal(value)
+	require.NoError(t, err)
+	return data
+}
+
+func generateIDMapKVData(t *testing.T) ([]byte, logclient.Log, int64, int64, string, string) {
+	const (
+		dbID       int64  = 101
+		tableID    int64  = 202
+		dbName            = "test_db"
+		tableName         = "test_table"
+		dbEntryTS  uint64 = 40
+		tblEntryTS uint64 = 41
+	)
+
+	dbValue := mustMarshalJSON(t, &model.DBInfo{
+		ID:   dbID,
+		Name: pmodel.NewCIStr(dbName),
+	})
+	tableValue := mustMarshalJSON(t, &model.TableInfo{
+		ID:   tableID,
+		Name: pmodel.NewCIStr(tableName),
+	})
+
+	buff := make([]byte, 0)
+	buff = append(buff, encodeTxnMetaKV([]byte("DBs"), meta.DBkey(dbID), dbEntryTS, dbValue)...)
+	buff = append(buff, encodeTxnMetaKV(meta.DBkey(dbID), meta.TableKey(tableID), tblEntryTS, tableValue)...)
+	checksum := sha256.Sum256(buff)
+	return buff, &backuppb.DataFileInfo{
+		Sha256:      checksum[:],
+		RangeOffset: 0,
+		RangeLength: uint64(len(buff)),
+		Length:      uint64(len(buff)),
+		Cf:          stream.DefaultCF,
+	}, dbID, tableID, dbName, tableName
+}
+
 func TestRestoreBatchMetaKVFiles(t *testing.T) {
 	client := logclient.NewRestoreClient(nil, nil, nil, keepalive.ClientParameters{})
 	files := []*backuppb.DataFileInfo{}
@@ -158,6 +231,47 @@ func TestRestoreBatchMetaKVFiles(t *testing.T) {
 	next, err := client.RestoreBatchMetaKVFiles(context.Background(), files[0:], nil, make([]*logclient.KvEntryWithTS, 0), math.MaxUint64, nil, nil, "")
 	require.NoError(t, err)
 	require.Equal(t, 0, len(next))
+}
+
+func TestConstructIDMapReadsFilesConcurrently(t *testing.T) {
+	ctx := context.Background()
+	data, file, dbID, tableID, dbName, tableName := generateIDMapKVData(t)
+	readGate := make(chan struct{})
+	helper := &logclient.FakeStreamMetadataHelper{Data: data, ReadGate: readGate}
+	fm := logclient.TEST_NewLogFileManager(35, 75, 25, helper)
+	client := logclient.TEST_NewLogClientWithLogFileManager(fm)
+
+	files := make([]*backuppb.DataFileInfo, 0, 4)
+	for i := range 4 {
+		f := *file
+		f.Path = fmt.Sprintf("meta-kv-%d", i)
+		f.Cf = stream.DefaultCF
+		files = append(files, &f)
+	}
+
+	sr := MockEmptySchemasReplaceWithGlobalID()
+	sr.SetPreConstructMapStatus()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- client.TEST_ConstructIDMap(ctx, files, sr)
+	}()
+
+	require.Eventually(t, func() bool {
+		return helper.ActiveReadCount() == int32(len(files))
+	}, time.Second, 10*time.Millisecond)
+	require.Equal(t, int32(len(files)), helper.MaxActiveReadCount())
+	close(readGate)
+	require.NoError(t, <-errCh)
+
+	dbReplace := sr.DbMap[dbID]
+	require.NotNil(t, dbReplace)
+	require.Equal(t, dbName, dbReplace.Name)
+	require.NotZero(t, dbReplace.DbID)
+
+	tableReplace := dbReplace.TableMap[tableID]
+	require.NotNil(t, tableReplace)
+	require.Equal(t, tableName, tableReplace.Name)
+	require.NotZero(t, tableReplace.TableID)
 }
 
 func TestRestoreMetaKVFilesWithBatchMethod1(t *testing.T) {
@@ -822,6 +936,41 @@ func TestSortMetaKVFiles(t *testing.T) {
 	require.Equal(t, files[2].Path, "f3")
 	require.Equal(t, files[3].Path, "f4")
 	require.Equal(t, files[4].Path, "f5")
+
+	files = []*backuppb.DataFileInfo{
+		{
+			Path: "write-put",
+			Cf:   stream.WriteCF,
+			Type: backuppb.FileType_Put,
+		},
+		{
+			Path: "write-delete",
+			Cf:   stream.WriteCF,
+			Type: backuppb.FileType_Delete,
+		},
+		{
+			Path: "default-put",
+			Cf:   stream.DefaultCF,
+			Type: backuppb.FileType_Put,
+		},
+		{
+			Path: "default-delete",
+			Cf:   stream.DefaultCF,
+			Type: backuppb.FileType_Delete,
+		},
+	}
+	client := logclient.NewRestoreClient(
+		split.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
+	defaultFiles, writeFiles, err := client.BuildMetaKVFiles(context.Background(), files,
+		stream.NewSchemasReplace(
+			nil, false, nil, 0, nil, nil, nil, nil,
+		),
+	)
+	require.NoError(t, err)
+	require.Len(t, defaultFiles, 1)
+	require.Equal(t, "default-put", defaultFiles[0].Path)
+	require.Len(t, writeFiles, 2)
+	require.Equal(t, 3, logclient.TEST_CountReadableMetaKVFiles(files))
 }
 
 func toLogDataFileInfoIter(logIter iter.TryNextor[*backuppb.DataFileInfo]) logclient.LogIter {
@@ -1345,7 +1494,12 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 	}
 	mockIter := &mockLogIter{}
 	ctx := context.Background()
-	logIter := logclient.NewLogFilesIterWithSplitHelper(mockIter, rewriteRulesMap, utiltest.NewFakeSplitClient(), 144*1024*1024, 1440000)
+	w := restore.PipelineRestorerWrapper[*logclient.LogDataFileInfo]{
+		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(split.NewFakeSplitClient(), 144*1024*1024, 1440000),
+	}
+	s, err := logclient.NewLogSplitStrategy(ctx, false, nil, rewriteRulesMap, func(uint64, uint64) {})
+	require.NoError(t, err)
+	logIter := w.WithSplit(context.Background(), mockIter, s)
 	next := 0
 	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
 		require.NoError(t, r.Err)
@@ -1584,7 +1738,7 @@ func TestRepairIngestIndex(t *testing.T) {
 			"test", "repair_index_t1", tableInfo.ID, indexIDi2, "i2", "a",
 			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", indexIDi2)),
 		), false))
-		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g, nil))
 		infoschema = s.Mock.InfoSchema()
 		table2, err := infoschema.TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("repair_index_t1"))
 		require.NoError(t, err)
@@ -1671,7 +1825,7 @@ func TestRepairIngestIndexFromCheckpoint(t *testing.T) {
 		},
 	}))
 	ingestRecorder := ingestrec.New()
-	require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
+	require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g, nil))
 	infoschema = s.Mock.InfoSchema()
 	table2, err := infoschema.TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("repair_index_t1"))
 	require.NoError(t, err)
@@ -1757,4 +1911,893 @@ func TestPutRawKvWithRetry(t *testing.T) {
 			require.Equal(t, tt.wantPuts, mockRawClient.putCount)
 		})
 	}
+}
+
+type mockLogStrategy struct {
+	*logclient.LogSplitStrategy
+	expectSplitCount int
+}
+
+func (m *mockLogStrategy) ShouldSplit() bool {
+	return m.AccumulateCount == m.expectSplitCount
+}
+
+func TestLogSplitStrategy(t *testing.T) {
+	ctx := context.Background()
+
+	// Define rewrite rules for table ID transformations.
+	rules := map[int64]*utils.RewriteRules{
+		1: {
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(1),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(100),
+				},
+			},
+		},
+		2: {
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(2),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(200),
+				},
+			},
+		},
+	}
+
+	// Define initial regions for the mock PD client.
+	oriRegions := [][]byte{
+		{},
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+	}
+
+	// Set up a mock PD client with predefined regions.
+	storesMap := make(map[uint64]*metapb.Store)
+	storesMap[1] = &metapb.Store{Id: 1}
+	mockPDCli := split.NewMockPDClientForSplit()
+	mockPDCli.SetStores(storesMap)
+	mockPDCli.SetRegions(oriRegions)
+
+	// Create a split client with the mock PD client.
+	client := split.NewClient(mockPDCli, nil, nil, 100, 4)
+
+	// these files should skip accumulation
+	smallFiles := make([]*backuppb.DataFileInfo, 0, 10)
+	for j := 0; j < 20; j++ {
+		smallFiles = append(smallFiles, fakeFile(1, 100, 1024*1024, 100))
+	}
+
+	// Define a mock iterator with sample data files.
+	mockIter := iter.FromSlice(append(smallFiles, []*backuppb.DataFileInfo{
+		fakeFile(1, 200, 2*units.MiB, 200),
+		fakeFile(2, 100, 3*units.MiB, 300),
+		fakeFile(3, 100, 10*units.MiB, 100000),
+		fakeFile(1, 300, 3*units.MiB, 10),
+		fakeFile(1, 400, 4*units.MiB, 10),
+	}...))
+	logIter := toLogDataFileInfoIter(mockIter)
+
+	// Initialize a wrapper for the file restorer with a region splitter.
+	wrapper := restore.PipelineRestorerWrapper[*logclient.LogDataFileInfo]{
+		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, 4*units.MB, 400),
+	}
+
+	// Create a log split strategy with the given rewrite rules.
+	strategy, err := logclient.NewLogSplitStrategy(ctx, false, nil, rules, func(u1, u2 uint64) {})
+	require.NoError(t, err)
+
+	// Set up a mock strategy to control split behavior.
+	expectSplitCount := 2
+	mockStrategy := &mockLogStrategy{
+		LogSplitStrategy: strategy,
+		// fakeFile(3, 100, 10*units.MiB, 100000) will skipped due to no rewrite rule found.
+		expectSplitCount: expectSplitCount,
+	}
+
+	// Use the wrapper to apply the split strategy to the log iterator.
+	helper := wrapper.WithSplit(ctx, logIter, mockStrategy)
+
+	// Iterate over the log items and verify the split behavior.
+	count := 0
+	for i := helper.TryNext(ctx); !i.Finished; i = helper.TryNext(ctx) {
+		require.NoError(t, i.Err)
+		if count == len(smallFiles)+expectSplitCount {
+			// Verify that no split occurs initially due to insufficient data.
+			regions, err := mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
+			require.NoError(t, err)
+			require.Len(t, regions, 3)
+			require.Equal(t, []byte{}, regions[0].Meta.StartKey)
+			require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)), regions[1].Meta.StartKey)
+			require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)), regions[2].Meta.StartKey)
+			require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)), regions[2].Meta.EndKey)
+		}
+		// iter.Filterout execute first
+		count += 1
+	}
+
+	// iterate 20 small files + 4 valid files
+	require.Equal(t, len(smallFiles)+4, count)
+
+	// Verify that a split occurs on the second region due to excess data.
+	regions, err := mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
+	require.NoError(t, err)
+	require.Len(t, regions, 4)
+	require.Equal(t, fakeRowKey(100, 400), kv.Key(regions[1].Meta.EndKey))
+}
+
+type mockCompactedStrategy struct {
+	*logclient.CompactedFileSplitStrategy
+	expectSplitCount int
+}
+
+func (m *mockCompactedStrategy) ShouldSplit() bool {
+	return m.AccumulateCount%m.expectSplitCount == 0
+}
+
+func TestCollectSSTFileSets(t *testing.T) {
+	ctx := context.Background()
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, nil, nil)
+	rules := map[int64]*utils.RewriteRules{
+		1: {
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(1),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(100),
+				},
+			},
+		},
+	}
+
+	t.Run("skips ssts without rewrite rule", func(t *testing.T) {
+		fileSets, totalKVs, err := client.CollectSSTFileSets(ctx, iter.FromSlice([]logclient.SSTs{
+			fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
+			fakeSubCompactionWithOneSst(3, 100, 16*units.MiB, 300),
+		}), rules)
+		require.NoError(t, err)
+		require.Equal(t, int64(100), totalKVs)
+		require.Len(t, fileSets, 1)
+		require.Equal(t, int64(1), fileSets[0].TableID)
+		require.Len(t, fileSets[0].SSTFiles, 1)
+	})
+
+	t.Run("counts only ssts that still need restore", func(t *testing.T) {
+		var skippedKVs uint64
+		strategy := logclient.NewCompactedFileSplitStrategy(rules, map[string]struct{}{
+			"1:200": {},
+		}, func(kvCount, _ uint64) {
+			skippedKVs += kvCount
+		})
+		ssts := fakeSubCompactionWithMultiSsts(1, 200, 32*units.MiB, 200)
+		require.False(t, strategy.ShouldSkip(ssts))
+
+		fileSets, totalKVs, err := client.CollectSSTFileSets(ctx, iter.FromSlice([]logclient.SSTs{ssts}), rules)
+		require.NoError(t, err)
+		require.Equal(t, uint64(200), skippedKVs)
+		require.Equal(t, int64(200), totalKVs)
+		require.Len(t, fileSets, 1)
+		require.Len(t, fileSets[0].SSTFiles, 1)
+		require.Equal(t, "1:201", fileSets[0].SSTFiles[0].Name)
+	})
+}
+
+func TestEstimateCompactedSSTFlowControl(t *testing.T) {
+	fileSets := restore.BatchBackupFileSet{
+		{
+			TableID: 1,
+			SSTFiles: []*backuppb.File{
+				{
+					Name:  "file-1",
+					Size_: 16 * units.MiB,
+				},
+				{
+					Name:       "file-2",
+					TotalBytes: 8 * units.MiB,
+				},
+			},
+		},
+	}
+
+	snapshotBytes, compactedSSTBytes, l6BytesPerStore, l5BytesPerStore, pendingBytes :=
+		logclient.TEST_EstimateCompactedSSTFlowControl(fileSets, 5, 3, 120*units.MiB, 6*units.MiB)
+	require.Equal(t, uint64(120*units.MiB), snapshotBytes)
+	require.Equal(t, uint64(30*units.MiB), compactedSSTBytes)
+	require.Equal(t, uint64(72*units.MiB), l6BytesPerStore)
+	require.Equal(t, uint64(18*units.MiB), l5BytesPerStore)
+	require.InDelta(t, 54*float64(units.MiB), float64(pendingBytes), float64(units.KiB))
+}
+
+func TestEstimatePendingCompactionBytes(t *testing.T) {
+	require.Equal(t, uint64(0), logclient.TEST_EstimatePendingCompactionBytes(11*units.TiB, units.TiB))
+	pendingBytes := logclient.TEST_EstimatePendingCompactionBytes(units.TiB, 512*units.GiB)
+	expectedPendingBytes := (512*float64(units.GiB) - float64(units.TiB)/10) * 3
+	require.InDelta(t, expectedPendingBytes, float64(pendingBytes), float64(units.MiB))
+}
+
+func TestCompactedSSTFlowControlTarget(t *testing.T) {
+	soft, hard := logclient.TEST_CompactedSSTFlowControlTarget(
+		[]string{"192GiB"},
+		[]string{"256GiB"},
+		512*units.GiB,
+	)
+	require.Equal(t, uint64(units.TiB), soft)
+	require.Equal(t, uint64(2*units.TiB), hard)
+
+	soft, hard = logclient.TEST_CompactedSSTFlowControlTarget(
+		[]string{"192GiB"},
+		[]string{"256GiB"},
+		3*units.TiB,
+	)
+	require.Equal(t, uint64(3840*units.GiB), soft)
+	require.Equal(t, uint64(7680*units.GiB), hard)
+
+	soft, hard = logclient.TEST_CompactedSSTFlowControlTarget(
+		[]string{"4TiB"},
+		[]string{"9TiB"},
+		512*units.GiB,
+	)
+	require.Equal(t, uint64(4*units.TiB), soft)
+	require.Equal(t, uint64(9*units.TiB), hard)
+
+	require.False(t, logclient.TEST_AllTiKVConfigsAtLeast([]string{"4TiB", "192GiB"}, 4*units.TiB))
+	require.True(t, logclient.TEST_AllTiKVConfigsAtLeast([]string{"4TiB", "5TiB"}, 4*units.TiB))
+	require.Equal(t, "1TiB", logclient.TEST_FormatBytes(units.TiB))
+	require.Equal(t, "1536GiB", logclient.TEST_FormatBytes(1536*units.GiB))
+}
+
+func TestCompactedSplitStrategy(t *testing.T) {
+	ctx := context.Background()
+
+	rules := map[int64]*utils.RewriteRules{
+		1: {
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(1),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(100),
+				},
+			},
+		},
+		2: {
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(2),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(200),
+				},
+			},
+		},
+	}
+
+	oriRegions := [][]byte{
+		{},
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+	}
+
+	cases := []struct {
+		MockSubcompationIter iter.TryNextor[logclient.SSTs]
+		ExpectRegionEndKeys  [][]byte
+	}{
+		{
+			iter.FromSlice([]logclient.SSTs{
+				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
+				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
+				fakeSubCompactionWithOneSst(2, 100, 48*units.MiB, 300),
+				fakeSubCompactionWithOneSst(3, 100, 100*units.MiB, 100000),
+			}),
+			// no split
+			// table 1 has not accumlate enough 400 keys or 4MB
+			[][]byte{
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+			},
+		},
+		{
+			iter.FromSlice([]logclient.SSTs{
+				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
+				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
+				fakeSubCompactionWithOneSst(1, 100, 32*units.MiB, 10),
+				fakeSubCompactionWithOneSst(2, 100, 48*units.MiB, 300),
+			}),
+			// split on table 1
+			// table 1 has accumlate enough keys
+			[][]byte{
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+				[]byte(fakeRowKey(100, 200)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+			},
+		},
+		{
+			iter.FromSlice([]logclient.SSTs{
+				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
+				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
+				fakeSubCompactionWithOneSst(2, 100, 32*units.MiB, 300),
+				fakeSubCompactionWithOneSst(3, 100, 10*units.MiB, 100000),
+				fakeSubCompactionWithOneSst(1, 300, 48*units.MiB, 13),
+				fakeSubCompactionWithOneSst(1, 400, 64*units.MiB, 14),
+				fakeSubCompactionWithOneSst(1, 100, 1*units.MiB, 15),
+			}),
+			[][]byte{
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+				[]byte(fakeRowKey(100, 400)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+			},
+		},
+	}
+	for _, ca := range cases {
+		storesMap := make(map[uint64]*metapb.Store)
+		storesMap[1] = &metapb.Store{Id: 1}
+		mockPDCli := split.NewMockPDClientForSplit()
+		mockPDCli.SetStores(storesMap)
+		mockPDCli.SetRegions(oriRegions)
+
+		client := split.NewClient(mockPDCli, nil, nil, 100, 4)
+		wrapper := restore.PipelineRestorerWrapper[logclient.SSTs]{
+			PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, 4*units.MB, 400),
+		}
+
+		strategy := logclient.NewCompactedFileSplitStrategy(rules, nil, nil)
+		mockStrategy := &mockCompactedStrategy{
+			CompactedFileSplitStrategy: strategy,
+			expectSplitCount:           3,
+		}
+
+		helper := wrapper.WithSplit(ctx, ca.MockSubcompationIter, mockStrategy)
+
+		for i := helper.TryNext(ctx); !i.Finished; i = helper.TryNext(ctx) {
+			require.NoError(t, i.Err)
+		}
+
+		regions, err := mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
+		require.NoError(t, err)
+		require.Len(t, regions, len(ca.ExpectRegionEndKeys))
+		for i, endKey := range ca.ExpectRegionEndKeys {
+			require.Equal(t, endKey, regions[i].Meta.EndKey)
+		}
+	}
+}
+
+func TestCompactedSplitStrategyWithCheckpoint(t *testing.T) {
+	ctx := context.Background()
+
+	rules := map[int64]*utils.RewriteRules{
+		1: {
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(1),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(100),
+				},
+			},
+		},
+		2: {
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(2),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(200),
+				},
+			},
+		},
+	}
+
+	oriRegions := [][]byte{
+		{},
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+	}
+
+	cases := []struct {
+		MockSubcompationIter iter.TryNextor[logclient.SSTs]
+		CheckpointSet        map[string]struct{}
+		ProcessedKVCount     int
+		ProcessedSize        int
+		ExpectRegionEndKeys  [][]byte
+	}{
+		{
+			iter.FromSlice([]logclient.SSTs{
+				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
+				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
+				fakeSubCompactionWithOneSst(2, 100, 48*units.MiB, 300),
+				fakeSubCompactionWithOneSst(3, 100, 100*units.MiB, 100000),
+			}),
+			map[string]struct{}{
+				"1:100": {},
+				"1:200": {},
+			},
+			300,
+			48 * units.MiB,
+			// no split, checkpoint files came in order
+			[][]byte{
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+			},
+		},
+		{
+			iter.FromSlice([]logclient.SSTs{
+				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
+				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
+				fakeSubCompactionWithOneSst(1, 100, 32*units.MiB, 10),
+				fakeSubCompactionWithOneSst(2, 100, 48*units.MiB, 300),
+			}),
+			map[string]struct{}{
+				"1:100": {},
+			},
+			110,
+			48 * units.MiB,
+			// no split, checkpoint files came in different order
+			[][]byte{
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+			},
+		},
+		{
+			iter.FromSlice([]logclient.SSTs{
+				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
+				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
+				fakeSubCompactionWithOneSst(2, 100, 32*units.MiB, 300),
+				fakeSubCompactionWithOneSst(3, 100, 10*units.MiB, 100000),
+				fakeSubCompactionWithOneSst(1, 300, 48*units.MiB, 13),
+				fakeSubCompactionWithOneSst(1, 400, 64*units.MiB, 14),
+				fakeSubCompactionWithOneSst(1, 100, 1*units.MiB, 15),
+			}),
+			map[string]struct{}{
+				"1:300": {},
+				"1:400": {},
+			},
+			27,
+			112 * units.MiB,
+			// no split, the main file has skipped due to checkpoint.
+			[][]byte{
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+			},
+		},
+		{
+			iter.FromSlice([]logclient.SSTs{
+				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
+				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
+				fakeSubCompactionWithOneSst(2, 100, 32*units.MiB, 300),
+				fakeSubCompactionWithOneSst(3, 100, 10*units.MiB, 100000),
+				fakeSubCompactionWithOneSst(1, 300, 48*units.MiB, 13),
+				fakeSubCompactionWithOneSst(1, 400, 64*units.MiB, 14),
+				fakeSubCompactionWithOneSst(1, 100, 1*units.MiB, 15),
+			}),
+			map[string]struct{}{
+				"1:100": {},
+				"1:200": {},
+			},
+			315,
+			49 * units.MiB,
+			[][]byte{
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+				[]byte(fakeRowKey(100, 400)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+			},
+		},
+		{
+			iter.FromSlice([]logclient.SSTs{
+				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
+				fakeSubCompactionWithMultiSsts(1, 200, 32*units.MiB, 200),
+				fakeSubCompactionWithOneSst(2, 100, 32*units.MiB, 300),
+				fakeSubCompactionWithOneSst(3, 100, 10*units.MiB, 100000),
+				fakeSubCompactionWithOneSst(1, 300, 48*units.MiB, 13),
+				fakeSubCompactionWithOneSst(1, 400, 64*units.MiB, 14),
+				fakeSubCompactionWithOneSst(1, 100, 1*units.MiB, 15),
+			}),
+			map[string]struct{}{
+				"1:100": {},
+				"1:200": {},
+			},
+			315,
+			49 * units.MiB,
+			[][]byte{
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+				[]byte(fakeRowKey(100, 300)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+			},
+		},
+	}
+	for _, ca := range cases {
+		storesMap := make(map[uint64]*metapb.Store)
+		storesMap[1] = &metapb.Store{Id: 1}
+		mockPDCli := split.NewMockPDClientForSplit()
+		mockPDCli.SetStores(storesMap)
+		mockPDCli.SetRegions(oriRegions)
+
+		client := split.NewClient(mockPDCli, nil, nil, 100, 4)
+		wrapper := restore.PipelineRestorerWrapper[logclient.SSTs]{
+			PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, 4*units.MB, 400),
+		}
+		totalSize := 0
+		totalKvCount := 0
+
+		strategy := logclient.NewCompactedFileSplitStrategy(rules, ca.CheckpointSet, func(u1, u2 uint64) {
+			totalKvCount += int(u1)
+			totalSize += int(u2)
+		})
+		mockStrategy := &mockCompactedStrategy{
+			CompactedFileSplitStrategy: strategy,
+			expectSplitCount:           3,
+		}
+
+		helper := wrapper.WithSplit(ctx, ca.MockSubcompationIter, mockStrategy)
+
+		for i := helper.TryNext(ctx); !i.Finished; i = helper.TryNext(ctx) {
+			require.NoError(t, i.Err)
+		}
+
+		regions, err := mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
+		require.NoError(t, err)
+		require.Len(t, regions, len(ca.ExpectRegionEndKeys))
+		for i, endKey := range ca.ExpectRegionEndKeys {
+			require.Equal(t, endKey, regions[i].Meta.EndKey)
+		}
+		require.Equal(t, totalKvCount, ca.ProcessedKVCount)
+		require.Equal(t, totalSize, ca.ProcessedSize)
+	}
+}
+
+func fakeSubCompactionWithMultiSsts(tableID, rowID int64, length uint64, num uint64) logclient.SSTs {
+	return &logclient.CompactedSSTs{&backuppb.LogFileSubcompaction{
+		Meta: &backuppb.LogFileSubcompactionMeta{
+			TableId: tableID,
+		},
+		SstOutputs: []*backuppb.File{
+			{
+				Name:     fmt.Sprintf("%d:%d", tableID, rowID),
+				StartKey: fakeRowRawKey(tableID, rowID),
+				EndKey:   fakeRowRawKey(tableID, rowID+1),
+				Size_:    length,
+				TotalKvs: num,
+			},
+			{
+				Name:     fmt.Sprintf("%d:%d", tableID, rowID+1),
+				StartKey: fakeRowRawKey(tableID, rowID+1),
+				EndKey:   fakeRowRawKey(tableID, rowID+2),
+				Size_:    length,
+				TotalKvs: num,
+			},
+		},
+	}}
+}
+func fakeSubCompactionWithOneSst(tableID, rowID int64, length uint64, num uint64) logclient.SSTs {
+	return &logclient.CompactedSSTs{&backuppb.LogFileSubcompaction{
+		Meta: &backuppb.LogFileSubcompactionMeta{
+			TableId: tableID,
+		},
+		SstOutputs: []*backuppb.File{
+			{
+				Name:     fmt.Sprintf("%d:%d", tableID, rowID),
+				StartKey: fakeRowRawKey(tableID, rowID),
+				EndKey:   fakeRowRawKey(tableID, rowID+1),
+				Size_:    length,
+				TotalKvs: num,
+			},
+		},
+	}}
+}
+
+func fakeFile(tableID, rowID int64, length uint64, num int64) *backuppb.DataFileInfo {
+	return &backuppb.DataFileInfo{
+		StartKey:        fakeRowKey(tableID, rowID),
+		EndKey:          fakeRowKey(tableID, rowID+1),
+		TableId:         tableID,
+		Length:          length,
+		NumberOfEntries: num,
+	}
+}
+
+func fakeRowKey(tableID, rowID int64) kv.Key {
+	return codec.EncodeBytes(nil, fakeRowRawKey(tableID, rowID))
+}
+
+func fakeRowRawKey(tableID, rowID int64) kv.Key {
+	return tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(tableID), kv.IntHandle(rowID))
+}
+
+func TestRepairIngestIndexOutputAddIndexSQL(t *testing.T) {
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.MustExec("CREATE TABLE test.repair_index_export_t(id int, a int, b int, key i1(id), unique key i2(a));")
+	g := gluetidb.New()
+	ctx := context.Background()
+	se, err := g.CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
+	client.SetUseCheckpoint()
+	tk.MustExec("CREATE DATABASE IF NOT EXISTS " + checkpoint.LogRestoreCheckpointDatabaseName)
+	defer tk.MustExec("DROP DATABASE IF EXISTS " + checkpoint.LogRestoreCheckpointDatabaseName)
+
+	fakeJob := func(
+		schemaName string,
+		tableName string,
+		tableID int64,
+		indexID int64,
+		indexName string,
+		columnName string,
+		args json.RawMessage,
+	) *model.Job {
+		return &model.Job{
+			Version:    model.JobVersion1,
+			SchemaName: schemaName,
+			TableName:  tableName,
+			TableID:    tableID,
+			Type:       model.ActionAddIndex,
+			State:      model.JobStateSynced,
+			RowCount:   100,
+			RawArgs:    args,
+			ReorgMeta: &model.DDLReorgMeta{
+				ReorgTp: model.ReorgTypeIngest,
+			},
+			BinlogInfo: &model.HistoryInfo{
+				TableInfo: &model.TableInfo{
+					Indices: []*model.IndexInfo{
+						{
+							ID:   indexID,
+							Name: pmodel.NewCIStr(indexName),
+							Columns: []*model.IndexColumn{{
+								Name: pmodel.NewCIStr(columnName),
+							}},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	infoSchema := s.Mock.InfoSchema()
+	table, err := infoSchema.TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("repair_index_export_t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	var indexIDi1, indexIDi2 int64
+	for _, indexInfo := range tableInfo.Indices {
+		switch indexInfo.Name.L {
+		case "i1":
+			indexIDi1 = indexInfo.ID
+		case "i2":
+			indexIDi2 = indexInfo.ID
+		}
+	}
+	require.NotZero(t, indexIDi1)
+	require.NotZero(t, indexIDi2)
+
+	ingestRecorder := ingestrec.New()
+	require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+		"test", "repair_index_export_t", tableInfo.ID, indexIDi1, "i1", "id",
+		json.RawMessage(fmt.Sprintf("[%d, false, [], false]", indexIDi1)),
+	), false))
+	require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+		"test", "repair_index_export_t", tableInfo.ID, indexIDi2, "i2", "a",
+		json.RawMessage(fmt.Sprintf("[%d, false, [], false]", indexIDi2)),
+	), false))
+
+	sqlStorage, err := storage.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g, sqlStorage))
+
+	infoSchema = s.Mock.InfoSchema()
+	table, err = infoSchema.TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("repair_index_export_t"))
+	require.NoError(t, err)
+	indexNames := make(map[string]struct{})
+	for _, indexInfo := range table.Meta().Indices {
+		indexNames[indexInfo.Name.L] = struct{}{}
+	}
+	require.NotContains(t, indexNames, "i1")
+	require.NotContains(t, indexNames, "i2")
+
+	data, err := sqlStorage.ReadFile(ctx, "add-index.sql")
+	require.NoError(t, err)
+	sqlText := string(data)
+	require.Contains(t, sqlText, "ALTER TABLE `test`.`repair_index_export_t` ADD INDEX `i1`(`id`) USING BTREE VISIBLE LOCAL;")
+	require.Contains(t, sqlText, "ALTER TABLE `test`.`repair_index_export_t` ADD UNIQUE KEY `i2`(`a`) USING BTREE VISIBLE LOCAL;")
+}
+
+func TestRepairIngestIndexWithForeignKey(t *testing.T) {
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.MustExec("create table test.parent (id int, index i2(id))")
+	tk.MustExec("create table test.child (id int, pid int, index i1(pid), foreign key (pid) references test.parent (id) on delete cascade)")
+	g := gluetidb.New()
+	ctx := context.Background()
+	se, err := g.CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
+	client.SetUseCheckpoint()
+	tk.MustExec("CREATE DATABASE IF NOT EXISTS " + checkpoint.LogRestoreCheckpointDatabaseName)
+	defer tk.MustExec("DROP DATABASE IF EXISTS " + checkpoint.LogRestoreCheckpointDatabaseName)
+
+	fakeJob := func(
+		schemaName string,
+		tableName string,
+		tableID int64,
+		indexID int64,
+		indexName string,
+		columnName string,
+		args json.RawMessage,
+	) *model.Job {
+		return &model.Job{
+			Version:    model.JobVersion1,
+			SchemaName: schemaName,
+			TableName:  tableName,
+			TableID:    tableID,
+			Type:       model.ActionAddIndex,
+			State:      model.JobStateSynced,
+			RowCount:   100,
+			RawArgs:    args,
+			ReorgMeta: &model.DDLReorgMeta{
+				ReorgTp: model.ReorgTypeIngest,
+			},
+			BinlogInfo: &model.HistoryInfo{
+				TableInfo: &model.TableInfo{
+					Indices: []*model.IndexInfo{
+						{
+							ID:   indexID,
+							Name: pmodel.NewCIStr(indexName),
+							Columns: []*model.IndexColumn{{
+								Name: pmodel.NewCIStr(columnName),
+							}},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	{
+		infoSchema := s.Mock.InfoSchema()
+		childTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
+		require.NoError(t, err)
+		parentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
+		require.NoError(t, err)
+		childTableIndexI1 := childTableInfo.Indices[0]
+		parentTableIndexI2 := parentTableInfo.Indices[0]
+
+		ingestRecorder := ingestrec.New()
+		require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+			"test", "child", childTableInfo.ID, childTableIndexI1.ID, "i1", "pid",
+			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", childTableIndexI1.ID)),
+		), false))
+		require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+			"test", "parent", parentTableInfo.ID, parentTableIndexI2.ID, "i2", "id",
+			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", parentTableIndexI2.ID)),
+		), false))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g, nil))
+		infoSchema = s.Mock.InfoSchema()
+		newChildTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
+		require.NoError(t, err)
+		newParentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
+		require.NoError(t, err)
+
+		require.Equal(t, parentTableIndexI2.Name, newParentTableInfo.Indices[0].Name)
+		require.NotEqual(t, parentTableIndexI2.ID, newParentTableInfo.Indices[0].ID)
+		require.Equal(t, childTableIndexI1.Name, newChildTableInfo.Indices[0].Name)
+		require.NotEqual(t, childTableIndexI1.ID, newChildTableInfo.Indices[0].ID)
+		require.Equal(t, childTableInfo.ForeignKeys[0].Name, newChildTableInfo.ForeignKeys[0].Name)
+		require.NotEqual(t, childTableInfo.ForeignKeys[0].ID, newChildTableInfo.ForeignKeys[0].ID)
+		sqls, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor())
+		require.NoError(t, err)
+		require.Len(t, sqls.FKSQLs, 1)
+		sqls.FKSQLs[0].FKID = newChildTableInfo.ForeignKeys[0].ID
+		if sqls.SQLs[0].TableName == childTableInfo.Name {
+			sqls.SQLs[0].IndexID = newChildTableInfo.Indices[0].ID
+			sqls.SQLs[1].IndexID = newParentTableInfo.Indices[0].ID
+		} else {
+			sqls.SQLs[0].IndexID = newParentTableInfo.Indices[0].ID
+			sqls.SQLs[1].IndexID = newChildTableInfo.Indices[0].ID
+		}
+		require.NoError(t, checkpoint.RemoveCheckpointDataForLogRestore(ctx, s.Mock.Domain, se))
+		tk.MustExec("CREATE DATABASE IF NOT EXISTS " + checkpoint.LogRestoreCheckpointDatabaseName)
+		err = checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, se, sqls)
+		require.NoError(t, err)
+	}
+	{
+		infoSchema := s.Mock.InfoSchema()
+		childTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
+		require.NoError(t, err)
+		parentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
+		require.NoError(t, err)
+		childTableIndexI1 := childTableInfo.Indices[0]
+		parentTableIndexI2 := parentTableInfo.Indices[0]
+
+		ingestRecorder := ingestrec.New()
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g, nil))
+		infoSchema = s.Mock.InfoSchema()
+		newChildTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
+		require.NoError(t, err)
+		newParentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
+		require.NoError(t, err)
+		require.Equal(t, parentTableIndexI2.Name, newParentTableInfo.Indices[0].Name)
+		require.NotEqual(t, parentTableIndexI2.ID, newParentTableInfo.Indices[0].ID)
+		require.Equal(t, childTableIndexI1.Name, newChildTableInfo.Indices[0].Name)
+		require.NotEqual(t, childTableIndexI1.ID, newChildTableInfo.Indices[0].ID)
+		require.Equal(t, childTableInfo.ForeignKeys[0].Name, newChildTableInfo.ForeignKeys[0].Name)
+		require.NotEqual(t, childTableInfo.ForeignKeys[0].ID, newChildTableInfo.ForeignKeys[0].ID)
+	}
+	{
+		require.NoError(t, checkpoint.RemoveCheckpointDataForLogRestore(ctx, s.Mock.Domain, se))
+		tk.MustExec("CREATE DATABASE IF NOT EXISTS " + checkpoint.LogRestoreCheckpointDatabaseName)
+		infoSchema := s.Mock.InfoSchema()
+		childTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
+		require.NoError(t, err)
+		parentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
+		require.NoError(t, err)
+		childTableIndexI1 := childTableInfo.Indices[0]
+		parentTableIndexI2 := parentTableInfo.Indices[0]
+
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-repair-ingest-index", `return(true)`))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-repair-ingest-index"))
+		}()
+		ingestRecorder := ingestrec.New()
+		require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+			"test", "child", childTableInfo.ID, childTableIndexI1.ID, "i1", "pid",
+			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", childTableIndexI1.ID)),
+		), false))
+		require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+			"test", "parent", parentTableInfo.ID, parentTableIndexI2.ID, "i2", "id",
+			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", parentTableIndexI2.ID)),
+		), false))
+		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, g, nil))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-repair-ingest-index"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index", `return(true)`))
+		defer func() {
+			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index")
+		}()
+		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, g, nil))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index", `return(true)`))
+		defer func() {
+			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index")
+		}()
+		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, g, nil))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index"))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g, nil))
+
+		infoSchema = s.Mock.InfoSchema()
+		newChildTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("child"))
+		require.NoError(t, err)
+		newParentTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("parent"))
+		require.NoError(t, err)
+		require.Equal(t, parentTableIndexI2.Name, newParentTableInfo.Indices[0].Name)
+		require.NotEqual(t, parentTableIndexI2.ID, newParentTableInfo.Indices[0].ID)
+		require.Equal(t, childTableIndexI1.Name, newChildTableInfo.Indices[0].Name)
+		require.NotEqual(t, childTableIndexI1.ID, newChildTableInfo.Indices[0].ID)
+		require.Equal(t, childTableInfo.ForeignKeys[0].Name, newChildTableInfo.ForeignKeys[0].Name)
+		require.NotEqual(t, childTableInfo.ForeignKeys[0].ID, newChildTableInfo.ForeignKeys[0].ID)
+	}
+}
+
+func TestGetLockedMigrationsReleasesReadLockOnLoadError(t *testing.T) {
+	ctx := context.Background()
+	stg, err := storage.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+
+	// Inject a malformed migration file so ext.Load()'s migIdOf parser fails.
+	// migIdOf takes the first 8 chars of the filename as an integer; "badfile."
+	// is not parseable, so Load() returns an error and exercises the error path
+	// in GetLockedMigrations.
+	require.NoError(t, stg.WriteFile(ctx, "v1/migrations/badfile.mgrt", []byte("garbage")))
+
+	client := logclient.TEST_NewLogClientWithStorage(stg)
+	_, err = client.GetLockedMigrations(ctx)
+	require.Error(t, err, "expected Load() to fail on malformed migration file")
+
+	var lingering []string
+	require.NoError(t, stg.WalkDir(ctx, &storage.WalkOption{
+		SubDir:    "v1",
+		ObjPrefix: "LOCK",
+	}, func(p string, _ int64) error {
+		lingering = append(lingering, p)
+		return nil
+	}))
+	require.Emptyf(t, lingering, "readLock was not released after Load error; lingering files: %v", lingering)
 }
