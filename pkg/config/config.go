@@ -259,6 +259,10 @@ type Config struct {
 	// GracefulCloseConnectionsTimeout is the number of seconds the server waits during shutdown for running
 	// statements and open transactions to finish before it kills the remaining connections.
 	GracefulCloseConnectionsTimeout int `toml:"graceful-close-connections-timeout" json:"graceful-close-connections-timeout"`
+	// GracefulCloseConnectionsLingerMs is the number of milliseconds a connection outside of a transaction keeps
+	// reading during shutdown, to reject the client's next command with ER_SERVER_SHUTDOWN before it is closed.
+	// 0 closes the connection right away.
+	GracefulCloseConnectionsLingerMs int `toml:"graceful-close-connections-linger-ms" json:"graceful-close-connections-linger-ms"`
 	// AlterPrimaryKey is used to control alter primary key feature.
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
@@ -1811,6 +1815,9 @@ func (c *Config) Valid() error {
 	}
 	if c.GracefulCloseConnectionsTimeout < 0 {
 		return fmt.Errorf("graceful-close-connections-timeout should not be negative")
+	}
+	if c.GracefulCloseConnectionsLingerMs < 0 {
+		return fmt.Errorf("graceful-close-connections-linger-ms should not be negative")
 	}
 	if c.Log.File.MaxSize > MaxLogFileSize {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
