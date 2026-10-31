@@ -32,39 +32,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestImportKVFiles(t *testing.T) {
-	var (
-		importer            = logclient.LogFileImporter{}
-		ctx                 = context.Background()
-		shiftStartTS uint64 = 100
-		startTS      uint64 = 200
-		restoreTS    uint64 = 300
-	)
-
-	err := importer.ImportKVFiles(
-		ctx,
-		[]*logclient.LogDataFileInfo{
-			{
-				DataFileInfo: &backuppb.DataFileInfo{
-					Path: "log3",
-				},
-			},
-			{
-				DataFileInfo: &backuppb.DataFileInfo{
-					Path: "log1",
-				},
-			},
-		},
-		nil,
-		shiftStartTS,
-		startTS,
-		restoreTS,
-		false,
-		nil, nil,
-	)
-	require.True(t, berrors.ErrInvalidArgument.Equal(err))
-}
-
 func TestFilterFilesByRegion(t *testing.T) {
 	files := []*logclient.LogDataFileInfo{
 		{
@@ -269,9 +236,6 @@ func TestFileImporter(t *testing.T) {
 	require.NoError(t, err)
 
 	rewriteRules, encodeKeyFiles := prepareData()
-	err = importer.ImportKVFiles(ctx, encodeKeyFiles, rewriteRules, 1, 1, 1, true, nil, nil)
-	require.NoError(t, err)
-
-	err = importer.ImportKVFiles(ctx, encodeKeyFiles, rewriteRules, 1, 1, 1, false, nil, nil)
+	err = importer.ImportKVFiles(ctx, encodeKeyFiles, rewriteRules, 1, 1, 1, nil, nil)
 	require.NoError(t, err)
 }
