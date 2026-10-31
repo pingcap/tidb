@@ -11,6 +11,8 @@ description = "TiDB pkg/planner/property (Rust)."
 workspace = true
 
 [dependencies]
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-model = { path = "../tidb-model" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-intset = { path = "../tidb-intset" }
 tidb-size = { path = "../tidb-size" }

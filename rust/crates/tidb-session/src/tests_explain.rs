@@ -1187,6 +1187,8 @@ fn determinate_objective_uses_analyzed_row_count_after_inserts() {
     session
         .run("CREATE TABLE ignore_realtime_stats (a INT, b INT)")
         .unwrap();
+    // Go's source test: `statstestutil.HandleNextDDLEventWithTxn(h)`.
+    session.handle_ddl_events_for_test();
     session
         .run(
             "INSERT INTO ignore_realtime_stats VALUES \

@@ -48,6 +48,7 @@
 //! Joins refuse toward [`crate::find_best_task`]'s own specialized search,
 //! which owns candidate enumeration for them.
 
+use tidb_planner_property::stats_info::HistCollExt as _;
 use tidb_planner_core_operator_logicalop::data_source::{index_covers_condition, index_path_is_single_scan};
 use std::collections::{HashMap, HashSet};
 
@@ -2650,7 +2651,11 @@ fn filter_column_correlation(
             let Some(histogram) = hist_coll.histogram(*unique_id) else {
                 continue;
             };
-            let correlation = histogram.histogram.correlation;
+            let correlation = histogram
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .histogram
+                .correlation;
             if !found_histogram || max_correlation.abs() < correlation.abs() {
                 max_correlation = correlation;
                 most_correlated_column = columns.get(unique_id).cloned();
@@ -2749,7 +2754,7 @@ mod index_scan_limit_adjustment_tests {
 #[cfg(test)]
 mod correlation_tests {
     use super::filter_column_correlation;
-    use tidb_planner_property::stats_info::{HistColl, StatsInfo};
+    use tidb_planner_property::stats_info::StatsInfo;
     use std::sync::Arc;
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_expr::column::Column;
@@ -2774,8 +2779,7 @@ mod correlation_tests {
             })
         };
         let stats = StatsInfo::new(100.0, []).with_hist_coll(
-            HistColl::new(false, 100, [])
-                .with_histograms([(7, histogram(7, 0.4)), (8, histogram(8, -0.9))]),
+            tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 100, 0, [(7, std::sync::Arc::unwrap_or_clone(histogram(7, 0.4))), (8, std::sync::Arc::unwrap_or_clone(histogram(8, -0.9)))], []),
         );
 
         let (both_count, both_column, largest) = filter_column_correlation(
@@ -2821,7 +2825,7 @@ mod cross_estimate_dispatch_tests {
     use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
     use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, DataSource};
     use tidb_planner_core_base::PlanIdAllocator;
-    use tidb_planner_property::stats_info::{HistColl, StatsInfo};
+    use tidb_planner_property::stats_info::StatsInfo;
     use std::sync::Arc;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_expr::column::Column;
@@ -2870,7 +2874,7 @@ mod cross_estimate_dispatch_tests {
             stats_version: 2,
             ..Default::default()
         });
-        let hist_coll = HistColl::new(false, 100, []).with_histograms([(2, histogram)]);
+        let hist_coll = tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 100, 0, [(2, std::sync::Arc::unwrap_or_clone(histogram))], []);
         let stats = StatsInfo::new(100.0, []).with_hist_coll(hist_coll.clone());
         let expected_cross_count =
             tidb_planner_cardinality::cross_estimation::estimate_table_cross_row_count(
@@ -2988,7 +2992,7 @@ fn find_best_task_4_logical_data_source_paths(
         .as_ref()
         .or_else(|| ds.base.base.stats_info())
         .and_then(tidb_planner_property::stats_info::StatsInfo::hist_coll)
-        .is_none_or(tidb_planner_property::stats_info::HistColl::pseudo);
+        .is_none_or(|hist| hist.pseudo);
     if let Some(dual) = try_to_get_dual_task(ds, ctx) {
         return Ok(dual);
     }
@@ -3322,7 +3326,7 @@ fn find_best_task_4_logical_data_source_paths(
                                         && !table_filters.is_empty()
                                         && !table_stats
                                             .hist_coll()
-                                            .is_some_and(tidb_planner_property::stats_info::HistColl::pseudo)
+                                            .is_some_and(|hist| hist.pseudo)
                                     {
                                         filter_column_correlation(
                                             table_stats,

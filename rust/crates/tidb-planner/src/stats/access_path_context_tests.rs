@@ -68,20 +68,28 @@ fn logical_range_derivation_uses_current_statement_parameters() {
         table_columns: vec![column.clone()],
         // Go `initStats` attaches `PseudoTable`'s collection, whose
         // handle column is `IsHandle`.
-        table_stats: Some(StatsInfo::new(10_000.0, [(1, 10_000.0)]).with_hist_coll(
-            tidb_planner_property::stats_info::HistColl::new(true, 10_000, [])
-                .with_pk_is_handle(true)
-                .with_column_and_index_infos(
-                    [(
-                        1,
-                        tidb_planner_property::stats_info::PseudoColumn {
-                            lower_name: "id".to_owned(),
-                            unique_key_flag: false,
-                        },
-                    )],
-                    [],
-                ),
-        )),
+        table_stats: Some(StatsInfo::new(10_000.0, [(1, 10_000.0)]).with_hist_coll({
+            let mut coll = tidb_planner_property::stats_info::HistColl::new_with_cols_and_idxs(
+                0,
+                10_000,
+                0,
+                [(
+                    1,
+                    tidb_stats::column::Column {
+                        info: Some(tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                            id: 1,
+                            name: tidb_ast::CiString::new("id"),
+                            ..tidb_model::ColumnInfo::default()
+                        })),
+                        is_handle: true,
+                        ..tidb_stats::column::Column::default()
+                    },
+                )],
+                [],
+            );
+            coll.pseudo = true;
+            std::sync::Arc::new(coll)
+        })),
         pushed_down_conds: vec![bound("ge", 0), bound("le", 1)],
         ..Default::default()
     };
@@ -109,7 +117,6 @@ fn logical_range_derivation_uses_current_statement_parameters() {
 
 #[test]
 fn analyzed_derivation_evaluates_parameters_like_literal_predicates() {
-    use tidb_planner_property::stats_info::HistColl;
     let allocator = tidb_planner_core_base::PlanIdAllocator::new();
     let ty = FieldType::new(FieldTypeCode::LongLong);
     let columns = [1, 2].map(|id| {
@@ -135,7 +142,7 @@ fn analyzed_derivation_evaluates_parameters_like_literal_predicates() {
         ..Default::default()
     });
     let profile = StatsInfo::new(100.0, [(1, 10.0), (2, 10.0)]).with_hist_coll(
-        HistColl::new(false, 100, []).with_histograms([(1, histogram.clone()), (2, histogram)]),
+        tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 100, 0, [(1, std::sync::Arc::unwrap_or_clone(histogram.clone())), (2, std::sync::Arc::unwrap_or_clone(histogram))], []),
     );
     let scalar = |name: &str, args| {
         Expression::ScalarFunction(ScalarFunction::new(

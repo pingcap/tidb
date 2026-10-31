@@ -329,6 +329,29 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
 
 #[cfg(test)]
 mod analyzed_filter_selectivity_tests {
+    /// Go `HistColl` holding one column object with only its `Info` (no
+    /// analyzed statistics), as `PseudoTable` holds a public column.
+    fn info_only_hist_coll(
+        realtime_count: i64,
+        unique_id: i64,
+        name: &str,
+    ) -> std::sync::Arc<tidb_planner_property::stats_info::HistColl> {
+        let column = tidb_stats::column::Column {
+            info: Some(tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                name: tidb_ast::CiString::new(name),
+                ..tidb_model::ColumnInfo::default()
+            })),
+            ..tidb_stats::column::Column::default()
+        };
+        std::sync::Arc::new(tidb_planner_property::stats_info::HistColl::new_with_cols_and_idxs(
+            0,
+            realtime_count,
+            0,
+            [(unique_id, column)],
+            [],
+        ))
+    }
+
     use super::{analyzed_filter_selectivity, analyzed_filter_selectivity_with_options};
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_expr::column::Column;
@@ -336,7 +359,7 @@ mod analyzed_filter_selectivity_tests {
     use tidb_expr::expression::Expression;
     use tidb_expr::scalar_function::ScalarFunction;
     use tidb_planner_cardinality::row_count_estimator::EstimatorOptions;
-    use tidb_planner_property::stats_info::{HistColl, StatsInfo};
+    use tidb_planner_property::stats_info::{HistCollExt as _, StatsInfo};
     use tidb_stats::{Bucket, Histogram};
 
     #[test]
@@ -360,8 +383,7 @@ mod analyzed_filter_selectivity_tests {
             ..Default::default()
         });
         let stats = StatsInfo::new(100.0, [(7, 10.0), (8, 10.0)]).with_hist_coll(
-            HistColl::new(false, 100, [])
-                .with_histograms([(7, column_stats.clone()), (8, column_stats)]),
+            tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 100, 0, [(7, std::sync::Arc::unwrap_or_clone(column_stats.clone())), (8, std::sync::Arc::unwrap_or_clone(column_stats))], []),
         );
         let scalar = |name: &str, args| {
             Expression::ScalarFunction(ScalarFunction::new(
@@ -466,7 +488,7 @@ mod analyzed_filter_selectivity_tests {
             ..Default::default()
         });
         let stats = StatsInfo::new(6.0, [(1, 3.0)]).with_hist_coll(
-            HistColl::new(false, 6, []).with_histograms([(1, column_stats.clone())]),
+            tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 6, 0, [(1, std::sync::Arc::unwrap_or_clone(column_stats.clone()))], []),
         );
         let varchar = FieldType::new(FieldTypeCode::Varchar);
         let escape_type = FieldType::new(FieldTypeCode::LongLong);
@@ -491,16 +513,7 @@ mod analyzed_filter_selectivity_tests {
         // The column is in `HistColl.Columns` without buckets; an EMPTY
         // collection would take `pseudoSelectivity` instead.
         let stats = StatsInfo::new(rows as f64, [(7, 1_500_000.0)]).with_hist_coll(
-            HistColl::new(false, rows, []).with_column_and_index_infos(
-                [(
-                    7,
-                    tidb_planner_property::stats_info::PseudoColumn {
-                        lower_name: "l_orderkey".to_owned(),
-                        unique_key_flag: false,
-                    },
-                )],
-                [],
-            ),
+            info_only_hist_coll(rows, 7, "l_orderkey"),
         );
         let condition = Expression::ScalarFunction(ScalarFunction::new(
             tidb_ast::CiString::new("lt"),
@@ -537,18 +550,13 @@ mod analyzed_filter_selectivity_tests {
             }],
             ..Histogram::default()
         };
-        let hist_coll = HistColl::new(false, 1_000, [])
-            .with_histograms([(
-                unique_id,
-                std::sync::Arc::new(tidb_stats::column::Column {
+        let hist_coll = tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 1_000, 2_000, [(unique_id, tidb_stats::column::Column {
                     histogram,
                     top_n: None,
                     cmsketch: None,
                     stats_version: 2,
                     ..Default::default()
-                }),
-            )])
-            .with_modify_count(2_000);
+                })], []);
         let table_stats = StatsInfo::new(1_000.0, [(unique_id, 10.0)]).with_hist_coll(hist_coll);
         let long = || FieldType::new(FieldTypeCode::LongLong);
         let compare = |name: &str, value| {
@@ -613,18 +621,13 @@ mod analyzed_filter_selectivity_tests {
             }],
             ..Histogram::default()
         };
-        let hist_coll = HistColl::new(false, 300_000, [])
-            .with_histograms([(
-                unique_id,
-                std::sync::Arc::new(tidb_stats::column::Column {
+        let hist_coll = tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 300_000, 0, [(unique_id, tidb_stats::column::Column {
                     histogram,
                     top_n: None,
                     cmsketch: None,
                     stats_version: 2,
                     ..Default::default()
-                }),
-            )])
-            .with_modify_count(0);
+                })], []);
         let table_stats = StatsInfo::new(300_000.0, [(unique_id, 10.0)]).with_hist_coll(hist_coll);
 
         let long = || FieldType::new(FieldTypeCode::LongLong);
@@ -687,18 +690,13 @@ mod analyzed_filter_selectivity_tests {
             ],
             ..Histogram::default()
         };
-        let hist_coll = HistColl::new(false, 1_000, [])
-            .with_histograms([(
-                unique_id,
-                std::sync::Arc::new(tidb_stats::column::Column {
+        let hist_coll = tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 1_000, 0, [(unique_id, tidb_stats::column::Column {
                     histogram,
                     top_n: None,
                     cmsketch: None,
                     stats_version: 2,
                     ..Default::default()
-                }),
-            )])
-            .with_modify_count(0);
+                })], []);
         let table_stats = StatsInfo::new(1_000.0, [(unique_id, 10.0)]).with_hist_coll(hist_coll);
         let long = || FieldType::new(FieldTypeCode::LongLong);
         let compare = |name: &str, value: i64| {
@@ -720,7 +718,10 @@ mod analyzed_filter_selectivity_tests {
         let hist = table_stats.hist_coll().unwrap();
         let one_range =
             tidb_planner_cardinality::row_count_estimator::get_row_count_by_column_ranges(
-                hist.histogram(unique_id).map(|stats| stats.as_ref()),
+                hist.histogram(unique_id)
+                    .as_ref()
+                    .map(|stats| stats.read().unwrap())
+                    .as_deref(),
                 &[
                     tidb_planner_cardinality::row_count_estimator::ColumnRange::new(
                         Datum::Int(2),
@@ -730,8 +731,8 @@ mod analyzed_filter_selectivity_tests {
                     ),
                 ],
                 long().collation(),
-                hist.realtime_count(),
-                hist.modify_count(),
+                hist.realtime_count,
+                hist.modify_count,
                 false,
                 &tidb_planner_cardinality::row_count_estimator::EstimatorOptions::default(),
             )
@@ -794,18 +795,13 @@ mod analyzed_filter_selectivity_tests {
         topn.append(&encode(&date(1996, 2, 16)), 3_669);
         topn.append(&encode(&date(1996, 3, 2)), 3_340);
         topn.sort();
-        let hist_coll = HistColl::new(false, 6_001_215, [])
-            .with_histograms([(
-                unique_id,
-                std::sync::Arc::new(tidb_stats::column::Column {
+        let hist_coll = tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 6_001_215, 0, [(unique_id, tidb_stats::column::Column {
                     histogram,
                     top_n: Some(topn),
                     cmsketch: None,
                     stats_version: 2,
                     ..Default::default()
-                }),
-            )])
-            .with_modify_count(0);
+                })], []);
         let table_stats =
             StatsInfo::new(6_001_215.0, [(unique_id, 2_526.0)]).with_hist_coll(hist_coll);
         let date_type = || FieldType::new(FieldTypeCode::Date);
@@ -834,7 +830,10 @@ mod analyzed_filter_selectivity_tests {
         let hist = table_stats.hist_coll().unwrap();
         let one_range =
             tidb_planner_cardinality::row_count_estimator::get_row_count_by_column_ranges(
-                hist.histogram(unique_id).map(|stats| stats.as_ref()),
+                hist.histogram(unique_id)
+                    .as_ref()
+                    .map(|stats| stats.read().unwrap())
+                    .as_deref(),
                 &[
                     tidb_planner_cardinality::row_count_estimator::ColumnRange::new(
                         date(1996, 1, 1),
@@ -844,8 +843,8 @@ mod analyzed_filter_selectivity_tests {
                     ),
                 ],
                 date_type().collation(),
-                hist.realtime_count(),
-                hist.modify_count(),
+                hist.realtime_count,
+                hist.modify_count,
                 false,
                 &tidb_planner_cardinality::row_count_estimator::EstimatorOptions::default(),
             )
@@ -900,18 +899,13 @@ mod analyzed_filter_selectivity_tests {
             ],
             ..Histogram::default()
         };
-        let hist_coll = HistColl::new(false, 1_000, [])
-            .with_histograms([(
-                unique_id,
-                std::sync::Arc::new(tidb_stats::column::Column {
+        let hist_coll = tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 1_000, 0, [(unique_id, tidb_stats::column::Column {
                     histogram,
                     top_n: None,
                     cmsketch: None,
                     stats_version: 2,
                     ..Default::default()
-                }),
-            )])
-            .with_modify_count(0);
+                })], []);
         let table_stats = StatsInfo::new(1_000.0, [(unique_id, 10.0)]).with_hist_coll(hist_coll);
         let long = || FieldType::new(FieldTypeCode::LongLong);
         let eq = |value: i64| {
@@ -970,18 +964,13 @@ mod analyzed_filter_selectivity_tests {
             ],
             ..Histogram::default()
         };
-        let hist_coll = HistColl::new(false, 128, [])
-            .with_histograms([(
-                unique_id,
-                std::sync::Arc::new(tidb_stats::column::Column {
+        let hist_coll = tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 128, 0, [(unique_id, tidb_stats::column::Column {
                     histogram,
                     top_n: None,
                     cmsketch: None,
                     stats_version: 2,
                     ..Default::default()
-                }),
-            )])
-            .with_modify_count(0);
+                })], []);
         let table_stats = StatsInfo::new(128.0, [(unique_id, 3.0)]).with_hist_coll(hist_coll);
         // Built as the rewriter builds it: the escape argument and the
         // derived collation decide whether the ranger accepts the pattern.
@@ -1032,16 +1021,7 @@ mod analyzed_filter_selectivity_tests {
         // A collection without the column gives it no node, and the
         // uncovered pattern answers the 0.1 string-match default.
         let bare = StatsInfo::new(128.0, [(unique_id, 3.0)]).with_hist_coll(
-            HistColl::new(false, 128, []).with_column_and_index_infos(
-                [(
-                    unique_id + 1,
-                    tidb_planner_property::stats_info::PseudoColumn {
-                        lower_name: "other".to_owned(),
-                        unique_key_flag: false,
-                    },
-                )],
-                [],
-            ),
+            info_only_hist_coll(128, unique_id + 1, "other"),
         );
         let selectivity = analyzed_filter_selectivity(&bare, &[like("green%")]).expect("analyzed");
         assert!(

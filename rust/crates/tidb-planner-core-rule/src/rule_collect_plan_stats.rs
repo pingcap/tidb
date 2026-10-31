@@ -20,6 +20,7 @@
 //! `true` means the histogram payload is required; `false` means metadata such
 //! as NDV is sufficient.
 
+use tidb_planner_property::stats_info::HistCollExt as _;
 use std::collections::{HashMap, HashSet};
 
 use tidb_expr::column::Column;
@@ -698,7 +699,7 @@ mod tests {
     use tidb_planner_core_base::PlanIdAllocator;
     use tidb_infoschema::table_source::SourceIndexColumn;
     use tidb_infoschema::table_source::SourceIndex;
-    use tidb_planner_property::stats_info::{HistColl, StatsInfo};
+    use tidb_planner_property::stats_info::StatsInfo;
 
     fn column(id: i64) -> Column {
         let mut column = Column::new(id, FieldType::new(FieldTypeCode::LongLong));
@@ -1159,8 +1160,26 @@ mod tests {
         source.asked_column_group = vec![vec![column(1), column(2)]];
         // Go `getGroupNDVs` matches an index whose WHOLE column list equals
         // an asked group, in any order; a narrower index publishes nothing.
-        let hist_coll = HistColl::new(false, 1_000, std::iter::empty())
-            .with_index_ndvs([(5, (vec![2, 1], 800.0)), (6, (vec![1], 900.0))]);
+        let index = |id, ndv, columns: usize| tidb_stats::index::Index {
+            histogram: tidb_stats::Histogram {
+                id,
+                ndv,
+                ..tidb_stats::Histogram::default()
+            },
+            info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
+                id,
+                columns: vec![tidb_model::IndexColumn::default(); columns].into(),
+                ..tidb_model::IndexInfo::default()
+            })),
+            ..tidb_stats::index::Index::default()
+        };
+        let hist_coll = tidb_planner_property::stats_info::loaded_hist_coll_for_test(
+            false,
+            1_000,
+            0,
+            [],
+            [(5, index(5, 800, 2), vec![2, 1]), (6, index(6, 900, 1), vec![1])],
+        );
         source.table_stats =
             Some(StatsInfo::new(1_000.0, [(1, 500.0), (2, 400.0)]).with_hist_coll(hist_coll));
         // The plan profile is the table profile already scaled by a filter;

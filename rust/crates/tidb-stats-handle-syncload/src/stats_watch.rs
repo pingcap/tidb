@@ -355,6 +355,32 @@ impl SharedStats {
     /// Applies Go sync-load's cache update with the current schema metadata.
     /// A fully loaded item is never downgraded, and a metadata-only request
     /// does not replace an item already present.
+    /// Go `statsSyncLoad.handleOneItemTask` for a column storage never
+    /// analyzed: publish Go's `statistics.EmptyColumn` so planning estimates
+    /// the column as pseudo instead of asking to load it again.
+    pub fn publish_empty_column(
+        &self,
+        table_id: i64,
+        column_id: i64,
+        table_info: &tidb_model::table_info::TableInfo,
+    ) -> bool {
+        let empty = ClusterStatsItem {
+            id: column_id,
+            is_index: false,
+            stats_ver: 0,
+            flag: 0,
+            load_status: tidb_stats::StatsLoadedStatus::default(),
+            histogram: tidb_stats::Histogram {
+                id: column_id,
+                ..tidb_stats::Histogram::default()
+            },
+            topn: None,
+            cms: None,
+            fm_sketch: None,
+        };
+        self.update_item(table_id, empty, table_info)
+    }
+
     pub fn update_item(
         &self,
         table_id: i64,

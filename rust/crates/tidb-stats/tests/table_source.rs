@@ -17,8 +17,7 @@ use std::sync::{Arc, RwLock};
 use tidb_datatype::Datum;
 use tidb_stats::{
     Bucket, ColAndIdxExistenceMap, Column, CopyIntent, HistColl, Histogram, Index,
-    QueryColumn, QueryIndexInfo,
-    QueryTableInfo, StatsLoadedStatus, Table, TopN, ALL_EVICTED, PSEUDO_ROW_COUNT, PSEUDO_VERSION,
+    StatsLoadedStatus, Table, TopN, ALL_EVICTED, PSEUDO_ROW_COUNT, PSEUDO_VERSION,
     RATIO_OF_PSEUDO_ESTIMATE,
 };
 
@@ -332,16 +331,7 @@ fn source_id_to_unique_id_rekeys_only_requested_columns_and_shares_payloads() {
     coll.set_column(2, column(2, 20, StatsLoadedStatus::full_load()));
     coll.set_index(3, index(3, 30, false, StatsLoadedStatus::full_load()));
     coll.pseudo = true;
-    let mapped = coll.id_to_unique_id(&[
-        QueryColumn {
-            id: 2,
-            unique_id: 102,
-        },
-        QueryColumn {
-            id: 99,
-            unique_id: 199,
-        },
-    ]);
+    let mapped = coll.id_to_unique_id(&[planner_column(2, 102), planner_column(99, 199)]);
     assert_eq!(mapped.physical_id, 8);
     assert_eq!(mapped.realtime_count, 90);
     assert_eq!(mapped.modify_count, 4);
@@ -359,42 +349,48 @@ fn source_generate_query_maps_keeps_partial_prefix_and_sorts_index_ids() {
     for id in [9, 3, 7] {
         coll.set_index(id, index(id, 30, id == 7, StatsLoadedStatus::full_load()));
     }
-    let table_info = QueryTableInfo {
-        column_ids: vec![10, 20],
+    let column_info = |id, offset| tidb_model::ColumnInfo {
+        id,
+        offset,
+        ..tidb_model::ColumnInfo::default()
+    };
+    let index_info = |id, offsets: &[i64], mv_index| tidb_model::IndexInfo {
+        id,
+        columns: offsets
+            .iter()
+            .map(|offset| tidb_model::IndexColumn {
+                offset: *offset,
+                ..tidb_model::IndexColumn::default()
+            })
+            .collect::<Vec<_>>()
+            .into(),
+        mv_index,
+        ..tidb_model::IndexInfo::default()
+    };
+    let table_info = tidb_model::TableInfo {
+        columns: vec![column_info(10, 0), column_info(20, 1)].into(),
         indices: vec![
-            QueryIndexInfo {
-                id: 9,
-                column_offsets: vec![0],
-                mv_index: false,
-            },
-            QueryIndexInfo {
-                id: 3,
-                // The missing second planner column stops the loop but Go
-                // retains the non-empty prefix and therefore the index.
-                column_offsets: vec![0, 1],
-                mv_index: false,
-            },
-            QueryIndexInfo {
-                id: 7,
-                column_offsets: vec![0],
-                mv_index: true,
-            },
-        ],
+            index_info(9, &[0], false),
+            // The missing second planner column stops the loop but Go
+            // retains the non-empty prefix and therefore the index.
+            index_info(3, &[0, 1], false),
+            index_info(7, &[0], true),
+        ]
+        .into(),
+        ..tidb_model::TableInfo::default()
     };
     let mapped = coll.generate_from_column_info(
         &table_info,
-        &[QueryColumn {
-            id: 10,
-            unique_id: 100,
-        }],
-        |index, _| index.mv_index.then_some(vec![100]),
+        &[planner_column(10, 100)],
+        |_, index, columns| index.mv_index.then(|| vec![(*columns[&10]).clone()]),
     );
     assert_eq!(mapped.column_count(), 1);
     assert_eq!(mapped.index_count(), 3);
     assert_eq!(mapped.idx_to_col_unique_ids[&3], [100]);
     assert_eq!(mapped.col_unique_id_to_idx_ids[&100], [3, 7, 9]);
     assert_eq!(mapped.unique_id_to_col_info_id[&100], 10);
-    assert_eq!(mapped.mv_idx_to_columns[&7], [100]);
+    assert_eq!(mapped.mv_idx_to_columns[&7].len(), 1);
+    assert_eq!(mapped.mv_idx_to_columns[&7][0].unique_id, 100);
 }
 
 #[test]
@@ -596,4 +592,14 @@ fn source_health_outdated_analysis_and_mv_scaling_match() {
             .item_id(),
         2
     );
+}
+
+/// A planner `expression.Column` for column `id` with `unique_id`.
+fn planner_column(id: i64, unique_id: i64) -> tidb_expr::column::Column {
+    let mut column = tidb_expr::column::Column::new(
+        unique_id,
+        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+    );
+    column.id = id;
+    column
 }

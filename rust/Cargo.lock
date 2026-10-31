@@ -6111,6 +6111,8 @@ dependencies = [
  "tidb-expr",
  "tidb-funcdep",
  "tidb-intset",
+ "tidb-model",
+ "tidb-mysql",
  "tidb-size",
  "tidb-stats",
 ]
@@ -7084,6 +7086,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-dbterror",
  "tidb-errno",
+ "tidb-expr",
  "tidb-fastrand",
  "tidb-generic",
  "tidb-goruntime",

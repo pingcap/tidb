@@ -36,6 +36,7 @@
 //! expression-to-range extraction, and the MV-index paths. Each is called
 //! out at its use site.
 
+use tidb_planner_property::stats_info::HistCollExt as _;
 use tidb_planner_property::stats_info::IndexRowCounts;
 use tidb_datatype::CollationCollator;
 #[cfg(test)]
@@ -2998,47 +2999,125 @@ mod version_one_index_dispatch_tests {
     }
 }
 
-/// The index estimation view of a statistics collection: the collection is
-/// `planner/property`'s, the view the row-count estimator's.
-pub trait HistCollIndexEstimation {
-    /// Borrowed collection view using Go's current Idx2ColUniqueIDs mapping.
-    /// Path preparation may extend the declared prefix with handle columns.
-    fn index_estimation_stats(&self, index_id: i64) -> IndexEstimationStats<'_>;
+/// The statistics objects index estimations read through Go's `HistColl`.
+/// Go reads them through shared pointers; here each distinct object is
+/// read-locked exactly once for the estimations' duration, so one thread
+/// never re-enters a lock an evicting writer may be waiting on.
+#[derive(Default)]
+pub struct IndexEstimationPins {
+    plans: Vec<PinnedIndexPlan>,
+    indexes: Vec<tidb_stats::SharedIndex>,
+    columns: Vec<tidb_stats::SharedColumn>,
 }
 
-impl HistCollIndexEstimation for tidb_planner_property::stats_info::HistColl {
-    fn index_estimation_stats(&self, index_id: i64) -> IndexEstimationStats<'_> {
-        let columns = self.index_columns(index_id);
-        let valid = columns
+struct PinnedIndexPlan {
+    index: Option<usize>,
+    valid_columns: Vec<Option<usize>>,
+    declared_columns: Vec<Option<usize>>,
+    row_counts: IndexRowCounts,
+    policy: tidb_planner_property::stats_info::IndexRangePolicy,
+    unique_columns: Option<usize>,
+}
+
+fn pin_shared<T>(pins: &mut Vec<std::sync::Arc<T>>, shared: std::sync::Arc<T>) -> usize {
+    if let Some(position) = pins.iter().position(|pinned| std::sync::Arc::ptr_eq(pinned, &shared)) {
+        return position;
+    }
+    pins.push(shared);
+    pins.len() - 1
+}
+
+impl IndexEstimationPins {
+    /// Pins one index estimation over Go's current `Idx2ColUniqueIDs`
+    /// mapping (path preparation may extend the declared prefix with the
+    /// handle). `valid_columns` overrides the estimation-valid column list
+    /// (`idxCols`) by planner unique ID. Returns the estimation's handle.
+    pub fn pin(
+        &mut self,
+        coll: &tidb_planner_property::stats_info::HistColl,
+        index_id: i64,
+        valid_columns: Option<&[i64]>,
+    ) -> usize {
+        let declared = coll.index_columns(index_id).to_vec();
+        let valid_ids = valid_columns.map_or_else(|| declared.clone(), <[i64]>::to_vec);
+        let valid_columns = valid_ids
             .iter()
-            .map(|id| self.histogram_for_estimation(*id).map(std::sync::Arc::as_ref))
+            .map(|id| {
+                coll.histogram_for_estimation(*id)
+                    .map(|column| pin_shared(&mut self.columns, column))
+            })
             .collect();
-        let mut stats = IndexEstimationStats::new(
-            self.index_histogram(index_id).map(std::sync::Arc::as_ref),
-            valid,
-            self.index_row_counts(index_id).unwrap_or_else(|| {
-                IndexRowCounts::unscaled(self.realtime_count(), self.modify_count())
+        let declared_columns = declared
+            .iter()
+            .map(|id| coll.histogram(*id).map(|column| pin_shared(&mut self.columns, column)))
+            .collect();
+        let index = coll
+            .index_histogram(index_id)
+            .map(|index| pin_shared(&mut self.indexes, index));
+        let unique_columns = coll.index_info(index_id).and_then(|info| {
+            let info = info.read();
+            info.unique.then_some(info.columns.len())
+        });
+        self.plans.push(PinnedIndexPlan {
+            index,
+            valid_columns,
+            declared_columns,
+            row_counts: coll.index_row_counts(index_id).unwrap_or_else(|| {
+                IndexRowCounts::unscaled(coll.realtime_count, coll.modify_count)
             }),
+            policy: coll.index_range_policy(index_id),
+            unique_columns,
+        });
+        self.plans.len() - 1
+    }
+
+    /// Read-locks every pinned object once.
+    #[must_use]
+    pub fn read(&self) -> IndexEstimationGuards<'_> {
+        IndexEstimationGuards {
+            pins: self,
+            indexes: self.indexes.iter().map(|index| crate::read(index)).collect(),
+            columns: self.columns.iter().map(|column| crate::read(column)).collect(),
+        }
+    }
+}
+
+/// The read guards of [`IndexEstimationPins`].
+pub struct IndexEstimationGuards<'a> {
+    pins: &'a IndexEstimationPins,
+    indexes: Vec<std::sync::RwLockReadGuard<'a, tidb_stats::index::Index>>,
+    columns: Vec<std::sync::RwLockReadGuard<'a, tidb_stats::column::Column>>,
+}
+
+impl IndexEstimationGuards<'_> {
+    /// The estimation context of one pinned index estimation.
+    #[must_use]
+    pub fn stats(&self, handle: usize) -> IndexEstimationStats<'_> {
+        let plan = &self.pins.plans[handle];
+        let column = |position: &Option<usize>| position.map(|position| &*self.columns[position]);
+        let mut stats = IndexEstimationStats::new(
+            plan.index.map(|position| &*self.indexes[position]),
+            plan.valid_columns.iter().map(column).collect(),
+            plan.row_counts,
         );
         if stats
             .index
             .is_some_and(|index| index.stats_version == 1 && index.cmsketch.is_some())
         {
-            stats.column_ndvs = columns
+            stats.column_ndvs = plan
+                .declared_columns
                 .iter()
-                .map(|id| self.histogram(*id).map(|column| column.histogram.ndv))
+                .map(|position| column(position).map(|column| column.histogram.ndv))
                 .collect();
-            stats.column_is_handle = columns
+            // Go `Column.IsHandle`.
+            stats.column_is_handle = plan
+                .declared_columns
                 .iter()
-                .map(|id| {
-                    self.pk_is_handle() && self.column(*id).is_some_and(|column| column.is_handle)
-                })
+                .map(|position| column(position).is_some_and(|column| column.is_handle))
                 .collect();
         }
-        stats.policy = self.index_range_policy(index_id);
-        if let Some(info) = self.index_info(index_id) {
-            stats.unique_columns = info.unique.then_some(info.column_lower_names.len());
-        }
+        stats.policy = plan.policy;
+        stats.unique_columns = plan.unique_columns;
         stats
     }
 }

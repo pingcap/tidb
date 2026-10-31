@@ -106,3 +106,8 @@ pub fn apply_exponential_backoff(sorted_values: &[f64], lower_bound: f64, upper_
 
     go_max(lower_bound, go_min(result, upper_bound))
 }
+
+/// A read guard on one statistics object Go's `HistColl` shares by pointer.
+pub(crate) fn read<T>(lock: &std::sync::RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(std::sync::PoisonError::into_inner)
+}

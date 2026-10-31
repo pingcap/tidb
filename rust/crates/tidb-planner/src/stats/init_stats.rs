@@ -19,8 +19,7 @@ use std::collections::BTreeSet;
 
 use tidb_planner_core_operator_logicalop::DataSource;
 use tidb_stats::Table;
-use tidb_planner_property::stats_info::{RowSizeColumnStats, RowSizeType};
-use tidb_planner_property::stats_info::{HistColl, StatsInfo};
+use tidb_planner_property::stats_info::StatsInfo;
 
 
 
@@ -31,6 +30,7 @@ use tidb_planner_property::stats_info::{HistColl, StatsInfo};
 /// has run.
 pub fn init_stats(
     source: &mut DataSource,
+    table_info: &tidb_model::TableInfo,
     statistics: Option<&Table>,
     row_count: f64,
     predicate_loaded: Option<(BTreeSet<i64>, BTreeSet<i64>)>,
@@ -112,291 +112,52 @@ pub fn init_stats(
     // to cost model v2: base-table rows include DataInDiskByRows' eight
     // bytes per column, while a join/projection-created StatsInfo has a
     // nil HistColl and uses static type width only.
-    let row_size_columns = source
-        .table_columns
-        .iter()
-        .filter_map(|column| {
-            let loaded = statistics?.hist_coll.get_column(column.id)?;
-            let loaded = read(&loaded);
-            let field_type = column.ret_type.as_ref()?;
-            let is_handle = source
-                .handle_cols
-                .iter()
-                .any(|handle| handle.unique_id == column.unique_id);
-            let row_size_col = RowSizeColumnStats::new(
-                RowSizeType::from_field_type_code(field_type.code()),
-                loaded.histogram.tot_col_size,
-                loaded.histogram.null_count,
-                loaded.total_row_count(),
-                is_handle,
-            );
-            Some((column.unique_id, row_size_col))
-        })
-        .collect::<Vec<_>>();
-    // The planner's DataSource-statistics rule reads the loaded
-    // histograms through `HistColl`; Go's `deriveStats4DataSource` uses
-    // the histogram-aware `Selectivity`, not an NDV approximation.
-    let histograms = source
-        .table_columns
-        .iter()
-        .filter_map(|column| {
-            let loaded = statistics?.hist_coll.get_column(column.id)?;
-            let loaded = read(&loaded).clone();
-            Some((column.unique_id, std::sync::Arc::new(loaded)))
-        })
-        .collect::<Vec<_>>();
-    let column_load_status = source
-        .table_columns
-        .iter()
-        .map(|column| {
-            let status = statistics
-                .and_then(|statistics| statistics.hist_coll.get_column(column.id))
-                .map(|loaded| read(&loaded).stats_loaded_status)
-                .unwrap_or_default();
-            (column.unique_id, status)
-        })
-        .collect::<Vec<_>>();
-    // Go `HistColl.Columns`/`Indices` membership: `PseudoTable` holds
-    // every public, non-hidden column and every public index; a stored
-    // table holds what it analyzed.
-    let pseudo_collection = statistics.is_none_or(|statistics| statistics.hist_coll.pseudo);
-    // A hypothetical index (negative id here, id 0 in Go) belongs to the
-    // session, not to `TableInfo`, so Go's `PseudoTable` and the loaded
-    // statistics never hold it: selectivity ignores its columns.
-    let index_in_collection = |index: &tidb_infoschema::table_source::SourceIndex| {
-        index.id >= 0
-            && match statistics {
-                Some(statistics) if !pseudo_collection => {
-                    statistics.hist_coll.get_index(index.id).is_some()
-                }
-                _ => index.is_public,
-            }
+    let pseudo;
+    let table = match statistics {
+        Some(statistics) => statistics,
+        // Go `GetStatsTable`'s `statistics.PseudoTable(tblInfo, false, true)`.
+        None => {
+            pseudo = tidb_stats::pseudo_table(table_info, false, true);
+            &pseudo
+        }
     };
-    // GenerateHistCollFromColumnInfo builds every index map from retained
-    // payloads, including invalid/evicted ones. A schema-only index must
-    // not become the first V1 suffix candidate, and a missing mapped
-    // column terminates the usable prefix rather than skipping a hole.
-    let index_columns = source
-        .indexes
-        .iter()
-        .filter(|index| index_in_collection(index))
-        .filter_map(|index| {
-            let declared = source.declared_index_columns(index)
-                .into_iter().map_while(|column| column).collect::<Vec<_>>();
-            // Go resolves the index against `ds.TblCols`, every table
-            // column, so an index leading with a pruned or hidden
-            // (expression-index) column is still in the collection.
-            let mut columns = index.columns.iter()
-                .map_while(|key| source.table_columns.get(key.offset))
-                .map(|column| column.unique_id)
-                .collect::<Vec<_>>();
-            // This snapshot is consumed after path preparation. Mirror
-            // fillIndexPath's extension of the initial retained-index map,
-            // which only ever appends the integer handle, and runs only
-            // for the paths in AllPossibleAccessPaths.
-            let has_possible_path = source.enumerated_paths.iter().any(|path| {
-                matches!(path, tidb_planner_util::path::PossiblePath::Index { index: position }
-                    if source.indexes.get(*position).is_some_and(|candidate| candidate.id == index.id))
-            });
-            if has_possible_path && columns.len() == index.columns.len() {
-                columns.extend(source.handle_cols_to_append(index, &declared)
-                    .into_iter().map(|(column, _)| column.unique_id));
-            }
-            (!columns.is_empty()).then_some((index.id, columns))
-        })
-        .collect::<Vec<_>>();
-    let mv_index_columns = source
-        .indexes
-        .iter()
-        .filter(|index| {
-            index.is_multi_valued && index_columns.iter().any(|(id, _)| *id == index.id)
-        })
-        .filter_map(|index| {
-            Some((
-                index.id,
-                crate::access_path::prepare_cols_for_mv_index(source, index)?,
-            ))
-        })
-        .collect::<Vec<_>>();
-    let index_histograms = index_columns
-        .iter()
-        .filter_map(|(id, _)| {
-            Some((
-                *id,
-                std::sync::Arc::new(read(statistics?.hist_coll.get_index(*id)?.as_ref()).clone()),
-            ))
-        })
-        .collect::<Vec<_>>();
-    let column_index_ids = index_columns
-        .iter()
-        .map(|(id, columns)| (columns[0], *id))
-        .collect::<Vec<_>>();
-    let index_row_counts = source
-        .indexes
-        .iter()
-        .filter_map(|index| {
-            let statistics = statistics?;
-            let index_stats = statistics.hist_coll.get_index(index.id)?;
-            source.schema_column_for_index_column(index.columns.first()?)?;
-            // Go `HistColl.ScaledRealtimeAndModifyCount`: a fully loaded
-            // multi-valued index scales the table's counts by its own total.
-            let (index_realtime, index_modify) = statistics
-                .hist_coll
-                .scaled_realtime_and_modify_count(Some(&read(&index_stats)));
-            let mut row_counts =
-                tidb_planner_property::stats_info::IndexRowCounts::unscaled(
-                    statistics.hist_coll.realtime_count,
-                    statistics.hist_coll.modify_count,
-                );
-            row_counts.index_realtime = index_realtime;
-            row_counts.index_modify = index_modify;
-            Some((index.id, row_counts))
-        })
-        .collect::<Vec<_>>();
-    // Go `HistColl.Indices`' NDVs feed `getGroupNDVs`, which matches an
-    // index's whole column list against a source's asked column groups.
-    let index_ndvs = source
-        .indexes
-        .iter()
-        .filter_map(|index| {
-            let loaded = statistics?.hist_coll.get_index(index.id)?;
-            let loaded = read(&loaded);
-            if loaded.histogram.ndv <= 0 {
-                return None;
-            }
-            let columns = index
-                .columns
-                .iter()
-                .filter_map(|column| {
-                    source
-                        .schema_column_for_index_column(column)
-                        .map(|planned| planned.unique_id)
-                })
-                .collect::<Vec<_>>();
-            (columns.len() == index.columns.len())
-                .then(|| (index.id, (columns, loaded.histogram.ndv as f64)))
-        })
-        .collect::<Vec<_>>();
-    let initialized_column_ndvs = source
-        .table_columns
-        .iter()
-        .filter_map(|column| {
-            let column_stats = statistics?.hist_coll.get_column(column.id)?;
-            let column_stats = read(&column_stats);
-            column_stats
-                .is_stats_initialized()
-                .then(|| (column.unique_id, column_stats.histogram.ndv))
-        })
-        .collect::<Vec<_>>();
-    let initialized_index_ndvs = source
-        .indexes
-        .iter()
-        .filter_map(|index| {
-            let index_stats = statistics?.hist_coll.get_index(index.id)?;
-            let index_stats = read(&index_stats);
-            if !index_stats.stats_loaded_status.stats_initialized() {
-                return None;
-            }
-            let ndv = index_stats.histogram.ndv;
-            let columns = index
-                .columns
-                .iter()
-                .map(|column| {
-                    source
-                        .schema_column_for_index_column(column)
-                        .map(|column| column.unique_id)
-                })
-                .collect::<Option<Vec<_>>>()?;
-            Some((index.id, (columns, ndv)))
-        })
-        .collect::<Vec<_>>();
-    // Go `HistColl.Columns`' and `Indices`' `Info`, which the
-    // selectivity estimators read.
-    let column_infos = source
-        .columns
-        .iter()
-        .zip(
-            source
-                .base
-                .base
-                .schema()
+    let mut hist_coll = table.hist_coll.generate_from_column_info(
+        table_info,
+        &source.table_columns,
+        // Go `statistics.PrepareCols4MVIndex`, which the planner injects.
+        |_, index_info, _| {
+            let index = source.indexes.iter().find(|index| index.id == index_info.id)?;
+            crate::access_path::prepare_cols_for_mv_index(source, index)
+        },
+    );
+    // Go `fillIndexPath` extends `Idx2ColUniqueIDs` with the integer handle
+    // for the paths in `AllPossibleAccessPaths` whose map entry covers every
+    // index column; this collection is consumed after path preparation.
+    for index in &source.indexes {
+        let has_possible_path = source.enumerated_paths.iter().any(|path| {
+            matches!(path, tidb_planner_util::path::PossiblePath::Index { index: position }
+                if source.indexes.get(*position).is_some_and(|candidate| candidate.id == index.id))
+        });
+        let Some(columns) = hist_coll.idx_to_col_unique_ids.get_mut(&index.id) else {
+            continue;
+        };
+        if has_possible_path && columns.len() == index.columns.len() {
+            let declared = source
+                .declared_index_columns(index)
                 .into_iter()
-                .flat_map(|schema| &schema.columns),
-        )
-        .filter(|(metadata, column)| match statistics {
-            Some(statistics) if !pseudo_collection => {
-                statistics.hist_coll.get_column(metadata.id).is_some()
-            }
-            // Go `PseudoTable` walks `TableInfo.Columns`, which holds
-            // neither `_tidb_rowid` nor the other extra (negative id) columns.
-            _ => !column.is_hidden && metadata.id > 0,
-        })
-        .map(|(metadata, column)| {
-            (
-                column.unique_id,
-                tidb_planner_property::stats_info::PseudoColumn {
-                    lower_name: tidb_hack::go_to_lower(&metadata.name),
-                    unique_key_flag: column.ret_type.as_ref().is_some_and(|field_type| {
-                        field_type.flags() & tidb_datatype::FieldTypeFlags::UNIQUE_KEY != 0
-                    }),
-                },
-            )
-        })
-        .collect::<Vec<_>>();
-    let index_infos = source
-        .indexes
-        .iter()
-        .filter(|index| index_in_collection(index))
-        .map(|index| tidb_planner_property::stats_info::HistCollIndexInfo {
-            id: index.id,
-            unique: index.unique,
-            mv_index: index.is_multi_valued,
-            column_lower_names: index
-                .columns
-                .iter()
-                .map(|column| tidb_hack::go_to_lower(&column.name))
-                .collect(),
-            column_lengths: index.columns.iter().map(|column| column.length).collect(),
-        })
-        .collect::<Vec<_>>();
+                .map_while(|column| column)
+                .collect::<Vec<_>>();
+            columns.extend(
+                source
+                    .handle_cols_to_append(index, &declared)
+                    .into_iter()
+                    .map(|(column, _)| column.unique_id),
+            );
+        }
+    }
     source.table_stats = Some(
         StatsInfo::new(row_count, ndvs)
-            .with_hist_coll(
-                HistColl::new(
-                    statistics.is_none_or(|statistics| statistics.hist_coll.pseudo),
-                    row_count as i64,
-                    row_size_columns,
-                )
-                .with_histograms(histograms)
-                .with_column_load_status(column_load_status)
-                .with_index_load_status(statistics.into_iter().flat_map(|statistics| {
-                    let mut statuses = Vec::new();
-                    statistics.hist_coll.for_each_index(|id, index| {
-                        statuses.push((id, index.stats_loaded_status));
-                        false
-                    });
-                    statuses
-                }))
-                .with_index_histograms(index_histograms)
-                .with_column_index_ids(column_index_ids)
-                .with_index_columns(index_columns)
-                .with_index_row_counts(index_row_counts)
-                .with_index_range_policies(source.indexes.iter().map(|index| {
-                    (
-                        index.id,
-                        tidb_planner_property::stats_info::IndexRangePolicy {
-                            has_condition: !index.condition_expr_string.is_empty(),
-                            is_multi_value: index.is_multi_valued,
-                        },
-                    )
-                }))
-                .with_modify_count(statistics.map_or(0, |statistics| statistics.hist_coll.modify_count))
-                .with_pk_is_handle(source.handle_is_int)
-                .with_index_ndvs(index_ndvs)
-                .with_initialized_ndvs(initialized_column_ndvs, initialized_index_ndvs)
-                .with_column_and_index_infos(column_infos, index_infos)
-                .with_mv_index_columns(mv_index_columns),
-            )
+            .with_hist_coll(std::sync::Arc::new(hist_coll))
             .with_stats_version(statistics.map_or(tidb_stats::PSEUDO_VERSION, |statistics| {
                 if statistics.hist_coll.pseudo || statistics.hist_coll.stats_version <= 0 {
                     tidb_stats::PSEUDO_VERSION
@@ -573,8 +334,42 @@ use tidb_charset::Collation;
                 ..Default::default()
             }];
             source.enumerated_paths = vec![tidb_planner_util::path::PossiblePath::Index { index: 0 }];
+            // Go `ds.TableInfo`: columns a and j, and the index on j.
+            let table_info = tidb_model::TableInfo {
+                columns: vec![
+                    tidb_model::ColumnInfo {
+                        id: 1,
+                        name: tidb_ast::CiString::new("a"),
+                        offset: 0,
+                        ..tidb_model::ColumnInfo::default()
+                    },
+                    tidb_model::ColumnInfo {
+                        id: 2,
+                        name: tidb_ast::CiString::new("j"),
+                        offset: 1,
+                        ..tidb_model::ColumnInfo::default()
+                    },
+                ]
+                .into(),
+                indices: vec![tidb_model::IndexInfo {
+                    id: 7,
+                    name: tidb_ast::CiString::new("mv_j"),
+                    columns: vec![tidb_model::IndexColumn {
+                        name: tidb_ast::CiString::new("j"),
+                        offset: 1,
+                        length: -1,
+                        ..tidb_model::IndexColumn::default()
+                    }]
+                    .into(),
+                    mv_index: multi_valued,
+                    ..tidb_model::IndexInfo::default()
+                }]
+                .into(),
+                ..tidb_model::TableInfo::default()
+            };
             super::init_stats(
                 &mut source,
+                &table_info,
                 Some(statistics),
                 statistics.hist_coll.realtime_count as f64,
                 None,

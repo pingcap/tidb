@@ -177,6 +177,45 @@ impl tidb_stats_handle::StatisticsSource for CanonicalStatistics {
     }
 }
 
+/// Go's domain sync-load worker over the harness cache. The harness table
+/// is never analyzed, so every load is `statsSyncLoad.handleOneItemTask`'s
+/// `EmptyColumn` branch.
+struct NeverAnalyzedLoader {
+    cache: Arc<tidb_stats_handle_syncload::stats_watch::SharedStats>,
+    table: tidb_model::TableInfo,
+}
+
+impl tidb_stats_handle_syncload::sync_load::StatisticsItemLoader for NeverAnalyzedLoader {
+    fn load_items(
+        &self,
+        items: &[tidb_model::StatsLoadItem],
+        _resource_group: &str,
+    ) -> Result<Vec<(i64, Arc<tidb_stats::Table>)>, String> {
+        for requested in items {
+            let item = requested.table_item_id;
+            if item.is_index {
+                continue;
+            }
+            let Some(current) = self
+                .cache
+                .load()
+                .get(&item.table_id)
+                .and_then(tidb_stats_handle_syncload::stats_watch::TableStatsState::loaded)
+                .cloned()
+            else {
+                continue;
+            };
+            let (_, load_needed, analyzed) =
+                current.column_load_needed(item.id, requested.full_load);
+            assert!(!analyzed, "the harness table is never analyzed");
+            if load_needed {
+                self.cache.publish_empty_column(item.table_id, item.id, &self.table);
+            }
+        }
+        Ok(Vec::new())
+    }
+}
+
 /// Go TestBuiltinInEstWithoutStats, including the previously omitted
 /// InitStatsLite / InitStats / existence-map lifecycle.
 #[test]
@@ -269,6 +308,14 @@ fn builtin_in_estimate_survives_statistics_initialization() {
     shared_catalog.stats_handle().set_statistics_view(Arc::new(
         tidb_stats_handle::StatisticsView::new(Arc::new(CanonicalStatistics(cache.clone()))),
     ));
+    // Go's test domain runs the sync-load workers.
+    shared_catalog.stats_handle().set_item_loader(
+        Arc::new(NeverAnalyzedLoader {
+            cache: cache.clone(),
+            table: table.clone(),
+        }),
+        tidb_stats_handle_syncload::sync_load::StatisticsLoadWorkers::new(),
+    );
     // Update after the delta, clear/init-lite, clear/init-full, then Update
     // again: retain Go's lifecycle order and the same planner-facing view.
     for mode in [

@@ -198,28 +198,6 @@ pub enum CopyIntent {
     AllDataWritable,
 }
 
-/// Planner column identity consumed by `ID2UniqueID` and
-/// `GenerateHistCollFromColumnInfo`.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct QueryColumn {
-    pub id: i64,
-    pub unique_id: i64,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct QueryIndexInfo {
-    pub id: i64,
-    pub column_offsets: Vec<usize>,
-    pub mv_index: bool,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct QueryTableInfo {
-    /// Metadata column IDs in offset order.
-    pub column_ids: Vec<i64>,
-    pub indices: Vec<QueryIndexInfo>,
-}
-
 #[derive(Clone, Debug)]
 pub struct HistColl {
     columns: Arc<RwLock<HashMap<i64, SharedColumn>>>,
@@ -233,7 +211,7 @@ pub struct HistColl {
     pub idx_to_col_unique_ids: HashMap<i64, Vec<i64>>,
     pub col_unique_id_to_idx_ids: HashMap<i64, Vec<i64>>,
     pub unique_id_to_col_info_id: HashMap<i64, i64>,
-    pub mv_idx_to_columns: HashMap<i64, Vec<i64>>,
+    pub mv_idx_to_columns: HashMap<i64, Vec<tidb_expr::column::Column>>,
 }
 
 /// Go's zero `HistColl`.
@@ -265,6 +243,25 @@ impl HistColl {
             unique_id_to_col_info_id: HashMap::new(),
             mv_idx_to_columns: HashMap::new(),
         }
+    }
+
+    /// Go `NewHistCollWithColsAndIdxs`.
+    #[must_use]
+    pub fn new_with_cols_and_idxs(
+        physical_id: i64,
+        realtime_count: i64,
+        modify_count: i64,
+        columns: impl IntoIterator<Item = (i64, Column)>,
+        indices: impl IntoIterator<Item = (i64, Index)>,
+    ) -> Self {
+        let coll = Self::new(physical_id, realtime_count, modify_count, 0, 0);
+        for (id, column) in columns {
+            coll.set_column(id, column);
+        }
+        for (id, index) in indices {
+            coll.set_index(id, index);
+        }
+        coll
     }
 
     pub fn set_column(&self, id: i64, column: Column) {
@@ -410,7 +407,7 @@ impl HistColl {
 
     /// Go `ID2UniqueID`. Statistics payloads remain shared; only the column
     /// map and its keys are rebuilt.
-    pub fn id_to_unique_id(&self, columns: &[QueryColumn]) -> Self {
+    pub fn id_to_unique_id(&self, columns: &[tidb_expr::column::Column]) -> Self {
         let source_columns = read(&self.columns);
         let mapped = columns
             .iter()
@@ -432,78 +429,83 @@ impl HistColl {
         result
     }
 
-    /// Go `GenerateHistCollFromColumnInfo`. `prepare_mv_columns` is the
-    /// planner-owned `PrepareCols4MVIndex` callback reduced to the unique IDs
-    /// retained by this crate's query map.
+    /// Go `GenerateHistCollFromColumnInfo`. `prepare_mv_columns` is Go's
+    /// `PrepareCols4MVIndex`, which the planner injects.
     pub fn generate_from_column_info(
         &self,
-        table_info: &QueryTableInfo,
-        columns: &[QueryColumn],
-        mut prepare_mv_columns: impl FnMut(&QueryIndexInfo, &[QueryColumn]) -> Option<Vec<i64>>,
+        table_info: &tidb_model::TableInfo,
+        columns: &[tidb_expr::column::Column],
+        mut prepare_mv_columns: impl FnMut(
+            &tidb_model::TableInfo,
+            &tidb_model::IndexInfo,
+            &HashMap<i64, &tidb_expr::column::Column>,
+        ) -> Option<Vec<tidb_expr::column::Column>>,
     ) -> Self {
-        let id_to_column: HashMap<_, _> =
-            columns.iter().map(|column| (column.id, *column)).collect();
-        let id_to_unique: HashMap<_, _> = columns
+        let col_info_id_to_col: HashMap<i64, &tidb_expr::column::Column> =
+            columns.iter().map(|column| (column.id, column)).collect();
+        let col_info_id_to_unique_id: HashMap<i64, i64> = columns
             .iter()
             .map(|column| (column.id, column.unique_id))
             .collect();
-        let unique_to_id = columns
+        let unique_id_to_col_info_id = columns
             .iter()
             .map(|column| (column.unique_id, column.id))
             .collect();
 
-        let source_columns = read(&self.columns);
-        let mapped_columns = source_columns
+        let mapped_columns = read(&self.columns)
             .iter()
             .filter_map(|(id, stats)| {
-                id_to_unique
+                col_info_id_to_unique_id
                     .get(id)
                     .map(|unique_id| (*unique_id, Arc::clone(stats)))
             })
             .collect();
-        drop(source_columns);
 
-        let index_info: HashMap<_, _> = table_info
-            .indices
-            .iter()
-            .map(|index| (index.id, index))
-            .collect();
+        let mut idx_id_to_idx_info = HashMap::new();
+        for index in table_info.indices.iter_deref() {
+            let id = index.read().id;
+            idx_id_to_idx_info.insert(id, index);
+        }
         let mut mapped_indices = HashMap::new();
-        let mut index_to_columns = HashMap::new();
-        let mut column_to_indices: HashMap<i64, Vec<i64>> = HashMap::new();
-        let mut mv_index_to_columns = HashMap::new();
+        let mut idx_to_columns = HashMap::new();
+        let mut col_id_to_idx_ids: HashMap<i64, Vec<i64>> = HashMap::new();
+        let mut mv_idx_to_columns = HashMap::new();
         for (id, stats) in read(&self.indices).iter() {
-            let Some(info) = index_info.get(id) else {
+            let Some(index_info) = idx_id_to_idx_info.get(id) else {
                 continue;
             };
-            let mut unique_ids = Vec::with_capacity(info.column_offsets.len());
-            for offset in &info.column_offsets {
-                let Some(column_id) = table_info.column_ids.get(*offset) else {
+            let index_info = index_info.read();
+            let mut ids = Vec::with_capacity(index_info.columns.len());
+            for index_column in index_info.columns.iter_deref() {
+                let offset = index_column.read().offset;
+                let column_id = table_info
+                    .columns
+                    .get(usize::try_from(offset).expect("negative index column offset"))
+                    .expect("index column offset outside table columns")
+                    .read()
+                    .id;
+                let Some(unique_id) = col_info_id_to_unique_id.get(&column_id) else {
                     break;
                 };
-                let Some(unique_id) = id_to_unique.get(column_id) else {
-                    break;
-                };
-                unique_ids.push(*unique_id);
+                ids.push(*unique_id);
             }
-            if unique_ids.is_empty() {
+            // An index whose first column this query does not read is unused.
+            if ids.is_empty() {
                 continue;
             }
             let stats_id = read(stats).histogram.id;
-            column_to_indices
-                .entry(unique_ids[0])
-                .or_default()
-                .push(stats_id);
+            col_id_to_idx_ids.entry(ids[0]).or_default().push(stats_id);
             mapped_indices.insert(stats_id, Arc::clone(stats));
-            index_to_columns.insert(stats_id, unique_ids);
-            if info.mv_index {
-                let planner_columns: Vec<_> = id_to_column.values().copied().collect();
-                if let Some(prepared) = prepare_mv_columns(info, &planner_columns) {
-                    mv_index_to_columns.insert(*id, prepared);
+            idx_to_columns.insert(stats_id, ids);
+            if index_info.mv_index {
+                if let Some(prepared) =
+                    prepare_mv_columns(table_info, &index_info, &col_info_id_to_col)
+                {
+                    mv_idx_to_columns.insert(*id, prepared);
                 }
             }
         }
-        for indices in column_to_indices.values_mut() {
+        for indices in col_id_to_idx_ids.values_mut() {
             indices.sort_unstable();
         }
 
@@ -517,10 +519,10 @@ impl HistColl {
         result.pseudo = self.pseudo;
         result.columns = Arc::new(RwLock::new(mapped_columns));
         result.indices = Arc::new(RwLock::new(mapped_indices));
-        result.col_unique_id_to_idx_ids = column_to_indices;
-        result.idx_to_col_unique_ids = index_to_columns;
-        result.unique_id_to_col_info_id = unique_to_id;
-        result.mv_idx_to_columns = mv_index_to_columns;
+        result.col_unique_id_to_idx_ids = col_id_to_idx_ids;
+        result.idx_to_col_unique_ids = idx_to_columns;
+        result.unique_id_to_col_info_id = unique_id_to_col_info_id;
+        result.mv_idx_to_columns = mv_idx_to_columns;
         result
     }
 

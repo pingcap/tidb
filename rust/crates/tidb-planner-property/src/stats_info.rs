@@ -22,480 +22,304 @@ use std::sync::Arc;
 
 use tidb_datatype::FieldTypeCode;
 
-/// Go `statistics.HistColl` state consumed by planner cardinality and costing.
+/// Go `statistics.HistColl`, the collection `GenerateHistCollFromColumnInfo`
+/// builds for a data source (`StatsInfo.HistColl`).
 ///
-/// `property.StatsInfo.HistColl` is not interchangeable with the scalar NDV
-/// map: its PRESENCE changes `getAvgRowSize`. A base table carries a
-/// collection even when it is pseudo, while joins, projections, and
-/// aggregations construct a fresh `StatsInfo` with a nil collection.
-#[derive(Clone, Debug, Default)]
-pub struct HistColl {
-    initialized_column_ndvs: BTreeMap<i64, i64>,
-    initialized_index_ndvs: BTreeMap<i64, (Vec<i64>, i64)>,
-    pseudo: bool,
-    realtime_count: i64,
-    columns: BTreeMap<i64, RowSizeColumnStats>,
-    /// Go `HistColl.Columns`' histogram-bearing entries, keyed by planner
-    /// `Column.UniqueID`. The row-size map above is `Copy`; the histograms are
-    /// shared so a plan carrying the collection does not deep-copy them.
-    /// Empty for pseudo collections and for profiles built without a catalog.
-    histograms: BTreeMap<i64, Arc<tidb_stats::column::Column>>,
-    /// Original column validity state, separate from retained histogram metadata.
-    column_load_status: BTreeMap<i64, tidb_stats::StatsLoadedStatus>,
-    /// Index load states, keyed by index ID.
-    index_load_status: BTreeMap<i64, tidb_stats::StatsLoadedStatus>,
-    /// Go `HistColl.Indices`, keyed by index ID, for correlated-range counts.
-    index_histograms: BTreeMap<i64, Arc<tidb_stats::index::Index>>,
-    /// Go `HistColl.ColUniqueID2IdxIDs`, sorted by index ID as generated.
-    column_index_ids: BTreeMap<i64, Vec<i64>>,
-    /// Go `HistColl.Idx2ColUniqueIDs`, in declared index-column order.
-    index_columns: BTreeMap<i64, Vec<i64>>,
-    /// Table and index entry counts used by the Go index range estimator.
-    index_row_counts: BTreeMap<i64, IndexRowCounts>,
-    index_range_policies: BTreeMap<i64, IndexRangePolicy>,
-    /// Go `HistColl.ModifyCount`, which the row-count estimator's skew
-    /// branches read.
-    modify_count: i64,
-    /// Go `HistColl.PKIsHandle`: the table's handle is ONE integer column, so
-    /// a point range on it names at most one row. A common handle is false
-    /// even though every handle column is a key column.
-    pk_is_handle: bool,
-    /// Go `HistColl.Indices`' `(column unique ids, NDV)` per loaded index,
-    /// which `getGroupNDVs` matches against a source's asked column groups.
-    index_ndvs: BTreeMap<i64, (Vec<i64>, f64)>,
-    /// Go `HistColl.Columns`' `col.Info`, keyed by planner unique ID, as
-    /// `pseudoSelectivity`'s `coll.GetCol` reads it: every public column of
-    /// a `PseudoTable`, the stored ones otherwise.
-    column_infos: BTreeMap<i64, PseudoColumn>,
-    /// Go `HistColl.Indices`' `idx.Info`, for every index the collection
-    /// holds: every public index of a `PseudoTable`, the stored ones
-    /// otherwise.
-    index_infos: Vec<HistCollIndexInfo>,
-    /// Go `HistColl.MVIdx2Columns`: each multi-valued index's columns as
-    /// `PrepareCols4MVIndex` returns them (the ARRAY column typed as its
-    /// element), which `getMaskAndSelectivityForMVIndex` matches against.
-    mv_index_columns: BTreeMap<i64, Vec<tidb_expr::column::Column>>,
-}
+/// Its PRESENCE changes `getAvgRowSize`: a base table carries a collection
+/// even when it is pseudo, while joins, projections, and aggregations
+/// construct a fresh `StatsInfo` with a nil collection.
+pub use tidb_stats::HistColl;
 
-/// Go `statistics.Index.Info`, the subset the planner's estimators read.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HistCollIndexInfo {
-    /// `idx.Info.ID`.
-    pub id: i64,
-    /// `idx.Info.Unique`.
-    pub unique: bool,
-    /// `idx.Info.MVIndex`.
-    pub mv_index: bool,
-    /// `idx.Info.Columns[i].Name.L`, in index order.
-    pub column_lower_names: Vec<String>,
-    /// `idx.Info.Columns[i].Length`, in index order.
-    pub column_lengths: Vec<i64>,
-}
-
-impl PartialEq for HistColl {
-    /// Go's `HistColl` equality is not observable to the planner; the
-    /// histogram payloads are ignored so a shared collection still compares
-    /// equal to its rebuilt twin.
-    fn eq(&self, other: &Self) -> bool {
-        self.pseudo == other.pseudo
-            && self.realtime_count == other.realtime_count
-            && self.columns == other.columns
-    }
-}
-
-impl HistColl {
-    /// Retains initialized NDVs even when histogram buckets have been evicted.
-    #[must_use]
-    pub fn with_initialized_ndvs(
-        mut self,
-        columns: impl IntoIterator<Item = (i64, i64)>,
-        indexes: impl IntoIterator<Item = (i64, (Vec<i64>, i64))>,
-    ) -> Self {
-        self.initialized_column_ndvs = columns.into_iter().collect();
-        self.initialized_index_ndvs = indexes.into_iter().collect();
-        self
-    }
-
-    /// Go `getColsNDVLowerBoundFromHistColl`: initialized column, exact index
-    /// column set, then the maximum initialized individual-column NDV.
-    #[must_use]
-    pub fn ndv_lower_bound(&self, columns: &[i64]) -> Option<i64> {
-        if columns.is_empty() {
-            return None;
-        }
-        if columns.len() == 1 {
-            if let Some(ndv) = self.initialized_column_ndvs.get(&columns[0]) {
-                return Some(*ndv);
-            }
-        }
-        let mut columns = columns.to_vec();
-        columns.sort_unstable();
-        for (index_columns, ndv) in self.initialized_index_ndvs.values() {
-            if index_columns.len() == columns.len() {
-                let mut index_columns = index_columns.clone();
-                index_columns.sort_unstable();
-                if index_columns == columns {
-                    return Some(*ndv);
-                }
-            }
-        }
-        columns
-            .iter()
-            .filter_map(|id| self.initialized_column_ndvs.get(id))
-            .copied()
-            .max()
-    }
-
-    /// Builds the row-size portion of one histogram collection. Column keys
-    /// are planner `Column.UniqueID`s, matching Go's generated HistColl.
-    #[must_use]
-    pub fn new(
-        pseudo: bool,
-        realtime_count: i64,
-        columns: impl IntoIterator<Item = (i64, RowSizeColumnStats)>,
-    ) -> Self {
-        Self {
-            pseudo,
-            initialized_column_ndvs: BTreeMap::new(),
-            initialized_index_ndvs: BTreeMap::new(),
-            realtime_count,
-            columns: columns.into_iter().collect(),
-            histograms: BTreeMap::new(),
-            column_load_status: BTreeMap::new(),
-            index_load_status: BTreeMap::new(),
-            index_histograms: BTreeMap::new(),
-            column_index_ids: BTreeMap::new(),
-            index_columns: BTreeMap::new(),
-            index_row_counts: BTreeMap::new(),
-            index_range_policies: BTreeMap::new(),
-            modify_count: 0,
-            pk_is_handle: false,
-            index_ndvs: BTreeMap::new(),
-            column_infos: BTreeMap::new(),
-            index_infos: Vec::new(),
-            mv_index_columns: BTreeMap::new(),
-        }
-    }
-
-    /// Attaches Go `HistColl.Columns`' and `Indices`' `Info` metadata.
-    #[must_use]
-    pub fn with_column_and_index_infos(
-        mut self,
-        columns: impl IntoIterator<Item = (i64, PseudoColumn)>,
-        indexes: impl IntoIterator<Item = HistCollIndexInfo>,
-    ) -> Self {
-        self.column_infos = columns.into_iter().collect();
-        self.index_infos = indexes.into_iter().collect();
-        self
-    }
-
-    /// Attaches Go `HistColl.MVIdx2Columns`.
-    #[must_use]
-    pub fn with_mv_index_columns(
-        mut self,
-        indexes: impl IntoIterator<Item = (i64, Vec<tidb_expr::column::Column>)>,
-    ) -> Self {
-        self.mv_index_columns = indexes.into_iter().collect();
-        self
-    }
-
-    /// Go `coll.MVIdx2Columns[id]`; empty when the index is not a
-    /// multi-valued index of this collection.
-    #[must_use]
-    pub fn mv_index_columns(&self, index_id: i64) -> &[tidb_expr::column::Column] {
-        self.mv_index_columns.get(&index_id).map_or(&[], Vec::as_slice)
-    }
-
-    /// Go `coll.GetCol(colID).Info`, when the collection holds the column.
-    #[must_use]
-    pub fn column_info(&self, unique_id: i64) -> Option<&PseudoColumn> {
-        self.column_infos.get(&unique_id)
-    }
-
-    /// Go `coll.Indices`' `Info`, in collection order.
-    #[must_use]
-    pub fn index_infos(&self) -> &[HistCollIndexInfo] {
-        &self.index_infos
-    }
-
-    /// Go `coll.GetIdx(id).Info`, when the collection holds the index.
-    #[must_use]
-    pub fn index_info(&self, index_id: i64) -> Option<&HistCollIndexInfo> {
-        self.index_infos.iter().find(|info| info.id == index_id)
-    }
-
-    /// Preserves catalog index load states, keyed by index ID.
-    #[must_use]
-    pub fn with_index_load_status(
-        mut self,
-        statuses: impl IntoIterator<Item = (i64, tidb_stats::StatsLoadedStatus)>,
-    ) -> Self {
-        self.index_load_status = statuses.into_iter().collect();
-        self
-    }
-
-    /// Go `coll.GetCol(uniqueID).IsFullLoad()`.
-    #[must_use]
-    pub fn column_is_full_load(&self, unique_id: i64) -> bool {
-        self.column_load_status
-            .get(&unique_id)
-            .is_some_and(|status| status.is_full_load())
-    }
-
-    /// Go `coll.GetIdx(id).IsFullLoad()`.
-    #[must_use]
-    pub fn index_is_full_load(&self, index_id: i64) -> bool {
-        self.index_load_status
-            .get(&index_id)
-            .is_some_and(|status| status.is_full_load())
-    }
-
+/// The reads planner cardinality and costing make of Go's `HistColl`: each is
+/// a Go field read (`GetCol`, `GetIdx`, `Idx2ColUniqueIDs`, ...) or the
+/// cardinality helper Go spells inline at its call sites.
+pub trait HistCollExt {
+    /// Go `HistColl.Pseudo`.
+    fn pseudo(&self) -> bool;
+    /// Go `HistColl.RealtimeCount`.
+    fn realtime_count(&self) -> i64;
+    /// Go `HistColl.ModifyCount`.
+    fn modify_count(&self) -> i64;
     /// Go `coll.GetCol(uniqueID) != nil`.
-    #[must_use]
-    pub fn has_column(&self, unique_id: i64) -> bool {
-        self.column_infos.contains_key(&unique_id)
-            || self.columns.contains_key(&unique_id)
-            || self.histograms.contains_key(&unique_id)
-    }
-
+    fn has_column(&self, unique_id: i64) -> bool;
+    /// Go `coll.GetCol(uniqueID)`.
+    fn histogram(&self, unique_id: i64) -> Option<tidb_stats::SharedColumn>;
+    /// Go `ColumnStatsIsInvalid`'s estimation gate over `coll.GetCol`.
+    fn histogram_for_estimation(&self, unique_id: i64) -> Option<tidb_stats::SharedColumn>;
+    /// Go `coll.GetCol(uniqueID).IsFullLoad()`.
+    fn column_is_full_load(&self, unique_id: i64) -> bool;
+    /// Go `coll.GetCol(colID).Info`, as `pseudoSelectivity` reads it.
+    fn column_info(&self, unique_id: i64) -> Option<PseudoColumn>;
+    /// Go `getAvgRowSize`'s reads of `coll.GetCol(uniqueID)`.
+    fn column(&self, unique_id: i64) -> Option<RowSizeColumnStats>;
+    /// Go `coll.GetIdx(id)`.
+    fn index_histogram(&self, index_id: i64) -> Option<tidb_stats::SharedIndex>;
+    /// Go `coll.GetIdx(id).IsFullLoad()`.
+    fn index_is_full_load(&self, index_id: i64) -> bool;
+    /// Go `coll.GetIdx(id).Info`.
+    fn index_info(&self, index_id: i64) -> Option<tidb_stats::IndexInfo>;
+    /// Go `coll.ForEachIndexImmutable`'s `Info`s, in index-ID order.
+    fn index_infos(&self) -> Vec<tidb_stats::IndexInfo>;
     /// Go `coll.ForEachIndexImmutable`'s index IDs, sorted as `Selectivity`
     /// stabilizes them.
-    #[must_use]
-    pub fn index_ids(&self) -> Vec<i64> {
-        let mut ids: Vec<i64> = self
-            .index_infos
-            .iter()
-            .map(|info| info.id)
-            .chain(self.index_columns.keys().copied())
-            .chain(self.index_histograms.keys().copied())
-            .collect();
+    fn index_ids(&self) -> Vec<i64>;
+    /// Go `coll.ColNum() == 0 && coll.IdxNum() == 0`.
+    fn has_no_column_or_index(&self) -> bool;
+    /// Go `HistColl.ColUniqueID2IdxIDs[uniqueID]`.
+    fn index_ids_for_column(&self, unique_id: i64) -> &[i64];
+    /// Go `HistColl.Idx2ColUniqueIDs[id]`.
+    fn index_columns(&self, index_id: i64) -> &[i64];
+    /// Go `HistColl.MVIdx2Columns[id]`.
+    fn mv_index_columns(&self, index_id: i64) -> &[tidb_expr::column::Column];
+    /// `canSkipIndexEstimation`'s reads of `idx.Info`.
+    fn index_range_policy(&self, index_id: i64) -> IndexRangePolicy;
+    /// Go `HistColl.GetScaledRealtimeAndModifyCnt(coll.GetIdx(id))`.
+    fn index_row_counts(&self, index_id: i64) -> Option<IndexRowCounts>;
+    /// Go `getGroupNDVs`' `(Idx2ColUniqueIDs[id], NDV)` per index covering
+    /// all its columns.
+    fn index_ndvs(&self) -> BTreeMap<i64, (Vec<i64>, f64)>;
+    /// Go `getColsNDVLowerBoundFromHistColl`: initialized column, exact index
+    /// column set, then the maximum initialized individual-column NDV.
+    fn ndv_lower_bound(&self, columns: &[i64]) -> Option<i64>;
+}
+
+/// Test fixture: Go `NewHistCollWithColsAndIdxs` over fully loaded column
+/// statistics keyed by planner unique ID and fully loaded index statistics
+/// with their `Idx2ColUniqueIDs` (which also fill `ColUniqueID2IdxIDs`).
+#[doc(hidden)]
+#[must_use]
+pub fn loaded_hist_coll_for_test(
+    pseudo: bool,
+    realtime_count: i64,
+    modify_count: i64,
+    columns: impl IntoIterator<Item = (i64, tidb_stats::column::Column)>,
+    indexes: impl IntoIterator<Item = (i64, tidb_stats::index::Index, Vec<i64>)>,
+) -> Arc<HistColl> {
+    let mut index_columns = Vec::new();
+    let mut coll = HistColl::new_with_cols_and_idxs(
+        0,
+        realtime_count,
+        modify_count,
+        columns.into_iter().map(|(id, mut column)| {
+            column.stats_loaded_status = tidb_stats::StatsLoadedStatus::full_load();
+            (id, column)
+        }),
+        indexes.into_iter().map(|(id, mut index, columns)| {
+            index.stats_loaded_status = tidb_stats::StatsLoadedStatus::full_load();
+            index_columns.push((id, columns));
+            (id, index)
+        }),
+    );
+    coll.pseudo = pseudo;
+    for (id, columns) in index_columns {
+        if let Some(first) = columns.first() {
+            coll.col_unique_id_to_idx_ids.entry(*first).or_default().push(id);
+        }
+        coll.idx_to_col_unique_ids.insert(id, columns);
+    }
+    for ids in coll.col_unique_id_to_idx_ids.values_mut() {
         ids.sort_unstable();
-        ids.dedup();
-        ids
     }
+    Arc::new(coll)
+}
 
-    /// Go `coll.ColNum() == 0 && coll.IdxNum() == 0`. Every map here is a
-    /// view of `Columns` or `Indices`, so any non-empty one means the
-    /// collection holds something.
-    #[must_use]
-    pub fn has_no_column_or_index(&self) -> bool {
-        self.column_infos.is_empty()
-            && self.index_infos.is_empty()
-            && self.columns.is_empty()
-            && self.histograms.is_empty()
-            && self.index_histograms.is_empty()
-            && self.index_columns.is_empty()
-    }
+fn read<T>(lock: &std::sync::RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
-    /// Attaches the loaded column histograms, keyed by planner unique id.
-    #[must_use]
-    pub fn with_histograms(
-        mut self,
-        histograms: impl IntoIterator<Item = (i64, Arc<tidb_stats::column::Column>)>,
-    ) -> Self {
-        self.histograms = histograms.into_iter().collect();
-        for id in self.histograms.keys() {
-            self.column_load_status
-                .entry(*id)
-                .or_insert_with(tidb_stats::StatsLoadedStatus::full_load);
-        }
-        self
-    }
-
-    /// Preserves catalog column load states, keyed by planner unique ID.
-    #[must_use]
-    pub fn with_column_load_status(
-        mut self,
-        statuses: impl IntoIterator<Item = (i64, tidb_stats::StatsLoadedStatus)>,
-    ) -> Self {
-        self.column_load_status = statuses.into_iter().collect();
-        self
-    }
-
-    /// Attaches loaded index histograms, keyed by Go planner index ID.
-    #[must_use]
-    pub fn with_index_histograms(
-        mut self,
-        histograms: impl IntoIterator<Item = (i64, Arc<tidb_stats::index::Index>)>,
-    ) -> Self {
-        self.index_histograms = histograms.into_iter().collect();
-        self
-    }
-
-    /// Attaches the loaded index IDs for each planner column. Input order is
-    /// retained because Go uses the first entry in `ColUniqueID2IdxIDs`.
-    #[must_use]
-    pub fn with_column_index_ids(
-        mut self,
-        associations: impl IntoIterator<Item = (i64, i64)>,
-    ) -> Self {
-        for (column_id, index_id) in associations {
-            self.column_index_ids
-                .entry(column_id)
-                .or_default()
-                .push(index_id);
-        }
-        for index_ids in self.column_index_ids.values_mut() {
-            index_ids.sort_unstable();
-        }
-        self
-    }
-
-    /// Attaches every loaded index's declared key columns in key order.
-    #[must_use]
-    pub fn with_index_columns(
-        mut self,
-        index_columns: impl IntoIterator<Item = (i64, Vec<i64>)>,
-    ) -> Self {
-        self.index_columns = index_columns.into_iter().collect();
-        self
-    }
-
-    /// Retains the index metadata used before statistics validity/version dispatch.
-    #[must_use]
-    pub fn with_index_range_policies(
-        mut self,
-        policies: impl IntoIterator<
-            Item = (
-                i64,
-                IndexRangePolicy,
-            ),
-        >,
-    ) -> Self {
-        self.index_range_policies = policies.into_iter().collect();
-        self
-    }
-
-
-    /// Attaches the realtime and modified row counts for each loaded index.
-    #[must_use]
-    pub fn with_index_row_counts(
-        mut self,
-        row_counts: impl IntoIterator<Item = (i64, IndexRowCounts)>,
-    ) -> Self {
-        self.index_row_counts = row_counts.into_iter().collect();
-        self
-    }
-
-    /// Sets Go `HistColl.ModifyCount`.
-    #[must_use]
-    pub const fn with_modify_count(mut self, modify_count: i64) -> Self {
-        self.modify_count = modify_count;
-        self
-    }
-
-    /// Sets Go `HistColl.PKIsHandle`.
-    #[must_use]
-    pub const fn with_pk_is_handle(mut self, pk_is_handle: bool) -> Self {
-        self.pk_is_handle = pk_is_handle;
-        self
-    }
-
-    /// Go `HistColl.PKIsHandle`.
-    #[must_use]
-    pub const fn pk_is_handle(&self) -> bool {
-        self.pk_is_handle
-    }
-
-    /// Attaches the loaded indexes' column lists and NDVs.
-    #[must_use]
-    pub fn with_index_ndvs(
-        mut self,
-        index_ndvs: impl IntoIterator<Item = (i64, (Vec<i64>, f64))>,
-    ) -> Self {
-        self.index_ndvs = index_ndvs.into_iter().collect();
-        self
-    }
-
-    /// Go `HistColl.Indices`, as `(column unique ids, NDV)` per index.
-    #[must_use]
-    pub const fn index_ndvs(&self) -> &BTreeMap<i64, (Vec<i64>, f64)> {
-        &self.index_ndvs
-    }
-
-    /// Go `HistColl.Pseudo`.
-    #[must_use]
-    pub const fn pseudo(&self) -> bool {
+impl HistCollExt for HistColl {
+    fn pseudo(&self) -> bool {
         self.pseudo
     }
 
-    /// Go `HistColl.RealtimeCount`.
-    #[must_use]
-    pub const fn realtime_count(&self) -> i64 {
+    fn realtime_count(&self) -> i64 {
         self.realtime_count
     }
 
-    /// Go `HistColl.ColNum()`: how many columns carry statistics.
-    #[must_use]
-    pub fn column_count(&self) -> usize {
-        self.columns.len()
-    }
-
-    /// Go `HistColl.ModifyCount`.
-    #[must_use]
-    pub const fn modify_count(&self) -> i64 {
+    fn modify_count(&self) -> i64 {
         self.modify_count
     }
 
-    /// The row-size record for one planner column, when it is loaded.
-    #[must_use]
-    pub fn column(&self, unique_id: i64) -> Option<RowSizeColumnStats> {
-        self.columns.get(&unique_id).copied()
+    fn has_column(&self, unique_id: i64) -> bool {
+        self.get_column(unique_id).is_some()
     }
 
-    /// The loaded histogram for one planner column, when it is present.
-    #[must_use]
-    pub fn histogram(&self, unique_id: i64) -> Option<&Arc<tidb_stats::column::Column>> {
-        self.histograms.get(&unique_id)
+    fn histogram(&self, unique_id: i64) -> Option<tidb_stats::SharedColumn> {
+        self.get_column(unique_id)
     }
 
-    /// Go ColumnStatsIsInvalid's estimation gate. Retained metadata remains
-    /// accessible through histogram(), independently of its usability here.
-    #[must_use]
-    pub fn histogram_for_estimation(
-        &self,
-        unique_id: i64,
-    ) -> Option<&Arc<tidb_stats::column::Column>> {
-        let column = self.histograms.get(&unique_id)?;
-        let essential = self
-            .column_load_status
-            .get(&unique_id)
-            .is_some_and(|status| status.is_essential_stats_loaded());
-        column
-            .is_valid_for_estimation(self.pseudo, essential)
-            .then_some(column)
+    fn histogram_for_estimation(&self, unique_id: i64) -> Option<tidb_stats::SharedColumn> {
+        let column = self.get_column(unique_id)?;
+        let valid = {
+            let stats = read(&column);
+            let essential = stats.stats_loaded_status.is_essential_stats_loaded();
+            stats.is_valid_for_estimation(self.pseudo, essential)
+        };
+        valid.then_some(column)
     }
 
-    /// The loaded statistics for one Go planner index ID.
-    #[must_use]
-    pub fn index_histogram(&self, index_id: i64) -> Option<&Arc<tidb_stats::index::Index>> {
-        self.index_histograms.get(&index_id)
+    fn column_is_full_load(&self, unique_id: i64) -> bool {
+        self.get_column(unique_id)
+            .is_some_and(|column| read(&column).is_full_load())
     }
 
-    /// Go's loaded index IDs for one planner column, in source index order.
-    #[must_use]
-    pub fn index_ids_for_column(&self, unique_id: i64) -> &[i64] {
-        self.column_index_ids
+    fn column_info(&self, unique_id: i64) -> Option<PseudoColumn> {
+        let column = self.get_column(unique_id)?;
+        let column = read(&column);
+        let info = column.info.as_ref()?.read();
+        Some(PseudoColumn {
+            lower_name: info.name.lowercase().to_owned(),
+            unique_key_flag: info
+                .field_type
+                .has_flag(tidb_datatype::FieldTypeFlags::UNIQUE_KEY),
+        })
+    }
+
+    fn column(&self, unique_id: i64) -> Option<RowSizeColumnStats> {
+        let column = self.get_column(unique_id)?;
+        let column = read(&column);
+        let code = column
+            .info
+            .as_ref()
+            .map_or(FieldTypeCode::Unspecified, |info| info.read().field_type.code());
+        Some(RowSizeColumnStats::new(
+            RowSizeType::from_field_type_code(code),
+            column.histogram.tot_col_size,
+            column.histogram.null_count,
+            column.total_row_count(),
+            column.is_handle,
+        ))
+    }
+
+    fn index_histogram(&self, index_id: i64) -> Option<tidb_stats::SharedIndex> {
+        self.get_index(index_id)
+    }
+
+    fn index_is_full_load(&self, index_id: i64) -> bool {
+        self.get_index(index_id)
+            .is_some_and(|index| read(&index).is_full_load())
+    }
+
+    fn index_info(&self, index_id: i64) -> Option<tidb_stats::IndexInfo> {
+        let index = self.get_index(index_id)?;
+        let info = read(&index).info.clone();
+        info
+    }
+
+    fn index_infos(&self) -> Vec<tidb_stats::IndexInfo> {
+        self.index_ids()
+            .into_iter()
+            .filter_map(|id| self.index_info(id))
+            .collect()
+    }
+
+    fn index_ids(&self) -> Vec<i64> {
+        let mut ids = Vec::with_capacity(self.index_count());
+        self.for_each_index(|id, _| {
+            ids.push(id);
+            false
+        });
+        ids.sort_unstable();
+        ids
+    }
+
+    fn has_no_column_or_index(&self) -> bool {
+        self.column_count() == 0 && self.index_count() == 0
+    }
+
+    fn index_ids_for_column(&self, unique_id: i64) -> &[i64] {
+        self.col_unique_id_to_idx_ids
             .get(&unique_id)
             .map_or(&[], Vec::as_slice)
     }
 
-    /// The range policy of an index, the default for one never registered.
-    #[must_use]
-    pub fn index_range_policy(&self, index_id: i64) -> IndexRangePolicy {
-        self.index_range_policies.get(&index_id).copied().unwrap_or_default()
+    fn index_columns(&self, index_id: i64) -> &[i64] {
+        self.idx_to_col_unique_ids
+            .get(&index_id)
+            .map_or(&[], Vec::as_slice)
     }
 
-    /// Go `HistColl.Idx2ColUniqueIDs` for one loaded index.
-    #[must_use]
-    pub fn index_columns(&self, index_id: i64) -> &[i64] {
-        self.index_columns.get(&index_id).map_or(&[], Vec::as_slice)
+    fn mv_index_columns(&self, index_id: i64) -> &[tidb_expr::column::Column] {
+        self.mv_idx_to_columns.get(&index_id).map_or(&[], Vec::as_slice)
     }
 
-    /// Go-scaled realtime and modified counts for one loaded index.
-    #[must_use]
-    pub fn index_row_counts(&self, index_id: i64) -> Option<IndexRowCounts> {
-        self.index_row_counts.get(&index_id).copied()
+    fn index_range_policy(&self, index_id: i64) -> IndexRangePolicy {
+        self.index_info(index_id)
+            .map(|info| {
+                let info = info.read();
+                IndexRangePolicy {
+                    has_condition: !info.condition_expr_string.is_empty(),
+                    is_multi_value: info.mv_index,
+                }
+            })
+            .unwrap_or_default()
+    }
+
+    fn index_row_counts(&self, index_id: i64) -> Option<IndexRowCounts> {
+        let index = self.get_index(index_id)?;
+        let (index_realtime, index_modify) =
+            self.scaled_realtime_and_modify_count(Some(&read(&index)));
+        Some(IndexRowCounts {
+            table_realtime: self.realtime_count,
+            table_modify: self.modify_count,
+            index_realtime,
+            index_modify,
+        })
+    }
+
+    fn index_ndvs(&self) -> BTreeMap<i64, (Vec<i64>, f64)> {
+        let mut ndvs = BTreeMap::new();
+        self.for_each_index(|id, index| {
+            let columns = self.index_columns(id);
+            let declared = index.info.as_ref().map_or(0, |info| info.read().columns.len());
+            if index.histogram.ndv > 0 && !columns.is_empty() && columns.len() == declared {
+                ndvs.insert(id, (columns.to_vec(), index.histogram.ndv as f64));
+            }
+            false
+        });
+        ndvs
+    }
+
+    fn ndv_lower_bound(&self, columns: &[i64]) -> Option<i64> {
+        let initialized_column_ndv = |unique_id: i64| {
+            let column = self.get_column(unique_id)?;
+            let column = read(&column);
+            column
+                .is_stats_initialized()
+                .then_some(column.histogram.ndv)
+        };
+        if columns.is_empty() {
+            return None;
+        }
+        if columns.len() == 1 {
+            if let Some(ndv) = initialized_column_ndv(columns[0]) {
+                return Some(ndv);
+            }
+        }
+        let mut columns = columns.to_vec();
+        columns.sort_unstable();
+        for id in self.index_ids() {
+            let Some(index) = self.get_index(id) else {
+                continue;
+            };
+            let index = read(&index);
+            if !index.stats_loaded_status.stats_initialized() {
+                continue;
+            }
+            let mut index_columns = self.index_columns(id).to_vec();
+            let declared = index.info.as_ref().map_or(0, |info| info.read().columns.len());
+            if index_columns.len() != declared || index_columns.len() != columns.len() {
+                continue;
+            }
+            index_columns.sort_unstable();
+            if index_columns == columns {
+                return Some(index.histogram.ndv);
+            }
+        }
+        columns
+            .iter()
+            .filter_map(|id| initialized_column_ndv(*id))
+            .max()
     }
 }
 
@@ -509,19 +333,34 @@ impl HistColl {
 /// [`GroupNdv::columns`]. The former second port in
 /// `cardinality::derive_stats` (keyed `u64`) is deleted; that module
 /// re-exports this type.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct StatsInfo {
     row_count: f64,
     col_ndvs: BTreeMap<i64, f64>,
     /// Go `StatsInfo.HistColl`. Its presence is preserved only by operators
     /// whose Go derivation copies the child profile or calls `Scale`.
-    hist_coll: Option<HistColl>,
+    hist_coll: Option<Arc<HistColl>>,
     /// Go `StatsInfo.StatsVersion`.
     stats_version: u64,
     /// Go `StatsInfo.GroupNDVs`: exact NDVs of composite column groups
     /// supplied by indexes. Empty for every profile whose source has no
     /// loaded index statistics, which is Go's nil.
     group_ndvs: Vec<GroupNdv>,
+}
+
+/// Value equality; `HistColl` compares as Go's `*HistColl` pointer.
+impl PartialEq for StatsInfo {
+    fn eq(&self, other: &Self) -> bool {
+        self.row_count == other.row_count
+            && self.col_ndvs == other.col_ndvs
+            && match (&self.hist_coll, &other.hist_coll) {
+                (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+                (None, None) => true,
+                _ => false,
+            }
+            && self.stats_version == other.stats_version
+            && self.group_ndvs == other.group_ndvs
+    }
 }
 
 impl StatsInfo {
@@ -552,14 +391,14 @@ impl StatsInfo {
 
     /// The same profile carrying Go's base-table histogram collection.
     #[must_use]
-    pub fn with_hist_coll(mut self, hist_coll: HistColl) -> Self {
+    pub fn with_hist_coll(mut self, hist_coll: Arc<HistColl>) -> Self {
         self.hist_coll = Some(hist_coll);
         self
     }
 
     /// Returns Go `StatsInfo.HistColl`.
     #[must_use]
-    pub const fn hist_coll(&self) -> Option<&HistColl> {
+    pub const fn hist_coll(&self) -> Option<&Arc<HistColl>> {
         self.hist_coll.as_ref()
     }
 
@@ -769,9 +608,38 @@ fn source_min(left: f64, right: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{HistColl, StatsInfo};
-    use super::{GroupNdv, RowSizeColumnStats, RowSizeType};
+    use super::{loaded_hist_coll_for_test, HistCollExt as _, StatsInfo};
+    use super::GroupNdv;
     use tidb_expr::column::Column;
+
+    fn column_stats(ndv: i64) -> tidb_stats::column::Column {
+        tidb_stats::column::Column {
+            histogram: tidb_stats::Histogram {
+                ndv,
+                ..tidb_stats::Histogram::default()
+            },
+            stats_version: 2,
+            ..tidb_stats::column::Column::default()
+        }
+    }
+
+    /// Index statistics whose `Info` declares `columns` key columns.
+    fn index_stats(id: i64, ndv: i64, columns: usize) -> tidb_stats::index::Index {
+        tidb_stats::index::Index {
+            histogram: tidb_stats::Histogram {
+                id,
+                ndv,
+                ..tidb_stats::Histogram::default()
+            },
+            info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
+                id,
+                columns: vec![tidb_model::IndexColumn::default(); columns].into(),
+                ..tidb_model::IndexInfo::default()
+            })),
+            stats_version: 2,
+            ..tidb_stats::index::Index::default()
+        }
+    }
 
     /// An NDV that scales with the selected rows, the planner's `scale_ndv`
     /// at skew ratio 1.0.
@@ -781,29 +649,26 @@ mod tests {
 
     #[test]
     fn scale_and_limit_retain_hist_coll_like_go() {
-        let hist_coll = HistColl::new(
-            true,
-            100,
-            [(
-                7,
-                RowSizeColumnStats::new(RowSizeType::Long, 800, 0, 100.0, false),
-            )],
-        );
+        let hist_coll = loaded_hist_coll_for_test(true, 100, 0, [(7, column_stats(10))], []);
         let profile = StatsInfo::new(100.0, [(7, 80.0)]).with_hist_coll(hist_coll);
 
         for derived in [profile.scale_with(0.5, 1.0, proportional), profile.derive_limit_stats(10.0)] {
             let retained = derived.hist_coll().expect("Go retains HistColl");
-            assert!(retained.pseudo());
-            assert_eq!(retained.realtime_count(), 100);
+            assert!(retained.pseudo);
+            assert_eq!(retained.realtime_count, 100);
             assert!(retained.column(7).is_some());
         }
     }
 
     #[test]
     fn hist_coll_sorts_column_index_lookup_by_index_id() {
-        let hist_coll = HistColl::new(false, 100, [])
-            .with_column_index_ids([(7, 11), (7, 4)])
-            .with_index_columns([(11, vec![7, 8]), (4, vec![7])]);
+        let hist_coll = loaded_hist_coll_for_test(
+            false,
+            100,
+            0,
+            [],
+            [(11, index_stats(11, 1, 2), vec![7, 8]), (4, index_stats(4, 1, 1), vec![7])],
+        );
 
         assert_eq!(hist_coll.index_ids_for_column(7), [4, 11]);
         assert!(hist_coll.index_ids_for_column(8).is_empty());
@@ -851,12 +716,15 @@ mod tests {
 
     #[test]
     fn initialized_ndv_bounds_use_column_and_index_evidence() {
-        let hist = HistColl::new(false, 1000, []).with_initialized_ndvs(
-            [(1, 10), (2, 20), (3, 0)],
+        let hist = loaded_hist_coll_for_test(
+            false,
+            1000,
+            0,
+            [(1, column_stats(10)), (2, column_stats(20)), (3, column_stats(0))],
             [
-                (4, (vec![2, 1], 50)),
-                (5, (vec![1], 99)),
-                (6, (vec![3], 100)),
+                (4, index_stats(4, 50, 2), vec![2, 1]),
+                (5, index_stats(5, 99, 1), vec![1]),
+                (6, index_stats(6, 100, 1), vec![3]),
             ],
         );
         // A single initialized column is authoritative, including NDV zero.
@@ -869,7 +737,10 @@ mod tests {
         assert_eq!(hist.ndv_lower_bound(&[1, 2, 99]), Some(20));
         assert_eq!(hist.ndv_lower_bound(&[99]), None);
         assert_eq!(hist.ndv_lower_bound(&[]), None);
-        assert_eq!(HistColl::new(false, 1000, []).ndv_lower_bound(&[1]), None);
+        assert_eq!(
+            loaded_hist_coll_for_test(false, 1000, 0, [], []).ndv_lower_bound(&[1]),
+            None
+        );
     }
 }
 

@@ -2460,23 +2460,39 @@ fn apply_window_arguments_and_frame_bounds_rebind_to_worker_owned_cells() {
 
 #[test]
 fn cop_read_size_uses_output_columns_scan_histograms_and_output_cardinality() {
-    use tidb_planner_property::stats_info::{RowSizeColumnStats, RowSizeType};
-    use tidb_planner_property::stats_info::HistColl;
+    // Go `getAvgRowSize` reads each column's `Info` type, `TotColSize`,
+    // `NullCount`, `TotalRowCount()` and `IsHandle`.
+    let column = |code, tot_col_size, is_handle| tidb_stats::column::Column {
+        info: Some(tidb_model::GoShared::new(tidb_model::ColumnInfo {
+            field_type: FieldType::new(code),
+            ..tidb_model::ColumnInfo::default()
+        })),
+        histogram: tidb_stats::Histogram {
+            tot_col_size,
+            buckets: vec![tidb_stats::Bucket {
+                count: 100,
+                repeat: 0,
+                ndv: 0,
+                lower_bound: tidb_datatype::Datum::Null,
+                upper_bound: tidb_datatype::Datum::Null,
+            }],
+            ..tidb_stats::Histogram::default()
+        },
+        stats_version: 1,
+        is_handle,
+        ..tidb_stats::column::Column::default()
+    };
     let mut table = scan(1, &[1, 2]);
     table.set_stats(Some(StatsInfo::new(100.0, []).with_hist_coll(
-        HistColl::new(
+        tidb_planner_property::stats_info::loaded_hist_coll_for_test(
             false,
             100,
+            0,
             [
-                (
-                    1,
-                    RowSizeColumnStats::new(RowSizeType::LongLong, 800, 0, 100.0, true),
-                ),
-                (
-                    2,
-                    RowSizeColumnStats::new(RowSizeType::Variable, 1600, 0, 100.0, false),
-                ),
+                (1, column(FieldTypeCode::LongLong, 800, true)),
+                (2, column(FieldTypeCode::VarString, 1600, false)),
             ],
+            [],
         ),
     )));
     let mut filtered = selection(2, table);

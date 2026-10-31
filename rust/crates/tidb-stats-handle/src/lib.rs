@@ -36,7 +36,7 @@ pub struct StatsHandle {
     pub view: std::sync::RwLock<Option<Arc<StatisticsView>>>,
     pub values: std::sync::RwLock<HashMap<i64, Arc<tidb_stats::Table>>>,
     pub loader: std::sync::RwLock<Option<Arc<dyn StatisticsItemLoader>>>,
-    pub sync_load: std::sync::OnceLock<Arc<tidb_stats_handle_syncload::sync_load::SyncLoadService>>,
+    pub sync_load: std::sync::RwLock<Option<Arc<tidb_stats_handle_syncload::sync_load::SyncLoadService>>>,
 }
 
 impl std::fmt::Debug for StatsHandle {
@@ -110,19 +110,27 @@ impl StatsHandle {
             .loader
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(loader);
-        self.sync_load.get_or_init(|| {
+        // Go's sync load reads through the handle's one loader: a newly
+        // installed loader replaces the service's, over the same workers.
+        *self
+            .sync_load
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(
             tidb_stats_handle_syncload::sync_load::SyncLoadService::with_pool(
                 service_loader,
                 Arc::downgrade(self) as std::sync::Weak<dyn tidb_stats_handle_types::stats_cache::StatsCache>,
                 workers,
-            )
-        });
+            ),
+        );
     }
 
     /// The synchronous-load worker service, once the domain started it.
     #[must_use]
-    pub fn sync_load_service(&self) -> Option<&Arc<tidb_stats_handle_syncload::sync_load::SyncLoadService>> {
-        self.sync_load.get()
+    pub fn sync_load_service(&self) -> Option<Arc<tidb_stats_handle_syncload::sync_load::SyncLoadService>> {
+        self.sync_load
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Uses the domain cache for cluster planning, independent of schema refresh.
@@ -202,8 +210,8 @@ mod sync_load_tests {
         first.set_item_loader(Arc::clone(&loader), Arc::clone(&workers));
         second.set_item_loader(loader, workers);
         assert!(Arc::ptr_eq(
-            first.sync_load.get().unwrap().pool(),
-            second.sync_load.get().unwrap().pool(),
+            first.sync_load_service().unwrap().pool(),
+            second.sync_load_service().unwrap().pool(),
         ));
         // Go TestSysSessionPoolGoroutineLeak / TestSessionPoolClose: a
         // closed session must not retain its workers after its last view.

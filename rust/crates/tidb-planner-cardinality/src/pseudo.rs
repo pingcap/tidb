@@ -22,6 +22,7 @@
 //! scalar bounds and prefix-equality lengths; no statistics/catalog/session
 //! facade is invented here.
 
+use tidb_planner_property::stats_info::HistCollExt as _;
 use tidb_planner_property::stats_info::PseudoColumn;
 
 use crate::derive_stats::StatsInfoScale;
@@ -528,7 +529,7 @@ pub fn hist_coll_pseudo_selectivity(
     conditions: &[tidb_expr::expression::Expression],
     selectivity_factor: f64,
 ) -> f64 {
-    let resolve = |unique_id: i64| hist_coll.column_info(unique_id).cloned();
+    let resolve = |unique_id: i64| hist_coll.column_info(unique_id);
     let predicates: Vec<PseudoPredicate> = conditions
         .iter()
         .map(|condition| classify_pseudo_predicate(condition, &resolve))
@@ -536,15 +537,22 @@ pub fn hist_coll_pseudo_selectivity(
     let indexes: Vec<PseudoIndex> = hist_coll
         .index_infos()
         .iter()
-        .map(|info| PseudoIndex {
-            unique: info.unique,
-            column_lower_names: info.column_lower_names.clone(),
+        .map(|info| {
+            let info = info.read();
+            PseudoIndex {
+                unique: info.unique,
+                column_lower_names: info
+                    .columns
+                    .iter_deref()
+                    .map(|column| column.read().name.lowercase().to_owned())
+                    .collect(),
+            }
         })
         .collect();
     pseudo_selectivity(
         &predicates,
         &indexes,
-        hist_coll.realtime_count(),
+        hist_coll.realtime_count,
         selectivity_factor,
     )
 }

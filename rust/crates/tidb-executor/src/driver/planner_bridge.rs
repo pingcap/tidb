@@ -1108,6 +1108,37 @@ pub(crate) fn record_used_item_stats_status(
 
 
 
+/// Go `infoschema.buildTableMeta`'s `TableInfo` for a source the catalog
+/// holds no stored table for (a memory table): the columns it lists, every
+/// one public, with no index.
+fn memory_table_info(
+    source: &tidb_planner_core_operator_logicalop::DataSource,
+) -> tidb_model::TableInfo {
+    tidb_model::TableInfo {
+        id: source.table_id,
+        name: tidb_ast::CiString::new(source.table_name.clone()),
+        columns: source
+            .table_columns
+            .iter()
+            .enumerate()
+            .filter(|(_, column)| column.id > 0)
+            .filter_map(|(offset, column)| {
+                Some(tidb_model::ColumnInfo {
+                    id: column.id,
+                    name: tidb_ast::CiString::new(column.orig_name.clone()),
+                    offset: offset as i64,
+                    field_type: column.ret_type.clone()?,
+                    state: tidb_model::SchemaState::PUBLIC,
+                    hidden: column.is_hidden,
+                    ..tidb_model::ColumnInfo::default()
+                })
+            })
+            .collect::<Vec<_>>()
+            .into(),
+        ..tidb_model::TableInfo::default()
+    }
+}
+
 fn read<T>(lock: &std::sync::RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
     lock.read().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
@@ -1225,8 +1256,16 @@ impl InitStats<'_> {
         // The cache's explicit status excludes evicted metadata from NDV
         // scaling and histogram estimates without inferring state from buckets.
         let predicate_loaded = self.predicate_loaded_items(source, statistics);
+        // Go `ds.TableInfo`.
+        let table_info = self
+            .catalog
+            .kv_table_by_id(source.table_id)
+            .map_or_else(|| tidb_model::GoShared::new(memory_table_info(source)), |table| {
+                table.meta()
+            });
         tidb_planner::stats::init_stats::init_stats(
             source,
+            &table_info.read(),
             statistics,
             row_count,
             predicate_loaded,
@@ -3417,6 +3456,7 @@ mod predicate_column_tests {
 #[cfg(test)]
 mod statistics_initialization_tests {
     use super::*;
+    use tidb_planner_property::stats_info::HistCollExt as _;
     use tidb_table::kv_table::KvTable;
     use tidb_table::kv_table::KvIndex;
     use tidb_table::kv_table::KvColumn;
@@ -3680,7 +3720,10 @@ mod statistics_initialization_tests {
             let hist = returned.table_stats.as_ref().unwrap().hist_coll().unwrap();
             assert_eq!(hist.index_ids_for_column(1), &[9, 11]);
             assert!(hist.index_columns(10).is_empty());
-            assert_eq!(hist.index_histogram(11).unwrap().total_row_count(), 0.0);
+            assert_eq!(
+                hist.index_histogram(11).unwrap().read().unwrap().total_row_count(),
+                0.0
+            );
             assert!(
                 hist.histogram(column.unique_id).is_some(),
                 "raw metadata survives eviction"
@@ -3697,11 +3740,13 @@ mod statistics_initialization_tests {
             let estimate =
                 tidb_planner_cardinality::row_count_estimator::get_row_count_by_column_ranges(
                     hist.histogram_for_estimation(column.unique_id)
-                        .map(|column| column.as_ref()),
+                        .as_ref()
+                        .map(|column| column.read().unwrap())
+                        .as_deref(),
                     &[tidb_planner_cardinality::row_count_estimator::ColumnRange::point(Datum::Null)],
                     tidb_charset::Collation::Binary,
-                    hist.realtime_count(),
-                    hist.modify_count(),
+                    hist.realtime_count,
+                    hist.modify_count,
                     false,
                     &Default::default(),
                 )

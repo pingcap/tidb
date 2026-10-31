@@ -132,6 +132,6 @@ pub use status::{StatsLoadedStatus, ALL_EVICTED, ALL_LOADED};
 pub use table::{
     PseudoStatsTable,
     pseudo_hist_coll, pseudo_table, CopyIntent, HistColl,
-    QueryColumn, QueryIndexInfo, QueryTableInfo, SharedColumn, SharedIndex,
+    SharedColumn, SharedIndex,
     StatsInfo, Table, TableMemoryUsage, PSEUDO_ROW_COUNT, PSEUDO_VERSION, RATIO_OF_PSEUDO_ESTIMATE,
 };

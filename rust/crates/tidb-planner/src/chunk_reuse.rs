@@ -23,6 +23,7 @@
 //! 1000 does too, unless the host has at least 120 GiB and the reusable
 //! chunk's estimated size stays within `MaxBlobWidth * 2`.
 
+use tidb_planner_property::stats_info::HistCollExt as _;
 use tidb_planner_core_operator_physicalop::PhysicalPlan;
 use tidb_planner_property::stats_info::StatsInfo;
 use tidb_datatype::FieldTypeCode;

@@ -1324,7 +1324,7 @@ mod tests {
         let mut logical_source = choices.clone();
         logical_source.table_stats = Some(
             tidb_planner_property::stats_info::StatsInfo::new(1000.0, [])
-                .with_hist_coll(tidb_planner_property::stats_info::HistColl::new(true, 1000, [])),
+                .with_hist_coll(tidb_planner_property::stats_info::loaded_hist_coll_for_test(true, 1000, 0, [], [])),
         );
         logical_source
             .base
@@ -1428,8 +1428,13 @@ mod tests {
                 .chain(cop.table_plan.as_deref())
             {
                 assert_eq!(
-                    scan.stats_info().unwrap().hist_coll(),
-                    derived_source.table_stats.as_ref().unwrap().hist_coll(),
+                    scan.stats_info().unwrap().hist_coll().map(std::sync::Arc::as_ptr),
+                    derived_source
+                        .table_stats
+                        .as_ref()
+                        .unwrap()
+                        .hist_coll()
+                        .map(std::sync::Arc::as_ptr),
                     "merge scans retain the same table profile as ordinary scans"
                 );
             }

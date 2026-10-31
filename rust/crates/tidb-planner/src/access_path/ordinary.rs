@@ -11,6 +11,7 @@
 
 //! Range/filter derivation shared by ordinary and index-merge alternatives.
 
+use tidb_planner_property::stats_info::HistCollExt as _;
 use tidb_planner_util::path::{FilledIndexPath, FilledTablePath, PossiblePath};
 use super::AccessPathDerivationContext;
 use tidb_planner_core_operator_logicalop::DataSource;
@@ -151,7 +152,7 @@ pub(crate) fn correlated_access_count_after_access(
     };
     let hist = stats.hist_coll();
     let realtime = hist.map_or(stats.row_count(), |hist| hist.realtime_count() as f64);
-    if hist.is_none_or(tidb_planner_property::stats_info::HistColl::pseudo) {
+    if hist.is_none_or(|hist| hist.pseudo) {
         return tidb_planner_cardinality::pseudo::pseudo_avg_count_per_value(realtime);
     }
     let selectivity = count_after_access / realtime;
@@ -521,6 +522,11 @@ pub(crate) fn estimate_int_table_path(
         .handle_column
         .as_ref()
         .and_then(|column| hist?.histogram_for_estimation(column.unique_id));
+    let column = column.as_ref().map(|column| {
+        column
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    });
     let ranges = path
         .detached
         .ranges
@@ -535,7 +541,7 @@ pub(crate) fn estimate_int_table_path(
         })
         .collect::<Vec<_>>();
     tidb_planner_cardinality::row_count_estimator::get_row_count_by_column_ranges(
-        column.map(|column| column.as_ref()),
+        column.as_deref(),
         &ranges,
         path.handle_type.collation(),
         hist.map_or(stats.row_count() as i64, |hist| hist.realtime_count()),

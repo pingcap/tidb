@@ -39,6 +39,7 @@
 //!   [`crate::find_best_task`]'s own model — price as the sum of their
 //!   children, conservative and shape-neutral.
 
+use tidb_planner_property::stats_info::HistCollExt as _;
 use tidb_planner_cardinality::row_size::RowSizeColumn;
 use tidb_planner_costusage::{CostVer2, PlanCostOption};
 use tidb_planner_core_operator_physicalop::PhysicalPlan;
@@ -287,7 +288,8 @@ impl Ver2Coster {
         Self::row_size_for_columns(
             plan.schema().into_iter().flat_map(|schema| &schema.columns),
             plan.stats_info()
-                .and_then(tidb_planner_property::stats_info::StatsInfo::hist_coll),
+                .and_then(tidb_planner_property::stats_info::StatsInfo::hist_coll)
+                .map(std::convert::AsRef::as_ref),
         )
     }
 
@@ -410,7 +412,8 @@ impl Ver2Coster {
                             .iter()
                             .filter(|column| column.id != crate::plan_builder::EXTRA_COMMIT_TS_ID),
                         plan.stats_info()
-                            .and_then(tidb_planner_property::stats_info::StatsInfo::hist_coll),
+                            .and_then(tidb_planner_property::stats_info::StatsInfo::hist_coll)
+                .map(std::convert::AsRef::as_ref),
                     )
                 };
                 if scan.store_type == tidb_kv::store_type::StoreType::TiFlash {
@@ -459,7 +462,8 @@ impl Ver2Coster {
                     Self::row_size_for_columns(
                         scan.cost_columns.iter(),
                         plan.stats_info()
-                            .and_then(tidb_planner_property::stats_info::StatsInfo::hist_coll),
+                            .and_then(tidb_planner_property::stats_info::StatsInfo::hist_coll)
+                .map(std::convert::AsRef::as_ref),
                     )
                 },
                 self.factors.task_scan(

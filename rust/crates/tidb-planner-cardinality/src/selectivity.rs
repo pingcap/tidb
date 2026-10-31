@@ -24,6 +24,7 @@
 //! does, through the access-path generator's own `CollectFilters4MVIndex` and
 //! `BuildPartialPaths4MVIndex` halves.
 
+use tidb_planner_property::stats_info::HistCollExt as _;
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
 use tidb_expr::expression::{Expression, ScalarFunction};
@@ -37,7 +38,7 @@ use tidb_ranger::Range;
 use tidb_ranger::points::{ExpressionEvaluator, PointBuilderError};
 use crate::selectivity_greedy::{StatsNode, StatsNodeType, get_usable_sets_by_greedy};
 use tidb_planner_property::stats_info::HistColl;
-use crate::row_count_estimator::HistCollIndexEstimation;
+use crate::row_count_estimator::IndexEstimationPins;
 
 /// The `PlanContext` state `Selectivity` reads.
 pub struct SelectivityContext<'a> {
@@ -182,9 +183,13 @@ pub fn selectivity(
             remained.push(expr.clone());
             continue;
         };
-        ret *= match coll.histogram_for_estimation(column.unique_id) {
-            Some(stats) if stats.histogram.ndv > 0 => 1.0 / stats.histogram.ndv as f64,
-            _ => 1.0 / PSEUDO_EQUAL_RATE,
+        let ndv = coll
+            .histogram_for_estimation(column.unique_id)
+            .map_or(0, |stats| crate::read(&stats).histogram.ndv);
+        ret *= if ndv > 0 {
+            1.0 / ndv as f64
+        } else {
+            1.0 / PSEUDO_EQUAL_RATE
         };
     }
 
@@ -209,14 +214,15 @@ pub fn selectivity(
         };
         let (mask, ranges) = column_mask_and_ranges(ctx, &remained, column, field_type)?;
         ctx.record_used_item(column.id, false);
-        let is_handle = column_is_handle(coll, column, field_type);
+        let is_handle = column_is_handle(coll, column);
+        let column_stats = coll.histogram_for_estimation(column.unique_id);
+        let column_stats = column_stats.as_ref().map(|stats| crate::read(stats));
         let estimate = get_row_count_by_column_ranges(
-            coll.histogram_for_estimation(column.unique_id)
-                .map(AsRef::as_ref),
+            column_stats.as_deref(),
             &ranges,
             field_type.collation(),
-            coll.realtime_count(),
-            coll.modify_count(),
+            coll.realtime_count,
+            coll.modify_count,
             is_handle,
             ctx.options,
         )?;
@@ -232,23 +238,30 @@ pub fn selectivity(
     }
 
     for index_id in coll.index_ids() {
-        let info = coll.index_info(index_id);
-        if let Some(info) = info.filter(|info| info.mv_index) {
+        // `idx.Info`: whether it is multi-valued and its key columns' prefix
+        // lengths, read once.
+        let info = coll.index_info(index_id).map(|info| {
+            let info = info.read();
+            (
+                info.mv_index,
+                info.columns
+                    .iter_deref()
+                    .map(|column| column.read().length)
+                    .collect::<Vec<_>>(),
+            )
+        });
+        if let Some((_, column_lengths)) = info.as_ref().filter(|(mv_index, _)| *mv_index) {
             if let Some((selectivity, mask)) =
-                mask_and_selectivity_for_mv_index(ctx, coll, index_id, info, &remained)
+                mask_and_selectivity_for_mv_index(ctx, coll, index_id, column_lengths, &remained)
             {
                 nodes.push(StatsNode {
                     selectivity,
-                    ..StatsNode::new(
-                        StatsNodeType::Index,
-                        index_id,
-                        mask,
-                        info.column_lower_names.len(),
-                    )
+                    ..StatsNode::new(StatsNodeType::Index, index_id, mask, column_lengths.len())
                 });
             }
             continue;
         }
+        let info = info.as_ref().map(|(_, column_lengths)| column_lengths);
         // Go `findPrefixOfIndexByCol`: a possible path decides by its own
         // `IdxCols`; an index without one by `Idx2ColUniqueIDs`.
         let index_columns = match filled_paths.and_then(|paths| paths.get(&index_id)) {
@@ -258,10 +271,10 @@ pub fn selectivity(
         if index_columns.is_empty() {
             continue;
         }
-        let declared = info.map_or(index_columns.len(), |info| info.column_lengths.len());
+        let declared = info.map_or(index_columns.len(), Vec::len);
         let mut lengths: Vec<i64> = (0..index_columns.len().min(declared))
             .map(|position| {
-                info.and_then(|info| info.column_lengths.get(position).copied())
+                info.and_then(|lengths| lengths.get(position).copied())
                     .unwrap_or(tidb_ranger::checker::UNSPECIFIED_LENGTH)
             })
             .collect();
@@ -303,9 +316,7 @@ pub fn selectivity(
                 StatsNodeType::Index,
                 index_id,
                 mask,
-                info.map_or(coll.index_columns(index_id).len(), |info| {
-                    info.column_lower_names.len()
-                }),
+                info.map_or(coll.index_columns(index_id).len(), Vec::len),
             )
         });
     }
@@ -487,14 +498,10 @@ fn is_col_eq_cor_col(expr: &Expression) -> Option<&Column> {
     }
 }
 
-/// Go `colStats.IsHandle`: the table's single integer handle. `PseudoTable`
-/// derives it from `PKIsHandle && HasPriKeyFlag`.
-fn column_is_handle(coll: &HistColl, column: &Column, field_type: &tidb_datatype::FieldType) -> bool {
-    coll.pk_is_handle()
-        && coll.column(column.unique_id).map_or(
-            field_type.flags() & tidb_datatype::FieldTypeFlags::PRI_KEY != 0,
-            |stats| stats.is_handle,
-        )
+/// Go `colStats.IsHandle`: the table's single integer handle (`PKIsHandle`
+/// and the column's `PriKeyFlag`, as the loader and `PseudoTable` set it).
+fn column_is_handle(coll: &HistColl, column: &Column) -> bool {
+    coll.column(column.unique_id).is_some_and(|stats| stats.is_handle)
 }
 
 /// Go `getMaskAndRanges(..., ranger.ColumnRangeType, ...)`.
@@ -583,7 +590,7 @@ fn mask_and_selectivity_for_mv_index(
     ctx: &SelectivityContext<'_>,
     coll: &HistColl,
     index_id: i64,
-    info: &tidb_planner_property::stats_info::HistCollIndexInfo,
+    column_lengths: &[i64],
     exprs: &[Expression],
 ) -> Option<(f64, i64)> {
     let cols = coll.mv_index_columns(index_id);
@@ -595,8 +602,8 @@ fn mask_and_selectivity_for_mv_index(
         .mv_index
         .partial_access_filters(ctx.evaluate, &access_conds, cols)
         .ok()??;
-    let lengths = ctx.mv_index.column_lengths(cols, &info.column_lengths);
-    let realtime = coll.realtime_count() as f64;
+    let lengths = ctx.mv_index.column_lengths(cols, column_lengths);
+    let realtime = coll.realtime_count as f64;
     // Go `CalcTotalSelectivityForMVIdxPath`: each partial reads the virtual
     // column, so its selectivity is over the table's realtime count.
     let mut total = if is_intersection { 1.0 } else { 0.0 };
@@ -669,24 +676,31 @@ pub fn get_row_count_by_index_ranges(
     index_columns: &[Column],
     options: &EstimatorOptions,
 ) -> Result<tidb_stats::RowEstimate, EstimationError> {
-    let mut stats = coll.index_estimation_stats(index_id);
+    let mut pins = IndexEstimationPins::default();
     // `hasColumnStats`, the partial-statistics estimate and the virtual-column
     // check read `idxCols`; an index the collection does not hold still has
     // them.
-    stats.columns = index_columns
+    let valid_columns = index_columns
         .iter()
-        .map(|column| {
-            coll.histogram_for_estimation(column.unique_id)
-                .map(AsRef::as_ref)
-        })
-        .collect();
-    let recursive = coll
-        .index_columns(index_id)
+        .map(|column| column.unique_id)
+        .collect::<Vec<_>>();
+    let main = pins.pin(coll, index_id, Some(&valid_columns));
+    let mut recursive_handles = Vec::new();
+    for id in coll.index_columns(index_id) {
+        let mut candidates = Vec::new();
+        for candidate in coll.index_ids_for_column(*id) {
+            candidates.push(pins.pin(coll, *candidate, None));
+        }
+        recursive_handles.push(candidates);
+    }
+    let guards = pins.read();
+    let stats = guards.stats(main);
+    let recursive = recursive_handles
         .iter()
-        .map(|id| {
-            coll.index_ids_for_column(*id)
+        .map(|candidates| {
+            candidates
                 .iter()
-                .map(|candidate| coll.index_estimation_stats(*candidate))
+                .map(|candidate| guards.stats(*candidate))
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
@@ -723,9 +737,11 @@ pub fn get_selectivity_by_filter(
     {
         return Ok(None);
     }
-    let Some(stats) = find_available_stats_for_col(coll, column.unique_id) else {
+    let Some(available) = find_available_stats_for_col(coll, column.unique_id) else {
         return Ok(None);
     };
+    let guard = available.read();
+    let stats = guard.stats();
     // Only stats version 2 guarantees TopN + histogram + NULL covers all.
     if stats.stats_ver != 2 {
         return Ok(None);
@@ -794,25 +810,59 @@ pub fn get_selectivity_by_filter(
     Ok(Some(topn_selectivity + hist_selectivity + null_selectivity))
 }
 
-/// The statistics `findAvailableStatsForCol` settles on.
+/// The statistics object `findAvailableStatsForCol` settles on.
+enum AvailableStats {
+    Column(tidb_stats::SharedColumn),
+    Index(tidb_stats::SharedIndex),
+}
+
+/// [`AvailableStats`] read-locked.
+enum AvailableStatsGuard<'a> {
+    Column(std::sync::RwLockReadGuard<'a, tidb_stats::column::Column>),
+    Index(std::sync::RwLockReadGuard<'a, tidb_stats::index::Index>),
+}
+
+/// The parts of the available statistics a filter selectivity reads.
 struct FilterStats<'a> {
     stats_ver: i64,
     histogram: &'a tidb_stats::histogram::Histogram,
     topn: Option<&'a tidb_stats::cmsketch::TopN>,
 }
 
+impl AvailableStats {
+    fn read(&self) -> AvailableStatsGuard<'_> {
+        match self {
+            Self::Column(column) => AvailableStatsGuard::Column(crate::read(column)),
+            Self::Index(index) => AvailableStatsGuard::Index(crate::read(index)),
+        }
+    }
+}
+
+impl AvailableStatsGuard<'_> {
+    fn stats(&self) -> FilterStats<'_> {
+        match self {
+            Self::Column(column) => FilterStats {
+                stats_ver: column.stats_version,
+                histogram: &column.histogram,
+                topn: column.top_n.as_ref(),
+            },
+            Self::Index(index) => FilterStats {
+                stats_ver: index.stats_version,
+                histogram: &index.histogram,
+                topn: index.top_n.as_ref(),
+            },
+        }
+    }
+}
+
 /// Go `findAvailableStatsForCol`: the column's own fully loaded statistics,
 /// else a fully loaded single-column, non-prefix index on it.
-fn find_available_stats_for_col(coll: &HistColl, unique_id: i64) -> Option<FilterStats<'_>> {
+fn find_available_stats_for_col(coll: &HistColl, unique_id: i64) -> Option<AvailableStats> {
     if let Some(column) = coll
         .histogram_for_estimation(unique_id)
         .filter(|_| coll.column_is_full_load(unique_id))
     {
-        return Some(FilterStats {
-            stats_ver: column.stats_version,
-            histogram: &column.histogram,
-            topn: column.top_n.as_ref(),
-        });
+        return Some(AvailableStats::Column(column));
     }
     coll.index_ids().into_iter().find_map(|index_id| {
         if coll.index_columns(index_id) != [unique_id] {
@@ -820,19 +870,15 @@ fn find_available_stats_for_col(coll: &HistColl, unique_id: i64) -> Option<Filte
         }
         let prefix = coll
             .index_info(index_id)
-            .and_then(|info| info.column_lengths.first().copied())
+            .and_then(|info| info.read().columns.get(0).map(|column| column.read().length))
             .is_some_and(|length| length != tidb_ranger::checker::UNSPECIFIED_LENGTH);
-        if prefix || coll.pseudo() || !coll.index_is_full_load(index_id) {
+        if prefix || coll.pseudo || !coll.index_is_full_load(index_id) {
             return None;
         }
         let index = coll
             .index_histogram(index_id)
-            .filter(|index| index.total_row_count() != 0.0)?;
-        Some(FilterStats {
-            stats_ver: index.stats_version,
-            histogram: &index.histogram,
-            topn: index.top_n.as_ref(),
-        })
+            .filter(|index| crate::read(index).total_row_count() != 0.0)?;
+        Some(AvailableStats::Index(index))
     })
 }
 
@@ -865,6 +911,7 @@ fn substitute_column(
 #[cfg(test)]
 mod index_range_estimate_tests {
     use std::sync::Arc;
+    use tidb_planner_property::stats_info::loaded_hist_coll_for_test;
 
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_charset::Collation;
@@ -873,9 +920,7 @@ use tidb_charset::Collation;
 
     use super::get_row_count_by_index_ranges;
     use crate::row_count_estimator::EstimatorOptions;
-    use tidb_planner_property::stats_info::IndexRowCounts;
     use tidb_ranger::Range;
-    use tidb_planner_property::stats_info::HistColl;
 
     fn column(unique_id: i64) -> Column {
         Column::new(unique_id, FieldType::new(FieldTypeCode::LongLong))
@@ -943,19 +988,20 @@ use tidb_charset::Collation;
         )];
         let options = EstimatorOptions::default();
         let collection = |indexes: &[(i64, Vec<i64>)]| {
-            HistColl::new(false, 1_000, [])
-                .with_index_histograms(indexes.iter().map(|(id, _)| {
-                    (*id, two_column_histogram(*id, if *id == 7 { 1 } else { 1_000 }, if *id == 7 { 100 } else { 2_000 }))
-                }))
-                .with_index_columns(indexes.iter().cloned())
-                .with_column_index_ids(
-                    indexes.iter().map(|(id, columns)| (columns[0], *id)),
-                )
-                .with_index_row_counts(
-                    indexes
-                        .iter()
-                        .map(|(id, _)| (*id, IndexRowCounts::unscaled(1_000, 0))),
-                )
+            loaded_hist_coll_for_test(
+                false,
+                1_000,
+                0,
+                [],
+                indexes.iter().map(|(id, columns)| {
+                    let histogram = two_column_histogram(
+                        *id,
+                        if *id == 7 { 1 } else { 1_000 },
+                        if *id == 7 { 100 } else { 2_000 },
+                    );
+                    (*id, Arc::unwrap_or_clone(histogram), columns.clone())
+                }),
+            )
         };
         let baseline = get_row_count_by_index_ranges(
             &collection(&[(7, vec![1, 2])]),
@@ -1021,11 +1067,8 @@ use tidb_charset::Collation;
             })),
             ..Default::default()
         });
-        let collection = HistColl::new(false, 20, [])
-            .with_modify_count(10)
-            .with_index_histograms([(7, index)])
-            .with_index_columns([(7, vec![1, 2])])
-            .with_index_row_counts([(7, IndexRowCounts::unscaled(20, 10))]);
+        let collection =
+            loaded_hist_coll_for_test(false, 20, 10, [], [(7, Arc::unwrap_or_clone(index), vec![1, 2])]);
         let columns = [column(1), column(2)];
         let estimate = |low, high| {
             get_row_count_by_index_ranges(
@@ -1078,10 +1121,8 @@ use tidb_charset::Collation;
             })),
             ..Default::default()
         });
-        let collection = HistColl::new(false, 80, [])
-            .with_index_histograms([(7, index)])
-            .with_index_columns([(7, vec![1])])
-            .with_index_row_counts([(7, IndexRowCounts::unscaled(80, 0))]);
+        let collection =
+            loaded_hist_coll_for_test(false, 80, 0, [], [(7, Arc::unwrap_or_clone(index), vec![1])]);
         let columns = [column(1)];
         let estimate = |low: Datum, high: Datum| {
             get_row_count_by_index_ranges(

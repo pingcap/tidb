@@ -38,6 +38,7 @@
 //!   this operator holds the handle COLUMNS, which is what the ported bodies
 //!   need, plus [`DataSource::handle_is_int`].
 
+use tidb_planner_property::stats_info::HistCollExt as _;
 #[cfg(test)]
 use tidb_datatype::Datum;
 use tidb_charset::Collation;
@@ -1043,7 +1044,10 @@ fn is_null_condition_selectivity_with_options(
     };
     let hist_coll = stats.hist_coll()?;
     let column_stats = hist_coll.histogram_for_estimation(column.unique_id)?;
-    let realtime_row_count = hist_coll.realtime_count();
+    let column_stats = column_stats
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let realtime_row_count = hist_coll.realtime_count;
     let total = realtime_row_count as f64;
     if total <= 0.0 {
         return None;
@@ -1062,11 +1066,11 @@ fn is_null_condition_selectivity_with_options(
             high_exclude: false,
         }];
         let estimate = tidb_planner_cardinality::row_count_estimator::get_column_row_count(
-            column_stats,
+            &column_stats,
             &ranges,
             Collation::Binary,
             realtime_row_count,
-            hist_coll.modify_count(),
+            hist_coll.modify_count,
             false,
             &options,
         )
@@ -1332,8 +1336,6 @@ fn index_covers_column(
 mod tests {
     use super::*;
     use tidb_planner_cardinality::derive_stats::StatsInfoScale;
-    use tidb_planner_property::stats_info::HistColl;
-    use std::sync::Arc;
     use tidb_ast::CiString;
     use tidb_datatype::{FieldType, FieldTypeCode};
     use tidb_expr::scalar_function::ScalarFunction;
@@ -1353,9 +1355,7 @@ mod tests {
         // OutOfRangeRowCount heuristic master applies to
         // `not(isnull(col))`'s [MinNotNull, MaxValue] range.
         let hist_coll =
-            HistColl::new(false, row_count as i64, std::iter::empty()).with_histograms([(
-                1,
-                Arc::new(tidb_stats::column::Column {
+            tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, row_count as i64, 0, [(1, tidb_stats::column::Column {
                     histogram: Histogram {
                         id: 1,
                         ndv: 900,
@@ -1376,8 +1376,7 @@ mod tests {
                     cmsketch: None,
                     stats_version: 2,
                     ..Default::default()
-                }),
-            )]);
+                })], []);
         StatsInfo::new(row_count, std::iter::empty()).with_hist_coll(hist_coll)
     }
 
@@ -1402,6 +1401,7 @@ mod tests {
         let column_stats = hist_coll
             .histogram(column.unique_id)
             .expect("column histogram");
+        let column_stats = &*column_stats.read().unwrap();
         let ranges = vec![tidb_planner_cardinality::row_count_estimator::ColumnRange {
             low: Datum::MinNotNull,
             high: Datum::MaxValue,
@@ -1412,13 +1412,13 @@ mod tests {
             column_stats,
             &ranges,
             Collation::Binary,
-            hist_coll.realtime_count(),
-            hist_coll.modify_count(),
+            hist_coll.realtime_count,
+            hist_coll.modify_count,
             false,
             &tidb_planner_cardinality::row_count_estimator::EstimatorOptions::default(),
         )
         .unwrap();
-        let expected = (estimate.est / hist_coll.realtime_count() as f64).clamp(0.0, 1.0);
+        let expected = (estimate.est / hist_coll.realtime_count as f64).clamp(0.0, 1.0);
         assert!(
             (selectivity - expected).abs() < 1e-9,
             "selectivity {selectivity} vs estimator {expected}"
@@ -1449,6 +1449,7 @@ mod tests {
         let column_stats = hist_coll
             .histogram(column.unique_id)
             .expect("column histogram");
+        let column_stats = &*column_stats.read().unwrap();
         let ranges = [tidb_planner_cardinality::row_count_estimator::ColumnRange {
             low: Datum::MinNotNull,
             high: Datum::MaxValue,
@@ -1459,19 +1460,19 @@ mod tests {
             column_stats,
             &ranges,
             Collation::Binary,
-            hist_coll.realtime_count(),
-            hist_coll.modify_count(),
+            hist_coll.realtime_count,
+            hist_coll.modify_count,
             false,
             &tidb_planner_cardinality::row_count_estimator::EstimatorOptions::default(),
         )
         .unwrap();
-        let expected = (estimate.est / hist_coll.realtime_count() as f64).clamp(0.0, 1.0);
+        let expected = (estimate.est / hist_coll.realtime_count as f64).clamp(0.0, 1.0);
         let wrong_count_estimate = tidb_planner_cardinality::row_count_estimator::get_column_row_count(
             column_stats,
             &ranges,
             Collation::Binary,
             scaled_stats.row_count() as i64,
-            hist_coll.modify_count(),
+            hist_coll.modify_count,
             false,
             &tidb_planner_cardinality::row_count_estimator::EstimatorOptions::default(),
         )

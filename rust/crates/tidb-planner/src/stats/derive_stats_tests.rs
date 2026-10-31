@@ -85,9 +85,13 @@ fn attach_pseudo_collection(op: &mut DataSource) {
         .map(|(metadata, column)| {
             (
                 column.unique_id,
-                tidb_planner_property::stats_info::PseudoColumn {
-                    lower_name: metadata.name.to_lowercase(),
-                    unique_key_flag: false,
+                tidb_stats::column::Column {
+                    info: Some(tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                        id: metadata.id,
+                        name: tidb_ast::CiString::new(metadata.name.clone()),
+                        ..tidb_model::ColumnInfo::default()
+                    })),
+                    ..tidb_stats::column::Column::default()
                 },
             )
         })
@@ -105,23 +109,60 @@ fn attach_pseudo_collection(op: &mut DataSource) {
             (index.id, ids)
         })
         .collect::<Vec<_>>();
-    let index_infos = op
+    // Go `PseudoTable`'s indexes: each object carries only its `Info`.
+    let indexes = op
         .indexes
         .iter()
-        .map(|index| tidb_planner_property::stats_info::HistCollIndexInfo {
-            id: index.id,
-            unique: index.unique,
-            mv_index: index.is_multi_valued,
-            column_lower_names: index.columns.iter().map(|c| c.name.to_lowercase()).collect(),
-            column_lengths: index.columns.iter().map(|c| c.length).collect(),
+        .map(|index| {
+            let info = tidb_model::IndexInfo {
+                id: index.id,
+                unique: index.unique,
+                mv_index: index.is_multi_valued,
+                columns: index
+                    .columns
+                    .iter()
+                    .map(|column| tidb_model::IndexColumn {
+                        name: tidb_ast::CiString::new(column.name.clone()),
+                        length: column.length,
+                        ..tidb_model::IndexColumn::default()
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+                ..tidb_model::IndexInfo::default()
+            };
+            (
+                index.id,
+                tidb_stats::index::Index {
+                    info: Some(tidb_model::GoShared::new(info)),
+                    histogram: tidb_stats::Histogram {
+                        id: index.id,
+                        ..tidb_stats::Histogram::default()
+                    },
+                    ..tidb_stats::index::Index::default()
+                },
+            )
         })
         .collect::<Vec<_>>();
+    let mut coll = tidb_planner_property::stats_info::HistColl::new_with_cols_and_idxs(
+        0,
+        rows as i64,
+        0,
+        columns,
+        indexes,
+    );
+    coll.pseudo = true;
+    for (id, ids) in index_columns {
+        if let Some(first) = ids.first() {
+            coll.col_unique_id_to_idx_ids.entry(*first).or_default().push(id);
+        }
+        coll.idx_to_col_unique_ids.insert(id, ids);
+    }
+    for ids in coll.col_unique_id_to_idx_ids.values_mut() {
+        ids.sort_unstable();
+    }
     op.table_stats = Some(
-        StatsInfo::new(rows, profile.col_ndvs().iter().map(|(id, ndv)| (*id, *ndv))).with_hist_coll(
-            tidb_planner_property::stats_info::HistColl::new(true, rows as i64, [])
-                .with_index_columns(index_columns)
-                .with_column_and_index_infos(columns, index_infos),
-        ),
+        StatsInfo::new(rows, profile.col_ndvs().iter().map(|(id, ndv)| (*id, *ndv)))
+            .with_hist_coll(std::sync::Arc::new(coll)),
     );
 }
 

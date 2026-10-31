@@ -2758,7 +2758,7 @@ mod attach_tests {
         });
         let source_stats = StatsInfo::new(12.0, [(1, 3.0), (2, 5.0), (3, 7.0)])
             .with_stats_version(2)
-            .with_hist_coll(tidb_planner_property::stats_info::HistColl::new(false, 12, []))
+            .with_hist_coll(tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 12, 0, [], []))
             .with_group_ndvs(vec![tidb_planner_property::stats_info::GroupNdv {
                 columns: vec![1, 2],
                 ndv: 8.0,
@@ -2835,7 +2835,10 @@ mod attach_tests {
         assert_eq!(expanded_stats.row_count(), 24.0);
         assert_eq!(expanded_stats.col_ndvs(), source_stats.col_ndvs());
         assert_eq!(expanded_stats.group_ndvs(), source_stats.group_ndvs());
-        assert_eq!(expanded_stats.hist_coll(), source_stats.hist_coll());
+        assert_eq!(
+            expanded_stats.hist_coll().map(std::sync::Arc::as_ptr),
+            source_stats.hist_coll().map(std::sync::Arc::as_ptr)
+        );
         assert_eq!(expanded_stats.stats_version(), source_stats.stats_version());
         assert_eq!(projection.base.base.stats_info(), Some(expanded_stats));
         assert_eq!(partial.base.base.stats_info().unwrap().row_count(), 8.0);
@@ -3661,7 +3664,7 @@ mod task_tests {
                 tidb_expr::column::Column::new(1, FieldType::new(FieldTypeCode::LongLong)),
             ])));
         plan.set_stats(Some(StatsInfo::new(100.0, [(1, 10.0)]).with_hist_coll(
-            tidb_planner_property::stats_info::HistColl::new(false, 100, []).with_histograms([(1, histogram)]),
+            tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 100, 0, [(1, std::sync::Arc::unwrap_or_clone(histogram))], []),
         )));
         let mpp = Task::Mpp(MppTask {
             plan: Some(Box::new(plan.clone())),
@@ -4435,8 +4438,6 @@ mod task_tests {
 
     #[test]
     fn root_task_filter_preserves_go_one_row_floor() {
-        use tidb_planner_property::stats_info::HistColl;
-        use std::sync::Arc;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::constant::Constant;
         use tidb_expr::expression::{Expression, ScalarFunction};
@@ -4456,18 +4457,13 @@ mod task_tests {
             }],
             ..Histogram::default()
         };
-        let hist_coll = HistColl::new(false, 100, [])
-            .with_histograms([(
-                unique_id,
-                Arc::new(tidb_stats::column::Column {
+        let hist_coll = tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 100, 0, [(unique_id, tidb_stats::column::Column {
                     histogram,
                     top_n: None,
                     cmsketch: None,
                     stats_version: 2,
                     ..Default::default()
-                }),
-            )])
-            .with_modify_count(0);
+                })], []);
         let stats = StatsInfo::new(100.0, [(unique_id, 10.0)]).with_hist_coll(hist_coll);
         let mut scan = table_scan_with_rows(100.0);
         scan.base_mut().base.set_stats(Some(stats));
@@ -4561,7 +4557,6 @@ mod task_tests {
     #[test]
     fn root_task_filter_uses_the_task_session_estimator_options() {
         use tidb_planner_cardinality::row_count_estimator::EstimatorOptions;
-        use tidb_planner_property::stats_info::HistColl;
         use std::sync::Arc;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::constant::Constant;
@@ -4582,18 +4577,13 @@ mod task_tests {
             }],
             ..Histogram::default()
         };
-        let hist_coll = HistColl::new(false, 1_000, [])
-            .with_histograms([(
-                unique_id,
-                Arc::new(tidb_stats::column::Column {
+        let hist_coll = tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 1_000, 2_000, [(unique_id, tidb_stats::column::Column {
                     histogram,
                     top_n: None,
                     cmsketch: None,
                     stats_version: 2,
                     ..Default::default()
-                }),
-            )])
-            .with_modify_count(2_000);
+                })], []);
         let table_stats = StatsInfo::new(1_000.0, [(unique_id, 10.0)]).with_hist_coll(hist_coll);
         let compare = |name: &str, value| {
             let long = FieldType::new(FieldTypeCode::LongLong);

@@ -543,21 +543,7 @@ impl tidb_stats_handle_syncload::sync_load::StatisticsItemLoader for ClusterStat
                     continue;
                 }
                 if !analyzed {
-                    let empty = tidb_stats_handle_storage::cluster_stats_load::ClusterStatsItem {
-                        id: item.id,
-                        is_index: false,
-                        stats_ver: 0,
-                        flag: 0,
-                        load_status: tidb_stats::StatsLoadedStatus::default(),
-                        histogram: tidb_stats::Histogram {
-                            id: item.id,
-                            ..tidb_stats::Histogram::default()
-                        },
-                        topn: None,
-                        cms: None,
-                        fm_sketch: None,
-                    };
-                    self.stats.update_item(item.table_id, empty, table);
+                    self.stats.publish_empty_column(item.table_id, item.id, table);
                     continue;
                 }
             }

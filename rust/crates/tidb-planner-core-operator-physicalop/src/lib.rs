@@ -50,6 +50,7 @@ mod memory;
 pub mod part_info;
 pub mod range_rebuild;
 pub use part_info::PhysPlanPartInfo;
+use tidb_planner_property::stats_info::HistCollExt as _;
 use tidb_kv::store_type::StoreType;
 use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 pub mod shuffle;

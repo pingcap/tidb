@@ -19,13 +19,14 @@ use crate::row_count_estimator::{
     ColumnRange, EstimatorOptions, get_index_row_count,
     get_row_count_by_column_ranges,
 };
+use tidb_planner_property::stats_info::HistCollExt as _;
 use tidb_ranger::types::Range;
 use tidb_planner_property::stats_info::HistColl;
 use tidb_datatype::Datum;
 use tidb_charset::Collation;
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
-use crate::row_count_estimator::HistCollIndexEstimation;
+use crate::row_count_estimator::IndexEstimationPins;
 
 /// Session controls for Go's correlation-adjusted scan estimates.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -271,10 +272,13 @@ fn estimate_correlation_range(
 ) -> Option<f64> {
     if let Some(index_id) = index_id {
         let index = stats.index_histogram(index_id)?;
-        if stats.pseudo() || index.total_row_count() == 0.0 {
+        if stats.pseudo || crate::read(&index).total_row_count() == 0.0 {
             return None;
         }
-        let context = stats.index_estimation_stats(index_id);
+        let mut pins = IndexEstimationPins::default();
+        let handle = pins.pin(stats, index_id, None);
+        let guards = pins.read();
+        let context = guards.stats(handle);
         let estimate =
             get_index_row_count(&context, &[], &[], std::slice::from_ref(range), &options).ok()?;
         return Some(estimate.est);
@@ -282,7 +286,8 @@ fn estimate_correlation_range(
     let low = range.low_val.first()?.clone();
     let high = range.high_val.first()?.clone();
     let column = stats.histogram_for_estimation(column_id)?;
-    if stats.pseudo() || column.total_row_count() == 0.0 {
+    let column = crate::read(&column);
+    if stats.pseudo || column.total_row_count() == 0.0 {
         return None;
     }
     let collation = range
@@ -290,8 +295,9 @@ fn estimate_correlation_range(
         .first()
         .copied()
         .unwrap_or(Collation::Binary);
+    // Go `getColumnRangeCounts` asks with `pkIsHandle` false.
     get_row_count_by_column_ranges(
-        Some(column),
+        Some(&column),
         &[ColumnRange::new(
             low,
             high,
@@ -299,9 +305,9 @@ fn estimate_correlation_range(
             range.high_exclude,
         )],
         collation,
-        stats.realtime_count(),
-        stats.modify_count(),
-        stats.pk_is_handle(),
+        stats.realtime_count,
+        stats.modify_count,
+        false,
         &options,
     )
     .ok()
@@ -310,6 +316,21 @@ fn estimate_correlation_range(
 
 #[cfg(test)]
 mod tests {
+    use tidb_planner_property::stats_info::loaded_hist_coll_for_test;
+
+    /// Go's zero `HistColl` with only counts and `ColUniqueID2IdxIDs`.
+    fn bare_coll(
+        pseudo: bool,
+        realtime_count: i64,
+        column_index_ids: impl IntoIterator<Item = (i64, Vec<i64>)>,
+    ) -> HistColl {
+        let mut coll = HistColl::default();
+        coll.pseudo = pseudo;
+        coll.realtime_count = realtime_count;
+        coll.col_unique_id_to_idx_ids = column_index_ids.into_iter().collect();
+        coll
+    }
+
     use super::{
         CountedRange, EstimatorOptions, convert_range_from_expected_cnt,
         estimate_table_cross_row_count,
@@ -398,7 +419,7 @@ use tidb_charset::Collation;
         assert_eq!(converted.skipped_rows(), 0.0);
     }
 
-    fn correlated_fixture() -> (HistColl, Column, Vec<Expression>) {
+    fn correlated_fixture() -> (Arc<HistColl>, Column, Vec<Expression>) {
         let field_type = FieldType::new(FieldTypeCode::LongLong);
         let column = Column::new(7, field_type.clone());
         let filter = Expression::ScalarFunction(ScalarFunction::new(
@@ -409,9 +430,9 @@ use tidb_charset::Collation;
                 Expression::Constant(Constant::new(Datum::Int(50), field_type)),
             ],
         ));
-        let stats = HistColl::new(false, 100, []).with_histograms([(
+        let stats = loaded_hist_coll_for_test(false, 100, 0, [(
             7,
-            Arc::new(tidb_stats::column::Column {
+            tidb_stats::column::Column {
                 histogram: Histogram {
                     id: 7,
                     ndv: 100,
@@ -429,8 +450,8 @@ use tidb_charset::Collation;
                 cmsketch: None,
                 stats_version: 2,
                 ..Default::default()
-            }),
-        )]);
+            },
+        )], []);
         (stats, column, vec![filter])
     }
 
@@ -519,7 +540,7 @@ use tidb_charset::Collation;
     #[test]
     fn table_cross_estimate_keeps_correlation_when_statistics_are_unusable() {
         let (_, column, filters) = correlated_fixture();
-        let pseudo = HistColl::new(true, 100, []);
+        let pseudo = bare_coll(true, 100, []);
         let result = estimate_table_cross_row_count(
             &pseudo,
             &pseudo,
@@ -538,10 +559,8 @@ use tidb_charset::Collation;
 
     #[test]
     fn table_cross_estimate_does_not_skip_the_first_leading_index() {
-        use tidb_planner_property::stats_info::IndexRowCounts;
-
         let (column_stats, column, filters) = correlated_fixture();
-        let source_stats = HistColl::new(false, 100, []).with_column_index_ids([(7, 11), (7, 4)]);
+        let source_stats = bare_coll(false, 100, [(7, vec![4, 11])]);
         let later_index = tidb_stats::index::Index {
             histogram: Histogram {
                 id: 11,
@@ -574,11 +593,9 @@ use tidb_charset::Collation;
         // Go uses the first ID in ColUniqueID2IdxIDs. If it is absent or
         // unusable, it falls back to the correlation heuristic; it does not
         // try a later index or switch to the column histogram.
-        let table_stats = HistColl::new(false, 100, [])
-            .with_histograms([(7, column_stats.histogram(7).unwrap().clone())])
-            .with_index_histograms([(11, Arc::new(later_index))])
-            .with_index_columns([(11, vec![7])])
-            .with_index_row_counts([(11, IndexRowCounts::unscaled(100, 0))]);
+        let payload = column_stats.get_column(7).unwrap().read().unwrap().clone();
+        let table_stats =
+            loaded_hist_coll_for_test(false, 100, 0, [(7, payload)], [(11, later_index, vec![7])]);
 
         let estimate = estimate_table_cross_row_count(
             &source_stats,
@@ -595,7 +612,7 @@ use tidb_charset::Collation;
         );
 
         assert_eq!(estimate, (0.0, false, 0.95));
-        let later_index_is_first = HistColl::new(false, 100, []).with_column_index_ids([(7, 11)]);
+        let later_index_is_first = bare_coll(false, 100, [(7, vec![11])]);
         let estimate = estimate_table_cross_row_count(
             &later_index_is_first,
             &table_stats,
