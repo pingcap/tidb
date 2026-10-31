@@ -8,10 +8,11 @@ go_test(
         "index_lookup_merge_join_test.go",
     ],
     flaky = True,
-    shard_count = 13,
+    shard_count = 14,
     deps = [
         "//pkg/session",
         "//pkg/testkit",
+        "//pkg/util/dbterror/exeerrors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
     ],

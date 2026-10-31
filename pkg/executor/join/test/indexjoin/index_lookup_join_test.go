@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -382,5 +383,79 @@ func TestIndexJoinInnerCTEStorageConcurrentBuild(t *testing.T) {
 	require.Contains(t, plan, "CTE")
 	for range 20 {
 		tk.MustQuery(sql).Check(testkit.Rows(fmt.Sprintf("%d", rowCount)))
+	}
+}
+
+// TestKillDuringIndexHashJoinProbe checks that an index hash join can be killed while it
+// compares rows, even when its result chunk never fills (issue#72481). It covers
+// semi, anti semi, and left outer semi joins, on a hot key (one long chain of
+// outer rows) and on distinct keys (many short chains).
+func TestKillDuringIndexHashJoinProbe(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@cte_max_recursion_depth = 10000")
+	for _, table := range []string{"t_hot_outer", "t_distinct_outer"} {
+		tk.MustExec("create table " + table + " (id bigint primary key, k bigint not null, v bigint not null)")
+	}
+	for _, table := range []string{"t_hot_inner", "t_distinct_inner"} {
+		tk.MustExec("create table " + table + " (k bigint not null, id bigint not null, primary key (k, id) clustered)")
+	}
+	// Hot key: every row has k = 1, so each inner row is compared with all
+	// 4096 outer rows in one chain.
+	tk.MustExec("insert into t_hot_outer with recursive s(n) as (select 1 union all select n + 1 from s where n < 4096) select n, 1, n from s")
+	tk.MustExec("insert into t_hot_inner with recursive s(n) as (select 1 union all select n + 1 from s where n < 8) select 1, n from s")
+	// Distinct keys: each inner row matches one outer row, so every chain is
+	// short and the compares only add up across rows.
+	tk.MustExec("insert into t_distinct_outer with recursive s(n) as (select 1 union all select n + 1 from s where n < 4096) select n, n, n from s")
+	tk.MustExec("insert into t_distinct_inner with recursive s(n) as (select 1 union all select n + 1 from s where n < 4096) select n, n from s")
+	tk.MustExec("analyze table t_hot_outer, t_hot_inner, t_distinct_outer, t_distinct_inner")
+
+	hot := func(q string) string {
+		return fmt.Sprintf(q, "t_hot_outer", "t_hot_inner")
+	}
+	distinct := func(q string) string {
+		return fmt.Sprintf(q, "t_distinct_outer", "t_distinct_inner")
+	}
+	const (
+		exists      = "select /*+ INL_HASH_JOIN(i@sel_2) */ count(*) from %s o where exists (select 1 from %s i where i.k = o.k and i.id <> o.v)"
+		existsNone  = "select /*+ INL_HASH_JOIN(i@sel_2) */ count(*) from %s o where exists (select 1 from %s i where i.k = o.k and mod(i.id, 2) > mod(o.v, 2) + 5)"
+		notExists   = "select /*+ INL_HASH_JOIN(i@sel_2) */ count(*) from %s o where not exists (select 1 from %s i where i.k = o.k and i.id <> o.v)"
+		in          = "select /*+ INL_HASH_JOIN(i@sel_2) */ count(*) from %s o where o.k in (select i.k from %s i where i.id <> o.v)"
+		notIn       = "select /*+ INL_HASH_JOIN(i@sel_2) */ count(*) from %s o where o.k not in (select i.k from %s i where i.id <> o.v)"
+		inSelect    = "select /*+ INL_HASH_JOIN(i@sel_2) */ sum(o.k in (select i.k from %s i where i.id <> o.v)) from %s o"
+		notInSelect = "select /*+ INL_HASH_JOIN(i@sel_2) */ sum(o.k not in (select i.k from %s i where i.id <> o.v)) from %s o"
+	)
+	queries := []string{
+		// Hot key, semi join: most outer rows match, so a few rows are output early and then none.
+		hot(exists),
+		// Hot key, semi join: no outer row matches, so the join outputs nothing at all.
+		// The condition can't become a scan range or a hash key, so every pair is still compared.
+		hot(existsNone),
+		// Hot key, anti semi join.
+		hot(notExists),
+		// Hot key, semi and anti semi joins from IN and NOT IN.
+		hot(in),
+		hot(notIn),
+		// Hot key, left outer semi and anti left outer semi joins: IN and NOT IN in the select list.
+		fmt.Sprintf(inSelect, "t_hot_inner", "t_hot_outer"),
+		fmt.Sprintf(notInSelect, "t_hot_inner", "t_hot_outer"),
+		// Distinct keys, semi join: no outer row matches (i.id = o.v for every pair).
+		distinct(exists),
+		// Distinct keys, anti semi join.
+		distinct(notExists),
+	}
+	for _, q := range queries {
+		tk.MustHavePlan(q, "IndexHashJoin")
+	}
+
+	fp := "github.com/pingcap/tidb/pkg/executor/join/killedDuringIndexHashJoinProbe"
+	require.NoError(t, failpoint.Enable(fp, "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fp))
+	}()
+	for _, q := range queries {
+		err := tk.QueryToErr(q)
+		require.Equal(t, exeerrors.ErrQueryInterrupted, err, q)
 	}
 }
