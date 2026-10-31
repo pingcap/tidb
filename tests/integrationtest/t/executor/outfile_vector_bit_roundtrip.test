@@ -1,0 +1,19 @@
+CREATE TABLE vector_src (id INT PRIMARY KEY, emb VECTOR(3), note VARCHAR(10));
+INSERT INTO vector_src VALUES (1, '[1,2,3]', 'a'), (2, '[0.5,-1,2]', 'b');
+CREATE TABLE vector_dst LIKE vector_src;
+SELECT * FROM vector_src ORDER BY id INTO OUTFILE 'outfile_vector_roundtrip.csv'
+  FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"';
+LOAD DATA LOCAL INFILE 'outfile_vector_roundtrip.csv' INTO TABLE vector_dst
+  FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"';
+SELECT id, emb, note FROM vector_dst ORDER BY id;
+--remove_file outfile_vector_roundtrip.csv
+
+CREATE TABLE bit_src (id INT PRIMARY KEY, flags BIT(8));
+INSERT INTO bit_src VALUES (1, b'00001010'), (2, b'01011100'), (3, b'00001001'), (4, b'00000000');
+CREATE TABLE bit_dst LIKE bit_src;
+SELECT * FROM bit_src ORDER BY id INTO OUTFILE 'outfile_bit_roundtrip.txt';
+LOAD DATA LOCAL INFILE 'outfile_bit_roundtrip.txt' INTO TABLE bit_dst;
+SELECT id, BIN(flags) FROM bit_dst ORDER BY id;
+--remove_file outfile_bit_roundtrip.txt
+
+DROP TABLE vector_dst, vector_src, bit_dst, bit_src;

@@ -77,7 +77,7 @@ func TestSelectIntoOutfileTypes(t *testing.T) {
 	tk.MustExec("CREATE TABLE `t` ( `a` bit(10) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
 	tk.MustExec("INSERT INTO `t` VALUES (_binary '\\0'), (_binary '\\1'), (_binary '\\2'), (_binary '\\3');")
 	tk.MustExec(fmt.Sprintf("SELECT * FROM t INTO OUTFILE %q", outfile))
-	cmpAndRm("\x00\x00\n\x001\n\x002\n\x003\n", outfile, t)
+	cmpAndRm("\\0\\0\n\\01\n\\02\n\\03\n", outfile, t)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `t` (col ENUM ('value1','value2','value3'));")
@@ -110,6 +110,33 @@ func TestSelectIntoOutfileTypes(t *testing.T) {
 3.40
 10.10
 `, outfile, t)
+}
+
+func TestSelectIntoOutfileVector(t *testing.T) {
+	enclosedFile := randomSelectFilePath("TestSelectIntoOutfileVectorEnclosed")
+	escapedFile := randomSelectFilePath("TestSelectIntoOutfileVectorEscaped")
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table v (id int, emb vector(3))")
+	tk.MustExec("insert into v values (1, '[1,2,3]'), (2, '[0.5,-1,2]')")
+
+	tk.MustExec(fmt.Sprintf(`SELECT * FROM v ORDER BY id INTO OUTFILE %q FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"'`, enclosedFile))
+	cmpAndRm("1,\"[1,2,3]\"\n2,\"[0.5,-1,2]\"\n", enclosedFile, t)
+
+	tk.MustExec(fmt.Sprintf(`SELECT * FROM v ORDER BY id INTO OUTFILE %q FIELDS TERMINATED BY ',' ESCAPED BY '#'`, escapedFile))
+	cmpAndRm("1,[1#,2#,3]\n2,[0.5#,-1#,2]\n", escapedFile, t)
+}
+
+func TestSelectIntoOutfileBitEscaping(t *testing.T) {
+	outfile := randomSelectFilePath("TestSelectIntoOutfileBitEscaping")
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table b (id int primary key, flags bit(8))")
+	tk.MustExec("insert into b values (1, b'00001010'), (2, b'01011100'), (3, b'00001001'), (4, b'00000001')")
+	tk.MustExec(fmt.Sprintf("SELECT * FROM b ORDER BY id INTO OUTFILE %q", outfile))
+	cmpAndRm("1\t\\\n\n2\t\\\\\n3\t\\\t\n4\t\x01\n", outfile, t)
 }
 
 func TestSelectIntoOutfileFromTable(t *testing.T) {
@@ -251,8 +278,8 @@ func TestDeliminators(t *testing.T) {
 	tk.MustExec("create table tb (s char(10), b bit(48), bb blob(6))")
 	tk.MustExec("insert into tb values ('\\0\\b\\n\\r\\t\\Z', _binary '\\0\\b\\n\\r\\t\\Z', unhex('00080A0D091A'))")
 	tk.MustExec(fmt.Sprintf("select * from tb into outfile %q", outfile))
-	// bit type won't be escaped (verified on MySQL)
-	cmpAndRm("\\0\b\\\n\r\\\t\032\t"+"\000\b\n\r\t\032\t"+"\\0\b\\\n\r\\\t\032\n", outfile, t)
+	// BIT values use the same escaping as other byte fields.
+	cmpAndRm("\\0\b\\\n\r\\\t\032\t"+"\\0\b\\\n\r\\\t\032\t"+"\\0\b\\\n\r\\\t\032\n", outfile, t)
 
 	tk.MustExec("create table zero (a varchar(10), b varchar(10), c varchar(10))")
 	tk.MustExec("insert into zero values (unhex('00'), _binary '\\0', '\\0')")
