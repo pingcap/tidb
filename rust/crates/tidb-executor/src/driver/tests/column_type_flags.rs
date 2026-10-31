@@ -32,17 +32,16 @@ fn catalog_column_iteration_borrows_visible_metadata() {
             owned.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>()
         );
         for (offset, (name, ty)) in entry.columns().enumerate() {
-            assert_eq!((name, ty), (owned[offset].0.as_str(), &owned[offset].1));
+            assert_eq!((&name, &ty), (&owned[offset].0, &owned[offset].1));
             let (source_name, source_type) = match entry {
                 TableEntry::Kv(kv) => {
-                    let column = kv.visible_columns()[offset].1;
-                    (column.name.as_str(), &column.field_type)
+                    let column = kv.visible_columns()[offset].1.read();
+                    (column.name.original().to_owned(), column.field_type.clone())
                 }
-                TableEntry::Mem(mem) => (mem.columns[offset].0.as_str(), &mem.columns[offset].1),
+                TableEntry::Mem(mem) => mem.columns[offset].clone(),
                 _ => unreachable!(),
             };
-            assert!(std::ptr::eq(name.as_ptr(), source_name.as_ptr()));
-            assert!(std::ptr::eq(ty, source_type));
+            assert_eq!((name, ty), (source_name, source_type));
         }
     }
 }

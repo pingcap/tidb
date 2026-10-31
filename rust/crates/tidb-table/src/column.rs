@@ -25,29 +25,49 @@ use tidb_terror::MysqlError;
 use tidb_expr::EvalErrorSql;
 
 /// Go `table.Column`: the table's shared `*model.ColumnInfo`, embedded, and
-/// the expression parsed from it once, when the table is loaded.
+/// what is built from it once, when the table is loaded.
 #[derive(Clone, Debug)]
 pub struct Column {
-    /// Go's embedded `*model.ColumnInfo`.
+    /// Go's embedded `*model.ColumnInfo`, the pointer `TableInfo.Columns`
+    /// holds.
     pub info: tidb_model::GoShared<tidb_model::ColumnInfo>,
-    /// Go `Column.GeneratedExpr`: `GeneratedExprString` parsed, `None` for
-    /// an ordinary column.
-    pub generated_expr: Option<tidb_ast::Expr>,
+    /// Go `Column.GeneratedExpr`: `GeneratedExprString` parsed (`source`),
+    /// with the evaluable form a write fills the column from. `None` for an
+    /// ordinary column. See [`crate::generated_column`].
+    pub generated: Option<crate::generated_column::GeneratedColumn>,
+    /// Go `DefaultValue` + `DefaultIsExpr` (`Column.DefaultExpr`): where the
+    /// value of an omitted column comes from. `None` means no `DEFAULT` was
+    /// written, which is not the same as a `DEFAULT NULL`. See
+    /// [`crate::column_default`] for the computed forms.
+    pub default_value: Option<crate::column_default::ColumnDefault>,
+    /// Go `OriginDefaultValue`, decoded: what a row written BEFORE this
+    /// column existed reads back as. `ADD COLUMN ... DEFAULT 7` gives the
+    /// existing rows 7, not NULL, and the row bytes are never rewritten --
+    /// the value is filled in on read.
+    pub origin_default: Option<Datum>,
 }
 
 impl Column {
-    /// Go `ToColumn`: an ordinary column over `info`.
+    /// Go `ToColumn`: an ordinary column over `info`, no default written.
     #[must_use]
     pub fn new(info: tidb_model::GoShared<tidb_model::ColumnInfo>) -> Self {
         Self {
             info,
-            generated_expr: None,
+            generated: None,
+            default_value: None,
+            origin_default: None,
         }
     }
 
     /// The shared `ColumnInfo`, read.
     pub fn read(&self) -> std::sync::RwLockReadGuard<'_, tidb_model::ColumnInfo> {
         self.info.read()
+    }
+
+    /// Go `Column.GeneratedExpr`: the parsed generation expression.
+    #[must_use]
+    pub fn generated_expr(&self) -> Option<&tidb_ast::Expr> {
+        self.generated.as_ref().map(|generated| &generated.source)
     }
 }
 

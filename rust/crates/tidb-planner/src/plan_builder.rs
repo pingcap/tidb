@@ -3351,8 +3351,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     return None;
                 }
                 column
-                    .generated_expr
-                    .as_ref()
+                    .generated_expr()
                     .map(|expression| (offset, expression.clone()))
             })
             .collect::<Vec<_>>();

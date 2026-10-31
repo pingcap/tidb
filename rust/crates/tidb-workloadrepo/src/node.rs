@@ -254,11 +254,11 @@ impl crate::RepositorySession for WorkloadRepositorySession {
                 .visible_columns()
                 .into_iter()
                 .map(|(_, column)| crate::Column {
-                    name: column.name.clone(),
+                    name: column.read().name.original().to_owned(),
                     type_desc: column
-                        .field_type
+                        .read().field_type
                         .type_desc(tidb_datatype::STRICT_INTEGER_DISPLAY_WIDTH),
-                    comment: column.comment.clone(),
+                    comment: column.read().comment.clone(),
                 })
                 .collect(),
             _ => entry

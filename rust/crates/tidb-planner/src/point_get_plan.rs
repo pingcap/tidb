@@ -82,7 +82,7 @@ pub fn fast_point_schema(table: &KvTable, output: &FastPointOutput) -> Schema {
             let id = table
                 .columns()
                 .get(*offset)
-                .map_or(tidb_model::column::EXTRA_HANDLE_ID, |column| column.id);
+                .map_or(tidb_model::column::EXTRA_HANDLE_ID, |column| column.read().id);
             let mut column = Column::new(id, field_type.clone());
             column.id = id;
             column.index = position as i64;
@@ -637,7 +637,10 @@ fn fast_dml_point_output(table: &KvTable) -> FastPointOutput {
     let mut columns = table
         .columns()
         .iter()
-        .map(|column| (column.name.clone(), column.field_type.clone()))
+        .map(|column| {
+            let column = column.read();
+            (column.name.original().to_owned(), column.field_type.clone())
+        })
         .collect::<Vec<_>>();
     if table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty() {
         offsets.push(table.columns().len());
@@ -1347,7 +1350,7 @@ fn index_key_part_name(table: &KvTable, offset: usize) -> String {
     };
     match &column.generated {
         Some(generated) if table.is_hidden(offset) => generated.expr_text.clone(),
-        _ => column.name.clone(),
+        _ => column.read().name.original().to_owned(),
     }
 }
 

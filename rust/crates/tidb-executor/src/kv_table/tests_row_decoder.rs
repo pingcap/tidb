@@ -44,11 +44,14 @@ fn check_generated_matching(code: tidb_datatype::FieldTypeCode, mode: bool, expe
         let mut field_type = FieldType::new(code).with_collation_name("utf8mb4_general_ci");
         field_type.set_elems(vec!["A".into(), "a".into(), "B".into()]);
         let mut column = KvColumn {
-            id: 1,
-            name: "v".to_owned(),
-            field_type,
-            column_info_version: 1,
-            comment: String::new(),
+            info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                id: 1,
+                name: tidb_ast::CiString::new("v"),
+                field_type: field_type,
+                version: 1,
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::ColumnInfo::default()
+            }),
             generated: None,
             default_value: None,
             origin_default: None,

@@ -299,7 +299,7 @@ impl KvTable {
                     tidb_tablecodec::cut_datum_by_prefix_len(
                         &mut value,
                         index.prefix_length(position),
-                        field_type,
+                        &field_type,
                     );
                 }
                 value
@@ -313,7 +313,7 @@ impl KvTable {
     pub fn is_mv_index(&self, index: &KvIndex) -> bool {
         index.column_offsets.iter().any(|offset| {
             self.write_column(*offset)
-                .is_some_and(|column| column.field_type.is_array())
+                .is_some_and(|column| column.read().field_type.is_array())
         })
     }
 
@@ -332,7 +332,7 @@ impl KvTable {
         }
         let is_array_part = |position: usize| {
             self.write_column(index.column_offsets[position])
-                .is_some_and(|column| column.field_type.is_array())
+                .is_some_and(|column| column.read().field_type.is_array())
         };
         let json_error = |error| KvTableError::Encode(format!("{error:?}"));
         let mut tuples = Vec::new();
@@ -482,12 +482,12 @@ impl KvTable {
                 .chain(self.nonpublic_columns.iter().map(|column| &column.column))
                 .enumerate()
                 .map(|(offset, column)| CodecTableColumn {
-                    id: column.id,
+                    id: column.read().id,
                     offset,
                     primary_key: column
-                        .field_type
+                        .read().field_type
                         .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
-                    field_type: column.field_type.clone(),
+                    field_type: column.read().field_type.clone(),
                     // Go `ColumnInfo.ChangingFieldType`, set while a MODIFY
                     // COLUMN that rewrites no rows checks writes.
                     changing_field_type: self.changing_field_types.get(&offset).cloned(),
@@ -581,7 +581,7 @@ impl KvTable {
             .filter_map(|offset| {
                 let column = self.columns.get(*offset)?;
                 if !column
-                    .field_type
+                    .read().field_type
                     .need_restored_data_with_collation(self.use_new_collation)
                 {
                     return None;
@@ -591,7 +591,7 @@ impl KvTable {
                 // key differs from the data only by the trailing spaces it
                 // trimmed, so the COUNT restores it and the string would be a
                 // second copy of the key.
-                if is_bin_collation(column.field_type.collation_name()) {
+                if is_bin_collation(column.read().field_type.collation_name()) {
                     return Some(Datum::Int(trailing_spaces(&value) as i64));
                 }
                 Some(value)

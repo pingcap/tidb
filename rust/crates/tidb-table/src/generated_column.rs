@@ -100,11 +100,11 @@ impl GeneratedColumn {
         }
         let names: Vec<String> = columns
             .iter()
-            .map(|column| column.column_name().to_owned())
+            .map(|column| column.column_name())
             .collect();
         let types: Vec<FieldType> = columns
             .iter()
-            .map(|column| column.column_type().clone())
+            .map(|column| column.column_type())
             .collect();
         let resolver = TableColumnResolver::with_like_default_escape(
             &names,
@@ -131,9 +131,9 @@ pub trait GeneratedColumnSlot {
     /// The column's generation, if it has one.
     fn generation(&self) -> Option<&GeneratedColumn>;
     /// The column's own type, which the computed value is cast into.
-    fn column_type(&self) -> &FieldType;
+    fn column_type(&self) -> FieldType;
     /// The column's name, which is what a dependency names it by.
-    fn column_name(&self) -> &str;
+    fn column_name(&self) -> String;
 }
 
 /// The offset of `name` in `columns`, matched as MySQL matches column names.
@@ -197,8 +197,8 @@ pub fn fill_virtual_column_values<S: GeneratedColumnSlot>(
     materialize_with(columns, row, true, ctx, |column, value| {
         cast_virtual_column_value(
             value,
-            column.column_type(),
-            column.column_name(),
+            &column.column_type(),
+            &column.column_name(),
             ctx,
             flags,
         )
@@ -276,13 +276,13 @@ pub fn materialize_with<S: GeneratedColumnSlot, E: From<GenerationError>>(
         let expr = generated
             .expression_in(columns, &ctx.time_zone(), ctx.like_default_escape())
             .map_err(|()| GenerationError {
-                column: columns[offset].column_name().to_owned(),
+                column: columns[offset].column_name(),
                 detail: "the generated expression does not build in this session".to_owned(),
                 eval: None,
             })?;
         let value = eval_over_dependencies(&expr, &generated.dependencies, columns, row, ctx)
             .map_err(|error| GenerationError {
-                column: columns[offset].column_name().to_owned(),
+                column: columns[offset].column_name(),
                 detail: format!("{error:?}"),
                 eval: Some(error),
             })?;
@@ -305,7 +305,7 @@ pub fn materialize_planned<S: GeneratedColumnSlot, E: From<GenerationError>>(
 ) -> Result<(), E> {
     let types: Vec<FieldType> = columns
         .iter()
-        .map(|column| column.column_type().clone())
+        .map(|column| column.column_type())
         .collect();
     for (offset, column) in columns.iter().enumerate() {
         if column.generation().is_none() {
@@ -313,14 +313,14 @@ pub fn materialize_planned<S: GeneratedColumnSlot, E: From<GenerationError>>(
         }
         let Some(expr) = planned.get(offset).and_then(Option::as_ref) else {
             return Err(GenerationError {
-                column: column.column_name().to_owned(),
+                column: column.column_name(),
                 detail: "the generated expression was not planned".to_owned(),
                 eval: None,
             }
             .into());
         };
         let value = eval_over_row(expr, &types, row, ctx).map_err(|error| GenerationError {
-            column: column.column_name().to_owned(),
+            column: column.column_name(),
             detail: format!("{error:?}"),
             eval: Some(error),
         })?;
@@ -363,7 +363,7 @@ pub fn eval_over_dependencies<S: GeneratedColumnSlot>(
         let offset = offset_of(columns, name).ok_or(tidb_exprctx::EvalError::Unsupported(
             "a generated or partition expression names a column the table no longer defines",
         ))?;
-        types.push(columns[offset].column_type().clone());
+        types.push(columns[offset].column_type());
         values.push(row.get(offset).cloned().unwrap_or(Datum::Null));
     }
     eval_over_row(expr, &types, &values, ctx)

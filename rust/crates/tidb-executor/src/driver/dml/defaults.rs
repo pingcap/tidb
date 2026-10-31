@@ -97,14 +97,14 @@ pub(crate) fn kv_column_metadata(column: &tidb_table::kv_table::KvColumn) -> Col
     ColumnDefaultMeta {
         default_value: column.default_value.clone(),
         not_null: column
-            .field_type
+            .read().field_type
             .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL),
         no_default_value: column
-            .field_type
+            .read().field_type
             .has_flag(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE),
-        name: column.name.clone(),
-        field_type: column.field_type.clone(),
-        column_info_version: column.column_info_version,
+        name: column.read().name.original().to_owned(),
+        field_type: column.read().field_type.clone(),
+        column_info_version: column.read().version,
         generated: column.generated.is_some(),
     }
 }

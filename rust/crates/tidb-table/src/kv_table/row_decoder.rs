@@ -196,7 +196,7 @@ impl PreparedPointGetRowDecoder {
             .collect();
         let common_handle_column_ids: Vec<i64> = common_handle_parts
             .iter()
-            .filter_map(|part| columns.get(common_handle_offsets[*part]).map(|column| column.id))
+            .filter_map(|part| columns.get(common_handle_offsets[*part]).map(|column| column.read().id))
             .collect();
         let projected = output_offsets
             .iter()
@@ -234,21 +234,21 @@ impl PreparedPointGetRowDecoder {
         let stored_column_types = projected
             .iter()
             .filter(|column| !column.from_handle)
-            .map(|column| (column.column.id, column.column.field_type.clone()))
+            .map(|column| (column.column.read().id, column.column.read().field_type.clone()))
             .collect();
         let v2_columns = projected
             .iter()
             .map(|output| tidb_rowcodec::ColumnInfo {
-                id: output.column.id,
+                id: output.column.read().id,
                 is_pk_handle: output.from_handle,
                 virtual_generated: false,
-                field_type: output.column.field_type.clone(),
+                field_type: output.column.read().field_type.clone(),
             })
             .collect::<Vec<_>>();
         let v2_handle_column_ids = projected
             .iter()
             .find(|output| output.from_handle)
-            .map(|output| output.column.id)
+            .map(|output| output.column.read().id)
             .into_iter()
             .chain(common_handle_column_ids.iter().copied())
             .collect();
@@ -331,7 +331,7 @@ impl PreparedPointGetRowDecoder {
                     };
                     return tidb_tablecodec::unflatten_datum(
                         Datum::Int(*value),
-                        &output.column.field_type,
+                        &output.column.read().field_type,
                         Some(context.zone()),
                     )
                     .map_err(|error| KvTableError::Decode(format!("{error:?}")));
@@ -351,7 +351,7 @@ impl PreparedPointGetRowDecoder {
                     };
                     let (remainder, value) = tidb_codec::decode_one_typed_in_timezone(
                         encoded,
-                        &output.column.field_type,
+                        &output.column.read().field_type,
                         Some(context.zone()),
                     )
                     .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
@@ -362,11 +362,11 @@ impl PreparedPointGetRowDecoder {
                     }
                     return Ok(value);
                 }
-                if let Some(value) = decoded.get(&output.column.id) {
+                if let Some(value) = decoded.get(&output.column.read().id) {
                     return Ok(value.clone());
                 }
                 if output.column.origin_default.is_none()
-                    && output.column.field_type.flags() & NOT_NULL_FLAG != 0
+                    && output.column.read().field_type.flags() & NOT_NULL_FLAG != 0
                 {
                     return Err(KvTableError::Decode("Miss column".to_owned()));
                 }
@@ -534,7 +534,7 @@ impl RowDecoder {
                         .map_err(|name| {
                             KvTableError::Decode(format!(
                                 "generated column `{}` reads missing column `{name}`",
-                                columns[offset].name
+                                columns[offset].read().name
                             ))
                         })?;
                 decoded_offsets.extend(dependencies);
@@ -556,7 +556,7 @@ impl RowDecoder {
 
         let column_types = decoded_offsets
             .iter()
-            .map(|offset| (columns[*offset].id, columns[*offset].field_type.clone()))
+            .map(|offset| (columns[*offset].read().id, columns[*offset].read().field_type.clone()))
             .collect();
         // Only a DECODED virtual generated column needs evaluation. When
         // there is none -- the common table -- `evaluation_columns` stays
@@ -578,21 +578,21 @@ impl RowDecoder {
             .iter()
             .enumerate()
             .map(|(offset, column)| tidb_rowcodec::ColumnInfo {
-                id: column.id,
+                id: column.read().id,
                 is_pk_handle: pk_handle_offset == Some(offset),
                 virtual_generated: false,
-                field_type: column.field_type.clone(),
+                field_type: column.read().field_type.clone(),
             })
             .collect();
         let v2_handle_column_ids = pk_handle_offset
-            .and_then(|offset| columns.get(offset).map(|column| column.id))
+            .and_then(|offset| columns.get(offset).map(|column| column.read().id))
             .into_iter()
             .chain(
                 common_handle_offsets
                     .iter()
                     .zip(&common_handle_prefix_lengths)
                     .filter(|(_, length)| **length == UNSPECIFIED_LENGTH)
-                    .filter_map(|(offset, _)| columns.get(*offset).map(|column| column.id)),
+                    .filter_map(|(offset, _)| columns.get(*offset).map(|column| column.read().id)),
             )
             .collect();
         let v2_fast_path = generated_offsets.is_empty()
@@ -639,8 +639,8 @@ impl RowDecoder {
         for offset in [target_offset, dependency_offset] {
             self.decoded_offsets.insert(offset);
             self.column_types.insert(
-                self.columns[offset].id,
-                self.columns[offset].field_type.clone(),
+                self.columns[offset].read().id,
+                self.columns[offset].read().field_type.clone(),
             );
         }
         self.changing_dependencies
@@ -735,7 +735,7 @@ impl RowDecoder {
         let mut values = vec![Datum::Null; self.columns.len()];
         for offset in &self.decoded_offsets {
             let column = &self.columns[*offset];
-            if let Some(value) = by_id.get(&column.id) {
+            if let Some(value) = by_id.get(&column.read().id) {
                 values[*offset] = value.clone();
             }
         }
@@ -756,18 +756,18 @@ impl RowDecoder {
             let column = &self.columns[offset];
             if self.decoded_offsets.contains(&offset)
                 && !column
-                    .field_type
+                    .read().field_type
                     .need_restored_data_with_collation(self.use_new_collation)
             {
                 by_id
-                    .entry(column.id)
+                    .entry(column.read().id)
                     .or_insert_with(|| values[offset].clone());
             }
         }
 
         for offset in &self.decoded_offsets {
             let column = &self.columns[*offset];
-            if by_id.contains_key(&column.id) {
+            if by_id.contains_key(&column.read().id) {
                 continue;
             }
             if self.generated_offsets.contains(offset)
@@ -782,7 +782,7 @@ impl RowDecoder {
             };
             values[*offset] = value.clone();
             if split_phase {
-                by_id.insert(column.id, value);
+                by_id.insert(column.read().id, value);
             }
         }
         Ok(DecodedRow { values, by_id })
@@ -796,7 +796,7 @@ impl RowDecoder {
 
     fn origin_default(&self, offset: usize) -> Result<Datum, KvTableError> {
         let column = &self.columns[offset];
-        if column.origin_default.is_none() && column.field_type.flags() & NOT_NULL_FLAG != 0 {
+        if column.origin_default.is_none() && column.read().field_type.flags() & NOT_NULL_FLAG != 0 {
             return Err(KvTableError::Decode("Miss column".to_owned()));
         }
         column
@@ -810,14 +810,14 @@ impl RowDecoder {
         dependency_offset: usize,
         row: &BTreeMap<i64, Datum>,
     ) -> Result<Datum, KvTableError> {
-        let dependency_id = self.columns[dependency_offset].id;
+        let dependency_id = self.columns[dependency_offset].read().id;
         let Some(source) = row.get(&dependency_id) else {
             return self.origin_default(target_offset);
         };
         crate::column::cast_table_value_with_flags(
             source.clone(),
-            &self.columns[target_offset].field_type,
-            &self.columns[target_offset].name,
+            &self.columns[target_offset].read().field_type,
+            self.columns[target_offset].read().name.original(),
             self.context.expression(),
             self.context.type_flags(),
             false,
@@ -838,7 +838,7 @@ impl RowDecoder {
             ));
         };
         row.values[offset] = value.clone();
-        row.by_id.insert(column.id, value);
+        row.by_id.insert(column.read().id, value);
         Ok(())
     }
 
@@ -859,16 +859,16 @@ impl RowDecoder {
                 let cast = if self.fill_virtual_values {
                     crate::generated_column::cast_virtual_column_value(
                         value,
-                        &column.field_type,
-                        &column.name,
+                        &column.read().field_type,
+                        column.read().name.original(),
                         self.context.expression(),
                         self.context.type_flags(),
                     )
                 } else {
                     crate::column::cast_table_value_with_flags(
                         value,
-                        &column.field_type,
-                        &column.name,
+                        &column.read().field_type,
+                        column.read().name.original(),
                         self.context.expression(),
                         self.context.type_flags(),
                         true,
@@ -879,7 +879,7 @@ impl RowDecoder {
         )?;
         for offset in &self.generated_offsets {
             row.by_id
-                .insert(self.columns[*offset].id, row.values[*offset].clone());
+                .insert(self.columns[*offset].read().id, row.values[*offset].clone());
         }
         Ok(())
     }
@@ -998,7 +998,7 @@ fn fill_handle_columns_if(
     selected: impl Fn(usize) -> bool,
 ) -> Result<(), KvTableError> {
     let unflatten = |offset: usize, value: Datum| -> Result<Datum, KvTableError> {
-        tidb_tablecodec::unflatten_datum(value, &columns[offset].field_type, Some(context.zone))
+        tidb_tablecodec::unflatten_datum(value, &columns[offset].read().field_type, Some(context.zone))
             .map_err(|error| KvTableError::Decode(format!("{error:?}")))
     };
     match handle {
@@ -1007,7 +1007,7 @@ fn fill_handle_columns_if(
                 if !selected(offset) {
                     return Ok(());
                 }
-                let decoded = if columns[offset].field_type.is_unsigned() {
+                let decoded = if columns[offset].read().field_type.is_unsigned() {
                     Datum::UInt(*value as u64)
                 } else {
                     Datum::Int(*value)
@@ -1032,7 +1032,7 @@ fn fill_handle_columns_if(
                 if prefix_length == UNSPECIFIED_LENGTH
                     && selected(*offset)
                     && !columns[*offset]
-                        .field_type
+                        .read().field_type
                         .need_restored_data_with_collation(context.use_new_collation)
                 {
                     row[*offset] = unflatten(*offset, value)?;
@@ -1062,18 +1062,18 @@ pub fn row_checksum(
     let columns = table.columns.as_slice();
     let column_types = columns
         .iter()
-        .map(|column| (column.id, column.field_type.clone()))
+        .map(|column| (column.read().id, column.read().field_type.clone()))
         .collect::<BTreeMap<_, _>>();
     let mut datums = decode_table_row_to_map(value, &column_types, Some(zone))
         .map_err(|error| decode_error(&error))?;
     // Go: `PKIsHandle` names the integer handle column, `IsCommonHandle`
     // the primary index's columns in index order.
     let handle_column_ids = match table.pk_handle_offset() {
-        Some(offset) => vec![columns[offset].id],
+        Some(offset) => vec![columns[offset].read().id],
         None => table
             .common_handle_offsets()
             .iter()
-            .map(|offset| columns[*offset].id)
+            .map(|offset| columns[*offset].read().id)
             .collect(),
     };
     let kv_handle: tidb_txnkv::Handle = match handle {
@@ -1092,13 +1092,13 @@ pub fn row_checksum(
     .map_err(|error| decode_error(&error))?;
     let mut row = tidb_rowcodec::RowData::default();
     for column in columns {
-        let datum = match datums.remove(&column.id) {
+        let datum = match datums.remove(&column.read().id) {
             Some(datum) => datum,
             None => column_origin_default_for_checksum(column, context)?,
         };
         row.columns.push(tidb_rowcodec::DatumColumn {
-            id: column.id,
-            field_type: column.field_type.clone(),
+            id: column.read().id,
+            field_type: column.read().field_type.clone(),
             datum,
         });
     }
@@ -1121,9 +1121,9 @@ fn column_origin_default_for_checksum(
             .map_err(|error| KvTableError::Decode(error.to_string()));
     }
     crate::column_default::get_col_default_value_from_nil(
-        &column.field_type,
-        &column.name,
-        column.field_type.flags() & NOT_NULL_FLAG != 0,
+        &column.read().field_type,
+        column.read().name.original(),
+        column.read().field_type.flags() & NOT_NULL_FLAG != 0,
         context.expression(),
     )
     .map_err(KvTableError::from)

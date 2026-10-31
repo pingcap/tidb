@@ -24,11 +24,11 @@ use tidb_hack::GoCaseCompare;
 /// Go prints the column comment last, after AUTO_RANDOM and before the next
 /// column's line, for every column that carries one.
 fn push_column_comment(clause: &mut String, column: &crate::KvColumn) {
-    if column.comment.is_empty() {
+    if column.read().comment.is_empty() {
         return;
     }
     clause.push_str(" COMMENT '");
-    clause.push_str(&tidb_format::output_format(&column.comment));
+    clause.push_str(&tidb_format::output_format(&column.read().comment));
     clause.push('\'');
 }
 
@@ -97,11 +97,11 @@ fn index_part_text(
     {
         Some(generated) => format!("({})", generated.expr_text),
         None if prefix_length == tidb_datatype::UNSPECIFIED_LENGTH => {
-            escape_name(&column.name, ansi_quotes)
+            escape_name(column.read().name.original(), ansi_quotes)
         }
         None => format!(
             "{}({prefix_length})",
-            escape_name(&column.name, ansi_quotes)
+            escape_name(column.read().name.original(), ansi_quotes)
         ),
     }
 }
@@ -152,11 +152,11 @@ pub fn show_create_table_text(
     for (offset, column) in table.visible_columns() {
         let mut clause = format!(
             "  {} {}",
-            escape_name(&column.name, ansi_quotes),
-            column.field_type.type_desc(STRICT_INTEGER_DISPLAY_WIDTH)
+            escape_name(column.read().name.original(), ansi_quotes),
+            column.read().field_type.type_desc(STRICT_INTEGER_DISPLAY_WIDTH)
         );
-        clause.push_str(&column_charset_clause(&column.field_type, table_charset));
-        let not_null = column.field_type.flags() & NOT_NULL_FLAG != 0;
+        clause.push_str(&column_charset_clause(&column.read().field_type, table_charset));
+        let not_null = column.read().field_type.flags() & NOT_NULL_FLAG != 0;
         if table.auto_increment_offset() == Some(offset) {
             // Go writes the pair together for an auto column and prints no
             // default for it.
@@ -195,12 +195,12 @@ pub fn show_create_table_text(
         // Go prints nothing for a column carrying NoDefaultValueFlag; absent
         // that flag, a nullable column with no stored default reports NULL.
         if !column
-            .field_type
+            .read().field_type
             .has_flag(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE)
         {
             match &column.default_value {
                 Some(tidb_table::column_default::ColumnDefault::Value(Datum::Null)) => {
-                    if column.field_type.code() == tidb_datatype::FieldTypeCode::Timestamp {
+                    if column.read().field_type.code() == tidb_datatype::FieldTypeCode::Timestamp {
                         clause.push_str(" NULL");
                     }
                     clause.push_str(" DEFAULT NULL")
@@ -221,7 +221,7 @@ pub fn show_create_table_text(
                             .map_err(|_| {
                                 DriverError::from(
                                     tidb_table::table_errors::ERR_GET_DEFAULT_FAILED
-                                        .generate_with_stack_by_args(&[column.name.clone().into()]),
+                                        .generate_with_stack_by_args(&[column.read().name.original().to_owned().into()]),
                                 )
                             })?
                             .unwrap_or_default()
@@ -232,13 +232,13 @@ pub fn show_create_table_text(
                         " DEFAULT {}",
                         crate::show::show_create_default_clause(
                             default,
-                            &column.field_type,
+                            &column.read().field_type,
                             &literal,
                         )
                     ));
                 }
                 None if !not_null => {
-                    if column.field_type.code() == tidb_datatype::FieldTypeCode::Timestamp {
+                    if column.read().field_type.code() == tidb_datatype::FieldTypeCode::Timestamp {
                         clause.push_str(" NULL");
                     }
                     clause.push_str(" DEFAULT NULL");
@@ -247,11 +247,11 @@ pub fn show_create_table_text(
             }
         }
         if column
-            .field_type
+            .read().field_type
             .has_flag(tidb_datatype::FieldTypeFlags::ON_UPDATE_NOW)
         {
             clause.push_str(" ON UPDATE CURRENT_TIMESTAMP");
-            let fsp = column.field_type.decimal();
+            let fsp = column.read().field_type.decimal();
             if fsp > 0 {
                 clause.push('(');
                 clause.push_str(&fsp.to_string());
@@ -297,7 +297,7 @@ pub fn show_create_table_text(
     if primary_emitted_from_handles {
         let columns = handle_columns
             .iter()
-            .map(|offset| escape_name(&table.columns()[*offset].name, ansi_quotes))
+            .map(|offset| escape_name(&table.columns()[*offset].read().name.original(), ansi_quotes))
             .collect::<Vec<_>>()
             .join(",");
         clauses.push(format!(

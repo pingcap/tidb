@@ -3447,14 +3447,17 @@ mod statistics_initialization_tests {
         let table = KvTable::new(
             7,
             vec![KvColumn {
-                id: 1,
-                name: "a".to_owned(),
-                field_type: FieldType::new(FieldTypeCode::LongLong),
-                column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("a"),
+                    field_type: FieldType::new(FieldTypeCode::LongLong),
+                    version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                }),
+                generated: None,
                 default_value: None,
                 origin_default: None,
-                comment: String::new(),
-                generated: None,
             }],
         );
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
@@ -3542,14 +3545,17 @@ mod statistics_initialization_tests {
         let mut table = KvTable::new(
             7,
             vec![KvColumn {
-                id: 1,
-                name: "a".to_owned(),
-                field_type: field_type.clone(),
-                column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("a"),
+                    field_type: field_type.clone(),
+                    version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                }),
+                generated: None,
                 default_value: None,
                 origin_default: None,
-                comment: String::new(),
-                generated: None,
             }],
         );
         table.add_index(
@@ -3755,14 +3761,17 @@ mod statistics_initialization_tests {
         let mut table = KvTable::new(
             7,
             vec![KvColumn {
-                id: 1,
-                name: "a".to_owned(),
-                field_type: field_type.clone(),
-                column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("a"),
+                    field_type: field_type.clone(),
+                    version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                }),
+                generated: None,
                 default_value: None,
                 origin_default: None,
-                comment: String::new(),
-                generated: None,
             }],
         );
         table.add_index(

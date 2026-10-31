@@ -732,9 +732,9 @@ impl Session {
         let shard_column_type = match table
             .columns()
             .iter()
-            .find(|column| lower(&column.name) == lower(&shard_column.name))
+            .find(|column| lower(column.read().name.original()) == lower(&shard_column.name))
         {
-            Some(column) => column.field_type.clone(),
+            Some(column) => column.read().field_type.clone(),
             None if lower(&shard_column.name) == EXTRA_HANDLE_NAME => {
                 FieldType::new(FieldTypeCode::LongLong)
             }
@@ -1022,15 +1022,15 @@ fn select_shard_column_by_given_name(
         .columns()
         .iter()
         .enumerate()
-        .find(|(_, column)| lower(&column.name) == shard_column_name)
+        .find(|(_, column)| lower(column.read().name.original()) == shard_column_name)
     else {
         return Err(plain_error(format!(
             "shard column {shard_column_name} not found"
         )));
     };
     let info = ShardColumnInfo {
-        name: column.name.clone(),
-        field_type: column.field_type.clone(),
+        name: column.read().name.original().to_owned(),
+        field_type: column.read().field_type.clone(),
     };
     // An integer handle.
     if table.is_clustered_handle_column(offset) {
@@ -1054,8 +1054,8 @@ fn select_shard_column_automatically(
 ) -> Result<(bool, Option<ShardColumnInfo>), DriverError> {
     let column_info = |offset: usize| {
         table.columns().get(offset).map(|column| ShardColumnInfo {
-            name: column.name.clone(),
-            field_type: column.field_type.clone(),
+            name: column.read().name.original().to_owned(),
+            field_type: column.read().field_type.clone(),
         })
     };
     let shard_column_info = if let Some(offset) = table.pk_handle_offset() {

@@ -434,7 +434,7 @@ impl tidb_exprctx::Columns for IndexConditionContext<'_> {
         let offset = self
             .columns
             .iter()
-            .position(|column| column.name.go_lower_eq(name))?;
+            .position(|column| column.read().name.original().go_lower_eq(name))?;
         self.row.get(offset).cloned()
     }
 
@@ -654,10 +654,10 @@ impl PointRowDecoder {
                     .iter()
                     .enumerate()
                     .map(|(offset, column)| tidb_rowcodec::ColumnInfo {
-                        id: column.id,
+                        id: column.read().id,
                         is_pk_handle: table.pk_handle_offset == Some(offset),
                         virtual_generated: false,
-                        field_type: column.field_type.clone(),
+                        field_type: column.read().field_type.clone(),
                     })
                     .collect();
                 let ids = table
@@ -674,7 +674,7 @@ impl PointRowDecoder {
                             })
                             .map(|(offset, _)| offset),
                     )
-                    .filter_map(|offset| table.columns.get(offset).map(|column| column.id))
+                    .filter_map(|offset| table.columns.get(offset).map(|column| column.read().id))
                     .collect();
                 (columns, ids)
             });
@@ -1143,17 +1143,44 @@ impl KvTable {
         store: Box<dyn TableStorage>,
         use_new_collation: bool,
     ) -> Self {
-        KvTable {
-            meta: tidb_model::GoShared::new(tidb_model::TableInfo {
-                id: table_id,
-                columns: columns
-                    .iter()
-                    .enumerate()
-                    .map(|(offset, column)| fixture_column_info(column, offset, false))
-                    .collect::<Vec<_>>()
-                    .into(),
-                ..tidb_model::TableInfo::default()
-            }),
+        // A table built from columns alone: its `TableInfo` lists them in
+        // order, each `Offset` its place, as Go's DDL leaves them.
+        for (offset, column) in columns.iter().enumerate() {
+            let mut info = column.info.write();
+            info.offset = offset as i64;
+            info.state = tidb_model::SchemaState::PUBLIC;
+            sync_fixture_generation(&mut info, column.generated.as_ref());
+        }
+        let meta = tidb_model::TableInfo {
+            id: table_id,
+            columns: tidb_model::GoSharedPointerSlice::from_handles(
+                columns.iter().map(|column| Some(column.info.clone())).collect(),
+            ),
+            ..tidb_model::TableInfo::default()
+        };
+        Self::over_meta(meta, columns, store, use_new_collation)
+    }
+
+    /// Go `TableFromMeta`'s table over the `TableInfo` it was loaded from:
+    /// `columns` are `meta`'s public columns, sharing its `ColumnInfo`s.
+    #[must_use]
+    pub fn loaded(
+        meta: tidb_model::TableInfo,
+        columns: Vec<KvColumn>,
+        store: Box<dyn TableStorage>,
+    ) -> Self {
+        Self::over_meta(meta, columns, store, new_collation_enabled())
+    }
+
+    fn over_meta(
+        meta: tidb_model::TableInfo,
+        columns: Vec<KvColumn>,
+        store: Box<dyn TableStorage>,
+        use_new_collation: bool,
+    ) -> Self {
+        let table_id = meta.id;
+        let mut table = KvTable {
+            meta: tidb_model::GoShared::new(meta),
             table_id,
             storage_statistics: (0, 0, 0, 0),
             partition_storage_statistics: std::collections::BTreeMap::new(),
@@ -1186,7 +1213,9 @@ impl KvTable {
             check_constraint_infos: std::sync::Arc::new(Vec::new()),
             partition: None,
             read_partitions: None,
-        }
+        };
+        table.refresh_from_meta();
+        table
     }
 
     /// Publishes Go's four `information_schema.tables` statistics values.
@@ -1620,7 +1649,7 @@ impl KvTable {
                     && columns.iter().enumerate().all(|(position, offset)| {
                         let length = index.prefix_length(position);
                         length == tidb_datatype::UNSPECIFIED_LENGTH
-                            || length >= self.columns[*offset].field_type.flen()
+                            || length >= self.columns[*offset].read().field_type.flen()
                     })
                     && self.partial_index_safe_for_columns(index, columns)
             })
@@ -2354,12 +2383,12 @@ impl KvTable {
         let names = self
             .columns
             .iter()
-            .map(|column| column.name.clone())
+            .map(|column| column.read().name.original().to_owned())
             .collect::<Vec<_>>();
         let types = self
             .columns
             .iter()
-            .map(|column| column.field_type.clone())
+            .map(|column| column.read().field_type.clone())
             .collect::<Vec<_>>();
         let resolver = crate::generated_column::TableColumnResolver::with_like_default_escape(
             &names,
@@ -2410,12 +2439,12 @@ impl KvTable {
                 let names = self
                     .columns
                     .iter()
-                    .map(|column| column.name.clone())
+                    .map(|column| column.read().name.original().to_owned())
                     .collect::<Vec<_>>();
                 let types = self
                     .columns
                     .iter()
-                    .map(|column| column.field_type.clone())
+                    .map(|column| column.read().field_type.clone())
                     .collect::<Vec<_>>();
                 let resolver =
                     crate::generated_column::TableColumnResolver::with_like_default_escape(
@@ -2571,7 +2600,7 @@ impl KvTable {
                 ));
             };
             if let Some(length) = self.common_handle_prefix_lengths.get(position) {
-                tidb_tablecodec::cut_datum_by_prefix_len(value, *length, &column.field_type);
+                tidb_tablecodec::cut_datum_by_prefix_len(value, *length, &column.read().field_type);
             }
         }
         let encoded = tidb_codec::Encoder::new(self.use_new_collation)
@@ -2610,12 +2639,12 @@ impl KvTable {
             let lossless_handle = self.pk_handle_offset == Some(offset)
                 || (full_common_handle
                     && !column
-                        .field_type
+                        .read().field_type
                         .need_restored_data_with_collation(self.use_new_collation));
             if lossless_handle || crate::generated_column::is_virtual(column) {
                 continue;
             }
-            ids.push(column.id);
+            ids.push(column.read().id);
             values.push(row.get(offset).cloned().unwrap_or(Datum::Null));
         }
         // Go `AddRecord` / `updateRecord`: a write row past the public
@@ -2627,7 +2656,7 @@ impl KvTable {
                 .zip(&row[self.columns.len()..])
             {
                 if column.is_writable() {
-                    ids.push(column.column.id);
+                    ids.push(column.column.read().id);
                     values.push(value.clone());
                 }
             }
@@ -2707,13 +2736,7 @@ impl KvTable {
         let mut meta = self.meta.read().clone_like_go();
         change(&mut meta);
         self.meta = tidb_model::GoShared::new(meta);
-        self.refresh_hidden_offsets();
-    }
-
-    /// Records the `TableInfo` the loader built this table from.
-    pub(crate) fn set_meta(&mut self, meta: tidb_model::TableInfo) {
-        self.meta = tidb_model::GoShared::new(meta);
-        self.refresh_hidden_offsets();
+        self.refresh_from_meta();
     }
 
     /// Changes this table's `TableInfo` copy-on-write: a cloned table (an
@@ -2722,7 +2745,7 @@ impl KvTable {
         let mut meta = self.meta.read().clone();
         change(&mut meta);
         self.meta = tidb_model::GoShared::new(meta);
-        self.refresh_hidden_offsets();
+        self.refresh_from_meta();
     }
 
     /// The table's name as created (Go `TableInfo.Name.O`), empty when the
@@ -2906,20 +2929,31 @@ impl KvTable {
         self.hidden_offsets.contains(&offset)
     }
 
-    /// Re-reads [`Self::hidden_offsets`] from the `TableInfo`.
-    fn refresh_hidden_offsets(&mut self) {
-        let meta = self.meta.read();
-        let hidden = self
+    /// Points every column at the `ColumnInfo` the `TableInfo` now holds (a
+    /// copy-on-write change of the `TableInfo` makes new ones), and re-reads
+    /// [`Self::hidden_offsets`] off them.
+    fn refresh_from_meta(&mut self) {
+        let meta = self.meta.clone();
+        let meta = meta.read();
+        let stale = self.columns.iter().any(|column| {
+            meta.find_column_by_id(column.read().id)
+                .is_some_and(|info| !info.ptr_eq(&column.info))
+        });
+        if stale {
+            for column in self.columns_mut() {
+                let id = column.read().id;
+                if let Some(info) = meta.find_column_by_id(id) {
+                    column.info = info;
+                }
+            }
+        }
+        self.hidden_offsets = self
             .columns
             .iter()
             .enumerate()
-            .filter(|(_, column)| {
-                meta.find_column_by_id(column.id).is_some_and(|info| info.read().hidden)
-            })
+            .filter(|(_, column)| column.read().hidden)
             .map(|(offset, _)| offset)
             .collect();
-        drop(meta);
-        self.hidden_offsets = hidden;
     }
 
     /// Appends a hidden column -- the one an expression index key part is
@@ -2928,7 +2962,7 @@ impl KvTable {
     pub fn add_hidden_column(&mut self, column: KvColumn) -> usize {
         self.record_fixture_column(&column, None, true);
         self.columns_mut().push(column);
-        self.refresh_hidden_offsets();
+        self.refresh_from_meta();
         self.columns.len() - 1
     }
 
@@ -2943,10 +2977,10 @@ impl KvTable {
     /// expression-index column, as Go's `ADD COLUMN` without a position does.
     pub fn add_column(&mut self, position: usize, column: KvColumn) {
         let position = position.min(self.columns.len());
-        let before = self.columns.get(position).map(|column| column.id);
+        let before = self.columns.get(position).map(|column| column.read().id);
         self.record_fixture_column(&column, before, false);
         self.columns_mut().insert(position, column);
-        self.refresh_hidden_offsets();
+        self.refresh_from_meta();
         let shift = |offset: &mut usize| {
             if *offset >= position {
                 *offset += 1;
@@ -2984,7 +3018,7 @@ impl KvTable {
     /// again because nothing lists that id -- Go likewise leaves the old row
     /// values in place until the table is rewritten.
     pub fn drop_column(&mut self, offset: usize) {
-        let id = self.columns[offset].id;
+        let id = self.columns[offset].read().id;
         let position = self
             .meta
             .read()
@@ -3000,7 +3034,7 @@ impl KvTable {
             });
         }
         self.columns_mut().remove(offset);
-        self.refresh_hidden_offsets();
+        self.refresh_from_meta();
         let shift = |value: &mut usize| {
             if *value > offset {
                 *value -= 1;
@@ -3330,16 +3364,24 @@ impl KvTable {
     /// Go `ADD COLUMN` appends the column and moves it before `before`
     /// (`MoveColumnInfo`); `None` leaves it last.
     fn record_fixture_column(&mut self, column: &KvColumn, before: Option<i64>, hidden: bool) {
+        let id = column.read().id;
         let meta = self.meta.read();
-        if meta.cols().iter_deref().any(|info| info.read().id == column.id) {
+        if meta.cols().iter_deref().any(|info| info.read().id == id) {
             return;
         }
         let from = meta.columns.len();
         let to = before.and_then(|id| meta.columns.iter_deref().position(|info| info.read().id == id));
         drop(meta);
-        let info = fixture_column_info(column, from, hidden);
+        {
+            let mut info = column.info.write();
+            info.offset = from as i64;
+            info.state = tidb_model::SchemaState::PUBLIC;
+            info.hidden = hidden;
+            sync_fixture_generation(&mut info, column.generated.as_ref());
+        }
+        let shared = column.info.clone();
         self.update_meta_cloned(|meta| {
-            meta.columns.push_go(info);
+            meta.columns.push_handle_go(Some(shared));
             if let Some(to) = to {
                 meta.move_column_info(from as isize, to as isize);
             }
@@ -3396,7 +3438,7 @@ impl KvTable {
                 let info = self
                     .columns
                     .get(*offset)
-                    .and_then(|column| meta.columns.iter_deref().find(|info| info.read().id == column.id));
+                    .and_then(|column| meta.columns.iter_deref().find(|info| info.read().id == column.read().id));
                 tidb_model::IndexColumn {
                     name: info.as_ref().map(|info| info.read().name.clone()).unwrap_or_default(),
                     offset: info.as_ref().map_or(*offset as i64, |info| info.read().offset),
@@ -3416,7 +3458,7 @@ impl KvTable {
         let flag = u64::from(tidb_datatype::FieldTypeFlags::PRI_KEY);
         let ids = offsets
             .iter()
-            .filter_map(|offset| self.columns.get(*offset).map(|column| column.id))
+            .filter_map(|offset| self.columns.get(*offset).map(|column| column.read().id))
             .collect::<Vec<_>>();
         let missing = ids.iter().any(|id| {
             self.meta
@@ -3471,7 +3513,7 @@ impl KvTable {
             .column_offsets
             .iter()
             .filter_map(|offset| self.columns.get(*offset))
-            .find(|column| column.field_type.is_array())
+            .find(|column| column.read().field_type.is_array())
             .and_then(|column| column.generated.as_ref())
         else {
             return;
@@ -3662,7 +3704,7 @@ impl KvTable {
         offsets.iter().all(|offset| {
             self.columns
                 .get(*offset)
-                .is_some_and(|column| not_null.contains(&column.name.go_to_lower()))
+                .is_some_and(|column| not_null.contains(column.read().name.lowercase()))
         })
     }
 
@@ -3727,7 +3769,7 @@ impl KvTable {
     pub fn unsigned_pk_handle(&self) -> bool {
         self.pk_handle_offset
             .and_then(|offset| self.columns.get(offset))
-            .is_some_and(|column| column.field_type.is_unsigned())
+            .is_some_and(|column| column.read().field_type.is_unsigned())
     }
 
     /// The number of stored rows.
@@ -4707,7 +4749,7 @@ fn clustered_key_text(table: &KvTable, row: &[Datum]) -> String {
                     table.common_handle_prefix_lengths.get(position),
                     table.columns.get(*offset),
                 ) {
-                    tidb_tablecodec::cut_datum_by_prefix_len(&mut value, *length, &column.field_type);
+                    tidb_tablecodec::cut_datum_by_prefix_len(&mut value, *length, &column.read().field_type);
                 }
             }
             datum_text(&value)
@@ -4875,23 +4917,22 @@ pub fn hypo_kv_indexes(
         .collect()
 }
 
-/// Go `model.ColumnInfo` for a column of a table built from columns alone.
-fn fixture_column_info(column: &KvColumn, offset: usize, hidden: bool) -> tidb_model::ColumnInfo {
-    let mut info = tidb_model::ColumnInfo {
-        id: column.id,
-        name: tidb_ast::CiString::new(column.name.clone()),
-        offset: offset as i64,
-        field_type: column.field_type.clone(),
-        state: tidb_model::SchemaState::PUBLIC,
-        hidden,
-        ..tidb_model::ColumnInfo::default()
+/// A column built with its generation alone (a test fixture) records it as
+/// Go's `ColumnInfo` holds it: `GeneratedExprString`, `GeneratedStored` and
+/// the dependency names. A loaded column already carries them.
+fn sync_fixture_generation(
+    info: &mut tidb_model::ColumnInfo,
+    generated: Option<&crate::generated_column::GeneratedColumn>,
+) {
+    let Some(generated) = generated else {
+        return;
     };
-    if let Some(generated) = &column.generated {
-        info.generated_expr_string = generated.expr_text.clone();
-        info.generated_stored = generated.stored;
-        for dependency in &generated.dependencies {
-            info.dependences.insert(dependency.go_to_lower());
-        }
+    if !info.generated_expr_string.is_empty() {
+        return;
     }
-    info
+    info.generated_expr_string = generated.expr_text.clone();
+    info.generated_stored = generated.stored;
+    for dependency in &generated.dependencies {
+        info.dependences.insert(dependency.go_to_lower());
+    }
 }

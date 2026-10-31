@@ -390,7 +390,11 @@ pub fn cluster_table(
     let mut kv_columns: Vec<KvColumn> = Vec::with_capacity(columns.len());
     // One `KvColumn` per stored column, public or not (the write path
     // carries the non-public ones).
-    let build_column = |column: &tidb_model::ColumnInfo| -> Result<KvColumn, String> {
+    // Each column shares the `ColumnInfo` pointer `TableInfo.Columns` holds,
+    // as Go's `table.Column` embeds it.
+    let build_column = |shared: &tidb_model::GoShared<tidb_model::ColumnInfo>| -> Result<KvColumn, String> {
+        let guard = shared.read();
+        let column: &tidb_model::ColumnInfo = &guard;
         let name = column.name.original().to_owned();
         // A nil Go interface is "no DEFAULT was written", which is not the
         // same fact as a `DEFAULT NULL`, so it must become `None` here rather
@@ -536,23 +540,16 @@ pub fn cluster_table(
             None
         };
         Ok(KvColumn {
-            name,
-            id: column.id,
-            field_type: column.field_type.clone(),
-            column_info_version: column.version,
-            // Go `ColumnInfo.Comment`, which `SHOW CREATE TABLE` prints and
-            // `information_schema.columns.column_comment` reports.
-            comment: column.comment.clone(),
+            info: shared.clone(),
             generated,
             default_value,
             origin_default,
         })
     };
     for column in &columns {
-        kv_columns.push(build_column(&column.read())?);
+        kv_columns.push(build_column(column)?);
     }
-    let mut kv_table = KvTable::with_storage(table.id, kv_columns, storage.clone_box());
-    kv_table.set_meta(table.clone());
+    let mut kv_table = KvTable::loaded(table.clone(), kv_columns, storage.clone_box());
     kv_table.set_all_columns_public(
         table
             .columns
@@ -563,8 +560,8 @@ pub fn cluster_table(
     // DDL is adding, dropping or changing is written by its state, and a
     // public column a MODIFY COLUMN is checking carries its changing type.
     let public_ids: Vec<i64> = columns.iter().map(|column| column.read().id).collect();
-    for column in table.columns.iter_deref() {
-        let column = column.read();
+    for shared in table.columns.iter_deref() {
+        let column = shared.read();
         if column.state == SchemaState::PUBLIC {
             if let (Some(changing), Some(offset)) = (
                 column.changing_field_type.as_ref(),
@@ -585,7 +582,7 @@ pub fn cluster_table(
             public_ids.iter().position(|public| *public == id)
         });
         kv_table.add_nonpublic_column(crate::kv_table::NonPublicColumn {
-            column: build_column(&column)?,
+            column: build_column(&shared)?,
             state: column.state,
             dependency,
         });
@@ -1087,7 +1084,7 @@ pub fn kv_index(
         };
         let offset = columns
             .iter()
-            .position(|column| tidb_hack::GoCaseCompare::go_lower_eq(column.name.as_str(), &name))
+            .position(|column| tidb_hack::GoCaseCompare::go_lower_eq(column.read().name.original(), &name))
             .ok_or_else(|| {
                 format!(
                     "its index {} covers non-public column {}",

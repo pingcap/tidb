@@ -130,8 +130,8 @@ fn scale_analyzed_tpcc_table(
             .into_iter()
             .filter_map(|(_, column)| {
                 requested
-                    .get(column.name.as_str())
-                    .map(|ndv| (column.id, *ndv))
+                    .get(column.read().name.original())
+                    .map(|ndv| (column.read().id, *ndv))
             })
             .collect::<std::collections::BTreeMap<_, _>>();
         assert_eq!(
@@ -147,7 +147,7 @@ fn scale_analyzed_tpcc_table(
                     .column_offsets
                     .iter()
                     .filter_map(|offset| table.columns().get(*offset))
-                    .map(|column| column.id)
+                    .map(|column| column.read().id)
                     .collect::<Vec<_>>();
                 (index.id, columns)
             })

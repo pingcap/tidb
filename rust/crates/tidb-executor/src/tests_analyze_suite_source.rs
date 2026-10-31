@@ -198,7 +198,7 @@ fn single_column_index_ndv_and_null_count_match_the_column() {
     let column_names = table
         .visible_columns()
         .into_iter()
-        .map(|(_, column)| (column.id, column.name.clone()))
+        .map(|(_, column)| (column.read().id, column.read().name.original().to_owned()))
         .collect::<BTreeMap<_, _>>();
     let index_names = table
         .indexes()

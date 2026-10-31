@@ -750,14 +750,17 @@ mod tests {
 
     fn column(id: i64, name: &str) -> tidb_table::kv_table::KvColumn {
         tidb_table::kv_table::KvColumn {
-            id,
-            name: name.to_owned(),
-            field_type: FieldType::new(FieldTypeCode::LongLong),
-            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                id: id,
+                name: tidb_ast::CiString::new(name.to_owned()),
+                field_type: FieldType::new(FieldTypeCode::LongLong),
+                version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::ColumnInfo::default()
+            }),
+            generated: None,
             default_value: None,
             origin_default: None,
-            comment: String::new(),
-            generated: None,
         }
     }
 
@@ -960,10 +963,11 @@ mod tests {
     fn json_builds_full_table_including_hidden_columns_and_fm_sketch() {
         // Go's PK-is-handle column carries `PriKeyFlag`, which
         // `TableStatsFromJSON` reads for `IsHandle`.
-        let mut handle = column(1, "a");
+        let handle = column(1, "a");
         handle
-            .field_type
-            .add_flags(tidb_datatype::FieldTypeFlags::PRI_KEY);
+            .info
+            .write()
+            .add_flag(u64::from(tidb_datatype::FieldTypeFlags::PRI_KEY));
         let mut schema = KvTable::new(41, vec![handle]);
         schema.set_pk_handle_offset(0);
         schema.add_hidden_column(column(2, "_V$_expr"));

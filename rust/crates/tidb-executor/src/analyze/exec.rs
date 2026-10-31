@@ -204,7 +204,7 @@ fn merge_partitioned_global_statistics(
         let items = partitions
             .iter()
             .filter_map(|(_, stats)| {
-                let column_stats = stats.hist_coll.get_column(column.id)?;
+                let column_stats = stats.hist_coll.get_column(column.read().id)?;
                 let column_stats = column_stats
                     .read()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -231,7 +231,7 @@ fn merge_partitioned_global_statistics(
             topn_count,
             bucket_count,
             row_count,
-            &column.field_type,
+            &column.read().field_type,
             false,
             tidb_stats_handle_globalstats::GlobalStatsMergeMode::Blocking,
             1,
@@ -240,28 +240,28 @@ fn merge_partitioned_global_statistics(
         )
         .map_err(|error| DriverError::unsupported(error.to_string()))?;
         if let Some(mut histogram) = merged.histogram {
-            if crate::analyze::kv::is_local_unique(table, false, column.id) {
+            if crate::analyze::kv::is_local_unique(table, false, column.read().id) {
                 histogram.ndv = tidb_stats_handle_globalstats::unique_global_ndv(
                     items.iter().map(|stats| &stats.histogram),
                     row_count,
                 );
             }
-            histogram.round_trip_through_storage(&column.field_type);
+            histogram.round_trip_through_storage(&column.read().field_type);
             global.hist_coll.set_column(
-                column.id,
+                column.read().id,
                 tidb_stats::column::Column {
                     histogram,
                     top_n: merged.topn,
                     cmsketch: merged.cmsketch,
                     stats_version: source.stats_version,
                     stats_loaded_status: source.stats_loaded_status,
-                    info: meta.find_column_by_id(column.id),
+                    info: meta.find_column_by_id(column.read().id),
                     physical_id: table.table_id(),
                     is_handle: source.is_handle,
                     ..Default::default()
                 },
             );
-            insert_existence(&global, column.id, false);
+            insert_existence(&global, column.read().id, false);
         }
     }
 
@@ -294,7 +294,7 @@ fn merge_partitioned_global_statistics(
             .column_offsets
             .first()
             .and_then(|offset| table.columns().get(*offset))
-            .map(|column| &column.field_type)
+            .map(|column| column.read().field_type.clone())
             .ok_or_else(|| DriverError::unsupported("global index has no leading column"))?;
         let merged = tidb_stats_handle_globalstats::merge_partition_stats_item(
             Some(time_zone),
@@ -302,7 +302,7 @@ fn merge_partitioned_global_statistics(
             topn_count,
             bucket_count,
             row_count,
-            field_type,
+            &field_type,
             true,
             tidb_stats_handle_globalstats::GlobalStatsMergeMode::Blocking,
             1,
@@ -498,13 +498,13 @@ fn selected_column_ids(
                 let column = table
                     .columns()
                     .iter()
-                    .find(|column| go_to_lower(&column.name) == go_to_lower(name))
+                    .find(|column| go_to_lower(column.read().name.original()) == go_to_lower(name))
                     .ok_or_else(|| {
                         DriverError::unsupported(format!(
                             "column `{name}` does not exist in `{schema}`.`{table_name}`"
                         ))
                     })?;
-                ids.insert(column.id);
+                ids.insert(column.read().id);
             }
             Some(ids)
         }
@@ -528,19 +528,19 @@ fn selected_column_ids(
     for index in table.indexes() {
         for offset in &index.column_offsets {
             if let Some(column) = table.columns().get(*offset) {
-                selected_ids.insert(column.id);
+                selected_ids.insert(column.read().id);
             }
         }
     }
     if let Some(offset) = table.pk_handle_offset() {
         if let Some(column) = table.columns().get(offset) {
-            selected_ids.insert(column.id);
+            selected_ids.insert(column.read().id);
         }
     }
     loop {
         let before = selected_ids.len();
         for column in table.columns() {
-            if !selected_ids.contains(&column.id) {
+            if !selected_ids.contains(&column.read().id) {
                 continue;
             }
             if let Some(generated) = &column.generated {
@@ -548,9 +548,9 @@ fn selected_column_ids(
                     if let Some(base) = table
                         .columns()
                         .iter()
-                        .find(|base| go_to_lower(&base.name) == go_to_lower(dependency))
+                        .find(|base| go_to_lower(base.read().name.original()) == go_to_lower(dependency))
                     {
-                        selected_ids.insert(base.id);
+                        selected_ids.insert(base.read().id);
                     }
                 }
             }
@@ -567,9 +567,9 @@ fn selected_column_ids(
             .columns()
             .iter()
             .filter(|column| {
-                selected_ids.contains(&column.id) && !explicitly_selected.contains(&column.id)
+                selected_ids.contains(&column.read().id) && !explicitly_selected.contains(&column.read().id)
             })
-            .map(|column| column.name.as_str())
+            .map(|column| column.read().name.original().to_owned())
             .collect::<Vec<_>>();
         context.append_warning_parts(
             1105,
@@ -594,7 +594,7 @@ fn skip_column_types(
 ) -> Option<HashSet<i64>> {
     let columns = table.columns();
     let mut selected =
-        selected.unwrap_or_else(|| columns.iter().map(|column| column.id).collect::<HashSet<_>>());
+        selected.unwrap_or_else(|| columns.iter().map(|column| column.read().id).collect::<HashSet<_>>());
     // Go `getMustAnalyzedColumns`: public non-multi-valued index columns, the
     // integer handle, and what a virtual generated one of them is built from.
     let mut mandatory = HashSet::new();
@@ -604,13 +604,13 @@ fn skip_column_types(
         }
         for offset in &index.column_offsets {
             if let Some(column) = columns.get(*offset) {
-                mandatory.insert(column.id);
+                mandatory.insert(column.read().id);
             }
         }
     }
     let mut roots = mandatory.clone();
     if let Some(column) = table.pk_handle_offset().and_then(|offset| columns.get(offset)) {
-        mandatory.insert(column.id);
+        mandatory.insert(column.read().id);
     }
     loop {
         let before = roots.len();
@@ -618,16 +618,16 @@ fn skip_column_types(
             let Some(generated) = &column.generated else {
                 continue;
             };
-            if !roots.contains(&column.id) || generated.stored {
+            if !roots.contains(&column.read().id) || generated.stored {
                 continue;
             }
             for dependency in &generated.dependencies {
                 if let Some(base) = columns
                     .iter()
-                    .find(|base| go_to_lower(&base.name) == go_to_lower(dependency))
+                    .find(|base| go_to_lower(base.read().name.original()) == go_to_lower(dependency))
                 {
-                    roots.insert(base.id);
-                    mandatory.insert(base.id);
+                    roots.insert(base.read().id);
+                    mandatory.insert(base.read().id);
                 }
             }
         }
@@ -637,26 +637,26 @@ fn skip_column_types(
     }
     let mut skipped_names = HashSet::new();
     for column in columns {
-        let vector = column.field_type.code() == tidb_datatype::FieldTypeCode::VectorFloat32;
+        let vector = column.read().field_type.code() == tidb_datatype::FieldTypeCode::VectorFloat32;
         let skipped = skip_types.contains(tidb_datatype::type_to_str(
-            column.field_type.code(),
-            column.field_type.charset_name(),
+            column.read().field_type.code(),
+            column.read().field_type.charset_name(),
         ));
-        if vector || (skipped && !mandatory.contains(&column.id)) {
-            selected.remove(&column.id);
-            skipped_names.insert(column.name.go_to_lower());
+        if vector || (skipped && !mandatory.contains(&column.read().id)) {
+            selected.remove(&column.read().id);
+            skipped_names.insert(column.read().name.original().go_to_lower());
         }
     }
     for column in columns {
         let Some(generated) = &column.generated else {
             continue;
         };
-        if !selected.contains(&column.id) {
+        if !selected.contains(&column.read().id) {
             continue;
         }
         // A stored generated column that must be analyzed is read from
         // storage, so its skipped dependencies do not matter.
-        if generated.stored && mandatory.contains(&column.id) {
+        if generated.stored && mandatory.contains(&column.read().id) {
             continue;
         }
         if generated
@@ -664,7 +664,7 @@ fn skip_column_types(
             .iter()
             .any(|dependency| skipped_names.contains(&dependency.go_to_lower()))
         {
-            selected.remove(&column.id);
+            selected.remove(&column.read().id);
         }
     }
     (selected.len() != columns.len()).then_some(selected)
@@ -680,8 +680,8 @@ fn saved_options(
             table
                 .columns()
                 .iter()
-                .filter(|column| selected.is_some_and(|selected| selected.contains(&column.id)))
-                .map(|column| column.name.clone())
+                .filter(|column| selected.is_some_and(|selected| selected.contains(&column.read().id)))
+                .map(|column| column.read().name.original().to_owned())
                 .collect(),
         ),
         choice => choice.clone(),
@@ -717,8 +717,8 @@ fn saved_options_from_row(
             text(5)
                 .split(',')
                 .filter_map(|id| id.parse::<i64>().ok())
-                .filter_map(|id| table.columns().iter().find(|column| column.id == id))
-                .map(|column| column.name.clone())
+                .filter_map(|id| table.columns().iter().find(|column| column.read().id == id))
+                .map(|column| column.read().name.original().to_owned())
                 .collect(),
         ),
         "PREDICATE" => AnalyzeColumnChoice::Predicate,
@@ -748,8 +748,8 @@ fn save_analyze_options_sql(
                             table
                                 .columns()
                                 .iter()
-                                .find(|column| column.name.go_to_lower() == name.go_to_lower())
-                                .map(|column| column.id.to_string())
+                                .find(|column| column.read().name.original().go_to_lower() == name.go_to_lower())
+                                .map(|column| column.read().id.to_string())
                         })
                         .collect::<Vec<_>>()
                         .join(","),

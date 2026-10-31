@@ -62,9 +62,9 @@ impl ForeignKeyCatalog for CatalogForeignKeys<'_> {
                 .columns()
                 .iter()
                 .map(|column| FkColumn {
-                    name: column.name.clone(),
+                    name: column.read().name.original().to_owned(),
                     on_update_now: column
-                        .field_type
+                        .read().field_type
                         .has_flag(tidb_datatype::FieldTypeFlags::ON_UPDATE_NOW),
                     generated_dependencies: column
                         .generated

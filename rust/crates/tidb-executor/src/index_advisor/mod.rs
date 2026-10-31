@@ -179,7 +179,7 @@ impl<S: IndexAdvisorExec> SessionOptimizer<'_, S> {
                 Some(crate::TableEntry::Kv(stored)) => Ok(stored
                     .columns()
                     .iter()
-                    .map(|column| (column.name.go_to_lower(), column.field_type.clone()))
+                    .map(|column| (column.read().name.original().go_to_lower(), column.read().field_type.clone()))
                     .collect()),
                 Some(_) => Ok(Vec::new()),
                 None => Err(DriverError::from(
@@ -314,9 +314,7 @@ impl<S: IndexAdvisorExec> Optimizer for SessionOptimizer<'_, S> {
                     continue;
                 }
                 let matched = index.columns.iter().enumerate().all(|(position, column)| {
-                    table.columns()[stored.column_offsets[position]]
-                        .name
-                        .go_to_lower()
+                    table.columns()[stored.column_offsets[position]].read().name.lowercase()
                         == column.column_name.go_to_lower()
                 });
                 if matched {
@@ -345,11 +343,11 @@ impl<S: IndexAdvisorExec> Optimizer for SessionOptimizer<'_, S> {
                 if let Some(crate::TableEntry::Kv(table)) = catalog.table_in(&schema, &name)
                 {
                     for column in table.columns() {
-                        if column.name.go_to_lower() == column_name {
+                        if column.read().name.original().go_to_lower() == column_name {
                             found.push(Column {
                                 schema_name: schema.clone(),
                                 table_name: name.go_to_lower(),
-                                column_name: column.name.go_to_lower(),
+                                column_name: column.read().name.original().go_to_lower(),
                             });
                         }
                     }
@@ -407,9 +405,9 @@ impl<S: IndexAdvisorExec> Optimizer for SessionOptimizer<'_, S> {
                 let total_size = stored
                     .columns()
                     .iter()
-                    .find(|column| column.name.go_to_lower() == wanted)
+                    .find(|column| column.read().name.original().go_to_lower() == wanted)
                     .and_then(|column| {
-                        let column_stats = statistics.as_ref()?.hist_coll.get_column(column.id)?;
+                        let column_stats = statistics.as_ref()?.hist_coll.get_column(column.read().id)?;
                         let column_stats = column_stats
                             .read()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);

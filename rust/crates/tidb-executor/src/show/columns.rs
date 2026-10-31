@@ -78,19 +78,19 @@ pub fn literal_column_default_text(
     flags: tidb_datatype::ConversionFlags,
     session_zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Option<String>, tidb_datatype::DatumValueError> {
-    if column.field_type.code() != tidb_datatype::FieldTypeCode::Timestamp {
-        return Ok(column_default_text(value, &column.field_type));
+    if column.read().field_type.code() != tidb_datatype::FieldTypeCode::Timestamp {
+        return Ok(column_default_text(value, &column.read().field_type));
     }
     let converted = tidb_table::column_default::materialize_stored_literal(
         value,
-        &column.field_type,
-        column.column_info_version,
+        &column.read().field_type,
+        column.read().version,
         flags,
         session_zone,
     )?;
     Ok(match converted.value {
         Datum::Time(time) => Some(time.to_string()),
-        other => column_default_text(&other, &column.field_type),
+        other => column_default_text(&other, &column.read().field_type),
     })
 }
 
@@ -131,13 +131,13 @@ pub fn column_description(
     full: bool,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<Datum>, DriverError> {
-    let null_flag = if column.field_type.flags() & NOT_NULL_FLAG != 0 {
+    let null_flag = if column.read().field_type.flags() & NOT_NULL_FLAG != 0 {
         "NO"
     } else {
         "YES"
     };
     let extra = column_extra(
-        &column.field_type,
+        &column.read().field_type,
         table.auto_increment_offset() == Some(offset),
         column.generated.as_ref().map(|generated| generated.stored),
         column
@@ -150,7 +150,7 @@ pub fn column_description(
     // default, whatever value its metadata still stores (a NOT NULL TEXT/BLOB
     // given `DEFAULT ''` under a non-strict sql_mode).
     let no_default = column
-        .field_type
+        .read().field_type
         .has_flag(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE);
     let default = match &column.default_value {
         _ if no_default => Datum::Null,
@@ -164,7 +164,7 @@ pub fn column_description(
             .map_err(|_| {
                 DriverError::from(
                     tidb_table::table_errors::ERR_GET_DEFAULT_FAILED
-                        .generate_with_stack_by_args(&[column.name.clone().into()]),
+                        .generate_with_stack_by_args(&[column.read().name.original().to_owned().into()]),
                 )
             })? {
                 Some(text) => Datum::Bytes(text.into_bytes()),
@@ -173,7 +173,7 @@ pub fn column_description(
         }
         // Go `NewColDesc` reports a computed default's STORED string here,
         // which is not the parenthesised form `SHOW CREATE TABLE` prints.
-        Some(computed) => match computed.column_desc_text(&column.field_type) {
+        Some(computed) => match computed.column_desc_text(&column.read().field_type) {
             Some(text) => Datum::Bytes(text.into_bytes()),
             None => Datum::Null,
         },
@@ -181,18 +181,18 @@ pub fn column_description(
     };
     if !full {
         return Ok(vec![
-            Datum::Bytes(column.name.clone().into_bytes()),
-            type_desc_cell(&column.field_type),
+            Datum::Bytes(column.read().name.original().to_owned().into_bytes()),
+            type_desc_cell(&column.read().field_type),
             Datum::Bytes(null_flag.as_bytes().to_vec()),
             Datum::Bytes(key_flag.into_bytes()),
             default,
             Datum::Bytes(extra.clone().into_bytes()),
         ]);
     }
-    let collation = column_collation_cell(&column.field_type);
+    let collation = column_collation_cell(&column.read().field_type);
     Ok(vec![
-        Datum::Bytes(column.name.clone().into_bytes()),
-        type_desc_cell(&column.field_type),
+        Datum::Bytes(column.read().name.original().to_owned().into_bytes()),
+        type_desc_cell(&column.read().field_type),
         collation,
         Datum::Bytes(null_flag.as_bytes().to_vec()),
         Datum::Bytes(key_flag.into_bytes()),
@@ -200,7 +200,7 @@ pub fn column_description(
         Datum::Bytes(extra.into_bytes()),
         Datum::Bytes(FULL_COL_DESC_PRIVILEGES.as_bytes().to_vec()),
         // Go `table.NewColDesc`'s `Comment`, from `ColumnInfo.Comment`.
-        Datum::Bytes(column.comment.clone().into_bytes()),
+        Datum::Bytes(column.read().comment.clone().into_bytes()),
     ])
 }
 
@@ -329,7 +329,7 @@ pub(crate) const NOT_NULL_FLAG: u32 = 1;
 /// is the whole of a unique index, MUL for one that leads a non-unique index.
 pub fn column_key_flag(table: &crate::KvTable, offset: usize) -> String {
     if table.columns()[offset]
-        .field_type
+        .read().field_type
         .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)
     {
         "PRI".to_owned()

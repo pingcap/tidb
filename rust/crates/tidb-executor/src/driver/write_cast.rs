@@ -77,23 +77,23 @@ pub(crate) fn materialize_generated_for_write(
         let mut value = match policy {
             GeneratedWrite::Insert { row_index, .. } => cast_value_for_column(
                 value,
-                &column.field_type,
-                &column.name,
+                &column.read().field_type,
+                column.read().name.original(),
                 row_index,
                 ctx,
                 ctx.ignore_err(),
             ),
             GeneratedWrite::Update { row_index } => cast_value_for_update_assignment(
                 value,
-                &column.field_type,
-                &column.name,
+                &column.read().field_type,
+                column.read().name.original(),
                 row_index,
                 ctx,
             ),
             GeneratedWrite::OnDuplicate { row_index, .. } => cast_value_shaped(
                 value,
-                &column.field_type,
-                &column.name,
+                &column.read().field_type,
+                column.read().name.original(),
                 row_index,
                 ctx,
                 CastShape::GeneratedOnDuplicate,
@@ -105,8 +105,8 @@ pub(crate) fn materialize_generated_for_write(
         if let GeneratedWrite::Insert { null_level, .. } = policy {
             crate::bad_null::handle_bad_null(
                 &mut value,
-                &column.field_type,
-                &column.name,
+                &column.read().field_type,
+                column.read().name.original(),
                 null_level,
                 ctx,
             )?;
@@ -127,8 +127,8 @@ pub(crate) fn materialize_generated_for_write(
         GeneratedWriteFailure::Generation(error) => {
             let array_offset = columns
                 .iter()
-                .position(|column| column.name == error.column)
-                .filter(|offset| columns[*offset].field_type.is_array());
+                .position(|column| column.read().name.original() == error.column)
+                .filter(|offset| columns[*offset].read().field_type.is_array());
             match (policy, array_offset, error.eval) {
                 // Go `fillRow`: an array column's evaluation error is
                 // completed with its index's name before any truncation

@@ -200,7 +200,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 resolved.push(None);
                 continue;
             }
-            let Some(expr) = &column.generated_expr else {
+            let Some(expr) = column.generated_expr() else {
                 failure = Some(PlanError::internal(
                     "a generated column has no expression to build",
                 ));

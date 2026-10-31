@@ -62,7 +62,7 @@
             panic!("fixture is not a KV table")
         };
         let table_id = table.table_id();
-        let column_id = table.columns()[0].id;
+        let column_id = table.columns()[0].read().id;
         let statistics = evicted_statistics(10, 0, &[column_id], &[]);
         handle.set_table_statistics(table_id, Arc::new(statistics));
         (catalog, handle, table_id, column_id)
@@ -156,7 +156,7 @@
         let column_ids = table
             .columns()
             .iter()
-            .map(|column| column.id)
+            .map(|column| column.read().id)
             .collect::<Vec<_>>();
         let indexes = table
             .indexes()
@@ -480,7 +480,7 @@
             .and_then(|table| table.indexes().first())
             .expect("fixture index ia")
             .id;
-        let column_id = catalog.kv_table_by_id(table_id).unwrap().columns()[0].id;
+        let column_id = catalog.kv_table_by_id(table_id).unwrap().columns()[0].read().id;
         let statistics = evicted_statistics(10, 0, &[column_id], &[index_id]);
         handle.set_table_statistics(table_id, Arc::new(statistics));
         let loader = Arc::new(RecordingLoader::default());
@@ -588,7 +588,7 @@
         let (mut catalog, handle, table_id, _) = analyzed_lite_catalog();
         let column_id = catalog
             .kv_table_by_id(table_id)
-            .and_then(|table| table.columns().iter().map(|column| column.id).max())
+            .and_then(|table| table.columns().iter().map(|column| column.read().id).max())
             .expect("fixture columns")
             + 1;
         let loader = Arc::new(RecordingLoader::default());
@@ -743,7 +743,7 @@
             panic!("fixture is not a KV table")
         };
         let (table_id, column_id, index_id) =
-            (table.table_id(), table.columns()[0].id, table.indexes()[0].id);
+            (table.table_id(), table.columns()[0].read().id, table.indexes()[0].id);
         let statistics = |meta_version: u64, row_count: i64, column_version: u64| {
             let histogram = |id, last_update_version| tidb_stats::Histogram {
                 id,
@@ -894,15 +894,15 @@
         let a = table
             .columns()
             .iter()
-            .find(|column| column.name == "a")
+            .find(|column| column.read().name.original() == "a")
             .unwrap()
-            .id;
+            .read().id;
         let v = table
             .columns()
             .iter()
-            .find(|column| column.name == "v")
+            .find(|column| column.read().name.original() == "v")
             .unwrap()
-            .id;
+            .read().id;
         let index_id = table.indexes().first().expect("expression index").id;
         handle.set_table_statistics(
             table_id,
@@ -1016,11 +1016,11 @@
         let column = table
             .columns()
             .iter()
-            .find(|column| column.name == column_name)
+            .find(|column| column.read().name.original() == column_name)
             .expect("fixture column");
         tidb_model::TableItemID {
             table_id: table.table_id(),
-            id: column.id,
+            id: column.read().id,
             is_index: false,
             is_sync_load_failed: false,
         }

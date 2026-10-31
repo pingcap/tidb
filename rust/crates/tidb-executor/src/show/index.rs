@@ -68,8 +68,8 @@ pub fn show_index_rows(
             true,
             true,
             1,
-            Some(&table.columns()[offset].name),
-            column_ndv(table.columns()[offset].id),
+            Some(&table.columns()[offset].read().name.original()),
+            column_ndv(table.columns()[offset].read().id),
             None,
             false,
             "",
@@ -83,7 +83,8 @@ pub fn show_index_rows(
         let clustered = index.primary && !table.common_handle_offsets().is_empty();
         for (position, offset) in index.column_offsets.iter().enumerate() {
             let column = &table.columns()[*offset];
-            let nullable = column.field_type.flags() & FieldTypeFlags::NOT_NULL == 0;
+            let nullable = column.read().field_type.flags() & FieldTypeFlags::NOT_NULL == 0;
+            let column_name = column.read().name.original().to_owned();
             let expression = column
                 .generated
                 .as_ref()
@@ -101,8 +102,8 @@ pub fn show_index_rows(
                 position + 1,
                 // Go `fetchShowIndex`: a hidden expression-index column is
                 // named by the STRING "NULL" (not SQL NULL).
-                Some(if expression.is_none() { column.name.as_str() } else { "NULL" }),
-                column_ndv(column.id),
+                Some(if expression.is_none() { column_name.as_str() } else { "NULL" }),
+                column_ndv(column.read().id),
                 expression,
                 nullable,
                 &index.comment,

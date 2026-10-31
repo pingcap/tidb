@@ -62,21 +62,37 @@ fn run_topic(topic: &str) -> Result<TopicReport, String> {
     replay::run_topic::<Connections>(topic)
 }
 
-/// Replays every topic, `INTEGRATION_JOBS` at a time (all cores by default),
-/// and answers the reports in `topics` order.
+/// Replays every topic, `INTEGRATION_JOBS` at a time (half the cores by
+/// default), and answers the reports in `topics` order.
 ///
 /// Each topic replays in a process of its own, as each recording was made
 /// against a server: a topic opens its own store, but `SET GLOBAL`, the
 /// config and Go's process-wide singletons (`vardef`, infosync's label
 /// rules) are process state, and topics sharing one process would read each
 /// other's. `INTEGRATION_JOBS=1` replays the topics one after another.
+///
+/// A topic's own store runs threads of its own, and a recording is wall-clock
+/// sensitive (`unix_timestamp() - unix_timestamp(c)` across a few ALTERs
+/// assumes they finish in seconds), so the default leaves the other half of
+/// the cores to them. The longest scripts start first: the slowest topic
+/// bounds the wall time, so it should not start last.
 fn run_topics(topics: &[&str]) -> Vec<Result<TopicReport, String>> {
     let jobs = std::env::var("INTEGRATION_JOBS")
         .ok()
         .and_then(|jobs| jobs.parse::<usize>().ok())
         .filter(|jobs| *jobs > 0)
-        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, usize::from))
+        .unwrap_or_else(|| {
+            (std::thread::available_parallelism().map_or(2, usize::from) / 2).max(1)
+        })
         .min(topics.len().max(1));
+    let dir = integrationtest_dir();
+    let mut order: Vec<usize> = (0..topics.len()).collect();
+    order.sort_by_key(|index| {
+        std::cmp::Reverse(
+            fs::metadata(dir.join(format!("t/{}.test", topics[*index])))
+                .map_or(0, |metadata| metadata.len()),
+        )
+    });
     let reports_dir = std::env::temp_dir().join(format!("integration-diff-{}", std::process::id()));
     std::fs::create_dir_all(&reports_dir).expect("create the report directory");
     let next = std::sync::atomic::AtomicUsize::new(0);
@@ -85,10 +101,11 @@ fn run_topics(topics: &[&str]) -> Vec<Result<TopicReport, String>> {
     std::thread::scope(|scope| {
         for _ in 0..jobs {
             scope.spawn(|| loop {
-                let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let Some(topic) = topics.get(index) else {
+                let position = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Some(&index) = order.get(position) else {
                     break;
                 };
+                let topic = topics[index];
                 let report = replay_topic_in_child(topic, &reports_dir.join(index.to_string()));
                 *reports[index].lock().unwrap() = Some(report);
             });

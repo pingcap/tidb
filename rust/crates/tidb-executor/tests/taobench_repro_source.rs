@@ -22,14 +22,17 @@ fn long_col(name: &str, id: i64) -> KvColumn {
     ft.set_flen(20);
     ft.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
     KvColumn {
-        name: name.to_owned(),
-        id,
-        field_type: ft,
-        column_info_version: 1,
+        info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+            id: id,
+            name: tidb_ast::CiString::new(name.to_owned()),
+            field_type: ft,
+            version: 1,
+            state: tidb_model::SchemaState::PUBLIC,
+            ..tidb_model::ColumnInfo::default()
+        }),
+        generated: None,
         default_value: None,
         origin_default: None,
-        comment: String::new(),
-        generated: None,
     }
 }
 
@@ -39,14 +42,17 @@ fn varchar_col(name: &str, id: i64) -> KvColumn {
     ft.set_collation(tidb_charset::Collation::Utf8Mb4Bin);
     ft.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
     KvColumn {
-        name: name.to_owned(),
-        id,
-        field_type: ft,
-        column_info_version: 1,
+        info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+            id: id,
+            name: tidb_ast::CiString::new(name.to_owned()),
+            field_type: ft,
+            version: 1,
+            state: tidb_model::SchemaState::PUBLIC,
+            ..tidb_model::ColumnInfo::default()
+        }),
+        generated: None,
         default_value: None,
         origin_default: None,
-        comment: String::new(),
-        generated: None,
     }
 }
 
@@ -60,14 +66,17 @@ fn edges_columns() -> Vec<KvColumn> {
             let mut ft = FieldType::new(FieldTypeCode::Varchar);
             ft.set_flen(150);
             KvColumn {
-                name: "value".to_owned(),
-                id: 5,
-                field_type: ft,
-                column_info_version: 1,
+                info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                    id: 5,
+                    name: tidb_ast::CiString::new("value"),
+                    field_type: ft,
+                    version: 1,
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                }),
+                generated: None,
                 default_value: None,
                 origin_default: None,
-                comment: String::new(),
-                generated: None,
             }
         },
     ]

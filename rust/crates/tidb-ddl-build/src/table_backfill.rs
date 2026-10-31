@@ -623,14 +623,16 @@ impl KvTableBackfill for KvTable {
             .ok_or_else(|| {
                 KvTableError::Decode("the modified column is not on the table".to_owned())
             })?
+            .read()
             .name
-            .clone();
+            .original()
+            .to_owned();
         let zone = decode_context.zone().clone();
         let decoder = reorg_row_decoder(self, decode_context)?;
         let types: std::collections::BTreeMap<i64, tidb_datatype::FieldType> = self
             .nonpublic_columns()
             .iter()
-            .map(|column| (column.column.id, column.column.field_type.clone()))
+            .map(|column| (column.column.read().id, column.column.read().field_type.clone()))
             .collect();
         let mut rows = Vec::new();
         let mut task_done = false;
@@ -671,9 +673,9 @@ impl KvTableBackfill for KvTable {
             ..ReorgBatch::default()
         };
         // Go `null` -> NOT NULL TIMESTAMP: the current timestamp stands in.
-        let substitute = (self.columns()[old_offset].field_type.code()
+        let substitute = (self.columns()[old_offset].read().field_type.code()
             != tidb_datatype::FieldTypeCode::Timestamp)
-            .then(|| tidb_table::kv_table::null_timestamp_substitute(&target.field_type, cast_context))
+            .then(|| tidb_table::kv_table::null_timestamp_substitute(&target.read().field_type, cast_context))
             .flatten();
         let flags = cast_context.reorg_default_conversion_flags();
         let statement_warnings = cast_context.take_warnings();
@@ -685,7 +687,7 @@ impl KvTableBackfill for KvTable {
                 .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
             // Go: "The column is already added by update or insert
             // statement, skip it."
-            if stored.contains_key(&target.id) {
+            if stored.contains_key(&target.read().id) {
                 continue;
             }
             let (handle, public_row) = decoder.decode_record(&key, &value)?;
@@ -698,8 +700,8 @@ impl KvTableBackfill for KvTable {
             }
             let converted = match tidb_table::column::cast_table_value_with_flags(
                 old_value.clone(),
-                &target.field_type,
-                &target.name,
+                &target.read().field_type,
+                target.read().name.original(),
                 cast_context,
                 flags,
                 false,
@@ -735,7 +737,7 @@ impl KvTableBackfill for KvTable {
                     converted.clone()
                 } else {
                     stored
-                        .get(&column.column.id)
+                        .get(&column.column.read().id)
                         .cloned()
                         .unwrap_or(tidb_datatype::Datum::Null)
                 });

@@ -99,7 +99,7 @@ impl CatalogStatistics for Catalog {
             } else {
                 item.id > 0
                     && self.kv_table_by_id(item.table_id).is_some_and(|table| {
-                        table.columns().iter().any(|column| column.id == item.id)
+                        table.columns().iter().any(|column| column.read().id == item.id)
                     })
             };
             let load_needed = handle
@@ -185,12 +185,12 @@ impl CatalogStatistics for Catalog {
                         .generated
                         .as_ref()
                         .is_none_or(|generated| generated.stored)
-                        && has_analyzed(&statistics, column.id, false)
+                        && has_analyzed(&statistics, column.read().id, false)
                 }) {
                     columns.insert(
                         tidb_model::TableItemID {
                             table_id: *table_id,
-                            id: column.id,
+                            id: column.read().id,
                             is_index: false,
                             is_sync_load_failed: false,
                         },
@@ -211,8 +211,8 @@ impl CatalogStatistics for Catalog {
             let Some(name) = table
                 .columns()
                 .iter()
-                .find(|metadata| metadata.id == column.id)
-                .map(|metadata| metadata.name.as_str())
+                .find(|metadata| metadata.read().id == column.id)
+                .map(|metadata| metadata.read().name.original().to_owned())
             else {
                 continue;
             };
@@ -222,10 +222,10 @@ impl CatalogStatistics for Catalog {
                     && generated
                         .dependencies
                         .iter()
-                        .any(|dependency| dependency.go_lower_eq(name)))
+                        .any(|dependency| dependency.go_lower_eq(&name)))
                 .then_some(tidb_model::TableItemID {
                     table_id: column.table_id,
-                    id: metadata.id,
+                    id: metadata.read().id,
                     is_index: false,
                     is_sync_load_failed: false,
                 })
@@ -238,7 +238,7 @@ impl CatalogStatistics for Catalog {
             let Some(offset) = table
                 .columns()
                 .iter()
-                .position(|metadata| metadata.id == column.id)
+                .position(|metadata| metadata.read().id == column.id)
             else {
                 continue;
             };

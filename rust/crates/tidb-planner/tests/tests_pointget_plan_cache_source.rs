@@ -72,7 +72,9 @@ fn point_get_column(offset: usize, name: &str, primary: bool) -> SourceColumn {
             }
             info
         }),
-        generated_expr: None,
+        generated: None,
+        default_value: None,
+        origin_default: None,
     }
 }
 

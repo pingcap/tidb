@@ -173,15 +173,15 @@ impl TableWriter {
         self.table
             .columns()
             .iter()
-            .map(|column| match values.get(&column.id) {
+            .map(|column| match values.get(&column.read().id) {
                 Some(value) => Ok(collated_value(
-                    typed_value(value, &column.field_type)?,
-                    &column.field_type,
+                    typed_value(value, &column.read().field_type)?,
+                    &column.read().field_type,
                 )),
                 None if !whole => Ok(Datum::Null),
                 None => Err(encode_error(format!(
                     "{}.{} has no value in the row being written",
-                    self.name, column.name
+                    self.name, column.read().name
                 ))),
             })
             .collect()

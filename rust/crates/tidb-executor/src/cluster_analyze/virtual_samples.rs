@@ -31,11 +31,11 @@ impl GeneratedColumnSlot for SampleColumn {
     fn generation(&self) -> Option<&GeneratedColumn> {
         self.generated.as_ref()
     }
-    fn column_type(&self) -> &FieldType {
-        &self.field_type
+    fn column_type(&self) -> FieldType {
+        self.field_type.clone()
     }
-    fn column_name(&self) -> &str {
-        &self.name
+    fn column_name(&self) -> String {
+        self.name.clone()
     }
 }
 

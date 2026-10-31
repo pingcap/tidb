@@ -157,27 +157,33 @@ fn binary_pk_column() -> KvColumn {
     let mut field_type = FieldType::new(FieldTypeCode::String);
     field_type.set_flen(16);
     KvColumn {
-        name: "a".to_owned(),
-        id: 2,
-        field_type,
-        column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+        info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+            id: 2,
+            name: tidb_ast::CiString::new("a"),
+            field_type: field_type,
+            version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            state: tidb_model::SchemaState::PUBLIC,
+            ..tidb_model::ColumnInfo::default()
+        }),
+        generated: None,
         default_value: None,
         origin_default: None,
-        comment: String::new(),
-        generated: None,
     }
 }
 
 fn plain_column() -> KvColumn {
     KvColumn {
-        name: "b".to_owned(),
-        id: 4,
-        field_type: FieldType::new(FieldTypeCode::LongLong),
-        column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+        info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+            id: 4,
+            name: tidb_ast::CiString::new("b"),
+            field_type: FieldType::new(FieldTypeCode::LongLong),
+            version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            state: tidb_model::SchemaState::PUBLIC,
+            ..tidb_model::ColumnInfo::default()
+        }),
+        generated: None,
         default_value: None,
         origin_default: None,
-        comment: String::new(),
-        generated: None,
     }
 }
 
@@ -186,7 +192,7 @@ fn count_over_primary() -> PushdownPartialAggregate {
     output_type.set_flen(21);
     output_type.set_decimal(0);
     // Go's `COUNT(a)` argument is the column itself, with `a`'s type.
-    let mut input = tidb_expr::column::Column::new(1, binary_pk_column().field_type);
+    let mut input = tidb_expr::column::Column::new(1, binary_pk_column().read().field_type.clone());
     input.index = 0;
     PushdownPartialAggregate::Global {
         functions: vec![tidb_distsql::remote_scan::PushdownAggregateFunction {

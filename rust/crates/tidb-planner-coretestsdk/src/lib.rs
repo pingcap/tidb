@@ -519,7 +519,9 @@ fn source_table(table: GoShared<TableInfo>) -> SourceTable {
                     }
                     info
                 }),
-                generated_expr: None,
+                generated: None,
+                default_value: None,
+                origin_default: None,
             }
         })
         .collect();
@@ -615,7 +617,9 @@ impl MockInfoSchema {
                                     };
                                     info
                                 }),
-                                generated_expr: None,
+                                generated: None,
+                                default_value: None,
+                                origin_default: None,
                             }
                         })
                         .collect(),

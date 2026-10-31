@@ -81,26 +81,30 @@ fn test_table() -> KvTable {
         42,
         vec![
             KvColumn {
-                name: "a".to_owned(),
-                id: 1,
-                field_type: long(),
-                column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-                default_value: None,
-                // A column present at CREATE TABLE has no pre-existing rows.
-                origin_default: None,
-                comment: String::new(),
+                info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("a"),
+                    field_type: long(),
+                    version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                }),
                 generated: None,
+                default_value: None,
+                origin_default: None,
             },
             KvColumn {
-                name: "s".to_owned(),
-                id: 2,
-                field_type: varstr(),
-                column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-                default_value: None,
-                // A column present at CREATE TABLE has no pre-existing rows.
-                origin_default: None,
-                comment: String::new(),
+                info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                    id: 2,
+                    name: tidb_ast::CiString::new("s"),
+                    field_type: varstr(),
+                    version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                }),
                 generated: None,
+                default_value: None,
+                origin_default: None,
             },
         ],
     )
@@ -354,14 +358,17 @@ fn test_extract_columns_from_condition() {
 #[test]
 fn column_and_index_mutators_keep_the_table_info_in_step() {
     let column = |name: &str, id: i64| KvColumn {
-        name: name.to_owned(),
-        id,
-        field_type: long(),
-        column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+        info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+            id: id,
+            name: tidb_ast::CiString::new(name.to_owned()),
+            field_type: long(),
+            version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            state: tidb_model::SchemaState::PUBLIC,
+            ..tidb_model::ColumnInfo::default()
+        }),
+        generated: None,
         default_value: None,
         origin_default: None,
-        comment: String::new(),
-        generated: None,
     };
     let layout = |table: &KvTable| {
         table
@@ -560,34 +567,43 @@ fn update_rewrites_only_index_entries_whose_bytes_change() {
         42,
         vec![
             KvColumn {
-                name: "a".to_owned(),
-                id: 1,
-                field_type: long(),
-                column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("a"),
+                    field_type: long(),
+                    version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                }),
+                generated: None,
                 default_value: None,
                 origin_default: None,
-                comment: String::new(),
-                generated: None,
             },
             KvColumn {
-                name: "s".to_owned(),
-                id: 2,
-                field_type: varstr(),
-                column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                    id: 2,
+                    name: tidb_ast::CiString::new("s"),
+                    field_type: varstr(),
+                    version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                }),
+                generated: None,
                 default_value: None,
                 origin_default: None,
-                comment: String::new(),
-                generated: None,
             },
             KvColumn {
-                name: "x".to_owned(),
-                id: 3,
-                field_type: long(),
-                column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                    id: 3,
+                    name: tidb_ast::CiString::new("x"),
+                    field_type: long(),
+                    version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                }),
+                generated: None,
                 default_value: None,
                 origin_default: None,
-                comment: String::new(),
-                generated: None,
             },
         ],
     );
@@ -853,14 +869,17 @@ fn test_table_from_meta_with_collate_uses_fixed_mode() {
         let table = KvTable::with_storage_and_collation(
             1,
             vec![KvColumn {
-                name: "a".to_owned(),
-                id: 1,
-                field_type: varstr(),
-                column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("a"),
+                    field_type: varstr(),
+                    version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                }),
+                generated: None,
                 default_value: None,
                 origin_default: None,
-                comment: String::new(),
-                generated: None,
             }],
             Box::new(MemTableStorage::new()),
             use_new_collation,
@@ -880,14 +899,17 @@ fn test_iter_records() {
             .into_iter()
             .enumerate()
             .map(|(offset, name)| KvColumn {
-                name: name.to_owned(),
-                id: offset as i64 + 1,
-                field_type: long(),
-                column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                    id: offset as i64 + 1,
+                    name: tidb_ast::CiString::new(name.to_owned()),
+                    field_type: long(),
+                    version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                }),
+                generated: None,
                 default_value: None,
                 origin_default: None,
-                comment: String::new(),
-                generated: None,
             })
             .collect(),
     );
@@ -1091,24 +1113,30 @@ fn a_short_common_handle_indexes_under_the_key_the_delete_path_computes() {
         77,
         vec![
             KvColumn {
-                name: "pk".to_owned(),
-                id: 1,
-                field_type: decimal_type,
-                column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("pk"),
+                    field_type: decimal_type,
+                    version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                }),
+                generated: None,
                 default_value: None,
                 origin_default: None,
-                comment: String::new(),
-                generated: None,
             },
             KvColumn {
-                name: "v".to_owned(),
-                id: 2,
-                field_type: long(),
-                column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                    id: 2,
+                    name: tidb_ast::CiString::new("v"),
+                    field_type: long(),
+                    version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                }),
+                generated: None,
                 default_value: None,
                 origin_default: None,
-                comment: String::new(),
-                generated: None,
             },
         ],
     );

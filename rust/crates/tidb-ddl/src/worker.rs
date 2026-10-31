@@ -3121,14 +3121,14 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 let old_offset = table
                     .columns()
                     .iter()
-                    .position(|column| column.id == spec.old_column_id)
+                    .position(|column| column.read().id == spec.old_column_id)
                     .ok_or_else(|| {
                         exchange_validation_internal("the modified column is absent".to_owned())
                     })?;
                 let changing = table
                     .nonpublic_columns()
                     .iter()
-                    .position(|column| column.column.id == spec.changing_column_id)
+                    .position(|column| column.column.read().id == spec.changing_column_id)
                     .ok_or_else(|| {
                         exchange_validation_internal("the changing column is absent".to_owned())
                     })?;

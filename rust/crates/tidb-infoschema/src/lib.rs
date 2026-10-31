@@ -481,23 +481,18 @@ impl TableEntry {
     /// resolution -- so the hidden column an expression index was rewritten
     /// into is excluded once, at the source. A position here is therefore NOT
     /// a stored-row offset when the table has a hidden column.
-    pub fn columns(&self) -> impl Iterator<Item = (&str, &FieldType)> {
+    pub fn columns(&self) -> impl Iterator<Item = (String, FieldType)> {
         let columns: Vec<_> = match self {
-            TableEntry::Mem(mem) => mem
-                .columns
-                .iter()
-                .map(|(name, field_type)| (name.as_str(), field_type))
-                .collect(),
+            TableEntry::Mem(mem) => mem.columns.clone(),
             TableEntry::Kv(kv) => kv
                 .visible_columns()
                 .into_iter()
-                .map(|(_, column)| (column.name.as_str(), &column.field_type))
+                .map(|(_, column)| {
+                    let column = column.read();
+                    (column.name.original().to_owned(), column.field_type.clone())
+                })
                 .collect(),
-            TableEntry::View(view) => view
-                .columns
-                .iter()
-                .map(|(name, field_type)| (name.as_str(), field_type))
-                .collect(),
+            TableEntry::View(view) => view.columns.clone(),
             // Go gives a sequence a fixed one-column schema, but no statement
             // this tier accepts ever reads it: `SELECT * FROM <sequence>` is
             // refused, and `nextval` reaches the allocator directly.
@@ -508,9 +503,7 @@ impl TableEntry {
 
     /// An owned schema for consumers that retain or modify column types.
     pub fn column_list(&self) -> Vec<(String, FieldType)> {
-        self.columns()
-            .map(|(name, field_type)| (name.to_owned(), field_type.clone()))
-            .collect()
+        self.columns().collect()
     }
 
     /// The table's `(name, type)` pairs in schema order, for callers outside
@@ -527,7 +520,7 @@ impl TableEntry {
     /// (`GRANT SELECT (a) ON db.t`).
     #[must_use]
     pub fn column_names(&self) -> Vec<String> {
-        self.columns().map(|(name, _)| name.to_owned()).collect()
+        self.columns().map(|(name, _)| name).collect()
     }
 
     /// Whether this entry is a view, which decides which of MySQL's two

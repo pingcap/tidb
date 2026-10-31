@@ -182,8 +182,10 @@ impl<'a> UpdateRecords<'a> {
             .get_in(database, name)
             .expect("the update target still exists");
         let level = generation.null_level(ctx);
-        for (value, (column, field_type)) in new.iter_mut().zip(entry.columns()) {
-            crate::bad_null::handle_bad_null(value, field_type, column, level, ctx)?;
+        // Go `updateRecord` checks every column of the written row, the
+        // hidden ones where DDL placed them included.
+        for (value, column) in new.iter_mut().zip(super::stored_column_metadata(entry)) {
+            crate::bad_null::handle_bad_null(value, &column.field_type, &column.name, level, ctx)?;
         }
         // Go `updateRecord`'s `checkRowForExchangePartition`, and
         // `partitionedTableUpdateRecord`'s constraint check for a row moving

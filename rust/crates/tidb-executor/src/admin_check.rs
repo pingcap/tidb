@@ -408,9 +408,9 @@ pub fn check_table(
                     tidb_tablecodec::cut_datum_by_prefix_len(
                         &mut cut,
                         index.prefix_length(position),
-                        &column.field_type,
+                        &column.read().field_type,
                     );
-                    match cut.compare(record_value, column.field_type.collation()) {
+                    match cut.compare(record_value, column.read().field_type.collation()) {
                         Ok(Ordering::Equal) => {}
                         comparison => {
                             let reported = if comparison.is_err() {
@@ -422,7 +422,7 @@ pub fn check_table(
                                 AdminValueMismatch {
                                     table: table_name.clone(),
                                     index: index.name.clone(),
-                                    column: column.name.clone(),
+                                    column: column.read().name.original().to_owned(),
                                     handle: render_handle(handle),
                                     index_value: render_go_datum(reported),
                                     record_value: render_go_datum(record_value),
@@ -549,7 +549,7 @@ pub fn check_index_ranges(
         .iter()
         .map(|offset| {
             let column = &table.columns()[*offset];
-            (column.name.clone(), column.field_type.clone())
+            (column.read().name.original().to_owned(), column.read().field_type.clone())
         })
         .collect();
     columns.push((

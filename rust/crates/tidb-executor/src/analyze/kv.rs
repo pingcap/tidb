@@ -125,18 +125,18 @@ pub fn analyze_kv_table_columns(
     let physical_id = table.table_id();
     let handle_id = table
         .pk_handle_offset()
-        .map(|offset| table.columns()[offset].id);
+        .map(|offset| table.columns()[offset].read().id);
     let mut columns = BTreeMap::new();
     let source_columns = source_positions
         .iter()
         .map(|position| &table.columns()[*position])
         .filter(|column| !tidb_table::generated_column::is_virtual(*column));
     for (built, column) in analyzed.columns.into_iter().zip(source_columns) {
-        debug_assert_eq!(built.id, column.id);
-        let info = meta.find_column_by_id(column.id);
-        let mut item = column_statistics(built, &column.field_type, info, physical_id);
-        item.is_handle = handle_id == Some(column.id);
-        columns.insert(column.id, item);
+        debug_assert_eq!(built.id, column.read().id);
+        let info = meta.find_column_by_id(column.read().id);
+        let mut item = column_statistics(built, &column.read().field_type, info, physical_id);
+        item.is_handle = handle_id == Some(column.read().id);
+        columns.insert(column.read().id, item);
     }
     let mut indexes = BTreeMap::new();
     for (position, built) in analyzed.indexes.into_iter().enumerate() {
@@ -331,15 +331,15 @@ fn kv_analyze_plan(
     let mut source_positions = Vec::with_capacity(physical_columns.len());
     let mut remapped = BTreeMap::new();
     for (source_position, column) in physical_columns.iter().enumerate() {
-        if selected_column_ids.is_some_and(|selected| !selected.contains(&column.id)) {
+        if selected_column_ids.is_some_and(|selected| !selected.contains(&column.read().id)) {
             continue;
         }
-        let qualified = format!("`{}`.`{}`", table.name(), column.name);
-        let collation = AnalyzedColumn::sampling_collation(&column.field_type, &qualified)?;
+        let qualified = format!("`{}`.`{}`", table.name(), column.read().name);
+        let collation = AnalyzedColumn::sampling_collation(&column.read().field_type, &qualified)?;
         columns.push(AnalyzedColumn {
-            id: column.id,
-            name: column.name.to_ascii_lowercase(),
-            field_type: column.field_type.clone(),
+            id: column.read().id,
+            name: column.read().name.original().to_ascii_lowercase(),
+            field_type: column.read().field_type.clone(),
             collation,
             // A row written before an `ADD COLUMN` carries no entry for it and
             // reads back as the column's `OriginDefaultValue`. This tier's row
@@ -386,14 +386,14 @@ fn kv_analyze_plan(
     AnalyzePlan::new(columns, indexes, &table.name()).map(|plan| {
         (
             plan.with_unique_columns(physical_columns.iter().filter_map(|column| {
-                unique_by_schema(table, false, column.id).then_some(column.id)
+                unique_by_schema(table, false, column.read().id).then_some(column.read().id)
             }))
             .with_time_zone(context.zone().clone())
             .with_virtual_columns(
                 physical_columns
                     .iter()
                     .filter(|column| tidb_table::generated_column::is_virtual(*column))
-                    .map(|column| column.id),
+                    .map(|column| column.read().id),
             ),
             source_positions,
             source_indexes,
@@ -447,7 +447,7 @@ fn schema_unique_item(table: &KvTable, is_index: bool, id: i64, local_only: bool
                 table
                     .columns()
                     .get(index.column_offsets[0])
-                    .is_some_and(|column| column.id == id)
+                    .is_some_and(|column| column.read().id == id)
             }
     })
 }

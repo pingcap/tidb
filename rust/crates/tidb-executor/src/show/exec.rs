@@ -789,7 +789,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             };
             listed
                 .into_iter()
-                .filter(|(_, candidate)| admits(&candidate.name))
+                .filter(|(_, candidate)| admits(candidate.read().name.original()))
                 .map(|(offset, candidate)| crate::show::columns::column_description(candidate, offset, table, full, &ctx))
                 .collect::<Result<Vec<_>, _>>()
         })?;
@@ -840,7 +840,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                         for column in table.columns() {
                             let item = tidb_model::TableItemID {
                                 table_id: physical_id,
-                                id: column.id,
+                                id: column.read().id,
                                 is_index: false,
                                 is_sync_load_failed: false,
                             };
@@ -851,7 +851,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                                 &database,
                                 &name,
                                 &partition,
-                                &column.name,
+                                column.read().name.original(),
                                 *last_used_at,
                                 *last_analyzed_at,
                             ));
@@ -1152,7 +1152,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                             continue;
                         }
                         for (offset, column) in table.columns().iter().enumerate() {
-                            let Some(column_stats) = statistics.hist_coll.get_column(column.id) else {
+                            let Some(column_stats) = statistics.hist_coll.get_column(column.read().id) else {
                                 continue;
                             };
                             let column_stats = column_stats
@@ -1165,7 +1165,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                             let row_size =
                                 tidb_planner_property::stats_info::RowSizeColumnStats::new(
                                     tidb_planner_property::stats_info::RowSizeType::from_field_type_code(
-                                        column.field_type.code(),
+                                        column.read().field_type.code(),
                                     ),
                                     column_stats.histogram.tot_col_size,
                                     column_stats.histogram.null_count,
@@ -1182,7 +1182,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                                 &database,
                                 &name,
                                 &target.label,
-                                &column.name,
+                                column.read().name.original(),
                                 false,
                                 &column_stats.histogram,
                                 avg_col_size,
@@ -1276,11 +1276,11 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                         }
                         for (id, column_stats) in &sorted_columns(&statistics) {
                             let Some(column) =
-                                table.columns().iter().find(|column| column.id == *id)
+                                table.columns().iter().find(|column| column.read().id == *id)
                             else {
                                 continue;
                             };
-                            let column_types = [column.field_type.code()];
+                            let column_types = [column.read().field_type.code()];
                             let mut render = |value: &Datum,
                                               num_columns: usize,
                                               types: &[tidb_datatype::FieldTypeCode]| {
@@ -1300,7 +1300,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                                 &database,
                                 &name,
                                 &target.label,
-                                &column.name,
+                                column.read().name.original(),
                                 1,
                                 false,
                                 column_stats.top_n.as_ref(),
@@ -1317,7 +1317,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                                 .column_offsets
                                 .iter()
                                 .filter_map(|offset| table.columns().get(*offset))
-                                .map(|column| column.field_type.code())
+                                .map(|column| column.read().field_type.code())
                                 .collect::<Vec<_>>();
                             let mut render = |value: &Datum,
                                               num_columns: usize,
@@ -1407,7 +1407,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                         }
                         for (id, column_stats) in &sorted_columns(&statistics) {
                             let Some(column) =
-                                table.columns().iter().find(|column| column.id == *id)
+                                table.columns().iter().find(|column| column.read().id == *id)
                             else {
                                 continue;
                             };
@@ -1430,7 +1430,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                                 &database,
                                 &name,
                                 &target.label,
-                                &column.name,
+                                column.read().name.original(),
                                 0,
                                 &column_stats.histogram,
                                 &[],
@@ -1446,7 +1446,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                                 .column_offsets
                                 .iter()
                                 .filter_map(|offset| table.columns().get(*offset))
-                                .map(|column| column.field_type.code())
+                                .map(|column| column.read().field_type.code())
                                 .collect::<Vec<_>>();
                             let mut render = |value: &Datum,
                                               num_columns: usize,

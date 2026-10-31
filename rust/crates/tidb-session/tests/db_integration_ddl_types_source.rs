@@ -37,7 +37,7 @@ fn column(tk: &TestKit, database: &str, table_name: &str, name: &str) -> KvColum
     kv_table(tk, database, table_name)
         .columns()
         .iter()
-        .find(|column| column.name.eq_ignore_ascii_case(name))
+        .find(|column| column.read().name.original().eq_ignore_ascii_case(name))
         .unwrap_or_else(|| panic!("no column {name} in {database}.{table_name}"))
         .clone()
 }
@@ -95,8 +95,8 @@ fn create_table_if_not_exists_like_suppresses_and_copies() {
     tk.must_exec("create table ct3 like ct1");
     let source = column(&tk, "test", "ct1", "a");
     let copy = column(&tk, "test", "ct3", "a");
-    assert_eq!(source.field_type.code(), FieldTypeCode::LongLong);
-    assert_eq!(copy.field_type.code(), source.field_type.code());
+    assert_eq!(source.read().field_type.code(), FieldTypeCode::LongLong);
+    assert_eq!(copy.read().field_type.code(), source.read().field_type.code());
 }
 
 // --- TestCreateTableWithKeyWord (pkg/ddl/db_integration_test.go:87) ---
@@ -112,7 +112,7 @@ fn create_table_with_keyword_column_names() {
     );
     for name in ["pump", "drainer", "node_id", "node_state"] {
         assert_eq!(
-            column(&tk, "test", "t1", name).field_type.code(),
+            column(&tk, "test", "t1", name).read().field_type.code(),
             FieldTypeCode::Varchar
         );
     }
@@ -142,7 +142,7 @@ fn add_column_if_not_exists_skips_duplicates_and_continues_grouped_adds() {
         table
             .columns()
             .iter()
-            .map(|column| column.name.as_str())
+            .map(|column| column.read().name.original().to_owned())
             .collect::<Vec<_>>(),
         vec!["a", "b", "c", "d"],
     );
@@ -376,7 +376,7 @@ fn issue_5092_add_drop_column_positions_and_guards() {
     let names: Vec<String> = kv_table(&tk, "test", "t_issue_5092")
         .columns()
         .iter()
-        .map(|c| c.name.clone())
+        .map(|c| c.read().name.original().to_owned())
         .collect();
     assert_eq!(
         names,
@@ -668,8 +668,8 @@ fn case_insensitive_charset_and_collate_stored_lowercase() {
     // and the column's charset lowercased.
     let table = kv_table(&tk, "test", "t5");
     let first = column(&tk, "test", "t5", "a");
-    assert_eq!(first.field_type.charset_name(), "utf8mb4");
-    assert_eq!(first.field_type.collation_name(), "utf8mb4_general_ci");
+    assert_eq!(first.read().field_type.charset_name(), "utf8mb4");
+    assert_eq!(first.read().field_type.collation_name(), "utf8mb4_general_ci");
     assert_eq!(table.name(), "t5");
 }
 
@@ -683,14 +683,14 @@ fn zero_fill_create_table_flags() {
     let mut tk = TestKit::new();
     tk.must_exec("create table abc(y year, z tinyint(10) zerofill, primary key(y))");
     let year_col = column(&tk, "test", "abc", "y");
-    assert_eq!(year_col.field_type.code(), FieldTypeCode::Year);
+    assert_eq!(year_col.read().field_type.code(), FieldTypeCode::Year);
     assert!(
-        year_col.field_type.has_flag(FieldTypeFlags::UNSIGNED),
+        year_col.read().field_type.has_flag(FieldTypeFlags::UNSIGNED),
         "y year is unsigned"
     );
     let z_col = column(&tk, "test", "abc", "z");
     assert!(
-        z_col.field_type.has_flag(FieldTypeFlags::UNSIGNED),
+        z_col.read().field_type.has_flag(FieldTypeFlags::UNSIGNED),
         "tinyint(10) zerofill is unsigned"
     );
 }
@@ -812,7 +812,7 @@ fn alter_table_collate_refusal_names_the_collations_like_go() {
     tk.must_exec("create table t (a varchar(10)) charset gbk");
     let error = tk.must_get_err_code("alter table t collate gbk_bin", 8200);
     assert_eq!(error.message, "Unsupported modify change collate from gbk_chinese_ci to gbk_bin");
-    assert_eq!(column(&tk, "test", "t", "a").field_type.collation_name(), "gbk_chinese_ci");
+    assert_eq!(column(&tk, "test", "t", "a").read().field_type.collation_name(), "gbk_chinese_ci");
 }
 
 /// Go `checkModifyTypes` always applies `checkModifyCharsetAndCollation`.
@@ -841,8 +841,8 @@ fn modify_column_refuses_binary_charset_conversion_without_mutation() {
         );
 
         let stored = column(&tk, "test", "binary_column", "a");
-        assert_eq!(stored.field_type.charset_name(), "binary", "{sql}");
-        assert_eq!(stored.field_type.collation_name(), "binary", "{sql}");
+        assert_eq!(stored.read().field_type.charset_name(), "binary", "{sql}");
+        assert_eq!(stored.read().field_type.collation_name(), "binary", "{sql}");
     }
 
     // The adjacent widening Go permits remains admitted.
@@ -881,14 +881,14 @@ fn changing_table_charset_matches_go_validation_and_conversion() {
     let table = kv_table(&tk, "test", "t");
     assert_eq!(table.charset().charset, Charset::Utf8Mb4);
     assert_eq!(table.charset().collation, Charset::Utf8Mb4.default_collation());
-    assert_eq!(column(&tk, "test", "t", "a").field_type.charset(), Charset::Latin1);
+    assert_eq!(column(&tk, "test", "t", "a").read().field_type.charset(), Charset::Latin1);
 
     tk.must_exec("create table utf8_table(a varchar(10)) charset utf8");
     // Go converts table and columns to utf8mb4.
     tk.must_exec("alter table utf8_table convert to charset utf8mb4");
     let table = kv_table(&tk, "test", "utf8_table");
     assert_eq!(table.charset().charset, Charset::Utf8Mb4);
-    assert_eq!(column(&tk, "test", "utf8_table", "a").field_type.charset(), Charset::Utf8Mb4);
+    assert_eq!(column(&tk, "test", "utf8_table", "a").read().field_type.charset(), Charset::Utf8Mb4);
 
     tk.must_exec("create table ascii_table(a varchar(10) character set ascii) charset utf8mb4");
     tk.must_get_err_code("alter table ascii_table convert to charset utf8mb4", 8200);

@@ -1025,9 +1025,9 @@ pub fn validate_partial_index_condition(
     let column = |name: &str| {
         columns
             .iter()
-            .find(|column| column.name.go_lower_eq(name))
+            .find(|column| column.read().name.original().go_lower_eq(name))
             .map(|column| IndexConditionColumn {
-                field_type: column.field_type.clone(),
+                field_type: column.read().field_type.clone(),
                 generated: column.generated.is_some(),
             })
     };

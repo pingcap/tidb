@@ -305,24 +305,30 @@ fn fixture(collation: &str) -> (Catalog, Arc<FakeRegion>) {
     text.set_flen(20);
     let columns = vec![
         KvColumn {
-            name: "id".to_owned(),
-            id: 1,
-            field_type: FieldType::new(FieldTypeCode::LongLong),
-            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                id: 1,
+                name: tidb_ast::CiString::new("id"),
+                field_type: FieldType::new(FieldTypeCode::LongLong),
+                version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::ColumnInfo::default()
+            }),
+            generated: None,
             default_value: None,
             origin_default: None,
-            comment: String::new(),
-            generated: None,
         },
         KvColumn {
-            name: "s".to_owned(),
-            id: 2,
-            field_type: text,
-            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                id: 2,
+                name: tidb_ast::CiString::new("s"),
+                field_type: text,
+                version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::ColumnInfo::default()
+            }),
+            generated: None,
             default_value: None,
             origin_default: None,
-            comment: String::new(),
-            generated: None,
         },
     ];
     let storage = ClusterTableStorage::new(MutationBuffer::new(), snapshot)

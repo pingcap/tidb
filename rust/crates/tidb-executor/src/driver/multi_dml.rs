@@ -201,7 +201,7 @@ pub(crate) fn run_multi_update(
             columns: kv
                 .columns()
                 .iter()
-                .map(|column| (column.name.clone(), column.field_type.clone()))
+                .map(|column| (column.read().name.original().to_owned(), column.read().field_type.clone()))
                 .collect(),
             default_meta: super::dml::stored_column_metadata(entry),
             generated_columns: kv

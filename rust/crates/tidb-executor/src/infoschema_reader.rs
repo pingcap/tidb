@@ -511,7 +511,7 @@ fn key_column_usage_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Ve
                 &schema,
                 &table_name,
                 "PRIMARY",
-                &table.columns()[offset].name,
+                &table.columns()[offset].read().name.original(),
                 1,
                 Datum::Int(1),
                 None,
@@ -533,7 +533,7 @@ fn key_column_usage_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Ve
                     &schema,
                     &table_name,
                     constraint_name,
-                    &table.columns()[*offset].name,
+                    &table.columns()[*offset].read().name.original(),
                     (position + 1) as i64,
                     Datum::Null,
                     None,
@@ -617,7 +617,7 @@ fn statistics_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
                 },
                 StatisticsKeyPart {
                     sequence: 1,
-                    column_name: &table.columns()[offset].name,
+                    column_name: &table.columns()[offset].read().name.original(),
                     sub_part: Datum::Null,
                     nullable: false,
                     expression: Datum::Null,
@@ -628,12 +628,12 @@ fn statistics_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
             for (position, offset) in index.column_offsets.iter().enumerate() {
                 let column = &table.columns()[*offset];
                 let nullable =
-                    column.field_type.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL == 0;
+                    column.read().field_type.flags() & tidb_datatype::FieldTypeFlags::NOT_NULL == 0;
                 let (column_name, expression) = match &column.generated {
                     Some(generated) if table.is_hidden(*offset) => {
-                        ("NULL", text(&generated.expr_text))
+                        ("NULL".to_owned(), text(&generated.expr_text))
                     }
-                    _ => (column.name.as_str(), Datum::Null),
+                    _ => (column.read().name.original().to_owned(), Datum::Null),
                 };
                 let prefix = index.prefix_length(position);
                 rows.push(statistics_row(
@@ -647,7 +647,7 @@ fn statistics_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
                     },
                     StatisticsKeyPart {
                         sequence: position + 1,
-                        column_name,
+                        column_name: &column_name,
                         sub_part: if prefix == UNSPECIFIED_LENGTH {
                             Datum::Null
                         } else {
@@ -1860,7 +1860,7 @@ fn column_row(
     privileges: &str,
     ctx: &crate::StmtContext,
 ) -> Vec<Datum> {
-    let field_type = &column.field_type;
+    let field_type = &column.read().field_type;
     let not_null = field_type.flags() & 1 != 0;
     let TypeCells {
         char_max,
@@ -1876,7 +1876,7 @@ fn column_row(
         text(CATALOG),
         text(schema),
         text(table_name),
-        text(&column.name),
+        text(column.read().name.original()),
         Datum::Int(ordinal as i64),
         match &column.default_value {
             // Go `NewColDesc`: `NoDefaultValueFlag` reports no default.
@@ -1932,7 +1932,7 @@ fn column_row(
         )),
         text(privileges),
         // Go `COLUMN_COMMENT`, from `ColumnInfo.Comment`.
-        text(&column.comment),
+        text(&column.read().comment),
         // Go `GENERATION_EXPRESSION`, `ColumnInfo.GeneratedExprString`.
         text(
             column
@@ -2350,7 +2350,7 @@ fn tidb_indexes_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Ve
                     Datum::Int(0),
                     text("PRIMARY"),
                     Datum::Int(1),
-                    text(&table.columns()[offset].name),
+                    text(&table.columns()[offset].read().name.original()),
                     Datum::Null,
                     text(""),
                     Datum::Null,
@@ -2391,7 +2391,7 @@ fn tidb_indexes_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Ve
                         Datum::Int(position as i64 + 1),
                         match &generated_expr {
                             Some(_) => text("NULL"),
-                            None => text(&column.name),
+                            None => text(column.read().name.original()),
                         },
                         if prefix == UNSPECIFIED_LENGTH {
                             Datum::Null

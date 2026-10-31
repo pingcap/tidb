@@ -1264,7 +1264,7 @@ fn physical_statistics_loads_become_shared_at_the_next_statement_boundary() {
                     let column_ndvs = table
                         .visible_columns()
                         .into_iter()
-                        .map(|(_, column)| (column.id, requested[column.name.as_str()]))
+                        .map(|(_, column)| (column.read().id, requested[column.read().name.original()]))
                         .collect::<std::collections::BTreeMap<_, _>>();
                     let indexes = table
                         .indexes()
@@ -1274,7 +1274,7 @@ fn physical_statistics_loads_become_shared_at_the_next_statement_boundary() {
                                 .column_offsets
                                 .iter()
                                 .filter_map(|offset| table.columns().get(*offset))
-                                .map(|column| column.id)
+                                .map(|column| column.read().id)
                                 .collect::<Vec<_>>();
                             (index.id, columns)
                         })

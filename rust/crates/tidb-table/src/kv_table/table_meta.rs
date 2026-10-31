@@ -456,49 +456,21 @@ pub struct KvForeignKey {
     pub on_update: FkAction,
 }
 
-/// A column of a [`KvTable`]: name, column id, and type.
-#[derive(Clone, Debug)]
-pub struct KvColumn {
-    /// The column name.
-    pub name: String,
-    /// The column id (Go `ColumnInfo.ID`), the key of the row-format entries.
-    pub id: i64,
-    /// The column type.
-    pub field_type: FieldType,
-    /// Go `ColumnInfo.Version`: literal TIMESTAMP defaults written by v0 are
-    /// system-local wall clocks, while v1 and later persist UTC wall clocks.
-    pub column_info_version: u64,
-    /// Go `ColumnInfo.DefaultValue` + `DefaultIsExpr`: where the value of an
-    /// omitted column comes from. `None` means no `DEFAULT` was written,
-    /// which is not the same as a `DEFAULT NULL`. See
-    /// [`crate::column_default`] for the computed forms.
-    pub default_value: Option<crate::column_default::ColumnDefault>,
-    /// Go `ColumnInfo.OriginDefaultValue`: what a row written BEFORE this
-    /// column existed reads back as. `ADD COLUMN ... DEFAULT 7` gives the
-    /// existing rows 7, not NULL, and the row bytes are never rewritten --
-    /// the value is filled in on read.
-    pub origin_default: Option<Datum>,
-    /// Go `ColumnInfo.Comment`: what `SHOW CREATE TABLE` prints after the
-    /// column and what `information_schema.columns.column_comment` reports.
-    /// Empty when the column was declared without one.
-    pub comment: String,
-    /// Go `ColumnInfo.GeneratedExprString`/`GeneratedStored`: the column's
-    /// value comes from an expression rather than from the row bytes. `None`
-    /// is an ordinary column. See [`crate::generated_column`].
-    pub generated: Option<crate::generated_column::GeneratedColumn>,
-}
+/// A column of a [`KvTable`]: Go's `table.Column`, whose `ColumnInfo` is
+/// the pointer the table's `TableInfo.Columns` holds.
+pub type KvColumn = crate::column::Column;
 
-impl crate::generated_column::GeneratedColumnSlot for KvColumn {
+impl crate::generated_column::GeneratedColumnSlot for crate::column::Column {
     fn generation(&self) -> Option<&crate::generated_column::GeneratedColumn> {
         self.generated.as_ref()
     }
 
-    fn column_type(&self) -> &FieldType {
-        &self.field_type
+    fn column_type(&self) -> FieldType {
+        self.read().field_type.clone()
     }
 
-    fn column_name(&self) -> &str {
-        &self.name
+    fn column_name(&self) -> String {
+        self.read().name.original().to_owned()
     }
 }
 
@@ -549,8 +521,8 @@ impl KvColumn {
         };
         crate::column_default::materialize_stored_literal(
             &value,
-            &self.field_type,
-            self.column_info_version,
+            &self.read().field_type,
+            self.read().version,
             flags,
             zone,
         )
@@ -570,14 +542,15 @@ impl KvColumn {
     /// exactly. A LOCAL temporary table never reaches meta and must not be
     /// passed through here.
     pub fn reload_from_meta_json(&mut self) {
-        self.field_type = FieldType::from_json(
-            &self
+        let mut info = self.info.write();
+        info.field_type = FieldType::from_json(
+            &info
                 .field_type
                 .to_json()
                 .expect("a column FieldType always encodes as Go JSON"),
         )
         .expect("Go JSON a FieldType encoded decodes back");
-        let bit = self.field_type.code() == tidb_datatype::FieldTypeCode::Bit;
+        let bit = info.field_type.code() == tidb_datatype::FieldTypeCode::Bit;
         if !bit {
             if let Some(crate::column_default::ColumnDefault::Value(value)) =
                 &mut self.default_value
@@ -588,11 +561,14 @@ impl KvColumn {
                 *value = go_json_string_round_trip(std::mem::take(value));
             }
         }
-        go_json_text_round_trip(&mut self.comment);
+        go_json_text_round_trip(&mut info.comment);
         // `Name` and the expression strings are Go strings of the
         // `ColumnInfo` too. The generated expression's dependency names are
         // this table's column names, replaced alike.
-        go_json_text_round_trip(&mut self.name);
+        let mut name = info.name.original().to_owned();
+        go_json_text_round_trip(&mut name);
+        info.name = tidb_ast::CiString::new(name);
+        drop(info);
         if let Some(generated) = &mut self.generated {
             go_json_text_round_trip(&mut generated.expr_text);
             generated

@@ -155,7 +155,7 @@ impl KvTable {
         let unsigned = self
             .columns
             .get(offset)
-            .is_some_and(|column| column.field_type.is_unsigned());
+            .is_some_and(|column| column.read().field_type.is_unsigned());
         self.auto_id.set_unsigned(unsigned);
     }
 
@@ -199,7 +199,7 @@ impl KvTable {
         let unsigned = self
             .auto_increment_offset
             .and_then(|offset| self.columns.get(offset))
-            .is_some_and(|column| column.field_type.is_unsigned());
+            .is_some_and(|column| column.read().field_type.is_unsigned());
         // Go wraps the allocator's `autoid.ErrAutoincReadFailed` into a plain
         // error through its `Error()` text, so the class prefix is part of the
         // 1105 message.
@@ -221,10 +221,10 @@ impl KvTable {
 
     /// The AUTO_INCREMENT column's name.
     #[must_use]
-    fn auto_increment_column_name(&self) -> Option<&str> {
+    fn auto_increment_column_name(&self) -> Option<String> {
         self.auto_increment_offset
             .and_then(|offset| self.columns.get(offset))
-            .map(|column| column.name.as_str())
+            .map(|column| column.read().name.original().to_owned())
     }
 
     /// Rows produced by Go's `ShowNextRowIDExec` for this table.
@@ -238,19 +238,17 @@ impl KvTable {
             let column = if self.pk_handle_offset.is_some() {
                 self.auto_increment_column_name().unwrap_or_default()
             } else {
-                "_tidb_rowid"
+                "_tidb_rowid".to_owned()
             };
             rows.push((
-                column.to_owned(),
+                column,
                 self.row_id_allocator().next_global()? as i64,
                 "_TIDB_ROWID",
             ));
         }
         if self.row_id.is_some() && self.auto_increment_offset.is_some() {
             rows.push((
-                self.auto_increment_column_name()
-                    .unwrap_or_default()
-                    .to_owned(),
+                self.auto_increment_column_name().unwrap_or_default(),
                 self.auto_id.next_global()? as i64,
                 "AUTO_INCREMENT",
             ));
@@ -259,9 +257,10 @@ impl KvTable {
             let column = self
                 .columns
                 .get(spec.offset)
-                .map_or("", |column| column.name.as_str());
+                .map(|column| column.read().name.original().to_owned())
+                .unwrap_or_default();
             rows.push((
-                column.to_owned(),
+                column,
                 self.auto_random_id.next_global()? as i64,
                 "AUTO_RANDOM",
             ));
@@ -408,7 +407,7 @@ impl KvTable {
         row[offset] = match self
             .columns
             .get(offset)
-            .map(|column| column.field_type.code())
+            .map(|column| column.read().field_type.code())
         {
             Some(FieldTypeCode::Float) => Datum::Float32(f64::from(integer as f32)),
             Some(FieldTypeCode::Double) => Datum::Real(integer),
@@ -453,7 +452,7 @@ impl KvTable {
         let Some(column) = self.columns.get(offset) else {
             return;
         };
-        let code = column.field_type.code();
+        let code = column.read().field_type.code();
         row[offset] = if self.auto_id.unsigned {
             Datum::UInt(integer_unsigned_upper_bound(code))
         } else {
@@ -465,7 +464,7 @@ impl KvTable {
         let Some(column) = self.columns.get(offset) else {
             return Ok(());
         };
-        let code = column.field_type.code();
+        let code = column.read().field_type.code();
         let unsigned = self.auto_id.unsigned;
         // Go allows AUTO_INCREMENT on FLOAT/DOUBLE too, whose cast is not an
         // integer range check; only the integer widths are bounded here.
@@ -513,14 +512,17 @@ mod tests {
         let mut table = KvTable::new(
             7,
             vec![KvColumn {
-                name: "id".to_owned(),
-                id: 1,
-                field_type: long().with_unsigned(unsigned),
-                column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("id"),
+                    field_type: long().with_unsigned(unsigned),
+                    version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                }),
+                generated: None,
                 default_value: None,
                 origin_default: None,
-                comment: String::new(),
-                generated: None,
             }],
         );
         table.set_auto_increment_offset(0);

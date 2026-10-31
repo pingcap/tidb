@@ -64,9 +64,9 @@ impl TidbDecodeKeySnapshot {
                 .iter()
                 .enumerate()
                 .map(|(offset, column)| DecodeColumn {
-                    id: column.id,
-                    name: column.name.go_to_lower(),
-                    field_type: column.field_type.clone(),
+                    id: column.read().id,
+                    name: column.read().name.original().go_to_lower(),
+                    field_type: column.read().field_type.clone(),
                     is_pk_handle: table.is_clustered_handle_column(offset),
                 })
                 .collect(),

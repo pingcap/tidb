@@ -37,8 +37,8 @@ fn materialize<S: GeneratedColumnSlot>(
     materialize_with(columns, row, only_virtual, &ctx, |column, value| {
         tidb_table::column::cast_table_value(
             value,
-            column.column_type(),
-            column.column_name(),
+            &column.column_type(),
+            &column.column_name(),
             &ctx,
             true,
         )
@@ -56,11 +56,11 @@ impl GeneratedColumnSlot for Slot {
     fn generation(&self) -> Option<&GeneratedColumn> {
         self.generation.as_ref()
     }
-    fn column_type(&self) -> &FieldType {
-        &self.field_type
+    fn column_type(&self) -> FieldType {
+        self.field_type.clone()
     }
-    fn column_name(&self) -> &str {
-        &self.name
+    fn column_name(&self) -> String {
+        self.name.clone()
     }
 }
 

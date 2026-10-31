@@ -415,14 +415,17 @@ mod tests {
 
     fn column(name: &str, id: i64) -> KvColumn {
         KvColumn {
-            name: name.to_owned(),
-            id,
-            field_type: FieldType::new(FieldTypeCode::LongLong),
-            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                id: id,
+                name: tidb_ast::CiString::new(name.to_owned()),
+                field_type: FieldType::new(FieldTypeCode::LongLong),
+                version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::ColumnInfo::default()
+            }),
+            generated: None,
             default_value: None,
             origin_default: None,
-            comment: String::new(),
-            generated: None,
         }
     }
 
@@ -732,10 +735,11 @@ mod tests {
 
     #[test]
     fn unsigned_staged_rows_merge_in_the_readers_value_order() {
-        let mut columns = vec![column("a", 1), column("b", 2)];
+        let columns = vec![column("a", 1), column("b", 2)];
         columns[0]
-            .field_type
-            .add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+            .info
+            .write()
+            .add_flag(u64::from(tidb_datatype::FieldTypeFlags::UNSIGNED));
         let mut fixture = fixture_with_columns(Some(0), columns);
         fixture
             .region
@@ -1042,8 +1046,8 @@ mod tests {
                 "a='ABC'",
             ),
         ] {
-            let mut columns = vec![column("a", 1), column("b", 2), column("c", 3)];
-            columns[0].field_type = key_type;
+            let columns = vec![column("a", 1), column("b", 2), column("c", 3)];
+            columns[0].info.write().field_type = key_type;
             let mut fixture = fixture_with_columns(None, columns);
             fixture
                 .region
@@ -2260,8 +2264,8 @@ mod tests {
     /// carries a real `NewDecimal` column, unlike [`aggregate_fixture`]'s
     /// `LongLong` one, so it actually reaches `prepare_decimal_cache`.
     fn decimal_aggregate_fixture() -> Fixture {
-        let mut decimal_col = column("b", 2);
-        decimal_col.field_type = FieldType::new(tidb_datatype::FieldTypeCode::NewDecimal);
+        let decimal_col = column("b", 2);
+        decimal_col.info.write().field_type = FieldType::new(tidb_datatype::FieldTypeCode::NewDecimal);
         let mut fixture = fixture_with_columns(None, vec![column("a", 1), decimal_col]);
         for a in 1..=100 {
             let b = if a > 96 {
@@ -2315,8 +2319,8 @@ mod tests {
     /// Every row NULL, not merely the ones a predicate admits.
     #[test]
     fn a_decimal_sum_over_an_entirely_null_column_does_not_crash() {
-        let mut decimal_col = column("b", 2);
-        decimal_col.field_type = FieldType::new(tidb_datatype::FieldTypeCode::NewDecimal);
+        let decimal_col = column("b", 2);
+        decimal_col.info.write().field_type = FieldType::new(tidb_datatype::FieldTypeCode::NewDecimal);
         let mut fixture = fixture_with_columns(None, vec![column("a", 1), decimal_col]);
         for a in 1..=100 {
             fixture

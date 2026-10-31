@@ -145,7 +145,7 @@ fn check_datetime_default_ddl(
                     Ok(table
                         .columns()
                         .iter()
-                        .find(|column| column.name == "v")
+                        .find(|column| column.read().name.original() == "v")
                         .expect("default column v")
                         .default_value
                         .clone())

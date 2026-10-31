@@ -81,7 +81,9 @@ fn column(offset: usize, name: &str, primary: bool) -> SourceColumn {
             }
             info
         }),
-        generated_expr: None,
+        generated: None,
+        default_value: None,
+        origin_default: None,
     }
 }
 
@@ -1813,7 +1815,24 @@ fn insert_generated_columns_are_expressions_over_the_whole_row() {
         }
     };
     generated.catalog.tables[0].columns[2].info.write().generated_expr_string = "`a` + 1".to_owned();
-    generated.catalog.tables[0].columns[2].generated_expr = Some(expression);
+    let (names, types): (Vec<String>, Vec<FieldType>) = generated.catalog.tables[0]
+        .columns
+        .iter()
+        .map(|column| {
+            let column = column.read();
+            (column.name.original().to_owned(), column.field_type.clone())
+        })
+        .unzip();
+    generated.catalog.tables[0].columns[2].generated = Some(
+        tidb_table::generated_column::build_generated_expr(
+            &expression,
+            false,
+            &names,
+            &types,
+            &SessionTimeZone::utc(),
+        )
+        .unwrap(),
+    );
     let statement = tidb_parser::parse("INSERT INTO t VALUES (1, 2, DEFAULT)").unwrap();
     let Stmt::Dml(dml) = statement else {
         panic!("not a DML statement");

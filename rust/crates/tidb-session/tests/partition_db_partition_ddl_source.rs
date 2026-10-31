@@ -1095,9 +1095,9 @@ fn issue_40135_modify_partition_column() {
     {
         let table = kv_table(&tk, "t40135");
         let first = table.columns().first().unwrap();
-        assert_eq!(first.name, "a");
+        assert_eq!(first.read().name.original(), "a");
         assert_eq!(
-            first.field_type.code(),
+            first.read().field_type.code(),
             tidb_datatype::FieldTypeCode::LongLong,
             "a must be bigint now"
         );
@@ -1271,8 +1271,8 @@ fn issue_57780_add_and_change_column_on_partitioned_table() {
     let column = table
         .columns()
         .iter()
-        .find(|column| column.name == "test_decimal")
+        .find(|column| column.read().name.original() == "test_decimal")
         .expect("test_decimal must exist after add + change");
-    assert_eq!(column.field_type.flen(), 11);
-    assert_eq!(column.field_type.decimal(), 2);
+    assert_eq!(column.read().field_type.flen(), 11);
+    assert_eq!(column.read().field_type.decimal(), 2);
 }

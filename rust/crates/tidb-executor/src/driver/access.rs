@@ -1394,7 +1394,7 @@ pub fn build_prepared_point_get_plan(
     let columns: Vec<(String, FieldType)> = table
         .columns()
         .iter()
-        .map(|column| (column.name.clone(), column.field_type.clone()))
+        .map(|column| (column.read().name.original().to_owned(), column.read().field_type.clone()))
         .collect();
     // A generated output can evaluate expressions while its stored row is
     // decoded. Keep those plans on the full statement context; the cached
@@ -1961,7 +1961,7 @@ pub fn open_prepared_point_get(
             original_column: tidb_datatype::IdentifierMetadata::new(
                 kv.columns()
                     .get(offset)
-                    .map_or_else(String::new, |column| column.name.clone()),
+                    .map_or_else(String::new, |column| column.read().name.original().to_owned()),
             ),
             database: tidb_datatype::IdentifierMetadata::new(plan.database.clone()),
             table: tidb_datatype::IdentifierMetadata::new(plan.output.table_alias.clone()),

@@ -1463,8 +1463,8 @@ fn global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader() {
             .visible_columns()
             .into_iter()
             .map(|(_, column)| column)
-            .find(|column| column.name == "k")
-            .map(|column| column.id)
+            .find(|column| column.read().name.original() == "k")
+            .map(|column| column.read().id)
             .expect("k column");
         let index_id = table
             .indexes()

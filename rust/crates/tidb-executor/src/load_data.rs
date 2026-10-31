@@ -211,14 +211,14 @@ pub fn prepare_load_data(
     let find_visible = |wanted: &str| {
         visible
             .iter()
-            .position(|column| column.name.go_equal_fold(wanted))
+            .position(|column| column.read().name.original().go_equal_fold(wanted))
     };
     let mut field_mappings = Vec::new();
     let mut column_names: Vec<String> = Vec::new();
     if load.columns_and_user_vars.is_empty() {
         for (offset, column) in visible.iter().enumerate() {
             field_mappings.push(FieldMapping::Column { offset });
-            column_names.push(column.name.clone());
+            column_names.push(column.read().name.original().to_owned());
         }
     } else {
         for item in &load.columns_and_user_vars {
@@ -250,7 +250,7 @@ pub fn prepare_load_data(
         // Go `table.FindCols`: `_tidb_rowid` is the extra handle column of a
         // table without an integer primary-key handle.
         let found = find_visible(name)
-            .map(|offset| visible[offset].name.clone())
+            .map(|offset| visible[offset].read().name.original().to_owned())
             .or_else(|| {
                 (!pk_is_handle && name.eq_ignore_ascii_case("_tidb_rowid"))
                     .then(|| "_tidb_rowid".to_owned())
@@ -526,12 +526,12 @@ pub fn run_load_data(
                     match value {
                         // A missing NOT NULL time column is the current time.
                         None if matches!(
-                            column.field_type.code(),
+                            column.read().field_type.code(),
                             FieldTypeCode::Date
                                 | FieldTypeCode::Datetime
                                 | FieldTypeCode::Timestamp
                         ) && column
-                            .field_type
+                            .read().field_type
                             .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL) =>
                         {
                             row.push(Datum::new_collation_string(

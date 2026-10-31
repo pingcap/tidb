@@ -46,14 +46,17 @@ fn long() -> FieldType {
 
 fn column(name: &str, id: i64) -> KvColumn {
     KvColumn {
-        name: name.to_owned(),
-        id,
-        field_type: long(),
-        column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+        info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+            id: id,
+            name: tidb_ast::CiString::new(name.to_owned()),
+            field_type: long(),
+            version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            state: tidb_model::SchemaState::PUBLIC,
+            ..tidb_model::ColumnInfo::default()
+        }),
+        generated: None,
         default_value: None,
         origin_default: None,
-        comment: String::new(),
-        generated: None,
     }
 }
 

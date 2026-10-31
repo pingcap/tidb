@@ -175,26 +175,30 @@ fn sql_round_trips_through_real_tikv_bytes() {
             77,
             vec![
                 KvColumn {
-                    name: "a".to_owned(),
-                    id: 1,
-                    field_type: FieldType::new(FieldTypeCode::LongLong),
-                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-                    default_value: None,
-                    // A column present at CREATE TABLE has no pre-existing rows.
-                    origin_default: None,
-                    comment: String::new(),
+                    info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                        id: 1,
+                        name: tidb_ast::CiString::new("a"),
+                        field_type: FieldType::new(FieldTypeCode::LongLong),
+                        version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::ColumnInfo::default()
+                    }),
                     generated: None,
+                    default_value: None,
+                    origin_default: None,
                 },
                 KvColumn {
-                    name: "b".to_owned(),
-                    id: 2,
-                    field_type: FieldType::new(FieldTypeCode::LongLong),
-                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-                    default_value: None,
-                    // A column present at CREATE TABLE has no pre-existing rows.
-                    origin_default: None,
-                    comment: String::new(),
+                    info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                        id: 2,
+                        name: tidb_ast::CiString::new("b"),
+                        field_type: FieldType::new(FieldTypeCode::LongLong),
+                        version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::ColumnInfo::default()
+                    }),
                     generated: None,
+                    default_value: None,
+                    origin_default: None,
                 },
             ],
         ),

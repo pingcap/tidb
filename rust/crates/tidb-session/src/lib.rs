@@ -2439,7 +2439,7 @@ impl Session {
         published.is_pk_handle = table.pk_handle_offset().is_some();
         let handle_id = table
             .pk_handle_offset()
-            .map(|offset| table.columns()[offset].id);
+            .map(|offset| table.columns()[offset].read().id);
         for column in meta.columns.iter_deref() {
             let id = column.read().id;
             if let Some(item) = published.hist_coll.get_column(id) {

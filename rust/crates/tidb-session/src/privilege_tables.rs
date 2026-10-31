@@ -47,10 +47,13 @@ impl tidb_privilege::cluster_privilege_load::PrivilegeTables for SessionPrivileg
             stored
                 .columns()
                 .iter()
-                .map(|column| (column.name.clone(), column.id, column.field_type.clone())),
+                .map(|column| {
+                    let column = column.read();
+                    (column.name.original().to_owned(), column.id, column.field_type.clone())
+                }),
             columns,
         );
-        let ids: Vec<i64> = stored.columns().iter().map(|column| column.id).collect();
+        let ids: Vec<i64> = stored.columns().iter().map(|column| column.read().id).collect();
         let rows = stored
             .scan_rows_with_context(&self.decode)
             .map_err(

@@ -4751,7 +4751,7 @@ fn add_column_ddl_initializes_statistics_like_go() {
         assert!(table
             .columns()
             .iter()
-            .find(|column| column.name.eq_ignore_ascii_case("e"))
+            .find(|column| column.read().name.original().eq_ignore_ascii_case("e"))
             .expect("executor virtual column exists")
             .generated
             .is_some());

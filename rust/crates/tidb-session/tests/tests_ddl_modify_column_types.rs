@@ -387,21 +387,22 @@ fn column_of(tk: &TestKit, table: &str, column: &str) -> KvColumn {
     table
         .columns()
         .iter()
-        .find(|candidate| candidate.name.eq_ignore_ascii_case(column))
+        .find(|candidate| candidate.read().name.original().eq_ignore_ascii_case(column))
         .expect("column exists")
         .clone()
 }
 
 fn column_flen(tk: &TestKit, table: &str, column: &str) -> i64 {
-    column_of(tk, table, column).field_type.flen()
+    column_of(tk, table, column).read().field_type.flen()
 }
 
 fn column_code_is_char(tk: &TestKit, table: &str, column: &str) -> bool {
-    column_of(tk, table, column).field_type.code() == tidb_datatype::FieldTypeCode::String
+    column_of(tk, table, column).read().field_type.code() == tidb_datatype::FieldTypeCode::String
 }
 
 fn column_charset(tk: &TestKit, table: &str, column: &str) -> (String, String) {
     let column = column_of(tk, table, column);
+    let column = column.read();
     (
         column.field_type.charset_name().to_owned(),
         column.field_type.collation_name().to_owned(),
@@ -413,12 +414,12 @@ fn column_ids(tk: &TestKit, table: &str) -> Vec<i64> {
     let TableEntry::Kv(table) = tk.get_table_by_name("test", table) else {
         panic!("table {table} is not a KV table");
     };
-    table.columns().iter().map(|column| column.id).collect()
+    table.columns().iter().map(|column| column.read().id).collect()
 }
 
 fn column_names(tk: &TestKit, table: &str) -> Vec<String> {
     let TableEntry::Kv(table) = tk.get_table_by_name("test", table) else {
         panic!("table {table} is not a KV table");
     };
-    table.columns().iter().map(|column| column.name.clone()).collect()
+    table.columns().iter().map(|column| column.read().name.original().to_owned()).collect()
 }

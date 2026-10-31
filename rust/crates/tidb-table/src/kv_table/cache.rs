@@ -118,14 +118,17 @@ mod tests {
     #[test]
     fn cache_admission_measures_the_encoded_table_image() {
         let column = KvColumn {
-            name: "id".to_owned(),
-            id: 1,
-            field_type: FieldType::new(FieldTypeCode::LongLong),
-            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                id: 1,
+                name: tidb_ast::CiString::new("id"),
+                field_type: FieldType::new(FieldTypeCode::LongLong),
+                version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::ColumnInfo::default()
+            }),
+            generated: None,
             default_value: None,
             origin_default: None,
-            comment: String::new(),
-            generated: None,
         };
         let mut table = KvTable::new(42, vec![column]);
         assert!(!table.cache_storage_size_exceeds(0).unwrap());

@@ -98,7 +98,7 @@ pub fn split_region(
     let columns: Vec<(String, FieldType)> = table
         .columns()
         .iter()
-        .map(|column| (column.name.clone(), column.field_type.clone()))
+        .map(|column| (column.read().name.original().to_owned(), column.read().field_type.clone()))
         .collect();
     let converter = ValueConverter {
         resolver: crate::driver::TableResolver {
@@ -210,7 +210,7 @@ fn plan_index_split<'a>(
             .zip(&index.column_offsets)
             .map(|(value, offset)| {
                 let column = &table.columns()[*offset];
-                converter.convert(value, &column.name, &column.field_type)
+                converter.convert(value, column.read().name.original(), &column.read().field_type)
             })
             .collect::<Result<Vec<_>, _>>()
     };
@@ -262,21 +262,21 @@ fn plan_table_split(
     table: &KvTable,
     converter: &ValueConverter<'_>,
 ) -> Result<SplitValues, DriverError> {
-    let handle_columns: Vec<(&str, FieldType)> = if let Some(offset) = table.pk_handle_offset() {
+    let handle_columns: Vec<(String, FieldType)> = if let Some(offset) = table.pk_handle_offset() {
         let column = &table.columns()[offset];
-        vec![(column.name.as_str(), column.field_type.clone())]
+        vec![(column.read().name.original().to_owned(), column.read().field_type.clone())]
     } else if !table.common_handle_offsets().is_empty() {
         table
             .common_handle_offsets()
             .iter()
             .map(|offset| {
                 let column = &table.columns()[*offset];
-                (column.name.as_str(), column.field_type.clone())
+                (column.read().name.original().to_owned(), column.read().field_type.clone())
             })
             .collect()
     } else {
         // Go `model.NewExtraHandleColInfo`.
-        vec![("_tidb_rowid", FieldType::new(FieldTypeCode::LongLong))]
+        vec![("_tidb_rowid".to_owned(), FieldType::new(FieldTypeCode::LongLong))]
     };
     // Go `convertValueListToData`: a value-count mismatch names the bound, or
     // the row by its ZERO-based position.

@@ -38,7 +38,7 @@ fn handle_column(table: &KvTable) -> Option<HandleColumn> {
         // The handle codec is integer; a clustered non-integer key reaches
         // this tier as a common handle, which `pk_handle_offset` excludes.
         if !matches!(
-            column.field_type.code(),
+            column.read().field_type.code(),
             FieldTypeCode::Tiny
                 | FieldTypeCode::Short
                 | FieldTypeCode::Int24
@@ -48,7 +48,7 @@ fn handle_column(table: &KvTable) -> Option<HandleColumn> {
             return None;
         }
         return Some(HandleColumn {
-            field_type: column.field_type.clone(),
+            field_type: column.read().field_type.clone(),
         });
     }
     // Go `buildDataSource`: a table with neither an integer primary key nor a

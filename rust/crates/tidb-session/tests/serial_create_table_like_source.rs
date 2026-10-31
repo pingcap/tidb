@@ -63,7 +63,7 @@ fn create_table_like_copies_structure_without_rows_fks_or_autoinc_and_reports_go
         assert_eq!(table.pk_handle_offset(), Some(0), "{name} PKIsHandle");
         assert!(
             table.columns()[0]
-                .field_type
+                .read().field_type
                 .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL),
             "{name} first column NOT NULL"
         );

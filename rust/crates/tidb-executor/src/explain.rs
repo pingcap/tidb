@@ -136,7 +136,7 @@ fn used_stats_suffix_for_scan(
                     table
                         .columns()
                         .iter()
-                        .map(|column| (column.id, column.name.clone()))
+                        .map(|column| (column.read().id, column.read().name.original().to_owned()))
                         .collect(),
                     table
                         .indexes()
@@ -752,7 +752,7 @@ fn index_access(
         .filter_map(|offset| table.columns().get(*offset).map(|column| (*offset, column)))
         .map(|(offset, column)| match &column.generated {
             Some(generated) if table.is_hidden(offset) => generated.expr_text.clone(),
-            _ => column.name.clone(),
+            _ => column.read().name.original().to_owned(),
         })
         .collect();
     table_access.indexes.push(IndexAccess {
@@ -783,7 +783,7 @@ fn point_access(
                     .common_handle_offsets()
                     .iter()
                     .filter_map(|offset| table.columns().get(*offset))
-                    .map(|column| column.name.clone())
+                    .map(|column| column.read().name.original().to_owned())
                     .collect();
                 access.indexes.push(IndexAccess {
                     name: "PRIMARY".to_owned(),

@@ -145,14 +145,17 @@ fn table_with_collation(columns: Vec<KvColumn>, use_new_collation: bool) -> (KvT
 
 fn column(id: i64, name: &str, field_type: FieldType) -> KvColumn {
     KvColumn {
-        name: name.to_owned(),
-        id,
-        field_type,
-        column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+        info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+            id: id,
+            name: tidb_ast::CiString::new(name.to_owned()),
+            field_type: field_type,
+            version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            state: tidb_model::SchemaState::PUBLIC,
+            ..tidb_model::ColumnInfo::default()
+        }),
+        generated: None,
         default_value: None,
         origin_default: None,
-        comment: String::new(),
-        generated: None,
     }
 }
 

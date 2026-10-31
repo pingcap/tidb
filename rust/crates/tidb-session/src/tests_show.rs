@@ -2439,8 +2439,8 @@ fn show_column_stats_usage_reads_global_and_partition_ids() {
             Ok((
                 table.table_id(),
                 table.partition().unwrap().definitions[0].id,
-                table.columns()[0].id,
-                table.columns()[1].id,
+                table.columns()[0].read().id,
+                table.columns()[1].read().id,
             ))
         })
         .unwrap();

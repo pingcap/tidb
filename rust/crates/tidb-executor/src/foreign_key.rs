@@ -573,8 +573,8 @@ fn cascade_at_depth(
                         for (value, column) in new.iter_mut().zip(kv.columns().iter()) {
                             crate::bad_null::handle_bad_null(
                                 value,
-                                &column.field_type,
-                                &column.name,
+                                &column.read().field_type,
+                                column.read().name.original(),
                                 level,
                                 ctx,
                             )?;

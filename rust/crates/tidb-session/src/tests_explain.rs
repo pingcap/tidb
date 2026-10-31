@@ -47,9 +47,9 @@ fn install_cardinality_mock_statistics_for_table(
     statistics.hist_coll.realtime_count = row_count;
     for (column, &(ndv, repeat)) in table.columns().iter().zip(columns) {
         statistics.put_analyzed_column(
-            column.id,
+            column.read().id,
             tidb_stats::column::Column {
-                histogram: histogram(column.id, ndv, repeat, false),
+                histogram: histogram(column.read().id, ndv, repeat, false),
                 top_n: None,
                 cmsketch: None,
                 stats_version: 2,
@@ -1774,6 +1774,13 @@ fn explain_marks_missing_stats_for_selected_index() {
             _ => panic!("explain_partial_index is not a KV table"),
         };
         let statistics = catalog.table_statistics_in(&shared.stats_handle(), table.table_id()).unwrap().clone();
+        let column_b_id = table
+            .columns()
+            .iter()
+            .find(|column| column.read().name.original().eq_ignore_ascii_case("b"))
+            .expect("column b")
+            .read()
+            .id;
         (
             table.table_id(),
             table
@@ -1782,12 +1789,7 @@ fn explain_marks_missing_stats_for_selected_index() {
                 .find(|index| index.name.eq_ignore_ascii_case("idx_ab"))
                 .expect("idx_ab")
                 .id,
-            table
-                .columns()
-                .iter()
-                .find(|column| column.name.eq_ignore_ascii_case("b"))
-                .expect("column b")
-                .id,
+            column_b_id,
             statistics,
         )
     };
@@ -2000,9 +2002,9 @@ fn explain_partial_stats_match_go_plan_matrix() {
         let column_b_id = table
             .columns()
             .iter()
-            .find(|column| column.name.eq_ignore_ascii_case("b"))
+            .find(|column| column.read().name.original().eq_ignore_ascii_case("b"))
             .unwrap()
-            .id;
+            .read().id;
         let t = match catalog.table_in("test", "t").unwrap() {
             tidb_infoschema::TableEntry::Kv(table) => table,
             _ => panic!("t is not a KV table"),
@@ -4893,7 +4895,7 @@ fn unknown_value_estimates_follow_analyze_and_truncate_lifecycle() {
         let shared = session.shared_catalog();
         let catalog = shared.lock().unwrap();
         let (table_id, column_id) = match catalog.table_in("test", table).unwrap() {
-            tidb_infoschema::TableEntry::Kv(table) => (table.table_id(), table.columns()[0].id),
+            tidb_infoschema::TableEntry::Kv(table) => (table.table_id(), table.columns()[0].read().id),
             _ => panic!("{table} is not a KV table"),
         };
         let stats = catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap();
@@ -4997,7 +4999,7 @@ fn unknown_value_estimates_follow_modify_delta_lifecycle() {
             .table_in("test", "unknown_modify_lifecycle")
             .unwrap()
         {
-            tidb_infoschema::TableEntry::Kv(table) => (table.table_id(), table.columns()[0].id),
+            tidb_infoschema::TableEntry::Kv(table) => (table.table_id(), table.columns()[0].read().id),
             _ => panic!("unknown_modify_lifecycle is not a KV table"),
         };
         let stats = catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap();

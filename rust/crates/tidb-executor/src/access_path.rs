@@ -272,7 +272,7 @@ pub fn statement_read_shape(
     let columns: Vec<(String, FieldType)> = table
         .visible_columns()
         .into_iter()
-        .map(|(_, column)| (column.name.clone(), column.field_type.clone()))
+        .map(|(_, column)| (column.read().name.original().to_owned(), column.read().field_type.clone()))
         .collect();
     let Some(where_clause) = select.where_clause.as_ref() else {
         return StatementReadShape::Unknown;
@@ -291,8 +291,8 @@ pub fn statement_read_shape(
         if pairs.len() != 1 {
             return StatementReadShape::Unknown;
         }
-        let handle_column = &table.columns()[handle_offset].name;
-        if !pairs[0].column().go_lower_eq(handle_column) {
+        let handle_column = table.columns()[handle_offset].read().name.original().to_owned();
+        if !pairs[0].column().go_lower_eq(&handle_column) {
             return StatementReadShape::Unknown;
         }
         return match pairs[0].value() {
@@ -314,10 +314,10 @@ pub fn statement_read_shape(
     }
     let complete = common_offsets.iter().all(|offset| {
         table.columns().get(*offset).is_some_and(|column| {
-            let name = &column.name;
+            let name = column.read().name.original().to_owned();
             pairs
                 .iter()
-                .filter(|pair| pair.column().go_lower_eq(name))
+                .filter(|pair| pair.column().go_lower_eq(&name))
                 .count()
                 == 1
         })
@@ -341,24 +341,30 @@ mod common_handle_shape_tests {
             1,
             vec![
                 tidb_table::kv_table::KvColumn {
-                    name: "k".to_owned(),
-                    id: 1,
-                    field_type: FieldType::new(tidb_datatype::FieldTypeCode::VarString),
-                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-                    comment: String::new(),
+                    info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                        id: 1,
+                        name: tidb_ast::CiString::new("k"),
+                        field_type: FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+                        version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::ColumnInfo::default()
+                    }),
+                    generated: None,
                     default_value: None,
                     origin_default: None,
-                    generated: None,
                 },
                 tidb_table::kv_table::KvColumn {
-                    name: "v".to_owned(),
-                    id: 2,
-                    field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-                    comment: String::new(),
+                    info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                        id: 2,
+                        name: tidb_ast::CiString::new("v"),
+                        field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                        version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::ColumnInfo::default()
+                    }),
+                    generated: None,
                     default_value: None,
                     origin_default: None,
-                    generated: None,
                 },
             ],
         );
@@ -384,24 +390,30 @@ mod common_handle_shape_tests {
             1,
             vec![
                 tidb_table::kv_table::KvColumn {
-                    name: "k".to_owned(),
-                    id: 1,
-                    field_type: FieldType::new(tidb_datatype::FieldTypeCode::VarString),
-                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-                    comment: String::new(),
+                    info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                        id: 1,
+                        name: tidb_ast::CiString::new("k"),
+                        field_type: FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+                        version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::ColumnInfo::default()
+                    }),
+                    generated: None,
                     default_value: None,
                     origin_default: None,
-                    generated: None,
                 },
                 tidb_table::kv_table::KvColumn {
-                    name: "v".to_owned(),
-                    id: 2,
-                    field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-                    comment: String::new(),
+                    info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                        id: 2,
+                        name: tidb_ast::CiString::new("v"),
+                        field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                        version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::ColumnInfo::default()
+                    }),
+                    generated: None,
                     default_value: None,
                     origin_default: None,
-                    generated: None,
                 },
             ],
         );
@@ -5206,7 +5218,7 @@ impl IndexJoinLookupExec {
         let filter_types = table
             .logical_columns()
             .iter()
-            .map(|column| column.field_type.clone())
+            .map(|column| column.read().field_type.clone())
             .collect::<Vec<_>>();
         let filter_chunk = Chunk::new(&filter_types, meta.init_cap(), meta.max_chunk_size());
         IndexJoinLookupExec {
@@ -5387,7 +5399,7 @@ impl IndexJoinLookupExec {
                 .table
                 .logical_columns()
                 .iter()
-                .map(|column| column.field_type.clone())
+                .map(|column| column.read().field_type.clone())
                 .collect(),
             decode_offsets: self.decode_offsets.clone(),
             output_offsets: self.output_offsets.clone(),
@@ -5752,7 +5764,7 @@ impl IndexJoinLookupExec {
                         .column_offsets
                         .iter()
                         .filter_map(|offset| columns.get(*offset))
-                        .map(|column| column.field_type.clone())
+                        .map(|column| column.read().field_type.clone())
                         .collect(),
                 )
             }
@@ -5761,7 +5773,7 @@ impl IndexJoinLookupExec {
                     .common_handle_offsets()
                     .iter()
                     .filter_map(|offset| columns.get(*offset))
-                    .map(|column| column.field_type.clone())
+                    .map(|column| column.read().field_type.clone())
                     .collect(),
             ),
             // The integer-handle arm already refuses a value that is not an
@@ -6859,14 +6871,17 @@ use std::collections::HashMap;
 
     fn column(name: &str, id: i64) -> KvColumn {
         KvColumn {
-            name: name.to_owned(),
-            id,
-            field_type: long(),
-            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                id: id,
+                name: tidb_ast::CiString::new(name.to_owned()),
+                field_type: long(),
+                version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::ColumnInfo::default()
+            }),
+            generated: None,
             default_value: None,
             origin_default: None,
-            comment: String::new(),
-            generated: None,
         }
     }
 
@@ -7241,7 +7256,7 @@ use std::collections::HashMap;
         let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.get_in("test", "p") else {
             panic!("table");
         };
-        let field_type = table.columns()[0].field_type.clone();
+        let field_type = table.columns()[0].read().field_type.clone();
         let index_id = table.indexes()[0].id;
         let schema = Schema::new(vec![tidb_expr::column::Column::new(1, field_type)]);
         let mut source = IndexRangeSourceExec::new_with_context(

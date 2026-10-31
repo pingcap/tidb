@@ -1183,8 +1183,8 @@ impl KvTableReader for KvTable {
             .map(|offset| {
                 let column = &self.columns()[*offset];
                 PushdownScanColumn {
-                    id: column.id,
-                    field_type: column.field_type.clone(),
+                    id: column.read().id,
+                    field_type: column.read().field_type.clone(),
                     is_handle: self.pk_handle_offset() == Some(*offset),
                     origin_default: column.origin_default.clone(),
                 }
@@ -1212,11 +1212,11 @@ impl KvTableReader for KvTable {
                             let column = &self.columns()[*offset];
                             let position = columns
                                 .iter()
-                                .position(|kept| kept.id == column.id)
+                                .position(|kept| kept.id == column.read().id)
                                 .unwrap_or_else(|| {
                                     columns.push(PushdownScanColumn {
-                                        id: column.id,
-                                        field_type: column.field_type.clone(),
+                                        id: column.read().id,
+                                        field_type: column.read().field_type.clone(),
                                         is_handle: false,
                                         origin_default: column.origin_default.clone(),
                                     });
@@ -1225,7 +1225,7 @@ impl KvTableReader for KvTable {
                             (
                                 position,
                                 primary.prefix_length(part),
-                                column.field_type.clone(),
+                                column.read().field_type.clone(),
                             )
                         })
                         .collect();
@@ -1247,8 +1247,8 @@ impl KvTableReader for KvTable {
                 None => {
                     columns.push(match self.pk_handle_offset() {
                         Some(offset) => PushdownScanColumn {
-                            id: self.columns()[offset].id,
-                            field_type: self.columns()[offset].field_type.clone(),
+                            id: self.columns()[offset].read().id,
+                            field_type: self.columns()[offset].read().field_type.clone(),
                             is_handle: true,
                             origin_default: None,
                         },
@@ -1317,7 +1317,7 @@ impl KvTableReader for KvTable {
             .into_iter()
             .flat_map(|index| index.column_offsets.iter())
             .filter_map(|offset| self.columns().get(*offset))
-            .map(|column| column.id)
+            .map(|column| column.read().id)
             .collect();
         let primary_prefix_column_ids: Vec<i64> = common_primary
             .as_ref()
@@ -1330,7 +1330,7 @@ impl KvTableReader for KvTable {
                     .filter_map(|(position, offset)| {
                         let column = self.columns().get(*offset)?;
                         let prefix = index.prefix_length(position);
-                        (prefix > 0 && column.field_type.flen() > prefix).then_some(column.id)
+                        (prefix > 0 && column.read().field_type.flen() > prefix).then_some(column.read().id)
                     })
             })
             .collect();
@@ -2032,8 +2032,8 @@ impl KvTableReader for KvTable {
             .map(|offset| {
                 let column = &self.columns()[*offset];
                 PushdownScanColumn {
-                    id: column.id,
-                    field_type: column.field_type.clone(),
+                    id: column.read().id,
+                    field_type: column.read().field_type.clone(),
                     is_handle: self.pk_handle_offset() == Some(*offset),
                     origin_default: column.origin_default.clone(),
                 }
@@ -2054,7 +2054,7 @@ impl KvTableReader for KvTable {
             .into_iter()
             .flat_map(|index| index.column_offsets.iter())
             .filter_map(|offset| self.columns().get(*offset))
-            .map(|column| column.id)
+            .map(|column| column.read().id)
             .collect();
         let primary_prefix_column_ids: Vec<i64> = common_primary
             .as_ref()
@@ -2067,7 +2067,7 @@ impl KvTableReader for KvTable {
                     .filter_map(|(position, offset)| {
                         let column = self.columns().get(*offset)?;
                         let prefix = index.prefix_length(position);
-                        (prefix > 0 && column.field_type.flen() > prefix).then_some(column.id)
+                        (prefix > 0 && column.read().field_type.flen() > prefix).then_some(column.read().id)
                     })
             })
             .collect();
@@ -2191,8 +2191,8 @@ impl KvTableReader for KvTable {
             .iter()
             .filter_map(|offset| self.columns().get(*offset))
             .map(|column| PushdownScanColumn {
-                id: column.id,
-                field_type: column.field_type.clone(),
+                id: column.read().id,
+                field_type: column.read().field_type.clone(),
                 is_handle: false,
                 origin_default: column.origin_default.clone(),
             })
@@ -2209,8 +2209,8 @@ impl KvTableReader for KvTable {
                 return Ok(None);
             };
             columns.push(PushdownScanColumn {
-                id: column.id,
-                field_type: column.field_type.clone(),
+                id: column.read().id,
+                field_type: column.read().field_type.clone(),
                 is_handle: false,
                 origin_default: column.origin_default.clone(),
             });
@@ -2338,7 +2338,7 @@ impl KvTableReader for KvTable {
         let primary_column_ids: Vec<i64> = self
             .common_handle_offsets()
             .iter()
-            .filter_map(|offset| self.columns().get(*offset).map(|column| column.id))
+            .filter_map(|offset| self.columns().get(*offset).map(|column| column.read().id))
             .collect();
         let mut streams = Vec::with_capacity(physical_ids.len());
         for physical_id in physical_ids {
@@ -2427,10 +2427,10 @@ impl KvTableReader for KvTable {
             .map(|offset| {
                 let column = &self.columns()[*offset];
                 tidb_rowcodec::ColumnInfo {
-                    id: column.id,
+                    id: column.read().id,
                     is_pk_handle: false,
                     virtual_generated: false,
-                    field_type: column.field_type.clone(),
+                    field_type: column.read().field_type.clone(),
                 }
             })
             .collect();
@@ -2573,7 +2573,7 @@ impl KvTableReader for KvTable {
             let full_length = |length| {
                 ignore_len
                     || length == tidb_datatype::UNSPECIFIED_LENGTH
-                    || length == column.field_type.flen()
+                    || length == column.read().field_type.flen()
             };
             if position < index.column_offsets.len() {
                 return full_length(index.prefix_length(position));
@@ -2591,9 +2591,9 @@ impl KvTableReader for KvTable {
                     .is_some_and(|part| full_length(primary.prefix_length(part)))
             }) && !(self.common_handle_version() == 0
                 && self.use_new_collation()
-                && column.field_type.eval_type() == tidb_datatype::EvalType::String
+                && column.read().field_type.eval_type() == tidb_datatype::EvalType::String
                 && !column
-                    .field_type
+                    .read().field_type
                     .has_flag(tidb_datatype::FieldTypeFlags::BINARY))
         };
         let complete_columns: Vec<_> = table_offsets
@@ -2680,8 +2680,8 @@ impl KvTableReader for KvTable {
                 if let Some(offset) = offset {
                     let column = self.columns().get(*offset)?;
                     Some(PushdownScanColumn {
-                        id: column.id,
-                        field_type: column.field_type.clone(),
+                        id: column.read().id,
+                        field_type: column.read().field_type.clone(),
                         is_handle: self.pk_handle_offset() == Some(*offset),
                         origin_default: column.origin_default.clone(),
                     })
@@ -2861,7 +2861,7 @@ impl KvTableReader for KvTable {
             primary_column_ids: self
                 .common_handle_offsets()
                 .iter()
-                .filter_map(|offset| self.columns().get(*offset).map(|column| column.id))
+                .filter_map(|offset| self.columns().get(*offset).map(|column| column.read().id))
                 .collect(),
             primary_prefix_column_ids: Vec::new(),
             conditions: predicates,
@@ -6544,14 +6544,17 @@ mod remote_cursor_tests {
 
     fn bigint_column(id: i64, name: &str) -> KvColumn {
         KvColumn {
-            name: name.to_owned(),
-            id,
-            field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                id: id,
+                name: tidb_ast::CiString::new(name.to_owned()),
+                field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::ColumnInfo::default()
+            }),
+            generated: None,
             default_value: None,
             origin_default: None,
-            comment: String::new(),
-            generated: None,
         }
     }
 
@@ -6589,7 +6592,7 @@ mod remote_cursor_tests {
         );
         let predicate = crate::tests_predicate_pushdown::fixtures::compare(
             1,
-            table.columns()[1].field_type.clone(),
+            table.columns()[1].read().field_type.clone(),
             "gt",
             Datum::Int(6),
             FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
@@ -6630,8 +6633,8 @@ mod remote_cursor_tests {
     }
 
     fn index_selection_table(capture: RequestCapture, prefix_length: i64) -> KvTable {
-        let mut a = bigint_column(2, "a");
-        a.field_type = FieldType::new(tidb_datatype::FieldTypeCode::Varchar).with_flen(20);
+        let a = bigint_column(2, "a");
+        a.info.write().field_type = FieldType::new(tidb_datatype::FieldTypeCode::Varchar).with_flen(20);
         let mut table = KvTable::with_storage(
             91,
             vec![bigint_column(1, "id"), a, bigint_column(3, "v")],
@@ -6702,7 +6705,7 @@ mod remote_cursor_tests {
             }
             let predicate = index_selection_predicate(
                 slot,
-                table.columns()[[2, 1, 0][slot as usize]].field_type.clone(),
+                table.columns()[[2, 1, 0][slot as usize]].read().field_type.clone(),
             );
             let prefix_limit = (prefix == 2).then_some(tidb_distsql::remote_scan::PushdownPrefixLimit {
                 count: 1,
@@ -6786,7 +6789,7 @@ mod remote_cursor_tests {
                     ),
                     crate::tests_predicate_pushdown::fixtures::is_null(
                         a_slot,
-                        table.columns()[1].field_type.clone(),
+                        table.columns()[1].read().field_type.clone(),
                         true,
                     ),
                 ];
@@ -6907,7 +6910,7 @@ mod remote_cursor_tests {
                 let predicates = if filtered {
                     vec![index_selection_predicate(
                         1,
-                        table.columns()[1].field_type.clone(),
+                        table.columns()[1].read().field_type.clone(),
                     )]
                 } else {
                     Vec::new()
@@ -6989,14 +6992,14 @@ mod remote_cursor_tests {
             ..RequestCapture::default()
         };
         let mut table = index_selection_table(capture.clone(), 2);
-        let column = column_at(1, table.columns()[1].field_type.clone());
+        let column = column_at(1, table.columns()[1].read().field_type.clone());
         let null = call("isnull", vec![column.clone()]);
         let nested = call("not", vec![null]);
         let predicates = vec![call(
             "or",
             vec![
                 nested.clone(),
-                index_selection_predicate(0, table.columns()[0].field_type.clone()),
+                index_selection_predicate(0, table.columns()[0].read().field_type.clone()),
             ],
         )];
         let mut cursor = table

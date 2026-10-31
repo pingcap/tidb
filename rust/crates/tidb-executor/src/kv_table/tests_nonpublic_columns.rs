@@ -21,14 +21,17 @@ use tidb_datatype::FieldTypeCode;
 
 fn column(name: &str, id: i64, code: FieldTypeCode, origin: Option<Datum>) -> KvColumn {
     KvColumn {
-        name: name.to_owned(),
-        id,
-        field_type: FieldType::new(code),
-        column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+        info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+            id: id,
+            name: tidb_ast::CiString::new(name.to_owned()),
+            field_type: FieldType::new(code),
+            version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            state: tidb_model::SchemaState::PUBLIC,
+            ..tidb_model::ColumnInfo::default()
+        }),
+        generated: None,
         default_value: None,
         origin_default: origin,
-        comment: String::new(),
-        generated: None,
     }
 }
 

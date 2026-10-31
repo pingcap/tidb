@@ -364,7 +364,9 @@ mod tests {
                 };
                 info
             }),
-            generated_expr: None,
+            generated: None,
+            default_value: None,
+            origin_default: None,
         }
     }
 

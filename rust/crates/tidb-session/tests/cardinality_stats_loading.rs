@@ -64,7 +64,7 @@ fn subset_index_cardinality_after_async_statistics_load() {
         let column_ids = table
             .columns()
             .iter()
-            .map(|column| column.id)
+            .map(|column| column.read().id)
             .collect::<Vec<_>>();
         (table.table_id(), column_ids, table.indexes()[0].id)
     };
@@ -424,7 +424,8 @@ fn datetime_range_overflow_survives_async_statistics_load() {
         let tidb_infoschema::TableEntry::Kv(table) = catalog.table_in("test", "t").unwrap() else {
             panic!("not KV")
         };
-        (table.table_id(), table.columns()[0].id)
+        let column_id = table.columns()[0].read().id;
+        (table.table_id(), column_id)
     };
     let sql = "SELECT * FROM t WHERE col BETWEEN '8499-1-23 2:14:38' AND '9961-7-23 18:35:26'";
     assert!(rows(&mut session, sql).is_empty());

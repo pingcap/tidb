@@ -194,9 +194,9 @@ impl SizeStats<'_> {
         let mut column_lengths = vec![0_u64; table.columns().len()];
         let mut data = 0_u64;
         for (offset, column) in table.columns().iter().enumerate() {
-            let storage_length = column.field_type.storage_length();
+            let storage_length = column.read().field_type.storage_length();
             let length = if storage_length == VAR_STORAGE_LEN {
-                self.column_length(physical_id, column.id)
+                self.column_length(physical_id, column.read().id)
             } else {
                 rows.wrapping_mul(storage_length as u64)
             };

@@ -908,7 +908,7 @@ fn point_get_is_chosen_only_for_the_shapes_go_accepts() {
     let columns = table
         .columns()
         .iter()
-        .map(|c| (c.name.clone(), c.field_type.clone()))
+        .map(|c| (c.read().name.original().to_owned(), c.read().field_type.clone()))
         .collect::<Vec<_>>();
 
     let decides = |sql: &str| {
@@ -1454,7 +1454,7 @@ fn batch_point_get_accepts_row_in_on_a_composite_key() {
     let columns = table
         .columns()
         .iter()
-        .map(|column| (column.name.clone(), column.field_type.clone()))
+        .map(|column| (column.read().name.original().to_owned(), column.read().field_type.clone()))
         .collect::<Vec<_>>();
     let stmt = tidb_parser::parse("SELECT v FROM c WHERE (a, b) IN ((1, 2), (2, 1))").unwrap();
     let Stmt::Query(query) = &stmt else {
@@ -1659,7 +1659,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
     let Some(TableEntry::Kv(table)) = catalog.get_in(DEFAULT_DATABASE, "bd") else {
         panic!("bd")
     };
-    let schema = Schema::new(vec![Column::new(1, table.columns()[0].field_type.clone())]);
+    let schema = Schema::new(vec![Column::new(1, table.columns()[0].read().field_type.clone())]);
     let mut source = crate::access_path::HandleSourceExec::new_mapped_with_context(
         crate::ExecutorMeta::new(schema, 1, 8, 8),
         (**table).clone(),
@@ -1697,7 +1697,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         source.close().unwrap();
     }
 
-    let schema = Schema::new(vec![Column::new(1, table.columns()[0].field_type.clone())]);
+    let schema = Schema::new(vec![Column::new(1, table.columns()[0].read().field_type.clone())]);
     let index_id = table
         .indexes()
         .iter()
@@ -1711,11 +1711,11 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         vec![
             vec![Datum::new_collation_string(
                 b"a".to_vec(),
-                table.columns()[1].field_type.collation(),
+                table.columns()[1].read().field_type.collation(),
             )],
             vec![Datum::new_collation_string(
                 b"b".to_vec(),
-                table.columns()[1].field_type.collation(),
+                table.columns()[1].read().field_type.collation(),
             )],
         ],
         vec![crate::access_path::HandleOutputColumn::Stored(0)],

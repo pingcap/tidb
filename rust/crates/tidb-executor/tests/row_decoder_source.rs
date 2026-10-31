@@ -30,11 +30,14 @@ use tidb_table::kv_table::{
 
 fn column(id: i64, name: &str, field_type: FieldType) -> KvColumn {
     KvColumn {
-        name: name.to_owned(),
-        id,
-        field_type,
-        column_info_version: 1,
-        comment: String::new(),
+        info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+            id: id,
+            name: tidb_ast::CiString::new(name.to_owned()),
+            field_type: field_type,
+            version: 1,
+            state: tidb_model::SchemaState::PUBLIC,
+            ..tidb_model::ColumnInfo::default()
+        }),
         generated: None,
         default_value: None,
         origin_default: None,
@@ -67,11 +70,11 @@ fn generated_column(
 ) -> tidb_table::generated_column::GeneratedColumn {
     let names = preceding
         .iter()
-        .map(|column| column.name.clone())
+        .map(|column| column.read().name.original().to_owned())
         .collect::<Vec<_>>();
     let types = preceding
         .iter()
-        .map(|column| column.field_type.clone())
+        .map(|column| column.read().field_type.clone())
         .collect::<Vec<_>>();
     tidb_ddl_build::generated_column::build_added_generated_column(
         "generated",
@@ -123,13 +126,13 @@ fn assert_point_chunks(
     let types = table
         .columns()
         .iter()
-        .map(|column| column.field_type.clone())
+        .map(|column| column.read().field_type.clone())
         .collect::<Vec<_>>();
     let schema = tidb_expr::schema::Schema::new(
         table
             .columns()
             .iter()
-            .map(|column| tidb_expr::column::Column::new(column.id, column.field_type.clone()))
+            .map(|column| tidb_expr::column::Column::new(column.read().id, column.read().field_type.clone()))
             .collect(),
     );
     let mut source = tidb_executor::access_path::HandleSourceExec::new_with_context(
@@ -990,7 +993,7 @@ fn legacy_generated_enum_set_cursor_preserves_members_and_declared_collation() {
                 other => panic!("unexpected generated value: {other:?}"),
             }
             assert_eq!(
-                table.columns()[1].field_type.collation(),
+                table.columns()[1].read().field_type.collation(),
                 tidb_charset::Collation::Utf8Mb4GeneralCi
             );
         }

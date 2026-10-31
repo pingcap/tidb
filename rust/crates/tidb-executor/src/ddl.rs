@@ -339,12 +339,12 @@ use tidb_charset::Collation;
         let column = kv
             .columns()
             .iter()
-            .find(|c| c.name == column)
+            .find(|c| c.read().name.original() == column)
             .expect("column exists");
         (
-            column.field_type.charset_name().to_owned(),
-            column.field_type.collation_name().to_owned(),
-            column.field_type.flen(),
+            column.read().field_type.charset_name().to_owned(),
+            column.read().field_type.collation_name().to_owned(),
+            column.read().field_type.flen(),
         )
     }
 
@@ -414,9 +414,9 @@ use tidb_charset::Collation;
         let has_charset = |column: &str| {
             kv.columns()
                 .iter()
-                .find(|c| c.name == column)
+                .find(|c| c.read().name.original() == column)
                 .unwrap()
-                .field_type
+                .read().field_type
                 .has_charset()
         };
         assert!(has_charset("c_varchar") && has_charset("c_enum"));

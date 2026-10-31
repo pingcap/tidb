@@ -430,7 +430,7 @@ impl Catalog {
                                 .iter()
                                 .enumerate()
                                 .map(|(offset, column)| {
-                                    memory_column(offset, &column.name, &column.field_type)
+                                    memory_column(offset, column.read().name.original(), &column.read().field_type)
                                 })
                                 .collect(),
                             ..SourceTable::default()
@@ -598,26 +598,13 @@ fn kv_source_table(
     db_name: &str,
     resolve_db_info: tidb_model::GoShared<tidb_model::DBInfo>,
 ) -> crate::table_source::SourceTable {
-    use crate::table_source::SourceColumn;
 
     // Go `buildDataSource` reads `TableInfo.Columns` and `.Indices` as
     // `TableFromMeta` loaded them, in their stored order.
     let meta = table.meta();
     let info = meta.read();
-    let columns = info
-        .cols()
-        .iter_deref()
-        .map(|info| SourceColumn {
-            // Go `table.Column.GeneratedExpr`, parsed once at load.
-            generated_expr: table
-                .columns()
-                .iter()
-                .find(|loaded| loaded.id == info.read().id)
-                .and_then(|loaded| loaded.generated.as_ref())
-                .map(|generated| generated.source.clone()),
-            info,
-        })
-        .collect::<Vec<_>>();
+    // Go `tbl.Cols()`: the table's own `table.Column`s.
+    let columns = table.columns().to_vec();
     let indexes = info.indices.iter_deref().collect::<Vec<_>>();
     // Go `buildDataSource`'s handle columns: the PKIsHandle column, else the
     // clustered PRIMARY KEY's columns (`tables.FindPrimaryIndex`).

@@ -79,17 +79,17 @@ impl KvTable {
         index_id: i64,
         position: usize,
         offset: usize,
-    ) -> Option<&FieldType> {
+    ) -> Option<FieldType> {
         if self
             .changing_index_parts
             .get(&index_id)
             .is_some_and(|parts| parts.contains(&position))
         {
             if let Some(changing) = self.changing_field_types.get(&offset) {
-                return Some(changing);
+                return Some(changing.clone());
             }
         }
-        self.write_column(offset).map(|column| &column.field_type)
+        self.write_column(offset).map(|column| column.read().field_type.clone())
     }
 
     /// Go `index.castIndexValuesToChangingTypes`: a key part using its
@@ -132,11 +132,11 @@ impl KvTable {
     ) -> Result<Datum, KvTableError> {
         match ctx {
             Some(ctx) => {
-                crate::column::cast_table_value(value, &column.field_type, &column.name, ctx, false)
+                crate::column::cast_table_value(value, &column.read().field_type, column.read().name.original(), ctx, false)
                     .map_err(|error| KvTableError::Mysql(error.to_mysql_error()))
             }
             None => Ok(value
-                .convert_to_in(&column.field_type, flags, zone)
+                .convert_to_in(&column.read().field_type, flags, zone)
                 .map_or(Datum::Null, |converted| converted.value)),
         }
     }
@@ -235,7 +235,7 @@ impl KvTable {
         let types: BTreeMap<i64, FieldType> = self
             .nonpublic_columns
             .iter()
-            .map(|column| (column.column.id, column.column.field_type.clone()))
+            .map(|column| (column.column.read().id, column.column.read().field_type.clone()))
             .collect();
         let stored = match self.stored_record(handle)? {
             Some((_, entry)) => {
@@ -247,7 +247,7 @@ impl KvTable {
         let nonpublic = Arc::clone(&self.nonpublic_columns);
         nonpublic
             .iter()
-            .map(|column| match stored.get(&column.column.id) {
+            .map(|column| match stored.get(&column.column.read().id) {
                 Some(value) => Ok(value.clone()),
                 None => match column.dependency {
                     Some(dependency) => Self::cast_into_column(

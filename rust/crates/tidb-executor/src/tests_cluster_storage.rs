@@ -34,14 +34,17 @@ use tidb_txnkv::Key;
                 .iter()
                 .enumerate()
                 .map(|(i, name)| KvColumn {
-                    name: name.to_string(),
-                    id: i as i64 + 1,
-                    field_type: FieldType::new(FieldTypeCode::LongLong),
-                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                        id: i as i64 + 1,
+                        name: tidb_ast::CiString::new(name.to_string()),
+                        field_type: FieldType::new(FieldTypeCode::LongLong),
+                        version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::ColumnInfo::default()
+                    }),
+                    generated: None,
                     default_value: None,
                     origin_default: None,
-                    comment: String::new(),
-                    generated: None,
                 })
                 .collect(),
             Box::new(store),
@@ -161,14 +164,17 @@ use tidb_txnkv::Key;
                 .iter()
                 .enumerate()
                 .map(|(i, name)| KvColumn {
-                    name: name.to_string(),
-                    id: i as i64 + 1,
-                    field_type: FieldType::new(FieldTypeCode::LongLong),
-                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                        id: i as i64 + 1,
+                        name: tidb_ast::CiString::new(name.to_string()),
+                        field_type: FieldType::new(FieldTypeCode::LongLong),
+                        version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::ColumnInfo::default()
+                    }),
+                    generated: None,
                     default_value: None,
                     origin_default: None,
-                    comment: String::new(),
-                    generated: None,
                 })
                 .collect(),
             Box::new(store),
@@ -255,14 +261,17 @@ use tidb_txnkv::Key;
             let mut table = KvTable::with_storage(
                 42,
                 vec![KvColumn {
-                    name: "a".to_owned(),
-                    id: 1,
-                    field_type: FieldType::new(FieldTypeCode::LongLong),
-                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                        id: 1,
+                        name: tidb_ast::CiString::new("a"),
+                        field_type: FieldType::new(FieldTypeCode::LongLong),
+                        version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::ColumnInfo::default()
+                    }),
+                    generated: None,
                     default_value: None,
                     origin_default: None,
-                    comment: String::new(),
-                    generated: None,
                 }],
                 Box::new(store),
             );
@@ -439,14 +448,17 @@ use tidb_txnkv::Key;
         let mut table = KvTable::with_storage(
             42,
             vec![KvColumn {
-                name: "a".to_owned(),
-                id: 1,
-                field_type: FieldType::new(FieldTypeCode::LongLong),
-                column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("a"),
+                    field_type: FieldType::new(FieldTypeCode::LongLong),
+                    version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                }),
+                generated: None,
                 default_value: None,
                 origin_default: None,
-                comment: String::new(),
-                generated: None,
             }],
             Box::new(ClusterTableStorage::new(buffer.clone(), handle)),
         );
@@ -571,15 +583,17 @@ use tidb_txnkv::Key;
                         .into_iter()
                         .enumerate()
                         .map(|(i, name)| KvColumn {
-                            name: name.to_owned(),
-                            id: i as i64 + 1,
-                            field_type: FieldType::new(FieldTypeCode::LongLong),
-                            column_info_version:
-                                tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                            info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                                id: i as i64 + 1,
+                                name: tidb_ast::CiString::new(name.to_owned()),
+                                field_type: FieldType::new(FieldTypeCode::LongLong),
+                                version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                                state: tidb_model::SchemaState::PUBLIC,
+                                ..tidb_model::ColumnInfo::default()
+                            }),
+                            generated: None,
                             default_value: None,
                             origin_default: None,
-                            comment: String::new(),
-                            generated: None,
                         })
                         .collect(),
                     Box::new(store),

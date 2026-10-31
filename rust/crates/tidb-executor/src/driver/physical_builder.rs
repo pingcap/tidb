@@ -1151,11 +1151,11 @@ fn table_scan_schema(
         let mut planned = scan
             .cost_columns
             .iter()
-            .find(|planned| planned.id == column.id)
+            .find(|planned| planned.id == column.read().id)
             .cloned()
             .unwrap_or_else(|| {
-                let mut planned = Column::new(column.id, column.field_type.clone());
-                planned.id = column.id;
+                let mut planned = Column::new(column.read().id, column.read().field_type.clone());
+                planned.id = column.read().id;
                 planned
             });
         planned.index = index as i64;
@@ -1427,7 +1427,7 @@ fn build_table_sample(
             table
                 .columns()
                 .iter()
-                .position(|stored| stored.id == column.id)
+                .position(|stored| stored.read().id == column.id)
                 .map(SampleOutputColumn::Stored)
                 .ok_or_else(|| {
                     DriverError::unsupported(format!(
@@ -1564,7 +1564,7 @@ fn memory_table_rows<'a>(
             let column_names = virtual_table
                 .columns()
                 .iter()
-                .map(|column| column.name.clone())
+                .map(|column| column.read().name.original().to_owned())
                 .collect();
             if let Some((read, retriever)) = owned_mem_table_retriever(plan, catalog, ctx) {
                 return Ok(MemoryTableRows {
@@ -2480,13 +2480,13 @@ fn reader_output_offsets(
         let Some(offset) = table
             .columns()
             .iter()
-            .position(|column| column.id == source.id)
+            .position(|column| column.read().id == source.id)
             .or_else(|| {
                 source.orig_name.rsplit('.').next().and_then(|name| {
                     table
                         .columns()
                         .iter()
-                        .position(|column| column.name.eq_ignore_ascii_case(name))
+                        .position(|column| column.read().name.original().eq_ignore_ascii_case(name))
                 })
             })
         else {
@@ -2666,7 +2666,7 @@ fn build_index_reader(
                     index
                         .column_offsets
                         .iter()
-                        .position(|offset| table.columns()[*offset].id == column.id)
+                        .position(|offset| table.columns()[*offset].read().id == column.id)
                 })
                 .ok_or_else(|| {
                     DriverError::unsupported("a prefix Limit column is absent from its index")
@@ -2960,10 +2960,10 @@ fn physical_table_schema(plan: &PhysicalPlan, table: &crate::KvTable) -> Schema 
         .enumerate()
         .map(|(index, stored)| {
             let mut column = planned_columns
-                .and_then(|columns| columns.iter().find(|column| column.id == stored.id))
+                .and_then(|columns| columns.iter().find(|column| column.id == stored.read().id))
                 .cloned()
-                .unwrap_or_else(|| Column::new(stored.id, stored.field_type.clone()));
-            column.id = stored.id;
+                .unwrap_or_else(|| Column::new(stored.read().id, stored.read().field_type.clone()));
+            column.id = stored.read().id;
             column.index = index as i64;
             column
         })
@@ -3009,13 +3009,13 @@ fn index_inner_output_offsets(
             table
                 .logical_columns()
                 .iter()
-                .position(|stored| stored.id == column.id)
+                .position(|stored| stored.read().id == column.id)
                 .or_else(|| {
                     column.orig_name.rsplit('.').next().and_then(|name| {
                         table
                             .logical_columns()
                             .iter()
-                            .position(|stored| stored.name.eq_ignore_ascii_case(name))
+                            .position(|stored| stored.read().name.original().eq_ignore_ascii_case(name))
                     })
                 })
                 .ok_or_else(|| {
@@ -3159,7 +3159,7 @@ fn index_join_probe_key_domains(
                 table
                     .logical_columns()
                     .get(*offset)
-                    .map(|column| column.field_type.clone())
+                    .map(|column| column.read().field_type.clone())
                     .ok_or_else(|| {
                         DriverError::unsupported(
                             "an index-join key column is absent from its retained table",
@@ -3178,7 +3178,7 @@ fn index_join_probe_key_domains(
                     .and_then(|offset| table.logical_columns().get(offset))
                     .map_or_else(
                         || FieldType::new(FieldTypeCode::LongLong),
-                        |column| column.field_type.clone(),
+                        |column| column.read().field_type.clone(),
                     ),
             );
         }
@@ -3191,7 +3191,7 @@ fn index_join_probe_key_domains(
                 table
                     .logical_columns()
                     .get(*offset)
-                    .map(|column| column.field_type.clone())
+                    .map(|column| column.read().field_type.clone())
                     .ok_or_else(|| {
                         DriverError::unsupported(
                             "a common-handle join key is absent from its retained table",
@@ -3205,7 +3205,7 @@ fn index_join_probe_key_domains(
             .and_then(|offset| table.logical_columns().get(offset))
             .map_or_else(
                 || FieldType::new(FieldTypeCode::LongLong),
-                |column| column.field_type.clone(),
+                |column| column.read().field_type.clone(),
             )]
     };
 
@@ -4608,7 +4608,7 @@ fn table_output_columns(
             table
                 .columns()
                 .iter()
-                .position(|stored| stored.id == column.id)
+                .position(|stored| stored.read().id == column.id)
                 .map(HandleOutputColumn::Stored)
                 .ok_or_else(|| {
                     DriverError::unsupported(format!(
@@ -5055,7 +5055,7 @@ fn with_select_lock(
             let stored = table.columns().get(*offset).ok_or_else(|| {
                 DriverError::unsupported("a common handle column is outside its table")
             })?;
-            handle_columns.push(synthetic(stored.id, stored.field_type.clone()));
+            handle_columns.push(synthetic(stored.read().id, stored.read().field_type.clone()));
         }
     }
     let phys_column = table.partition().is_some().then(|| {
@@ -5290,7 +5290,7 @@ fn build_batch_point_get(
         let unsigned_pk_is_handle = table
             .pk_handle_offset()
             .and_then(|offset| table.columns().get(offset))
-            .is_some_and(|column| column.field_type.is_unsigned());
+            .is_some_and(|column| column.read().field_type.is_unsigned());
         sort_handles_for_keep_order(&mut handles, batch.desc, unsigned_pk_is_handle);
     }
     let partition_ids = routes.map(|routes| handles.iter().map(|handle| routes[handle]).collect());
@@ -5388,7 +5388,7 @@ fn partial_handle_columns(
     table: &crate::KvTable,
 ) -> Result<PartialHandleColumns, DriverError> {
     let table_column_slot = |offset: usize| {
-        let id = table.columns().get(offset)?.id;
+        let id = table.columns().get(offset)?.read().id;
         // Common handles are a suffix, even when an index column has the
         // same ID (and may contain only a prefix of the full key value).
         schema.columns.iter().rposition(|column| column.id == id)
@@ -7484,13 +7484,13 @@ fn build_union_scan(
                 .column_offsets
                 .iter()
                 .filter_map(|offset| {
-                    let name = &table.columns().get(*offset)?.name;
+                    let name = table.columns().get(*offset)?.read().name.original().to_owned();
                     schema.columns.iter().position(|column| {
                         column
                             .orig_name
                             .rsplit('.')
                             .next()
-                            .is_some_and(|column_name| column_name.go_lower_eq(name))
+                            .is_some_and(|column_name| column_name.go_lower_eq(&name))
                     })
                 })
                 .collect::<Vec<_>>()
@@ -8563,14 +8563,17 @@ use super::*;
 
     fn long_column(name: &str, id: i64) -> tidb_table::kv_table::KvColumn {
         tidb_table::kv_table::KvColumn {
-            name: name.to_owned(),
-            id,
-            field_type: FieldType::new(FieldTypeCode::LongLong),
-            column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+            info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                id: id,
+                name: tidb_ast::CiString::new(name.to_owned()),
+                field_type: FieldType::new(FieldTypeCode::LongLong),
+                version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::ColumnInfo::default()
+            }),
+            generated: None,
             default_value: None,
             origin_default: None,
-            comment: String::new(),
-            generated: None,
         }
     }
 

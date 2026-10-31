@@ -80,7 +80,9 @@ fn column(offset: usize, name: &str, ret_type: FieldType) -> SourceColumn {
             };
             info
         }),
-        generated_expr: None,
+        generated: None,
+        default_value: None,
+        origin_default: None,
     }
 }
 
