@@ -120,6 +120,7 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		if err = e.producer.genCTEResult(ctx); err != nil {
 			return err
 		}
+		failpoint.InjectCall("afterCTEResultForTest")
 	}
 	return e.producer.getChunk(e, req)
 }

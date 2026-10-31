@@ -34,10 +34,57 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPessimisticRetryMaterializedCTE(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	owner := testkit.NewTestKit(t, store)
+	competitor := testkit.NewTestKit(t, store)
+	owner.MustExec("use test")
+	competitor.MustExec("use test")
+	owner.MustExec("create table cte_src(id int primary key, next_u int, payload int)")
+	owner.MustExec("create table cte_dst(id int primary key, u int unique, v int)")
+	owner.MustExec("insert into cte_src values (1, 1, 10)")
+	owner.MustExec("insert into cte_dst values (1, 10, 0)")
+	owner.MustExec("set transaction_isolation = 'READ-COMMITTED'")
+	competitor.MustExec("set transaction_isolation = 'READ-COMMITTED'")
+	updateSQL := `with c as (select id, payload from cte_src)
+		update cte_dst d join cte_src s on s.id = d.id
+		join c c1 on c1.id = d.id join c c2 on c2.id = d.id
+		set d.u = s.next_u, d.v = c1.payload where d.id = 1`
+	require.Contains(t, fmt.Sprint(owner.MustQuery("explain "+updateSQL).Rows()), "CTEFullScan")
+	var once sync.Once
+	var concurrentErr error
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterCTEResultForTest", func() {
+		once.Do(func() {
+			for _, sql := range []string{"begin pessimistic", "insert into cte_dst values (2, 1, 0)", "update cte_src set next_u = 2, payload = 20 where id = 1", "commit"} {
+				if _, concurrentErr = competitor.Exec(sql); concurrentErr != nil {
+					return
+				}
+			}
+		})
+	})
+	owner.MustExec("begin pessimistic")
+	owner.MustExec(updateSQL)
+	require.NoError(t, concurrentErr)
+	require.Greater(t, owner.Session().GetSessionVars().StmtCtx.ExecRetryCount, uint64(0))
+	require.Nil(t, owner.Session().GetSessionVars().StmtCtx.CTEStorageMap)
+	owner.MustExec("commit")
+	owner.MustQuery("select * from cte_dst order by id").Check(testkit.Rows("1 2 20", "2 1 0"))
+
+	// A subsequent statement must also build fresh storage, without a retry.
+	owner.MustExec("update cte_src set next_u = 3, payload = 30 where id = 1")
+	owner.MustExec("begin pessimistic")
+	owner.MustExec(updateSQL)
+	require.Zero(t, owner.Session().GetSessionVars().StmtCtx.ExecRetryCount)
+	require.Nil(t, owner.Session().GetSessionVars().StmtCtx.CTEStorageMap)
+	owner.MustExec("commit")
+	owner.MustQuery("select * from cte_dst order by id").Check(testkit.Rows("1 3 30", "2 1 0"))
+}
 
 func TestInsertIgnore(t *testing.T) {
 	store := testkit.CreateMockStore(t)
