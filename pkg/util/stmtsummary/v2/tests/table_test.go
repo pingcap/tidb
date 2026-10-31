@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
@@ -336,7 +337,20 @@ func TestStmtSummaryRUVersion(t *testing.T) {
 					if version == rmclient.RUVersionV2 {
 						wantRead, wantWrite = totalRUV2, 0
 						if tc.write {
-							wantRead, wantWrite = 0, totalRUV2
+							// Price the write evidence independently of the log/summary output.
+							sc := tk.Session().GetSessionVars().StmtCtx
+							plan, ok := sc.GetPlan().(base.Plan)
+							require.True(t, ok)
+							work, found := sc.RuntimeStatsColl.GetRootWriteCPUWork(plan.ID())
+							require.True(t, found)
+							commit := sc.GetExecDetails().CommitDetail
+							require.NotNil(t, commit)
+							weights := config.GetGlobalConfig().RUV2.StmtWeights
+							wantWrite = weights.WriteStatement + weights.OperatorNum + weights.CPUWork*work +
+								weights.WriteKey*float64(commit.WriteKeys) + weights.WriteByte*float64(commit.WriteSize)
+							wantRead = totalRUV2 - wantWrite
+							require.Positive(t, wantRead)
+							require.Positive(t, wantWrite)
 						}
 					}
 
@@ -346,10 +360,16 @@ func TestStmtSummaryRUVersion(t *testing.T) {
 					require.Len(t, rows, 1)
 					require.Equal(t, "1", fmt.Sprint(rows[0][0]))
 					waitNanos := float64(ruDetails.RUWaitDuration().Nanoseconds())
+					gotValues := make([]float64, 6)
 					for i, want := range []float64{wantRead, wantRead, wantWrite, wantWrite, waitNanos, waitNanos} {
 						got, err := strconv.ParseFloat(fmt.Sprint(rows[0][i+1]), 64)
 						require.NoError(t, err)
+						gotValues[i] = got
 						require.InDelta(t, want, got, 1e-9)
+					}
+					if version == rmclient.RUVersionV2 {
+						require.InDelta(t, totalRUV2, gotValues[0]+gotValues[2], 1e-9)
+						require.InDelta(t, totalRUV2, gotValues[1]+gotValues[3], 1e-9)
 					}
 				})
 			}

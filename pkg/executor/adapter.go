@@ -1969,10 +1969,11 @@ func (a *ExecStmt) ruDetailsForStatementLog(ruDetails *util.RUDetails, statement
 
 	totalRU := statementRUTotal[0]
 	consumption := rmpb.Consumption{RRU: totalRU}
-	kind := classifyStatementRUPlan(a.Plan).kind
-	if kind == statementRUPlanWrite || kind == statementRUPlanCommit {
-		// Explicit transactions account for their committed write payload on COMMIT.
-		consumption.RRU, consumption.WRU = 0, totalRU
+	if owner := a.statementRUOwner; owner != nil {
+		// Clamp only for floating-point rounding (and zero totals on repeated
+		// terminal calls); never classify a mixed statement by its plan kind.
+		consumption.WRU = min(owner.writeRU, totalRU)
+		consumption.RRU = totalRU - consumption.WRU
 	}
 	var waitDuration time.Duration
 	if ruDetails != nil {

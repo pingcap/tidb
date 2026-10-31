@@ -16,6 +16,7 @@ go_test(
         "//pkg/kv",
         "//pkg/parser/auth",
         "//pkg/planner/core",
+        "//pkg/planner/core/base",
         "//pkg/session",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
