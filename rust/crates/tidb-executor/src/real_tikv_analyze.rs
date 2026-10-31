@@ -469,8 +469,7 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
         statement.dynamic_partition_prune,
     );
     let mut build_diagnostics = Vec::new();
-    let pseudo_info = tidb_stats_handle_storage::cluster_stats_load::StatsTableSchema::of_table_info(&table)
-        .pseudo_table_info(table.id);
+    let pseudo_info = &table;
     // Go `Handle.isSystemTable`: `filter.IsSystemSchema(db.Name.L)`.
     let pseudo_cacheable = table.temp_table_type == tidb_model::TempTableType::NONE
         && !tidb_filter::is_system_schema(&tidb_hack::go_to_lower(&statement.schema));
@@ -506,7 +505,7 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
                     options.physical_id,
                     table.partition.is_some(),
                     pseudo_cacheable,
-                    || tidb_stats::pseudo_table(&pseudo_info, false, true),
+                    || tidb_stats::pseudo_table(pseudo_info, false, true),
                 )
                 .map_or(tidb_stats::PSEUDO_ROW_COUNT, |cached| {
                     cached.hist_coll.realtime_count

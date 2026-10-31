@@ -20,20 +20,11 @@ use crate::{
     ALL_LOADED,
 };
 
-/// The index metadata used directly by `index.go` and `table.go`.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct IndexInfo {
-    pub id: i64,
-    pub name: String,
-    /// Lower-cased indexed-column names in index order.
-    pub columns: Vec<String>,
-    pub mv_index: bool,
-    /// Go `Info.Unique`.
-    pub unique: bool,
-}
+/// Go `Index.Info`: the schema's shared `*model.IndexInfo`.
+pub type IndexInfo = tidb_model::GoShared<tidb_model::IndexInfo>;
 
 /// An index histogram and its optional sketches.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct Index {
     pub cmsketch: Option<CmsSketch>,
     pub top_n: Option<TopN>,
@@ -49,11 +40,16 @@ impl Index {
     pub fn copy(&self) -> Self {
         let mut copied = self.clone();
         copied.histogram = self.histogram.copy();
+        // Go `nc.Info = c.Info.Clone()`.
+        copied.info = self
+            .info
+            .as_ref()
+            .and_then(|info| tidb_model::IndexInfo::clone_pointer(Some(&info.read())));
         copied
     }
 
     pub fn item_id(&self) -> i64 {
-        self.info.as_ref().expect("index has no metadata").id
+        self.info.as_ref().expect("index has no metadata").read().id
     }
 
     pub const fn is_all_evicted(&self) -> bool {

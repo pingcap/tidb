@@ -429,7 +429,7 @@ fn analyzed_composite_index_dominates_single_equality_index() {
             // Eviction removes payloads, not persisted HasAnalyzed metadata.
             let mut evicted_ids = Vec::new();
             current.hist_coll.for_each_index(|id, index| {
-                if index.info.as_ref().map_or(0, |info| info.columns.len()) != 1 {
+                if index.info.as_ref().map_or(0, |info| info.read().columns.len()) != 1 {
                     evicted_ids.push(id);
                 }
                 false

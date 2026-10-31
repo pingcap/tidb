@@ -1020,7 +1020,7 @@ pub fn equal_row_count_on_index(
     modify_count: i64,
     options: &EstimatorOptions,
 ) -> RowEstimate {
-    if index.info.as_ref().map_or(0, |info| info.columns.len()) == 1
+    if index.info.as_ref().map_or(0, |info| info.read().columns.len()) == 1
         && encoded == null_key_bytes().as_slice()
     {
         return tidb_stats::default_row_est(index.histogram.null_count as f64);
@@ -1205,8 +1205,8 @@ impl<'a> IndexEstimationStats<'a> {
         };
         Self {
             unique_columns: index
-                .filter(|index| index.info.as_ref().is_some_and(|info| info.unique))
-                .map(|index| index.info.as_ref().map_or(0, |info| info.columns.len())),
+                .filter(|index| index.info.as_ref().is_some_and(|info| info.read().unique))
+                .map(|index| index.info.as_ref().map_or(0, |info| info.read().columns.len())),
             index,
             columns,
             column_ndvs,
@@ -1313,7 +1313,7 @@ pub fn get_index_row_count(
         if values.is_some() {
             position += 1;
         }
-        let single_null = index.info.as_ref().map_or(0, |info| info.columns.len()) <= 1
+        let single_null = index.info.as_ref().map_or(0, |info| info.read().columns.len()) <= 1
             && range.low_val.first().is_some_and(Datum::is_null)
             && range.high_val.first().is_some_and(Datum::is_null);
         if position == 0 || single_null {
@@ -1333,8 +1333,8 @@ pub fn get_index_row_count(
             let mut column_counts = Vec::new();
             // Go skips cross validation entirely for a full unique key or
             // an out-of-range prefix; errors in unused columns must not leak.
-            if !(index.info.as_ref().is_some_and(|info| info.unique)
-                && position == index.info.as_ref().map_or(0, |info| info.columns.len()))
+            if !(index.info.as_ref().is_some_and(|info| info.read().unique)
+                && position == index.info.as_ref().map_or(0, |info| info.read().columns.len()))
                 && !out_of_range_on_index(index, &Datum::Bytes(encoded.to_vec()))
             {
                 for (column_position, column) in stats
@@ -1563,7 +1563,7 @@ pub fn exp_backoff_estimation(
     };
     let mut idx_low_bound = 1.0 / hist_ndv.min(realtime_row_count) as f64;
     let mut min_bound = idx_low_bound;
-    if len < index.info.as_ref().map_or(0, |info| info.columns.len()) {
+    if len < index.info.as_ref().map_or(0, |info| info.read().columns.len()) {
         idx_low_bound /= 0.9;
     }
     max_sel = go_max(idx_low_bound, max_sel);
@@ -1591,7 +1591,7 @@ pub fn get_index_row_count_for_stats_v2(
     let realtime_row_count = row_counts.index_realtime;
     let modify_count = row_counts.index_modify;
     let mut total = tidb_stats::default_row_est(0.0);
-    let is_single_col_idx = index.info.as_ref().map_or(0, |info| info.columns.len()) == 1;
+    let is_single_col_idx = index.info.as_ref().map_or(0, |info| info.read().columns.len()) == 1;
     let null_key = null_key_bytes();
 
     for range in ranges {
@@ -1601,7 +1601,7 @@ pub fn get_index_row_count_for_stats_v2(
         let mut rb =
             tidb_codec::encode_key_in_timezone(options.time_zone.as_ref(), &range.high_val)?;
         let full_len = range.low_val.len() == range.high_val.len()
-            && range.low_val.len() == index.info.as_ref().map_or(0, |info| info.columns.len());
+            && range.low_val.len() == index.info.as_ref().map_or(0, |info| info.read().columns.len());
 
         if lb == rb {
             // Case 1: a point.
@@ -1609,7 +1609,7 @@ pub fn get_index_row_count_for_stats_v2(
                 continue;
             }
             if full_len {
-                if index.info.as_ref().is_some_and(|info| info.unique) {
+                if index.info.as_ref().is_some_and(|info| info.read().unique) {
                     let only_null = range.low_val.iter().all(Datum::is_null);
                     if !only_null {
                         total.add_all(1.0);
@@ -1804,8 +1804,8 @@ pub struct EqualCondSelectivityInputs<'a> {
 pub fn get_equal_cond_selectivity(inputs: EqualCondSelectivityInputs<'_>) -> f64 {
     let index = inputs.index;
     let cover_all =
-        inputs.used_cols_len == index.info.as_ref().map_or(0, |info| info.columns.len());
-    if index.info.as_ref().is_some_and(|info| info.unique) && cover_all {
+        inputs.used_cols_len == index.info.as_ref().map_or(0, |info| info.read().columns.len());
+    if index.info.as_ref().is_some_and(|info| info.read().unique) && cover_all {
         return 1.0 / index.total_row_count();
     }
     let value = Datum::Bytes(inputs.encoded_value.to_vec());
@@ -1882,11 +1882,18 @@ mod equal_cond_selectivity_tests {
             top_n: None,
             cmsketch: None,
             stats_version: 2,
-            info: Some(tidb_stats::index::IndexInfo {
-                columns: vec![String::new(); num_columns],
+            info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
+                columns: (vec![String::new(); num_columns])
+                    .into_iter()
+                    .map(|name: String| tidb_model::IndexColumn {
+                        name: tidb_ast::CiString::new(name),
+                        ..Default::default()
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
                 unique: unique,
-                ..Default::default()
-            }),
+                ..tidb_model::IndexInfo::default()
+            })),
             ..Default::default()
         }
     }
@@ -2021,11 +2028,17 @@ mod recursive_index_estimation_tests {
             top_n: None,
             cmsketch: None,
             stats_version: 2,
-            info: Some(tidb_stats::index::IndexInfo {
-                columns: vec![String::new(); 1],
-                unique: false,
-                ..Default::default()
-            }),
+            info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
+                columns: (vec![String::new(); 1])
+                    .into_iter()
+                    .map(|name: String| tidb_model::IndexColumn {
+                        name: tidb_ast::CiString::new(name),
+                        ..Default::default()
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+                ..tidb_model::IndexInfo::default()
+            })),
             ..Default::default()
         }
     }
@@ -2097,7 +2110,7 @@ mod recursive_index_estimation_tests {
             high_exclude: false,
         };
         let mut index = index_stats(1, 100);
-        index.info.get_or_insert_with(Default::default).columns = vec![String::new(); 2];
+        index.info.get_or_insert_with(|| tidb_model::GoShared::new(tidb_model::IndexInfo::default())).write().columns = vec![tidb_model::IndexColumn::default(); 2].into();
         let estimate = |index: &tidb_stats::index::Index,
                         virtual_columns: &[bool],
                         candidates: &[Vec<RecursiveIndexStats<'_>>]| {
@@ -2154,7 +2167,7 @@ mod recursive_index_estimation_tests {
         };
         let columns = vec![Some(&column), None];
         let mut index = index_stats(1, 100);
-        index.info.get_or_insert_with(Default::default).columns = vec![String::new(); 2];
+        index.info.get_or_insert_with(|| tidb_model::GoShared::new(tidb_model::IndexInfo::default())).write().columns = vec![tidb_model::IndexColumn::default(); 2].into();
         let candidate = index_stats(2, 100);
         let recursive_indexes = vec![
             Vec::new(),
@@ -2192,7 +2205,7 @@ mod recursive_index_estimation_tests {
         // Keep the source index's lower bound below the candidate maximum so
         // its normalization denominator remains observable in max_sel.
         index.histogram.ndv = 1_000;
-        index.info.get_or_insert_with(Default::default).columns = vec![String::new(); 2];
+        index.info.get_or_insert_with(|| tidb_model::GoShared::new(tidb_model::IndexInfo::default())).write().columns = vec![tidb_model::IndexColumn::default(); 2].into();
         let second_column = tidb_stats::column::Column {
             histogram: Histogram {
                 id: 4,
@@ -2456,11 +2469,17 @@ mod version_one_value_tests {
                         top_n: Some(topn.clone()),
                         cmsketch: None,
                         stats_version: version,
-                        info: Some(tidb_stats::index::IndexInfo {
-                            columns: vec![String::new(); 1],
-                            unique: false,
-                            ..Default::default()
-                        }),
+                        info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
+                            columns: (vec![String::new(); 1])
+                                .into_iter()
+                                .map(|name: String| tidb_model::IndexColumn {
+                                    name: tidb_ast::CiString::new(name),
+                                    ..Default::default()
+                                })
+                                .collect::<Vec<_>>()
+                                .into(),
+                            ..tidb_model::IndexInfo::default()
+                        })),
                         ..Default::default()
                     };
                     if version == VERSION1 {
@@ -2732,11 +2751,17 @@ mod version_one_index_dispatch_tests {
             top_n: None,
             cmsketch: Some(cms),
             stats_version: VERSION1,
-            info: Some(tidb_stats::index::IndexInfo {
-                columns: vec![String::new(); 1],
-                unique: false,
-                ..Default::default()
-            }),
+            info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
+                columns: (vec![String::new(); 1])
+                    .into_iter()
+                    .map(|name: String| tidb_model::IndexColumn {
+                        name: tidb_ast::CiString::new(name),
+                        ..Default::default()
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+                ..tidb_model::IndexInfo::default()
+            })),
             ..Default::default()
         }
     }
@@ -2786,7 +2811,7 @@ mod version_one_index_dispatch_tests {
     #[test]
     fn version_one_suffix_prefers_the_first_index_even_when_invalid() {
         let mut index = index();
-        index.info.get_or_insert_with(Default::default).columns = vec![String::new(); 2];
+        index.info.get_or_insert_with(|| tidb_model::GoShared::new(tidb_model::IndexInfo::default())).write().columns = vec![tidb_model::IndexColumn::default(); 2].into();
         let column = topn_column(15, 7);
         let context = IndexEstimationStats::new(
             Some(&index),
@@ -2804,11 +2829,17 @@ mod version_one_index_dispatch_tests {
             cmsketch: None,
             top_n: None,
             stats_version: VERSION2,
-            info: Some(tidb_stats::index::IndexInfo {
-                columns: vec![String::new(); 1],
-                unique: false,
-                ..Default::default()
-            }),
+            info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
+                columns: (vec![String::new(); 1])
+                    .into_iter()
+                    .map(|name: String| tidb_model::IndexColumn {
+                        name: tidb_ast::CiString::new(name),
+                        ..Default::default()
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+                ..tidb_model::IndexInfo::default()
+            })),
             ..Default::default()
         };
         let invalid = IndexEstimationStats::new(
@@ -2838,7 +2869,7 @@ mod version_one_index_dispatch_tests {
     #[test]
     fn version_one_cross_validation_retains_handle_and_raw_ndv_metadata() {
         let mut index = index();
-        index.info.get_or_insert_with(Default::default).columns = vec![String::new(); 2];
+        index.info.get_or_insert_with(|| tidb_model::GoShared::new(tidb_model::IndexInfo::default())).write().columns = vec![tidb_model::IndexColumn::default(); 2].into();
         let column = topn_column(1, 10);
         let mut context = IndexEstimationStats::new(
             Some(&index),
@@ -2886,7 +2917,7 @@ mod version_one_index_dispatch_tests {
                 .est,
             0.0
         );
-        index.info.get_or_insert_with(Default::default).unique = true;
+        index.info.get_or_insert_with(|| tidb_model::GoShared::new(tidb_model::IndexInfo::default())).write().unique = true;
         index
             .cmsketch
             .as_mut()
@@ -2930,7 +2961,7 @@ mod version_one_index_dispatch_tests {
         let mut main = index();
         main.stats_version = VERSION2;
         main.cmsketch = None;
-        main.info.get_or_insert_with(Default::default).columns = vec![String::new(); 2];
+        main.info.get_or_insert_with(|| tidb_model::GoShared::new(tidb_model::IndexInfo::default())).write().columns = vec![tidb_model::IndexColumn::default(); 2].into();
         main.histogram.ndv = 2;
         main.histogram.buckets[0].repeat = 80;
         main.histogram.buckets[0].lower_bound =

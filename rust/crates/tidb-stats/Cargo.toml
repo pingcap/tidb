@@ -35,6 +35,7 @@ tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-vardef = { path = "../tidb-vardef" }
 
 [dev-dependencies]
+tidb-ast = { path = "../tidb-ast" }
 tidb-stats-handle-globalstats = { path = "../tidb-stats-handle-globalstats" }
 serde_json.workspace = true
 sha2 = { workspace = true }

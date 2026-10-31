@@ -441,11 +441,17 @@ fn risk_eq_skew_ratio_raises_index_equal_estimates_for_unseen_value() {
         top_n: None,
         cmsketch: None,
         stats_version: 2,
-        info: Some(tidb_stats::index::IndexInfo {
-            columns: vec![String::new(); 1],
-            unique: false,
-            ..Default::default()
-        }),
+        info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
+            columns: (vec![String::new(); 1])
+                .into_iter()
+                .map(|name: String| tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new(name),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            ..tidb_model::IndexInfo::default()
+        })),
         ..Default::default()
     };
     let columns: IndexColumnStats<'_> = vec![None];
@@ -498,11 +504,17 @@ fn index_estimation_survives_empty_idx_to_col_mapping() {
         top_n: None,
         cmsketch: None,
         stats_version: 2,
-        info: Some(tidb_stats::index::IndexInfo {
-            columns: vec![String::new(); 1],
-            unique: false,
-            ..Default::default()
-        }),
+        info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
+            columns: (vec![String::new(); 1])
+                .into_iter()
+                .map(|name: String| tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new(name),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            ..tidb_model::IndexInfo::default()
+        })),
         ..Default::default()
     };
     let columns: IndexColumnStats<'_> = vec![None];
@@ -609,11 +621,18 @@ fn unique_key_equal_conds_return_exact_counts() {
         top_n: None,
         cmsketch: None,
         stats_version: 2,
-        info: Some(tidb_stats::index::IndexInfo {
-            columns: vec![String::new(); 1],
+        info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
+            columns: (vec![String::new(); 1])
+                .into_iter()
+                .map(|name: String| tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new(name),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
             unique: true,
-            ..Default::default()
-        }),
+            ..tidb_model::IndexInfo::default()
+        })),
         ..Default::default()
     };
     for value in [7, 6] {
@@ -686,11 +705,17 @@ fn issue_39593_composite_prefix_point_ranges_match_estimates() {
         cmsketch: None,
         // Go's mock `statistics.Index` omits StatsVer here, so it is version 0.
         stats_version: 0,
-        info: Some(tidb_stats::index::IndexInfo {
-            columns: vec![String::new(); 2],
-            unique: false,
-            ..Default::default()
-        }),
+        info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
+            columns: (vec![String::new(); 2])
+                .into_iter()
+                .map(|name: String| tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new(name),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            ..tidb_model::IndexInfo::default()
+        })),
         ..Default::default()
     };
     let columns: IndexColumnStats<'_> = vec![Some(&first), Some(&second)];
@@ -761,11 +786,17 @@ fn risk_range_skew_ratio_widens_within_bucket_estimates() {
         top_n: None,
         cmsketch: None,
         stats_version: 2,
-        info: Some(tidb_stats::index::IndexInfo {
-            columns: vec![String::new(); 1],
-            unique: false,
-            ..Default::default()
-        }),
+        info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
+            columns: (vec![String::new(); 1])
+                .into_iter()
+                .map(|name: String| tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new(name),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            ..tidb_model::IndexInfo::default()
+        })),
         ..Default::default()
     };
     let range = Range {
@@ -872,11 +903,17 @@ fn last_bucket_end_value_heuristic_lifts_underrepresented_counts() {
         top_n: None,
         cmsketch: None,
         stats_version: 2,
-        info: Some(tidb_stats::index::IndexInfo {
-            columns: vec![String::new(); 1],
-            unique: false,
-            ..Default::default()
-        }),
+        info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
+            columns: (vec![String::new(); 1])
+                .into_iter()
+                .map(|name: String| tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new(name),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            ..tidb_model::IndexInfo::default()
+        })),
         ..Default::default()
     };
     let estimate_index = |value, realtime, modify| {

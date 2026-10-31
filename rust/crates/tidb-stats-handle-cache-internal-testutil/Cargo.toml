@@ -11,5 +11,7 @@ description = "TiDB statistics cache test support."
 workspace = true
 
 [dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-model = { path = "../tidb-model" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-stats = { path = "../tidb-stats" }

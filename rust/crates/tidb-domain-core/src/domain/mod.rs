@@ -108,7 +108,7 @@ impl tidb_stats_handle::StatisticsSource for ClusterStatisticsSource {
     ) -> Option<Arc<tidb_stats::Table>> {
         self.0
             .get_physical_table_stats(physical_id, table.partitioned, table.cacheable, || {
-                tidb_stats::pseudo_table(&table.info, false, true)
+                tidb_stats::pseudo_table(&table.info.read(), false, true)
             })
     }
 }

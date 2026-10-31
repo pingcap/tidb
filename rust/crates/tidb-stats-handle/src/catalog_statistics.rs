@@ -171,7 +171,7 @@ impl CatalogStatistics for Catalog {
                 });
                 statistics.hist_coll.for_each_index(|_, index| {
                     has_full |= index.is_full_load()
-                        && !index.info.as_ref().is_some_and(|info| info.mv_index);
+                        && !index.info.as_ref().is_some_and(|info| info.read().mv_index);
                     has_full
                 });
                 if statistics.hist_coll.pseudo || has_full {

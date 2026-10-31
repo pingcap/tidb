@@ -5855,6 +5855,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-expr",
  "tidb-exprctx",
+ "tidb-model",
  "tidb-planner-core-base",
  "tidb-planner-core-cost",
  "tidb-planner-property",
@@ -7076,6 +7077,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tidb-ast",
  "tidb-charset",
  "tidb-chunk",
  "tidb-codec",
@@ -7243,7 +7245,9 @@ dependencies = [
 name = "tidb-stats-handle-cache-internal-testutil"
 version = "0.0.0"
 dependencies = [
+ "tidb-ast",
  "tidb-datatype",
+ "tidb-model",
  "tidb-stats",
 ]
 

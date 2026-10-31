@@ -19,8 +19,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::{
-    CmsSketch, ColAndIdxExistenceMap, Column, ColumnInfo, ColumnMemUsage, FmSketch, Histogram,
-    Index, IndexInfo, IndexMemUsage, StatsLoadedStatus, TopN,
+    CmsSketch, ColAndIdxExistenceMap, Column, ColumnMemUsage, FmSketch, Histogram, Index,
+    IndexMemUsage, StatsLoadedStatus, TopN,
 };
 
 pub const PSEUDO_VERSION: u64 = 0;
@@ -196,28 +196,6 @@ pub enum CopyIntent {
     IndexMapWritable,
     BothMapsWritable,
     AllDataWritable,
-}
-
-/// Schema inputs consumed by Go `PseudoTable`.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct PseudoColumnInfo {
-    pub info: ColumnInfo,
-    pub public: bool,
-    pub hidden: bool,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct PseudoIndexInfo {
-    pub info: IndexInfo,
-    pub public: bool,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct PseudoTableInfo {
-    pub id: i64,
-    pub pk_is_handle: bool,
-    pub columns: Vec<PseudoColumnInfo>,
-    pub indices: Vec<PseudoIndexInfo>,
 }
 
 /// Planner column identity consumed by `ID2UniqueID` and
@@ -401,7 +379,7 @@ impl HistColl {
         }
         for index in self.stable_indices() {
             let index = read(&index);
-            if index.info.as_ref().is_some_and(|info| info.mv_index) {
+            if index.info.as_ref().is_some_and(|info| info.read().mv_index) {
                 continue;
             }
             if index.is_full_load() {
@@ -415,7 +393,7 @@ impl HistColl {
         let Some(index) = index else {
             return (self.realtime_count, self.modify_count);
         };
-        if !index.info.as_ref().is_some_and(|info| info.mv_index) || !index.is_full_load() {
+        if !index.info.as_ref().is_some_and(|info| info.read().mv_index) || !index.is_full_load() {
             return (self.realtime_count, self.modify_count);
         }
         let analyzed = self.analyze_row_count();
@@ -877,8 +855,10 @@ impl Table {
     pub fn index_starting_with_column(&self, name: &str) -> Option<SharedIndex> {
         read(&self.hist_coll.indices).values().find_map(|shared| {
             let index = read(shared);
-            let info = index.info.as_ref().expect("index has no metadata");
-            (info.columns[0] == name).then(|| Arc::clone(shared))
+            let info = index.info.as_ref().expect("index has no metadata").read();
+            let first = info.columns.get(0).expect("index has no columns");
+            let matches = first.read().name.lowercase() == name;
+            matches.then(|| Arc::clone(shared))
         })
     }
 
@@ -886,8 +866,8 @@ impl Table {
     pub fn column_by_name(&self, name: &str) -> Option<SharedColumn> {
         read(&self.hist_coll.columns).values().find_map(|shared| {
             let column = read(shared);
-            let info = column.info.as_ref().expect("column has no metadata");
-            (info.name == name).then(|| Arc::clone(shared))
+            let info = column.info.as_ref().expect("column has no metadata").read();
+            (info.name.lowercase() == name).then(|| Arc::clone(shared))
         })
     }
 }
@@ -895,27 +875,38 @@ impl Table {
 /// Go `PseudoTable`, including public/hidden schema filtering and the option
 /// to omit histogram metadata while retaining the existence map.
 pub fn pseudo_table(
-    table_info: &PseudoTableInfo,
+    table_info: &tidb_model::TableInfo,
     allow_trigger_loading: bool,
     allow_fill_hist_meta: bool,
 ) -> Table {
     let coll = pseudo_hist_coll(table_info.id, allow_trigger_loading);
     let mut existence =
         ColAndIdxExistenceMap::new(table_info.columns.len(), table_info.indices.len());
-    for column in &table_info.columns {
-        if !column.public || column.hidden {
+    for column in table_info.columns.iter_deref() {
+        // A hidden column serves an expression index; Go neither collects
+        // nor estimates with its statistics.
+        let (id, public, primary_key) = {
+            let info = column.read();
+            (
+                info.id,
+                info.state == tidb_model::SchemaState::PUBLIC && !info.hidden,
+                info.field_type
+                    .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
+            )
+        };
+        if !public {
             continue;
         }
-        existence.insert_column(column.info.id, false);
+        existence.insert_column(id, false);
         if allow_fill_hist_meta {
             coll.set_column(
-                column.info.id,
+                id,
                 Column {
                     physical_id: table_info.id,
-                    info: Some(column.info.clone()),
-                    is_handle: table_info.pk_is_handle && column.info.primary_key,
+                    info: Some(column),
+                    is_handle: table_info.pk_is_handle && primary_key,
                     histogram: Histogram {
-                        id: column.info.id,
+                        id,
                         ..Histogram::default()
                     },
                     ..Column::default()
@@ -923,19 +914,23 @@ pub fn pseudo_table(
             );
         }
     }
-    for index in &table_info.indices {
-        if !index.public {
+    for index in table_info.indices.iter_deref() {
+        let (id, public) = {
+            let info = index.read();
+            (info.id, info.state == tidb_model::SchemaState::PUBLIC)
+        };
+        if !public {
             continue;
         }
-        existence.insert_index(index.info.id, false);
+        existence.insert_index(id, false);
         if allow_fill_hist_meta {
             coll.set_index(
-                index.info.id,
+                id,
                 Index {
                     physical_id: table_info.id,
-                    info: Some(index.info.clone()),
+                    info: Some(index),
                     histogram: Histogram {
-                        id: index.info.id,
+                        id,
                         ..Histogram::default()
                     },
                     ..Index::default()
@@ -956,10 +951,10 @@ pub fn pseudo_table(
 
 /// The `TableInfo` facts Go `Handle.getStatsByPhysicalID` reads on a cache
 /// miss.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct PseudoStatsTable {
-    /// The schema `PseudoTable(tblInfo, false, true)` is built from.
-    pub info: PseudoTableInfo,
+    /// The `tblInfo` `PseudoTable(tblInfo, false, true)` is built from.
+    pub info: tidb_model::GoShared<tidb_model::TableInfo>,
     /// `tblInfo.GetPartitionInfo() != nil`.
     pub partitioned: bool,
     /// Neither a temporary table nor a table of a system schema, the two

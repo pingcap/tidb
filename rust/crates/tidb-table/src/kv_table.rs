@@ -1147,6 +1147,12 @@ impl KvTable {
         KvTable {
             meta: tidb_model::GoShared::new(tidb_model::TableInfo {
                 id: table_id,
+                columns: columns
+                    .iter()
+                    .enumerate()
+                    .map(|(offset, column)| fixture_column_info(column, offset, false))
+                    .collect::<Vec<_>>()
+                    .into(),
                 ..tidb_model::TableInfo::default()
             }),
             table_id,
@@ -2816,6 +2822,8 @@ impl KvTable {
     /// It goes at the very end, so no existing offset moves and the tail
     /// invariant holds by construction.
     pub fn add_hidden_column(&mut self, column: KvColumn) -> usize {
+        let offset = self.columns.len();
+        self.record_fixture_column(&column, offset, true);
         self.columns_mut().push(column);
         self.hidden_columns += 1;
         self.columns.len() - 1
@@ -2834,6 +2842,7 @@ impl KvTable {
     /// `information_schema.columns` gives them ordinals 1 and 2.
     pub fn add_column(&mut self, position: usize, column: KvColumn) {
         let position = position.min(self.visible_column_count());
+        self.record_fixture_column(&column, position, false);
         self.columns_mut().insert(position, column);
         let shift = |offset: &mut usize| {
             if *offset >= position {
@@ -3194,7 +3203,57 @@ impl KvTable {
             index.clustered_primary = true;
         }
         self.record_mv_key_part_source(&index);
+        self.record_fixture_index(&index);
         self.indexes_mut().push(index);
+    }
+
+    /// A table built from columns alone (a test fixture) records each column
+    /// it gains in its `TableInfo`, as a Go fixture's `TableInfo` lists it. A
+    /// table `TableFromMeta` loaded already holds every column there.
+    fn record_fixture_column(&mut self, column: &KvColumn, offset: usize, hidden: bool) {
+        if self.meta.read().cols().iter_deref().any(|info| info.read().id == column.id) {
+            return;
+        }
+        let info = fixture_column_info(column, offset, hidden);
+        self.update_meta(|meta| meta.columns.push_go(info));
+    }
+
+    /// [`Self::record_fixture_column`] for an index.
+    fn record_fixture_index(&mut self, index: &KvIndex) {
+        if self.meta.read().indices.iter_deref().any(|info| info.read().id == index.id) {
+            return;
+        }
+        let info = tidb_model::IndexInfo {
+            id: index.id,
+            name: tidb_ast::CiString::new(index.name.clone()),
+            columns: index
+                .column_offsets
+                .iter()
+                .enumerate()
+                .map(|(position, offset)| tidb_model::IndexColumn {
+                    // A fixture may declare an index over columns it never added.
+                    name: self
+                        .columns
+                        .get(*offset)
+                        .map(|column| tidb_ast::CiString::new(column.name.clone()))
+                        .unwrap_or_default(),
+                    offset: *offset as i64,
+                    length: index
+                        .prefix_lengths
+                        .get(position)
+                        .copied()
+                        .unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH as i64),
+                    ..tidb_model::IndexColumn::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            state: tidb_model::SchemaState::PUBLIC,
+            unique: index.unique,
+            primary: index.primary,
+            mv_index: self.mv_key_part_source(index.id).is_some(),
+            ..tidb_model::IndexInfo::default()
+        };
+        self.update_meta(|meta| meta.indices.push_go(info));
     }
 
     /// Adds an index a DDL is still adding or dropping, which only the write
@@ -3454,6 +3513,9 @@ impl KvTable {
     /// records as `TableInfo.PKIsHandle`.
     pub fn set_pk_handle_offset(&mut self, offset: usize) {
         self.pk_handle_offset = Some(offset);
+        if !self.meta.read().pk_is_handle {
+            self.update_meta(|meta| meta.pk_is_handle = true);
+        }
     }
 
     /// The handle column's offset, if the table has one.
@@ -4618,4 +4680,17 @@ pub fn hypo_kv_indexes(
         .into_iter()
         .filter_map(|index| crate::table_from_meta::kv_index(index, &table.columns).ok())
         .collect()
+}
+
+/// Go `model.ColumnInfo` for a column of a table built from columns alone.
+fn fixture_column_info(column: &KvColumn, offset: usize, hidden: bool) -> tidb_model::ColumnInfo {
+    tidb_model::ColumnInfo {
+        id: column.id,
+        name: tidb_ast::CiString::new(column.name.clone()),
+        offset: offset as i64,
+        field_type: column.field_type.clone(),
+        state: tidb_model::SchemaState::PUBLIC,
+        hidden,
+        ..tidb_model::ColumnInfo::default()
+    }
 }

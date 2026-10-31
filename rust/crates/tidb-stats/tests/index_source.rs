@@ -20,7 +20,6 @@ use tidb_stats::CmsSketch;
 use tidb_stats::FmSketch;
 use tidb_stats::Histogram;
 use tidb_stats::Index;
-use tidb_stats::IndexInfo;
 use tidb_stats::StatsLoadedStatus;
 use tidb_stats::TopN;
 use tidb_stats::ALL_EVICTED;
@@ -34,13 +33,19 @@ fn populated_index(version: i64) -> Index {
         cmsketch: Some(cmsketch),
         top_n: Some(top_n),
         fm_sketch: Some(FmSketch::new(8)),
-        info: Some(IndexInfo {
-            unique: false,
+        info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
             id: 9,
-            name: "idx_a".to_owned(),
-            columns: vec!["a".to_owned()],
-            mv_index: false,
-        }),
+            name: tidb_ast::CiString::new("idx_a".to_owned()),
+            columns: (vec!["a".to_owned()])
+                .into_iter()
+                .map(|name: String| tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new(name),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            ..tidb_model::IndexInfo::default()
+        })),
         histogram: Histogram {
             id: 9,
             null_count: 1,
@@ -61,14 +66,26 @@ fn populated_index(version: i64) -> Index {
 
 #[test]
 fn source_copy_nil_and_deep_boundaries_match() {
-    assert_eq!(copy_index(None), None);
+    assert!(copy_index(None).is_none());
     let source = populated_index(2);
     let mut copied = copy_index(Some(&source)).unwrap();
     copied.histogram.buckets[0].count = 100;
-    copied.info.as_mut().unwrap().columns.push("b".to_owned());
+    copied.info.as_mut().unwrap().write().columns.push_go(tidb_model::IndexColumn {
+        name: tidb_ast::CiString::new("b"),
+        ..tidb_model::IndexColumn::default()
+    });
     copied.cmsketch.as_mut().unwrap().insert_bytes(b"new");
     assert_eq!(source.histogram.buckets[0].count, 6);
-    assert_eq!(source.info.as_ref().unwrap().columns, ["a"]);
+    let names = source
+        .info
+        .as_ref()
+        .unwrap()
+        .read()
+        .columns
+        .iter_deref()
+        .map(|column| column.read().name.lowercase().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["a"]);
     assert_eq!(source.cmsketch.as_ref().unwrap().total_count(), 4);
 }
 
@@ -145,7 +162,7 @@ fn source_memory_excludes_fm_sketch() {
 /// uniqueness from disjoint local partition NDVs.
 #[test]
 fn stats_ndv_batch_schema_unique_admission_and_local_partition_bounds() {
-    use tidb_model::{ColumnInfo, IndexColumn, IndexInfo, SchemaState, TableInfo};
+    use tidb_model::{IndexColumn, IndexInfo, SchemaState, TableInfo};
     use tidb_stats_handle_globalstats::{is_local_unique, unique_global_ndv};
     use tidb_stats::index::{is_single_col_non_prefix_unique_index, unique_by_schema};
     let mut index = IndexInfo {
@@ -161,9 +178,9 @@ fn stats_ndv_batch_schema_unique_admission_and_local_partition_bounds() {
         ..IndexInfo::default()
     };
     let table = TableInfo {
-        columns: vec![ColumnInfo {
+        columns: vec![tidb_model::ColumnInfo {
             id: 3,
-            ..ColumnInfo::default()
+            ..tidb_model::ColumnInfo::default()
         }]
         .into(),
         indices: vec![index.clone()].into(),

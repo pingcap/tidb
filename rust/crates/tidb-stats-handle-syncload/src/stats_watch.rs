@@ -1219,12 +1219,11 @@ mod tests {
         table.hist_coll.set_column(
             1,
             Column {
-                info: Some(tidb_stats::ColumnInfo {
+                info: Some(tidb_model::GoShared::new(tidb_model::ColumnInfo {
                     id: 1,
-                    name: "a".to_owned(),
-                    primary_key: false,
-                    flag: 0,
-                }),
+                    name: tidb_ast::CiString::new("a".to_owned()),
+                    ..tidb_model::ColumnInfo::default()
+                })),
                 histogram: evicted.histogram,
                 stats_loaded_status: evicted.load_status,
                 stats_version: evicted.stats_ver,
@@ -1441,12 +1440,11 @@ mod tests {
         hist_coll.set_column(
             1,
             Column {
-                info: Some(tidb_stats::ColumnInfo {
+                info: Some(tidb_model::GoShared::new(tidb_model::ColumnInfo {
                     id: 1,
-                    name: "a".to_owned(),
-                    primary_key: false,
-                    flag: 0,
-                }),
+                    name: tidb_ast::CiString::new("a".to_owned()),
+                    ..tidb_model::ColumnInfo::default()
+                })),
                 histogram: Histogram {
                     id: 1,
                     ndv: 10,
@@ -1672,20 +1670,16 @@ mod tests {
     /// keeps reading the table as pseudo, also after a pass over it.
     #[test]
     fn a_stats_miss_caches_go_pseudo_table_outside_the_statement_index() {
-        let info = tidb_stats::PseudoTableInfo {
+        let info = tidb_model::TableInfo {
             id: 1,
-            pk_is_handle: false,
-            columns: vec![tidb_stats::PseudoColumnInfo {
-                info: tidb_stats::ColumnInfo {
-                    id: 1,
-                    name: "a".to_owned(),
-                    primary_key: false,
-                    flag: 0,
-                },
-                public: true,
-                hidden: false,
-            }],
-            indices: Vec::new(),
+            columns: vec![tidb_model::ColumnInfo {
+                id: 1,
+                name: tidb_ast::CiString::new("a"),
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::ColumnInfo::default()
+            }]
+            .into(),
+            ..tidb_model::TableInfo::default()
         };
         let pseudo = || tidb_stats::pseudo_table(&info, false, true);
 

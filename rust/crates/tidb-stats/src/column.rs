@@ -17,21 +17,11 @@
 use crate::histogram::Histogram;
 use crate::{CmsSketch, ColumnMemUsage, FmSketch, StatsLoadedStatus, TopN, ALL_EVICTED};
 
-/// The column metadata used directly by `column.go`.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ColumnInfo {
-    /// TiDB column identifier.
-    pub id: i64,
-    /// Lower-cased column name.
-    pub name: String,
-    /// Whether the MySQL primary-key flag is present.
-    pub primary_key: bool,
-    /// Go `Info.GetFlag()`: the column's field-type flags.
-    pub flag: usize,
-}
+/// Go `Column.Info`: the schema's shared `*model.ColumnInfo`.
+pub type ColumnInfo = tidb_model::GoShared<tidb_model::ColumnInfo>;
 
 /// A column histogram and its optional sketches.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct Column {
     pub cmsketch: Option<CmsSketch>,
     pub top_n: Option<TopN>,
@@ -49,6 +39,11 @@ impl Column {
     pub fn copy(&self) -> Self {
         let mut copied = self.clone();
         copied.histogram = self.histogram.copy();
+        // Go `nc.Info = c.Info.Clone()`.
+        copied.info = self
+            .info
+            .as_ref()
+            .and_then(|info| tidb_model::ColumnInfo::clone_pointer(Some(&info.read())));
         copied
     }
 
@@ -86,7 +81,7 @@ impl Column {
     pub fn is_unsigned(&self) -> bool {
         self.info
             .as_ref()
-            .is_some_and(|info| tidb_mysql::has_unsigned_flag(info.flag))
+            .is_some_and(|info| info.read().field_type.is_unsigned())
     }
 
     /// Go `GetIncreaseFactor`, including its zero-count identity fallback.
@@ -103,7 +98,7 @@ impl Column {
     /// wrapping.
     pub fn memory_usage(&self) -> ColumnMemUsage {
         let mut usage = ColumnMemUsage {
-            column_id: self.info.as_ref().expect("column has no metadata").id,
+            column_id: self.item_id(),
             histogram_mem_usage: self.histogram.memory_usage(),
             ..ColumnMemUsage::default()
         };
@@ -135,11 +130,8 @@ impl Column {
             StatsLoadedStatus::new(self.stats_loaded_status.stats_initialized(), ALL_EVICTED);
     }
 
-    pub const fn item_id(&self) -> i64 {
-        match &self.info {
-            Some(info) => info.id,
-            None => panic!("column has no metadata"),
-        }
+    pub fn item_id(&self) -> i64 {
+        self.info.as_ref().expect("column has no metadata").read().id
     }
 
     pub const fn is_all_evicted(&self) -> bool {
@@ -196,10 +188,17 @@ pub fn column_is_all_evicted(column: Option<&Column>) -> bool {
     column.is_none_or(Column::is_all_evicted)
 }
 
-/// Go `EmptyColumn` at the dependency-closed metadata boundary.
+/// Go `EmptyColumn`.
 pub fn empty_column(physical_id: i64, pk_is_handle: bool, info: ColumnInfo) -> Column {
-    let id = info.id;
-    let is_handle = pk_is_handle && info.primary_key;
+    let (id, primary_key) = {
+        let info = info.read();
+        (
+            info.id,
+            info.field_type
+                .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
+        )
+    };
+    let is_handle = pk_is_handle && primary_key;
     Column {
         physical_id,
         info: Some(info),

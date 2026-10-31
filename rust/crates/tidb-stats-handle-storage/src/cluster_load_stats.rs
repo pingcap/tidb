@@ -20,8 +20,7 @@
 //! then commits every item, usage slice, and final meta update in the separate
 //! transactions the Go statistics handle uses.
 
-use tidb_datatype::FieldTypeFlags;
-use crate::json::{statistics_table_from_json_schema, LoadStatsColumnSchema, LoadStatsError, LoadStatsIndexSchema, LoadStatsTableSchema};
+use crate::json::{table_stats_from_json, LoadStatsError};
 use tidb_stats_util::JsonTable;
 use tidb_stats_util::TIDB_GLOBAL_STATS;
 use tidb_model::table_info::TableInfo;
@@ -80,7 +79,7 @@ pub struct LoadedStatsTable {
 /// Schema and physical-table tasks selected by Go
 /// `LoadStatsFromJSONNoUpdate` before its partition workers start.
 pub(crate) struct ResolvedClusterLoadStats {
-    pub(crate) schema: LoadStatsTableSchema,
+    pub(crate) schema: TableInfo,
     pub(crate) targets: Vec<ClusterLoadStatsTarget>,
     pub(crate) concurrent: bool,
 }
@@ -158,7 +157,7 @@ pub(crate) fn resolve_cluster_load_stats(
             database: json.database_name.clone(),
             table: json.table_name.clone(),
         })?;
-    let schema = load_stats_schema(table);
+    let schema = table.clone();
 
     let Some(partitions) = json.partitions.as_ref() else {
         return Ok(ResolvedClusterLoadStats {
@@ -206,7 +205,7 @@ pub(crate) fn resolve_cluster_load_stats(
 }
 
 pub(crate) fn load_cluster_stats_target(
-    schema: &LoadStatsTableSchema,
+    schema: &TableInfo,
     target: &ClusterLoadStatsTarget,
 ) -> Result<LoadedStatsTable, ClusterLoadStatsError> {
     let json = target
@@ -216,49 +215,12 @@ pub(crate) fn load_cluster_stats_target(
     Ok(loaded_table(schema, target.physical_id, json)?)
 }
 
-fn load_stats_schema(table: &TableInfo) -> LoadStatsTableSchema {
-    LoadStatsTableSchema {
-        columns: table
-            .columns
-            .iter_deref()
-            .map(|column| {
-                let column = column.read();
-                LoadStatsColumnSchema {
-                    id: column.id,
-                    name: column.name.lowercase().to_owned(),
-                    field_type: column.field_type.clone(),
-                    primary_key: column.field_type.flags() & FieldTypeFlags::PRI_KEY != 0,
-                }
-            })
-            .collect(),
-        indexes: table
-            .indices
-            .iter_deref()
-            .map(|index| {
-                let index = index.read();
-                LoadStatsIndexSchema {
-                    id: index.id,
-                    name: index.name.lowercase().to_owned(),
-                    columns: index
-                        .columns
-                        .iter_deref()
-                        .map(|column| column.read().name.lowercase().to_owned())
-                        .collect(),
-                    mv_index: index.mv_index,
-                    unique: index.unique,
-                }
-            })
-            .collect(),
-        pk_is_handle: table.pk_is_handle,
-    }
-}
-
 fn loaded_table(
-    schema: &LoadStatsTableSchema,
+    schema: &TableInfo,
     physical_id: i64,
     json: &JsonTable,
 ) -> Result<LoadedStatsTable, LoadStatsError> {
-    let table = statistics_table_from_json_schema(schema, physical_id, json)?;
+    let table = table_stats_from_json(schema, physical_id, json)?;
     Ok(LoadedStatsTable {
         physical_id,
         count: json.count,

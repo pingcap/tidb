@@ -16,20 +16,19 @@ use std::sync::{Arc, RwLock};
 
 use tidb_datatype::Datum;
 use tidb_stats::{
-    Bucket, ColAndIdxExistenceMap, Column, ColumnInfo, CopyIntent, HistColl, Histogram, Index,
-    IndexInfo, PseudoColumnInfo, PseudoIndexInfo, PseudoTableInfo, QueryColumn, QueryIndexInfo,
+    Bucket, ColAndIdxExistenceMap, Column, CopyIntent, HistColl, Histogram, Index,
+    QueryColumn, QueryIndexInfo,
     QueryTableInfo, StatsLoadedStatus, Table, TopN, ALL_EVICTED, PSEUDO_ROW_COUNT, PSEUDO_VERSION,
     RATIO_OF_PSEUDO_ESTIMATE,
 };
 
 fn column(id: i64, count: i64, status: StatsLoadedStatus) -> Column {
     Column {
-        info: Some(ColumnInfo {
-            flag: 0,
-            id,
-            name: format!("c{id}"),
-            primary_key: false,
-        }),
+        info: Some(tidb_model::GoShared::new(tidb_model::ColumnInfo {
+            id: id,
+            name: tidb_ast::CiString::new(format!("c{id}")),
+            ..tidb_model::ColumnInfo::default()
+        })),
         histogram: Histogram {
             id,
             buckets: vec![Bucket {
@@ -49,13 +48,20 @@ fn column(id: i64, count: i64, status: StatsLoadedStatus) -> Column {
 
 fn index(id: i64, count: i64, mv_index: bool, status: StatsLoadedStatus) -> Index {
     Index {
-        info: Some(IndexInfo {
-            unique: false,
-            id,
-            name: format!("i{id}"),
-            columns: vec![format!("c{id}")],
-            mv_index,
-        }),
+        info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
+            id: id,
+            name: tidb_ast::CiString::new(format!("i{id}")),
+            columns: (vec![format!("c{id}")])
+                .into_iter()
+                .map(|name: String| tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new(name),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            mv_index: mv_index,
+            ..tidb_model::IndexInfo::default()
+        })),
         histogram: Histogram {
             id,
             buckets: vec![Bucket {
@@ -245,59 +251,37 @@ fn source_table_memory_uses_go_int64_wrapping_boundaries() {
 
 #[test]
 fn source_pseudo_table_filters_schema_and_optionally_fills_histograms() {
-    let info = PseudoTableInfo {
+    let column = |id, name: &str, state, hidden| tidb_model::ColumnInfo {
+        id,
+        name: tidb_ast::CiString::new(name),
+        state,
+        hidden,
+        ..tidb_model::ColumnInfo::default()
+    };
+    let index = |id, name: &str, state| tidb_model::IndexInfo {
+        id,
+        name: tidb_ast::CiString::new(name),
+        state,
+        ..tidb_model::IndexInfo::default()
+    };
+    let public = tidb_model::SchemaState::PUBLIC;
+    let mut pk = column(1, "pk", public, false);
+    pk.add_flag(tidb_mysql::PriKeyFlag as u64);
+    let info = tidb_model::TableInfo {
         id: 42,
         pk_is_handle: true,
         columns: vec![
-            PseudoColumnInfo {
-                info: ColumnInfo {
-                    flag: 0,
-                    id: 1,
-                    name: "pk".to_owned(),
-                    primary_key: true,
-                },
-                public: true,
-                hidden: false,
-            },
-            PseudoColumnInfo {
-                info: ColumnInfo {
-                    flag: 0,
-                    id: 2,
-                    name: "hidden".to_owned(),
-                    primary_key: false,
-                },
-                public: true,
-                hidden: true,
-            },
-            PseudoColumnInfo {
-                info: ColumnInfo {
-                    flag: 0,
-                    id: 3,
-                    name: "nonpublic".to_owned(),
-                    primary_key: false,
-                },
-                public: false,
-                hidden: false,
-            },
-        ],
+            pk,
+            column(2, "hidden", public, true),
+            column(3, "nonpublic", tidb_model::SchemaState::WRITE_ONLY, false),
+        ]
+        .into(),
         indices: vec![
-            PseudoIndexInfo {
-                info: IndexInfo {
-                    id: 4,
-                    name: "public".to_owned(),
-                    ..IndexInfo::default()
-                },
-                public: true,
-            },
-            PseudoIndexInfo {
-                info: IndexInfo {
-                    id: 5,
-                    name: "nonpublic".to_owned(),
-                    ..IndexInfo::default()
-                },
-                public: false,
-            },
-        ],
+            index(4, "public", public),
+            index(5, "nonpublic", tidb_model::SchemaState::WRITE_ONLY),
+        ]
+        .into(),
+        ..tidb_model::TableInfo::default()
     };
 
     let metadata_only = tidb_stats::pseudo_table(&info, false, false);
@@ -461,13 +445,19 @@ fn source_index_start_lookup_panics_for_empty_column_metadata() {
     coll.set_index(
         1,
         Index {
-            info: Some(IndexInfo {
-                unique: false,
+            info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 1,
-                name: "broken".to_owned(),
-                columns: Vec::new(),
-                mv_index: false,
-            }),
+                name: tidb_ast::CiString::new("broken".to_owned()),
+                columns: (Vec::new())
+                    .into_iter()
+                    .map(|name: String| tidb_model::IndexColumn {
+                        name: tidb_ast::CiString::new(name),
+                        ..Default::default()
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+                ..tidb_model::IndexInfo::default()
+            })),
             ..Index::default()
         },
     );

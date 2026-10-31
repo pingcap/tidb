@@ -73,129 +73,13 @@ use tidb_stats::cmsketch::{
     cmsketch_and_topn_from_proto, CmsSketchProto, CmsSketchProtoRow, CmsSketchProtoTopN,
 };
 use tidb_stats::histogram::Histogram;
-use tidb_stats::{fm_sketch_from_proto, ColAndIdxExistenceMap, Column, ColumnInfo, FmSketchProto, HistColl, Index, IndexInfo, StatsLoadedStatus, Table};
+use tidb_stats::{fm_sketch_from_proto, ColAndIdxExistenceMap, Column, FmSketchProto, HistColl, Index, StatsLoadedStatus, Table};
 use tidb_stats_util::{JsonBucket, JsonCmSketch, JsonCmSketchRow, JsonCmSketchTopN, JsonColumn, JsonFmSketch, JsonHistogram, JsonPredicateColumn};
 use tidb_stats_util::JsonTable;
 use tidb_compress::{GzipReaderPool, GzipWriterPool};
 
 use tidb_table::kv_table::KvTable;
 use tidb_hack::GoToLower;
-
-/// The `TableInfo` subset Go `TableStatsFromJSON` reads.
-///
-/// Keeping this schema-only contract independent of [`KvTable`] lets the
-/// cluster storage path convert against its canonical `model.TableInfo`
-/// without constructing an executor table or duplicating JSON semantics.
-#[derive(Clone, Debug)]
-pub struct LoadStatsTableSchema {
-    /// Columns in schema order, including hidden columns.
-    pub columns: Vec<LoadStatsColumnSchema>,
-    /// Indexes in schema order.
-    pub indexes: Vec<LoadStatsIndexSchema>,
-    /// Go `TableInfo.PKIsHandle`.
-    pub pk_is_handle: bool,
-}
-
-/// One schema column used while restoring statistics JSON.
-#[derive(Clone, Debug)]
-pub struct LoadStatsColumnSchema {
-    /// Go `ColumnInfo.ID`.
-    pub id: i64,
-    /// Go `ColumnInfo.Name.L`.
-    pub name: String,
-    /// Go `ColumnInfo.FieldType`.
-    pub field_type: FieldType,
-    /// Whether this column carries the primary-key flag.
-    pub primary_key: bool,
-}
-
-/// One schema index used while restoring statistics JSON.
-#[derive(Clone, Debug)]
-pub struct LoadStatsIndexSchema {
-    /// Go `IndexInfo.ID`.
-    pub id: i64,
-    /// Go `IndexInfo.Name.L`.
-    pub name: String,
-    /// Lowercase index-column names.
-    pub columns: Vec<String>,
-    /// Go `IndexInfo.MVIndex`.
-    pub mv_index: bool,
-    /// Go `IndexInfo.Unique`.
-    pub unique: bool,
-}
-
-impl LoadStatsColumnSchema {
-    /// Go `Column.Info`: the schema column these statistics describe.
-    #[must_use]
-    pub fn info(&self) -> ColumnInfo {
-        ColumnInfo {
-            id: self.id,
-            name: self.name.clone(),
-            primary_key: self.primary_key,
-            flag: self.field_type.flags() as usize,
-        }
-    }
-}
-
-impl LoadStatsIndexSchema {
-    /// Go `Index.Info`: the schema index these statistics describe.
-    #[must_use]
-    pub fn info(&self) -> IndexInfo {
-        IndexInfo {
-            id: self.id,
-            name: self.name.clone(),
-            columns: self.columns.clone(),
-            mv_index: self.mv_index,
-            unique: self.unique,
-        }
-    }
-}
-
-impl LoadStatsTableSchema {
-    /// Builds the schema contract from the ordinary executor table.
-    #[must_use]
-    pub fn from_kv_table(table: &KvTable) -> Self {
-        Self {
-            columns: table
-                .columns()
-                .iter()
-                .enumerate()
-                .map(|(offset, column)| LoadStatsColumnSchema {
-                    id: column.id,
-                    name: column.name.go_to_lower(),
-                    field_type: column.field_type.clone(),
-                    // Go `mysql.HasPriKeyFlag(colInfo.GetFlag())`.
-                    primary_key: column
-                        .field_type
-                        .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
-                })
-                .collect(),
-            indexes: table
-                .indexes()
-                .iter()
-                .map(|index| LoadStatsIndexSchema {
-                    id: index.id,
-                    name: index.name.go_to_lower(),
-                    columns: index
-                        .column_offsets
-                        .iter()
-                        .map(|offset| {
-                            table
-                                .columns()
-                                .get(*offset)
-                                .expect("index column offset outside table columns")
-                                .name
-                                .go_to_lower()
-                        })
-                        .collect(),
-                    mv_index: table.mv_key_part_source(index.id).is_some(),
-                    unique: index.unique,
-                })
-                .collect(),
-            pk_is_handle: table.pk_handle_offset().is_some(),
-        }
-    }
-}
 
 /// Why a dump could not be loaded. Go surfaces each of these as the
 /// statement's error, so the text names what the caller can act on.
@@ -442,8 +326,10 @@ pub fn gen_json_table_from_stats(
             .info
             .as_ref()
             .expect("column has no metadata")
+            .read()
             .name
-            .go_to_lower();
+            .lowercase()
+            .to_owned();
         columns.insert(
             name,
             Some(stats_item_to_json(
@@ -465,8 +351,10 @@ pub fn gen_json_table_from_stats(
             .info
             .as_ref()
             .expect("index has no metadata")
+            .read()
             .name
-            .go_to_lower();
+            .lowercase()
+            .to_owned();
         indices.insert(
             name,
             Some(stats_item_to_json(
@@ -658,12 +546,12 @@ const STATS_CONVERSION_FLAGS: ConversionFlags = ConversionFlags::from_bits(
 /// One dumped column into the estimator's [`tidb_stats::column::Column`]: Go
 /// `TableStatsFromJSON`'s column arm.
 fn column_from_json(
-    column: &LoadStatsColumnSchema,
+    info: &tidb_model::GoShared<tidb_model::ColumnInfo>,
     json: &JsonColumn,
     physical_id: i64,
     is_handle: bool,
-    primary_key: bool,
 ) -> Result<Column, LoadStatsError> {
+    let column = info.read();
     let proto = json
         .histogram
         .as_ref()
@@ -684,7 +572,7 @@ fn column_from_json(
                         &SessionTimeZone::utc(),
                     )
                     .map_err(|error| {
-                        LoadStatsError::Convert(format!("column `{}`: {error:?}", column.name))
+                        LoadStatsError::Convert(format!("column `{}`: {error:?}", column.name.original()))
                     })?;
                 *bound = converted.value;
             }
@@ -701,12 +589,7 @@ fn column_from_json(
         cmsketch: cms,
         top_n: topn,
         fm_sketch: fmsketch_from_json(json.fm_sketch.as_ref()),
-        info: Some(ColumnInfo {
-            id: column.id,
-            name: column.name.go_to_lower(),
-            primary_key,
-            flag: column.field_type.flags() as usize,
-        }),
+        info: Some(info.clone()),
         histogram,
         stats_loaded_status: StatsLoadedStatus::full_load(),
         physical_id,
@@ -719,16 +602,17 @@ fn column_from_json(
 /// which sets id/null-count/version/correlation on the histogram and nothing
 /// else -- crucially NO `ConvertTo`, because index bounds are key bytes.
 fn index_from_json(
-    index: &LoadStatsIndexSchema,
+    info: &tidb_model::GoShared<tidb_model::IndexInfo>,
     json: &JsonColumn,
     physical_id: i64,
 ) -> Result<Index, LoadStatsError> {
+    let index_id = info.read().id;
     let proto = json
         .histogram
         .as_ref()
         .expect("index stats JSON has no histogram");
     let mut histogram = histogram_from_json(proto)?;
-    histogram.id = index.id;
+    histogram.id = index_id;
     histogram.null_count = json.null_count;
     histogram.last_update_version = json.last_update_version;
     histogram.correlation = json.correlation;
@@ -737,13 +621,7 @@ fn index_from_json(
         cmsketch: cms,
         top_n: topn,
         fm_sketch: fmsketch_from_json(json.fm_sketch.as_ref()),
-        info: Some(IndexInfo {
-            id: index.id,
-            name: index.name.go_to_lower(),
-            columns: index.columns.clone(),
-            mv_index: index.mv_index,
-            unique: index.unique,
-        }),
+        info: Some(info.clone()),
         histogram,
         stats_loaded_status: StatsLoadedStatus::full_load(),
         stats_version: resolve_stats_version(json),
@@ -765,16 +643,12 @@ pub fn statistics_table_from_json(
     physical_id: i64,
     json: &JsonTable,
 ) -> Result<Table, LoadStatsError> {
-    statistics_table_from_json_schema(
-        &LoadStatsTableSchema::from_kv_table(table),
-        physical_id,
-        json,
-    )
+    table_stats_from_json(&table.meta().read(), physical_id, json)
 }
 
-/// Go `storage.TableStatsFromJSON` against the canonical schema-only subset.
-pub fn statistics_table_from_json_schema(
-    table: &LoadStatsTableSchema,
+/// Go `storage.TableStatsFromJSON(tableInfo, physicalID, jsonTbl)`.
+pub fn table_stats_from_json(
+    table: &tidb_model::TableInfo,
     physical_id: i64,
     json: &JsonTable,
 ) -> Result<Table, LoadStatsError> {
@@ -785,43 +659,54 @@ pub fn statistics_table_from_json_schema(
         json.columns.as_ref().map_or(0, BTreeMap::len),
         json.indices.as_ref().map_or(0, BTreeMap::len),
     );
-    let mut existence = ColAndIdxExistenceMap::new(table.columns.len(), table.indexes.len());
+    let mut existence = ColAndIdxExistenceMap::new(table.columns.len(), table.indices.len());
     if let Some(dumped) = &json.indices {
         for (name, entry) in dumped {
             let entry = entry.as_ref().expect("index stats JSON entry is null");
-            for index in &table.indexes {
+            for index in table.indices.iter_deref() {
                 // Go: `idxInfo.Name.L != id` -- the LOWERCASED schema name
                 // against the raw map key. Dumps write lowercase keys
                 // (`GenJSONTableFromStats` uses `.Name.L`), so an uppercase
                 // key matches nothing there and must match nothing here.
-                if index.name.go_to_lower() != *name {
+                let (id, matches) = {
+                    let info = index.read();
+                    (info.id, info.name.lowercase() == name)
+                };
+                if !matches {
                     continue;
                 }
-                let item = index_from_json(index, entry, physical_id)?;
+                let item = index_from_json(&index, entry, physical_id)?;
                 if item.stats_version != 0 {
                     hist_coll.stats_version = item.stats_version as i32;
                 }
-                hist_coll.set_index(index.id, item);
-                existence.insert_index(index.id, true);
+                hist_coll.set_index(id, item);
+                existence.insert_index(id, true);
             }
         }
     }
     if let Some(dumped) = &json.columns {
         for (name, entry) in dumped {
             let entry = entry.as_ref().expect("column stats JSON entry is null");
-            for column in &table.columns {
+            for column in table.columns.iter_deref() {
                 // Same rule as the index loop: `colInfo.Name.L != id`.
-                if column.name.go_to_lower() != *name {
+                let (id, matches, primary_key) = {
+                    let info = column.read();
+                    (
+                        info.id,
+                        info.name.lowercase() == name,
+                        info.field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
+                    )
+                };
+                if !matches {
                     continue;
                 }
-                let is_handle = table.pk_is_handle && column.primary_key;
-                let item =
-                    column_from_json(column, entry, physical_id, is_handle, column.primary_key)?;
+                let is_handle = table.pk_is_handle && primary_key;
+                let item = column_from_json(&column, entry, physical_id, is_handle)?;
                 if item.stats_version != 0 {
                     hist_coll.stats_version = item.stats_version as i32;
                 }
-                hist_coll.set_column(column.id, item);
-                existence.insert_column(column.id, true);
+                hist_coll.set_column(id, item);
+                existence.insert_column(id, true);
             }
         }
     }
@@ -842,12 +727,8 @@ mod tests {
 
     #[test]
     fn projection_keeps_analyzed_items_that_are_not_resident() {
-        let mut stats = statistics_table_from_json_schema(
-            &LoadStatsTableSchema {
-                columns: Vec::new(),
-                indexes: Vec::new(),
-                pk_is_handle: false,
-            },
+        let mut stats = table_stats_from_json(
+            &tidb_model::TableInfo::default(),
             41,
             &JsonTable::default(),
         )
@@ -947,16 +828,19 @@ mod tests {
     /// bounds while index key bytes remain unchanged.
     #[test]
     fn stats_ndv_batch_index_sketch_survives_json_round_trip() {
-        let schema = LoadStatsTableSchema {
-            columns: Vec::new(),
-            pk_is_handle: false,
-            indexes: vec![LoadStatsIndexSchema {
+        let schema = tidb_model::TableInfo {
+            indices: vec![tidb_model::IndexInfo {
                 id: 2,
-                name: "i".into(),
-                columns: vec!["a".into()],
-                mv_index: false,
-                unique: false,
-            }],
+                name: tidb_ast::CiString::new("i"),
+                columns: vec![tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new("a"),
+                    ..tidb_model::IndexColumn::default()
+                }]
+                .into(),
+                ..tidb_model::IndexInfo::default()
+            }]
+            .into(),
+            ..tidb_model::TableInfo::default()
         };
         let sketch = JsonFmSketch {
             mask: 3,
@@ -974,7 +858,7 @@ mod tests {
             )])),
             ..JsonTable::default()
         };
-        let table = statistics_table_from_json_schema(&schema, 41, &json).unwrap();
+        let table = table_stats_from_json(&schema, 41, &json).unwrap();
         let index = table.hist_coll.get_index(2).unwrap();
         assert_eq!(
             index.read().unwrap().fm_sketch,
@@ -1000,12 +884,11 @@ mod tests {
         coll.set_column(
             1,
             Column {
-                info: Some(ColumnInfo {
+                info: Some(tidb_model::GoShared::new(tidb_model::ColumnInfo {
                     id: 1,
-                    name: "A".to_owned(),
-                    primary_key: false,
-                    flag: 0,
-                }),
+                    name: tidb_ast::CiString::new("A".to_owned()),
+                    ..tidb_model::ColumnInfo::default()
+                })),
                 histogram: column_histogram,
                 stats_version: 2,
                 physical_id: 41,
@@ -1018,11 +901,11 @@ mod tests {
         coll.set_index(
             2,
             Index {
-                info: Some(IndexInfo {
+                info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 2,
-                    name: "IDX_A".to_owned(),
-                    ..IndexInfo::default()
-                }),
+                    name: tidb_ast::CiString::new("IDX_A".to_owned()),
+                    ..tidb_model::IndexInfo::default()
+                })),
                 histogram: index_histogram,
                 stats_version: 2,
                 physical_id: 41,
@@ -1032,12 +915,8 @@ mod tests {
         let table = Table {
             hist_coll: coll,
             version: 88,
-            ..statistics_table_from_json_schema(
-                &LoadStatsTableSchema {
-                    columns: Vec::new(),
-                    indexes: Vec::new(),
-                    pk_is_handle: false,
-                },
+            ..table_stats_from_json(
+                &tidb_model::TableInfo::default(),
                 41,
                 &JsonTable::default(),
             )
@@ -1168,12 +1047,19 @@ mod tests {
         stats.hist_coll.set_index(
             7,
             tidb_stats::Index {
-                info: Some(tidb_stats::IndexInfo {
+                info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 7,
-                    name: "idx_a".to_owned(),
-                    columns: vec!["a".to_owned()],
-                    ..Default::default()
-                }),
+                    name: tidb_ast::CiString::new("idx_a".to_owned()),
+                    columns: (vec!["a".to_owned()])
+                        .into_iter()
+                        .map(|name: String| tidb_model::IndexColumn {
+                            name: tidb_ast::CiString::new(name),
+                            ..Default::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
+                    ..tidb_model::IndexInfo::default()
+                })),
                 histogram: Histogram {
                     id: 7,
                     ..Default::default()
@@ -1216,12 +1102,11 @@ mod tests {
         stats.hist_coll.set_column(
             1,
             Column {
-                info: Some(ColumnInfo {
+                info: Some(tidb_model::GoShared::new(tidb_model::ColumnInfo {
                     id: 1,
-                    name: "a".to_owned(),
-                    primary_key: false,
-                    flag: 0,
-                }),
+                    name: tidb_ast::CiString::new("a".to_owned()),
+                    ..tidb_model::ColumnInfo::default()
+                })),
                 histogram: Histogram {
                     id: 1,
                     ndv: 1,

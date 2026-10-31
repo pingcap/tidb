@@ -11,6 +11,7 @@ description = "TiDB pkg/planner/cardinality (Rust)."
 workspace = true
 
 [dependencies]
+tidb-model = { path = "../tidb-model" }
 tidb-planner-core-base = { path = "../tidb-planner-core-base" }
 tidb-planner-property = { path = "../tidb-planner-property" }
 tidb-planner-core-cost = { path = "../tidb-planner-core-cost" }

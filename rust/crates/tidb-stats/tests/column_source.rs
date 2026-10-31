@@ -29,12 +29,15 @@ fn populated_column(stats_version: i64) -> Column {
         cmsketch: Some(CmsSketch::new(2, 4)),
         top_n: Some(top_n(3)),
         fm_sketch: Some(FmSketch::new(8)),
-        info: Some(ColumnInfo {
-            flag: 0,
-            id: 7,
-            name: "a".to_owned(),
-            primary_key: true,
-        }),
+        info: Some(tidb_model::GoShared::new({
+            let mut info = tidb_model::ColumnInfo {
+                id: 7,
+                name: tidb_ast::CiString::new("a".to_owned()),
+                ..tidb_model::ColumnInfo::default()
+            };
+            info.add_flag(tidb_mysql::PriKeyFlag as u64);
+            info
+        })),
         histogram: Histogram {
             id: 7,
             ndv: 2,
@@ -57,15 +60,15 @@ fn populated_column(stats_version: i64) -> Column {
 
 #[test]
 fn source_copy_is_nil_preserving_and_deep() {
-    assert_eq!(copy_column(None), None);
+    assert!(copy_column(None).is_none());
     let source = populated_column(2);
     let mut copied = copy_column(Some(&source)).unwrap();
     copied.histogram.buckets[0].count = 99;
     copied.cmsketch.as_mut().unwrap().insert_bytes(b"x");
-    copied.info.as_mut().unwrap().name = "changed".to_owned();
+    copied.info.as_mut().unwrap().write().name = tidb_ast::CiString::new("changed");
     assert_eq!(source.histogram.buckets[0].count, 5);
     assert_eq!(source.cmsketch.as_ref().unwrap().total_count(), 0);
-    assert_eq!(source.info.as_ref().unwrap().name, "a");
+    assert_eq!(source.info.as_ref().unwrap().read().name.lowercase(), "a");
 }
 
 #[test]
@@ -80,7 +83,7 @@ fn source_v1_and_v2_counts_and_increase_factor_match() {
     assert_eq!(v2.total_row_count(), 10.0);
     assert_eq!(v2.increase_factor(15), 1.5);
 
-    let empty = empty_column(9, false, ColumnInfo::default());
+    let empty = empty_column(9, false, ColumnInfo::new(tidb_model::ColumnInfo::default()));
     assert_eq!(empty.increase_factor(200), 1.0);
 }
 
@@ -162,12 +165,15 @@ fn source_status_availability_and_empty_column_boundaries_match() {
     let empty = empty_column(
         -1,
         true,
-        ColumnInfo {
-            flag: 0,
-            id: 5,
-            name: "pk".to_owned(),
-            primary_key: true,
-        },
+        tidb_model::GoShared::new({
+            let mut info = tidb_model::ColumnInfo {
+                id: 5,
+                name: tidb_ast::CiString::new("pk".to_owned()),
+                ..tidb_model::ColumnInfo::default()
+            };
+            info.add_flag(tidb_mysql::PriKeyFlag as u64);
+            info
+        }),
     );
     assert_eq!(empty.physical_id, -1);
     assert_eq!(empty.histogram.id, 5);

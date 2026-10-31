@@ -193,7 +193,8 @@ fn merge_partitioned_global_statistics(
         .max()
         .unwrap_or(0);
     global.hist_coll.pseudo = false;
-    let schema = tidb_stats_handle_storage::json::LoadStatsTableSchema::from_kv_table(table);
+    let meta = table.meta();
+    let meta = meta.read();
 
     let bucket_count = usize::try_from(options.num_buckets.max(1)).unwrap_or(256);
     let topn_count = u32::try_from(options.num_topn.max(0)).unwrap_or(0);
@@ -254,11 +255,7 @@ fn merge_partitioned_global_statistics(
                     cmsketch: merged.cmsketch,
                     stats_version: source.stats_version,
                     stats_loaded_status: source.stats_loaded_status,
-                    info: schema
-                        .columns
-                        .iter()
-                        .find(|schema| schema.id == column.id)
-                        .map(tidb_stats_handle_storage::json::LoadStatsColumnSchema::info),
+                    info: meta.find_column_by_id(column.id),
                     physical_id: table.table_id(),
                     is_handle: source.is_handle,
                     ..Default::default()
@@ -331,11 +328,7 @@ fn merge_partitioned_global_statistics(
                     cmsketch: merged.cmsketch,
                     stats_version: source.stats_version,
                     stats_loaded_status: source.stats_loaded_status,
-                    info: schema
-                        .indexes
-                        .iter()
-                        .find(|schema| schema.id == index.id)
-                        .map(tidb_stats_handle_storage::json::LoadStatsIndexSchema::info),
+                    info: meta.find_index_by_id(index.id),
                     physical_id: table.table_id(),
                     ..Default::default()
                 },

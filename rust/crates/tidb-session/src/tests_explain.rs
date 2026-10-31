@@ -72,11 +72,18 @@ fn install_cardinality_mock_statistics_for_table(
                 top_n: None,
                 cmsketch: None,
                 stats_version: 2,
-                info: Some(tidb_stats::index::IndexInfo {
-                    columns: vec![String::new(); index.column_offsets.len()],
+                info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    columns: (vec![String::new(); index.column_offsets.len()])
+                        .into_iter()
+                        .map(|name: String| tidb_model::IndexColumn {
+                            name: tidb_ast::CiString::new(name),
+                            ..Default::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
                     unique: index.unique,
-                    ..Default::default()
-                }),
+                    ..tidb_model::IndexInfo::default()
+                })),
                 ..Default::default()
             },
         );

@@ -2432,25 +2432,28 @@ impl Session {
             panic!("{schema}.{name} is not a stored table");
         };
         // Go's loader attaches each item's schema `Info` from `TableInfo`.
-        let schema = tidb_stats_handle_storage::json::LoadStatsTableSchema::from_kv_table(table);
+        let meta = table.meta();
+        let meta = meta.read();
         let mut published = statistics.copy_as(tidb_stats::CopyIntent::AllDataWritable);
         published.hist_coll.physical_id = physical_id;
         published.is_pk_handle = table.pk_handle_offset().is_some();
         let handle_id = table
             .pk_handle_offset()
             .map(|offset| table.columns()[offset].id);
-        for column in &schema.columns {
-            if let Some(item) = published.hist_coll.get_column(column.id) {
+        for column in meta.columns.iter_deref() {
+            let id = column.read().id;
+            if let Some(item) = published.hist_coll.get_column(id) {
                 let mut item = item.write().unwrap_or_else(std::sync::PoisonError::into_inner);
-                item.info = Some(column.info());
+                item.info = Some(column);
                 item.physical_id = physical_id;
-                item.is_handle = handle_id == Some(column.id);
+                item.is_handle = handle_id == Some(id);
             }
         }
-        for index in &schema.indexes {
-            if let Some(item) = published.hist_coll.get_index(index.id) {
+        for index in meta.indices.iter_deref() {
+            let id = index.read().id;
+            if let Some(item) = published.hist_coll.get_index(id) {
                 let mut item = item.write().unwrap_or_else(std::sync::PoisonError::into_inner);
-                item.info = Some(index.info());
+                item.info = Some(index);
                 item.physical_id = physical_id;
             }
         }

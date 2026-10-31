@@ -767,11 +767,17 @@
                     top_n: None,
                     cmsketch: None,
                     stats_version: 2,
-                    info: Some(tidb_stats::index::IndexInfo {
-                        columns: vec![String::new(); 1],
-                        unique: false,
-                        ..Default::default()
-                    }),
+                    info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
+                        columns: (vec![String::new(); 1])
+                            .into_iter()
+                            .map(|name: String| tidb_model::IndexColumn {
+                                name: tidb_ast::CiString::new(name),
+                                ..Default::default()
+                            })
+                            .collect::<Vec<_>>()
+                            .into(),
+                        ..tidb_model::IndexInfo::default()
+                    })),
                     ..Default::default()
                 },
             )];

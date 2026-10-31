@@ -228,11 +228,17 @@ fn index_ab() -> tidb_stats::index::Index {
         ])),
         cmsketch: None,
         stats_version: 2,
-        info: Some(tidb_stats::index::IndexInfo {
-            columns: vec![String::new(); 2],
-            unique: false,
-            ..Default::default()
-        }),
+        info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
+            columns: (vec![String::new(); 2])
+                .into_iter()
+                .map(|name: String| tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new(name),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            ..tidb_model::IndexInfo::default()
+        })),
         ..Default::default()
     }
 }
@@ -778,11 +784,18 @@ fn source_composite_index_prefix_matching_the_first_bound_is_in_range() {
         top_n: Some(index_topn),
         cmsketch: None,
         stats_version: 2,
-        info: Some(tidb_stats::index::IndexInfo {
-            columns: vec![String::new(); 2],
+        info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
+            columns: (vec![String::new(); 2])
+                .into_iter()
+                .map(|name: String| tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new(name),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
             unique: true,
-            ..Default::default()
-        }),
+            ..tidb_model::IndexInfo::default()
+        })),
         ..Default::default()
     };
     let leading_column = tidb_stats::column::Column {

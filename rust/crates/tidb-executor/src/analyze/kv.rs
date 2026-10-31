@@ -48,9 +48,6 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_stats::cmsketch::TopN;
 
 use tidb_stats::Table;
-use tidb_stats_handle_storage::json::{
-    LoadStatsColumnSchema, LoadStatsIndexSchema, LoadStatsTableSchema,
-};
 use crate::analyze::{
     AnalyzeError, AnalyzeOptions, AnalyzePlan, AnalyzeRun, AnalyzedColumn, AnalyzedHistogram,
     AnalyzedIndex,
@@ -123,7 +120,8 @@ pub fn analyze_kv_table_columns(
     }
     let analyzed = run.finish()?;
 
-    let schema = LoadStatsTableSchema::from_kv_table(table);
+    let meta = table.meta();
+    let meta = meta.read();
     let physical_id = table.table_id();
     let handle_id = table
         .pk_handle_offset()
@@ -135,11 +133,7 @@ pub fn analyze_kv_table_columns(
         .filter(|column| !tidb_table::generated_column::is_virtual(*column));
     for (built, column) in analyzed.columns.into_iter().zip(source_columns) {
         debug_assert_eq!(built.id, column.id);
-        let info = schema
-            .columns
-            .iter()
-            .find(|schema| schema.id == column.id)
-            .map(LoadStatsColumnSchema::info);
+        let info = meta.find_column_by_id(column.id);
         let mut item = column_statistics(built, &column.field_type, info, physical_id);
         item.is_handle = handle_id == Some(column.id);
         columns.insert(column.id, item);
@@ -147,11 +141,7 @@ pub fn analyze_kv_table_columns(
     let mut indexes = BTreeMap::new();
     for (position, built) in analyzed.indexes.into_iter().enumerate() {
         let stored = &table.indexes()[source_indexes[position]];
-        let info = schema
-            .indexes
-            .iter()
-            .find(|schema| schema.id == stored.id)
-            .map(LoadStatsIndexSchema::info);
+        let info = meta.find_index_by_id(stored.id);
         indexes.insert(built.id, index_statistics(built, info, physical_id));
     }
 
@@ -236,11 +226,7 @@ pub fn analyze_kv_table_independent_index(
     let built = processor
         .finish()
         .map_err(|error| AnalyzeError::Unsupported(error.to_string()))?;
-    let info = LoadStatsTableSchema::from_kv_table(table)
-        .indexes
-        .iter()
-        .find(|schema| schema.id == index.id)
-        .map(LoadStatsIndexSchema::info);
+    let info = table.meta().read().find_index_by_id(index.id);
     let mut indexes = BTreeMap::new();
     indexes.insert(
         index.id,

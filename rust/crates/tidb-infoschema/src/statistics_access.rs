@@ -20,51 +20,6 @@
 
 use crate::*;
 
-/// Go `PseudoTable`'s schema inputs from a catalog table, whose columns and
-/// indexes are all public; a column past the visible ones is hidden.
-pub fn pseudo_table_info(table: &crate::KvTable) -> tidb_stats::PseudoTableInfo {
-    tidb_stats::PseudoTableInfo {
-        id: table.table_id(),
-        pk_is_handle: table.pk_handle_offset().is_some(),
-        columns: table
-            .columns()
-            .iter()
-            .enumerate()
-            .map(|(offset, column)| tidb_stats::PseudoColumnInfo {
-                info: tidb_stats::ColumnInfo {
-                    id: column.id,
-                    name: column.name.go_to_lower(),
-                    primary_key: column
-                        .field_type
-                        .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
-                    flag: column.field_type.flags() as usize,
-                },
-                public: true,
-                hidden: table.is_hidden(offset),
-            })
-            .collect(),
-        indices: table
-            .indexes()
-            .iter()
-            .map(|index| tidb_stats::PseudoIndexInfo {
-                info: tidb_stats::IndexInfo {
-                    id: index.id,
-                    name: index.name.go_to_lower(),
-                    columns: index
-                        .column_offsets
-                        .iter()
-                        .filter_map(|offset| table.columns().get(*offset))
-                        .map(|column| column.name.go_to_lower())
-                        .collect(),
-                    mv_index: table.mv_key_part_source(index.id).is_some(),
-                    unique: index.unique,
-                },
-                public: true,
-            })
-            .collect(),
-    }
-}
-
 impl Catalog {
     /// The `TableInfo` facts Go `Handle.getStatsByPhysicalID` reads on a
     /// statistics cache miss, for a table or partition id of this image.
@@ -97,7 +52,7 @@ impl Catalog {
                             continue;
                         };
                         let schema = Arc::new(tidb_stats::PseudoStatsTable {
-                            info: pseudo_table_info(table),
+                            info: table.meta(),
                             partitioned: table.partition().is_some(),
                             cacheable: table.temp_table_type() == tidb_model::TempTableType::NONE
                                 && !system_schema,

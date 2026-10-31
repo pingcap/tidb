@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_stats::{
-    CmsSketch, Column, ColumnInfo, HistColl, Histogram, Index, IndexInfo, StatsLoadedStatus, Table,
+    CmsSketch, Column, HistColl, Histogram, Index, StatsLoadedStatus, Table,
     TopN,
 };
 
@@ -41,10 +41,10 @@ fn column(id: i64, with_cms: bool, with_top_n: bool, with_hist: bool) -> Column 
     Column {
         cmsketch: with_cms.then(|| CmsSketch::new(1, 1)),
         top_n: with_top_n.then(top_n),
-        info: Some(ColumnInfo {
-            id,
-            ..ColumnInfo::default()
-        }),
+        info: Some(tidb_model::GoShared::new(tidb_model::ColumnInfo {
+            id: id,
+            ..tidb_model::ColumnInfo::default()
+        })),
         histogram,
         stats_loaded_status: StatsLoadedStatus::full_load(),
         ..Column::default()
@@ -60,10 +60,10 @@ fn index(id: i64, with_cms: bool, with_top_n: bool, with_hist: bool) -> Index {
     Index {
         cmsketch: with_cms.then(|| CmsSketch::new(1, 1)),
         top_n: with_top_n.then(top_n),
-        info: Some(IndexInfo {
-            id,
-            ..IndexInfo::default()
-        }),
+        info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
+            id: id,
+            ..tidb_model::IndexInfo::default()
+        })),
         histogram,
         stats_loaded_status: StatsLoadedStatus::full_load(),
         ..Index::default()
@@ -105,10 +105,10 @@ pub fn mock_table_append_column(table: &Table) {
         id,
         Column {
             cmsketch: Some(CmsSketch::new(1, 1)),
-            info: Some(ColumnInfo {
-                id,
-                ..ColumnInfo::default()
-            }),
+            info: Some(tidb_model::GoShared::new(tidb_model::ColumnInfo {
+                id: id,
+                ..tidb_model::ColumnInfo::default()
+            })),
             ..Column::default()
         },
     );
@@ -121,10 +121,10 @@ pub fn mock_table_append_index(table: &Table) {
         id,
         Index {
             cmsketch: Some(CmsSketch::new(1, 1)),
-            info: Some(IndexInfo {
-                id,
-                ..IndexInfo::default()
-            }),
+            info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
+                id: id,
+                ..tidb_model::IndexInfo::default()
+            })),
             ..Index::default()
         },
     );

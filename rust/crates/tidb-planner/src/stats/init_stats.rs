@@ -502,11 +502,18 @@ use tidb_charset::Collation;
                 top_n: Some(topn.clone()),
                 cmsketch: None,
                 stats_version: 2,
-                info: Some(tidb_stats::index::IndexInfo {
-                    columns: vec![String::new(); 1],
+                info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
+                    columns: (vec![String::new(); 1])
+                        .into_iter()
+                        .map(|name: String| tidb_model::IndexColumn {
+                            name: tidb_ast::CiString::new(name),
+                            ..Default::default()
+                        })
+                        .collect::<Vec<_>>()
+                        .into(),
                     mv_index: multi_valued,
-                    ..Default::default()
-                }),
+                    ..tidb_model::IndexInfo::default()
+                })),
                 stats_loaded_status: if full {
                     StatsLoadedStatus::full_load()
                 } else {
