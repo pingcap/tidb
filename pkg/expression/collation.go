@@ -244,7 +244,7 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 
 func deriveCollation(ctx BuildContext, funcName string, args []Expression, retType types.EvalType, argTps ...types.EvalType) (ec *ExprCollation, err error) {
 	switch funcName {
-	case ast.Concat, ast.ConcatWS, ast.Lower, ast.Lcase, ast.Reverse, ast.Upper, ast.Ucase, ast.Quote, ast.Coalesce, ast.Greatest, ast.Least:
+	case ast.Concat, ast.ConcatWS, ast.Lower, ast.Lcase, ast.Reverse, ast.Upper, ast.Ucase, ast.Quote, ast.Soundex, ast.Coalesce, ast.Greatest, ast.Least:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args...)
 	case ast.Left, ast.Right, ast.Repeat, ast.Trim, ast.LTrim, ast.RTrim, ast.Substr, ast.SubstringIndex, ast.Replace, ast.Substring, ast.Mid, ast.Translate:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0])

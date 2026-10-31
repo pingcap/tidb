@@ -141,6 +141,39 @@ func skipIfNotStarterForFTS(t *testing.T) {
 	}
 }
 
+func TestSoundex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustQuery("select soundex('Hello'), soundex('Quadratically'), soundex('Tymczak'), soundex('a'), soundex('')").Check(
+		testkit.Rows("H400 Q36324 T520 A000 "))
+	tk.MustQuery("select soundex(null), soundex(12345), soundex('日本語')").Check(testkit.Rows("<nil>  日000"))
+	tk.MustQuery("select soundex(_binary 'Hello'), hex(soundex(_binary 0xE9616263))").Check(testkit.Rows("H400 41313230"))
+	tk.MustQuery("select charset(soundex('a')), charset(soundex(_binary 'a'))").Check(testkit.Rows("utf8mb4 binary"))
+
+	// A Latin-1 argument is read byte by byte and its letters are kept as they are, as MySQL 8.0.46 does.
+	tk.MustQuery("select hex(soundex(_latin1 0xE9616263)), hex(soundex(_latin1 0xC3A9616263)), hex(soundex(_latin1 0x61E9626364))").Check(
+		testkit.Rows("E9313230 C3313230 41313233"))
+	tk.MustExec("create table l (a varchar(10) character set latin1)")
+	tk.MustExec("insert into l values (0xE9616263), (0xC3A9616263), (0x61E9626364), ('abc')")
+	tk.MustQuery("select hex(soundex(a)) from l order by a").Check(testkit.Rows("41313230", "41313233", "C3313230", "E9313230"))
+
+	// The collation of the result comes from the argument.
+	tk.MustQuery("select collation(soundex(_utf8mb4'abc' collate utf8mb4_unicode_ci)), coercibility(soundex(_utf8mb4'abc' collate utf8mb4_unicode_ci))").Check(
+		testkit.Rows("utf8mb4_unicode_ci 0"))
+	tk.MustQuery("select collation(soundex(_latin1'abc')), charset(soundex(_latin1'abc'))").Check(testkit.Rows("latin1_bin latin1"))
+
+	tk.MustExec("create table t (id int primary key, a varchar(100) character set utf8 collate utf8_unicode_ci)")
+	tk.MustExec("insert into t values (1, 'Test'), (2, 'Text'), (3, 'Other'), (4, null)")
+	tk.MustQuery("select id from t where soundex(a) = soundex('Test') order by id").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select id, soundex(a) from t order by id").Check(testkit.Rows("1 T230", "2 T230", "3 O360", "4 <nil>"))
+	tk.MustQuery("select collation(soundex(a)), coercibility(soundex(a)) from t limit 1").Check(testkit.Rows("utf8_unicode_ci 2"))
+
+	tk.MustGetErrCode("select soundex()", errno.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select soundex('a', 'b')", errno.ErrWrongParamcountToNativeFct)
+}
+
 func TestFTSParser(t *testing.T) {
 	skipIfNotStarterForFTS(t)
 

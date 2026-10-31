@@ -717,6 +717,87 @@ func TestReverse(t *testing.T) {
 	}
 }
 
+func TestSoundex(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.Soundex]
+	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
+	require.NoError(t, err)
+	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, types.KindNull, d.Kind())
+
+	// The expected values are what MySQL 8.0.46 returns.
+	cases := []struct {
+		input  any
+		expect string
+	}{
+		{"Hello", "H400"},
+		{"Quadratically", "Q36324"},
+		{"Ashcraft", "A2613"},
+		{"Tymczak", "T520"},
+		{"Pfister", "P236"},
+		{"Robert", "R163"},
+		{"Rupert", "R163"},
+		{"Wright", "W623"},
+		{"Rodgers", "R3262"},
+		{"Jackson", "J500"},
+		{"Supercalifragilisticexpialidocious", "S162416242321432"},
+		// a vowel, H or W does not separate equal codes
+		{"Bab", "B000"},
+		{"Bbb", "B000"},
+		{"Ahw", "A000"},
+		// a result has at least four characters
+		{"a", "A000"},
+		{"b", "B000"},
+		{"Abcd", "A123"},
+		{"Abcdefg", "A12312"},
+		// characters that are not letters are skipped, the first letter is upper cased
+		{"", ""},
+		{"12345", ""},
+		{12345, ""},
+		{"-", ""},
+		{"  1-ab", "A100"},
+		{"0abc", "A120"},
+		{"a b c", "A120"},
+		{"a-", "A000"},
+		{"Jack Daniels", "J3542"},
+		{"hëllo wörld", "H4643"},
+		// non ASCII letters keep their case, characters above U+00FF are all letters
+		{"Ünïcode", "Ü523"},
+		{"éa", "é000"},
+		{"aé", "A000"},
+		{"ßa", "ß000"},
+		{"日本語", "日000"},
+		{"€abc", "€120"},
+		{"\U0001F600abc", "\U0001F600120"},
+		{"١abc", "١120"},
+		{"²abc", "A120"},
+		// U+00C0 is the boundary: U+00D7 and U+00F7 are letters, U+00AA, U+00B5 and U+00BA are not
+		{"×abc", "×120"},
+		{"÷abc", "÷120"},
+		{"ÿabc", "ÿ120"},
+		{"ªabc", "A120"},
+		{"µabc", "A120"},
+		{"ºabc", "A120"},
+		// only the ASCII letters of a binary string are letters
+		{[]byte("Hello"), "H400"},
+		{[]byte{0xC3, 0xA9, 'a', 'b', 'c'}, "A120"},
+		{[]byte{0xE9, 'a', 'b', 'c'}, "A120"},
+		{[]byte{0x80}, ""},
+	}
+	for _, c := range cases {
+		f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(c.input)))
+		require.NoError(t, err, "%v", c.input)
+		d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err, "%v", c.input)
+		require.Equal(t, c.expect, d.GetString(), "%v", c.input)
+	}
+
+	// SOUNDEX needs exactly one argument.
+	_, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums("a", "b")))
+	require.Error(t, err)
+}
+
 func TestStrcmp(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
