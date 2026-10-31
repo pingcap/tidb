@@ -169,12 +169,13 @@ func TestTTLStatusCache(t *testing.T) {
 	}
 	for index, testCase := range testCases {
 		t.Run(testCase.columnName, func(t *testing.T) {
+			expectedTables := len(isc.Tables) + 1
 			sql := fmt.Sprintf(`insert into mysql.tidb_ttl_table_status (table_id, %s) values (%d, %s)`,
 				testCase.columnName, index, testCase.sqlLiteral)
 
 			tk.MustExec(sql)
 			assert.NoError(t, isc.Update(context.Background(), ttlSession))
-			assert.Equal(t, index+1, len(isc.Tables))
+			assert.Equal(t, expectedTables, len(isc.Tables))
 			testCase.assert(isc.Tables[int64(index)])
 		})
 	}
