@@ -639,8 +639,14 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                     Ok(crate::show::index::show_index_rows(&table_name, table, |column_id| {
                         statistics
                             .as_ref()
-                            .and_then(|statistics| statistics.columns.get(&column_id))
-                            .map_or(0, |column| column.histogram.ndv)
+                            .and_then(|statistics| statistics.hist_coll.get_column(column_id))
+                            .map_or(0, |column| {
+                                column
+                                    .read()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .histogram
+                                    .ndv
+                            })
                     }))
                 })?
             }
@@ -1143,16 +1149,17 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                         let Some(statistics) = catalog.table_statistics_in(&stats_handle, target.physical_id) else {
                             continue;
                         };
-                        if statistics.is_synthetic_pseudo() {
+                        if statistics.hist_coll.pseudo {
                             continue;
                         }
                         for (offset, column) in table.columns().iter().enumerate() {
-                            let Some(column_stats) = statistics.columns.get(&column.id) else {
+                            let Some(column_stats) = statistics.hist_coll.get_column(column.id) else {
                                 continue;
                             };
-                            let Some(status) = statistics.column_load_status.get(&column.id) else {
-                                continue;
-                            };
+                            let column_stats = column_stats
+                                .read()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            let status = column_stats.stats_loaded_status;
                             if !status.stats_initialized() {
                                 continue;
                             }
@@ -1169,7 +1176,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                             let avg_col_size =
                                 tidb_planner_cardinality::row_size::avg_col_size(
                                     &row_size,
-                                    statistics.row_count,
+                                    statistics.hist_coll.realtime_count,
                                     false,
                                 );
                             rows.push(crate::show_stats::histogram_row(
@@ -1186,12 +1193,13 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                             ));
                         }
                         for index in table.indexes() {
-                            let Some(index_stats) = statistics.indexes.get(&index.id) else {
+                            let Some(index_stats) = statistics.hist_coll.get_index(index.id) else {
                                 continue;
                             };
-                            let Some(status) = statistics.index_load_status.get(&index.id) else {
-                                continue;
-                            };
+                            let index_stats = index_stats
+                                .read()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            let status = index_stats.stats_loaded_status;
                             if !status.stats_initialized() {
                                 continue;
                             }
@@ -1264,10 +1272,10 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                         let Some(statistics) = catalog.table_statistics_in(&stats_handle, target.physical_id) else {
                             continue;
                         };
-                        if statistics.is_synthetic_pseudo() {
+                        if statistics.hist_coll.pseudo {
                             continue;
                         }
-                        for (id, column_stats) in &statistics.columns {
+                        for (id, column_stats) in &sorted_columns(&statistics) {
                             let Some(column) =
                                 table.columns().iter().find(|column| column.id == *id)
                             else {
@@ -1301,7 +1309,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                                 &mut render,
                             )?);
                         }
-                        for (id, index_stats) in &statistics.indexes {
+                        for (id, index_stats) in &sorted_indexes(&statistics) {
                             let Some(index) = table.indexes().iter().find(|index| index.id == *id)
                             else {
                                 continue;
@@ -1395,10 +1403,10 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                         let Some(statistics) = catalog.table_statistics_in(&stats_handle, target.physical_id) else {
                             continue;
                         };
-                        if statistics.is_synthetic_pseudo() {
+                        if statistics.hist_coll.pseudo {
                             continue;
                         }
-                        for (id, column_stats) in &statistics.columns {
+                        for (id, column_stats) in &sorted_columns(&statistics) {
                             let Some(column) =
                                 table.columns().iter().find(|column| column.id == *id)
                             else {
@@ -1430,7 +1438,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                                 &mut render,
                             )?);
                         }
-                        for (id, index_stats) in &statistics.indexes {
+                        for (id, index_stats) in &sorted_indexes(&statistics) {
                             let Some(index) = table.indexes().iter().find(|index| index.id == *id)
                             else {
                                 continue;
@@ -1811,4 +1819,26 @@ fn base_extractor(
         .as_deref()?
         .as_any()
         .downcast_ref::<tidb_planner::show_predicate_extractor::ShowBaseExtractor>()
+}
+
+/// The column statistics in id order, the order SHOW renders them in.
+fn sorted_columns(statistics: &tidb_stats::Table) -> Vec<(i64, tidb_stats::column::Column)> {
+    let mut columns = Vec::new();
+    statistics.hist_coll.for_each_column(|id, column| {
+        columns.push((id, column.clone()));
+        false
+    });
+    columns.sort_by_key(|(id, _)| *id);
+    columns
+}
+
+/// The index statistics in id order, the order SHOW renders them in.
+fn sorted_indexes(statistics: &tidb_stats::Table) -> Vec<(i64, tidb_stats::index::Index)> {
+    let mut indexes = Vec::new();
+    statistics.hist_coll.for_each_index(|id, index| {
+        indexes.push((id, index.clone()));
+        false
+    });
+    indexes.sort_by_key(|(id, _)| *id);
+    indexes
 }

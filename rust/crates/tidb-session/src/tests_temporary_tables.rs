@@ -137,7 +137,8 @@ fn only_explicit_analyze_publishes_temporary_table_statistics() {
                 catalog
                     .table_statistics_in(&stats_handle, local_id)
                     .expect("explicit ANALYZE publishes local statistics")
-                    .row_count,
+                    .hist_coll
+                    .realtime_count,
                 3
             );
             Ok(())
@@ -176,7 +177,8 @@ fn only_explicit_analyze_publishes_temporary_table_statistics() {
                 catalog
                     .table_statistics_in(&stats_handle, global_id)
                     .expect("explicit ANALYZE publishes global statistics")
-                    .row_count,
+                    .hist_coll
+                    .realtime_count,
                 0
             );
             Ok(())

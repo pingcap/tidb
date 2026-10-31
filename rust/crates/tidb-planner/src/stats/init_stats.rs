@@ -13,12 +13,12 @@
 //! `statistics.Table.GenerateHistCollFromColumnInfo`: the table profile, its
 //! `HistColl` and the scan penalty inputs a source derives its statistics
 //! from. The statistics object itself is reached through
-//! [`TableStatsSnapshot`], the part of Go's `statistics.Table` this reads.
+//! Go's `statistics.Table` ([`Table`]) as `GetStatsTable` answered it.
 
 use std::collections::BTreeSet;
 
 use tidb_planner_core_operator_logicalop::DataSource;
-use tidb_stats::table_statistics::{analyze_row_count, TableStatsSnapshot};
+use tidb_stats::Table;
 use tidb_planner_property::stats_info::{RowSizeColumnStats, RowSizeType};
 use tidb_planner_property::stats_info::{HistColl, StatsInfo};
 
@@ -31,16 +31,19 @@ use tidb_planner_property::stats_info::{HistColl, StatsInfo};
 /// has run.
 pub fn init_stats(
     source: &mut DataSource,
-    statistics: Option<&dyn TableStatsSnapshot>,
+    statistics: Option<&Table>,
     row_count: f64,
     predicate_loaded: Option<(BTreeSet<i64>, BTreeSet<i64>)>,
 ) {
     source.analyzed_index_ids = statistics
-        .map(|stats| {
-            stats
-                .index_stats_existence()
+        .and_then(|stats| stats.existence_map.as_ref())
+        .map(|map| {
+            let map = read(map);
+            source
+                .indexes
                 .iter()
-                .filter_map(|(id, analyzed)| analyzed.then_some(*id))
+                .map(|index| index.id)
+                .filter(|id| map.has_analyzed(*id, true))
                 .collect()
         })
         .unwrap_or_default();
@@ -48,32 +51,26 @@ pub fn init_stats(
         (
             statistics
                 .map(|statistics| {
-                    statistics
-                        .columns()
-                        .iter()
-                        .filter(|(id, _)| {
-                            statistics
-                                .column_load_status()
-                                .get(id)
-                                .is_some_and(|status| status.is_full_load())
-                        })
-                        .map(|(id, _)| *id)
-                        .collect()
+                    let mut ids = BTreeSet::new();
+                    statistics.hist_coll.for_each_column(|id, column| {
+                        if column.is_full_load() {
+                            ids.insert(id);
+                        }
+                        false
+                    });
+                    ids
                 })
                 .unwrap_or_default(),
             statistics
                 .map(|statistics| {
-                    statistics
-                        .indexes()
-                        .iter()
-                        .filter(|(id, _)| {
-                            statistics
-                                .index_load_status()
-                                .get(id)
-                                .is_some_and(|status| status.is_full_load())
-                        })
-                        .map(|(id, _)| *id)
-                        .collect()
+                    let mut ids = BTreeSet::new();
+                    statistics.hist_coll.for_each_index(|id, index| {
+                        if index.is_full_load() {
+                            ids.insert(id);
+                        }
+                        false
+                    });
+                    ids
                 })
                 .unwrap_or_default(),
         )
@@ -119,7 +116,8 @@ pub fn init_stats(
         .table_columns
         .iter()
         .filter_map(|column| {
-            let loaded = statistics?.columns().get(&column.id)?;
+            let loaded = statistics?.hist_coll.get_column(column.id)?;
+            let loaded = read(&loaded);
             let field_type = column.ret_type.as_ref()?;
             let is_handle = source
                 .handle_cols
@@ -142,8 +140,9 @@ pub fn init_stats(
         .table_columns
         .iter()
         .filter_map(|column| {
-            let loaded = statistics?.columns().get(&column.id)?;
-            Some((column.unique_id, std::sync::Arc::new(loaded.clone())))
+            let loaded = statistics?.hist_coll.get_column(column.id)?;
+            let loaded = read(&loaded).clone();
+            Some((column.unique_id, std::sync::Arc::new(loaded)))
         })
         .collect::<Vec<_>>();
     let column_load_status = source
@@ -151,8 +150,8 @@ pub fn init_stats(
         .iter()
         .map(|column| {
             let status = statistics
-                .and_then(|statistics| statistics.column_load_status().get(&column.id))
-                .copied()
+                .and_then(|statistics| statistics.hist_coll.get_column(column.id))
+                .map(|loaded| read(&loaded).stats_loaded_status)
                 .unwrap_or_default();
             (column.unique_id, status)
         })
@@ -160,7 +159,7 @@ pub fn init_stats(
     // Go `HistColl.Columns`/`Indices` membership: `PseudoTable` holds
     // every public, non-hidden column and every public index; a stored
     // table holds what it analyzed.
-    let pseudo_collection = statistics.is_none_or(|statistics| statistics.pseudo());
+    let pseudo_collection = statistics.is_none_or(|statistics| statistics.hist_coll.pseudo);
     // A hypothetical index (negative id here, id 0 in Go) belongs to the
     // session, not to `TableInfo`, so Go's `PseudoTable` and the loaded
     // statistics never hold it: selectivity ignores its columns.
@@ -168,7 +167,7 @@ pub fn init_stats(
         index.id >= 0
             && match statistics {
                 Some(statistics) if !pseudo_collection => {
-                    statistics.indexes().contains_key(&index.id)
+                    statistics.hist_coll.get_index(index.id).is_some()
                 }
                 _ => index.is_public,
             }
@@ -224,7 +223,7 @@ pub fn init_stats(
         .filter_map(|(id, _)| {
             Some((
                 *id,
-                std::sync::Arc::new(statistics?.indexes().get(id)?.clone()),
+                std::sync::Arc::new(read(statistics?.hist_coll.get_index(*id)?.as_ref()).clone()),
             ))
         })
         .collect::<Vec<_>>();
@@ -237,57 +236,20 @@ pub fn init_stats(
         .iter()
         .filter_map(|index| {
             let statistics = statistics?;
-            statistics.indexes().get(&index.id)?;
+            let index_stats = statistics.hist_coll.get_index(index.id)?;
             source.schema_column_for_index_column(index.columns.first()?)?;
+            // Go `HistColl.ScaledRealtimeAndModifyCount`: a fully loaded
+            // multi-valued index scales the table's counts by its own total.
+            let (index_realtime, index_modify) = statistics
+                .hist_coll
+                .scaled_realtime_and_modify_count(Some(&read(&index_stats)));
             let mut row_counts =
                 tidb_planner_property::stats_info::IndexRowCounts::unscaled(
-                    statistics.row_count(),
-                    statistics.modify_count(),
+                    statistics.hist_coll.realtime_count,
+                    statistics.hist_coll.modify_count,
                 );
-            let index_is_fully_loaded = statistics
-                .index_load_status()
-                .get(&index.id)
-                .is_some_and(|status| status.is_full_load());
-            if index.is_multi_valued && index_is_fully_loaded {
-                let analyzed_row_count = statistics
-                    .columns()
-                    .iter()
-                    .find_map(|(column_id, column)| {
-                        statistics
-                            .column_load_status()
-                            .get(column_id)
-                            .is_some_and(|status| status.is_full_load())
-                            .then(|| column.total_row_count())
-                    })
-                    .or_else(|| {
-                        statistics
-                            .indexes()
-                            .iter()
-                            .find_map(|(candidate_id, candidate)| {
-                                let candidate_is_multi_valued = source
-                                    .indexes
-                                    .iter()
-                                    .find(|source_index| source_index.id == *candidate_id)
-                                    .is_some_and(|source_index| source_index.is_multi_valued);
-                                (!candidate_is_multi_valued
-                                    && statistics
-                                        .index_load_status()
-                                        .get(candidate_id)
-                                        .is_some_and(|status| status.is_full_load()))
-                                .then(|| candidate.total_row_count())
-                            })
-                    })
-                    .unwrap_or(-1.0);
-                let index_total_count = statistics
-                    .indexes()
-                    .get(&index.id)
-                    .map_or(0.0, tidb_stats::index::Index::total_row_count);
-                if analyzed_row_count > 0.0 && index_total_count > 0.0 {
-                    let scale = index_total_count / analyzed_row_count;
-                    row_counts.index_realtime = (statistics.row_count() as f64 * scale) as i64;
-                    row_counts.index_modify = (statistics.modify_count() as f64 * scale) as i64;
-                }
-            }
+            row_counts.index_realtime = index_realtime;
+            row_counts.index_modify = index_modify;
             Some((index.id, row_counts))
         })
         .collect::<Vec<_>>();
@@ -297,7 +259,8 @@ pub fn init_stats(
         .indexes
         .iter()
         .filter_map(|index| {
-            let loaded = statistics?.indexes().get(&index.id)?;
+            let loaded = statistics?.hist_coll.get_index(index.id)?;
+            let loaded = read(&loaded);
             if loaded.histogram.ndv <= 0 {
                 return None;
             }
@@ -318,32 +281,23 @@ pub fn init_stats(
         .table_columns
         .iter()
         .filter_map(|column| {
-            let statistics = statistics?;
-            let status = statistics.column_load_status().get(&column.id)?;
-            status
-                .stats_initialized()
-                .then(|| {
-                    statistics
-                        .columns()
-                        .get(&column.id)
-                        .map(|column_stats| (column.unique_id, column_stats.histogram.ndv))
-                })
-                .flatten()
+            let column_stats = statistics?.hist_coll.get_column(column.id)?;
+            let column_stats = read(&column_stats);
+            column_stats
+                .is_stats_initialized()
+                .then(|| (column.unique_id, column_stats.histogram.ndv))
         })
         .collect::<Vec<_>>();
     let initialized_index_ndvs = source
         .indexes
         .iter()
         .filter_map(|index| {
-            let statistics = statistics?;
-            if !statistics
-                .index_load_status()
-                .get(&index.id)?
-                .stats_initialized()
-            {
+            let index_stats = statistics?.hist_coll.get_index(index.id)?;
+            let index_stats = read(&index_stats);
+            if !index_stats.stats_loaded_status.stats_initialized() {
                 return None;
             }
-            let ndv = statistics.indexes().get(&index.id)?.histogram.ndv;
+            let ndv = index_stats.histogram.ndv;
             let columns = index
                 .columns
                 .iter()
@@ -371,7 +325,7 @@ pub fn init_stats(
         )
         .filter(|(metadata, column)| match statistics {
             Some(statistics) if !pseudo_collection => {
-                statistics.columns().contains_key(&metadata.id)
+                statistics.hist_coll.get_column(metadata.id).is_some()
             }
             // Go `PseudoTable` walks `TableInfo.Columns`, which holds
             // neither `_tidb_rowid` nor the other extra (negative id) columns.
@@ -409,17 +363,19 @@ pub fn init_stats(
         StatsInfo::new(row_count, ndvs)
             .with_hist_coll(
                 HistColl::new(
-                    statistics.is_none_or(|statistics| statistics.pseudo()),
+                    statistics.is_none_or(|statistics| statistics.hist_coll.pseudo),
                     row_count as i64,
                     row_size_columns,
                 )
                 .with_histograms(histograms)
                 .with_column_load_status(column_load_status)
                 .with_index_load_status(statistics.into_iter().flat_map(|statistics| {
-                    statistics
-                        .index_load_status()
-                        .iter()
-                        .map(|(id, status)| (*id, *status))
+                    let mut statuses = Vec::new();
+                    statistics.hist_coll.for_each_index(|id, index| {
+                        statuses.push((id, index.stats_loaded_status));
+                        false
+                    });
+                    statuses
                 }))
                 .with_index_histograms(index_histograms)
                 .with_column_index_ids(column_index_ids)
@@ -434,7 +390,7 @@ pub fn init_stats(
                         },
                     )
                 }))
-                .with_modify_count(statistics.map_or(0, |statistics| statistics.modify_count()))
+                .with_modify_count(statistics.map_or(0, |statistics| statistics.hist_coll.modify_count))
                 .with_pk_is_handle(source.handle_is_int)
                 .with_index_ndvs(index_ndvs)
                 .with_initialized_ndvs(initialized_column_ndvs, initialized_index_ndvs)
@@ -442,10 +398,10 @@ pub fn init_stats(
                 .with_mv_index_columns(mv_index_columns),
             )
             .with_stats_version(statistics.map_or(tidb_stats::PSEUDO_VERSION, |statistics| {
-                if statistics.pseudo() || statistics.stats_ver() <= 0 {
+                if statistics.hist_coll.pseudo || statistics.hist_coll.stats_version <= 0 {
                     tidb_stats::PSEUDO_VERSION
                 } else {
-                    statistics.stats_ver() as u64
+                    statistics.hist_coll.stats_version as u64
                 }
             })),
     );
@@ -454,10 +410,10 @@ pub fn init_stats(
         // Go's `tidb_opt_prefer_range_scan` default is ON. This executor
         // does not expose a session override yet.
         allow_prefer_range_scan: true,
-        pseudo_stats: statistics.is_none_or(|statistics| statistics.pseudo()),
+        pseudo_stats: statistics.is_none_or(|statistics| statistics.hist_coll.pseudo),
         analyze_row_count: statistics
-            .map_or(-1, |statistics| analyze_row_count(statistics) as i64),
-        modify_count: statistics.map_or(0, |statistics| statistics.modify_count()),
+            .map_or(-1, |statistics| statistics.hist_coll.analyze_row_count() as i64),
+        modify_count: statistics.map_or(0, |statistics| statistics.hist_coll.modify_count),
         has_partition_scan: false,
         has_index_force: false,
         unsigned_int_handle: source.handle_is_int
@@ -469,17 +425,17 @@ pub fn init_stats(
     };
 }
 
+fn read<T>(lock: &std::sync::RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
-
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_charset::Collation;
     use tidb_expr::column::Column;
     use tidb_expr::schema::Schema;
-    use tidb_stats::{Bucket, Histogram, StatsLoadedStatus};
-
-    use super::TableStatsSnapshot;
+    use tidb_stats::{Bucket, Histogram, StatsLoadedStatus, Table};
     use tidb_planner_cardinality::row_count_estimator::EstimatorOptions;
     use tidb_ranger::Range;
     use tidb_planner_cardinality::selectivity::get_row_count_by_index_ranges;
@@ -487,54 +443,6 @@ use tidb_charset::Collation;
     use tidb_planner_core_operator_logicalop::DataSource;
     use tidb_infoschema::table_source::SourceIndexColumn;
     use tidb_infoschema::table_source::SourceIndex;
-
-    #[derive(Default)]
-    struct Snapshot {
-        row_count: i64,
-        modify_count: i64,
-        columns: BTreeMap<i64, tidb_stats::column::Column>,
-        indexes: BTreeMap<i64, tidb_stats::index::Index>,
-        column_load_status: BTreeMap<i64, StatsLoadedStatus>,
-        index_load_status: BTreeMap<i64, StatsLoadedStatus>,
-        index_stats_existence: BTreeMap<i64, bool>,
-        mv_index_ids: BTreeSet<i64>,
-    }
-
-    impl TableStatsSnapshot for Snapshot {
-        fn pseudo(&self) -> bool {
-            false
-        }
-        fn row_count(&self) -> i64 {
-            self.row_count
-        }
-        fn modify_count(&self) -> i64 {
-            self.modify_count
-        }
-        fn version(&self) -> u64 {
-            1
-        }
-        fn stats_ver(&self) -> i64 {
-            2
-        }
-        fn columns(&self) -> &BTreeMap<i64, tidb_stats::column::Column> {
-            &self.columns
-        }
-        fn indexes(&self) -> &BTreeMap<i64, tidb_stats::index::Index> {
-            &self.indexes
-        }
-        fn column_load_status(&self) -> &BTreeMap<i64, StatsLoadedStatus> {
-            &self.column_load_status
-        }
-        fn index_load_status(&self) -> &BTreeMap<i64, StatsLoadedStatus> {
-            &self.index_load_status
-        }
-        fn index_stats_existence(&self) -> &BTreeMap<i64, bool> {
-            &self.index_stats_existence
-        }
-        fn mv_index_ids(&self) -> &BTreeSet<i64> {
-            &self.mv_index_ids
-        }
-    }
 
     /// Go `GetScaledRealtimeAndModifyCnt`: a fully loaded multi-valued
     /// index's entries count array elements, so its histogram scales with the
@@ -550,14 +458,7 @@ use tidb_charset::Collation;
         j_column.id = 2;
         let mut topn = tidb_stats::cmsketch::TopN::new(1);
         topn.append(&tidb_codec::encode_key(&[Datum::Int(1)]).unwrap(), 50);
-        let mut snapshot = Snapshot {
-            row_count: 1_500,
-            modify_count: 100,
-            ..Default::default()
-        };
-        snapshot.columns.insert(
-            1,
-            tidb_stats::column::Column {
+        let column_stats = |full: bool| tidb_stats::column::Column {
                 histogram: Histogram {
                     id: 1,
                     ndv: 100,
@@ -574,12 +475,14 @@ use tidb_charset::Collation;
                 top_n: None,
                 cmsketch: None,
                 stats_version: 2,
+                stats_loaded_status: if full {
+                    StatsLoadedStatus::full_load()
+                } else {
+                    StatsLoadedStatus::default()
+                },
                 ..Default::default()
-            },
-        );
-        snapshot.indexes.insert(
-            7,
-            tidb_stats::index::Index {
+            };
+        let index_stats = |full: bool, multi_valued: bool| tidb_stats::index::Index {
                 histogram: Histogram {
                     id: 7,
                     ndv: 100,
@@ -596,26 +499,41 @@ use tidb_charset::Collation;
                     }],
                     ..Histogram::default()
                 },
-                top_n: Some(topn),
+                top_n: Some(topn.clone()),
                 cmsketch: None,
                 stats_version: 2,
                 info: Some(tidb_stats::index::IndexInfo {
                     columns: vec![String::new(); 1],
-                    unique: false,
+                    mv_index: multi_valued,
                     ..Default::default()
                 }),
+                stats_loaded_status: if full {
+                    StatsLoadedStatus::full_load()
+                } else {
+                    StatsLoadedStatus::default()
+                },
                 ..Default::default()
-            },
-        );
-        snapshot
-            .column_load_status
-            .insert(1, StatsLoadedStatus::full_load());
-        snapshot
-            .index_load_status
-            .insert(7, StatsLoadedStatus::full_load());
-        snapshot.index_stats_existence.insert(7, true);
+            };
+        // Go `statistics.Table` with RealtimeCount 1500 / ModifyCount 100,
+        // column 1 and index 7 analyzed.
+        let table = |column_full: bool, index_full: bool, multi_valued: bool| {
+            let mut table = Table::default();
+            table.version = 1;
+            table.hist_coll.realtime_count = 1_500;
+            table.hist_coll.modify_count = 100;
+            table.hist_coll.stats_version = 2;
+            table.hist_coll.set_column(1, column_stats(column_full));
+            table
+                .hist_coll
+                .set_index(7, index_stats(index_full, multi_valued));
+            let mut existence = tidb_stats::ColAndIdxExistenceMap::new(1, 1);
+            existence.insert_column(1, true);
+            existence.insert_index(7, true);
+            table.existence_map = Some(std::sync::Arc::new(std::sync::RwLock::new(existence)));
+            table
+        };
 
-        let estimate = |multi_valued: bool, snapshot: &Snapshot, low: Datum, high: Datum| {
+        let estimate = |multi_valued: bool, statistics: &Table, low: Datum, high: Datum| {
             let mut source = DataSource::new(Default::default(), 1, "t");
             source.columns = vec![
                 DataSourceColumn {
@@ -648,7 +566,12 @@ use tidb_charset::Collation;
                 ..Default::default()
             }];
             source.enumerated_paths = vec![tidb_planner_util::path::PossiblePath::Index { index: 0 }];
-            super::init_stats(&mut source, Some(snapshot), snapshot.row_count as f64, None);
+            super::init_stats(
+                &mut source,
+                Some(statistics),
+                statistics.hist_coll.realtime_count as f64,
+                None,
+            );
             let hist = source
                 .table_stats
                 .as_ref()
@@ -675,36 +598,16 @@ use tidb_charset::Collation;
         let full = || (Datum::Null, Datum::MaxValue);
         // Ordinary indexes keep Go's unscaled-count behavior.
         let (low, high) = point();
-        assert_eq!(estimate(false, &snapshot, low, high), 15.0);
+        assert_eq!(estimate(false, &table(true, true, false), low, high), 15.0);
         let (low, high) = point();
-        assert_eq!(estimate(true, &snapshot, low, high), 75.0);
+        assert_eq!(estimate(true, &table(true, true, true), low, high), 75.0);
         let (low, high) = full();
-        assert_eq!(estimate(true, &snapshot, low, high), 7_500.0);
+        assert_eq!(estimate(true, &table(true, true, true), low, high), 7_500.0);
         // Not fully loaded: no scaling.
-        let mut unloaded = Snapshot {
-            row_count: snapshot.row_count,
-            modify_count: snapshot.modify_count,
-            columns: snapshot.columns.clone(),
-            indexes: snapshot.indexes.clone(),
-            column_load_status: snapshot.column_load_status.clone(),
-            index_stats_existence: snapshot.index_stats_existence.clone(),
-            ..Default::default()
-        };
-        unloaded.index_load_status.clear();
         let (low, high) = point();
-        assert_eq!(estimate(true, &unloaded, low, high), 15.0);
+        assert_eq!(estimate(true, &table(true, false, true), low, high), 15.0);
         // The MV index itself cannot serve as the analyzed TABLE row count.
-        let mut no_columns = Snapshot {
-            row_count: snapshot.row_count,
-            modify_count: snapshot.modify_count,
-            columns: snapshot.columns.clone(),
-            indexes: snapshot.indexes.clone(),
-            index_load_status: snapshot.index_load_status.clone(),
-            index_stats_existence: snapshot.index_stats_existence.clone(),
-            ..Default::default()
-        };
-        no_columns.column_load_status.clear();
         let (low, high) = point();
-        assert_eq!(estimate(true, &no_columns, low, high), 15.0);
+        assert_eq!(estimate(true, &table(false, true, true), low, high), 15.0);
     }
 }

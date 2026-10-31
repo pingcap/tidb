@@ -790,9 +790,9 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
         &statement,
     )
     .unwrap();
-    assert_eq!(statistics.row_count, 1);
-    assert!(statistics.columns.contains_key(&1));
-    assert!(statistics.columns.contains_key(&2));
+    assert_eq!(statistics.hist_coll.realtime_count, 1);
+    assert!(statistics.hist_coll.get_column(1).is_some());
+    assert!(statistics.hist_coll.get_column(2).is_some());
 }
 
 #[test]

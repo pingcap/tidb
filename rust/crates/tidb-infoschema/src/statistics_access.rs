@@ -66,11 +66,10 @@ pub fn pseudo_table_info(table: &crate::KvTable) -> tidb_stats::PseudoTableInfo 
 }
 
 impl Catalog {
-    /// The schema facts the statistics view converts a table's canonical
-    /// statistics under (Go `Handle.getStatsByPhysicalID` reads the same
-    /// `TableInfo`), for a table or partition id of this image.
+    /// The `TableInfo` facts Go `Handle.getStatsByPhysicalID` reads on a
+    /// statistics cache miss, for a table or partition id of this image.
     #[must_use]
-    pub fn statistics_schema(&self, table_id: i64) -> Option<Arc<tidb_stats::StatisticsSchema>> {
+    pub fn statistics_schema(&self, table_id: i64) -> Option<Arc<tidb_stats::PseudoStatsTable>> {
         let schemas = self.statistics_schemas.get_or_init(|| {
                 let mut schemas = HashMap::new();
                 // The shared schema's tables and the session's LOCAL
@@ -97,24 +96,11 @@ impl Catalog {
                         let TableEntry::Kv(table) = entry.as_ref() else {
                             continue;
                         };
-                        let schema = Arc::new(tidb_stats::StatisticsSchema {
-                            columns: table
-                                .columns()
-                                .iter()
-                                .map(|column| (column.id, column.field_type.is_unsigned()))
-                                .collect(),
-                            indexes: table
-                                .indexes()
-                                .iter()
-                                .map(|index| (index.id, index.column_offsets.len(), index.unique))
-                                .collect(),
-                            pseudo: tidb_stats::PseudoStatsTable {
-                                info: pseudo_table_info(table),
-                                partitioned: table.partition().is_some(),
-                                cacheable: table.temp_table_type()
-                                    == tidb_model::TempTableType::NONE
-                                    && !system_schema,
-                            },
+                        let schema = Arc::new(tidb_stats::PseudoStatsTable {
+                            info: pseudo_table_info(table),
+                            partitioned: table.partition().is_some(),
+                            cacheable: table.temp_table_type() == tidb_model::TempTableType::NONE
+                                && !system_schema,
                         });
                         if let Some(partition) = table.partition() {
                             for definition in &partition.definitions {

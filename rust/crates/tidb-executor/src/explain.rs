@@ -2639,7 +2639,7 @@ fn collect_stats_info(
 ) {
     let stats_version = |physical_table_id| {
         crate::access_cost::get_stats_table(ctx, catalog, physical_table_id)
-            .filter(|statistics| !statistics.pseudo)
+            .filter(|statistics| !statistics.hist_coll.pseudo)
             .map_or(tidb_stats::PSEUDO_VERSION, |statistics| statistics.version)
     };
     for child in plan.children() {

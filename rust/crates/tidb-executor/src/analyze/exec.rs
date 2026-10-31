@@ -66,82 +66,96 @@ use tidb_hack::go_to_lower;
 /// Publish merged ANALYZE items as a real cache table. Go's storage loader
 /// derives the table format from histogram rows; these local results bypass
 /// that reload and must refresh the same metadata after replacing items.
-fn finish_analyze_publication(statistics: &mut tidb_stats::table_statistics::TableStatistics) {
-    if let Some(version) = statistics
-        .columns
-        .values()
-        .map(|item| item.stats_version)
-        .chain(statistics.indexes.values().map(|item| item.stats_version))
-        .filter(|version| *version != 0)
-        .max()
-    {
-        statistics.stats_ver = version;
+fn finish_analyze_publication(statistics: &mut tidb_stats::Table) {
+    let mut version = 0;
+    statistics.hist_coll.for_each_column(|_, item| {
+        version = version.max(item.stats_version);
+        false
+    });
+    statistics.hist_coll.for_each_index(|_, item| {
+        version = version.max(item.stats_version);
+        false
+    });
+    if version != 0 {
+        statistics.hist_coll.stats_version = i32::try_from(version).unwrap_or(i32::MAX);
     }
-    statistics.cache_pseudo = false;
-    statistics.pseudo = statistics.row_count == 0
-        || (statistics
-            .column_stats_existence
-            .values()
-            .all(|exists| !exists)
-            && statistics
-                .index_stats_existence
-                .values()
-                .all(|exists| !exists));
+    statistics.hist_coll.pseudo = false;
 }
 
 fn merge_analyzed_statistics(
-    old: Option<Arc<tidb_stats::table_statistics::TableStatistics>>,
-    mut fresh: tidb_stats::table_statistics::TableStatistics,
+    old: Option<Arc<tidb_stats::Table>>,
+    mut fresh: tidb_stats::Table,
     replace_counts: bool,
-) -> tidb_stats::table_statistics::TableStatistics {
+) -> tidb_stats::Table {
     let Some(old) = old else {
         finish_analyze_publication(&mut fresh);
         return fresh;
     };
-    let mut merged = (*old).clone();
+    let mut merged = old.copy_as(tidb_stats::CopyIntent::BothMapsWritable);
     if replace_counts {
-        merged.row_count = fresh.row_count;
-        merged.modify_count = fresh.modify_count;
+        merged.hist_coll.realtime_count = fresh.hist_coll.realtime_count;
+        merged.hist_coll.modify_count = fresh.hist_coll.modify_count;
     }
     merged.version = fresh.version;
     merged.last_analyze_version = merged.last_analyze_version.max(fresh.last_analyze_version);
-    merged.columns.append(&mut fresh.columns);
-    merged.indexes.append(&mut fresh.indexes);
-    merged
-        .column_load_status
-        .append(&mut fresh.column_load_status);
-    merged
-        .index_load_status
-        .append(&mut fresh.index_load_status);
-    merged
-        .column_stats_existence
-        .append(&mut fresh.column_stats_existence);
-    merged
-        .index_stats_existence
-        .append(&mut fresh.index_stats_existence);
-    merged
-        .column_fm_sketches
-        .append(&mut fresh.column_fm_sketches);
-    merged
-        .index_fm_sketches
-        .append(&mut fresh.index_fm_sketches);
-    merged.mv_index_ids.append(&mut fresh.mv_index_ids);
+    merged.last_stats_hist_version = merged
+        .last_stats_hist_version
+        .max(fresh.last_stats_hist_version);
+    merged.is_pk_handle = fresh.is_pk_handle;
+    for (id, column) in analyzed_columns(&fresh) {
+        merged.hist_coll.set_column(id, column);
+        insert_existence(&merged, id, false);
+    }
+    for (id, index) in analyzed_indexes(&fresh) {
+        merged.hist_coll.set_index(id, index);
+        insert_existence(&merged, id, true);
+    }
     finish_analyze_publication(&mut merged);
     merged
 }
 
+fn analyzed_columns(statistics: &tidb_stats::Table) -> Vec<(i64, tidb_stats::column::Column)> {
+    let mut columns = Vec::new();
+    statistics.hist_coll.for_each_column(|id, column| {
+        columns.push((id, column.clone()));
+        false
+    });
+    columns
+}
+
+fn analyzed_indexes(statistics: &tidb_stats::Table) -> Vec<(i64, tidb_stats::index::Index)> {
+    let mut indexes = Vec::new();
+    statistics.hist_coll.for_each_index(|id, index| {
+        indexes.push((id, index.clone()));
+        false
+    });
+    indexes
+}
+
+/// Records one freshly analyzed item in Go's `ColAndIdxExistenceMap`.
+fn insert_existence(statistics: &tidb_stats::Table, id: i64, is_index: bool) {
+    if let Some(map) = &statistics.existence_map {
+        let mut map = map.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if is_index {
+            map.insert_index(id, true);
+        } else {
+            map.insert_column(id, true);
+        }
+    }
+}
+
 fn merge_partial_statistics(
-    old: Option<Arc<tidb_stats::table_statistics::TableStatistics>>,
-    fresh: tidb_stats::table_statistics::TableStatistics,
+    old: Option<Arc<tidb_stats::Table>>,
+    fresh: tidb_stats::Table,
     partial: bool,
-) -> tidb_stats::table_statistics::TableStatistics {
+) -> tidb_stats::Table {
     merge_analyzed_statistics(if partial { old } else { None }, fresh, true)
 }
 
 fn merge_independent_index_statistics(
-    old: Option<Arc<tidb_stats::table_statistics::TableStatistics>>,
-    fresh: tidb_stats::table_statistics::TableStatistics,
-) -> tidb_stats::table_statistics::TableStatistics {
+    old: Option<Arc<tidb_stats::Table>>,
+    fresh: tidb_stats::Table,
+) -> tidb_stats::Table {
     // An independent index task updates histogram rows without changing
     // stats_meta row/modify counts, unlike a full column-sampling task.
     merge_analyzed_statistics(old, fresh, false)
@@ -151,36 +165,35 @@ fn merge_independent_index_statistics(
 /// statistics, the same source used by Go's `MergePartitionStats2GlobalStats`.
 fn merge_partitioned_global_statistics(
     table: &tidb_table::kv_table::KvTable,
-    partitions: &[(i64, Arc<tidb_stats::table_statistics::TableStatistics>)],
-    previous: Option<Arc<tidb_stats::table_statistics::TableStatistics>>,
+    partitions: &[(i64, Arc<tidb_stats::Table>)],
+    previous: Option<Arc<tidb_stats::Table>>,
     options: &crate::analyze::AnalyzeOptions,
     time_zone: &tidb_datatype::SessionTimeZone,
-) -> Result<tidb_stats::table_statistics::TableStatistics, DriverError> {
+) -> Result<tidb_stats::Table, DriverError> {
     let row_count = partitions
         .iter()
-        .fold(0_i64, |count, (_, stats)| count.saturating_add(stats.row_count.max(0)));
+        .fold(0_i64, |count, (_, stats)| {
+            count.saturating_add(stats.hist_coll.realtime_count.max(0))
+        });
     let modify_count = partitions
         .iter()
-        .fold(0_i64, |count, (_, stats)| count.saturating_add(stats.modify_count.max(0)));
-    let mut global = previous
-        .as_deref()
-        .cloned()
-        .unwrap_or_else(|| tidb_stats::table_statistics::TableStatistics::new(
-            row_count,
-            modify_count,
-            Default::default(),
-            Default::default(),
-        ));
-    global.row_count = row_count;
-    global.modify_count = modify_count;
+        .fold(0_i64, |count, (_, stats)| {
+            count.saturating_add(stats.hist_coll.modify_count.max(0))
+        });
+    let mut global = previous.map_or_else(
+        || tidb_stats::Table::from_analyzed_items(table.table_id(), 0, 0, [], []),
+        |previous| previous.copy_as(tidb_stats::CopyIntent::BothMapsWritable),
+    );
+    global.hist_coll.realtime_count = row_count;
+    global.hist_coll.modify_count = modify_count;
     global.version = partitions.iter().map(|(_, stats)| stats.version).max().unwrap_or(0);
     global.last_analyze_version = partitions
         .iter()
         .map(|(_, stats)| stats.last_analyze_version)
         .max()
         .unwrap_or(0);
-    global.pseudo = false;
-    global.cache_pseudo = false;
+    global.hist_coll.pseudo = false;
+    let schema = tidb_stats_handle_storage::json::LoadStatsTableSchema::from_kv_table(table);
 
     let bucket_count = usize::try_from(options.num_buckets.max(1)).unwrap_or(256);
     let topn_count = u32::try_from(options.num_topn.max(0)).unwrap_or(0);
@@ -190,11 +203,12 @@ fn merge_partitioned_global_statistics(
         let items = partitions
             .iter()
             .filter_map(|(_, stats)| {
-                let column_stats = stats.columns.get(&column.id)?;
-                Some((
-                    column_stats,
-                    stats.column_fm_sketches.get(&column.id).cloned(),
-                ))
+                let column_stats = stats.hist_coll.get_column(column.id)?;
+                let column_stats = column_stats
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
+                Some(column_stats)
             })
             .collect::<Vec<_>>();
         if items.len() != partitions.len() || items.is_empty() {
@@ -202,14 +216,14 @@ fn merge_partitioned_global_statistics(
         }
         let partition_items = items
             .iter()
-            .map(|(stats, fm_sketch)| tidb_stats_handle_globalstats::PartitionStatsItem {
+            .map(|stats| tidb_stats_handle_globalstats::PartitionStatsItem {
                 histogram: stats.histogram.clone(),
                 cmsketch: stats.cmsketch.clone(),
                 topn: stats.top_n.clone(),
-                fm_sketch: fm_sketch.clone(),
+                fm_sketch: stats.fm_sketch.clone(),
             })
             .collect();
-        let source = items[0].0;
+        let source = &items[0];
         let merged = tidb_stats_handle_globalstats::merge_partition_stats_item(
             Some(time_zone),
             source.stats_version,
@@ -227,49 +241,43 @@ fn merge_partitioned_global_statistics(
         if let Some(mut histogram) = merged.histogram {
             if crate::analyze::kv::is_local_unique(table, false, column.id) {
                 histogram.ndv = tidb_stats_handle_globalstats::unique_global_ndv(
-                    items.iter().map(|(stats, _)| &stats.histogram),
+                    items.iter().map(|stats| &stats.histogram),
                     row_count,
                 );
             }
             histogram.round_trip_through_storage(&column.field_type);
-            global.columns.insert(
+            global.hist_coll.set_column(
                 column.id,
                 tidb_stats::column::Column {
                     histogram,
                     top_n: merged.topn,
                     cmsketch: merged.cmsketch,
                     stats_version: source.stats_version,
-                    info: Some(tidb_stats::column::ColumnInfo {
-                        flag: if column.field_type.is_unsigned() {
-                            tidb_mysql::UnsignedFlag
-                        } else {
-                            0
-                        },
-                        ..Default::default()
-                    }),
+                    stats_loaded_status: source.stats_loaded_status,
+                    info: schema
+                        .columns
+                        .iter()
+                        .find(|schema| schema.id == column.id)
+                        .map(tidb_stats_handle_storage::json::LoadStatsColumnSchema::info),
+                    physical_id: table.table_id(),
+                    is_handle: source.is_handle,
                     ..Default::default()
                 },
             );
-            global.column_stats_existence.insert(column.id, true);
-            if let Some(status) = partitions
-                .iter()
-                .find_map(|(_, stats)| stats.column_load_status.get(&column.id).copied())
-            {
-                global.column_load_status.insert(column.id, status);
-            }
+            insert_existence(&global, column.id, false);
         }
-        global.column_fm_sketches.remove(&column.id);
     }
 
     for index in table.indexes() {
         let items = partitions
             .iter()
             .filter_map(|(_, stats)| {
-                let index_stats = stats.indexes.get(&index.id)?;
-                Some((
-                    index_stats,
-                    stats.index_fm_sketches.get(&index.id).cloned(),
-                ))
+                let index_stats = stats.hist_coll.get_index(index.id)?;
+                let index_stats = index_stats
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
+                Some(index_stats)
             })
             .collect::<Vec<_>>();
         if items.len() != partitions.len() || items.is_empty() {
@@ -277,14 +285,14 @@ fn merge_partitioned_global_statistics(
         }
         let partition_items = items
             .iter()
-            .map(|(stats, fm_sketch)| tidb_stats_handle_globalstats::PartitionStatsItem {
+            .map(|stats| tidb_stats_handle_globalstats::PartitionStatsItem {
                 histogram: stats.histogram.clone(),
                 cmsketch: stats.cmsketch.clone(),
                 topn: stats.top_n.clone(),
-                fm_sketch: fm_sketch.clone(),
+                fm_sketch: stats.fm_sketch.clone(),
             })
             .collect();
-        let source = items[0].0;
+        let source = &items[0];
         let field_type = index
             .column_offsets
             .first()
@@ -308,40 +316,32 @@ fn merge_partitioned_global_statistics(
         if let Some(mut histogram) = merged.histogram {
             if crate::analyze::kv::is_local_unique(table, true, index.id) {
                 histogram.ndv = tidb_stats_handle_globalstats::unique_global_ndv(
-                    items.iter().map(|(stats, _)| &stats.histogram),
+                    items.iter().map(|stats| &stats.histogram),
                     row_count,
                 );
             }
             histogram.round_trip_through_storage(&tidb_datatype::FieldType::new(
                 tidb_datatype::FieldTypeCode::Blob,
             ));
-            global.indexes.insert(
+            global.hist_coll.set_index(
                 index.id,
                 tidb_stats::index::Index {
                     histogram,
                     top_n: merged.topn,
                     cmsketch: merged.cmsketch,
                     stats_version: source.stats_version,
-                    info: Some(tidb_stats::index::IndexInfo {
-                        columns: vec![
-                            String::new();
-                            source.info.as_ref().map_or(0, |info| info.columns.len())
-                        ],
-                        unique: source.info.as_ref().is_some_and(|info| info.unique),
-                        ..Default::default()
-                    }),
+                    stats_loaded_status: source.stats_loaded_status,
+                    info: schema
+                        .indexes
+                        .iter()
+                        .find(|schema| schema.id == index.id)
+                        .map(tidb_stats_handle_storage::json::LoadStatsIndexSchema::info),
+                    physical_id: table.table_id(),
                     ..Default::default()
                 },
             );
-            global.index_stats_existence.insert(index.id, true);
-            if let Some(status) = partitions
-                .iter()
-                .find_map(|(_, stats)| stats.index_load_status.get(&index.id).copied())
-            {
-                global.index_load_status.insert(index.id, status);
-            }
+            insert_existence(&global, index.id, true);
         }
-        global.index_fm_sketches.remove(&index.id);
     }
     finish_analyze_publication(&mut global);
     Ok(global)
@@ -823,13 +823,7 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
             .ok_or_else(|| DriverError::unsupported("temporary ANALYZE produced no statistics"))?;
         Ok(Some((
             table_id,
-            Arc::new(
-                tidb_stats_handle_storage::json::statistics_table_from_planner_statistics(
-                    &table,
-                    table_id,
-                    &statistics,
-                ),
-            ),
+            statistics,
         )))
     }
 
@@ -838,7 +832,7 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
         &mut self,
         statement: &AnalyzeStatement,
     ) -> Result<
-        std::collections::HashMap<i64, Arc<tidb_stats::table_statistics::TableStatistics>>,
+        std::collections::HashMap<i64, Arc<tidb_stats::Table>>,
         DriverError,
     > {
         let stats_handle = self.stats_handle();
@@ -990,7 +984,7 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
                 // published.
                 catalog
                     .table_statistics_in(&stats_handle, physical_id)
-                    .map(|statistics| statistics.row_count)
+                    .map(|statistics| statistics.hist_coll.realtime_count)
                     // Go GetPhysicalTableStats supplies a PseudoTable on a
                     // cache miss; it is not the unavailable-stats branch.
                     .or(Some(tidb_stats::PSEUDO_ROW_COUNT))

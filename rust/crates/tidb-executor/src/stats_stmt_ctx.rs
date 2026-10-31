@@ -24,7 +24,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use tidb_sessionctx::{StmtContext, StmtContextData};
-use tidb_stats::table_statistics::TableStatistics;
+use tidb_stats::Table;
 use tidb_stats_handle_syncload::sync_load::SyncLoadOutcome;
 use tidb_stats_handle::StatsHandle;
 
@@ -54,11 +54,11 @@ pub trait StatsStmtCtx {
     fn record_table_runtime_statistics(
         &self,
         table_ids: impl IntoIterator<Item = i64>,
-        get: impl FnMut(i64) -> Option<Arc<TableStatistics>>,
+        get: impl FnMut(i64) -> Option<Arc<Table>>,
     );
 
     /// Snapshot of Go `StmtCtx.TableStats` for plan-replayer dumping.
-    fn table_runtime_statistics(&self) -> HashMap<i64, Option<Arc<TableStatistics>>>;
+    fn table_runtime_statistics(&self) -> HashMap<i64, Option<Arc<Table>>>;
 
     /// Go `SyncLoad`'s pending requests, which `SyncWaitStatsLoad` waits for.
     fn install_pending_statistics_load(
@@ -98,20 +98,20 @@ impl StatsStmtCtx for StmtContext {
     fn record_table_runtime_statistics(
         &self,
         table_ids: impl IntoIterator<Item = i64>,
-        mut get: impl FnMut(i64) -> Option<Arc<TableStatistics>>,
+        mut get: impl FnMut(i64) -> Option<Arc<Table>>,
     ) {
         self.record_table_runtime_statistics_any(table_ids, |table_id| {
             get(table_id).map(|stats| stats as Arc<dyn std::any::Any + Send + Sync>)
         });
     }
 
-    fn table_runtime_statistics(&self) -> HashMap<i64, Option<Arc<TableStatistics>>> {
+    fn table_runtime_statistics(&self) -> HashMap<i64, Option<Arc<Table>>> {
         self.table_runtime_statistics_any()
             .into_iter()
             .map(|(table_id, stats)| {
                 (
                     table_id,
-                    stats.and_then(|stats| stats.downcast::<TableStatistics>().ok()),
+                    stats.and_then(|stats| stats.downcast::<Table>().ok()),
                 )
             })
             .collect()

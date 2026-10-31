@@ -24,8 +24,7 @@
 //! * `pkg/statistics/handle/storage/json.go` (`TableStatsFromJSON`) turns one
 //!   `JSONTable` into a `statistics.Table`: histograms decoded from their
 //!   proto form, CMSketch/TopN rebuilt, stats version resolved.
-//!   [`statistics_table_from_json`] is that function; the planner's reduced
-//!   view is derived from the resulting canonical table.
+//!   [`statistics_table_from_json`] is that function.
 //! * `pkg/statistics/handle/storage/stats_read_writer.go`
 //!   (`LoadStatsFromJSONNoUpdate`) resolves WHICH physical tables the dump
 //!   feeds -- the table itself, or its partitions by name plus the `global`
@@ -79,10 +78,8 @@ use tidb_stats_util::{JsonBucket, JsonCmSketch, JsonCmSketchRow, JsonCmSketchTop
 use tidb_stats_util::JsonTable;
 use tidb_compress::{GzipReaderPool, GzipWriterPool};
 
-use tidb_stats::table_statistics::TableStatistics;
 use tidb_table::kv_table::KvTable;
 use tidb_hack::GoToLower;
-use tidb_stats::table_statistics::table_statistics_from_table_schema;
 
 /// The `TableInfo` subset Go `TableStatsFromJSON` reads.
 ///
@@ -125,6 +122,33 @@ pub struct LoadStatsIndexSchema {
     pub mv_index: bool,
     /// Go `IndexInfo.Unique`.
     pub unique: bool,
+}
+
+impl LoadStatsColumnSchema {
+    /// Go `Column.Info`: the schema column these statistics describe.
+    #[must_use]
+    pub fn info(&self) -> ColumnInfo {
+        ColumnInfo {
+            id: self.id,
+            name: self.name.clone(),
+            primary_key: self.primary_key,
+            flag: self.field_type.flags() as usize,
+        }
+    }
+}
+
+impl LoadStatsIndexSchema {
+    /// Go `Index.Info`: the schema index these statistics describe.
+    #[must_use]
+    pub fn info(&self) -> IndexInfo {
+        IndexInfo {
+            id: self.id,
+            name: self.name.clone(),
+            columns: self.columns.clone(),
+            mv_index: self.mv_index,
+            unique: self.unique,
+        }
+    }
 }
 
 impl LoadStatsTableSchema {
@@ -170,139 +194,6 @@ impl LoadStatsTableSchema {
                 .collect(),
             pk_is_handle: table.pk_handle_offset().is_some(),
         }
-    }
-}
-
-/// Reconstitutes Go's canonical cache object from the planner view produced
-/// by the in-process analyzer.
-///
-/// Temporary-table ANALYZE is the production caller: its rows are held by
-/// the session rather than TiKV, but Go still publishes the resulting
-/// `statistics.Table` into the process-wide statistics cache. Keeping this
-/// translation beside the inverse one below prevents the cluster route from
-/// inventing a second statistics representation.
-#[must_use]
-pub fn statistics_table_from_planner_statistics(
-    table: &KvTable,
-    physical_id: i64,
-    statistics: &TableStatistics,
-) -> Table {
-    let schema = LoadStatsTableSchema::from_kv_table(table);
-    let mut hist_coll = HistColl::new(
-        physical_id,
-        statistics.row_count,
-        statistics.modify_count,
-        statistics.columns.len(),
-        statistics.indexes.len(),
-    );
-    hist_coll.pseudo = statistics.cache_pseudo;
-    let mut existence = ColAndIdxExistenceMap::new(schema.columns.len(), schema.indexes.len());
-
-    for column in &schema.columns {
-        let Some(item) = statistics.columns.get(&column.id) else {
-            continue;
-        };
-        hist_coll.stats_version = hist_coll
-            .stats_version
-            .max(i32::try_from(item.stats_version).unwrap_or(i32::MAX));
-        hist_coll.set_column(
-            column.id,
-            Column {
-                cmsketch: item.cmsketch.clone(),
-                top_n: item.top_n.clone(),
-                fm_sketch: statistics.column_fm_sketches.get(&column.id).cloned(),
-                info: Some(ColumnInfo {
-                    id: column.id,
-                    name: column.name.clone(),
-                    primary_key: column.primary_key,
-                    flag: column.field_type.flags() as usize,
-                }),
-                histogram: item.histogram.clone(),
-                stats_loaded_status: statistics
-                    .column_load_status
-                    .get(&column.id)
-                    .copied()
-                    .unwrap_or_else(StatsLoadedStatus::full_load),
-                physical_id,
-                stats_version: item.stats_version,
-                is_handle: table
-                    .pk_handle_offset()
-                    .is_some_and(|offset| table.columns()[offset].id == column.id),
-            },
-        );
-        existence.insert_column(
-            column.id,
-            statistics
-                .column_stats_existence
-                .get(&column.id)
-                .copied()
-                .unwrap_or(true),
-        );
-    }
-    for index in &schema.indexes {
-        let Some(item) = statistics.indexes.get(&index.id) else {
-            continue;
-        };
-        hist_coll.stats_version = hist_coll
-            .stats_version
-            .max(i32::try_from(item.stats_version).unwrap_or(i32::MAX));
-        hist_coll.set_index(
-            index.id,
-            Index {
-                cmsketch: item.cmsketch.clone(),
-                top_n: item.top_n.clone(),
-                fm_sketch: statistics.index_fm_sketches.get(&index.id).cloned(),
-                info: Some(IndexInfo {
-                    id: index.id,
-                    name: index.name.clone(),
-                    columns: index.columns.clone(),
-                    mv_index: index.mv_index,
-                    unique: index.unique,
-                }),
-                histogram: item.histogram.clone(),
-                stats_loaded_status: statistics
-                    .index_load_status
-                    .get(&index.id)
-                    .copied()
-                    .unwrap_or_else(StatsLoadedStatus::full_load),
-                stats_version: item.stats_version,
-                physical_id,
-            },
-        );
-        existence.insert_index(
-            index.id,
-            statistics
-                .index_stats_existence
-                .get(&index.id)
-                .copied()
-                .unwrap_or(true),
-        );
-    }
-    // Go keeps `ColAndIdxExistenceMap` independently of resident histograms:
-    // an analyzed item whose payload is not in memory is still known.
-    for column in &schema.columns {
-        if !statistics.columns.contains_key(&column.id) {
-            if let Some(&analyzed) = statistics.column_stats_existence.get(&column.id) {
-                existence.insert_column(column.id, analyzed);
-            }
-        }
-    }
-    for index in &schema.indexes {
-        if !statistics.indexes.contains_key(&index.id) {
-            if let Some(&analyzed) = statistics.index_stats_existence.get(&index.id) {
-                existence.insert_index(index.id, analyzed);
-            }
-        }
-    }
-
-    Table {
-        existence_map: Some(Arc::new(RwLock::new(existence))),
-        hist_coll,
-        version: statistics.version,
-        last_analyze_version: statistics.last_analyze_version,
-        last_stats_hist_version: statistics.last_analyze_version,
-        table_info_update_ts: 0,
-        is_pk_handle: table.pk_handle_offset().is_some(),
     }
 }
 
@@ -945,30 +836,6 @@ pub fn statistics_table_from_json_schema(
     })
 }
 
-/// The common planner view of a canonical Go-compatible statistics table.
-pub fn table_statistics_from_table(stats: &Table, table: &KvTable) -> TableStatistics {
-    let columns = table
-        .columns()
-        .iter()
-        .map(|column| (column.id, column.field_type.is_unsigned()))
-        .collect::<Vec<_>>();
-    let indexes = table
-        .indexes()
-        .iter()
-        .map(|index| (index.id, index.column_offsets.len(), index.unique))
-        .collect::<Vec<_>>();
-    table_statistics_from_table_schema(stats, &columns, &indexes)
-}
-
-/// Restores one non-partitioned executor table and derives its planner view.
-pub fn table_statistics_from_json(
-    table: &KvTable,
-    json: &JsonTable,
-) -> Result<TableStatistics, LoadStatsError> {
-    let statistics = statistics_table_from_json(table, table.table_id(), json)?;
-    Ok(table_statistics_from_table(&statistics, table))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -989,12 +856,15 @@ mod tests {
         existence.insert_column(3, true);
         existence.insert_index(7, true);
         stats.existence_map = Some(Arc::new(RwLock::new(existence)));
-        let projected = table_statistics_from_table_schema(&stats, &[(3, false)], &[(7, 1, false)]);
-        assert_eq!(projected.column_stats_existence.get(&3), Some(&true));
-        assert_eq!(projected.index_stats_existence.get(&7), Some(&true));
-        assert!(projected.columns.is_empty());
-        assert!(projected.indexes.is_empty());
-        assert!(projected.column_is_load_needed(3, true));
+        assert_eq!(stats.hist_coll.column_count(), 0);
+        assert_eq!(stats.hist_coll.index_count(), 0);
+        // Go `ColumnIsLoadNeeded` on an analyzed, non-resident column:
+        // `(nil, Has, HasAnalyzed)`, both true.
+        let (resident, needed, analyzed) = stats.column_load_needed(3, true);
+        assert!(resident.is_none() && needed && analyzed);
+        // Go `IndexIsLoadNeeded` likewise asks for the analyzed index.
+        let (resident, needed) = stats.index_load_needed(7);
+        assert!(resident.is_none() && needed);
     }
 
     fn column(id: i64, name: &str) -> tidb_table::kv_table::KvColumn {
@@ -1255,11 +1125,9 @@ mod tests {
         let stats = statistics_table_from_json(&schema, 99, &dumped).expect("load dump");
         assert_eq!(stats.hist_coll.physical_id, 99);
         // Go `Table.StatsInfo` publishes `HistColl.StatsVer`, the format
-        // version of the loaded objects. The planner view must carry it or
-        // EXPLAIN labels a real histogram `stats:pseudo` (version zero).
-        let planner = table_statistics_from_json(&schema, &dumped).expect("planner view");
-        assert_eq!(planner.stats_ver, 2);
-        assert!(!planner.pseudo);
+        // version of the loaded objects; zero would label a real histogram
+        // `stats:pseudo` in EXPLAIN.
+        assert!(!stats.hist_coll.pseudo);
         assert_eq!(stats.hist_coll.column_count(), 2);
         assert_eq!(stats.hist_coll.stats_version, 2);
         assert!(stats.is_pk_handle);
@@ -1283,9 +1151,6 @@ mod tests {
             .read()
             .unwrap()
             .has_analyzed(2, false));
-        drop(hidden);
-        let planner = table_statistics_from_table(&stats, &schema);
-        assert!(planner.columns.contains_key(&2));
     }
 
     #[test]
@@ -1316,15 +1181,21 @@ mod tests {
                 ..Default::default()
             },
         );
-        let planner = table_statistics_from_table_schema(&stats, &[(1, false)], &[(7, 1, false)]);
-        assert!(planner.pseudo);
-        assert!(!planner.cache_pseudo);
-        assert_eq!(planner.indexes[&7].total_row_count(), 0.0);
-        assert_eq!(
-            planner.index_load_status[&7],
-            tidb_stats::StatsLoadedStatus::default()
-        );
-        assert!(!planner.index_stats_existence[&7]);
+        // Uninitialized, so `GetStatsTable` plans from a pseudo copy; the
+        // cache object itself is not pseudo.
+        assert!(!stats.is_initialized());
+        assert!(!stats.hist_coll.pseudo);
+        let index = stats.hist_coll.get_index(7).expect("placeholder index");
+        let index = index.read().unwrap();
+        assert_eq!(index.total_row_count(), 0.0);
+        assert_eq!(index.stats_loaded_status, tidb_stats::StatsLoadedStatus::default());
+        assert!(!stats
+            .existence_map
+            .as_ref()
+            .unwrap()
+            .read()
+            .unwrap()
+            .has_analyzed(7, true));
     }
 
     /// Go `GetStatsTable` consults `Table.IsInitialized`, rather than the
@@ -1362,10 +1233,8 @@ mod tests {
         );
 
         assert!(!stats.is_initialized());
-        let planner = table_statistics_from_table(&stats, &schema);
-        assert_eq!(planner.row_count, 5);
-        assert!(planner.columns.contains_key(&1));
-        assert!(planner.pseudo);
-        assert!(!planner.cache_pseudo);
+        assert_eq!(stats.hist_coll.realtime_count, 5);
+        assert!(stats.hist_coll.get_column(1).is_some());
+        assert!(!stats.hist_coll.pseudo);
     }
 }

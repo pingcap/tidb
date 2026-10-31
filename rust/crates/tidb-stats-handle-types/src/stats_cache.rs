@@ -16,10 +16,10 @@
 
 use std::sync::Arc;
 
-use tidb_stats::table_statistics::TableStatistics;
+use tidb_stats::Table;
 
 /// Go `StatsCache.UpdateStatsCache`: publishes freshly loaded tables.
 pub trait StatsCache: Send + Sync {
     /// Publishes `tables`, keyed by physical table ID, replacing older ones.
-    fn update_stats_cache(&self, tables: Vec<(i64, Arc<TableStatistics>)>);
+    fn update_stats_cache(&self, tables: Vec<(i64, Arc<Table>)>);
 }

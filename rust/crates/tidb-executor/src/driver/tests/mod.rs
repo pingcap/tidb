@@ -169,18 +169,20 @@ fn scale_analyzed_tpcc_table(
         .unwrap();
         (table_id, column_ndvs, indexes, statistics)
     };
-    for (column_id, column) in &mut statistics.columns {
+    for column in statistics.hist_coll.stable_columns() {
+        let mut column = column.write().unwrap();
         let ndv = column_ndvs
-            .get(column_id)
+            .get(&column.histogram.id)
             .copied()
             .unwrap_or(column.histogram.ndv.max(1));
         scale_histogram(&mut column.histogram, row_count, ndv);
     }
     for (index_id, index_columns) in indexes {
         let index = statistics
-            .indexes
-            .get_mut(&index_id)
+            .hist_coll
+            .get_index(index_id)
             .expect("analyzed TPCC index statistics");
+        let mut index = index.write().unwrap();
         let index_ndv = index_columns
             .iter()
             .try_fold(1_i64, |ndv, column_id| {
@@ -193,6 +195,6 @@ fn scale_analyzed_tpcc_table(
             .max(1);
         scale_histogram(&mut index.histogram, row_count, index_ndv);
     }
-    statistics.row_count = row_count;
+    statistics.hist_coll.realtime_count = row_count;
     ctx.stats_handle().set_table_statistics(table_id, std::sync::Arc::new(statistics));
 }

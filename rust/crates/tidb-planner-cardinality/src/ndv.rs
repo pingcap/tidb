@@ -218,20 +218,17 @@ fn estimate_skewed_ndv(original_ndv: f64, original_rows: f64, selected_rows: f64
 /// the payloads eagerly, so callers pass the items Go's predicate-statistics
 /// collection would have marked fully loaded for this query.
 pub fn estimate_column_ndv(
-    s: &dyn tidb_stats::table_statistics::TableStatsSnapshot,
+    s: &tidb_stats::Table,
     column_id: i64,
     full_loaded_columns: &std::collections::BTreeSet<i64>,
     full_loaded_indexes: &std::collections::BTreeSet<i64>,
 ) -> Option<f64> {
-    let column = s.columns().get(&column_id)?;
+    let column = s.hist_coll.get_column(column_id)?;
+    let column = read(&column);
     // Go reads the histogram's NDV only when `IsStatsInitialized()`; an
     // `EmptyColumn` placeholder -- a never-analyzed column a load request
     // published -- takes the `RealtimeCount * distinctFactor` branch.
-    if !s
-        .column_load_status()
-        .get(&column_id)
-        .is_some_and(|status| status.stats_initialized())
-    {
+    if !column.is_stats_initialized() {
         return None;
     }
     let version = column.histogram.last_update_version;
@@ -241,7 +238,8 @@ pub fn estimate_column_ndv(
         full_loaded_indexes
             .iter()
             .find_map(|id| {
-                s.indexes().get(id).and_then(|index| {
+                s.hist_coll.get_index(*id).and_then(|index| {
+                    let index = read(&index);
                     (index.histogram.last_update_version == version)
                         .then(|| index.total_row_count() as i64)
                 })
@@ -251,7 +249,8 @@ pub fn estimate_column_ndv(
                     .iter()
                     .filter(|id| **id != column_id)
                     .find_map(|id| {
-                        s.columns().get(id).and_then(|candidate| {
+                        s.hist_coll.get_column(*id).and_then(|candidate| {
+                            let candidate = read(&candidate);
                             let same_version = candidate.histogram.last_update_version == version;
                             // A candidate whose histogram never got
                             // buckets stores its rows in TopN only, and
@@ -279,7 +278,11 @@ pub fn estimate_column_ndv(
     };
     let mut ndv = column.histogram.ndv as f64;
     if analyzed_count > 0 {
-        ndv *= s.row_count() as f64 / analyzed_count as f64;
+        ndv *= s.hist_coll.realtime_count as f64 / analyzed_count as f64;
     }
     Some(ndv)
+}
+
+fn read<T>(lock: &std::sync::RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(std::sync::PoisonError::into_inner)
 }

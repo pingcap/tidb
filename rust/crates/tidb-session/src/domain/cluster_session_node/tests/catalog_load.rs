@@ -21,7 +21,7 @@
 use tidb_stats_handle::catalog_statistics::CatalogStatistics;
 use super::super::*;
 use super::node_fixture::*;
-use tidb_domain_core::cluster_session::{planner_statistics, SkippedTable};
+use tidb_domain_core::cluster_session::SkippedTable;
 use crate::StmtResult;
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, FieldType};
@@ -290,10 +290,14 @@ fn loaded_column_ndv_reaches_grouped_cluster_plans() {
     };
     let loaded_stats = loaded_stats.to_statistics_table(&table);
     let table_id = table.id;
-    let translated = planner_statistics(loaded_stats.as_ref(), &table);
-    assert!(!translated.pseudo);
+    assert!(!loaded_stats.hist_coll.pseudo);
     assert_eq!(
-        translated.columns.keys().copied().collect::<Vec<_>>(),
+        loaded_stats
+            .hist_coll
+            .stable_columns()
+            .iter()
+            .map(|column| column.read().unwrap().histogram.id)
+            .collect::<Vec<_>>(),
         vec![1, 2, 3]
     );
     let (mut session, skipped, _node) = node_session(one_table_catalog(table));
@@ -321,8 +325,11 @@ fn loaded_column_ndv_reaches_grouped_cluster_plans() {
         let statistics = catalog
             .table_statistics_in(&shared.stats_handle(), 130)
             .expect("loaded statistics reach the session's catalog");
-        assert!(!statistics.pseudo);
-        assert_eq!(statistics.columns.get(&2).unwrap().histogram.ndv, 10);
+        assert!(!statistics.hist_coll.pseudo);
+        assert_eq!(
+            statistics.hist_coll.get_column(2).unwrap().read().unwrap().histogram.ndv,
+            10
+        );
     }
     session
         .run(

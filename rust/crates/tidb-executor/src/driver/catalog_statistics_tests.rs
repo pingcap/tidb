@@ -38,7 +38,7 @@
             &self,
             items: &[tidb_model::StatsLoadItem],
             _resource_group: &str,
-        ) -> Result<Vec<(i64, Arc<tidb_stats::table_statistics::TableStatistics>)>, String> {
+        ) -> Result<Vec<(i64, Arc<tidb_stats::Table>)>, String> {
             *self
                 .requests
                 .lock()
@@ -63,17 +63,53 @@
         };
         let table_id = table.table_id();
         let column_id = table.columns()[0].id;
-        let statistics = tidb_stats::table_statistics::TableStatistics {
-            pseudo: false,
-            row_count: 10,
-            column_load_status: [(column_id, tidb_stats::StatsLoadedStatus::all_evicted())]
-                .into_iter()
-                .collect(),
-            column_stats_existence: [(column_id, true)].into_iter().collect(),
-            ..tidb_stats::table_statistics::TableStatistics::default()
-        };
+        let statistics = evicted_statistics(10, 0, &[column_id], &[]);
         handle.set_table_statistics(table_id, Arc::new(statistics));
         (catalog, handle, table_id, column_id)
+    }
+
+    /// Go's cache table after eviction: every analyzed item keeps its object
+    /// and `StatsVer`, with its payload status `allEvicted`.
+    fn evicted_statistics(
+        realtime_count: i64,
+        modify_count: i64,
+        column_ids: &[i64],
+        index_ids: &[i64],
+    ) -> tidb_stats::Table {
+        let statistics = tidb_stats::Table::from_analyzed_items(
+            0,
+            realtime_count,
+            modify_count,
+            column_ids.iter().map(|id| {
+                (
+                    *id,
+                    tidb_stats::column::Column {
+                        histogram: tidb_stats::Histogram { id: *id, ..Default::default() },
+                        stats_version: 2,
+                        ..Default::default()
+                    },
+                )
+            }),
+            index_ids.iter().map(|id| {
+                (
+                    *id,
+                    tidb_stats::index::Index {
+                        histogram: tidb_stats::Histogram { id: *id, ..Default::default() },
+                        stats_version: 2,
+                        ..Default::default()
+                    },
+                )
+            }),
+        );
+        for column in statistics.hist_coll.stable_columns() {
+            column.write().unwrap().stats_loaded_status =
+                tidb_stats::StatsLoadedStatus::all_evicted();
+        }
+        for index in statistics.hist_coll.stable_indices() {
+            index.write().unwrap().stats_loaded_status =
+                tidb_stats::StatsLoadedStatus::all_evicted();
+        }
+        statistics
     }
 
     fn index_pruning_catalog(
@@ -127,24 +163,12 @@
             .iter()
             .map(|index| (index.name.clone(), index.id))
             .collect::<Vec<_>>();
-        let statistics = tidb_stats::table_statistics::TableStatistics {
-            pseudo: false,
-            row_count: 4,
-            column_load_status: column_ids
-                .iter()
-                .copied()
-                .map(|id| (id, tidb_stats::StatsLoadedStatus::all_evicted()))
-                .collect(),
-            index_load_status: indexes
-                .iter()
-                .map(|(_, id)| (*id, tidb_stats::StatsLoadedStatus::all_evicted()))
-                .collect(),
-            column_stats_existence: column_ids.iter().copied().map(|id| (id, true)).collect(),
-            index_stats_existence: indexes.iter().map(|(_, id)| (*id, true)).collect(),
-            ..tidb_stats::table_statistics::TableStatistics::default()
-        };
+        let index_ids = indexes.iter().map(|(_, id)| *id).collect::<Vec<_>>();
         for physical_id in std::iter::once(table_id).chain(partition_ids.iter().copied()) {
-            handle.set_table_statistics(physical_id, Arc::new(statistics.clone()));
+            handle.set_table_statistics(
+                physical_id,
+                Arc::new(evicted_statistics(4, 0, &column_ids, &index_ids)),
+            );
         }
         (catalog, handle, table_id, partition_ids, indexes)
     }
@@ -456,15 +480,8 @@
             .and_then(|table| table.indexes().first())
             .expect("fixture index ia")
             .id;
-        let mut statistics = catalog
-            .table_statistics_in(&handle, table_id)
-            .expect("fixture statistics")
-            .as_ref()
-            .clone();
-        statistics
-            .index_load_status
-            .insert(index_id, tidb_stats::StatsLoadedStatus::all_evicted());
-        statistics.index_stats_existence.insert(index_id, true);
+        let column_id = catalog.kv_table_by_id(table_id).unwrap().columns()[0].id;
+        let statistics = evicted_statistics(10, 0, &[column_id], &[index_id]);
         handle.set_table_statistics(table_id, Arc::new(statistics));
         let loader = Arc::new(RecordingLoader::default());
         handle.set_item_loader(loader.clone(), StatisticsLoadWorkers::new());
@@ -667,23 +684,9 @@
             .and_then(|table| table.indexes().first())
             .expect("fixture index")
             .id;
-        let statistics = tidb_stats::table_statistics::TableStatistics {
-            // `GetStatsTable` rule 2 makes this table's planner copy pseudo,
-            // while the cached `HistColl.Pseudo` stays false.
-            pseudo: true,
-            cache_pseudo: false,
-            row_count: 0,
-            modify_count: 3,
-            column_load_status: [(column_id, tidb_stats::StatsLoadedStatus::all_evicted())]
-                .into_iter()
-                .collect(),
-            index_load_status: [(index_id, tidb_stats::StatsLoadedStatus::all_evicted())]
-                .into_iter()
-                .collect(),
-            column_stats_existence: [(column_id, true)].into_iter().collect(),
-            index_stats_existence: [(index_id, true)].into_iter().collect(),
-            ..tidb_stats::table_statistics::TableStatistics::default()
-        };
+        // `GetStatsTable` rule 2 makes this table's planner copy pseudo,
+        // while the cached `HistColl.Pseudo` stays false.
+        let statistics = evicted_statistics(0, 3, &[column_id], &[index_id]);
         handle.set_table_statistics(table_id, Arc::new(statistics));
         let column = tidb_model::TableItemID {
             table_id,
@@ -756,9 +759,7 @@
                     stats_version: 2,
                     ..Default::default()
                 },
-            )]
-            .into_iter()
-            .collect();
+            )];
             let indexes = [(
                 index_id,
                 tidb_stats::index::Index {
@@ -773,13 +774,12 @@
                     }),
                     ..Default::default()
                 },
-            )]
-            .into_iter()
-            .collect();
-            Arc::new(
-                tidb_stats::table_statistics::TableStatistics::new(row_count, 0, columns, indexes)
-                    .with_stat_versions(meta_version, 7),
-            )
+            )];
+            let mut statistics =
+                tidb_stats::Table::from_analyzed_items(table_id, row_count, 0, columns, indexes);
+            statistics.version = meta_version;
+            statistics.last_analyze_version = 7;
+            Arc::new(statistics)
         };
         let environment = crate::PreparedPlanCacheEnvironment::default().with_stats_handle(Arc::clone(&handle));
         let keys = [CatalogTableKey::new("test", "t")];
@@ -811,19 +811,7 @@
             .and_then(|table| table.indexes().first())
             .expect("fixture index")
             .id;
-        let statistics = tidb_stats::table_statistics::TableStatistics {
-            pseudo: false,
-            row_count: 10,
-            column_load_status: [(column_id, tidb_stats::StatsLoadedStatus::all_evicted())]
-                .into_iter()
-                .collect(),
-            index_load_status: [(index_id, tidb_stats::StatsLoadedStatus::all_evicted())]
-                .into_iter()
-                .collect(),
-            column_stats_existence: [(column_id, true)].into_iter().collect(),
-            index_stats_existence: [(index_id, true)].into_iter().collect(),
-            ..tidb_stats::table_statistics::TableStatistics::default()
-        };
+        let statistics = evicted_statistics(10, 0, &[column_id], &[index_id]);
         handle.set_table_statistics(table_id, Arc::new(statistics));
         let column = tidb_model::TableItemID {
             table_id,
@@ -912,22 +900,7 @@
         let index_id = table.indexes().first().expect("expression index").id;
         handle.set_table_statistics(
             table_id,
-            Arc::new(tidb_stats::table_statistics::TableStatistics {
-                pseudo: false,
-                row_count: 10,
-                column_load_status: [
-                    (a, tidb_stats::StatsLoadedStatus::all_evicted()),
-                    (v, tidb_stats::StatsLoadedStatus::all_evicted()),
-                ]
-                .into_iter()
-                .collect(),
-                index_load_status: [(index_id, tidb_stats::StatsLoadedStatus::all_evicted())]
-                    .into_iter()
-                    .collect(),
-                column_stats_existence: [(a, true), (v, true)].into_iter().collect(),
-                index_stats_existence: [(index_id, true)].into_iter().collect(),
-                ..tidb_stats::table_statistics::TableStatistics::default()
-            }),
+            Arc::new(evicted_statistics(10, 0, &[a, v], &[index_id])),
         );
         let requested = tidb_model::TableItemID {
             table_id,
@@ -975,7 +948,7 @@
                 .table_runtime_statistics()
                 .get(&table_id)
                 .and_then(Option::as_deref)
-                .map(|statistics| statistics.row_count),
+                .map(|statistics| statistics.hist_coll.realtime_count),
             Some(10)
         );
         usage_list.sweep_session_stats_list();

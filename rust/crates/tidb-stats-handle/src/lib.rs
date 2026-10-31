@@ -34,7 +34,7 @@ pub struct StatsHandle {
     /// Go `Handle`'s statistics view over the domain's canonical cache, when
     /// a cluster node installed one; it answers instead of `values`.
     pub view: std::sync::RwLock<Option<Arc<StatisticsView>>>,
-    pub values: std::sync::RwLock<HashMap<i64, Arc<tidb_stats::table_statistics::TableStatistics>>>,
+    pub values: std::sync::RwLock<HashMap<i64, Arc<tidb_stats::Table>>>,
     pub loader: std::sync::RwLock<Option<Arc<dyn StatisticsItemLoader>>>,
     pub sync_load: std::sync::OnceLock<Arc<tidb_stats_handle_syncload::sync_load::SyncLoadService>>,
 }
@@ -91,7 +91,7 @@ impl StatsHandle {
     pub fn set_table_statistics(
         &self,
         table_id: i64,
-        statistics: Arc<tidb_stats::table_statistics::TableStatistics>,
+        statistics: Arc<tidb_stats::Table>,
     ) {
         self.values
             .write()
@@ -133,22 +133,22 @@ impl StatsHandle {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(view);
     }
 
-    /// One table's loaded statistics; `None` is Go's `PseudoTable`. `schema`
-    /// supplies the table's metadata when a domain view converts canonical
-    /// statistics, and is not called otherwise.
+    /// Go `Handle.GetPhysicalTableStats`: one table's cached statistics;
+    /// `None` is Go's `PseudoTable`. `schema` supplies the `TableInfo` facts a
+    /// domain view's cache miss reads, and is not called otherwise.
     #[must_use]
     pub fn table_statistics(
         &self,
         table_id: i64,
-        schema: impl FnOnce() -> Option<Arc<tidb_stats::StatisticsSchema>>,
-    ) -> Option<Arc<tidb_stats::table_statistics::TableStatistics>> {
+        schema: impl FnOnce() -> Option<Arc<tidb_stats::PseudoStatsTable>>,
+    ) -> Option<Arc<tidb_stats::Table>> {
         let view = self
             .view
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         if let Some(view) = view {
-            return view.table(table_id, &schema()?);
+            return view.table(table_id, schema()?.as_ref());
         }
         self.values
             .read()
@@ -159,7 +159,7 @@ impl StatsHandle {
 }
 
 impl tidb_stats_handle_types::stats_cache::StatsCache for StatsHandle {
-    fn update_stats_cache(&self, tables: Vec<(i64, Arc<tidb_stats::table_statistics::TableStatistics>)>) {
+    fn update_stats_cache(&self, tables: Vec<(i64, Arc<tidb_stats::Table>)>) {
         let mut values = self
             .values
             .write()
@@ -185,7 +185,7 @@ mod sync_load_tests {
             &self,
             _items: &[tidb_model::StatsLoadItem],
             _resource_group: &str,
-        ) -> Result<Vec<(i64, Arc<tidb_stats::table_statistics::TableStatistics>)>, String> {
+        ) -> Result<Vec<(i64, Arc<tidb_stats::Table>)>, String> {
             Ok(Vec::new())
         }
     }

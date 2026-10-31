@@ -5371,7 +5371,7 @@ fn batch_point_usage_stats(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     table: &tidb_table::kv_table::KvTable,
-) -> Option<std::sync::Arc<tidb_stats::table_statistics::TableStatistics>> {
+) -> Option<std::sync::Arc<tidb_stats::Table>> {
     // Go `BatchPointGetPlan.LoadTableStats`: `GetStatsTable(TblInfo.ID)`.
     if crate::access_cost::table_statistics(ctx, catalog, table.table_id()).is_some() {
         return crate::access_cost::get_stats_table(ctx, catalog, table.table_id());
@@ -5379,16 +5379,16 @@ fn batch_point_usage_stats(
     let partition = table.partition()?;
     let mut row_count = 0_i64;
     for definition in &partition.definitions {
-        let stats = crate::access_cost::table_statistics(ctx, catalog, definition.id)?;
-        if stats.pseudo {
+        // Go `LoadTableStats` reads each partition through `GetStatsTable`.
+        let stats = crate::access_cost::get_stats_table(ctx, catalog, definition.id)?;
+        if stats.hist_coll.pseudo {
             return None;
         }
-        row_count = row_count.saturating_add(stats.row_count);
+        row_count = row_count.saturating_add(stats.hist_coll.realtime_count);
     }
-    Some(std::sync::Arc::new(tidb_stats::table_statistics::TableStatistics {
-        row_count,
-        ..tidb_stats::table_statistics::TableStatistics::default()
-    }))
+    let mut stats = tidb_stats::Table::default();
+    stats.hist_coll.realtime_count = row_count;
+    Some(std::sync::Arc::new(stats))
 }
 
 fn schema_column_slot(schema: &Schema, wanted: &Column) -> Option<usize> {
@@ -5482,7 +5482,7 @@ struct IndexPartialHandleSource {
     source: IndexRangeSourceExec,
     partition_indexes: Vec<usize>,
     table: crate::KvTable,
-    stats: Option<Arc<tidb_stats::table_statistics::TableStatistics>>,
+    stats: Option<Arc<tidb_stats::Table>>,
     ctx: crate::StmtContext,
     index_id: i64,
     reported: bool,

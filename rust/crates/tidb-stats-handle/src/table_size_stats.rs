@@ -36,17 +36,21 @@ impl TableSizeSource for CatalogTableStatistics<'_> {
     fn table_rows(&self, physical_id: i64) -> u64 {
         self.1
             .table_statistics(physical_id, || self.0.statistics_schema(physical_id))
-            .map_or(0, |statistics| statistics.row_count.max(0) as u64)
+            .map_or(0, |statistics| statistics.hist_coll.realtime_count.max(0) as u64)
     }
 
     fn column_length(&self, physical_id: i64, column_id: i64) -> u64 {
         self.1
             .table_statistics(physical_id, || self.0.statistics_schema(physical_id))
             .and_then(|statistics| {
-                statistics
-                    .columns
-                    .get(&column_id)
-                    .map(|column| column.histogram.tot_col_size.max(0) as u64)
+                statistics.hist_coll.get_column(column_id).map(|column| {
+                    column
+                        .read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .histogram
+                        .tot_col_size
+                        .max(0) as u64
+                })
             })
             .unwrap_or(0)
     }

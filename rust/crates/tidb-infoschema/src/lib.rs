@@ -233,10 +233,10 @@ pub struct Catalog {
     /// `SchemaMetaVersion`, so a temporary table never moves a plan-cache key
     /// (see [`Catalog::schema_version`]).
     overlay_versions: Option<(u64, u64)>,
-    /// The schema facts the statistics view converts a table under, by
-    /// table / partition id; the statistics themselves live in the domain's
+    /// The `TableInfo` facts a statistics cache miss reads, by table /
+    /// partition id; the statistics themselves live in the domain's
     /// `StatsHandle`, not in this image.
-    statistics_schemas: Arc<std::sync::OnceLock<HashMap<i64, Arc<tidb_stats::StatisticsSchema>>>>,
+    statistics_schemas: Arc<std::sync::OnceLock<HashMap<i64, Arc<tidb_stats::PseudoStatsTable>>>>,
 }
 
 impl Catalog {

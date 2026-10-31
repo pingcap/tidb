@@ -400,7 +400,7 @@ impl<S: IndexAdvisorExec> Optimizer for SessionOptimizer<'_, S> {
             let statistics = catalog.table_statistics_in(&stats_handle, stored.table_id());
             let row_count = statistics
                 .as_ref()
-                .map_or(0.0, |stats| stats.row_count as f64);
+                .map_or(0.0, |stats| stats.hist_coll.realtime_count as f64);
             let mut size = 0.0_f64;
             for name in columns {
                 let wanted = name.go_to_lower();
@@ -409,14 +409,13 @@ impl<S: IndexAdvisorExec> Optimizer for SessionOptimizer<'_, S> {
                     .iter()
                     .find(|column| column.name.go_to_lower() == wanted)
                     .and_then(|column| {
-                        let stats = statistics.as_ref()?;
-                        let loaded = stats
-                            .column_load_status
-                            .get(&column.id)
-                            .is_some_and(|status| status.stats_initialized());
-                        loaded
-                            .then(|| stats.columns.get(&column.id))?
-                            .map(|column_stats| column_stats.histogram.tot_col_size as f64)
+                        let column_stats = statistics.as_ref()?.hist_coll.get_column(column.id)?;
+                        let column_stats = column_stats
+                            .read()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        column_stats
+                            .is_stats_initialized()
+                            .then(|| column_stats.histogram.tot_col_size as f64)
                     });
                 match total_size {
                     // Might be not loaded.

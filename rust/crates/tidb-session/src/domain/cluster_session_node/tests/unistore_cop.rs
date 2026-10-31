@@ -3689,7 +3689,7 @@ fn ddl_after_loaded_statistics_matches_go() {
             .unwrap()
             .table_statistics_in(&peer_catalog.stats_handle(), table_id)
             .unwrap()
-            .column_is_load_needed(1, true));
+            .column_load_needed(1, true).1);
         let mut snapshot = (*stack.factory.stats().load()).clone();
         let table = snapshot.get(&table_id).unwrap().loaded().unwrap();
         let table = table.copy_as(tidb_stats::CopyIntent::AllDataWritable);
@@ -3709,7 +3709,7 @@ fn ddl_after_loaded_statistics_matches_go() {
             .unwrap()
             .table_statistics_in(&peer_catalog.stats_handle(), table_id)
             .unwrap()
-            .column_is_load_needed(1, true));
+            .column_load_needed(1, true).1);
         let read_count = tidb_stats_handle_metrics::READ_STATS_HISTOGRAM.get_sample_count();
         rows(
             session,
@@ -3751,7 +3751,7 @@ fn ddl_after_loaded_statistics_matches_go() {
                 .unwrap()
                 .table_statistics_in(&peer_catalog.stats_handle(), table_id)
                 .unwrap()
-                .column_is_load_needed(1, true),
+                .column_load_needed(1, true).1,
             "the peer still sees an evicted column after the domain load completes"
         );
         assert!(

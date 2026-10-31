@@ -1529,11 +1529,12 @@ fn global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader() {
         )
     };
     let (column_stats, index_stats) = analyzed_stats(k_column_id, index_id);
-    let statistics = tidb_stats::table_statistics::TableStatistics::new(
+    let statistics = tidb_stats::Table::from_analyzed_items(
+        table_id,
         10_000,
         0,
-        [(k_column_id, column_stats)].into_iter().collect(),
-        [(index_id, index_stats)].into_iter().collect(),
+        [(k_column_id, column_stats)],
+        [(index_id, index_stats)],
     );
     let ctx = ctx.with_fresh_staged_writes();
     ctx.stats_handle().set_table_statistics(table_id, std::sync::Arc::new(statistics));

@@ -98,7 +98,7 @@ pub fn analyze_status_rows_of(
                     physical_id,
                     catalog
                         .table_statistics_in(stats_handle, physical_id)
-                        .map_or(0, |statistics| statistics.row_count),
+                        .map_or(0, |statistics| statistics.hist_coll.realtime_count),
                 )))
             })()?;
             if let Some((physical_id, mut total_rows)) = table_count {

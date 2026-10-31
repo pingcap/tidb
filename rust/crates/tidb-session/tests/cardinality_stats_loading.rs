@@ -85,9 +85,9 @@ fn subset_index_cardinality_after_async_statistics_load() {
         catalog.load_needed_histograms(&shared.stats_handle(), "default").unwrap();
         let loaded = catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap();
         for id in column_ids {
-            assert!(loaded.column_load_status[&id].is_full_load());
+            assert!(loaded.hist_coll.get_column(id).unwrap().read().unwrap().is_full_load());
         }
-        assert!(loaded.index_load_status[&index_id].is_full_load());
+        assert!(loaded.hist_coll.get_index(index_id).unwrap().read().unwrap().is_full_load());
     }
     assert!(!queued(), "domain loading must consume the demand");
     let output: serde_json::Value = serde_json::from_str(include_str!(
@@ -328,12 +328,16 @@ fn builtin_in_estimate_survives_statistics_initialization() {
             .unwrap()
             .table_statistics_in(&shared_catalog.stats_handle(), table_id)
             .unwrap();
-        assert!(stats.pseudo, "{mode:?}");
-        assert!(!stats.cache_pseudo, "{mode:?}");
-        assert_eq!(
-            stats.column_stats_existence,
-            std::collections::BTreeMap::from([(1, false), (2, false)])
-        );
+        // Uninitialized: `GetStatsTable` plans from a pseudo copy, while the
+        // cache object itself is not pseudo.
+        assert!(!stats.is_initialized(), "{mode:?}");
+        assert!(!stats.hist_coll.pseudo, "{mode:?}");
+        let existence = stats.existence_map.as_ref().unwrap().read().unwrap();
+        for id in [1, 2] {
+            assert!(existence.has(id, false) && !existence.has_analyzed(id, false));
+        }
+        assert_eq!(existence.column_count(), 2);
+        drop(existence);
         for column in ["a", "b"] {
             let sql = format!(
                 "EXPLAIN FORMAT='brief' SELECT * FROM t WHERE {column} IN (1,2,3,4,5,6,7,8)"
@@ -390,7 +394,11 @@ fn datetime_range_overflow_survives_async_statistics_load() {
         assert!(catalog
             .table_statistics_in(&shared.stats_handle(), table_id)
             .unwrap()
-            .column_load_status[&column_id]
+            .hist_coll
+            .get_column(column_id)
+            .unwrap()
+            .read()
+            .unwrap()
             .is_full_load());
     }
     assert!(!queued());

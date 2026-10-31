@@ -258,6 +258,13 @@ pub struct HistColl {
     pub mv_idx_to_columns: HashMap<i64, Vec<i64>>,
 }
 
+/// Go's zero `HistColl`.
+impl Default for HistColl {
+    fn default() -> Self {
+        Self::new(0, 0, 0, 0, 0)
+    }
+}
+
 impl HistColl {
     pub fn new(
         physical_id: i64,
@@ -574,7 +581,8 @@ pub fn pseudo_hist_coll(physical_id: i64, allow_trigger_loading: bool) -> HistCo
     coll
 }
 
-#[derive(Clone, Debug)]
+/// Go `statistics.Table`; [`Default`] is its zero value.
+#[derive(Clone, Debug, Default)]
 pub struct Table {
     pub existence_map: Option<Arc<RwLock<ColAndIdxExistenceMap>>>,
     pub hist_coll: HistColl,
@@ -586,6 +594,61 @@ pub struct Table {
 }
 
 impl Table {
+    /// The cache object Go reloads after an `ANALYZE` saved these items:
+    /// every column and index fully loaded and analyzed, and `StatsVer` the
+    /// largest item format version.
+    #[must_use]
+    pub fn from_analyzed_items(
+        physical_id: i64,
+        realtime_count: i64,
+        modify_count: i64,
+        columns: impl IntoIterator<Item = (i64, Column)>,
+        indexes: impl IntoIterator<Item = (i64, Index)>,
+    ) -> Self {
+        let mut table = Self {
+            hist_coll: HistColl::new(physical_id, realtime_count, modify_count, 0, 0),
+            ..Self::default()
+        };
+        for (id, column) in columns {
+            table.put_analyzed_column(id, column);
+        }
+        for (id, index) in indexes {
+            table.put_analyzed_index(id, index);
+        }
+        table
+    }
+
+    /// Go `HistColl.SetCol` of an analyzed, fully loaded column, recorded in
+    /// `ColAndIdxExistenceMap` as analyzed; `StatsVer` follows the item's.
+    pub fn put_analyzed_column(&mut self, id: i64, mut column: Column) {
+        column.stats_loaded_status = StatsLoadedStatus::full_load();
+        self.hist_coll.stats_version = self
+            .hist_coll
+            .stats_version
+            .max(i32::try_from(column.stats_version).unwrap_or(i32::MAX));
+        write(self.existence_map()).insert_column(id, true);
+        self.hist_coll.set_column(id, column);
+    }
+
+    /// Go `HistColl.SetIdx` of an analyzed, fully loaded index, recorded in
+    /// `ColAndIdxExistenceMap` as analyzed; `StatsVer` follows the item's.
+    pub fn put_analyzed_index(&mut self, id: i64, mut index: Index) {
+        index.stats_loaded_status = StatsLoadedStatus::full_load();
+        self.hist_coll.stats_version = self
+            .hist_coll
+            .stats_version
+            .max(i32::try_from(index.stats_version).unwrap_or(i32::MAX));
+        write(self.existence_map()).insert_index(id, true);
+        self.hist_coll.set_index(id, index);
+    }
+
+    /// Go `Table.ColAndIdxExistenceMap`, created empty on first use as
+    /// `NewTable` does.
+    pub fn existence_map(&mut self) -> &RwLock<ColAndIdxExistenceMap> {
+        self.existence_map
+            .get_or_insert_with(|| Arc::new(RwLock::new(ColAndIdxExistenceMap::new_without_size())))
+    }
+
     /// Go `(*Table).MemoryUsage`; only column and index statistics payloads
     /// contribute, while table metadata is intentionally excluded.
     pub fn memory_usage(&self) -> TableMemoryUsage {
@@ -904,10 +967,3 @@ pub struct PseudoStatsTable {
     pub cacheable: bool,
 }
 
-/// Only the schema metadata used when converting canonical statistics.
-#[derive(Debug, PartialEq, Eq)]
-pub struct StatisticsSchema {
-    pub columns: Vec<(i64, bool)>,
-    pub indexes: Vec<(i64, usize, bool)>,
-    pub pseudo: PseudoStatsTable,
-}

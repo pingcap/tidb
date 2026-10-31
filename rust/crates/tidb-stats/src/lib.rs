@@ -130,7 +130,7 @@ pub use stats_version::{
 };
 pub use status::{StatsLoadedStatus, ALL_EVICTED, ALL_LOADED};
 pub use table::{
-    PseudoStatsTable, StatisticsSchema,
+    PseudoStatsTable,
     pseudo_hist_coll, pseudo_table, CopyIntent, HistColl, PseudoColumnInfo, PseudoIndexInfo,
     PseudoTableInfo, QueryColumn, QueryIndexInfo, QueryTableInfo, SharedColumn, SharedIndex,
     StatsInfo, Table, TableMemoryUsage, PSEUDO_ROW_COUNT, PSEUDO_VERSION, RATIO_OF_PSEUDO_ESTIMATE,

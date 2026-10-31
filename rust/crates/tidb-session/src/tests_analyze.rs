@@ -121,7 +121,8 @@ fn first_analyze_without_cached_statistics_collects_small_table_distribution() {
             let stats = catalog
                 .table_statistics_in(&stats_handle, table.table_id())
                 .unwrap();
-            let column = stats.columns.values().next().unwrap();
+            let column = stats.hist_coll.stable_columns().remove(0);
+            let column = column.read().unwrap();
             assert_eq!(column.total_row_count(), 3.0);
             assert_eq!(column.histogram.ndv, 2);
             Ok(())
@@ -1321,15 +1322,22 @@ fn physical_statistics_loads_become_shared_at_the_next_statement_boundary() {
                     }};
                 }
 
-                        for (column_id, column) in &mut statistics.columns {
-                            scale_histogram!(&mut column.histogram, column_ndvs[column_id]);
+                        for column in statistics.hist_coll.stable_columns() {
+                            let mut column = column.write().unwrap();
+                            let column_id = column.histogram.id;
+                            scale_histogram!(&mut column.histogram, column_ndvs[&column_id]);
                         }
                         if table_name == "customer" {
-                            statistics
-                                .columns
-                                .values_mut()
+                            let columns = statistics.hist_coll.stable_columns();
+                            let mut column = columns
+                                .iter()
+                                .map(|column| column.write().unwrap())
                                 .find(|column| column.histogram.ndv == 5)
-                                .and_then(|column| column.histogram.buckets.last_mut())
+                                .expect("customer.c_mktsegment histogram");
+                            column
+                                .histogram
+                                .buckets
+                                .last_mut()
                                 .expect("customer.c_mktsegment histogram")
                                 .count = 149_998;
                         }
@@ -1342,12 +1350,10 @@ fn physical_statistics_loads_become_shared_at_the_next_statement_boundary() {
                                 .unwrap_or(row_count)
                                 .min(row_count)
                                 .max(1);
-                            scale_histogram!(
-                                &mut statistics.indexes.get_mut(&index_id).unwrap().histogram,
-                                index_ndv
-                            );
+                            let index = statistics.hist_coll.get_index(index_id).unwrap();
+                            scale_histogram!(&mut index.write().unwrap().histogram, index_ndv);
                         }
-                        statistics.row_count = row_count;
+                        statistics.hist_coll.realtime_count = row_count;
                         published.push((table_id, statistics));
                     }
                     Ok(())
@@ -1542,10 +1548,10 @@ fn partial_analyze_replaces_unanalyzed_table_metadata() {
         panic!("KV table")
     };
     let stats = catalog.table_statistics_in(&shared.stats_handle(), table.table_id()).unwrap();
-    assert_eq!(stats.stats_ver, 2);
-    assert!(!stats.cache_pseudo);
-    assert!(!stats.pseudo);
-    assert_eq!(stats.row_count, 3);
+    assert_eq!(stats.hist_coll.stats_version, 2);
+    assert!(!stats.hist_coll.pseudo);
+    assert!(stats.is_initialized());
+    assert_eq!(stats.hist_coll.realtime_count, 3);
     drop(catalog);
     let plan = row_text(session.run("EXPLAIN SELECT * FROM partial_metadata WHERE a=2"));
     assert!(

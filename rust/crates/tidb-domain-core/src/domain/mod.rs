@@ -480,7 +480,7 @@ impl tidb_stats_handle_syncload::sync_load::StatisticsItemLoader for ClusterStat
         &self,
         items: &[tidb_model::StatsLoadItem],
         resource_group: &str,
-    ) -> Result<Vec<(i64, Arc<tidb_stats::table_statistics::TableStatistics>)>, String> {
+    ) -> Result<Vec<(i64, Arc<tidb_stats::Table>)>, String> {
         let catalog = self.catalog.load();
         let loader = ClusterStatsLoader::locate(&catalog).map_err(|error| error.to_string())?;
         let skipped_column_types = self

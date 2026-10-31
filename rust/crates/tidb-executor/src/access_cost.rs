@@ -22,7 +22,7 @@
 
 use crate::StatsStmtCtx as _;
 use tidb_planner::stmt_ctx::PlannerStmtCtx as _;
-use tidb_stats::table_statistics::TableStatistics;
+use tidb_stats::Table;
 
 /// One table's loaded statistics as the statement's statistics handle holds
 /// them (Go `sctx.GetStatsHandle().GetPhysicalTableStats`); `None` is Go's
@@ -32,7 +32,7 @@ pub fn table_statistics(
     ctx: &crate::StmtContext,
     catalog: &tidb_infoschema::Catalog,
     table_id: i64,
-) -> Option<std::sync::Arc<TableStatistics>> {
+) -> Option<std::sync::Arc<Table>> {
     ctx.stats_handle()
         .table_statistics(table_id, || catalog.statistics_schema(table_id))
 }
@@ -56,7 +56,7 @@ pub fn get_stats_table(
     ctx: &crate::StmtContext,
     catalog: &tidb_infoschema::Catalog,
     physical_table_id: i64,
-) -> Option<std::sync::Arc<TableStatistics>> {
+) -> Option<std::sync::Arc<Table>> {
     let opt_objective_determinate = !ctx
         .optimizer_cost_env()
         .session
@@ -71,36 +71,39 @@ pub fn get_stats_table(
 
 /// The session rules of [`get_stats_table`] over one cached table.
 fn stats_table_for_session(
-    mut statistics: std::sync::Arc<TableStatistics>,
+    mut statistics: std::sync::Arc<Table>,
     opt_objective_determinate: bool,
     enable_pseudo_for_outdated_stats: bool,
-) -> Option<std::sync::Arc<TableStatistics>> {
+) -> Option<std::sync::Arc<Table>> {
     // `OptObjectiveDeterminate` ignores the real-time statistics: the copy's
     // `RealtimeCount` is the row count the loaded histograms observed at
     // ANALYZE time, and its `ModifyCount` is zero.
     if opt_objective_determinate {
-        let analyze_count = statistics.analyze_row_count().max(0.0) as i64;
-        if statistics.row_count != analyze_count || statistics.modify_count != 0 {
-            let copied = std::sync::Arc::make_mut(&mut statistics);
-            copied.row_count = analyze_count;
-            copied.modify_count = 0;
-            // The cached `pseudo` folds rule 2 in for the cached count; the
-            // copy's count is a different one, so only the cached
-            // `HistColl.Pseudo` and rule 3's `!IsInitialized()` carry over.
-            copied.pseudo = copied.cache_pseudo || !copied.is_initialized();
+        let analyze_count = statistics.hist_coll.analyze_row_count().max(0.0) as i64;
+        if statistics.hist_coll.realtime_count != analyze_count
+            || statistics.hist_coll.modify_count != 0
+        {
+            let mut copied = statistics.copy_as(tidb_stats::CopyIntent::MetaOnly);
+            copied.hist_coll.realtime_count = analyze_count;
+            copied.hist_coll.modify_count = 0;
+            statistics = std::sync::Arc::new(copied);
         }
     }
     // Rule 2: a zero `RealtimeCount` plans from a fresh `PseudoTable`; none of
     // the cached objects survive.
-    if statistics.row_count == 0 {
+    if statistics.hist_coll.realtime_count == 0 {
         return None;
     }
-    // Rule 3: an uninitialized table is already `pseudo` in the cache
-    // (`TableStatistics::new` and the loaders decide it). Outdatedness is
+    // Rule 3: an uninitialized or (when enabled) outdated table plans from
+    // Go's struct copy `tbl := *statsTbl` with `Pseudo` set. Outdatedness is
     // judged on the table this statement plans from, so the determinate
     // copy's zero `ModifyCount` is never outdated.
-    if enable_pseudo_for_outdated_stats && !statistics.pseudo && statistics.is_outdated() {
-        std::sync::Arc::make_mut(&mut statistics).pseudo = true;
+    if !statistics.is_initialized()
+        || (enable_pseudo_for_outdated_stats && statistics.is_outdated())
+    {
+        let mut copied = (*statistics).clone();
+        copied.hist_coll.pseudo = true;
+        statistics = std::sync::Arc::new(copied);
     }
     Some(statistics)
 }
@@ -124,25 +127,23 @@ pub fn get_latest_version_from_stats_table(
         return 0;
     };
     let realtime_row_count = if opt_objective_determinate {
-        statistics.analyze_row_count().max(0.0) as i64
+        statistics.hist_coll.analyze_row_count().max(0.0) as i64
     } else {
-        statistics.row_count
+        statistics.hist_coll.realtime_count
     };
     if realtime_row_count == 0 {
         return 0;
     }
-    statistics
-        .columns
-        .values()
-        .map(|column| column.histogram.last_update_version)
-        .chain(
-            statistics
-                .indexes
-                .values()
-                .map(|index| index.histogram.last_update_version),
-        )
-        .max()
-        .unwrap_or(0)
+    let mut version = 0;
+    statistics.hist_coll.for_each_column(|_, column| {
+        version = version.max(column.histogram.last_update_version);
+        false
+    });
+    statistics.hist_coll.for_each_index(|_, index| {
+        version = version.max(index.histogram.last_update_version);
+        false
+    });
+    version
 }
 
 /// The estimate one committed access path carries into `EXPLAIN`.
@@ -158,9 +159,9 @@ pub struct ScanEstimate {
 
 /// The table's realtime row count: `stats_meta.count` when analyzed, Go's
 /// `statistics.PseudoRowCount` when not.
-pub(crate) fn realtime_row_count(stats: Option<&TableStatistics>) -> f64 {
+pub(crate) fn realtime_row_count(stats: Option<&Table>) -> f64 {
     match stats {
-        Some(stats) if stats.row_count > 0 => stats.row_count as f64,
+        Some(stats) if stats.hist_coll.realtime_count > 0 => stats.hist_coll.realtime_count as f64,
         // A count of zero on a table with no histograms is not the statement
         // "this table is empty" -- it is `mysql.stats_meta` not having caught
         // up with the rows yet, and Go answers it with
@@ -171,10 +172,9 @@ pub(crate) fn realtime_row_count(stats: Option<&TableStatistics>) -> f64 {
         //
         // An ANALYZED table that really is empty lands here too, because a
         // zero count is one of Go's own routes to `PseudoTable` -- see
-        // [`TableStatistics::new`], where that rule lives, and the capture
-        // that pins it.
-        Some(stats) if stats.pseudo => tidb_stats::PSEUDO_ROW_COUNT as f64,
-        Some(stats) => stats.row_count.max(0) as f64,
+        // [`get_stats_table`], where that rule lives.
+        Some(stats) if stats.hist_coll.pseudo => tidb_stats::PSEUDO_ROW_COUNT as f64,
+        Some(stats) => stats.hist_coll.realtime_count.max(0) as f64,
         None => tidb_stats::PSEUDO_ROW_COUNT as f64,
     }
 }
@@ -182,8 +182,8 @@ pub(crate) fn realtime_row_count(stats: Option<&TableStatistics>) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::{BTreeMap, BTreeSet};
-    use tidb_planner::table_statistics::TableStatisticsExt as _;
+    use std::collections::BTreeSet;
+    use tidb_planner_cardinality::ndv::estimate_column_ndv;
     use tidb_datatype::Datum;
 
 
@@ -203,19 +203,20 @@ mod tests {
         }
     }
 
+    /// Go `Table.GetStatsHealthy` reads the cache object: Go's synthetic
+    /// `PseudoTable` has no health, while an analyzed empty table is healthy.
     #[test]
     fn initialized_empty_stats_are_not_a_synthetic_cache_pseudo() {
-        let synthetic = TableStatistics::new(0, 0, BTreeMap::new(), BTreeMap::new());
-        assert!(synthetic.is_synthetic_pseudo());
+        let synthetic = tidb_stats::pseudo_table(&Default::default(), false, true);
         assert_eq!(synthetic.stats_healthy(), (0, false));
 
-        let mut analyzed_empty = synthetic;
-        analyzed_empty.cache_pseudo = false;
-        analyzed_empty
-            .index_load_status
-            .insert(1, tidb_stats::StatsLoadedStatus::full_load());
-        assert!(analyzed_empty.pseudo);
-        assert!(!analyzed_empty.is_synthetic_pseudo());
+        let mut analyzed_empty = Table::from_analyzed_items(
+            1,
+            0,
+            0,
+            [],
+            [(1, tidb_stats::index::Index::default())],
+        );
         assert_eq!(analyzed_empty.stats_healthy(), (0, true));
         analyzed_empty.last_analyze_version = 42;
         assert_eq!(analyzed_empty.stats_healthy(), (100, true));
@@ -241,19 +242,24 @@ mod tests {
             stats_version: 0,
             ..Default::default()
         };
-        let mut stats = TableStatistics::new(8, 8, BTreeMap::from([(3, column)]), BTreeMap::new());
-        stats
-            .column_load_status
-            .insert(3, tidb_stats::StatsLoadedStatus::default());
+        let stats = Table::from_analyzed_items(1, 8, 8, [(3, column)], []);
+        let set_status = |status| {
+            stats
+                .hist_coll
+                .get_column(3)
+                .unwrap()
+                .write()
+                .unwrap()
+                .stats_loaded_status = status;
+        };
+        set_status(tidb_stats::StatsLoadedStatus::default());
         assert_eq!(
-            stats.estimate_column_ndv(3, &BTreeSet::new(), &BTreeSet::new()),
+            estimate_column_ndv(&stats, 3, &BTreeSet::new(), &BTreeSet::new()),
             None
         );
-        stats
-            .column_load_status
-            .insert(3, tidb_stats::StatsLoadedStatus::full_load());
+        set_status(tidb_stats::StatsLoadedStatus::full_load());
         assert_eq!(
-            stats.estimate_column_ndv(3, &BTreeSet::new(), &BTreeSet::new()),
+            estimate_column_ndv(&stats, 3, &BTreeSet::new(), &BTreeSet::new()),
             Some(0.0)
         );
     }
@@ -262,27 +268,29 @@ mod tests {
     /// histogram counts array elements rather than rows.
     #[test]
     fn analyze_row_count_skips_multi_valued_indexes() {
-        let index = |id, count| tidb_stats::index::Index {
+        let index = |id, count, mv_index| tidb_stats::index::Index {
             histogram: histogram_with_count(id, 1, count, 42),
             top_n: None,
             cmsketch: None,
             stats_version: 2,
             info: Some(tidb_stats::index::IndexInfo {
                 columns: vec![String::new(); 1],
-                unique: false,
+                mv_index,
                 ..Default::default()
             }),
             ..Default::default()
         };
-        let mut statistics = TableStatistics::new(
-            4,
-            0,
-            BTreeMap::new(),
-            [(1, index(1, 10)), (2, index(2, 4))].into_iter().collect(),
-        );
-        assert_eq!(statistics.analyze_row_count(), 10.0);
-        statistics.mv_index_ids.insert(1);
-        assert_eq!(statistics.analyze_row_count(), 4.0);
+        let statistics = |first_is_mv| {
+            Table::from_analyzed_items(
+                1,
+                4,
+                0,
+                [],
+                [(1, index(1, 10, first_is_mv)), (2, index(2, 4, false))],
+            )
+        };
+        assert_eq!(statistics(false).hist_coll.analyze_row_count(), 10.0);
+        assert_eq!(statistics(true).hist_coll.analyze_row_count(), 4.0);
     }
 
     #[test]
@@ -298,15 +306,14 @@ mod tests {
             stats_version: 2,
             ..Default::default()
         };
-        let statistics = TableStatistics::new(
+        let statistics = Table::from_analyzed_items(
+            1,
             300_000,
             0,
             [
                 (target_id, column(target_id, 3_000, 300_000)),
                 (predicate_id, column(predicate_id, 10, 299_995)),
-            ]
-            .into_iter()
-            .collect(),
+            ],
             [(
                 index_id,
                 tidb_stats::index::Index {
@@ -321,20 +328,16 @@ mod tests {
                     }),
                     ..Default::default()
                 },
-            )]
-            .into_iter()
-            .collect(),
+            )],
         );
         let full_columns = [predicate_id].into_iter().collect();
         let full_indexes = [index_id].into_iter().collect();
-        let ndv = statistics
-            .estimate_column_ndv(target_id, &full_columns, &full_indexes)
-            .unwrap();
+        let ndv = estimate_column_ndv(&statistics, target_id, &full_columns, &full_indexes).unwrap();
         assert!((ndv - 3000.0500008333474).abs() < 1e-12, "{ndv:.17}");
 
         let target_full = [target_id].into_iter().collect();
         assert_eq!(
-            statistics.estimate_column_ndv(target_id, &target_full, &BTreeSet::new()),
+            estimate_column_ndv(&statistics, target_id, &target_full, &BTreeSet::new()),
             Some(3000.0)
         );
     }

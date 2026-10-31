@@ -43,12 +43,10 @@ fn install_cardinality_mock_statistics_for_table(
         }
         histogram
     };
-    let mut statistics = tidb_stats::table_statistics::TableStatistics {
-        row_count,
-        ..Default::default()
-    };
+    let mut statistics = tidb_stats::Table::default();
+    statistics.hist_coll.realtime_count = row_count;
     for (column, &(ndv, repeat)) in table.columns().iter().zip(columns) {
-        statistics.columns.insert(
+        statistics.put_analyzed_column(
             column.id,
             tidb_stats::column::Column {
                 histogram: histogram(column.id, ndv, repeat, false),
@@ -58,10 +56,6 @@ fn install_cardinality_mock_statistics_for_table(
                 ..Default::default()
             },
         );
-        statistics
-            .column_load_status
-            .insert(column.id, tidb_stats::StatsLoadedStatus::full_load());
-        statistics.column_stats_existence.insert(column.id, true);
     }
     for index in table
         .indexes()
@@ -71,7 +65,7 @@ fn install_cardinality_mock_statistics_for_table(
         // Go TestOrderingIdxSelectivityRatioForApply deliberately installs
         // one-component histogram keys even for its composite ibc index.
         let (ndv, repeat) = columns[index.column_offsets[0]];
-        statistics.indexes.insert(
+        statistics.put_analyzed_index(
             index.id,
             tidb_stats::index::Index {
                 histogram: histogram(index.id, ndv, repeat, true),
@@ -86,10 +80,6 @@ fn install_cardinality_mock_statistics_for_table(
                 ..Default::default()
             },
         );
-        statistics
-            .index_load_status
-            .insert(index.id, tidb_stats::StatsLoadedStatus::full_load());
-        statistics.index_stats_existence.insert(index.id, true);
     }
     session.publish_table_statistics_for_test(&catalog, table_id, &statistics);
 }
@@ -261,9 +251,12 @@ fn process_stats_info_reports_the_get_stats_table_version() {
             panic!("stats_info_src is not a stored table");
         };
         let table_id = table.table_id();
-        let statistics = (*catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap())
-            .clone()
-            .with_stat_versions(77, 77);
+        let mut statistics = catalog
+            .table_statistics_in(&shared.stats_handle(), table_id)
+            .unwrap()
+            .copy_as(tidb_stats::CopyIntent::AllDataWritable);
+        statistics.version = 77;
+        statistics.last_analyze_version = 77;
         session.publish_table_statistics_for_test(&catalog, table_id, &statistics);
         table_id
     };
@@ -285,9 +278,9 @@ fn process_stats_info_reports_the_get_stats_table_version() {
     {
         let shared = session.shared_catalog();
         let catalog = shared.lock().unwrap();
-        let mut statistics = (*catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap()).clone();
-        statistics.row_count = 0;
-        statistics.modify_count = 3;
+        let mut statistics = catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap().copy_as(tidb_stats::CopyIntent::AllDataWritable);
+        statistics.hist_coll.realtime_count = 0;
+        statistics.hist_coll.modify_count = 3;
         session.publish_table_statistics_for_test(&catalog, table_id, &statistics);
     }
     assert_eq!(stats_info(&mut session), Some(0));
@@ -908,10 +901,8 @@ fn appended_handle_range_uses_partial_column_statistics() {
     };
     {
         let catalog = shared.lock().unwrap();
-        let mut statistics = (*catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap()).clone();
-        statistics.indexes.remove(&index_id);
-        statistics.index_load_status.remove(&index_id);
-        statistics.index_stats_existence.remove(&index_id);
+        let statistics = catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap().copy_as(tidb_stats::CopyIntent::AllDataWritable);
+        statistics.delete_index(index_id);
         session.publish_table_statistics_for_test(&catalog, table_id, &statistics);
     }
 
@@ -1261,8 +1252,8 @@ fn determinate_objective_uses_analyzed_row_count_after_inserts() {
         // Go's source test flushes these four committed inserts and reloads
         // stats_meta before comparing the objective modes.
         let statistics = catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap();
-        assert_eq!(statistics.row_count, 15);
-        assert_eq!(statistics.modify_count, 4);
+        assert_eq!(statistics.hist_coll.realtime_count, 15);
+        assert_eq!(statistics.hist_coll.modify_count, 4);
     }
 
     session.run("SET tidb_opt_objective = 'moderate'").unwrap();
@@ -1804,10 +1795,8 @@ fn explain_marks_missing_stats_for_selected_index() {
     );
     {
         let catalog = shared.lock().unwrap();
-        let mut statistics = (*catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap()).clone();
-        statistics.indexes.remove(&index_id);
-        statistics.index_load_status.remove(&index_id);
-        statistics.index_stats_existence.remove(&index_id);
+        let statistics = catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap().copy_as(tidb_stats::CopyIntent::AllDataWritable);
+        statistics.delete_index(index_id);
         session.publish_table_statistics_for_test(&catalog, table_id, &statistics);
     }
 
@@ -1823,10 +1812,8 @@ fn explain_marks_missing_stats_for_selected_index() {
         "missing used-index status in EXPLAIN: {rows:?}"
     );
 
-    let mut statistics = (*original_statistics).clone();
-    statistics
-        .index_load_status
-        .insert(index_id, tidb_stats::StatsLoadedStatus::all_evicted());
+    let statistics = original_statistics.copy_as(tidb_stats::CopyIntent::AllDataWritable);
+    set_index_status(&statistics, index_id, tidb_stats::StatsLoadedStatus::all_evicted());
     session.publish_table_statistics_for_test(&shared.lock().unwrap(), table_id, &statistics);
     let rows = row_text(session.run(
         "EXPLAIN SELECT payload FROM explain_partial_index USE INDEX (idx_ab) WHERE a = 2 AND b = 2",
@@ -1840,10 +1827,8 @@ fn explain_marks_missing_stats_for_selected_index() {
         "evicted used-index status in EXPLAIN: {rows:?}"
     );
 
-    let mut statistics = (*original_statistics).clone();
-    statistics.columns.remove(&column_b_id);
-    statistics.column_load_status.remove(&column_b_id);
-    statistics.column_stats_existence.remove(&column_b_id);
+    let statistics = original_statistics.copy_as(tidb_stats::CopyIntent::AllDataWritable);
+    statistics.delete_column(column_b_id);
     session.publish_table_statistics_for_test(&shared.lock().unwrap(), table_id, &statistics);
     let rows = row_text(session.run(
         "EXPLAIN SELECT payload FROM explain_partial_index IGNORE INDEX (idx_ab) WHERE b = 2",
@@ -1857,10 +1842,13 @@ fn explain_marks_missing_stats_for_selected_index() {
         "missing used-column status in EXPLAIN: {rows:?}"
     );
 
-    let mut statistics = (*original_statistics).clone();
-    statistics.columns.remove(&column_b_id);
-    statistics.column_load_status.remove(&column_b_id);
-    statistics.column_stats_existence.insert(column_b_id, true);
+    let mut statistics = original_statistics.copy_as(tidb_stats::CopyIntent::AllDataWritable);
+    statistics.delete_column(column_b_id);
+    statistics
+        .existence_map()
+        .write()
+        .unwrap()
+        .insert_column(column_b_id, true);
     session.publish_table_statistics_for_test(&shared.lock().unwrap(), table_id, &statistics);
     let rows = row_text(session.run(
         "EXPLAIN SELECT payload FROM explain_partial_index IGNORE INDEX (idx_ab) WHERE b = 2",
@@ -1930,14 +1918,8 @@ fn determinate_explain_reports_the_pseudo_table_get_stats_table_returns() {
             tidb_infoschema::TableEntry::Kv(table) => table.table_id(),
             _ => panic!("explain_determinate_pseudo is not a KV table"),
         };
-        let mut statistics = (*catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap()).clone();
-        for status in statistics
-            .column_load_status
-            .values_mut()
-            .chain(statistics.index_load_status.values_mut())
-        {
-            *status = tidb_stats::StatsLoadedStatus::all_evicted();
-        }
+        let statistics = catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap().copy_as(tidb_stats::CopyIntent::AllDataWritable);
+        evict_all(&statistics);
         session.publish_table_statistics_for_test(&catalog, table_id, &statistics);
     }
     let scan_info = |session: &mut Session| {
@@ -2026,10 +2008,8 @@ fn explain_partial_stats_match_go_plan_matrix() {
     };
 
     let query_tp = "EXPLAIN FORMAT = BRIEF SELECT * FROM tp WHERE b = 10";
-    let mut partial_tp = (*tp_original).clone();
-    partial_tp.columns.remove(&tp_b_id);
-    partial_tp.column_load_status.remove(&tp_b_id);
-    partial_tp.column_stats_existence.remove(&tp_b_id);
+    let partial_tp = tp_original.copy_as(tidb_stats::CopyIntent::AllDataWritable);
+    partial_tp.delete_column(tp_b_id);
     session.publish_table_statistics_for_test(&shared.lock().unwrap(), tp_id, &partial_tp);
     let plan = row_text(session.run(query_tp));
     let plan_text = plan
@@ -2066,17 +2046,8 @@ fn explain_partial_stats_match_go_plan_matrix() {
         "unexpected partial marker: {plan_text}"
     );
 
-    let mut evicted_t = (*t_original).clone();
-    for id in evicted_t.columns.keys().copied().collect::<Vec<_>>() {
-        evicted_t
-            .column_load_status
-            .insert(id, tidb_stats::StatsLoadedStatus::all_evicted());
-    }
-    for id in evicted_t.indexes.keys().copied().collect::<Vec<_>>() {
-        evicted_t
-            .index_load_status
-            .insert(id, tidb_stats::StatsLoadedStatus::all_evicted());
-    }
+    let evicted_t = t_original.copy_as(tidb_stats::CopyIntent::AllDataWritable);
+    evict_all(&evicted_t);
     session.publish_table_statistics_for_test(&shared.lock().unwrap(), t_id, &evicted_t);
     let plan = row_text(session.run(query_join));
     let plan_text = plan
@@ -2413,13 +2384,16 @@ fn builtin_in_estimate_without_stats_keeps_selection_floor() {
     let statistics = catalog
         .table_statistics_in(&shared.stats_handle(), table_id)
         .expect("flushed stats_meta produces a cached statistics table");
-    assert!(statistics.pseudo);
-    assert!(!statistics.cache_pseudo);
-    assert_eq!(
-        statistics.column_stats_existence,
-        std::collections::BTreeMap::from([(1, false), (2, false)])
-    );
-    assert!(statistics.index_stats_existence.is_empty());
+    // Uninitialized: `GetStatsTable` plans from a pseudo copy, while the
+    // cache object itself is not pseudo.
+    assert!(!statistics.is_initialized());
+    assert!(!statistics.hist_coll.pseudo);
+    let existence = statistics.existence_map.as_ref().unwrap().read().unwrap();
+    for id in [1, 2] {
+        assert!(existence.has(id, false) && !existence.has_analyzed(id, false));
+    }
+    assert_eq!(existence.column_count(), 2);
+    drop(existence);
     drop(catalog);
 
     for column in ["a", "b"] {
@@ -4474,9 +4448,9 @@ fn outdated_statistics_follow_the_session_pseudo_switch() {
             tidb_infoschema::TableEntry::Kv(table) => table.table_id(),
             _ => panic!("t is not a KV table"),
         };
-        let mut statistics = (*catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap()).clone();
-        statistics.row_count = 35;
-        statistics.modify_count = 15;
+        let mut statistics = catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap().copy_as(tidb_stats::CopyIntent::AllDataWritable);
+        statistics.hist_coll.realtime_count = 35;
+        statistics.hist_coll.modify_count = 15;
         session.publish_table_statistics_for_test(&catalog, table_id, &statistics);
     }
 
@@ -4914,8 +4888,10 @@ fn unknown_value_estimates_follow_analyze_and_truncate_lifecycle() {
             _ => panic!("{table} is not a KV table"),
         };
         let stats = catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap();
+        let column = stats.hist_coll.get_column(column_id);
+        let column = column.as_ref().map(|column| column.read().unwrap());
         tidb_planner_cardinality::row_count_estimator::get_row_count_by_column_ranges(
-            stats.columns.get(&column_id),
+            column.as_deref(),
             &[
                 tidb_planner_cardinality::row_count_estimator::ColumnRange::new(
                     tidb_datatype::Datum::Int(low),
@@ -4925,8 +4901,8 @@ fn unknown_value_estimates_follow_analyze_and_truncate_lifecycle() {
                 ),
             ],
             tidb_charset::Collation::Binary,
-            stats.row_count,
-            stats.modify_count,
+            stats.hist_coll.realtime_count,
+            stats.hist_coll.modify_count,
             false,
             &tidb_planner_cardinality::row_count_estimator::EstimatorOptions::default(),
         )
@@ -5016,16 +4992,18 @@ fn unknown_value_estimates_follow_modify_delta_lifecycle() {
             _ => panic!("unknown_modify_lifecycle is not a KV table"),
         };
         let stats = catalog.table_statistics_in(&shared.stats_handle(), table_id).unwrap();
+        let column = stats.hist_coll.get_column(column_id);
+        let column = column.as_ref().map(|column| column.read().unwrap());
         tidb_planner_cardinality::row_count_estimator::get_row_count_by_column_ranges(
-            stats.columns.get(&column_id),
+            column.as_deref(),
             &[
                 tidb_planner_cardinality::row_count_estimator::ColumnRange::point(
                     tidb_datatype::Datum::Int(value),
                 ),
             ],
             tidb_charset::Collation::Binary,
-            stats.row_count,
-            stats.modify_count,
+            stats.hist_coll.realtime_count,
+            stats.hist_coll.modify_count,
             false,
             &tidb_planner_cardinality::row_count_estimator::EstimatorOptions::default(),
         )
@@ -6319,4 +6297,29 @@ fn match_against_in_a_join_on_resolves_like_where() {
         )),
         [["5", "MySQL Security"]]
     );
+}
+
+/// Go `StatsLoadedStatus` of one cached index, set in place.
+fn set_index_status(
+    statistics: &tidb_stats::Table,
+    index_id: i64,
+    status: tidb_stats::StatsLoadedStatus,
+) {
+    statistics
+        .hist_coll
+        .get_index(index_id)
+        .expect("index statistics")
+        .write()
+        .unwrap()
+        .stats_loaded_status = status;
+}
+
+/// Evicts every column and index payload status, as Go's eviction marks them.
+fn evict_all(statistics: &tidb_stats::Table) {
+    for column in statistics.hist_coll.stable_columns() {
+        column.write().unwrap().stats_loaded_status = tidb_stats::StatsLoadedStatus::all_evicted();
+    }
+    for index in statistics.hist_coll.stable_indices() {
+        index.write().unwrap().stats_loaded_status = tidb_stats::StatsLoadedStatus::all_evicted();
+    }
 }

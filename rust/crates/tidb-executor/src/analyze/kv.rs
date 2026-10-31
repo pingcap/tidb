@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! `ANALYZE TABLE` over the IN-PROCESS catalog: a [`KvTable`]'s own rows in,
-//! the [`TableStatistics`] the planner reads out.
+//! the [`Table`] the planner reads out.
 //!
 //! Everything that decides a NUMBER is [`super`]'s, shared with the cluster
 //! tier. This file is only the two translations either side of it: a
@@ -47,7 +47,10 @@ use std::collections::HashSet;
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_stats::cmsketch::TopN;
 
-use tidb_stats::table_statistics::TableStatistics;
+use tidb_stats::Table;
+use tidb_stats_handle_storage::json::{
+    LoadStatsColumnSchema, LoadStatsIndexSchema, LoadStatsTableSchema,
+};
 use crate::analyze::{
     AnalyzeError, AnalyzeOptions, AnalyzePlan, AnalyzeRun, AnalyzedColumn, AnalyzedHistogram,
     AnalyzedIndex,
@@ -92,7 +95,7 @@ pub fn analyze_kv_table(
     options: &AnalyzeOptions,
     realtime_count: Option<i64>,
     ctx: &crate::StmtContext,
-) -> Result<TableStatistics, AnalyzeError> {
+) -> Result<Table, AnalyzeError> {
     analyze_kv_table_columns(table, options, realtime_count, ctx, None)
 }
 
@@ -103,7 +106,7 @@ pub fn analyze_kv_table_columns(
     realtime_count: Option<i64>,
     ctx: &crate::StmtContext,
     selected_column_ids: Option<&HashSet<i64>>,
-) -> Result<TableStatistics, AnalyzeError> {
+) -> Result<Table, AnalyzeError> {
     let decode_context = RowDecodeContext::for_analyze(ctx);
     let (plan, source_positions, source_indexes) =
         kv_analyze_plan(table, &decode_context, selected_column_ids)?;
@@ -120,59 +123,71 @@ pub fn analyze_kv_table_columns(
     }
     let analyzed = run.finish()?;
 
+    let schema = LoadStatsTableSchema::from_kv_table(table);
+    let physical_id = table.table_id();
+    let handle_id = table
+        .pk_handle_offset()
+        .map(|offset| table.columns()[offset].id);
     let mut columns = BTreeMap::new();
-    let mut column_fm_sketches = BTreeMap::new();
     let source_columns = source_positions
         .iter()
         .map(|position| &table.columns()[*position])
         .filter(|column| !tidb_table::generated_column::is_virtual(*column));
     for (built, column) in analyzed.columns.into_iter().zip(source_columns) {
         debug_assert_eq!(built.id, column.id);
-        let unsigned = column.field_type.is_unsigned();
-        if let Some(sketch) = built.fm_sketch.clone() {
-            column_fm_sketches.insert(built.id, sketch);
-        }
-        columns.insert(
-            built.id,
-            column_statistics(built, &column.field_type, unsigned),
-        );
+        let info = schema
+            .columns
+            .iter()
+            .find(|schema| schema.id == column.id)
+            .map(LoadStatsColumnSchema::info);
+        let mut item = column_statistics(built, &column.field_type, info, physical_id);
+        item.is_handle = handle_id == Some(column.id);
+        columns.insert(column.id, item);
     }
     let mut indexes = BTreeMap::new();
-    let mut index_fm_sketches = BTreeMap::new();
     for (position, built) in analyzed.indexes.into_iter().enumerate() {
         let stored = &table.indexes()[source_indexes[position]];
-        if let Some(sketch) = built.fm_sketch.clone() {
-            index_fm_sketches.insert(built.id, sketch);
-        }
-        indexes.insert(
-            built.id,
-            index_statistics(built, stored.column_offsets.len(), stored.unique),
-        );
+        let info = schema
+            .indexes
+            .iter()
+            .find(|schema| schema.id == stored.id)
+            .map(LoadStatsIndexSchema::info);
+        indexes.insert(built.id, index_statistics(built, info, physical_id));
     }
 
-    let mut statistics = TableStatistics::new(
-        analyzed.scanned_rows,
+    Ok(analyzed_table(
+        table,
         // A fresh `ANALYZE` describes exactly the rows it just read, so
         // nothing has been modified since. `crate::cluster_analyze` stores
         // the same zero, and says at length why that is a fact rather than a
         // discarded count.
-        0,
+        analyzed.scanned_rows,
         columns,
         indexes,
-    );
-    // Go stores an analyzed empty table as a real cache object and only marks
-    // the planner's per-query copy pseudo because its realtime count is zero.
-    // This function knows zero came from an actual ANALYZE scan.
-    statistics.cache_pseudo = false;
-    Ok(statistics
-        .with_fm_sketches(column_fm_sketches, index_fm_sketches)
-        // Go stamps the writing transaction's start TS into both
-        // `mysql.stats_meta` columns (`save.go:200`). This tier has no cluster
-        // TSO, so the stamp is this process's clock in Go's TSO shape -- the
-        // physical half in the high bits, exactly what
-        // `show_stats::version_to_time` decodes back for `SHOW STATS_META`.
-        .with_stat_versions(now_tso_shaped(), now_tso_shaped())
-        .with_stats_ver(2))
+    ))
+}
+
+/// Go's cache object for one in-process `ANALYZE`'s items. Go stores an
+/// analyzed empty table as a real (not pseudo) cache object; only the
+/// planner's per-query copy turns pseudo because its realtime count is zero.
+fn analyzed_table(
+    table: &KvTable,
+    realtime_count: i64,
+    columns: BTreeMap<i64, tidb_stats::column::Column>,
+    indexes: BTreeMap<i64, tidb_stats::index::Index>,
+) -> Table {
+    let mut statistics =
+        Table::from_analyzed_items(table.table_id(), realtime_count, 0, columns, indexes);
+    // Go stamps the writing transaction's start TS into both
+    // `mysql.stats_meta` columns (`save.go:200`). This tier has no cluster
+    // TSO, so the stamp is this process's clock in Go's TSO shape -- the
+    // physical half in the high bits, exactly what
+    // `show_stats::version_to_time` decodes back for `SHOW STATS_META`.
+    statistics.version = now_tso_shaped();
+    statistics.last_analyze_version = statistics.version;
+    statistics.last_stats_hist_version = statistics.version;
+    statistics.is_pk_handle = table.pk_handle_offset().is_some();
+    statistics
 }
 
 /// Runs Go's independent stats-v2 task for one special global index.
@@ -184,7 +199,7 @@ pub fn analyze_kv_table_independent_index(
     table: &mut KvTable,
     index_id: i64,
     options: &AnalyzeOptions,
-) -> Result<TableStatistics, AnalyzeError> {
+) -> Result<Table, AnalyzeError> {
     let index = table
         .indexes()
         .iter()
@@ -221,6 +236,11 @@ pub fn analyze_kv_table_independent_index(
     let built = processor
         .finish()
         .map_err(|error| AnalyzeError::Unsupported(error.to_string()))?;
+    let info = LoadStatsTableSchema::from_kv_table(table)
+        .indexes
+        .iter()
+        .find(|schema| schema.id == index.id)
+        .map(LoadStatsIndexSchema::info);
     let mut indexes = BTreeMap::new();
     indexes.insert(
         index.id,
@@ -228,24 +248,14 @@ pub fn analyze_kv_table_independent_index(
             histogram: built.histogram,
             top_n: Some(built.topn),
             cmsketch: None,
+            fm_sketch: Some(built.fm_sketch),
             stats_version: 2,
-            info: Some(tidb_stats::index::IndexInfo {
-                columns: vec![String::new(); index.column_offsets.len()],
-                unique: index.unique,
-                ..Default::default()
-            }),
+            info,
+            physical_id: table.table_id(),
             ..Default::default()
         },
     );
-    let mut statistics = TableStatistics::new(0, 0, BTreeMap::new(), indexes)
-        .with_fm_sketches(
-            BTreeMap::new(),
-            BTreeMap::from([(index.id, built.fm_sketch)]),
-        )
-        .with_stat_versions(now_tso_shaped(), now_tso_shaped())
-        .with_stats_ver(2);
-    statistics.cache_pseudo = false;
-    Ok(statistics)
+    Ok(analyzed_table(table, 0, BTreeMap::new(), indexes))
 }
 
 /// The current wall clock as a Go TSO: milliseconds since the epoch shifted
@@ -285,7 +295,8 @@ fn sorted_topn(topn: Option<TopN>) -> Option<TopN> {
 fn column_statistics(
     mut built: AnalyzedHistogram,
     field_type: &FieldType,
-    unsigned: bool,
+    info: Option<tidb_stats::column::ColumnInfo>,
+    physical_id: i64,
 ) -> tidb_stats::column::Column {
     built.histogram.round_trip_through_storage(field_type);
     tidb_stats::column::Column {
@@ -294,25 +305,19 @@ fn column_statistics(
         // Analyze v2 builds no CMSketch: its TopN and histogram carry what the
         // CMSketch used to.
         cmsketch: None,
+        fm_sketch: built.fm_sketch,
         stats_version: built.stats_ver,
-        info: Some(tidb_stats::column::ColumnInfo {
-            flag: if unsigned {
-                tidb_mysql::UnsignedFlag
-            } else {
-                0
-            },
-            ..Default::default()
-        }),
+        info,
+        physical_id,
         ..Default::default()
     }
 }
 
-/// One built index histogram, with the two schema facts the estimator needs
-/// that the histogram itself does not carry.
+/// One built index histogram with Go's `Index.Info`.
 fn index_statistics(
     mut built: AnalyzedHistogram,
-    num_columns: usize,
-    unique: bool,
+    info: Option<tidb_stats::index::IndexInfo>,
+    physical_id: i64,
 ) -> tidb_stats::index::Index {
     built
         .histogram
@@ -321,12 +326,10 @@ fn index_statistics(
         histogram: built.histogram,
         top_n: sorted_topn(built.topn),
         cmsketch: None,
+        fm_sketch: built.fm_sketch,
         stats_version: built.stats_ver,
-        info: Some(tidb_stats::index::IndexInfo {
-            columns: vec![String::new(); num_columns],
-            unique: unique,
-            ..Default::default()
-        }),
+        info,
+        physical_id,
         ..Default::default()
     }
 }

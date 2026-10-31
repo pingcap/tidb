@@ -39,7 +39,6 @@
 use std::sync::{Arc, Mutex};
 use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_stats_handle_syncload::stats_watch::{StatsSnapshot, TableStatsState};
-use tidb_stats::table_statistics::TableStatistics;
 use tidb_store_driver_txn::cluster_storage::ClusterTableStorage;
 use tidb_infoschema::{Catalog, ViewDef};
 use tidb_table::kv_table::KvTable;
@@ -353,31 +352,6 @@ fn cluster_view(table: &TableInfo) -> Result<ViewDef, String> {
         update_ts: table.update_ts,
         id: table.id,
     })
-}
-
-/// Go `mysql.MaxUnsignedFlag` (`UnsignedFlag`), which the out-of-range
-/// scaling in the estimator reads off a column.
-const UNSIGNED_FLAG: u32 = 1 << 5;
-
-/// Adapts Go `TableInfo` metadata to the common canonical-table planner view.
-pub fn planner_statistics(stats: &tidb_stats::Table, table: &TableInfo) -> TableStatistics {
-    let columns = table
-        .cols()
-        .iter_deref()
-        .map(|column| {
-            let column = column.read();
-            (column.id, column.field_type.flags() & UNSIGNED_FLAG != 0)
-        })
-        .collect::<Vec<_>>();
-    let indexes = table
-        .indices
-        .iter_deref()
-        .map(|index| {
-            let index = index.read();
-            (index.id, index.columns.len(), index.unique)
-        })
-        .collect::<Vec<_>>();
-    tidb_stats::table_statistics::table_statistics_from_table_schema(stats, &columns, &indexes)
 }
 
 #[cfg(test)]

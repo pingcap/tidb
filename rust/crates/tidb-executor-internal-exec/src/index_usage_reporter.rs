@@ -21,7 +21,7 @@ use tidb_datatype::FieldType;
 use tidb_expr::schema::Schema;
 use tidb_stats_handle_usage_indexusage::{new_sample, StmtIndexUsageCollector};
 
-use tidb_stats::table_statistics::TableStatistics;
+use tidb_stats::Table;
 use crate::Executor;
 use tidb_driver_error::ExecError;
 use tidb_table::kv_table::KvTable;
@@ -44,7 +44,7 @@ impl<'a> IndexUsageReporter<'a> {
     pub fn report_cop_for_table(
         &self,
         table: &KvTable,
-        stats: Option<&TableStatistics>,
+        stats: Option<&Table>,
         index_id: i64,
         kv_requests: u64,
         accessed_rows: u64,
@@ -57,7 +57,7 @@ impl<'a> IndexUsageReporter<'a> {
         &self,
         logical_table_id: i64,
         index_id: i64,
-        stats: Option<&TableStatistics>,
+        stats: Option<&Table>,
         kv_requests: u64,
         accessed_rows: u64,
     ) {
@@ -81,7 +81,7 @@ impl<'a> IndexUsageReporter<'a> {
     pub fn report_point_for_handle(
         &self,
         table: &KvTable,
-        stats: Option<&TableStatistics>,
+        stats: Option<&Table>,
         kv_requests: u64,
         rows: u64,
     ) {
@@ -95,7 +95,7 @@ impl<'a> IndexUsageReporter<'a> {
     pub fn report_point_for_table(
         &self,
         table: &KvTable,
-        stats: Option<&TableStatistics>,
+        stats: Option<&Table>,
         index_id: i64,
         kv_requests: u64,
         rows: u64,
@@ -108,7 +108,7 @@ impl<'a> IndexUsageReporter<'a> {
     pub fn report_point(
         &self,
         logical_table_id: i64,
-        stats: Option<&TableStatistics>,
+        stats: Option<&Table>,
         index_id: i64,
         kv_requests: u64,
         rows: u64,
@@ -125,12 +125,12 @@ impl<'a> IndexUsageReporter<'a> {
     }
 }
 
-fn real_table_row_count(stats: Option<&TableStatistics>) -> Option<u64> {
+fn real_table_row_count(stats: Option<&Table>) -> Option<u64> {
     let stats = stats?;
-    if stats.pseudo {
+    if stats.hist_coll.pseudo {
         return None;
     }
-    Some(stats.row_count as u64)
+    Some(stats.hist_coll.realtime_count as u64)
 }
 
 /// Go `getClusterIndexID`.
@@ -175,7 +175,7 @@ pub struct PointSnapshotStats {
 pub struct PointIndexUsageExec {
     child: Box<dyn Executor>,
     table: KvTable,
-    stats: Option<Arc<TableStatistics>>,
+    stats: Option<Arc<Table>>,
     collector: Option<Arc<StmtIndexUsageCollector>>,
     index_id: Option<i64>,
     command: PointCommand,
@@ -193,7 +193,7 @@ impl PointIndexUsageExec {
     pub fn new(
         child: Box<dyn Executor>,
         table: KvTable,
-        stats: Option<Arc<TableStatistics>>,
+        stats: Option<Arc<Table>>,
         collector: Option<Arc<StmtIndexUsageCollector>>,
         index_id: Option<i64>,
         command: PointCommand,
@@ -312,7 +312,7 @@ impl Executor for PointIndexUsageExec {
 pub struct CopIndexUsageExec {
     child: Box<dyn Executor>,
     logical_table_id: i64,
-    stats: Option<Arc<TableStatistics>>,
+    stats: Option<Arc<Table>>,
     collector: Option<Arc<StmtIndexUsageCollector>>,
     index_id: Option<i64>,
     reported: bool,
@@ -324,7 +324,7 @@ impl CopIndexUsageExec {
     pub fn new(
         child: Box<dyn Executor>,
         logical_table_id: i64,
-        stats: Option<Arc<TableStatistics>>,
+        stats: Option<Arc<Table>>,
         collector: Option<Arc<StmtIndexUsageCollector>>,
         index_id: Option<i64>,
     ) -> Self {
@@ -478,19 +478,19 @@ mod tests {
         (global, session, statement)
     }
 
+    fn stats_with_count(realtime_count: i64, pseudo: bool) -> Table {
+        let mut stats = Table::default();
+        stats.hist_coll.realtime_count = realtime_count;
+        stats.hist_coll.pseudo = pseudo;
+        stats
+    }
+
     #[test]
     fn source_go_indexusage_test_reporter_rules() {
         let (global, session, statement) = collectors();
         let reporter = IndexUsageReporter::new(Some(&statement));
-        let real = TableStatistics {
-            row_count: 100,
-            ..TableStatistics::default()
-        };
-        let pseudo = TableStatistics {
-            pseudo: true,
-            row_count: 100,
-            ..TableStatistics::default()
-        };
+        let real = stats_with_count(100, false);
+        let pseudo = stats_with_count(100, true);
 
         reporter.report_point_for_table(&KvTable::new(1, vec![]), Some(&real), 2, 1, 2024);
         reporter.report_cop(1, 2, Some(&real), 1, 2024);
@@ -514,10 +514,7 @@ mod tests {
         let mut reporter = CopIndexUsageExec::new(
             Box::new(scan),
             42,
-            Some(Arc::new(TableStatistics {
-                row_count: 100,
-                ..TableStatistics::default()
-            })),
+            Some(Arc::new(stats_with_count(100, false))),
             Some(statement),
             Some(7),
         );
@@ -538,10 +535,7 @@ mod tests {
     fn disabled_reporter_does_not_record_index_usage() {
         let (global, session, _statement) = collectors();
         let reporter = IndexUsageReporter::new(None);
-        let stats = TableStatistics {
-            row_count: 100,
-            ..TableStatistics::default()
-        };
+        let stats = stats_with_count(100, false);
 
         reporter.report_point(1, Some(&stats), 2, 1, 1);
         reporter.report_cop(1, 2, Some(&stats), 1, 1);
@@ -572,10 +566,7 @@ mod tests {
 
         reporter.report_point_for_handle(
             &table,
-            Some(&TableStatistics {
-                row_count: 100,
-                ..TableStatistics::default()
-            }),
+            Some(&stats_with_count(100, false)),
             1,
             1,
         );

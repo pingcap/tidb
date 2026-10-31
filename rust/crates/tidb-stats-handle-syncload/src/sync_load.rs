@@ -31,7 +31,7 @@ pub trait StatisticsItemLoader: Send + Sync {
         &self,
         items: &[tidb_model::StatsLoadItem],
         resource_group: &str,
-    ) -> Result<Vec<(i64, Arc<tidb_stats::table_statistics::TableStatistics>)>, String>;
+    ) -> Result<Vec<(i64, Arc<tidb_stats::Table>)>, String>;
 }
 
 const RETRY_COUNT: usize = 1;
@@ -401,7 +401,7 @@ mod tests {
             &self,
             _items: &[tidb_model::StatsLoadItem],
             _resource_group: &str,
-        ) -> Result<Vec<(i64, Arc<tidb_stats::table_statistics::TableStatistics>)>, String> {
+        ) -> Result<Vec<(i64, Arc<tidb_stats::Table>)>, String> {
             self.calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if !self.delay.is_zero() {
@@ -444,7 +444,7 @@ mod tests {
             &self,
             _items: &[tidb_model::StatsLoadItem],
             _resource_group: &str,
-        ) -> Result<Vec<(i64, Arc<tidb_stats::table_statistics::TableStatistics>)>, String> {
+        ) -> Result<Vec<(i64, Arc<tidb_stats::Table>)>, String> {
             self.started.send(()).expect("test receives worker start");
             self.release
                 .lock()
@@ -485,7 +485,7 @@ mod tests {
     struct TestCache;
 
     impl StatsCache for TestCache {
-        fn update_stats_cache(&self, _tables: Vec<(i64, Arc<tidb_stats::table_statistics::TableStatistics>)>) {}
+        fn update_stats_cache(&self, _tables: Vec<(i64, Arc<tidb_stats::Table>)>) {}
     }
 
     fn service(loader: Arc<TestLoader>) -> (Arc<TestCache>, Arc<SyncLoadService>) {

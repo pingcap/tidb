@@ -2422,7 +2422,7 @@ impl Session {
         &self,
         catalog: &tidb_infoschema::Catalog,
         physical_id: i64,
-        statistics: &tidb_stats::table_statistics::TableStatistics,
+        statistics: &tidb_stats::Table,
     ) {
         let (schema, name) = catalog
             .table_names_by_id(physical_id)
@@ -2431,13 +2431,30 @@ impl Session {
         let Some(tidb_infoschema::TableEntry::Kv(table)) = catalog.table_in(&schema, &name) else {
             panic!("{schema}.{name} is not a stored table");
         };
-        self.update_stats_cache_with(vec![Arc::new(
-            tidb_stats_handle_storage::json::statistics_table_from_planner_statistics(
-                table,
-                physical_id,
-                statistics,
-            ),
-        )]);
+        // Go's loader attaches each item's schema `Info` from `TableInfo`.
+        let schema = tidb_stats_handle_storage::json::LoadStatsTableSchema::from_kv_table(table);
+        let mut published = statistics.copy_as(tidb_stats::CopyIntent::AllDataWritable);
+        published.hist_coll.physical_id = physical_id;
+        published.is_pk_handle = table.pk_handle_offset().is_some();
+        let handle_id = table
+            .pk_handle_offset()
+            .map(|offset| table.columns()[offset].id);
+        for column in &schema.columns {
+            if let Some(item) = published.hist_coll.get_column(column.id) {
+                let mut item = item.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+                item.info = Some(column.info());
+                item.physical_id = physical_id;
+                item.is_handle = handle_id == Some(column.id);
+            }
+        }
+        for index in &schema.indexes {
+            if let Some(item) = published.hist_coll.get_index(index.id) {
+                let mut item = item.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+                item.info = Some(index.info());
+                item.physical_id = physical_id;
+            }
+        }
+        self.update_stats_cache_with(vec![Arc::new(published)]);
     }
 
     /// Go testkit's `dom.StatsHandle().DumpColStatsUsageToKV()` on this

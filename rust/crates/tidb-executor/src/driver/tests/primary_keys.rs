@@ -424,12 +424,20 @@ fn analyzed_composite_index_dominates_single_equality_index() {
         )
     };
     for evicted in [false, true] {
-        let mut current = statistics.clone();
+        let mut current = statistics.copy_as(tidb_stats::CopyIntent::IndexMapWritable);
         if evicted {
             // Eviction removes payloads, not persisted HasAnalyzed metadata.
-            current
-                .indexes
-                .retain(|_, index| index.info.as_ref().map_or(0, |info| info.columns.len()) == 1);
+            let mut evicted_ids = Vec::new();
+            current.hist_coll.for_each_index(|id, index| {
+                if index.info.as_ref().map_or(0, |info| info.columns.len()) != 1 {
+                    evicted_ids.push(id);
+                }
+                false
+            });
+            for id in evicted_ids {
+                current.delete_index(id);
+                current.existence_map().write().unwrap().insert_index(id, true);
+            }
         }
         ctx.stats_handle().set_table_statistics(table_id, Arc::new(current));
         let rows = explain_plan("SELECT * FROM t WHERE bucket = 1 AND rare = 7", &catalog, &ctx);

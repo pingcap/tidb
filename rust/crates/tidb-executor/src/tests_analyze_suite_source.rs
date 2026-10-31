@@ -133,7 +133,7 @@ fn full_sampling_keeps_nulls_out_of_column_and_index_distributions() {
     )
     .unwrap_or_else(|error| panic!("analyze failed: {error:?}"));
 
-    let column = statistics.columns.values().next().expect("a statistics");
+    let column = column_list(&statistics).into_iter().next().expect("a statistics");
     assert_eq!(column.histogram.null_count, 3);
     assert_eq!(topn_counts(column.top_n.as_ref()), vec![2, 3]);
     assert_eq!(
@@ -154,7 +154,7 @@ fn full_sampling_keeps_nulls_out_of_column_and_index_distributions() {
         ]
     );
 
-    let index = statistics.indexes.values().next().expect("idx statistics");
+    let index = index_list(&statistics).into_iter().next().expect("idx statistics");
     assert_eq!(index.histogram.null_count, 3);
     assert_eq!(topn_counts(index.top_n.as_ref()), vec![2, 3]);
     assert_eq!(
@@ -208,8 +208,7 @@ fn single_column_index_ndv_and_null_count_match_the_column() {
     let statistics = analyze_kv_table(&mut table, &AnalyzeOptions::default(), None, &ctx())
         .unwrap_or_else(|error| panic!("analyze failed: {error:?}"));
 
-    let columns = statistics
-        .columns
+    let columns = column_map(&statistics)
         .iter()
         .map(|(id, column)| {
             (
@@ -218,8 +217,7 @@ fn single_column_index_ndv_and_null_count_match_the_column() {
             )
         })
         .collect::<BTreeMap<_, _>>();
-    let indexes = statistics
-        .indexes
+    let indexes = index_map(&statistics)
         .iter()
         .map(|(id, index)| {
             (
@@ -296,10 +294,10 @@ fn analyze_partition_publishes_per_partition_then_partition_scoped_statistics() 
         partition.restrict_read_to_partitions(&[*physical_id]);
         let statistics = analyze_kv_table(&mut partition, &options, None, &ctx())
             .unwrap_or_else(|error| panic!("partition analyze failed: {error:?}"));
-        assert!(!statistics.pseudo, "analyzed partition is not pseudo");
-        assert_eq!(statistics.columns.len(), 3, "ColNum");
-        assert_eq!(statistics.indexes.len(), 1, "IdxNum");
-        for column in statistics.columns.values() {
+        assert!(!statistics.hist_coll.pseudo, "analyzed partition is not pseudo");
+        assert_eq!(statistics.hist_coll.column_count(), 3, "ColNum");
+        assert_eq!(statistics.hist_coll.index_count(), 1, "IdxNum");
+        for column in column_list(&statistics) {
             assert!(
                 column.histogram.len()
                     + column
@@ -310,7 +308,7 @@ fn analyze_partition_publishes_per_partition_then_partition_scoped_statistics() 
                 "column histogram has content"
             );
         }
-        for index in statistics.indexes.values() {
+        for index in index_list(&statistics) {
             assert!(
                 index.histogram.len()
                     + index
@@ -353,9 +351,9 @@ fn analyze_partition_publishes_per_partition_then_partition_scoped_statistics() 
     p0.restrict_read_to_partitions(&[partition_ids[0]]);
     let p0_stats = analyze_kv_table(&mut p0, &options, None, &ctx())
         .unwrap_or_else(|error| panic!("p0 analyze failed: {error:?}"));
-    assert!(!p0_stats.pseudo);
-    assert_eq!(p0_stats.columns.len(), 3);
-    assert_eq!(p0_stats.indexes.len(), 1);
+    assert!(!p0_stats.hist_coll.pseudo);
+    assert_eq!(p0_stats.hist_coll.column_count(), 3);
+    assert_eq!(p0_stats.hist_coll.index_count(), 1);
     handle.set_table_statistics(partition_ids[0], Arc::new(p0_stats));
     for physical_id in &partition_ids[1..] {
         assert!(
@@ -393,9 +391,8 @@ fn analyze_extract_topn_entries_and_counts_from_index_and_column() {
     let statistics = analyze_kv_table(&mut table, &options, None, &ctx())
         .unwrap_or_else(|error| panic!("analyze failed: {error:?}"));
 
-    let column_b = statistics
-        .columns
-        .values()
+    let column_b = column_map(&statistics)
+        .into_values()
         .find(|column| column.histogram.ndv == 10)
         .expect("column b statistics");
     let topn = column_b.top_n.as_ref().expect("v2 keeps a TopN");
@@ -403,9 +400,8 @@ fn analyze_extract_topn_entries_and_counts_from_index_and_column() {
     assert_eq!(topn.entries()[0].count, 11, "the zero value's count");
     assert_eq!(topn_counts(Some(topn)), vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 11]);
 
-    let index_b = statistics
-        .indexes
-        .values()
+    let index_b = index_map(&statistics)
+        .into_values()
         .find(|index| index.histogram.ndv == 10)
         .expect("index_b statistics");
     let topn = index_b.top_n.as_ref().expect("v2 keeps a TopN");
@@ -441,7 +437,7 @@ fn analyze_full_sampling_on_virtual_or_prefix_column_index() {
     let statistics = analyze_kv_table(&mut table, &options, None, &ctx())
         .unwrap_or_else(|error| panic!("analyze failed: {error:?}"));
 
-    let index = statistics.indexes.values().next().expect("idx statistics");
+    let index = index_list(&statistics).into_iter().next().expect("idx statistics");
     assert_eq!(index.histogram.ndv, 5, "the NDV");
     assert_eq!(index.histogram.null_count, 2, "the NULLs");
     let bounds: Vec<_> = index
@@ -478,7 +474,7 @@ fn analyze_full_sampling_on_virtual_or_prefix_column_index() {
     let statistics = analyze_kv_table(&mut table, &options, None, &ctx())
         .unwrap_or_else(|error| panic!("prefix-index analyze failed: {error:?}"));
 
-    let index = statistics.indexes.values().next().expect("idx statistics");
+    let index = index_list(&statistics).into_iter().next().expect("idx statistics");
     assert_eq!(index.histogram.ndv, 2, "prefix-index NDV");
     let topn = index.top_n.as_ref().expect("prefix index keeps a TopN");
     assert_eq!(topn.num(), 1);
@@ -564,7 +560,7 @@ fn analyze_collation_sort_keys_shape_topn_and_histograms() {
         })
         .unwrap_or_default()
     };
-    let column_a = &statistics.columns[&1];
+    let column_a = &column_map(&statistics)[&1];
     assert_eq!(
         key_bytes(column_a.top_n.as_ref()),
         vec![
@@ -574,7 +570,7 @@ fn analyze_collation_sort_keys_shape_topn_and_histograms() {
         ],
         "unicode_ci keys for #, $, a"
     );
-    let column_b = &statistics.columns[&2];
+    let column_b = &column_map(&statistics)[&2];
     assert_eq!(
         key_bytes(column_b.top_n.as_ref()),
         vec![
@@ -585,11 +581,11 @@ fn analyze_collation_sort_keys_shape_topn_and_histograms() {
     );
     // The indexes repeat the column keys.
     assert_eq!(
-        key_bytes(statistics.indexes[&1].top_n.as_ref()),
+        key_bytes(index_map(&statistics)[&1].top_n.as_ref()),
         key_bytes(column_a.top_n.as_ref())
     );
     assert_eq!(
-        key_bytes(statistics.indexes[&2].top_n.as_ref()),
+        key_bytes(index_map(&statistics)[&2].top_n.as_ref()),
         key_bytes(column_b.top_n.as_ref())
     );
 
@@ -622,21 +618,21 @@ fn analyze_collation_sort_keys_shape_topn_and_histograms() {
     assert_eq!(
         shape(3, 0, 6, 2, 0.0),
         shape(
-            statistics.indexes[&1].histogram.ndv,
-            statistics.indexes[&1].histogram.null_count,
-            statistics.indexes[&1].histogram.tot_col_size,
-            statistics.indexes[&1].stats_version,
-            statistics.indexes[&1].histogram.correlation
+            index_map(&statistics)[&1].histogram.ndv,
+            index_map(&statistics)[&1].histogram.null_count,
+            index_map(&statistics)[&1].histogram.tot_col_size,
+            index_map(&statistics)[&1].stats_version,
+            index_map(&statistics)[&1].histogram.correlation
         )
     );
     assert_eq!(
         shape(2, 0, 6, 2, 0.0),
         shape(
-            statistics.indexes[&2].histogram.ndv,
-            statistics.indexes[&2].histogram.null_count,
-            statistics.indexes[&2].histogram.tot_col_size,
-            statistics.indexes[&2].stats_version,
-            statistics.indexes[&2].histogram.correlation
+            index_map(&statistics)[&2].histogram.ndv,
+            index_map(&statistics)[&2].histogram.null_count,
+            index_map(&statistics)[&2].histogram.tot_col_size,
+            index_map(&statistics)[&2].stats_version,
+            index_map(&statistics)[&2].histogram.correlation
         )
     );
 }
@@ -667,7 +663,7 @@ fn analyze_clustered_varchar_primary_key_buckets_without_topn() {
         .unwrap_or_else(|error| panic!("analyze failed: {error:?}"));
 
         // show stats_topn is empty: no TopN entries anywhere.
-        for column in statistics.columns.values() {
+        for column in column_list(&statistics) {
             assert_eq!(
                 column
                     .top_n
@@ -677,7 +673,7 @@ fn analyze_clustered_varchar_primary_key_buckets_without_topn() {
                 "no column TopN"
             );
         }
-        for index in statistics.indexes.values() {
+        for index in index_list(&statistics) {
             assert_eq!(
                 index
                     .top_n
@@ -701,14 +697,14 @@ fn analyze_clustered_varchar_primary_key_buckets_without_topn() {
                 .collect()
         };
         // Column a's histogram.
-        let column_a = statistics.columns.values().next().expect("column a");
+        let column_a = column_list(&statistics).into_iter().next().expect("column a");
         assert_eq!(
             bounds_of(&column_a.histogram.buckets),
             vec![("1111".to_owned(), "1111".to_owned())],
             "column a bucket bounds"
         );
         // The PRIMARY index histogram.
-        let primary = statistics.indexes.values().next().expect("PRIMARY index");
+        let primary = index_list(&statistics).into_iter().next().expect("PRIMARY index");
         assert_eq!(
             bounds_of(&primary.histogram.buckets),
             vec![("1111".to_owned(), "1111".to_owned())],
@@ -757,8 +753,8 @@ fn analyze_partition_verify_per_partition_and_global_ndv() {
         partition.restrict_read_to_partitions(&[*physical_id]);
         let statistics = analyze_kv_table(&mut partition, &options, None, &ctx())
             .unwrap_or_else(|error| panic!("partition analyze failed: {error:?}"));
-        assert_eq!(statistics.row_count, 100);
-        let columns: Vec<_> = statistics.columns.values().collect();
+        assert_eq!(statistics.hist_coll.realtime_count, 100);
+        let columns = column_list(&statistics);
         assert_eq!(columns.len(), 3);
         assert_eq!(
             columns[1].histogram.ndv, 1,
@@ -767,9 +763,8 @@ fn analyze_partition_verify_per_partition_and_global_ndv() {
         assert_eq!(columns[0].histogram.ndv, 100, "partition a");
         assert_eq!(columns[2].histogram.ndv, 100, "partition c");
         assert_eq!(
-            statistics
-                .indexes
-                .values()
+            index_map(&statistics)
+                .into_values()
                 .next()
                 .expect("idx_c")
                 .histogram
@@ -781,13 +776,13 @@ fn analyze_partition_verify_per_partition_and_global_ndv() {
 
     let global = analyze_kv_table(&mut table, &options, None, &ctx())
         .unwrap_or_else(|error| panic!("global analyze failed: {error:?}"));
-    assert_eq!(global.row_count, 1000);
-    let columns: Vec<_> = global.columns.values().collect();
+    assert_eq!(global.hist_coll.realtime_count, 1000);
+    let columns = column_list(&global);
     assert_eq!(columns[1].histogram.ndv, 1, "global b: one distinct value");
     assert_eq!(columns[0].histogram.ndv, 1000, "global a");
     assert_eq!(columns[2].histogram.ndv, 1000, "global c");
     assert_eq!(
-        global.indexes.values().next().expect("idx_c").histogram.ndv,
+        index_list(&global).into_iter().next().expect("idx_c").histogram.ndv,
         1000,
         "global idx_c"
     );
@@ -809,8 +804,8 @@ fn analyze_numeric_generated_column_with_index_succeeds() {
         .unwrap_or_else(|error| panic!("analyze must not fail: {error:?}"));
     // Go's `SHOW STATS_HISTOGRAMS` lists `c0` and `i0` only: the virtual
     // generated column gets no histogram of its own.
-    assert_eq!(statistics.columns.len(), 1, "c0 only");
-    assert_eq!(statistics.indexes.len(), 1, "i0 over the generated column");
+    assert_eq!(statistics.hist_coll.column_count(), 1, "c0 only");
+    assert_eq!(statistics.hist_coll.index_count(), 1, "i0 over the generated column");
 }
 
 /// Go `analyze_test.go:1998::TestIssue61609`: one sample drawn from ten
@@ -832,7 +827,7 @@ fn analyze_single_sample_scales_topn_count_to_the_table() {
     };
     let statistics = analyze_kv_table(&mut table, &options, None, &ctx())
         .unwrap_or_else(|error| panic!("analyze failed: {error:?}"));
-    let column = statistics.columns.values().next().expect("column a");
+    let column = column_list(&statistics).into_iter().next().expect("column a");
     let topn = column.top_n.as_ref().expect("one topn kept");
     assert_eq!(topn.num(), 1, "with 1 topn");
     assert_eq!(
@@ -861,19 +856,47 @@ fn analyze_stored_generated_column_from_json_with_unique_index() {
     let statistics = analyze_kv_table(&mut table, &AnalyzeOptions::default(), None, &ctx())
         .unwrap_or_else(|error| panic!("analyze must not panic or fail: {error:?}"));
     assert_eq!(
-        statistics.columns.len(),
+        statistics.hist_coll.column_count(),
         2,
         "j and the stored g are both analyzed"
     );
-    assert_eq!(statistics.indexes.len(), 1, "g_idx is analyzed");
-    for column in statistics.columns.values() {
+    assert_eq!(statistics.hist_coll.index_count(), 1, "g_idx is analyzed");
+    for column in column_list(&statistics) {
         assert_eq!(column.stats_version, 2, "v2 stats");
     }
-    for index in statistics.indexes.values() {
+    for index in index_list(&statistics) {
         assert_eq!(index.stats_version, 2, "v2 stats");
     }
     assert!(
-        statistics.columns.contains_key(&2),
+        statistics.hist_coll.get_column(2).is_some(),
         "the stored generated column is analyzed"
     );
+}
+
+/// The analyzed column statistics in id order.
+fn column_map(statistics: &tidb_stats::Table) -> BTreeMap<i64, tidb_stats::column::Column> {
+    let mut columns = BTreeMap::new();
+    statistics.hist_coll.for_each_column(|id, column| {
+        columns.insert(id, column.clone());
+        false
+    });
+    columns
+}
+
+/// The analyzed index statistics in id order.
+fn index_map(statistics: &tidb_stats::Table) -> BTreeMap<i64, tidb_stats::index::Index> {
+    let mut indexes = BTreeMap::new();
+    statistics.hist_coll.for_each_index(|id, index| {
+        indexes.insert(id, index.clone());
+        false
+    });
+    indexes
+}
+
+fn column_list(statistics: &tidb_stats::Table) -> Vec<tidb_stats::column::Column> {
+    column_map(statistics).into_values().collect()
+}
+
+fn index_list(statistics: &tidb_stats::Table) -> Vec<tidb_stats::index::Index> {
+    index_map(statistics).into_values().collect()
 }

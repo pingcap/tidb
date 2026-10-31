@@ -1039,7 +1039,7 @@ pub(crate) fn record_used_item_stats_status(
     context: &crate::StmtContext,
     table_name: &str,
     physical_table_id: i64,
-    statistics: Option<&tidb_stats::table_statistics::TableStatistics>,
+    statistics: Option<&tidb_stats::Table>,
     in_pseudo_table: bool,
     item_id: i64,
     is_index: bool,
@@ -1066,25 +1066,21 @@ pub(crate) fn record_used_item_stats_status(
         );
         return;
     };
-    let (loaded_status, analyzed) = if is_index {
-        (
-            statistics.index_load_status.get(&item_id).copied(),
-            statistics
-                .index_stats_existence
-                .get(&item_id)
-                .copied()
-                .unwrap_or(false),
-        )
+    let loaded_status = if is_index {
+        statistics
+            .hist_coll
+            .get_index(item_id)
+            .map(|index| read(&index).stats_loaded_status)
     } else {
-        (
-            statistics.column_load_status.get(&item_id).copied(),
-            statistics
-                .column_stats_existence
-                .get(&item_id)
-                .copied()
-                .unwrap_or(false),
-        )
+        statistics
+            .hist_coll
+            .get_column(item_id)
+            .map(|column| read(&column).stats_loaded_status)
     };
+    let analyzed = statistics
+        .existence_map
+        .as_ref()
+        .is_some_and(|map| read(map).has_analyzed(item_id, is_index));
     if loaded_status.is_some_and(tidb_stats::StatsLoadedStatus::is_full_load) {
         return;
     }
@@ -1097,13 +1093,13 @@ pub(crate) fn record_used_item_stats_status(
     context.record_used_stats_status(
         physical_table_id,
         table_name,
-        if statistics.pseudo {
+        if statistics.hist_coll.pseudo {
             0
         } else {
             statistics.version
         },
-        statistics.row_count,
-        statistics.modify_count,
+        statistics.hist_coll.realtime_count,
+        statistics.hist_coll.modify_count,
         item_id,
         is_index,
         status,
@@ -1111,6 +1107,10 @@ pub(crate) fn record_used_item_stats_status(
 }
 
 
+
+fn read<T>(lock: &std::sync::RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 impl InitStats<'_> {
     /// The `(column ids, index ids)` Go's lite statistics initialization
@@ -1123,7 +1123,7 @@ impl InitStats<'_> {
     fn predicate_loaded_items(
         &self,
         source: &tidb_planner_core_operator_logicalop::DataSource,
-        statistics: Option<&tidb_stats::table_statistics::TableStatistics>,
+        statistics: Option<&tidb_stats::Table>,
     ) -> Option<(BTreeSet<i64>, BTreeSet<i64>)> {
         statistics?;
         let demanded = self.demanded?;
@@ -1150,13 +1150,13 @@ impl InitStats<'_> {
         // Use the same retained load status as the statistics cache.
         columns.retain(|id| {
             statistics
-                .and_then(|statistics| statistics.column_load_status.get(id))
-                .is_some_and(|status| status.is_full_load())
+                .and_then(|statistics| statistics.hist_coll.get_column(*id))
+                .is_some_and(|column| read(&column).is_full_load())
         });
         indexes.retain(|id| {
             statistics
-                .and_then(|statistics| statistics.index_load_status.get(id))
-                .is_some_and(|status| status.is_full_load())
+                .and_then(|statistics| statistics.hist_coll.get_index(*id))
+                .is_some_and(|index| read(&index).is_full_load())
         });
         if columns.is_empty() {
             return None;
@@ -1215,10 +1215,10 @@ impl InitStats<'_> {
                 source.physical_table_id,
                 self.catalog.used_stats_table_name(source.physical_table_id),
                 statistics
-                    .filter(|statistics| !statistics.pseudo)
+                    .filter(|statistics| !statistics.hist_coll.pseudo)
                     .map_or(0, |statistics| statistics.version),
                 row_count as i64,
-                statistics.map_or(0, |statistics| statistics.modify_count),
+                statistics.map_or(0, |statistics| statistics.hist_coll.modify_count),
             );
         }
         // Retain Go's loaded subset, including empty and TopN-only payloads.
@@ -1227,7 +1227,7 @@ impl InitStats<'_> {
         let predicate_loaded = self.predicate_loaded_items(source, statistics);
         tidb_planner::stats::init_stats::init_stats(
             source,
-            statistics.map(|statistics| statistics as &dyn tidb_stats::table_statistics::TableStatsSnapshot),
+            statistics,
             row_count,
             predicate_loaded,
         );
@@ -3364,7 +3364,6 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
 #[cfg(test)]
 mod predicate_column_tests {
     use super::*;
-    use tidb_stats::table_statistics::TableStatistics;
     use tidb_planner_core_operator_logicalop::DataSource;
     use tidb_model::TableItemID;
 
@@ -3376,12 +3375,13 @@ mod predicate_column_tests {
     fn filter_columns_load_and_join_keys_do_not() {
         let mut source = DataSource::new(Default::default(), 7, "history");
         source.physical_table_id = 7;
-        let mut statistics = TableStatistics::default();
-        for id in [1, 2] {
-            statistics
-                .column_load_status
-                .insert(id, tidb_stats::StatsLoadedStatus::full_load());
-        }
+        let statistics = tidb_stats::Table::from_analyzed_items(
+            7,
+            0,
+            0,
+            [1, 2].map(|id| (id, tidb_stats::column::Column::default())),
+            [],
+        );
         let item = |id| TableItemID {
             table_id: 7,
             id,
@@ -3425,7 +3425,6 @@ mod statistics_initialization_tests {
     use tidb_expr::constant::{Constant, ParamMarker};
     use tidb_expr::expression::Expression;
     use tidb_expr::scalar_function::ScalarFunction;
-    use std::collections::BTreeMap;
     use tidb_expr::schema::Schema;
     use tidb_planner_core_operator_logicalop::DataSource;
     use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
@@ -3452,12 +3451,7 @@ mod statistics_initialization_tests {
         let context = crate::StmtContext::default();
         context.stats_handle().set_table_statistics(
             7,
-            std::sync::Arc::new(tidb_stats::table_statistics::TableStatistics::new(
-                1000,
-                0,
-                BTreeMap::new(),
-                BTreeMap::new(),
-            )),
+            std::sync::Arc::new(tidb_stats::Table::from_analyzed_items(7, 1000, 0, [], [])),
         );
         let mut source = DataSource::new(Default::default(), 7, "t");
         source.db_name = "test".to_owned();
@@ -3628,28 +3622,39 @@ mod statistics_initialization_tests {
             }),
             ..Default::default()
         };
-        let mut statistics = tidb_stats::table_statistics::TableStatistics::new(
+        let mut empty_index = index_stats.clone();
+        empty_index.histogram = tidb_stats::Histogram { id: 11, ..Default::default() };
+        let mut statistics = tidb_stats::Table::from_analyzed_items(
+            7,
             100,
             0,
-            [(1, column_stats)].into(),
-            [(9, index_stats)].into(),
+            [(1, column_stats)],
+            [(9, index_stats), (11, empty_index)],
         );
-        let mut empty_index = statistics.indexes[&9].clone();
-        empty_index.histogram = tidb_stats::Histogram { id: 11, ..Default::default() };
-        statistics.indexes.insert(11, empty_index);
-        statistics
-            .column_load_status
-            .insert(1, tidb_stats::StatsLoadedStatus::all_evicted());
-        statistics
-            .index_load_status
-            .insert(9, tidb_stats::StatsLoadedStatus::all_evicted());
+        let evicted = tidb_stats::StatsLoadedStatus::all_evicted();
+        statistics.hist_coll.get_column(1).unwrap().write().unwrap().stats_loaded_status = evicted;
+        statistics.hist_coll.get_index(9).unwrap().write().unwrap().stats_loaded_status = evicted;
+        // Index 11 is an unloaded placeholder that storage never recorded.
+        statistics.hist_coll.get_index(11).unwrap().write().unwrap().stats_loaded_status =
+            tidb_stats::StatsLoadedStatus::default();
+        statistics.existence_map().write().unwrap().delete_index_not_found(11);
         for ndv in [2, 0] {
-            statistics.columns.get_mut(&1).unwrap().histogram.ndv = ndv;
-            let cache_usable = statistics.column_for_estimation(1).is_some();
+            let published = statistics.copy_as(tidb_stats::CopyIntent::AllDataWritable);
+            let cache_usable = {
+                let column = published.hist_coll.get_column(1).unwrap();
+                let mut column = column.write().unwrap();
+                column.histogram.ndv = ndv;
+                // Go `ColumnStatsIsInvalid`'s estimation gate.
+                let essential = column.stats_loaded_status.is_essential_stats_loaded();
+                column.is_valid_for_estimation(published.hist_coll.pseudo, essential)
+            };
+            statistics = published;
             let context = crate::StmtContext::default();
             context
                 .stats_handle()
-                .set_table_statistics(7, std::sync::Arc::new(statistics.clone()));
+                .set_table_statistics(7, std::sync::Arc::new(statistics.copy_as(
+                    tidb_stats::CopyIntent::MetaOnly,
+                )));
             let mut initializer = InitStats {
                 error: None,
                 catalog: &catalog,

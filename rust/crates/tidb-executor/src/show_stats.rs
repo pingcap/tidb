@@ -35,7 +35,7 @@
 //!
 //! # Reused rather than restated
 //!
-//! * [`TableStatistics`] is the shared production statistics object used by
+//! * [`Table`] is the shared production statistics object used by
 //!   the SHOW paths. Its `stats_healthy` method owns Go's
 //!   `GetStatsHealthy` calculation for the wired [`healthy_row`].
 //! * [`tidb_stats::Histogram`] and [`tidb_stats::Bucket`] ARE Go
@@ -88,7 +88,7 @@ use tidb_datatype::{core_time_from_datetime, Datum, FieldTypeCode, Time, TimeTyp
 use tidb_stats::memory_usage::{ColumnMemUsage, IndexMemUsage};
 use tidb_stats::{Histogram, TopN};
 
-use tidb_stats::table_statistics::TableStatistics;
+use tidb_stats::Table;
 
 /// Go `oracle.physicalShiftBits`: a TSO's low 18 bits are its logical
 /// counter, so the physical half is milliseconds since the Unix epoch.
@@ -269,10 +269,10 @@ pub fn table_statistics_meta_row<TZ: chrono::TimeZone>(
     db_name: &str,
     table_name: &str,
     partition: &PartitionLabel,
-    stats: &TableStatistics,
+    stats: &Table,
     zone: &TZ,
 ) -> Option<Vec<Datum>> {
-    if stats.is_synthetic_pseudo() {
+    if stats.hist_coll.pseudo {
         return None;
     }
     let last_analyze = if stats.last_analyze_version > 0 {
@@ -285,8 +285,8 @@ pub fn table_statistics_meta_row<TZ: chrono::TimeZone>(
         Datum::new_string(table_name.as_bytes().to_vec()),
         Datum::new_string(partition.as_str().as_bytes().to_vec()),
         version_to_time(stats.version, zone).map_or(Datum::Null, Datum::Time),
-        Datum::Int(stats.modify_count),
-        Datum::Int(stats.row_count),
+        Datum::Int(stats.hist_coll.modify_count),
+        Datum::Int(stats.hist_coll.realtime_count),
         last_analyze,
     ])
 }
@@ -493,7 +493,7 @@ pub fn topn_to_rows<E>(
 
 /// Go `appendTableForStatsHealthy` (:522): one `SHOW STATS_HEALTHY` row.
 ///
-/// `None` is Go's `if !ok { return }`. [`TableStatistics::stats_healthy`]
+/// `None` is Go's `if !ok { return }`. [`Table::stats_healthy`]
 /// returns `ok == false` for a PSEUDO table only; an analyzed-but-unmodified
 /// table returns `(100, true)` and an un-analyzed non-pseudo table returns
 /// `(0, true)`. So a missing row means "no statistics object at all", while a
@@ -504,7 +504,7 @@ pub fn healthy_row(
     db_name: &str,
     table_name: &str,
     partition: &PartitionLabel,
-    stats: &TableStatistics,
+    stats: &Table,
 ) -> Option<Vec<Datum>> {
     let (healthy, ok) = stats.stats_healthy();
     if !ok {
@@ -729,10 +729,10 @@ mod tests {
     #[test]
     fn stats_meta_row_nulls_the_analyze_time_when_never_analyzed() {
         let version = 1_700_000_000_000u64 << PHYSICAL_SHIFT_BITS;
-        let mut stats = TableStatistics::default();
+        let mut stats = Table::default();
         stats.version = version;
-        stats.modify_count = 5;
-        stats.row_count = 100;
+        stats.hist_coll.modify_count = 5;
+        stats.hist_coll.realtime_count = 100;
         stats.last_analyze_version = 0;
 
         let row = table_statistics_meta_row("d", "t", &PartitionLabel::None, &stats, &chrono::Utc)
@@ -749,7 +749,7 @@ mod tests {
         assert!(matches!(row[6], Datum::Time(_)));
 
         // A pseudo table produces no row at all.
-        stats.cache_pseudo = true;
+        stats.hist_coll.pseudo = true;
         assert!(
             table_statistics_meta_row("d", "t", &PartitionLabel::None, &stats, &chrono::Utc)
                 .is_none()
@@ -911,16 +911,13 @@ mod tests {
     // WRITTEN test for :522-534: the pseudo skip versus a zero health.
     #[test]
     fn healthy_row_distinguishes_absent_from_zero() {
-        let mut stats = TableStatistics {
-            pseudo: true,
-            cache_pseudo: true,
-            ..TableStatistics::default()
-        };
+        let mut stats = Table::default();
+        stats.hist_coll.pseudo = true;
         assert!(healthy_row("d", "t", &PartitionLabel::None, &stats).is_none());
 
         // A real cache table may still use pseudo estimates in the planner.
         // Never analyzed: a real row holding 0.
-        stats.cache_pseudo = false;
+        stats.hist_coll.pseudo = false;
         let row = healthy_row("d", "t", &PartitionLabel::None, &stats).unwrap();
         assert_eq!(row.len(), 4);
         assert_eq!(row[3], Datum::Int(0));

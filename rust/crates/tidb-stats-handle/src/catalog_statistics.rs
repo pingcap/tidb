@@ -45,7 +45,7 @@ pub trait CatalogStatistics {
         &self,
         handle: &StatsHandle,
         table_id: i64,
-    ) -> Option<Arc<tidb_stats::table_statistics::TableStatistics>>;
+    ) -> Option<Arc<tidb_stats::Table>>;
 }
 
 impl CatalogStatistics for Catalog {
@@ -62,9 +62,11 @@ impl CatalogStatistics for Catalog {
                 continue;
             };
             let load_needed = if item.is_index {
-                statistics.index_is_load_needed(item.id)
+                statistics.index_load_needed(item.id).1
             } else {
-                statistics.column_is_load_needed(item.id, requested.full_load)
+                let (_, load_needed, analyzed) =
+                    statistics.column_load_needed(item.id, requested.full_load);
+                load_needed && analyzed
             };
             if load_needed {
                 really_needed = really_needed.saturating_add(1);
@@ -104,9 +106,11 @@ impl CatalogStatistics for Catalog {
                 .table_statistics(item.table_id, || self.statistics_schema(item.table_id))
                 .is_some_and(|statistics| {
                     if item.is_index {
-                        statistics.index_is_load_needed(item.id)
+                        statistics.index_load_needed(item.id).1
                     } else {
-                        statistics.column_is_load_needed(item.id, true)
+                        // Go also proceeds for an unanalyzed column, to
+                        // publish its fake `EmptyColumn`; the loader makes it.
+                        statistics.column_load_needed(item.id, true).1
                     }
                 });
             if !valid_metadata || !load_needed {
@@ -153,32 +157,24 @@ impl CatalogStatistics for Catalog {
                 if columns.iter().any(|(item, full)| {
                     item.table_id == *table_id
                         && *full
-                        && statistics
-                            .column_stats_existence
-                            .get(&item.id)
-                            .copied()
-                            .unwrap_or(false)
+                        && has_analyzed(&statistics, item.id, false)
                 }) {
                     continue;
                 }
                 // Go reads the cached `tblStats.Pseudo` straight off the
                 // handle, not `GetStatsTable`'s planner copy: an analyzed
                 // table whose count is zero still asks for a load.
-                if statistics.is_synthetic_pseudo()
-                    || statistics
-                        .column_load_status
-                        .values()
-                        .any(|status| status.is_full_load())
-                    || statistics
-                        .index_load_status
-                        .iter()
-                        .any(|(index_id, status)| {
-                            status.is_full_load()
-                                && self.kv_table_by_id(*table_id).is_none_or(|table| {
-                                    table.mv_key_part_source(*index_id).is_none()
-                                })
-                        })
-                {
+                let mut has_full = false;
+                statistics.hist_coll.for_each_column(|_, column| {
+                    has_full = column.is_full_load();
+                    has_full
+                });
+                statistics.hist_coll.for_each_index(|_, index| {
+                    has_full |= index.is_full_load()
+                        && !index.info.as_ref().is_some_and(|info| info.mv_index);
+                    has_full
+                });
+                if statistics.hist_coll.pseudo || has_full {
                     continue;
                 }
                 let Some(table) = self.kv_table_by_id(*table_id) else {
@@ -189,11 +185,7 @@ impl CatalogStatistics for Catalog {
                         .generated
                         .as_ref()
                         .is_none_or(|generated| generated.stored)
-                        && statistics
-                            .column_stats_existence
-                            .get(&column.id)
-                            .copied()
-                            .unwrap_or(false)
+                        && has_analyzed(&statistics, column.id, false)
                 }) {
                     columns.insert(
                         tidb_model::TableItemID {
@@ -254,12 +246,12 @@ impl CatalogStatistics for Catalog {
                 continue;
             };
             // Go `collectSyncIndices`: the handle's cached `tblStats.Pseudo`.
-            if statistics.is_synthetic_pseudo() {
+            if statistics.hist_coll.pseudo {
                 continue;
             }
             for index in table.indexes() {
                 if !index.column_offsets.contains(&offset)
-                    || !statistics.index_is_load_needed(index.id)
+                    || !statistics.index_load_needed(index.id).1
                 {
                     continue;
                 }
@@ -317,10 +309,11 @@ impl CatalogStatistics for Catalog {
             let Some(statistics) = handle.table_statistics(item.table_id, || self.statistics_schema(item.table_id)) else {
                 return false;
             };
+            // Go `statsSyncLoad.removeHistLoadedColumns`.
             if item.is_index {
-                return statistics.index_is_load_needed(item.id);
+                return statistics.index_load_needed(item.id).1;
             }
-            statistics.column_is_load_needed(item.id, *full_load)
+            statistics.column_load_needed(item.id, *full_load).1
         });
 
         let mut result = items
@@ -350,7 +343,16 @@ impl CatalogStatistics for Catalog {
         &self,
         handle: &StatsHandle,
         table_id: i64,
-    ) -> Option<Arc<tidb_stats::table_statistics::TableStatistics>> {
+    ) -> Option<Arc<tidb_stats::Table>> {
         handle.table_statistics(table_id, || self.statistics_schema(table_id))
     }
+}
+
+/// Go `ColAndIdxExistenceMap.HasAnalyzed`.
+fn has_analyzed(statistics: &tidb_stats::Table, id: i64, is_index: bool) -> bool {
+    statistics.existence_map.as_ref().is_some_and(|map| {
+        map.read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .has_analyzed(id, is_index)
+    })
 }
