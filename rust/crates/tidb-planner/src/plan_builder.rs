@@ -227,7 +227,7 @@ use crate::expression_rewriter::{
     SubQueryCtx,
 };
 use tidb_planner_core_operator_logicalop::data_source::{
-    DataSource, DataSourceColumn, DataSourceIndexHint, DataSourceIndexMergeHint, EXTRA_HANDLE_ID,
+    DataSource, DataSourceIndexHint, DataSourceIndexMergeHint, EXTRA_HANDLE_ID,
     PREFER_TIFLASH, PREFER_TIKV,
 };
 use tidb_planner_core_operator_logicalop::limit::LogicalLimit;
@@ -3216,7 +3216,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 && index.read().columns.iter_deref().any(|index_column| {
                     table
                         .column_at(index_column.read().offset as usize)
-                        .is_some_and(|column| column.is_virtual_generated)
+                        .is_some_and(|column| column.read().is_virtual_generated())
                 })
         }) {
             self.opt_flag |= flags::GC_SUBSTITUTE;
@@ -3316,12 +3316,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 &db_name,
                 &table.table_name,
                 &visible_table,
-                &source_column.name,
-                !source_column.is_public,
-                source_column.is_hidden,
+                source_column.read().name.original(),
+                source_column.read().state != tidb_model::SchemaState::PUBLIC,
+                source_column.read().hidden,
             );
-            let mut column = Column::new(self.column_ids.alloc(), source_column.ret_type.clone());
-            column.id = source_column.id;
+            let mut column = Column::new(self.column_ids.alloc(), source_column.read().field_type.clone());
+            column.id = source_column.read().id;
             // Go `buildDataSource` sets `Column.OrigName` from the PRE-alias
             // `FieldName` (`logical_plan_builder.go:5259`) and
             // `buildResultSetNode` renames only the OUTPUT `FieldName` to the
@@ -3331,13 +3331,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let mut original_name = name.clone();
             original_name.names.table = original_name.names.original_table.clone();
             column.orig_name = original_name.display_name();
-            column.is_hidden = source_column.is_hidden;
-            columns.push(DataSourceColumn {
-                id: source_column.id,
-                name: source_column.name.clone(),
-                is_primary_key: source_column.is_primary_key,
-                is_not_null: source_column.ret_type.has_flag(FieldTypeFlags::NOT_NULL),
-            });
+            column.is_hidden = source_column.read().hidden;
+            // Go `ds.Columns = append(ds.Columns, col.ToInfo())`.
+            columns.push(source_column.info.clone());
             schema_columns.push(column);
             names.push(name);
         }
@@ -3351,7 +3347,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .iter()
             .enumerate()
             .filter_map(|(offset, column)| {
-                if !column.is_virtual_generated {
+                if !column.read().is_virtual_generated() {
                     return None;
                 }
                 column
@@ -3400,12 +3396,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             extra.orig_name = original_name.display_name();
             handle_cols = vec![extra.clone()];
             handle_is_int = true;
-            columns.push(DataSourceColumn {
-                id: EXTRA_HANDLE_ID,
-                name: EXTRA_HANDLE_NAME.to_owned(),
-                is_primary_key: false,
-                is_not_null: true,
-            });
+            columns.push(tidb_model::GoShared::new(
+                tidb_model::ColumnInfo::new_extra_handle_col_info(),
+            ));
             schema_columns.push(extra);
             names.push(name);
         } else {
@@ -3437,12 +3430,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             original_commit_ts_name.names.table =
                 original_commit_ts_name.names.original_table.clone();
             commit_ts.orig_name = original_commit_ts_name.display_name();
-            columns.push(DataSourceColumn {
-                id: EXTRA_COMMIT_TS_ID,
-                name: EXTRA_COMMIT_TS_NAME.to_owned(),
-                is_primary_key: false,
-                is_not_null: false,
-            });
+            columns.push(tidb_model::GoShared::new(
+                tidb_model::ColumnInfo::new_extra_commit_ts_col_info(),
+            ));
             schema_columns.push(commit_ts);
             names.push(commit_ts_name);
         }

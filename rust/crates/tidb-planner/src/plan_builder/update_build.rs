@@ -134,11 +134,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                             )
                         })?;
                     let id = frozen_schema.columns[assigned.position].id;
-                    let Some(offset) = table.columns.iter().position(|column| column.id == id)
+                    let Some(offset) = table.columns.iter().position(|column| column.read().id == id)
                     else {
                         continue;
                     };
-                    if !table.columns[offset].is_generated {
+                    if !table.columns[offset].read().is_generated() {
                         continue;
                     }
                     let same = match &update.assignments[assigned.index].value {
@@ -156,7 +156,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         return Err(PlanError::from(
                             tidb_plannererrors::ERR_BAD_GENERATED_COLUMN
                                 .generate_with_stack_by_args(&[
-                                    (table.columns[offset].name.clone()).into(),
+                                    (table.columns[offset].read().name.original().to_owned()).into(),
                                     (table.table_name.clone()).into(),
                                 ]),
                         ));
@@ -264,7 +264,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         if id == EXTRA_COMMIT_TS_ID {
                             continue;
                         }
-                        let Some(offset) = table.columns.iter().position(|column| column.id == id)
+                        let Some(offset) = table.columns.iter().position(|column| column.read().id == id)
                         else {
                             return Err(PlanError::internal(
                                 "an updated column is not in its table",
@@ -341,7 +341,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         table
                             .columns
                             .iter()
-                            .position(|candidate| candidate.id == id)
+                            .position(|candidate| candidate.read().id == id)
                             .ok_or_else(|| {
                                 PlanError::internal("an assigned column is not in its table")
                             })?

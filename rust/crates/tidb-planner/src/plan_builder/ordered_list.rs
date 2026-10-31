@@ -102,7 +102,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut names: Vec<FieldName> = table
             .columns
             .iter()
-            .map(|column| field(&column.name))
+            .map(|column| field(column.read().name.original()))
             .collect();
         if schema.columns.len() > names.len() {
             names.push(field(tidb_model::column::EXTRA_HANDLE_NAME));
@@ -127,8 +127,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     table
                         .columns
                         .iter()
-                        .find(|candidate| candidate.name.eq_ignore_ascii_case(column))
-                        .map(|candidate| candidate.ret_type.clone())
+                        .find(|candidate| candidate.read().name.original().eq_ignore_ascii_case(column))
+                        .map(|candidate| candidate.read().field_type.clone())
                 });
                 match target_type {
                     Some(target_type) => {

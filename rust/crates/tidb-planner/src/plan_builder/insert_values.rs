@@ -89,10 +89,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         for column in table
             .columns
             .iter()
-            .filter(|column| !column.is_hidden && column.is_public)
+            .filter(|column| {
+                let column = column.read();
+                !column.hidden && column.state == tidb_model::SchemaState::PUBLIC
+            })
         {
-            columns.push((column.name.clone(), column.ret_type.clone()));
-            generated.push(column.is_generated);
+            columns.push((column.read().name.original().to_owned(), column.read().field_type.clone()));
+            generated.push(column.read().is_generated());
         }
         let named: Vec<String> = if insert.set_syntax {
             insert
@@ -171,21 +174,21 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 )
             })?
             .clone();
-        if !table.columns.iter().any(|column| column.is_generated) {
+        if !table.columns.iter().any(|column| column.read().is_generated()) {
             return Ok(Vec::new());
         }
         let mut schema = Schema::default();
         let mut names = Vec::with_capacity(table.columns.len());
         for column in &table.columns {
-            let mut built = Column::new(self.column_ids.alloc(), column.ret_type.clone());
-            built.orig_name = format!("{}.{}.{}", table.db_name, table.table_name, column.name);
+            let mut built = Column::new(self.column_ids.alloc(), column.read().field_type.clone());
+            built.orig_name = format!("{}.{}.{}", table.db_name, table.table_name, column.read().name);
             schema.columns.push(built);
             names.push(FieldName::new(FieldNameMetadata {
                 original_table: IdentifierMetadata::new(table.table_name.as_str()),
-                original_column: IdentifierMetadata::new(column.name.as_str()),
+                original_column: IdentifierMetadata::new(column.read().name.original()),
                 database: IdentifierMetadata::new(table.db_name.as_str()),
                 table: IdentifierMetadata::new(table.table_name.as_str()),
-                column: IdentifierMetadata::new(column.name.as_str()),
+                column: IdentifierMetadata::new(column.read().name.original()),
             }));
         }
         let saved_clause = self.cur_clause;
@@ -193,7 +196,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut resolved = Vec::with_capacity(table.columns.len());
         let mut failure = None;
         for column in &table.columns {
-            if !column.is_generated {
+            if !column.read().is_generated() {
                 resolved.push(None);
                 continue;
             }
@@ -345,7 +348,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     let found = table
                         .columns
                         .iter()
-                        .find(|column| go_to_lower(&column.name) == go_to_lower(written))
+                        .find(|column| go_to_lower(column.read().name.original()) == go_to_lower(written))
                         .ok_or_else(|| {
                             PlanError::from(
                                 tidb_plannererrors::ERR_UNKNOWN_COLUMN
@@ -356,8 +359,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                             )
                         })?;
                     // `DEFAULT(generated column)` only for the same column.
-                    let same = go_to_lower(&found.name) == go_to_lower(column_name);
-                    if !same && (generated || found.is_generated) {
+                    let same = go_to_lower(found.read().name.original()) == go_to_lower(column_name);
+                    if !same && (generated || found.read().is_generated()) {
                         return Err(PlanError::from(
                             tidb_plannererrors::ERR_BAD_GENERATED_COLUMN
                                 .generate_with_stack_by_args(&[
@@ -369,7 +372,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     if same && generated {
                         return Ok(None);
                     }
-                    reference = found.name.clone();
+                    reference = found.read().name.original().to_owned();
                 } else if generated {
                     // Only DEFAULT for a generated column is accepted: its
                     // expression fills the value.

@@ -6053,8 +6053,10 @@ name = "tidb-planner-core-rule-util"
 version = "0.0.0"
 dependencies = [
  "tidb-ast",
+ "tidb-datatype",
  "tidb-expr",
  "tidb-infoschema",
+ "tidb-model",
 ]
 
 [[package]]

@@ -517,7 +517,6 @@ mod tests {
     fn integer_handle_residual_stops_before_later_covering_index() {
         use tidb_planner_core_operator_logicalop::data_source_paths::{IndexAccessPath, PointGetAdmission, ResolvedTableDescriptor, ResolvedTableScanKind, TableAccessPath, TableScanExplainIdSuffix};
         use tidb_planner_cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
-        use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
         use tidb_planner_core_operator_logicalop::tikv_scan_spec::TiKvTableScanSpec;
         let allocator = PlanIdAllocator::new();
         let handle = column(1, false);
@@ -557,16 +556,24 @@ mod tests {
             handle_is_int: true,
             handle_cols: vec![handle.clone()],
             columns: vec![
-                DataSourceColumn {
-                    id: 1,
-                    name: "a".to_owned(),
-                    ..Default::default()
-                },
-                DataSourceColumn {
-                    id: 2,
-                    name: "b".to_owned(),
-                    ..Default::default()
-                },
+                tidb_model::GoShared::new({
+                        let info = tidb_model::ColumnInfo {
+                            id: 1,
+                            name: tidb_ast::CiString::new("a"),
+                            state: tidb_model::SchemaState::PUBLIC,
+                            ..tidb_model::ColumnInfo::default()
+                        };
+                        info
+                    }),
+                tidb_model::GoShared::new({
+                        let info = tidb_model::ColumnInfo {
+                            id: 2,
+                            name: tidb_ast::CiString::new("b"),
+                            state: tidb_model::SchemaState::PUBLIC,
+                            ..tidb_model::ColumnInfo::default()
+                        };
+                        info
+                    }),
             ],
             indexes: vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 11,

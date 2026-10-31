@@ -70,15 +70,21 @@ impl TableSource for TestCatalog {
 }
 
 fn column(offset: usize, name: &str, primary: bool) -> SourceColumn {
-    SourceColumn {
-        id: offset as i64 + 1,
-        name: name.to_owned(),
-        is_primary_key: primary,
-        offset,
-        ret_type: FieldType::new(FieldTypeCode::LongLong),
-        is_public: true,
-        is_hidden: false,
-        is_virtual_generated: false,
+    tidb_table::column::Column {
+        info: tidb_model::GoShared::new({
+            let mut info = tidb_model::ColumnInfo {
+                id: offset as i64 + 1,
+                name: tidb_ast::CiString::new(name.to_owned()),
+                offset: (offset) as i64,
+                field_type: FieldType::new(FieldTypeCode::LongLong),
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::ColumnInfo::default()
+            };
+            if primary {
+                info.add_flag(u64::from(tidb_datatype::FieldTypeFlags::PRI_KEY));
+            }
+            info
+        }),
         generated_expr: None,
     }
 }

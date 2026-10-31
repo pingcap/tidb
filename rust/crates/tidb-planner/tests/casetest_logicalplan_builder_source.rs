@@ -60,16 +60,18 @@ fn integer_column(code: FieldTypeCode, unsigned: bool) -> SourceColumn {
     if unsigned {
         ret_type.add_flags(FieldTypeFlags::UNSIGNED);
     }
-    SourceColumn {
-        id: 1,
-        name: "c1".to_owned(),
-        is_primary_key: false,
-        offset: 0,
-        ret_type,
-        is_public: true,
-        is_hidden: false,
-        is_generated: false,
-        is_virtual_generated: false,
+    tidb_table::column::Column {
+        info: tidb_model::GoShared::new({
+            let info = tidb_model::ColumnInfo {
+                id: 1,
+                name: tidb_ast::CiString::new("c1"),
+                offset: 0,
+                field_type: ret_type,
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::ColumnInfo::default()
+            };
+            info
+        }),
         generated_expr: None,
     }
 }

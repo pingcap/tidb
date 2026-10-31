@@ -70,8 +70,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         if table.is_partitioned
             || table.is_temporary
-            || table.columns.iter().any(|column| column.is_hidden)
-            || table.columns.iter().any(|column| column.is_generated)
+            || table.columns.iter().any(|column| column.read().hidden)
+            || table.columns.iter().any(|column| column.read().is_generated())
             || table
                 .indexes
                 .iter()
@@ -101,7 +101,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let visible = go_to_lower(table_ref.alias.as_deref().unwrap_or(name));
         let mut pairs: BTreeSet<(String, String)> = kept
             .iter()
-            .map(|offset| (visible.clone(), go_to_lower(&table.columns[*offset].name)))
+            .map(|offset| (visible.clone(), go_to_lower(&table.columns[*offset].read().name.original())))
             .collect();
         if extra_handle {
             pairs.insert((visible, go_to_lower(tidb_model::column::EXTRA_HANDLE_NAME)));
@@ -186,7 +186,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
             let offset_of = |position: usize| {
                 let id = schema.columns[position].id;
-                table.columns.iter().position(|column| column.id == id)
+                table.columns.iter().position(|column| column.read().id == id)
             };
             // Go skips pruning for a partitioned table, a partial index and a
             // foreign key anywhere in the statement; this port also keeps the
@@ -194,8 +194,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let skip = input.has_fk
                 || table.is_partitioned
                 || table.is_temporary
-                || table.columns.iter().any(|column| column.is_hidden)
-                || table.columns.iter().any(|column| column.is_generated)
+                || table.columns.iter().any(|column| column.read().hidden)
+                || table.columns.iter().any(|column| column.read().is_generated())
                 || table
                     .indexes
                     .iter()

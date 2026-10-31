@@ -39,7 +39,7 @@ use super::cte::{
     extract_correlated_cols_for_plan, get_has_tiflash, CteClass, CtePredicatePushDown, LogicalCTE,
     LogicalCTETable,
 };
-use super::data_source::{DataSource, DataSourceColumn};
+use super::data_source::{DataSource};
 use super::expand::{GroupingMode, LogicalExpand, RollupGroupingSet};
 use super::index_scan::{matches_indices_prop, LogicalIndexScan};
 use super::join::{is_eq_cond_from_in, LogicalJoin, OnConditionSplit};
@@ -1110,12 +1110,15 @@ fn data_source_records_all_conds_and_returns_the_remainder() {
 fn data_source_prune_columns_separates_conds_from_output() {
     let mut source = DataSource::new(BaseLogicalPlan::default(), 7, "t");
     source.columns = (1..=3)
-        .map(|id| DataSourceColumn {
-            id,
-            name: format!("c{id}"),
-            is_primary_key: false,
-            is_not_null: false,
-        })
+        .map(|id| tidb_model::GoShared::new({
+                let info = tidb_model::ColumnInfo {
+                    id: id,
+                    name: tidb_ast::CiString::new(format!("c{id}")),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                };
+                info
+            }))
         .collect();
     source.all_conds = vec![eq(col_expr(2), one())];
     let mut output = schema(&[1, 2, 3]);
@@ -1148,7 +1151,7 @@ fn data_source_prune_columns_forgets_a_dropped_int_handle() {
     let mut source = DataSource::new(BaseLogicalPlan::default(), 7, "t");
     source.handle_cols = vec![column(3)];
     source.handle_is_int = true;
-    source.columns = vec![DataSourceColumn::default(); 3];
+    source.columns = (0..3).map(|_| tidb_model::GoShared::new(tidb_model::ColumnInfo::default())).collect();
     let mut output = schema(&[1, 2, 3]);
     source.prune_columns_local(&[column(1)], &mut output);
     assert!(source.handle_cols.is_empty());
@@ -1162,18 +1165,26 @@ fn data_source_build_key_info_adds_the_int_primary_key() {
     let mut source = DataSource::new(BaseLogicalPlan::default(), 7, "t");
     source.pk_is_handle = true;
     source.columns = vec![
-        DataSourceColumn {
-            id: 1,
-            name: "a".to_owned(),
-            is_primary_key: false,
-            is_not_null: false,
-        },
-        DataSourceColumn {
-            id: 2,
-            name: "id".to_owned(),
-            is_primary_key: true,
-            is_not_null: true,
-        },
+        tidb_model::GoShared::new({
+                let info = tidb_model::ColumnInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("a"),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                };
+                info
+            }),
+        tidb_model::GoShared::new({
+                let mut info = tidb_model::ColumnInfo {
+                    id: 2,
+                    name: tidb_ast::CiString::new("id"),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                };
+                info.add_flag(u64::from(tidb_datatype::FieldTypeFlags::PRI_KEY));
+                info.add_flag(u64::from(tidb_datatype::FieldTypeFlags::NOT_NULL));
+                info
+            }),
     ];
     let mut output = schema(&[1, 2]);
     source.build_key_info(&mut output, Vec::new());
@@ -1226,18 +1237,26 @@ fn data_source_build_key_info_adds_the_int_primary_key() {
 fn data_source_unique_index_keys_keep_nullability_and_pruning_semantics() {
     let mut source = DataSource::new(BaseLogicalPlan::default(), 7, "t");
     source.columns = vec![
-        DataSourceColumn {
-            id: 1,
-            name: "a".to_owned(),
-            is_primary_key: false,
-            is_not_null: true,
-        },
-        DataSourceColumn {
-            id: 2,
-            name: "b".to_owned(),
-            is_primary_key: false,
-            is_not_null: true,
-        },
+        tidb_model::GoShared::new({
+                let mut info = tidb_model::ColumnInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("a"),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                };
+                info.add_flag(u64::from(tidb_datatype::FieldTypeFlags::NOT_NULL));
+                info
+            }),
+        tidb_model::GoShared::new({
+                let mut info = tidb_model::ColumnInfo {
+                    id: 2,
+                    name: tidb_ast::CiString::new("b"),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                };
+                info.add_flag(u64::from(tidb_datatype::FieldTypeFlags::NOT_NULL));
+                info
+            }),
     ];
     source.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
         columns: vec![
@@ -1272,7 +1291,7 @@ fn data_source_unique_index_keys_keep_nullability_and_pruning_semantics() {
     );
     assert!(nullable.is_empty());
 
-    source.columns[1].is_not_null = false;
+    source.columns[1].write().and_flag(!u64::from(tidb_datatype::FieldTypeFlags::NOT_NULL));
     let (strong, nullable) = source.index_keys(&output);
     assert!(strong.is_empty());
     assert_eq!(nullable.len(), 1);

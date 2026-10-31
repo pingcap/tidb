@@ -62,23 +62,24 @@ impl PhysPlanPartInfo {
             .map(|column| {
                 let (name, original_table) = match column.id {
                     tidb_model::column::EXTRA_HANDLE_ID => {
-                        (tidb_model::column::EXTRA_HANDLE_NAME, None)
+                        (tidb_model::column::EXTRA_HANDLE_NAME.to_owned(), None)
                     }
                     tidb_model::column::EXTRA_PHYS_TBL_ID => {
-                        (tidb_model::column::EXTRA_PHYS_TBL_ID_NAME, None)
+                        (tidb_model::column::EXTRA_PHYS_TBL_ID_NAME.to_owned(), None)
                     }
                     tidb_model::column::EXTRA_COMMIT_TS_ID => {
-                        (tidb_model::column::EXTRA_COMMIT_TS_NAME, None)
+                        (tidb_model::column::EXTRA_COMMIT_TS_NAME.to_owned(), None)
                     }
                     id => (
                         ds.columns
                             .iter()
-                            .find(|info| info.id == id)
-                            .map_or("", |info| info.name.as_str()),
+                            .find(|info| info.read().id == id)
+                            .map(|info| info.read().name.original().to_owned())
+                            .unwrap_or_default(),
                         Some(&table),
                     ),
                 };
-                let name = IdentifierMetadata::new(name);
+                let name = IdentifierMetadata::new(name.as_str());
                 FieldName::new(FieldNameMetadata {
                     original_table: original_table.cloned().unwrap_or_default(),
                     original_column: name.clone(),

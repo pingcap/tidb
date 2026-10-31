@@ -690,7 +690,6 @@ mod tests {
     use super::*;
     use tidb_planner_core_operator_logicalop::plan_context::StatisticsLoadRequester;
     use tidb_planner_util::path::PossiblePath;
-    use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
     use tidb_planner_core_operator_logicalop::join::LogicalJoin;
     use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
     use crate::test_support::{test_context, TEST_BUILDER};
@@ -740,12 +739,15 @@ mod tests {
         source.db_name = "test".to_owned();
         source.columns = columns
             .iter()
-            .map(|(id, _)| DataSourceColumn {
-                id: *id,
-                name: format!("c{id}"),
-                is_primary_key: false,
-                is_not_null: false,
-            })
+            .map(|(id, _)| tidb_model::GoShared::new({
+                    let info = tidb_model::ColumnInfo {
+                        id: *id,
+                        name: tidb_ast::CiString::new(format!("c{id}")),
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::ColumnInfo::default()
+                    };
+                    info
+                }))
             .collect();
         // Go `DataSource.TableInfo`, whose `Columns` index offsets address.
         source.table_info = Some(tidb_model::GoShared::new(tidb_model::TableInfo {

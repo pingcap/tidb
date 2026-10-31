@@ -11,6 +11,8 @@ description = "TiDB pkg/planner/core/rule/util (Rust)."
 workspace = true
 
 [dependencies]
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-model = { path = "../tidb-model" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-infoschema = { path = "../tidb-infoschema" }

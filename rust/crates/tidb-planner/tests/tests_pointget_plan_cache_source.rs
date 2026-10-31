@@ -57,16 +57,21 @@ fn point_get_column(offset: usize, name: &str, primary: bool) -> SourceColumn {
     let mut ret_type = tidb_datatype::FieldType::new(FieldTypeCode::Long);
     ret_type.set_flen(11);
     ret_type.set_decimal(0);
-    SourceColumn {
-        id: (offset + 1) as i64,
-        name: name.to_owned(),
-        is_primary_key: primary,
-        offset,
-        ret_type,
-        is_public: true,
-        is_hidden: false,
-        is_generated: false,
-        is_virtual_generated: false,
+    tidb_table::column::Column {
+        info: tidb_model::GoShared::new({
+            let mut info = tidb_model::ColumnInfo {
+                id: (offset + 1) as i64,
+                name: tidb_ast::CiString::new(name.to_owned()),
+                offset: (offset) as i64,
+                field_type: ret_type,
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::ColumnInfo::default()
+            };
+            if primary {
+                info.add_flag(u64::from(tidb_datatype::FieldTypeFlags::PRI_KEY));
+            }
+            info
+        }),
         generated_expr: None,
     }
 }

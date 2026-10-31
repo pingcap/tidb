@@ -24,6 +24,33 @@ use tidb_datatype::{Datum, FieldType};
 use tidb_terror::MysqlError;
 use tidb_expr::EvalErrorSql;
 
+/// Go `table.Column`: the table's shared `*model.ColumnInfo`, embedded, and
+/// the expression parsed from it once, when the table is loaded.
+#[derive(Clone, Debug)]
+pub struct Column {
+    /// Go's embedded `*model.ColumnInfo`.
+    pub info: tidb_model::GoShared<tidb_model::ColumnInfo>,
+    /// Go `Column.GeneratedExpr`: `GeneratedExprString` parsed, `None` for
+    /// an ordinary column.
+    pub generated_expr: Option<tidb_ast::Expr>,
+}
+
+impl Column {
+    /// Go `ToColumn`: an ordinary column over `info`.
+    #[must_use]
+    pub fn new(info: tidb_model::GoShared<tidb_model::ColumnInfo>) -> Self {
+        Self {
+            info,
+            generated_expr: None,
+        }
+    }
+
+    /// The shared `ColumnInfo`, read.
+    pub fn read(&self) -> std::sync::RwLockReadGuard<'_, tidb_model::ColumnInfo> {
+        self.info.read()
+    }
+}
+
 /// Go `table.CastValue`'s returned `error`: a cast-family `terror` already
 /// rendered with its identity, or the evaluation error Go returns unchanged
 /// (a malformed JSON document, a VECTOR conversion), kept typed so the

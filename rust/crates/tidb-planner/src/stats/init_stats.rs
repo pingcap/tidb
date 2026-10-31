@@ -98,7 +98,7 @@ pub fn init_stats(
                 .and_then(|statistics| {
                     tidb_planner_cardinality::ndv::estimate_column_ndv(
                         statistics,
-                        metadata.id,
+                        metadata.read().id,
                         &loaded_columns,
                         &loaded_indexes,
                     )
@@ -200,7 +200,6 @@ use tidb_charset::Collation;
     use tidb_planner_cardinality::row_count_estimator::EstimatorOptions;
     use tidb_ranger::Range;
     use tidb_planner_cardinality::selectivity::get_row_count_by_index_ranges;
-    use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
     use tidb_planner_core_operator_logicalop::DataSource;
 
     /// Go `GetScaledRealtimeAndModifyCnt`: a fully loaded multi-valued
@@ -302,16 +301,24 @@ use tidb_charset::Collation;
         let estimate = |multi_valued: bool, statistics: &Table, low: Datum, high: Datum| {
             let mut source = DataSource::new(Default::default(), 1, "t");
             source.columns = vec![
-                DataSourceColumn {
-                    id: 1,
-                    name: "a".to_owned(),
-                    ..Default::default()
-                },
-                DataSourceColumn {
-                    id: 2,
-                    name: "j".to_owned(),
-                    ..Default::default()
-                },
+                tidb_model::GoShared::new({
+                        let info = tidb_model::ColumnInfo {
+                            id: 1,
+                            name: tidb_ast::CiString::new("a"),
+                            state: tidb_model::SchemaState::PUBLIC,
+                            ..tidb_model::ColumnInfo::default()
+                        };
+                        info
+                    }),
+                tidb_model::GoShared::new({
+                        let info = tidb_model::ColumnInfo {
+                            id: 2,
+                            name: tidb_ast::CiString::new("j"),
+                            state: tidb_model::SchemaState::PUBLIC,
+                            ..tidb_model::ColumnInfo::default()
+                        };
+                        info
+                    }),
             ];
             source.table_columns = vec![a_column.clone(), j_column.clone()];
             source

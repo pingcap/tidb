@@ -2131,18 +2131,26 @@ fn build_key_info_portal_runs_bottom_up_over_the_whole_tree() {
     let mut source = DataSource::new(base(&allocator, "DataSource", Some(source_schema)), 1, "t");
     source.pk_is_handle = true;
     source.columns = vec![
-        tidb_planner_core_operator_logicalop::data_source::DataSourceColumn {
-            id: 1,
-            name: "a".to_owned(),
-            is_primary_key: true,
-            is_not_null: true,
-        },
-        tidb_planner_core_operator_logicalop::data_source::DataSourceColumn {
-            id: 2,
-            name: "b".to_owned(),
-            is_primary_key: false,
-            is_not_null: false,
-        },
+        tidb_model::GoShared::new({
+                let mut info = tidb_model::ColumnInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("a"),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                };
+                info.add_flag(u64::from(tidb_datatype::FieldTypeFlags::PRI_KEY));
+                info.add_flag(u64::from(tidb_datatype::FieldTypeFlags::NOT_NULL));
+                info
+            }),
+        tidb_model::GoShared::new({
+                let info = tidb_model::ColumnInfo {
+                    id: 2,
+                    name: tidb_ast::CiString::new("b"),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                };
+                info
+            }),
     ];
     let source = LogicalPlan::DataSource(source);
 

@@ -86,11 +86,7 @@ fn attach_pseudo_collection(op: &mut DataSource) {
             (
                 column.unique_id,
                 tidb_stats::column::Column {
-                    info: Some(tidb_model::GoShared::new(tidb_model::ColumnInfo {
-                        id: metadata.id,
-                        name: tidb_ast::CiString::new(metadata.name.clone()),
-                        ..tidb_model::ColumnInfo::default()
-                    })),
+                    info: Some(metadata.clone()),
                     ..tidb_stats::column::Column::default()
                 },
             )
@@ -547,12 +543,15 @@ fn a_pushed_equality_charges_gos_pseudo_rate() {
         unreachable!()
     };
     op.table_scan_penalty.pseudo_stats = true;
-    op.columns = vec![tidb_planner_core_operator_logicalop::data_source::DataSourceColumn {
-        id: 1,
-        name: "a".to_owned(),
-        is_primary_key: false,
-        is_not_null: false,
-    }];
+    op.columns = vec![tidb_model::GoShared::new({
+            let info = tidb_model::ColumnInfo {
+                id: 1,
+                name: tidb_ast::CiString::new("a"),
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::ColumnInfo::default()
+            };
+            info
+        })];
     op.pushed_down_conds = vec![Expression::ScalarFunction(eq_condition_to_constant(1, 7))];
     attach_pseudo_collection(op);
 
@@ -575,12 +574,15 @@ fn two_pseudo_bounds_form_one_column_range() {
         unreachable!()
     };
     op.table_scan_penalty.pseudo_stats = true;
-    op.columns = vec![tidb_planner_core_operator_logicalop::data_source::DataSourceColumn {
-        id: 1,
-        name: "a".to_owned(),
-        is_primary_key: false,
-        is_not_null: false,
-    }];
+    op.columns = vec![tidb_model::GoShared::new({
+            let info = tidb_model::ColumnInfo {
+                id: 1,
+                name: tidb_ast::CiString::new("a"),
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::ColumnInfo::default()
+            };
+            info
+        })];
     op.pushed_down_conds = vec![
         Expression::ScalarFunction(comparison_condition_to_constant("ge", 1, 1)),
         Expression::ScalarFunction(comparison_condition_to_constant("le", 1, 3)),
@@ -634,12 +636,15 @@ fn pseudo_column_range_quota_changes_statistics_cover() {
             unreachable!()
         };
         op.table_scan_penalty.pseudo_stats = true;
-        op.columns = vec![tidb_planner_core_operator_logicalop::data_source::DataSourceColumn {
-            id: 1,
-            name: "a".to_owned(),
-            is_primary_key: false,
-            is_not_null: false,
-        }];
+        op.columns = vec![tidb_model::GoShared::new({
+                let info = tidb_model::ColumnInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("a"),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                };
+                info
+            })];
         op.pushed_down_conds = vec![
             Expression::ScalarFunction(comparison_condition_to_constant("ge", 1, 1)),
             Expression::ScalarFunction(comparison_condition_to_constant("le", 1, 3)),
@@ -665,12 +670,15 @@ fn partial_dnf_index_range_preserves_logical_statistics_cover() {
     op.columns = ["a", "b"]
         .iter()
         .enumerate()
-        .map(|(i, name)| tidb_planner_core_operator_logicalop::data_source::DataSourceColumn {
-            id: i as i64 + 1,
-            name: (*name).to_owned(),
-            is_primary_key: false,
-            is_not_null: false,
-        })
+        .map(|(i, name)| tidb_model::GoShared::new({
+                let info = tidb_model::ColumnInfo {
+                    id: i as i64 + 1,
+                    name: tidb_ast::CiString::new((*name).to_owned()),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                };
+                info
+            }))
         .collect();
     op.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
         id: 8,
@@ -727,12 +735,15 @@ fn deriving_a_data_source_fills_each_index_path_row_count_from_its_collection() 
         unreachable!()
     };
     op.table_scan_penalty.pseudo_stats = true;
-    op.columns = vec![tidb_planner_core_operator_logicalop::data_source::DataSourceColumn {
-        id: 1,
-        name: "a".to_owned(),
-        is_primary_key: false,
-        is_not_null: false,
-    }];
+    op.columns = vec![tidb_model::GoShared::new({
+            let info = tidb_model::ColumnInfo {
+                id: 1,
+                name: tidb_ast::CiString::new("a"),
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::ColumnInfo::default()
+            };
+            info
+        })];
     op.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
         id: 8,
         name: tidb_ast::CiString::new("ia"),
@@ -790,12 +801,15 @@ fn deriving_an_index_path_records_the_index_in_the_used_stats_ledger() {
         let LogicalPlan::DataSource(op) = &mut source else {
             unreachable!()
         };
-        op.columns = vec![tidb_planner_core_operator_logicalop::data_source::DataSourceColumn {
-            id: 1,
-            name: "a".to_owned(),
-            is_primary_key: false,
-            is_not_null: false,
-        }];
+        op.columns = vec![tidb_model::GoShared::new({
+                let info = tidb_model::ColumnInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("a"),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                };
+                info
+            })];
         op.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
             id: 8,
             name: tidb_ast::CiString::new("ia"),

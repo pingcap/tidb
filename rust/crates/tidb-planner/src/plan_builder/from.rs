@@ -1382,14 +1382,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     database: IdentifierMetadata::new(db_name),
                     table: IdentifierMetadata::new(visible_table),
                     original_table: IdentifierMetadata::new(&table.table_name),
-                    column: IdentifierMetadata::new(&source_column.name),
-                    original_column: IdentifierMetadata::new(&source_column.name),
+                    column: IdentifierMetadata::new(source_column.read().name.original()),
+                    original_column: IdentifierMetadata::new(source_column.read().name.original()),
                 },
                 ..FieldName::default()
             });
-            let mut column = Column::new(self.column_ids.alloc(), source_column.ret_type.clone());
-            column.id = source_column.id;
-            if table.pk_is_handle && source_column.ret_type.has_flag(FieldTypeFlags::PRI_KEY) {
+            let mut column = Column::new(self.column_ids.alloc(), source_column.read().field_type.clone());
+            column.id = source_column.read().id;
+            if table.pk_is_handle && source_column.read().field_type.has_flag(FieldTypeFlags::PRI_KEY) {
                 handle_cols = Some(self.plan_handle_cols(std::slice::from_ref(&column), true));
             }
             schema_columns.push(column);
@@ -1410,8 +1410,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .columns
             .iter()
             .map(|source_column| MemTableColumn {
-                id: source_column.id,
-                name: source_column.name.clone(),
+                id: source_column.read().id,
+                name: source_column.read().name.original().to_owned(),
             })
             .collect();
         let mut mem_table = LogicalMemTable::new(
@@ -1720,7 +1720,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     // Go `expression.FindFieldNameIdxByColName(names, info.Name.L)`.
                     let index = names
                         .iter()
-                        .position(|name| lower_name_matches(&name.names.column.lower, &info.name))
+                        .position(|name| lower_name_matches(&name.names.column.lower, info.read().name.original()))
                         .ok_or_else(|| view_invalid(&view.db_name, &view.view_name))?;
                     let (Some(column), Some(name)) = (schema.columns.get(index), names.get(index))
                     else {
@@ -1750,7 +1750,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     // underlying table."
                     table: IdentifierMetadata::new(&view.view_name),
                     original_table: name.names.original_table.clone(),
-                    column: IdentifierMetadata::new(&column_info.name),
+                    column: IdentifierMetadata::new(column_info.read().name.original()),
                     original_column: IdentifierMetadata::new(orig_column),
                 },
                 ..FieldName::default()
@@ -1823,12 +1823,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             );
             source
                 .columns
-                .push(tidb_planner_core_operator_logicalop::data_source::DataSourceColumn {
-                    id: column.id,
-                    name: EXTRA_PHYS_TBL_ID_NAME.to_owned(),
-                    is_primary_key: false,
-                    is_not_null: false,
-                });
+                .push(tidb_model::GoShared::new(
+                    tidb_model::ColumnInfo::new_extra_phys_tbl_id_col_info(),
+                ));
             let mut schema = source.base.base.schema().cloned().unwrap_or_default();
             schema.append([column.clone()]);
             source.base.base.set_schema(Some(schema));

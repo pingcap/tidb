@@ -32,7 +32,6 @@ use tidb_parser::auth::UserIdentity;
 use tidb_infoschema::table_source::TableSource;
 use tidb_infoschema::table_source::SourceView;
 use tidb_infoschema::table_source::SourceTable;
-use tidb_infoschema::table_source::SourceColumn;
 
 const DEFAULT_DIV_PRECISION_INCREMENT: u32 = 4;
 
@@ -503,16 +502,24 @@ fn source_table(table: GoShared<TableInfo>) -> SourceTable {
         .iter_deref()
         .map(|column| {
             let column = column.read();
-            SourceColumn {
-                id: column.id,
-                name: column.name.original().to_owned(),
-                is_primary_key: column.get_flag() & u64::from(FieldTypeFlags::PRI_KEY) != 0,
-                offset: usize::try_from(column.offset)
-                    .expect("fixture column offsets are nonnegative"),
-                ret_type: column.field_type.clone(),
-                is_public: column.state == SchemaState::PUBLIC,
-                is_hidden: column.hidden,
-                ..SourceColumn::default()
+            tidb_infoschema::table_source::SourceColumn {
+                info: tidb_model::GoShared::new({
+                    let mut info = tidb_model::ColumnInfo {
+                        id: column.id,
+                        name: tidb_ast::CiString::new(column.name.original().to_owned()),
+                        offset: (usize::try_from(column.offset)
+                    .expect("fixture column offsets are nonnegative")) as i64,
+                        field_type: column.field_type.clone(),
+                        state: if column.state == SchemaState::PUBLIC { tidb_model::SchemaState::PUBLIC } else { tidb_model::SchemaState::NONE },
+                        hidden: column.hidden,
+                        ..tidb_model::ColumnInfo::default()
+                    };
+                    if column.get_flag() & u64::from(FieldTypeFlags::PRI_KEY) != 0 {
+                        info.add_flag(u64::from(tidb_datatype::FieldTypeFlags::PRI_KEY));
+                    }
+                    info
+                }),
+                generated_expr: None,
             }
         })
         .collect();
@@ -596,13 +603,19 @@ impl MockInfoSchema {
                         .iter_deref()
                         .map(|column| {
                             let column = column.read();
-                            SourceColumn {
-                                id: column.id,
-                                name: column.name.original().to_owned(),
-                                offset: usize::try_from(column.offset).unwrap(),
-                                ret_type: column.field_type.clone(),
-                                is_public: column.state == SchemaState::PUBLIC,
-                                ..SourceColumn::default()
+                            tidb_infoschema::table_source::SourceColumn {
+                                info: tidb_model::GoShared::new({
+                                    let info = tidb_model::ColumnInfo {
+                                        id: column.id,
+                                        name: tidb_ast::CiString::new(column.name.original().to_owned()),
+                                        offset: (usize::try_from(column.offset).unwrap()) as i64,
+                                        field_type: column.field_type.clone(),
+                                        state: if column.state == SchemaState::PUBLIC { tidb_model::SchemaState::PUBLIC } else { tidb_model::SchemaState::NONE },
+                                        ..tidb_model::ColumnInfo::default()
+                                    };
+                                    info
+                                }),
+                                generated_expr: None,
                             }
                         })
                         .collect(),

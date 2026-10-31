@@ -25,7 +25,6 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
 use tidb_planner_util::path::PossiblePath;
-use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
 use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, DataSource};
 use tidb_planner_core_base::PlanIdAllocator;
 
@@ -154,11 +153,15 @@ fn datasource_prunes_partial_paths_and_marks_the_ordinary_cached_plan() {
     base.base
         .set_schema(Some(tidb_expr::schema::Schema::new(vec![column.clone()])));
     let mut source = DataSource::new(base, 1, "t");
-    source.columns = vec![DataSourceColumn {
-        id: 1,
-        name: "a".to_owned(),
-        ..DataSourceColumn::default()
-    }];
+    source.columns = vec![tidb_model::GoShared::new({
+            let info = tidb_model::ColumnInfo {
+                id: 1,
+                name: tidb_ast::CiString::new("a"),
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::ColumnInfo::default()
+            };
+            info
+        })];
     source.indexes = vec![
         tidb_model::GoShared::new(tidb_model::IndexInfo {
             id: 10,

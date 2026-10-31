@@ -71,9 +71,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let columns: Vec<&tidb_infoschema::table_source::SourceColumn> = table
             .columns
             .iter()
-            .filter(|column| !column.is_hidden && column.is_public)
+            .filter(|column| {
+                let column = column.read();
+                !column.hidden && column.state == tidb_model::SchemaState::PUBLIC
+            })
             .collect();
-        let mut names: Vec<FieldName> = columns.iter().map(|column| field(&column.name)).collect();
+        let mut names: Vec<FieldName> = columns.iter().map(|column| field(column.read().name.original())).collect();
         // Go exposes the heap handle to assignment admission, independently of
         // whether anything else names it.
         let extra_handle = !table.pk_is_handle && !table.is_common_handle && !table.is_memory_table;
@@ -87,7 +90,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 table
                     .columns
                     .iter()
-                    .position(|column| column.id == named.id)
+                    .position(|column| column.read().id == named.read().id)
                     .expect("a visible column is one of the table's columns")
             })
         };
@@ -104,7 +107,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             if extra_handle && column == columns.len() && !allow_write_row_id {
                 return Err(PlanError::internal(WRITE_ROW_ID_REFUSED));
             }
-            if columns.get(column).is_some_and(|column| column.is_generated) {
+            if columns.get(column).is_some_and(|column| column.read().is_generated()) {
                 let own_default = match &assignment.value {
                     Expr::Default(None) => true,
                     Expr::Default(Some(path)) => find_field_name(&names, path) == Some(column),
@@ -114,7 +117,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     return Err(PlanError::from(
                         tidb_plannererrors::ERR_BAD_GENERATED_COLUMN
                             .generate_with_stack_by_args(&[
-                                (columns[column].name.clone()).into(),
+                                (columns[column].read().name.original().to_owned()).into(),
                                 written.into(),
                             ]),
                     ));

@@ -66,16 +66,21 @@ fn column(offset: usize, name: &str, primary: bool) -> SourceColumn {
     if primary {
         ret_type.set_flags(ret_type.flags() | FieldTypeFlags::NOT_NULL | FieldTypeFlags::PRI_KEY);
     }
-    SourceColumn {
-        id: offset as i64 + 1,
-        name: name.to_owned(),
-        is_primary_key: primary,
-        offset,
-        ret_type,
-        is_public: true,
-        is_generated: false,
-        is_hidden: false,
-        is_virtual_generated: false,
+    tidb_table::column::Column {
+        info: tidb_model::GoShared::new({
+            let mut info = tidb_model::ColumnInfo {
+                id: offset as i64 + 1,
+                name: tidb_ast::CiString::new(name.to_owned()),
+                offset: (offset) as i64,
+                field_type: ret_type,
+                state: tidb_model::SchemaState::PUBLIC,
+                ..tidb_model::ColumnInfo::default()
+            };
+            if primary {
+                info.add_flag(u64::from(tidb_datatype::FieldTypeFlags::PRI_KEY));
+            }
+            info
+        }),
         generated_expr: None,
     }
 }
@@ -1247,7 +1252,10 @@ fn single_table_delete_prunes_the_read_to_the_handle_and_index_columns() {
     let mut heap = Harness::new();
     heap.catalog.tables[0].pk_is_handle = false;
     heap.catalog.tables[0].handle_col_offsets = Vec::new();
-    heap.catalog.tables[0].columns[0].is_primary_key = false;
+    heap.catalog.tables[0].columns[0]
+        .info
+        .write()
+        .and_flag(!u64::from(tidb_datatype::FieldTypeFlags::PRI_KEY));
     assert_eq!(
         build_delete(&heap, "SELECT * FROM t", false),
         (Some((vec![1], true)), Some(2))
@@ -1623,8 +1631,8 @@ fn insert_values_are_expressions_over_the_target() {
     let error = build(&harness, "INSERT INTO t (nope) VALUES (1)").err().unwrap();
     assert_eq!(error.message(), "Unknown column 'nope' in 'field list'");
 
-    let mut generated = Harness::new();
-    generated.catalog.tables[0].columns[2].is_generated = true;
+    let generated = Harness::new();
+    generated.catalog.tables[0].columns[2].info.write().generated_expr_string = "`a` + 1".to_owned();
     let (_, values) = build(&generated, "INSERT INTO t VALUES (1, 2, DEFAULT)").unwrap();
     assert!(values.lists[0][2].is_none(), "a generated column's own DEFAULT");
     let error = build(&generated, "INSERT INTO t VALUES (1, 2, 3)").err().unwrap();
@@ -1689,8 +1697,8 @@ fn insert_on_duplicate_assignments_resolve_over_schema4_on_duplicate() {
     .unwrap();
     assert_eq!(error.message(), "Unknown column 'nope' in 'field list'");
 
-    let mut generated = Harness::new();
-    generated.catalog.tables[0].columns[2].is_generated = true;
+    let generated = Harness::new();
+    generated.catalog.tables[0].columns[2].info.write().generated_expr_string = "`a` + 1".to_owned();
     let assigns = build(
         &generated,
         "INSERT INTO t VALUES (1, 2, DEFAULT) ON DUPLICATE KEY UPDATE c = DEFAULT, b = 1",
@@ -1742,8 +1750,8 @@ fn single_table_update_assignments_resolve_to_table_columns() {
     let error = resolve(&harness, "UPDATE t SET nope = 1").err().unwrap();
     assert_eq!(error.message(), "Unknown column 'nope' in 'field list'");
 
-    let mut generated = Harness::new();
-    generated.catalog.tables[0].columns[2].is_generated = true;
+    let generated = Harness::new();
+    generated.catalog.tables[0].columns[2].info.write().generated_expr_string = "`a` + 1".to_owned();
     let resolved = resolve(&generated, "UPDATE t SET c = DEFAULT").unwrap();
     assert!(resolved[0].value.is_none(), "left to the generation expression");
     let error = resolve(&generated, "UPDATE t SET c = 1").err().unwrap();
@@ -1780,8 +1788,8 @@ fn insert_on_duplicate_columns_follow_the_resolved_assignments() {
         };
         insert
     };
-    let mut generated = Harness::new();
-    generated.catalog.tables[0].columns[2].is_generated = true;
+    let generated = Harness::new();
+    generated.catalog.tables[0].columns[2].info.write().generated_expr_string = "`a` + 1".to_owned();
     let insert = parse("INSERT INTO t VALUES (1, 2, DEFAULT) ON DUPLICATE KEY UPDATE C = DEFAULT, b = 1");
     let builder = generated.builder();
     let target = builder.resolve_insert_target(&insert).unwrap();
@@ -1804,7 +1812,7 @@ fn insert_generated_columns_are_expressions_over_the_whole_row() {
             other => panic!("unexpected field {other:?}"),
         }
     };
-    generated.catalog.tables[0].columns[2].is_generated = true;
+    generated.catalog.tables[0].columns[2].info.write().generated_expr_string = "`a` + 1".to_owned();
     generated.catalog.tables[0].columns[2].generated_expr = Some(expression);
     let statement = tidb_parser::parse("INSERT INTO t VALUES (1, 2, DEFAULT)").unwrap();
     let Stmt::Dml(dml) = statement else {

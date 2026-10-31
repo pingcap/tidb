@@ -65,68 +65,11 @@
 
 use std::collections::BTreeMap;
 use tidb_mysql::PrivilegeType;
-use tidb_datatype::{FieldType, FieldTypeCode};
-use tidb_model::{
-    ColumnInfo, DBInfo, GoShared, GoSharedPointerSlice, IndexInfo, SchemaState,
-    TableInfo,
-};
+use tidb_model::{DBInfo, GoShared, GoSharedPointerSlice, IndexInfo, SchemaState, TableInfo};
 
-/// What the ported builder bodies read off a `*model.ColumnInfo`.
-///
-/// [`Default`] is hand-written rather than derived because
-/// [`FieldType`] has no `Default` — Go's zero `types.FieldType` is a
-/// `TypeUnspecified`, which [`FieldTypeCode::Unspecified`] spells explicitly.
-///
-/// The first four fields are exactly
-/// `DataSourceColumn`; the
-/// rest are the builder-only inputs named in this module's header.
-#[derive(Clone, Debug)]
-pub struct SourceColumn {
-    /// Go `ColumnInfo.ID`.
-    pub id: i64,
-    /// Go `ColumnInfo.Name.O`.
-    pub name: String,
-    /// Go `mysql.HasPriKeyFlag(col.GetFlag())`.
-    pub is_primary_key: bool,
-    /// Go `ColumnInfo.Offset`: the position in the table's column list, which
-    /// is the schema position `buildDataSource` gives the built column.
-    pub offset: usize,
-    /// Go `ColumnInfo.FieldType`, which becomes the built
-    /// [`Column`](tidb_expr::column::Column)'s `RetType`.
-    pub ret_type: FieldType,
-    /// Go `ColumnInfo.State == model.StatePublic`. A non-public column is
-    /// still SCANNED but is `NotExplicitUsable` in the output names.
-    pub is_public: bool,
-    /// Go `ColumnInfo.IsGenerated`, including stored generated columns.
-    pub is_generated: bool,
-    /// Go `ColumnInfo.Hidden`: never expanded by `*`, never user-referencable.
-    pub is_hidden: bool,
-    /// Go `col.IsGenerated() && !col.GeneratedStored`: a virtual generated
-    /// column, which the storage layer cannot return and the planner must
-    /// compute. Read by `FlagGcSubstitute`'s eligibility.
-    pub is_virtual_generated: bool,
-    /// Go `ColumnInfo.GeneratedExpr`, retained for every generated column: the
-    /// reading statement rewrites a virtual one in its own expression context,
-    /// and an INSERT rewrites each one over its target (`resolveGeneratedColumns`).
-    pub generated_expr: Option<tidb_ast::Expr>,
-}
-
-impl Default for SourceColumn {
-    fn default() -> Self {
-        Self {
-            id: 0,
-            name: String::new(),
-            is_primary_key: false,
-            offset: 0,
-            ret_type: FieldType::new(FieldTypeCode::Unspecified),
-            is_public: true,
-            is_generated: false,
-            is_hidden: false,
-            is_virtual_generated: false,
-            generated_expr: None,
-        }
-    }
-}
+/// Go `table.Column`: the shared `*model.ColumnInfo` and its parsed
+/// `GeneratedExpr`.
+pub type SourceColumn = tidb_table::column::Column;
 
 /// Go `*model.IndexColumn`.
 pub type SourceIndexColumn = tidb_model::IndexColumn;
@@ -234,21 +177,7 @@ impl SourceTable {
         let columns = self
             .columns
             .iter()
-            .map(|column| {
-                Some(GoShared::new(ColumnInfo {
-                    id: column.id,
-                    name: tidb_ast::CiString::new(column.name.clone()),
-                    offset: column.offset as i64,
-                    field_type: column.ret_type.clone(),
-                    state: if column.is_public {
-                        SchemaState::PUBLIC
-                    } else {
-                        SchemaState::NONE
-                    },
-                    hidden: column.is_hidden,
-                    ..ColumnInfo::default()
-                }))
-            })
+            .map(|column| Some(column.info.clone()))
             .collect();
         let indices = self.indexes.iter().cloned().map(Some).collect();
         self.table_info = Some(GoShared::new(TableInfo {
@@ -283,7 +212,7 @@ impl SourceTable {
     pub fn find_column(&self, name: &str) -> Option<&SourceColumn> {
         self.columns
             .iter()
-            .find(|column| tidb_mysql::lowercase_equal(&column.name, name))
+            .find(|column| tidb_mysql::lowercase_equal(column.read().name.original(), name))
     }
 }
 
@@ -423,13 +352,19 @@ mod tests {
     use tidb_datatype::{FieldType, FieldTypeCode};
 
     fn column(offset: usize, name: &str) -> SourceColumn {
-        SourceColumn {
-            id: offset as i64 + 1,
-            name: name.to_owned(),
-            offset,
-            ret_type: FieldType::new(FieldTypeCode::LongLong),
-            is_public: true,
-            ..SourceColumn::default()
+        tidb_table::column::Column {
+            info: tidb_model::GoShared::new({
+                let info = tidb_model::ColumnInfo {
+                    id: offset as i64 + 1,
+                    name: tidb_ast::CiString::new(name.to_owned()),
+                    offset: (offset) as i64,
+                    field_type: FieldType::new(FieldTypeCode::LongLong),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                };
+                info
+            }),
+            generated_expr: None,
         }
     }
 
@@ -466,10 +401,10 @@ mod tests {
     #[test]
     fn test_find_column_is_case_insensitive() {
         let tbl = table();
-        assert_eq!(tbl.find_column("A").map(|c| c.offset), Some(0));
-        assert_eq!(tbl.find_column("b").map(|c| c.offset), Some(1));
+        assert_eq!(tbl.find_column("A").map(|c| c.read().offset), Some(0));
+        assert_eq!(tbl.find_column("b").map(|c| c.read().offset), Some(1));
         assert!(tbl.find_column("c").is_none());
-        assert_eq!(tbl.column_at(1).map(|c| c.name.as_str()), Some("b"));
+        assert_eq!(tbl.column_at(1).map(|c| c.read().name.original().to_owned()).as_deref(), Some("b"));
         assert!(tbl.column_at(9).is_none());
     }
 }

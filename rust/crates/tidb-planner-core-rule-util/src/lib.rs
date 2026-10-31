@@ -149,15 +149,15 @@ pub fn check_max_one_row_cond(equal_column_ids: &BTreeSet<i64>, child: &Schema) 
         })
 }
 
-/// Go `CheckIndexCanBeKey` over the source columns' names and NOT NULL flags
-/// (Go's `[]*model.ColumnInfo`), positionally aligned with `schema`.
+/// Go `CheckIndexCanBeKey` over the source `columns`, positionally aligned
+/// with `schema`.
 ///
 /// The first result is Go's nullable `uniqueKey`; the second is its strong
 /// all-NOT-NULL `newKey`.
 #[must_use]
 pub fn check_index_can_be_key(
     index: &SourceIndex,
-    columns: &[(&str, bool)],
+    columns: &[tidb_model::GoShared<tidb_model::ColumnInfo>],
     schema: &Schema,
 ) -> (Option<Vec<Column>>, Option<Vec<Column>>) {
     let index = index.read();
@@ -170,8 +170,9 @@ pub fn check_index_can_be_key(
     for index_column in index.columns.iter_deref() {
         let index_column_name = index_column.read().name.clone();
         let mut found = false;
-        for (position, &(source_name, source_not_null)) in columns.iter().enumerate() {
-            if tidb_ast::CiString::new(source_name) != index_column_name {
+        for (position, source) in columns.iter().enumerate() {
+            let source = source.read();
+            if source.name != index_column_name {
                 continue;
             }
             // The schema may be pruned relative to the source column list
@@ -186,7 +187,7 @@ pub fn check_index_can_be_key(
             unique_key.push(column.clone());
             found = true;
             if strong {
-                if !source_not_null {
+                if !source.field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL) {
                     strong = false;
                     break;
                 }

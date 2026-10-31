@@ -25,7 +25,6 @@ mod derive_stats_tests;
 
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
-use tidb_hack::go_to_lower;
 use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 use tidb_planner_core_base::PlanError;
 use tidb_planner_property::stats_info::StatsInfo;
@@ -207,7 +206,7 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                         let position = schema_ids.iter().position(|id| *id == unique_id)?;
                         let column = op.columns.get(position)?;
                         Some(tidb_planner_property::stats_info::PseudoColumn {
-                            lower_name: go_to_lower(&column.name),
+                            lower_name: column.read().name.lowercase().to_owned(),
                             unique_key_flag: false,
                         })
                     };

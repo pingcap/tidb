@@ -1019,7 +1019,7 @@ pub(super) fn index_scan_schema(
                     && ds
                         .columns
                         .iter()
-                        .any(|metadata| metadata.id == column.id && metadata.is_primary_key))
+                        .any(|metadata| metadata.read().id == column.id && metadata.read().field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)))
         })
     }) {
         columns.push(handle.clone());
@@ -1148,7 +1148,7 @@ mod tests {
     /// TestIndexMergePathGeneration: pruning cannot change physical key layout.
     #[test]
     fn index_merge_restores_index_columns_and_handle_suffix() {
-        use tidb_planner_core_operator_logicalop::{data_source::DataSourceColumn, BaseLogicalPlan};
+        use tidb_planner_core_operator_logicalop::{BaseLogicalPlan};
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
         use tidb_expr::constant::Constant;
@@ -1178,12 +1178,17 @@ mod tests {
         let ds = DataSource {
             base,
             table_columns: vec![a.clone(), b],
-            columns: vec![DataSourceColumn {
-                id: 1,
-                name: "a".into(),
-                is_primary_key: true,
-                is_not_null: true,
-            }],
+            columns: vec![tidb_model::GoShared::new({
+                    let mut info = tidb_model::ColumnInfo {
+                        id: 1,
+                        name: tidb_ast::CiString::new("a"),
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::ColumnInfo::default()
+                    };
+                    info.add_flag(u64::from(tidb_datatype::FieldTypeFlags::PRI_KEY));
+                    info.add_flag(u64::from(tidb_datatype::FieldTypeFlags::NOT_NULL));
+                    info
+                })],
             enumerated_paths: vec![tidb_planner_util::path::PossiblePath::Index { index: 0 }],
             index_merge_hints: vec![Default::default()],
             common_handle_cols: vec![a.clone()],
@@ -1267,12 +1272,15 @@ mod tests {
             .all(|branch| branch.len() == 2));
         assert_eq!(allocator.current(), plan_id_before);
         let b = choices.table_columns[1].clone();
-        choices.columns.push(DataSourceColumn {
-            id: b.id,
-            name: "b".into(),
-            is_primary_key: false,
-            is_not_null: false,
-        });
+        choices.columns.push(tidb_model::GoShared::new({
+                let info = tidb_model::ColumnInfo {
+                    id: b.id,
+                    name: tidb_ast::CiString::new("b"),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                };
+                info
+            }));
         choices
             .base
             .base

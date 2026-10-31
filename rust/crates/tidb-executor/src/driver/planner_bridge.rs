@@ -120,7 +120,10 @@ fn static_global_index_point_lookup(
         || table
             .columns
             .iter()
-            .any(|column| !column.is_public || column.is_generated)
+            .any(|column| {
+                let column = column.read();
+                column.state != tidb_model::SchemaState::PUBLIC || column.is_generated()
+            })
         || select.fields.fields().is_empty()
         || !select.fields.fields().iter().all(|field| match field {
             tidb_ast::SelectField::Wildcard(names) => {
@@ -135,7 +138,7 @@ fn static_global_index_point_lookup(
                         table
                             .columns
                             .iter()
-                            .any(|column| column.name.go_lower_eq(column_name))
+                            .any(|column| column.read().name.original().go_lower_eq(column_name))
                     })
             }
             _ => false,
@@ -219,7 +222,7 @@ fn static_global_index_point_lookup(
         let key = key.read();
         key.length < 0
             && table.column_at(key.offset as usize).is_some_and(|column| {
-                column.name.go_lower_eq(column_name) && column.ret_type.code().is_type_integer()
+                column.read().name.original().go_lower_eq(column_name) && column.read().field_type.code().is_type_integer()
             })
     })
 }
@@ -3438,7 +3441,6 @@ mod statistics_initialization_tests {
     use tidb_expr::scalar_function::ScalarFunction;
     use tidb_expr::schema::Schema;
     use tidb_planner_core_operator_logicalop::DataSource;
-    use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
 
     #[test]
     fn unfiltered_table_path_count_uses_realtime_row_count() {
@@ -3579,11 +3581,15 @@ mod statistics_initialization_tests {
         // Go `ds.TableInfo`.
         source.table_info = Some(table_info.clone());
         source.db_name = "test".to_owned();
-        source.columns = vec![DataSourceColumn {
-            id: 1,
-            name: "a".to_owned(),
-            ..Default::default()
-        }];
+        source.columns = vec![tidb_model::GoShared::new({
+                let info = tidb_model::ColumnInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("a"),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                };
+                info
+            })];
         let mut column = Column::new(1, field_type.clone());
         column.id = 1;
         column.index = 0;
@@ -3782,11 +3788,15 @@ mod statistics_initialization_tests {
         // Go `ds.TableInfo`.
         source.table_info = Some(table_info.clone());
         source.db_name = "test".to_owned();
-        source.columns = vec![DataSourceColumn {
-            id: 1,
-            name: "a".to_owned(),
-            ..Default::default()
-        }];
+        source.columns = vec![tidb_model::GoShared::new({
+                let info = tidb_model::ColumnInfo {
+                    id: 1,
+                    name: tidb_ast::CiString::new("a"),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                };
+                info
+            })];
         let mut column = Column::new(1, field_type.clone());
         column.id = 1;
         column.index = 0;

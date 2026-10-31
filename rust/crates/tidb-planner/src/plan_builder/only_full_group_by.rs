@@ -544,8 +544,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
             let whole_index_determined = index.read().columns.iter_deref().all(|index_column| {
                 table.column_at(index_column.read().offset as usize).is_some_and(|column| {
-                    column.ret_type.flags() & FieldTypeFlags::NOT_NULL != 0
-                        && determined(&column.name)
+                    column.read().field_type.flags() & FieldTypeFlags::NOT_NULL != 0
+                        && determined(column.read().name.original())
                 })
             });
             if whole_index_determined {
@@ -557,11 +557,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut has_primary_field = false;
         let mut primary_determined = true;
         for column in &table.columns {
-            if !column.is_primary_key {
+            if !column.read().field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY) {
                 continue;
             }
             has_primary_field = true;
-            if !determined(&column.name) {
+            if !determined(column.read().name.original()) {
                 primary_determined = false;
                 break;
             }

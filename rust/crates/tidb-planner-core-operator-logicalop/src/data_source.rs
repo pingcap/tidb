@@ -60,21 +60,8 @@ use tidb_planner_property::stats_info::StatsInfo;
 /// Go `model.ExtraHandleID`: the id of the implicit `_tidb_rowid` column.
 pub const EXTRA_HANDLE_ID: i64 = -1;
 
-/// What the ported `DataSource` bodies read off a `*model.ColumnInfo`.
-#[derive(Clone, Debug, Default)]
-pub struct DataSourceColumn {
-    /// Go `ColumnInfo.ID`.
-    pub id: i64,
-    /// Go `ColumnInfo.Name.O`.
-    pub name: String,
-    /// Go `mysql.HasPriKeyFlag(col.GetFlag())`.
-    pub is_primary_key: bool,
-    /// Go `mysql.HasNotNullFlag(col.GetFlag())`.
-    ///
-    /// `rule/util.CheckIndexCanBeKey` deliberately reads the table-column
-    /// metadata rather than the corresponding expression column's type.
-    pub is_not_null: bool,
-}
+/// Go `DataSource.Columns`' element: the table's shared `*model.ColumnInfo`.
+pub type DataSourceColumn = tidb_model::GoShared<tidb_model::ColumnInfo>;
 
 /// Go `h.HintedIndex` fields consumed by partition processing and index-merge
 /// path pruning.
@@ -307,11 +294,6 @@ impl DataSource {
     pub fn index_keys(&self, self_schema: &Schema) -> (Vec<Vec<Column>>, Vec<Vec<Column>>) {
         let mut strong = Vec::new();
         let mut nullable = Vec::new();
-        let source_columns: Vec<(&str, bool)> = self
-            .columns
-            .iter()
-            .map(|column| (column.name.as_str(), column.is_not_null))
-            .collect();
         for index in &self.indexes {
             if !index.read().unique || !index.read().is_public() {
                 continue;
@@ -325,7 +307,7 @@ impl DataSource {
             }
             let (nullable_key, strong_key) = tidb_planner_core_rule_util::check_index_can_be_key(
                 index,
-                &source_columns,
+                &self.columns,
                 self_schema,
             );
             if let Some(key) = strong_key {
@@ -352,7 +334,7 @@ impl DataSource {
         let position = self
             .columns
             .iter()
-            .position(|column| tidb_mysql::lowercase_equal(&column.name, index_column.name.original()))?;
+            .position(|column| tidb_mysql::lowercase_equal(column.read().name.original(), index_column.name.original()))?;
         self.base.base.schema()?.columns.get(position)
     }
 
@@ -680,11 +662,11 @@ impl DataSource {
         let position = if self.pk_is_handle {
             self.columns
                 .iter()
-                .position(|column| column.is_primary_key)?
+                .position(|column| column.read().field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY))?
         } else {
             self.columns
                 .iter()
-                .position(|column| column.id == EXTRA_HANDLE_ID)?
+                .position(|column| column.read().id == EXTRA_HANDLE_ID)?
         };
         self_schema.columns.get(position)
     }
@@ -760,7 +742,7 @@ impl DataSource {
             .map(|column| {
                 tidb_datatype::FieldName::new(tidb_datatype::FieldNameMetadata {
                     table: tidb_datatype::IdentifierMetadata::new(&self.table_name),
-                    column: tidb_datatype::IdentifierMetadata::new(&column.name),
+                    column: tidb_datatype::IdentifierMetadata::new(column.read().name.original()),
                     ..tidb_datatype::FieldNameMetadata::default()
                 })
             })
@@ -868,6 +850,8 @@ impl DataSource {
                 .collect(),
         );
 
+        // Go `originColumns := ds.Columns`.
+        let origin_columns = self.columns.clone();
         for i in (0..used.len()).rev() {
             if used[i] || expr_used[i] {
                 continue;
@@ -907,24 +891,26 @@ impl DataSource {
                 .or_else(|| self.table_columns.first())
                 .cloned();
             if let Some(forced) = forced {
-                let name = forced
-                    .orig_name
-                    .rsplit('.')
-                    .next()
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or("_tidb_rowid")
-                    .to_owned();
-                let is_primary_key = forced.ret_type.as_ref().is_some_and(|field_type| {
-                    field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)
-                });
-                self.columns.push(DataSourceColumn {
-                    id: forced.id,
-                    name,
-                    is_primary_key,
-                    is_not_null: forced.ret_type.as_ref().is_some_and(|field_type| {
-                        field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
-                    }),
-                });
+                // Go `preferKeyColumnFromTable`'s `*model.ColumnInfo`: the
+                // column's own, from the columns before pruning or the table,
+                // and `NewExtraHandleColInfo()` for the implicit row id.
+                let info = origin_columns
+                    .iter()
+                    .find(|info| info.read().id == forced.id)
+                    .cloned()
+                    .or_else(|| {
+                        self.table_info
+                            .as_ref()
+                            .and_then(|table| table.read().find_column_by_id(forced.id))
+                    })
+                    .unwrap_or_else(|| {
+                        assert_eq!(
+                            forced.id, EXTRA_HANDLE_ID,
+                            "a forced column is the table's or its row id"
+                        );
+                        tidb_model::GoShared::new(tidb_model::ColumnInfo::new_extra_handle_col_info())
+                    });
+                self.columns.push(info);
                 schema.columns.push(forced);
             }
         }
@@ -992,7 +978,7 @@ impl DataSource {
         if !self.pk_is_handle {
             return;
         }
-        if let Some(position) = self.columns.iter().position(|column| column.is_primary_key) {
+        if let Some(position) = self.columns.iter().position(|column| column.read().field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)) {
             if let Some(column) = self_schema.columns.get(position) {
                 self_schema.pk_or_uk.push(vec![column.clone()]);
             }
@@ -1291,9 +1277,9 @@ fn index_covers_column(
     let Some(column) = ds.columns.get(position) else {
         return false;
     };
-    if (ds.pk_is_handle && column.is_primary_key)
-        || column.id == tidb_model::column::EXTRA_HANDLE_ID
-        || column.id == tidb_model::column::EXTRA_PHYS_TBL_ID
+    if (ds.pk_is_handle && column.read().field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY))
+        || column.read().id == tidb_model::column::EXTRA_HANDLE_ID
+        || column.read().id == tidb_model::column::EXTRA_PHYS_TBL_ID
     {
         return true;
     }
@@ -1314,7 +1300,7 @@ fn index_covers_column(
     if source_index.read().columns.iter_deref().any(|index_column| {
         let index_column = index_column.read();
         full_length(index_column.length)
-            && (tidb_mysql::lowercase_equal(index_column.name.original(), &column.name)
+            && (tidb_mysql::lowercase_equal(index_column.name.original(), column.read().name.original())
                 || schema_column.is_some_and(|schema_column| {
                     ds.schema_column_for_index_column(&index_column)
                         .is_some_and(|indexed| schema_column.equal_by_expr_and_id_column(indexed))

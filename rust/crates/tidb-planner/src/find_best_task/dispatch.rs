@@ -2822,7 +2822,6 @@ mod cross_estimate_dispatch_tests {
     };
     use tidb_planner_util::path::PossiblePath;
     use crate::find_best_task::coster::Ver2Coster;
-    use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
     use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, DataSource};
     use tidb_planner_core_base::PlanIdAllocator;
     use tidb_planner_property::stats_info::StatsInfo;
@@ -2898,17 +2897,26 @@ mod cross_estimate_dispatch_tests {
             base,
             physical_table_id: 7,
             columns: vec![
-                DataSourceColumn {
-                    id: 1,
-                    name: "pk".to_owned(),
-                    is_primary_key: true,
-                    is_not_null: true,
-                },
-                DataSourceColumn {
-                    id: 2,
-                    name: "a".to_owned(),
-                    ..DataSourceColumn::default()
-                },
+                tidb_model::GoShared::new({
+                        let mut info = tidb_model::ColumnInfo {
+                            id: 1,
+                            name: tidb_ast::CiString::new("pk"),
+                            state: tidb_model::SchemaState::PUBLIC,
+                            ..tidb_model::ColumnInfo::default()
+                        };
+                        info.add_flag(u64::from(tidb_datatype::FieldTypeFlags::PRI_KEY));
+                        info.add_flag(u64::from(tidb_datatype::FieldTypeFlags::NOT_NULL));
+                        info
+                    }),
+                tidb_model::GoShared::new({
+                        let info = tidb_model::ColumnInfo {
+                            id: 2,
+                            name: tidb_ast::CiString::new("a"),
+                            state: tidb_model::SchemaState::PUBLIC,
+                            ..tidb_model::ColumnInfo::default()
+                        };
+                        info
+                    }),
             ],
             table_columns: vec![handle, filtered],
             handle_cols: vec![Column::new(1, FieldType::new(FieldTypeCode::LongLong))],
@@ -3490,7 +3498,7 @@ fn find_best_task_4_logical_data_source_paths(
                 let convertable_schema = !ds
                     .columns
                     .iter()
-                    .any(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID);
+                    .any(|column| column.read().id == tidb_model::column::EXTRA_PHYS_TBL_ID);
                 if prop.index_join_prop.is_none()
                     && ctx.enable_point_get_conversion
                     && convertable_schema
@@ -5964,7 +5972,6 @@ mod tests {
         // the index scan's ranges with the point.
         use tidb_planner_util::path::PossiblePath;
         use tidb_planner_core_operator_logicalop::DataSource;
-        use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
         use tidb_expr::constant::Constant;
@@ -6005,18 +6012,26 @@ mod tests {
                 physical_table_id: 7,
                 pk_is_handle: true,
                 columns: vec![
-                    DataSourceColumn {
-                        id: 1,
-                        name: "pk".to_owned(),
-                        is_primary_key: true,
-                        is_not_null: true,
-                    },
-                    DataSourceColumn {
-                        id: 2,
-                        name: "b".to_owned(),
-                        is_primary_key: false,
-                        is_not_null: false,
-                    },
+                    tidb_model::GoShared::new({
+                            let mut info = tidb_model::ColumnInfo {
+                                id: 1,
+                                name: tidb_ast::CiString::new("pk"),
+                                state: tidb_model::SchemaState::PUBLIC,
+                                ..tidb_model::ColumnInfo::default()
+                            };
+                            info.add_flag(u64::from(tidb_datatype::FieldTypeFlags::PRI_KEY));
+                            info.add_flag(u64::from(tidb_datatype::FieldTypeFlags::NOT_NULL));
+                            info
+                        }),
+                    tidb_model::GoShared::new({
+                            let info = tidb_model::ColumnInfo {
+                                id: 2,
+                                name: tidb_ast::CiString::new("b"),
+                                state: tidb_model::SchemaState::PUBLIC,
+                                ..tidb_model::ColumnInfo::default()
+                            };
+                            info
+                        }),
                 ],
                 pushed_down_conds: conds,
                 enumerated_paths: paths,
@@ -6197,7 +6212,6 @@ mod tests {
         // Go prints `range:[1,+inf]` for this shape.
         use tidb_planner_util::path::PossiblePath;
         use tidb_planner_core_operator_logicalop::DataSource;
-        use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
         use tidb_expr::constant::Constant;
         use tidb_expr::expression::{Expression, ScalarFunction};
@@ -6244,21 +6258,33 @@ mod tests {
             is_common_handle: true,
             handle_is_int: false,
             columns: vec![
-                DataSourceColumn {
-                    id: 1,
-                    name: "a".to_owned(),
-                    ..DataSourceColumn::default()
-                },
-                DataSourceColumn {
-                    id: 2,
-                    name: "b".to_owned(),
-                    ..DataSourceColumn::default()
-                },
-                DataSourceColumn {
-                    id: 3,
-                    name: "c".to_owned(),
-                    ..DataSourceColumn::default()
-                },
+                tidb_model::GoShared::new({
+                        let info = tidb_model::ColumnInfo {
+                            id: 1,
+                            name: tidb_ast::CiString::new("a"),
+                            state: tidb_model::SchemaState::PUBLIC,
+                            ..tidb_model::ColumnInfo::default()
+                        };
+                        info
+                    }),
+                tidb_model::GoShared::new({
+                        let info = tidb_model::ColumnInfo {
+                            id: 2,
+                            name: tidb_ast::CiString::new("b"),
+                            state: tidb_model::SchemaState::PUBLIC,
+                            ..tidb_model::ColumnInfo::default()
+                        };
+                        info
+                    }),
+                tidb_model::GoShared::new({
+                        let info = tidb_model::ColumnInfo {
+                            id: 3,
+                            name: tidb_ast::CiString::new("c"),
+                            state: tidb_model::SchemaState::PUBLIC,
+                            ..tidb_model::ColumnInfo::default()
+                        };
+                        info
+                    }),
             ],
             common_handle_cols: vec![b, c],
             common_handle_lens: vec![UNSPECIFIED_LENGTH; 2],
@@ -6302,7 +6328,7 @@ mod tests {
 
     #[test]
     fn prefix_single_scan_distinguishes_unpruned_full_values_and_null_arguments() {
-        use tidb_planner_core_operator_logicalop::data_source::{DataSource, DataSourceColumn};
+        use tidb_planner_core_operator_logicalop::data_source::{DataSource};
         use tidb_expr::expression::{Expression, ScalarFunction};
         let allocator = PlanIdAllocator::new();
         let a = Column::new(11, FieldType::new(FieldTypeCode::Varchar).with_flen(20));
@@ -6313,16 +6339,24 @@ mod tests {
         let mut ds = DataSource {
             base,
             columns: vec![
-                DataSourceColumn {
-                    id: 1,
-                    name: "a".into(),
-                    ..DataSourceColumn::default()
-                },
-                DataSourceColumn {
-                    id: 2,
-                    name: "b".into(),
-                    ..DataSourceColumn::default()
-                },
+                tidb_model::GoShared::new({
+                        let info = tidb_model::ColumnInfo {
+                            id: 1,
+                            name: tidb_ast::CiString::new("a"),
+                            state: tidb_model::SchemaState::PUBLIC,
+                            ..tidb_model::ColumnInfo::default()
+                        };
+                        info
+                    }),
+                tidb_model::GoShared::new({
+                        let info = tidb_model::ColumnInfo {
+                            id: 2,
+                            name: tidb_ast::CiString::new("b"),
+                            state: tidb_model::SchemaState::PUBLIC,
+                            ..tidb_model::ColumnInfo::default()
+                        };
+                        info
+                    }),
             ],
             ..DataSource::default()
         };
@@ -6476,7 +6510,6 @@ mod tests {
         // plain IndexReader.
         use tidb_planner_util::path::PossiblePath;
         use tidb_planner_core_operator_logicalop::DataSource;
-        use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
         use tidb_infoschema::table_source::SourceIndexColumn;
         use tidb_datatype::{FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
@@ -6499,18 +6532,24 @@ mod tests {
                 base,
                 physical_table_id: 7,
                 columns: vec![
-                    DataSourceColumn {
-                        id: 1,
-                        name: "a".to_owned(),
-                        is_primary_key: false,
-                        is_not_null: false,
-                    },
-                    DataSourceColumn {
-                        id: 2,
-                        name: "b".to_owned(),
-                        is_primary_key: false,
-                        is_not_null: false,
-                    },
+                    tidb_model::GoShared::new({
+                            let info = tidb_model::ColumnInfo {
+                                id: 1,
+                                name: tidb_ast::CiString::new("a"),
+                                state: tidb_model::SchemaState::PUBLIC,
+                                ..tidb_model::ColumnInfo::default()
+                            };
+                            info
+                        }),
+                    tidb_model::GoShared::new({
+                            let info = tidb_model::ColumnInfo {
+                                id: 2,
+                                name: tidb_ast::CiString::new("b"),
+                                state: tidb_model::SchemaState::PUBLIC,
+                                ..tidb_model::ColumnInfo::default()
+                            };
+                            info
+                        }),
                 ],
                 enumerated_paths: vec![
                     PossiblePath::Table {
@@ -6624,7 +6663,6 @@ mod tests {
     fn a_prefix_index_matches_partial_order_and_carries_the_match_result() {
         use tidb_planner_util::path::PossiblePath;
         use tidb_planner_core_operator_logicalop::DataSource;
-        use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
         use tidb_datatype::{FieldType, FieldTypeCode};
 
         let allocator = PlanIdAllocator::new();
@@ -6639,11 +6677,15 @@ mod tests {
         let mut source = DataSource {
             base,
             physical_table_id: 7,
-            columns: vec![DataSourceColumn {
-                id: 1,
-                name: "a".to_owned(),
-                ..DataSourceColumn::default()
-            }],
+            columns: vec![tidb_model::GoShared::new({
+                    let info = tidb_model::ColumnInfo {
+                        id: 1,
+                        name: tidb_ast::CiString::new("a"),
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::ColumnInfo::default()
+                    };
+                    info
+                })],
             enumerated_paths: vec![PossiblePath::Index { index: 0 }],
             indexes: vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 3,
@@ -6852,7 +6894,6 @@ mod tests {
     #[test]
     fn a_constant_index_prefix_is_skipped_when_matching_order() {
         use tidb_planner_core_operator_logicalop::DataSource;
-        use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
         use tidb_expr::constant::Constant;
@@ -6868,18 +6909,24 @@ mod tests {
         let source = DataSource {
             base,
             columns: vec![
-                DataSourceColumn {
-                    id: 1,
-                    name: "a".to_owned(),
-                    is_primary_key: false,
-                    is_not_null: false,
-                },
-                DataSourceColumn {
-                    id: 2,
-                    name: "b".to_owned(),
-                    is_primary_key: false,
-                    is_not_null: false,
-                },
+                tidb_model::GoShared::new({
+                        let info = tidb_model::ColumnInfo {
+                            id: 1,
+                            name: tidb_ast::CiString::new("a"),
+                            state: tidb_model::SchemaState::PUBLIC,
+                            ..tidb_model::ColumnInfo::default()
+                        };
+                        info
+                    }),
+                tidb_model::GoShared::new({
+                        let info = tidb_model::ColumnInfo {
+                            id: 2,
+                            name: tidb_ast::CiString::new("b"),
+                            state: tidb_model::SchemaState::PUBLIC,
+                            ..tidb_model::ColumnInfo::default()
+                        };
+                        info
+                    }),
             ],
             pushed_down_conds: vec![Expression::ScalarFunction(ScalarFunction::new(
                 tidb_ast::CiString::new("eq"),

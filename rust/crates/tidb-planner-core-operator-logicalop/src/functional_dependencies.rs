@@ -254,7 +254,7 @@ impl LogicalPlan {
                         .columns
                         .iter()
                         .zip(&source.table_columns)
-                        .filter(|(metadata, _)| metadata.is_primary_key)
+                        .filter(|(metadata, _)| metadata.read().field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY))
                         .map(|(_, column)| column.unique_id)
                         .collect::<Vec<_>>();
                     if !primary.is_empty() {
@@ -283,7 +283,7 @@ impl LogicalPlan {
                 add_condition_facts(context, &mut fds, &source.all_conds);
                 let mut declared_not_null = FastIntSet::default();
                 for (metadata, column) in source.columns.iter().zip(&source.table_columns) {
-                    if metadata.is_not_null {
+                    if metadata.read().field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL) {
                         declared_not_null.insert(column.unique_id);
                     }
                     if let Some(generated) = column.virtual_expr.as_deref() {
@@ -693,7 +693,7 @@ mod tests {
     use super::*;
     use crate::aggregation::LogicalAggregation;
     use crate::apply::LogicalApply;
-    use crate::data_source::{DataSource, DataSourceColumn};
+    use crate::data_source::{DataSource};
     use crate::join::LogicalJoin;
     use crate::projection::LogicalProjection;
     use crate::selection::LogicalSelection;
@@ -736,11 +736,19 @@ mod tests {
         source.columns = ids
             .iter()
             .enumerate()
-            .map(|(index, _)| DataSourceColumn {
-                is_primary_key: index == primary,
-                is_not_null: index == primary,
-                ..DataSourceColumn::default()
-            })
+            .map(|(index, _)| tidb_model::GoShared::new({
+                    let mut info = tidb_model::ColumnInfo {
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::ColumnInfo::default()
+                    };
+                    if index == primary {
+                        info.add_flag(u64::from(tidb_datatype::FieldTypeFlags::PRI_KEY));
+                    }
+                    if index == primary {
+                        info.add_flag(u64::from(tidb_datatype::FieldTypeFlags::NOT_NULL));
+                    }
+                    info
+                }))
             .collect();
         source.pk_is_handle = true;
         source.base.base.set_schema(Some(schema(ids)));
@@ -750,7 +758,7 @@ mod tests {
     fn keyless_data_source(ids: &[i64]) -> LogicalPlan {
         let mut source = DataSource::new(BaseLogicalPlan::default(), 1, "t");
         source.table_columns = ids.iter().copied().map(column).collect();
-        source.columns = ids.iter().map(|_| DataSourceColumn::default()).collect();
+        source.columns = ids.iter().map(|_| tidb_model::GoShared::new(tidb_model::ColumnInfo::default())).collect();
         source.base.base.set_schema(Some(schema(ids)));
         LogicalPlan::DataSource(source)
     }
@@ -759,22 +767,34 @@ mod tests {
         let mut source = DataSource::new(BaseLogicalPlan::default(), 1, "t");
         source.table_columns = vec![column(1), column(2), column(3)];
         source.columns = vec![
-            DataSourceColumn {
-                id: 1,
-                name: "a".to_owned(),
-                ..DataSourceColumn::default()
-            },
-            DataSourceColumn {
-                id: 2,
-                name: "b".to_owned(),
-                is_not_null: true,
-                ..DataSourceColumn::default()
-            },
-            DataSourceColumn {
-                id: 3,
-                name: "c".to_owned(),
-                ..DataSourceColumn::default()
-            },
+            tidb_model::GoShared::new({
+                    let info = tidb_model::ColumnInfo {
+                        id: 1,
+                        name: tidb_ast::CiString::new("a"),
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::ColumnInfo::default()
+                    };
+                    info
+                }),
+            tidb_model::GoShared::new({
+                    let mut info = tidb_model::ColumnInfo {
+                        id: 2,
+                        name: tidb_ast::CiString::new("b"),
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::ColumnInfo::default()
+                    };
+                    info.add_flag(u64::from(tidb_datatype::FieldTypeFlags::NOT_NULL));
+                    info
+                }),
+            tidb_model::GoShared::new({
+                    let info = tidb_model::ColumnInfo {
+                        id: 3,
+                        name: tidb_ast::CiString::new("c"),
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::ColumnInfo::default()
+                    };
+                    info
+                }),
         ];
         source.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
             id: 1,
@@ -945,8 +965,8 @@ mod tests {
             unreachable!("helper returns a data source")
         };
         source.pk_is_handle = true;
-        source.columns[0].is_primary_key = true;
-        source.columns[0].is_not_null = true;
+        source.columns[0].write().add_flag(u64::from(tidb_datatype::FieldTypeFlags::PRI_KEY));
+        source.columns[0].write().add_flag(u64::from(tidb_datatype::FieldTypeFlags::NOT_NULL));
         source.fd_latest_index_lookup_failed = true;
         let lookup_failed = lookup_failed.extract_fd();
         assert!(lookup_failed.in_closure(&FastIntSet::new([1]), &FastIntSet::new([2, 3])));

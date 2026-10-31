@@ -634,12 +634,18 @@ mod tests {
         let mut source = source();
         source.pk_is_handle = true;
         source.columns = (1..=3)
-            .map(|id| tidb_planner_core_operator_logicalop::data_source::DataSourceColumn {
-                id,
-                name: format!("c{id}"),
-                is_primary_key: id == 3,
-                ..Default::default()
-            })
+            .map(|id| tidb_model::GoShared::new({
+                    let mut info = tidb_model::ColumnInfo {
+                        id: id,
+                        name: tidb_ast::CiString::new(format!("c{id}")),
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::ColumnInfo::default()
+                    };
+                    if id == 3 {
+                        info.add_flag(u64::from(tidb_datatype::FieldTypeFlags::PRI_KEY));
+                    }
+                    info
+                }))
             .collect();
         source.table_columns[2]
             .ret_type

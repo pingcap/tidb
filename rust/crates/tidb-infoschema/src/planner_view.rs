@@ -150,12 +150,12 @@ fn mark_cluster_table(
     }
     let Some(offset) = table.columns.iter().position(|column| {
         column
-            .ret_type
+            .read()
+            .field_type
             .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)
     }) else {
         return;
     };
-    table.columns[offset].is_primary_key = true;
     table.is_common_handle = true;
     table.common_handle_version = 1;
     table.handle_col_offsets = vec![offset];
@@ -165,7 +165,7 @@ fn mark_cluster_table(
         name: tidb_ast::CiString::new("primary"),
         table: tidb_ast::CiString::new(table.table_name.clone()),
         columns: vec![tidb_model::IndexColumn {
-            name: tidb_ast::CiString::new(table.columns[offset].name.clone()),
+            name: table.columns[offset].read().name.clone(),
             offset: offset as i64,
             length: tidb_datatype::UNSPECIFIED_LENGTH,
             ..tidb_model::IndexColumn::default()
@@ -350,9 +350,7 @@ impl Catalog {
     /// first when `with_local_temporary` (Go's `SessionExtendedInfoSchema`),
     /// or without them (its `DetachLocalTemporaryTableInfoSchema`).
     fn build_planner_schema_view(&self, with_local_temporary: bool) -> PlannerSchemaView {
-        use crate::table_source::{
-            SourceColumn, SourceTable, SourceView,
-        };
+        use crate::table_source::{SourceTable, SourceView};
 
         let databases = self.schema.databases.keys().cloned().collect();
         let mut tables = HashMap::new();
@@ -431,12 +429,8 @@ impl Catalog {
                                 .columns()
                                 .iter()
                                 .enumerate()
-                                .map(|(offset, column)| SourceColumn {
-                                    id: offset as i64 + 1,
-                                    name: column.name.clone(),
-                                    offset,
-                                    ret_type: column.field_type.clone(),
-                                    ..SourceColumn::default()
+                                .map(|(offset, column)| {
+                                    memory_column(offset, &column.name, &column.field_type)
                                 })
                                 .collect(),
                             ..SourceTable::default()
@@ -475,12 +469,8 @@ impl Catalog {
                                 .columns
                                 .iter()
                                 .enumerate()
-                                .map(|(offset, (name, ret_type))| SourceColumn {
-                                    id: offset as i64 + 1,
-                                    name: name.clone(),
-                                    offset,
-                                    ret_type: ret_type.clone(),
-                                    ..SourceColumn::default()
+                                .map(|(offset, (name, ret_type))| {
+                                    memory_column(offset, name, ret_type)
                                 })
                                 .collect(),
                             ..SourceTable::default()
@@ -501,12 +491,8 @@ impl Catalog {
                                     .columns
                                     .iter()
                                     .enumerate()
-                                    .map(|(offset, (name, ret_type))| SourceColumn {
-                                        id: offset as i64 + 1,
-                                        name: name.clone(),
-                                        offset,
-                                        ret_type: ret_type.clone(),
-                                        ..SourceColumn::default()
+                                    .map(|(offset, (name, ret_type))| {
+                                        memory_column(offset, name, ret_type)
                                     })
                                     .collect(),
                                 definer_user: view.definer_user.clone(),
@@ -587,6 +573,24 @@ impl Catalog {
     }
 }
 
+/// Go's memory-table `ColumnInfo` (`infoschema.buildColumnInfo`): a public
+/// column at `offset` whose id is its position plus one (`c.ID = int64(i) + 1`
+/// as `infoschema` installs the table).
+fn memory_column(
+    offset: usize,
+    name: &str,
+    field_type: &tidb_datatype::FieldType,
+) -> crate::table_source::SourceColumn {
+    crate::table_source::SourceColumn::new(tidb_model::GoShared::new(tidb_model::ColumnInfo {
+        id: offset as i64 + 1,
+        name: tidb_ast::CiString::new(name),
+        offset: offset as i64,
+        field_type: field_type.clone(),
+        state: tidb_model::SchemaState::PUBLIC,
+        ..tidb_model::ColumnInfo::default()
+    }))
+}
+
 /// The planner's `SourceTable` for a stored table of the schema `db_name`
 /// (Go's `TableInfo` as `buildDataSource` reads it).
 fn kv_source_table(
@@ -603,28 +607,15 @@ fn kv_source_table(
     let columns = info
         .cols()
         .iter_deref()
-        .map(|column| {
-            let column = column.read();
-            SourceColumn {
-                id: column.id,
-                name: column.name.original().to_owned(),
-                is_primary_key: column
-                    .field_type
-                    .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
-                offset: column.offset as usize,
-                ret_type: column.field_type.clone(),
-                is_public: true,
-                is_generated: column.is_generated(),
-                is_hidden: column.hidden,
-                is_virtual_generated: column.is_virtual_generated(),
-                // Go `table.Column.GeneratedExpr`, parsed once at load.
-                generated_expr: table
-                    .columns()
-                    .iter()
-                    .find(|loaded| loaded.id == column.id)
-                    .and_then(|loaded| loaded.generated.as_ref())
-                    .map(|generated| generated.source.clone()),
-            }
+        .map(|info| SourceColumn {
+            // Go `table.Column.GeneratedExpr`, parsed once at load.
+            generated_expr: table
+                .columns()
+                .iter()
+                .find(|loaded| loaded.id == info.read().id)
+                .and_then(|loaded| loaded.generated.as_ref())
+                .map(|generated| generated.source.clone()),
+            info,
         })
         .collect::<Vec<_>>();
     let indexes = info.indices.iter_deref().collect::<Vec<_>>();
