@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	metaautoid "github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
@@ -696,4 +697,56 @@ func TestIssue52622(t *testing.T) {
 
 		tk.MustExec("drop table issue52622;")
 	}
+}
+
+func TestIssue72555(t *testing.T) {
+	// An upsert that names an existing auto-increment value must not discard the
+	// executing server's cached auto ID range when it does not insert a row.
+	distCtx := testkit.NewDistExecutionContext(t, 2)
+	defer distCtx.Close()
+	store := distCtx.Store
+	newTestKit := func(idx int) *testkit.TestKit {
+		se, err := session.CreateSessionWithDomain(store, distCtx.GetDomain(idx))
+		require.NoError(t, err)
+		tk := testkit.NewTestKitWithSession(t, store, se)
+		tk.MustExec("use test")
+		return tk
+	}
+	tkA, tkB := newTestKit(0), newTestKit(1)
+
+	tkA.MustExec("create table t (id bigint unsigned not null auto_increment primary key, ref varchar(32) not null, state varchar(16) not null, unique key ref_uq (ref)) auto_id_cache 100")
+	require.NoError(t, distCtx.GetDomain(1).Reload())
+	tkA.MustExec("insert into t (ref, state) values ('a1', 'new')")
+	tkB.MustExec("insert into t (ref, state) values ('b1', 'new')")
+	tkB.MustQuery("select id from t where ref = 'b1'").Check(testkit.Rows("101"))
+
+	// Row 101 already exists and was handed out to server B, so server A keeps its range.
+	tkA.MustExec("insert into t (id, ref, state) values (101, 'b1', 'done') on duplicate key update state = values(state)")
+	tkA.MustExec("insert into t (ref, state) values ('a2', 'new')")
+	tkA.MustQuery("select id from t where ref = 'a2'").Check(testkit.Rows("2"))
+
+	// Same through INSERT ... SELECT, which fills auto IDs without the lazy path.
+	tkA.MustExec("insert into t (id, ref, state) select 101, 'b1', 'again' on duplicate key update state = values(state)")
+	tkA.MustExec("insert into t (ref, state) values ('a3', 'new')")
+	tkA.MustQuery("select id from t where ref = 'a3'").Check(testkit.Rows("3"))
+
+	// A failed upsert does not discard the range either.
+	tkA.MustGetErrCode("insert into t (id, ref, state) values (101, 'b1', 'x') on duplicate key update ref = 'a1'", mysql.ErrDupEntry)
+	tkA.MustExec("insert into t (ref, state) values ('a4', 'new')")
+	tkA.MustQuery("select id from t where ref = 'a4'").Check(testkit.Rows("4"))
+
+	// An explicit value beyond every handed-out range still moves the server past it.
+	tkA.MustExec("insert into t (id, ref, state) values (250, 'a5', 'new') on duplicate key update state = values(state)")
+	tkA.MustExec("insert into t (ref, state) values ('a6', 'new')")
+	tkA.MustQuery("select id from t where ref = 'a6'").Check(testkit.Rows("251"))
+}
+
+func TestIssue72555SameStatement(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id bigint unsigned not null auto_increment primary key, ref varchar(32) not null, state varchar(16) not null, unique key ref_uq (ref))")
+	tk.MustExec("insert into t (ref, state) values ('a1', 'new')")
+	tk.MustExec("insert into t (id, ref, state) values (2, 'x', 'new'), (null, 'y', 'new') on duplicate key update state = 'dup'")
+	tk.MustQuery("select id, ref, state from t order by id").Check(testkit.Rows("1 a1 new", "2 x new", "3 y new"))
 }
