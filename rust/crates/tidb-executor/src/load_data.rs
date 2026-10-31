@@ -207,7 +207,7 @@ pub fn prepare_load_data(
 
     // Go `buildFieldMappings`: an unknown column maps to nothing here and
     // fails in `buildInsertColumns`.
-    let visible = table.visible_columns();
+    let visible: Vec<_> = table.visible_columns().into_iter().map(|(_, column)| column).collect();
     let find_visible = |wanted: &str| {
         visible
             .iter()

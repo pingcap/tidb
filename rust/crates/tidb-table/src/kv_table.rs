@@ -471,13 +471,10 @@ pub struct KvTable {
     /// in `storage_statistics`; these entries retain each partition's own
     /// row count and lengths.
     partition_storage_statistics: std::collections::BTreeMap<i64, (u64, u64, u64, u64)>,
-    /// The columns, in schema order, VISIBLE ONES FIRST.
-    ///
-    /// The tail of this vector is the hidden columns an expression index was
-    /// rewritten into (`hidden_columns` counts them). Keeping them contiguous
-    /// at the end is what makes a visible offset and a physical offset the
-    /// same number, so no call site has to translate between the two -- see
-    /// [`crate::expression_index`] for why that matters.
+    /// The columns, in Go `TableInfo.Cols()` order: the order `TableFromMeta`
+    /// loads them in, hidden expression-index columns (`ColumnInfo.Hidden`)
+    /// wherever DDL placed them. A column's position here is its offset in
+    /// every row, index and planned expression.
     ///
     /// Behind an `Arc`, because this is METADATA and Go shares metadata by
     /// pointer: an `InfoSchema`'s `TableInfo` is immutable and every session
@@ -490,9 +487,11 @@ pub struct KvTable {
     /// build-a-new-TableInfo, one shared metadata copied only when a DDL
     /// actually changes it.
     pub(crate) columns: std::sync::Arc<Vec<KvColumn>>,
-    /// How many of the TRAILING entries of `columns` are hidden (Go
-    /// `ColumnInfo.Hidden`). Zero for every table with no expression index.
-    hidden_columns: usize,
+    /// The offsets of `columns` whose Go `ColumnInfo.Hidden` is set, read
+    /// off [`Self::meta`] whenever it or the column list changes: Go reads
+    /// `Hidden` straight off each column, which a per-row lookup into the
+    /// `TableInfo` would not afford.
+    hidden_offsets: Vec<usize>,
     /// Go `model.IndexInfo.MVIndex`, carried as the SOURCE column each
     /// multi-valued index's single ARRAY key part was built over
     /// (`ColumnInfo.Dependences`, which DDL's `buildHiddenColumnInfoWithCheck`
@@ -1159,7 +1158,7 @@ impl KvTable {
             storage_statistics: (0, 0, 0, 0),
             partition_storage_statistics: std::collections::BTreeMap::new(),
             columns: std::sync::Arc::new(columns),
-            hidden_columns: 0,
+            hidden_offsets: Vec::new(),
             mv_key_part_sources: std::collections::BTreeMap::new(),
             store,
             keys_read: None,
@@ -2057,11 +2056,50 @@ impl KvTable {
     pub fn set_common_handle_offsets(&mut self, offsets: Vec<usize>) {
         self.common_handle_offsets = offsets;
         self.common_handle_prefix_lengths = vec![tidb_datatype::UNSPECIFIED_LENGTH; self.common_handle_offsets.len()];
+        if self.common_handle_offsets.is_empty() {
+            return;
+        }
+        let offsets = self.common_handle_offsets.clone();
+        self.record_fixture_primary_key(&offsets);
+        if !self.meta.read().is_common_handle {
+            self.update_meta(|meta| meta.is_common_handle = true);
+        }
+        if self.meta.read().indices.iter_deref().any(|index| index.read().primary) {
+            return;
+        }
+        // A table built from columns alone lists its clustered PRIMARY KEY in
+        // `TableInfo.Indices`, as every Go clustered table does.
+        let primary = tidb_model::IndexInfo {
+            name: tidb_ast::CiString::new("PRIMARY"),
+            columns: self.fixture_index_columns(&offsets, &[]).into(),
+            state: tidb_model::SchemaState::PUBLIC,
+            unique: true,
+            primary: true,
+            ..tidb_model::IndexInfo::default()
+        };
+        self.update_meta(|meta| meta.indices.push_go(primary));
     }
 
     /// Records Go `IndexColumn.Length` for each common-handle component.
     pub fn set_common_handle_prefix_lengths(&mut self, lengths: Vec<i64>) {
         assert_eq!(lengths.len(), self.common_handle_offsets.len());
+        let recorded = self.meta.read().get_primary_key().is_some_and(|primary| {
+            primary
+                .read()
+                .columns
+                .iter_deref()
+                .map(|column| column.read().length)
+                .eq(lengths.iter().copied())
+        });
+        if !recorded {
+            self.update_meta_cloned(|meta| {
+                if let Some(primary) = meta.indices.iter_deref().find(|index| index.read().primary) {
+                    for (column, length) in primary.read().columns.iter_deref().zip(&lengths) {
+                        column.write().length = *length;
+                    }
+                }
+            });
+        }
         self.common_handle_prefix_lengths = lengths;
     }
 
@@ -2663,9 +2701,19 @@ impl KvTable {
         self.meta.clone()
     }
 
+    /// [`Self::update_meta`] over Go `TableInfo.Clone`, for a change that
+    /// writes through the column or index pointers.
+    fn update_meta_cloned(&mut self, change: impl FnOnce(&mut tidb_model::TableInfo)) {
+        let mut meta = self.meta.read().clone_like_go();
+        change(&mut meta);
+        self.meta = tidb_model::GoShared::new(meta);
+        self.refresh_hidden_offsets();
+    }
+
     /// Records the `TableInfo` the loader built this table from.
     pub(crate) fn set_meta(&mut self, meta: tidb_model::TableInfo) {
         self.meta = tidb_model::GoShared::new(meta);
+        self.refresh_hidden_offsets();
     }
 
     /// Changes this table's `TableInfo` copy-on-write: a cloned table (an
@@ -2674,6 +2722,7 @@ impl KvTable {
         let mut meta = self.meta.read().clone();
         change(&mut meta);
         self.meta = tidb_model::GoShared::new(meta);
+        self.refresh_hidden_offsets();
     }
 
     /// The table's name as created (Go `TableInfo.Name.O`), empty when the
@@ -2769,6 +2818,15 @@ impl KvTable {
         self.store.release(stage);
         self.indexes_mut().remove(position);
         self.remove_partial_index_condition(index_id);
+        let position = self
+            .meta
+            .read()
+            .indices
+            .iter_deref()
+            .position(|index| index.read().id == index_id);
+        if let Some(position) = position {
+            self.update_meta(|meta| meta.indices.delete_go(position, position + 1));
+        }
         Ok(true)
     }
 
@@ -2779,13 +2837,45 @@ impl KvTable {
         self.meta.read().max_index_id + 1
     }
 
-    /// The columns a user can name or see: everything but the hidden tail.
-    ///
-    /// A visible column's offset in this slice IS its physical offset, which
-    /// is the whole point of keeping the hidden ones last.
+    /// The columns a user can name or see (Go `table.Cols()` without the
+    /// `Hidden` ones), with their offsets in [`Self::columns`].
     #[must_use]
-    pub fn visible_columns(&self) -> &[KvColumn] {
-        &self.columns[..self.visible_column_count()]
+    pub fn visible_columns(&self) -> Vec<(usize, &KvColumn)> {
+        self.columns
+            .iter()
+            .enumerate()
+            .filter(|(offset, _)| !self.is_hidden(*offset))
+            .collect()
+    }
+
+    /// The offsets of [`Self::visible_columns`].
+    #[must_use]
+    pub fn visible_offsets(&self) -> Vec<usize> {
+        (0..self.columns.len()).filter(|offset| !self.is_hidden(*offset)).collect()
+    }
+
+    /// The visible columns' values of a stored `row`, in order: the row a
+    /// statement's visible schema describes.
+    #[must_use]
+    pub fn visible_row(&self, row: &[Datum]) -> Vec<Datum> {
+        row.iter()
+            .enumerate()
+            .filter(|(offset, _)| !self.is_hidden(*offset))
+            .map(|(_, value)| value.clone())
+            .collect()
+    }
+
+    /// The stored row whose visible columns hold `visible`, in order, and
+    /// whose hidden columns are NULL until their generation fills them.
+    #[must_use]
+    pub fn stored_row(&self, visible: Vec<Datum>) -> Vec<Datum> {
+        let mut row = vec![Datum::Null; self.columns.len().max(visible.len())];
+        let mut offsets = (0..row.len()).filter(|offset| !self.is_hidden(*offset));
+        for value in visible {
+            let offset = offsets.next().expect("a stored row has room for every visible value");
+            row[offset] = value;
+        }
+        row
     }
 
     /// Columns carried by Go's logical `DataSource`, including hidden
@@ -2799,7 +2889,7 @@ impl KvTable {
     /// How many columns a user can name or see.
     #[must_use]
     pub fn visible_column_count(&self) -> usize {
-        self.columns.len() - self.hidden_columns
+        self.columns.len() - self.hidden_offsets.len()
     }
 
     /// Columns Go's logical `DataSource` allocates before appending its
@@ -2810,22 +2900,35 @@ impl KvTable {
         self.columns.len()
     }
 
-    /// Whether the column at `offset` is hidden.
+    /// Go `ColumnInfo.Hidden` of the column at `offset`.
     #[must_use]
     pub fn is_hidden(&self, offset: usize) -> bool {
-        offset >= self.visible_column_count()
+        self.hidden_offsets.contains(&offset)
+    }
+
+    /// Re-reads [`Self::hidden_offsets`] from the `TableInfo`.
+    fn refresh_hidden_offsets(&mut self) {
+        let meta = self.meta.read();
+        let hidden = self
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(_, column)| {
+                meta.find_column_by_id(column.id).is_some_and(|info| info.read().hidden)
+            })
+            .map(|(offset, _)| offset)
+            .collect();
+        drop(meta);
+        self.hidden_offsets = hidden;
     }
 
     /// Appends a hidden column -- the one an expression index key part is
-    /// rewritten into -- and returns its offset.
-    ///
-    /// It goes at the very end, so no existing offset moves and the tail
-    /// invariant holds by construction.
+    /// rewritten into, which Go `AddIndex` appends to `TableInfo.Columns` --
+    /// and returns its offset.
     pub fn add_hidden_column(&mut self, column: KvColumn) -> usize {
-        let offset = self.columns.len();
-        self.record_fixture_column(&column, offset, true);
+        self.record_fixture_column(&column, None, true);
         self.columns_mut().push(column);
-        self.hidden_columns += 1;
+        self.refresh_hidden_offsets();
         self.columns.len() - 1
     }
 
@@ -2835,15 +2938,15 @@ impl KvTable {
     /// carry it and read back its origin default. Index and handle offsets
     /// shift with the insertion, since they address columns by position.
     ///
-    /// `position` is clamped to the VISIBLE width, so `ADD COLUMN` with no
-    /// position lands before the hidden tail rather than after it. Captured
-    /// from Go: after `alter table te add column z int` on a table with an
-    /// expression index, `SHOW CREATE TABLE` prints `a`, `z` and
-    /// `information_schema.columns` gives them ordinals 1 and 2.
+    /// `position` is the column's place in `TableInfo.Columns` (Go
+    /// `LocateOffsetToMove`); one past the end appends it, after any hidden
+    /// expression-index column, as Go's `ADD COLUMN` without a position does.
     pub fn add_column(&mut self, position: usize, column: KvColumn) {
-        let position = position.min(self.visible_column_count());
-        self.record_fixture_column(&column, position, false);
+        let position = position.min(self.columns.len());
+        let before = self.columns.get(position).map(|column| column.id);
+        self.record_fixture_column(&column, before, false);
         self.columns_mut().insert(position, column);
+        self.refresh_hidden_offsets();
         let shift = |offset: &mut usize| {
             if *offset >= position {
                 *offset += 1;
@@ -2881,10 +2984,23 @@ impl KvTable {
     /// again because nothing lists that id -- Go likewise leaves the old row
     /// values in place until the table is rewritten.
     pub fn drop_column(&mut self, offset: usize) {
-        if self.is_hidden(offset) {
-            self.hidden_columns -= 1;
+        let id = self.columns[offset].id;
+        let position = self
+            .meta
+            .read()
+            .columns
+            .iter_deref()
+            .position(|info| info.read().id == id);
+        if let Some(position) = position {
+            // Go `onDropColumn`: the column moves to the end, then leaves.
+            self.update_meta_cloned(|meta| {
+                let last = meta.columns.len() - 1;
+                meta.move_column_info(position as isize, last as isize);
+                meta.columns.delete_go(last, last + 1);
+            });
         }
         self.columns_mut().remove(offset);
+        self.refresh_hidden_offsets();
         let shift = |value: &mut usize| {
             if *value > offset {
                 *value -= 1;
@@ -3210,50 +3326,113 @@ impl KvTable {
     /// A table built from columns alone (a test fixture) records each column
     /// it gains in its `TableInfo`, as a Go fixture's `TableInfo` lists it. A
     /// table `TableFromMeta` loaded already holds every column there.
-    fn record_fixture_column(&mut self, column: &KvColumn, offset: usize, hidden: bool) {
-        if self.meta.read().cols().iter_deref().any(|info| info.read().id == column.id) {
+    ///
+    /// Go `ADD COLUMN` appends the column and moves it before `before`
+    /// (`MoveColumnInfo`); `None` leaves it last.
+    fn record_fixture_column(&mut self, column: &KvColumn, before: Option<i64>, hidden: bool) {
+        let meta = self.meta.read();
+        if meta.cols().iter_deref().any(|info| info.read().id == column.id) {
             return;
         }
-        let info = fixture_column_info(column, offset, hidden);
-        self.update_meta(|meta| meta.columns.push_go(info));
+        let from = meta.columns.len();
+        let to = before.and_then(|id| meta.columns.iter_deref().position(|info| info.read().id == id));
+        drop(meta);
+        let info = fixture_column_info(column, from, hidden);
+        self.update_meta_cloned(|meta| {
+            meta.columns.push_go(info);
+            if let Some(to) = to {
+                meta.move_column_info(from as isize, to as isize);
+            }
+        });
     }
 
-    /// [`Self::record_fixture_column`] for an index.
+    /// [`Self::record_fixture_column`] for an index. A fixture's PRIMARY KEY
+    /// replaces the one [`Self::set_common_handle_offsets`] recorded for it.
     fn record_fixture_index(&mut self, index: &KvIndex) {
-        if self.meta.read().indices.iter_deref().any(|info| info.read().id == index.id) {
+        let meta = self.meta.read();
+        if meta.indices.iter_deref().any(|info| info.read().id == index.id) {
             return;
         }
+        let recorded_primary = index
+            .primary
+            .then(|| {
+                meta.indices
+                    .iter_deref()
+                    .position(|info| info.read().primary && info.read().id == 0)
+            })
+            .flatten();
+        drop(meta);
         let info = tidb_model::IndexInfo {
             id: index.id,
             name: tidb_ast::CiString::new(index.name.clone()),
-            columns: index
-                .column_offsets
-                .iter()
-                .enumerate()
-                .map(|(position, offset)| tidb_model::IndexColumn {
-                    // A fixture may declare an index over columns it never added.
-                    name: self
-                        .columns
-                        .get(*offset)
-                        .map(|column| tidb_ast::CiString::new(column.name.clone()))
-                        .unwrap_or_default(),
-                    offset: *offset as i64,
-                    length: index
-                        .prefix_lengths
-                        .get(position)
-                        .copied()
-                        .unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH as i64),
-                    ..tidb_model::IndexColumn::default()
-                })
-                .collect::<Vec<_>>()
+            columns: self
+                .fixture_index_columns(&index.column_offsets, &index.prefix_lengths)
                 .into(),
             state: tidb_model::SchemaState::PUBLIC,
             unique: index.unique,
             primary: index.primary,
+            invisible: !index.visible,
+            global: index.global,
             mv_index: self.mv_key_part_source(index.id).is_some(),
             ..tidb_model::IndexInfo::default()
         };
-        self.update_meta(|meta| meta.indices.push_go(info));
+        self.update_meta(|meta| {
+            if let Some(position) = recorded_primary {
+                meta.indices.delete_go(position, position + 1);
+            }
+            meta.indices.push_go(info);
+        });
+    }
+
+    /// Go `IndexInfo.Columns` over the columns at `offsets`, each named and
+    /// placed as `TableInfo.Columns` lists it.
+    fn fixture_index_columns(&self, offsets: &[usize], prefix_lengths: &[i64]) -> Vec<tidb_model::IndexColumn> {
+        let meta = self.meta.read();
+        offsets
+            .iter()
+            .enumerate()
+            .map(|(position, offset)| {
+                // A fixture may declare an index over columns it never added.
+                let info = self
+                    .columns
+                    .get(*offset)
+                    .and_then(|column| meta.columns.iter_deref().find(|info| info.read().id == column.id));
+                tidb_model::IndexColumn {
+                    name: info.as_ref().map(|info| info.read().name.clone()).unwrap_or_default(),
+                    offset: info.as_ref().map_or(*offset as i64, |info| info.read().offset),
+                    length: prefix_lengths
+                        .get(position)
+                        .copied()
+                        .unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH as i64),
+                    ..tidb_model::IndexColumn::default()
+                }
+            })
+            .collect()
+    }
+
+    /// Go's handle columns carry `PriKeyFlag` in `TableInfo.Columns`; a
+    /// table built from columns alone records it there.
+    fn record_fixture_primary_key(&mut self, offsets: &[usize]) {
+        let flag = u64::from(tidb_datatype::FieldTypeFlags::PRI_KEY);
+        let ids = offsets
+            .iter()
+            .filter_map(|offset| self.columns.get(*offset).map(|column| column.id))
+            .collect::<Vec<_>>();
+        let missing = ids.iter().any(|id| {
+            self.meta
+                .read()
+                .find_column_by_id(*id)
+                .is_some_and(|info| info.read().get_flag() & flag == 0)
+        });
+        if missing {
+            self.update_meta_cloned(|meta| {
+                for id in &ids {
+                    if let Some(info) = meta.find_column_by_id(*id) {
+                        info.write().add_flag(flag);
+                    }
+                }
+            });
+        }
     }
 
     /// Adds an index a DDL is still adding or dropping, which only the write
@@ -3377,6 +3556,19 @@ impl KvTable {
             like_default_escape,
         )?;
         self.partial_index_conditions.insert(index_id, compiled);
+        // A table built from columns alone records the predicate in its
+        // `IndexInfo`, where Go's planner reads it.
+        let recorded = self.meta.read().find_index_by_id(index_id).is_some_and(|index| {
+            !index.read().condition_expr_string.is_empty()
+        });
+        if !recorded {
+            let text = self.partial_index_condition_string(index_id).unwrap_or_default();
+            self.update_meta_cloned(|meta| {
+                if let Some(index) = meta.find_index_by_id(index_id) {
+                    index.write().condition_expr_string = text;
+                }
+            });
+        }
         Ok(())
     }
 
@@ -3513,6 +3705,7 @@ impl KvTable {
     /// records as `TableInfo.PKIsHandle`.
     pub fn set_pk_handle_offset(&mut self, offset: usize) {
         self.pk_handle_offset = Some(offset);
+        self.record_fixture_primary_key(&[offset]);
         if !self.meta.read().pk_is_handle {
             self.update_meta(|meta| meta.pk_is_handle = true);
         }
@@ -4684,7 +4877,7 @@ pub fn hypo_kv_indexes(
 
 /// Go `model.ColumnInfo` for a column of a table built from columns alone.
 fn fixture_column_info(column: &KvColumn, offset: usize, hidden: bool) -> tidb_model::ColumnInfo {
-    tidb_model::ColumnInfo {
+    let mut info = tidb_model::ColumnInfo {
         id: column.id,
         name: tidb_ast::CiString::new(column.name.clone()),
         offset: offset as i64,
@@ -4692,5 +4885,13 @@ fn fixture_column_info(column: &KvColumn, offset: usize, hidden: bool) -> tidb_m
         state: tidb_model::SchemaState::PUBLIC,
         hidden,
         ..tidb_model::ColumnInfo::default()
+    };
+    if let Some(generated) = &column.generated {
+        info.generated_expr_string = generated.expr_text.clone();
+        info.generated_stored = generated.stored;
+        for dependency in &generated.dependencies {
+            info.dependences.insert(dependency.go_to_lower());
+        }
     }
+    info
 }

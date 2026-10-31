@@ -1184,14 +1184,15 @@ fn data_source_build_key_info_adds_the_int_primary_key() {
     source.base.base.set_schema(Some(output.clone()));
     source.handle_is_int = true;
     source.handle_cols = vec![column(2)];
-    let index = tidb_infoschema::table_source::SourceIndex {
-        columns: vec![tidb_infoschema::table_source::SourceIndexColumn {
-            name: "a".into(),
+    let index = tidb_model::GoShared::new(tidb_model::IndexInfo {
+        columns: vec![tidb_model::IndexColumn {
+            name: tidb_ast::CiString::new("a"),
             offset: 0,
             length: -1,
-        }],
-        ..Default::default()
-    };
+            ..tidb_model::IndexColumn::default()
+        }].into(),
+        ..tidb_model::IndexInfo::default()
+    });
     assert_eq!(
         source
             .index_range_columns(&index)
@@ -1238,21 +1239,21 @@ fn data_source_unique_index_keys_keep_nullability_and_pruning_semantics() {
             is_not_null: true,
         },
     ];
-    source.indexes = vec![tidb_infoschema::table_source::SourceIndex {
+    source.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
         columns: vec![
-            tidb_infoschema::table_source::SourceIndexColumn {
-                name: "a".to_owned(),
-                ..Default::default()
+            tidb_model::IndexColumn {
+                name: tidb_ast::CiString::new("a"),
+                ..tidb_model::IndexColumn::default()
             },
-            tidb_infoschema::table_source::SourceIndexColumn {
-                name: "b".to_owned(),
-                ..Default::default()
+            tidb_model::IndexColumn {
+                name: tidb_ast::CiString::new("b"),
+                ..tidb_model::IndexColumn::default()
             },
-        ],
+        ].into(),
         unique: true,
-        is_public: true,
-        ..Default::default()
-    }];
+        state: tidb_model::SchemaState::PUBLIC,
+        ..tidb_model::IndexInfo::default()
+    })];
     let mut output = schema(&[1, 2]);
     for column in &mut output.columns {
         column

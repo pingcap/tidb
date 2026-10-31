@@ -109,11 +109,12 @@ fn check_column_can_use_index(
                                 continue;
                             };
                             index
-                                .columns
-                                .iter()
+                                .read().columns
+                                .iter_deref()
                                 .map_while(|index_column| {
+                                    let index_column = index_column.read();
                                     source
-                                        .schema_column_for_index_column(index_column)
+                                        .schema_column_for_index_column(&index_column)
                                         .cloned()
                                         .map(|column| (column, index_column.length))
                                 })
@@ -181,16 +182,17 @@ fn check_column_can_use_index(
                         let Some(index) = source
                             .indexes
                             .iter()
-                            .find(|index| index.id == path.candidate().index_id)
+                            .find(|index| index.read().id == path.candidate().index_id)
                         else {
                             continue;
                         };
                         let resolved = index
-                            .columns
-                            .iter()
+                            .read().columns
+                            .iter_deref()
                             .map_while(|index_column| {
+                                let index_column = index_column.read();
                                 source
-                                    .schema_column_for_index_column(index_column)
+                                    .schema_column_for_index_column(&index_column)
                                     .cloned()
                                     .map(|column| (column, index_column.length))
                             })
@@ -516,8 +518,6 @@ mod tests {
         use tidb_planner_core_operator_logicalop::data_source_paths::{IndexAccessPath, PointGetAdmission, ResolvedTableDescriptor, ResolvedTableScanKind, TableAccessPath, TableScanExplainIdSuffix};
         use tidb_planner_cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate};
         use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
-        use tidb_infoschema::table_source::SourceIndexColumn;
-        use tidb_infoschema::table_source::SourceIndex;
         use tidb_planner_core_operator_logicalop::tikv_scan_spec::TiKvTableScanSpec;
         let allocator = PlanIdAllocator::new();
         let handle = column(1, false);
@@ -568,22 +568,24 @@ mod tests {
                     ..Default::default()
                 },
             ],
-            indexes: vec![SourceIndex {
+            indexes: vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 11,
                 columns: vec![
-                    SourceIndexColumn {
-                        name: "b".to_owned(),
+                    tidb_model::IndexColumn {
+                        name: tidb_ast::CiString::new("b"),
                         offset: 1,
                         length: -1,
+                        ..tidb_model::IndexColumn::default()
                     },
-                    SourceIndexColumn {
-                        name: "a".to_owned(),
+                    tidb_model::IndexColumn {
+                        name: tidb_ast::CiString::new("a"),
                         offset: 0,
                         length: -1,
+                        ..tidb_model::IndexColumn::default()
                     },
-                ],
-                ..Default::default()
-            }],
+                ].into(),
+                ..tidb_model::IndexInfo::default()
+            })],
             all_possible_access_paths: vec![index.clone()],
             ..DataSource::default()
         };

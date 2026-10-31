@@ -539,11 +539,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         };
 
         for index in &table.indexes {
-            if !index.unique {
+            if !index.read().unique {
                 continue;
             }
-            let whole_index_determined = index.columns.iter().all(|index_column| {
-                table.column_at(index_column.offset).is_some_and(|column| {
+            let whole_index_determined = index.read().columns.iter_deref().all(|index_column| {
+                table.column_at(index_column.read().offset as usize).is_some_and(|column| {
                     column.ret_type.flags() & FieldTypeFlags::NOT_NULL != 0
                         && determined(&column.name)
                 })

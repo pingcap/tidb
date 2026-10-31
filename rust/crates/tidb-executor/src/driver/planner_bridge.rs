@@ -201,20 +201,24 @@ fn static_global_index_point_lookup(
     }
 
     table.indexes.iter().any(|index| {
+        let index = index.read();
         if !index.global
             || !index.unique
-            || !index.is_public
-            || !index.is_visible
-            || index.is_multi_valued
+            || !index.is_public()
+            || index.invisible
+            || index.mv_index
             || !index.condition_expr_string.is_empty()
             || index.columns.len() != 1
-            || !index_hint_allows(&table_ref.hints, &index.name)
+            || !index_hint_allows(&table_ref.hints, index.name.original())
         {
             return false;
         }
-        let key = &index.columns[0];
+        let Some(key) = index.columns.get(0) else {
+            return false;
+        };
+        let key = key.read();
         key.length < 0
-            && table.column_at(key.offset).is_some_and(|column| {
+            && table.column_at(key.offset as usize).is_some_and(|column| {
                 column.name.go_lower_eq(column_name) && column.ret_type.code().is_type_integer()
             })
     })
@@ -3435,8 +3439,6 @@ mod statistics_initialization_tests {
     use tidb_expr::schema::Schema;
     use tidb_planner_core_operator_logicalop::DataSource;
     use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
-    use tidb_infoschema::table_source::SourceIndexColumn;
-    use tidb_infoschema::table_source::SourceIndex;
 
     #[test]
     fn unfiltered_table_path_count_uses_realtime_row_count() {
@@ -3589,23 +3591,23 @@ mod statistics_initialization_tests {
             .base
             .base
             .set_schema(Some(Schema::new(vec![column.clone()])));
-        source.indexes = vec![SourceIndex {
+        source.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
             id: 9,
-            name: "ia".to_owned(),
-            columns: vec![SourceIndexColumn {
-                name: "a".to_owned(),
+            name: tidb_ast::CiString::new("ia"),
+            columns: vec![tidb_model::IndexColumn {
+                name: tidb_ast::CiString::new("a"),
                 offset: 0,
                 length: -1,
-            }],
-            is_public: true,
-            is_visible: true,
-            ..Default::default()
-        }];
+                ..tidb_model::IndexColumn::default()
+            }].into(),
+            state: tidb_model::SchemaState::PUBLIC,
+            ..tidb_model::IndexInfo::default()
+        })];
 
         for id in [10, 11] {
-            let mut index = source.indexes[0].clone();
-            index.id = id;
-            index.name = format!("ia_{id}");
+            let index = tidb_model::GoShared::new(source.indexes[0].read().clone_like_go());
+            index.write().id = id;
+            index.write().name = tidb_ast::CiString::new(format!("ia_{id}"));
             source.indexes.push(index);
         }
         source.table_columns = vec![column.clone()];
@@ -3792,18 +3794,18 @@ mod statistics_initialization_tests {
             .base
             .base
             .set_schema(Some(Schema::new(vec![column.clone()])));
-        source.indexes = vec![SourceIndex {
+        source.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
             id: 9,
-            name: "ia".to_owned(),
-            columns: vec![SourceIndexColumn {
-                name: "a".to_owned(),
+            name: tidb_ast::CiString::new("ia"),
+            columns: vec![tidb_model::IndexColumn {
+                name: tidb_ast::CiString::new("a"),
                 offset: 0,
                 length: -1,
-            }],
-            is_public: true,
-            is_visible: true,
-            ..Default::default()
-        }];
+                ..tidb_model::IndexColumn::default()
+            }].into(),
+            state: tidb_model::SchemaState::PUBLIC,
+            ..tidb_model::IndexInfo::default()
+        })];
         source.enumerated_paths = vec![tidb_planner_util::path::PossiblePath::Index { index: 0 }];
         let mut parameter = Constant::new(Datum::Int(1), field_type);
         parameter.param_marker = Some(ParamMarker { order: 0 });

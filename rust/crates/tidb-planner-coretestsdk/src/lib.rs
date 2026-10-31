@@ -32,8 +32,6 @@ use tidb_parser::auth::UserIdentity;
 use tidb_infoschema::table_source::TableSource;
 use tidb_infoschema::table_source::SourceView;
 use tidb_infoschema::table_source::SourceTable;
-use tidb_infoschema::table_source::SourceIndexColumn;
-use tidb_infoschema::table_source::SourceIndex;
 use tidb_infoschema::table_source::SourceColumn;
 
 const DEFAULT_DIV_PRECISION_INCREMENT: u32 = 4;
@@ -518,45 +516,7 @@ fn source_table(table: GoShared<TableInfo>) -> SourceTable {
             }
         })
         .collect();
-    let indexes = info
-        .indices
-        .iter_deref()
-        .map(|index| {
-            let index = index.read();
-            SourceIndex {
-                id: index.id,
-                name: index.name.original().to_owned(),
-                columns: index
-                    .columns
-                    .iter_deref()
-                    .map(|column| {
-                        let column = column.read();
-                        SourceIndexColumn {
-                            name: column.name.original().to_owned(),
-                            offset: usize::try_from(column.offset)
-                                .expect("fixture index offsets are nonnegative"),
-                            length: column.length,
-                        }
-                    })
-                    .collect(),
-                unique: index.unique,
-                primary: index.primary,
-                is_public: index.state == SchemaState::PUBLIC,
-                is_visible: !index.invisible,
-                is_columnar: index.vector_info.is_some()
-                    || index.inverted_info.is_some()
-                    || index.full_text_info.is_some(),
-                is_multi_valued: index.mv_index,
-                global: index.global,
-                condition_expr_string: index.condition_expr_string.clone(),
-                affect_column_offsets: index
-                    .affect_column
-                    .iter_deref()
-                    .map(|column| usize::try_from(column.read().offset).unwrap())
-                    .collect(),
-            }
-        })
-        .collect();
+    let indexes = info.indices.iter_deref().collect();
     let (partition_definition_names, partition_definition_ids) = info
         .partition
         .as_ref()

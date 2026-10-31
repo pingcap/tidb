@@ -2361,8 +2361,8 @@ fn table_has_index_matching_ordering(
         parent_filters,
     );
     data_source.indexes.iter().any(|index| {
-        index.is_public
-            && index.is_visible
+        index.read().is_public()
+            && !index.read().invisible
             && index_matches_ordering(
                 index,
                 data_source,
@@ -2382,8 +2382,8 @@ fn index_matches_ordering(
         return false;
     }
     let mut order_position = 0;
-    for index_column in &index.columns {
-        let Some(column) = data_source.table_columns.get(index_column.offset) else {
+    for index_column in index.read().columns.iter_deref() {
+        let Some(column) = data_source.table_columns.get(index_column.read().offset as usize) else {
             return false;
         };
         if ordering_column_ids.get(order_position) == Some(&column.id) {
@@ -2480,8 +2480,6 @@ mod tests {
     use tidb_planner_core_operator_logicalop::table_dual::LogicalTableDual;
     use tidb_planner_core_operator_logicalop::BaseLogicalPlan;
     use tidb_planner_core_base::PlanIdAllocator;
-    use tidb_infoschema::table_source::SourceIndexColumn;
-    use tidb_infoschema::table_source::SourceIndex;
     use tidb_planner_property::stats_info::StatsInfo;
     use tidb_ast::CiString;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -2668,28 +2666,27 @@ mod tests {
             .set_schema(Some(Schema::new(vec![column(1), column(2), column(3)])));
         let mut data_source = DataSource::new(base, 1, "t");
         data_source.table_columns = vec![column(1), column(2), column(3)];
-        data_source.indexes = vec![SourceIndex {
-            is_public: true,
-            is_visible: true,
+        data_source.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
+            state: tidb_model::SchemaState::PUBLIC,
             columns: vec![
-                SourceIndexColumn {
-                    name: "a".to_owned(),
+                tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new("a"),
                     offset: 0,
-                    ..SourceIndexColumn::default()
+                    ..tidb_model::IndexColumn::default()
                 },
-                SourceIndexColumn {
-                    name: "b".to_owned(),
+                tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new("b"),
                     offset: 1,
-                    ..SourceIndexColumn::default()
+                    ..tidb_model::IndexColumn::default()
                 },
-                SourceIndexColumn {
-                    name: "c".to_owned(),
+                tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new("c"),
                     offset: 2,
-                    ..SourceIndexColumn::default()
+                    ..tidb_model::IndexColumn::default()
                 },
-            ],
-            ..SourceIndex::default()
-        }];
+            ].into(),
+            ..tidb_model::IndexInfo::default()
+        })];
 
         assert!(data_source_satisfies_ordering(
             &data_source,
@@ -2723,7 +2720,7 @@ mod tests {
             &[]
         ));
 
-        data_source.indexes[0].is_visible = false;
+        data_source.indexes[0].write().invisible = true;
         assert!(!data_source_satisfies_ordering(
             &data_source,
             &[column(1)],

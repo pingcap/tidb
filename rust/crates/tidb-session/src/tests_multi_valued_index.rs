@@ -452,3 +452,28 @@ fn a_multi_valued_index_is_never_read_as_an_ordinary_index() {
         vec![vec!["1", "2"], vec!["1", "5"]]
     );
 }
+
+/// Go `BuildIndexInfo` takes `IndexInfo.MVIndex` from `buildIndexColumns`,
+/// so an index ADDED to an existing table over an ARRAY cast is as
+/// multi-valued as one declared at CREATE TABLE, and plans its IndexMerge
+/// path (`TestIssue50298`).
+#[test]
+fn an_added_array_index_is_a_multi_valued_index() {
+    let mut session = Session::new();
+    session.run("create table t(a int, b json)").unwrap();
+    session
+        .run(r#"insert into t value (1, '{"a":[1,2,3], "b": [2,3,4]}')"#)
+        .unwrap();
+    session
+        .run("alter table t add index ibb( (cast(b->'$.b' as signed array)) )")
+        .unwrap();
+    let plan = brief_plan(
+        &mut session,
+        "explain format = 'brief' select /*+ use_index_merge(t) */ * from t where 10 member of (b->'$.b')",
+    );
+    assert!(plan[0].starts_with("IndexMerge"), "{plan:?}");
+    assert_eq!(
+        row_text(session.run("select a from t where 3 member of (b->'$.b')")),
+        vec![vec!["1"]]
+    );
+}

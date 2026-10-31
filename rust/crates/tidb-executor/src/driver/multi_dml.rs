@@ -195,9 +195,15 @@ pub(crate) fn run_multi_update(
             ));
         };
         let heap = matches!(table.handle, tidb_planner_core_operator_physicalop::DeleteHandle::Extra(_));
+        // The planner's assignment offsets and the composed rows address
+        // the stored row, `TableInfo.Columns` with any hidden column.
         updated.push(UpdatedTable {
-            columns: entry.column_list(),
-            default_meta: super::dml::column_metadata(entry),
+            columns: kv
+                .columns()
+                .iter()
+                .map(|column| (column.name.clone(), column.field_type.clone()))
+                .collect(),
+            default_meta: super::dml::stored_column_metadata(entry),
             generated_columns: kv
                 .columns()
                 .iter()

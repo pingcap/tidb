@@ -3212,10 +3212,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // `:5102` "Try to substitute generate column only if there is an index
         // on generate column."
         if table.indexes.iter().any(|index| {
-            index.is_public
-                && index.columns.iter().any(|index_column| {
+            index.read().is_public()
+                && index.read().columns.iter_deref().any(|index_column| {
                     table
-                        .column_at(index_column.offset)
+                        .column_at(index_column.read().offset as usize)
                         .is_some_and(|column| column.is_virtual_generated)
                 })
         }) {
@@ -3569,7 +3569,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         latest_indexes
                             .into_iter()
                             .flatten()
-                            .filter_map(|(id, index)| index.is_public.then_some(id))
+                            .filter_map(|(id, index)| index.read().is_public().then_some(id))
                             .collect(),
                     );
                 }
@@ -3607,7 +3607,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         tidb_planner_util::path::PossiblePath::Index { index } => table
                             .indexes
                             .get(*index)
-                            .is_some_and(|index| lower_name_matches(&index.name, name)),
+                            .is_some_and(|index| lower_name_matches(index.read().name.original(), name)),
                     })
                 })
                 .cloned()

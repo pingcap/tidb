@@ -62,6 +62,125 @@ fn run_topic(topic: &str) -> Result<TopicReport, String> {
     replay::run_topic::<Connections>(topic)
 }
 
+/// Replays every topic, `INTEGRATION_JOBS` at a time (all cores by default),
+/// and answers the reports in `topics` order.
+///
+/// Each topic replays in a process of its own, as each recording was made
+/// against a server: a topic opens its own store, but `SET GLOBAL`, the
+/// config and Go's process-wide singletons (`vardef`, infosync's label
+/// rules) are process state, and topics sharing one process would read each
+/// other's. `INTEGRATION_JOBS=1` replays the topics one after another.
+fn run_topics(topics: &[&str]) -> Vec<Result<TopicReport, String>> {
+    let jobs = std::env::var("INTEGRATION_JOBS")
+        .ok()
+        .and_then(|jobs| jobs.parse::<usize>().ok())
+        .filter(|jobs| *jobs > 0)
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, usize::from))
+        .min(topics.len().max(1));
+    let reports_dir = std::env::temp_dir().join(format!("integration-diff-{}", std::process::id()));
+    std::fs::create_dir_all(&reports_dir).expect("create the report directory");
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let reports: Vec<std::sync::Mutex<Option<Result<TopicReport, String>>>> =
+        topics.iter().map(|_| std::sync::Mutex::new(None)).collect();
+    std::thread::scope(|scope| {
+        for _ in 0..jobs {
+            scope.spawn(|| loop {
+                let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Some(topic) = topics.get(index) else {
+                    break;
+                };
+                let report = replay_topic_in_child(topic, &reports_dir.join(index.to_string()));
+                *reports[index].lock().unwrap() = Some(report);
+            });
+        }
+    });
+    let _ = std::fs::remove_dir_all(&reports_dir);
+    reports
+        .into_iter()
+        .map(|report| report.into_inner().unwrap().expect("every topic was replayed"))
+        .collect()
+}
+
+/// Replays `topic` in a child process ([`replay_child_topic`]), which writes
+/// its report to `<path>.report` and its output to `<path>.log`.
+fn replay_topic_in_child(topic: &str, path: &std::path::Path) -> Result<TopicReport, String> {
+    let report_path = path.with_extension("report");
+    let log_path = path.with_extension("log");
+    let log = std::fs::File::create(&log_path).map_err(|e| format!("create {}: {e}", log_path.display()))?;
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "--ignored", "--nocapture", "--test-threads=1", "replay_child_topic"])
+        .env("INTEGRATION_CHILD_TOPIC", topic)
+        .env("INTEGRATION_CHILD_REPORT", &report_path)
+        .stdout(log.try_clone().map_err(|e| format!("log handle: {e}"))?)
+        .stderr(log)
+        .status()
+        .map_err(|e| format!("spawn the replay of {topic}: {e}"))?;
+    match std::fs::read_to_string(&report_path) {
+        Ok(text) if status.success() => match text.strip_prefix("ERROR\t") {
+            Some(error) => Err(error.to_owned()),
+            None => TopicReport::decode(&text),
+        },
+        _ => {
+            // The child's last lines name the panic.
+            let output = std::fs::read_to_string(&log_path).unwrap_or_default();
+            let tail: Vec<&str> = output
+                .lines()
+                .filter(|line| !line.starts_with('['))
+                .collect();
+            let tail = tail[tail.len().saturating_sub(12)..].join("\n");
+            Err(format!("the replay process failed ({status}):\n{tail}"))
+        }
+    }
+}
+
+/// The child half of [`run_topics`]: replays `INTEGRATION_CHILD_TOPIC` and
+/// writes its encoded report to `INTEGRATION_CHILD_REPORT`.
+#[test]
+#[ignore = "run by integrationtest_replay_matches_recorded_tidb_output, one process per topic"]
+fn replay_child_topic() {
+    let topic = std::env::var("INTEGRATION_CHILD_TOPIC").expect("INTEGRATION_CHILD_TOPIC");
+    let path = std::env::var("INTEGRATION_CHILD_REPORT").expect("INTEGRATION_CHILD_REPORT");
+    let text = match run_topic(&topic) {
+        Ok(report) => report.encode(),
+        Err(error) => format!("ERROR\t{error}"),
+    };
+    std::fs::write(&path, text).expect("write the topic report");
+}
+
+/// `INTEGRATION_TIMING=1`: where the replay's time went -- the slowest
+/// topics, and the statement kinds by total time across every topic.
+fn print_timing(topics: &[&str], reports: &[Result<TopicReport, String>], wall: std::time::Duration) {
+    let mut by_topic: Vec<(std::time::Duration, &str)> = topics
+        .iter()
+        .zip(reports)
+        .filter_map(|(topic, report)| report.as_ref().ok().map(|report| (report.elapsed, *topic)))
+        .collect();
+    let summed: std::time::Duration = by_topic.iter().map(|(elapsed, _)| *elapsed).sum();
+    by_topic.sort_by(|left, right| right.cmp(left));
+    let mut by_kind: BTreeMap<String, (usize, std::time::Duration)> = BTreeMap::new();
+    for report in reports.iter().flatten() {
+        for (kind, (count, spent)) in &report.statement_time {
+            let total = by_kind.entry(kind.clone()).or_default();
+            total.0 += count;
+            total.1 += *spent;
+        }
+    }
+    let mut by_kind: Vec<_> = by_kind.into_iter().collect();
+    by_kind.sort_by(|left, right| right.1 .1.cmp(&left.1 .1));
+    eprintln!("replay wall time {wall:.1?}, summed topic time {summed:.1?}");
+    eprintln!("slowest topics:");
+    for (elapsed, topic) in by_topic.iter().take(15) {
+        eprintln!("  {elapsed:>9.2?} {topic}");
+    }
+    eprintln!("statement kinds by total time:");
+    for (kind, (count, spent)) in by_kind.iter().take(20) {
+        eprintln!(
+            "  {spent:>9.2?} {count:>6} x {kind:<24} {:>8.2?} each",
+            *spent / u32::try_from(*count).unwrap_or(u32::MAX).max(1)
+        );
+    }
+}
+
 /// A topic listed twice is replayed twice, and every statement it compares is
 /// counted twice in the headline totals -- which is exactly what happened when
 /// `session/variable` and `table/cache` were each onboarded a second time by a
@@ -203,10 +322,17 @@ fn warning_comparison_covers_only_enable_warnings_statements() {
 fn integrationtest_replay_matches_recorded_tidb_output() {
     assert_topics_are_unique();
 
+    let started = std::time::Instant::now();
+    let reports = run_topics(TOPICS);
+    let wall = started.elapsed();
+    if std::env::var_os("INTEGRATION_TIMING").is_some() {
+        print_timing(TOPICS, &reports, wall);
+    }
+
     let mut total = TopicReport::default();
     let mut per_topic = Vec::new();
-    for topic in TOPICS {
-        let report = run_topic(topic).unwrap_or_else(|e| panic!("topic {topic}: {e}"));
+    for (topic, report) in TOPICS.iter().zip(reports) {
+        let report = report.unwrap_or_else(|e| panic!("topic {topic}: {e}"));
         per_topic.push(format!(
             "{topic}: {} matched {:?}, {} diverged, {} skipped of {}",
             report.matched_total(),
@@ -434,6 +560,13 @@ fn replay_topic_reporting(topic: &str) {
             );
             if std::env::var_os("INTEGRATION_SHOW_DIVERGENCES").is_some() {
                 eprintln!("{}", report.divergences.join(""));
+            }
+            if std::env::var_os("INTEGRATION_TIMING").is_some() {
+                let mut kinds: Vec<_> = report.statement_time.iter().collect();
+                kinds.sort_by(|left, right| right.1 .1.cmp(&left.1 .1));
+                for (kind, (count, spent)) in kinds.iter().take(12) {
+                    eprintln!("  {spent:>9.2?} {count:>6} x {kind}");
+                }
             }
         }
         Err(reason) => eprintln!("UNALIGNED {topic}: {reason}"),

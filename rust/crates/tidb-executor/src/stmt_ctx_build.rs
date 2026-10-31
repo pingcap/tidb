@@ -906,15 +906,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         for (_, _, table) in self.local_temporary_tables_ref() {
             Arc::make_mut(&mut schema).table_indexes.insert(
                 table.table_id(),
-                table
-                    .indexes()
-                    .iter()
-                    .map(|index| tidb_infoschema::table_source::SourceIndex {
-                        id: index.id,
-                        is_public: true,
-                        ..Default::default()
-                    })
-                    .collect(),
+                table.meta().read().indices.iter_deref().collect(),
             );
         }
         Some(schema)

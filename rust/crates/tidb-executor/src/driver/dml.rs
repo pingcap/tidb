@@ -38,8 +38,9 @@ use update_record::UpdateRecords;
 
 
 pub(crate) use defaults::{
-    column_default, column_metadata, materialize_column_default, ColumnDefaultMeta, DefaultUse,
-    PreparedOnUpdateNow, set_value_for_ref_column,
+    column_default, column_metadata, kv_column_metadata, materialize_column_default,
+    stored_column_metadata, ColumnDefaultMeta, DefaultUse, PreparedOnUpdateNow,
+    set_value_for_ref_column,
 };
 
 /// Parses and runs a plain `INSERT INTO t [(cols)] VALUES (...), ...` against
@@ -1058,6 +1059,12 @@ fn run_insert_rows(
 
     let auto_increment_offset = kv.auto_increment_offset();
     let auto_random_offset = kv.auto_random().map(|spec| spec.offset);
+    // Until generation makes it a stored row, a row holds the visible
+    // columns, where an auto-id column sits at its visible position.
+    let visible_offsets = kv.visible_offsets();
+    let visible_position =
+        |stored: usize| visible_offsets.iter().position(|offset| *offset == stored);
+    let stored_meta: Vec<ColumnDefaultMeta> = kv.columns().iter().map(kv_column_metadata).collect();
     // One marker per staged row: after casting, a supplied zero under
     // NO_AUTO_VALUE_ON_ZERO remains zero while NULL and omitted values still
     // take an id. Keeping the supplied-ness beside the row distinguishes the
@@ -1155,12 +1162,15 @@ fn run_insert_rows(
         .collect::<Result<Vec<_>, DriverError>>()?;
     let table_types = column_list.iter().map(|(_, field_type)| field_type.clone());
     let prepared_on_duplicate = PreparedOnDuplicate {
+        // The duplicate row is a stored row, where each visible column sits
+        // at its stored offset.
         on_update_now: PreparedOnUpdateNow::new(
-            &column_meta,
+            &stored_meta,
             on_duplicate_assignments
                 .iter()
-                .map(|assignment| assignment.offset),
+                .map(|assignment| visible_offsets[assignment.offset]),
         )?,
+        visible_offsets: visible_offsets.clone(),
         assignments: on_duplicate_assignments,
         extra_handle: extra_handle_offset.is_some(),
         selected_partitions: insert_partition_ids.clone(),
@@ -1303,7 +1313,7 @@ fn run_insert_rows(
         // Go fills the auto-increment column before the default and NOT NULL
         // rules run, so an omitted auto column never looks like a missing
         // value (`adjustAutoIncrementDatum` runs inside the row build).
-        if let Some(offset) = auto_increment_offset {
+        if let Some(offset) = auto_increment_offset.and_then(visible_position) {
             // An omitted or explicitly NULL auto column becomes the zero
             // marker, which allocation replaces; Go does this before the
             // NOT NULL check, so a NULL here is never a bad-null error.
@@ -1316,7 +1326,7 @@ fn run_insert_rows(
         }
         // AUTO_RANDOM uses the same NULL/omitted/zero value boundary as Go's
         // `adjustAutoRandomDatum`, but draws from its own allocator below.
-        if let Some(offset) = auto_random_offset {
+        if let Some(offset) = auto_random_offset.and_then(visible_position) {
             let supplied = assigned[offset] && row[offset] != Datum::Null;
             if !supplied {
                 row[offset] = Datum::Int(0);
@@ -1870,17 +1880,15 @@ fn run_insert_rows(
                     continue;
                 }
             } else if has_on_duplicate {
-                let sql_candidate;
-                let candidate_values = if let Some(offset) = extra_handle_offset {
-                    sql_candidate = candidate[..column_list.len() - 1]
-                        .iter()
-                        .chain(std::iter::once(&candidate[offset]))
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    sql_candidate.as_slice()
-                } else {
-                    row
-                };
+                // `VALUES(col)` and the assignments read the statement's
+                // visible columns, then the extra handle it wrote.
+                let sql_candidate = visible_offsets
+                    .iter()
+                    .map(|offset| &row[*offset])
+                    .chain(extra_handle_offset.map(|offset| &candidate[offset]))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let candidate_values = sql_candidate.as_slice();
                 let applied = apply_on_duplicate(
                     catalog,
                     &database,
@@ -2168,6 +2176,8 @@ pub(crate) struct PreparedOnDuplicateAssignment {
 
 struct PreparedOnDuplicate {
     extra_handle: bool,
+    /// The stored offsets of the visible columns the assignments name.
+    visible_offsets: Vec<usize>,
     assignments: Vec<PreparedOnDuplicateAssignment>,
     on_update_now: PreparedOnUpdateNow,
     selected_partitions: Option<Vec<i64>>,
@@ -2214,8 +2224,8 @@ fn apply_on_duplicate(
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
     let extra_handle = prepared.extra_handle;
     let sql_row = |row: &[Datum]| {
-        let visible = column_list.len() - usize::from(extra_handle);
-        let mut values = row[..visible].to_vec();
+        let mut values: Vec<Datum> =
+            prepared.visible_offsets.iter().map(|offset| row[*offset].clone()).collect();
         if extra_handle {
             values.push(Datum::Int(
                 extra_handle_value(handle).expect("heap row has an integer handle"),
@@ -2249,7 +2259,7 @@ fn apply_on_duplicate(
                 .value
                 .eval(ctx, chunk.get_row(0))
                 .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-            updated[assignment.offset] = cast_value_for_assignment(
+            updated[prepared.visible_offsets[assignment.offset]] = cast_value_for_assignment(
                 value,
                 &field_types[assignment.offset],
                 &column_list[assignment.offset].0,
@@ -3317,6 +3327,23 @@ fn run_update_with_physical(
         column_list.len() - 1
     });
     let column_list = column_list;
+    // The rows are stored rows and the planner's assignment offsets address
+    // them (`TableInfo.Columns`, hidden columns included), with the extra
+    // handle one past the last column; the statement's expressions read the
+    // visible columns.
+    let stored_meta = stored_column_metadata(table);
+    let stored_handle_slot = extra_handle_slot.map(|_| stored_meta.len());
+    let visible_offsets: Vec<usize> = match table {
+        TableEntry::Kv(kv) => kv.visible_offsets(),
+        _ => (0..column_meta.len()).collect(),
+    };
+    let handle_type = extra_handle_slot.map(|slot| column_list[slot].1.clone());
+    let assignment_type = |offset: usize| -> FieldType {
+        match stored_meta.get(offset) {
+            Some(meta) => meta.field_type.clone(),
+            None => handle_type.clone().expect("only the extra handle follows the columns"),
+        }
+    };
 
     // Go `buildUpdateLists` resolved every SET item at plan time: the planner's
     // assignments name the target column of each expression.
@@ -3336,10 +3363,9 @@ fn run_update_with_physical(
         set_exprs.push((*offset, planned.clone()));
     }
     let on_update_now =
-        PreparedOnUpdateNow::new(&column_meta, set_exprs.iter().map(|(offset, _)| *offset))?;
+        PreparedOnUpdateNow::new(&stored_meta, set_exprs.iter().map(|(offset, _)| *offset))?;
 
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
-    let column_names: Vec<String> = column_list.iter().map(|(name, _)| name.clone()).collect();
     // Finish the physical read before evaluating the predicate. The Apply's
     // inner query needs an immutable view of the complete statement snapshot,
     // including the target table itself, and no write is applied until every
@@ -3404,7 +3430,7 @@ fn run_update_with_physical(
         for (offset, expression) in &mut set_exprs {
             *expression = tidb_planner::plan_builder::ordered_list::cast_point_update_assignment(
                 expression.clone(),
-                &column_list[*offset].1,
+                &assignment_type(*offset),
                 ctx,
             )
             .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
@@ -3448,7 +3474,7 @@ fn run_update_with_physical(
     let mut records = UpdateRecords::new(fk_triggers);
     let writes_stored_columns = set_exprs
         .iter()
-        .any(|(offset, _)| Some(*offset) != extra_handle_slot);
+        .any(|(offset, _)| Some(*offset) != stored_handle_slot);
     let accountant = ctx
         .statement_memory()
         .write_accountant(mem_quota::label::UPDATE);
@@ -3473,11 +3499,12 @@ fn run_update_with_physical(
                 let handle = extra_handle_value(&row.id);
                 let mut new_row = UpdateRowEvaluator {
                     field_types: &field_types,
-                    column_names: &column_names,
+                    stored_meta: &stored_meta,
+                    visible_offsets: &visible_offsets,
                     set_exprs: &set_exprs,
                     ctx,
                     on_update_now: &on_update_now,
-                    extra_handle: extra_handle_slot.is_some(),
+                    stored_handle_slot,
                 }
                 .compute(
                     &row.stored,
@@ -3532,11 +3559,12 @@ fn run_update_with_physical(
     )?;
     let row_evaluator = UpdateRowEvaluator {
         field_types: &field_types,
-        column_names: &column_names,
+        stored_meta: &stored_meta,
+        visible_offsets: &visible_offsets,
         set_exprs: &set_exprs,
         ctx,
         on_update_now: &on_update_now,
-        extra_handle: extra_handle_slot.is_some(),
+        stored_handle_slot,
     };
     for row in rows {
         let handle = extra_handle_value(&row.id);
@@ -3585,14 +3613,19 @@ fn run_update_with_physical(
 }
 
 struct UpdateRowEvaluator<'a> {
+    /// The statement's visible columns, then Go's extra handle column when
+    /// the table has one.
     field_types: &'a [FieldType],
-    column_names: &'a [String],
+    /// Every column of the stored row, which `set_exprs` offsets address.
+    stored_meta: &'a [ColumnDefaultMeta],
+    /// The stored offsets of the visible columns, in order.
+    visible_offsets: &'a [usize],
     set_exprs: &'a [(usize, Expression)],
     ctx: &'a crate::StmtContext,
     on_update_now: &'a PreparedOnUpdateNow,
-    /// Whether `field_types` ends in Go's extra handle column, so the row
-    /// this evaluates has one more slot than the row it stages.
-    extra_handle: bool,
+    /// The extra handle's assignment offset, one past the stored row: Go
+    /// evaluates it but stages no column for it.
+    stored_handle_slot: Option<usize>,
 }
 
 impl UpdateRowEvaluator<'_> {
@@ -3605,9 +3638,9 @@ impl UpdateRowEvaluator<'_> {
         physical_input: Option<(&[Datum], &[FieldType])>,
         matched: &mut u64,
     ) -> Result<Vec<Datum>, DriverError> {
-        let visible = self.field_types.len() - usize::from(self.extra_handle);
-        let mut evaluated = row[..visible].to_vec();
-        if self.extra_handle {
+        let mut evaluated: Vec<Datum> =
+            self.visible_offsets.iter().map(|offset| row[*offset].clone()).collect();
+        if self.stored_handle_slot.is_some() {
             evaluated.push(handle.map_or(Datum::Null, Datum::Int));
         }
         let sql_row = evaluated.as_slice();
@@ -3642,13 +3675,13 @@ impl UpdateRowEvaluator<'_> {
                 .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
             // ExtraHandleID has no column metadata in Go composeNewRow:
             // evaluate it, but neither cast it nor put it in the writable row.
-            if self.extra_handle && *offset == visible {
+            if self.stored_handle_slot == Some(*offset) {
                 continue;
             }
             new_row[*offset] = cast_value_for_update_assignment(
                 value,
-                &self.field_types[*offset],
-                &self.column_names[*offset],
+                &self.stored_meta[*offset].field_type,
+                &self.stored_meta[*offset].name,
                 row_index,
                 self.ctx,
             )?;

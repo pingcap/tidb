@@ -42,7 +42,7 @@ pub fn init_stats(
             source
                 .indexes
                 .iter()
-                .map(|index| index.id)
+                .map(|index| index.read().id)
                 .filter(|id| map.has_analyzed(*id, true))
                 .collect()
         })
@@ -126,7 +126,7 @@ pub fn init_stats(
         &source.table_columns,
         // Go `statistics.PrepareCols4MVIndex`, which the planner injects.
         |_, index_info, _| {
-            let index = source.indexes.iter().find(|index| index.id == index_info.id)?;
+            let index = source.indexes.iter().find(|index| index.read().id == index_info.id)?;
             crate::access_path::prepare_cols_for_mv_index(source, index)
         },
     );
@@ -136,12 +136,12 @@ pub fn init_stats(
     for index in &source.indexes {
         let has_possible_path = source.enumerated_paths.iter().any(|path| {
             matches!(path, tidb_planner_util::path::PossiblePath::Index { index: position }
-                if source.indexes.get(*position).is_some_and(|candidate| candidate.id == index.id))
+                if source.indexes.get(*position).is_some_and(|candidate| candidate.read().id == index.read().id))
         });
-        let Some(columns) = hist_coll.idx_to_col_unique_ids.get_mut(&index.id) else {
+        let Some(columns) = hist_coll.idx_to_col_unique_ids.get_mut(&index.read().id) else {
             continue;
         };
-        if has_possible_path && columns.len() == index.columns.len() {
+        if has_possible_path && columns.len() == index.read().columns.len() {
             let declared = source
                 .declared_index_columns(index)
                 .into_iter()
@@ -202,8 +202,6 @@ use tidb_charset::Collation;
     use tidb_planner_cardinality::selectivity::get_row_count_by_index_ranges;
     use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
     use tidb_planner_core_operator_logicalop::DataSource;
-    use tidb_infoschema::table_source::SourceIndexColumn;
-    use tidb_infoschema::table_source::SourceIndex;
 
     /// Go `GetScaledRealtimeAndModifyCnt`: a fully loaded multi-valued
     /// index's entries count array elements, so its histogram scales with the
@@ -320,19 +318,19 @@ use tidb_charset::Collation;
                 .base
                 .base
                 .set_schema(Some(Schema::new(vec![a_column.clone(), j_column.clone()])));
-            source.indexes = vec![SourceIndex {
+            source.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 7,
-                name: "mv_j".to_owned(),
-                columns: vec![SourceIndexColumn {
-                    name: "j".to_owned(),
+                name: tidb_ast::CiString::new("mv_j"),
+                columns: vec![tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new("j"),
                     offset: 1,
                     length: -1,
-                }],
-                is_public: true,
-                is_visible: true,
-                is_multi_valued: multi_valued,
-                ..Default::default()
-            }];
+                    ..tidb_model::IndexColumn::default()
+                }].into(),
+                state: tidb_model::SchemaState::PUBLIC,
+                mv_index: multi_valued,
+                ..tidb_model::IndexInfo::default()
+            })];
             source.enumerated_paths = vec![tidb_planner_util::path::PossiblePath::Index { index: 0 }];
             // Go `ds.TableInfo`: columns a and j, and the index on j.
             let table_info = tidb_model::TableInfo {

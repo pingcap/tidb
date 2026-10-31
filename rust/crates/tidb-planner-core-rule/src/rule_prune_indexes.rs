@@ -90,11 +90,12 @@ fn discounted_handle_prefix(source: &DataSource, interesting: &HashSet<i64>) -> 
             key.push(col.id);
         }
     } else if source.is_common_handle {
-        let Some(primary) = source.indexes.iter().find(|index| index.primary) else {
+        let Some(primary) = source.indexes.iter().find(|index| index.read().primary) else {
             return HashSet::new();
         };
-        for col in &primary.columns {
-            let Some(meta) = source.table_columns.get(col.offset) else {
+        for col in primary.read().columns.iter_deref() {
+            let col = col.read();
+            let Some(meta) = source.table_columns.get(col.offset as usize) else {
                 return HashSet::new();
             };
             if col.length > 0 {
@@ -118,7 +119,7 @@ fn score_index_path(
         return None;
     };
     let metadata = source.indexes.get(*index)?;
-    let state = source.derived_index_paths.get(&metadata.id);
+    let state = source.derived_index_paths.get(&metadata.read().id);
     let declared = state.and_then(|state| state.declared_columns.as_ref());
     let mut score = IndexWithScore {
         path: path.clone(),
@@ -133,15 +134,21 @@ fn score_index_path(
                     && tidb_planner_core_operator_logicalop::data_source::index_path_is_single_scan(source, metadata, false)
             }),
         columns: declared.map_or(0, Vec::len),
-        index_id: metadata.id,
+        index_id: metadata.read().id,
         single_interesting_declared_column: None,
     };
-    if !metadata.condition_expr_string.is_empty()
-        && metadata.affect_column_offsets.iter().any(|offset| {
-            !source
-                .table_columns
-                .get(*offset)
-                .is_some_and(|column| interesting_ids.contains(&column.id))
+    // Go `ds.TableInfo.Columns`, which `IndexColumn.Offset` addresses.
+    let table_columns = source.table_info.as_ref().map(|info| info.read().columns.clone());
+    // Go `ds.TableInfo.Columns[col.Offset].ID`.
+    let table_column_id = |offset: i64| {
+        table_columns
+            .as_ref()
+            .and_then(|columns| columns.get(offset as usize))
+            .map(|column| column.read().id)
+    };
+    if !metadata.read().condition_expr_string.is_empty()
+        && metadata.read().affect_column.iter_deref().any(|column| {
+            !table_column_id(column.read().offset).is_some_and(|id| interesting_ids.contains(&id))
         })
     {
         return Some(score);
@@ -176,13 +183,20 @@ fn score_index_path(
             }
         }
     } else {
-        for col in &metadata.columns {
-            let Some(col) = source.table_columns.get(col.offset) else {
+        for col in metadata.read().columns.iter_deref() {
+            let offset = col.read().offset;
+            if table_columns
+                .as_ref()
+                .is_none_or(|columns| offset < 0 || offset as usize >= columns.len())
+            {
+                continue;
+            }
+            let Some(id) = table_column_id(offset) else {
                 continue;
             };
-            if interesting_ids.contains(&col.id) {
+            if interesting_ids.contains(&id) {
                 score.interesting_count += 1;
-                score.covers_non_discounted |= !discounted.contains(&col.id);
+                score.covers_non_discounted |= !discounted.contains(&id);
             }
         }
     }
@@ -298,11 +312,11 @@ pub fn prune_indexes_by_where_and_order(
                 let Some(metadata) = source.indexes.get(*index) else {
                     continue;
                 };
-                if metadata.is_multi_valued {
+                if metadata.read().mv_index {
                     multi_value_paths.push(path.clone());
                     continue;
                 }
-                if source.forced_index_ids.contains(&metadata.id) {
+                if source.forced_index_ids.contains(&metadata.read().id) {
                     return paths.to_vec();
                 }
                 let Some(scored) = score_index_path(source, path, &interesting_ids, &discounted)
@@ -315,7 +329,7 @@ pub fn prune_indexes_by_where_and_order(
                         .iter()
                         .flat_map(|hint| &hint.index_names)
                         .any(|name| {
-                            tidb_mysql::equal_fold(&tidb_mysql::to_lowercase(&metadata.name), name)
+                            tidb_mysql::equal_fold(metadata.read().name.lowercase(), name)
                         })
                 {
                     index_merge_paths.push(path.clone());
@@ -374,14 +388,14 @@ pub fn prune_data_source_with_options(
     for index in &source.indexes {
         if source
             .derived_index_paths
-            .get(&index.id)
+            .get(&index.read().id)
             .is_some_and(|state| state.declared_columns.is_some())
         {
             let single =
                 tidb_planner_core_operator_logicalop::data_source::index_path_is_single_scan(source, index, prefix_single_scan);
             source
                 .derived_index_paths
-                .get_mut(&index.id)
+                .get_mut(&index.read().id)
                 .unwrap()
                 .is_single_scan = Some(single);
         }
@@ -400,11 +414,11 @@ pub fn prune_data_source_with_options(
     let kept = pruned
         .iter()
         .filter_map(|path| match path {
-            PossiblePath::Index { index } => source.indexes.get(*index).map(|index| index.id),
+            PossiblePath::Index { index } => source.indexes.get(*index).map(|index| index.read().id),
             PossiblePath::Table {
                 primary_index: Some(index),
                 ..
-            } => source.indexes.get(*index).map(|index| index.id),
+            } => source.indexes.get(*index).map(|index| index.read().id),
             PossiblePath::Table { .. } => None,
             PossiblePath::TiFlashTable => None,
         })
@@ -420,8 +434,6 @@ mod tests {
     use tidb_expr::column::Column;
 
     use super::*;
-    use tidb_infoschema::table_source::SourceIndexColumn;
-    use tidb_infoschema::table_source::SourceIndex;
 
     fn column(id: i64) -> Column {
         let mut column = Column::new(id, FieldType::new(FieldTypeCode::LongLong));
@@ -432,25 +444,39 @@ mod tests {
     fn source() -> DataSource {
         DataSource {
             table_columns: vec![column(1), column(2), column(3)],
+            // Go `ds.TableInfo.Columns`, which index offsets address.
+            table_info: Some(tidb_model::GoShared::new(tidb_model::TableInfo {
+                columns: (1..=3)
+                    .map(|id| tidb_model::ColumnInfo {
+                        id,
+                        name: tidb_ast::CiString::new(format!("c{id}")),
+                        offset: id - 1,
+                        state: tidb_model::SchemaState::PUBLIC,
+                        ..tidb_model::ColumnInfo::default()
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+                ..tidb_model::TableInfo::default()
+            })),
             indexes: vec![
-                SourceIndex {
+                tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 11,
-                    name: "idx_a".to_owned(),
-                    columns: vec![SourceIndexColumn {
+                    name: tidb_ast::CiString::new("idx_a"),
+                    columns: vec![tidb_model::IndexColumn {
                         offset: 0,
-                        ..SourceIndexColumn::default()
-                    }],
-                    ..SourceIndex::default()
-                },
-                SourceIndex {
+                        ..tidb_model::IndexColumn::default()
+                    }].into(),
+                    ..tidb_model::IndexInfo::default()
+                }),
+                tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 12,
-                    name: "idx_b".to_owned(),
-                    columns: vec![SourceIndexColumn {
+                    name: tidb_ast::CiString::new("idx_b"),
+                    columns: vec![tidb_model::IndexColumn {
                         offset: 1,
-                        ..SourceIndexColumn::default()
-                    }],
-                    ..SourceIndex::default()
-                },
+                        ..tidb_model::IndexColumn::default()
+                    }].into(),
+                    ..tidb_model::IndexInfo::default()
+                }),
             ],
             enumerated_paths: vec![
                 PossiblePath::Table {
@@ -523,8 +549,12 @@ mod tests {
     #[test]
     fn a_partial_index_missing_an_affected_column_has_zero_score() {
         let mut source = source();
-        source.indexes[0].condition_expr_string = "c > 0".to_owned();
-        source.indexes[0].affect_column_offsets = vec![2];
+        source.indexes[0].write().condition_expr_string = "c > 0".to_owned();
+        source.indexes[0].write().affect_column = vec![tidb_model::IndexColumn {
+            offset: 2,
+            ..tidb_model::IndexColumn::default()
+        }]
+        .into();
         source.interesting_columns = vec![column(1), column(2)];
         assert_eq!(
             prune_indexes_by_where_and_order(&source, &source.enumerated_paths, 0),
@@ -542,15 +572,15 @@ mod tests {
     fn positive_threshold_keeps_go_default_maximum() {
         let mut source = source();
         source.indexes = (0..12)
-            .map(|offset| SourceIndex {
+            .map(|offset| tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 100 + offset,
-                name: format!("i{offset}"),
-                columns: vec![SourceIndexColumn {
+                name: tidb_ast::CiString::new(format!("i{offset}")),
+                columns: vec![tidb_model::IndexColumn {
                     offset: 0,
-                    ..SourceIndexColumn::default()
-                }],
-                ..SourceIndex::default()
-            })
+                    ..tidb_model::IndexColumn::default()
+                }].into(),
+                ..tidb_model::IndexInfo::default()
+            }))
             .collect();
         source.enumerated_paths = std::iter::once(PossiblePath::Table {
             is_int_handle: true,
@@ -572,15 +602,16 @@ mod tests {
     fn initialized_keys_prune_dominated_coverage_before_stats_loading() {
         let mut source = source();
         source.interesting_columns = vec![column(1), column(2)];
-        source.indexes[0].columns.push(SourceIndexColumn {
+        source.indexes[0].write().columns.push_go(tidb_model::IndexColumn {
             offset: 1,
-            ..Default::default()
+            ..tidb_model::IndexColumn::default()
         });
-        source.indexes[1].columns = source.indexes[0].columns.clone();
+        let columns = source.indexes[0].read().columns.clone();
+        source.indexes[1].write().columns = columns;
         for index in &source.indexes {
             source
                 .derived_index_paths
-                .entry(index.id)
+                .entry(index.read().id)
                 .or_default()
                 .declared_columns = Some(vec![Some((column(1), -1)), Some((column(2), -1))]);
         }
@@ -620,8 +651,9 @@ mod tests {
             .base
             .set_schema(Some(Schema::new(source.table_columns.clone())));
         for index in &mut source.indexes {
-            for key in &mut index.columns {
-                key.name = format!("c{}", key.offset + 1);
+            for key in index.read().columns.iter_deref() {
+                let mut key = key.write();
+                key.name = tidb_ast::CiString::new(format!("c{}", key.offset + 1));
             }
         }
         source.initialize_index_columns();
@@ -681,8 +713,12 @@ mod tests {
             missing.interesting_count, 0,
             "unresolved declared column suppresses the suffix"
         );
-        source.indexes[0].condition_expr_string = "c1 > 0".to_owned();
-        source.indexes[0].affect_column_offsets = vec![99];
+        source.indexes[0].write().condition_expr_string = "c1 > 0".to_owned();
+        source.indexes[0].write().affect_column = vec![tidb_model::IndexColumn {
+            offset: 1,
+            ..tidb_model::IndexColumn::default()
+        }]
+        .into();
         assert_eq!(
             score_index_path(
                 &source,

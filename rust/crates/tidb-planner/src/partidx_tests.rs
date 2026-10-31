@@ -28,7 +28,6 @@ use tidb_planner_util::path::PossiblePath;
 use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
 use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, DataSource};
 use tidb_planner_core_base::PlanIdAllocator;
-use tidb_infoschema::table_source::SourceIndex;
 
 fn integer_column(id: i64) -> Expression {
     Expression::Column(Column::new(id, FieldType::new(FieldTypeCode::LongLong)))
@@ -161,17 +160,17 @@ fn datasource_prunes_partial_paths_and_marks_the_ordinary_cached_plan() {
         ..DataSourceColumn::default()
     }];
     source.indexes = vec![
-        SourceIndex {
+        tidb_model::GoShared::new(tidb_model::IndexInfo {
             id: 10,
-            name: "partial".to_owned(),
+            name: tidb_ast::CiString::new("partial"),
             condition_expr_string: "a > 0".to_owned(),
-            ..SourceIndex::default()
-        },
-        SourceIndex {
+            ..tidb_model::IndexInfo::default()
+        }),
+        tidb_model::GoShared::new(tidb_model::IndexInfo {
             id: 20,
-            name: "ordinary".to_owned(),
-            ..SourceIndex::default()
-        },
+            name: tidb_ast::CiString::new("ordinary"),
+            ..tidb_model::IndexInfo::default()
+        }),
     ];
     source.enumerated_paths = vec![
         PossiblePath::Table {

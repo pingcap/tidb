@@ -59,8 +59,8 @@ pub(crate) fn collect_candidates(
         let Some(index) = source.indexes.get(*index) else {
             continue;
         };
-        for part in &index.columns {
-            let Some(column) = schema.columns.get(part.offset) else {
+        for part in index.read().columns.iter_deref() {
+            let Some(column) = schema.columns.get(part.read().offset as usize) else {
                 continue;
             };
             let Some(generated) = column.virtual_expr.as_deref() else {

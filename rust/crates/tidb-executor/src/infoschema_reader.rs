@@ -1805,16 +1805,15 @@ fn columns_rows(
         match catalog.table_in(&schema, &table_name) {
             Some(TableEntry::Kv(table)) => {
                 // Hidden columns are absent here, and ORDINAL_POSITION
-                // counts only the visible ones -- which needs no separate
-                // counter, because a visible column's offset IS its
-                // physical offset (see `tidb_ddl_build::expression_index`).
+                // counts only the visible ones (Go `ListColumns`' `ord`).
                 // Captured: a table with an expression index and columns
                 // `a`, `z` reports exactly a|1, z|2.
-                for (offset, column) in table.visible_columns().iter().enumerate() {
+                for (ordinal, (offset, column)) in table.visible_columns().into_iter().enumerate() {
                     rows.push(column_row(
                         &schema,
                         &table_name,
                         table,
+                        ordinal + 1,
                         offset,
                         column,
                         &privileges,
@@ -1849,11 +1848,13 @@ fn columns_rows(
     rows
 }
 
-/// One `COLUMNS` row.
+/// One `COLUMNS` row: `ordinal` is its `ORDINAL_POSITION`, `offset` its
+/// place in the stored row.
 fn column_row(
     schema: &str,
     table_name: &str,
     table: &KvTable,
+    ordinal: usize,
     offset: usize,
     column: &crate::KvColumn,
     privileges: &str,
@@ -1876,7 +1877,7 @@ fn column_row(
         text(schema),
         text(table_name),
         text(&column.name),
-        Datum::Int((offset + 1) as i64),
+        Datum::Int(ordinal as i64),
         match &column.default_value {
             // Go `NewColDesc`: `NoDefaultValueFlag` reports no default.
             _ if field_type.has_flag(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE) => {

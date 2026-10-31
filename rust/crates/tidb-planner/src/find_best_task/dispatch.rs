@@ -2010,8 +2010,8 @@ pub(super) fn index_path_matches_order(
     // (index columns, handle columns); Go extends `idxCols` with the handle
     // columns the index does not hold -- except where a v0 handle keeps
     // collation sort keys instead of values.
-    if !index.unique
-        && !index.primary
+    if !index.read().unique
+        && !index.read().primary
         && !ds.common_handle_cols.is_empty()
         && ds.declared_index_columns(index).iter().all(Option::is_some)
         && !has_v0_new_collation_string_handle(ds)
@@ -2081,7 +2081,7 @@ pub(super) fn global_index_partition_filter(
     scan_schema: Option<&tidb_expr::schema::Schema>,
 ) -> Option<tidb_expr::expression::Expression> {
     use tidb_expr::expression::Expression;
-    if !index.global {
+    if !index.read().global {
         return None;
     }
     let access = ds.dynamic_partition_access.as_ref()?;
@@ -2137,16 +2137,16 @@ pub(super) fn match_partial_order_property(
     if partial.sort_items.is_empty() || !partial.all_same_order().0 {
         return None;
     }
-    let index_columns = &index.columns;
+    let index_columns = &index.read().columns;
     if index_columns.is_empty() || index_columns.len() > partial.sort_items.len() {
         return None;
     }
-    if index_columns.last()?.length == tidb_datatype::UNSPECIFIED_LENGTH {
+    if index_columns.iter_deref().last()?.read().length == tidb_datatype::UNSPECIFIED_LENGTH {
         return None;
     }
     let mut prefix = None;
-    for (position, index_column) in index_columns.iter().enumerate() {
-        let column = ds.schema_column_for_index_column(index_column)?;
+    for (position, index_column) in index_columns.iter_deref().enumerate() {
+        let column = ds.schema_column_for_index_column(&index_column.read())?;
         let order = partial.sort_items.get(position)?;
         if column.unique_id != order.col.unique_id {
             return None;
@@ -2155,11 +2155,11 @@ pub(super) fn match_partial_order_property(
         let length = if column
             .ret_type
             .as_ref()
-            .is_some_and(|field_type| field_type.flen() == index_column.length)
+            .is_some_and(|field_type| field_type.flen() == index_column.read().length)
         {
             tidb_datatype::UNSPECIFIED_LENGTH
         } else {
-            index_column.length
+            index_column.read().length
         };
         if length != tidb_datatype::UNSPECIFIED_LENGTH {
             if position + 1 != index_columns.len() {
@@ -2268,7 +2268,7 @@ fn build_index_join_path_result(
             };
             // Go `IsIndexJoinUnapplicable`: an MV or partial index is
             // reachable only through IndexMerge or its own condition.
-            if source_index.is_multi_valued || !source_index.condition_expr_string.is_empty() {
+            if source_index.read().mv_index || !source_index.read().condition_expr_string.is_empty() {
                 return Ok(IndexJoinPathAnswer::NotApplicable);
             }
             Some(source_index)
@@ -2318,7 +2318,7 @@ fn build_index_join_path_result(
             .collect(),
     };
     // A clustered primary key is unique by definition.
-    let unique = source_index.is_none_or(|index| index.unique);
+    let unique = source_index.is_none_or(|index| index.read().unique);
     let max_one_row =
         super::index_join_path::index_join_path_max_one_row(&core, unique, full_idx_cols.len());
     // Go `indexJoinPathConstructResult`: the NDV reads the table's own
@@ -2385,7 +2385,7 @@ fn index_join_candidate(
     core: &super::index_join_path::IndexJoinPathCore,
     ctx: &DispatchContext<'_>,
 ) -> crate::find_best_task::candidate::CandidateMetrics {
-    let state = ds.derived_index_paths.get(&source_index.id);
+    let state = ds.derived_index_paths.get(&source_index.read().id);
     let mut candidate = state
         .and_then(|state| {
             let single_scan = state.is_single_scan.unwrap_or_else(|| {
@@ -2412,7 +2412,7 @@ fn index_join_candidate(
         .and_then(|state| state.filled.as_ref())
         .map_or(0, |filled| filled.detached.eq_or_in_count);
     candidate.full_index_match =
-        static_eq_or_in > 0 && candidate.index_columns.len() >= source_index.columns.len();
+        static_eq_or_in > 0 && candidate.index_columns.len() >= source_index.read().columns.len();
     candidate
 }
 
@@ -3472,17 +3472,17 @@ fn find_best_task_4_logical_data_source_paths(
                 // non-prefix UNIQUE common handle whose range covers every key
                 // column.
                 let point_handle_ok = common_handle.map_or(handle_column.is_some(), |index| {
-                    index.unique
+                    index.read().unique
                         && !tidb_ranger::ranger::has_prefix(
                             &index
-                                .columns
-                                .iter()
-                                .map(|column| column.length)
+                                .read().columns
+                                .iter_deref()
+                                .map(|column| column.read().length)
                                 .collect::<Vec<_>>(),
                         )
                         && ranges
                             .iter()
-                            .all(|range| range.low_val.len() == index.columns.len())
+                            .all(|range| range.low_val.len() == index.read().columns.len())
                 });
                 // Go `isPointGetConvertableSchema`: every column must be public,
                 // and the extra partition-id column a lock or union scan adds
@@ -3872,10 +3872,10 @@ fn find_best_task_4_logical_data_source_paths(
                 // index is read only through IndexMerge, never as an
                 // IndexReader/IndexLookUp or a PointGet (which would return a
                 // row once per array element and miss every empty array).
-                if source_index.is_multi_valued {
+                if source_index.read().mv_index {
                     continue 'paths;
                 }
-                let path_key = (std::ptr::from_ref(ds).addr(), source_index.id);
+                let path_key = (std::ptr::from_ref(ds).addr(), source_index.read().id);
                 if partial_order.is_none() && ctx.forced_partial_order_paths.contains(&path_key) {
                     // The earlier match already proved this immutable path's
                     // ranges nonempty; do not rebuild them for a refused task.
@@ -3889,13 +3889,13 @@ fn find_best_task_4_logical_data_source_paths(
                 // invalidate ranges on an earlier prefix; only the first
                 // unresolved position ends that prefix.
                 let filled_path = prop.index_join_prop.is_none().then(|| {
-                    ds.derived_index_paths.get(&source_index.id).and_then(|path| path.filled.as_ref())
+                    ds.derived_index_paths.get(&source_index.read().id).and_then(|path| path.filled.as_ref())
                 }).flatten();
                 let resolved_index_prefix = filled_path.map_or_else(
                     || ds.index_range_columns(source_index), |path| path.columns.clone(),
                 );
                 let declared_index_prefix_complete =
-                    resolved_index_prefix.len() >= source_index.columns.len();
+                    resolved_index_prefix.len() >= source_index.read().columns.len();
                 // Go `find_best_task.go:2204`: `canConvertPointGet =
                 // path.Index.Unique && !path.Index.HasPrefixIndex()`. A prefix
                 // entry holds `'abc'` where the row holds `'abcdef'`, and a
@@ -3903,9 +3903,9 @@ fn find_best_task_4_logical_data_source_paths(
                 // index must stay an IndexReader/IndexLookUp candidate.
                 let declared_index_has_prefix = tidb_ranger::ranger::has_prefix(
                     &source_index
-                        .columns
-                        .iter()
-                        .map(|column| column.length)
+                        .read().columns
+                        .iter_deref()
+                        .map(|column| column.read().length)
                         .collect::<Vec<_>>(),
                 );
                 let index_cols = resolved_index_prefix
@@ -3956,8 +3956,8 @@ fn find_best_task_4_logical_data_source_paths(
                 }
                 if ctx.partial_ordered_index_for_topn
                     && partial_order_match.is_some()
-                    && ds.forced_index_ids.contains(&source_index.id)
-                    && !ds.force_no_keep_order_index_ids.contains(&source_index.id)
+                    && ds.forced_index_ids.contains(&source_index.read().id)
+                    && !ds.force_no_keep_order_index_ids.contains(&source_index.read().id)
                 {
                     // Go skylinePruning marks the path before conversion, even
                     // if this candidate's single/double-read task is refused.
@@ -3972,8 +3972,8 @@ fn find_best_task_4_logical_data_source_paths(
                 {
                     continue 'paths;
                 }
-                if (!keep_order && ds.force_keep_order_index_ids.contains(&source_index.id))
-                    || (keep_order && ds.force_no_keep_order_index_ids.contains(&source_index.id))
+                if (!keep_order && ds.force_keep_order_index_ids.contains(&source_index.read().id))
+                    || (keep_order && ds.force_no_keep_order_index_ids.contains(&source_index.read().id))
                 {
                     continue 'paths;
                 }
@@ -3997,7 +3997,7 @@ fn find_best_task_4_logical_data_source_paths(
                 // carries BOTH halves, exactly Go's shape.
                 let single_scan = ds
                     .derived_index_paths
-                    .get(&source_index.id)
+                    .get(&source_index.read().id)
                     .and_then(|path| path.is_single_scan)
                     .unwrap_or_else(|| {
                         index_path_is_single_scan(
@@ -4025,7 +4025,7 @@ fn find_best_task_4_logical_data_source_paths(
                     && prop.index_join_prop.is_none()
                     && prop.is_sort_item_empty()
                     && partial_order_match.is_none()
-                    && !ds.forced_index_ids.contains(&source_index.id)
+                    && !ds.forced_index_ids.contains(&source_index.read().id)
                     && !single_scan
                 {
                     continue 'paths;
@@ -4092,10 +4092,10 @@ fn find_best_task_4_logical_data_source_paths(
                     && !single_scan
                     && !ds.partition_definition_ids.is_empty()
                     && ds.dynamic_partition_access.is_some();
-                if keeps_phys_tbl_id && !source_index.global {
+                if keeps_phys_tbl_id && !source_index.read().global {
                     add_extra_phys_tbl_id_column(&mut index_schema, ctx);
                 }
-                if ds.partial_index_noncacheable_ids.contains(&source_index.id) {
+                if ds.partial_index_noncacheable_ids.contains(&source_index.read().id) {
                     base.base
                         .set_noncacheable_reason("IndexScan of partial index is uncacheable");
                 }
@@ -4112,19 +4112,19 @@ fn find_best_task_4_logical_data_source_paths(
                         // keyspace and carries each row's partition ID, so a
                         // unique-key point read does not need static pruning
                         // to choose one physical table first.
-                        || source_index.global
+                        || source_index.read().global
                         // Go `find_best_task.go:2214`: a partitioned table
                         // still converts, one range at a time (a batch
                         // needs a hash/key column and static pruning). The
                         // executor routes the key to its partition.
                         || ranges.len() == 1)
-                    && source_index.unique
+                    && source_index.read().unique
                     && !declared_index_has_prefix
                     && declared_index_prefix_complete
                     && !ranges.is_empty()
                     && ranges.iter().all(|range| {
                         range.is_point_non_nullable()
-                            && range.high_val.len() == source_index.columns.len()
+                            && range.high_val.len() == source_index.read().columns.len()
                     })
                 {
                     let mut point_base = tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(
@@ -4136,7 +4136,7 @@ fn find_best_task_4_logical_data_source_paths(
                         },
                         ds.base.base.query_block_offset(),
                     );
-                    if ds.partial_index_noncacheable_ids.contains(&source_index.id) {
+                    if ds.partial_index_noncacheable_ids.contains(&source_index.read().id) {
                         point_base
                             .base
                             .set_noncacheable_reason("IndexScan of partial index is uncacheable");
@@ -4144,7 +4144,7 @@ fn find_best_task_4_logical_data_source_paths(
                     point_base.base.set_schema(ds.base.base.schema().cloned());
                     let access_rows = ds
                         .derived_index_paths
-                        .get(&source_index.id)
+                        .get(&source_index.read().id)
                         .and_then(|path| path.count_after_access())
                         .unwrap_or(ranges.len() as f64)
                         .min(ranges.len() as f64);
@@ -4174,7 +4174,7 @@ fn find_best_task_4_logical_data_source_paths(
                                     names: ds.partition_names.clone(),
                                     physical_table_id: None,
                                 }),
-                            index_id: Some(source_index.id),
+                            index_id: Some(source_index.read().id),
                             access_cols: Some(if single_scan {
                                 index_cols.clone()
                             } else {
@@ -4191,7 +4191,7 @@ fn find_best_task_4_logical_data_source_paths(
                         PhysicalPlan::BatchPointGet(tidb_planner_core_operator_physicalop::PhysicalBatchPointGet {
                             base: point_base,
                             table_id: ds.physical_table_id,
-                            index_id: Some(source_index.id),
+                            index_id: Some(source_index.read().id),
                             access_cols: Some(if single_scan {
                                 index_cols.clone()
                             } else {
@@ -4242,15 +4242,15 @@ fn find_best_task_4_logical_data_source_paths(
                     .or_else(|| ds.base.base.stats_info().cloned());
                 let mut count_after_access = table_stats.as_ref().map(|stats| stats.row_count());
                 let ranges_include_appended_handle =
-                    resolved_index_prefix.len() > source_index.columns.len()
+                    resolved_index_prefix.len() > source_index.read().columns.len()
                         && ranges.iter().any(|range| {
-                            range.low_val.len() > source_index.columns.len()
-                                || range.high_val.len() > source_index.columns.len()
+                            range.low_val.len() > source_index.read().columns.len()
+                                || range.high_val.len() > source_index.read().columns.len()
                         });
                 if detach.is_some() {
                     count_after_access = ds
                         .derived_index_paths
-                        .get(&source_index.id)
+                        .get(&source_index.read().id)
                         .and_then(|path| path.count_after_access())
                         .or_else(|| {
                             let base_stats = table_stats.as_ref()?;
@@ -4259,14 +4259,14 @@ fn find_best_task_4_logical_data_source_paths(
                             // index columns before estimating CountAfterAccess.
                             // The handle remains in `ranges` for execution.
                             let estimate_ranges =
-                                if resolved_index_prefix.len() > source_index.columns.len() {
+                                if resolved_index_prefix.len() > source_index.read().columns.len() {
                                     ranges
                                         .iter()
                                         .cloned()
                                         .map(|mut range| {
-                                            range.low_val.truncate(source_index.columns.len());
-                                            range.high_val.truncate(source_index.columns.len());
-                                            range.collators.truncate(source_index.columns.len());
+                                            range.low_val.truncate(source_index.read().columns.len());
+                                            range.high_val.truncate(source_index.read().columns.len());
+                                            range.collators.truncate(source_index.read().columns.len());
                                             range
                                         })
                                         .collect()
@@ -4289,7 +4289,7 @@ fn find_best_task_4_logical_data_source_paths(
                     let logically_adjusted = filled_path.is_some()
                         && ds
                             .derived_index_paths
-                            .get(&source_index.id)
+                            .get(&source_index.read().id)
                             .is_some_and(|path| path.row_estimate.is_some());
                     if !logically_adjusted
                         && *count + tidb_planner_core_cost::TOLERANCE_FACTOR < ds_stats.row_count()
@@ -4451,8 +4451,8 @@ fn find_best_task_4_logical_data_source_paths(
                     dynamic_partition_access: ds.dynamic_partition_access.clone(),
                     cost_columns,
                     data_source_schema: ds.base.base.schema().cloned().map(Box::new),
-                    index_id: source_index.id,
-                    index_name: source_index.name.clone(),
+                    index_id: source_index.read().id,
+                    index_name: source_index.read().name.original().to_owned(),
                     keep_order,
                     desc,
                     ranges: ranges.clone(),
@@ -4461,7 +4461,7 @@ fn find_best_task_4_logical_data_source_paths(
                     // (only required for a local index)" and "between range
                     // groups" both add the sort items the reader merges by.
                     by_items: if keep_order
-                        && ((!ds.partition_definition_ids.is_empty() && !source_index.global)
+                        && ((!ds.partition_definition_ids.is_empty() && !source_index.read().global)
                             || order_match.result
                                 == tidb_planner_property::PhysicalPropMatchResult::MatchedNeedMergeSort)
                     {
@@ -4615,7 +4615,7 @@ fn find_best_task_4_logical_data_source_paths(
                         {
                             let access_rows = ds
                                 .derived_index_paths
-                                .get(&source_index.id)
+                                .get(&source_index.read().id)
                                 .and_then(|path| path.count_after_access())
                                 .unwrap_or(0.0);
                             let selectivity = if access_rows > 0.0 {
@@ -4770,7 +4770,7 @@ fn find_best_task_4_logical_data_source_paths(
                         tidb_planner_util::path::IndexLookupPushDownBy::None
                     } else {
                         ds.index_lookup_push_down_by
-                            .get(&source_index.id)
+                            .get(&source_index.read().id)
                             .copied()
                             .unwrap_or(tidb_planner_util::path::IndexLookupPushDownBy::None)
                     },
@@ -4784,7 +4784,7 @@ fn find_best_task_4_logical_data_source_paths(
                             ds,
                             probe,
                             runtime,
-                            Some(source_index.id),
+                            Some(source_index.read().id),
                         )),
                         (Some(_), None) => continue 'paths,
                         (None, _) => None,
@@ -4893,8 +4893,8 @@ fn heuristic_selection_note(
     };
     format!(
         "{}index {} of {table} is selected since the path {}{}",
-        if index.unique { "unique " } else { "" },
-        index.name,
+        if index.read().unique { "unique " } else { "" },
+        index.read().name,
         if refined {
             "only fetches limited number of rows"
         } else {
@@ -4930,12 +4930,12 @@ fn pruning_info_message(
         PossiblePath::Index { index } => ds
             .indexes
             .get(*index)
-            .map_or_else(String::new, |index| index.name.clone()),
+            .map_or_else(String::new, |index| index.read().name.original().to_owned()),
     };
     let index_name = |position: usize| {
         ds.indexes
             .get(position)
-            .map_or_else(String::new, |index| index.name.clone())
+            .map_or_else(String::new, |index| index.read().name.original().to_owned())
     };
     let mut names = Vec::new();
     for (position, path) in derived.paths.iter().enumerate() {
@@ -5965,8 +5965,6 @@ mod tests {
         use tidb_planner_util::path::PossiblePath;
         use tidb_planner_core_operator_logicalop::DataSource;
         use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
-        use tidb_infoschema::table_source::SourceIndexColumn;
-        use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
         use tidb_expr::constant::Constant;
@@ -6022,16 +6020,17 @@ mod tests {
                 ],
                 pushed_down_conds: conds,
                 enumerated_paths: paths,
-                indexes: vec![SourceIndex {
+                indexes: vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 3,
-                    name: "ib".to_owned(),
-                    columns: vec![SourceIndexColumn {
-                        name: "b".to_owned(),
+                    name: tidb_ast::CiString::new("ib"),
+                    columns: vec![tidb_model::IndexColumn {
+                        name: tidb_ast::CiString::new("b"),
                         offset: 1,
                         length: -1,
-                    }],
-                    ..SourceIndex::default()
-                }],
+                        ..tidb_model::IndexColumn::default()
+                    }].into(),
+                    ..tidb_model::IndexInfo::default()
+                })],
                 ..DataSource::default()
             })
         };
@@ -6178,14 +6177,15 @@ mod tests {
             common_handle_lens: vec![3],
             ..Default::default()
         };
-        let index = tidb_infoschema::table_source::SourceIndex {
-            columns: vec![tidb_infoschema::table_source::SourceIndexColumn {
-                name: "a".into(),
+        let index = tidb_model::GoShared::new(tidb_model::IndexInfo {
+            columns: vec![tidb_model::IndexColumn {
+                name: tidb_ast::CiString::new("a"),
                 offset: 0,
                 length: -1,
-            }],
-            ..Default::default()
-        };
+                ..tidb_model::IndexColumn::default()
+            }].into(),
+            ..tidb_model::IndexInfo::default()
+        });
         let prefix = vec![(declared, -1)];
         assert!(source.handle_cols_to_append(&index, &prefix).is_empty());
     }
@@ -6198,8 +6198,6 @@ mod tests {
         use tidb_planner_util::path::PossiblePath;
         use tidb_planner_core_operator_logicalop::DataSource;
         use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
-        use tidb_infoschema::table_source::SourceIndexColumn;
-        use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
         use tidb_expr::constant::Constant;
         use tidb_expr::expression::{Expression, ScalarFunction};
@@ -6266,16 +6264,17 @@ mod tests {
             common_handle_lens: vec![UNSPECIFIED_LENGTH; 2],
             pushed_down_conds: vec![cond],
             enumerated_paths: vec![PossiblePath::Index { index: 0 }],
-            indexes: vec![SourceIndex {
+            indexes: vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 3,
-                name: "ia".to_owned(),
-                columns: vec![SourceIndexColumn {
-                    name: "a".to_owned(),
+                name: tidb_ast::CiString::new("ia"),
+                columns: vec![tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new("a"),
                     offset: 0,
                     length: UNSPECIFIED_LENGTH,
-                }],
-                ..SourceIndex::default()
-            }],
+                    ..tidb_model::IndexColumn::default()
+                }].into(),
+                ..tidb_model::IndexInfo::default()
+            })],
             ..DataSource::default()
         });
         let task = find_best_task(&source, &PhysicalProperty::default(), &mut ctx).expect("plans");
@@ -6304,8 +6303,6 @@ mod tests {
     #[test]
     fn prefix_single_scan_distinguishes_unpruned_full_values_and_null_arguments() {
         use tidb_planner_core_operator_logicalop::data_source::{DataSource, DataSourceColumn};
-        use tidb_infoschema::table_source::SourceIndexColumn;
-        use tidb_infoschema::table_source::SourceIndex;
         use tidb_expr::expression::{Expression, ScalarFunction};
         let allocator = PlanIdAllocator::new();
         let a = Column::new(11, FieldType::new(FieldTypeCode::Varchar).with_flen(20));
@@ -6329,21 +6326,23 @@ mod tests {
             ],
             ..DataSource::default()
         };
-        let index = SourceIndex {
+        let index = tidb_model::GoShared::new(tidb_model::IndexInfo {
             columns: vec![
-                SourceIndexColumn {
-                    name: "a".into(),
+                tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new("a"),
                     offset: 0,
                     length: 2,
+                    ..tidb_model::IndexColumn::default()
                 },
-                SourceIndexColumn {
-                    name: "b".into(),
+                tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new("b"),
                     offset: 1,
                     length: -1,
+                    ..tidb_model::IndexColumn::default()
                 },
-            ],
-            ..SourceIndex::default()
-        };
+            ].into(),
+            ..tidb_model::IndexInfo::default()
+        });
         let call = |name: &str, args| {
             Expression::ScalarFunction(ScalarFunction::new(
                 tidb_ast::CiString::new(name),
@@ -6479,7 +6478,6 @@ mod tests {
         use tidb_planner_core_operator_logicalop::DataSource;
         use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
         use tidb_infoschema::table_source::SourceIndexColumn;
-        use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
         use tidb_expr::schema::Schema;
@@ -6521,12 +6519,12 @@ mod tests {
                     },
                     PossiblePath::Index { index: 0 },
                 ],
-                indexes: vec![SourceIndex {
+                indexes: vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 3,
-                    name: "ib".to_owned(),
-                    columns: index_columns,
-                    ..SourceIndex::default()
-                }],
+                    name: tidb_ast::CiString::new("ib"),
+                    columns: (index_columns).into(),
+                    ..tidb_model::IndexInfo::default()
+                })],
                 ..DataSource::default()
             })
         };
@@ -6535,10 +6533,11 @@ mod tests {
         // Index on (b) alone: column `a` is uncovered — the double read
         // plans, its index side keeping the order and its table side reading
         // the rows back.
-        let narrow = build(vec![SourceIndexColumn {
-            name: "b".to_owned(),
+        let narrow = build(vec![tidb_model::IndexColumn {
+            name: tidb_ast::CiString::new("b"),
             offset: 1,
             length: -1,
+            ..tidb_model::IndexColumn::default()
         }]);
         let task = find_best_task(&narrow, &order_by_b, &mut ctx).expect("plans");
         let reader = task.plan().and_then(|plan| match plan {
@@ -6563,15 +6562,17 @@ mod tests {
 
         // Index on (b, a): covering, the reader plans as before.
         let covering = build(vec![
-            SourceIndexColumn {
-                name: "b".to_owned(),
+            tidb_model::IndexColumn {
+                name: tidb_ast::CiString::new("b"),
                 offset: 1,
                 length: -1,
+                ..tidb_model::IndexColumn::default()
             },
-            SourceIndexColumn {
-                name: "a".to_owned(),
+            tidb_model::IndexColumn {
+                name: tidb_ast::CiString::new("a"),
                 offset: 0,
                 length: -1,
+                ..tidb_model::IndexColumn::default()
             },
         ]);
         let task = find_best_task(&covering, &order_by_b, &mut ctx).expect("plans");
@@ -6586,15 +6587,17 @@ mod tests {
         // order (`isMatchProp` walks `FullIdxCols`): the ordered property
         // has no server at all.
         let prefix = build(vec![
-            SourceIndexColumn {
-                name: "b".to_owned(),
+            tidb_model::IndexColumn {
+                name: tidb_ast::CiString::new("b"),
                 offset: 1,
                 length: 10,
+                ..tidb_model::IndexColumn::default()
             },
-            SourceIndexColumn {
-                name: "a".to_owned(),
+            tidb_model::IndexColumn {
+                name: tidb_ast::CiString::new("a"),
                 offset: 0,
                 length: -1,
+                ..tidb_model::IndexColumn::default()
             },
         ]);
         let task = find_best_task(&prefix, &order_by_b, &mut ctx).expect("answers");
@@ -6622,8 +6625,6 @@ mod tests {
         use tidb_planner_util::path::PossiblePath;
         use tidb_planner_core_operator_logicalop::DataSource;
         use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
-        use tidb_infoschema::table_source::SourceIndexColumn;
-        use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{FieldType, FieldTypeCode};
 
         let allocator = PlanIdAllocator::new();
@@ -6644,16 +6645,17 @@ mod tests {
                 ..DataSourceColumn::default()
             }],
             enumerated_paths: vec![PossiblePath::Index { index: 0 }],
-            indexes: vec![SourceIndex {
+            indexes: vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 3,
-                name: "ia_prefix".to_owned(),
-                columns: vec![SourceIndexColumn {
-                    name: "a".to_owned(),
+                name: tidb_ast::CiString::new("ia_prefix"),
+                columns: vec![tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new("a"),
                     offset: 0,
                     length: 4,
-                }],
-                ..SourceIndex::default()
-            }],
+                    ..tidb_model::IndexColumn::default()
+                }].into(),
+                ..tidb_model::IndexInfo::default()
+            })],
             ..DataSource::default()
         };
         let partial = PhysicalProperty {
@@ -6690,8 +6692,8 @@ mod tests {
             Some(PhysicalPlan::IndexScan(scan)) if scan.keep_order && !scan.desc
         ));
 
-        let mut full_length = source.indexes[0].clone();
-        full_length.columns[0].length = 20;
+        let full_length = tidb_model::GoShared::new(source.indexes[0].read().clone_like_go());
+        full_length.read().columns.get(0).unwrap().write().length = 20;
         assert!(
             match_partial_order_property(
                 &source,
@@ -6851,8 +6853,6 @@ mod tests {
     fn a_constant_index_prefix_is_skipped_when_matching_order() {
         use tidb_planner_core_operator_logicalop::DataSource;
         use tidb_planner_core_operator_logicalop::data_source::DataSourceColumn;
-        use tidb_infoschema::table_source::SourceIndexColumn;
-        use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
         use tidb_expr::constant::Constant;
@@ -6892,21 +6892,23 @@ mod tests {
                     )),
                 ],
             ))],
-            indexes: vec![SourceIndex {
+            indexes: vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                 columns: vec![
-                    SourceIndexColumn {
-                        name: "a".to_owned(),
+                    tidb_model::IndexColumn {
+                        name: tidb_ast::CiString::new("a"),
                         offset: 0,
                         length: -1,
+                        ..tidb_model::IndexColumn::default()
                     },
-                    SourceIndexColumn {
-                        name: "b".to_owned(),
+                    tidb_model::IndexColumn {
+                        name: tidb_ast::CiString::new("b"),
                         offset: 1,
                         length: -1,
+                        ..tidb_model::IndexColumn::default()
                     },
-                ],
-                ..SourceIndex::default()
-            }],
+                ].into(),
+                ..tidb_model::IndexInfo::default()
+            })],
             ..DataSource::default()
         };
         let order_by_b = PhysicalProperty::new(TaskType::Root, &[12], false, f64::MAX, false);

@@ -213,10 +213,13 @@ fn show_index_reports_the_expression_and_a_null_column_name() {
     );
 }
 
-/// Captured: `alter table te add column z int` puts `z` after `a` and before
-/// the hidden column, so the declared columns stay contiguous.
+/// Captured: after `alter table te add column z int` every listing shows
+/// `z` right after the declared columns. Go appends `z` behind the hidden
+/// column in `TableInfo.Columns` (`LocateOffsetToMove` keeps the appended
+/// offset); the listings skip the hidden column, so the declared columns read
+/// as contiguous.
 #[test]
-fn add_column_lands_before_the_hidden_tail() {
+fn add_column_after_an_expression_index_reads_as_contiguous() {
     let mut session = indexed();
     session.run("ALTER TABLE t ADD COLUMN z INT").unwrap();
     let text = show_create(&mut session, "t");
@@ -230,6 +233,80 @@ fn add_column_lands_before_the_hidden_tail() {
         vec![vec!["1", "2", "3"]]
     );
     admin_check(&mut session, "t", "ADD COLUMN");
+}
+
+/// The hidden column sits BETWEEN visible ones once a column is added after
+/// the expression index (Go's `TableInfo.Columns` order, see above). Every
+/// write path keeps each visible value in its own column and the expression
+/// index in step: INSERT with defaults, UPDATE of a plain and of an indexed
+/// column, ON DUPLICATE KEY UPDATE, REPLACE, a multi-table UPDATE, an UPDATE
+/// of a heap table through its extra handle, and DELETE through the index.
+#[test]
+fn a_hidden_column_between_visible_ones_keeps_every_write_in_place() {
+    let mut session = Session::new();
+    let mut run = |session: &mut Session, sql: &str| {
+        session.run(sql).unwrap_or_else(|error| {
+            panic!("{sql}: {}", error.to_mysql_error().message)
+        });
+        admin_check(session, "m", sql);
+        admin_check(session, "h", sql);
+    };
+    session.run("CREATE TABLE m (id INT PRIMARY KEY, a INT)").unwrap();
+    session.run("CREATE INDEX idx ON m((a+1))").unwrap();
+    session.run("ALTER TABLE m ADD COLUMN z INT DEFAULT 7").unwrap();
+    session.run("CREATE TABLE h (a INT)").unwrap();
+    session.run("CREATE INDEX idx ON h((a+1))").unwrap();
+    session.run("ALTER TABLE h ADD COLUMN z INT").unwrap();
+    session.run("CREATE TABLE n (id INT PRIMARY KEY, w INT)").unwrap();
+    session.run("INSERT INTO n VALUES (1, 5), (2, 6)").unwrap();
+
+    run(&mut session, "INSERT INTO m VALUES (1, 10, 100), (2, 20, 200)");
+    run(&mut session, "INSERT INTO m (id, a) VALUES (3, 30)");
+    run(&mut session, "UPDATE m SET z = z + 1 WHERE id = 1");
+    run(&mut session, "UPDATE m SET a = 11 WHERE id = 1");
+    run(
+        &mut session,
+        "INSERT INTO m VALUES (2, 21, 201) ON DUPLICATE KEY UPDATE z = VALUES(z) + 1, a = VALUES(a)",
+    );
+    run(&mut session, "REPLACE INTO m VALUES (3, 31, 301)");
+    assert_eq!(
+        rows(&mut session, "SELECT * FROM m ORDER BY id"),
+        vec![
+            vec!["1", "11", "101"],
+            vec!["2", "21", "202"],
+            vec!["3", "31", "301"],
+        ]
+    );
+    run(&mut session, "UPDATE m, n SET m.z = n.w WHERE m.id = n.id");
+    assert_eq!(
+        rows(&mut session, "SELECT * FROM m ORDER BY id"),
+        vec![
+            vec!["1", "11", "5"],
+            vec!["2", "21", "6"],
+            vec!["3", "31", "301"],
+        ]
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT id, z FROM m USE INDEX (idx) WHERE a + 1 = 22"),
+        vec![vec!["2", "6"]]
+    );
+    run(&mut session, "DELETE FROM m WHERE a + 1 = 32");
+    assert_eq!(
+        rows(&mut session, "SELECT id FROM m ORDER BY id"),
+        vec![vec!["1"], vec!["2"]]
+    );
+
+    run(&mut session, "INSERT INTO h VALUES (1, 2), (3, 4)");
+    run(&mut session, "UPDATE h SET z = 9 WHERE a = 1");
+    run(&mut session, "UPDATE h SET a = 5 WHERE z = 4");
+    assert_eq!(
+        rows(&mut session, "SELECT * FROM h ORDER BY a"),
+        vec![vec!["1", "9"], vec!["5", "4"]]
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT z FROM h USE INDEX (idx) WHERE a + 1 = 6"),
+        vec![vec!["4"]]
+    );
 }
 
 /// Captured: `alter table te drop index idxe` takes the hidden column with

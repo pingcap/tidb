@@ -746,13 +746,12 @@ fn index_access(
     };
     // Go `PhysicalIndexScan.AccessObject`: a hidden expression-index column
     // prints its `GeneratedExprString`.
-    let visible = table.visible_column_count();
     let cols = index
         .column_offsets
         .iter()
         .filter_map(|offset| table.columns().get(*offset).map(|column| (*offset, column)))
         .map(|(offset, column)| match &column.generated {
-            Some(generated) if offset >= visible => generated.expr_text.clone(),
+            Some(generated) if table.is_hidden(offset) => generated.expr_text.clone(),
             _ => column.name.clone(),
         })
         .collect();

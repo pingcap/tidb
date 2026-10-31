@@ -129,7 +129,7 @@
             after_index
                 .tables
                 .get(&CatalogTableKey::new(DEFAULT_DATABASE, "pv"))
-                .is_some_and(|table| table.indexes.iter().any(|index| index.name == "ib")),
+                .is_some_and(|table| table.indexes.iter().any(|index| index.read().name.original() == "ib")),
             "the new index reaches the planner"
         );
 

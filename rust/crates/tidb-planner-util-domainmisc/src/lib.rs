@@ -57,7 +57,7 @@ pub fn get_latest_index_info(
         .get(&table_id)
         .into_iter()
         .flatten()
-        .map(|index| (index.id, index.clone()))
+        .map(|index| (index.read().id, index.clone()))
         .collect();
     Ok((Some(indexes), true))
 }

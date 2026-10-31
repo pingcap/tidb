@@ -252,8 +252,8 @@ impl crate::RepositorySession for WorkloadRepositorySession {
         let columns = match entry {
             tidb_infoschema::TableEntry::Kv(table) => table
                 .visible_columns()
-                .iter()
-                .map(|column| crate::Column {
+                .into_iter()
+                .map(|(_, column)| crate::Column {
                     name: column.name.clone(),
                     type_desc: column
                         .field_type

@@ -75,7 +75,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             || table
                 .indexes
                 .iter()
-                .any(|index| !index.condition_expr_string.is_empty())
+                .any(|index| !index.read().condition_expr_string.is_empty())
         {
             return None;
         }
@@ -89,8 +89,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             keep[*offset] = true;
         }
         for index in &table.indexes {
-            for column in &index.columns {
-                keep[column.offset] = true;
+            for column in index.read().columns.iter_deref() {
+                keep[column.read().offset as usize] = true;
             }
         }
         if keep.iter().all(|kept| *kept) {
@@ -199,7 +199,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 || table
                     .indexes
                     .iter()
-                    .any(|index| !index.condition_expr_string.is_empty());
+                    .any(|index| !index.read().condition_expr_string.is_empty());
             let mut needed = vec![false; table.columns.len()];
             if table.pk_is_handle {
                 for offset in &table.handle_col_offsets {
@@ -210,8 +210,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 needed[*offset] = true;
             }
             for index in &table.indexes {
-                for column in &index.columns {
-                    needed[column.offset] = true;
+                for column in index.read().columns.iter_deref() {
+                    needed[column.read().offset as usize] = true;
                 }
             }
             let prune = !skip && needed.iter().any(|kept| !kept);

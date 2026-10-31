@@ -101,12 +101,12 @@ fn attach_pseudo_collection(op: &mut DataSource) {
         .iter()
         .map(|index| {
             let ids = index
-                .columns
-                .iter()
-                .map_while(|column| op.schema_column_for_index_column(column))
+                .read().columns
+                .iter_deref()
+                .map_while(|column| op.schema_column_for_index_column(&column.read()))
                 .map(|column| column.unique_id)
                 .collect::<Vec<_>>();
-            (index.id, ids)
+            (index.read().id, ids)
         })
         .collect::<Vec<_>>();
     // Go `PseudoTable`'s indexes: each object carries only its `Info`.
@@ -114,28 +114,13 @@ fn attach_pseudo_collection(op: &mut DataSource) {
         .indexes
         .iter()
         .map(|index| {
-            let info = tidb_model::IndexInfo {
-                id: index.id,
-                unique: index.unique,
-                mv_index: index.is_multi_valued,
-                columns: index
-                    .columns
-                    .iter()
-                    .map(|column| tidb_model::IndexColumn {
-                        name: tidb_ast::CiString::new(column.name.clone()),
-                        length: column.length,
-                        ..tidb_model::IndexColumn::default()
-                    })
-                    .collect::<Vec<_>>()
-                    .into(),
-                ..tidb_model::IndexInfo::default()
-            };
+
             (
-                index.id,
+                index.read().id,
                 tidb_stats::index::Index {
-                    info: Some(tidb_model::GoShared::new(info)),
+                    info: Some(index.clone()),
                     histogram: tidb_stats::Histogram {
-                        id: index.id,
+                        id: index.read().id,
                         ..tidb_stats::Histogram::default()
                     },
                     ..tidb_stats::index::Index::default()
@@ -687,18 +672,18 @@ fn partial_dnf_index_range_preserves_logical_statistics_cover() {
             is_not_null: false,
         })
         .collect();
-    op.indexes = vec![tidb_infoschema::table_source::SourceIndex {
+    op.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
         id: 8,
-        name: "ia".to_owned(),
-        is_public: true,
-        is_visible: true,
-        columns: vec![tidb_infoschema::table_source::SourceIndexColumn {
-            name: "a".to_owned(),
+        name: tidb_ast::CiString::new("ia"),
+        state: tidb_model::SchemaState::PUBLIC,
+        columns: vec![tidb_model::IndexColumn {
+            name: tidb_ast::CiString::new("a"),
             offset: 0,
             length: -1,
-        }],
-        ..Default::default()
-    }];
+            ..tidb_model::IndexColumn::default()
+        }].into(),
+        ..tidb_model::IndexInfo::default()
+    })];
     let branch = |value| {
         Expression::ScalarFunction(ScalarFunction::new(
             CiString::new("and"),
@@ -748,18 +733,18 @@ fn deriving_a_data_source_fills_each_index_path_row_count_from_its_collection() 
         is_primary_key: false,
         is_not_null: false,
     }];
-    op.indexes = vec![tidb_infoschema::table_source::SourceIndex {
+    op.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
         id: 8,
-        name: "ia".to_owned(),
-        is_public: true,
-        is_visible: true,
-        columns: vec![tidb_infoschema::table_source::SourceIndexColumn {
-            name: "a".to_owned(),
+        name: tidb_ast::CiString::new("ia"),
+        state: tidb_model::SchemaState::PUBLIC,
+        columns: vec![tidb_model::IndexColumn {
+            name: tidb_ast::CiString::new("a"),
             offset: 0,
             length: -1,
-        }],
-        ..Default::default()
-    }];
+            ..tidb_model::IndexColumn::default()
+        }].into(),
+        ..tidb_model::IndexInfo::default()
+    })];
     op.enumerated_paths = vec![tidb_planner_util::path::PossiblePath::Index { index: 0 }];
     op.pushed_down_conds = vec![Expression::ScalarFunction(eq_condition_to_constant(1, 7))];
     op.derived_index_paths.entry(8).or_default().row_estimate =
@@ -811,18 +796,18 @@ fn deriving_an_index_path_records_the_index_in_the_used_stats_ledger() {
             is_primary_key: false,
             is_not_null: false,
         }];
-        op.indexes = vec![tidb_infoschema::table_source::SourceIndex {
+        op.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
             id: 8,
-            name: "ia".to_owned(),
-            is_public: true,
-            is_visible: true,
-            columns: vec![tidb_infoschema::table_source::SourceIndexColumn {
-                name: "a".to_owned(),
+            name: tidb_ast::CiString::new("ia"),
+            state: tidb_model::SchemaState::PUBLIC,
+            columns: vec![tidb_model::IndexColumn {
+                name: tidb_ast::CiString::new("a"),
                 offset: 0,
                 length: -1,
-            }],
-            ..Default::default()
-        }];
+                ..tidb_model::IndexColumn::default()
+            }].into(),
+            ..tidb_model::IndexInfo::default()
+        })];
         op.enumerated_paths = vec![tidb_planner_util::path::PossiblePath::Index { index: 0 }];
         op.pushed_down_conds = conditions
             .into_iter()

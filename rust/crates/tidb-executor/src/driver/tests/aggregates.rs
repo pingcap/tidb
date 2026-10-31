@@ -1461,7 +1461,8 @@ fn global_count_over_index_ranges_uses_gos_stream_agg_and_index_reader() {
         };
         let k_column_id = table
             .visible_columns()
-            .iter()
+            .into_iter()
+            .map(|(_, column)| column)
             .find(|column| column.name == "k")
             .map(|column| column.id)
             .expect("k column");

@@ -197,8 +197,8 @@ fn single_column_index_ndv_and_null_count_match_the_column() {
     let mut table = kv_table_of(&catalog, "t");
     let column_names = table
         .visible_columns()
-        .iter()
-        .map(|column| (column.id, column.name.clone()))
+        .into_iter()
+        .map(|(_, column)| (column.id, column.name.clone()))
         .collect::<BTreeMap<_, _>>();
     let index_names = table
         .indexes()

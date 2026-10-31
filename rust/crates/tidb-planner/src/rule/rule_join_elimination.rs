@@ -222,12 +222,12 @@ fn join_keys_contain_unique_index(
         let Some(index) = source
             .indexes
             .iter()
-            .find(|index| index.id == index_id && index.unique && !index.columns.is_empty())
+            .find(|index| index.read().id == index_id && index.read().unique && !index.read().columns.is_empty())
         else {
             return false;
         };
-        index.columns.iter().all(|index_column| {
-            let Some(column) = source.table_columns.get(index_column.offset) else {
+        index.read().columns.iter_deref().all(|index_column| {
+            let Some(column) = source.table_columns.get(index_column.read().offset as usize) else {
                 return false;
             };
             join_keys.contains(column)

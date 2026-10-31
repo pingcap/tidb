@@ -27,8 +27,11 @@ use tidb_planner_core_base::PlanError;
 /// One resolved `SET` item of a single-table UPDATE.
 #[derive(Clone, Debug)]
 pub struct SingleUpdateAssignment {
-    /// The target column's position among the table's visible columns, or
-    /// their count for `_tidb_rowid`.
+    /// The target column's offset in the table's stored row (its place in
+    /// `TableInfo.Columns`), or the stored width for `_tidb_rowid` -- the
+    /// convention of the multi-table [`UpdateAssign::column`].
+    ///
+    /// [`UpdateAssign::column`]: tidb_planner_core_operator_physicalop::UpdateAssign::column
     pub column: usize,
     /// The value to rewrite: `None` for a generated column's own `DEFAULT`
     /// (the generation expression stays the value source); a bare `DEFAULT`
@@ -77,6 +80,17 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if extra_handle {
             names.push(field(tidb_model::column::EXTRA_HANDLE_NAME));
         }
+        // A name's position counts the visible columns; the stored row also
+        // holds the hidden ones, wherever DDL placed them.
+        let stored_offset = |position: usize| {
+            columns.get(position).map_or(table.columns.len(), |named| {
+                table
+                    .columns
+                    .iter()
+                    .position(|column| column.id == named.id)
+                    .expect("a visible column is one of the table's columns")
+            })
+        };
         let mut resolved = Vec::with_capacity(update.assignments.len());
         for assignment in &update.assignments {
             let column = find_field_name(&names, &assignment.col).ok_or_else(|| {
@@ -106,7 +120,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     ));
                 }
                 resolved.push(SingleUpdateAssignment {
-                    column,
+                    column: stored_offset(column),
                     value: None,
                 });
                 continue;
@@ -116,7 +130,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 value => value.clone(),
             };
             resolved.push(SingleUpdateAssignment {
-                column,
+                column: stored_offset(column),
                 value: Some(value),
             });
         }

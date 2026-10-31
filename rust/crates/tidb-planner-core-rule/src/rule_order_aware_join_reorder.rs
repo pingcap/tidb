@@ -330,8 +330,6 @@ mod tests {
     use tidb_planner_core_operator_logicalop::topn::LogicalTopN;
     use tidb_planner_core_operator_logicalop::BaseLogicalPlan;
     use tidb_planner_core_base::PlanIdAllocator;
-    use tidb_infoschema::table_source::SourceIndexColumn;
-    use tidb_infoschema::table_source::SourceIndex;
     use tidb_datatype::{
         FieldName, FieldNameMetadata, FieldType, FieldTypeCode, IdentifierMetadata,
     };
@@ -366,16 +364,15 @@ mod tests {
         let mut source = DataSource::new(base, table_id, table);
         source.table_columns = vec![column(table_id)];
         if indexed {
-            source.indexes.push(SourceIndex {
-                is_public: true,
-                is_visible: true,
-                columns: vec![SourceIndexColumn {
-                    name: "a".to_owned(),
+            source.indexes.push(tidb_model::GoShared::new(tidb_model::IndexInfo {
+                state: tidb_model::SchemaState::PUBLIC,
+                columns: vec![tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new("a"),
                     offset: 0,
-                    ..SourceIndexColumn::default()
-                }],
-                ..SourceIndex::default()
-            });
+                    ..tidb_model::IndexColumn::default()
+                }].into(),
+                ..tidb_model::IndexInfo::default()
+            }));
         }
         LogicalPlan::DataSource(source)
     }

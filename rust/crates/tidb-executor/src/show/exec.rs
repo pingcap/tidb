@@ -783,13 +783,12 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
             // `EXTENDED` adds the hidden columns MySQL keeps internally
             // (`tb.Cols()` rather than `tb.VisibleCols()`).
             let listed = if extended {
-                table.columns()
+                table.columns().iter().enumerate().collect()
             } else {
                 table.visible_columns()
             };
             listed
-                .iter()
-                .enumerate()
+                .into_iter()
                 .filter(|(_, candidate)| admits(&candidate.name))
                 .map(|(offset, candidate)| crate::show::columns::column_description(candidate, offset, table, full, &ctx))
                 .collect::<Result<Vec<_>, _>>()

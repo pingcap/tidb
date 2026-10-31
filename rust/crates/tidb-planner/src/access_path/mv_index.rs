@@ -66,9 +66,9 @@ pub(crate) fn prepare_idx_cols_and_unwrap_array_type(
     check_only_1_array: bool,
 ) -> Option<Vec<Column>> {
     let mut array_columns = 0;
-    let mut columns = Vec::with_capacity(index.columns.len());
-    for key in &index.columns {
-        let column = ds.table_columns.get(key.offset)?.clone();
+    let mut columns = Vec::with_capacity(index.read().columns.len());
+    for key in index.read().columns.iter_deref() {
+        let column = ds.table_columns.get(key.read().offset as usize)?.clone();
         if column.get_static_type().is_some_and(FieldType::is_array) {
             array_columns += 1;
         }
@@ -381,7 +381,7 @@ fn build_partial_path_for_mv_index(
     index_pos: usize,
 ) -> Result<Option<IndexMergePartial>, PlanError> {
     let index = &ds.indexes[index_pos];
-    let declared_lengths = index.columns.iter().map(|key| key.length).collect::<Vec<_>>();
+    let declared_lengths = index.read().columns.iter_deref().map(|key| key.read().length).collect::<Vec<_>>();
     let columns = idx_cols
         .iter()
         .cloned()
@@ -618,8 +618,8 @@ fn possible_mv_indexes(ds: &DataSource) -> Vec<usize> {
         .enumerate()
         .filter(|(position, index)| {
             enumerated[*position]
-                && index.is_multi_valued
-                && index_merge_hint_allows(ds, &index.name)
+                && index.read().mv_index
+                && index_merge_hint_allows(ds, index.read().name.original())
         })
         .map(|(position, _)| position)
         .collect()
@@ -794,7 +794,7 @@ pub(crate) fn generate_and_index_merge_for_composed_index(
     // At least one hinted MV index path.
     let enumerated = enumerated_index_mask(ds);
     let has_mv = ds.indexes.iter().enumerate().any(|(position, index)| {
-        enumerated[position] && index.is_multi_valued && index_merge_hint_allows(ds, &index.name)
+        enumerated[position] && index.read().mv_index && index_merge_hint_allows(ds, index.read().name.original())
     });
     if !has_mv {
         return Ok(None);
@@ -857,7 +857,7 @@ pub(crate) fn clean_access_path_for_mv_index_hint(
         .indexes
         .iter()
         .enumerate()
-        .filter(|(_, index)| index.is_multi_valued && ds.forced_index_ids.contains(&index.id))
+        .filter(|(_, index)| index.read().mv_index && ds.forced_index_ids.contains(&index.read().id))
         .map(|(position, _)| position)
         .collect();
     if forced.is_empty() {

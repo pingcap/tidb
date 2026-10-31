@@ -200,7 +200,7 @@ fn merge_partitioned_global_statistics(
     let topn_count = u32::try_from(options.num_topn.max(0)).unwrap_or(0);
     let killer = tidb_sqlkiller::SqlKiller::default();
 
-    for column in table.visible_columns() {
+    for (_, column) in table.visible_columns() {
         let items = partitions
             .iter()
             .filter_map(|(_, stats)| {

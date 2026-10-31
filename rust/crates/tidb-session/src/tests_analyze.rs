@@ -1263,8 +1263,8 @@ fn physical_statistics_loads_become_shared_at_the_next_statement_boundary() {
                         .collect::<std::collections::BTreeMap<_, _>>();
                     let column_ndvs = table
                         .visible_columns()
-                        .iter()
-                        .map(|column| (column.id, requested[column.name.as_str()]))
+                        .into_iter()
+                        .map(|(_, column)| (column.id, requested[column.name.as_str()]))
                         .collect::<std::collections::BTreeMap<_, _>>();
                     let indexes = table
                         .indexes()
@@ -1273,7 +1273,7 @@ fn physical_statistics_loads_become_shared_at_the_next_statement_boundary() {
                             let columns = index
                                 .column_offsets
                                 .iter()
-                                .filter_map(|offset| table.visible_columns().get(*offset))
+                                .filter_map(|offset| table.columns().get(*offset))
                                 .map(|column| column.id)
                                 .collect::<Vec<_>>();
                             (index.id, columns)

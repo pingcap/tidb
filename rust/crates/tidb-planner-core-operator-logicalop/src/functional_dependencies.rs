@@ -699,8 +699,6 @@ mod tests {
     use crate::selection::LogicalSelection;
     use crate::union_all::LogicalUnionAll;
     use crate::BaseLogicalPlan;
-    use tidb_infoschema::table_source::SourceIndexColumn;
-    use tidb_infoschema::table_source::SourceIndex;
 
     fn column(id: i64) -> Column {
         Column::new(id, FieldType::new(FieldTypeCode::LongLong))
@@ -778,26 +776,27 @@ mod tests {
                 ..DataSourceColumn::default()
             },
         ];
-        source.indexes = vec![SourceIndex {
+        source.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
             id: 1,
-            name: "bc".to_owned(),
+            name: tidb_ast::CiString::new("bc"),
             columns: vec![
-                SourceIndexColumn {
-                    name: "b".to_owned(),
+                tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new("b"),
                     offset: 1,
                     length: -1,
+                    ..tidb_model::IndexColumn::default()
                 },
-                SourceIndexColumn {
-                    name: "c".to_owned(),
+                tidb_model::IndexColumn {
+                    name: tidb_ast::CiString::new("c"),
                     offset: 2,
                     length: -1,
+                    ..tidb_model::IndexColumn::default()
                 },
-            ],
+            ].into(),
             unique: true,
-            is_public: true,
-            is_visible: true,
-            ..SourceIndex::default()
-        }];
+            state: tidb_model::SchemaState::PUBLIC,
+            ..tidb_model::IndexInfo::default()
+        })];
         if with_not_null_filter {
             source.all_conds.push(Expression::ScalarFunction(scalar(
                 "eq",

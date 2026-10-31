@@ -148,8 +148,7 @@ impl KvTableDdl for KvTable {
                 self.store_mut().set(key, value).map_err(KvTableError::from)?;
             }
         }
-        self.record_mv_key_part_source(&index);
-        self.indexes_mut().push(index);
+        self.add_index(index, false);
         Ok(added)
     }
 

@@ -46,20 +46,8 @@ pub(crate) fn column_metadata(table: &TableEntry) -> Vec<ColumnDefaultMeta> {
     match table {
         TableEntry::Kv(kv) => kv
             .visible_columns()
-            .iter()
-            .map(|column| ColumnDefaultMeta {
-                default_value: column.default_value.clone(),
-                not_null: column
-                    .field_type
-                    .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL),
-                no_default_value: column
-                    .field_type
-                    .has_flag(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE),
-                name: column.name.clone(),
-                field_type: column.field_type.clone(),
-                column_info_version: column.column_info_version,
-                generated: column.generated.is_some(),
-            })
+            .into_iter()
+            .map(|(_, column)| kv_column_metadata(column))
             .collect(),
         // A matrix-backed table carries no column metadata, so every column
         // is nullable with no default -- the original mock behavior.
@@ -91,6 +79,33 @@ pub(crate) fn column_metadata(table: &TableEntry) -> Vec<ColumnDefaultMeta> {
             })
             .collect(),
         TableEntry::Sequence(_) => Vec::new(),
+    }
+}
+
+/// [`column_metadata`] over every column of the stored row, hidden ones
+/// included, in `TableInfo.Columns` order: what a write indexes by a stored
+/// offset reads.
+pub(crate) fn stored_column_metadata(table: &TableEntry) -> Vec<ColumnDefaultMeta> {
+    match table {
+        TableEntry::Kv(kv) => kv.columns().iter().map(kv_column_metadata).collect(),
+        _ => column_metadata(table),
+    }
+}
+
+/// [`ColumnDefaultMeta`] of one stored column.
+pub(crate) fn kv_column_metadata(column: &tidb_table::kv_table::KvColumn) -> ColumnDefaultMeta {
+    ColumnDefaultMeta {
+        default_value: column.default_value.clone(),
+        not_null: column
+            .field_type
+            .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL),
+        no_default_value: column
+            .field_type
+            .has_flag(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE),
+        name: column.name.clone(),
+        field_type: column.field_type.clone(),
+        column_info_version: column.column_info_version,
+        generated: column.generated.is_some(),
     }
 }
 

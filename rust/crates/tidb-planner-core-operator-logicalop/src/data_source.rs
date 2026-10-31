@@ -313,13 +313,13 @@ impl DataSource {
             .map(|column| (column.name.as_str(), column.is_not_null))
             .collect();
         for index in &self.indexes {
-            if !index.unique || !index.is_public {
+            if !index.read().unique || !index.read().is_public() {
                 continue;
             }
             if self
                 .fd_latest_public_index_ids
                 .as_ref()
-                .is_some_and(|indexes| !indexes.contains(&index.id))
+                .is_some_and(|indexes| !indexes.contains(&index.read().id))
             {
                 continue;
             }
@@ -352,7 +352,7 @@ impl DataSource {
         let position = self
             .columns
             .iter()
-            .position(|column| tidb_mysql::lowercase_equal(&column.name, &index_column.name))?;
+            .position(|column| tidb_mysql::lowercase_equal(&column.name, index_column.name.original()))?;
         self.base.base.schema()?.columns.get(position)
     }
 
@@ -364,10 +364,11 @@ impl DataSource {
         index: &tidb_infoschema::table_source::SourceIndex,
     ) -> Vec<Option<(Column, i64)>> {
         index
-            .columns
-            .iter()
+            .read().columns
+            .iter_deref()
             .map(|key| {
-                self.schema_column_for_index_column(key)
+                let key = key.read();
+                self.schema_column_for_index_column(&key)
                     .cloned()
                     .map(|column| {
                         let length = if column
@@ -410,10 +411,10 @@ impl DataSource {
                         .first()
                         .and_then(Option::as_ref)
                         .is_some_and(|(column, _)| is_shard_column(column))
-                    && index.columns.len() > 1
-                    && index.unique;
+                    && index.read().columns.len() > 1
+                    && index.read().unique;
             self.contain_expr_prefix_uk |= is_uk_shard_index_path;
-            let state = self.derived_index_paths.entry(index.id).or_default();
+            let state = self.derived_index_paths.entry(index.read().id).or_default();
             state.declared_columns = Some(columns);
             state.is_uk_shard_index_path = is_uk_shard_index_path;
         }
@@ -442,7 +443,7 @@ impl DataSource {
             };
             if !self
                 .derived_index_paths
-                .get(&index.id)
+                .get(&index.read().id)
                 .is_some_and(|state| state.is_uk_shard_index_path)
             {
                 continue;
@@ -504,7 +505,7 @@ impl DataSource {
         let in_pseudo_table = if is_index {
             self.indexes
                 .iter()
-                .any(|index| index.id == item_id && index.is_public)
+                .any(|index| index.read().id == item_id && index.read().is_public())
         } else {
             self.table_columns
                 .iter()
@@ -537,7 +538,7 @@ impl DataSource {
                     ..
                 } => {
                     if let Some(index) = self.indexes.get(*position) {
-                        paths.insert(index.id, Vec::new());
+                        paths.insert(index.read().id, Vec::new());
                     }
                 }
                 tidb_planner_util::path::PossiblePath::Index { index: position } => {
@@ -547,7 +548,7 @@ impl DataSource {
                         let schema = self.base.base.schema();
                         let columns = hist_coll
                             .map(|coll| {
-                                coll.index_columns(index.id)
+                                coll.index_columns(index.read().id)
                                     .iter()
                                     .map_while(|id| {
                                         schema?
@@ -559,7 +560,7 @@ impl DataSource {
                                     .collect()
                             })
                             .unwrap_or_default();
-                        paths.insert(index.id, columns);
+                        paths.insert(index.read().id, columns);
                     }
                 }
                 tidb_planner_util::path::PossiblePath::Table { .. }
@@ -580,7 +581,7 @@ impl DataSource {
         index: &tidb_infoschema::table_source::SourceIndex,
         declared: &[(Column, i64)],
     ) -> Vec<(Column, i64)> {
-        if index.unique || index.primary || declared.len() != index.columns.len() {
+        if index.read().unique || index.read().primary || declared.len() != index.read().columns.len() {
             return Vec::new();
         }
         let Some(handle) = self
@@ -776,14 +777,14 @@ impl DataSource {
             let Some(metadata) = self.indexes.get(*index) else {
                 continue;
             };
-            if metadata.condition_expr_string.is_empty() {
+            if metadata.read().condition_expr_string.is_empty() {
                 continue;
             }
             has_partial_index = true;
-            let predicates = parse_simple_expr(resolver, &metadata.condition_expr_string, &options)
+            let predicates = parse_simple_expr(resolver, &metadata.read().condition_expr_string, &options)
                 .map(|expression| split_cnf_items(&expression));
             let Ok(predicates) = predicates else {
-                removed_ids.insert(metadata.id);
+                removed_ids.insert(metadata.read().id);
                 continue;
             };
             if !tidb_planner_core_partidx::check_constraints(
@@ -791,16 +792,16 @@ impl DataSource {
                 &predicates,
                 &self.pushed_down_conds,
             ) {
-                removed_ids.insert(metadata.id);
+                removed_ids.insert(metadata.read().id);
                 continue;
             }
-            if self.forced_index_ids.contains(&metadata.id) {
+            if self.forced_index_ids.contains(&metadata.read().id) {
                 partial_index_used_hint = true;
             }
             if use_plan_cache
                 && !tidb_planner_core_partidx::always_meet_constraints(&predicates, &self.pushed_down_conds)
             {
-                self.partial_index_noncacheable_ids.insert(metadata.id);
+                self.partial_index_noncacheable_ids.insert(metadata.read().id);
             }
         }
         if !has_partial_index || (removed_ids.is_empty() && !partial_index_used_hint) {
@@ -816,7 +817,7 @@ impl DataSource {
             tidb_planner_util::path::PossiblePath::Index { index } => self
                 .indexes
                 .get(*index)
-                .is_some_and(|metadata| keep_index_id(metadata.id)),
+                .is_some_and(|metadata| keep_index_id(metadata.read().id)),
             tidb_planner_util::path::PossiblePath::Table { .. }
             | tidb_planner_util::path::PossiblePath::TiFlashTable => !partial_index_used_hint,
         });
@@ -1310,11 +1311,12 @@ fn index_covers_column(
     // Go `isIndexColsCoveringCol` matches by `EqualByExprAndID`: another
     // expression index's hidden column with the same expression is covered
     // too.
-    if source_index.columns.iter().any(|index_column| {
+    if source_index.read().columns.iter_deref().any(|index_column| {
+        let index_column = index_column.read();
         full_length(index_column.length)
-            && (tidb_mysql::lowercase_equal(&index_column.name, &column.name)
+            && (tidb_mysql::lowercase_equal(index_column.name.original(), &column.name)
                 || schema_column.is_some_and(|schema_column| {
-                    ds.schema_column_for_index_column(index_column)
+                    ds.schema_column_for_index_column(&index_column)
                         .is_some_and(|indexed| schema_column.equal_by_expr_and_id_column(indexed))
                 }))
     }) {

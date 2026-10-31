@@ -271,8 +271,8 @@ pub fn statement_read_shape(
     }
     let columns: Vec<(String, FieldType)> = table
         .visible_columns()
-        .iter()
-        .map(|column| (column.name.clone(), column.field_type.clone()))
+        .into_iter()
+        .map(|(_, column)| (column.name.clone(), column.field_type.clone()))
         .collect();
     let Some(where_clause) = select.where_clause.as_ref() else {
         return StatementReadShape::Unknown;
@@ -291,7 +291,7 @@ pub fn statement_read_shape(
         if pairs.len() != 1 {
             return StatementReadShape::Unknown;
         }
-        let handle_column = &columns[handle_offset].0;
+        let handle_column = &table.columns()[handle_offset].name;
         if !pairs[0].column().go_lower_eq(handle_column) {
             return StatementReadShape::Unknown;
         }
@@ -313,7 +313,8 @@ pub fn statement_read_shape(
         return StatementReadShape::Unknown;
     }
     let complete = common_offsets.iter().all(|offset| {
-        columns.get(*offset).is_some_and(|(name, _)| {
+        table.columns().get(*offset).is_some_and(|column| {
+            let name = &column.name;
             pairs
                 .iter()
                 .filter(|pair| pair.column().go_lower_eq(name))
@@ -523,21 +524,31 @@ fn select_is_bare_read(select: &tidb_ast::SelectStmt, allow_limit: bool) -> bool
         })
 }
 
-/// The prefix of a decoded table row that a source emits.
+/// The visible columns of a decoded table row, the ones a source emits.
 ///
 /// `KvTable::get_row_by_handle` decodes and materializes EVERY column of the
 /// table, hidden ones included -- the hidden column an expression index was
 /// rewritten into has to be computed so an index entry can be written from
 /// the same row. The default output schema of these sources is the visible
 /// one; an explicit physical output mapping may also request hidden columns
-/// and uses the full row instead. Hidden columns are the row's trailing tail by
-/// construction (`KvTable::add_hidden_column`), so the visible row is a
-/// prefix rather than a gather.
+/// and uses the full row instead. A hidden column sits wherever Go's DDL put
+/// it in `TableInfo.Columns`, so a table that has one gathers the rest.
 ///
 /// `TableScanExec` states the same rule as its `keep` list; this is that rule
 /// for the two narrowed sources, which read their rows by handle instead.
-fn visible_of<'a>(table: &KvTable, row: &'a [tidb_datatype::Datum]) -> &'a [tidb_datatype::Datum] {
-    &row[..row.len().min(table.visible_column_count())]
+fn visible_of<'a>(
+    table: &KvTable,
+    row: &'a [tidb_datatype::Datum],
+) -> std::borrow::Cow<'a, [tidb_datatype::Datum]> {
+    if table.visible_column_count() == table.columns().len() {
+        return std::borrow::Cow::Borrowed(&row[..row.len().min(table.columns().len())]);
+    }
+    std::borrow::Cow::Owned(
+        (0..row.len())
+            .filter(|offset| !table.is_hidden(*offset))
+            .map(|offset| row[offset].clone())
+            .collect(),
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -758,7 +769,7 @@ impl HandleSourceExec {
         }
         if let Some(statement) = &self.table_statement {
             let keep = self.output_columns.as_ref().map_or_else(
-                || (0..self.table.visible_column_count()).collect::<Vec<_>>(),
+                || self.table.visible_offsets(),
                 |columns| {
                     columns
                         .iter()
@@ -951,7 +962,7 @@ impl HandleSourceExec {
                     owned = crate::kv_table::insert_extra_handle(visible.to_vec(), slot, handle);
                     &owned
                 }
-                None => visible,
+                None => &visible,
             };
             for (column, value) in visible.iter().enumerate() {
                 req.append_datum(column, value);
@@ -5293,7 +5304,7 @@ impl IndexJoinLookupExec {
         let keep = if self.covering {
             self.decode_offsets
                 .clone()
-                .unwrap_or_else(|| (0..self.table.visible_column_count()).collect::<Vec<_>>())
+                .unwrap_or_else(|| self.table.visible_offsets())
         } else {
             expression_column_offsets(filters)
         };
@@ -5799,7 +5810,7 @@ impl IndexJoinLookupExec {
                                 &self.index_filters,
                                 self.filter_context.as_ref(),
                                 &mut self.filter_chunk,
-                                visible_of(&self.table, &row),
+                                &visible_of(&self.table, &row),
                             )? {
                                 return Ok(std::ops::ControlFlow::Continue(false));
                             }
@@ -5909,7 +5920,7 @@ impl IndexJoinLookupExec {
         let keep = self
             .decode_offsets
             .clone()
-            .unwrap_or_else(|| (0..self.table.visible_column_count()).collect::<Vec<_>>());
+            .unwrap_or_else(|| self.table.visible_offsets());
         let remote_predicates =
             scan_conditions_for_filters(&self.filters, &keep, self.filter_context.as_ref());
         self.remote_filters_complete = remote_predicates.len() == self.filters.len();
@@ -5973,10 +5984,9 @@ impl IndexJoinLookupExec {
         if self.emit_extra_handle || self.emit_physical_table_id {
             return None;
         }
-        let visible = self.table.visible_column_count();
         let sources: Vec<usize> = match &self.output_offsets {
             Some(offsets) => offsets.clone(),
-            None => (0..visible).collect(),
+            None => self.table.visible_offsets(),
         };
         match &self.decode_offsets {
             None => Some(sources),
@@ -6080,7 +6090,7 @@ impl IndexJoinLookupExec {
         let keep = self
             .decode_offsets
             .clone()
-            .unwrap_or_else(|| (0..self.table.visible_column_count()).collect::<Vec<_>>());
+            .unwrap_or_else(|| self.table.visible_offsets());
         let remote_predicates =
             scan_conditions_for_filters(&self.filters, &keep, self.filter_context.as_ref());
         self.remote_filters_complete = remote_predicates.len() == self.filters.len();
@@ -6173,7 +6183,7 @@ impl IndexJoinLookupExec {
         let keep = self
             .decode_offsets
             .clone()
-            .unwrap_or_else(|| (0..self.table.visible_column_count()).collect::<Vec<_>>());
+            .unwrap_or_else(|| self.table.visible_offsets());
         let predicates =
             scan_conditions_for_filters(&self.filters, &keep, self.filter_context.as_ref());
         let Some(staged) = self

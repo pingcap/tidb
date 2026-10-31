@@ -146,7 +146,7 @@ fn contradiction_plan(
         residuals: Vec::new(),
         contradiction: true,
         row_decoder: tidb_table::kv_table::PreparedPointGetRowDecoder::new_with_handle_prefixes(
-            table.visible_columns(),
+            table.columns(),
             handle_offset,
             &[],
             &[],
@@ -1377,16 +1377,31 @@ pub fn build_prepared_point_get_plan(
         table_ref.alias.is_none().then(|| database.to_owned()),
         columns.clone(),
     );
-    let output = match fast_point_output(select, &scope) {
+    let mut output = match fast_point_output(select, &scope) {
         Some(output) => output,
         None => return None,
     };
+    // The scope lists the visible columns; every offset below is a stored-row
+    // offset, the one the table's keys, indexes and decoder address.
+    let visible_offsets = table.visible_offsets();
+    let stored_offset = |offset: usize| visible_offsets.get(offset).copied();
+    for offset in &mut output.offsets {
+        // The checksum column's sentinel is no column and stays as it is.
+        if let Some(stored) = stored_offset(*offset) {
+            *offset = stored;
+        }
+    }
+    let columns: Vec<(String, FieldType)> = table
+        .columns()
+        .iter()
+        .map(|column| (column.name.clone(), column.field_type.clone()))
+        .collect();
     // A generated output can evaluate expressions while its stored row is
     // decoded. Keep those plans on the full statement context; the cached
     // point path below needs only SELECT's temporal/default conversion state.
     if output.offsets.iter().any(|offset| {
         table
-            .visible_columns()
+            .columns()
             .get(*offset)
             .is_none_or(|column| column.generated.is_some())
     }) {
@@ -1411,13 +1426,13 @@ pub fn build_prepared_point_get_plan(
                 let Some((offset, _, _)) = resolver.resolve(point_get_column_path(&path)) else {
                     return None;
                 };
-                resolved.push((offset, PreparedPointPredicate::Eq(order, literal)));
+                resolved.push((stored_offset(offset)?, PreparedPointPredicate::Eq(order, literal)));
             }
             PreparedPointConjunct::IsNull { path } => {
                 let Some((offset, _, _)) = resolver.resolve(point_get_column_path(&path)) else {
                     return None;
                 };
-                resolved.push((offset, PreparedPointPredicate::IsNull));
+                resolved.push((stored_offset(offset)?, PreparedPointPredicate::IsNull));
             }
         }
     }
@@ -1564,7 +1579,7 @@ pub fn build_prepared_point_get_plan(
         handle_literals,
         target,
         row_decoder: tidb_table::kv_table::PreparedPointGetRowDecoder::new_with_handle_prefixes(
-            table.visible_columns(),
+            table.columns(),
             handle_offset,
             &common_handle_offsets,
             table.common_handle_prefix_lengths(),

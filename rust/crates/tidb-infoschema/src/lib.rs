@@ -479,26 +479,31 @@ impl TableEntry {
     /// HIDDEN columns are not here. This is the schema every user-facing
     /// enumeration is built from -- `SELECT *`, an `INSERT`'s arity, name
     /// resolution -- so the hidden column an expression index was rewritten
-    /// into is excluded once, at the source. Its physical offset is unchanged
-    /// by the exclusion because hidden columns are the tail (see
-    /// [`crate::expression_index`]).
+    /// into is excluded once, at the source. A position here is therefore NOT
+    /// a stored-row offset when the table has a hidden column.
     pub fn columns(&self) -> impl Iterator<Item = (&str, &FieldType)> {
-        let (pairs, kv): (&[(String, FieldType)], &[tidb_table::kv_table::KvColumn]) = match self {
-            TableEntry::Mem(mem) => (&mem.columns, &[]),
-            TableEntry::Kv(kv) => (&[], kv.visible_columns()),
-            TableEntry::View(view) => (&view.columns, &[]),
+        let columns: Vec<_> = match self {
+            TableEntry::Mem(mem) => mem
+                .columns
+                .iter()
+                .map(|(name, field_type)| (name.as_str(), field_type))
+                .collect(),
+            TableEntry::Kv(kv) => kv
+                .visible_columns()
+                .into_iter()
+                .map(|(_, column)| (column.name.as_str(), &column.field_type))
+                .collect(),
+            TableEntry::View(view) => view
+                .columns
+                .iter()
+                .map(|(name, field_type)| (name.as_str(), field_type))
+                .collect(),
             // Go gives a sequence a fixed one-column schema, but no statement
             // this tier accepts ever reads it: `SELECT * FROM <sequence>` is
             // refused, and `nextval` reaches the allocator directly.
-            TableEntry::Sequence(_) => (&[], &[]),
+            TableEntry::Sequence(_) => Vec::new(),
         };
-        pairs
-            .iter()
-            .map(|(name, field_type)| (name.as_str(), field_type))
-            .chain(
-                kv.iter()
-                    .map(|column| (column.name.as_str(), &column.field_type)),
-            )
+        columns.into_iter()
     }
 
     /// An owned schema for consumers that retain or modify column types.

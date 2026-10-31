@@ -191,6 +191,28 @@ pub struct TopicReport {
     /// One `statement`, `error` pair per statement TiDB answered and this
     /// engine refused (counted as [`SkipClass::OutOfDomain`]).
     pub out_of_domain: Vec<(String, String)>,
+    /// The topic's wall time: store bootstrap and every statement.
+    pub elapsed: std::time::Duration,
+    /// Statement count and wall time by [`statement_kind`].
+    pub statement_time: BTreeMap<String, (usize, std::time::Duration)>,
+}
+
+/// The leading keywords that name what a statement does (`create table`,
+/// `select`, `explain`), the key [`TopicReport::statement_time`] groups by.
+#[must_use]
+pub fn statement_kind(sql: &str) -> String {
+    let mut words = sql
+        .split(|c: char| c.is_whitespace() || c == '(' || c == ';')
+        .filter(|word| !word.is_empty())
+        .map(str::to_ascii_lowercase);
+    let first = words.next().unwrap_or_default();
+    match first.as_str() {
+        "create" | "drop" | "alter" | "admin" | "show" | "set" | "load" => {
+            let second = words.next().unwrap_or_default();
+            format!("{first} {second}")
+        }
+        _ => first,
+    }
 }
 
 impl TopicReport {
@@ -215,6 +237,91 @@ impl TopicReport {
     pub fn total(&self) -> usize {
         self.matched_total() + self.divergences.len() + self.skipped.values().sum::<usize>()
     }
+}
+
+/// [`TopicReport`] as the lines a replay child process hands its parent:
+/// one record per line, tab-separated, each text escaped so a multi-line
+/// divergence stays on its line.
+impl TopicReport {
+    /// The report as [`Self::decode`] reads it back.
+    #[must_use]
+    pub fn encode(&self) -> String {
+        let mut out = String::new();
+        for (kind, count) in &self.matched {
+            out.push_str(&format!("M\t{}\t{count}\n", escape(kind)));
+        }
+        for (class, count) in &self.skipped {
+            out.push_str(&format!("S\t{}\t{count}\n", escape(class)));
+        }
+        for divergence in &self.divergences {
+            out.push_str(&format!("D\t{}\n", escape(divergence)));
+        }
+        for (sql, error) in &self.out_of_domain {
+            out.push_str(&format!("O\t{}\t{}\n", escape(sql), escape(error)));
+        }
+        out.push_str(&format!("E\t{}\n", self.elapsed.as_nanos()));
+        for (kind, (count, spent)) in &self.statement_time {
+            out.push_str(&format!("T\t{}\t{count}\t{}\n", escape(kind), spent.as_nanos()));
+        }
+        out
+    }
+
+    /// Reads back [`Self::encode`].
+    ///
+    /// # Errors
+    ///
+    /// A line that is not one of the records `encode` writes.
+    pub fn decode(text: &str) -> Result<Self, String> {
+        let mut report = TopicReport::default();
+        let nanos = |field: &str| {
+            field
+                .parse::<u64>()
+                .map(std::time::Duration::from_nanos)
+                .map_err(|e| format!("bad duration {field:?}: {e}"))
+        };
+        let count = |field: &str| field.parse::<usize>().map_err(|e| format!("bad count {field:?}: {e}"));
+        for line in text.lines() {
+            let fields: Vec<&str> = line.split('\t').collect();
+            match fields.as_slice() {
+                ["M", kind, n] => {
+                    report.matched.insert(unescape(kind), count(n)?);
+                }
+                ["S", class, n] => {
+                    report.skipped.insert(unescape(class), count(n)?);
+                }
+                ["D", divergence] => report.divergences.push(unescape(divergence)),
+                ["O", sql, error] => report.out_of_domain.push((unescape(sql), unescape(error))),
+                ["E", elapsed] => report.elapsed = nanos(elapsed)?,
+                ["T", kind, n, spent] => {
+                    report.statement_time.insert(unescape(kind), (count(n)?, nanos(spent)?));
+                }
+                _ => return Err(format!("unreadable report line {line:?}")),
+            }
+        }
+        Ok(report)
+    }
+}
+
+fn escape(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('\n', "\\n").replace('\t', "\\t")
+}
+
+fn unescape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some(other) => out.push(other),
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 /// Whether to print each out-of-domain statement with the error that refused
@@ -875,6 +982,7 @@ fn run_topic_on_this_stack<B: ReplayBackend>(topic: &str) -> Result<TopicReport,
     let items = parse_test(&script)?;
     let aligned = align_bytes(&items, &recorded)?;
 
+    let started = std::time::Instant::now();
     let mut report = TopicReport::default();
     let mut connections = B::open(topic)?;
     // `INTEGRATION_SHOW_CONTEXT` lists the statements that ran before each
@@ -894,8 +1002,15 @@ fn run_topic_on_this_stack<B: ReplayBackend>(topic: &str) -> Result<TopicReport,
             }
             Item::Echo(_) => continue,
         };
+        let statement_started = std::time::Instant::now();
         let outcome =
             connections.with_current(&mut |session| compare(session, stmt, &block, &mut report));
+        let spent = report
+            .statement_time
+            .entry(statement_kind(&stmt.sql))
+            .or_default();
+        spent.0 += 1;
+        spent.1 += statement_started.elapsed();
         if matches!(outcome, Err(None)) && !stmt.expect_error {
             connections.after_refused_statement(&stmt.sql);
         }
@@ -923,5 +1038,6 @@ fn run_topic_on_this_stack<B: ReplayBackend>(topic: &str) -> Result<TopicReport,
             }
         }
     }
+    report.elapsed = started.elapsed();
     Ok(report)
 }

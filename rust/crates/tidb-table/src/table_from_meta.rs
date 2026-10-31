@@ -315,16 +315,9 @@ pub fn cluster_table(
     if table.is_sequence() {
         return Err("it is a sequence".to_owned());
     }
-    // Go retains ColumnInfo.Hidden separately from column identity. The
-    // executor's native layout keeps visible columns first; derive every
-    // expression/index/handle offset from this one ordering, not stored
-    // Go offsets. Stable partitioning preserves visible SQL column order.
-    let (mut columns, hidden): (Vec<_>, Vec<_>) = table
-        .cols()
-        .iter_deref()
-        .partition(|column| !column.read().hidden);
-    let visible_count = columns.len();
-    columns.extend(hidden);
+    // Go `TableFromMeta` keeps `TableInfo.Cols()` in their stored order,
+    // hidden expression-index columns included.
+    let columns: Vec<_> = table.cols().iter_deref().collect();
     // A partitioned table is loadable when its partitioning is one this node
     // can rebuild from METADATA. `partition_spec_from_metadata` reads Go's
     // stored `PartitionInfo` -- the restored expression text, the columns,
@@ -558,7 +551,6 @@ pub fn cluster_table(
     for column in &columns {
         kv_columns.push(build_column(&column.read())?);
     }
-    let hidden = kv_columns.split_off(visible_count);
     let mut kv_table = KvTable::with_storage(table.id, kv_columns, storage.clone_box());
     kv_table.set_meta(table.clone());
     kv_table.set_all_columns_public(
@@ -567,9 +559,6 @@ pub fn cluster_table(
             .iter_deref()
             .all(|column| column.read().state == SchemaState::PUBLIC),
     );
-    for column in hidden {
-        kv_table.add_hidden_column(column);
-    }
     // Go `TableFromMeta` keeps every column that is not `StateNone`: one a
     // DDL is adding, dropping or changing is written by its state, and a
     // public column a MODIFY COLUMN is checking carries its changing type.
@@ -1072,7 +1061,7 @@ fn loaded_partition_spec(
 /// The offsets are resolved by NAME here even though `IndexColumn.Offset`
 /// carries one, because the two count different things: Go's offset is a
 /// position in `TableInfo.Columns`, and a `KvIndex`'s is a position in the
-/// native columns this loader built, with visible columns before hidden
+/// native columns this loader built from `TableInfo.Cols()`, the public
 /// ones. Resolving against that same list also keeps backfill and normal
 /// writes from indexing different row slots.
 ///

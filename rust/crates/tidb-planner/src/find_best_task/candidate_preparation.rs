@@ -94,7 +94,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
                             || range.is_point_nullable(),
                             |index| {
                                 range.is_point_non_nullable()
-                                    && range.low_val.len() == index.columns.len()
+                                    && range.low_val.len() == index.read().columns.len()
                             },
                         )
                     }),
@@ -110,10 +110,10 @@ pub(super) fn prepare_ordinary_paths<'a>(
                 // Go `convertToIndexScan`: a multi-valued index is read only
                 // through IndexMerge, so it is no ordinary candidate (and its
                 // logical derivation fills no ordinary path).
-                if index.is_multi_valued {
+                if index.read().mv_index {
                     continue;
                 }
-                let state = ds.derived_index_paths.get(&index.id)?;
+                let state = ds.derived_index_paths.get(&index.read().id)?;
                 let filled = state.filled.as_ref()?;
                 let partial = prop
                     .partial_order_info
@@ -124,11 +124,11 @@ pub(super) fn prepare_ordinary_paths<'a>(
                 }
                 if ctx.partial_ordered_index_for_topn
                     && partial.is_some()
-                    && ds.forced_index_ids.contains(&index.id)
-                    && !ds.force_no_keep_order_index_ids.contains(&index.id)
+                    && ds.forced_index_ids.contains(&index.read().id)
+                    && !ds.force_no_keep_order_index_ids.contains(&index.read().id)
                 {
                     ctx.forced_partial_order_paths
-                        .insert((std::ptr::from_ref(ds).addr(), index.id));
+                        .insert((std::ptr::from_ref(ds).addr(), index.read().id));
                 }
                 let single_scan = state.is_single_scan.unwrap_or_else(|| {
                     index_path_is_single_scan(ds, index, ctx.opt_prefix_index_single_scan)
@@ -140,7 +140,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
                 if filled.detached.access_conds.is_empty()
                     && !empty_ranges
                     && prop.is_sort_item_empty()
-                    && !ds.forced_index_ids.contains(&index.id)
+                    && !ds.forced_index_ids.contains(&index.read().id)
                     && !single_scan
                     && partial.is_none()
                 {
@@ -160,9 +160,9 @@ pub(super) fn prepare_ordinary_paths<'a>(
                         range_count: filled.detached.ranges.len(),
                         only_points: filled.detached.ranges.iter().all(|range| {
                             range.is_point_non_nullable()
-                                && range.low_val.len() == index.columns.len()
+                                && range.low_val.len() == index.read().columns.len()
                         }),
-                        unique: index.unique,
+                        unique: index.read().unique,
                         single_scan,
                         table_filter_count: filled.table_filters.len(),
                         access_columns: metrics.access_columns.clone(),
@@ -260,7 +260,7 @@ fn range_scan_flags(
             };
             let Some(filled) = ds
                 .derived_index_paths
-                .get(&index.id)
+                .get(&index.read().id)
                 .and_then(|state| state.filled.as_ref())
             else {
                 return (false, false);
@@ -289,7 +289,7 @@ fn range_scan_flags(
                     || ((single_scan || index_filters)
                         && (prop.is_sort_item_empty() || matches_property)))
                     && !tidb_ranger::types::has_full_range(&filled.detached.ranges, false),
-                ds.forced_index_ids.contains(&index.id) || index.global || index.is_multi_valued,
+                ds.forced_index_ids.contains(&index.read().id) || index.read().global || index.read().mv_index,
             )
         }
         PossiblePath::TiFlashTable => (false, true),

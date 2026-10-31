@@ -24,6 +24,7 @@ tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-mysql = { path = "../tidb-mysql" }
 
 [dev-dependencies]
+tidb-model = { path = "../tidb-model" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-planner-cardinality = { path = "../tidb-planner-cardinality" }

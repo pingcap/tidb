@@ -119,7 +119,7 @@ fn index_partial_matches_order(
     allow_groups: bool,
 ) -> Option<Vec<usize>> {
     let index = &ds.indexes[index_pos];
-    if ds.force_no_keep_order_index_ids.contains(&index.id) {
+    if ds.force_no_keep_order_index_ids.contains(&index.read().id) {
         return None;
     }
     // Match the same normalized key layout used by ordinary ranges,
@@ -260,7 +260,7 @@ pub(super) fn converge_union_index_merge_path<'a>(
     );
     let index_id = |partial: &Partial| match partial {
         Partial::Index { index_pos, .. } | Partial::MvIndex { index_pos, .. } => {
-            ds.indexes[*index_pos].id
+            ds.indexes[*index_pos].read().id
         }
         Partial::Table { .. } => -1,
     };
@@ -866,7 +866,7 @@ fn push_index_partial(
     // Go `ConvertToPartialIndexScan`: an ordered partial of a dynamically
     // pruned partitioned table also reads each entry's partition id, unless
     // a global index already carries it.
-    if matched && keeps_phys_tbl_id(ds) && !source_index.global {
+    if matched && keeps_phys_tbl_id(ds) && !source_index.read().global {
         super::dispatch::add_extra_phys_tbl_id_column(&mut schema_columns, ctx);
     }
     // Go GetScanRowSize prices the physical index schema once.
@@ -888,8 +888,8 @@ fn push_index_partial(
         dynamic_partition_access: ds.dynamic_partition_access.clone(),
         cost_columns,
         data_source_schema: ds.base.base.schema().cloned().map(Box::new),
-        index_id: source_index.id,
-        index_name: source_index.name.clone(),
+        index_id: source_index.read().id,
+        index_name: source_index.read().name.original().to_owned(),
         keep_order: matched,
         desc,
         ranges: ranges.clone(),
@@ -970,14 +970,14 @@ pub(super) fn index_scan_schema(
     ctx: &DispatchContext<'_>,
     double_read: bool,
 ) -> Result<Vec<tidb_expr::column::Column>, PlanError> {
-    let mut columns = Vec::with_capacity(index.columns.len() + ds.common_handle_cols.len() + 2);
-    for index_column in &index.columns {
-        let column = if let Some(column) = ds.schema_column_for_index_column(index_column) {
+    let mut columns = Vec::with_capacity(index.read().columns.len() + ds.common_handle_cols.len() + 2);
+    for index_column in index.read().columns.iter_deref() {
+        let column = if let Some(column) = ds.schema_column_for_index_column(&index_column.read()) {
             column.clone()
         } else {
             let mut column = ds
                 .table_columns
-                .get(index_column.offset)
+                .get(index_column.read().offset as usize)
                 .cloned()
                 .ok_or_else(|| {
                     PlanError::internal("index column is absent from immutable table metadata")
@@ -995,11 +995,11 @@ pub(super) fn index_scan_schema(
         // whole), which keeps `canPushToIndexPlan` from sorting or cutting by
         // a truncated key.
         let mut column = column;
-        if index_column.length > 0
+        if index_column.read().length > 0
             && column
                 .ret_type
                 .as_ref()
-                .is_some_and(|field_type| field_type.flen() > index_column.length)
+                .is_some_and(|field_type| field_type.flen() > index_column.read().length)
         {
             column.is_prefix = true;
         }
@@ -1023,7 +1023,7 @@ pub(super) fn index_scan_schema(
         })
     }) {
         columns.push(handle.clone());
-    } else if double_read || index.global {
+    } else if double_read || index.read().global {
         columns.push(extra_column(
             ctx,
             tidb_model::column::EXTRA_HANDLE_ID,
@@ -1037,7 +1037,7 @@ pub(super) fn index_scan_schema(
             .find(|column| column.id == tidb_model::column::EXTRA_PHYS_TBL_ID)
     }) {
         columns.push(column.clone());
-    } else if index.global {
+    } else if index.read().global {
         columns.push(extra_column(
             ctx,
             tidb_model::column::EXTRA_PHYS_TBL_ID,
@@ -1149,8 +1149,6 @@ mod tests {
     #[test]
     fn index_merge_restores_index_columns_and_handle_suffix() {
         use tidb_planner_core_operator_logicalop::{data_source::DataSourceColumn, BaseLogicalPlan};
-        use tidb_infoschema::table_source::SourceIndexColumn;
-        use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::column::Column;
         use tidb_expr::constant::Constant;
@@ -1190,23 +1188,25 @@ mod tests {
             index_merge_hints: vec![Default::default()],
             common_handle_cols: vec![a.clone()],
             is_common_handle: true,
-            indexes: vec![SourceIndex {
+            indexes: vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 7,
                 global: true,
                 columns: vec![
-                    SourceIndexColumn {
-                        name: "a".into(),
+                    tidb_model::IndexColumn {
+                        name: tidb_ast::CiString::new("a"),
                         offset: 0,
                         length: -1,
+                        ..tidb_model::IndexColumn::default()
                     },
-                    SourceIndexColumn {
-                        name: "b".into(),
+                    tidb_model::IndexColumn {
+                        name: tidb_ast::CiString::new("b"),
                         offset: 1,
                         length: -1,
+                        ..tidb_model::IndexColumn::default()
                     },
-                ],
-                ..Default::default()
-            }],
+                ].into(),
+                ..tidb_model::IndexInfo::default()
+            })],
             pushed_down_conds: vec![Expression::ScalarFunction(ScalarFunction::new(
                 tidb_ast::CiString::new("or"),
                 ty.clone(),
@@ -1245,9 +1245,13 @@ mod tests {
         // Both (a,b) and (a) can serve each branch. Logical preparation must
         // retain both; an ordering property may need the longer alternative.
         let mut choices = ds.clone();
-        let mut shorter = choices.indexes[0].clone();
-        shorter.id = 8;
-        shorter.columns.truncate(1);
+        let shorter = tidb_model::GoShared::new(choices.indexes[0].read().clone_like_go());
+        {
+            let mut info = shorter.write();
+            info.id = 8;
+            let len = info.columns.len();
+            info.columns.delete_go(1, len);
+        }
         choices.indexes.push(shorter);
         choices
             .enumerated_paths
@@ -1293,19 +1297,20 @@ mod tests {
             .is_empty());
         // Two indexes led by `b` serve the second OR.
         for (id, columns) in [(9, vec!["b"]), (10, vec!["b", "a"])] {
-            multiple_or.indexes.push(SourceIndex {
-                id,
+            multiple_or.indexes.push(tidb_model::GoShared::new(tidb_model::IndexInfo {
+                id: id,
                 global: true,
-                columns: columns
+                columns: (columns
                     .into_iter()
-                    .map(|name| SourceIndexColumn {
-                        name: name.into(),
-                        offset: usize::from(name == "b"),
+                    .map(|name| tidb_model::IndexColumn {
+                        name: tidb_ast::CiString::new(name),
+                        offset: (usize::from(name == "b")) as i64,
                         length: -1,
+                        ..tidb_model::IndexColumn::default()
                     })
-                    .collect(),
-                ..Default::default()
-            });
+                    .collect::<Vec<_>>()).into(),
+                ..tidb_model::IndexInfo::default()
+            }));
             multiple_or
                 .enumerated_paths
                 .push(tidb_planner_util::path::PossiblePath::Index { index: multiple_or.indexes.len() - 1 });
@@ -1458,7 +1463,7 @@ mod tests {
         for index in &ordinary_source.indexes {
             ordinary_source
                 .derived_index_paths
-                .entry(index.id)
+                .entry(index.read().id)
                 .or_default()
                 .row_estimate = Some(tidb_stats::RowEstimate::new(
                 100.0, 0.0, 0.0,
@@ -1521,8 +1526,10 @@ mod tests {
         table_source.pushed_down_conds = vec![eq(1)];
         table_source.all_conds = table_source.pushed_down_conds.clone();
         table_source.index_merge_hints.clear();
-        table_source.indexes[0].primary = true;
-        table_source.indexes[0].unique = true;
+        let detached = tidb_model::GoShared::new(table_source.indexes[0].read().clone_like_go());
+        table_source.indexes[0] = detached;
+        table_source.indexes[0].write().primary = true;
+        table_source.indexes[0].write().unique = true;
         table_source.enumerated_paths = vec![tidb_planner_util::path::PossiblePath::Table {
             is_int_handle: false,
             primary_index: Some(0),
@@ -1587,7 +1594,9 @@ mod tests {
         let mut ds = ds;
         ds.is_common_handle = false;
         ds.common_handle_cols.clear();
-        ds.indexes[0].global = false;
+        let detached = tidb_model::GoShared::new(ds.indexes[0].read().clone_like_go());
+        ds.indexes[0] = detached;
+        ds.indexes[0].write().global = false;
         for (pk_is_handle, expected) in [(false, vec![1, 2, -1]), (true, vec![1, 2, 1])] {
             ds.pk_is_handle = pk_is_handle;
             let columns = partial_index_schema(&ds, &ds.indexes[0], &ctx).unwrap();
@@ -1606,7 +1615,7 @@ mod tests {
         ds.base
             .base
             .set_schema(Some(Schema::new(vec![inherited.clone()])));
-        ds.indexes[0].global = true;
+        ds.indexes[0].write().global = true;
         let columns = partial_index_schema(&ds, &ds.indexes[0], &ctx).unwrap();
         assert_eq!(
             columns.iter().map(|column| column.id).collect::<Vec<_>>(),

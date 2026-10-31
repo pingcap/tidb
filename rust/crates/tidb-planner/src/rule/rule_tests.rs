@@ -2207,7 +2207,6 @@ pub(crate) fn push_down_topn(
 mod partition_index_hints {
     use tidb_planner_util::path::PossiblePath;
     use tidb_planner_core_operator_logicalop::data_source::{DataSource, DataSourceIndexHint};
-    use tidb_infoschema::table_source::SourceIndex;
 
     #[test]
     fn ordinary_index_hints_are_resolved_per_static_partition() {
@@ -2223,21 +2222,21 @@ mod partition_index_hints {
         let mut source = DataSource {
             table_name: "t".to_owned(),
             indexes: vec![
-                SourceIndex {
+                tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
-                    name: "idx_all".to_owned(),
-                    ..SourceIndex::default()
-                },
-                SourceIndex {
+                    name: tidb_ast::CiString::new("idx_all"),
+                    ..tidb_model::IndexInfo::default()
+                }),
+                tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 2,
-                    name: "idx_p0".to_owned(),
-                    ..SourceIndex::default()
-                },
-                SourceIndex {
+                    name: tidb_ast::CiString::new("idx_p0"),
+                    ..tidb_model::IndexInfo::default()
+                }),
+                tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 3,
-                    name: "idx_p1".to_owned(),
-                    ..SourceIndex::default()
-                },
+                    name: tidb_ast::CiString::new("idx_p1"),
+                    ..tidb_model::IndexInfo::default()
+                }),
             ],
             public_enumerated_paths: vec![
                 PossiblePath::Table {
@@ -2288,11 +2287,11 @@ mod partition_index_hints {
     fn table_syntax_index_hints_survive_per_partition_resolution() {
         let mut source = DataSource {
             table_name: "t".to_owned(),
-            indexes: vec![SourceIndex {
+            indexes: vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 1,
-                name: "ia".to_owned(),
-                ..SourceIndex::default()
-            }],
+                name: tidb_ast::CiString::new("ia"),
+                ..tidb_model::IndexInfo::default()
+            })],
             public_enumerated_paths: vec![
                 PossiblePath::Table {
                     is_int_handle: true,

@@ -97,18 +97,18 @@ fn catalog() -> TestCatalog {
                 db_name: "test".to_owned(),
                 physical_table_id: 100,
                 columns: vec![column(0, "a", true), column(1, "b", false)],
-                indexes: vec![SourceIndex {
+                indexes: vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 1,
-                    name: "idx_b".to_owned(),
-                    columns: vec![SourceIndexColumn {
-                        name: "b".to_owned(),
+                    name: tidb_ast::CiString::new("idx_b"),
+                    columns: vec![tidb_model::IndexColumn {
+                        name: tidb_ast::CiString::new("b"),
                         offset: 1,
                         length: -1,
-                    }],
-                    is_public: true,
-                    is_visible: true,
-                    ..SourceIndex::default()
-                }],
+                        ..tidb_model::IndexColumn::default()
+                    }].into(),
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                })],
                 pk_is_handle: true,
                 handle_col_offsets: vec![0],
                 ..SourceTable::default()

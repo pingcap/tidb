@@ -149,7 +149,7 @@ pub fn show_create_table_text(
     // Only the VISIBLE columns get a definition line: the hidden column an
     // expression index was rewritten into is printed as the index's
     // expression instead, below.
-    for (offset, column) in table.visible_columns().iter().enumerate() {
+    for (offset, column) in table.visible_columns() {
         let mut clause = format!(
             "  {} {}",
             escape_name(&column.name, ansi_quotes),

@@ -1397,15 +1397,17 @@ pub fn resolve_index_columns(
             length: *length,
         })
         .collect::<Vec<_>>();
-    // Go `buildIndexColumns` over the table's columns, the new hidden ones
-    // included, run as the job worker runs it (Go's nil context).
-    let (index_columns, _) = crate::index::build_index_columns(
+    // Go `idxInfo.Columns, idxInfo.MVIndex, err = buildIndexColumns(...)`
+    // over the table's columns, the new hidden ones included, run as the job
+    // worker runs it (Go's nil context).
+    let (index_columns, mv_index) = crate::index::build_index_columns(
         None,
         &columns,
         &specs,
         tidb_model::index::ColumnarIndexType::NA,
     )
     .map_err(|error| DdlAdmissionError::from_mysql_error(error.into()))?;
+    added.mv_index = mv_index;
     for (part, built) in added.columns.iter_deref().zip(&index_columns) {
         let mut part = part.write();
         part.name = built.name.clone();

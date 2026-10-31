@@ -165,13 +165,13 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                         .iter()
                         .filter(|index| {
                             op.derived_index_paths
-                                .get(&index.id)
+                                .get(&index.read().id)
                                 .and_then(|path| path.is_single_scan)
                                 .is_none()
                         })
                         .map(|index| {
                             (
-                                index.id,
+                                index.read().id,
                                 tidb_planner_core_operator_logicalop::data_source::index_path_is_single_scan(
                                     op,
                                     index,
@@ -265,7 +265,7 @@ impl DataSourceStatsDeriver for CoreDataSourceStats {
                             env.opt_prefix_index_single_scan,
                         );
                         op.derived_index_paths
-                            .entry(index.id)
+                            .entry(index.read().id)
                             .or_default()
                             .is_single_scan = Some(is_single_scan);
                     }

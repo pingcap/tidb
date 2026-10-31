@@ -161,20 +161,21 @@ fn mark_cluster_table(
     table.handle_col_offsets = vec![offset];
     table.common_handle_col_offsets = vec![offset];
     table.common_handle_lens = vec![tidb_datatype::UNSPECIFIED_LENGTH];
-    table.indexes = vec![crate::table_source::SourceIndex {
-        id: 0,
-        name: "primary".to_owned(),
-        columns: vec![crate::table_source::SourceIndexColumn {
-            name: table.columns[offset].name.clone(),
-            offset,
+    table.indexes = vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
+        name: tidb_ast::CiString::new("primary"),
+        table: tidb_ast::CiString::new(table.table_name.clone()),
+        columns: vec![tidb_model::IndexColumn {
+            name: tidb_ast::CiString::new(table.columns[offset].name.clone()),
+            offset: offset as i64,
             length: tidb_datatype::UNSPECIFIED_LENGTH,
-        }],
+            ..tidb_model::IndexColumn::default()
+        }]
+        .into(),
+        state: tidb_model::SchemaState::PUBLIC,
         unique: true,
         primary: true,
-        is_public: true,
-        is_visible: true,
-        ..crate::table_source::SourceIndex::default()
-    }];
+        ..tidb_model::IndexInfo::default()
+    })];
 }
 
 pub fn is_virtual_schema_table(database: &str, name: &str) -> bool {
@@ -236,47 +237,16 @@ impl crate::table_source::TableSource for PlannerCatalog {
         db_name: &str,
         table_name: &str,
     ) -> Vec<crate::table_source::SourceIndex> {
-        let (Some(hypo), Some(table)) = (
-            self.hypo_indexes.as_deref(),
-            self.find_table(db_name, table_name),
-        ) else {
+        // Go appends the session's `*model.IndexInfo` itself.
+        let Some(hypo) = self.hypo_indexes.as_deref() else {
             return Vec::new();
         };
+        if self.find_table(db_name, table_name).is_none() {
+            return Vec::new();
+        }
         hypo.table_indexes(db_name, table_name)
             .into_iter()
-            .map(|index| crate::table_source::SourceIndex {
-                id: index.id,
-                name: index.name.original().to_owned(),
-                // Go resolves each key part by its column's offset in the
-                // table.
-                columns: index
-                    .columns
-                    .iter_deref()
-                    .filter_map(|part| {
-                        let part = part.read();
-                        let offset = table
-                            .columns
-                            .iter()
-                            .position(|column| {
-                                tidb_mysql::lowercase_equal(&column.name, part.name.original())
-                            })?;
-                        Some(crate::table_source::SourceIndexColumn {
-                            name: table.columns[offset].name.clone(),
-                            offset,
-                            length: part.length,
-                        })
-                    })
-                    .collect(),
-                unique: index.unique,
-                primary: false,
-                is_public: true,
-                is_visible: !index.invisible,
-                is_columnar: false,
-                is_multi_valued: false,
-                global: index.global,
-                condition_expr_string: String::new(),
-                affect_column_offsets: Vec::new(),
-            })
+            .map(|index| tidb_model::GoShared::new(index.clone()))
             .collect()
     }
 
@@ -596,8 +566,6 @@ impl Catalog {
     /// `planner/util/domainmisc.GetLatestIndexInfo`.
     #[must_use]
     pub fn latest_index_schema(&self) -> Arc<crate::table_source::LatestIndexSchema> {
-        use crate::table_source::SourceIndex;
-
         Arc::clone(self.schema.latest_index_schema.get_or_init(|| {
             let mut table_indexes = std::collections::BTreeMap::new();
             for database in self.schema.databases.values() {
@@ -607,15 +575,7 @@ impl Catalog {
                     };
                     table_indexes.insert(
                         table.table_id(),
-                        table
-                            .indexes()
-                            .iter()
-                            .map(|index| SourceIndex {
-                                id: index.id,
-                                is_public: true,
-                                ..SourceIndex::default()
-                            })
-                            .collect(),
+                        table.meta().read().indices.iter_deref().collect(),
                     );
                 }
             }
@@ -634,85 +594,68 @@ fn kv_source_table(
     db_name: &str,
     resolve_db_info: tidb_model::GoShared<tidb_model::DBInfo>,
 ) -> crate::table_source::SourceTable {
-    use crate::table_source::{SourceColumn, SourceIndex, SourceIndexColumn};
+    use crate::table_source::SourceColumn;
 
-    let columns = table
-        .columns()
-        .iter()
-        .enumerate()
-        .map(|(offset, column)| SourceColumn {
-            id: column.id,
-            name: column.name.clone(),
-            // PKIsHandle and its primary column must agree,
-            // including tables installed through register_kv.
-            is_primary_key: table.pk_handle_offset() == Some(offset)
-                || table.common_handle_offsets().contains(&offset)
-                || column
+    // Go `buildDataSource` reads `TableInfo.Columns` and `.Indices` as
+    // `TableFromMeta` loaded them, in their stored order.
+    let meta = table.meta();
+    let info = meta.read();
+    let columns = info
+        .cols()
+        .iter_deref()
+        .map(|column| {
+            let column = column.read();
+            SourceColumn {
+                id: column.id,
+                name: column.name.original().to_owned(),
+                is_primary_key: column
                     .field_type
                     .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
-            offset,
-            ret_type: column.field_type.clone(),
-            is_public: true,
-            is_generated: column.generated.is_some(),
-            is_hidden: table.is_hidden(offset),
-            is_virtual_generated: column
-                .generated
-                .as_ref()
-                .is_some_and(|generated| !generated.stored),
-            generated_expr: column
-                .generated
-                .as_ref()
-                .map(|generated| generated.source.clone()),
+                offset: column.offset as usize,
+                ret_type: column.field_type.clone(),
+                is_public: true,
+                is_generated: column.is_generated(),
+                is_hidden: column.hidden,
+                is_virtual_generated: column.is_virtual_generated(),
+                // Go `table.Column.GeneratedExpr`, parsed once at load.
+                generated_expr: table
+                    .columns()
+                    .iter()
+                    .find(|loaded| loaded.id == column.id)
+                    .and_then(|loaded| loaded.generated.as_ref())
+                    .map(|generated| generated.source.clone()),
+            }
         })
         .collect::<Vec<_>>();
-    // Go keeps clustered PRIMARY in TableInfo.Indices even
-    // though no separate index records are maintained.
-    let primary = tidb_table::kv_table::clustered_primary_metadata(table);
-    let missing_primary = primary.as_deref().filter(|primary| {
-        !table.indexes().iter().any(|index| index.id == primary.id)
-    });
-    let indexes = table
-        .indexes()
-        .iter()
-        .chain(missing_primary)
-        .map(|index| SourceIndex {
-            id: index.id,
-            name: index.name.clone(),
-            columns: index
-                .column_offsets
-                .iter()
-                .enumerate()
-                .filter_map(|(position, offset)| {
-                    table.columns().get(*offset).map(|column| SourceIndexColumn {
-                        name: column.name.clone(),
-                        offset: *offset,
-                        length: index.prefix_length(position),
-                    })
+    let indexes = info.indices.iter_deref().collect::<Vec<_>>();
+    // Go `buildDataSource`'s handle columns: the PKIsHandle column, else the
+    // clustered PRIMARY KEY's columns (`tables.FindPrimaryIndex`).
+    let primary = info
+        .is_common_handle
+        .then(|| indexes.iter().find(|index| index.read().primary))
+        .flatten();
+    let (common_handle_col_offsets, common_handle_lens): (Vec<usize>, Vec<i64>) = primary
+        .map(|primary| {
+            primary
+                .read()
+                .columns
+                .iter_deref()
+                .map(|column| {
+                    let column = column.read();
+                    (column.offset as usize, column.length)
                 })
-                .collect(),
-            unique: index.unique,
-            primary: index.primary,
-            is_public: true,
-            is_visible: index.visible,
-            is_columnar: false,
-            is_multi_valued: table.mv_key_part_source(index.id).is_some(),
-            global: index.global,
-            condition_expr_string: table
-                .partial_index_condition_string(index.id)
-                .unwrap_or_default(),
-            affect_column_offsets: Vec::new(),
+                .unzip()
         })
-        .collect::<Vec<_>>();
-    let common_handle_lens = table
-        .indexes()
-        .iter()
-        .find(|index| index.primary)
-        .map(|index| {
-            (0..table.common_handle_offsets().len())
-                .map(|position| index.prefix_length(position))
-                .collect()
-        })
-        .unwrap_or_else(|| vec![-1; table.common_handle_offsets().len()]);
+        .unwrap_or_default();
+    let pk_handle_offset = info
+        .pk_is_handle
+        .then(|| info.get_pk_col_info())
+        .flatten()
+        .map(|column| column.read().offset as usize);
+    let handle_col_offsets = pk_handle_offset
+        .into_iter()
+        .chain(common_handle_col_offsets.iter().copied())
+        .collect();
     let mut source_table = crate::table_source::SourceTable {
         table_id: table.table_id(),
         table_name: table.name().clone(),
@@ -752,9 +695,9 @@ fn kv_source_table(
             .unwrap_or_default(),
         columns,
         indexes,
-        pk_is_handle: table.pk_handle_offset().is_some(),
-        is_common_handle: !table.common_handle_offsets().is_empty(),
-        common_handle_version: table.common_handle_version(),
+        pk_is_handle: info.pk_is_handle,
+        is_common_handle: info.is_common_handle,
+        common_handle_version: info.common_handle_version,
         is_temporary: table.is_temporary(),
         is_local_temporary: table.temp_table_type()
             == tidb_model::TempTableType::LOCAL,
@@ -762,16 +705,13 @@ fn kv_source_table(
             != tidb_model::TableCacheStatusType::DISABLE,
         has_affinity: table.has_affinity(),
         tiflash_replica: table.tiflash_replica(),
-        handle_col_offsets: table
-            .pk_handle_offset()
-            .into_iter()
-            .chain(table.common_handle_offsets().iter().copied())
-            .collect(),
-        common_handle_col_offsets: table.common_handle_offsets().to_vec(),
+        handle_col_offsets,
+        common_handle_col_offsets,
         common_handle_lens,
         ..crate::table_source::SourceTable::default()
     };
-    source_table.attach_resolve_metadata(resolve_db_info, Some(table.meta()));
+    drop(info);
+    source_table.attach_resolve_metadata(resolve_db_info, Some(meta));
     source_table
 }
 

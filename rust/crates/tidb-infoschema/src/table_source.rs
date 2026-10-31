@@ -67,7 +67,7 @@ use std::collections::BTreeMap;
 use tidb_mysql::PrivilegeType;
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_model::{
-    ColumnInfo, DBInfo, GoShared, GoSharedPointerSlice, IndexColumn, IndexInfo, SchemaState,
+    ColumnInfo, DBInfo, GoShared, GoSharedPointerSlice, IndexInfo, SchemaState,
     TableInfo,
 };
 
@@ -128,50 +128,11 @@ impl Default for SourceColumn {
     }
 }
 
-/// Go `model.IndexColumn` (`pkg/meta/model/index.go`).
-#[derive(Clone, Debug, Default)]
-pub struct SourceIndexColumn {
-    /// Go `IndexColumn.Name.O`.
-    pub name: String,
-    /// Go `IndexColumn.Offset`: the position in the TABLE's column list.
-    pub offset: usize,
-    /// Go `IndexColumn.Length`, `types.UnspecifiedLength` for a full column.
-    pub length: i64,
-}
+/// Go `*model.IndexColumn`.
+pub type SourceIndexColumn = tidb_model::IndexColumn;
 
-/// What the ported builder and `crate::access_path` bodies read off a
-/// `*model.IndexInfo`.
-#[derive(Clone, Debug, Default)]
-pub struct SourceIndex {
-    /// Go `IndexInfo.ID`, the deterministic tie-breaker in path selection.
-    pub id: i64,
-    /// Go `IndexInfo.Name.O`.
-    pub name: String,
-    /// Go `IndexInfo.Columns`, in index order.
-    pub columns: Vec<SourceIndexColumn>,
-    /// Go `IndexInfo.Unique`.
-    pub unique: bool,
-    /// Go `IndexInfo.Primary`.
-    pub primary: bool,
-    /// Go `IndexInfo.State == model.StatePublic`.
-    pub is_public: bool,
-    /// Go `IndexInfo.Invisible` inverted: `getPossibleAccessPaths` skips an
-    /// invisible index unless the session opted back in.
-    pub is_visible: bool,
-    /// Go `IndexInfo.VectorInfo != nil || InvertedInfo != nil || FullTextInfo
-    /// != nil`: a columnar index, which only the TiFlash paths may use.
-    pub is_columnar: bool,
-    /// Go `IndexInfo.MVIndex`.
-    pub is_multi_valued: bool,
-    /// Go `IndexInfo.Global`.
-    pub global: bool,
-    /// Go `IndexInfo.ConditionExprString`: non-empty for a partial index.
-    pub condition_expr_string: String,
-    /// Go `IndexInfo.AffectColumn`, represented by table-column offsets.
-    /// `rule_prune_indexes` uses these offsets for its conservative partial
-    /// index eligibility precheck.
-    pub affect_column_offsets: Vec<usize>,
-}
+/// Go `*model.IndexInfo`, shared with the table's `TableInfo.Indices`.
+pub type SourceIndex = GoShared<IndexInfo>;
 
 /// What the ported builder bodies read off a `*model.TableInfo` plus the
 /// partition selection `buildDataSource` has already made.
@@ -289,41 +250,7 @@ impl SourceTable {
                 }))
             })
             .collect();
-        let indices = self
-            .indexes
-            .iter()
-            .map(|index| {
-                Some(GoShared::new(IndexInfo {
-                    id: index.id,
-                    name: tidb_ast::CiString::new(index.name.clone()),
-                    table: tidb_ast::CiString::new(self.table_name.clone()),
-                    columns: GoSharedPointerSlice::from_nullable(
-                        index
-                            .columns
-                            .iter()
-                            .map(|column| {
-                                Some(IndexColumn {
-                                    name: tidb_ast::CiString::new(column.name.clone()),
-                                    offset: column.offset as i64,
-                                    length: column.length,
-                                    ..IndexColumn::default()
-                                })
-                            })
-                            .collect(),
-                    ),
-                    state: if index.is_public {
-                        SchemaState::PUBLIC
-                    } else {
-                        SchemaState::NONE
-                    },
-                    unique: index.unique,
-                    primary: index.primary,
-                    invisible: !index.is_visible,
-                    mv_index: index.is_multi_valued,
-                    ..IndexInfo::default()
-                }))
-            })
-            .collect();
+        let indices = self.indexes.iter().cloned().map(Some).collect();
         self.table_info = Some(GoShared::new(TableInfo {
             id: self.table_id,
             name: tidb_ast::CiString::new(self.table_name.clone()),

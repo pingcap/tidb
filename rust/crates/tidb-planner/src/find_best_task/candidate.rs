@@ -180,18 +180,18 @@ pub(crate) fn index_candidate_metrics(
     let (eq_or_in_count, equal_dnf) = equality_facts(detached);
     let minimum_dnf = detached.min_access_conds_for_dnf_cond.max(0) as usize;
     let full_index_match = if equal_dnf {
-        minimum_dnf >= index.columns.len()
+        minimum_dnf >= index.read().columns.len()
     } else {
-        detached.eq_or_in_count > 0 && index_columns.len() >= index.columns.len()
+        detached.eq_or_in_count > 0 && index_columns.len() >= index.read().columns.len()
     };
     Some(CandidateMetrics {
         access_columns,
         index_columns,
         single_scan,
-        multi_valued: index.is_multi_valued,
-        global: index.global,
+        multi_valued: index.read().mv_index,
+        global: index.read().global,
         matches_property,
-        pseudo: !source.analyzed_index_ids.contains(&index.id),
+        pseudo: !source.analyzed_index_ids.contains(&index.read().id),
         full_index_match,
         eq_or_in_count,
         count_after_access: estimate.est,
@@ -447,7 +447,6 @@ mod skyline_tests {
     fn index_facts_keep_full_key_filters_and_dnf_equality_counts() {
         use tidb_planner_util::path::{IndexPathState, FilledIndexPath};
         use tidb_infoschema::table_source::SourceIndexColumn;
-        use tidb_infoschema::table_source::SourceIndex;
         use tidb_datatype::{Datum, FieldType, FieldTypeCode};
         use tidb_expr::{
             column::Column, constant::Constant, expression::Expression,
@@ -472,11 +471,11 @@ mod skyline_tests {
                 ],
             )
         };
-        let index = SourceIndex {
+        let index = tidb_model::GoShared::new(tidb_model::IndexInfo {
             id: 9,
-            columns: vec![SourceIndexColumn::default(); 3],
-            ..Default::default()
-        };
+            columns: vec![SourceIndexColumn::default(); 3].into(),
+            ..tidb_model::IndexInfo::default()
+        });
         let source = tidb_planner_core_operator_logicalop::DataSource::default();
         let mut path = IndexPathState {
             row_estimate: Some(tidb_stats::RowEstimate::new(
@@ -510,8 +509,12 @@ mod skyline_tests {
             (20.0, 200.0)
         );
         assert!(!facts.full_index_match);
-        let mut two_keys = index.clone();
-        two_keys.columns.truncate(2);
+        let two_keys = tidb_model::GoShared::new(index.read().clone_like_go());
+        {
+            let mut info = two_keys.write();
+            let len = info.columns.len();
+            info.columns.delete_go(2, len);
+        }
         assert!(
             index_candidate_metrics(&source, &two_keys, &path, false, false)
                 .unwrap()

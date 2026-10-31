@@ -697,8 +697,6 @@ mod tests {
     use tidb_planner_core_operator_logicalop::selection::LogicalSelection;
     use tidb_planner_core_operator_logicalop::BaseLogicalPlan;
     use tidb_planner_core_base::PlanIdAllocator;
-    use tidb_infoschema::table_source::SourceIndexColumn;
-    use tidb_infoschema::table_source::SourceIndex;
     use tidb_planner_property::stats_info::StatsInfo;
 
     fn column(id: i64) -> Column {
@@ -749,6 +747,23 @@ mod tests {
                 is_not_null: false,
             })
             .collect();
+        // Go `DataSource.TableInfo`, whose `Columns` index offsets address.
+        source.table_info = Some(tidb_model::GoShared::new(tidb_model::TableInfo {
+            id: table_id,
+            columns: columns
+                .iter()
+                .enumerate()
+                .map(|(offset, (id, _))| tidb_model::ColumnInfo {
+                    id: *id,
+                    name: tidb_ast::CiString::new(format!("c{id}")),
+                    offset: offset as i64,
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::ColumnInfo::default()
+                })
+                .collect::<Vec<_>>()
+                .into(),
+            ..tidb_model::TableInfo::default()
+        }));
         if let Some(mut schema) = source.base.base.schema().cloned() {
             for (column, (id, _)) in schema.columns.iter_mut().zip(columns) {
                 column.id = *id;
@@ -988,22 +1003,22 @@ mod tests {
             .set_schema(Some(Schema::new(vec![first.clone(), second.clone()])));
         source.table_columns = vec![first.clone(), second];
         source.indexes = vec![
-            SourceIndex {
+            tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 101,
-                columns: vec![SourceIndexColumn {
+                columns: vec![tidb_model::IndexColumn {
                     offset: 0,
-                    ..SourceIndexColumn::default()
-                }],
-                ..SourceIndex::default()
-            },
-            SourceIndex {
+                    ..tidb_model::IndexColumn::default()
+                }].into(),
+                ..tidb_model::IndexInfo::default()
+            }),
+            tidb_model::GoShared::new(tidb_model::IndexInfo {
                 id: 102,
-                columns: vec![SourceIndexColumn {
+                columns: vec![tidb_model::IndexColumn {
                     offset: 1,
-                    ..SourceIndexColumn::default()
-                }],
-                ..SourceIndex::default()
-            },
+                    ..tidb_model::IndexColumn::default()
+                }].into(),
+                ..tidb_model::IndexInfo::default()
+            }),
         ];
         source.enumerated_paths = vec![
             PossiblePath::Table {

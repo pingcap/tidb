@@ -345,6 +345,102 @@ fn test_extract_columns_from_condition() {
 
 /// Go delete-range cleanup uses key ownership, even if the base row is
 /// absent or its generated value can no longer be evaluated.
+/// The planner reads a table's Go `TableInfo` (`KvTable::meta`), so every
+/// column and index mutator keeps it as Go's DDL leaves it: an added column
+/// is appended behind a hidden one unless placed (`LocateOffsetToMove`), a
+/// dropped column leaves and renumbers the offsets (`MoveColumnInfo`), an
+/// index names its columns, a dropped index leaves, and a clustered handle
+/// is the PRIMARY KEY over `PriKeyFlag` columns.
+#[test]
+fn column_and_index_mutators_keep_the_table_info_in_step() {
+    let column = |name: &str, id: i64| KvColumn {
+        name: name.to_owned(),
+        id,
+        field_type: long(),
+        column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+        default_value: None,
+        origin_default: None,
+        comment: String::new(),
+        generated: None,
+    };
+    let layout = |table: &KvTable| {
+        table
+            .meta()
+            .read()
+            .columns
+            .iter_deref()
+            .map(|info| {
+                let info = info.read();
+                (info.name.original().to_owned(), info.offset, info.hidden)
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut table = test_table();
+    table.add_hidden_column(column("_V$_i_0", 3));
+    table.add_column(3, column("z", 4));
+    table.add_column(1, column("y", 5));
+    assert_eq!(
+        layout(&table),
+        [
+            ("a".to_owned(), 0, false),
+            ("y".to_owned(), 1, false),
+            ("s".to_owned(), 2, false),
+            ("_V$_i_0".to_owned(), 3, true),
+            ("z".to_owned(), 4, false),
+        ]
+    );
+    assert_eq!(table.visible_offsets(), [0, 1, 2, 4]);
+    assert!(table.is_hidden(3));
+
+    table.add_index(
+        KvIndex {
+            id: 9,
+            name: "iz".to_owned(),
+            comment: String::new(),
+            unique: false,
+            column_offsets: vec![4],
+            prefix_lengths: vec![],
+            visible: false,
+            global: false,
+            global_index_version: 0,
+            clustered_primary: false,
+            primary: false,
+        },
+        false,
+    );
+    table.drop_column(0);
+    assert_eq!(
+        layout(&table),
+        [
+            ("y".to_owned(), 0, false),
+            ("s".to_owned(), 1, false),
+            ("_V$_i_0".to_owned(), 2, true),
+            ("z".to_owned(), 3, false),
+        ]
+    );
+    {
+        let meta = table.meta();
+        let meta = meta.read();
+        let index = meta.find_index_by_id(9).expect("the index is recorded");
+        let index = index.read();
+        assert!(index.invisible);
+        let part = index.columns.get(0).unwrap();
+        assert_eq!((part.read().name.original(), part.read().offset), ("z", 3));
+    }
+    assert!(table.drop_index("iz").unwrap());
+    assert!(table.meta().read().find_index_by_id(9).is_none());
+
+    table.set_common_handle_offsets(vec![1]);
+    let meta = table.meta();
+    let meta = meta.read();
+    assert!(meta.is_common_handle);
+    let primary = meta.get_primary_key().expect("the clustered PRIMARY KEY");
+    let part = primary.read().columns.get(0).unwrap();
+    assert_eq!(part.read().name.original(), "s");
+    let s = meta.columns.get(1).unwrap();
+    assert!(s.read().field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY));
+}
+
 #[test]
 fn drop_index_removes_orphan_entries_without_decoding_rows() {
     let mut table = KvTable::new(42, Vec::new());

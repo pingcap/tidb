@@ -133,7 +133,7 @@ pub(crate) fn derive_access_paths(
                     PossiblePath::Index { index } => source
                         .indexes
                         .get(*index)
-                        .and_then(|index| source.derived_index_paths.get(&index.id))
+                        .and_then(|index| source.derived_index_paths.get(&index.read().id))
                         .and_then(|path| {
                             path.filled
                                 .as_ref()
@@ -204,7 +204,7 @@ pub(crate) fn derive_access_paths(
                             PossiblePath::Index { index } => source
                                 .indexes
                                 .get(*index)
-                                .and_then(|index| source.derived_index_paths.get(&index.id))
+                                .and_then(|index| source.derived_index_paths.get(&index.read().id))
                                 .and_then(|path| path.filled.as_ref())
                                 .is_some_and(|filled| !filled.detached.access_conds.is_empty()),
                         });
@@ -382,7 +382,7 @@ pub fn get_possible_access_paths(
     paths.push(PossiblePath::Table {
         is_int_handle: !is_common_handle,
         primary_index: if is_common_handle {
-            table.indexes.iter().position(|index| index.primary)
+            table.indexes.iter().position(|index| index.read().primary)
         } else {
             None
         },
@@ -394,13 +394,13 @@ pub fn get_possible_access_paths(
         (is_for_update_read || !repeatable_read) && connection_id.is_some_and(|id| id > 0);
     let mut latest_indexes = None;
     for (offset, index) in table.indexes.iter().enumerate() {
-        if !index.is_public {
+        if !index.read().is_public() {
             continue;
         }
         // A hypothetical index (negative id) is appended to the public paths
         // as it is (`:1419-1441`): it is not in the latest schema, whose check
         // only vets stored indexes.
-        if index.id < 0 {
+        if index.read().id < 0 {
             paths.push(PossiblePath::Index { index: offset });
             continue;
         }
@@ -414,19 +414,19 @@ pub fn get_possible_access_paths(
         if check_latest_schema
             && latest_indexes.as_ref().is_none_or(|indexes| {
                 indexes
-                    .get(&index.id)
-                    .is_none_or(|latest| !latest.is_public)
+                    .get(&index.read().id)
+                    .is_none_or(|latest| !latest.read().is_public())
             })
         {
             continue;
         }
-        if !optimizer_use_invisible_indexes && !index.is_visible {
+        if !optimizer_use_invisible_indexes && index.read().invisible {
             continue;
         }
-        if is_common_handle && index.primary {
+        if is_common_handle && index.read().primary {
             continue;
         }
-        if index.is_columnar {
+        if index.read().is_columnar_index() {
             continue;
         }
         paths.push(PossiblePath::Index { index: offset });
@@ -496,13 +496,13 @@ pub fn apply_table_index_hints(
     let unsupported_reason = |metadata: &tidb_infoschema::table_source::SourceIndex| {
         if table.is_common_handle && table.common_handle_version < 1 {
             Some("common handle table with old encoding version is not supported")
-        } else if metadata.global {
+        } else if metadata.read().global {
             Some("the global index in partition table is not supported")
         } else if table.is_temporary {
             Some("temporary table is not supported")
         } else if table.is_cached {
             Some("cached table is not supported")
-        } else if metadata.is_multi_valued {
+        } else if metadata.read().mv_index {
             Some("multi-valued index is not supported")
         } else if !session.repeatable_read {
             Some("transaction isolation level is not REPEATABLE-READ")
@@ -535,7 +535,7 @@ pub fn apply_table_index_hints(
             if unsupported_reason(metadata).is_none() {
                 result
                     .index_lookup_push_down_by
-                    .insert(metadata.id, IndexLookupPushDownBy::SysVar);
+                    .insert(metadata.read().id, IndexLookupPushDownBy::SysVar);
             }
         }
     }
@@ -588,10 +588,10 @@ pub fn apply_table_index_hints(
                 }
                 PossiblePath::Index { index } => {
                     table.indexes.get(*index).is_some_and(|metadata| {
-                        if tidb_mysql::lowercase_equal(&metadata.name, name) {
+                        if tidb_mysql::lowercase_equal(metadata.read().name.original(), name) {
                             return true;
                         }
-                        if tidb_mysql::to_lowercase(&metadata.name)
+                        if tidb_mysql::to_lowercase(metadata.read().name.original())
                             .starts_with(&tidb_mysql::to_lowercase(name))
                         {
                             prefix_path = Some(*path);
@@ -633,7 +633,7 @@ pub fn apply_table_index_hints(
                 PossiblePath::Index { index } => table
                     .indexes
                     .get(index)
-                    .is_some_and(|metadata| !metadata.is_columnar),
+                    .is_some_and(|metadata| !metadata.read().is_columnar_index()),
                 PossiblePath::TiFlashTable => false,
             };
             if is_tikv_index && !tikv_in_isolation_read {
@@ -650,12 +650,12 @@ pub fn apply_table_index_hints(
             match path {
                 PossiblePath::Index { index } => {
                     if let Some(metadata) = table.indexes.get(index) {
-                        result.forced_index_ids.insert(metadata.id);
+                        result.forced_index_ids.insert(metadata.read().id);
                         if force_keep_order {
-                            result.force_keep_order_index_ids.insert(metadata.id);
+                            result.force_keep_order_index_ids.insert(metadata.read().id);
                         }
                         if force_no_keep_order {
-                            result.force_no_keep_order_index_ids.insert(metadata.id);
+                            result.force_no_keep_order_index_ids.insert(metadata.read().id);
                         }
                         if push_down_lookup {
                             if force_no_index_lookup_push_down {
@@ -672,7 +672,7 @@ pub fn apply_table_index_hints(
                             }
                             result
                                 .index_lookup_push_down_by
-                                .insert(metadata.id, IndexLookupPushDownBy::Hint);
+                                .insert(metadata.read().id, IndexLookupPushDownBy::Hint);
                         }
                     }
                 }
@@ -685,12 +685,12 @@ pub fn apply_table_index_hints(
                     }
                     if let Some(metadata) = primary_index.and_then(|index| table.indexes.get(index))
                     {
-                        result.forced_index_ids.insert(metadata.id);
+                        result.forced_index_ids.insert(metadata.read().id);
                         if force_keep_order {
-                            result.force_keep_order_index_ids.insert(metadata.id);
+                            result.force_keep_order_index_ids.insert(metadata.read().id);
                         }
                         if force_no_keep_order {
-                            result.force_no_keep_order_index_ids.insert(metadata.id);
+                            result.force_no_keep_order_index_ids.insert(metadata.read().id);
                         }
                         if push_down_lookup {
                             if force_no_index_lookup_push_down {
@@ -707,7 +707,7 @@ pub fn apply_table_index_hints(
                             }
                             result
                                 .index_lookup_push_down_by
-                                .insert(metadata.id, IndexLookupPushDownBy::Hint);
+                                .insert(metadata.read().id, IndexLookupPushDownBy::Hint);
                         }
                     }
                 }
@@ -725,7 +725,7 @@ pub fn apply_table_index_hints(
     if remove_global_indexes {
         available.retain(|path| {
             !matches!(path, PossiblePath::Index { index }
-                if table.indexes.get(*index).is_some_and(|metadata| metadata.global))
+                if table.indexes.get(*index).is_some_and(|metadata| metadata.read().global))
         });
     }
     if available.is_empty() {
@@ -734,7 +734,7 @@ pub fn apply_table_index_hints(
     if available.iter().all(|path| match path {
         PossiblePath::Table { .. } | PossiblePath::TiFlashTable => false,
         PossiblePath::Index { index } => table.indexes.get(*index).is_some_and(|metadata| {
-            metadata.is_multi_valued || !metadata.condition_expr_string.is_empty()
+            metadata.read().mv_index || !metadata.read().condition_expr_string.is_empty()
         }),
     }) {
         available.push(table_path);
@@ -841,20 +841,18 @@ mod enumeration_tests {
     // checks.
 
     fn index(name: &str) -> SourceIndex {
-        SourceIndex {
+        tidb_model::GoShared::new(tidb_model::IndexInfo {
             id: 1,
-            name: name.to_string(),
-            columns: Vec::new(),
+            name: tidb_ast::CiString::new(name.to_string()),
+            columns: (Vec::new()).into(),
             unique: false,
             primary: false,
-            is_public: true,
-            is_visible: true,
-            is_columnar: false,
-            is_multi_valued: false,
+            state: tidb_model::SchemaState::PUBLIC,
+            mv_index: false,
             global: false,
             condition_expr_string: String::new(),
-            affect_column_offsets: Vec::new(),
-        }
+            ..tidb_model::IndexInfo::default()
+        })
     }
 
     fn table(indexes: Vec<SourceIndex>) -> SourceTable {
@@ -898,8 +896,8 @@ mod enumeration_tests {
     fn an_invisible_index_needs_the_session_flag() {
         // `!optimizerUseInvisibleIndexes && index.Invisible` skips
         // (`planbuilder.go:1378`).
-        let mut hidden = index("hidden");
-        hidden.is_visible = false;
+        let hidden = index("hidden");
+        hidden.write().invisible = true;
         let t = table(vec![hidden]);
         assert_eq!(get_possible_access_paths(&t, false).len(), 1);
         assert_eq!(get_possible_access_paths(&t, true).len(), 2);
@@ -909,8 +907,8 @@ mod enumeration_tests {
     fn a_non_public_index_never_enumerates() {
         // `index.State == model.StatePublic` guards the whole arm
         // (`planbuilder.go:1376`).
-        let mut building = index("building");
-        building.is_public = false;
+        let building = index("building");
+        building.write().state = tidb_model::SchemaState::WRITE_REORGANIZATION;
         assert_eq!(
             get_possible_access_paths(&table(vec![building]), true).len(),
             1
@@ -921,8 +919,9 @@ mod enumeration_tests {
     fn a_columnar_index_is_skipped_without_a_tiflash_index_path_identity() {
         // Go admits a columnar index only as a TiFlash index path
         // (`planbuilder.go:1399-1404`); this path type is not represented yet.
-        let mut columnar = index("v");
-        columnar.is_columnar = true;
+        let columnar = index("v");
+        columnar.write().vector_info =
+            Some(tidb_model::GoShared::new(tidb_model::VectorIndexInfo::default()));
         assert_eq!(
             get_possible_access_paths(&table(vec![columnar]), false).len(),
             1
@@ -933,10 +932,10 @@ mod enumeration_tests {
     fn read_committed_connected_session_uses_only_latest_public_indexes() {
         let mut source = table(vec![
             index("removed"),
-            SourceIndex {
-                id: 2,
-                name: "public".to_owned(),
-                ..index("public")
+            {
+                let public = index("public");
+                public.write().id = 2;
+                public
             },
         ]);
         source.table_id = 42;
@@ -944,11 +943,11 @@ mod enumeration_tests {
             schema_meta_version: 8,
             table_indexes: BTreeMap::from([(
                 42,
-                vec![SourceIndex {
+                vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
                     id: 2,
-                    is_public: true,
-                    ..SourceIndex::default()
-                }],
+                    state: tidb_model::SchemaState::PUBLIC,
+                    ..tidb_model::IndexInfo::default()
+                })],
             )]),
         };
 

@@ -181,7 +181,7 @@ pub(crate) fn fill_ordinary_index_paths(
         let Some(index) = source.indexes.get(*index) else {
             continue;
         };
-        if index.is_multi_valued || index.is_columnar {
+        if index.read().mv_index || index.read().is_columnar_index() {
             continue;
         }
         let mut filled = fill_index_path(
@@ -255,7 +255,7 @@ pub(crate) fn fill_ordinary_index_paths(
                 )
             }
         });
-        let state = source.derived_index_paths.entry(index.id).or_default();
+        let state = source.derived_index_paths.entry(index.read().id).or_default();
         state.row_estimate = estimate;
         filled.count_after_index = count_after_index;
         state.filled = Some(filled);

@@ -68,7 +68,11 @@ pub(crate) fn materialize_generated_for_write(
     planned: Option<&[Option<Expression>]>,
 ) -> Result<(), DriverError> {
     let columns = table.columns();
-    row.resize(row.len().max(columns.len()), Datum::Null);
+    // A statement row holds the visible columns; generation fills the
+    // hidden ones in their `TableInfo.Columns` places.
+    if row.len() < columns.len() {
+        *row = table.stored_row(std::mem::take(row));
+    }
     let convert = |column: &tidb_table::kv_table::KvColumn, value| {
         let mut value = match policy {
             GeneratedWrite::Insert { row_index, .. } => cast_value_for_column(

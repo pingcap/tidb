@@ -5923,6 +5923,7 @@ dependencies = [
  "tidb-hint",
  "tidb-infoschema",
  "tidb-intset",
+ "tidb-model",
  "tidb-mysql",
  "tidb-planner-cardinality",
  "tidb-planner-core-base",

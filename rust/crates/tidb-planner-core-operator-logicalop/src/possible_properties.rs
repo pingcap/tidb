@@ -59,14 +59,14 @@ fn data_source_orders(source: &super::DataSource, inherited_fixed: &[i64]) -> Ve
         // Go `IndexInfo2PrefixCols`: the index columns up to the first one
         // the schema lacks, a prefix-length column included.
         let mut order: Vec<Column> = index
-            .columns
-            .iter()
-            .map_while(|column| source.schema_column_for_index_column(column).cloned())
+            .read().columns
+            .iter_deref()
+            .map_while(|column| source.schema_column_for_index_column(&column.read()).cloned())
             .collect();
         // Go `fillIndexPath`: a secondary (non-unique, non-primary) index
         // whose columns are all resolved also orders by the signed integer
         // primary-key handle it carries.
-        if !index.unique && !index.primary && order.len() == index.columns.len() {
+        if !index.read().unique && !index.read().primary && order.len() == index.read().columns.len() {
             if let Some(handle) = source.handle_cols.first().filter(|_| source.pk_is_handle) {
                 let unsigned = handle
                     .ret_type

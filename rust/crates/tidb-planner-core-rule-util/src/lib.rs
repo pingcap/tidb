@@ -160,14 +160,15 @@ pub fn check_index_can_be_key(
     columns: &[(&str, bool)],
     schema: &Schema,
 ) -> (Option<Vec<Column>>, Option<Vec<Column>>) {
+    let index = index.read();
     if !index.unique {
         return (None, None);
     }
     let mut unique_key = Vec::with_capacity(index.columns.len());
     let mut strong_key = Vec::with_capacity(index.columns.len());
     let mut strong = true;
-    for index_column in &index.columns {
-        let index_column_name = tidb_ast::CiString::new(&index_column.name);
+    for index_column in index.columns.iter_deref() {
+        let index_column_name = index_column.read().name.clone();
         let mut found = false;
         for (position, &(source_name, source_not_null)) in columns.iter().enumerate() {
             if tidb_ast::CiString::new(source_name) != index_column_name {

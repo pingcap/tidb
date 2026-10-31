@@ -210,13 +210,13 @@ fn prepare_union_index_merge_path_for_or(
         }
         for (index_pos, source_index) in ds.indexes.iter().enumerate() {
             if !enumerated_indexes[index_pos]
-                || source_index.is_columnar
-                || !source_index.condition_expr_string.is_empty()
+                || source_index.read().is_columnar_index()
+                || !source_index.read().condition_expr_string.is_empty()
             {
                 continue;
             }
-            if source_index.is_multi_valued {
-                if !index_merge_hint_allows(ds, &source_index.name) {
+            if source_index.read().mv_index {
+                if !index_merge_hint_allows(ds, source_index.read().name.original()) {
                     continue;
                 }
                 // Go initUnfinishedPathsFromExpr, then handleTopLevelANDList,
@@ -251,10 +251,10 @@ fn prepare_union_index_merge_path_for_or(
             // Go folds a clustered PRIMARY key into the table path
             // (`getPossibleAccessPaths`), never a secondary index partial; the
             // table partial above builds that disjunct's TableRangeScan.
-            if source_index.primary && (ds.handle_is_int || ds.is_common_handle) {
+            if source_index.read().primary && (ds.handle_is_int || ds.is_common_handle) {
                 continue;
             }
-            if !index_merge_hint_allows(ds, &source_index.name) {
+            if !index_merge_hint_allows(ds, source_index.read().name.original()) {
                 continue;
             }
             let Some((mut usable, keep_branch_filter)) =
@@ -325,8 +325,8 @@ fn prepare_union_index_merge_path_for_or(
         match partial {
             Partial::Index { index_pos, .. } | Partial::MvIndex { index_pos, .. } => {
                 if let Some(index) = ds.indexes.get(*index_pos) {
-                    possible_ids.insert(index.id);
-                    contain_mv_path |= index.is_multi_valued;
+                    possible_ids.insert(index.read().id);
+                    contain_mv_path |= index.read().mv_index;
                 }
             }
             Partial::Table { .. } => {
@@ -472,8 +472,8 @@ fn collect_unfinished_filters(
     let index = index?;
     let mut collected = vec![false; conditions.len()];
     let mut filters = Vec::new();
-    for key in &index.columns {
-        let Some(column) = ds.table_columns.get(key.offset) else {
+    for key in index.read().columns.iter_deref() {
+        let Some(column) = ds.table_columns.get(key.read().offset as usize) else {
             continue;
         };
         if column.virtual_expr.is_some() {
@@ -527,12 +527,12 @@ pub(crate) fn compare_alternatives(
                 let ranges = &filled.detached.ranges;
                 let index = &ds.indexes[*index_pos];
                 let point = ranges.is_empty()
-                    || (index.unique
+                    || (index.read().unique
                         && ranges.iter().all(|range| {
                             range.is_point_non_nullable()
-                                && range.high_val.len() == index.columns.len()
+                                && range.high_val.len() == index.read().columns.len()
                         }));
-                (point, filled.count_after_index.unwrap_or(*rows), index.global)
+                (point, filled.count_after_index.unwrap_or(*rows), index.read().global)
             }
             Partial::Table { filled, rows, .. } => (
                 filled.detached.ranges.iter().all(|range| range.is_point_nullable()),
@@ -548,10 +548,10 @@ pub(crate) fn compare_alternatives(
                 let point = paths.iter().all(|path| {
                     let ranges = &path.filled().detached.ranges;
                     ranges.is_empty()
-                        || (index.unique
+                        || (index.read().unique
                             && ranges.iter().all(|range| {
                                 range.is_point_non_nullable()
-                                    && range.high_val.len() == index.columns.len()
+                                    && range.high_val.len() == index.read().columns.len()
                             }))
                 });
                 let rows = paths
@@ -565,7 +565,7 @@ pub(crate) fn compare_alternatives(
                         }
                     })
                     .fold(0.0, f64::max);
-                (point, rows, index.global)
+                (point, rows, index.read().global)
             }
         };
         (point, rows, global)
@@ -607,10 +607,10 @@ pub(super) fn estimate_index_ranges(
     columns: &[(tidb_expr::column::Column, i64)],
     ctx: &AccessPathDerivationContext<'_>,
 ) -> Result<tidb_stats::RowEstimate, PlanError> {
-    let declared = source_index.columns.len();
+    let declared = source_index.read().columns.len();
     // Go `GetRowCountByIndexRanges` records the index it reads before any
     // fast path (`row_count_index.go:48`).
-    ds.record_used_item(ctx.used_stats_recorder, source_index.id, true);
+    ds.record_used_item(ctx.used_stats_recorder, source_index.read().id, true);
     let ranges = &super::ordinary::prune_estimate_range(ranges, declared);
     let Some(hist) = ds.table_stats.as_ref().and_then(|stats| stats.hist_coll()) else {
         // Go's table always carries a collection; a profile without one
@@ -621,7 +621,7 @@ pub(super) fn estimate_index_ranges(
                 ds.table_stats
                     .as_ref()
                     .map_or(ranges.len() as f64, |stats| stats.row_count()),
-                source_index.unique.then_some(source_index.columns.len()),
+                source_index.read().unique.then_some(source_index.read().columns.len()),
             ),
         ));
     };
@@ -632,7 +632,7 @@ pub(super) fn estimate_index_ranges(
         .collect::<Vec<_>>();
     tidb_planner_cardinality::selectivity::get_row_count_by_index_ranges(
         hist,
-        source_index.id,
+        source_index.read().id,
         ranges,
         &columns,
         &ctx.estimator_options,
@@ -696,14 +696,14 @@ fn generate_and_index_merge_for_normal_index(
     let mut covered = HashSet::new();
     for (index_pos, index) in ds.indexes.iter().enumerate() {
         if !enumerated[index_pos]
-            || index.is_multi_valued
-            || index.is_columnar
-            || !index.condition_expr_string.is_empty()
-            || !index_merge_hint_specifies(ds, &index.name)
+            || index.read().mv_index
+            || index.read().is_columnar_index()
+            || !index.read().condition_expr_string.is_empty()
+            || !index_merge_hint_specifies(ds, index.read().name.original())
         {
             continue;
         }
-        let Some(mut path) = ds.derived_index_paths.get(&index.id).cloned() else {
+        let Some(mut path) = ds.derived_index_paths.get(&index.read().id).cloned() else {
             continue;
         };
         let Some(filled) = &mut path.filled else {

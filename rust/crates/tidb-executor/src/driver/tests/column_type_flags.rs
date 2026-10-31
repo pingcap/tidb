@@ -35,7 +35,7 @@ fn catalog_column_iteration_borrows_visible_metadata() {
             assert_eq!((name, ty), (owned[offset].0.as_str(), &owned[offset].1));
             let (source_name, source_type) = match entry {
                 TableEntry::Kv(kv) => {
-                    let column = &kv.visible_columns()[offset];
+                    let column = kv.visible_columns()[offset].1;
                     (column.name.as_str(), &column.field_type)
                 }
                 TableEntry::Mem(mem) => (mem.columns[offset].0.as_str(), &mem.columns[offset].1),
