@@ -181,6 +181,42 @@ func TestRevokeTableScopeCaseInsensitiveWithNewCollationDisabled(t *testing.T) {
 }
 
 func TestRevokeColumnScope(t *testing.T) {
+	t.Run("stale column after drop or rename", func(t *testing.T) {
+		for _, tt := range []struct {
+			name string
+			ddl  string
+		}{
+			{name: "drop", ddl: `ALTER TABLE test.issue70933 DROP COLUMN old_column`},
+			{name: "rename", ddl: `ALTER TABLE test.issue70933 RENAME COLUMN old_column TO new_column`},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				store := testkit.CreateMockStore(t)
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec(`CREATE USER 'testIssue70933'@'localhost'`)
+				tk.MustExec(`CREATE TABLE test.issue70933(id INT, old_column INT)`)
+				tk.MustExec(`GRANT SELECT(old_column) ON test.issue70933 TO 'testIssue70933'@'localhost'`)
+				tk.MustExec(tt.ddl)
+
+				tk.MustExec(`REVOKE SELECT(old_column) ON test.issue70933 FROM 'testIssue70933'@'localhost'`)
+				tk.MustQuery(`SELECT Column_name FROM mysql.columns_priv WHERE User='testIssue70933' AND Host='localhost' AND Table_name='issue70933'`).
+					Check(testkit.Rows())
+			})
+		}
+	})
+
+	t.Run("stale column does not skip later columns", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec(`CREATE USER 'testIssue70933Mixed'@'localhost'`)
+		tk.MustExec(`CREATE TABLE test.issue70933_mixed(old_column INT, live_column INT)`)
+		tk.MustExec(`GRANT SELECT(old_column, live_column) ON test.issue70933_mixed TO 'testIssue70933Mixed'@'localhost'`)
+		tk.MustExec(`ALTER TABLE test.issue70933_mixed DROP COLUMN old_column`)
+
+		tk.MustExec(`REVOKE SELECT(old_column, live_column) ON test.issue70933_mixed FROM 'testIssue70933Mixed'@'localhost'`)
+		tk.MustQuery(`SELECT Column_name FROM mysql.columns_priv WHERE User='testIssue70933Mixed' AND Host='localhost' AND Table_name='issue70933_mixed'`).
+			Check(testkit.Rows())
+	})
+
 	t.Run("basic", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)

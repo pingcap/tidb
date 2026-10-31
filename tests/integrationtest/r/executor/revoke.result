@@ -83,3 +83,22 @@ GRANT SELECT ON executor__revoke.* TO 'root'@'%';
 revoke SELECT ON executor__revoke.* from 'root'@'%';
 GRANT SELECT (id), INSERT (ID, name) ON executor__revoke.TABLE_PRIV TO 'root'@'%';
 REVOKE SELECT (ID) ON executor__revoke.taBle_priv from 'root'@'%';
+drop user if exists 'issue70933'@'%';
+drop table if exists executor__revoke.issue70933_drop, executor__revoke.issue70933_rename;
+create user 'issue70933'@'%';
+CREATE TABLE executor__revoke.issue70933_drop(old_column int, live_column int);
+GRANT SELECT(old_column, live_column) ON executor__revoke.issue70933_drop TO 'issue70933'@'%';
+ALTER TABLE executor__revoke.issue70933_drop DROP COLUMN old_column;
+REVOKE SELECT(old_column) ON executor__revoke.issue70933_drop FROM 'issue70933'@'%';
+SELECT Column_name FROM mysql.columns_priv WHERE User='issue70933' AND Host='%' AND Table_name='issue70933_drop' ORDER BY Column_name;
+Column_name
+live_column
+CREATE TABLE executor__revoke.issue70933_rename(old_column int, live_column int);
+GRANT SELECT(old_column, live_column) ON executor__revoke.issue70933_rename TO 'issue70933'@'%';
+ALTER TABLE executor__revoke.issue70933_rename RENAME COLUMN old_column TO renamed_column;
+REVOKE SELECT(old_column) ON executor__revoke.issue70933_rename FROM 'issue70933'@'%';
+SELECT Column_name FROM mysql.columns_priv WHERE User='issue70933' AND Host='%' AND Table_name='issue70933_rename' ORDER BY Column_name;
+Column_name
+live_column
+drop user 'issue70933'@'%';
+drop table executor__revoke.issue70933_drop, executor__revoke.issue70933_rename;
