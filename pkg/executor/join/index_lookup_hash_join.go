@@ -109,6 +109,7 @@ type indexHashJoinInnerWorker struct {
 	joinKeyBuf     []byte
 	outerRowStatus []outerRowStatusFlag
 	rowIter        *chunk.Iterator4Slice
+	compareCount   int // compares in getMatchedOuterRows, kept across calls
 }
 
 type indexHashJoinResult struct {
@@ -845,6 +846,12 @@ func (iw *indexHashJoinInnerWorker) getMatchedOuterRows(innerRow chunk.Row, task
 	joinType := JoinerType(iw.joiner)
 	isSemiJoin := joinType.IsSemiJoin()
 	for ; matchedOuterEntry != nil; matchedOuterEntry = matchedOuterEntry.Next {
+		iw.compareCount++
+		if iw.compareCount%2000 == 0 {
+			if err := checkSQLKiller(&iw.ctx.GetSessionVars().SQLKiller, "killedDuringIndexHashJoinProbe"); err != nil {
+				return nil, nil, err
+			}
+		}
 		ptr := matchedOuterEntry.Ptr
 		outerRow := task.outerResult.GetRow(ptr)
 		ok, err := codec.EqualChunkRow(iw.ctx.GetSessionVars().StmtCtx.TypeCtx(), innerRow, iw.HashTypes, iw.HashCols, outerRow, iw.outerCtx.HashTypes, iw.outerCtx.HashCols)
