@@ -28,7 +28,7 @@ use tidb_codec::{encode_value, encode_value_in_timezone};
 use tidb_datatype::{parse_datetime, Datum, FieldType, FieldTypeCode, SessionTimeZone, TimeType};
 use tidb_txnkv::QueryResponseError;
 use tidb_txnkv::QueryResultSubset;
-use tidb_distsql::select_response::IntoSelectIter;
+use tidb_distsql::select_response::SelectResult;
 use tidb_distsql::InjectedQueryRuntime;
 use tidb_distsql::KvRequestBuilder;
 use tidb_copr::query_transport::QueryOperation;

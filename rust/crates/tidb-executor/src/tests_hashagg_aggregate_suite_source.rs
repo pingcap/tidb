@@ -19,29 +19,29 @@
 //! These tests exercise aggregate semantics through fixed input rows and
 //! absolute expected values.
 
-use crate::{run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
+use crate::{run_create_table_on, run_insert_on, run_select_on, SessionExtendedInfoSchema, StmtContext};
 use tidb_datatype::Datum;
 
 fn ctx() -> StmtContext {
     StmtContext::for_query()
 }
 
-fn create(catalog: &mut Catalog, sql: &str) {
+fn create(catalog: &mut SessionExtendedInfoSchema, sql: &str) {
     run_create_table_on(sql, catalog)
         .unwrap_or_else(|error| panic!("create {sql:?} failed: {error:?}"));
 }
 
-fn insert(catalog: &mut Catalog, sql: &str) {
+fn insert(catalog: &mut SessionExtendedInfoSchema, sql: &str) {
     run_insert_on(sql, catalog, &ctx())
         .unwrap_or_else(|error| panic!("insert {sql:?} failed: {error:?}"));
 }
 
-fn select(catalog: &Catalog, sql: &str) -> Vec<Vec<Datum>> {
+fn select(catalog: &SessionExtendedInfoSchema, sql: &str) -> Vec<Vec<Datum>> {
     run_select_on(sql, catalog, &ctx())
         .unwrap_or_else(|error| panic!("select {sql:?} failed: {error:?}"))
 }
 
-fn select_numeric_sorted(catalog: &Catalog, sql: &str) -> Vec<Vec<Datum>> {
+fn select_numeric_sorted(catalog: &SessionExtendedInfoSchema, sql: &str) -> Vec<Vec<Datum>> {
     let mut rows = select(catalog, sql);
     rows.sort_by(|left, right| {
         let value = |row: &[Datum]| {
@@ -80,7 +80,7 @@ fn cell(datum: &Datum) -> String {
 /// the token lists are sorted — so only the MULTISET of per-row `a||b`
 /// concatenations matters, never the row order within a group or the group
 /// order.
-fn reconstructed(catalog: &Catalog, sql: &str) -> Vec<String> {
+fn reconstructed(catalog: &SessionExtendedInfoSchema, sql: &str) -> Vec<String> {
     let mut data = Vec::new();
     for row in select(catalog, sql) {
         let cell = cell(&row[0]);

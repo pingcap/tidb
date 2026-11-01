@@ -19,7 +19,7 @@
 //! observations, or Go-only private helpers remain explicit parity gaps.
 
 use crate::{
-    run_create_table_on, run_insert_on, run_insert_reporting, run_select_on, Catalog, StmtContext,
+    run_create_table_on, run_insert_on, run_insert_reporting, run_select_on, SessionExtendedInfoSchema, StmtContext,
 };
 use tidb_datatype::Datum;
 

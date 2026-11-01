@@ -18,7 +18,7 @@
 use tidb_hack::GoToLower;
 use tidb_model::index::{IndexColumn, IndexInfo};
 
-use crate::{Catalog, DriverError};
+use crate::{SessionExtendedInfoSchema, DriverError};
 use tidb_variable::hypo_index::HypoIndexes;
 
 /// The Index Advisor's `addHypoIndex` (`pkg/planner/indexadvisor/optimizer.go`):
@@ -26,7 +26,7 @@ use tidb_variable::hypo_index::HypoIndexes;
 /// from the table's columns with no key-length admission and replacing any
 /// hypothetical index of the same name, as the advisor's own map write does.
 pub fn set_advisor_hypo_index(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     database: &str,
     table_name: &str,
     index_name: &str,

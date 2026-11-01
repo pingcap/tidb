@@ -467,7 +467,7 @@ pub(super) fn statement_key(database: &str, sql: &str) -> String {
 /// The statement's tables this transaction has written, sorted, as the logical
 /// table ids Go's `NewPlanCacheKey` appends (`TblInfo2UnionScan`).
 pub(super) fn dirty_statement_tables(
-    catalog: &super::Catalog,
+    catalog: &super::SessionExtendedInfoSchema,
     keys: &[tidb_infoschema::CatalogTableKey],
     dirty: &[i64],
 ) -> Vec<i64> {
@@ -498,7 +498,7 @@ pub(super) fn dirty_statement_tables(
 }
 
 pub(super) fn tables_cacheable(
-    catalog: &super::Catalog,
+    catalog: &super::SessionExtendedInfoSchema,
     keys: &[tidb_infoschema::CatalogTableKey],
 ) -> bool {
     keys.iter().all(|key| !matches!(catalog.get_by_key(key), Some(super::TableEntry::Kv(table)) if table.temp_table_type() != tidb_model::TempTableType::NONE))

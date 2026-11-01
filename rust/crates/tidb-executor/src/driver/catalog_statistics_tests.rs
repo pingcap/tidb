@@ -53,7 +53,7 @@
         }
     }
 
-    fn analyzed_lite_catalog() -> (Catalog, Arc<StatsHandle>, i64, i64) {
+    fn analyzed_lite_catalog() -> (SessionExtendedInfoSchema, Arc<StatsHandle>, i64, i64) {
         let handle = Arc::new(StatsHandle::default());
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on("CREATE TABLE t(a INT, b INT, KEY ia(a))", &mut catalog)
@@ -114,7 +114,7 @@
 
     fn index_pruning_catalog(
         partitioned: bool,
-    ) -> (Catalog, Arc<StatsHandle>, i64, Vec<i64>, Vec<(String, i64)>) {
+    ) -> (SessionExtendedInfoSchema, Arc<StatsHandle>, i64, Vec<i64>, Vec<(String, i64)>) {
         let handle = Arc::new(StatsHandle::default());
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         let partition_clause = if partitioned {
@@ -980,7 +980,7 @@
             }));
     }
 
-    fn stats_usage_fixture() -> Catalog {
+    fn stats_usage_fixture() -> SessionExtendedInfoSchema {
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on(
             "CREATE TABLE t(a INT NOT NULL PRIMARY KEY, b INT NOT NULL, c INT NOT NULL)",
@@ -1005,7 +1005,7 @@
     }
 
     fn column_item(
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         table_name: &str,
         column_name: &str,
     ) -> tidb_model::TableItemID {

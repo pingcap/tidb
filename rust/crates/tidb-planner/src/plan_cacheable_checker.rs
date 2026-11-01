@@ -22,7 +22,7 @@
 use std::any::Any;
 
 use tidb_ast::{Visitable, Visitor};
-use tidb_infoschema::{Catalog, TableEntry};
+use tidb_infoschema::{SessionExtendedInfoSchema, TableEntry};
 use tidb_hack::{GoCaseCompare, GoToLower};
 
 /// Go `getMaxParamLimit`'s default: more than this many values in one IN
@@ -98,7 +98,7 @@ fn cacheable_dml_kind(dml: &tidb_ast::DmlStmt) -> bool {
 /// Session and infoschema state read by Go's `IsASTCacheable` visitor.
 #[derive(Clone, Copy)]
 pub struct CacheableContext<'a> {
-    pub catalog: &'a Catalog,
+    pub catalog: &'a SessionExtendedInfoSchema,
     pub current_database: &'a str,
     pub enable_param_limit: bool,
     pub enable_subquery: bool,

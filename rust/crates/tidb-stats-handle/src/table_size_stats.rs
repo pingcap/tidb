@@ -16,21 +16,21 @@
 //! `cache.TableRowStatsCache` serves (`tidb_stats_handle_cache::table_size_stats`),
 //! read from this handle's table statistics.
 
-use tidb_infoschema::Catalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_stats_handle_cache::table_size_stats::{estimates_from, TableSizeSource, TableStorageEstimate};
 
 /// The estimates of every stored table in `catalog`, from the catalog's own
 /// table statistics (the in-process store's statistics handle).
 #[must_use]
 pub fn table_storage_estimates(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     handle: &crate::StatsHandle,
 ) -> Vec<TableStorageEstimate> {
     estimates_from(catalog, &CatalogTableStatistics(catalog, handle))
 }
 
 /// The in-process catalog's table statistics.
-struct CatalogTableStatistics<'a>(&'a Catalog, &'a crate::StatsHandle);
+struct CatalogTableStatistics<'a>(&'a SessionExtendedInfoSchema, &'a crate::StatsHandle);
 
 impl TableSizeSource for CatalogTableStatistics<'_> {
     fn table_rows(&self, physical_id: i64) -> u64 {

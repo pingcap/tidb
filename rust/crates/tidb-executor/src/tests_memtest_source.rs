@@ -19,7 +19,7 @@
 use tidb_variable::mem_quota::SessionMemory;
 use tidb_vardef::OomAction;
 use crate::{
-    run_create_table_on, run_insert_on, run_select_on, run_update_on, Catalog, StatementMemory,
+    run_create_table_on, run_insert_on, run_select_on, run_update_on, SessionExtendedInfoSchema, StatementMemory,
     StmtContext,
 };
 

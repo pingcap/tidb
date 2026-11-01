@@ -4798,7 +4798,7 @@ pub struct TableScanExec {
     /// column. Like the handle it is not a stored column, but unlike the
     /// handle its value does not come from the record: this storage seam has
     /// no MVCC version, so every row reports the zero version, matching
-    /// `TableSampleExec`'s `SampleOutputColumn::ExtraCommitTs`.
+    /// `TableSampleExecutor`'s `SampleOutputColumn::ExtraCommitTs`.
     extra_commit_ts_slot: Option<usize>,
     /// Synthetic partition ID from the current record key.
     physical_table_id_slot: Option<usize>,
@@ -8916,7 +8916,7 @@ mod remote_cursor_tests {
 /// Places Go's synthetic `_tidb_commit_ts` value at `slot`.
 ///
 /// The local `TableStorage` seam keeps no MVCC version, so its ordinary read
-/// timestamp is the zero version -- the same value `TableSampleExec` reports
+/// timestamp is the zero version -- the same value `TableSampleExecutor` reports
 /// for `SampleOutputColumn::ExtraCommitTs`.
 pub(crate) fn insert_extra_commit_ts(mut row: Vec<Datum>, slot: Option<usize>) -> Vec<Datum> {
     let Some(slot) = slot else {

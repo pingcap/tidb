@@ -30,7 +30,7 @@ pub(super) struct MockDdl {
     pub(super) catalog: Arc<InfoCache>,
     /// Stands in for `NextGlobalID`.
     pub(super) next_id: AtomicI64,
-    /// Catalog changes actually published.
+    /// SessionExtendedInfoSchema changes actually published.
     pub(super) applied: AtomicUsize,
 }
 

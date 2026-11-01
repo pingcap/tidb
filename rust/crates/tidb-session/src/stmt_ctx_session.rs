@@ -31,7 +31,7 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
     }
 
 
-    fn domain_info_schema(&self) -> std::sync::Arc<std::sync::Mutex<Catalog>> {
+    fn domain_info_schema(&self) -> std::sync::Arc<std::sync::Mutex<SessionExtendedInfoSchema>> {
         std::sync::Arc::clone(self.catalog.inner())
     }
 
@@ -345,7 +345,7 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
 
     fn with_catalog_mut<T>(
         &mut self,
-        body: impl FnOnce(&mut tidb_infoschema::Catalog) -> Result<T, DriverError>,
+        body: impl FnOnce(&mut tidb_infoschema::SessionExtendedInfoSchema) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
         Session::with_catalog_mut(self, body)
     }
@@ -382,7 +382,7 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Session::current_tso(self)
     }
 
-    fn with_txn_catalog<T>(&self, body: impl FnOnce(&Catalog) -> T, ) -> Result<T, DriverError> {
+    fn with_txn_catalog<T>(&self, body: impl FnOnce(&SessionExtendedInfoSchema) -> T, ) -> Result<T, DriverError> {
         Session::with_txn_catalog(self, body)
     }
 

@@ -23,7 +23,7 @@ use tidb_expr::scalar_function::ScalarFunction;
 
 use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_operator_logicalop::aggregation::LogicalAggregation;
-use tidb_planner_core_operator_logicalop::expand::{LogicalExpand, RollupGroupingSet};
+use tidb_planner_core_operator_logicalop::expand::{LogicalExpand, GroupingSet};
 use tidb_planner_core_operator_logicalop::join::LogicalJoin;
 use tidb_planner_core_operator_logicalop::BaseLogicalPlan;
 use tidb_planner_core_base::PossiblePropertiesInfo;
@@ -69,7 +69,7 @@ fn expand_hash64_equals_tracks_distinct_gby_size_sets_levels_and_generated_cols(
     let expand = |gby_col: i64,
                   gby_expr: i64,
                   distinct_size: i64,
-                  sets: Vec<RollupGroupingSet>,
+                  sets: Vec<GroupingSet>,
                   levels: Option<Vec<Vec<Expression>>>,
                   gid: Option<Box<Column>>,
                   gpos: Option<Box<Column>>| {
@@ -153,7 +153,7 @@ fn expand_hash64_equals_tracks_distinct_gby_size_sets_levels_and_generated_cols(
         1,
         1,
         1,
-        vec![RollupGroupingSet::new([1])],
+        vec![GroupingSet::new([1])],
         None,
         Some(Box::new(column(1, 0))),
         Some(Box::new(column(1, 0))),

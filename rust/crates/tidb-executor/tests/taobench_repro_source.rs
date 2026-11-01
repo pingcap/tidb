@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_executor::driver::run_select_on;
-use tidb_infoschema::Catalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_table::tables::TableCommon;
 use tidb_table::tables::Index;
 use prost::Message;

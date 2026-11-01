@@ -14,7 +14,7 @@
 
 //! Connected source-derived tests for DistSQL select-response consumption.
 
-use tidb_distsql::select_response::IntoSelectIter;
+use tidb_distsql::select_response::SelectResult;
 use std::collections::BTreeMap;
 
 use prost::Message;

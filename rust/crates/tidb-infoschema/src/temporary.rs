@@ -18,7 +18,7 @@
 
 use crate::*;
 
-impl Catalog {
+impl SessionExtendedInfoSchema {
     /// Attaches a session's LOCAL temporary tables for the duration of one
     /// statement -- Go `temptable.AttachLocalTemporaryTableInfoSchema`, which
     /// wraps the infoschema in a `SessionExtendedInfoSchema` whose
@@ -124,7 +124,7 @@ impl Catalog {
     /// A mutable handle on a table for the temporary-table overlay, which
     /// swaps row storage in and out without changing any schema.
     ///
-    /// It deliberately does NOT bump [`Catalog::version`]: moving a session's
+    /// It deliberately does NOT bump [`SessionExtendedInfoSchema::version`]: moving a session's
     /// own rows into and out of the slot they are read through is not a
     /// schema change, and counting it as one would abort every concurrent
     /// transaction whenever any session touched a temporary table.

@@ -26,7 +26,7 @@ use super::*;
 /// `'abcdef'` and `'abcxyz'` share the indexed prefix `'abc'` and differ
 /// after it; `'zzz'` is shorter than nothing else and lands in its own
 /// entry.
-fn prefix_table() -> Catalog {
+fn prefix_table() -> SessionExtendedInfoSchema {
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on(
         "CREATE TABLE t (a VARCHAR(20), b INT, KEY idx (a(3)))",
@@ -42,7 +42,7 @@ fn prefix_table() -> Catalog {
     catalog
 }
 
-fn strings(sql: &str, catalog: &Catalog) -> Vec<String> {
+fn strings(sql: &str, catalog: &SessionExtendedInfoSchema) -> Vec<String> {
     let mut out: Vec<String> = run_select_on(sql, catalog, &crate::StmtContext::for_query())
         .unwrap()
         .iter()
@@ -282,7 +282,7 @@ fn writes_through_a_prefix_index_stay_admin_check_clean() {
     let ctx = crate::StmtContext::for_query();
     // `check_table` returns the number of INDEXES it checked; the row-level
     // agreement is what it errors on.
-    let check = |catalog: &mut Catalog| {
+    let check = |catalog: &mut SessionExtendedInfoSchema| {
         let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t") else {
             panic!("the table is not storage-backed");
         };

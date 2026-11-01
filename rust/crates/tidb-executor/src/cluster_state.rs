@@ -23,7 +23,7 @@
 //! drains into its own warnings.
 
 use tidb_datatype::{Datum, FieldType};
-use crate::Catalog;
+use crate::SessionExtendedInfoSchema;
 use crate::DriverError;
 
 use crate::memtable_reader::ViewerState;
@@ -351,7 +351,7 @@ impl ViewerState {
     pub fn local_cluster_table_rows_for(
         &self,
         ctx: &crate::StmtContext,
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         table_name: &str,
         registry: Option<&tidb_sessmgr::ProcessRegistry>,
         zone: &tidb_datatype::SessionTimeZone,
@@ -412,7 +412,7 @@ impl ViewerState {
     fn diagnostic_rows(
         &self,
         ctx: &crate::StmtContext,
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         source: &str,
         registry: Option<&tidb_sessmgr::ProcessRegistry>,
         required: Option<&std::collections::HashSet<String>>,
@@ -609,7 +609,7 @@ use tidb_charset::Collation;
     fn data_lock_waits_rows(
         &self,
         ctx: &crate::StmtContext,
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         required: Option<&std::collections::HashSet<String>>,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         use std::fmt::Write as _;
@@ -696,7 +696,7 @@ use tidb_charset::Collation;
     pub fn cluster_table_rows(
         &self,
         ctx: &crate::StmtContext,
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         table_name: &str,
         columns: &[(String, FieldType)],
         required: Option<&std::collections::HashSet<String>>,
@@ -786,7 +786,7 @@ use tidb_charset::Collation;
     fn deadlock_history_rows(
         &self,
         ctx: &crate::StmtContext,
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         needs_text: bool,
         needs_key_info: bool,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
@@ -807,7 +807,7 @@ use tidb_charset::Collation;
         } else {
             Default::default()
         };
-        let render = |catalog: Option<&Catalog>| {
+        let render = |catalog: Option<&SessionExtendedInfoSchema>| {
             records
                 .into_iter()
                 .flat_map(|record| {
@@ -862,7 +862,7 @@ use tidb_charset::Collation;
     fn hot_regions_history_rows(
         &self,
         ctx: &crate::StmtContext,
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         extractor: Option<&tidb_planner::memtable_predicate_extractor::HotRegionsHistoryTableExtractor>,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         let Some(extractor) = extractor else {
@@ -994,7 +994,7 @@ impl crate::mem_table_retrieval::MemTableRetriever for ClusterTablesRetriever {
     fn retrieve(
         &self,
         read: &crate::mem_table_retrieval::MemTableRead,
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         ctx: &crate::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         use tidb_hack::GoCaseCompare;

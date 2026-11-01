@@ -62,7 +62,7 @@ pub struct StatementObservation {
     pub exec_details: Arc<tikv_client::util::ExecDetails>,
     /// Go `SessionVars.RUV2Metrics`: the statement's TiDB-side RU v2
     /// counters (`RUV2MetricsFromContext`), created with its ctx.
-    pub ruv2_metrics: Arc<tidb_execdetails::ruv2_metrics::RuV2Metrics>,
+    pub ruv2_metrics: Arc<tidb_execdetails::ruv2_metrics::RUV2Metrics>,
     /// Go `recordLastQueryInfo`'s statement test: a `SHOW` other than
     /// `SHOW SESSION_STATES`, an `EXECUTE`, or a DML node.
     pub record_last_query: bool,
@@ -177,7 +177,7 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
     /// Go `TxnCtx.StartTS` and `TxnCtx.GetForUpdateTS()`.
     fn txn_start_and_for_update_ts(&self) -> (u64, u64);
     /// The statement's warnings as the slow log prints them.
-    fn slow_log_warnings(&self) -> Vec<tidb_variable::slow_log::JsonSqlWarnForSlowLog>;
+    fn slow_log_warnings(&self) -> Vec<tidb_variable::slow_log::JSONSQLWarnForSlowLog>;
     /// Go `StmtCtx.WarningCount()`.
     fn statement_warning_count(&self) -> usize;
     /// Go `SQLCPUUsages.GetCPUUsages().TikvCPUTime` of the point readers.

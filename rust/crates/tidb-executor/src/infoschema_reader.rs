@@ -20,7 +20,7 @@
 //! so the column lists must match exactly -- a `SELECT *` that returns the
 //! wrong arity breaks a client that reads by position.
 //!
-//! Column definitions live in `tidb_infoschema::infoschema_meta`. Catalog-backed
+//! Column definitions live in `tidb_infoschema::infoschema_meta`. SessionExtendedInfoSchema-backed
 //! readers below share the statement's schema and privilege snapshot. Session
 //! dispatch composes process-owned providers for runtime tables. A declared
 //! virtual table does not imply that its live provider is implemented; remaining
@@ -30,7 +30,7 @@ use tidb_datatype::{
     Datum, FieldType, FieldTypeCode, STRICT_INTEGER_DISPLAY_WIDTH, UNSPECIFIED_LENGTH,
 };
 use tidb_privilege::PrivilegeTypeExt;
-use crate::{Catalog, TableCommon, TableEntry};
+use crate::{SessionExtendedInfoSchema, TableCommon, TableEntry};
 
 use tidb_infoschema::infoschema_meta::INFORMATION_SCHEMA;
 
@@ -184,7 +184,7 @@ impl SchemaVisibility {
 /// walks tables walks this instead of the catalog, so a new one cannot be
 /// written that forgets the check.
 fn visible_tables(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     visibility: &SchemaVisibility,
     mask: PrivMask,
 ) -> Vec<(String, String)> {
@@ -215,7 +215,7 @@ fn visible_tables(
 /// node-global usage counters. Integer primary-key handles use synthetic
 /// index ID zero because Go does not keep them in `TableInfo.Indices`.
 pub fn set_data_from_index_usage(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     visibility: &SchemaVisibility,
     collector: &tidb_stats_handle_usage_indexusage::Collector,
 ) -> Vec<Vec<Datum>> {
@@ -331,7 +331,7 @@ pub fn serves_table(name: &str) -> bool {
 #[must_use]
 pub fn table_rows(
     name: &str,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     visibility: &SchemaVisibility,
     ctx: &crate::StmtContext,
 ) -> Option<Vec<Vec<Datum>>> {
@@ -447,7 +447,7 @@ pub fn table_rows(
 /// readable, 0.0 while the learners are being placed): the live fraction
 /// lives in the replica manager's progress cache, which this seam does not
 /// see yet.
-fn tiflash_replica_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
+fn tiflash_replica_rows(catalog: &SessionExtendedInfoSchema, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
     for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
         let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
@@ -500,7 +500,7 @@ fn tiflash_replica_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec
 /// CONSTRAINT` 1), then every PRIMARY or UNIQUE index's visible key parts
 /// (`NULL` position, the primary named `PRIMARY`), then each foreign key's
 /// columns with their referenced column.
-fn key_column_usage_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
+fn key_column_usage_rows(catalog: &SessionExtendedInfoSchema, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
     for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
         let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
@@ -599,7 +599,7 @@ fn key_column_usage_row(
 /// one row per key part of every index. An expression key part reads
 /// `COLUMN_NAME` `NULL` beside its expression, and a prefix part reports its
 /// length in `SUB_PART`.
-fn statistics_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
+fn statistics_rows(catalog: &SessionExtendedInfoSchema, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
     for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
         let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
@@ -710,7 +710,7 @@ fn statistics_row(
     ]
 }
 
-fn table_constraints_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
+fn table_constraints_rows(catalog: &SessionExtendedInfoSchema, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
     for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
         let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
@@ -753,7 +753,7 @@ fn table_constraints_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> V
 }
 
 fn referential_constraints_rows(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     visibility: &SchemaVisibility,
 ) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
@@ -796,7 +796,7 @@ fn referential_rule(action: crate::FkAction) -> &'static str {
 /// table the session may SELECT from, its clause parenthesized; the TiDB form
 /// adds the table's name and id.
 fn check_constraints_rows(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     visibility: &SchemaVisibility,
     tidb_form: bool,
 ) -> Vec<Vec<Datum>> {
@@ -860,7 +860,7 @@ fn table_constraint_row(
 /// account holding only `GRANT SELECT(a) ON d1.t` (or only
 /// `GRANT SELECT ON d1.t`) sees `d1` in `SHOW DATABASES` and does NOT see it
 /// here.
-fn schemata_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
+fn schemata_rows(catalog: &SessionExtendedInfoSchema, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     // go seeds metrics_schema/performance_schema/sys at bootstrap; the
     // catalog here doesn't carry them as objects, so synthesize their rows
     // (the utf8mb4/utf8mb4_bin defaults go's bootstrap settles).
@@ -924,7 +924,7 @@ fn schemata_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Da
 /// client joining against this table still sees it. Reporting nothing for
 /// unpartitioned tables would make them look absent rather than unpartitioned.
 fn partitions_rows(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     visibility: &SchemaVisibility,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Vec<Vec<Datum>> {
@@ -1159,7 +1159,7 @@ fn information_schema_tables_rows(zone: &tidb_datatype::SessionTimeZone) -> Vec<
 /// table or partition that still exists, and whose table the session may
 /// SELECT from. A malformed rule is skipped (Go logs it).
 pub fn set_data_for_attributes(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     visibility: &SchemaVisibility,
 ) -> Result<Vec<Vec<Datum>>, crate::DriverError> {
     use tidb_ddl_label as ddl_label;
@@ -1222,7 +1222,7 @@ pub fn set_data_for_attributes(
 pub fn ddl_jobs_rows(
     jobs: &[tidb_model::Job],
     visibility: &SchemaVisibility,
-    catalog: &crate::Catalog,
+    catalog: &crate::SessionExtendedInfoSchema,
 ) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
     for job in jobs {
@@ -1322,7 +1322,7 @@ fn go_hex_decode_string(text: &str) -> Option<Vec<u8>> {
 
 /// Go `tableOrPartitionNotExist`.
 fn table_or_partition_not_exist(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     db_name: &str,
     table_name: &str,
     partition_name: &str,
@@ -1388,7 +1388,7 @@ pub fn update_time_datum(update_ts: u64, zone: &tidb_datatype::SessionTimeZone) 
 /// IFNULL(checksum,''), create_options, table_comment ... WHERE
 /// lower(table_schema)=? ORDER BY table_name`, over `catalog`'s TABLES rows.
 pub fn show_table_status_rows(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     visibility: &SchemaVisibility,
     zone: &tidb_datatype::SessionTimeZone,
     database: &str,
@@ -1423,7 +1423,7 @@ pub fn show_table_status_rows(
 }
 
 fn tables_rows(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     visibility: &SchemaVisibility,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Vec<Vec<Datum>> {
@@ -1723,7 +1723,7 @@ fn non_empty_or<'a>(value: &'a str, default: &'a str) -> &'a str {
     }
 }
 
-fn views_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
+fn views_rows(catalog: &SessionExtendedInfoSchema, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     let mut rows = Vec::new();
     for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
         let Some(TableEntry::View(view)) = catalog.table_in(&schema, &table_name) else {
@@ -1795,7 +1795,7 @@ fn table_create_options(table: &TableCommon) -> &'static str {
 /// `SELECT`/`INSERT`/`UPDATE`/`REFERENCES` is held, so a table reachable only
 /// through, say, a `DROP` grant lists no columns.
 fn columns_rows(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     visibility: &SchemaVisibility,
     ctx: &crate::StmtContext,
 ) -> Vec<Vec<Datum>> {
@@ -2325,7 +2325,7 @@ fn events_rows() -> Vec<Vec<Datum>> {
     Vec::new()
 }
 
-fn tidb_indexes_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
+fn tidb_indexes_rows(catalog: &SessionExtendedInfoSchema, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     // go `setDataFromIndexes`: `ListSchemasAndTables` walks schemas in
     // ci-alphabetical order (`ListSchemas` sorts `AllSchemaNames`), and the
     // tables of each schema in the meta KV's KEY BYTE ORDER —
@@ -2447,7 +2447,7 @@ fn plugins_rows() -> Vec<Vec<Datum>> {
 }
 
 /// Go setDataFromSequences reads the schema definition, never allocator state.
-fn sequences_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
+fn sequences_rows(catalog: &SessionExtendedInfoSchema, visibility: &SchemaVisibility) -> Vec<Vec<Datum>> {
     visible_tables(catalog, visibility, ANY_PRIV)
         .into_iter()
         .filter_map(|(schema, name)| {
@@ -2485,7 +2485,7 @@ fn tiflash_segments_rows() -> Vec<Vec<Datum>> {
 /// Go `memtableRetriever.setDataFromResourceGroups` over the groups the
 /// resource manager holds -- for this tier, the catalog's, as `onCreate`/
 /// `onAlterResourceGroup` register them (`NewGroupFromOptions`' shape).
-fn resource_groups_rows(catalog: &crate::Catalog) -> Vec<Vec<Datum>> {
+fn resource_groups_rows(catalog: &crate::SessionExtendedInfoSchema) -> Vec<Vec<Datum>> {
     let mut groups: Vec<_> = catalog.resource_groups().collect();
     groups.sort_by(|left, right| left.name.lowercase().cmp(right.name.lowercase()));
     groups.into_iter().map(resource_group_row).collect()

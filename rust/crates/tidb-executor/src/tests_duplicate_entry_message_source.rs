@@ -13,13 +13,13 @@
 //! port retains the diagnostic in `TableCommon::row_conflicts` with collation-aware
 //! index entry encoding). The transaction arms are the gap test below.
 
-use crate::{run_create_table_on, run_insert_reporting, Catalog, StmtContext};
+use crate::{run_create_table_on, run_insert_reporting, SessionExtendedInfoSchema, StmtContext};
 
 fn strict() -> StmtContext {
     StmtContext::for_dml(false, true, false)
 }
 
-fn expect_duplicate(catalog: &mut Catalog, sql: &str, value: &str, key: &str) {
+fn expect_duplicate(catalog: &mut SessionExtendedInfoSchema, sql: &str, value: &str, key: &str) {
     let error = run_insert_reporting(sql, catalog, "test", &strict()).unwrap_err();
     assert!(
         error.equal(&tidb_kv::kv_errors::ERR_KEY_EXISTS)

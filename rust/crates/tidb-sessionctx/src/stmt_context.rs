@@ -5251,7 +5251,7 @@ impl StmtContext {
     /// state a new autocommit statement (or a freshly opened transaction)
     /// starts with. Test fixtures that build rows and then run a query as if
     /// no statement boundary had passed use this in place of the old
-    /// `Catalog::clear_dirty_content`, which cleared marks stored on the
+    /// `SessionExtendedInfoSchema::clear_dirty_content`, which cleared marks stored on the
     /// catalog itself; this tier's marks live on the context instead, so
     /// there is nothing on the catalog left to clear.
     #[must_use]

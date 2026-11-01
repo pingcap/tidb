@@ -344,7 +344,7 @@ impl Session {
         // Go `executeStmtImpl`: `sessVars.RUV2Metrics` is the statement ctx's,
         // its bypass decided (`shouldBypass`: no internal source type here),
         // and the parses counted since the last statement move into it.
-        let ruv2_metrics = Arc::new(tidb_execdetails::ruv2_metrics::RuV2Metrics::new());
+        let ruv2_metrics = Arc::new(tidb_execdetails::ruv2_metrics::RUV2Metrics::new());
         ruv2_metrics.set_bypass(false);
         let pending_parses = std::mem::take(&mut self.ruv2_pending_session_parser_total);
         if pending_parses > 0 {
@@ -1192,10 +1192,10 @@ impl tidb_executor::exec_stmt_observation::ExecStmtObservation for Session {
         (start_ts, for_update_ts.max(start_ts))
     }
 
-    fn slow_log_warnings(&self) -> Vec<tidb_variable::slow_log::JsonSqlWarnForSlowLog> {
+    fn slow_log_warnings(&self) -> Vec<tidb_variable::slow_log::JSONSQLWarnForSlowLog> {
         self.warnings
             .iter()
-            .map(|warning| tidb_variable::slow_log::JsonSqlWarnForSlowLog {
+            .map(|warning| tidb_variable::slow_log::JSONSQLWarnForSlowLog {
                 level: warning.level.clone(),
                 message: warning.message().to_owned(),
                 is_extra: false,

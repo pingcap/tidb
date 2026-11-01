@@ -18,7 +18,7 @@
 //! obligations; those remain in the current parity audit.
 
 use tidb_vardef::OomAction;
-use crate::{run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
+use crate::{run_create_table_on, run_insert_on, run_select_on, SessionExtendedInfoSchema, StmtContext};
 use tidb_datatype::Datum;
 
 fn ctx() -> StmtContext {
@@ -47,7 +47,7 @@ fn sorted(mut rows: Vec<Vec<Datum>>) -> Vec<Vec<Datum>> {
     rows
 }
 
-fn select_sorted(catalog: &Catalog, sql: &str, context: &StmtContext) -> Vec<Vec<Datum>> {
+fn select_sorted(catalog: &SessionExtendedInfoSchema, sql: &str, context: &StmtContext) -> Vec<Vec<Datum>> {
     match run_select_on(sql, catalog, context) {
         Ok(rows) => sorted(rows),
         Err(error) => panic!("query {sql:?} failed: {error:?}"),

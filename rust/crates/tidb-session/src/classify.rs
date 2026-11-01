@@ -32,7 +32,7 @@
 //! stored outside this process.
 
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
-use tidb_executor::compiler::PreparedExec;
+use tidb_executor::compiler::PrepareExec;
 use tidb_ast::Stmt;
 use tidb_datatype::Datum;
 use tidb_executor::access_path::StatementReadShape;
@@ -353,7 +353,7 @@ impl Session {
     /// session holds a LOCAL temporary table: 1733, once the partitioned
     /// table has resolved.
     pub(crate) fn exchange_local_temporary_refusal(
-        catalog: &tidb_infoschema::Catalog,
+        catalog: &tidb_infoschema::SessionExtendedInfoSchema,
         partitioned: (&str, &str),
         local_temporary: Option<&str>,
     ) -> Result<(), DriverError> {

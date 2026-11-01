@@ -17,7 +17,7 @@
 //! SQL string.
 //!
 //! SCOPE: `SELECT <exprs | *> [FROM <table>] [WHERE <pred>] [ORDER BY ...]
-//! [LIMIT ...]` over a single in-memory [`Catalog`] table or the implicit dual
+//! [LIMIT ...]` over a single in-memory [`SessionExtendedInfoSchema`] table or the implicit dual
 //! row. It parses via `tidb-parser`, resolves `FROM` against the catalog,
 //! rewrites fields/predicates/by-items through
 //! [`tidb_expr::rewriter::rewrite_expr_resolved`] (columns bound by the
@@ -98,7 +98,7 @@ pub fn run_select(sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
 /// returning its rows as `Datum`s.
 pub fn run_select_on(
     sql: &str,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
     run_select_meta_on(sql, catalog, ctx).map(|(_, rows)| rows)
@@ -119,7 +119,7 @@ pub type SelectMeta = (Vec<(String, FieldType)>, Vec<Vec<Datum>>);
 /// `*` expands to the table's column names.
 pub fn run_select_meta_on(
     sql: &str,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
     run_select_meta_in(sql, catalog, DEFAULT_DATABASE, ctx)
@@ -128,7 +128,7 @@ pub fn run_select_meta_on(
 /// [`run_select_meta_on`] resolving unqualified names in `current_db`.
 pub fn run_select_meta_in(
     sql: &str,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
@@ -149,7 +149,7 @@ pub fn run_select_meta_in(
 pub(crate) fn build_create_view(
     create: &mut tidb_ast::CreateViewStmt,
     view_schema: &str,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<FieldType>, DriverError> {
@@ -166,7 +166,7 @@ pub(crate) fn view_column_types(
     database: &str,
     view_name: &str,
     columns: &[String],
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<Option<FieldType>>, DriverError> {
     planner_bridge::view_column_types(database, view_name, columns, catalog, ctx)
@@ -228,7 +228,7 @@ fn validate_query_sequence_names(
 /// out so the lateral-over-set-operation path can share it.
 pub(crate) fn run_query_stmt(
     query: &QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
@@ -326,7 +326,7 @@ pub(crate) fn begin_dml_execution(executor: &'static str) -> DmlExecutionRegions
 /// build and optimize the ordinary logical tree exactly once.
 pub(crate) fn optimize_query_stmt(
     query: &QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
@@ -340,7 +340,7 @@ pub(crate) fn optimize_query_stmt(
 /// entry point needs them.
 pub(crate) fn optimize_query_stmt_with_scalar_subqueries(
     query: &QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<
@@ -362,7 +362,7 @@ pub(crate) fn optimize_query_stmt_with_scalar_subqueries(
 
 pub(super) fn run_physical_set_opr_stmt(
     set_opr: &tidb_ast::SetOprStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
@@ -406,7 +406,7 @@ pub(super) fn planner_error_to_driver(error: tidb_planner_core_base::PlanError) 
 /// and must not go back through SQL text.
 pub fn run_select_meta_stmt(
     select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
@@ -419,7 +419,7 @@ pub fn run_select_meta_stmt(
 pub fn run_select_meta_stmt_with_physical(
     select: &tidb_ast::SelectStmt,
     physical: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
@@ -437,7 +437,7 @@ pub fn run_select_meta_stmt_with_physical(
 pub fn run_query_meta_stmt_with_physical(
     query: &QueryStmt,
     physical: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
@@ -449,7 +449,7 @@ pub fn run_query_meta_stmt_with_physical(
 pub fn open_query_meta_stmt_with_physical(
     query: &QueryStmt,
     physical: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<QueryRecordSet, DriverError> {
@@ -472,7 +472,7 @@ pub fn open_query_meta_stmt_with_physical(
 pub fn open_query_meta_stmt_with_physical_without_sequence_validation(
     query: &QueryStmt,
     physical: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<QueryRecordSet, DriverError> {
@@ -493,7 +493,7 @@ pub fn open_query_meta_stmt_with_physical_without_sequence_validation(
 pub fn plan_show_stmt(
     show: &tidb_ast::ShowStmt,
     auth_user: Option<(&str, &str)>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<
@@ -519,7 +519,7 @@ pub fn plan_show_stmt(
 /// The builder's own refusals.
 pub fn plan_statement(
     stmt: &tidb_ast::Stmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     session_ctx: &dyn tidb_planner::plan_builder::stmt_build::SessionPlanContext,
@@ -544,7 +544,7 @@ pub fn plan_statement(
 /// A value's rewrite or subquery-evaluation error.
 pub fn plan_set_stmt(
     set: &tidb_ast::SetStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<
@@ -578,7 +578,7 @@ pub fn physical_show_of(
 pub fn plan_admin_show_ddl_jobs(
     job_number: i64,
     where_clause: Option<&tidb_ast::Expr>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
@@ -612,7 +612,7 @@ pub fn physical_show_ddl_jobs_of(
 /// A build failure, including a `PhysicalShow` with no supplied rows.
 pub fn open_show_plan(
     physical: &mut tidb_planner_core_operator_physicalop::PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<QueryRecordSet, DriverError> {
     physical_builder::open_show(physical, catalog, ctx)
@@ -625,7 +625,7 @@ pub fn open_show_plan(
 /// process-wide table-size cache needs a fresh restricted read.
 pub fn plan_query_meta_stmt(
     query: &QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
@@ -640,7 +640,7 @@ pub fn plan_query_meta_stmt(
 /// still being planned.
 pub fn plan_query_meta_stmt_with_subqueries(
     query: &QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<
@@ -672,7 +672,7 @@ pub fn plan_query_meta_stmt_with_subqueries(
 pub fn fts_columns_are_strings(
     select: &tidb_ast::SelectStmt,
     columns: &[Vec<String>],
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> bool {
@@ -713,7 +713,7 @@ fn drop_join_conditions(join: &mut tidb_ast::Join) {
 /// stops before the pipeline is opened or drained.
 pub fn plan_select_meta_stmt(
     select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<(String, FieldType)>, DriverError> {
@@ -1011,7 +1011,7 @@ mod limit_bound_tests {
 
 #[cfg(test)]
 mod field_name_tests {
-    use super::{run_select_meta_on, Catalog};
+    use super::{run_select_meta_on, SessionExtendedInfoSchema};
     use tidb_planner::plan_builder::field_name::strip_spec_field_comment_markers;
 
     /// Go `SpecFieldPattern` + `TrimComment`: every closing `*/` and opening

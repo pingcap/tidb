@@ -17264,7 +17264,7 @@ fn distinct_variance_is_computed_in_two_passes_like_go() {
     );
 }
 
-/// Go's `TableSampleExec` samples `GetSnapshot(TxnCtx.StartTS)`: the open
+/// Go's `TableSampleExecutor` samples `GetSnapshot(TxnCtx.StartTS)`: the open
 /// transaction's own pending writes are invisible to `TABLESAMPLE REGIONS`
 /// (`TestTableSampleUnionScanIgnorePendingKV`).
 #[test]

@@ -19,7 +19,7 @@
 use tidb_datatype::{Datum, Time, TimeType};
 use tidb_model::{ActionType, Job, JobState, SchemaState};
 
-use crate::Catalog;
+use crate::SessionExtendedInfoSchema;
 
 /// Go `ts2Time` over a TSO: its physical milliseconds in the process's
 /// local zone.
@@ -47,7 +47,7 @@ pub fn ts_2_time(timestamp: u64) -> Time {
 ///
 /// A job that records neither name gets them from `catalog`, the session's
 /// info schema, by its schema and table IDs.
-pub fn ddl_job_rows(job: &Job, in_show_stmt: bool, catalog: &Catalog) -> Vec<Vec<Datum>> {
+pub fn ddl_job_rows(job: &Job, in_show_stmt: bool, catalog: &SessionExtendedInfoSchema) -> Vec<Vec<Datum>> {
     let history = job.binlog_info.as_ref().map(|info| info.read().clone());
     let mut schema_name = job.schema_name.to_utf8_lossy_go();
     let mut table_name = String::new();

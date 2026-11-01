@@ -363,7 +363,7 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
 
     let int_type = FieldType::new(FieldTypeCode::LongLong);
     let handle = Column::new(1, int_type.clone());
-    let point = PhysicalPlan::PointGet(PhysicalPointGet {
+    let point = PhysicalPlan::PointGet(PointGetPlan {
         lock: false,
         base: BasePhysicalPlan::with_id(11, "PointGet", 0),
         table_id: 1,
@@ -380,7 +380,7 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
     });
 
     let index_column = Column::new(2, int_type);
-    let batch = PhysicalPlan::BatchPointGet(PhysicalBatchPointGet {
+    let batch = PhysicalPlan::BatchPointGet(BatchPointGetPlan {
         base: BasePhysicalPlan::with_id(12, "BatchPointGet", 0),
         table_id: 1,
         index_id: Some(2),
@@ -470,7 +470,7 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
             parameter_condition("eq", first.clone(), 0),
         ]
     };
-    let common_handle = PhysicalPlan::PointGet(PhysicalPointGet {
+    let common_handle = PhysicalPlan::PointGet(PointGetPlan {
         lock: false,
         base: BasePhysicalPlan::with_id(31, "PointGet", 0),
         table_id: 1,
@@ -485,7 +485,7 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
         ))),
         select_lock: None,
     });
-    let unique_index = PhysicalPlan::PointGet(PhysicalPointGet {
+    let unique_index = PhysicalPlan::PointGet(PointGetPlan {
         lock: false,
         base: BasePhysicalPlan::with_id(32, "PointGet", 0),
         table_id: 1,
@@ -560,7 +560,7 @@ fn cached_point_plan_rebuilds_a_collated_string_key_as_its_sort_key() {
         low_exclude: false,
         high_exclude: false,
     };
-    let point = PhysicalPlan::PointGet(PhysicalPointGet {
+    let point = PhysicalPlan::PointGet(PointGetPlan {
         lock: false,
         base: BasePhysicalPlan::with_id(34, "PointGet", 0),
         table_id: 1,
@@ -634,7 +634,7 @@ fn cached_batch_point_plan_rebuilds_dnf_equalities_as_unioned_points() {
         low_exclude: false,
         high_exclude: false,
     };
-    let batch = PhysicalPlan::BatchPointGet(PhysicalBatchPointGet {
+    let batch = PhysicalPlan::BatchPointGet(BatchPointGetPlan {
         base: BasePhysicalPlan::with_id(33, "BatchPointGet", 0),
         table_id: 1,
         index_id: Some(5),
@@ -2532,13 +2532,13 @@ fn snapshot_read_policy_point_sizes_follow_go_fast_and_optimizer_plans() {
                     29.0
                 };
                 let plan = if batch {
-                    PhysicalPlan::BatchPointGet(PhysicalBatchPointGet {
+                    PhysicalPlan::BatchPointGet(BatchPointGetPlan {
                         access_cols: access,
                         index_id: index,
                         ..Default::default()
                     })
                 } else {
-                    PhysicalPlan::PointGet(PhysicalPointGet {
+                    PhysicalPlan::PointGet(PointGetPlan {
                         access_cols: access,
                         index_id: index,
                         ..Default::default()
@@ -2563,9 +2563,9 @@ fn union_scan(id: i32, child: PhysicalPlan) -> PhysicalPlan {
 }
 
 fn point_get(id: i32) -> PhysicalPlan {
-    PhysicalPlan::PointGet(PhysicalPointGet {
+    PhysicalPlan::PointGet(PointGetPlan {
         base: BasePhysicalPlan::with_id(id, "Point_Get", 0),
-        ..PhysicalPointGet::default()
+        ..PointGetPlan::default()
     })
 }
 
@@ -2610,7 +2610,7 @@ fn remove_union_scans_replaces_each_by_its_child() {
 fn shallow_clone_keeps_the_lock_a_locking_point_read_takes() {
     use tidb_planner_core_operator_logicalop::SelectLockType;
     let lock = Some((SelectLockType::ForUpdateNoWait, 0));
-    let point = PhysicalPlan::PointGet(PhysicalPointGet {
+    let point = PhysicalPlan::PointGet(PointGetPlan {
         base: BasePhysicalPlan::with_id(31, "Point_Get", 0),
         lock: true,
         select_lock: lock,
@@ -2620,7 +2620,7 @@ fn shallow_clone_keeps_the_lock_a_locking_point_read_takes() {
         unreachable!("a shallow clone keeps the operator");
     };
     assert!(copy.lock && copy.select_lock == lock);
-    let batch = PhysicalPlan::BatchPointGet(PhysicalBatchPointGet {
+    let batch = PhysicalPlan::BatchPointGet(BatchPointGetPlan {
         base: BasePhysicalPlan::with_id(32, "Batch_Point_Get", 0),
         lock: true,
         select_lock: lock,

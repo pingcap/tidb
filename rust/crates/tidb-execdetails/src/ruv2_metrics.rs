@@ -26,7 +26,7 @@
 //! `runtime_stats.go`'s `RURuntimeStats` ([`RuRuntimeStats`]), which wraps
 //! these metrics with `RUDetails` for EXPLAIN ANALYZE.
 //!
-//! [`RuV2Weights`] and the live metrics container are owned together here, as
+//! [`RUV2Weights`] and the live metrics container are owned together here, as
 //! they are in Go. Formatting snapshots the live atomics into local values in
 //! one pass; there is no separate public snapshot API.
 //!
@@ -44,7 +44,7 @@
 //!   flattens into a `Mutex<BTreeMap<String, i64>>` (sorted iteration matches
 //!   Go's sort-before-render).
 //! - Go nil-receiver methods and nil-argument functions become free functions
-//!   over `Option<&RuV2Metrics>` ([`total_ru`], [`update_ruv_2_metrics_from_ruv_2`],
+//!   over `Option<&RUV2Metrics>` ([`total_ru`], [`update_ruv_2_metrics_from_ruv_2`],
 //!   [`sync_ruv_2_metrics_from_ru_details`],
 //!   [`update_ruv_2_metrics_from_commit_details`], [`format_ruv_2_summary`]);
 //!   Go `Clone` (nil returns nil) becomes `impl Clone` on the non-nil case.
@@ -68,7 +68,7 @@ use tikv_client::util::CommitDetails;
 
 /// Go `RUV2Weights`: per-counter weights used by RU v2 accounting.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct RuV2Weights {
+pub struct RUV2Weights {
     /// Go `RUV2Weights.RUScale`.
     pub ru_scale: f64,
     /// Go `RUV2Weights.ResultChunkCells`.
@@ -529,7 +529,7 @@ impl Ruv2MetricsExtra {
 
 /// Go `RUV2Metrics`: stores statement-level RUv2 metrics.
 #[derive(Debug, Default)]
-pub struct RuV2Metrics {
+pub struct RUV2Metrics {
     bypass: AtomicBool,
 
     result_chunk_cells: AtomicI64,
@@ -556,7 +556,7 @@ fn go_i64(v: u64) -> i64 {
     v as i64
 }
 
-impl RuV2Metrics {
+impl RUV2Metrics {
     /// Go `NewRUV2Metrics`: creates a new RUv2 metrics container.
     pub fn new() -> Self {
         Self::default()
@@ -920,7 +920,7 @@ impl RuV2Metrics {
     }
 
     /// Go `Merge`: merges another metrics container into the receiver.
-    pub fn merge(&self, other: &RuV2Metrics) {
+    pub fn merge(&self, other: &RUV2Metrics) {
         if self.bypass() || other.bypass() {
             return;
         }
@@ -1086,7 +1086,7 @@ impl RuV2Metrics {
     /// Go `CalculateRUValues`: calculates the current TiDB RU from the
     /// metrics using the provided weights (0 when bypassed; Go's nil
     /// receiver is handled by [`total_ru`]).
-    pub fn calculate_ru_values(&self, weights: RuV2Weights) -> f64 {
+    pub fn calculate_ru_values(&self, weights: RUV2Weights) -> f64 {
         if self.bypass() {
             return 0.0;
         }
@@ -1095,7 +1095,7 @@ impl RuV2Metrics {
 
     /// Go `calculateRUValuesWithWeights`.
     #[expect(clippy::cast_precision_loss, reason = "Go float64(int64) conversion")]
-    fn calculate_ru_values_with_weights(&self, weights: RuV2Weights) -> f64 {
+    fn calculate_ru_values_with_weights(&self, weights: RUV2Weights) -> f64 {
         let mut executor_l2 = 0i64;
         let mut executor_l3 = 0i64;
         let mut executor_l5_insert_rows = 0i64;
@@ -1170,9 +1170,9 @@ impl RuV2Metrics {
 
 /// Go `Clone`: a copy of the current metrics for reporting (Go's nil-in
 /// nil-out is the caller's `Option`).
-impl Clone for RuV2Metrics {
+impl Clone for RUV2Metrics {
     fn clone(&self) -> Self {
-        let cloned = RuV2Metrics::new();
+        let cloned = RUV2Metrics::new();
         cloned.bypass.store(self.bypass(), Ordering::Relaxed);
         cloned
             .result_chunk_cells
@@ -1206,8 +1206,8 @@ impl Clone for RuV2Metrics {
 /// Go `TotalRU`: the statement RU v2 total as TiDB + TiKV + TiFlash, on a
 /// possibly-nil (Go) receiver.
 pub fn total_ru(
-    metrics: Option<&RuV2Metrics>,
-    weights: RuV2Weights,
+    metrics: Option<&RUV2Metrics>,
+    weights: RUV2Weights,
     tikv_ru: f64,
     tiflash_ru: f64,
 ) -> f64 {
@@ -1220,7 +1220,7 @@ pub fn total_ru(
 
 /// Go `UpdateRUV2MetricsFromRUV2`: adds raw RUv2 counters into the
 /// statement-level metrics snapshot.
-pub fn update_ruv_2_metrics_from_ruv_2(metrics: Option<&RuV2Metrics>, ru: Option<&Ruv2>) {
+pub fn update_ruv_2_metrics_from_ruv_2(metrics: Option<&RUV2Metrics>, ru: Option<&Ruv2>) {
     let (Some(metrics), Some(ru)) = (metrics, ru) else {
         return;
     };
@@ -1235,7 +1235,7 @@ pub fn update_ruv_2_metrics_from_ruv_2(metrics: Option<&RuV2Metrics>, ru: Option
 /// statement-level metrics. Safe to call multiple times; each call transfers
 /// only the delta.
 pub fn sync_ruv_2_metrics_from_ru_details(
-    metrics: Option<&RuV2Metrics>,
+    metrics: Option<&RUV2Metrics>,
     ru_details: Option<&RuDetails>,
 ) {
     let (Some(metrics), Some(ru_details)) = (metrics, ru_details) else {
@@ -1250,7 +1250,7 @@ pub fn sync_ruv_2_metrics_from_ru_details(
 /// Go `UpdateRUV2MetricsFromCommitDetails`: adds commit write counters into
 /// RUv2 metrics.
 pub fn update_ruv_2_metrics_from_commit_details(
-    metrics: Option<&RuV2Metrics>,
+    metrics: Option<&RUV2Metrics>,
     commit_details: Option<&CommitDetails>,
 ) {
     let (Some(metrics), Some(commit_details)) = (metrics, commit_details) else {
@@ -1282,7 +1282,7 @@ impl ExecutorMetricRecorder {
     }
 
     /// Go `Record`: applies `delta`. Caller must ensure `m` is not bypassed.
-    pub fn record(&self, m: &RuV2Metrics, delta: i64) {
+    pub fn record(&self, m: &RUV2Metrics, delta: i64) {
         add_prometheus_i64(
             self.counter
                 .as_ref()
@@ -1335,12 +1335,12 @@ fn format_ruv2_label_map(values: &BTreeMap<String, i64>) -> String {
 /// Go `FormatRUV2Summary`: formats the RUv2 total and detailed metrics in
 /// one pass over the live metrics.
 pub fn format_ruv_2_summary(
-    metrics: Option<&RuV2Metrics>,
-    weights: RuV2Weights,
+    metrics: Option<&RUV2Metrics>,
+    weights: RUV2Weights,
     tikv_ru: f64,
     tiflash_ru: f64,
 ) -> (String, String) {
-    if metrics.is_some_and(RuV2Metrics::bypass) {
+    if metrics.is_some_and(RUV2Metrics::bypass) {
         return (String::new(), String::new());
     }
     let snapshot = metrics.map_or_else(FormattingSnapshot::default, |metrics| {
@@ -1451,8 +1451,8 @@ pub fn format_ruv_2_summary(
 
 /// Go `FormatRUV2Total`: formats the RUv2 total into a slow log string.
 pub fn format_ruv_2_total(
-    metrics: Option<&RuV2Metrics>,
-    weights: RuV2Weights,
+    metrics: Option<&RUV2Metrics>,
+    weights: RUV2Weights,
     tikv_ru: f64,
     tiflash_ru: f64,
 ) -> String {
@@ -1461,8 +1461,8 @@ pub fn format_ruv_2_total(
 
 /// Go `FormatRUV2Metrics`: formats RUv2 metrics into a compact detail string.
 pub fn format_ruv_2_metrics(
-    metrics: Option<&RuV2Metrics>,
-    weights: RuV2Weights,
+    metrics: Option<&RUV2Metrics>,
+    weights: RUV2Weights,
     tikv_ru: f64,
     tiflash_ru: f64,
 ) -> String {
@@ -1478,9 +1478,9 @@ pub struct RuRuntimeStats {
     /// Go `RURuntimeStats.RUDetails` (embedded `*util.RUDetails`).
     pub ru_details: Option<RuDetails>,
     /// Go `RURuntimeStats.Metrics`.
-    pub metrics: Option<RuV2Metrics>,
+    pub metrics: Option<RUV2Metrics>,
     /// Go `RURuntimeStats.Weights`.
-    pub weights: RuV2Weights,
+    pub weights: RUV2Weights,
     /// Go `RURuntimeStats.RUVersion`.
     pub ru_version: tidb_pd_client::rm_client::RuVersion,
 }
@@ -1532,7 +1532,7 @@ impl RuRuntimeStats {
             }
             None => self.metrics = other.metrics.clone(),
         }
-        if self.weights == RuV2Weights::default() {
+        if self.weights == RUV2Weights::default() {
             self.weights = other.weights;
         }
         if self.ru_version == tidb_pd_client::rm_client::RuVersion::UNSPECIFIED {
@@ -1551,7 +1551,7 @@ mod tests {
     ) -> RuRuntimeStats {
         RuRuntimeStats {
             ru_details,
-            metrics: Some(RuV2Metrics::new()),
+            metrics: Some(RUV2Metrics::new()),
             weights: default_ruv2_weights_for_test(),
             ru_version,
         }
@@ -1637,9 +1637,9 @@ mod tests {
 
     /// Go `defaultRUV2WeightsForTest`, sourced from
     /// `config.DefaultRUV2Config()`.
-    fn default_ruv2_weights_for_test() -> RuV2Weights {
+    fn default_ruv2_weights_for_test() -> RUV2Weights {
         let config = tidb_config::config_tree::RuV2Config::default();
-        RuV2Weights {
+        RUV2Weights {
             ru_scale: config.ru_scale,
             result_chunk_cells: config.result_chunk_cells,
             executor_l1: config.executor_l1,
@@ -1674,7 +1674,7 @@ mod tests {
     #[test]
     fn ruv2_metrics_snapshot_calculate_ru_values() {
         let weights = default_ruv2_weights_for_test();
-        let metrics = RuV2Metrics::new();
+        let metrics = RUV2Metrics::new();
         metrics.add_result_chunk_cells(1000);
         metrics.add_executor_metric(1, "TableReader", 5);
         metrics.add_executor_metric(1, "Projection", 7);
@@ -1719,7 +1719,7 @@ mod tests {
         );
 
         // Go subtest "bypass keeps total zero".
-        let bypassed = RuV2Metrics::new();
+        let bypassed = RUV2Metrics::new();
         bypassed.set_bypass(true);
         bypassed.add_result_chunk_cells(1000);
         bypassed.add_plan_cnt(2);
@@ -1743,24 +1743,24 @@ mod tests {
     /// label-map arms in Go's arm order.
     #[test]
     fn format_ruv2_summary_arm_coverage() {
-        let weights = RuV2Weights {
+        let weights = RUV2Weights {
             ru_scale: 1.0,
             plan_cnt: 2.0,
-            ..RuV2Weights::default()
+            ..RUV2Weights::default()
         };
         assert_eq!(
             (String::new(), String::new()),
             format_ruv_2_summary(None, weights, 0.0, 0.0)
         );
 
-        let bypassed = RuV2Metrics::new();
+        let bypassed = RUV2Metrics::new();
         bypassed.set_bypass(true);
         assert_eq!(
             (String::new(), String::new()),
             format_ruv_2_summary(Some(&bypassed), weights, 3.0, 0.0)
         );
 
-        let metrics = RuV2Metrics::new();
+        let metrics = RUV2Metrics::new();
         metrics.add_plan_cnt(5);
         metrics.add_executor_metric(1, "TableReader", 3);
         metrics.add_executor_metric(1, "Zero", 0);
@@ -1776,7 +1776,7 @@ mod tests {
     /// Port of Go `TestUpdateRUV2MetricsFromCommitDetails`.
     #[test]
     fn update_ruv2_metrics_from_commit_details_test() {
-        let metrics = RuV2Metrics::new();
+        let metrics = RUV2Metrics::new();
         let weights = default_ruv2_weights_for_test();
         let before_ru = metrics.calculate_ru_values(weights);
 
@@ -1801,7 +1801,7 @@ mod tests {
         assert!(detail.contains("write_keys:3"), "detail: {detail}");
         assert!(detail.contains("write_size:66"), "detail: {detail}");
 
-        let bypassed = RuV2Metrics::new();
+        let bypassed = RUV2Metrics::new();
         bypassed.set_bypass(true);
         update_ruv_2_metrics_from_commit_details(
             Some(&bypassed),
@@ -1819,7 +1819,7 @@ mod tests {
     #[test]
     fn ruv2_metrics_snapshot_freezes_ru_values() {
         let weights = default_ruv2_weights_for_test();
-        let metrics = RuV2Metrics::new();
+        let metrics = RUV2Metrics::new();
         metrics.add_result_chunk_cells(1000);
         metrics.add_plan_cnt(2);
 
@@ -1835,7 +1835,7 @@ mod tests {
     /// Port of Go `TestUpdateRUV2MetricsFromRUV2`.
     #[test]
     fn update_ruv2_metrics_from_ruv2_test() {
-        let metrics = RuV2Metrics::new();
+        let metrics = RUV2Metrics::new();
         update_ruv_2_metrics_from_ruv_2(
             Some(&metrics),
             Some(&Ruv2 {
@@ -1890,7 +1890,7 @@ mod tests {
     /// Port of Go `TestSyncRUV2MetricsFromRUDetailsIncremental`.
     #[test]
     fn sync_ruv2_metrics_from_ru_details_incremental() {
-        let metrics = RuV2Metrics::new();
+        let metrics = RUV2Metrics::new();
         let ru_details = RuDetails::new();
         ru_details.add_ru_v2(Some(&Ruv2 {
             read_rpc_count: 2,
@@ -1955,7 +1955,7 @@ mod tests {
     /// Port of Go `TestSyncRUV2MetricsFromRUDetailsBypass`.
     #[test]
     fn sync_ruv2_metrics_from_ru_details_bypass() {
-        let metrics = RuV2Metrics::new();
+        let metrics = RUV2Metrics::new();
         metrics.set_bypass(true);
         let ru_details = RuDetails::new();
         ru_details.add_ru_v2(Some(&Ruv2 {
@@ -1972,7 +1972,7 @@ mod tests {
     /// Port of Go `TestUpdateRUV2MetricsFromRUV2Bypass`.
     #[test]
     fn update_ruv2_metrics_from_ruv2_bypass() {
-        let metrics = RuV2Metrics::new();
+        let metrics = RUV2Metrics::new();
         metrics.set_bypass(true);
         update_ruv_2_metrics_from_ruv_2(
             Some(&metrics),
@@ -2007,8 +2007,8 @@ mod tests {
         let zero = ExecutorMetricRecorder::default();
         assert!(!zero.available());
 
-        let fast = RuV2Metrics::new();
-        let slow = RuV2Metrics::new();
+        let fast = RUV2Metrics::new();
+        let slow = RUV2Metrics::new();
         resolve_executor_metric(1, RUV2_LABEL_BATCH_POINT_GET_EXEC).record(&fast, 7);
         resolve_executor_metric(1, RUV2_LABEL_POINT_GET_EXECUTOR).record(&fast, 3);
         resolve_executor_metric(1, RUV2_LABEL_LIMIT_EXEC).record(&fast, 5);
@@ -2023,7 +2023,7 @@ mod tests {
     #[test]
     fn format_ruv2_metrics_includes_ru_values_first() {
         let weights = default_ruv2_weights_for_test();
-        let metrics = RuV2Metrics::new();
+        let metrics = RUV2Metrics::new();
         metrics.add_result_chunk_cells(1000);
         metrics.add_resource_manager_write_cnt(20);
         metrics.add_tikv_coprocessor_work_total("BatchTopN", 10);

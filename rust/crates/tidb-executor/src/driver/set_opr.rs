@@ -165,7 +165,7 @@ pub(crate) fn validate_query_usage(
 /// materializing each term.
 pub fn run_set_opr_stmt(
     stmt: &tidb_ast::SetOprStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {

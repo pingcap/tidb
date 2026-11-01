@@ -20,7 +20,7 @@
 //! see [`reports_warnings`].
 
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
-use tidb_executor::compiler::PreparedExec;
+use tidb_executor::compiler::PrepareExec;
 use std::borrow::Cow;
 
 use tidb_ast::{AdminStmt, Stmt};

@@ -24,7 +24,7 @@
 #![cfg(test)]
 
 use crate::{
-    run_create_table_on, run_insert_on, run_select_on, run_update_on, Catalog, StmtContext,
+    run_create_table_on, run_insert_on, run_select_on, run_update_on, SessionExtendedInfoSchema, StmtContext,
 };
 
 fn query_ctx() -> StmtContext {

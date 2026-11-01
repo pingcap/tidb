@@ -25,7 +25,7 @@ pub use plan::{
     join_hint_flags,
     collect_unmatched_hint_warnings, extract_unmatched_tables, parse_plan_hints,
     remove_duplicated_hints, restore_index_hint, restore_2_join_hint, restore_2_storage_hint,
-    HintedIndex, HintedIndexKind, HintedTable, IndexJoinHints, PlanHints, HINT_FLAG_NO_DECORRELATE,
+    HintedIndex, IndexHintType, HintedTable, IndexJoinHints, PlanHints, HINT_FLAG_NO_DECORRELATE,
     HINT_FLAG_SEMI_JOIN_REWRITE, PREFER_HASH_AGG, PREFER_MPP_1_PHASE_AGG, PREFER_MPP_2_PHASE_AGG,
     PREFER_STREAM_AGG,
 };

@@ -552,7 +552,7 @@ impl ForeignKeyReference {
     }
 }
 
-/// Full foreign-key `ast.Constraint` payload. Catalog execution deliberately
+/// Full foreign-key `ast.Constraint` payload. SessionExtendedInfoSchema execution deliberately
 /// rejects the parts and MATCH forms it cannot yet represent before mutation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ForeignKeyConstraintDefinition {

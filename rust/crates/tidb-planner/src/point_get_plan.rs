@@ -22,7 +22,7 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
 use tidb_expr::schema::Schema;
-use tidb_infoschema::{split_table_path, Catalog, TableEntry};
+use tidb_infoschema::{split_table_path, SessionExtendedInfoSchema, TableEntry};
 use crate::plan_builder::field_name::default_field_display_name;
 
 use crate::from_scope::{single_table_scope, FromScope, ScopeResolver};
@@ -111,7 +111,7 @@ fn closed_point_ranges(keys: &[Vec<Datum>]) -> tidb_ranger::types::Ranges {
 /// executor pipeline.
 pub fn try_fast_plan(
     select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &tidb_sessionctx::StmtContext,
 ) -> Result<Option<tidb_planner_core_operator_physicalop::PhysicalPlan>, DriverError> {
@@ -141,7 +141,7 @@ pub fn try_fast_plan(
 /// same implementation without assigning fixed IDs by hand.
 pub fn try_fast_point_physical_plan_with_allocator(
     select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &tidb_sessionctx::StmtContext,
     plan_ids: &tidb_planner_core_base::PlanIdAllocator,
@@ -156,7 +156,7 @@ pub fn try_fast_point_physical_plan_with_allocator(
 /// projection.
 pub fn try_fast_dml_point_physical_plan_with_allocator(
     select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &tidb_sessionctx::StmtContext,
     plan_ids: &tidb_planner_core_base::PlanIdAllocator,
@@ -210,7 +210,7 @@ fn fast_point_lock_of_warnings(
 
 fn try_fast_point_physical_plan_with_allocator_mode(
     select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &tidb_sessionctx::StmtContext,
     plan_ids: &tidb_planner_core_base::PlanIdAllocator,
@@ -231,7 +231,7 @@ fn try_fast_point_physical_plan_with_allocator_mode(
 
 fn build_fast_point_physical_plan(
     select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &tidb_sessionctx::StmtContext,
     plan_ids: &tidb_planner_core_base::PlanIdAllocator,
@@ -439,7 +439,7 @@ fn build_fast_point_physical_plan(
         base.base.set_schema(Some(schema));
         let ranges = closed_point_ranges(&batch.key_values);
         return Ok(Some(tidb_planner_core_operator_physicalop::PhysicalPlan::BatchPointGet(
-            tidb_planner_core_operator_physicalop::PhysicalBatchPointGet {
+            tidb_planner_core_operator_physicalop::BatchPointGetPlan {
                 base,
                 table_id: table.table_id(),
                 index_id: batch.index.as_ref().map(|(id, _)| *id),
@@ -558,7 +558,7 @@ fn build_fast_point_physical_plan(
         .has_parameters()
         .then_some(tidb_planner_core_operator_physicalop::range_rebuild::PointRangeRebuild::Constants(constants));
     Ok(Some(tidb_planner_core_operator_physicalop::PhysicalPlan::PointGet(
-        tidb_planner_core_operator_physicalop::PhysicalPointGet {
+        tidb_planner_core_operator_physicalop::PointGetPlan {
             base,
             table_id: table.table_id(),
             // Go `PointGetPlan.PartitionNames`: a global index applies them

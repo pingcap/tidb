@@ -59,7 +59,7 @@ pub trait AccountSession: crate::stmt_ctx_build::ResetContextOfStmt {
     /// Go `ExecRestrictedSQL`.
     fn exec_restricted_sql(&mut self, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError>;
     /// The statement's infoschema.
-    fn lock_catalog(&self) -> Result<std::sync::MutexGuard<'_, crate::Catalog>, DriverError>;
+    fn lock_catalog(&self) -> Result<std::sync::MutexGuard<'_, crate::SessionExtendedInfoSchema>, DriverError>;
     /// The `RESOURCE_GROUP` user attribute after Go's resource-group checks.
     fn user_resource_group_attribute(&self, name: &str, is_role: bool) -> Result<String, DriverError>;
 }

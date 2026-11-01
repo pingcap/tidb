@@ -14,7 +14,7 @@
 
 //! The planner's view of the schema image: Go's `PlanBuilder` reads the
 //! infoschema through `table.Table` metadata only, never storage. This is
-//! that projection of a [`Catalog`], and the privilege and hypothetical-index
+//! that projection of a [`SessionExtendedInfoSchema`], and the privilege and hypothetical-index
 //! state a statement's planning adds to it.
 
 use crate::*;
@@ -189,7 +189,7 @@ pub fn is_virtual_schema_table(database: &str, name: &str) -> bool {
 /// `infoschema.InfoSchema` holds. Go builds it once per schema version and
 /// every statement plans against the shared value; this tier builds it once
 /// per catalog metadata version (the same epoch, see
-/// [`Catalog::metadata_version`]) and hands every statement the same `Arc`,
+/// [`SessionExtendedInfoSchema::metadata_version`]) and hands every statement the same `Arc`,
 /// rather than converting every column of every table per statement.
 #[derive(Debug, Default)]
 pub struct PlannerSchemaView {
@@ -314,7 +314,7 @@ impl crate::table_source::TableSource for PlannerCatalog {
     }
 }
 
-impl Catalog {
+impl SessionExtendedInfoSchema {
     /// Materializes the narrow `infoschema` view consumed by the ported Go
     /// logical planner. Storage handles, rows, statistics and allocators stay
     /// in this catalog; only immutable schema metadata crosses the seam.

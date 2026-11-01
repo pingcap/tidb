@@ -554,7 +554,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
     /// transaction -- see `with_statement_stage`'s note about a storage whose
     /// clone shares a handle rather than copying by value.
     fn sequence_snapshot(&self) -> Arc<tidb_infoschema::SequenceSnapshot> {
-        let snapshot = |catalog: &crate::Catalog| {
+        let snapshot = |catalog: &crate::SessionExtendedInfoSchema| {
             Arc::new(tidb_infoschema::SequenceSnapshot::new(
                 catalog,
                 &self.session_vars().current_db,
@@ -2108,7 +2108,7 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// Go `SessionVars.ResourceGroupName`.
     fn active_resource_group(&self) -> &str;
     /// Go `domain.GetDomain(ctx).InfoSchema()`: the domain's latest image.
-    fn domain_info_schema(&self) -> std::sync::Arc<std::sync::Mutex<crate::Catalog>>;
+    fn domain_info_schema(&self) -> std::sync::Arc<std::sync::Mutex<crate::SessionExtendedInfoSchema>>;
     /// Go `tikv.Storage`'s region cache and PD client.
     fn region_store(&self) -> std::sync::Arc<dyn tidb_kv::region_map::RegionStore>;
     /// The server's published pushdown and optimizer-rule blacklists.
@@ -2283,7 +2283,7 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// The statement's infoschema, mutably (the in-process tables).
     fn with_catalog_mut<T>(
         &mut self,
-        body: impl FnOnce(&mut crate::Catalog) -> Result<T, DriverError>,
+        body: impl FnOnce(&mut crate::SessionExtendedInfoSchema) -> Result<T, DriverError>,
     ) -> Result<T, DriverError>;
     /// Session primitive.
     fn statement_txn_mode(&self) -> tidb_vardef::txn_mode::SessionTxnMode;
@@ -2307,7 +2307,7 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// Runs `body` over the catalog the open transaction reads: a stale
     /// transaction's historical schema (Go `TxnCtx.InfoSchema`), otherwise the
     /// session's catalog.
-    fn with_txn_catalog<T>(&self, body: impl FnOnce(&crate::Catalog) -> T, ) -> Result<T, DriverError>;
+    fn with_txn_catalog<T>(&self, body: impl FnOnce(&crate::SessionExtendedInfoSchema) -> T, ) -> Result<T, DriverError>;
     /// Go `privilege.Manager.RequestVerificationWithUser` for the planner's
     /// view expansion: whether an account -- matched against the stored ones by
     /// host pattern, with its default roles -- holds a privilege. `None` is a

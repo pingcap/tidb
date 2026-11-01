@@ -43,7 +43,7 @@
 //!
 //! Go's value is `util.HandleCols`, an interface over an int handle and a
 //! common handle. [`tidb_planner_util::handle_cols`] already models both identities, so
-//! [`PlanHandleCols`] is the two-variant sum of them rather than a third
+//! [`HandleCols`] is the two-variant sum of them rather than a third
 //! spelling. That keeps the `Hash64`/`Equals` behaviour the cascades memo
 //! needs on the same values the helper stores.
 
@@ -54,14 +54,14 @@ use tidb_planner_util::handle_cols::{CommonHandleIdentity, IntHandleIdentity};
 /// Go `util.HandleCols`, as the closed sum of the two implementations
 /// [`tidb_planner_util::handle_cols`] already carries.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum PlanHandleCols {
+pub enum HandleCols {
     /// Go `util.IntHandleCols`.
     Int(IntHandleIdentity),
     /// Go `util.CommonHandleCols`.
     Common(CommonHandleIdentity),
 }
 
-impl PlanHandleCols {
+impl HandleCols {
     /// Go `HandleCols.IsInt()`.
     #[must_use]
     pub const fn is_int(&self) -> bool {
@@ -83,7 +83,7 @@ impl PlanHandleCols {
 /// `BTreeMap` rather than `HashMap` so a merge and any diagnostic walk are
 /// deterministic; Go's map order is unobserved by the ported bodies, which
 /// only ever look a table id up.
-pub type HandleColMap = BTreeMap<i64, Vec<PlanHandleCols>>;
+pub type HandleColMap = BTreeMap<i64, Vec<HandleCols>>;
 
 /// Go `handleColHelper` (`planbuilder.go:375`).
 #[derive(Clone, Debug, Default)]
@@ -159,24 +159,24 @@ impl HandleColHelper {
 
 #[cfg(test)]
 mod tests {
-    use super::{HandleColHelper, HandleColMap, PlanHandleCols};
+    use super::{HandleColHelper, HandleColMap, HandleCols};
     use tidb_planner_util::handle_cols::{CommonHandleIdentity, HandleColumnIdentity, IntHandleIdentity};
 
-    fn int_handle(unique_id: i64) -> PlanHandleCols {
-        PlanHandleCols::Int(IntHandleIdentity::new(Some(HandleColumnIdentity::new(
+    fn int_handle(unique_id: i64) -> HandleCols {
+        HandleCols::Int(IntHandleIdentity::new(Some(HandleColumnIdentity::new(
             1, unique_id, 0,
         ))))
     }
 
-    fn common_handle(unique_id: i64) -> PlanHandleCols {
-        PlanHandleCols::Common(CommonHandleIdentity::new(
+    fn common_handle(unique_id: i64) -> HandleCols {
+        HandleCols::Common(CommonHandleIdentity::new(
             None,
             None,
             Some(vec![HandleColumnIdentity::new(1, unique_id, 0)]),
         ))
     }
 
-    fn map_of(entries: &[(i64, PlanHandleCols)]) -> HandleColMap {
+    fn map_of(entries: &[(i64, HandleCols)]) -> HandleColMap {
         let mut map = HandleColMap::new();
         for (table_id, handle) in entries {
             map.entry(*table_id).or_default().push(handle.clone());

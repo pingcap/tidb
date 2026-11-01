@@ -157,7 +157,7 @@ mod tests {
         super::super::open_query_meta_stmt_with_physical(
             query,
             None,
-            &super::super::Catalog::mock(),
+            &super::super::SessionExtendedInfoSchema::mock(),
             "test",
             &ctx,
         )

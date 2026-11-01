@@ -24,11 +24,11 @@
 use tidb_executor::ddl_exec::TemporaryTableDdlExec;
 use tidb_executor::mem_table_retrieval::StmtMemTableRetrieval as _;
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
-use tidb_executor::compiler::PreparedExec;
+use tidb_executor::compiler::PrepareExec;
 use tidb_executor::compiler::NonPreparedPlanCacheCompile;
 use tidb_executor::compiler::PlanCacheableChecker;
 use tidb_ast::{DmlStmt, SessionStmt, Stmt};
-use tidb_infoschema::Catalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_driver_error::DriverError;
 
 pub(crate) use tidb_executor::compiler::explain::variant_name;
@@ -497,7 +497,7 @@ impl Session {
     pub(crate) fn with_catalog_retrieving<T>(
         &mut self,
         ctx: &tidb_sessionctx::StmtContext,
-        mut attempt: impl FnMut(&mut Catalog) -> Result<T, DriverError>,
+        mut attempt: impl FnMut(&mut SessionExtendedInfoSchema) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
         self.retrieving_memory_tables(ctx, |session| session.with_catalog_mut(&mut attempt))
     }
@@ -581,7 +581,7 @@ impl Session {
     pub(crate) fn table_storage_statistics_catalog(
         &mut self,
         needs_column_lengths: bool,
-    ) -> Result<tidb_infoschema::Catalog, DriverError> {
+    ) -> Result<tidb_infoschema::SessionExtendedInfoSchema, DriverError> {
         let scratch = self.with_catalog_mut(|catalog| Ok(catalog.clone()))?;
         tidb_executor::memtable_retrievers::table_storage_statistics_catalog_of(
             scratch,

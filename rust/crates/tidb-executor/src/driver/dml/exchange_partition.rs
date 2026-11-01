@@ -24,7 +24,7 @@ use std::sync::Arc;
 use tidb_datatype::Datum;
 
 use tidb_table::tables::TableCommon;
-use crate::{Catalog, DriverError, TableEntry};
+use crate::{SessionExtendedInfoSchema, DriverError, TableEntry};
 
 /// The other table of an ongoing EXCHANGE PARTITION, resolved from the
 /// session's catalog before the written table is borrowed for the write.
@@ -49,7 +49,7 @@ pub(crate) enum ExchangePartitionCheck {
 /// Go's errors for a standalone table whose partitioned table cannot be
 /// found.
 pub(crate) fn exchange_partition_check(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     database: &str,
     name: &str,
 ) -> Result<Option<ExchangePartitionCheck>, DriverError> {

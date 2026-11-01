@@ -14,7 +14,7 @@
 //! The in-process catalog as the planner's [`ForeignKeyCatalog`]: Go
 //! `physicalop/foreign_key.go` itself is `tidb_planner_core_operator_physicalop::fk_plan`.
 
-use tidb_infoschema::{Catalog, TableEntry};
+use tidb_infoschema::{SessionExtendedInfoSchema, TableEntry};
 use crate::driver::DriverError;
 use tidb_table::tables::KvForeignKey;
 use tidb_table::tables::FkAction;
@@ -50,7 +50,7 @@ pub(crate) fn meta(fk: &KvForeignKey) -> FkMeta {
     }
 }
 
-struct CatalogForeignKeys<'a>(&'a Catalog);
+struct CatalogForeignKeys<'a>(&'a SessionExtendedInfoSchema);
 
 impl ForeignKeyCatalog for CatalogForeignKeys<'_> {
     fn table(&self, database: &str, table: &str) -> Option<FkTable> {
@@ -103,7 +103,7 @@ impl ForeignKeyCatalog for CatalogForeignKeys<'_> {
 
 /// Select constraints once, following Go's BuildOn{Insert,Update,Delete}FKTriggers.
 pub(crate) fn build_fk_triggers(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &StmtContext,
     operator: &str,
     spec: &FkPlanSpec,

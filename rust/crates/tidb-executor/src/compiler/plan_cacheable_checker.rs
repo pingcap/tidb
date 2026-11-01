@@ -15,7 +15,7 @@
 //! Go `IsASTCacheable` as a session asks it: the session's variables over
 //! the planner's AST check (`tidb_planner::plan_cacheable_checker`).
 
-use tidb_infoschema::Catalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_planner::plan_cacheable_checker::{stmt_cacheable, CacheableContext, MAX_NUM_PARAM};
 
 /// Go `IsASTCacheable` with the session's variables.
@@ -26,7 +26,7 @@ pub trait PlanCacheableChecker: super::CompilerSession {
     fn prepared_statement_cacheable(
         &self,
         stmt: &mut tidb_ast::Stmt,
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
     ) -> Result<(), String> {
         let configured_max = self
             .session_vars()

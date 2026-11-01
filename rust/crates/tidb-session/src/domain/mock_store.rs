@@ -226,7 +226,7 @@ fn bootstrap_image_path() -> Option<std::path::PathBuf> {
 /// shares (`Session::with_catalog(first.shared_catalog())`); Go's testkit
 /// names it by the store (`testkit.NewTestKit(t, store)`). This table turns
 /// the one into the other.
-static CATALOG_DOMAINS: Mutex<Vec<(Weak<Mutex<crate::Catalog>>, Weak<MockStoreDomain>)>> =
+static CATALOG_DOMAINS: Mutex<Vec<(Weak<Mutex<crate::SessionExtendedInfoSchema>>, Weak<MockStoreDomain>)>> =
     Mutex::new(Vec::new());
 
 fn remember_catalog_domain(catalog: &crate::SharedCatalog, domain: &Arc<MockStoreDomain>) {

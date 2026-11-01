@@ -23,7 +23,7 @@
 //! (`session_variables`, `events_statements_summary_by_digest`, ...) get
 //! their rows per statement, as the `information_schema` tables do.
 
-use tidb_infoschema::Catalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_hack::GoCaseCompare;
 
 /// The database name Go registers these tables under.
@@ -238,7 +238,7 @@ pub fn tables(
     > = std::sync::OnceLock::new();
     TABLES_BUILT
         .get_or_init(|| {
-            let mut scratch = Catalog::memory_schema_scratch();
+            let mut scratch = SessionExtendedInfoSchema::memory_schema_scratch();
             for (_, offset, sql) in TABLES {
                 run_create_system_table_in(
                     sql,
@@ -252,7 +252,7 @@ pub fn tables(
                 .tables_of(PERFORMANCE_SCHEMA)
                 .map(|(name, entry)| (name.to_owned(), std::sync::Arc::clone(entry)))
                 .collect();
-            Catalog::register_virtual_schema(
+            SessionExtendedInfoSchema::register_virtual_schema(
                 PERFORMANCE_SCHEMA_DB_ID,
                 "PERFORMANCE_SCHEMA",
                 &tables,
@@ -269,7 +269,7 @@ pub fn tables(
 /// loaded like any table (`TableFromMeta`) and registered in `database`.
 pub fn run_create_system_table_in(
     sql: &str,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     database: &str,
     table_id: i64,
 ) -> Result<(), tidb_driver_error::DriverError> {
@@ -310,16 +310,16 @@ pub fn register() {
     tidb_infoschema::register_performance_schema(tables);
 }
 
-/// A [`Catalog::new`] with `performance_schema` registered first.
+/// A [`SessionExtendedInfoSchema::new`] with `performance_schema` registered first.
 #[must_use]
-pub fn catalog() -> Catalog {
+pub fn catalog() -> SessionExtendedInfoSchema {
     register();
-    Catalog::new()
+    SessionExtendedInfoSchema::new()
 }
 
-/// A [`Catalog::mock`] with `performance_schema` registered first.
+/// A [`SessionExtendedInfoSchema::mock`] with `performance_schema` registered first.
 #[must_use]
-pub fn mock_catalog() -> Catalog {
+pub fn mock_catalog() -> SessionExtendedInfoSchema {
     register();
-    Catalog::mock()
+    SessionExtendedInfoSchema::mock()
 }

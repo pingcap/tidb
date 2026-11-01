@@ -149,7 +149,7 @@ pub static SYS_VARS: &[SysVarDef] = {
 
 #[cfg(test)]
 mod registry_tests {
-    use super::super::VarType;
+    use super::super::TypeFlag;
     use super::*;
 
     /// The assembled registry stays name-ordered so binary search remains
@@ -169,7 +169,7 @@ mod registry_tests {
         let columnar = columnar.expect("tidb_columnar_storage_enabled in registry");
         assert_eq!(columnar.scope, 1_u8);
         assert_eq!(columnar.value, "ON");
-        assert!(matches!(columnar.var_type, VarType::Bool));
+        assert!(matches!(columnar.var_type, TypeFlag::Bool));
 
         let cop = SYS_VARS
             .iter()
@@ -177,7 +177,7 @@ mod registry_tests {
         let cop = cop.expect("tidb_query_cop_store_limit in registry");
         assert_eq!(cop.scope, 3_u8);
         assert_eq!(cop.value, "15");
-        assert!(matches!(cop.var_type, VarType::Unsigned));
+        assert!(matches!(cop.var_type, TypeFlag::Unsigned));
         assert_eq!(cop.min_value, 0_i64);
         assert_eq!(cop.max_value, 256_u64);
     }

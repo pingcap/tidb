@@ -31,7 +31,7 @@ pub struct SequenceSnapshot {
 
 impl SequenceSnapshot {
     #[must_use]
-    pub fn new(catalog: &Catalog, current_db: &str) -> Self {
+    pub fn new(catalog: &SessionExtendedInfoSchema, current_db: &str) -> Self {
         Self {
             databases: Arc::clone(&catalog.schema.databases),
             local_temporary: catalog.local_temporary.clone(),

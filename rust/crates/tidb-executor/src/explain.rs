@@ -36,7 +36,7 @@ use tidb_proto::tipb::{ExplainData, ExplainOperator as PbExplainOperator, Operat
 use tidb_planner::find_best_task::coster::Ver2Coster;
 
 use crate::driver::{run_delete_stmt_with_physical_and_stats, run_insert_stmt_with_physical_and_stats, run_update_stmt_with_physical_and_stats, DriverError, SelectMeta};
-use tidb_infoschema::Catalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_sessionctx::explain_format::ExplainFormat;
 
 /// The plan a finished trace recorded, or the refusal a build site left in it.
@@ -103,7 +103,7 @@ fn used_stats_suffix_for_scan(
     context: &crate::StmtContext,
     physical_table_id: i64,
     base: &tidb_planner_core_operator_physicalop::BasePhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     selected_index_id: Option<i64>,
 ) -> Option<String> {
     // A correlated IndexJoin can select its inner index after datasource
@@ -670,7 +670,7 @@ fn scan_keep_order_text(keep_order: bool, desc: bool) -> String {
     }
 }
 
-fn table_name(catalog: &Catalog, table_id: i64, alias: Option<&str>) -> String {
+fn table_name(catalog: &SessionExtendedInfoSchema, table_id: i64, alias: Option<&str>) -> String {
     alias.map_or_else(
         || {
             catalog
@@ -681,7 +681,7 @@ fn table_name(catalog: &Catalog, table_id: i64, alias: Option<&str>) -> String {
     )
 }
 
-fn table_access(catalog: &Catalog, table_id: i64, alias: Option<&str>) -> ScanAccessObject {
+fn table_access(catalog: &SessionExtendedInfoSchema, table_id: i64, alias: Option<&str>) -> ScanAccessObject {
     let mut access = ScanAccessObject {
         database: catalog
             .physical_kv_table_database_by_id(table_id)
@@ -705,7 +705,7 @@ fn table_access(catalog: &Catalog, table_id: i64, alias: Option<&str>) -> ScanAc
 }
 
 fn index_access(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     hypo_indexes: Option<&tidb_variable::hypo_index::HypoIndexes>,
     table_id: i64,
     alias: Option<&str>,
@@ -764,7 +764,7 @@ fn index_access(
 }
 
 fn point_access(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     hypo_indexes: Option<&tidb_variable::hypo_index::HypoIndexes>,
     table_id: i64,
     index_id: Option<i64>,
@@ -1044,7 +1044,7 @@ fn physical_operator_name(
 
 fn physical_access(
     plan: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     hypo_indexes: Option<&tidb_variable::hypo_index::HypoIndexes>,
 ) -> Option<AccessObject> {
     match plan {
@@ -1236,7 +1236,7 @@ fn physical_operator_info(
     eval_ctx: &dyn tidb_exprctx::Columns,
     statement_context: &crate::StmtContext,
     plan: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ignore_explain_id_suffix: bool,
     index_join_context: Option<IndexJoinExplainContext<'_>>,
 ) -> String {
@@ -1695,7 +1695,7 @@ fn physical_explain_operator(
     statement_context: &crate::StmtContext,
     brief_binary: bool,
     plan: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     task: ExplainTask,
     label: &str,
     runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
@@ -2099,7 +2099,7 @@ fn cte_definitions(
     statement_context: &crate::StmtContext,
     brief_binary: bool,
     plan: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
     seen: &mut std::collections::BTreeSet<i32>,
     out: &mut Vec<ExplainOperator>,
@@ -2292,7 +2292,7 @@ fn physical_explain_roots(
     statement_context: &crate::StmtContext,
     brief_binary: bool,
     physical: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
     ignore_explain_id_suffix: bool,
     scalar_subqueries: &[crate::driver::planner_bridge::RegisteredScalarSubquery],
@@ -2348,7 +2348,7 @@ fn scalar_subquery_root(
     statement_context: &crate::StmtContext,
     brief_binary: bool,
     subquery: &crate::driver::planner_bridge::RegisteredScalarSubquery,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
     ignore_explain_id_suffix: bool,
 ) -> ExplainOperator {
@@ -2440,7 +2440,7 @@ fn binary_operator(full: ExplainOperator, brief: ExplainOperator) -> PbExplainOp
 pub fn brief_binary_plan(
     statement_context: &crate::StmtContext,
     physical: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
 ) -> String {
     let full = physical_explain_roots(
         None,
@@ -2459,7 +2459,7 @@ pub fn brief_binary_plan(
 fn binary_plan_from_roots(
     statement_context: &crate::StmtContext,
     physical: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     mut full: Vec<ExplainOperator>,
 ) -> String {
     let mut brief = physical_explain_roots(
@@ -2526,14 +2526,14 @@ fn first_index_scan(plan: &PhysicalPlan) -> Option<&tidb_planner_core_operator_p
     }
 }
 
-fn logical_table_id(catalog: &Catalog, physical_id: i64) -> i64 {
+fn logical_table_id(catalog: &SessionExtendedInfoSchema, physical_id: i64) -> i64 {
     catalog
         .physical_kv_table_by_id(physical_id)
         .map_or(physical_id, |table| table.table_id())
 }
 
 fn index_process_name(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     scan: &tidb_planner_core_operator_physicalop::PhysicalIndexScan,
 ) -> String {
     format!(
@@ -2545,7 +2545,7 @@ fn index_process_name(
 
 fn collect_executor_process_fields(
     plan: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     table_ids: &mut Vec<i64>,
     index_names: &mut Vec<String>,
 ) {
@@ -2633,7 +2633,7 @@ fn collect_executor_process_fields(
 fn collect_stats_info(
     plan: &PhysicalPlan,
     ctx: &crate::StmtContext,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     stats_info: &mut std::collections::HashMap<String, u64>,
 ) {
     let stats_version = |physical_table_id| {
@@ -3009,7 +3009,7 @@ fn physical_normalized_info(
     eval_ctx: &dyn tidb_exprctx::Columns,
     statement_context: &crate::StmtContext,
     plan: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     index_join_context: Option<IndexJoinExplainContext<'_>>,
 ) -> String {
     let access = |plan: &PhysicalPlan| {
@@ -3139,11 +3139,11 @@ fn physical_normalized_info(
 pub fn normalize_flat_plan(
     statement_context: &crate::StmtContext,
     physical: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
 ) -> (String, String) {
     struct Walk<'a> {
         statement_context: &'a crate::StmtContext,
-        catalog: &'a Catalog,
+        catalog: &'a SessionExtendedInfoSchema,
         output: String,
     }
     impl Walk<'_> {
@@ -3272,7 +3272,7 @@ pub fn normalize_flat_plan(
 pub fn process_plan_info(
     statement_context: &crate::StmtContext,
     physical: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
 ) -> crate::ProcessPlanInfo {
     process_plan_info_with_brief(statement_context, physical, catalog, true)
 }
@@ -3282,7 +3282,7 @@ pub fn process_plan_info(
 fn plan_encodings(
     statement_context: &crate::StmtContext,
     physical: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
 ) -> (String, String) {
     let full = physical_explain_roots(
         None,
@@ -3315,7 +3315,7 @@ fn plan_encodings(
 pub fn publish_physical_process_info(
     ctx: &crate::StmtContext,
     physical: &tidb_planner_core_operator_physicalop::PhysicalPlan,
-    catalog: &tidb_infoschema::Catalog,
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
 ) {
     let Some(execution_started) = ctx.begin_physical_process_info() else {
         return;
@@ -3336,7 +3336,7 @@ pub fn publish_physical_process_info(
 pub fn process_plan_info_with_brief(
     statement_context: &crate::StmtContext,
     physical: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     with_brief: bool,
 ) -> crate::ProcessPlanInfo {
     let stored = std::sync::Arc::new(physical.deep_clone());
@@ -3402,7 +3402,7 @@ pub fn process_plan_info_with_brief(
 }
 
 /// The table facts Go's hint generation reads off a plan's `TableInfo`.
-struct CatalogHints<'a>(&'a Catalog);
+struct CatalogHints<'a>(&'a SessionExtendedInfoSchema);
 
 impl tidb_planner::plan_hint::HintCatalog for CatalogHints<'_> {
     fn table_name(&self, table_id: i64) -> Option<String> {
@@ -3438,7 +3438,7 @@ fn register_ru_runtime_stats(
             .register_ru_runtime_stats(tidb_execdetails::ruv2_metrics::RuRuntimeStats {
                 ru_details: Some(ru_details.cloned()),
                 metrics: None,
-                weights: tidb_execdetails::ruv2_metrics::RuV2Weights::default(),
+                weights: tidb_execdetails::ruv2_metrics::RUV2Weights::default(),
                 // Go `do.GetRUVersion()`.
                 ru_version: tidb_topsql_stmtstats::bound_ru_version(),
             });
@@ -3450,7 +3450,7 @@ fn render_physical_plan(
     eval_ctx: &dyn tidb_exprctx::Columns,
     statement_context: &crate::StmtContext,
     physical: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     format: ExplainFormat,
     analyze: bool,
     runtime: Option<&crate::driver::physical_builder::PhysicalRuntimeStats>,
@@ -3776,7 +3776,7 @@ fn prepare_task_dot(plan: &PhysicalPlan, task_tp: &str, buffer: &mut String) {
 
 fn render_physical_query(
     query: &tidb_ast::QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     format: ExplainFormat,
@@ -3810,7 +3810,7 @@ fn render_physical_query(
 /// rows, executing nothing.
 pub fn explain_physical_plan(
     physical: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
@@ -3825,7 +3825,7 @@ pub fn explain_physical_plan(
 /// ordinary statement, so those cells report what an unexecuted plan does.
 pub fn explain_connection_plan(
     physical: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
@@ -3839,7 +3839,7 @@ pub fn explain_connection_plan(
 /// it produced, as [`explain_analyze_select_stmt`] does for a fresh plan.
 pub fn explain_analyze_physical_plan(
     physical: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
@@ -3864,7 +3864,7 @@ pub fn explain_analyze_physical_plan(
 /// undrained.
 pub fn explain_select_stmt(
     select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     format: ExplainFormat,
@@ -3885,7 +3885,7 @@ pub fn explain_select_stmt(
 /// evaluate an uncorrelated scalar subquery while planning is refused.
 pub fn query_plan_cost(
     query: &tidb_ast::QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<f64, DriverError> {
@@ -3907,7 +3907,7 @@ pub fn query_plan_cost(
 /// Plain `EXPLAIN` over a supported set operation.
 pub fn explain_set_opr_stmt(
     set_opr: &tidb_ast::SetOprStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     format: ExplainFormat,
@@ -3930,7 +3930,7 @@ pub fn explain_set_opr_stmt(
 /// Nothing is estimated, and nothing is run a second time to be counted.
 pub fn explain_analyze_select_stmt(
     select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     format: ExplainFormat,
@@ -3948,7 +3948,7 @@ pub fn explain_analyze_select_stmt(
 /// `EXPLAIN ANALYZE` over a supported set operation.
 pub fn explain_analyze_set_opr_stmt(
     set_opr: &tidb_ast::SetOprStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     format: ExplainFormat,
@@ -3971,7 +3971,7 @@ pub fn explain_analyze_set_opr_stmt(
 /// `Insert`'s one child).
 pub fn explain_insert_stmt(
     insert: &tidb_ast::InsertStmt,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     format: ExplainFormat,
@@ -4009,7 +4009,7 @@ pub fn explain_insert_stmt(
 /// counted as one it read, and the source is read exactly once.
 pub fn explain_analyze_insert_stmt(
     insert: &tidb_ast::InsertStmt,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     format: ExplainFormat,
@@ -4046,7 +4046,7 @@ pub fn explain_analyze_insert_stmt(
 /// the `WHERE` (divergences 7 and 8).
 pub fn explain_update_stmt(
     update: &tidb_ast::UpdateStmt,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     format: ExplainFormat,
@@ -4079,7 +4079,7 @@ pub fn explain_update_stmt(
 /// See [`explain_update_stmt`]: `Delete_N`'s child is the same read plan.
 pub fn explain_delete_stmt(
     delete: &tidb_ast::DeleteStmt,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     format: ExplainFormat,
@@ -4118,7 +4118,7 @@ pub fn explain_delete_stmt(
 /// row this operator's `Next()` produces.
 pub fn explain_analyze_update_stmt(
     update: &tidb_ast::UpdateStmt,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     format: ExplainFormat,
@@ -4173,7 +4173,7 @@ pub fn explain_analyze_update_stmt(
 /// same real read-then-write shape, over the delete driver.
 pub fn explain_analyze_delete_stmt(
     delete: &tidb_ast::DeleteStmt,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     format: ExplainFormat,

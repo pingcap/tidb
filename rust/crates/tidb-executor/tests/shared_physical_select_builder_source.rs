@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use tidb_datatype::Datum;
 use tidb_executor::{build_prepared_select_plan, run_create_table_on, run_insert_on, run_select_meta_on, run_select_meta_stmt_with_physical, PreparedPlanCacheEnvironment};
-use tidb_infoschema::{Catalog, DEFAULT_DATABASE};
+use tidb_infoschema::{SessionExtendedInfoSchema, DEFAULT_DATABASE};
 
 fn has_index_join_compare_filters(plan: &tidb_planner_core_operator_physicalop::PhysicalPlan) -> bool {
     matches!(

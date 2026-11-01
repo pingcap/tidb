@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! Go `ddl.CreateTable` and its job run in one process over the in-process
-//! [`Catalog`]: the executor's test fixtures build their tables here
+//! [`SessionExtendedInfoSchema`]: the executor's test fixtures build their tables here
 //! ([`run_create_table_on`]). The table is the DDL package's own --
 //! `BuildTableInfoWithStmt` / `BuildTableInfoWithLike`
 //! (`tidb_ddl_build::table_info_build`), checked by
@@ -38,7 +38,7 @@ pub use indexes::{index_backfill_error};
 
 
 use crate::driver::DriverError;
-use tidb_infoschema::Catalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_ast::{DdlStmt, Stmt};
 
 /// Go `CREATE TABLE` through its job, in one process: the table built from
@@ -49,7 +49,7 @@ use tidb_ast::{DdlStmt, Stmt};
 /// EXISTS` over an existing name).
 pub fn create_table_in_catalog(
     create: &tidb_ast::CreateTableStmt,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     reserved_table_id: Option<i64>,
@@ -177,7 +177,7 @@ fn fixture_global_id() -> i64 {
 /// Parses and executes a `CREATE TABLE`, building a [`TableInfo`] and
 /// registering a TiKV-byte-backed table in `catalog`. Returns whether a table
 /// was created (`false` only for `IF NOT EXISTS` over an existing name).
-pub fn run_create_table_on(sql: &str, catalog: &mut Catalog) -> Result<bool, DriverError> {
+pub fn run_create_table_on(sql: &str, catalog: &mut SessionExtendedInfoSchema) -> Result<bool, DriverError> {
     // A stock session's context: UTC, the SHIPPED strict `sql_mode` and
     // `tidb_enable_clustered_index` ON (`StmtContext`'s derived `Default`
     // is non-strict and leaves clustering at Go's zero value, OFF).
@@ -194,7 +194,7 @@ pub fn run_create_table_on(sql: &str, catalog: &mut Catalog) -> Result<bool, Dri
 /// is built with.
 pub fn run_create_table_on_with(
     sql: &str,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<bool, DriverError> {
@@ -329,7 +329,7 @@ use tidb_charset::Collation;
 
     /// The `(charset, collation, flen)` a column resolves to, for the
     /// charset/collation captures below.
-    fn resolved(catalog: &Catalog, table: &str, column: &str) -> (String, String, i64) {
+    fn resolved(catalog: &SessionExtendedInfoSchema, table: &str, column: &str) -> (String, String, i64) {
         let Some(crate::TableEntry::Kv(kv)) = catalog.get_table_for_test(table) else {
             panic!("expected a kv table");
         };

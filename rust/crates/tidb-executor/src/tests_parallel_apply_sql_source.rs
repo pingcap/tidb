@@ -21,7 +21,7 @@
 //! Full Go failpoint/RPC cancellation and casetest golden obligations remain
 //! recorded in the batch receipt; data assertions alone do not claim them.
 
-use crate::{run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
+use crate::{run_create_table_on, run_insert_on, run_select_on, SessionExtendedInfoSchema, StmtContext};
 use tidb_datatype::{Datum, StringDatum};
 use tidb_charset::Collation;
 
@@ -55,7 +55,7 @@ fn sorted(mut rows: Vec<Vec<Datum>>) -> Vec<Vec<Datum>> {
     rows
 }
 
-fn select_sorted(catalog: &Catalog, sql: &str) -> Vec<Vec<Datum>> {
+fn select_sorted(catalog: &SessionExtendedInfoSchema, sql: &str) -> Vec<Vec<Datum>> {
     match run_select_on(sql, catalog, &ctx()) {
         Ok(rows) => sorted(rows),
         Err(error) => panic!("query {sql:?} failed: {error:?}"),

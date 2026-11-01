@@ -34,7 +34,7 @@ use tidb_memory::DEF_LOG_PRIORITY;
 use tidb_variable::mem_quota::SessionMemory;
 use tidb_vardef::OomAction;
 use crate::{
-    run_create_table_on, run_delete_on, run_insert_on, run_select_on, run_update_on, Catalog,
+    run_create_table_on, run_delete_on, run_insert_on, run_select_on, run_update_on, SessionExtendedInfoSchema,
     StmtContext,
 };
 
@@ -52,7 +52,7 @@ fn is_memory_exceeded(error: &crate::DriverError) -> bool {
     error.equal(&tidb_exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY)
 }
 
-fn rows(catalog: &Catalog, sql: &str) -> Vec<Vec<Datum>> {
+fn rows(catalog: &SessionExtendedInfoSchema, sql: &str) -> Vec<Vec<Datum>> {
     run_select_on(sql, catalog, &permitting()).unwrap()
 }
 

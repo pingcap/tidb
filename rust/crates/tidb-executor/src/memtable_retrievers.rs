@@ -28,7 +28,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use tidb_datatype::Datum;
 use tidb_kv::region_map::RegionStore;
-use crate::Catalog;
+use crate::SessionExtendedInfoSchema;
 use crate::DriverError;
 use tidb_hack::{GoCaseCompare, GoToLower};
 use tidb_planner_core_operator_logicalop::mem_table::QueryTimeRange;
@@ -471,7 +471,7 @@ fn regions_info_for_table(
 /// region covering nothing reads one row without table cells.
 pub fn set_data_for_tikv_region_status(
     extractor: Option<&TiKVRegionStatusExtractor>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     store: &dyn RegionStore,
     visibility: &SchemaVisibility,
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
@@ -577,7 +577,7 @@ pub fn set_new_tikv_region_status_col(
 /// then the hot write regions (Go `Helper.ScrapeHotInfo`), each with the
 /// table or index its range covers.
 pub fn set_data_for_tidb_hot_regions(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     store: &dyn RegionStore,
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
     let client = store_helper::try_get_pdhttp_client(store)
@@ -655,7 +655,7 @@ fn internal_http_schema() -> &'static str {
 pub fn tidb_hot_regions_history_rows(
     extractor: &HotRegionsHistoryTableExtractor,
     pd_servers: &[String],
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     store: &dyn RegionStore,
     mut append_warning: impl FnMut(&str),
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
@@ -797,7 +797,7 @@ pub fn get_hot_region_row_with_schema_info(
 /// sorted sets.
 pub fn table_storage_stats_rows(
     extractor: &TableStorageStatsExtractor,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     store: &dyn RegionStore,
     visibility: &SchemaVisibility,
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
@@ -917,7 +917,7 @@ pub fn set_data_for_keyspace_meta() -> Vec<Vec<Datum>> {
 /// Go `setDataFromPlacementPolicies`: every placement policy, a `FOLLOWERS`
 /// of zero (unset) shown as the default two. Go walks its policy map in
 /// random order; this lists the policies by name.
-pub fn set_data_from_placement_policies(catalog: &Catalog) -> Vec<Vec<Datum>> {
+pub fn set_data_from_placement_policies(catalog: &SessionExtendedInfoSchema) -> Vec<Vec<Datum>> {
     let mut policies = catalog.policies().collect::<Vec<_>>();
     policies.sort_by(|left, right| left.name.lowercase().cmp(right.name.lowercase()));
     policies
@@ -1237,12 +1237,12 @@ mod tests {
 }
 
 pub fn table_storage_statistics_catalog_of(
-    mut scratch: crate::Catalog,
+    mut scratch: crate::SessionExtendedInfoSchema,
     stats_handle: &tidb_stats_handle::StatsHandle,
     table_storage_stats: Option<&dyn tidb_stats_handle_cache::table_size_stats::TableStorageStatsProvider>,
     resource_group: &str,
     needs_column_lengths: bool,
-) -> Result<crate::Catalog, DriverError> {
+) -> Result<crate::SessionExtendedInfoSchema, DriverError> {
     let estimates = match table_storage_stats {
         Some(provider) => {
             let physical_ids = tidb_stats_handle_cache::table_size_stats::physical_table_ids(&scratch);
@@ -1318,7 +1318,7 @@ impl crate::mem_table_retrieval::MemTableRetriever for InformationSchemaRetrieve
     fn retrieve(
         &self,
         read: &crate::mem_table_retrieval::MemTableRead,
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         ctx: &crate::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         // Go `updateStatsCacheIfNeed`: the size columns of TABLES and
@@ -1384,7 +1384,7 @@ impl crate::mem_table_retrieval::MemTableRetriever for CatalogTablesRetriever {
     fn retrieve(
         &self,
         read: &crate::mem_table_retrieval::MemTableRead,
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         ctx: &crate::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         use tidb_planner::memtable_predicate_extractor::MemTableExtractor as Extractor;
@@ -1440,7 +1440,7 @@ impl crate::mem_table_retrieval::MemTableRetriever for CatalogTablesRetriever {
 /// Go table IDs (`perfschema.tableIDMap`) have no port here. Its IDs lie
 /// between the other two memory schemas' and hold no keys, so no region
 /// boundary falls among them.
-fn all_schemas(catalog: &tidb_infoschema::Catalog) -> Vec<store_helper::HelperSchema> {
+fn all_schemas(catalog: &tidb_infoschema::SessionExtendedInfoSchema) -> Vec<store_helper::HelperSchema> {
     let mut stored = catalog
         .database_names()
         .into_iter()

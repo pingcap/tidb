@@ -54,7 +54,7 @@
 //!   column whose unique id appears in any grouping set — which is the whole
 //!   content of that function.
 //! * `expression.GroupingSets`/`GroupingSet`/`GroupingExprs` are not
-//!   transcreated; [`tidb_planner_core_operator_logicalop::expand::RollupGroupingSet`]'s own header
+//!   transcreated; [`tidb_planner_core_operator_logicalop::expand::GroupingSet`]'s own header
 //!   records why, and [`distinct_size`] is the one method of that file the
 //!   builder must supply, ported here against the column-id sets.
 //! * `expression.Expression.CanonicalHashCode`, which
@@ -74,7 +74,7 @@ use tidb_exprctx::Columns;
 
 use tidb_infoschema::table_source::TableSource;
 use super::{snapshot_schema_and_names, BlockExpand, PlanBuilder};
-use tidb_planner_core_operator_logicalop::expand::{GroupingMode, LogicalExpand, RollupGroupingSet};
+use tidb_planner_core_operator_logicalop::expand::{GroupingMode, LogicalExpand, GroupingSet};
 use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
 use tidb_planner_core_rule::flags;
 use tidb_planner_core_operator_logicalop::LogicalPlan;
@@ -121,7 +121,7 @@ pub fn restore_gby_expression(
 /// Go `expression.RollupGroupingSets(newGbyItems)`: `<a,b,c>` becomes
 /// `{}, {a}, {a,b}, {a,b,c}` — every PREFIX of the written group-by list.
 #[must_use]
-pub fn rollup_grouping_sets(gby_items: &[Expression]) -> Vec<RollupGroupingSet> {
+pub fn rollup_grouping_sets(gby_items: &[Expression]) -> Vec<GroupingSet> {
     let ids: Vec<i64> = gby_items
         .iter()
         .filter_map(|item| match item {
@@ -130,7 +130,7 @@ pub fn rollup_grouping_sets(gby_items: &[Expression]) -> Vec<RollupGroupingSet> 
         })
         .collect();
     (0..=ids.len())
-        .map(|length| RollupGroupingSet::new(ids[..length].iter().copied()))
+        .map(|length| GroupingSet::new(ids[..length].iter().copied()))
         .collect()
 }
 
@@ -142,7 +142,7 @@ pub fn rollup_grouping_sets(gby_items: &[Expression]) -> Vec<RollupGroupingSet> 
 /// Go's and [`LogicalExpand::gen_level_projections`] reads all three fields.
 #[must_use]
 pub fn distinct_size(
-    sets: &[RollupGroupingSet],
+    sets: &[GroupingSet],
     distinct_cols: &[Column],
     mode: GroupingMode,
 ) -> (i64, Vec<u64>, BTreeMap<i64, BTreeSet<u64>>) {
@@ -169,7 +169,7 @@ pub fn distinct_size(
 
 /// [`LogicalExpand::generate_grouping_id_mode_bit_and`] before the operator
 /// exists to call it on.
-fn bit_and_id(set: &RollupGroupingSet, distinct_cols: &[Column]) -> u64 {
+fn bit_and_id(set: &GroupingSet, distinct_cols: &[Column]) -> u64 {
     let mut res = 0_u64;
     for column in distinct_cols.iter().rev() {
         res <<= 1;

@@ -132,7 +132,7 @@ use tidb_planner_core_base::PlanError;
 use tidb_infoschema::table_source::TableSource;
 use tidb_infoschema::table_source::SourceView;
 use tidb_infoschema::table_source::SourceTable;
-use super::handle_col_helper::PlanHandleCols;
+use super::handle_col_helper::HandleCols;
 use super::marker::MarkerKind;
 use super::{
     lower_name_matches, snapshot_schema_and_names, PlanBuilder, EXTRA_COMMIT_TS_NAME,
@@ -1375,7 +1375,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let visible_table = alias.unwrap_or(&table.table_name);
         let mut schema_columns = Vec::with_capacity(table.columns.len());
         let mut names = Vec::with_capacity(table.columns.len());
-        let mut handle_cols: Option<PlanHandleCols> = None;
+        let mut handle_cols: Option<HandleCols> = None;
         for source_column in &table.columns {
             names.push(FieldName {
                 names: FieldNameMetadata {
@@ -1844,7 +1844,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// Go `buildSelectLock(src, lock)` (`planbuilder.go:1610`).
     ///
     /// Go's `TblID2Handle` is `map[int64][]util.HandleCols`; 6a's
-    /// [`PlanHandleCols`] carries handle IDENTITIES rather than whole
+    /// [`HandleCols`] carries handle IDENTITIES rather than whole
     /// [`Column`]s, and [`LogicalLock`] wants the columns, so each identity is
     /// resolved back against the child's schema by unique id. Losing an
     /// identity is a planning error, never permission to omit a row lock.
@@ -1896,10 +1896,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
 }
 
 /// The unique ids of whichever handle identity this is.
-fn handle_unique_ids(handle: &PlanHandleCols) -> Vec<i64> {
+fn handle_unique_ids(handle: &HandleCols) -> Vec<i64> {
     match handle {
-        PlanHandleCols::Int(identity) => identity.column_unique_ids(),
-        PlanHandleCols::Common(identity) => identity.column_unique_ids(),
+        HandleCols::Int(identity) => identity.column_unique_ids(),
+        HandleCols::Common(identity) => identity.column_unique_ids(),
     }
 }
 

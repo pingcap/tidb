@@ -50,7 +50,7 @@ use super::{CatalogStatisticsLoad, PlannerCatalogContext};
 use tidb_planner_property::stats_info::StatsInfo;
 
 use super::FromTable;
-use tidb_infoschema::Catalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use super::from::FromScope;
 use tidb_planner_cardinality::derive_stats::StatsInfoScale;
 
@@ -765,7 +765,7 @@ pub(super) use tidb_planner::point_get_plan::is_cte;
 pub(super) fn logical_from_plan(
     join: &tidb_ast::Join,
     with: Option<&tidb_ast::WithClause>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
     in_dml: bool,
@@ -827,7 +827,7 @@ pub(super) fn logical_from_plan(
 /// made, and the statement's own planning raises the error.
 pub fn dml_visit_info(
     statement: &tidb_ast::DmlStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<tidb_planner::plan_builder::visit_info::VisitInfo>, super::DriverError> {
@@ -842,7 +842,7 @@ pub fn dml_visit_info(
 
 fn dml_visit_info_inner(
     statement: &tidb_ast::DmlStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<tidb_planner::plan_builder::visit_info::VisitInfo>, super::DriverError> {
@@ -888,7 +888,7 @@ fn dml_visit_info_inner(
 
 pub(super) fn update_target_columns(
     update: &tidb_ast::UpdateStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<(String, String, String)>, super::DriverError> {
@@ -914,7 +914,7 @@ pub(super) fn update_target_columns(
 /// and output names, not an executor or a second AST-side join builder.
 pub(crate) fn logical_from_scope(
     join: &tidb_ast::Join,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<FromScope, tidb_planner_core_base::PlanError> {
@@ -1019,7 +1019,7 @@ impl OwnedRewrite for StampIndexForce {
 
 struct InitStats<'a> {
     error: Option<tidb_planner_core_base::PlanError>,
-    catalog: &'a Catalog,
+    catalog: &'a SessionExtendedInfoSchema,
     /// Go's statistics demand for this statement (`statistics_demand`), once
     /// `CollectPredicateColumnsPoint` has seen the plan: the columns and
     /// indexes whose payloads the synchronous load makes available. `None`
@@ -1296,7 +1296,7 @@ impl OwnedRewrite for InitStats<'_> {
 
 fn planner_physical_select(
     select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
     use_plan_cache: bool,
@@ -1315,7 +1315,7 @@ fn planner_physical_select(
 
 fn planner_physical_query(
     query: &tidb_ast::QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
     use_plan_cache: bool,
@@ -1335,7 +1335,7 @@ fn planner_physical_query(
 
 fn planner_physical_query_with_allocators(
     query: &tidb_ast::QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
     use_plan_cache: bool,
@@ -1359,7 +1359,7 @@ fn planner_physical_query_with_allocators(
 /// registered roots.
 fn planner_physical_query_with_registry(
     query: &tidb_ast::QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
     use_plan_cache: bool,
@@ -1426,7 +1426,7 @@ pub(crate) fn physical_plan_for_logical_with_update_refs(
 /// reference's statistics are derived, with the DNF of every predicate its
 /// references have recorded by then. It is never re-optimized.
 struct DriverCteOptimizer<'a> {
-    catalog: &'a Catalog,
+    catalog: &'a SessionExtendedInfoSchema,
     ctx: &'a crate::StmtContext,
     plan_ids: &'a PlanIdAllocator,
     column_ids: &'a ColumnIdAllocator,
@@ -1583,7 +1583,7 @@ impl DriverCteOptimizer<'_> {
 /// execution from rediscovering its operators from the SQL AST.
 pub(crate) fn physical_select_plan(
     select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<PhysicalPlan, tidb_planner_core_base::PlanError> {
@@ -1596,7 +1596,7 @@ pub(crate) fn physical_select_plan(
 /// logical optimizer, physical search, and executor-builder switch.
 pub(crate) fn physical_query_plan(
     query: &tidb_ast::QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<PhysicalPlan, tidb_planner_core_base::PlanError> {
@@ -1609,7 +1609,7 @@ pub(crate) fn physical_query_plan(
 /// appends each one's optimized child as an extra root.
 pub(crate) fn physical_query_plan_with_scalar_subqueries(
     query: &tidb_ast::QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<(PhysicalPlan, Vec<RegisteredScalarSubquery>), tidb_planner_core_base::PlanError> {
@@ -1633,7 +1633,7 @@ pub(crate) fn physical_query_plan_with_scalar_subqueries(
 /// shared preserves both tree ownership and explain identities.
 pub(crate) fn physical_query_plan_with_allocators(
     query: &tidb_ast::QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
     use_plan_cache: bool,
@@ -1699,7 +1699,7 @@ fn driver_error_to_plan(error: crate::DriverError) -> tidb_planner_core_base::Pl
 /// CURRENT_TIMESTAMP default reads the statement clock, a column with no
 /// default is NULL or 1364 -- as a constant of the column's type.
 fn default_evaluator<'a>(
-    catalog: &'a Catalog,
+    catalog: &'a SessionExtendedInfoSchema,
     ctx: &'a crate::StmtContext,
 ) -> impl Fn(&str, &str, &str) -> Result<Expression, tidb_exprctx::EvalError> + 'a {
     default_evaluator_using(catalog, ctx, super::dml::DefaultUse::Expression)
@@ -1709,7 +1709,7 @@ fn default_evaluator<'a>(
 /// `DEFAULT` (Go `getDefaultValueForInsert`) answers differently from
 /// `DEFAULT(col)` inside an expression.
 fn default_evaluator_using<'a>(
-    catalog: &'a Catalog,
+    catalog: &'a SessionExtendedInfoSchema,
     ctx: &'a crate::StmtContext,
     default_use: super::dml::DefaultUse,
 ) -> impl Fn(&str, &str, &str) -> Result<Expression, tidb_exprctx::EvalError> + 'a {
@@ -1769,7 +1769,7 @@ fn default_evaluator_using<'a>(
 /// `handleExistSubquery`: `DoOptimize` the child, allocate its output column
 /// ids, register it for EXPLAIN, then run it and report the first row.
 fn subquery_evaluator<'a>(
-    catalog: &'a Catalog,
+    catalog: &'a SessionExtendedInfoSchema,
     ctx: &'a crate::StmtContext,
     plan_ids: &'a PlanIdAllocator,
     column_ids: &'a ColumnIdAllocator,
@@ -1840,7 +1840,7 @@ fn subquery_evaluator<'a>(
 /// partition statistics may be skipped (`tidb_skip_missing_partition_stats`,
 /// which fix control 44262 overrides).
 fn dynamic_prune_fallback<'a>(
-    catalog: &'a Catalog,
+    catalog: &'a SessionExtendedInfoSchema,
     ctx: &'a crate::StmtContext,
 ) -> impl Fn(i64, &str) -> bool + 'a {
     move |table_id, table_name| {
@@ -1865,7 +1865,7 @@ fn dynamic_prune_fallback<'a>(
 
 fn planner_optimized_query(
     query: &tidb_ast::QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
     use_plan_cache: bool,
@@ -1889,7 +1889,7 @@ fn planner_optimized_query(
 #[allow(clippy::too_many_arguments)]
 fn planner_optimized_query_with_allocators(
     query: &tidb_ast::QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
     use_plan_cache: bool,
@@ -1934,7 +1934,7 @@ fn planner_optimized_query_with_allocators(
 /// physical optimization every plan goes through.
 pub(crate) fn physical_show_plan(
     show: &tidb_ast::ShowStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<
@@ -1981,7 +1981,7 @@ pub(crate) fn physical_show_plan(
 /// Go `buildSet` for a `SET` statement: the plan and its visit infos.
 pub(crate) fn set_plan(
     set: &tidb_ast::SetStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<
@@ -2016,7 +2016,7 @@ pub(crate) fn set_plan(
 /// common plan and its visit infos.
 pub(crate) fn statement_plan(
     stmt: &tidb_ast::Stmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
     session_ctx: &dyn tidb_planner::plan_builder::stmt_build::SessionPlanContext,
@@ -2051,7 +2051,7 @@ pub(crate) fn statement_plan(
 pub(crate) fn physical_admin_show_ddl_jobs_plan(
     job_number: i64,
     where_clause: Option<&tidb_ast::Expr>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<PhysicalPlan, tidb_planner_core_base::PlanError> {
@@ -2091,7 +2091,7 @@ pub(crate) fn physical_admin_show_ddl_jobs_plan(
 /// from `BuildDataSourceFromView` with the view on its building stack.
 fn planner_built_query_with_allocators(
     query: &tidb_ast::QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
     use_plan_cache: bool,
@@ -2125,7 +2125,7 @@ fn planner_built_query_with_allocators(
 pub(crate) fn build_create_view(
     create: &mut tidb_ast::CreateViewStmt,
     view_schema: &str,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<tidb_datatype::FieldType>, tidb_planner_core_base::PlanError> {
@@ -2151,7 +2151,7 @@ pub(crate) fn build_create_view(
 
 /// What [`QueryBuilderParts::build`] configures a query's `PlanBuilder` from.
 struct QueryBuilderParts<'a> {
-    catalog: &'a Catalog,
+    catalog: &'a SessionExtendedInfoSchema,
     current_database: &'a str,
     ctx: &'a crate::StmtContext,
     use_plan_cache: bool,
@@ -2257,7 +2257,7 @@ pub(crate) fn view_column_types(
     database: &str,
     view_name: &str,
     columns: &[String],
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<Option<tidb_datatype::FieldType>>, tidb_planner_core_base::PlanError> {
     let plan_ids = PlanIdAllocator::new();
@@ -2323,7 +2323,7 @@ fn logical_column_types(plan: &LogicalPlan) -> Vec<tidb_datatype::FieldType> {
 /// The query is only planned logically; nothing runs.
 pub fn query_visit_info(
     query: &tidb_ast::QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<tidb_planner::plan_builder::visit_info::VisitInfo>, super::DriverError> {
@@ -2338,7 +2338,7 @@ pub fn query_visit_info(
 
 fn query_visit_info_inner(
     query: &tidb_ast::QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<tidb_planner::plan_builder::visit_info::VisitInfo>, super::DriverError> {
@@ -2394,7 +2394,7 @@ pub(crate) fn plan_insert_expressions(
         &tidb_expr::schema::Schema,
         &tidb_planner_core_operator_physicalop::InsertSelectOutput,
     )>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<
@@ -2458,7 +2458,7 @@ pub(crate) fn plan_insert_expressions(
 /// DUPLICATE assignments, and the width the SELECT had before it.
 pub(crate) fn insert_extended_source(
     insert: &tidb_ast::InsertStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Option<(tidb_ast::QueryStmt, usize)> {
@@ -2479,7 +2479,7 @@ pub(crate) fn insert_extended_source(
 /// `selectPlan.OutputNames()`).
 pub(crate) fn physical_query_plan_and_names_with_allocators(
     query: &tidb_ast::QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
     use_plan_cache: bool,
@@ -2506,7 +2506,7 @@ fn physical_names(logical: &LogicalPlan) -> Vec<tidb_datatype::FieldName> {
 /// Go `buildUpdateLists`'s resolution of a single-table UPDATE's SET items.
 pub(crate) fn single_update_assignments(
     update: &tidb_ast::UpdateStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<
@@ -2528,7 +2528,7 @@ pub(crate) fn single_update_assignments(
 /// DUPLICATE assignments write.
 pub(crate) fn insert_on_duplicate_columns(
     insert: &tidb_ast::InsertStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<String>, tidb_planner_core_base::PlanError> {
@@ -2547,7 +2547,7 @@ pub(crate) fn insert_on_duplicate_columns(
 /// Go `getAffectCols` of `buildInsert`: the columns an INSERT writes.
 pub(crate) fn insert_target(
     insert: &tidb_ast::InsertStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<
@@ -2576,7 +2576,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     select: &tidb_ast::SelectStmt,
     update_assignment_values: Option<&[Option<tidb_ast::Expr>]>,
     multi_update: Option<&tidb_ast::UpdateStmt>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
     use_plan_cache: bool,
@@ -2785,7 +2785,7 @@ pub(crate) fn point_update_ordered_list(
     table_ref: &tidb_ast::TableRef,
     schema: &tidb_expr::schema::Schema,
     assignments: &[(Vec<String>, Option<tidb_ast::Expr>)],
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
     plan_ids: &PlanIdAllocator,
@@ -2814,7 +2814,7 @@ pub(crate) fn point_update_ordered_list(
 /// Go `buildDelete`'s resolution of a multi-table DELETE's targets.
 pub(crate) fn delete_targets(
     delete: &tidb_ast::DeleteStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<
@@ -2837,7 +2837,7 @@ pub(crate) fn delete_targets(
 fn optimize_built_logical(
     plan: LogicalPlan,
     flags: u64,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     use_plan_cache: bool,
     plan_ids: &PlanIdAllocator,
@@ -2845,7 +2845,7 @@ fn optimize_built_logical(
     _session_zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<LogicalPlan, tidb_planner_core_base::PlanError> {
     struct PlannerStatisticsLoad<'a> {
-        catalog: &'a Catalog,
+        catalog: &'a SessionExtendedInfoSchema,
         context: &'a crate::StmtContext,
         /// The statement's accumulated statistics demand; see
         /// [`InitStats::demanded`]. A CTE body optimized on its own adds its
@@ -2941,7 +2941,7 @@ fn optimize_built_logical(
     }
 
     struct PlannerPartitionPruning<'a> {
-        catalog: &'a Catalog,
+        catalog: &'a SessionExtendedInfoSchema,
         builder: &'a RealFunctionBuilder<'a, crate::StmtContext>,
         context: &'a crate::StmtContext,
         plan_ids: &'a PlanIdAllocator,
@@ -3244,7 +3244,7 @@ pub(super) fn deferred_rebuild_context(
 /// folded into a value-specific shape.
 pub(crate) fn cached_query_plan(
     query: &tidb_ast::QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
     cacheability: tidb_planner::physical_plan_cache::PlanCacheabilityContext,
@@ -3266,7 +3266,7 @@ pub(crate) fn cached_query_plan(
 /// cached DML roots.
 pub(crate) fn cached_physical_query_plan(
     query: &tidb_ast::QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
     cacheability: tidb_planner::physical_plan_cache::PlanCacheabilityContext,
@@ -3308,7 +3308,7 @@ pub(crate) fn cached_physical_query_plan(
 #[cfg(test)]
 pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     query: &tidb_ast::QueryStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<

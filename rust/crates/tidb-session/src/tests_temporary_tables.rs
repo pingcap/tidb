@@ -864,7 +864,7 @@ fn ttl_on_a_temporary_table_is_8151() {
 }
 
 /// Go DDLExec.Next returns before NewTxnInStmt for local-only DROP, including
-/// explicit local mismatches. Catalog removal survives rollback; prior rows don't.
+/// explicit local mismatches. SessionExtendedInfoSchema removal survives rollback; prior rows don't.
 #[test]
 fn local_drop_transaction_boundary_follows_resolved_targets() {
     for drop in ["DROP TABLE loc", "DROP TEMPORARY TABLE loc"] {

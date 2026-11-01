@@ -18,7 +18,7 @@
 
 use tidb_datatype::Datum;
 use tidb_executor::{run_create_table_on, run_insert_on, run_select_on};
-use tidb_infoschema::Catalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_sessionctx::StmtContext;
 
 #[test]

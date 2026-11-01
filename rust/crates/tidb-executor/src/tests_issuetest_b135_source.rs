@@ -18,24 +18,24 @@
 //! the in-process executor catalog. Failpoint, session, transaction, DDL-job,
 //! EXPLAIN ANALYZE, and memory-manager arms remain explicit gaps.
 
-use crate::{run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
+use crate::{run_create_table_on, run_insert_on, run_select_on, SessionExtendedInfoSchema, StmtContext};
 use tidb_datatype::Datum;
 
 fn ctx() -> StmtContext {
     StmtContext::for_query()
 }
 
-fn create(catalog: &mut Catalog, sql: &str) {
+fn create(catalog: &mut SessionExtendedInfoSchema, sql: &str) {
     run_create_table_on(sql, catalog)
         .unwrap_or_else(|error| panic!("create {sql:?} failed: {error:?}"));
 }
 
-fn insert(catalog: &mut Catalog, sql: &str) {
+fn insert(catalog: &mut SessionExtendedInfoSchema, sql: &str) {
     run_insert_on(sql, catalog, &ctx())
         .unwrap_or_else(|error| panic!("insert {sql:?} failed: {error:?}"));
 }
 
-fn select(catalog: &Catalog, sql: &str) -> Vec<Vec<Datum>> {
+fn select(catalog: &SessionExtendedInfoSchema, sql: &str) -> Vec<Vec<Datum>> {
     run_select_on(sql, catalog, &ctx())
         .unwrap_or_else(|error| panic!("select {sql:?} failed: {error:?}"))
 }

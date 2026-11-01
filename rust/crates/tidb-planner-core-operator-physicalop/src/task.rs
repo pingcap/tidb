@@ -473,7 +473,7 @@ pub struct CopTask {
     pub common_handle_cols: Vec<tidb_expr::column::Column>,
     /// Go `IndexLookUpPushDownBy`: whether a double read should become one
     /// storage-side local index lookup, and which authority requested it.
-    pub index_lookup_push_down_by: tidb_planner_util::path::IndexLookupPushDownBy,
+    pub index_lookup_push_down_by: tidb_planner_util::path::IndexLookUpPushDownByType,
     /// Go `IndexPlanFinished`: whether the index half is sealed, which
     /// decides which half [`CopTask::plan`] and [`CopTask::count`] read.
     pub index_plan_finished: bool,
@@ -721,11 +721,11 @@ impl CopTask {
         base.base.set_stats(table_plan.stats_info().cloned());
         base.base.set_schema(table_plan.schema().cloned());
         let mut index_lookup_push_down = if self.index_lookup_push_down_by
-            == tidb_planner_util::path::IndexLookupPushDownBy::None
+            == tidb_planner_util::path::IndexLookUpPushDownByType::None
         {
             false
         } else if self.keep_order {
-            if self.index_lookup_push_down_by == tidb_planner_util::path::IndexLookupPushDownBy::Hint {
+            if self.index_lookup_push_down_by == tidb_planner_util::path::IndexLookUpPushDownByType::Hint {
                 self.warnings.append_warning(
                     "hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported.",
                 );

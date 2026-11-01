@@ -1217,7 +1217,7 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
     /// Appends one note of a routed statement.
     fn append_routed_note(&mut self, code: u16, message: String);
     /// The session's catalog, read even after a panic poisoned its lock.
-    fn catalog_ignoring_poison(&self) -> std::sync::MutexGuard<'_, crate::Catalog>;
+    fn catalog_ignoring_poison(&self) -> std::sync::MutexGuard<'_, crate::SessionExtendedInfoSchema>;
 
     /// Go `AnalyzeExec.Next`: runs `ANALYZE TABLE` over `tables` through
     /// `service`, after `Compile` checked their privileges. The user's

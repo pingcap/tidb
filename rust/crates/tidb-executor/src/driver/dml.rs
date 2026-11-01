@@ -54,7 +54,7 @@ pub(crate) use defaults::{
 /// the write runs normally and answers with a plain OK packet.
 pub fn run_insert_on(
     sql: &str,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
     run_insert_in(sql, catalog, DEFAULT_DATABASE, ctx)
@@ -63,7 +63,7 @@ pub fn run_insert_on(
 /// [`run_insert_on`] resolving unqualified names in `current_db`.
 pub fn run_insert_in(
     sql: &str,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
@@ -78,7 +78,7 @@ pub fn run_insert_in(
 /// the behavior captured from TiDB.
 pub fn run_insert_reporting(
     sql: &str,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<(u64, Option<u64>), DriverError> {
@@ -101,7 +101,7 @@ pub fn run_insert_reporting(
 /// `pkg/executor`: an `EXPLAIN ANALYZE INSERT` really inserts the row).
 pub fn run_insert_stmt(
     insert: &tidb_ast::InsertStmt,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<(u64, Option<u64>), DriverError> {
@@ -113,7 +113,7 @@ pub fn run_insert_stmt(
 /// cache hit passes the child rebuilt by the shared cache visitor.
 pub fn run_insert_stmt_with_physical(
     insert: &tidb_ast::InsertStmt,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
@@ -123,7 +123,7 @@ pub fn run_insert_stmt_with_physical(
 
 pub(crate) fn run_insert_stmt_with_physical_and_stats(
     insert: &tidb_ast::InsertStmt,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
@@ -184,7 +184,7 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
 /// what the planner decided about the source's outputs.
 pub(crate) fn physical_insert_plan(
     insert: &tidb_ast::InsertStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
@@ -243,7 +243,7 @@ pub(crate) fn physical_dml_plan(
     operator: &str,
     source: Option<&tidb_ast::QueryStmt>,
     update: Option<&tidb_ast::UpdateStmt>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     fk_spec: &fk_trigger_plan::FkPlanSpec,
@@ -268,7 +268,7 @@ pub(crate) fn physical_multi_dml_plan(
     operator: &str,
     source: &tidb_ast::QueryStmt,
     update: Option<&tidb_ast::UpdateStmt>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     fk_specs: &[fk_trigger_plan::FkPlanSpec],
@@ -308,7 +308,7 @@ fn physical_dml_plan_with_cache_mode(
     operator: &str,
     source: Option<&tidb_ast::QueryStmt>,
     update: Option<&tidb_ast::UpdateStmt>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     use_plan_cache: bool,
@@ -535,7 +535,7 @@ fn physical_dml_plan_with_cache_mode(
 /// columns the RESOLVED assignments write (`buildOnDuplicateUpdateColumns`).
 pub(crate) fn fk_spec_for_insert(
     insert: &tidb_ast::InsertStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<fk_trigger_plan::FkPlanSpec, DriverError> {
@@ -629,7 +629,7 @@ pub(super) const WRITE_ROW_ID_REFUSED: &str =
 /// source with user-variable or sequence side effects must not run first.
 fn resolve_insert_target(
     insert: &tidb_ast::InsertStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<InsertTargetLayout, DriverError> {
@@ -734,7 +734,7 @@ fn refuse_generated_insert_select_targets(layout: &InsertTargetLayout) -> Result
 /// executor's own check lives in `execute_insert`, after the source ran.
 pub(crate) fn validate_insert_for_explain(
     insert: &tidb_ast::InsertStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     select_width: Option<usize>,
@@ -797,7 +797,7 @@ fn plan_insert(
         &tidb_expr::schema::Schema,
         &tidb_planner_core_operator_physicalop::InsertSelectOutput,
     )>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<PlannedInsert, DriverError> {
@@ -816,7 +816,7 @@ fn plan_insert(
 fn run_insert_with_physical(
     insert: &tidb_ast::InsertStmt,
     planned: Option<&PlannedInsert>,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     physical_source: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
@@ -874,7 +874,7 @@ pub struct LoadDataCounts {
 pub fn check_and_insert_one_batch(
     insert: &tidb_ast::InsertStmt,
     rows: LoadDataRows<'_>,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<(LoadDataCounts, Option<u64>), DriverError> {
@@ -898,7 +898,7 @@ pub fn check_and_insert_one_batch(
 fn run_insert_rows(
     insert: &tidb_ast::InsertStmt,
     planned: Option<&PlannedInsert>,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     physical_source: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
@@ -1649,7 +1649,7 @@ fn run_insert_rows(
     // operators, and those write the DEPENDENT tables the statement never
     // named -- reachable only from the catalog, not from this table.
     fn target<'a>(
-        catalog: &'a mut Catalog,
+        catalog: &'a mut SessionExtendedInfoSchema,
         database: &str,
         table_name: &str,
     ) -> &'a mut tidb_table::tables::TableCommon {
@@ -2187,7 +2187,7 @@ struct PreparedOnDuplicate {
 /// nothing counts 0 (or 1 under `CLIENT_FOUND_ROWS`), and one that changes
 /// something counts 2.
 fn apply_on_duplicate(
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     database: &str,
     handle: &tidb_table::tables::TableHandle,
     candidate: &[Datum],
@@ -2343,7 +2343,7 @@ fn datum_bits_as_u64(value: &Datum) -> u64 {
 /// the retained physical read child).
 pub fn run_update_on(
     sql: &str,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
     run_update_in(sql, catalog, DEFAULT_DATABASE, ctx)
@@ -2352,7 +2352,7 @@ pub fn run_update_on(
 /// [`run_update_on`] resolving unqualified names in `current_db`.
 pub fn run_update_in(
     sql: &str,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
@@ -2375,7 +2375,7 @@ pub fn run_update_in(
 /// keep around).
 pub fn run_update_stmt(
     update: &tidb_ast::UpdateStmt,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
@@ -2386,7 +2386,7 @@ pub fn run_update_stmt(
 /// `Update.SelectPlan` selected by the shared physical planner.
 pub fn run_update_stmt_with_physical(
     update: &tidb_ast::UpdateStmt,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
@@ -2396,7 +2396,7 @@ pub fn run_update_stmt_with_physical(
 
 pub(crate) fn run_update_stmt_with_physical_and_stats(
     update: &tidb_ast::UpdateStmt,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
@@ -2516,7 +2516,7 @@ fn fast_update_ordered_list(
     update: &tidb_ast::UpdateStmt,
     assignments: &[tidb_planner::plan_builder::single_update::SingleUpdateAssignment],
     fast: &tidb_planner_core_operator_physicalop::PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     plan_ids: &tidb_planner_core_base::PlanIdAllocator,
@@ -2552,7 +2552,7 @@ fn fast_update_ordered_list(
 /// its expression. A view or a sequence is no UPDATE target.
 fn update_assignments_for_plan(
     update: &tidb_ast::UpdateStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<tidb_planner::plan_builder::single_update::SingleUpdateAssignment>, DriverError> {
@@ -2703,7 +2703,7 @@ impl PreparedDmlPlan {
     pub fn discard_cached_plan(
         &self,
         cache: &SessionPlanCache,
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         environment: &PreparedPlanCacheEnvironment,
     ) {
         cache.delete(&PhysicalPlanCacheKey {
@@ -2734,7 +2734,7 @@ impl PreparedDmlPlan {
         self: &Arc<Self>,
         cache: &SessionPlanCache,
         params: &[Datum],
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         current_database: &str,
         environment: &PreparedPlanCacheEnvironment,
     ) -> Option<PreparedDmlExecution> {
@@ -2759,7 +2759,7 @@ impl PreparedDmlPlan {
         self: &Arc<Self>,
         cache: &SessionPlanCache,
         params: &[Datum],
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         current_database: &str,
         ctx: &crate::StmtContext,
         dirty_ids: &[i64],
@@ -2786,7 +2786,7 @@ impl PreparedDmlPlan {
         self: &Arc<Self>,
         cache: &SessionPlanCache,
         params: &[Datum],
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         current_database: &str,
         dirty_ids: &[i64],
         environment: &PreparedPlanCacheEnvironment,
@@ -2808,7 +2808,7 @@ impl PreparedDmlPlan {
         self: &Arc<Self>,
         cache: &SessionPlanCache,
         params: &[Datum],
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         current_database: &str,
         ctx: Option<&crate::StmtContext>,
         dirty_ids: &[i64],
@@ -2935,7 +2935,7 @@ impl PreparedDmlPlan {
 
     fn stats_version_hash(
         &self,
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         environment: &PreparedPlanCacheEnvironment,
     ) -> u64 {
         environment.stats_version_hash(catalog, &self.stats_table_keys)
@@ -2992,7 +2992,7 @@ impl PreparedDmlExecution {
 pub fn build_prepared_dml_plan(
     statement: &Stmt,
     parameter_count: usize,
-    _catalog: &Catalog,
+    _catalog: &SessionExtendedInfoSchema,
     current_db: &str,
 ) -> Result<Option<PreparedDmlPlan>, DriverError> {
     if parsed_parameter_count(statement) != parameter_count
@@ -3026,7 +3026,7 @@ fn prepared_dml_kind(dml: &tidb_ast::DmlStmt) -> bool {
 
 fn cached_dml_physical_plan(
     statement: &Stmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
     cacheability: tidb_planner::physical_plan_cache::PlanCacheabilityContext,
@@ -3118,7 +3118,7 @@ fn mark_dml_point_source_lock(plan: &mut tidb_planner_core_operator_physicalop::
 }
 
 fn promote_cached_dml_point_source(plan: &mut tidb_planner_core_operator_physicalop::PhysicalPlan) {
-    use tidb_planner_core_operator_physicalop::{PhysicalPlan, PhysicalPointGet};
+    use tidb_planner_core_operator_physicalop::{PhysicalPlan, PointGetPlan};
     use tidb_planner_core_operator_physicalop::range_rebuild::PointRangeRebuild;
 
     if let PhysicalPlan::Dml(dml) = plan {
@@ -3134,7 +3134,7 @@ fn promote_cached_dml_point_source(plan: &mut tidb_planner_core_operator_physica
         if scan.ranges.len() != 1 || !scan.ranges[0].is_point_nullable() {
             return;
         }
-        *plan = PhysicalPlan::PointGet(PhysicalPointGet {
+        *plan = PhysicalPlan::PointGet(PointGetPlan {
             base: scan.base.clone(),
             table_id: scan.table_id,
             partition: None,
@@ -3242,7 +3242,7 @@ fn prepared_dml_table_names(statement: &Stmt, current_database: &str) -> Vec<(St
 /// divergence 8.
 fn run_update_with_physical(
     update: &tidb_ast::UpdateStmt,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     physical_source: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
@@ -3698,7 +3698,7 @@ impl UpdateRowEvaluator<'_> {
 /// `DeleteStmt.Returning`.
 pub fn run_delete_on(
     sql: &str,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
     run_delete_in(sql, catalog, DEFAULT_DATABASE, ctx)
@@ -3707,7 +3707,7 @@ pub fn run_delete_on(
 /// [`run_delete_on`] resolving unqualified names in `current_db`.
 pub fn run_delete_in(
     sql: &str,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
@@ -3727,7 +3727,7 @@ pub fn run_delete_in(
 /// needs this split.
 pub fn run_delete_stmt(
     delete: &tidb_ast::DeleteStmt,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<u64, DriverError> {
@@ -3738,7 +3738,7 @@ pub fn run_delete_stmt(
 /// `Delete.SelectPlan` selected by the shared physical planner.
 pub fn run_delete_stmt_with_physical(
     delete: &tidb_ast::DeleteStmt,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
@@ -3748,7 +3748,7 @@ pub fn run_delete_stmt_with_physical(
 
 pub(crate) fn run_delete_stmt_with_physical_and_stats(
     delete: &tidb_ast::DeleteStmt,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
@@ -3846,7 +3846,7 @@ pub(crate) enum DmlKeep {
 /// len(del.FKChecks) > 0`, which declines the read's column pruning.
 fn delete_has_fk(
     select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> bool {
@@ -3875,7 +3875,7 @@ pub(crate) fn delete_source_query(delete: &tidb_ast::DeleteStmt) -> Option<tidb_
 
 fn run_delete_with_physical(
     delete: &tidb_ast::DeleteStmt,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     mut physical_source: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
@@ -3988,7 +3988,7 @@ struct PhysicalWriteShape {
 impl PhysicalWriteShape {
     fn new(
         physical: &tidb_planner_core_operator_physicalop::PhysicalPlan,
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         database: &str,
         name: &str,
         pruning: Option<&tidb_planner_core_operator_physicalop::DeleteColPos>,
@@ -4116,7 +4116,7 @@ impl PhysicalWriteShape {
 /// applies each row as the source delivers it ([`stream_physical_write_rows`]).
 fn execute_physical_write_rows(
     physical: &mut tidb_planner_core_operator_physicalop::PhysicalPlan,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     database: &str,
     name: &str,
     ctx: &crate::StmtContext,
@@ -4149,14 +4149,14 @@ fn execute_physical_write_rows(
 /// source's column types.
 fn stream_physical_write_rows(
     physical: &mut tidb_planner_core_operator_physicalop::PhysicalPlan,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     database: &str,
     name: &str,
     ctx: &crate::StmtContext,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
     memory_label: i64,
     pruning: Option<&tidb_planner_core_operator_physicalop::DeleteColPos>,
-    mut apply: impl FnMut(&mut Catalog, PhysicalWriteRow, &[FieldType]) -> Result<(), DriverError>,
+    mut apply: impl FnMut(&mut SessionExtendedInfoSchema, PhysicalWriteRow, &[FieldType]) -> Result<(), DriverError>,
 ) -> Result<Vec<FieldType>, DriverError> {
     let shape = PhysicalWriteShape::new(physical, catalog, database, name, pruning)?;
     let accountant = ctx.statement_memory().write_accountant(memory_label);

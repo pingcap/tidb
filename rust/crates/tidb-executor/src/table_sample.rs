@@ -39,7 +39,7 @@ pub(crate) enum SampleOutputColumn {
 /// record range: a region, clipped to the record prefix.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SampleRange {
-    /// The position in [`TableSampleExec`]'s tables of the physical table
+    /// The position in [`TableSampleExecutor`]'s tables of the physical table
     /// whose rows the range holds.
     pub(crate) table: usize,
     /// The inclusive start key.
@@ -54,7 +54,7 @@ pub(crate) struct SampleRange {
 /// The builder supplies the ranges already sorted by start key (descending
 /// for a descending sample, Go `sortRanges`), and each range is scanned
 /// forward from its start, as Go's `sampleFetcher` does.
-pub struct TableSampleExec {
+pub struct TableSampleExecutor {
     meta: ExecutorMeta,
     tables: Vec<TableCommon>,
     ranges: Vec<SampleRange>,
@@ -64,7 +64,7 @@ pub struct TableSampleExec {
     cursor: usize,
 }
 
-impl TableSampleExec {
+impl TableSampleExecutor {
     /// Builds a region-sampling source over the selected physical tables.
     #[must_use]
     pub(crate) fn new(
@@ -86,7 +86,7 @@ impl TableSampleExec {
     }
 }
 
-impl Executor for TableSampleExec {
+impl Executor for TableSampleExecutor {
     fn open(&mut self) -> Result<(), ExecError> {
         self.rows.clear();
         self.cursor = 0;

@@ -8,7 +8,7 @@
 //
 //! Variables this branch's Go registers that the original Rust catalog lacked.
 
-use super::super::{SysVarDef, VarType};
+use super::super::{SysVarDef, TypeFlag};
 
 pub(super) static ENTRIES: [SysVarDef; 2] = [
     SysVarDef {
@@ -16,7 +16,7 @@ pub(super) static ENTRIES: [SysVarDef; 2] = [
         global_config_name: "",
         scope: 3,
         value: "4",
-        var_type: VarType::Unsigned,
+        var_type: TypeFlag::Unsigned,
         read_only: false,
         allow_auto_value: false,
         min_value: 0,
@@ -29,7 +29,7 @@ pub(super) static ENTRIES: [SysVarDef; 2] = [
         global_config_name: "",
         scope: 1,
         value: "OFF",
-        var_type: VarType::Bool,
+        var_type: TypeFlag::Bool,
         read_only: false,
         allow_auto_value: false,
         min_value: 0,

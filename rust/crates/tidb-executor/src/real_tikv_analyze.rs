@@ -14,7 +14,7 @@
 
 //! Cluster ANALYZE sampling and statistics persistence.
 //!
-//! Catalog selection and previous statistics are read at the sampling TSO.
+//! SessionExtendedInfoSchema selection and previous statistics are read at the sampling TSO.
 //! Coprocessor sampling follows Go's analyze snapshot setting: snapshot reads
 //! use that TSO, while the default reads use RC at the latest version.
 //! Statistics are saved in a separate transaction; its version and the

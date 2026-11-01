@@ -29,7 +29,7 @@
 
 use tidb_datatype::Datum;
 
-use crate::{run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
+use crate::{run_create_table_on, run_insert_on, run_select_on, SessionExtendedInfoSchema, StmtContext};
 
 fn ctx() -> StmtContext {
     StmtContext::for_query()

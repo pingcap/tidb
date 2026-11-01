@@ -20,7 +20,7 @@ use tidb_executor::KvTableReader;
 /// This session's own `mysql.*` tables, read the way
 /// `tidb_privilege::cluster_privilege_load::load_privileges` reads a cluster's.
 pub(crate) struct SessionPrivilegeTables<'a> {
-    pub(crate) catalog: &'a mut tidb_infoschema::Catalog,
+    pub(crate) catalog: &'a mut tidb_infoschema::SessionExtendedInfoSchema,
     /// TIMESTAMP columns decode in UTC, as the cluster reader decodes them.
     pub(crate) decode: tidb_table::tables::RowDecodeContext,
 }

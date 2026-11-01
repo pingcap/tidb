@@ -32,7 +32,7 @@ use tidb_datatype::{Datum, Time, TimeType};
 use tidb_infoschema::cluster_catalog::{
     fetch_all_schemas_with_tables, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
-use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::ColumnStatsTimeInfo;
+use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::ColStatsTimeInfo;
 use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::{
     load_column_stats_usage, load_column_stats_usage_for_table,
 };
@@ -1865,8 +1865,8 @@ fn stats_item_gc_removes_only_the_dropped_column_in_one_plan() {
     let plan = plan_stats_write(&mut store, &catalog, &stats, now(), Some(&*row_ids)).expect("analyze plans");
     apply_mutations(&mut store, &plan.mutations);
     let usage = HashMap::from([
-        (usage_item(table_id, 1), ColumnStatsTimeInfo::default()),
-        (usage_item(table_id, 2), ColumnStatsTimeInfo::default()),
+        (usage_item(table_id, 1), ColStatsTimeInfo::default()),
+        (usage_item(table_id, 2), ColStatsTimeInfo::default()),
     ]);
     let plan = plan_column_stats_usage_write(&mut store, &catalog, &usage, now(), Some(&*row_ids))
         .expect("predicate usage plans");
@@ -2492,7 +2492,7 @@ fn global_stats_id_moves_all_six_go_tables() {
     apply_mutations(&mut store, &plan.mutations);
     let usage = HashMap::from([(
         usage_item(from, 1),
-        ColumnStatsTimeInfo {
+        ColStatsTimeInfo {
             last_used_at: Some(now()),
             last_analyzed_at: Some(now()),
         },
@@ -3236,7 +3236,7 @@ fn column_stats_usage_write_does_not_filter_the_table_item_kind() {
             is_index: true,
             is_sync_load_failed: false,
         },
-        ColumnStatsTimeInfo::default(),
+        ColStatsTimeInfo::default(),
     )]);
     let plan = plan_column_stats_usage_write(&mut store, &catalog, &usage, now(), Some(&*row_ids))
         .expect("Go writes every supplied TableItemID");
@@ -3405,7 +3405,7 @@ fn predicate_column_missing_table_skips_cleanup_but_still_reads_usage() {
     let item = usage_item(table_id, 9);
     let usage = HashMap::from([(
         item,
-        ColumnStatsTimeInfo {
+        ColStatsTimeInfo {
             last_used_at: Some(now()),
             last_analyzed_at: None,
         },
@@ -3434,7 +3434,7 @@ fn predicate_column_invalid_zero_timestamp_matches_convert_tz_null() {
         .expect("zero timestamp");
     let usage = HashMap::from([(
         item,
-        ColumnStatsTimeInfo {
+        ColStatsTimeInfo {
             last_used_at: Some(zero),
             last_analyzed_at: Some(zero),
         },
@@ -3480,7 +3480,7 @@ fn predicate_column_invalid_zero_timestamp_matches_convert_tz_null() {
         table_id,
     )
     .expect("usage reloads");
-    assert_eq!(loaded[&item], ColumnStatsTimeInfo::default());
+    assert_eq!(loaded[&item], ColStatsTimeInfo::default());
     let (columns, cleanup) =
         plan_get_predicate_columns(&mut store, &catalog, table_id, Some(&[item.id]))
             .expect("predicate read plans");

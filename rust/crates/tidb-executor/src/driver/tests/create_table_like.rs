@@ -15,7 +15,7 @@
 use super::*;
 
 /// The `TableCommon` a test asserts structure against.
-fn kv<'a>(catalog: &'a Catalog, name: &str) -> &'a crate::TableCommon {
+fn kv<'a>(catalog: &'a SessionExtendedInfoSchema, name: &str) -> &'a crate::TableCommon {
     match catalog.get_table_for_test(name) {
         Some(tidb_infoschema::TableEntry::Kv(kv)) => kv,
         _ => panic!("{name} is not a KV table"),

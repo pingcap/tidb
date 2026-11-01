@@ -19,7 +19,7 @@
 //! generic Rust candidate cannot silently become an index scan.
 
 use tidb_planner_util::path::ResolvedIndexPaths;
-use tidb_planner_util::path::{DerivedAccessPath, DerivedAccessPaths, IndexLookupPushDownBy, PossiblePath};
+use tidb_planner_util::path::{DerivedAccessPath, DerivedAccessPaths, IndexLookUpPushDownByType, PossiblePath};
 use tidb_sessionctx::{IndexLookupPushDownPolicy, IndexLookupPushDownSession};
 
 pub(crate) mod index_merge;
@@ -525,7 +525,7 @@ pub fn apply_table_index_hints(
             if unsupported_reason(metadata).is_none() {
                 result
                     .index_lookup_push_down_by
-                    .insert(metadata.read().id, IndexLookupPushDownBy::SysVar);
+                    .insert(metadata.read().id, IndexLookUpPushDownByType::SysVar);
             }
         }
     }
@@ -659,7 +659,7 @@ pub fn apply_table_index_hints(
                             }
                             result
                                 .index_lookup_push_down_by
-                                .insert(metadata.read().id, IndexLookupPushDownBy::Hint);
+                                .insert(metadata.read().id, IndexLookUpPushDownByType::Hint);
                         }
                     }
                 }
@@ -693,7 +693,7 @@ pub fn apply_table_index_hints(
                             }
                             result
                                 .index_lookup_push_down_by
-                                .insert(metadata.read().id, IndexLookupPushDownBy::Hint);
+                                .insert(metadata.read().id, IndexLookUpPushDownByType::Hint);
                         }
                     }
                 }

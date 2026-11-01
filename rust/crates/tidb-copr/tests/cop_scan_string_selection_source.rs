@@ -45,7 +45,7 @@ use tidb_copr::cop_client::RealTiKvSessionTransportFactory;
 use tidb_kv::cluster_storage::{ClusterSnapshot, SnapshotPairs};
 use tidb_store_driver_txn::cluster_storage::{ClusterTableStorage, MutationBuffer};
 use tidb_executor::driver::run_select_on;
-use tidb_infoschema::Catalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_table::tables::TableCommon;
 use tidb_kv::storage::StorageError;
 use tidb_sessionctx::StmtContext;
@@ -293,7 +293,7 @@ impl RealTiKvSessionTransportFactory for FakeFactory {
 
 /// `t(id BIGINT, s VARCHAR(20) COLLATE <collation>)` read through a real
 /// coprocessor reader.
-fn fixture(collation: &str) -> (Catalog, Arc<FakeRegion>) {
+fn fixture(collation: &str) -> (SessionExtendedInfoSchema, Arc<FakeRegion>) {
     let region = Arc::new(FakeRegion::default());
     let factory = Arc::new(FakeFactory {
         region: Arc::clone(&region),

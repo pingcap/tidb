@@ -4742,7 +4742,7 @@ pub enum DdlPlan {
 /// One worker transaction decoded from a persisted active DDL job.
 #[derive(Clone, Debug)]
 pub struct PersistedDdlJobStep {
-    /// Catalog and active-job mutations committed atomically by the worker.
+    /// SessionExtendedInfoSchema and active-job mutations committed atomically by the worker.
     pub write: DdlWrite,
     /// Whether this transaction removes the job from the active table.
     pub terminal: bool,

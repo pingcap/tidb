@@ -107,7 +107,7 @@ impl tidb_executor::compiler::CompilerSession for Session {
         Session::drain_eval_warnings(self, ctx)
     }
 
-    fn with_staged_catalog<T>(&mut self, body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>, ) -> Result<T, DriverError> {
+    fn with_staged_catalog<T>(&mut self, body: impl FnOnce(&mut SessionExtendedInfoSchema) -> Result<T, DriverError>, ) -> Result<T, DriverError> {
         Session::with_staged_catalog(self, body)
     }
 

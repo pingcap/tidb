@@ -12,7 +12,7 @@
 //! itself is per-statement batch state (`pkg/table/tables/tables.go`
 //! `AddRecord` -> autoid allocator), which the Rust gateway models.
 
-use crate::{run_create_table_on, run_insert_reporting, run_select_on, Catalog, StmtContext};
+use crate::{run_create_table_on, run_insert_reporting, run_select_on, SessionExtendedInfoSchema, StmtContext};
 
 /// Go `insert_test.go:503::TestGlobalTempTableParallel`, single-session
 /// slice: `insert temp_test value(0)` allocates id 1, the two-row

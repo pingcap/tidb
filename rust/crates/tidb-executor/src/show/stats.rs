@@ -30,7 +30,7 @@ pub fn data_for_analyze_status_helper(
     visibility: &crate::infoschema_reader::SchemaVisibility,
     session_zone: &tidb_datatype::SessionTimeZone,
     stats_handle: &tidb_stats_handle::StatsHandle,
-    catalog: &crate::Catalog,
+    catalog: &crate::SessionExtendedInfoSchema,
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
     let jobs = match provider {
         Some(provider) => provider

@@ -262,7 +262,7 @@
         // a specific catalog copy or record key -- so it is true under BOTH
         // trackers here (each staged something under this table id). The
         // record-level check is what must tell the two writes apart.
-        let staged = |image: &Catalog, ctx: &crate::StmtContext, handle: i64| {
+        let staged = |image: &SessionExtendedInfoSchema, ctx: &crate::StmtContext, handle: i64| {
             let TableEntry::Kv(table) = image.get_in(DEFAULT_DATABASE, "cd").unwrap() else {
                 panic!("expected KV table")
             };

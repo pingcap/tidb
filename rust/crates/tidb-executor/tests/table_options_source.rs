@@ -2,7 +2,7 @@
 //! and `checkTableEngine` (`:1549`, with `mysqlValidTableEngineNames`).
 
 use tidb_executor::run_create_table_on;
-use tidb_infoschema::Catalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 
 fn create_error(sql: &str) -> String {
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();

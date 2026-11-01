@@ -172,7 +172,7 @@ use crate::store_session::{sql_query_error, StoreTxnOps};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, SystemTime};
 use tidb_executor::compiler::PreparedAstCompile;
-use tidb_executor::compiler::PreparedExec;
+use tidb_executor::compiler::PrepareExec;
 use tidb_executor::ddl_exec::DdlExec as _;
 use tidb_executor::stats_exec::StatsExec as _;
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;

@@ -64,7 +64,7 @@ use tidb_stats_util::JsonPredicateColumn;
 use tidb_sqlescape::{must_escape_sql, must_escape_sql_text, SqlArg};
 
 use tidb_infoschema::cluster_catalog::{ClusterCatalog, MetaSnapshot};
-use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::ColumnStatsTimeInfo;
+use tidb_stats_handle_usage_predicatecolumn::cluster_predicate_column::ColStatsTimeInfo;
 use crate::cluster_stats_load::{ClusterStatsItem, ClusterTableStats};
 use tidb_syssession::mysql_system_tables::{
     scan_system_table, scan_system_table_prefixed, HandleLayout,
@@ -1039,7 +1039,7 @@ pub fn plan_loaded_stats_usage_write<S: MetaSnapshot>(
                 is_index: false,
                 is_sync_load_failed: false,
             },
-            ColumnStatsTimeInfo {
+            ColStatsTimeInfo {
                 last_used_at: parse_predicate_time(column.last_used_at.as_deref())?,
                 last_analyzed_at: parse_predicate_time(column.last_analyzed_at.as_deref())?,
             },
@@ -1055,7 +1055,7 @@ pub fn plan_loaded_stats_usage_write<S: MetaSnapshot>(
 pub fn plan_column_stats_usage_write<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
-    usage: &HashMap<TableItemID, ColumnStatsTimeInfo>,
+    usage: &HashMap<TableItemID, ColStatsTimeInfo>,
     now: Time,
     row_ids: Option<&dyn tidb_table::table_from_meta::TableAutoIds>,
 ) -> Result<StatsWritePlan, StatsWriteError> {

@@ -110,7 +110,7 @@ pub trait MemTableRetriever: Send + Sync {
     fn retrieve(
         &self,
         read: &MemTableRead,
-        catalog: &tidb_infoschema::Catalog,
+        catalog: &tidb_infoschema::SessionExtendedInfoSchema,
         ctx: &crate::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, tidb_driver_error::DriverError>;
 }

@@ -23,7 +23,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
-use crate::{Catalog, TableEntry};
+use crate::{SessionExtendedInfoSchema, TableEntry};
 
 /// The database name Go registers these tables under.
 pub const METRICS_SCHEMA: &str = "metrics_schema";
@@ -55,7 +55,7 @@ pub fn tables() -> HashMap<String, Arc<TableEntry>> {
     static TABLES: OnceLock<HashMap<String, Arc<TableEntry>>> = OnceLock::new();
     TABLES
         .get_or_init(|| {
-            let mut scratch = Catalog::memory_schema_scratch();
+            let mut scratch = SessionExtendedInfoSchema::memory_schema_scratch();
             for &(name, id) in table_ids() {
                 let def = crate::metric_table_def::METRIC_TABLE_MAP
                     .iter()
@@ -78,7 +78,7 @@ pub fn tables() -> HashMap<String, Arc<TableEntry>> {
                 .tables_of(METRICS_SCHEMA)
                 .map(|(name, entry)| (name.to_owned(), Arc::clone(entry)))
                 .collect();
-            Catalog::register_virtual_schema(METRICS_SCHEMA_DB_ID, "METRICS_SCHEMA", &tables);
+            SessionExtendedInfoSchema::register_virtual_schema(METRICS_SCHEMA_DB_ID, "METRICS_SCHEMA", &tables);
             tables
         })
         .clone()

@@ -4,7 +4,7 @@
 //! Go splits this across three stages, and so does this module:
 //! * [`build_fk_infos`] -- `buildTableInfo`'s `ConstraintForeignKey` arm
 //!   (`create_table.go:1452`, `buildFKInfo` at `executor.go:5897`) plus
-//!   `addIndexForForeignKey` (`create_table.go:1740`). Catalog-free.
+//!   `addIndexForForeignKey` (`create_table.go:1740`). SessionExtendedInfoSchema-free.
 //! * [`check_table_foreign_keys_valid`] -- `checkTableForeignKeysValid`
 //!   (`foreign_key.go:151`), the submitter-side check against InfoSchema.
 //! * [`check_table_foreign_key_valid_in_owner`] -- the owner-side

@@ -335,7 +335,7 @@ fn clustered_common_handle() {
 /// `deriveCommonHandleTablePathStats` derives the path over those key parts.
 /// It nevertheless lowers to `PhysicalTableScan`, whose `TP()` reports a
 /// `TableFullScan` for a full range.
-fn explain_plan(sql: &str, catalog: &Catalog, ctx: &crate::StmtContext) -> Vec<String> {
+fn explain_plan(sql: &str, catalog: &SessionExtendedInfoSchema, ctx: &crate::StmtContext) -> Vec<String> {
     use crate::explain::explain_select_stmt;
     use tidb_sessionctx::explain_format::ExplainFormat;
 
@@ -640,7 +640,7 @@ fn a_handle_column_reads_back_in_its_own_type() {
 fn create_with_mode(
     sql: &str,
     mode: tidb_vardef::modes::ClusteredIndexDefMode,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
 ) -> Result<bool, DriverError> {
     crate::ddl::run_create_table_on_with(
         sql,
@@ -652,7 +652,7 @@ fn create_with_mode(
 
 /// The layout a built table actually has, read back off the catalog entry:
 /// `(pk_is_handle, common handle columns)`.
-fn layout_of(catalog: &Catalog, name: &str) -> (bool, Vec<usize>) {
+fn layout_of(catalog: &SessionExtendedInfoSchema, name: &str) -> (bool, Vec<usize>) {
     let Some(crate::driver::TableEntry::Kv(table)) = catalog.get_table_for_test(name) else {
         panic!("{name} was not built as a KV table");
     };
@@ -665,7 +665,7 @@ fn layout_of(catalog: &Catalog, name: &str) -> (bool, Vec<usize>) {
 /// Whether the built table carries a `PRIMARY` index -- which is what a
 /// NON-clustered primary key becomes, and what a clustered one never is
 /// (its encoding IS the row key).
-fn has_primary_index(catalog: &Catalog, name: &str) -> bool {
+fn has_primary_index(catalog: &SessionExtendedInfoSchema, name: &str) -> bool {
     let Some(crate::driver::TableEntry::Kv(table)) = catalog.get_table_for_test(name) else {
         panic!("{name} was not built as a KV table");
     };

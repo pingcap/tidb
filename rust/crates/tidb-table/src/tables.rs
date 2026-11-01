@@ -201,14 +201,14 @@ struct CommonMutateOptions {
 /// Go `table.AddRecordOpt`, in the fields exercised by
 /// `pkg/table/table_test.go::TestOptions`.
 #[derive(Clone, Default)]
-pub struct AddRecordOptions {
+pub struct AddRecordOpt {
     common: CommonMutateOptions,
     is_update: bool,
     generate_record_id: bool,
     reserve_auto_id: usize,
 }
 
-impl AddRecordOptions {
+impl AddRecordOpt {
     /// Creates the Go zero-value option set.
     #[must_use]
     pub fn new() -> Self {
@@ -264,10 +264,10 @@ impl AddRecordOptions {
 
     /// Go `AddRecordOpt.GetCreateIdxOpt`.
     #[must_use]
-    pub fn create_index_options(&self) -> CreateIndexOptions {
-        CreateIndexOptions {
+    pub fn create_index_options(&self) -> CreateIdxOpt {
+        CreateIdxOpt {
             common: self.common.clone(),
-            ..CreateIndexOptions::default()
+            ..CreateIdxOpt::default()
         }
     }
 }
@@ -275,12 +275,12 @@ impl AddRecordOptions {
 /// Go `table.UpdateRecordOpt`, including its conversions to the options used
 /// by the delete/add and index halves of an update.
 #[derive(Clone, Default)]
-pub struct UpdateRecordOptions {
+pub struct UpdateRecordOpt {
     common: CommonMutateOptions,
     skip_write_untouched_indices: bool,
 }
 
-impl UpdateRecordOptions {
+impl UpdateRecordOpt {
     /// Creates the Go zero-value option set.
     #[must_use]
     pub fn new() -> Self {
@@ -308,8 +308,8 @@ impl UpdateRecordOptions {
 
     /// Go `UpdateRecordOpt.GetAddRecordOpt`.
     #[must_use]
-    pub fn get_add_record_opt(&self) -> AddRecordOptions {
-        AddRecordOptions {
+    pub fn get_add_record_opt(&self) -> AddRecordOpt {
+        AddRecordOpt {
             common: self.common.clone(),
             is_update: true,
             generate_record_id: true,
@@ -319,8 +319,8 @@ impl UpdateRecordOptions {
 
     /// Go `UpdateRecordOpt.GetAddRecordOptKeepRecordID`.
     #[must_use]
-    pub fn get_add_record_opt_keep_record_id(&self) -> AddRecordOptions {
-        AddRecordOptions {
+    pub fn get_add_record_opt_keep_record_id(&self) -> AddRecordOpt {
+        AddRecordOpt {
             common: self.common.clone(),
             is_update: true,
             generate_record_id: false,
@@ -330,23 +330,23 @@ impl UpdateRecordOptions {
 
     /// Go `UpdateRecordOpt.GetCreateIdxOpt`.
     #[must_use]
-    pub fn create_index_options(&self) -> CreateIndexOptions {
-        CreateIndexOptions {
+    pub fn create_index_options(&self) -> CreateIdxOpt {
+        CreateIdxOpt {
             common: self.common.clone(),
-            ..CreateIndexOptions::default()
+            ..CreateIdxOpt::default()
         }
     }
 }
 
 /// Go `table.CreateIdxOpt`.
 #[derive(Clone, Default)]
-pub struct CreateIndexOptions {
+pub struct CreateIdxOpt {
     common: CommonMutateOptions,
     ignore_assertion: bool,
     from_backfill: bool,
 }
 
-impl CreateIndexOptions {
+impl CreateIdxOpt {
     /// Creates the Go zero-value option set.
     #[must_use]
     pub fn new() -> Self {

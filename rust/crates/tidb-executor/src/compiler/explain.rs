@@ -283,7 +283,7 @@ pub trait ExplainCompile: super::CompilerSession {
             }
         }
         let explain_query =
-            |query: &tidb_ast::QueryStmt, catalog: &crate::Catalog| match query {
+            |query: &tidb_ast::QueryStmt, catalog: &crate::SessionExtendedInfoSchema| match query {
                 tidb_ast::QueryStmt::Select(select) => {
                     crate::explain_select_stmt(select, catalog, &current_db, &ctx, format)
                 }

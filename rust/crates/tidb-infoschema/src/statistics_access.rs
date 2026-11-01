@@ -20,7 +20,7 @@
 
 use crate::*;
 
-impl Catalog {
+impl SessionExtendedInfoSchema {
     /// The `TableInfo` facts Go `Handle.getStatsByPhysicalID` reads on a
     /// statistics cache miss, for a table or partition id of this image.
     #[must_use]

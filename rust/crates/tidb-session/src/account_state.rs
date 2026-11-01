@@ -23,7 +23,7 @@ use tidb_privilege::PrivilegeTypeExt;
 use tidb_datatype::Datum;
 use tidb_executor::mem_table_retrieval::{MemTableRead, MemTableRetriever};
 use tidb_driver_error::DriverError;
-use tidb_infoschema::Catalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_hack::GoCaseCompare;
 
 use tidb_privilege;
@@ -296,7 +296,7 @@ impl VariablesState {
             };
             let numeric = matches!(
                 definition.var_type,
-                sysvar::VarType::Unsigned | sysvar::VarType::Int | sysvar::VarType::Float
+                sysvar::TypeFlag::Unsigned | sysvar::TypeFlag::Int | sysvar::TypeFlag::Float
             );
             let (min, max) = if numeric {
                 (
@@ -306,7 +306,7 @@ impl VariablesState {
             } else {
                 (Datum::Null, Datum::Null)
             };
-            let possible = if definition.var_type == sysvar::VarType::Enum {
+            let possible = if definition.var_type == sysvar::TypeFlag::Enum {
                 text(&definition.possible_values.join(","))
             } else {
                 Datum::Null
@@ -373,7 +373,7 @@ impl MemTableRetriever for AccountRetriever {
     fn retrieve(
         &self,
         read: &MemTableRead,
-        _catalog: &Catalog,
+        _catalog: &SessionExtendedInfoSchema,
         _ctx: &tidb_sessionctx::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         Ok(if read.table_name.go_lower_eq("USER_PRIVILEGES") {
@@ -415,7 +415,7 @@ impl MemTableRetriever for VariablesRetriever {
     fn retrieve(
         &self,
         read: &MemTableRead,
-        _catalog: &Catalog,
+        _catalog: &SessionExtendedInfoSchema,
         _ctx: &tidb_sessionctx::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         if read.table_name.go_lower_eq("VARIABLES_INFO") {

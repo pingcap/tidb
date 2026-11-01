@@ -17,7 +17,7 @@
 //! one candidate before writing it. Statement staging owns rollback.
 
 use super::{kv_read_error, TableHandle};
-use crate::driver::{Catalog, DriverError, TableEntry};
+use crate::driver::{SessionExtendedInfoSchema, DriverError, TableEntry};
 use crate::foreign_key::{self, ParentChange};
 use crate::StmtContext;
 use tidb_datatype::Datum;
@@ -38,7 +38,7 @@ impl<'a> DeleteRecords<'a> {
 
     pub(crate) fn write(
         &mut self,
-        catalog: &mut Catalog,
+        catalog: &mut SessionExtendedInfoSchema,
         database: &str,
         name: &str,
         id: &TableHandle,
@@ -103,7 +103,7 @@ impl<'a> DeleteRecords<'a> {
 
     pub(crate) fn finish(
         self,
-        catalog: &mut Catalog,
+        catalog: &mut SessionExtendedInfoSchema,
         ctx: &StmtContext,
     ) -> Result<(), DriverError> {
         for (database, table, rows) in &self.tables {

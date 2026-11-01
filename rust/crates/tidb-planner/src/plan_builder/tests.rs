@@ -1184,7 +1184,7 @@ fn test_lookup_pushdown_rejects_go_unsupported_index_metadata() {
 #[test]
 fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
     use crate::access_path::{apply_table_index_hints, get_possible_access_paths, IndexLookupPushDownPolicy, IndexLookupPushDownSession};
-    use tidb_planner_util::path::{IndexLookupPushDownBy};
+    use tidb_planner_util::path::{IndexLookUpPushDownByType};
     use tidb_planner_core_operator_logicalop::data_source::DataSourceIndexHint;
 
     let hint = DataSourceIndexHint {
@@ -1281,7 +1281,7 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
     );
     assert_eq!(
         forced.index_lookup_push_down_by.get(&1),
-        Some(&IndexLookupPushDownBy::Hint),
+        Some(&IndexLookUpPushDownByType::Hint),
         "an explicit hint overrides the system-policy origin"
     );
 
@@ -1303,7 +1303,7 @@ fn test_lookup_pushdown_support_gates_and_auto_policy_match_go() {
     .unwrap();
     assert_eq!(
         auto.index_lookup_push_down_by.get(&1),
-        Some(&IndexLookupPushDownBy::SysVar)
+        Some(&IndexLookUpPushDownByType::SysVar)
     );
     let affinity_only = apply_table_index_hints(
         &table,

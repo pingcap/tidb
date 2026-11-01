@@ -20,7 +20,7 @@ pub mod account_tables;
 pub mod exec;
 
 use crate::sessionctx::SessionContext;
-use crate::{Catalog, DriverError};
+use crate::{SessionExtendedInfoSchema, DriverError};
 
 /// Go `SimpleExec.executeUse`: an invisible schema is refused (1044) before
 /// it is looked up, so it cannot be told apart from a missing one; an unknown
@@ -29,7 +29,7 @@ use crate::{Catalog, DriverError};
 /// charset into `character_set_database`.
 pub fn execute_use(
     ctx: &mut dyn SessionContext,
-    is: &Catalog,
+    is: &SessionExtendedInfoSchema,
     name: &str,
 ) -> Result<(), DriverError> {
     // An empty schema name (`USE ``) is `ErrNoDB`, as Go's preprocessor
@@ -76,7 +76,7 @@ pub fn execute_use(
 /// written); the empty name is `default`.
 pub fn execute_set_resource_group_name(
     ctx: &mut dyn SessionContext,
-    is: &Catalog,
+    is: &SessionExtendedInfoSchema,
     stmt: &tidb_ast::SetResourceGroupStmt,
 ) -> Result<(), DriverError> {
     use tidb_hack::GoToLower;

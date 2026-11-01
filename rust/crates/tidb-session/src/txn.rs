@@ -30,20 +30,20 @@ use tidb_datatype::Datum;
 use tidb_store_driver_error::sql_query_error::SqlQueryError;
 use tidb_store_driver_txn::cluster_storage::BufferCheckpoint;
 use tidb_driver_error::DriverError;
-use tidb_infoschema::Catalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 
 use crate::{txn_mode_for_begin, PESSIMISTIC_TXN_MODE};
 use crate::{Session, SessionTxnMode};
 
 /// A persisted schema image and the storage authority's retained timestamp guard.
 pub struct HistoricalRead {
-    pub catalog: Catalog,
+    pub catalog: SessionExtendedInfoSchema,
     pub timestamp_hold: std::sync::Arc<dyn Send + Sync>,
 }
 
 /// Domain/storage callback shared by explicit and one-statement historical reads.
 pub type HistoricalReadProvider =
-    dyn Fn(u64, &str, Option<&Catalog>) -> Result<HistoricalRead, DriverError> + Send + Sync;
+    dyn Fn(u64, &str, Option<&SessionExtendedInfoSchema>) -> Result<HistoricalRead, DriverError> + Send + Sync;
 
 /// A server's Go `sessionctx.Context.Txn(true)` for the running statement:
 /// opens the statement's (lazily activated) transaction, which publishes its
@@ -52,7 +52,7 @@ pub type StatementTxnActivator = dyn Fn() + Send + Sync;
 
 /// SET-time validation and schema loading, without replacing the active row snapshot.
 pub type SnapshotSchemaProvider =
-    dyn Fn(u64, &str, bool) -> Result<Catalog, DriverError> + Send + Sync;
+    dyn Fn(u64, &str, bool) -> Result<SessionExtendedInfoSchema, DriverError> + Send + Sync;
 
 /// Go `SessionVars.TxnCtx` of the open transaction; `Some` is Go's `InTxn`.
 ///
@@ -203,8 +203,8 @@ impl TemporaryTableOverlay {
     /// leaves a temporary table visible to another session.
     fn run<T>(
         &mut self,
-        catalog: &mut Catalog,
-        body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
+        catalog: &mut SessionExtendedInfoSchema,
+        body: impl FnOnce(&mut SessionExtendedInfoSchema) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
         catalog.attach_local_temporary_tables(std::mem::take(&mut self.local));
         self.swap_global_storage(catalog);
@@ -222,7 +222,7 @@ impl TemporaryTableOverlay {
     /// temporary table except a session that has its own storage swapped in,
     /// so what comes out at attach is empty and what goes back at detach can
     /// be the empty store that came out.
-    fn swap_global_storage(&mut self, catalog: &mut Catalog) {
+    fn swap_global_storage(&mut self, catalog: &mut SessionExtendedInfoSchema) {
         // Memoized walk (Go answers this from `temptable`'s session map, not
         // by iterating infoschema): a session with no global temporary tables
         // -- every OLTP workload -- pays one epoch compare per call.
@@ -255,8 +255,8 @@ impl TemporaryTableOverlay {
 /// GLOBAL-table check: row statements cannot create temporary metadata, so
 /// they do not need the post-statement catalog sweep.
 fn run_discovering_temporary_overlay<T>(
-    catalog: &mut Catalog,
-    body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
+    catalog: &mut SessionExtendedInfoSchema,
+    body: impl FnOnce(&mut SessionExtendedInfoSchema) -> Result<T, DriverError>,
 ) -> (Result<T, DriverError>, Option<TemporaryTableOverlay>) {
     if !catalog.global_temporary_table_ids_memo().is_empty() {
         let mut overlay = TemporaryTableOverlay {
@@ -291,7 +291,7 @@ fn run_discovering_temporary_overlay<T>(
 /// a panic unwinding out of it (see [`Session::with_staged_catalog`]).
 struct CatalogStage<'a> {
     /// The catalog the statement mutates in place.
-    catalog: &'a mut Catalog,
+    catalog: &'a mut SessionExtendedInfoSchema,
     /// The statement's stage, taken away once the statement has succeeded.
     stage: Option<tidb_infoschema::StatementStage>,
 }
@@ -1002,7 +1002,7 @@ impl Session {
     /// session's catalog.
     pub(crate) fn with_txn_catalog<T>(
         &self,
-        body: impl FnOnce(&Catalog) -> T,
+        body: impl FnOnce(&SessionExtendedInfoSchema) -> T,
     ) -> Result<T, DriverError> {
         if let Some((_, read)) = self.txn_ctx.as_ref().and_then(|ctx| ctx.stale.as_ref()) {
             return Ok(body(&read.catalog));
@@ -1012,7 +1012,7 @@ impl Session {
     }
 
     /// A stale transaction's historical catalog (Go `TxnCtx.InfoSchema`).
-    pub(crate) fn txn_ctx_stale_catalog(&self) -> Option<&Catalog> {
+    pub(crate) fn txn_ctx_stale_catalog(&self) -> Option<&SessionExtendedInfoSchema> {
         self.txn_ctx
             .as_ref()
             .and_then(|ctx| ctx.stale.as_ref())
@@ -1027,7 +1027,7 @@ impl Session {
     /// Borrows the shared catalog for one statement. The lock is held for the
     /// statement's duration only, which is the granularity Go's schema state
     /// is consumed at.
-    pub(crate) fn lock_catalog(&self) -> Result<MutexGuard<'_, Catalog>, DriverError> {
+    pub(crate) fn lock_catalog(&self) -> Result<MutexGuard<'_, SessionExtendedInfoSchema>, DriverError> {
         self.catalog
             .lock()
             .map_err(|_| DriverError::CatalogPoisoned)
@@ -1039,7 +1039,7 @@ impl Session {
     /// are read through the store session's buffer under its tables.
     pub(crate) fn with_catalog_mut<T>(
         &mut self,
-        body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
+        body: impl FnOnce(&mut SessionExtendedInfoSchema) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
         self.with_catalog_scope(true, body)
     }
@@ -1049,7 +1049,7 @@ impl Session {
     #[cfg(test)]
     pub(crate) fn with_committed_catalog_mut<T>(
         &mut self,
-        body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
+        body: impl FnOnce(&mut SessionExtendedInfoSchema) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
         self.with_committed_snapshot(|session| session.with_catalog_mut(body))?
     }
@@ -1058,7 +1058,7 @@ impl Session {
     /// temporary names. Global temporary row storage remains session-owned.
     pub(crate) fn with_persistent_catalog_mut<T>(
         &mut self,
-        body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
+        body: impl FnOnce(&mut SessionExtendedInfoSchema) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
         self.with_catalog_scope(false, body)
     }
@@ -1067,7 +1067,7 @@ impl Session {
     pub(crate) fn with_catalog_scope<T>(
         &mut self,
         include_local: bool,
-        body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
+        body: impl FnOnce(&mut SessionExtendedInfoSchema) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
         // A session that already owns temporary state always takes the full
         // attach/detach path. This is the uncommon branch.
@@ -1198,7 +1198,7 @@ impl Session {
     ///
     /// The in-process stores (the temporary tables) keep Go's staging undo
     /// log themselves (`TableStorage::staging` / `cleanup` / `release`), and
-    /// `Catalog::begin_statement_stage` opens one stage on each. A KV-backed
+    /// `SessionExtendedInfoSchema::begin_statement_stage` opens one stage on each. A KV-backed
     /// table's writes go to the store session's `MutationBuffer`, whose
     /// statement savepoint the convergence node takes over the buffer itself
     /// (`tidb_server`'s `ClusterServerSession::with_statement`:
@@ -1227,7 +1227,7 @@ impl Session {
     /// in the in-process rows.
     pub(crate) fn with_staged_catalog<T>(
         &mut self,
-        body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
+        body: impl FnOnce(&mut SessionExtendedInfoSchema) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
         // Go stages a statement's writes on the transaction's membuffer
         // (`MemBuffer.Staging()`) and `StmtRollback` cleans the stage up. A

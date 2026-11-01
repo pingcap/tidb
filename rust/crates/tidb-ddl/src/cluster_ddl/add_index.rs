@@ -231,7 +231,7 @@ pub enum AddIndexSubmission {
 /// (`initJobReorgMetaFromVariables`). `None` when the statement is not one
 /// ADD INDEX. `store_count` is PD's store count, for Go's automatic
 /// `max_node_count`.
-pub fn prepare_add_index_job_submission<S: MetaSnapshot>(
+pub fn create_index<S: MetaSnapshot>(
     snapshot: &mut S,
     statement: &DdlStatement,
     start_ts: u64,

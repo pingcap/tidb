@@ -247,7 +247,7 @@ fn outer_join_inner_key_is_null_becomes_anti_semi_join() {
     .unwrap();
     run_insert_on("INSERT INTO anti_d VALUES (1),(2),(3)", &mut catalog, &ctx).unwrap();
 
-    let explain = |sql: &str, catalog: &Catalog| {
+    let explain = |sql: &str, catalog: &SessionExtendedInfoSchema| {
         let stmt = tidb_parser::parse(sql).unwrap();
         let Stmt::Query(query) = &stmt else {
             panic!("not query")

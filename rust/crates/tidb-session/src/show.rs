@@ -164,7 +164,7 @@ impl tidb_executor::show::exec::ShowExec for Session {
     fn with_catalog_scope<T>(
         &mut self,
         include_local: bool,
-        body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
+        body: impl FnOnce(&mut SessionExtendedInfoSchema) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
         Session::with_catalog_scope(self, include_local, body)
     }
@@ -221,7 +221,7 @@ impl tidb_executor::show::exec::ShowExec for Session {
     fn table_storage_statistics_catalog(
         &mut self,
         needs_column_lengths: bool,
-    ) -> Result<Catalog, DriverError> {
+    ) -> Result<SessionExtendedInfoSchema, DriverError> {
         Session::table_storage_statistics_catalog(self, needs_column_lengths)
     }
 
@@ -298,7 +298,7 @@ impl tidb_executor::bind_exec::SqlBindExec for Session {
     }
 }
 
-impl tidb_executor::index_advisor::IndexAdvisorExec for Session {
+impl tidb_executor::index_advisor::RecommendIndexExec for Session {
 
     fn set_hypo_indexes(&mut self, indexes: std::sync::Arc<tidb_variable::hypo_index::HypoIndexes>) {
         self.hypo_indexes = indexes;
@@ -328,7 +328,7 @@ impl tidb_executor::admin::AdminExec for Session {
     fn with_catalog_retrieving<T>(
         &mut self,
         ctx: &tidb_sessionctx::StmtContext,
-        attempt: impl FnMut(&mut Catalog) -> Result<T, DriverError>,
+        attempt: impl FnMut(&mut SessionExtendedInfoSchema) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
         Session::with_catalog_retrieving(self, ctx, attempt)
     }

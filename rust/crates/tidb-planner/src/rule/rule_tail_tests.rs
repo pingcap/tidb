@@ -45,7 +45,7 @@ use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_operator_logicalop::aggregation::{LogicalAggregation, AGG_FUNC_MAX};
 use tidb_planner_core_operator_logicalop::cte::{CteClass, LogicalCTE};
 use tidb_planner_core_operator_logicalop::data_source::DataSource;
-use tidb_planner_core_operator_logicalop::expand::{LogicalExpand, RollupGroupingSet};
+use tidb_planner_core_operator_logicalop::expand::{LogicalExpand, GroupingSet};
 use tidb_planner_core_operator_logicalop::join::LogicalJoin;
 use tidb_planner_core_operator_logicalop::limit::LogicalLimit;
 use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
@@ -542,8 +542,8 @@ fn expand_with_two_sets(allocator: &PlanIdAllocator, schema: Schema) -> LogicalP
     expand.distinct_group_by_col = vec![column(1)];
     expand.distinct_size = 2;
     expand.rollup_grouping_sets = vec![
-        RollupGroupingSet::new([1]),
-        RollupGroupingSet::new(BTreeSet::new()),
+        GroupingSet::new([1]),
+        GroupingSet::new(BTreeSet::new()),
     ];
     with_children(
         LogicalPlan::Expand(expand),

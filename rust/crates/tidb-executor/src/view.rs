@@ -31,7 +31,7 @@
 
 use crate::driver::DriverError;
 use tidb_infoschema::ViewDef;
-use tidb_infoschema::Catalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_ast::{CreateViewStmt, QueryStmt, SetOprTermBody, Stmt};
 use tidb_datatype::FieldType;
 
@@ -45,7 +45,7 @@ use tidb_datatype::FieldType;
 /// Returns `(database, name, view)`.
 pub fn resolve_view_definition(
     create: &CreateViewStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<(String, String, ViewDef), DriverError> {
@@ -240,7 +240,7 @@ fn build_view_info_select(
 pub fn view_column_list(
     view: &ViewDef,
     database: &str,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<(String, FieldType)>, DriverError> {
     let names: Vec<String> = view.columns.iter().map(|(name, _)| name.clone()).collect();

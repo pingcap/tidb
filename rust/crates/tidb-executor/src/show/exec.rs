@@ -36,7 +36,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
     fn with_catalog_scope<T>(
         &mut self,
         include_local: bool,
-        body: impl FnOnce(&mut crate::Catalog) -> Result<T, DriverError>,
+        body: impl FnOnce(&mut crate::SessionExtendedInfoSchema) -> Result<T, DriverError>,
     ) -> Result<T, DriverError>;
     /// Go `GlobalBindingHandle`'s bindings, loaded from the domain's cache
     /// or the binding storage.
@@ -70,7 +70,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
     fn table_storage_statistics_catalog(
         &mut self,
         needs_column_lengths: bool,
-    ) -> Result<crate::Catalog, DriverError>;
+    ) -> Result<crate::SessionExtendedInfoSchema, DriverError>;
     /// Go `statstypes.ColumnStatsUsage` storage reader.
     fn column_stats_usage_provider(&self) -> Option<std::sync::Arc<dyn ColumnStatsUsageProvider>>;
     /// Go's `mysql.analyze_jobs` reader.
@@ -889,7 +889,7 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
     ///
     /// Go walks the infoschema and asks the stats handle for each physical ID;
     /// the walk here is the catalog and the handle is
-    /// [`Catalog::table_statistics`], where `None` is exactly Go's
+    /// [`SessionExtendedInfoSchema::table_statistics`], where `None` is exactly Go's
     /// `GetNonPseudoPhysicalTableStats` miss: no `mysql.stats_meta` row was
     /// ever loaded for that physical table. A LOADED row is shown even when
     /// it carries no histograms -- Go shows an un-analyzed table too, with a

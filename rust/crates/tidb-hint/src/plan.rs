@@ -115,7 +115,7 @@ impl HintedTable {
 
 /// Go `ast.IndexHintType` values used by `HintedIndex`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum HintedIndexKind {
+pub enum IndexHintType {
     /// USE_INDEX.
     Use,
     /// IGNORE_INDEX.
@@ -138,7 +138,7 @@ pub struct HintedIndex {
     /// Named partitions.
     pub partitions: Vec<String>,
     /// Index hint type.
-    pub kind: HintedIndexKind,
+    pub kind: IndexHintType,
     /// Index names.
     pub index_names: Vec<String>,
     /// Whether index lookup should be pushed down.
@@ -157,17 +157,17 @@ impl HintedIndex {
 
     /// Go `HintedIndex.ShouldPushDownIndexLookUp`.
     pub fn should_push_down_index_look_up(&self) -> bool {
-        self.kind == HintedIndexKind::Use && self.push_down_lookup
+        self.kind == IndexHintType::Use && self.push_down_lookup
     }
 
     /// Go `HintedIndex.HintTypeString`.
     pub fn hint_type_string(&self) -> &'static str {
         match self.kind {
-            HintedIndexKind::Use if self.push_down_lookup => "index_lookup_pushdown",
-            HintedIndexKind::Use => "use_index",
-            HintedIndexKind::Ignore => "ignore_index",
-            HintedIndexKind::Force => "force_index",
-            HintedIndexKind::Order | HintedIndexKind::NoOrder => "",
+            IndexHintType::Use if self.push_down_lookup => "index_lookup_pushdown",
+            IndexHintType::Use => "use_index",
+            IndexHintType::Ignore => "ignore_index",
+            IndexHintType::Force => "force_index",
+            IndexHintType::Order | IndexHintType::NoOrder => "",
         }
     }
 
@@ -544,11 +544,11 @@ pub fn parse_plan_hints(
                     table_name: table.name.clone(),
                     partitions: table.partitions.clone(),
                     kind: match name.as_str() {
-                        "ignore_index" => HintedIndexKind::Ignore,
-                        "force_index" => HintedIndexKind::Force,
-                        "order_index" => HintedIndexKind::Order,
-                        "no_order_index" => HintedIndexKind::NoOrder,
-                        _ => HintedIndexKind::Use,
+                        "ignore_index" => IndexHintType::Ignore,
+                        "force_index" => IndexHintType::Force,
+                        "order_index" => IndexHintType::Order,
+                        "no_order_index" => IndexHintType::NoOrder,
+                        _ => IndexHintType::Use,
                     },
                     index_names: indexes.clone(),
                     push_down_lookup: name == "index_lookup_pushdown",

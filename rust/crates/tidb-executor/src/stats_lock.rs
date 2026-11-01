@@ -20,11 +20,11 @@ use std::collections::BTreeSet;
 
 use tidb_datatype::Datum;
 
-use crate::{Catalog, DriverError, StmtContext};
+use crate::{SessionExtendedInfoSchema, DriverError, StmtContext};
 
 /// Reads every persisted lock ID, the query Go's `QueryLockedTables` runs.
 pub fn query_catalog_locked_tables(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     context: &StmtContext,
 ) -> Result<BTreeSet<i64>, DriverError> {
     let rows = crate::run_select_meta_in(

@@ -1969,7 +1969,7 @@ fn explain_distinct_scalar_subquery_with_filter() {
 #[test]
 fn bit_aggregates_are_unsigned() {
 
-    fn catalog_with(rows: Vec<Vec<Datum>>) -> Catalog {
+    fn catalog_with(rows: Vec<Vec<Datum>>) -> SessionExtendedInfoSchema {
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on("CREATE TABLE b (v BIGINT)", &mut catalog).unwrap();
         for row in rows {
@@ -2049,7 +2049,7 @@ fn bit_aggregates_are_unsigned() {
 /// to come from the argument EXPRESSION's derived collation.
 #[test]
 fn aggregates_read_the_arguments_collation() {
-    fn catalog_with(values: &[&str]) -> Catalog {
+    fn catalog_with(values: &[&str]) -> SessionExtendedInfoSchema {
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on(
             "CREATE TABLE g (s VARCHAR(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)",

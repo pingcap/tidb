@@ -107,7 +107,7 @@ pub use job_args::{
     AlterTableSetRegionSplitPolicyArgs, BatchCreateTableArgs, CheckConstraintArgs,
     CreateSchemaArgs, CreateTableArgs, DropForeignKeyArgs, DropSchemaArgs, DropTableArgs,
     EmptyArgs, ExchangeTablePartitionArgs, FinishedJobArgs, GoByteSlice, GoField, Ident, IndexArg,
-    IndexArgSplitOpt, IndexOp, JobArgs, JobArgsValue, JobTiFlashReplicaSpec, LockTablesArgs,
+    IndexArgSplitOpt, IndexOp, JobArgs, JobArgsValue, TiFlashReplicaSpec, LockTablesArgs,
     ModifyColumnArgs, ModifyIndexArgs, ModifySchemaArgs, ModifyTableAutoIDCacheArgs,
     ModifyTableCharsetAndCollateArgs, ModifyTableCommentArgs, ModifyTableEngineAttributeArgs,
     PlacementPolicyArgs, RebaseAutoIDArgs, RefreshMetaArgs, RenameTableArgs, RenameTablesArgs,

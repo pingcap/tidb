@@ -20,13 +20,13 @@
 use tidb_ast::Stmt;
 use tidb_datatype::Datum;
 
-use crate::{run_create_table_on, run_insert_on, run_select_on, Catalog, StmtContext};
+use crate::{run_create_table_on, run_insert_on, run_select_on, SessionExtendedInfoSchema, StmtContext};
 
 fn ctx() -> StmtContext {
     StmtContext::for_query()
 }
 
-fn text_rows(catalog: &Catalog, sql: &str) -> Vec<Vec<String>> {
+fn text_rows(catalog: &SessionExtendedInfoSchema, sql: &str) -> Vec<Vec<String>> {
     run_select_on(sql, catalog, &ctx())
         .expect("select succeeds")
         .into_iter()
@@ -44,7 +44,7 @@ fn text_rows(catalog: &Catalog, sql: &str) -> Vec<Vec<String>> {
         .collect()
 }
 
-fn global_temp_catalog() -> Catalog {
+fn global_temp_catalog() -> SessionExtendedInfoSchema {
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create global temporary table t1 (id int primary key, val int) on commit delete rows",

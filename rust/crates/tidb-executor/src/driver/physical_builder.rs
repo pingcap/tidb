@@ -40,7 +40,7 @@ use tidb_executor_aggregate::HashAggExec;
 use tidb_executor_aggregate::StreamAggExec;
 use tidb_executor_join::executor::{HashJoinV2Executor, HashJoinV2Plan};
 use crate::index_merge_reader::{
-    ExecutorPartialHandleSource, HandleRef, IndexMergeReaderExec, MergeByItem, PartialHandleBatch,
+    ExecutorPartialHandleSource, HandleRef, IndexMergeReaderExecutor, MergeByItem, PartialHandleBatch,
     PartialHandleColumns, PartialHandleSource, PartitionedHandleSource,
     PushedDownLimit as ExecutorPushedDownLimit,
 };
@@ -66,7 +66,7 @@ use crate::selection::SelectionExec;
 use tidb_executor_sortexec::{SortByItem, SortExec};
 use tidb_executor_internal_exec::table_access::TableAccess;
 use crate::table_dual::TableDualExec;
-use crate::table_sample::{SampleOutputColumn, TableSampleExec};
+use crate::table_sample::{SampleOutputColumn, TableSampleExecutor};
 use tidb_executor_sortexec::topn::TopNExec;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{FieldType, FieldTypeCode};
@@ -78,11 +78,11 @@ use tidb_expr::schema::Schema;
 use tidb_hack::GoCaseCompare;
 use tidb_planner_core_base::LogicalJoinType;
 use tidb_planner_core_operator_physicalop::{
-    PhysicalBatchPointGet, PhysicalIndexScan, PhysicalMemTable, PhysicalPlan, PhysicalPointGet,
+    BatchPointGetPlan, PhysicalIndexScan, PhysicalMemTable, PhysicalPlan, PointGetPlan,
     PhysicalTableSample, PhysicalTableScan,
 };
 
-use super::{Catalog, DriverError};
+use super::{SessionExtendedInfoSchema, DriverError};
 
 struct CteBuildSlot {
     result: SharedCteStorage,
@@ -1223,7 +1223,7 @@ fn table_scan_schema(
 fn build_table_scan(
     plan: &PhysicalPlan,
     scan: &PhysicalTableScan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     net_bytes: Option<f64>,
     range_group: Option<&tidb_ranger::types::Ranges>,
@@ -1370,7 +1370,7 @@ fn build_table_scan(
 fn build_table_sample(
     plan: &PhysicalPlan,
     sample: &PhysicalTableSample,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let physical_ids = if sample.table_sample_info.partition_ids.is_empty() {
@@ -1402,7 +1402,7 @@ fn build_table_sample(
         _ => {}
     }
     if tables.is_empty() {
-        return Ok(Box::new(TableSampleExec::new(
+        return Ok(Box::new(TableSampleExecutor::new(
             meta(ctx, plan, plan_schema(plan)?),
             Vec::new(),
             Vec::new(),
@@ -1465,7 +1465,7 @@ fn build_table_sample(
         .into_iter()
         .map(std::sync::Arc::unwrap_or_clone)
         .collect();
-    Ok(Box::new(TableSampleExec::new(
+    Ok(Box::new(TableSampleExecutor::new(
         meta(ctx, plan, schema),
         tables,
         ranges,
@@ -1516,7 +1516,7 @@ impl MemoryTableRows {
 /// the statement's session gave one that serves its table.
 fn owned_mem_table_retriever(
     plan: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Option<(
     crate::mem_table_retrieval::MemTableRead,
@@ -1546,7 +1546,7 @@ fn memory_table_rows(
     plan: &PhysicalPlan,
     database: &str,
     table: &str,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<MemoryTableRows, DriverError> {
     match catalog
@@ -1582,7 +1582,7 @@ fn memory_table_rows(
 fn build_mem_table(
     plan: &PhysicalPlan,
     scan: &PhysicalMemTable,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
     if scan.db_name.go_lower_eq("metrics_schema") {
@@ -1753,7 +1753,7 @@ fn build_aggregation(
     descriptors: &[AggFuncDesc],
     group_by: &[Expression],
     stream: bool,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -1853,7 +1853,7 @@ fn build_aggregation_over_child(
 fn build_window(
     plan: &PhysicalPlan,
     window: &tidb_planner_core_operator_physicalop::PhysicalWindow,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -2153,7 +2153,7 @@ fn pushed_partial_aggregation(
 fn build_reader(
     reader_id: i32,
     embedded: Option<&PhysicalPlan>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -2564,7 +2564,7 @@ fn build_index_reader(
     scan_limit: Option<u64>,
     net_bytes: Option<f64>,
     range_group: Option<&tidb_ranger::types::Ranges>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     storage: &ReaderStorage,
     cop_chain: Option<&CopChain>,
@@ -3130,7 +3130,7 @@ fn index_join_probe_tails(join: &tidb_planner_core_operator_physicalop::Physical
 fn index_join_probe_key_domains(
     join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
     probe_parts: &[LookupProbePart],
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
 ) -> Result<Vec<IndexProbeKeyDomain>, DriverError> {
     let table_id = join.inner_access_table_id.ok_or_else(|| {
         DriverError::unsupported("a physical index join has no retained inner table ID")
@@ -3322,7 +3322,7 @@ fn build_index_inner_reader(
     join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
     probe_parts: &[LookupProbePart],
     shared: Option<&std::sync::Arc<std::sync::Mutex<SharedIndexJoinProbes>>>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     offset_schema: Option<&Schema>,
     storage: &ReaderStorage,
@@ -3449,7 +3449,7 @@ fn build_index_inner_subtree(
     join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
     probe_parts: &[LookupProbePart],
     shared: &std::sync::Arc<std::sync::Mutex<SharedIndexJoinProbes>>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -3672,7 +3672,7 @@ fn build_index_lookup_source(
     inner: &PhysicalPlan,
     join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
     probe_parts: &[LookupProbePart],
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<IndexLookupSource, DriverError> {
@@ -3698,7 +3698,7 @@ fn build_index_lookup_source(
 fn build_index_join(
     plan: &PhysicalPlan,
     join: &tidb_planner_core_operator_physicalop::PhysicalIndexJoin,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -3891,7 +3891,7 @@ fn build_join(
     left_conditions: &[Expression],
     right_conditions: &[Expression],
     other_conditions: &[Expression],
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<JoinExec<crate::StmtContext>, DriverError> {
@@ -4065,7 +4065,7 @@ fn is_ga_for_hash_join_v2(join: &tidb_planner_core_operator_physicalop::Physical
 fn build_hash_join_v2(
     plan: &PhysicalPlan,
     join: &tidb_planner_core_operator_physicalop::PhysicalHashJoin,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -4254,7 +4254,7 @@ fn build_hash_join_v2(
 fn build_apply(
     plan: &PhysicalPlan,
     apply: &tidb_planner_core_operator_physicalop::PhysicalApply,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -4728,8 +4728,8 @@ fn unique_index_point_values(
 }
 
 fn point_partition_id(
-    point: &PhysicalPointGet,
-    catalog: &Catalog,
+    point: &PointGetPlan,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<Option<i64>, DriverError> {
     let Some(routing) = &point.partition else {
@@ -4878,7 +4878,7 @@ fn partition_ids_named(table: &tidb_table::tables::TableCommon, names: &[String]
 fn select_lock_executor(
     lock: &tidb_planner_core_operator_physicalop::PhysicalLock,
     child: Box<dyn Executor>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let Some(selected) = ctx.selected_lock_keys() else {
@@ -5014,7 +5014,7 @@ fn with_select_lock(
     plan: &PhysicalPlan,
     select_lock: Option<(tidb_planner_core_operator_logicalop::SelectLockType, u64)>,
     table_id: i64,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     build: impl FnOnce(&PhysicalPlan) -> Result<Box<dyn Executor>, DriverError>,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -5127,8 +5127,8 @@ fn point_lock(
 
 fn build_point_get(
     plan: &PhysicalPlan,
-    point: &PhysicalPointGet,
-    catalog: &Catalog,
+    point: &PointGetPlan,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     snapshot_stats: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -5210,8 +5210,8 @@ fn build_point_get(
 
 fn build_batch_point_get(
     plan: &PhysicalPlan,
-    batch: &PhysicalBatchPointGet,
-    catalog: &Catalog,
+    batch: &BatchPointGetPlan,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     snapshot_stats: Option<Arc<tikv_client::SnapshotRuntimeStats>>,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -5337,7 +5337,7 @@ fn configure_point_snapshot_read(
 fn wrap_point_index_usage(
     child: Box<dyn Executor>,
     table: tidb_table::tables::TableCommon,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     index_id: Option<i64>,
     command: PointCommand,
@@ -5527,7 +5527,7 @@ impl PartialHandleSource for IndexPartialHandleSource {
 fn build_index_merge_reader(
     plan: &PhysicalPlan,
     reader: &tidb_planner_core_operator_physicalop::PhysicalIndexMergeReader,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -5785,7 +5785,7 @@ fn build_index_merge_reader(
             desc: item.desc,
         })
         .collect();
-    let mut executor = IndexMergeReaderExec::new(
+    let mut executor = IndexMergeReaderExecutor::new(
         meta(ctx, plan, schema.clone()),
         (*table).clone(),
         RowDecodeContext::for_query(ctx),
@@ -5930,7 +5930,7 @@ fn set_index_merge_partition(plan: &mut PhysicalPlan, physical_id: i64) {
 /// [`DriverError::MemTableRetrievalNeeded`] so the session retrieves them.
 pub(crate) fn prepare_execution_plan(
     plan: &mut PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     prepare_execution_plan_node(plan, catalog, ctx, true)?;
@@ -5945,7 +5945,7 @@ pub(crate) fn prepare_execution_plan(
 /// retriever runs.
 pub(crate) fn prepare_plan_for_explain(
     plan: &mut PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     prepare_execution_plan_node(plan, catalog, ctx, false)
@@ -6002,7 +6002,7 @@ fn mem_table_read_of(plan: &PhysicalPlan) -> Option<crate::mem_table_retrieval::
 /// `information_schema` / `performance_schema` table are not stored, so the
 /// session produces them per scan. A table the catalog stores as materialized
 /// rows (a fixture, `SHOW ... WHERE`'s selection) already holds its own.
-fn request_memory_table_rows(plan: &PhysicalPlan, catalog: &Catalog, ctx: &crate::StmtContext) {
+fn request_memory_table_rows(plan: &PhysicalPlan, catalog: &SessionExtendedInfoSchema, ctx: &crate::StmtContext) {
     let Some(read) = mem_table_read_of(plan) else {
         return;
     };
@@ -6024,7 +6024,7 @@ fn request_memory_table_rows(plan: &PhysicalPlan, catalog: &Catalog, ctx: &crate
 
 fn prepare_execution_plan_node(
     plan: &mut PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     retrieve: bool,
 ) -> Result<(), DriverError> {
@@ -6131,7 +6131,7 @@ fn cte_reader(
 fn build_cte(
     plan: &PhysicalPlan,
     cte: &tidb_planner_core_operator_physicalop::PhysicalCTE,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -6241,7 +6241,7 @@ fn build_cte_table(
 fn build_shuffle(
     plan: &PhysicalPlan,
     shuffle: &tidb_planner_core_operator_physicalop::PhysicalShuffle,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -6323,7 +6323,7 @@ fn build_shuffle(
 /// the per-node metering [`build_with_state`] adds.
 fn build_reader_node(
     plan: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -6464,7 +6464,7 @@ fn range_grouped_scan(
 /// scan property's items (`NewSortedSelectResults`).
 fn build_range_grouped_reader(
     plan: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -6534,7 +6534,7 @@ fn build_range_grouped_reader(
 fn build_cluster_table_scan(
     plan: &PhysicalPlan,
     scan: &PhysicalTableScan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let table = memory_table_rows(plan, &scan.db_name, &scan.table_name, catalog, ctx)?;
@@ -6621,7 +6621,7 @@ fn build_cluster_table_scan(
 
 fn build_with_state(
     plan: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -7360,7 +7360,7 @@ impl crate::mem_reader::MemRowsIter for ReaderMemRowsIter {
 fn build_union_scan(
     plan: &PhysicalPlan,
     union_scan: &tidb_planner_core_operator_physicalop::PhysicalUnionScan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
@@ -7561,7 +7561,7 @@ fn build_union_scan(
 
 pub(super) fn build(
     plan: &PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let mut state = BuildState {
@@ -7715,7 +7715,7 @@ pub(super) fn planned_result_columns(
 pub(super) fn open_query(
     query: &tidb_ast::QueryStmt,
     physical: &mut PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<super::QueryRecordSet, DriverError> {
     // Go `runStmt` -> `ExecStmt.Exec`: build the executor and open it --
@@ -7756,7 +7756,7 @@ pub(super) fn open_query(
 /// over the rows the session supplied, and opened.
 pub(super) fn open_show(
     physical: &mut PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<super::QueryRecordSet, DriverError> {
     super::begin_run_stmt_region();
@@ -7779,7 +7779,7 @@ pub(super) fn open_show(
 /// rendering cannot accidentally attribute a duplicate plan id to a sibling.
 pub(crate) fn execute_for_explain(
     physical: &mut PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<PhysicalRuntimeStats, DriverError> {
     prepare_execution_plan(physical, catalog, ctx)?;
@@ -7817,7 +7817,7 @@ pub(crate) fn execute_for_explain(
 /// keeps the physical tree for the EXPLAIN root, so this borrows it.
 pub(crate) fn execute_first_row(
     physical: &mut PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<(Vec<tidb_datatype::Datum>, bool), DriverError> {
     prepare_execution_plan(physical, catalog, ctx)?;
@@ -7845,7 +7845,7 @@ pub(crate) fn execute_first_row(
 /// builder without the metering wrappers.
 pub(crate) fn execute_dml_source(
     physical: &mut PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     analyze: bool,
     visit: impl FnMut(Vec<tidb_datatype::Datum>) -> Result<(), DriverError>,
@@ -7860,10 +7860,10 @@ pub(crate) fn execute_dml_source(
 /// again for the rows' writes.
 pub(crate) fn execute_dml_source_writing(
     physical: &mut PhysicalPlan,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     analyze: bool,
-    visit: impl FnMut(&mut Catalog, Vec<tidb_datatype::Datum>) -> Result<(), DriverError>,
+    visit: impl FnMut(&mut SessionExtendedInfoSchema, Vec<tidb_datatype::Datum>) -> Result<(), DriverError>,
 ) -> Result<PhysicalRuntimeStats, DriverError> {
     prepare_execution_plan(physical, catalog, ctx)?;
     let mut state = BuildState {
@@ -7887,7 +7887,7 @@ pub(crate) fn execute_dml_source_writing(
 /// the source executor returned.
 pub(crate) fn execute_dml_source_chunks(
     physical: &mut PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     analyze: bool,
     visit: impl FnMut(Vec<tidb_datatype::Datum>) -> Result<(), DriverError>,
@@ -7916,7 +7916,7 @@ mod tests {
     use crate::KvTableDdl;
 use super::*;
     use tidb_datatype::Datum;
-    use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, PhysicalBatchPointGet, PhysicalCTE, PhysicalCTETable, PhysicalIndexMergeReader, PhysicalMaxOneRow, PhysicalPointGet, PhysicalSelection, PhysicalTableDual, PhysicalTableReader, PhysicalUnionAll};
+    use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, BatchPointGetPlan, PhysicalCTE, PhysicalCTETable, PhysicalIndexMergeReader, PhysicalMaxOneRow, PointGetPlan, PhysicalSelection, PhysicalTableDual, PhysicalTableReader, PhysicalUnionAll};
 
     /// Go `LimitExec.Close`: a close that takes over a millisecond records
     /// `limitExec.Close` from when the close began, under the span the
@@ -8777,7 +8777,7 @@ use super::*;
 
         let mut base = BasePhysicalPlan::with_id(10, "PointGet", 0);
         base.base.set_schema(Some(two_long_schema()));
-        let plan = PhysicalPlan::PointGet(PhysicalPointGet {
+        let plan = PhysicalPlan::PointGet(PointGetPlan {
             base,
             table_id: 43,
             partition: None,
@@ -8852,7 +8852,7 @@ use super::*;
 
         let mut base = BasePhysicalPlan::with_id(13, "PointGet", 0);
         base.base.set_schema(Some(two_long_schema()));
-        let plan = PhysicalPlan::PointGet(PhysicalPointGet {
+        let plan = PhysicalPlan::PointGet(PointGetPlan {
             base,
             table_id: 46,
             partition: None,
@@ -8907,7 +8907,7 @@ use super::*;
             low_exclude: false,
             high_exclude: false,
         };
-        let plan = PhysicalPlan::BatchPointGet(PhysicalBatchPointGet {
+        let plan = PhysicalPlan::BatchPointGet(BatchPointGetPlan {
             base,
             table_id: 44,
             index_id: None,
@@ -8985,7 +8985,7 @@ use super::*;
             low_exclude: false,
             high_exclude: false,
         };
-        let plan = PhysicalPlan::BatchPointGet(PhysicalBatchPointGet {
+        let plan = PhysicalPlan::BatchPointGet(BatchPointGetPlan {
             base,
             table_id: 45,
             index_id: Some(8),

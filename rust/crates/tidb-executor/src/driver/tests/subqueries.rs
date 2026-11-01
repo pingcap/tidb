@@ -478,7 +478,7 @@ fn explaining_a_correlated_scalar_type_reads_no_storage() {
 
     fn explain_without_storage(
         sql: &str,
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         ctx: &crate::StmtContext,
     ) -> Vec<Vec<Datum>> {
         let statement = tidb_parser::parse(sql).unwrap();

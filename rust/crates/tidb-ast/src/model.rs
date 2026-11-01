@@ -781,7 +781,7 @@ mod tests {
     }
 
     /// Go capture (go1.26.0): strings.ToLower("ΟΔΟΣ") == "οδοσ" with U+03C3,
-    /// and strings.ToLower("İ") == "i" as a single U+0069. Catalog lookups key
+    /// and strings.ToLower("İ") == "i" as a single U+0069. SessionExtendedInfoSchema lookups key
     /// on CiString.L, so any deviation hides a Go-created object from Rust.
     #[test]
     fn identifier_folding_uses_go_simple_case_mapping() {

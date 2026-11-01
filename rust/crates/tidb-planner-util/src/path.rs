@@ -142,7 +142,7 @@ impl Eq for PossiblePath {}
 
 /// Go `util.IndexLookUpPushDownByType`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum IndexLookupPushDownBy {
+pub enum IndexLookUpPushDownByType {
     /// Go `IndexLookUpPushDownNone`.
     #[default]
     None,
@@ -306,7 +306,7 @@ pub struct ResolvedIndexPaths {
     /// Whether the TiKV table path has `ForceNoKeepOrder` set.
     pub force_no_keep_order_table_path: bool,
     /// Go `AccessPath.IndexLookUpPushDownBy`, keyed by index ID.
-    pub index_lookup_push_down_by: std::collections::BTreeMap<i64, IndexLookupPushDownBy>,
+    pub index_lookup_push_down_by: std::collections::BTreeMap<i64, IndexLookUpPushDownByType>,
     /// Unknown names from comment-style hints; Go downgrades these to 1176
     /// warnings while table-syntax hints return the error directly.
     pub unknown_comment_indexes: Vec<String>,

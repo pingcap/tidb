@@ -21,7 +21,7 @@
 
 use tidb_datatype::Datum;
 use crate::show_regions::get_policy_placement;
-use crate::{Catalog, TableEntry};
+use crate::{SessionExtendedInfoSchema, TableEntry};
 use tidb_hack::GoCaseCompare;
 use tidb_model::PlacementSettings;
 
@@ -43,7 +43,7 @@ pub fn row(target: String, placement: &PlacementSettings, state: &str) -> Vec<Da
 /// partitions after (`fetchAllTablePlacements`): the table's own row, then
 /// each partition's.
 pub fn table_rows(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     database: &str,
     entry: &TableEntry,
     table_name: &str,
@@ -77,7 +77,7 @@ pub fn table_rows(
 
 /// The schema's own placement row, if it has a policy. Its state is
 /// `PENDING` while any table exists.
-pub fn database_rows(catalog: &Catalog, database: &str) -> Result<Option<Vec<Datum>>, DriverError> {
+pub fn database_rows(catalog: &SessionExtendedInfoSchema, database: &str) -> Result<Option<Vec<Datum>>, DriverError> {
     let Some(placement) = get_policy_placement(catalog, catalog.database_placement_policy(database))?
     else {
         return Ok(None);
@@ -95,7 +95,7 @@ pub fn database_rows(catalog: &Catalog, database: &str) -> Result<Option<Vec<Dat
 /// The table `SHOW PLACEMENT FOR TABLE | PARTITION` names, with the schema and
 /// table names as the catalog stores them.
 pub fn placement_table<'a>(
-    catalog: &'a Catalog,
+    catalog: &'a SessionExtendedInfoSchema,
     database: &str,
     table_name: &str,
 ) -> Result<(String, String, &'a TableEntry), DriverError> {

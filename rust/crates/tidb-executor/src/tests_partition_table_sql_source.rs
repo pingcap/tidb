@@ -19,7 +19,7 @@
 
 use crate::{
     run_create_table_on, run_delete_on, run_insert_on, run_select_on,
-    run_update_on, Catalog, StmtContext,
+    run_update_on, SessionExtendedInfoSchema, StmtContext,
 };
 use tidb_datatype::StringDatum;
 use tidb_datatype::Datum;
@@ -89,7 +89,7 @@ fn sorted(mut rows: Vec<Vec<Datum>>) -> Vec<Vec<Datum>> {
     rows
 }
 
-fn select_sorted(catalog: &Catalog, sql: &str) -> Vec<Vec<Datum>> {
+fn select_sorted(catalog: &SessionExtendedInfoSchema, sql: &str) -> Vec<Vec<Datum>> {
     match run_select_on(sql, catalog, &ctx()) {
         Ok(rows) => sorted(rows),
         Err(error) => panic!("query {sql:?} failed: {error:?}"),
@@ -118,7 +118,7 @@ fn rows_text(rows: &[Vec<Datum>]) -> Vec<Vec<String>> {
         .collect()
 }
 
-fn must_insert(catalog: &mut Catalog, sql: &str) {
+fn must_insert(catalog: &mut SessionExtendedInfoSchema, sql: &str) {
     run_insert_on(sql, catalog, &ctx()).unwrap_or_else(|error| panic!("insert {sql:?}: {error:?}"));
 }
 
@@ -432,7 +432,7 @@ fn order_by_limit_partitions_match_regular() {
 /// over its unpartitioned twin must return the same rows for the same
 /// filters. Go builds `vhash`/`v1` via CREATE VIEW with `definer='root'` and
 /// random 3000-row fixtures; this tier registers the resolved view definition
-/// (`Catalog::register_view_in`, the CREATE VIEW surface it captures) and
+/// (`SessionExtendedInfoSchema::register_view_in`, the CREATE VIEW surface it captures) and
 /// uses 300 rows. Go's `trange`/`vrange`/`vboth` arms add RANGE-COLUMNS
 /// partitioning and two-table views; the same lowering applies, and the
 /// 100-random-query loops are plan-identical differentials already covered by

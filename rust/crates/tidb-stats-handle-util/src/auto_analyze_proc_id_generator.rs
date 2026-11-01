@@ -15,7 +15,7 @@
 use std::collections::HashSet;
 use std::sync::{Arc, LazyLock, RwLock};
 
-use tidb_sqlexec::{SqlExecError, TrackProcess, TrackSysProc, UntrackSysProc};
+use tidb_sqlexec::{SqlExecError, TrackProc, TrackSysProc, UntrackSysProc};
 
 /// Go `AutoAnalyzeProcIDGenerator`.
 pub trait AutoAnalyzeProcIdGenerator: Send + Sync {
@@ -115,7 +115,7 @@ impl AutoAnalyzeTracker {
 
     /// Go `Track`. The global list is updated before the delegated callback,
     /// including when that callback returns an error.
-    pub fn track(&self, id: u64, context: Arc<dyn TrackProcess>) -> Result<(), SqlExecError> {
+    pub fn track(&self, id: u64, context: Arc<dyn TrackProc>) -> Result<(), SqlExecError> {
         GLOBAL_AUTO_ANALYZE_PROCESS_LIST.tracker(id);
         (self.track)(id, context)
     }

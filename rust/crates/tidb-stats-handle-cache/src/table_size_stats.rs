@@ -25,7 +25,7 @@
 //! walked are the statement's own schema.
 
 use tidb_table::tables::TableCommon;
-use tidb_infoschema::Catalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_datatype::{UNSPECIFIED_LENGTH, VAR_STORAGE_LEN};
 
 /// `(rows, average row length, data length, index length)`.
@@ -48,7 +48,7 @@ pub struct TableStorageEstimate {
 /// `cache.TableRowStatsCache` for each physical ID.
 #[must_use]
 pub fn table_storage_estimates_from_row_stats(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     row_stats: &TableRowStatsSnapshot,
 ) -> Vec<TableStorageEstimate> {
     estimates_from(catalog, row_stats)
@@ -58,7 +58,7 @@ pub fn table_storage_estimates_from_row_stats(
 /// partitions, the IDs Go's readers refresh the size cache for
 /// (`updateStatsCacheIfNeed`).
 #[must_use]
-pub fn physical_table_ids(catalog: &Catalog) -> Vec<i64> {
+pub fn physical_table_ids(catalog: &SessionExtendedInfoSchema) -> Vec<i64> {
     let mut ids = Vec::new();
     for database in catalog.database_names() {
         for name in catalog.table_names(&database).unwrap_or_default() {
@@ -87,7 +87,7 @@ pub struct TableRowStatsSnapshot {
 
 /// The estimates of every stored table in `catalog` from `source`.
 #[must_use]
-pub fn estimates_from(catalog: &Catalog, source: &dyn TableSizeSource) -> Vec<TableStorageEstimate> {
+pub fn estimates_from(catalog: &SessionExtendedInfoSchema, source: &dyn TableSizeSource) -> Vec<TableStorageEstimate> {
     let stats = SizeStats { source };
     let mut estimates = Vec::new();
     for database in catalog.database_names() {

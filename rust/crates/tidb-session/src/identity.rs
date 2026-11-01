@@ -706,9 +706,9 @@ impl Session {
     /// of the same name for name resolution too).
     pub(crate) fn with_planning_catalog<T>(
         &self,
-        plan: impl FnOnce(&tidb_infoschema::Catalog) -> Result<T, DriverError>,
+        plan: impl FnOnce(&tidb_infoschema::SessionExtendedInfoSchema) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
-        let overlay = |catalog: &tidb_infoschema::Catalog| {
+        let overlay = |catalog: &tidb_infoschema::SessionExtendedInfoSchema| {
             if self.local_temporary_tables.is_empty() {
                 return plan(catalog);
             }

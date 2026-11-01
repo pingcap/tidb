@@ -18,7 +18,7 @@
 //! This is the dependency-closed part of Go `expression.PbConverter`
 //! (`pkg/expression/expr_to_pb.go`): a resolved TiKV DAG column offset or
 //! integer constant becomes a TiPB leaf, and one predicate becomes a
-//! scalar-function node. Catalog binding, type coercion, pushdown admission,
+//! scalar-function node. SessionExtendedInfoSchema binding, type coercion, pushdown admission,
 //! conjunction splitting, and DAG executor construction remain with their
 //! existing owners.
 //!

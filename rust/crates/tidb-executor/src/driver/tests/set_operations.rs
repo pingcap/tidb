@@ -208,7 +208,7 @@ fn set_operations() {
     )
     .unwrap();
 
-    let sorted = |sql: &str, catalog: &Catalog| {
+    let sorted = |sql: &str, catalog: &SessionExtendedInfoSchema| {
         let mut got: Vec<i64> = run_select_on(sql, catalog, &crate::StmtContext::for_query())
             .unwrap()
             .into_iter()
@@ -220,7 +220,7 @@ fn set_operations() {
         got.sort_unstable();
         got
     };
-    let listed = |sql: &str, catalog: &Catalog| {
+    let listed = |sql: &str, catalog: &SessionExtendedInfoSchema| {
         run_select_on(sql, catalog, &crate::StmtContext::for_query())
             .unwrap()
             .into_iter()

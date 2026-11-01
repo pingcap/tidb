@@ -29,23 +29,23 @@
 use crate::KvTableReader;
 #[allow(unused_imports)]
 use crate::RowDecodeContextExt;
-use crate::{admin_check, run_create_table_on, run_insert_on, Catalog, RowDecodeContext};
+use crate::{admin_check, run_create_table_on, run_insert_on, SessionExtendedInfoSchema, RowDecodeContext};
 
 fn ctx() -> crate::StmtContext {
     crate::StmtContext::for_query()
 }
 
-fn create(catalog: &mut Catalog, sql: &str) {
+fn create(catalog: &mut SessionExtendedInfoSchema, sql: &str) {
     run_create_table_on(sql, catalog)
         .unwrap_or_else(|error| panic!("create {sql:?} failed: {error:?}"));
 }
 
-fn insert(catalog: &mut Catalog, sql: &str) {
+fn insert(catalog: &mut SessionExtendedInfoSchema, sql: &str) {
     run_insert_on(sql, catalog, &ctx())
         .unwrap_or_else(|error| panic!("insert {sql:?} failed: {error:?}"));
 }
 
-fn kv_table_of(catalog: &Catalog, name: &str) -> tidb_table::tables::TableCommon {
+fn kv_table_of(catalog: &SessionExtendedInfoSchema, name: &str) -> tidb_table::tables::TableCommon {
     let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", name) else {
         panic!("table {name} is not stored as bytes");
     };

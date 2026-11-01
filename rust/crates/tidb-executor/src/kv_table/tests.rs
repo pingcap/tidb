@@ -171,7 +171,7 @@ fn test_options() {
     // Direct port of pkg/table/table_test.go::TestOptions. Rust builders
     // replace Go's variadic functional options, but the zero values and
     // every conversion retain the same observable fields.
-    let add = AddRecordOptions::new();
+    let add = AddRecordOpt::new();
     assert!(add.context().is_none());
     assert!(!add.is_update());
     assert!(!add.generate_record_id());
@@ -183,7 +183,7 @@ fn test_options() {
 
     let context: std::rc::Rc<dyn tidb_tblctx::MutateContext> =
         std::rc::Rc::new(crate::StmtContext::default());
-    let add = AddRecordOptions::new()
+    let add = AddRecordOpt::new()
         .with_context(context.clone())
         .for_update()
         .with_reserve_auto_id_hint(12);
@@ -196,7 +196,7 @@ fn test_options() {
         &context
     ));
 
-    let update = UpdateRecordOptions::new();
+    let update = UpdateRecordOpt::new();
     assert!(update.context().is_none());
     assert!(!update.skip_write_untouched_indices());
     let generated = update.get_add_record_opt();
@@ -207,7 +207,7 @@ fn test_options() {
     assert!(!kept.generate_record_id());
     assert!(update.create_index_options().context().is_none());
 
-    let update = UpdateRecordOptions::new().with_context(context.clone());
+    let update = UpdateRecordOpt::new().with_context(context.clone());
     assert!(std::rc::Rc::ptr_eq(update.context().unwrap(), &context));
     assert!(std::rc::Rc::ptr_eq(
         update.get_add_record_opt().context().unwrap(),
@@ -225,7 +225,7 @@ fn test_options() {
         &context
     ));
 
-    let create = CreateIndexOptions::new();
+    let create = CreateIdxOpt::new();
     assert!(create.context().is_none());
     assert!(!create.ignore_assertion());
     assert!(!create.from_backfill());

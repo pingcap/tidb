@@ -240,7 +240,7 @@ use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalPlan};
 use tidb_planner_core_base::{PlanError, PlanIdAllocator};
 
 use tidb_infoschema::table_source::TableSource;
-use handle_col_helper::{HandleColHelper, HandleColMap, PlanHandleCols};
+use handle_col_helper::{HandleColHelper, HandleColMap, HandleCols};
 use marker::{MarkerKind, PlanMarker};
 use only_full_group_by::inner_from_parentheses_and_unary_plus;
 
@@ -486,7 +486,7 @@ fn index_hints_from_plan(
         .iter()
         .map(|hint| {
             let (kind, force_keep_order, force_no_keep_order, hint_name) = match hint.kind {
-                tidb_hint::HintedIndexKind::Use => (
+                tidb_hint::IndexHintType::Use => (
                     tidb_ast::IndexHintKind::Use,
                     false,
                     false,
@@ -496,19 +496,19 @@ fn index_hints_from_plan(
                         "USE_INDEX"
                     },
                 ),
-                tidb_hint::HintedIndexKind::Ignore => (
+                tidb_hint::IndexHintType::Ignore => (
                     tidb_ast::IndexHintKind::Ignore,
                     false,
                     false,
                     "IGNORE_INDEX",
                 ),
-                tidb_hint::HintedIndexKind::Force => {
+                tidb_hint::IndexHintType::Force => {
                     (tidb_ast::IndexHintKind::Force, false, false, "FORCE_INDEX")
                 }
-                tidb_hint::HintedIndexKind::Order => {
+                tidb_hint::IndexHintType::Order => {
                     (tidb_ast::IndexHintKind::Use, true, false, "ORDER_INDEX")
                 }
-                tidb_hint::HintedIndexKind::NoOrder => {
+                tidb_hint::IndexHintType::NoOrder => {
                     (tidb_ast::IndexHintKind::Use, false, true, "NO_ORDER_INDEX")
                 }
             };
@@ -3829,16 +3829,16 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         format!("map[{}]", engines.join(" "))
     }
 
-    fn plan_handle_cols(&self, handle_cols: &[Column], handle_is_int: bool) -> PlanHandleCols {
+    fn plan_handle_cols(&self, handle_cols: &[Column], handle_is_int: bool) -> HandleCols {
         use tidb_planner_util::handle_cols::{CommonHandleIdentity, HandleColumnIdentity, IntHandleIdentity};
         let identities: Vec<HandleColumnIdentity> = handle_cols
             .iter()
             .map(|column| HandleColumnIdentity::new(column.id, column.unique_id, column.index))
             .collect();
         if handle_is_int {
-            PlanHandleCols::Int(IntHandleIdentity::new(identities.first().cloned()))
+            HandleCols::Int(IntHandleIdentity::new(identities.first().cloned()))
         } else {
-            PlanHandleCols::Common(CommonHandleIdentity::new(None, None, Some(identities)))
+            HandleCols::Common(CommonHandleIdentity::new(None, None, Some(identities)))
         }
     }
 

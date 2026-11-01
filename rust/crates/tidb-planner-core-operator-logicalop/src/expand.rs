@@ -30,7 +30,7 @@
 //!   `GroupingSets`/`GroupingSet`/`GroupingExprs` are NOT transcreated. Every
 //!   body in this Go file reads a grouping set through exactly one method —
 //!   `GroupingSet.AllColIDs()` — and the file-level `AllSetsColIDs()` is their
-//!   union, so [`RollupGroupingSet`] carries that column-id set and nothing
+//!   union, so [`GroupingSet`] carries that column-id set and nothing
 //!   else. What is lost is the EXPRESSION form of a set, which only
 //!   `expression.GroupingSets.DistinctSize` and the grouping-set builder in
 //!   `pkg/expression/grouping_sets.go` need.
@@ -84,12 +84,12 @@ pub enum GroupingMode {
 /// Go `expression.GroupingSet` as `logical_expand.go` uses it: the set of
 /// column unique ids the set groups by. See this module's header.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct RollupGroupingSet {
+pub struct GroupingSet {
     /// Go `GroupingSet.AllColIDs()`.
     pub col_ids: BTreeSet<i64>,
 }
 
-impl RollupGroupingSet {
+impl GroupingSet {
     /// A grouping set over the given column unique ids.
     #[must_use]
     pub fn new(col_ids: impl IntoIterator<Item = i64>) -> Self {
@@ -118,7 +118,7 @@ pub struct LogicalExpand {
     /// Go `DistinctSize`; see this module's header.
     pub distinct_size: i64,
     /// Go `RollupGroupingSets`.
-    pub rollup_grouping_sets: Vec<RollupGroupingSet>,
+    pub rollup_grouping_sets: Vec<GroupingSet>,
     /// Go `RollupID2GIDS`: for `ModeNumericSet`, each column's grouping ids.
     pub rollup_id_to_gids: BTreeMap<i64, BTreeSet<u64>>,
     /// Go `RollupGroupingIDs`, one per grouping set in order.
@@ -254,7 +254,7 @@ impl LogicalExpand {
     /// BOUNDARY: Go's first two lines call
     /// `expression.GroupingSets.AllSetsColIDs()` and
     /// `expression.GroupingSets.DistinctSize()`, of which only the former is
-    /// dependency-closed here (it is the union of [`RollupGroupingSet::col_ids`]).
+    /// dependency-closed here (it is the union of [`GroupingSet::col_ids`]).
     /// `DistinctSize` fills [`Self::distinct_size`], [`Self::rollup_grouping_ids`]
     /// and [`Self::rollup_id_to_gids`]; this body READS those three rather than
     /// recomputing them, so the builder must have filled them.
@@ -322,7 +322,7 @@ impl LogicalExpand {
     /// `101`. Two grouping sets that name the same columns therefore share a
     /// grouping id, which is exactly what a duplicate set is.
     #[must_use]
-    pub fn generate_grouping_id_mode_bit_and(&self, one_set: &RollupGroupingSet) -> u64 {
+    pub fn generate_grouping_id_mode_bit_and(&self, one_set: &GroupingSet) -> u64 {
         let mut res = 0_u64;
         for col in self.distinct_group_by_col.iter().rev() {
             res <<= 1;

@@ -3936,7 +3936,7 @@ mod task_tests {
                 table_schema.clone(),
                 1_000.0,
             ))),
-            index_lookup_push_down_by: tidb_planner_util::path::IndexLookupPushDownBy::Hint,
+            index_lookup_push_down_by: tidb_planner_util::path::IndexLookUpPushDownByType::Hint,
             ..CopTask::default()
         })
         .convert_to_root_task(&allocator)
@@ -3965,7 +3965,7 @@ mod task_tests {
                 1_000.0,
             ))),
             common_handle_cols: vec![column_with_id(1), column_with_id(2)],
-            index_lookup_push_down_by: tidb_planner_util::path::IndexLookupPushDownBy::Hint,
+            index_lookup_push_down_by: tidb_planner_util::path::IndexLookUpPushDownByType::Hint,
             ..CopTask::default()
         })
         .convert_to_root_task(&allocator)
@@ -4021,7 +4021,7 @@ mod task_tests {
         let complex = Task::Cop(CopTask {
             index_plan: Some(Box::new(limit)),
             table_plan: Some(Box::new(table_scan)),
-            index_lookup_push_down_by: tidb_planner_util::path::IndexLookupPushDownBy::Hint,
+            index_lookup_push_down_by: tidb_planner_util::path::IndexLookUpPushDownByType::Hint,
             ..CopTask::default()
         })
         .convert_to_root_task(&allocator)
@@ -4760,7 +4760,7 @@ mod task_tests {
             Task::Cop(CopTask {
                 index_plan: Some(Box::new(dual_with_rows(1.0))),
                 table_plan: Some(Box::new(dual_with_rows(1.0))),
-                index_lookup_push_down_by: tidb_planner_util::path::IndexLookupPushDownBy::Hint,
+                index_lookup_push_down_by: tidb_planner_util::path::IndexLookUpPushDownByType::Hint,
                 keep_order,
                 ..CopTask::default()
             })

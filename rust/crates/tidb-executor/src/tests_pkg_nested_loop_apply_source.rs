@@ -24,7 +24,7 @@
 //! parse+optimize SUCCEEDS precondition is planner surface and is covered by
 //! the tidb-planner crate's own tests, not re-asserted here.
 
-use crate::{Catalog, StmtContext};
+use crate::{SessionExtendedInfoSchema, StmtContext};
 
 fn ctx() -> StmtContext {
     StmtContext::for_query()
@@ -79,7 +79,7 @@ fn stmt_label_matrix_source() {
 /// `moveInfoSchemaToFront` (pkg/executor/show.go:434) relocates
 /// INFORMATION_SCHEMA, every listing that contains it starts with it and the
 /// remaining names keep ascending order. This tier's surface is
-/// [`Catalog::database_names`], which performs both steps; every catalog
+/// [`SessionExtendedInfoSchema::database_names`], which performs both steps; every catalog
 /// bootstraps INFORMATION_SCHEMA/mysql/test (Go's always contains
 /// INFORMATION_SCHEMA too -- `infoschema.AllSchemaNames`), so the Go
 /// matrices are realized by registering their extra databases and asserting

@@ -33,7 +33,7 @@ mod table_round_trip;
 use crate::StatsStmtCtx as _;
 use super::*;
 
-fn test_catalog() -> Catalog {
+fn test_catalog() -> SessionExtendedInfoSchema {
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE t (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     run_insert_on(
@@ -63,7 +63,7 @@ fn datum_text_for_test(value: &Datum) -> String {
 /// equal to the real-time count makes Go's `EstimateColumnNDV` increase factor
 /// one, so the explicit column NDVs below remain the source statistics.
 fn scale_analyzed_tpcc_table(
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     table_name: &str,
     row_count: i64,
     column_ndvs: &[(&str, i64)],

@@ -30,7 +30,7 @@
 //! `model.DefaultTTLJobInterval` = `"24h"` (`pkg/meta/model/table.go:1433`).
 
 use tidb_executor::run_create_table_on;
-use tidb_infoschema::{Catalog, TableEntry};
+use tidb_infoschema::{SessionExtendedInfoSchema, TableEntry};
 
 /// Creates the Go test's option row over SQL on a `datetime` column (Go
 /// builds the `ast.TableOption` values by hand against no table; a

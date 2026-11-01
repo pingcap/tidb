@@ -218,7 +218,7 @@ pub const SLOW_LOG_SESSION_CONNECT_ATTRS: &str = "Session_connect_attrs";
 
 /// Go `JSONSQLWarnForSlowLog`: one statement warning in the `Warnings` line.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct JsonSqlWarnForSlowLog {
+pub struct JSONSQLWarnForSlowLog {
     /// Go `Level`.
     pub level: String,
     /// Go `Message`.
@@ -333,13 +333,13 @@ pub struct SlowQueryLogItems {
     /// Go `ResultRows`.
     pub result_rows: i64,
     /// Go `Warnings`.
-    pub warnings: Vec<JsonSqlWarnForSlowLog>,
+    pub warnings: Vec<JSONSQLWarnForSlowLog>,
     /// Go `ResourceGroupName`.
     pub resource_group_name: String,
     /// Go `RUDetails`.
     pub ru_details: Option<Arc<tikv_client::RuDetails>>,
     /// Go `RUV2Metrics`.
-    pub ruv2_metrics: Option<tidb_execdetails::ruv2_metrics::RuV2Metrics>,
+    pub ruv2_metrics: Option<tidb_execdetails::ruv2_metrics::RUV2Metrics>,
     /// Go `MemMax`.
     pub mem_max: i64,
     /// Go `DiskMax`.
@@ -385,15 +385,15 @@ pub struct SlowLogSessionVars {
     /// `SlowLogFormat` does.
     pub current_db_changed: bool,
     /// Go `RUV2Weights()`.
-    pub ruv2_weights: tidb_execdetails::ruv2_metrics::RuV2Weights,
+    pub ruv2_weights: tidb_execdetails::ruv2_metrics::RUV2Weights,
 }
 
 /// Go `SessionVars.RUV2Weights()`: the TiDB-side RU v2 weights of the
 /// global config (`ruv2WeightsFromConfig`).
 #[must_use]
-pub fn ruv2_weights() -> tidb_execdetails::ruv2_metrics::RuV2Weights {
+pub fn ruv2_weights() -> tidb_execdetails::ruv2_metrics::RUV2Weights {
     let config = tidb_config::config_tree::config::get_global_config().ru_v2;
-    tidb_execdetails::ruv2_metrics::RuV2Weights {
+    tidb_execdetails::ruv2_metrics::RUV2Weights {
         ru_scale: config.ru_scale,
         result_chunk_cells: config.result_chunk_cells,
         executor_l1: config.executor_l1,
@@ -529,7 +529,7 @@ pub(crate) fn go_json_string(buf: &mut String, value: &str) {
 
 /// Go `json.NewEncoder(&buf).Encode(warnings)` with HTML escaping off,
 /// including the newline `Encode` appends.
-fn encode_warnings(buf: &mut String, warnings: &[JsonSqlWarnForSlowLog]) {
+fn encode_warnings(buf: &mut String, warnings: &[JSONSQLWarnForSlowLog]) {
     buf.push('[');
     for (index, warning) in warnings.iter().enumerate() {
         if index > 0 {
@@ -1302,12 +1302,12 @@ mod tests {
         // characters unescaped.
         items.session_connect_attrs.clear();
         items.warnings = vec![
-            JsonSqlWarnForSlowLog {
+            JSONSQLWarnForSlowLog {
                 level: "Warning".to_owned(),
                 message: "a \"<b>\"\n".to_owned(),
                 is_extra: false,
             },
-            JsonSqlWarnForSlowLog {
+            JSONSQLWarnForSlowLog {
                 level: "Note".to_owned(),
                 message: "extra".to_owned(),
                 is_extra: true,

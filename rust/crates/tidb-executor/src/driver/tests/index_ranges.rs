@@ -12,7 +12,7 @@ use tidb_ranger::types::Range;
 
 fn planner_index_path(
     sql: &str,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     table: &TableCommon,
     visible: &str,
 ) -> Option<(i64, Vec<Range>)> {
@@ -385,7 +385,7 @@ fn index_range_scans() {
     )
     .unwrap();
 
-    let ids = |sql: &str, catalog: &Catalog| {
+    let ids = |sql: &str, catalog: &SessionExtendedInfoSchema| {
         let mut got: Vec<i64> = run_select_on(sql, catalog, &crate::StmtContext::for_query())
             .unwrap()
             .into_iter()

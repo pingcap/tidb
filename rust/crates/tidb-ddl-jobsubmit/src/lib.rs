@@ -416,7 +416,7 @@ pub enum JobSubmitError {
     /// An active flashback-cluster job excludes every new DDL submission.
     FlashbackClusterJob,
     /// The catalog could not be read.
-    Catalog(tidb_infoschema::cluster_catalog::ClusterCatalogError),
+    SessionExtendedInfoSchema(tidb_infoschema::cluster_catalog::ClusterCatalogError),
     /// A stored value could not be decoded or encoded.
     Encode(String),
     /// A mutation could not be built.
@@ -430,7 +430,7 @@ pub enum JobSubmitError {
 
 impl From<tidb_infoschema::cluster_catalog::ClusterCatalogError> for JobSubmitError {
     fn from(error: tidb_infoschema::cluster_catalog::ClusterCatalogError) -> Self {
-        Self::Catalog(error)
+        Self::SessionExtendedInfoSchema(error)
     }
 }
 
@@ -464,7 +464,7 @@ impl JobSubmitError {
             ),
             Self::InvalidInvolvingSchemaInfo(_)
             | Self::FlashbackClusterJob
-            | Self::Catalog(_)
+            | Self::SessionExtendedInfoSchema(_)
             | Self::Encode(_)
             | Self::Mutations(_)
             | Self::GlobalIdExhausted { .. } => None,
@@ -486,7 +486,7 @@ impl fmt::Display for JobSubmitError {
         match (self.to_terror(), self) {
             (Some(error), _) => formatter.write_str(error.message()),
             (None, Self::InvalidInvolvingSchemaInfo(message)) => formatter.write_str(message),
-            (None, Self::Catalog(error)) => write!(formatter, "{error}"),
+            (None, Self::SessionExtendedInfoSchema(error)) => write!(formatter, "{error}"),
             (None, Self::Encode(detail)) => formatter.write_str(detail),
             (None, Self::Mutations(error)) => write!(formatter, "{error}"),
             (None, Self::GlobalIdExhausted { wanted }) => write!(

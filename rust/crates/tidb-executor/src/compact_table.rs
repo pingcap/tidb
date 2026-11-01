@@ -17,7 +17,7 @@
 use tidb_ast::{CompactReplicaKind, CompactTableStmt};
 use tidb_hack::GoCaseCompare;
 
-use crate::{Catalog, DriverError, StmtContext, TableEntry};
+use crate::{SessionExtendedInfoSchema, DriverError, StmtContext, TableEntry};
 
 /// Go `executorBuilder.buildCompactTable` and `CompactTableTiFlashExec.Next`
 /// over the `CompactTable` plan: the replica kind and the partition list are
@@ -31,7 +31,7 @@ use crate::{Catalog, DriverError, StmtContext, TableEntry};
 /// partition list over an unpartitioned table, or an unknown partition.
 pub fn build_compact_table(
     compact: &CompactTableStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &StmtContext,
 ) -> Result<(), DriverError> {

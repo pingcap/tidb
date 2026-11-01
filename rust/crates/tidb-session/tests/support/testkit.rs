@@ -25,7 +25,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use tidb_datatype::Datum;
 use tidb_terror::MysqlError;
-use tidb_infoschema::{Catalog, TableEntry};
+use tidb_infoschema::{SessionExtendedInfoSchema, TableEntry};
 use tidb_session::{Session, StmtResult};
 
 /// Go `testkit.TestKit`: one connection to a mock store.
@@ -192,7 +192,7 @@ impl TestKit {
     /// domain's current schema, read through a new connection so it is never
     /// a snapshot this kit cached.
     #[must_use]
-    pub fn info_schema(&self) -> Catalog {
+    pub fn info_schema(&self) -> SessionExtendedInfoSchema {
         let fresh = Session::with_catalog(self.session.shared_catalog());
         let catalog = fresh
             .shared_catalog()

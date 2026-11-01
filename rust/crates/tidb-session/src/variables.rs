@@ -56,11 +56,11 @@ enum ResourceGroupHintRejection {
 fn sysvar_native_expr(name: &str, value: String) -> tidb_ast::Expr {
     use tidb_ast::Expr;
     match sysvar::get_sys_var(name).map(|def| def.var_type) {
-        Some(sysvar::VarType::Bool) => {
+        Some(sysvar::TypeFlag::Bool) => {
             let on = value.eq_ignore_ascii_case("ON") || value == "1";
             Expr::Int(i32::from(on).to_string())
         }
-        Some(sysvar::VarType::Unsigned)
+        Some(sysvar::TypeFlag::Unsigned)
             if value.parse::<i64>().is_ok() || value.parse::<u64>().is_ok() =>
         {
             Expr::Int(value)

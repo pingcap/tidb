@@ -26,23 +26,23 @@ use tidb_datatype::Datum;
 
 use crate::analyze::{kv::analyze_kv_table, AnalyzeOptions};
 use tidb_stats_handle::catalog_statistics::CatalogStatistics;
-use crate::{run_create_table_on, run_insert_on, Catalog, StmtContext};
+use crate::{run_create_table_on, run_insert_on, SessionExtendedInfoSchema, StmtContext};
 
 fn ctx() -> StmtContext {
     StmtContext::for_query()
 }
 
-fn create(catalog: &mut Catalog, sql: &str) {
+fn create(catalog: &mut SessionExtendedInfoSchema, sql: &str) {
     run_create_table_on(sql, catalog)
         .unwrap_or_else(|error| panic!("create {sql:?} failed: {error:?}"));
 }
 
-fn insert(catalog: &mut Catalog, sql: &str) {
+fn insert(catalog: &mut SessionExtendedInfoSchema, sql: &str) {
     run_insert_on(sql, catalog, &ctx())
         .unwrap_or_else(|error| panic!("insert {sql:?} failed: {error:?}"));
 }
 
-fn kv_table_of(catalog: &Catalog, name: &str) -> tidb_table::tables::TableCommon {
+fn kv_table_of(catalog: &SessionExtendedInfoSchema, name: &str) -> tidb_table::tables::TableCommon {
     let Some(crate::TableEntry::Kv(table)) = catalog.table_in("test", name) else {
         panic!("table {name} is not stored as bytes");
     };

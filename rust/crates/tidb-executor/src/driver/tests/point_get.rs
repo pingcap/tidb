@@ -1173,7 +1173,7 @@ fn prepared_point_cache_declines_partial_and_non_unique_keys() {
 /// Binds one EXECUTE of a prepared point plan and drains its cached read.
 fn cached_rows(
     plan: &std::sync::Arc<crate::driver::access::PreparedPointGetPlan>,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     ctx: &tidb_table::tables::PreparedPointGetDecodeContext,
     zone: &tidb_datatype::SessionTimeZone,
     values: &[Datum],
@@ -1368,7 +1368,7 @@ fn batch_point_get() {
     )
     .unwrap();
 
-    let ids = |sql: &str, catalog: &Catalog| {
+    let ids = |sql: &str, catalog: &SessionExtendedInfoSchema| {
         let mut got: Vec<i64> = run_select_on(sql, catalog, &crate::StmtContext::for_query())
             .unwrap()
             .into_iter()
@@ -2204,7 +2204,7 @@ fn fast_point_writes_remove_only_the_consumed_selection_like_go() {
     use crate::explain::{explain_delete_stmt, explain_update_stmt};
     use tidb_sessionctx::explain_format::ExplainFormat;
 
-    fn explain_write(sql: &str, catalog: &mut Catalog, ctx: &crate::StmtContext) -> Vec<String> {
+    fn explain_write(sql: &str, catalog: &mut SessionExtendedInfoSchema, ctx: &crate::StmtContext) -> Vec<String> {
         let stmt = tidb_parser::parse(sql).unwrap();
         let Stmt::Dml(dml) = &stmt else {
             panic!("not DML");
@@ -2766,7 +2766,7 @@ fn out_of_range_point_literal_plans_a_table_dual() {
 // Go executor InitSnapshotWithSessCtx and newReplicaReadAdjuster configure the
 // snapshot for each execution, including reused prepared plans.
 fn snapshot_policy_catalog() -> (
-    Catalog,
+    SessionExtendedInfoSchema,
     Arc<std::sync::Mutex<Vec<tidb_txnkv::SnapshotReadOptions>>>,
 ) {
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();

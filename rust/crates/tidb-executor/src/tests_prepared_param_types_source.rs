@@ -37,14 +37,14 @@ use tidb_charset::Collation;
 
 use crate::{
     build_prepared_select_plan, run_create_table_on, run_insert_on, run_prepared_select_for_test,
-    Catalog, PreparedPlanCacheEnvironment, StmtContext, DEFAULT_DATABASE,
+    SessionExtendedInfoSchema, PreparedPlanCacheEnvironment, StmtContext, DEFAULT_DATABASE,
 };
 
 fn ctx() -> StmtContext {
     StmtContext::for_query()
 }
 
-fn go_t1_t2_catalog() -> Catalog {
+fn go_t1_t2_catalog() -> SessionExtendedInfoSchema {
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "create table t1(a varchar(20), b int, c float, key(b, a))",

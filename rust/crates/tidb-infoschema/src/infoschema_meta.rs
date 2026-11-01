@@ -23,11 +23,11 @@
 //!
 //! This module is the schema half, and it lives here rather than beside the
 //! row computation (`tidb-session`'s `infoschema`) for exactly one reason:
-//! [`Catalog::default`] can then register them itself, so there is no call
+//! [`SessionExtendedInfoSchema::default`] can then register them itself, so there is no call
 //! site left that could forget to. The rows stay in `tidb-session`, which is
 //! the only tier that can see sessions and privileges.
 
-use crate::Catalog;
+use crate::SessionExtendedInfoSchema;
 use tidb_datatype::{FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
 use tidb_goruntime::GoString;
 use tidb_hack::GoCaseCompare;
@@ -8772,13 +8772,13 @@ pub fn tables(
     > = std::sync::OnceLock::new();
     TABLES_BUILT
         .get_or_init(|| {
-            let mut scratch = Catalog::memory_schema_scratch();
+            let mut scratch = SessionExtendedInfoSchema::memory_schema_scratch();
             register_tables(&mut scratch);
             let tables = scratch
                 .tables_of("information_schema")
                 .map(|(name, entry)| (name.to_owned(), std::sync::Arc::clone(entry)))
                 .collect();
-            Catalog::register_virtual_schema(
+            SessionExtendedInfoSchema::register_virtual_schema(
                 INFORMATION_SCHEMA_DB_ID,
                 "INFORMATION_SCHEMA",
                 &tables,
@@ -8789,7 +8789,7 @@ pub fn tables(
 }
 
 /// [`tables`]' builder: Go `infoschema.init` into `catalog`.
-fn register_tables(catalog: &mut Catalog) {
+fn register_tables(catalog: &mut SessionExtendedInfoSchema) {
     for name in served_table_names() {
         let columns = table_columns(name).expect("registered memory table");
         let mut info = build_table_meta(name, &columns);
@@ -8809,7 +8809,7 @@ fn register_tables(catalog: &mut Catalog) {
         )
         .unwrap_or_else(|error| panic!("information_schema.{name} cannot load: {error}"));
         // The schema exists in every catalog this is called on (see
-        // `Catalog::default`), so the only error `register_kv_in` reports
+        // `SessionExtendedInfoSchema::default`), so the only error `register_kv_in` reports
         // cannot happen here.
         let _ = catalog.register_kv_in(INFORMATION_SCHEMA, name, table);
     }

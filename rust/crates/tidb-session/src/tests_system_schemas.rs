@@ -16,7 +16,7 @@
 //! its tables does.
 //!
 //! Mirrors the schemas Go's `pkg/session/bootstrap.go` creates, as seen
-//! through `tidb_executor::Catalog::default`. Every assertion below was
+//! through `tidb_executor::SessionExtendedInfoSchema::default`. Every assertion below was
 //! CAPTURED from a real TiDB over `rust/difftests/gorun` before it was
 //! written -- the case-preserving `DATABASE()`, the failed `USE` leaving the
 //! session where it was, and the 61-table `SHOW TABLES` -- because two of
@@ -151,7 +151,7 @@ fn the_bootstrap_tables_answer_by_name() {
 ///
 /// Captured from Go, `select schema_name from information_schema.schemata`:
 /// `INFORMATION_SCHEMA;METRICS_SCHEMA;PERFORMANCE_SCHEMA;mysql;sys;test`.
-/// All six schema owners are now installed by `Catalog::default`, with
+/// All six schema owners are now installed by `SessionExtendedInfoSchema::default`, with
 /// `INFORMATION_SCHEMA` first as Go's `fetchShowDatabases` requires.
 #[test]
 fn the_system_schema_is_listed_among_the_databases() {

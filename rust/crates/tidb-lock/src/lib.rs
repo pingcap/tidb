@@ -23,7 +23,7 @@ use tidb_model::TableLockTpInfo;
 use tidb_mysql::PrivilegeType;
 use tidb_hack::go_to_lower;
 
-use tidb_infoschema::Catalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_driver_error::DriverError;
 use tidb_infoschema::TableEntry;
 
@@ -45,12 +45,12 @@ impl From<DriverError> for LockCheckError {
 pub struct Checker<'a> {
     /// Go `TableLockReadContext`: the session's own lock set.
     locked_tables: &'a BTreeMap<i64, TableLockTpInfo>,
-    catalog: &'a Catalog,
+    catalog: &'a SessionExtendedInfoSchema,
 }
 
 impl<'a> Checker<'a> {
     /// A checker over the session's lock set and the statement's catalog.
-    pub fn new(locked_tables: &'a BTreeMap<i64, TableLockTpInfo>, catalog: &'a Catalog) -> Self {
+    pub fn new(locked_tables: &'a BTreeMap<i64, TableLockTpInfo>, catalog: &'a SessionExtendedInfoSchema) -> Self {
         Self {
             locked_tables,
             catalog,

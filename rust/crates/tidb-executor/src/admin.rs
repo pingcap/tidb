@@ -122,7 +122,7 @@ pub fn show_imports_output() -> StmtOutput {
 /// installed by the repository when it is set up (`SetupRepository`).
 pub type TakeSnapshot = std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
-pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
+pub trait AdminExec: crate::index_advisor::RecommendIndexExec {
     /// Go `DDLJobRetriever.initial`: the running jobs, then the meta
     /// history newest first, read on a fresh system-session transaction.
     fn all_ddl_jobs(&mut self) -> Result<(Vec<tidb_model::Job>, Vec<tidb_model::Job>), DriverError>;
@@ -132,7 +132,7 @@ pub trait AdminExec: crate::index_advisor::IndexAdvisorExec {
     fn with_catalog_retrieving<T>(
         &mut self,
         ctx: &crate::StmtContext,
-        attempt: impl FnMut(&mut crate::Catalog) -> Result<T, DriverError>,
+        attempt: impl FnMut(&mut crate::SessionExtendedInfoSchema) -> Result<T, DriverError>,
     ) -> Result<T, DriverError>;
 
     /// Resolves a written table path against the current database.
@@ -1261,7 +1261,7 @@ pub(crate) fn admin_check_passed() -> StmtOutput {
 /// The storage-backed table `ADMIN CHECK` needs, or the refusal that names
 /// why it is not checkable.
 pub(crate) fn admin_check_table_mut<'a>(
-    catalog: &'a mut crate::Catalog,
+    catalog: &'a mut crate::SessionExtendedInfoSchema,
     database: &str,
     name: &str,
     // The statement name Go's 8006 carries: `admin check table` or
@@ -1298,7 +1298,7 @@ pub(crate) fn admin_check_table_mut<'a>(
 
 /// The stored table `ADMIN RECOVER INDEX` / `ADMIN CLEANUP INDEX` works on.
 pub(crate) fn admin_index_table_mut<'a>(
-    catalog: &'a mut crate::Catalog,
+    catalog: &'a mut crate::SessionExtendedInfoSchema,
     database: &str,
     name: &str,
 ) -> Result<&'a mut tidb_table::tables::TableCommon, DriverError> {

@@ -40,7 +40,7 @@ use std::sync::{Arc, Mutex};
 use tidb_infoschema::cluster_catalog::ClusterCatalog;
 use tidb_stats_handle_syncload::stats_watch::{StatsSnapshot, TableStatsState};
 use tidb_store_driver_txn::cluster_storage::ClusterTableStorage;
-use tidb_infoschema::{Catalog, ViewDef};
+use tidb_infoschema::{SessionExtendedInfoSchema, ViewDef};
 use tidb_table::tables::TableCommon;
 use tidb_kv::storage::TableStorage;
 #[cfg(test)]
@@ -69,7 +69,7 @@ pub struct SkippedTable {
 #[derive(Debug)]
 pub struct ClusterSessionCatalog {
     /// The driver's catalog: databases and tables backed by `storage`.
-    pub catalog: Catalog,
+    pub catalog: SessionExtendedInfoSchema,
     /// Tables the cluster has that this tier cannot serve.
     pub skipped: Vec<SkippedTable>,
     /// The domain statistics the sessions over this catalog plan from (Go's

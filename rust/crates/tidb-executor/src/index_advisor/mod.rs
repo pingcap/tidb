@@ -52,7 +52,7 @@ fn text(value: impl Into<String>) -> Datum {
 
 /// Go `RecommendIndexExec` (`executor/recommend_index.go`) and the
 /// advisor's session optimizer.
-pub trait IndexAdvisorExec: crate::bind_exec::SqlBindExec {
+pub trait RecommendIndexExec: crate::bind_exec::SqlBindExec {
     /// Replaces `SessionVars.HypoIndexes`.
     fn set_hypo_indexes(&mut self, indexes: Arc<HypoIndexes>);
     /// The statement's warnings, to restore after a what-if plan.
@@ -167,11 +167,11 @@ pub trait IndexAdvisorExec: crate::bind_exec::SqlBindExec {
 }
 
 /// The what-if optimizer over a live session (Go `optimizerImpl`).
-struct SessionOptimizer<'a, S: IndexAdvisorExec> {
+struct SessionOptimizer<'a, S: RecommendIndexExec> {
     session: &'a mut S,
 }
 
-impl<S: IndexAdvisorExec> SessionOptimizer<'_, S> {
+impl<S: RecommendIndexExec> SessionOptimizer<'_, S> {
     /// `TableByName` and the columns it has.
     fn table_columns_of(&mut self, schema: &str, table: &str) -> Result<Vec<(String, FieldType)>> {
         self.session
@@ -280,7 +280,7 @@ fn first_table_name(statement: &tidb_ast::Stmt) -> String {
     name
 }
 
-impl<S: IndexAdvisorExec> Optimizer for SessionOptimizer<'_, S> {
+impl<S: RecommendIndexExec> Optimizer for SessionOptimizer<'_, S> {
     fn column_type(&mut self, column: &Column) -> Result<FieldType> {
         let wanted = column.column_name.go_to_lower();
         let columns = self.table_columns_of(&column.schema_name, &column.table_name)?;
@@ -436,7 +436,7 @@ impl<S: IndexAdvisorExec> Optimizer for SessionOptimizer<'_, S> {
     }
 }
 
-impl<S: IndexAdvisorExec> AdvisorSession for SessionOptimizer<'_, S> {
+impl<S: RecommendIndexExec> AdvisorSession for SessionOptimizer<'_, S> {
     fn option_rows(&mut self, sql: &str) -> Result<Vec<Vec<Datum>>> {
         self.session.user_table_rows(sql)
     }

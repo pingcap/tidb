@@ -315,7 +315,7 @@ mod tests {
     use tidb_datatype::StringDatum;
 use tidb_charset::Collation;
     use tidb_sqlexec::{
-        exec_option, ExecutionContext, RecordSet, RestrictedSqlExecutor, SqlExecutor, TrackProcess,
+        exec_option, ExecutionContext, RecordSet, RestrictedSqlExecutor, SqlExecutor, TrackProc,
     };
     use tidb_sqlexec_mock::MockRestrictedSqlExecutor;
     use tidb_stats_handle_util::Generator;
@@ -413,7 +413,7 @@ use tidb_charset::Collation;
         tracked: Arc<Mutex<Vec<u64>>>,
         untracked: Arc<Mutex<Vec<u64>>>,
     ) -> (TrackSysProc, UntrackSysProc) {
-        let track = Arc::new(move |id, _context: Arc<dyn TrackProcess>| {
+        let track = Arc::new(move |id, _context: Arc<dyn TrackProc>| {
             tracked.lock().unwrap().push(id);
             Ok(())
         }) as TrackSysProc;

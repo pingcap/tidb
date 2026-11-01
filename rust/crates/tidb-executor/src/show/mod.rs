@@ -108,7 +108,7 @@ pub fn fetch_show_variables(
 /// it.
 pub fn fetch_show_databases(
     ctx: &dyn SessionContext,
-    is: &crate::Catalog,
+    is: &crate::SessionExtendedInfoSchema,
     extractor: Extractor<'_>,
 ) -> Vec<String> {
     is.database_names()
@@ -128,7 +128,7 @@ pub fn fetch_show_databases(
 /// consulted). With `full`, each name carries its `Table_type`.
 pub fn fetch_show_tables(
     ctx: &dyn SessionContext,
-    is: &crate::Catalog,
+    is: &crate::SessionExtendedInfoSchema,
     database: &str,
     full: bool,
     extractor: Extractor<'_>,

@@ -3547,7 +3547,7 @@ fn find_best_task_4_logical_data_source_paths(
                         ranges.len(),
                     );
                     let mut point = if ranges.len() == 1 {
-                        PhysicalPlan::PointGet(tidb_planner_core_operator_physicalop::PhysicalPointGet {
+                        PhysicalPlan::PointGet(tidb_planner_core_operator_physicalop::PointGetPlan {
                             base: point_base,
                             table_id: if ds.pk_is_handle || common_handle.is_some() {
                                 ds.physical_table_id
@@ -3571,7 +3571,7 @@ fn find_best_task_4_logical_data_source_paths(
                             select_lock: None,
                         })
                     } else {
-                        PhysicalPlan::BatchPointGet(tidb_planner_core_operator_physicalop::PhysicalBatchPointGet {
+                        PhysicalPlan::BatchPointGet(tidb_planner_core_operator_physicalop::BatchPointGetPlan {
                             base: point_base,
                             table_id: explicit_physical_id.unwrap_or(ds.physical_table_id),
                             index_id: None,
@@ -4166,7 +4166,7 @@ fn find_best_task_4_logical_data_source_paths(
                         ranges.len(),
                     );
                     let mut point = if ranges.len() == 1 {
-                        PhysicalPlan::PointGet(tidb_planner_core_operator_physicalop::PhysicalPointGet {
+                        PhysicalPlan::PointGet(tidb_planner_core_operator_physicalop::PointGetPlan {
                             base: point_base,
                             table_id: ds.physical_table_id,
                             // Go `PointGetPlan.PartitionNames`: a global index
@@ -4192,7 +4192,7 @@ fn find_best_task_4_logical_data_source_paths(
                             select_lock: None,
                         })
                     } else {
-                        PhysicalPlan::BatchPointGet(tidb_planner_core_operator_physicalop::PhysicalBatchPointGet {
+                        PhysicalPlan::BatchPointGet(tidb_planner_core_operator_physicalop::BatchPointGetPlan {
                             base: point_base,
                             table_id: ds.physical_table_id,
                             index_id: Some(source_index.read().id),
@@ -4771,12 +4771,12 @@ fn find_best_task_4_logical_data_source_paths(
                         .flatten(),
                     common_handle_cols: ds.common_handle_cols.clone(),
                     index_lookup_push_down_by: if single_scan {
-                        tidb_planner_util::path::IndexLookupPushDownBy::None
+                        tidb_planner_util::path::IndexLookUpPushDownByType::None
                     } else {
                         ds.index_lookup_push_down_by
                             .get(&source_index.read().id)
                             .copied()
-                            .unwrap_or(tidb_planner_util::path::IndexLookupPushDownBy::None)
+                            .unwrap_or(tidb_planner_util::path::IndexLookUpPushDownByType::None)
                     },
                     stats_context: ctx.task_stats_context(ds, &root_task_conds),
                     root_task_conds,

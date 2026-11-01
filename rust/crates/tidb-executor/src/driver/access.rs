@@ -57,7 +57,7 @@ pub struct PreparedPointGetPlan {
     /// (`TryFastPlan`'s), computed once and copied onto each execution.
     plan_digest: std::sync::OnceLock<(String, String)>,
     /// The catalog's KEY-DECODE METADATA version at resolve time — the
-    /// counter DDL moves and DML never touches (`Catalog::metadata_version`).
+    /// counter DDL moves and DML never touches (`SessionExtendedInfoSchema::metadata_version`).
     /// A transaction's own writes bump the mutation counter every statement,
     /// so keying a cache hit on it would invalidate every read after the
     /// transaction's first write; Go's plan cache invalidates on SCHEMA
@@ -343,7 +343,7 @@ impl PreparedPointGetPlan {
 
     /// Whether the catalog still names the same unpartitioned physical table.
     #[must_use]
-    pub fn matches_catalog(&self, catalog: &Catalog) -> bool {
+    pub fn matches_catalog(&self, catalog: &SessionExtendedInfoSchema) -> bool {
         if self.schema_version != catalog.schema_version() {
             return false;
         }
@@ -717,7 +717,7 @@ impl PreparedPlanCacheEnvironment {
     /// Go `NewPlanCacheKey`'s `statsVerHash`: the sum of every table's
     /// `getLatestVersionFromStatsTable(sctx, t.Meta(), t.Meta().ID)`, zero
     /// when the key omits statistics.
-    pub(crate) fn stats_version_hash(&self, catalog: &Catalog, keys: &[CatalogTableKey]) -> u64 {
+    pub(crate) fn stats_version_hash(&self, catalog: &SessionExtendedInfoSchema, keys: &[CatalogTableKey]) -> u64 {
         if !self.hashes_fresh_statistics() {
             return 0;
         }
@@ -818,7 +818,7 @@ impl PreparedSelectPlan {
     pub fn discard_cached_plan(
         &self,
         cache: &SessionPlanCache,
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         environment: &PreparedPlanCacheEnvironment,
     ) {
         cache.delete(&PhysicalPlanCacheKey {
@@ -863,7 +863,7 @@ impl PreparedSelectPlan {
         self: &Arc<Self>,
         cache: &SessionPlanCache,
         values: &[Datum],
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         current_database: &str,
         ctx: &crate::StmtContext,
         environment: &PreparedPlanCacheEnvironment,
@@ -888,7 +888,7 @@ impl PreparedSelectPlan {
         self: &Arc<Self>,
         cache: &SessionPlanCache,
         values: &[Datum],
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         current_database: &str,
         ctx: &crate::StmtContext,
         dirty_ids: &[i64],
@@ -915,7 +915,7 @@ impl PreparedSelectPlan {
         self: &Arc<Self>,
         cache: &SessionPlanCache,
         values: &[Datum],
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         current_database: &str,
         dirty_ids: &[i64],
         environment: &PreparedPlanCacheEnvironment,
@@ -938,7 +938,7 @@ impl PreparedSelectPlan {
         self: &Arc<Self>,
         cache: &SessionPlanCache,
         values: &[Datum],
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         current_database: &str,
         dirty_ids: &[i64],
         environment: &PreparedPlanCacheEnvironment,
@@ -960,7 +960,7 @@ impl PreparedSelectPlan {
         self: &Arc<Self>,
         cache: &SessionPlanCache,
         values: &[Datum],
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         current_database: &str,
         ctx: Option<&crate::StmtContext>,
         dirty_ids: &[i64],
@@ -1089,7 +1089,7 @@ impl PreparedSelectPlan {
 
     fn stats_version_hash(
         &self,
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         environment: &PreparedPlanCacheEnvironment,
     ) -> u64 {
         environment.stats_version_hash(catalog, &self.stats_table_keys)
@@ -1224,7 +1224,7 @@ impl PreparedSelectExecution {
 #[cfg(test)]
 pub(crate) fn run_prepared_select_for_test(
     execution: &PreparedSelectExecution,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
@@ -1294,7 +1294,7 @@ impl PreparedPointGetExecution {
 pub fn build_prepared_point_get_plan(
     stmt: &tidb_ast::Stmt,
     parameter_count: usize,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Option<PreparedPointGetPlan> {
@@ -1599,7 +1599,7 @@ pub fn build_prepared_point_get_plan(
 pub fn build_prepared_select_plan(
     stmt: &tidb_ast::Stmt,
     parameter_count: usize,
-    _catalog: &Catalog,
+    _catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     _ctx: &crate::StmtContext,
 ) -> Option<PreparedSelectPlan> {
@@ -1919,7 +1919,7 @@ fn prepared_primary_index_hint(table_ref: &tidb_ast::TableRef) -> bool {
 /// Materializes explicitly for callers that require owned values.
 pub fn run_prepared_point_get(
     execution: &PreparedPointGetExecution,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &tidb_table::tables::PreparedPointGetDecodeContext,
     stmt_ctx: &crate::StmtContext,
 ) -> Result<Option<SelectMeta>, DriverError> {
@@ -1932,7 +1932,7 @@ pub fn run_prepared_point_get(
 /// cache miss; immutable metadata is retained until the record set closes.
 pub fn open_prepared_point_get(
     execution: &PreparedPointGetExecution,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &tidb_table::tables::PreparedPointGetDecodeContext,
     stmt_ctx: &crate::StmtContext,
 ) -> Result<Option<super::QueryRecordSet>, DriverError> {
@@ -2133,7 +2133,7 @@ fn point_byte_safe(field_type: &FieldType) -> bool {
 #[must_use]
 pub fn fast_point_process_plan_info(
     statement: &tidb_ast::Stmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Option<crate::ProcessPlanInfo> {

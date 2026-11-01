@@ -154,7 +154,7 @@ fn result_rows(result: Result<StmtResult, tidb_driver_error::DriverError>) -> Ve
 }
 
 fn kv_table<'a>(
-    catalog: &'a tidb_infoschema::Catalog,
+    catalog: &'a tidb_infoschema::SessionExtendedInfoSchema,
     name: &str,
 ) -> &'a tidb_table::tables::TableCommon {
     let tidb_infoschema::TableEntry::Kv(kv) = catalog

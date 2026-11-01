@@ -1122,7 +1122,7 @@ fn a_declared_type_without_a_width_normalizes_to_its_default() {
 /// the half an error-only assertion would miss -- it creates NOTHING.
 ///
 /// This used to report success and silently discard the table:
-/// `Catalog::register_in` returned `()` and its body was an `if let Some(..)`
+/// `SessionExtendedInfoSchema::register_in` returned `()` and its body was an `if let Some(..)`
 /// over the schema map, so an absent schema dropped the built table on the
 /// floor. `CREATE TABLE nosuchdb.t` answered "Query OK" and the table was
 /// never there.

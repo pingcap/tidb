@@ -41,7 +41,7 @@ use crate::{Session, StmtResult};
 /// invisible here until `COMMIT` -- which is what
 /// [`an_uncommitted_delete_is_invisible_in_the_committed_key_set`] pins.
 fn key_shapes(session: &mut Session, table: &str) -> Vec<&'static str> {
-    let read = |catalog: &mut tidb_infoschema::Catalog| {
+    let read = |catalog: &mut tidb_infoschema::SessionExtendedInfoSchema| {
         let entry = catalog
             .table_mut_in("test", table)
             .unwrap_or_else(|| panic!("table `{table}` is in the catalog"));

@@ -19,7 +19,7 @@
 use crate::record_set::PendingExecution;
 use crate::*;
 use tidb_ast::Expr;
-use tidb_executor::compiler::PreparedExec;
+use tidb_executor::compiler::PrepareExec;
 
 impl Session {
     /// Go `ExecuteExec`: looks the statement up, binds the `USING` variables'

@@ -28,7 +28,7 @@ use std::collections::HashSet;
 use tidb_ast::TableLockType;
 use tidb_config::config_tree::config::table_lock_enabled;
 use tidb_ddl_build::table_lock;
-use tidb_infoschema::Catalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_driver_error::DriverError;
 use tidb_infoschema::TableEntry;
 use tidb_table::tables::TableCommon;
@@ -118,7 +118,7 @@ impl Session {
     /// Whether `CheckTableLock` can find anything: with the feature off, or
     /// no lock held by this session nor recorded on any table, every arm of
     /// `lock.Checker` answers nil.
-    fn table_lock_check_needed(&self, catalog: &Catalog) -> bool {
+    fn table_lock_check_needed(&self, catalog: &SessionExtendedInfoSchema) -> bool {
         table_lock_enabled() && (self.has_locked_tables() || catalog.has_table_locks())
     }
 
@@ -130,7 +130,7 @@ impl Session {
         if self.has_locked_tables() {
             return Ok(true);
         }
-        self.with_txn_catalog(Catalog::has_table_locks)
+        self.with_txn_catalog(SessionExtendedInfoSchema::has_table_locks)
     }
 
     /// Go `core.CheckTableLock` over one statement's visit infos, after

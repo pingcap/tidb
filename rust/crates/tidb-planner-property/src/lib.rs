@@ -368,7 +368,7 @@ impl Eq for PartialOrderMatchResult {}
 
 /// Go `expression.VSInfo`, retained by `PhysicalProperty.VectorProp`.
 #[derive(Clone, Debug, Default)]
-pub struct VectorSearchInfo {
+pub struct VSInfo {
     /// Distance function name.
     pub distance_fn_name: String,
     /// Pushdown function signature code.
@@ -379,7 +379,7 @@ pub struct VectorSearchInfo {
     pub column: tidb_expr::column::Column,
 }
 
-impl PartialEq for VectorSearchInfo {
+impl PartialEq for VSInfo {
     fn eq(&self, other: &Self) -> bool {
         self.distance_fn_name == other.distance_fn_name
             && self.fn_pb_code == other.fn_pb_code
@@ -392,7 +392,7 @@ impl PartialEq for VectorSearchInfo {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct VectorProperty {
     /// Vector-search requirement, when present.
-    pub search_info: Option<VectorSearchInfo>,
+    pub search_info: Option<VSInfo>,
     /// Requested TopK count. Go does not include this in property hashing.
     pub top_k: u32,
 }

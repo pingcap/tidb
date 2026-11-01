@@ -25,7 +25,7 @@ use std::collections::HashSet;
 
 use tidb_table::tables::TableCommon;
 use tidb_kv::region_map::{RegionMeta, RegionStore};
-use crate::{Catalog, DriverError, MysqlError, TableEntry};
+use crate::{SessionExtendedInfoSchema, DriverError, MysqlError, TableEntry};
 use tidb_codec::decode_int;
 use tidb_datatype::Datum;
 use tidb_hack::GoCaseCompare;
@@ -48,7 +48,7 @@ struct Target<'a> {
 }
 
 fn resolve<'a>(
-    catalog: &'a Catalog,
+    catalog: &'a SessionExtendedInfoSchema,
     database: &str,
     table_name: &str,
     what: &'static str,
@@ -300,7 +300,7 @@ fn index_regions(
 
 /// Go `getPolicyPlacement`.
 pub fn get_policy_placement(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     policy: Option<&tidb_model::PolicyRefInfo>,
 ) -> Result<Option<PlacementSettings>, DriverError> {
     let Some(policy) = policy else {
@@ -321,7 +321,7 @@ pub fn get_policy_placement(
 /// Go `fetchSchedulingInfo`: each physical id's placement, as the listing
 /// prints it. A partition without a policy of its own inherits the table's.
 fn scheduling(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     target: &Target<'_>,
 ) -> Result<std::collections::HashMap<i64, PlacementSettings>, DriverError> {
     let table_placement =
@@ -351,7 +351,7 @@ fn scheduling(
 /// `table_path` is the statement's name, `[table]` or `[database, table]`,
 /// resolved against `current_database` as Go's planner does.
 pub fn show_table_regions(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     store: &dyn RegionStore,
     database: &str,
     table_name: &str,
@@ -438,7 +438,7 @@ pub fn show_table_regions(
 /// (`infosync.GetRegionDistributionByKeyRange`), which a store without PD does
 /// not have. The statement still validates the table and partitions first.
 pub fn show_table_distributions(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     database: &str,
     table_name: &str,
     partitions: &[String],

@@ -20,7 +20,7 @@
 //! count only, so those two checks have no surface here and the second test
 //! records them as a gap.
 
-use crate::{run_create_table_on, run_insert_reporting, run_select_on, Catalog, StmtContext};
+use crate::{run_create_table_on, run_insert_reporting, run_select_on, SessionExtendedInfoSchema, StmtContext};
 use tidb_datatype::Datum;
 
 fn dml_ctx() -> StmtContext {
@@ -28,7 +28,7 @@ fn dml_ctx() -> StmtContext {
     StmtContext::for_dml(false, true, false)
 }
 
-fn select_text(catalog: &Catalog, sql: &str) -> Vec<Vec<String>> {
+fn select_text(catalog: &SessionExtendedInfoSchema, sql: &str) -> Vec<Vec<String>> {
     run_select_on(sql, catalog, &StmtContext::for_query())
         .expect("select succeeds")
         .into_iter()
@@ -68,7 +68,7 @@ fn on_duplicate_key_values_form_and_constant_assignments_match_mysql_affected_ro
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     let ctx = dml_ctx();
     let insert =
-        |sql: &str, catalog: &mut Catalog| run_insert_reporting(sql, catalog, "test", &ctx);
+        |sql: &str, catalog: &mut SessionExtendedInfoSchema| run_insert_reporting(sql, catalog, "test", &ctx);
 
     run_create_table_on(
         "create table t1(a1 bigint primary key, b1 bigint)",

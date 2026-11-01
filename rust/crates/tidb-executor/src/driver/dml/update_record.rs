@@ -75,7 +75,7 @@ impl<'a> UpdateRecords<'a> {
     /// all three SQL update entrypoints.
     pub(crate) fn write(
         &mut self,
-        catalog: &mut Catalog,
+        catalog: &mut SessionExtendedInfoSchema,
         database: &str,
         name: &str,
         id: &TableHandle,
@@ -257,7 +257,7 @@ impl<'a> UpdateRecords<'a> {
 
     pub(crate) fn finish(
         self,
-        catalog: &mut Catalog,
+        catalog: &mut SessionExtendedInfoSchema,
         ctx: &crate::StmtContext,
     ) -> Result<(), DriverError> {
         // All checks see the final statement buffer, including writes to a

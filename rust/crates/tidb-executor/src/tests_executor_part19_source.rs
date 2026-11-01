@@ -25,7 +25,7 @@ use tidb_datatype::Datum;
 use crate::{
     build_prepared_dml_plan, build_prepared_select_plan, run_create_table_on,
     run_delete_stmt_with_physical, run_insert_on, run_insert_stmt_with_physical,
-    run_prepared_select_for_test, run_select_on, run_update_stmt_with_physical, Catalog,
+    run_prepared_select_for_test, run_select_on, run_update_stmt_with_physical, SessionExtendedInfoSchema,
     PreparedPlanCacheEnvironment, StmtContext, DEFAULT_DATABASE,
 };
 
@@ -33,7 +33,7 @@ fn ctx() -> StmtContext {
     StmtContext::for_query()
 }
 
-fn prepared_catalog() -> Catalog {
+fn prepared_catalog() -> SessionExtendedInfoSchema {
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     run_create_table_on(
         "CREATE TABLE prepared_part19 (id INT PRIMARY KEY, v INT NOT NULL)",
@@ -52,7 +52,7 @@ fn prepared_catalog() -> Catalog {
 fn prepared_select_plan(
     plan_sql: &str,
     parameter_count: usize,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
 ) -> Arc<crate::PreparedSelectPlan> {
     let statement = tidb_parser::parse(plan_sql).expect("prepared statement parses");
     Arc::new(
@@ -71,7 +71,7 @@ fn cached_select_rows(
     cache: &crate::SessionPlanCache,
     plan: &Arc<crate::PreparedSelectPlan>,
     values: &[Datum],
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
 ) -> (bool, Vec<Vec<Datum>>) {
     let execution = plan
         .bind(
@@ -89,7 +89,7 @@ fn cached_select_rows(
     (cache_hit, rows)
 }
 
-fn execute_prepared_dml(sql: &str, values: &[Datum], catalog: &mut Catalog) -> (bool, u64) {
+fn execute_prepared_dml(sql: &str, values: &[Datum], catalog: &mut SessionExtendedInfoSchema) -> (bool, u64) {
     let cache = crate::SessionPlanCache::default();
     let statement = tidb_parser::parse(sql).expect("prepared DML parses");
     let plan = Arc::new(

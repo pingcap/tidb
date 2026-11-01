@@ -208,7 +208,7 @@ pub enum StatementReadShape {
 #[must_use]
 pub fn statement_read_shape(
     stmt: &tidb_ast::Stmt,
-    catalog: &tidb_infoschema::Catalog,
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
     current_db: &str,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> StatementReadShape {
@@ -336,7 +336,7 @@ mod common_handle_shape_tests {
     // the first read, not a transport test.
     #[test]
     fn common_handle_point_read_is_admitted() {
-        let mut table = tidb_infoschema::Catalog::mock();
+        let mut table = tidb_infoschema::SessionExtendedInfoSchema::mock();
         let mut kv = tidb_table::tables::TableCommon::new(
             1,
             vec![
@@ -385,7 +385,7 @@ mod common_handle_shape_tests {
 
     #[test]
     fn a_limit_bound_does_not_replace_the_complete_point_key_proof() {
-        let mut table = tidb_infoschema::Catalog::mock();
+        let mut table = tidb_infoschema::SessionExtendedInfoSchema::mock();
         let mut kv = tidb_table::tables::TableCommon::new(
             1,
             vec![
@@ -470,7 +470,7 @@ mod common_handle_shape_tests {
     /// confused with the max-ts point-get shortcut used by SELECT.
     #[test]
     fn update_and_delete_use_the_prefetchable_write_shape() {
-        let catalog = tidb_infoschema::Catalog::mock();
+        let catalog = tidb_infoschema::SessionExtendedInfoSchema::mock();
         for sql in [
             "UPDATE t SET v = 1 WHERE k = 'x'",
             "DELETE FROM t WHERE k = 'x'",
@@ -6566,7 +6566,7 @@ use std::collections::HashMap;
 
     use super::*;
     use crate::driver::run_select_on;
-    use tidb_infoschema::Catalog;
+    use tidb_infoschema::SessionExtendedInfoSchema;
     use tidb_sessionctx::explain_format::ExplainFormat;
     use tidb_table::tables::TableCommon;
     use tidb_kv::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
@@ -7184,7 +7184,7 @@ use std::collections::HashMap;
     /// an index on `b`. Row `i` is `(i, i, n - i)`, so `b` is unique and
     /// ascending while `c` descends -- the two orders the push-down rule has
     /// to tell apart.
-    fn table_of(n: i64, indexed: bool) -> (Catalog, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+    fn table_of(n: i64, indexed: bool) -> (SessionExtendedInfoSchema, Arc<AtomicUsize>, Arc<AtomicUsize>) {
         let store = CountingStorage::default();
         let entries = Arc::clone(&store.entries);
         let gets = Arc::clone(&store.gets);

@@ -748,7 +748,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             table,
             JobArgsValue::SetTiFlashReplica(Some(GoShared::new(
                 tidb_model::SetTiFlashReplicaArgs {
-                    tiflash_replica: tidb_model::JobTiFlashReplicaSpec {
+                    tiflash_replica: tidb_model::TiFlashReplicaSpec {
                         count: *count,
                         labels: Some(labels.clone()),
                         hypo: false,

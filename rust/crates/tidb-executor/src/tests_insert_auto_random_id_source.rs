@@ -15,14 +15,14 @@
 //! expression surface), so the OK-packet value is the pinned observable, as
 //! documented per test.
 
-use crate::{run_create_table_on, run_insert_reporting, run_select_on, Catalog, StmtContext};
+use crate::{run_create_table_on, run_insert_reporting, run_select_on, SessionExtendedInfoSchema, StmtContext};
 use tidb_datatype::Datum;
 
 fn dml_ctx() -> StmtContext {
     StmtContext::for_dml(false, true, false)
 }
 
-fn select_ints(catalog: &Catalog, sql: &str) -> Vec<i64> {
+fn select_ints(catalog: &SessionExtendedInfoSchema, sql: &str) -> Vec<i64> {
     run_select_on(sql, catalog, &StmtContext::for_query())
         .expect("select succeeds")
         .into_iter()

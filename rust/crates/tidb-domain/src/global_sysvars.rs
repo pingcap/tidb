@@ -931,7 +931,7 @@ impl GlobalSysvars {
             }
         }
         let value = match get_sys_var(name) {
-            Some(def) if def.var_type == tidb_variable::sysvar::VarType::Time => {
+            Some(def) if def.var_type == tidb_variable::sysvar::TypeFlag::Time => {
                 tidb_variable::sysvar::check_time_system_var(&value, zone)
                     .map_err(|error| validation_var_error(name, &value, error))?
             }

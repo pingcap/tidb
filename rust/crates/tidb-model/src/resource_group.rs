@@ -34,7 +34,7 @@ pub(crate) const UNLIMITED_RU_RATE: u64 = i32::MAX as u64;
 
 /// An open `int32` representation of Go's `ast.RunawayActionType`.
 ///
-/// `tidb_ast::RunawayActionType` is currently a closed Rust enum. Catalog JSON
+/// `tidb_ast::RunawayActionType` is currently a closed Rust enum. SessionExtendedInfoSchema JSON
 /// must nevertheless preserve future/unknown Go ordinals, so the stored model
 /// uses this open representation at the persistence boundary.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

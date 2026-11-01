@@ -28,7 +28,7 @@ fn permitting() -> crate::StmtContext {
     crate::StmtContext::for_query()
 }
 
-fn seeded() -> Catalog {
+fn seeded() -> SessionExtendedInfoSchema {
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE t (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     run_insert_on(
@@ -40,7 +40,7 @@ fn seeded() -> Catalog {
     catalog
 }
 
-fn rows(catalog: &Catalog) -> Vec<Vec<Datum>> {
+fn rows(catalog: &SessionExtendedInfoSchema) -> Vec<Vec<Datum>> {
     run_select_on("SELECT a, b FROM t ORDER BY a", catalog, &permitting()).unwrap()
 }
 
@@ -140,7 +140,7 @@ fn a_cancelled_cascade_repoints_no_child_row() {
     )
     .unwrap();
 
-    let child = |catalog: &Catalog| {
+    let child = |catalog: &SessionExtendedInfoSchema| {
         run_select_on("SELECT id, pid FROM c ORDER BY id", catalog, &permitting()).unwrap()
     };
     let before = child(&catalog);
@@ -234,7 +234,7 @@ fn corpus_quota() -> crate::StmtContext {
 }
 
 /// `n` rows of `(i, i * 10)` in a fresh `t`.
-fn table_of(n: i64) -> Catalog {
+fn table_of(n: i64) -> SessionExtendedInfoSchema {
     let mut catalog = tidb_infoschema_perfschema::mock_catalog();
     crate::run_create_table_on("CREATE TABLE t (a BIGINT, b BIGINT)", &mut catalog).unwrap();
     let values: Vec<String> = (0..n).map(|i| format!("({i}, {})", i * 10)).collect();

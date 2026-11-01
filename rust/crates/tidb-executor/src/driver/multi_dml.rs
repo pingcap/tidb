@@ -157,7 +157,7 @@ fn selected_partition_ids(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_multi_update(
     update: &tidb_ast::UpdateStmt,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
     layout: (
@@ -445,7 +445,7 @@ fn check_update_list(
     tables: &[tidb_planner_core_operator_physicalop::UpdateTablePos],
     assigns: &[tidb_planner_core_operator_physicalop::UpdateAssign],
     updated: &[UpdatedTable],
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
 ) -> Result<(), DriverError> {
     struct UpdatedAlias<'a> {
         name: &'a str,
@@ -515,7 +515,7 @@ fn check_update_list(
 /// Runs a multi-table `DELETE`, returning the number of removed rows.
 pub(crate) fn run_multi_delete(
     delete: &tidb_ast::DeleteStmt,
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
     tables: &[tidb_planner_core_operator_physicalop::DeleteTablePos],
@@ -585,7 +585,7 @@ struct DeleteSourceRow {
 fn delete_source_rows(
     tables: &[tidb_planner_core_operator_physicalop::DeleteTablePos],
     plan: &mut tidb_planner_core_operator_physicalop::PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
     memory_label: i64,
@@ -691,7 +691,7 @@ pub(crate) fn multi_dml_select(
 /// and per-table FK maps do.
 pub(crate) fn multi_dml_physical_plan(
     dml: MultiDmlRef<'_>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
@@ -792,7 +792,7 @@ pub(crate) fn multi_dml_physical_plan(
 /// which declines the pruning for every table.
 fn delete_multi_input(
     delete: &tidb_ast::DeleteStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<tidb_planner::plan_builder::delete_pruning::DeleteMultiInput, DriverError> {
@@ -811,7 +811,7 @@ fn delete_multi_input(
 /// single-table statement, which keeps its own builder.
 pub(crate) fn multi_dml_explain_plan(
     dml: MultiDmlRef<'_>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Option<tidb_planner_core_operator_physicalop::PhysicalPlan>, DriverError> {

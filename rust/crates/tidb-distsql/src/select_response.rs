@@ -175,7 +175,7 @@ impl SelectResponseSource {
 
 /// Go `selectResult` over a coprocessor response channel: the decoded row
 /// iterator a raw channel converts into.
-pub trait IntoSelectIter {
+pub trait SelectResult {
     /// Converts this raw response source into the sole decoded row iterator.
     ///
     /// Consuming `self` makes the Go `selectResult` invalidation rule a Rust
@@ -199,7 +199,7 @@ pub trait IntoSelectIter {
     ) -> SelectResponseIter;
 }
 
-impl IntoSelectIter for ResponseChannel<prost::bytes::Bytes> {
+impl SelectResult for ResponseChannel<prost::bytes::Bytes> {
     /// Converts this raw response source into the sole decoded row iterator.
     ///
     /// Consuming `self` makes the Go `selectResult` invalidation rule a Rust

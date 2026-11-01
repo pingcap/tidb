@@ -1272,7 +1272,7 @@ pub fn get_alter_table_set_region_split_policy_args(
 
 /// Go `ast.TiFlashReplicaSpec` as a job persists it (untagged fields).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
-pub struct JobTiFlashReplicaSpec {
+pub struct TiFlashReplicaSpec {
     /// The replica count.
     #[serde(rename = "Count", default)]
     pub count: u64,
@@ -1289,7 +1289,7 @@ pub struct JobTiFlashReplicaSpec {
 pub struct SetTiFlashReplicaArgs {
     /// The replica spec. Go's struct value is never omitted.
     #[serde(rename = "tiflash_replica", default)]
-    pub tiflash_replica: JobTiFlashReplicaSpec,
+    pub tiflash_replica: TiFlashReplicaSpec,
     /// Native BR's repair: the replica turns unavailable again (v2 only).
     #[serde(
         rename = "reset_available",
@@ -1318,7 +1318,7 @@ impl JobArgs for SetTiFlashReplicaArgs {
     }
 
     fn decode_v1(job: &mut Job) -> Result<Option<GoShared<Self>>, serde_json::Error> {
-        let spec = GoField::<JobTiFlashReplicaSpec>::default();
+        let spec = GoField::<TiFlashReplicaSpec>::default();
         let mut decoder = V1Decoder::new(job)?;
         decoder.decode(&spec, ast_type("TiFlashReplicaSpec", GoTypeKind::Struct))?;
         decoder.finish(job);

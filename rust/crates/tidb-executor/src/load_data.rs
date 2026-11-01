@@ -29,7 +29,7 @@ use tidb_ast::{ColumnOrUserVar, LoadDataOnDuplicate, LoadDataStmt};
 use tidb_datatype::{Datum, FieldTypeCode};
 use tidb_charset::Collation;
 
-use crate::{Catalog, DriverError, TableEntry};
+use crate::{SessionExtendedInfoSchema, DriverError, TableEntry};
 use tidb_lightning_mydump::{CharsetConvertor, CsvConfig, CsvError, CsvParser};
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
@@ -110,7 +110,7 @@ fn plain_error(message: impl Into<String>) -> DriverError {
 /// table resolves and before the executor builder's own checks.
 pub fn prepare_load_data(
     load: &LoadDataStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     env: &LoadDataEnv,
     check_privileges: impl FnOnce(&str, &str) -> Result<(), DriverError>,
@@ -387,7 +387,7 @@ fn read_failure(error: &CsvError) -> DriverError {
 pub fn run_load_data(
     prepared: &PreparedLoadData,
     data: &[u8],
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
     env: &LoadDataEnv,

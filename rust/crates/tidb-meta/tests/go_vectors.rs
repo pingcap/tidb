@@ -326,7 +326,7 @@ fn magic_byte_matches_go() {
     assert!(std::panic::catch_unwind(|| value::detach_magic_byte(b"")).is_err());
 }
 
-// --- Catalog JSON ----------------------------------------------------------
+// --- SessionExtendedInfoSchema JSON ----------------------------------------------------------
 
 /// `json.Marshal(&model.DBInfo{ID: 3, Name: "Test", Charset: "utf8mb4",
 /// Collate: "utf8mb4_bin", State: StatePublic})`.

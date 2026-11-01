@@ -102,7 +102,7 @@ mod tests {
     use tidb_kv::cluster_storage::{ClusterSnapshot, SnapshotPairs};
     use tidb_store_driver_txn::cluster_storage::{ClusterTableStorage, MutationBuffer};
     use crate::driver::run_select_on;
-    use tidb_infoschema::Catalog;
+    use tidb_infoschema::SessionExtendedInfoSchema;
     use tidb_table::tables::TableCommon;
     use tidb_kv::storage::StorageError;
 

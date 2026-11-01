@@ -186,7 +186,7 @@ pub struct InfoSchema {
     /// cost of a spurious rebuild is one snapshot walk, never staleness.
     metadata_version: u64,
     /// The immutable domain index view belongs to this metadata version.
-    /// Catalog clones share the view; DDL invalidates only the mutated owner.
+    /// SessionExtendedInfoSchema clones share the view; DDL invalidates only the mutated owner.
     latest_index_schema: std::sync::OnceLock<Arc<crate::table_source::LatestIndexSchema>>,
     /// Memoized answer of walking EVERY database's table map for GLOBAL
     /// temporary tables, valid as of one `metadata_version`. Without the memo
@@ -201,7 +201,7 @@ pub struct InfoSchema {
 /// lookup indexes built over both. Every statement plans and executes
 /// against one of these.
 #[derive(Clone, Debug)]
-pub struct Catalog {
+pub struct SessionExtendedInfoSchema {
     /// The shared schema image.
     schema: InfoSchema,    /// The planner's view of this catalog image, shared by clones like the
     /// index view and dropped by every mutator that moves [`Self::version`]
@@ -222,7 +222,7 @@ pub struct Catalog {
     /// version of the image without them, and the version attaching gave.
     /// Go's `SessionExtendedInfoSchema` keeps the shared infoschema's
     /// `SchemaMetaVersion`, so a temporary table never moves a plan-cache key
-    /// (see [`Catalog::schema_version`]).
+    /// (see [`SessionExtendedInfoSchema::schema_version`]).
     overlay_versions: Option<(u64, u64)>,
     /// The `TableInfo` facts a statistics cache miss reads, by table /
     /// partition id; the statistics themselves live in the domain's
@@ -230,7 +230,7 @@ pub struct Catalog {
     statistics_schemas: Arc<std::sync::OnceLock<HashMap<i64, Arc<tidb_stats::PseudoStatsTable>>>>,
 }
 
-impl Catalog {
+impl SessionExtendedInfoSchema {
     /// Go `infoschema.NewBuilder(...).InitWithDBInfos` before any stored
     /// schema: only the memory schemas Go's `initVirtualTables` builds from
     /// its `drivers` -- `INFORMATION_SCHEMA`, `PERFORMANCE_SCHEMA` and
@@ -357,7 +357,7 @@ impl Catalog {
                 },
             );
         }
-        let catalog = Catalog {
+        let catalog = SessionExtendedInfoSchema {
             schema: InfoSchema {
                 databases: Arc::new(
                     databases
@@ -443,7 +443,7 @@ pub enum TableEntry {
     /// `Arc`-wrapped so a transient, read-only view of an already-private
     /// (already copy-on-write'd for this transaction, or never yet written
     /// to) table can be handed out for free: see
-    /// [`Catalog::physical_kv_table_by_id`]. A caller that mutates goes
+    /// [`SessionExtendedInfoSchema::physical_kv_table_by_id`]. A caller that mutates goes
     /// through [`std::sync::Arc::make_mut`] the same way [`Self::Kv`]'s own
     /// enclosing `Arc<TableEntry>` already does, so a table already
     /// EXCLUSIVELY owned by this transaction (the overwhelmingly common
@@ -526,7 +526,7 @@ impl TableEntry {
     }
 }
 
-impl Catalog {
+impl SessionExtendedInfoSchema {
     fn database_mut(&mut self, folded_name: &str) -> Option<&mut Database> {
         Arc::make_mut(&mut self.schema.databases)
             .get_mut(folded_name)
@@ -590,7 +590,7 @@ impl Catalog {
     /// Registers a TiKV-format-byte-backed `table` in the default database.
     ///
     /// # Panics
-    /// As [`Catalog::register`].
+    /// As [`SessionExtendedInfoSchema::register`].
     pub fn register_kv(&mut self, name: &str, table: TableCommon) {
         self.bump_metadata_version();
         self.register_in(DEFAULT_DATABASE, name, TableEntry::Kv(Arc::new(table)))
@@ -1028,7 +1028,7 @@ impl Catalog {
 
     /// A mutable handle on a table of `database`, for the write paths.
     ///
-    /// Taking it bumps [`Catalog::version`], which is what a transaction's
+    /// Taking it bumps [`SessionExtendedInfoSchema::version`], which is what a transaction's
     /// conflict check observes. The count is deliberately over-approximate:
     /// every write path goes through here, so a statement that ends up
     /// changing nothing still bumps it. That can refuse a commit Go would
@@ -1038,12 +1038,12 @@ impl Catalog {
         self.get_rows_mut_in(database, name)
     }
 
-    /// [`Catalog::get_mut_in`] for the paths that write rows (DML, foreign-key
-    /// actions, the stats-delta flush): it bumps [`Catalog::version`] the
+    /// [`SessionExtendedInfoSchema::get_mut_in`] for the paths that write rows (DML, foreign-key
+    /// actions, the stats-delta flush): it bumps [`SessionExtendedInfoSchema::version`] the
     /// same way but keeps the planner's schema view, which carries schema
     /// metadata only -- Go's `InfoSchema` does not move when rows do. A
     /// caller must not change the table's schema through this handle; a
-    /// schema change takes [`Catalog::table_mut_in`].
+    /// schema change takes [`SessionExtendedInfoSchema::table_mut_in`].
     pub fn get_rows_mut_in(
         &mut self,
         database: &str,
@@ -1366,8 +1366,8 @@ enum StagedTable {
     Local(usize),
 }
 
-/// The stages [`Catalog::begin_statement_stage`] opened, closed by
-/// [`Catalog::end_statement_stage`].
+/// The stages [`SessionExtendedInfoSchema::begin_statement_stage`] opened, closed by
+/// [`SessionExtendedInfoSchema::end_statement_stage`].
 #[derive(Debug)]
 #[must_use]
 pub struct StatementStage(Vec<(StagedTable, tidb_kv::storage::StagingHandle)>);

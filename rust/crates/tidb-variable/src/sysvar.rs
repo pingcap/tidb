@@ -27,7 +27,7 @@
 //! TiDB actually reports.
 //!
 //! Go's `TypeFlag` zero value and its explicit `TypeStr` both fall through
-//! the validation switch to the string case, so both map to [`VarType::Str`].
+//! the validation switch to the string case, so both map to [`TypeFlag::Str`].
 //!
 //! A clamp is not a refusal: every check that narrows a value instead of
 //! rejecting it records [`Validated::truncated`], and the `SET` path turns
@@ -547,7 +547,7 @@ pub const SCOPE_INSTANCE: u8 = 4;
 /// Go `vardef.TypeFlag`, restricted to the cases the validation switch
 /// distinguishes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VarType {
+pub enum TypeFlag {
     /// Go's `TypeStr` and the unset zero value.
     Str,
     /// Go `TypeBool`.
@@ -578,7 +578,7 @@ pub struct SysVarDef {
     /// Go `Value`: the default.
     pub value: &'static str,
     /// Go `Type`.
-    pub var_type: VarType,
+    pub var_type: TypeFlag,
     /// Go `ReadOnly`.
     pub read_only: bool,
     /// Go `AllowAutoValue`: `-1` is accepted even outside the range.
@@ -601,7 +601,7 @@ impl SysVarDef {
         global_config_name: "",
         scope: 0,
         value: "",
-        var_type: VarType::Str,
+        var_type: TypeFlag::Str,
         read_only: false,
         allow_auto_value: false,
         min_value: 0,
@@ -1160,17 +1160,17 @@ impl SysVarDef {
             });
         }
         match self.var_type {
-            VarType::Unsigned => self.check_uint64(value),
-            VarType::Int => self.check_int64(value),
-            VarType::Bool => self.check_bool(value),
-            VarType::Float => self.check_float(value),
-            VarType::Enum => self.check_enum(value),
-            VarType::Time => Ok(Validated {
+            TypeFlag::Unsigned => self.check_uint64(value),
+            TypeFlag::Int => self.check_int64(value),
+            TypeFlag::Bool => self.check_bool(value),
+            TypeFlag::Float => self.check_float(value),
+            TypeFlag::Enum => self.check_enum(value),
+            TypeFlag::Time => Ok(Validated {
                 value: check_time_system_var(value, &tidb_datatype::SessionTimeZone::utc())?,
                 truncated: false,
             }),
-            VarType::Duration => self.check_duration(value),
-            VarType::Str => Ok(Validated {
+            TypeFlag::Duration => self.check_duration(value),
+            TypeFlag::Str => Ok(Validated {
                 value: value.to_owned(),
                 truncated: false,
             }),
@@ -2408,7 +2408,7 @@ impl SysVarDef {
     ) {
         use tidb_datatype::{Datum, FieldTypeCode};
         match self.var_type {
-            VarType::Unsigned => (
+            TypeFlag::Unsigned => (
                 Datum::UInt(val.parse::<u64>().unwrap_or(0)),
                 FieldTypeCode::LongLong,
                 NativeValFlags {
@@ -2416,7 +2416,7 @@ impl SysVarDef {
                     binary: true,
                 },
             ),
-            VarType::Bool => {
+            TypeFlag::Bool => {
                 // Go `TiDBOptOn`: "ON" case-folded, or exactly "1".
                 let on = val.eq_ignore_ascii_case("ON") || val == "1";
                 (
@@ -2601,7 +2601,7 @@ mod variable_core_tests {
     use super::*;
     use tidb_datatype::{Datum, FieldTypeCode};
 
-    fn sysvar_of_type(var_type: VarType) -> SysVarDef {
+    fn sysvar_of_type(var_type: TypeFlag) -> SysVarDef {
         SysVarDef {
             var_type,
             ..SysVarDef::PLACEHOLDER
@@ -2611,7 +2611,7 @@ mod variable_core_tests {
     // Go `TestGetNativeValType`.
     #[test]
     fn native_val_types_follow_the_registry_type() {
-        let boolean = sysvar_of_type(VarType::Bool);
+        let boolean = sysvar_of_type(TypeFlag::Bool);
         let (val, code, flags) = boolean.get_native_val_type("ON");
         assert_eq!(val, Datum::Int(1));
         assert_eq!(code, FieldTypeCode::LongLong);
@@ -2626,7 +2626,7 @@ mod variable_core_tests {
         assert_eq!(boolean.get_native_val_type("bogus").0, Datum::Int(0));
         assert_eq!(boolean.get_native_val_type("1").0, Datum::Int(1));
 
-        let unsigned = sysvar_of_type(VarType::Unsigned);
+        let unsigned = sysvar_of_type(TypeFlag::Unsigned);
         let (val, code, flags) = unsigned.get_native_val_type("1234");
         assert_eq!(val, Datum::UInt(1234));
         assert_eq!(code, FieldTypeCode::LongLong);
@@ -2640,7 +2640,7 @@ mod variable_core_tests {
         // Unparsable converts to zero.
         assert_eq!(unsigned.get_native_val_type("bogus").0, Datum::UInt(0));
 
-        let string = sysvar_of_type(VarType::Str);
+        let string = sysvar_of_type(TypeFlag::Str);
         let (val, code, flags) = string.get_native_val_type("1234");
         assert_eq!(val, Datum::new_string(b"1234".to_vec()));
         assert_eq!(code, FieldTypeCode::VarString);
@@ -3221,7 +3221,7 @@ mod tests {
     fn primitive_type_validation_matches_go() {
         let int = SysVarDef {
             name: "mynewsysvar",
-            var_type: VarType::Int,
+            var_type: TypeFlag::Int,
             min_value: 10,
             max_value: 300,
             allow_auto_value: true,
@@ -3234,7 +3234,7 @@ mod tests {
         assert_eq!(int.validate("oN"), Err(ValidationError::WrongType));
 
         let unsigned = SysVarDef {
-            var_type: VarType::Unsigned,
+            var_type: TypeFlag::Unsigned,
             min_value: 10,
             max_value: 300,
             allow_auto_value: true,
@@ -3246,7 +3246,7 @@ mod tests {
         assert_eq!(unsigned.validate("-1").unwrap().value, "-1");
 
         let float = SysVarDef {
-            var_type: VarType::Float,
+            var_type: TypeFlag::Float,
             min_value: 2,
             max_value: 7,
             ..SysVarDef::PLACEHOLDER
@@ -3256,7 +3256,7 @@ mod tests {
         assert_eq!(float.validate("stringval"), Err(ValidationError::WrongType));
 
         let boolean = SysVarDef {
-            var_type: VarType::Bool,
+            var_type: TypeFlag::Bool,
             auto_convert_negative_bool: true,
             ..SysVarDef::PLACEHOLDER
         };
@@ -3266,7 +3266,7 @@ mod tests {
         assert_eq!(boolean.validate("0.000"), Err(ValidationError::WrongValue));
 
         let enumeration = SysVarDef {
-            var_type: VarType::Enum,
+            var_type: TypeFlag::Enum,
             possible_values: &["OFF", "ON", "AUTO"],
             ..SysVarDef::PLACEHOLDER
         };
@@ -3310,7 +3310,7 @@ mod tests {
     #[test]
     fn time_and_duration_validation_match_go() {
         let time = SysVarDef {
-            var_type: VarType::Time,
+            var_type: TypeFlag::Time,
             ..SysVarDef::PLACEHOLDER
         };
         assert_eq!(time.validate("23:59 +0000").unwrap().value, "23:59 +0000");
@@ -3324,7 +3324,7 @@ mod tests {
         );
 
         let duration = SysVarDef {
-            var_type: VarType::Duration,
+            var_type: TypeFlag::Duration,
             min_value: 1_000_000_000,
             max_value: 3_600_000_000_000,
             ..SysVarDef::PLACEHOLDER

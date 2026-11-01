@@ -266,7 +266,7 @@ mod tests {
     use super::{bind_parameters, parameter_count};
     use tidb_datatype::Datum;
 
-    fn prepared_catalog() -> crate::Catalog {
+    fn prepared_catalog() -> crate::SessionExtendedInfoSchema {
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         crate::run_create_table_on(
             "CREATE TABLE p (id BIGINT PRIMARY KEY, v BIGINT)",

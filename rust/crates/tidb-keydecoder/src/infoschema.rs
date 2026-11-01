@@ -15,12 +15,12 @@
 //! Go `keydecoder.DecodeKey`'s lookups over an `infoschema.InfoSchema`
 //! (`TIDB_DECODE_KEY`): the statement's catalog image.
 
-use tidb_infoschema::{Catalog, TableEntry};
+use tidb_infoschema::{SessionExtendedInfoSchema, TableEntry};
 use tidb_table::tables::TableCommon;
 
 use crate::{KeyInfoCatalog, KeyInfoIndex, KeyInfoTable, KeyInfoTableLookup};
 
-impl KeyInfoCatalog for Catalog {
+impl KeyInfoCatalog for SessionExtendedInfoSchema {
     fn resolve_physical_table(&self, physical_id: i64) -> Option<KeyInfoTableLookup> {
         for (database, registered_name, entry) in self.table_entries() {
             let TableEntry::Kv(table) = entry else {
@@ -64,7 +64,7 @@ impl KeyInfoCatalog for Catalog {
 }
 
 fn key_info_table(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     database: &str,
     registered_name: &str,
     table: &TableCommon,

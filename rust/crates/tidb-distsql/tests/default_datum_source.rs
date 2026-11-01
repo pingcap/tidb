@@ -14,7 +14,7 @@
 
 //! Source checks for typed scalar materialization from a `TypeDefault` chunk.
 
-use tidb_distsql::select_response::IntoSelectIter;
+use tidb_distsql::select_response::SelectResult;
 use prost::Message;
 use tidb_codec::{encode_value, encode_value_in_timezone};
 use tidb_datatype::{

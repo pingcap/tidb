@@ -257,7 +257,7 @@ fn pin_field_names(stmt: &mut Stmt) -> bool {
 }
 
 /// Go `PrepareExec`, `ExecuteExec` and `DeallocateExec` (`executor/prepared.go`).
-pub trait PreparedExec: super::CompilerSession {
+pub trait PrepareExec: super::CompilerSession {
     /// The text a prepared name holds, if this session holds that name.
     ///
     /// `EXECUTE` is the one statement whose answer SHAPE is not in its own
@@ -598,4 +598,4 @@ pub trait PreparedExec: super::CompilerSession {
     }
 }
 
-impl<T: super::CompilerSession> PreparedExec for T {}
+impl<T: super::CompilerSession> PrepareExec for T {}

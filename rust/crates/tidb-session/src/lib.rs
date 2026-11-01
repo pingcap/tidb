@@ -19,7 +19,7 @@
 //! client holds, dispatching each statement kind to its executor path.
 //!
 //! SEED SCOPE: [`Session::run`] dispatches `SELECT` (rows), `INSERT` (affected
-//! count), and `CREATE TABLE` over the session's [`Catalog`]. DEFERRED
+//! count), and `CREATE TABLE` over the session's [`SessionExtendedInfoSchema`]. DEFERRED
 //! (documented): transactions (autocommit is implicit and immediate --
 //! `BEGIN`/`COMMIT`/`ROLLBACK` land with the txnkv integration), session
 //! variables (`SET`), prepared statements, the MySQL wire protocol, privileges,
@@ -35,7 +35,7 @@ use std::time::Duration;
 
 use tidb_ast::Stmt;
 use tidb_datatype::{Datum, FieldType};
-use tidb_infoschema::Catalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_driver_error::DriverError;
 use tidb_mathutil::MysqlRng;
 pub use load_stats_arm::ClientLocalFileReader;
@@ -245,7 +245,7 @@ use tidb_executor::stmt_ctx_build::ResultMaterializationAuthority;
 /// `infoschema` is shared by every session of a TiDB instance.
 #[derive(Clone)]
 pub struct SharedCatalog {
-    catalog: Arc<Mutex<Catalog>>,
+    catalog: Arc<Mutex<SessionExtendedInfoSchema>>,
     /// Go `domain.Domain`'s instance plan cache owner, shared by every
     /// session opened over this catalog; cluster servers install their own
     /// on each session instead.
@@ -258,7 +258,7 @@ pub struct SharedCatalog {
 impl SharedCatalog {
     /// A domain over `catalog` with a fresh plan-cache owner.
     #[must_use]
-    pub fn new(catalog: Catalog) -> Self {
+    pub fn new(catalog: SessionExtendedInfoSchema) -> Self {
         Self {
             catalog: Arc::new(Mutex::new(catalog)),
             plan_cache_invalidation: Arc::default(),
@@ -287,7 +287,7 @@ impl SharedCatalog {
     }
 
     /// Locks the catalog image.
-    pub fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'_, Catalog>> {
+    pub fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'_, SessionExtendedInfoSchema>> {
         self.catalog.lock()
     }
 
@@ -298,7 +298,7 @@ impl SharedCatalog {
     }
 
     /// The catalog image's own handle, for registries keyed by identity.
-    pub(crate) fn inner(&self) -> &Arc<Mutex<Catalog>> {
+    pub(crate) fn inner(&self) -> &Arc<Mutex<SessionExtendedInfoSchema>> {
         &self.catalog
     }
 
@@ -453,7 +453,7 @@ pub struct Session {
     ///
     /// Go DETACHES the overlay again in three narrower places: `SHOW CREATE
     /// VIEW` / `SHOW CREATE SEQUENCE` (`preprocess.go:551`), the by-name
-    /// `SHOW TABLES` (which `Catalog::table_names` excludes), and while
+    /// `SHOW TABLES` (which `SessionExtendedInfoSchema::table_names` excludes), and while
     /// expanding a view's body (`logical_plan_builder.go:4941`), which the
     /// planner reads through the catalog's detached view.
     local_temporary_tables: tidb_infoschema::session_tables::SessionTables,
@@ -622,7 +622,7 @@ pub struct Session {
     /// [`Self::set_statement_txn_activator`].
     statement_txn_activator: Option<Arc<txn::StatementTxnActivator>>,
     snapshot_schema_provider: Option<Arc<txn::SnapshotSchemaProvider>>,
-    snapshot_schema: Option<(u64, Catalog)>,
+    snapshot_schema: Option<(u64, SessionExtendedInfoSchema)>,
     /// Statement-only SnapshotTS override; the ordinary transaction stays intact.
     statement_snapshot: Option<(u64, txn::HistoricalRead)>,
     /// Go `GetRestrictedSQLExecutor`: internal sessions of the node, absent
@@ -2420,7 +2420,7 @@ impl Session {
     #[doc(hidden)]
     pub fn publish_table_statistics_for_test(
         &self,
-        catalog: &tidb_infoschema::Catalog,
+        catalog: &tidb_infoschema::SessionExtendedInfoSchema,
         physical_id: i64,
         statistics: &tidb_stats::Table,
     ) {

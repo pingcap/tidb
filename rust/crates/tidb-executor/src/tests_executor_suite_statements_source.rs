@@ -17,7 +17,7 @@
 //! Broader session, memory and kill obligations remain in the parity audit.
 
 use crate::{
-    run_create_table_on, run_insert_on, run_select_meta_in, run_select_on, run_update_on, Catalog,
+    run_create_table_on, run_insert_on, run_select_meta_in, run_select_on, run_update_on, SessionExtendedInfoSchema,
     StmtContext,
 };
 use tidb_datatype::Datum;
@@ -26,19 +26,19 @@ fn ctx() -> StmtContext {
     StmtContext::for_query()
 }
 
-fn create(catalog: &mut Catalog, sql: &str) {
+fn create(catalog: &mut SessionExtendedInfoSchema, sql: &str) {
     run_create_table_on(sql, catalog).unwrap_or_else(|error| panic!("create {sql:?}: {error:?}"));
 }
 
-fn insert(catalog: &mut Catalog, sql: &str) {
+fn insert(catalog: &mut SessionExtendedInfoSchema, sql: &str) {
     run_insert_on(sql, catalog, &ctx()).unwrap_or_else(|error| panic!("insert {sql:?}: {error:?}"));
 }
 
-fn select(catalog: &Catalog, sql: &str) -> Vec<Vec<Datum>> {
+fn select(catalog: &SessionExtendedInfoSchema, sql: &str) -> Vec<Vec<Datum>> {
     run_select_on(sql, catalog, &ctx()).unwrap_or_else(|error| panic!("select {sql:?}: {error:?}"))
 }
 
-fn select_err(catalog: &Catalog, sql: &str) -> crate::DriverError {
+fn select_err(catalog: &SessionExtendedInfoSchema, sql: &str) -> crate::DriverError {
     run_select_on(sql, catalog, &ctx()).expect_err(&format!("select {sql:?} must fail"))
 }
 
@@ -64,7 +64,7 @@ fn rows_text(rows: &[Vec<Datum>]) -> Vec<Vec<String>> {
         .collect()
 }
 
-fn assert_rows(catalog: &Catalog, sql: &str, expected: &[&str]) {
+fn assert_rows(catalog: &SessionExtendedInfoSchema, sql: &str, expected: &[&str]) {
     let actual = rows_text(&select(catalog, sql));
     let expected: Vec<Vec<String>> = expected
         .iter()
@@ -80,7 +80,7 @@ fn assert_rows(catalog: &Catalog, sql: &str, expected: &[&str]) {
 /// defined output order. Go's `TestUnion2` calls `r.Sort()` on exactly these
 /// arms; comparing the rows positionally would pin an order the engine never
 /// promised.
-fn assert_rows_sorted(catalog: &Catalog, sql: &str, expected: &[&str]) {
+fn assert_rows_sorted(catalog: &SessionExtendedInfoSchema, sql: &str, expected: &[&str]) {
     let mut actual = rows_text(&select(catalog, sql));
     actual.sort();
     let mut expected: Vec<Vec<String>> = expected

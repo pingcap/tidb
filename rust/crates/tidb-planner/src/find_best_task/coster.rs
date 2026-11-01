@@ -1198,7 +1198,7 @@ fn plan_is_temporary(plan: &PhysicalPlan) -> bool {
 mod tests {
     use super::*;
     use tidb_planner_core_operator_physicalop::{
-        BasePhysicalPlan, PhysicalCTE, PhysicalPlan, PhysicalPointGet, PhysicalTableDual,
+        BasePhysicalPlan, PhysicalCTE, PhysicalPlan, PointGetPlan, PhysicalTableDual,
         PhysicalUnionAll,
     };
     use tidb_planner_core_base::PlanIdAllocator;
@@ -1213,7 +1213,7 @@ mod tests {
         let column = Column::new(id.into(), FieldType::new(FieldTypeCode::LongLong));
         base.base
             .set_schema(Some(Schema::new(vec![column.clone()])));
-        PhysicalPlan::PointGet(PhysicalPointGet {
+        PhysicalPlan::PointGet(PointGetPlan {
             base,
             lock: false,
             table_id: i64::from(id),

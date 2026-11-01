@@ -25,7 +25,7 @@
 //!
 //! # Where the result goes
 //!
-//! Into [`crate::driver::Catalog::set_table_statistics`], which is the ONE
+//! Into [`crate::driver::SessionExtendedInfoSchema::set_table_statistics`], which is the ONE
 //! place the planner reads statistics from -- so publishing there is what
 //! makes `stats:pseudo` disappear from `EXPLAIN`, and nothing else has to
 //! learn about `ANALYZE`. This tier keeps no `mysql.stats_*` rows: those are

@@ -18,7 +18,7 @@
 //! extension trait over [`CompilerSession`], the session primitives the
 //! compiler reads.
 
-use crate::{Catalog, DriverError};
+use crate::{SessionExtendedInfoSchema, DriverError};
 use tidb_ast::Stmt;
 
 // modules
@@ -29,7 +29,7 @@ pub mod non_prepared_plan_cache;
 
 // traits
 pub use explain::ExplainCompile;
-pub use prepared::PreparedExec;
+pub use prepared::PrepareExec;
 pub use prepared_ast::PreparedAstCompile;
 pub use non_prepared_plan_cache::NonPreparedPlanCacheCompile;
 pub mod plan_cacheable_checker;
@@ -117,7 +117,7 @@ pub trait CompilerSession: crate::admin::AdminExec {
     /// the statements around it survive to `COMMIT`.
     ///
     /// The stage here is an image of the catalog rather than an undo log,
-    /// because this tier's tables ARE the buffer: `Catalog::clone` deep-copies
+    /// because this tier's tables ARE the buffer: `SessionExtendedInfoSchema::clone` deep-copies
     /// the in-process bytes (`MemTableStorage::clone_box`). Restoring the
     /// image is the same observable effect as `Cleanup()`.
     ///
@@ -159,7 +159,7 @@ pub trait CompilerSession: crate::admin::AdminExec {
     /// path as an `Err`. An `inspect_err` restore is skipped entirely when
     /// `body` unwinds, so a caught panic would leave a HALF-APPLIED statement
     /// in the in-process rows.
-    fn with_staged_catalog<T>(&mut self, body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>, ) -> Result<T, DriverError>;
+    fn with_staged_catalog<T>(&mut self, body: impl FnOnce(&mut SessionExtendedInfoSchema) -> Result<T, DriverError>, ) -> Result<T, DriverError>;
     /// [`Self::require_statement_table_privileges`] for the statement inside
     /// an EXPLAIN, which Go plans under `StmtCtx.InExplainStmt`: every view
     /// `BuildDataSourceFromView` expands then needs SHOW VIEW, and a view

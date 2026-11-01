@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use tidb_datatype::{Datum, FieldType};
 use crate::mem_table_retrieval::{MemTableRead, MemTableRetriever};
-use crate::Catalog;
+use crate::SessionExtendedInfoSchema;
 use crate::DriverError;
 use tidb_hack::GoCaseCompare;
 
@@ -315,7 +315,7 @@ impl MemTableRetriever for InstanceStateRetriever {
     fn retrieve(
         &self,
         read: &MemTableRead,
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         ctx: &crate::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         use tidb_planner::memtable_predicate_extractor::MemTableExtractor as Extractor;

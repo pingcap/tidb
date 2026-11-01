@@ -99,7 +99,7 @@
 //!   all. Go makes no order promise for a union index merge without
 //!   `ORDER BY` (the planner puts a `Sort` above when one is needed), so the
 //!   path-0-first drain is one legal schedule. See
-//!   [`IndexMergeReaderExec::pushed_limit`] for the one case where this is
+//!   [`IndexMergeReaderExecutor::pushed_limit`] for the one case where this is
 //!   visible.
 //! * **Intersection output order.** Go iterates `kv.MemAwareHandleMap.Range`,
 //!   which promises no handle order. The shared Rust handle map has the same
@@ -1234,7 +1234,7 @@ struct MergeTableTask {
 ///
 /// The partial paths are the union or intersection operands; the table is the
 /// one every path indexes, and every surviving handle is read from it.
-pub struct IndexMergeReaderExec {
+pub struct IndexMergeReaderExecutor {
     meta: ExecutorMeta,
     /// Go `table`.
     table: TableCommon,
@@ -1282,7 +1282,7 @@ pub struct IndexMergeReaderExec {
     merge_stats: Option<crate::index_lookup_stats::IndexMergeStatsHandle>,
 }
 
-impl IndexMergeReaderExec {
+impl IndexMergeReaderExecutor {
     /// Builds the reader. `partials` are the access paths in plan order --
     /// intersection requires a handle to appear on ALL of them, so the count
     /// is load-bearing (Go: `*val == len(w.indexMerge.partialPlans)`, :1483).
@@ -1296,7 +1296,7 @@ impl IndexMergeReaderExec {
     ) -> Self {
         // The table side is a coprocessor read of the handles' rows.
         table.count_keys_read(decode_context.keys_read());
-        IndexMergeReaderExec {
+        IndexMergeReaderExecutor {
             meta,
             table,
             decode_context,
@@ -1798,7 +1798,7 @@ impl IndexMergeReaderExec {
     }
 }
 
-impl Executor for IndexMergeReaderExec {
+impl Executor for IndexMergeReaderExecutor {
     /// Go `Open` (:174). The process worker is not started here: Go starts its
     /// goroutines lazily on the first `Next` (`if !e.workerStarted`), and so
     /// does this port.
@@ -1932,8 +1932,8 @@ mod tests {
     fn merge(
         partials: Vec<Box<dyn PartialHandleSource>>,
         intersection: bool,
-    ) -> IndexMergeReaderExec {
-        IndexMergeReaderExec::new(
+    ) -> IndexMergeReaderExecutor {
+        IndexMergeReaderExecutor::new(
             ExecutorMeta::new(Schema::new(Vec::new()), 1, 32, 1024),
             TableCommon::new(1, Vec::new()),
             RowDecodeContext::for_test_query_utc(),

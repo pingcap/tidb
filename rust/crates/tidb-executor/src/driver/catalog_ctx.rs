@@ -18,7 +18,7 @@
 
 use tidb_stats_handle::catalog_statistics::CatalogStatistics;
 use crate::StatsStmtCtx as _;
-use crate::{Catalog, StmtContext};
+use crate::{SessionExtendedInfoSchema, StmtContext};
 use tidb_infoschema::PlannerCatalog;
 
 /// Go `RequestLoadStats` and `SyncWaitStatsLoad` over a statement's context.
@@ -39,7 +39,7 @@ pub trait CatalogStatisticsLoad {
     ) -> Result<(), tidb_planner_core_base::PlanError>;
 }
 
-impl CatalogStatisticsLoad for Catalog {
+impl CatalogStatisticsLoad for SessionExtendedInfoSchema {
     /// Go `RequestLoadStats`: start the workers at
     /// `CollectPredicateColumnsPoint` and leave synchronous waiting to the
     /// later `SyncWaitStatsLoadPoint`.

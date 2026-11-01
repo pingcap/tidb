@@ -212,7 +212,7 @@ mod tests {
     use tidb_kv::cluster_storage::{ClusterSnapshot, SnapshotPairs};
     use tidb_store_driver_txn::cluster_storage::{ClusterTableStorage, MutationBuffer};
     use crate::driver::{build_prepared_select_plan, run_select_on, PreparedPlanCacheEnvironment};
-    use tidb_infoschema::{Catalog, DEFAULT_DATABASE};
+    use tidb_infoschema::{SessionExtendedInfoSchema, DEFAULT_DATABASE};
     use tidb_executor_internal_exec::{Executor, ExecutorMeta};
     use tidb_executor_join::join::{IndexLookupPlan, IndexLookupSource, JoinExec, JoinKind};
     use tidb_table::tables::TableHandle;
@@ -1419,7 +1419,7 @@ mod tests {
         assert_eq!(fixture.region.opened(), 2);
     }
 
-    fn catalog_of(table: TableCommon) -> Catalog {
+    fn catalog_of(table: TableCommon) -> SessionExtendedInfoSchema {
         let mut catalog = tidb_infoschema_perfschema::mock_catalog();
         catalog.register_kv("t", table);
         catalog
@@ -2444,7 +2444,7 @@ mod tests {
     /// reduces before anything crosses the wire.
     fn run_counting(
         sql: &str,
-        catalog: &Catalog,
+        catalog: &SessionExtendedInfoSchema,
         ctx: &crate::StmtContext,
         matched: &AtomicU64,
     ) -> (Vec<Vec<Datum>>, u64) {

@@ -92,7 +92,7 @@ use tidb_datatype::Datum;
 
 use crate::driver::DriverError;
 use tidb_infoschema::TableEntry;
-use tidb_infoschema::Catalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_table::tables::TableHandle;
 use tidb_table::tables::RowDecodeContext;
 use tidb_table::tables::KvForeignKey;
@@ -139,7 +139,7 @@ fn same_key(left: &[Datum], right: &[Datum], ctx: &crate::StmtContext) -> bool {
 }
 
 fn lookup_handles(
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     database: &str,
     table: &str,
     index: Option<i64>,
@@ -160,7 +160,7 @@ fn lookup_handles(
 /// Go `buildFKCheckForReferredFK`'s index, computed on demand: every
 /// `(schema, table, foreign key)` whose constraint REFERS to `database.table`.
 pub(crate) fn referring(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     database: &str,
     table: &str,
 ) -> Vec<(String, String, KvForeignKey)> {
@@ -227,7 +227,7 @@ fn planned_violation(node: &FkTriggerNode) -> DriverError {
 
 /// Go FKCheckExec uses the offsets and constraints selected by the DML plan.
 pub(crate) fn require_updated_child_rows(
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     triggers: &[FkTriggerNode],
     database: &str,
     table: &str,
@@ -239,7 +239,7 @@ pub(crate) fn require_updated_child_rows(
 }
 
 fn check_child_row_changes(
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     triggers: &[FkTriggerNode],
     database: &str,
     table: &str,
@@ -291,7 +291,7 @@ fn check_child_row_changes(
 /// Go `FKCheckExec` on the child side, as a statement-level gate: the first
 /// violating row fails the whole statement.
 pub(crate) fn require_child_rows(
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     triggers: &[FkTriggerNode],
     database: &str,
     table: &str,
@@ -318,7 +318,7 @@ pub(crate) enum ParentChange<'a> {
 /// after the statement's record writes and checks, including DELETE/REPLACE. Statement staging owns
 /// rollback of both parent and dependent rows if any action fails.
 pub(crate) fn cascade_parent_changes(
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     triggers: &[FkTriggerNode],
     database: &str,
     table: &str,
@@ -331,7 +331,7 @@ pub(crate) fn cascade_parent_changes(
 /// The restricting FK checks run before cascades and, under IGNORE, before
 /// the candidate row is written. Consume only the retained check policies.
 pub(crate) fn check_parent_changes(
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     triggers: &[FkTriggerNode],
     database: &str,
     table: &str,
@@ -342,7 +342,7 @@ pub(crate) fn check_parent_changes(
 }
 
 fn cascade_at_depth(
-    catalog: &mut Catalog,
+    catalog: &mut SessionExtendedInfoSchema,
     triggers: &[FkTriggerNode],
     database: &str,
     table: &str,
@@ -642,7 +642,7 @@ fn cascade_at_depth(
 /// policy through the same builder rather than rediscovering constraints in
 /// the row callbacks.
 fn cascade_triggers(
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     database: &str,
     table: &str,
     deleting: bool,
@@ -677,7 +677,7 @@ fn cascade_triggers(
 /// visit order.
 fn check_fk_cascade_table_lock(
     locked_tables: &std::collections::BTreeMap<i64, tidb_model::TableLockTpInfo>,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     db: &str,
     table: &str,
     delete: bool,

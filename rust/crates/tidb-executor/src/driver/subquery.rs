@@ -24,7 +24,7 @@ use super::*;
 /// error surfaces when the query itself is built.
 pub(crate) fn select_outer_scope(
     select: &tidb_ast::SelectStmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> FromScope {

@@ -31,7 +31,7 @@ use tidb_syssession::mysql_system_tables::{
 
 /// Go `statstypes.ColStatsTimeInfo`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct ColumnStatsTimeInfo {
+pub struct ColStatsTimeInfo {
     /// Most recent predicate use, in the requested session location.
     pub last_used_at: Option<Time>,
     /// Most recent analyze, in the requested session location.
@@ -43,7 +43,7 @@ pub fn load_column_stats_usage<S: MetaSnapshot>(
     snapshot: &mut S,
     catalog: &ClusterCatalog,
     location: &SessionTimeZone,
-) -> Result<HashMap<TableItemID, ColumnStatsTimeInfo>, SystemTableError> {
+) -> Result<HashMap<TableItemID, ColStatsTimeInfo>, SystemTableError> {
     load(snapshot, catalog, location, None)
 }
 
@@ -53,7 +53,7 @@ pub fn load_column_stats_usage_for_table<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     location: &SessionTimeZone,
     table_id: i64,
-) -> Result<HashMap<TableItemID, ColumnStatsTimeInfo>, SystemTableError> {
+) -> Result<HashMap<TableItemID, ColStatsTimeInfo>, SystemTableError> {
     load(snapshot, catalog, location, Some(table_id))
 }
 
@@ -87,7 +87,7 @@ fn load<S: MetaSnapshot>(
     catalog: &ClusterCatalog,
     location: &SessionTimeZone,
     table_id: Option<i64>,
-) -> Result<HashMap<TableItemID, ColumnStatsTimeInfo>, SystemTableError> {
+) -> Result<HashMap<TableItemID, ColStatsTimeInfo>, SystemTableError> {
     let view = usage_view(catalog)?;
     let pairs = match table_id {
         Some(table_id) => scan_system_table_prefixed(snapshot, &view, &[Datum::Int(table_id)])?,
@@ -108,7 +108,7 @@ fn load<S: MetaSnapshot>(
                 is_index: false,
                 is_sync_load_failed: false,
             },
-            ColumnStatsTimeInfo {
+            ColStatsTimeInfo {
                 last_used_at: usage_time(&row, "last_used_at", &utc, location)?,
                 last_analyzed_at: usage_time(&row, "last_analyzed_at", &utc, location)?,
             },

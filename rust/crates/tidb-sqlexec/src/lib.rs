@@ -52,9 +52,9 @@ impl<T: Any + Send + Sync> ExecutionContext for T {
 pub struct BackgroundContext;
 
 /// Go `sysproctrack.TrackProc`, carried opaquely through restricted execution.
-pub trait TrackProcess: Any + Send + Sync {}
+pub trait TrackProc: Any + Send + Sync {}
 
-impl<T: Any + Send + Sync> TrackProcess for T {}
+impl<T: Any + Send + Sync> TrackProc for T {}
 
 /// Go `ExecOption`.
 #[derive(Default)]
@@ -83,7 +83,7 @@ pub struct ExecOption {
 
 /// Go `ExecOption.TrackSysProc`.
 pub type TrackSysProc =
-    Arc<dyn Fn(u64, Arc<dyn TrackProcess>) -> std::result::Result<(), SqlExecError> + Send + Sync>;
+    Arc<dyn Fn(u64, Arc<dyn TrackProc>) -> std::result::Result<(), SqlExecError> + Send + Sync>;
 
 /// Go `ExecOption.UnTrackSysProc`.
 pub type UntrackSysProc = Arc<dyn Fn(u64) + Send + Sync>;

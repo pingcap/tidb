@@ -17,11 +17,11 @@
 //! `StmtContext::for_dml(_, strict, ignore_err)`.
 
 use crate::{
-    run_create_table_on, run_insert_reporting, run_select_on, run_update_on, Catalog, StmtContext,
+    run_create_table_on, run_insert_reporting, run_select_on, run_update_on, SessionExtendedInfoSchema, StmtContext,
 };
 use tidb_datatype::Datum;
 
-fn select_col1(catalog: &Catalog, id: i64) -> String {
+fn select_col1(catalog: &SessionExtendedInfoSchema, id: i64) -> String {
     run_select_on(
         &format!("select col1 from tn where id = {id}"),
         catalog,
@@ -35,7 +35,7 @@ fn select_col1(catalog: &Catalog, id: i64) -> String {
     .unwrap_or_else(|| "<non-text>".to_owned())
 }
 
-fn all_rows(catalog: &Catalog) -> Vec<Vec<String>> {
+fn all_rows(catalog: &SessionExtendedInfoSchema) -> Vec<Vec<String>> {
     run_select_on(
         "select id, col1 from tn order by id",
         catalog,

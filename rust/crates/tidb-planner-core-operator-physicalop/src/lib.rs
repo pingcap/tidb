@@ -2687,7 +2687,7 @@ pub fn flatten_tree_push_down_plan(
 /// The runtime-specific decoder and lock state stay outside the reusable plan;
 /// this node retains the chosen key shape and its execute-time range source.
 #[derive(Clone, Debug, Default)]
-pub struct PhysicalPointGet {
+pub struct PointGetPlan {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
     /// The selected table.
@@ -2725,14 +2725,14 @@ pub struct PointGetPartition {
 
 /// Go `physicalop.BatchPointGetPlan`: a fixed-shape set of point keys.
 #[derive(Clone, Debug, Default)]
-pub struct PhysicalBatchPointGet {
+pub struct BatchPointGetPlan {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
     /// The selected table.
     pub table_id: i64,
     /// The selected index, or `None` for table handles.
     pub index_id: Option<i64>,
-    /// Go `BatchPointGetPlan.accessCols`; see [`PhysicalPointGet::access_cols`].
+    /// Go `BatchPointGetPlan.accessCols`; see [`PointGetPlan::access_cols`].
     pub access_cols: Option<Vec<tidb_expr::column::Column>>,
     /// Go `UnsignedHandle` (`physical_batch_point_get.go`): the table handle
     /// column is unsigned, so `handle:` values print as their uint64 reading
@@ -2754,7 +2754,7 @@ pub struct PhysicalBatchPointGet {
     /// Go `BatchPointGetPlan.Lock`: a locking SELECT inside a transaction
     /// locks the rows it reads; rendered as the `lock` operator detail.
     pub lock: bool,
-    /// See [`PhysicalPointGet::select_lock`].
+    /// See [`PointGetPlan::select_lock`].
     pub select_lock: Option<(tidb_planner_core_operator_logicalop::SelectLockType, u64)>,
 }
 
@@ -4020,9 +4020,9 @@ pub enum PhysicalPlan {
     /// Go `physicalop.PhysicalLocalIndexLookUp`.
     LocalIndexLookUp(PhysicalLocalIndexLookUp),
     /// Go `physicalop.PointGetPlan`.
-    PointGet(PhysicalPointGet),
+    PointGet(PointGetPlan),
     /// Go `physicalop.BatchPointGetPlan`.
-    BatchPointGet(PhysicalBatchPointGet),
+    BatchPointGet(BatchPointGetPlan),
     /// Go `physicalop.PhysicalIndexMergeReader`.
     IndexMergeReader(PhysicalIndexMergeReader),
     /// Go `Insert`/`Update`/`Delete` cached roots.
@@ -4893,7 +4893,7 @@ impl PhysicalPlan {
                 base: base_of(&op.base),
                 index_handle_offsets: op.index_handle_offsets.clone(),
             }),
-            Self::PointGet(op) => Self::PointGet(PhysicalPointGet {
+            Self::PointGet(op) => Self::PointGet(PointGetPlan {
                 base: base_of(&op.base),
                 table_id: op.table_id,
                 partition: op.partition.clone(),
@@ -4904,7 +4904,7 @@ impl PhysicalPlan {
                 lock: op.lock,
                 select_lock: op.select_lock,
             }),
-            Self::BatchPointGet(op) => Self::BatchPointGet(PhysicalBatchPointGet {
+            Self::BatchPointGet(op) => Self::BatchPointGet(BatchPointGetPlan {
                 base: base_of(&op.base),
                 table_id: op.table_id,
                 index_id: op.index_id,

@@ -30,7 +30,7 @@ use tidb_ast::{
 };
 use tidb_datatype::{Datum, Decimal, StringDatum};
 use tidb_charset::Collation;
-use crate::{Catalog, PreparedDmlPlan, PreparedSelectPlan};
+use crate::{SessionExtendedInfoSchema, PreparedDmlPlan, PreparedSelectPlan};
 use tidb_hack::GoCaseCompare;
 use tidb_mysql::to_lowercase as go_simple_lowercase;
 use tidb_planner_core_metrics::get_non_prep_plan_cache_unsupported_counter;
@@ -116,7 +116,7 @@ impl NonPreparedPlanCache {
 /// skips those node kinds so different limit values plan differently).
 pub fn parameterize_dml(
     stmt: &Stmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     enable_param_limit: bool,
     string_collation: Collation,
@@ -357,7 +357,7 @@ impl Walk<'_> {
 /// planning and later recursive rebuilds.
 pub fn get_param_sql_from_ast(
     stmt: &Stmt,
-    catalog: &Catalog,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     enable_param_limit: bool,
     enable_for_dml: bool,
@@ -412,7 +412,7 @@ pub fn get_param_sql_from_ast(
 /// The admitting walk: Go's `nonPreparedPlanCacheableChecker`, whose `Enter`
 /// admits a fixed node list and refuses everything else.
 struct Walk<'a> {
-    catalog: &'a Catalog,
+    catalog: &'a SessionExtendedInfoSchema,
     current_db: &'a str,
     enable_param_limit: bool,
     /// Go `checker.tableNodes`: the at-most-two tables the query reads, whose

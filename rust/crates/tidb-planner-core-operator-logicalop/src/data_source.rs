@@ -228,7 +228,7 @@ pub struct DataSource {
     pub force_no_keep_order_table_path: bool,
     /// Go `AccessPath.IndexLookUpPushDownBy`, keyed by index ID.
     pub index_lookup_push_down_by:
-        std::collections::BTreeMap<i64, tidb_planner_util::path::IndexLookupPushDownBy>,
+        std::collections::BTreeMap<i64, tidb_planner_util::path::IndexLookUpPushDownByType>,
     /// Index IDs carrying Go `AccessPath.NoncacheableReason` after
     /// `CheckPartialIndexes` rejects the general cached-plan proof.
     pub partial_index_noncacheable_ids: std::collections::BTreeSet<i64>,
@@ -322,7 +322,7 @@ impl DataSource {
     /// Go `plancodec.TypeTableScan`, as `DataSource.Init` sets it.
     pub const TYPE: &'static str = "DataSource";
 
-    /// Resolves an index column after logical column pruning. Catalog index
+    /// Resolves an index column after logical column pruning. SessionExtendedInfoSchema index
     /// offsets address the original table column list, while `columns` and
     /// the logical schema are pruned together; the column name is the stable
     /// identity between those two layouts.

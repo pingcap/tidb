@@ -16,13 +16,13 @@
 //! statement's plan needs (`CollectPredicateColumnsPoint`'s demand,
 //! `SyncWaitStatsLoad`'s items), the async-load queue upkeep, and
 //! `GetPhysicalTableStats` through the image's schema facts. Go's handle
-//! takes the `InfoSchema`; here the image is the infoschema's `Catalog`.
+//! takes the `InfoSchema`; here the image is the infoschema's `SessionExtendedInfoSchema`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use tidb_hack::GoCaseCompare;
-use tidb_infoschema::Catalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 
 use crate::StatsHandle;
 
@@ -48,7 +48,7 @@ pub trait CatalogStatistics {
     ) -> Option<Arc<tidb_stats::Table>>;
 }
 
-impl CatalogStatistics for Catalog {
+impl CatalogStatistics for SessionExtendedInfoSchema {
     /// Go `storage.CleanFakeItemsForShowHistInFlights`: remove queue entries
     /// whose cache state no longer requires a load and return the number that
     /// remain genuinely needed.

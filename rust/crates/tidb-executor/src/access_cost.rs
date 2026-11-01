@@ -30,7 +30,7 @@ use tidb_stats::Table;
 #[must_use]
 pub fn table_statistics(
     ctx: &crate::StmtContext,
-    catalog: &tidb_infoschema::Catalog,
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
     table_id: i64,
 ) -> Option<std::sync::Arc<Table>> {
     ctx.stats_handle()
@@ -54,7 +54,7 @@ pub fn table_statistics(
 #[must_use]
 pub fn get_stats_table(
     ctx: &crate::StmtContext,
-    catalog: &tidb_infoschema::Catalog,
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
     physical_table_id: i64,
 ) -> Option<std::sync::Arc<Table>> {
     let opt_objective_determinate = !ctx
@@ -113,7 +113,7 @@ fn stats_table_for_session(
 /// and returns that entry.
 pub fn load_table_stats(
     ctx: &crate::StmtContext,
-    catalog: &tidb_infoschema::Catalog,
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
     physical_table_id: i64,
 ) -> Option<tidb_stmtctx::used_stats::UsedStatsInfoForTable> {
     if ctx.used_stats_info(physical_table_id).is_none() {
@@ -155,7 +155,7 @@ pub fn load_table_stats(
 #[must_use]
 pub fn get_latest_version_from_stats_table(
     handle: &tidb_stats_handle::StatsHandle,
-    catalog: &tidb_infoschema::Catalog,
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
     table_id: i64,
     opt_objective_determinate: bool,
 ) -> u64 {

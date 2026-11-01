@@ -18,7 +18,7 @@
 
 use tidb_executor::run_create_table_on;
 use tidb_driver_error::DriverError;
-use tidb_infoschema::Catalog;
+use tidb_infoschema::SessionExtendedInfoSchema;
 
 /// The column set Go `serial_test.go:970` builds:
 /// `i int, f float, c char(20), b bit(2), b32 bit(32), b64 bit(64), d date,
@@ -26,7 +26,7 @@ use tidb_infoschema::Catalog;
 const COLS: &str = "(i int, f float, c char(20), b bit(2), b32 bit(32), b64 bit(64), d date, \
 dt datetime, dt6 datetime(6), ts timestamp, ts6 timestamp(6), j json)";
 
-fn create_error(catalog: &mut Catalog, sql: &str) -> DriverError {
+fn create_error(catalog: &mut SessionExtendedInfoSchema, sql: &str) -> DriverError {
     run_create_table_on(sql, catalog)
         .map(|_| panic!("{sql} was expected to fail"))
         .expect_err("expected error")
