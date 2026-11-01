@@ -18,7 +18,6 @@
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 
-use tidb_planner_util::path::PossiblePath;
 use tidb_planner_core_base::PossiblePropertiesInfo;
 
 use super::fold::{fold_owned, Descend, OwnedRewrite};
@@ -96,22 +95,15 @@ fn data_source_orders(source: &super::DataSource, inherited_fixed: &[i64]) -> Ve
         index_orders
     };
     for path in &source.enumerated_paths {
-        match path {
-            PossiblePath::Table {
-                is_int_handle: true,
-                ..
-            } => {
-                if let Some(column) = source.handle_cols.first() {
-                    orders.push(vec![column.clone()]);
-                }
+        if path.is_tiflash_path() {
+            continue;
+        }
+        if path.is_int_handle_path {
+            if let Some(column) = source.handle_cols.first() {
+                orders.push(vec![column.clone()]);
             }
-            PossiblePath::Table {
-                primary_index: Some(index),
-                ..
-            }
-            | PossiblePath::Index { index } => orders.extend(index_orders(index)),
-            PossiblePath::Table { .. } => {}
-            PossiblePath::TiFlashTable => {}
+        } else if let Some(index) = &path.index {
+            orders.extend(index_orders(index));
         }
     }
     orders

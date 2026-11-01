@@ -754,7 +754,7 @@ fn test_dynamic_partition_pruning_retains_global_index_paths() {
     assert_eq!(flags & flags::PARTITION_PROCESSOR, 0);
     assert!(source
         .enumerated_paths
-        .contains(&tidb_planner_util::path::PossiblePath::Index { index: source.indexes[0].clone() }));
+        .contains(&tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone())));
 
     let mut builder = harness.builder();
     let (plan, flags) = builder
@@ -769,7 +769,7 @@ fn test_dynamic_partition_pruning_retains_global_index_paths() {
     assert_ne!(flags & flags::PARTITION_PROCESSOR, 0);
     assert!(!source
         .enumerated_paths
-        .contains(&tidb_planner_util::path::PossiblePath::Index { index: source.indexes[0].clone() }));
+        .contains(&tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone())));
 }
 
 #[test]
@@ -811,7 +811,7 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
     };
     assert_eq!(
         source.enumerated_paths,
-        vec![tidb_planner_util::path::PossiblePath::Index { index: source.indexes[0].clone() }]
+        vec![tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone())]
     );
     assert_eq!(
         source.forced_index_ids,
@@ -830,7 +830,7 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
     };
     assert_eq!(
         source.enumerated_paths,
-        vec![tidb_planner_util::path::PossiblePath::Index { index: source.indexes[0].clone() }]
+        vec![tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone())]
     );
     assert_eq!(
         source.forced_index_ids,
@@ -851,7 +851,7 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
     };
     assert!(matches!(
         source.enumerated_paths.as_slice(),
-        [tidb_planner_util::path::PossiblePath::Table { .. }]
+        [path] if path.is_tikv_table_path()
     ));
     assert!(source.force_keep_order_table_path);
 
@@ -867,7 +867,7 @@ fn test_table_index_hints_filter_ordinary_planner_paths() {
     };
     assert!(matches!(
         source.enumerated_paths.as_slice(),
-        [tidb_planner_util::path::PossiblePath::Table { .. }]
+        [path] if path.is_tikv_table_path()
     ));
 
     let mut builder = harness.builder();
@@ -1016,7 +1016,7 @@ fn test_read_from_storage_is_resolved_from_plan_hints_like_go() {
 
 #[test]
 fn test_index_hints_respect_tikv_isolation_like_go() {
-    use tidb_planner_util::path::PossiblePath;
+    use tidb_planner_util::path::AccessPath;
 
     let mut harness = Harness::new();
     harness.tables_mut()[0].tiflash_replica = Some(tidb_model::TiFlashReplicaInfo {
@@ -1053,7 +1053,7 @@ fn test_index_hints_respect_tikv_isolation_like_go() {
         source
             .expect("the SELECT contains a DataSource")
             .enumerated_paths,
-        vec![PossiblePath::TiFlashTable]
+        vec![AccessPath::table_path(tidb_kv::store_type::StoreType::TiFlash, false, None)]
     );
 
     let error = build("SELECT a FROM t USE INDEX (idx_b)")
@@ -1075,7 +1075,7 @@ fn test_index_hints_respect_tikv_isolation_like_go() {
         source
             .expect("the SELECT contains a DataSource")
             .enumerated_paths,
-        vec![PossiblePath::TiFlashTable]
+        vec![AccessPath::table_path(tidb_kv::store_type::StoreType::TiFlash, false, None)]
     );
     assert_eq!(
         *warnings
@@ -1116,7 +1116,7 @@ fn test_no_index_lookup_pushdown_matches_and_overrides_positive_hint() {
     assert!(source.index_lookup_push_down_by.is_empty());
     assert!(matches!(
         source.enumerated_paths.as_slice(),
-        [tidb_planner_util::path::PossiblePath::Table { .. }]
+        [path] if path.is_tikv_table_path()
     ));
     assert_eq!(
         *warnings
@@ -1166,7 +1166,7 @@ fn test_lookup_pushdown_rejects_go_unsupported_index_metadata() {
         assert!(source.index_lookup_push_down_by.is_empty());
         assert!(matches!(
             source.enumerated_paths.as_slice(),
-            [tidb_planner_util::path::PossiblePath::Table { .. }]
+            [path] if path.is_tikv_table_path()
         ));
         assert_eq!(
             *warnings
@@ -1665,7 +1665,7 @@ fn a_built_data_source_enumerates_its_access_paths() {
     // Go `getPossibleAccessPaths` (`planbuilder.go:1320`) runs during
     // `buildDataSource`: the fixture table (`a BIGINT PRIMARY KEY, KEY
     // idx_b(b)`) yields the int-handle table path first, then `idx_b`.
-    use tidb_planner_util::path::PossiblePath;
+    use tidb_planner_util::path::AccessPath;
     let harness = Harness::new();
     let mut builder = harness.builder();
     let select = parse_select("SELECT * FROM t");
@@ -1681,11 +1681,8 @@ fn a_built_data_source_enumerates_its_access_paths() {
     assert_eq!(
         data_source.enumerated_paths,
         vec![
-            PossiblePath::Table {
-                is_int_handle: true,
-                primary_index: None
-            },
-            PossiblePath::Index { index: data_source.indexes[0].clone() },
+            AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
+            tidb_planner_util::path::AccessPath::index_path(data_source.indexes[0].clone()),
         ]
     );
     // The GROWN lists stay empty at build time; the costing seam fills them.

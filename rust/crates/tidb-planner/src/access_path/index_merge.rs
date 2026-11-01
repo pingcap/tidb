@@ -57,10 +57,7 @@ pub(crate) fn is_specified_in_index_merge_hints(ds: &DataSource, index_name: &st
 pub(crate) fn enumerated_indexes(
     ds: &DataSource,
 ) -> impl Iterator<Item = &tidb_model::GoShared<tidb_model::IndexInfo>> {
-    ds.enumerated_paths.iter().filter_map(|path| match path {
-        tidb_planner_util::path::PossiblePath::Index { index } => Some(index),
-        _ => None,
-    })
+    ds.enumerated_paths.iter().filter_map(tidb_planner_util::path::AccessPath::index_info)
 }
 
 #[cfg(test)]
@@ -126,17 +123,19 @@ fn prepare_union_index_merge_path_for_or(
         // Go `accessPathsForConds` over the table path: an integer handle
         // (`IsIntHandlePath`) or a clustered common handle
         // (`IsCommonHandlePath`, ranged over its PRIMARY index's columns).
-        let table_primary = ds.enumerated_paths.iter().find_map(|path| match path {
-            tidb_planner_util::path::PossiblePath::Table {
-                is_int_handle: true,
-                ..
-            } if ds.handle_is_int && !ds.handle_cols.is_empty() => Some(None),
-            tidb_planner_util::path::PossiblePath::Table {
-                is_int_handle: false,
-                primary_index: Some(primary),
-            } if ds.is_common_handle => Some(Some(primary)),
-            _ => None,
-        });
+        let table_primary = ds
+            .enumerated_paths
+            .iter()
+            .filter(|path| path.is_tikv_table_path())
+            .find_map(|path| {
+                if path.is_int_handle_path && ds.handle_is_int && !ds.handle_cols.is_empty() {
+                    Some(None)
+                } else if path.is_common_handle_path && ds.is_common_handle {
+                    path.index.as_ref().map(Some)
+                } else {
+                    None
+                }
+            });
         if let Some(primary) = table_primary.filter(|_| is_in_index_merge_hints(ds, "primary")) {
             let primary_index = primary;
             let collected = collect_unfinished_filters(ds, primary_index, disjunct, ctx);

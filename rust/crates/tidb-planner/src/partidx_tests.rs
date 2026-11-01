@@ -24,7 +24,7 @@ use tidb_datatype::Datum;
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::scalar_function::ScalarFunction;
-use tidb_planner_util::path::PossiblePath;
+use tidb_planner_util::path::AccessPath;
 use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, DataSource};
 use tidb_planner_core_base::PlanIdAllocator;
 
@@ -176,35 +176,29 @@ fn datasource_prunes_partial_paths_and_marks_the_ordinary_cached_plan() {
         }),
     ];
     source.enumerated_paths = vec![
-        PossiblePath::Table {
-            is_int_handle: true,
-            primary_index: None,
-        },
-        PossiblePath::Index { index: source.indexes[0].clone() },
-        PossiblePath::Index { index: source.indexes[1].clone() },
+        AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
+        tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()),
+        tidb_planner_util::path::AccessPath::index_path(source.indexes[1].clone()),
     ];
     source.pushed_down_conds = vec![compare("lt", integer_column(1), integer(0))];
     source.check_partial_indexes(&NoResolver, false, true);
     assert_eq!(
         source.enumerated_paths,
         vec![
-            PossiblePath::Table {
-                is_int_handle: true,
-                primary_index: None,
-            },
-            PossiblePath::Index { index: source.indexes[1].clone() },
+            AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
+            tidb_planner_util::path::AccessPath::index_path(source.indexes[1].clone()),
         ]
     );
 
     source
         .enumerated_paths
-        .insert(1, PossiblePath::Index { index: source.indexes[0].clone() });
+        .insert(1, tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()));
     source.pushed_down_conds = vec![compare("gt", integer_column(1), integer(5))];
     source.forced_index_ids.insert(10);
     source.check_partial_indexes(&NoResolver, true, true);
     assert_eq!(
         source.enumerated_paths,
-        vec![PossiblePath::Index { index: source.indexes[0].clone() }]
+        vec![tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone())]
     );
     assert!(source.partial_index_noncacheable_ids.contains(&10));
 }

@@ -137,14 +137,14 @@ pub struct DataSource {
     /// Go `AllConds`: every condition on this table, pushed down or not.
     pub all_conds: Vec<Expression>,
     /// Go `getPossibleAccessPaths`' answer at BUILD time — the newborn form
-    /// (`tidb_planner_util::path::PossiblePath`), before ranger and statistics
+    /// (`tidb_planner_util::path::AccessPath`), before ranger and statistics
     /// grow it. Go mutates one `util.AccessPath` through both stages; this
     /// port keeps the stages as two typed lists, and the grown lists below
     /// stay empty until the costing seam fills them.
-    pub enumerated_paths: Vec<tidb_planner_util::path::PossiblePath>,
+    pub enumerated_paths: Vec<tidb_planner_util::path::AccessPath>,
     /// The unfiltered public paths from which static partition children rerun
     /// Go `getPossibleAccessPaths` after partition-scoped hint selection.
-    pub public_enumerated_paths: Vec<tidb_planner_util::path::PossiblePath>,
+    pub public_enumerated_paths: Vec<tidb_planner_util::path::AccessPath>,
     /// Go `AstIndexHints`: table-syntax hints, which apply to every child.
     pub ast_index_hints: Vec<tidb_ast::IndexHint>,
     /// Go `IndexHints`: comment-style hints matched to this DataSource.
@@ -366,21 +366,16 @@ impl DataSource {
     /// statistics loading; ranger resolves the current schema again later.
     pub fn initialize_index_columns(&mut self) {
         for path in &self.enumerated_paths {
-            let index = match path {
-                tidb_planner_util::path::PossiblePath::Index { index }
-                | tidb_planner_util::path::PossiblePath::Table {
-                    primary_index: Some(index),
-                    ..
-                } => index.clone(),
-                _ => continue,
+            // Go: every path but an int-handle one (`!path.IsIntHandlePath`).
+            let Some(index) = &path.index else {
+                continue;
             };
-            let index = &index;
             let columns = self.index_info_2_full_cols(index);
             // Go `buildDataSource` (`logical_plan_builder.go:5316`): only a
             // unique secondary index of more than one column whose first
             // column is a `tidb_shard()` generated column.
             let is_uk_shard_index_path =
-                matches!(path, tidb_planner_util::path::PossiblePath::Index { .. })
+                !path.is_table_path()
                     && columns
                         .first()
                         .and_then(Option::as_ref)
@@ -409,7 +404,7 @@ impl DataSource {
         }
         let mut new_conds = conds.clone();
         for path in &self.enumerated_paths {
-            let tidb_planner_util::path::PossiblePath::Index { index } = path else {
+            let Some(index) = path.index_info() else {
                 continue;
             };
             if !self
@@ -503,38 +498,32 @@ impl DataSource {
         let hist_coll = self.table_stats.as_ref().and_then(StatsInfo::hist_coll);
         let mut paths = tidb_planner_cardinality::selectivity::FilledPaths::new();
         for path in &self.enumerated_paths {
-            match path {
-                tidb_planner_util::path::PossiblePath::Table {
-                    primary_index: Some(index),
-                    ..
-                } => {
-                    paths.insert(index.read().id, Vec::new());
-                }
-                tidb_planner_util::path::PossiblePath::Index { index } => {
-                    {
-                        // The path's `IdxCols`: the schema columns behind the
-                        // collection's ids, a prefix up to the first absent one.
-                        let schema = self.base.base.schema();
-                        let columns = hist_coll
-                            .map(|coll| {
-                                coll.index_columns(index.read().id)
+            // Go `Selectivity` keys every path with an `Index` (`selectivity.go:145`).
+            let Some(index) = &path.index else {
+                continue;
+            };
+            let columns = if path.is_table_path() {
+                Vec::new()
+            } else {
+                // The path's `IdxCols`: the schema columns behind the
+                // collection's ids, a prefix up to the first absent one.
+                let schema = self.base.base.schema();
+                hist_coll
+                    .map(|coll| {
+                        coll.index_columns(index.read().id)
+                            .iter()
+                            .map_while(|id| {
+                                schema?
+                                    .columns
                                     .iter()
-                                    .map_while(|id| {
-                                        schema?
-                                            .columns
-                                            .iter()
-                                            .find(|column| column.unique_id == *id)
-                                            .cloned()
-                                    })
-                                    .collect()
+                                    .find(|column| column.unique_id == *id)
+                                    .cloned()
                             })
-                            .unwrap_or_default();
-                        paths.insert(index.read().id, columns);
-                    }
-                }
-                tidb_planner_util::path::PossiblePath::Table { .. }
-                | tidb_planner_util::path::PossiblePath::TiFlashTable => {}
-            }
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            paths.insert(index.read().id, columns);
         }
         paths
     }
@@ -740,7 +729,7 @@ impl DataSource {
         let mut has_partial_index = false;
 
         for path in &self.enumerated_paths {
-            let tidb_planner_util::path::PossiblePath::Index { index } = path else {
+            let Some(index) = path.index_info() else {
                 continue;
             };
             let metadata = index;
@@ -780,11 +769,9 @@ impl DataSource {
                 && (!partial_index_used_hint || self.forced_index_ids.contains(&index_id))
         };
         self.derived_access_paths = None;
-        self.enumerated_paths.retain(|path| match path {
-            tidb_planner_util::path::PossiblePath::Index { index } => Some(index)
-                .is_some_and(|metadata| keep_index_id(metadata.read().id)),
-            tidb_planner_util::path::PossiblePath::Table { .. }
-            | tidb_planner_util::path::PossiblePath::TiFlashTable => !partial_index_used_hint,
+        self.enumerated_paths.retain(|path| match path.index_info() {
+            Some(index) => keep_index_id(index.read().id),
+            None => !partial_index_used_hint,
         });
     }
 

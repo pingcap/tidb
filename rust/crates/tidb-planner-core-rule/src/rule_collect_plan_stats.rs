@@ -689,7 +689,7 @@ mod tests {
 
     use super::*;
     use tidb_planner_core_operator_logicalop::plan_context::StatisticsLoadRequester;
-    use tidb_planner_util::path::PossiblePath;
+    use tidb_planner_util::path::AccessPath;
     use tidb_planner_core_operator_logicalop::join::LogicalJoin;
     use tidb_planner_core_operator_logicalop::projection::LogicalProjection;
     use crate::test_support::{test_context, TEST_BUILDER};
@@ -1023,12 +1023,9 @@ mod tests {
             }),
         ];
         source.enumerated_paths = vec![
-            PossiblePath::Table {
-                is_int_handle: true,
-                primary_index: None,
-            },
-            PossiblePath::Index { index: source.indexes[0].clone() },
-            PossiblePath::Index { index: source.indexes[1].clone() },
+            AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
+            tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()),
+            tidb_planner_util::path::AccessPath::index_path(source.indexes[1].clone()),
         ];
         source.pushed_down_conds = vec![Expression::ScalarFunction(ScalarFunction::new(
             CiString::new("eq"),

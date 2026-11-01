@@ -42,7 +42,7 @@ impl tidb_planner_core_operator_logicalop::plan_context::AccessPathResolver for 
     fn apply_table_index_hints(
         &self,
         _table: &tidb_infoschema::table_source::SourceTable,
-        _public_paths: &[tidb_planner_util::path::PossiblePath],
+        _public_paths: &[tidb_planner_util::path::AccessPath],
         _hints: &[tidb_ast::IndexHint],
         _comment_hints: &[tidb_planner_core_operator_logicalop::data_source::DataSourceIndexHint],
         _remove_global_indexes: bool,

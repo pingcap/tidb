@@ -33,6 +33,7 @@ tidb-ast = { path = "../tidb-ast" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-context = { path = "../tidb-context" }
 tidb-exprctx = { path = "../tidb-exprctx" }
+tidb-kv = { path = "../tidb-kv" }
 tidb-planner-core-cost = { path = "../tidb-planner-core-cost" }
 tidb-plannererrors = { path = "../tidb-plannererrors" }
 tidb-sessionctx = { path = "../tidb-sessionctx" }

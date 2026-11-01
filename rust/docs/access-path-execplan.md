@@ -66,9 +66,11 @@ recordings), 0 refused`, and the planner and executor suites pass.
 
 ## Plan of Work
 
-1. Define `AccessPath` in `tidb-planner-util` with Go's fields; build it
-   from `PossiblePath` at enumeration (`getPossibleAccessPaths`), stored as
-   `DataSource.possible_access_paths`, side by side with the old fields.
+1. Define `AccessPath` in `tidb-planner-util` with Go's enumeration fields
+   (`Index`, `StoreType`, `IsIntHandlePath`, `IsCommonHandlePath`) and Go's
+   predicates (`IsTablePath`, `IsTiKVTablePath`, `IsTiFlashSimpleTablePath`,
+   `IsUndetermined`); it replaces `PossiblePath` in place, since both are the
+   newborn path. Later steps add the derived fields to the same struct.
 2. Statistics derivation fills the `AccessPath` in place (Go
    `fillIndexPath` / `deriveTablePathStats`) instead of
    `derived_index_paths` / `derived_access_paths.table_path`.
@@ -90,7 +92,12 @@ CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
 
 ## Progress
 
-- [ ] 1. `AccessPath` defined and built at enumeration.
+- [x] 1. `AccessPath` defined and built at enumeration (2026-11-02):
+  `PossiblePath` is gone; `genTiFlashPath` now fills the handle kind and the
+  PRIMARY index as Go does; the hint tail ports `getPathByIndexName`,
+  `isTiKVIndexByName`, `removeIgnoredPaths`, `removeGlobalIndexPaths` and
+  `IsUndetermined`; the isolation filter and `prefer_tikv` key on
+  `StoreType`.
 - [ ] 2. Statistics derivation fills it.
 - [ ] 3. Index merge produces it.
 - [ ] 4. Consumers moved.
@@ -98,7 +105,18 @@ CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0`.
 
 ## Surprises & Discoveries
 
-(none yet)
+- Go's TiFlash path is a table path (`IsTablePath` includes
+  `Index != nil && StoreType == TiFlash`) and, on a clustered table, carries
+  the PRIMARY index. Rust's `TiFlashTable` carried nothing, so every rule
+  keyed by index id skipped it; Go's rules that walk `PossibleAccessPaths`
+  without a store check (`checkColCanUseIndex`, `Selectivity`'s
+  `filledPaths`, the join-elimination unique-key check) see it as a second
+  table path. Those sites now follow Go.
+- Go builds a columnar (vector) index path as a TiFlash table path with
+  `Index` set; Rust still skips columnar indexes at enumeration.
+- The physical task builders (`dispatch.rs`, `candidate_preparation.rs`)
+  keep their three-way TiKV-table / TiFlash / index split for now; step 4
+  moves them onto Go's per-path fields.
 
 ## Decision Log
 

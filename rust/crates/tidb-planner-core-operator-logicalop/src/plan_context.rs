@@ -184,7 +184,7 @@ pub trait AccessPathResolver {
     fn apply_table_index_hints(
         &self,
         table: &tidb_infoschema::table_source::SourceTable,
-        public_paths: &[tidb_planner_util::path::PossiblePath],
+        public_paths: &[tidb_planner_util::path::AccessPath],
         hints: &[tidb_ast::IndexHint],
         comment_hints: &[crate::data_source::DataSourceIndexHint],
         remove_global_indexes: bool,

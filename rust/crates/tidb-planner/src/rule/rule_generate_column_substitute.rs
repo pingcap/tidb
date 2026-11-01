@@ -53,7 +53,7 @@ pub(crate) fn collect_generate_column(
         return;
     };
     for path in &source.enumerated_paths {
-        let tidb_planner_util::path::PossiblePath::Index { index } = path else {
+        let Some(index) = path.index_info() else {
             continue;
         };
         for part in index.read().columns.iter_deref() {

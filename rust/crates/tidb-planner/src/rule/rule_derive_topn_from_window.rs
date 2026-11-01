@@ -120,7 +120,7 @@ fn window_is_topn(selection: &tidb_planner_core_operator_logicalop::LogicalSelec
     if data_source
         .enumerated_paths
         .iter()
-        .any(|path| matches!(path, tidb_planner_util::path::PossiblePath::TiFlashTable))
+        .any(|path| path.is_tiflash_path())
     {
         return None;
     }

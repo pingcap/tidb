@@ -12,7 +12,7 @@
 //! Range/filter derivation shared by ordinary and index-merge alternatives.
 
 use tidb_planner_property::stats_info::HistCollExt as _;
-use tidb_planner_util::path::{FilledIndexPath, FilledTablePath, PossiblePath};
+use tidb_planner_util::path::{FilledIndexPath, FilledTablePath, AccessPath};
 use super::AccessPathDerivationContext;
 use tidb_planner_core_operator_logicalop::DataSource;
 use tidb_planner_core_base::PlanError;
@@ -175,7 +175,7 @@ pub(crate) fn fill_ordinary_index_paths(
     prefix_single_scan: bool,
 ) -> Result<(), PlanError> {
     for candidate in &source.enumerated_paths {
-        let PossiblePath::Index { index } = candidate else {
+        let Some(index) = candidate.index_info() else {
             continue;
         };
         if index.read().mv_index || index.read().is_columnar_index() {

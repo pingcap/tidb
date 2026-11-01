@@ -16,12 +16,12 @@ use super::dispatch::{
     index_path_matches_order, match_partial_order_property, table_path_matches_order,
     DispatchContext,
 };
-use tidb_planner_util::path::PossiblePath;
+use tidb_planner_util::path::AccessPath;
 use tidb_planner_core_operator_logicalop::{data_source::index_path_is_single_scan, DataSource};
 use tidb_planner_property::{PhysicalProperty, TaskType};
 
 pub(super) struct PreparedOrdinaryPaths<'a> {
-    pub paths: Vec<&'a PossiblePath>,
+    pub paths: Vec<&'a AccessPath>,
     /// Per path, in `paths` order: Go `skylinePruning`'s preferRange inputs,
     /// `(is a preferred range scan, is kept regardless)`.
     pub range_flags: Vec<(bool, bool)>,
@@ -40,7 +40,7 @@ pub(super) struct PreparedOrdinaryPaths<'a> {
 /// keeps every path unpruned.
 pub(super) fn prepare_ordinary_paths<'a>(
     ds: &DataSource,
-    paths: &[&'a PossiblePath],
+    paths: &[&'a AccessPath],
     prop: &PhysicalProperty,
     ctx: &mut DispatchContext<'_>,
     table_pseudo: bool,
@@ -52,14 +52,15 @@ pub(super) fn prepare_ordinary_paths<'a>(
     let mut candidates = Vec::new();
     for &path in paths {
         if (ds.prefer_store_type & tidb_planner_core_operator_logicalop::data_source::PREFER_TIFLASH != 0
-            && !matches!(path, PossiblePath::TiFlashTable))
+            && !path.is_tiflash_path())
             || (ds.prefer_store_type & tidb_planner_core_operator_logicalop::data_source::PREFER_TIKV != 0
-                && matches!(path, PossiblePath::TiFlashTable))
+                && path.is_tiflash_path())
         {
             continue;
         }
-        let (metrics, heuristic) = match path {
-            PossiblePath::Table { primary_index, .. } => {
+        let (metrics, heuristic) = match path.index_info() {
+            None if !path.is_tiflash_path() => {
+                let primary_index = &path.index;
                 if prop.partial_order_info.is_some() {
                     continue;
                 }
@@ -105,8 +106,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
                 };
                 (metrics, Some(heuristic))
             }
-            PossiblePath::Index { index } => {
-                let index = Some(index)?;
+            Some(index) => {
                 // Go `convertToIndexScan`: a multi-valued index is read only
                 // through IndexMerge, so it is no ordinary candidate (and its
                 // logical derivation fills no ordinary path).
@@ -170,7 +170,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
                 };
                 (metrics, heuristic)
             }
-            PossiblePath::TiFlashTable => (None, None),
+            None => (None, None),
         };
         let flags = range_scan_flags(ds, path, prop, ctx, metrics.as_ref());
         candidates.push((path, metrics, heuristic, flags));
@@ -228,7 +228,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
 /// plan id is drawn, as in Go.
 fn range_scan_flags(
     ds: &DataSource,
-    path: &PossiblePath,
+    path: &AccessPath,
     prop: &PhysicalProperty,
     ctx: &DispatchContext<'_>,
     metrics: Option<&CandidateMetrics>,
@@ -238,8 +238,8 @@ fn range_scan_flags(
         None => return (false, false),
     };
     let prefer_merge = !ds.index_merge_hints.is_empty() || ds.prefer_index_merge_by_fix_control;
-    match path {
-        PossiblePath::Table { .. } => {
+    match path.index_info() {
+        None if !path.is_tiflash_path() => {
             let Some(table) = retained.table_path.as_ref() else {
                 return (false, false);
             };
@@ -254,7 +254,7 @@ fn range_scan_flags(
                 !ds.forced_index_ids.is_empty(),
             )
         }
-        PossiblePath::Index { index } => {
+        Some(index) => {
             let Some(filled) = ds
                 .derived_index_paths
                 .get(&index.read().id)
@@ -289,7 +289,7 @@ fn range_scan_flags(
                 ds.forced_index_ids.contains(&index.read().id) || index.read().global || index.read().mv_index,
             )
         }
-        PossiblePath::TiFlashTable => (false, true),
+        None => (false, true),
     }
 }
 
@@ -308,7 +308,7 @@ pub(super) struct PreparedDataSourcePaths<'a> {
 /// Resolve candidate identities and merge alternatives before converting any path.
 pub(super) fn prepare_access_paths<'a>(
     ds: &'a DataSource,
-    paths: &[&'a PossiblePath],
+    paths: &[&'a AccessPath],
     prop: &PhysicalProperty,
     ctx: &mut DispatchContext<'_>,
     table_pseudo: bool,

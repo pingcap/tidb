@@ -18,7 +18,7 @@
 use std::cmp::Ordering;
 use std::collections::HashSet;
 
-use tidb_planner_util::path::PossiblePath;
+use tidb_planner_util::path::AccessPath;
 
 use tidb_planner_core_operator_logicalop::data_source::DataSource;
 
@@ -26,7 +26,7 @@ const DEFAULT_MAX_INDEXES: usize = 10;
 
 #[derive(Clone)]
 struct IndexWithScore {
-    path: PossiblePath,
+    path: AccessPath,
     interesting_count: usize,
     consecutive_column_ids: Vec<i64>,
     covered_column_ids: Vec<i64>,
@@ -111,13 +111,11 @@ fn discounted_handle_prefix(source: &DataSource, interesting: &HashSet<i64>) -> 
 
 fn score_index_path(
     source: &DataSource,
-    path: &PossiblePath,
+    path: &AccessPath,
     interesting_ids: &HashSet<i64>,
     discounted: &HashSet<i64>,
 ) -> Option<IndexWithScore> {
-    let PossiblePath::Index { index } = path else {
-        return None;
-    };
+    let index = path.index_info()?;
     let metadata = Some(index)?;
     let state = source.derived_index_paths.get(&metadata.read().id);
     let declared = state.and_then(|state| state.declared_columns.as_ref());
@@ -225,7 +223,7 @@ fn select_indexes(
     preferred: Vec<IndexWithScore>,
     maximum: usize,
     only_zero: bool,
-) -> Vec<PossiblePath> {
+) -> Vec<AccessPath> {
     let mut result = Vec::new();
     let mut seen = HashSet::new();
     let mut coverage = std::collections::HashMap::<Vec<i64>, Vec<Vec<i64>>>::new();
@@ -277,9 +275,9 @@ fn select_indexes(
 #[must_use]
 pub fn prune_indexes_by_where_and_order(
     source: &DataSource,
-    paths: &[PossiblePath],
+    paths: &[AccessPath],
     threshold: i32,
-) -> Vec<PossiblePath> {
+) -> Vec<AccessPath> {
     if paths.len() <= 1 || threshold < 0 {
         return paths.to_vec();
     }
@@ -304,12 +302,9 @@ pub fn prune_indexes_by_where_and_order(
         .any(|hint| !hint.index_names.is_empty());
 
     for path in paths {
-        match path {
-            PossiblePath::Table { .. } | PossiblePath::TiFlashTable => {
-                table_paths.push(path.clone())
-            }
-            PossiblePath::Index { index } => {
-                let metadata = index;
+        match path.index_info() {
+            None => table_paths.push(path.clone()),
+            Some(metadata) => {
                 if metadata.read().mv_index {
                     multi_value_paths.push(path.clone());
                     continue;
@@ -387,14 +382,7 @@ pub fn prune_data_source_with_options(
     let path_indexes = source
         .enumerated_paths
         .iter()
-        .filter_map(|path| match path {
-            PossiblePath::Index { index }
-            | PossiblePath::Table {
-                primary_index: Some(index),
-                ..
-            } => Some(index.clone()),
-            _ => None,
-        })
+        .filter_map(|path| path.index.clone())
         .collect::<Vec<_>>();
     for index in &path_indexes {
         if source
@@ -424,15 +412,7 @@ pub fn prune_data_source_with_options(
 
     let kept = pruned
         .iter()
-        .filter_map(|path| match path {
-            PossiblePath::Index { index }
-            | PossiblePath::Table {
-                primary_index: Some(index),
-                ..
-            } => Some(index.read().id),
-            PossiblePath::Table { .. } => None,
-            PossiblePath::TiFlashTable => None,
-        })
+        .filter_map(|path| path.index.as_ref().map(|index| index.read().id))
         .collect();
     source.derived_access_paths = None;
     source.enumerated_paths = pruned;
@@ -493,12 +473,9 @@ mod tests {
             ..DataSource::default()
         };
         source.enumerated_paths = vec![
-            PossiblePath::Table {
-                is_int_handle: true,
-                primary_index: None,
-            },
-            PossiblePath::Index { index: source.indexes[0].clone() },
-            PossiblePath::Index { index: source.indexes[1].clone() },
+            AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
+            tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()),
+            tidb_planner_util::path::AccessPath::index_path(source.indexes[1].clone()),
         ];
         source
     }
@@ -511,11 +488,8 @@ mod tests {
         assert_eq!(
             source.enumerated_paths,
             vec![
-                PossiblePath::Table {
-                    is_int_handle: true,
-                    primary_index: None,
-                },
-                PossiblePath::Index { index: source.indexes[0].clone() },
+                AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
+                tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()),
             ]
         );
     }
@@ -548,12 +522,9 @@ mod tests {
         assert_eq!(
             prune_indexes_by_where_and_order(&source, &source.enumerated_paths, 1),
             vec![
-                PossiblePath::Table {
-                    is_int_handle: true,
-                    primary_index: None,
-                },
-                PossiblePath::Index { index: source.indexes[1].clone() },
-                PossiblePath::Index { index: source.indexes[0].clone() },
+                AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
+                tidb_planner_util::path::AccessPath::index_path(source.indexes[1].clone()),
+                tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()),
             ]
         );
     }
@@ -571,11 +542,8 @@ mod tests {
         assert_eq!(
             prune_indexes_by_where_and_order(&source, &source.enumerated_paths, 0),
             vec![
-                PossiblePath::Table {
-                    is_int_handle: true,
-                    primary_index: None,
-                },
-                PossiblePath::Index { index: source.indexes[1].clone() },
+                AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
+                tidb_planner_util::path::AccessPath::index_path(source.indexes[1].clone()),
             ]
         );
     }
@@ -594,11 +562,8 @@ mod tests {
                 ..tidb_model::IndexInfo::default()
             }))
             .collect();
-        source.enumerated_paths = std::iter::once(PossiblePath::Table {
-            is_int_handle: true,
-            primary_index: None,
-        })
-        .chain(source.indexes.iter().map(|index| PossiblePath::Index { index: index.clone() }))
+        source.enumerated_paths = std::iter::once(AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None))
+        .chain(source.indexes.iter().map(|index| tidb_planner_util::path::AccessPath::index_path(index.clone())))
         .collect();
 
         let pruned = prune_indexes_by_where_and_order(&source, &source.enumerated_paths, 1);
@@ -607,7 +572,7 @@ mod tests {
             pruned[1..],
             source.indexes[..10]
                 .iter()
-                .map(|index| PossiblePath::Index { index: index.clone() })
+                .map(|index| tidb_planner_util::path::AccessPath::index_path(index.clone()))
                 .collect::<Vec<_>>()
         );
     }
@@ -632,7 +597,7 @@ mod tests {
             prune_indexes_by_where_and_order(&source, &source.enumerated_paths, 1),
             vec![
                 source.enumerated_paths[0].clone(),
-                PossiblePath::Index { index: source.indexes[0].clone() }
+                tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone())
             ]
         );
     }
@@ -693,7 +658,7 @@ mod tests {
         assert_eq!(discounted, HashSet::from([3]));
         let a = score_index_path(
             &source,
-            &PossiblePath::Index { index: source.indexes[0].clone() },
+            &tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()),
             &interesting,
             &discounted,
         )
@@ -707,7 +672,7 @@ mod tests {
         assert!(!a.droppable());
         let b = score_index_path(
             &source,
-            &PossiblePath::Index { index: source.indexes[1].clone() },
+            &tidb_planner_util::path::AccessPath::index_path(source.indexes[1].clone()),
             &interesting,
             &discounted,
         )
@@ -723,7 +688,7 @@ mod tests {
             .unwrap()[0] = None;
         let missing = score_index_path(
             &source,
-            &PossiblePath::Index { index: source.indexes[0].clone() },
+            &tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()),
             &interesting,
             &discounted,
         )
@@ -741,7 +706,7 @@ mod tests {
         assert_eq!(
             score_index_path(
                 &source,
-                &PossiblePath::Index { index: source.indexes[0].clone() },
+                &tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()),
                 &interesting,
                 &discounted
             )

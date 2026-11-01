@@ -215,35 +215,35 @@ fn join_keys_contain_unique_index(
     join_keys: &Schema,
     null_eq: &HashSet<i64>,
 ) -> bool {
-    use tidb_planner_util::path::PossiblePath;
     let LogicalPlan::DataSource(source) = inner else {
         return false;
     };
     source.enumerated_paths.iter().any(|path| {
-        let idx_cols: Vec<&Column> = match path {
-            PossiblePath::Index { index } => {
-                if !index.read().unique {
-                    return false;
-                }
-                let Some(filled) = source
-                    .derived_index_paths
-                    .get(&index.read().id)
-                    .and_then(|state| state.filled.as_ref())
-                else {
-                    return false;
-                };
-                filled.columns.iter().map(|(column, _)| column).collect()
-            }
-            PossiblePath::Table {
-                is_int_handle: false,
-                primary_index: Some(_),
-            } => source
+        if path.is_int_handle_path {
+            return false;
+        }
+        let Some(index) = &path.index else {
+            return false;
+        };
+        if !index.read().unique {
+            return false;
+        }
+        let idx_cols: Vec<&Column> = if path.is_table_path() {
+            source
                 .derived_access_paths
                 .as_ref()
                 .and_then(|derived| derived.table_path.as_ref())
                 .map(|table| table.common_columns.iter().map(|(column, _)| column).collect())
-                .unwrap_or_default(),
-            _ => return false,
+                .unwrap_or_default()
+        } else {
+            let Some(filled) = source
+                .derived_index_paths
+                .get(&index.read().id)
+                .and_then(|state| state.filled.as_ref())
+            else {
+                return false;
+            };
+            filled.columns.iter().map(|(column, _)| column).collect()
         };
         !idx_cols.is_empty()
             && idx_cols.iter().all(|column| {

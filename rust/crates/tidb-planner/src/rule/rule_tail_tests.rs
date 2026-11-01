@@ -807,7 +807,7 @@ fn a_row_number_upper_bound_derives_a_topn_under_the_window() {
 fn only_an_enumerated_tiflash_path_refuses_the_derivation() {
     let allocator = PlanIdAllocator::default();
     let ctx = test_context(&allocator);
-    let plan = |paths: Vec<tidb_planner_util::path::PossiblePath>| {
+    let plan = |paths: Vec<tidb_planner_util::path::AccessPath>| {
         let mut source = data_source(&allocator, &[1]);
         let LogicalPlan::DataSource(ds) = &mut source else {
             unreachable!()
@@ -820,10 +820,7 @@ fn only_an_enumerated_tiflash_path_refuses_the_derivation() {
             row_number_window(&allocator, "row_number", source),
         )
     };
-    let table = tidb_planner_util::path::PossiblePath::Table {
-        is_int_handle: true,
-        primary_index: None,
-    };
+    let table = tidb_planner_util::path::AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None);
 
     let replica_only = derive_top_n(&ctx, plan(vec![table.clone()]));
     assert_eq!(kind(&replica_only.children()[0].children()[0]), "TopN");
@@ -831,7 +828,7 @@ fn only_an_enumerated_tiflash_path_refuses_the_derivation() {
 
     let tiflash_path = derive_top_n(
         &ctx,
-        plan(vec![table, tidb_planner_util::path::PossiblePath::TiFlashTable]),
+        plan(vec![table, tidb_planner_util::path::AccessPath::table_path(tidb_kv::store_type::StoreType::TiFlash, false, None)]),
     );
     assert_eq!(kind(&tiflash_path.children()[0].children()[0]), "DataSource");
     tiflash_path.dismantle();

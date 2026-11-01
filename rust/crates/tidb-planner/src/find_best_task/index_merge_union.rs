@@ -1220,7 +1220,7 @@ mod tests {
         // Go's `AllConds` contains every pushed condition.
         let ds = DataSource {
             all_conds: ds.pushed_down_conds.clone(),
-            enumerated_paths: vec![tidb_planner_util::path::PossiblePath::Index { index: ds.indexes[0].clone() }],
+            enumerated_paths: vec![tidb_planner_util::path::AccessPath::index_path(ds.indexes[0].clone())],
             ..ds
         };
         let allocator = tidb_planner_core_base::PlanIdAllocator::new();
@@ -1259,7 +1259,7 @@ mod tests {
         choices.indexes.push(shorter);
         choices
             .enumerated_paths
-            .push(tidb_planner_util::path::PossiblePath::Index { index: choices.indexes[1].clone() });
+            .push(tidb_planner_util::path::AccessPath::index_path(choices.indexes[1].clone()));
         let alternatives = prepare_union_index_merge_path(&choices, &derivation)
             .unwrap()
             .unwrap();
@@ -1320,7 +1320,7 @@ mod tests {
             }));
             multiple_or
                 .enumerated_paths
-                .push(tidb_planner_util::path::PossiblePath::Index { index: multiple_or.indexes.last().unwrap().clone() });
+                .push(tidb_planner_util::path::AccessPath::index_path(multiple_or.indexes.last().unwrap().clone()));
         }
         multiple_or.pushed_down_conds.push(Expression::ScalarFunction(ScalarFunction::new(
             tidb_ast::CiString::new("or"), ty.clone(), vec![eq_b(1), eq_b(2)],
@@ -1508,9 +1508,8 @@ mod tests {
             .retain(|path| {
                 matches!(
                     path,
-                    tidb_planner_util::path::DerivedAccessPath::Ordinary(
-                        tidb_planner_util::path::PossiblePath::Index { index }
-                    ) if index.ptr_eq(&first_index)
+                    tidb_planner_util::path::DerivedAccessPath::Ordinary(path)
+                        if path.index_info().is_some_and(|index| index.ptr_eq(&first_index))
                 )
             });
         let before_survivor = allocator.current();
@@ -1538,10 +1537,7 @@ mod tests {
         table_source.indexes[0] = detached;
         table_source.indexes[0].write().primary = true;
         table_source.indexes[0].write().unique = true;
-        table_source.enumerated_paths = vec![tidb_planner_util::path::PossiblePath::Table {
-            is_int_handle: false,
-            primary_index: Some(table_source.indexes[0].clone()),
-        }];
+        table_source.enumerated_paths = vec![tidb_planner_util::path::AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, true, Some(table_source.indexes[0].clone()))];
         let mut table = tidb_planner_core_operator_logicalop::LogicalPlan::DataSource(table_source);
         table
             .recursive_derive_stats_with_context(&[], &rule_context)

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! Go `pkg/planner/util/path.go`: an access path's state as the planner
-//! derives it -- the newborn candidate (`PossiblePath`), the filled table and
+//! derives it -- the newborn candidate (`AccessPath`), the filled table and
 //! index paths with their detached ranges and counts, and the index-merge
 //! paths. Deriving them from a `DataSource` is core's (`stats.go`,
 //! `indexmerge_path.go`), the planner's `access_path`.
@@ -56,7 +56,7 @@ impl IndexPathState {
 #[derive(Clone, Debug)]
 pub enum DerivedAccessPath {
     /// An ordinary table/index candidate from the logical pruning boundary.
-    Ordinary(PossiblePath),
+    Ordinary(AccessPath),
     /// OR alternatives converge only when physical properties are known.
     Union(UnionIndexMergePath),
     /// A finished index merge (Go `PartialIndexPaths`): the hinted normal
@@ -81,62 +81,117 @@ pub struct DerivedAccessPaths {
     pub index_merge_max_count: Option<f64>,
 }
 
-/// What one enumerated path reads, at enumeration time.
-///
-/// Go's `util.AccessPath` is born nearly empty — `{StoreType, Index,
-/// IsIntHandlePath/IsCommonHandlePath}` — and only later grows ranges and
-/// counts (`deriveStatsByFilter`). This type is that newborn form; the grown
-/// state is [`IndexPathState`] and [`DerivedAccessPaths`].
-#[derive(Clone, Debug)]
-pub enum PossiblePath {
-    /// The table path, always first (`publicPaths[0]`).
-    Table {
-        /// Go `IsIntHandlePath`: the table is not common-handle.
-        is_int_handle: bool,
-        /// Go `fillContentForTablePath`: a common-handle table path carries
-        /// its PRIMARY index (`path.Index`).
-        primary_index: Option<tidb_model::GoShared<tidb_model::IndexInfo>>,
-    },
-    /// Go `genTiFlashPath`: a table path served by an available TiFlash
-    /// replica.
-    TiFlashTable,
-    /// One index path: Go `AccessPath.Index`, the `*model.IndexInfo` itself.
-    Index {
-        /// The index's `IndexInfo`.
-        index: tidb_model::GoShared<tidb_model::IndexInfo>,
-    },
+/// Go `util.AccessPath`: one candidate way of reading a `DataSource`, born
+/// at enumeration (`getPossibleAccessPaths`) with its store, index and handle
+/// kind. (Its ranges, conditions and counts still live in
+/// [`IndexPathState`] / [`DerivedAccessPaths`]; see
+/// `docs/access-path-execplan.md`.)
+#[derive(Clone, Debug, Default)]
+pub struct AccessPath {
+    /// Go `Index`: the index the path reads, or a common-handle table path's
+    /// PRIMARY index (`fillContentForTablePath`).
+    pub index: Option<tidb_model::GoShared<tidb_model::IndexInfo>>,
+    /// Go `StoreType`.
+    pub store_type: tidb_kv::store_type::StoreType,
+    /// Go `IsIntHandlePath`.
+    pub is_int_handle_path: bool,
+    /// Go `IsCommonHandlePath`.
+    pub is_common_handle_path: bool,
 }
 
-/// Go compares `AccessPath.Index` by pointer: two paths over the same index
-/// are the same path.
-impl PartialEq for PossiblePath {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (
-                Self::Table {
-                    is_int_handle: left,
-                    primary_index: left_primary,
-                },
-                Self::Table {
-                    is_int_handle: right,
-                    primary_index: right_primary,
-                },
-            ) => {
-                left == right
-                    && match (left_primary, right_primary) {
-                        (Some(left), Some(right)) => left.ptr_eq(right),
-                        (None, None) => true,
-                        _ => false,
-                    }
-            }
-            (Self::TiFlashTable, Self::TiFlashTable) => true,
-            (Self::Index { index: left }, Self::Index { index: right }) => left.ptr_eq(right),
-            _ => false,
+impl AccessPath {
+    /// Go `fillContentForTablePath` over a path of `store_type`: a
+    /// common-handle table's path carries its PRIMARY index.
+    #[must_use]
+    pub fn table_path(
+        store_type: tidb_kv::store_type::StoreType,
+        is_common_handle: bool,
+        primary_index: Option<tidb_model::GoShared<tidb_model::IndexInfo>>,
+    ) -> Self {
+        Self {
+            index: if is_common_handle { primary_index } else { None },
+            store_type,
+            is_int_handle_path: !is_common_handle,
+            is_common_handle_path: is_common_handle,
+        }
+    }
+
+    /// An index path (`&util.AccessPath{Index: index}`).
+    #[must_use]
+    pub fn index_path(index: tidb_model::GoShared<tidb_model::IndexInfo>) -> Self {
+        Self {
+            index: Some(index),
+            ..Self::default()
+        }
+    }
+
+    /// Go `IsTablePath`: a handle path, or a TiFlash path over an index.
+    #[must_use]
+    pub fn is_table_path(&self) -> bool {
+        self.is_int_handle_path
+            || self.is_common_handle_path
+            || (self.index.is_some() && self.is_tiflash_path())
+    }
+
+    /// Go `IsTiKVTablePath`.
+    #[must_use]
+    pub fn is_tikv_table_path(&self) -> bool {
+        (self.is_int_handle_path || self.is_common_handle_path)
+            && self.store_type == tidb_kv::store_type::StoreType::TiKv
+    }
+
+    /// Go `IsTiFlashSimpleTablePath`.
+    #[must_use]
+    pub fn is_tiflash_simple_table_path(&self) -> bool {
+        self.is_tiflash_path() && self.index.is_none()
+    }
+
+    /// Go `IsUndetermined`: a multi-valued or partial index path, whose
+    /// usability is only known later.
+    #[must_use]
+    pub fn is_undetermined(&self) -> bool {
+        if self.is_table_path() {
+            return false;
+        }
+        self.index.as_ref().is_some_and(|index| {
+            let index = index.read();
+            index.mv_index || !index.condition_expr_string.is_empty()
+        })
+    }
+
+    /// A path served by TiFlash (Go `StoreType == kv.TiFlash`).
+    #[must_use]
+    pub fn is_tiflash_path(&self) -> bool {
+        self.store_type == tidb_kv::store_type::StoreType::TiFlash
+    }
+
+    /// An index path's `IndexInfo` (`!IsTablePath()`'s `Index`).
+    #[must_use]
+    pub fn index_info(&self) -> Option<&tidb_model::GoShared<tidb_model::IndexInfo>> {
+        if self.is_table_path() {
+            None
+        } else {
+            self.index.as_ref()
         }
     }
 }
 
-impl Eq for PossiblePath {}
+/// Go compares `AccessPath.Index` by pointer: two paths over the same index,
+/// store and handle kind are the same path.
+impl PartialEq for AccessPath {
+    fn eq(&self, other: &Self) -> bool {
+        self.store_type == other.store_type
+            && self.is_int_handle_path == other.is_int_handle_path
+            && self.is_common_handle_path == other.is_common_handle_path
+            && match (&self.index, &other.index) {
+                (Some(left), Some(right)) => left.ptr_eq(right),
+                (None, None) => true,
+                _ => false,
+            }
+    }
+}
+
+impl Eq for AccessPath {}
 
 /// Go `util.IndexLookUpPushDownByType`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -292,7 +347,7 @@ pub struct IndexMergePath {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ResolvedIndexPaths {
     /// Go `available` after ignore and fallback handling.
-    pub paths: Vec<PossiblePath>,
+    pub paths: Vec<AccessPath>,
     /// Index IDs whose path has `Forced` set.
     pub forced_index_ids: std::collections::BTreeSet<i64>,
     /// Index IDs whose path has `ForceKeepOrder` set.

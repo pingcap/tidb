@@ -2213,7 +2213,7 @@ pub(crate) fn push_down_topn(
 /// Partition-scoped index hints run through core's access-path hint
 /// resolution (`CoreAccessPathResolver`).
 mod partition_index_hints {
-    use tidb_planner_util::path::PossiblePath;
+    use tidb_planner_util::path::AccessPath;
     use tidb_planner_core_operator_logicalop::data_source::{DataSource, DataSourceIndexHint};
 
     #[test]
@@ -2260,13 +2260,10 @@ mod partition_index_hints {
             ..DataSource::default()
         };
         source.public_enumerated_paths = vec![
-            PossiblePath::Table {
-                is_int_handle: true,
-                primary_index: None,
-            },
-            PossiblePath::Index { index: source.indexes[0].clone() },
-            PossiblePath::Index { index: source.indexes[1].clone() },
-            PossiblePath::Index { index: source.indexes[2].clone() },
+            AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
+            tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()),
+            tidb_planner_util::path::AccessPath::index_path(source.indexes[1].clone()),
+            tidb_planner_util::path::AccessPath::index_path(source.indexes[2].clone()),
         ];
 
         // `PARTITION(P1)` applies to the partition written `P1` only.
@@ -2277,8 +2274,8 @@ mod partition_index_hints {
         assert_eq!(
             source.enumerated_paths,
             vec![
-                PossiblePath::Index { index: source.indexes[0].clone() },
-                PossiblePath::Index { index: source.indexes[2].clone() }
+                tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()),
+                tidb_planner_util::path::AccessPath::index_path(source.indexes[2].clone())
             ]
         );
         assert_eq!(
@@ -2310,17 +2307,14 @@ mod partition_index_hints {
             ..DataSource::default()
         };
         source.public_enumerated_paths = vec![
-            PossiblePath::Table {
-                is_int_handle: true,
-                primary_index: None,
-            },
-            PossiblePath::Index { index: source.indexes[0].clone() },
+            AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
+            tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()),
         ];
 
         tidb_planner_core_rule::rule_partition_processor::resolve_index_hints_for_partition(&crate::rule::rule_tests::test_context(&tidb_planner_core_base::PlanIdAllocator::new()), &mut source, "p0").expect("paths resolve");
         assert_eq!(
             source.enumerated_paths,
-            vec![PossiblePath::Index { index: source.indexes[0].clone() }]
+            vec![tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone())]
         );
         assert_eq!(
             source.forced_index_ids,

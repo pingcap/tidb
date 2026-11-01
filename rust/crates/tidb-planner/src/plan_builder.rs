@@ -3569,13 +3569,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 .index_names
                 .iter()
                 .filter(|name| {
-                    !resolution.paths.iter().any(|path| match path {
-                        tidb_planner_util::path::PossiblePath::Table { .. }
-                        | tidb_planner_util::path::PossiblePath::TiFlashTable => {
-                            lower_name_matches(name, "primary")
-                        }
-                        tidb_planner_util::path::PossiblePath::Index { index } => Some(index)
-                            .is_some_and(|index| lower_name_matches(index.read().name.original(), name)),
+                    !resolution.paths.iter().any(|path| match path.index_info() {
+                        None => lower_name_matches(name, "primary"),
+                        Some(index) => lower_name_matches(index.read().name.original(), name),
                     })
                 })
                 .cloned()
@@ -3607,20 +3603,19 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     .iter()
                     .rev()
                     .fold(Vec::<&'static str>::new(), |mut engines, path| {
-                        let engine = match path {
-                            tidb_planner_util::path::PossiblePath::TiFlashTable => "tiflash",
-                            tidb_planner_util::path::PossiblePath::Table { .. }
-                            | tidb_planner_util::path::PossiblePath::Index { .. } => "tikv",
-                        };
+                        let engine = if path.is_tiflash_path() { "tiflash" } else { "tikv" };
                         if !engines.contains(&engine) {
                             engines.push(engine);
                         }
                         engines
                     });
-            let permitted = |path: &tidb_planner_util::path::PossiblePath| match path {
-                tidb_planner_util::path::PossiblePath::TiFlashTable => self.tiflash_in_isolation_read,
-                tidb_planner_util::path::PossiblePath::Table { .. }
-                | tidb_planner_util::path::PossiblePath::Index { .. } => self.tikv_in_isolation_read,
+            // Go `FilterPathByIsolationRead` keys on `path.StoreType`.
+            let permitted = |path: &tidb_planner_util::path::AccessPath| {
+                if path.is_tiflash_path() {
+                    self.tiflash_in_isolation_read
+                } else {
+                    self.tikv_in_isolation_read
+                }
             };
             public_paths.retain(&permitted);
             resolution.paths.retain(permitted);
@@ -3752,13 +3747,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut plan_hints = plan_hints.borrow_mut();
 
         if let Some(hinted) = plan_hints.prefer_tikv(Some(&table)) {
-            if data_source.enumerated_paths.iter().any(|path| {
-                matches!(
-                    path,
-                    tidb_planner_util::path::PossiblePath::Table { .. }
-                        | tidb_planner_util::path::PossiblePath::Index { .. }
-                )
-            }) {
+            if data_source.enumerated_paths.iter().any(|path| !path.is_tiflash_path()) {
                 data_source.prefer_store_type |= PREFER_TIKV;
                 self.raise_mpp_warning(&format!(
                     "MPP mode may be blocked because you have set a hint to read table `{}` from TiKV.",
@@ -3794,7 +3783,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             if data_source
                 .enumerated_paths
                 .iter()
-                .any(|path| matches!(path, tidb_planner_util::path::PossiblePath::TiFlashTable))
+                .any(|path| path.is_tiflash_path())
             {
                 data_source.prefer_store_type |= PREFER_TIFLASH;
                 data_source

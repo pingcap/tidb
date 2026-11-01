@@ -71,49 +71,44 @@ fn check_column_can_use_index(
         }
         LogicalPlan::DataSource(source) => {
             // Go `AllPossibleAccessPaths`: the hint-filtered enumerated paths.
-            use tidb_planner_util::path::PossiblePath;
+            use tidb_planner_util::path::AccessPath;
             for path in &source.enumerated_paths {
-                let (columns, lengths): (Vec<Column>, Vec<i64>) = match path {
-                    PossiblePath::Table {
-                        is_int_handle: true,
-                        ..
-                    } => {
-                        if source
-                            .handle_cols
-                            .first()
-                            .is_some_and(|handle| handle.unique_id == column.unique_id)
-                        {
-                            return tidb_ranger::detacher::detach_conds_for_column(
-                                &conditions,
-                                column,
-                                true,
-                            )
-                            .1
-                            .is_empty();
-                        }
-                        continue;
+                if path.is_int_handle_path {
+                    if source
+                        .handle_cols
+                        .first()
+                        .is_some_and(|handle| handle.unique_id == column.unique_id)
+                    {
+                        return tidb_ranger::detacher::detach_conds_for_column(
+                            &conditions,
+                            column,
+                            true,
+                        )
+                        .1
+                        .is_empty();
                     }
-                    PossiblePath::Table {
-                        is_int_handle: false,
-                        ..
-                    } => (
+                    continue;
+                }
+                let (columns, lengths): (Vec<Column>, Vec<i64>) = if path.is_common_handle_path {
+                    (
                         source.common_handle_cols.clone(),
                         source.common_handle_lens.clone(),
-                    ),
-                    PossiblePath::Index { index } => {
-                        index
-                            .read().columns
-                            .iter_deref()
-                            .map_while(|index_column| {
-                                let index_column = index_column.read();
-                                source
-                                    .schema_column_for_index_column(&index_column)
-                                    .cloned()
-                                    .map(|column| (column, index_column.length))
-                            })
-                            .unzip()
-                    }
-                    PossiblePath::TiFlashTable => continue,
+                    )
+                } else {
+                    let Some(index) = &path.index else {
+                        continue;
+                    };
+                    index
+                        .read().columns
+                        .iter_deref()
+                        .map_while(|index_column| {
+                            let index_column = index_column.read();
+                            source
+                                .schema_column_for_index_column(&index_column)
+                                .cloned()
+                                .map(|column| (column, index_column.length))
+                        })
+                        .unzip()
                 };
                 if columns.is_empty() {
                     continue;
@@ -419,17 +414,14 @@ mod tests {
 
     #[test]
     fn integer_handle_residual_stops_before_later_covering_index() {
-        use tidb_planner_util::path::PossiblePath;
+        use tidb_planner_util::path::AccessPath;
         let allocator = PlanIdAllocator::new();
         let handle = column(1, false);
         let other = column(2, false);
         let mut base = BaseLogicalPlan::new(&allocator, DataSource::TYPE, 0);
         base.base
             .set_schema(Some(Schema::new(vec![handle.clone(), other.clone()])));
-        let table = PossiblePath::Table {
-            is_int_handle: true,
-            primary_index: None,
-        };
+        let table = AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None);
         let mut source = DataSource {
             base,
             handle_is_int: true,
@@ -474,9 +466,7 @@ mod tests {
             })],
             ..DataSource::default()
         };
-        let index = PossiblePath::Index {
-            index: source.indexes[0].clone(),
-        };
+        let index = AccessPath::index_path(source.indexes[0].clone());
         source.enumerated_paths = vec![index.clone()];
         let condition =
             Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(

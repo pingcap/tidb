@@ -19,7 +19,7 @@
 //! generic Rust candidate cannot silently become an index scan.
 
 use tidb_planner_util::path::ResolvedIndexPaths;
-use tidb_planner_util::path::{DerivedAccessPath, DerivedAccessPaths, IndexLookUpPushDownByType, PossiblePath};
+use tidb_planner_util::path::{DerivedAccessPath, DerivedAccessPaths, IndexLookUpPushDownByType, AccessPath};
 use tidb_sessionctx::{IndexLookupPushDownPolicy, IndexLookupPushDownSession};
 
 pub(crate) mod index_merge;
@@ -108,10 +108,8 @@ pub(crate) fn derive_access_paths(
     let table_path = source
         .enumerated_paths
         .iter()
-        .find_map(|path| match path {
-            PossiblePath::Table { primary_index, .. } => Some(primary_index.as_ref()),
-            _ => None,
-        })
+        .find(|path| path.is_tikv_table_path())
+        .map(|path| path.index.as_ref())
         .map(|primary| ordinary::fill_table_path(source, primary, context))
         .transpose()?;
     ordinary::fill_ordinary_index_paths(source, context, prefix_single_scan)?;
@@ -129,24 +127,28 @@ pub(crate) fn derive_access_paths(
             source
                 .enumerated_paths
                 .iter()
-                .filter_map(|path| match path {
-                    PossiblePath::Index { index } => Some(index)
-                        .and_then(|index| source.derived_index_paths.get(&index.read().id))
-                        .and_then(|path| {
-                            path.filled
-                                .as_ref()
-                                .and_then(|filled| filled.count_after_index)
-                                .or_else(|| path.count_after_access())
-                        }),
-                    PossiblePath::Table { .. } => table_path
-                        .as_ref()
-                        .and_then(|path| path.count_after_access),
-                    // The TiFlash path is the table path under another store;
-                    // only a common handle's PRIMARY estimate reaches it.
-                    PossiblePath::TiFlashTable => table_path
-                        .as_ref()
-                        .filter(|_| source.is_common_handle && !source.pushed_down_conds.is_empty())
-                        .and_then(|path| path.count_after_access),
+                .filter_map(|path| {
+                    if path.is_tiflash_path() {
+                        // The TiFlash path is the table path under another
+                        // store; only a common handle's PRIMARY estimate
+                        // reaches it.
+                        return table_path
+                            .as_ref()
+                            .filter(|_| source.is_common_handle && !source.pushed_down_conds.is_empty())
+                            .and_then(|path| path.count_after_access);
+                    }
+                    match path.index_info() {
+                        Some(index) => source
+                            .derived_index_paths
+                            .get(&index.read().id)
+                            .and_then(|path| {
+                                path.filled
+                                    .as_ref()
+                                    .and_then(|filled| filled.count_after_index)
+                                    .or_else(|| path.count_after_access())
+                            }),
+                        None => table_path.as_ref().and_then(|path| path.count_after_access),
+                    }
                 })
                 .map(|rows| rows / stats.row_count())
                 .reduce(f64::min)
@@ -195,12 +197,13 @@ pub(crate) fn derive_access_paths(
                         .enumerated_paths
                         .iter()
                         .skip(1)
-                        .any(|path| match path {
-                            PossiblePath::Table { .. } | PossiblePath::TiFlashTable => table_path
+                        .any(|path| match path.index_info() {
+                            None => table_path
                                 .as_ref()
                                 .is_some_and(|path| !path.detached.access_conds.is_empty()),
-                            PossiblePath::Index { index } => Some(index)
-                                .and_then(|index| source.derived_index_paths.get(&index.read().id))
+                            Some(index) => source
+                                .derived_index_paths
+                                .get(&index.read().id)
                                 .and_then(|path| path.filled.as_ref())
                                 .is_some_and(|filled| !filled.detached.access_conds.is_empty()),
                         });
@@ -370,23 +373,26 @@ pub fn get_possible_access_paths(
     is_for_update_read: bool,
     hypo_indexes: &[tidb_model::GoShared<tidb_model::IndexInfo>],
     hypo_tiflash_replica: bool,
-) -> Result<Vec<PossiblePath>, tidb_planner_core_base::PlanError> {
+) -> Result<Vec<AccessPath>, tidb_planner_core_base::PlanError> {
     // Go splits ONLY on `tblInfo.IsCommonHandle` (`planbuilder.go:1521`):
     // a table with no explicit handle column is still an int-handle path,
     // through the implicit `_tidb_rowid`. `handle_is_int()` would misread
     // that case — the first version of this port did, and the test caught it.
     let is_common_handle = table.is_common_handle;
     let mut paths = Vec::with_capacity(table.indexes.len() + 1);
-    paths.push(PossiblePath::Table {
-        is_int_handle: !is_common_handle,
-        primary_index: if is_common_handle {
-            table.indexes.iter().find(|index| index.read().primary).cloned()
-        } else {
-            None
-        },
-    });
+    let primary_index = table.indexes.iter().find(|index| index.read().primary).cloned();
+    paths.push(AccessPath::table_path(
+        tidb_kv::store_type::StoreType::TiKv,
+        is_common_handle,
+        primary_index.clone(),
+    ));
     if table.has_tiflash_replica() || hypo_tiflash_replica {
-        paths.push(PossiblePath::TiFlashTable);
+        // Go `genTiFlashPath`.
+        paths.push(AccessPath::table_path(
+            tidb_kv::store_type::StoreType::TiFlash,
+            is_common_handle,
+            primary_index,
+        ));
     }
     let mut check_latest_schema =
         (is_for_update_read || !repeatable_read) && connection_id.is_some_and(|id| id > 0);
@@ -420,9 +426,9 @@ pub fn get_possible_access_paths(
         if index.read().is_columnar_index() {
             continue;
         }
-        paths.push(PossiblePath::Index { index: index.clone() });
+        paths.push(tidb_planner_util::path::AccessPath::index_path(index.clone()));
     }
-    paths.extend(hypo_indexes.iter().map(|index| PossiblePath::Index { index: index.clone() }));
+    paths.extend(hypo_indexes.iter().map(|index| tidb_planner_util::path::AccessPath::index_path(index.clone())));
     Ok(paths)
 }
 
@@ -436,7 +442,7 @@ impl tidb_planner_core_operator_logicalop::plan_context::AccessPathResolver for 
     fn apply_table_index_hints(
         &self,
         table: &tidb_infoschema::table_source::SourceTable,
-        public_paths: &[PossiblePath],
+        public_paths: &[AccessPath],
         hints: &[tidb_ast::IndexHint],
         comment_hints: &[tidb_planner_core_operator_logicalop::data_source::DataSourceIndexHint],
         remove_global_indexes: bool,
@@ -463,7 +469,7 @@ impl tidb_planner_core_operator_logicalop::plan_context::AccessPathResolver for 
 /// comment-style index-hint tail to an enumerated public-path list.
 pub fn apply_table_index_hints(
     table: &tidb_infoschema::table_source::SourceTable,
-    public_paths: &[PossiblePath],
+    public_paths: &[AccessPath],
     hints: &[tidb_ast::IndexHint],
     comment_hints: &[tidb_planner_core_operator_logicalop::data_source::DataSourceIndexHint],
     remove_global_indexes: bool,
@@ -476,7 +482,7 @@ pub fn apply_table_index_hints(
 
     let table_path = public_paths
         .iter()
-        .find(|path| matches!(path, PossiblePath::Table { .. }))
+        .find(|path| path.is_tikv_table_path())
         .cloned()
         .expect("getPossibleAccessPaths always creates a table path");
     let mut has_scan_hint = false;
@@ -518,10 +524,9 @@ pub fn apply_table_index_hints(
         && (session.policy != IndexLookupPushDownPolicy::AffinityForce || table.has_affinity)
     {
         for path in public_paths {
-            let PossiblePath::Index { index } = path else {
+            let Some(metadata) = path.index_info() else {
                 continue;
             };
-            let metadata = index;
             if unsupported_reason(metadata).is_none() {
                 result
                     .index_lookup_push_down_by
@@ -571,24 +576,28 @@ pub fn apply_table_index_hints(
         for name in indexes {
             let mut prefix_path = None;
             let mut prefix_matches = 0;
-            let exact_path = public_paths.iter().find(|path| match path {
-                PossiblePath::Table { .. } => {
-                    tidb_mysql::lowercase_equal(name, "primary")
-                        && (table.pk_is_handle || table.is_common_handle)
+            // Go `getPathByIndexName`.
+            let exact_path = public_paths.iter().find(|path| {
+                // Only accept TiKV's primary key table path.
+                if path.is_tikv_table_path()
+                    && tidb_mysql::lowercase_equal(name, "primary")
+                    && (table.pk_is_handle || table.is_common_handle)
+                {
+                    return true;
                 }
-                PossiblePath::Index { index } => {
-                    if tidb_mysql::lowercase_equal(index.read().name.original(), name) {
-                        return true;
-                    }
-                    if tidb_mysql::to_lowercase(index.read().name.original())
-                        .starts_with(&tidb_mysql::to_lowercase(name))
-                    {
-                        prefix_path = Some(*path);
-                        prefix_matches += 1;
-                    }
-                    false
+                let Some(index) = &path.index else {
+                    return false;
+                };
+                if tidb_mysql::lowercase_equal(index.read().name.original(), name) {
+                    return true;
                 }
-                PossiblePath::TiFlashTable => false,
+                if tidb_mysql::to_lowercase(index.read().name.original())
+                    .starts_with(&tidb_mysql::to_lowercase(name))
+                {
+                    prefix_path = Some(*path);
+                    prefix_matches += 1;
+                }
+                false
             });
             let path = exact_path.or_else(|| {
                 if prefix_matches == 1 {
@@ -608,20 +617,18 @@ pub fn apply_table_index_hints(
                 ));
             };
             if kind == IndexHintKind::Ignore {
-                // Go `removeIgnoredPaths` matches `path.Index.ID`.
-                if let PossiblePath::Index { index } = path {
+                // Go `removeIgnoredPaths` matches the resolved paths' `Index`.
+                if let Some(index) = &path.index {
                     ignored.insert(index.read().id);
                 }
                 continue;
             }
-            let is_tikv_index = match path {
-                PossiblePath::Table { .. } => {
-                    tidb_mysql::lowercase_equal(name, "primary") && table.pk_is_handle
-                        || table.is_common_handle
-                }
-                PossiblePath::Index { ref index } => !index.read().is_columnar_index(),
-                PossiblePath::TiFlashTable => false,
-            };
+            // Go `isTiKVIndexByName`.
+            let is_tikv_index = tidb_mysql::lowercase_equal(name, "primary") && table.pk_is_handle
+                || path
+                    .index
+                    .as_ref()
+                    .is_some_and(|index| !index.read().is_columnar_index());
             if is_tikv_index && !tikv_in_isolation_read {
                 let message = format!(
                     "TiDB doesn't support index '{name}' in the isolation read engines(value: '{isolation_read_engines_value}')"
@@ -633,71 +640,39 @@ pub fn apply_table_index_hints(
                 return Err(tidb_planner_core_base::PlanError::internal(message));
             }
             has_use_or_force = true;
-            match path {
-                PossiblePath::Index { ref index } => {
-                    {
-                        let metadata = index;
-                        result.forced_index_ids.insert(metadata.read().id);
-                        if force_keep_order {
-                            result.force_keep_order_index_ids.insert(metadata.read().id);
-                        }
-                        if force_no_keep_order {
-                            result.force_no_keep_order_index_ids.insert(metadata.read().id);
-                        }
-                        if push_down_lookup {
-                            if force_no_index_lookup_push_down {
-                                result.hint_warnings.push(
-                                    "hint INDEX_LOOKUP_PUSHDOWN cannot be inapplicable, NO_INDEX_LOOKUP_PUSHDOWN is specified".to_owned(),
-                                );
-                                continue;
-                            }
-                            if let Some(reason) = unsupported_reason(metadata) {
-                                result.hint_warnings.push(format!(
-                                    "hint INDEX_LOOKUP_PUSHDOWN is inapplicable, {reason}"
-                                ));
-                                continue;
-                            }
-                            result
-                                .index_lookup_push_down_by
-                                .insert(metadata.read().id, IndexLookUpPushDownByType::Hint);
-                        }
-                    }
+            if path.is_table_path() {
+                if force_keep_order {
+                    result.force_keep_order_table_path = true;
                 }
-                PossiblePath::Table { ref primary_index, .. } => {
-                    if force_keep_order {
-                        result.force_keep_order_table_path = true;
-                    }
-                    if force_no_keep_order {
-                        result.force_no_keep_order_table_path = true;
-                    }
-                    if let Some(metadata) = primary_index.as_ref() {
-                        result.forced_index_ids.insert(metadata.read().id);
-                        if force_keep_order {
-                            result.force_keep_order_index_ids.insert(metadata.read().id);
-                        }
-                        if force_no_keep_order {
-                            result.force_no_keep_order_index_ids.insert(metadata.read().id);
-                        }
-                        if push_down_lookup {
-                            if force_no_index_lookup_push_down {
-                                result.hint_warnings.push(
-                                    "hint INDEX_LOOKUP_PUSHDOWN cannot be inapplicable, NO_INDEX_LOOKUP_PUSHDOWN is specified".to_owned(),
-                                );
-                                continue;
-                            }
-                            if let Some(reason) = unsupported_reason(metadata) {
-                                result.hint_warnings.push(format!(
-                                    "hint INDEX_LOOKUP_PUSHDOWN is inapplicable, {reason}"
-                                ));
-                                continue;
-                            }
-                            result
-                                .index_lookup_push_down_by
-                                .insert(metadata.read().id, IndexLookUpPushDownByType::Hint);
-                        }
-                    }
+                if force_no_keep_order {
+                    result.force_no_keep_order_table_path = true;
                 }
-                PossiblePath::TiFlashTable => continue,
+            }
+            if let Some(metadata) = path.index.as_ref() {
+                result.forced_index_ids.insert(metadata.read().id);
+                if force_keep_order {
+                    result.force_keep_order_index_ids.insert(metadata.read().id);
+                }
+                if force_no_keep_order {
+                    result.force_no_keep_order_index_ids.insert(metadata.read().id);
+                }
+                if push_down_lookup {
+                    if force_no_index_lookup_push_down {
+                        result.hint_warnings.push(
+                            "hint INDEX_LOOKUP_PUSHDOWN cannot be inapplicable, NO_INDEX_LOOKUP_PUSHDOWN is specified".to_owned(),
+                        );
+                        continue;
+                    }
+                    if let Some(reason) = unsupported_reason(metadata) {
+                        result.hint_warnings.push(format!(
+                            "hint INDEX_LOOKUP_PUSHDOWN is inapplicable, {reason}"
+                        ));
+                        continue;
+                    }
+                    result
+                        .index_lookup_push_down_by
+                        .insert(metadata.read().id, IndexLookUpPushDownByType::Hint);
+                }
             }
             available.push(path);
         }
@@ -706,24 +681,20 @@ pub fn apply_table_index_hints(
     if !has_scan_hint || !has_use_or_force {
         available = public_paths.to_vec();
     }
-    available
-        .retain(|path| {
-            !matches!(path, PossiblePath::Index { index } if ignored.contains(&index.read().id))
+    // Go `removeIgnoredPaths`.
+    available.retain(|path| {
+            path.is_tikv_table_path()
+                || path.is_tiflash_simple_table_path()
+                || !path.index.as_ref().is_some_and(|index| ignored.contains(&index.read().id))
         });
     if remove_global_indexes {
-        available.retain(|path| {
-            !matches!(path, PossiblePath::Index { index } if index.read().global)
-        });
+        // Go `removeGlobalIndexPaths`.
+        available.retain(|path| !path.index.as_ref().is_some_and(|index| index.read().global));
     }
     if available.is_empty() {
         available.push(table_path.clone());
     }
-    if available.iter().all(|path| match path {
-        PossiblePath::Table { .. } | PossiblePath::TiFlashTable => false,
-        PossiblePath::Index { index } => {
-            index.read().mv_index || !index.read().condition_expr_string.is_empty()
-        }
-    }) {
+    if available.iter().all(AccessPath::is_undetermined) {
         available.push(table_path);
     }
     result.paths = available;
@@ -818,7 +789,7 @@ mod enumeration_tests {
 
     use super::{get_possible_access_paths as enumerate_possible_access_paths};
 
-    use tidb_planner_util::path::{PossiblePath};
+    use tidb_planner_util::path::{AccessPath};
     use tidb_infoschema::table_source::LatestIndexSchema;
     use tidb_infoschema::table_source::SourceTable;
 
@@ -851,7 +822,7 @@ mod enumeration_tests {
     fn get_possible_access_paths(
         table: &SourceTable,
         optimizer_use_invisible_indexes: bool,
-    ) -> Vec<PossiblePath> {
+    ) -> Vec<AccessPath> {
         enumerate_possible_access_paths(
             table,
             optimizer_use_invisible_indexes,
@@ -872,10 +843,7 @@ mod enumeration_tests {
         let paths = get_possible_access_paths(&table(vec![index("i1")]), false);
         assert_eq!(
             paths[0],
-            PossiblePath::Table {
-                is_int_handle: true,
-                primary_index: None
-            }
+            AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None)
         );
         assert_eq!(paths.len(), 2);
     }
@@ -946,11 +914,8 @@ mod enumeration_tests {
         assert_eq!(
             paths,
             vec![
-                PossiblePath::Table {
-                    is_int_handle: true,
-                    primary_index: None,
-                },
-                PossiblePath::Index { index: source.indexes[1].clone() },
+                AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
+                tidb_planner_util::path::AccessPath::index_path(source.indexes[1].clone()),
             ]
         );
     }
@@ -983,13 +948,10 @@ mod enumeration_tests {
         assert_eq!(
             paths,
             vec![
-                PossiblePath::Table {
-                    is_int_handle: true,
-                    primary_index: None,
-                },
-                PossiblePath::TiFlashTable,
-                PossiblePath::Index { index: source.indexes[0].clone() },
-                PossiblePath::Index { index: hypo },
+                AccessPath::table_path(tidb_kv::store_type::StoreType::TiKv, false, None),
+                AccessPath::table_path(tidb_kv::store_type::StoreType::TiFlash, false, None),
+                tidb_planner_util::path::AccessPath::index_path(source.indexes[0].clone()),
+                tidb_planner_util::path::AccessPath::index_path(hypo),
             ]
         );
         assert_eq!(source.indexes.len(), 1);
