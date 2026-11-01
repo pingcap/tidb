@@ -1794,7 +1794,7 @@ func (rc *LogClient) PreSplitRegions(
 	// buffers alive until merge finishes, which is the point of separating the
 	// scan from Merge.
 	files := make([]pendingFile, 0, 1024)
-	var scanned, metaSkipped, ruleSkipped int
+	var scanned, metaSkipped, ruleSkipped, smallFileSkipped int
 	scanStart := time.Now()
 	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
 		if r.Err != nil {
@@ -1808,6 +1808,10 @@ func (rc *LogClient) PreSplitRegions(
 		}
 		if _, exist := rules[file.TableId]; !exist {
 			ruleSkipped++
+			continue
+		}
+		if file.Length <= SplitFileThresholdDefault {
+			smallFileSkipped++
 			continue
 		}
 		files = append(files, pendingFile{
@@ -1831,6 +1835,7 @@ func (rc *LogClient) PreSplitRegions(
 		zap.Int("scanned", scanned),
 		zap.Int("meta-skipped", metaSkipped),
 		zap.Int("rule-skipped", ruleSkipped),
+		zap.Int("small-file-skipped", smallFileSkipped),
 		zap.Duration("took", time.Since(scanStart)),
 		zap.Uint64("heap-mb", heapMB()))
 
